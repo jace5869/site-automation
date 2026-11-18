@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.74.0 — 2026-11-18
+
+**To set up:** give the *Patch hosts* template `report_email_to` (its Variables, as for the other reports), or set
+`report_web_dest` for the website. Then the report reaches you. Run *AAP - report email question* again, so
+*Patch hosts* gets the "Also email the report to" box. A host that could not be patched now fails the job at
+its end: `patch_fail_on_could_not: false` keeps it green. `patch_continue_on_failure: false` brings back the stop.
+
+**Linux patching goes on past a host it cannot patch, and reports every host** (Patch hosts; docs/RUNBOOKS.md,
+"The report"). Windows patching is unchanged.
+
+- A host that fails or is lost while it is patched goes in the report, and the others go on
+  (`patch_continue_on_failure`, default true). That is a dnf error, no return after its reboot, or a host lost
+  mid-run. It is marked COULD NOT PATCH with its reason and the step it got to.
+- Nothing touches such a host again in that run, and its snapshot is kept.
+- A host whose service that starts at boot is down after the update is PATCHED - SERVICES DOWN: it was patched, and
+  needs a look before any roll back.
+- A host whose VM is not sure (two VMs, not found, an old snapshot in the way) is left out, and the others go on.
+- The report: At a glance (Patched, Up to date, Could not patch, Skipped on purpose; Not started when the rollout
+  stopped), Start here, Could not patch or needs a look (worst first: reason, step, what to do, snapshot), Patched,
+  Up to date and Skipped on purpose. The email, the website with its index line, and the workbook.
+- The job fails at its end when a host could not be patched or needs a look (`patch_fail_on_could_not`, default
+  true). The report goes out first, also when every host failed. The workflow's "always" steps still run.
+- A dry run sends the same report, `DRY RUN - Patch hosts`, on its own page and index line. It stays green, so the
+  approval follows it.
+- `patch_continue_on_failure: false`: the rollout stops at such a host, as before. The rest of its batch goes no
+  further than its next step, no later batch starts (NOT STARTED), and the report goes out.
+- No ServiceNow incidents: the workflow's ServiceNow step is unchanged.
+
 ## 1.73.0 — 2026-11-18
 
 **To set up: nothing.** The STIG drift report and the STIG recheck read the texts from STIG Manager with the client they

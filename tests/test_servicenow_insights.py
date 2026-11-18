@@ -2936,7 +2936,7 @@ class PagesInOneGo(unittest.TestCase):
         self.assertIn("_report_web_url: >-", main)
         email = read("roles", "site_email", "tasks", "main.yml")
         self.assertIn("_report_email_to_override | email_recipients([], report_email_also_domains) if _report_email_to_override is defined", email)
-        self.assertIn("{{ _report_web_url if _report_web_url | default('') | length > 0 and not ansible_check_mode else", email)
+        self.assertIn("{{ _report_web_url if _report_web_url | default('') | length > 0 and not _email_dry else", email)
         for cp in ("'start'", "'read'", "'act_a'", "'model'", "'act_b'", "'finish'", "'db'", "'pages'", "'end'"):
             self.assertIn("combine({%s: now().timestamp()})" % cp, main)
         pages = read("roles", "site_email", "tasks", "pages.yml")

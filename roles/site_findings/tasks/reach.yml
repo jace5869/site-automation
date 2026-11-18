@@ -27,12 +27,14 @@
   when:
     - site_host_unreached | length > 0
     - ansible_play_hosts | map('extract', hostvars, 'site_host_unreached') | select('equalto', '') | list | length == 0
+    # a job whose report lists them and fails at its end (Patch hosts, 1.74.0) goes on to say so
+    - not site_reach_report_all | default(false) | bool
 
 - name: Not reached - the job goes on without it
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}. Left out of this run; the job is not
-      failed for it (site_unreachable_fails: true fails it).
+      {{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}. Left out of this run; {{ 'the report lists it.'
+      if site_reach_report_all | default(false) | bool else 'the job is not failed for it (site_unreachable_fails: true fails it).' }}
   when: site_host_unreached | length > 0 and not site_unreachable_fails | bool
 
 - name: Not reached - fail it (site_unreachable_fails)

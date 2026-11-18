@@ -1293,14 +1293,16 @@ File: `roles/ontap_report/defaults/main.yml`
 
 File: `roles/patch/defaults/main.yml`
 
-> PATCH: install updates with dnf, reboot if the updates need it, and prove the host came back: every service that was running before must be running after. One host at a time by default; the rollout stops at the first host that fails.
+> PATCH: install updates with dnf, reboot if the updates need it, and prove the host came back: every service that was running before must be running after. One host at a time by default.
 
 | Setting | Default | What it does |
 |---|---|---|
 | `patch_packages` | `['*']` | A list, or text from a survey or -e ("kernel*", "kernel*, glibc"): split at commas, spaces and line breaks (1.70.5). what to update ('*' = everything that has an update) |
 | `patch_security_only` | `false` | true = only updates that fix security advisories |
 | `patch_exclude` | `[]` | never update these here, e.g. ['mariadb*', 'kernel*'] |
-| `patch_serial` | `1` | How many hosts are patched at the same time (1 = one by one: the rollout stops at the first host that fails or is lost; with more, the rest of that batch stops too and no later batch starts). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size before it reads all.yml or any group… (all of it: the role file) |
+| `patch_serial` | `1` | How many hosts are patched at the same time (1 = one by one). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size before it reads all.yml or any group or host variables, so set there it does nothing. |
+| `patch_continue_on_failure` | `true` | A host that fails or is lost while it is patched (a dnf error, no return after its reboot, lost mid-run), or that could not be started (not reached, not ready, its VM not sure): true = it is listed as COULD NOT PATCH with its reason and the step it got to, and the others go on (1.74.0). false = the rollout stops there… (all of it: the role file) |
+| `patch_fail_on_could_not` | `true` | The job ends FAILED (red in AAP) when a host could not be patched or needs a look - after every other host is done and the report is sent. false = the job stays green; the report still lists them. |
 | `automatic_restarts` | `false` | NO AUTOMATIC RESTARTS unless you say so: this playbook reboots a host only when automatic_restarts is true (set it in the job template's Variables, or answer the survey), and then only as patch_reboot says. With automatic_restarts false (the default) it installs the updates and tells you which hosts still need a reboo… (all of it: the role file) |
 | `patch_reboot` | `when_needed` | Reboot (only with automatic_restarts: true): when_needed (needs-restarting says so) \| never \| always |
 | `patch_reboot_timeout` | `1800` | seconds to wait for the host to come back |

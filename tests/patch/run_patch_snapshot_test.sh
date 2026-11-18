@@ -126,6 +126,8 @@ snaps() {  # snaps VM -> its snapshots' names (and with ID=1 their IDs), comma-s
 print(','.join(s['name'] + (':%s' % s['id'] if os.environ.get('ID') else '') for s in v['snapshots']))"
 }
 # run NAME EXPECT(ok|fail) [args...] then TEXT... after '--'; a TEXT starting with ! must NOT be in the output
+# OLD=1 (the cases before 1.74.0): patch_continue_on_failure false and patch_fail_on_could_not false - the stop as it
+# was, and a host left out (not reached, not ready) keeps the job green
 run() {
     local tname="$1" want="$2"; shift 2
     local args=() texts=() seen=0
@@ -134,7 +136,8 @@ run() {
         ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
         ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_HOST_KEY_CHECKING=False \
         ${NOVC:+env -u VMWARE_HOST} "$ap" -i "$work/inv.yml" playbooks/patch_hosts.yml -e vmware_validate_certs=false \
-        -e '{"awx_job_id": 4711, "awx_user_name": "operator1", "patch_packages": ["tzdata"], "patch_update_check": false, "patch_snapshot_reuse_hours": 0}' "${args[@]}") > "$work/out.txt" 2>&1
+        -e '{"awx_job_id": 4711, "awx_user_name": "operator1", "patch_packages": ["tzdata"], "patch_update_check": false, "patch_snapshot_reuse_hours": 0}' \
+        ${OLD:+-e '{"patch_continue_on_failure": false, "patch_fail_on_could_not": false}'} "${args[@]}") > "$work/out.txt" 2>&1
     local rc=$?
     if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
         keep "$tname"; echo "FAIL - $tname: exit $rc (wanted $want)"; grep -E '"msg"|ERROR|fatal' "$work/out.txt" | head -8 | cut -c1-400; fails=$((fails + 1)); return 1
@@ -157,6 +160,7 @@ check() {  # check NAME GOT EXPECTED
     if [ "$2" = "$3" ]; then echo "ok   - $1"; else echo "FAIL - $1: got [$2], expected [$3]"; fails=$((fails + 1)); fi
 }
 installs='TASK [patch : Patch | install the updates'
+export OLD=1
 
 run "dry run: each host's VM found, a snapshot would be taken, none is" ok --check -e "$good" -e patch_snapshot=true \
     -- 'web01.example.mil: VM DC0_H0_VM1 (by guest host name)' 'DC0_C0_RP0_VM1: VM DC0_C0_RP0_VM1 (by VM name)' \
@@ -210,9 +214,10 @@ NOVC=1 run "a host not reached: listed, left out, the others patched - the job n
     -e target=web01.example.mil:down01.example.mil \
     -- 'down01.example.mil: NOT REACHED' '1 host(s) not reached, not patched: down01.example.mil' "$installs"
 NOVC=1 run "patch_skip_unreachable false: a host not reached fails the job" fail \
-    -e target=web01.example.mil:down01.example.mil -e patch_skip_unreachable=false -- 'down01.example.mil'
-NOVC=1 run "no host reached at all: the job fails (the machine credential?)" fail -e target=down01.example.mil \
-    -- 'No host could be reached' "!$installs"
+    -e target=web01.example.mil:down01.example.mil -e patch_skip_unreachable=false -e patch_fail_on_could_not=true \
+    -- 'down01.example.mil: COULD NOT PATCH - LOST mid-run' 'could not be patched or need a look: down01.example.mil'
+NOVC=1 run "no host reached at all: the job fails (the machine credential?)" fail -e target=down01.example.mil -e patch_fail_on_could_not=true \
+    -- 'No host could be reached: look first at the template' "!$installs"
 run "a host not reached, with patch_snapshot: no VM looked for it, no snapshot" ok -e "$good:down01.example.mil" \
     -e patch_snapshot=true -e patch_snapshot_replace=true -- 'down01.example.mil: NOT REACHED' '!down01.example.mil: NO VM' \
     'took \"patching\" of VM DC0_H0_VM1'
@@ -226,7 +231,8 @@ NOVC=1 run "neither dnf nor yum: listed, left out, the others patched - the job 
     -e target=web01.example.mil:other01.example.mil \
     -- 'other01.example.mil: NO DNF OR YUM' '1 host(s) with neither dnf nor yum, not patched: other01.example.mil' "$installs"
 NOVC=1 run "patch_skip_unsupported false: a host with neither fails at the update" fail \
-    -e target=other01.example.mil -e patch_skip_unsupported=false -- 'other01.example.mil' '!other01.example.mil: NO DNF OR YUM'
+    -e target=other01.example.mil -e patch_skip_unsupported=false -e patch_fail_on_could_not=true \
+    -- 'other01.example.mil: COULD NOT PATCH' '!other01.example.mil: NO DNF OR YUM'
 
 # The VMware protected lists: a host whose name, vmware_vm_name or VM matches vmware_protected_vms or
 # vm_snapshot_cleanup_exclude_vms is not patched, unless patch_protected_with_snapshot names it - then after its snapshot.
@@ -316,13 +322,36 @@ check "  ...the reboot task ran for it (Check mode: not done)" \
 mid="$(cat /etc/machine-id)"
 "$engine" exec "${hosts[2]}" sh -c "cp /etc/machine-id /etc/machine-id.sa-test 2>/dev/null; echo $mid > /etc/machine-id"
 NOVC=1 run "a host whose machine-id is the controller's (an alias of it): refused" fail -e target=web02.example.mil \
-    -- 'its /etc/machine-id is the one of the machine running this job' "!$installs"
+    -e patch_fail_on_could_not=true -- 'its /etc/machine-id is the one of the machine running this job' \
+    'web02.example.mil: COULD NOT PATCH - REFUSED' "!$installs"
 "$engine" exec "${hosts[2]}" sh -c 'if [ -f /etc/machine-id.sa-test ]; then mv /etc/machine-id.sa-test /etc/machine-id; else : > /etc/machine-id; fi'
 
 # a host lost in a batch of 2: the rollout stops, the next batch is not patched
 "$engine" exec "${hosts[1]}" sh -c 'rpm -q sa-patch-pending >/dev/null && rpm -U --oldpackage /opt/sa-patch-rpms/installed/sa-patch-pending-*.rpm' >/dev/null 2>&1
 # a host down from the start (patch_skip_unreachable true, the default): NOT REACHED and left out, and it never stops the
 # rollout - every good host patched, one at a time and two at a time
+# the report as the website keeps it (report_web_dest): rep look - the problem hosts (host:reason; worst first);
+# rep tile LABEL - a tile's value; rep title; rep sec TITLE - a section's hosts. DRY=1: the dry run's own page.
+site="{\"report_web_dest\": \"$work/site\", \"awx_job_template_name\": \"Patch hosts\"}"
+mkdir -p "$work/site"
+rep() {
+    "$py" - "$work/site/patch-hosts${DRY:+-dry-run}/latest.json" "$@" <<'EOP'
+import json, sys
+r = json.load(open(sys.argv[1]))["report"]
+what = sys.argv[2]
+secs = dict((s["title"], s) for s in r["sections"])
+if what == "look":
+    print(";".join("%s:%s" % (x[0], x[1].split(":")[0]) for x in secs.get("Could not patch or needs a look", {}).get("rows", [])))
+elif what == "tile":
+    print([str(t["value"]) for t in r["summary"] if t["label"] == sys.argv[3]][0])
+elif what == "title":
+    print(r["title"])
+elif what == "sec":
+    print(" ".join(x[0] for x in secs.get(sys.argv[3], {}).get("rows", [])))
+elif what == "counts":
+    print(json.dumps(r.get("counts"), sort_keys=True))
+EOP
+}
 patched() {  # the hosts the update task ran on
     awk '/^TASK \[patch : Patch \| install the updates\]/{f=1; next} /^TASK /{f=0} f && /^(ok|changed): \[/{sub(/^[a-z]+: \[/, ""); sub(/\].*/, ""); print}' \
         "$work/out.txt" | sort -u | tr '\n' ' ' | sed 's/ $//'
@@ -338,7 +367,14 @@ done
 # inventory's order) goes on with patch_skip_unreachable false and is lost in the patch play: web02 (batch 2) never patched
 NOVC=1 run "patch_serial 2, a host lost in batch 1 (patch_skip_unreachable false): batch 2 is never patched" fail \
     -e target=lost01.example.mil:DC0_C0_RP0_VM1:web02.example.mil -e patch_serial=2 -e patch_skip_unreachable=false -e "$uc1" \
-    -e patch_packages=sa-patch-pending -- 'UNREACHABLE! => ' 'Not patched: in an earlier batch DC0_C0_RP0_VM1, lost01.example.mil stopped - one or more of them failed or was lost' "!$installs"
+    -e patch_packages=sa-patch-pending -e patch_fail_on_could_not=true -e "$site" \
+    -- 'UNREACHABLE! => ' 'lost01.example.mil: COULD NOT PATCH - LOST mid-run' \
+    'DC0_C0_RP0_VM1: NOT STARTED - the rollout stopped at lost01.example.mil, before its snapshot' \
+    'web02.example.mil: NOT STARTED - Not patched: lost01.example.mil failed or was lost in an earlier batch, so the rollout stops here' \
+    'could not be patched or need a look: lost01.example.mil, DC0_C0_RP0_VM1, web02.example.mil'
+check "  ...no host updated" "$(patched)" ""
+check "  ...the report: lost first, then not started (2), and the tile" "$(rep look);$(rep tile 'Not started')" \
+    "lost01.example.mil:LOST mid-run;DC0_C0_RP0_VM1:NOT STARTED;web02.example.mil:NOT STARTED;2"
 check "  ...batch 1's other host not updated" "$(ver "${hosts[1]}")" "1.0"
 check "  ...batch 2's host not updated" "$(ver "${hosts[2]}")" "1.0"
 
@@ -379,5 +415,60 @@ check "  ...a new \"patching\"" "$(snaps DC0_H0_VM1) $([ "$before" != "$after" ]
 SNAP_ID="$(ID=1 snaps DC0_H0_VM1 | tr ',' '\n' | grep '^patching:' | cut -d: -f2)" \
     reval "the snapshot to reuse is too old by the host's turn: stopped" fail aged 'h old (over patch_snapshot_reuse_hours' 'patch_snapshot_replace: true'
 reval "the VM's ID now has another name: stopped" fail renamed 'is now named DC0_H0_VM1'
+
+# ---- 1.74.0: a host that fails or is lost is listed, the others go on; the report; the job fails at its end ----------
+unset OLD
+"$engine" exec "${hosts[2]}" sh -c 'printf "%s\n" "[sa-broken]" "name=sa-broken" "baseurl=file:///opt/sa-no-such-repo" "gpgcheck=0" "enabled=1" \
+    "skip_if_unavailable=False" > /etc/yum.repos.d/sa-broken.repo' || { echo "ABORT - the broken repository on web02"; exit 1; }
+for ser in 1 2; do
+    rm -rf "${work:?}/site" && mkdir -p "$work/site"
+    NOVC=1 run "patch_serial $ser: a host lost (lost01) and one whose update fails (web02): both listed, the others patched, the job fails at its end" fail \
+        -e target=lost01.example.mil:web01.example.mil:DC0_C0_RP0_VM1:web02.example.mil -e patch_serial=$ser -e patch_skip_unreachable=false \
+        -e "$site" -- 'lost01.example.mil: COULD NOT PATCH - LOST mid-run at the checks' 'web02.example.mil: COULD NOT PATCH - FAILED during update' \
+        'The other hosts go on' 'could not be patched or need a look: lost01.example.mil, web02.example.mil' '!: NOT STARTED -'
+    check "  ...the good hosts patched (patch_serial $ser)" "$(patched)" "DC0_C0_RP0_VM1 web01.example.mil"
+    check "  ...the report: the lost host, then the failed update" "$(rep look)" "lost01.example.mil:LOST mid-run;web02.example.mil:FAILED during update"
+    check "  ...its sections and tiles" "$(rep sec Patched)|$(rep tile 'Could not patch')|$(rep tile Patched)|$(rep counts)" \
+        "DC0_C0_RP0_VM1 web01.example.mil|2|2|{\"critical\": 2, \"low\": 0, \"warning\": 0}"
+done
+check "  ...the report's title" "$(rep title)" "Patch hosts: 2 hosts patched, 2 could not be patched"
+check "  ...the index lists it, critical" "$("$py" -c "import json,sys; r=[x for x in json.load(open(sys.argv[1]))['reports'] if x['name']=='Patch hosts'][0]; print(r['status'], json.dumps(r['counts'], sort_keys=True))" "$work/site/index.json")" \
+    "critical {\"critical\": 2, \"low\": 0, \"warning\": 0}"
+
+rm -rf "${work:?}/site" && mkdir -p "$work/site"
+NOVC=1 run "patch_serial 1, every host failed or lost: the report still goes out, the job fails at its end" fail \
+    -e target=lost01.example.mil:web02.example.mil -e patch_skip_unreachable=false -e "$site" \
+    -- 'could not be patched or need a look: lost01.example.mil, web02.example.mil' 'Patch hosts | the report'
+check "  ...no host patched" "$(patched)" ""
+check "  ...the report" "$(rep title)|$(rep look)" \
+    "Patch hosts: 0 hosts patched, 2 could not be patched|lost01.example.mil:LOST mid-run;web02.example.mil:FAILED during update"
+
+rm -rf "${work:?}/site" && mkdir -p "$work/site"
+NOVC=1 run "the default: a host not reached is listed, the others patched, and the job fails at its end" fail \
+    -e target=web01.example.mil:down01.example.mil -e "$site" -- 'down01.example.mil: NOT REACHED' "$installs" \
+    'could not be patched or need a look: down01.example.mil'
+check "  ...the report" "$(rep look)|$(rep sec Patched)" "down01.example.mil:NOT REACHED|web01.example.mil"
+NOVC=1 run "patch_fail_on_could_not false: the same, the job green" ok -e target=web01.example.mil:down01.example.mil \
+    -e patch_fail_on_could_not=false -- 'down01.example.mil: NOT REACHED' '!could not be patched or need a look:'
+
+# a dry run (Check mode): the same report, as a dry run, on its own page - never the real run's - and the job green
+rm -rf "${work:?}/site" && mkdir -p "$work/site"
+NOVC=1 run "a dry run: the problem hosts in its report (DRY RUN, its own page), the job green for the approval" ok --check \
+    -e target=lost01.example.mil:web01.example.mil:web02.example.mil -e patch_skip_unreachable=false -e "$site" \
+    -- 'COULD NOT PATCH' '!could not be patched or need a look:'
+check "  ...its title" "$(DRY=1 rep title)" "DRY RUN - Patch hosts: 1 host would be patched, 2 could not be patched"
+check "  ...not on the real run's page" "$([ -e "$work/site/patch-hosts/latest.json" ] && echo there || echo none)" "none"
+check "  ...its own line on the index" "$("$py" -c "import json,sys; print([x['name'] for x in json.load(open(sys.argv[1]))['reports']])" "$work/site/index.json")" \
+    "['Patch hosts - dry run']"
+
+# the VM step: a host whose VM is not sure is left out (COULD NOT PATCH), the others patched after their snapshots
+rm -rf "${work:?}/site" && mkdir -p "$work/site"
+"$engine" exec "${hosts[2]}" rm -f /etc/yum.repos.d/sa-broken.repo
+run "patch_snapshot_required: a host without a VM and one that matches two VMs are listed, the others patched" fail \
+    -e "$good:phys01.example.mil:dup" -e patch_snapshot=true -e patch_snapshot_required=true -e patch_snapshot_replace=true -e "$site" \
+    -- 'dup: COULD NOT PATCH - TWO VMs' 'phys01.example.mil: COULD NOT PATCH - VM NOT FOUND' 'took \"patching\" of VM DC0_H0_VM1' \
+       'could not be patched or need a look: dup, phys01.example.mil' '!Nothing was patched'
+check "  ...the good hosts patched" "$(patched)" "DC0_C0_RP0_VM1 web01.example.mil web02.example.mil"
+check "  ...the report" "$(rep look)" "dup:TWO VMs;phys01.example.mil:VM NOT FOUND"
 
 if [ "$fails" -eq 0 ]; then echo "all patch snapshot tests passed"; else echo "$fails patch snapshot test(s) FAILED"; exit 1; fi

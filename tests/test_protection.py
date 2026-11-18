@@ -41,14 +41,27 @@ def run_checks():
     check(pm.count("intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts'])") >= 2, "roles/patch: the never-patch skip tests no_patch and AAP literally")
     ph = (root / "playbooks/patch_hosts.yml").read_text()
     check(ph.count("+ ['no_patch', 'aap', 'aap_hosts']) | length == 0") >= 4, "patch_hosts.yml: the prechecks never contact no_patch or AAP hosts")
-    # 1.70.5: a host lost halfway (unreachable) stops the rollout, as a failed one does
+    # 1.70.5: a host lost halfway (unreachable) stops the rollout, as a failed one does - 1.74.0: with
+    # patch_continue_on_failure false; it is caught in roles/patch (rescue, ignore_unreachable), so no host fails the play
+    # (a failed batch ends the job, its report too) and any_errors_fatal is gone (it ends the play even at a caught host)
     pl = [x for x in load("playbooks/patch_hosts.yml") if x.get("name") == "Patch hosts"]
-    check(len(pl) == 1 and pl[0].get("any_errors_fatal") is True and pl[0].get("max_fail_percentage") == 0,
-          "playbooks/patch_hosts.yml: the play that patches stops at a host that fails or is lost (any_errors_fatal)")
-    pre = (pl[0].get("pre_tasks") or [{}, {}]) if pl else [{}, {}]
-    check("ansible.builtin.set_fact" in pre[0] and "_patch_out_at_start" in str(pre[0]) and "ansible.builtin.fail" in pre[1]
-          and "difference(ansible_play_hosts)" in str(pre[1].get("vars")) and "_patch_out_at_start" in str(pre[1].get("vars")),
-          "playbooks/patch_hosts.yml: each batch first stops when a host of an earlier batch failed or was lost (not one out from the start)")
+    check(len(pl) == 1 and "any_errors_fatal" not in pl[0] and "max_fail_percentage" not in pl[0],
+          "playbooks/patch_hosts.yml: the play that patches fails no host - each is caught and reported (1.74.0)")
+    pre = (pl[0].get("pre_tasks") or [{}] * 5) if pl else [{}] * 5
+    check("ansible.builtin.set_fact" in pre[0] and "_patch_out_at_start" in str(pre[0]) and "patch_not_started" in str(pre[1].get("ansible.builtin.set_fact"))
+          and "difference(ansible_play_hosts)" in str(pre[1].get("vars")) and "_patch_out_at_start" in str(pre[1].get("vars"))
+          and "_patch_could_not" in str(pre[1].get("vars")) and "not patch_continue_on_failure" in str(pre[1].get("when"))
+          and "ansible.builtin.meta" in pre[3] and pre[3].get("ansible.builtin.meta") == "end_host",
+          "playbooks/patch_hosts.yml: patch_continue_on_failure false - each batch first stops (NOT STARTED) when a host of an earlier "
+          "batch could not be patched or was lost (not one out from the start)")
+    role = load("roles/patch/tasks/main.yml")
+    inner = (role[0].get("block") or [{}])[0] if role else {}
+    check(len(role) == 1 and "rescue" in role[0] and inner.get("ignore_unreachable") is True and "_patch_lost_at" in str(inner.get("when"))
+          and "_patch_lost_at" in str(role[0].get("vars")),
+          "roles/patch: a host that fails or is lost is caught (rescue; lost: ignore_unreachable, its later steps skipped)")
+    mods = [k for t in (role[0].get("rescue") or [{"x": 1}]) for k in t if k.startswith("ansible.") or "." in k]
+    check(mods and set(mods) <= {"ansible.builtin.set_fact", "ansible.builtin.debug"},
+          "roles/patch: the rescue only writes facts and says so - it never touches the host or its snapshot")
 
     wd = load("roles/win_patch/defaults/main.yml")
     check("patch_never_reboot_groups" in str(wd["win_patch_never_reboot_groups"]), "win_patch never-reboot list follows the Linux list")

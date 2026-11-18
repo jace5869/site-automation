@@ -2,316 +2,455 @@
 # PATCH one host: guards -> the VMware snapshot of its VM (patch_snapshot) -> remember running services ->
 # dnf update (yum on RHEL 7) -> reboot if needed and allowed -> the same services must be running again. Check mode (a dry run)
 # shows what would be updated and changes nothing.
-
-- name: Patch | which groups are protected (yours, plus no_patch and AAP - built in)
-  ansible.builtin.set_fact:
-    _patch_no_patch: "{{ (patch_never_patch_groups + _patch_always_no_patch) | unique }}"
-    _patch_no_reboot: "{{ (patch_never_reboot_groups + _site_always_protected) | unique }}"
-
-# ['no_patch', 'aap', 'aap_hosts'] is written out below as well, on purpose: an extra variable (-e) can override
-# any variable, even these internal lists, but not a literal - no setting and no list name can remove them.
-- name: Patch | say why a protected host is skipped
-  ansible.builtin.debug:
-    msg: "{{ inventory_hostname }} is in {{ group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | join(', ') }}: never patched by automation. Patch it by hand in a maintenance window."
-  when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
-
-# 1.71.1: a host ended on purpose says so first, so the batch guard in playbooks/patch_hosts.yml never takes it for a
-# host that failed or was lost (it does not rely on ansible-core leaving such hosts out of the next batch's count)
-- name: Patch | mark it as left out on purpose (never-patch group)
-  ansible.builtin.set_fact:
-    _patch_ended_on_purpose: never-patch group
-  when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
-
-- name: Patch | skip hosts in the never-patch groups (patch_never_patch_groups, and AAP always)
-  ansible.builtin.meta: end_host
-  when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
-
-# The VMware protected lists (vmware_protected_groups, vmware_protected_vms, vm_snapshot_cleanup_exclude_vms): such a
-# host is patched only with patch_protected_with_snapshot naming it and its own snapshot taken first (patch_snapshot).
-- name: Patch | is it on the VMware protected lists
-  ansible.builtin.set_fact:
-    _patch_prot: >-
-      {{ inventory_hostname | patch_protected(hostvars,
-           (hostvars['localhost']._patch_snap.vms[inventory_hostname].name | default(''))
-             if hostvars['localhost']._patch_snap is defined else '',
-           vmware_protected_groups | default([]), vmware_protected_vms | default([]),
-           vm_snapshot_cleanup_exclude_vms | default([]), patch_protected_with_snapshot)
-         if inventory_hostname not in (hostvars['localhost']._patch_snap.protected | default({})) else
-         {'reason': hostvars['localhost']._patch_snap.protected[inventory_hostname], 'allowed': false} }}
-    _patch_prot_vm: >-
-      {{ patch_snapshot | bool and hostvars['localhost']._patch_snap is defined
-         and inventory_hostname in hostvars['localhost']._patch_snap.vms }}
-
-- name: Patch | say why a protected VM is skipped
-  ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }} is protected ({{ _patch_prot.reason }}): not patched.
-      {{ ('patch_protected_with_snapshot does not name it.' if patch_snapshot | bool else
-          'To patch it after a snapshot of its VM: patch_snapshot: true and patch_protected_with_snapshot (true, or a list naming it).')
-         if not _patch_prot.allowed else
-         ('Its VM was not found in vCenter, and a protected host is patched only after its own snapshot.' if patch_snapshot | bool else
-          'To patch it after a snapshot of its VM: patch_snapshot: true (patch_protected_with_snapshot names it already).') }}
-  when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
-
-- name: Patch | mark it as left out on purpose (protected VM)
-  ansible.builtin.set_fact:
-    _patch_ended_on_purpose: protected VM
-  when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
-
-- name: Patch | skip a protected VM (no patch_protected_with_snapshot for it, or no snapshot)
-  ansible.builtin.meta: end_host
-  when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
-
-- name: Patch | a protected VM, patched after its snapshot (patch_protected_with_snapshot)
-  ansible.builtin.debug:
-    msg: "{{ inventory_hostname }} is protected ({{ _patch_prot.reason }}): patched after a snapshot of its VM, as patch_protected_with_snapshot says."
-  when: _patch_prot.reason | length > 0
-
-- name: Patch | never patch the machine AAP is running this job from
-  ansible.builtin.assert:
-    that:
-      - ansible_connection | default('ssh') != 'local'
-      - inventory_hostname not in ['localhost', '127.0.0.1', '::1']
-    fail_msg: "Refusing to patch {{ inventory_hostname }}: it is the machine running this job (local connection)."
-    quiet: true
-
-# 1.70.5: an alias of it too - ansible_host 127.0.0.1 over ssh, its own name or address, a name that resolves to it, or
-# the same /etc/machine-id. Read once per batch on the AAP side (its facts kept on localhost, never on the host).
-- name: Patch | the machine running this job - its names and addresses
-  ansible.builtin.setup:
-    gather_subset: ['!all', '!min', 'network']
-  delegate_to: localhost
-  delegate_facts: true
-  run_once: true
-  become: false
-  check_mode: false
+#
+# 1.74.0: a host that fails or is lost is caught here (rescue) and marked _patch_could_not - its reason, the step it got
+# to - for the job's report (playbooks/patch_hosts.yml). It is never touched again in this run: a host lost (unreachable)
+# skips every later step (ignore_unreachable, then the lost check), and the rescue only writes facts on the AAP side. Its
+# snapshot, when one was taken, is kept as it is. patch_continue_on_failure: true (the default) - the others go on;
+# false - the rollout stops: the rest of its batch go no further than the next step, the later batches are not started
+# (the patch play's first step), and the job fails at the end with the stop. Either way the report goes out first.
+- name: Patch | this host
   vars:
-    ansible_connection: local
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # the first step that found the host unreachable: [step, Ansible's words] ([] = never lost)
+    _patch_lost_at: >-
+      {%- set out = [] -%}
+      {%- for step, r in [('the checks', _patch_host_mid | default({})), ('the checks', _patch_df | default({})),
+                          ('the update', _patch_before_raw | default({})), ('the update', _patch_pm | default({})),
+                          ('the update', _patch_dnf | default({})), ('the update', _patch_yum_list | default({})),
+                          ('the update', _patch_yum_run | default({})), ('the reboot', _patch_needs | default({})),
+                          ('the reboot', _patch_reboot_run | default({})), ('the services after the update', _patch_after | default({}))]
+              if r.unreachable | default(false) | bool and out | length == 0 -%}
+      {%-   set _ = out.extend([step, (r.msg | default('unreachable', true) | string).splitlines() | first | default('unreachable')]) -%}
+      {%- endfor -%}
+      {{ out }}
+  block:
+    - name: Patch | its steps (a host lost on the way skips the rest - never touched again)
+      ignore_unreachable: true
+      when: _patch_lost_at | length == 0
+      block:
+        - name: Patch | which groups are protected (yours, plus no_patch and AAP - built in)
+          ansible.builtin.set_fact:
+            _patch_no_patch: "{{ (patch_never_patch_groups + _patch_always_no_patch) | unique }}"
+            _patch_no_reboot: "{{ (patch_never_reboot_groups + _site_always_protected) | unique }}"
 
-- name: Patch | the machine running this job - its machine-id
-  ansible.builtin.slurp:
-    src: /etc/machine-id
-  delegate_to: localhost
-  run_once: true
-  become: false
-  check_mode: false
-  failed_when: false
-  register: _patch_ctl_mid
-  vars:
-    ansible_connection: local
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        # ['no_patch', 'aap', 'aap_hosts'] is written out below as well, on purpose: an extra variable (-e) can override
+        # any variable, even these internal lists, but not a literal - no setting and no list name can remove them.
+        - name: Patch | say why a protected host is skipped
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }} is in {{ group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | join(', ') }}: never patched by automation. Patch it by hand in a maintenance window."
+          when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
 
-- name: Patch | this host's machine-id
-  ansible.builtin.slurp:
-    src: /etc/machine-id
-  check_mode: false
-  failed_when: false
-  register: _patch_host_mid
+        # 1.71.1: a host ended on purpose says so first, so the batch guard in playbooks/patch_hosts.yml never takes it for a
+        # host that failed or was lost (it does not rely on ansible-core leaving such hosts out of the next batch's count)
+        - name: Patch | mark it as left out on purpose (never-patch group)
+          ansible.builtin.set_fact:
+            _patch_ended_on_purpose: never-patch group
+          when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
 
-- name: Patch | this host is not the machine running this job
-  ansible.builtin.assert:
-    that: _patch_ctl_why | length == 0
-    fail_msg: "Refusing to patch {{ inventory_hostname }}: {{ _patch_ctl_why }}. Leave it out of this job (Limit, or put it in no_patch)."
-    quiet: true
-  vars:
-    _patch_ctl:
-      names: "{{ [hostvars['localhost'].ansible_facts.hostname | default(''), hostvars['localhost'].ansible_facts.fqdn | default(''),
-                  hostvars['localhost'].ansible_facts.nodename | default('')] | select | list }}"
-      ips: "{{ hostvars['localhost'].ansible_facts.all_ipv4_addresses | default([]) + hostvars['localhost'].ansible_facts.all_ipv6_addresses | default([]) }}"
-      machine_id: "{{ (_patch_ctl_mid.content | default('') | b64decode | trim) if _patch_ctl_mid.content is defined else '' }}"
-      host_machine_id: "{{ (_patch_host_mid.content | default('') | b64decode | trim) if _patch_host_mid.content is defined else '' }}"
-    # where the job connects: ansible_host, else the inventory name
-    _patch_ctl_why: "{{ (ansible_host | default(inventory_hostname) | string) | patch_controller_hit(_patch_ctl) }}"
+        - name: Patch | skip hosts in the never-patch groups (patch_never_patch_groups, and AAP always)
+          ansible.builtin.meta: end_host
+          when: group_names | intersect(_patch_no_patch + ['no_patch', 'aap', 'aap_hosts']) | length > 0
 
-- name: Patch | free space in /var
-  ansible.builtin.command: df -P -m /var
-  register: _patch_df
-  changed_when: false
-  check_mode: false
+        # The VMware protected lists (vmware_protected_groups, vmware_protected_vms, vm_snapshot_cleanup_exclude_vms): such a
+        # host is patched only with patch_protected_with_snapshot naming it and its own snapshot taken first (patch_snapshot).
+        - name: Patch | is it on the VMware protected lists
+          ansible.builtin.set_fact:
+            _patch_prot: >-
+              {{ inventory_hostname | patch_protected(hostvars,
+                   (hostvars['localhost']._patch_snap.vms[inventory_hostname].name | default(''))
+                     if hostvars['localhost']._patch_snap is defined else '',
+                   vmware_protected_groups | default([]), vmware_protected_vms | default([]),
+                   vm_snapshot_cleanup_exclude_vms | default([]), patch_protected_with_snapshot)
+                 if inventory_hostname not in (hostvars['localhost']._patch_snap.protected | default({})) else
+                 {'reason': hostvars['localhost']._patch_snap.protected[inventory_hostname], 'allowed': false} }}
+            _patch_prot_vm: >-
+              {{ patch_snapshot | bool and hostvars['localhost']._patch_snap is defined
+                 and inventory_hostname in hostvars['localhost']._patch_snap.vms }}
 
-- name: Patch | enough room for the update
-  ansible.builtin.assert:
-    that: (_patch_df.stdout_lines[-1].split()[3] | int) >= patch_min_free_mb | int
-    fail_msg: >-
-      Only {{ _patch_df.stdout_lines[-1].split()[3] }} MB free in /var (need {{ patch_min_free_mb }} MB):
-      not patching. Free space first (see the health check's disk findings).
-    quiet: true
+        - name: Patch | say why a protected VM is skipped
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }} is protected ({{ _patch_prot.reason }}): not patched.
+              {{ ('patch_protected_with_snapshot does not name it.' if patch_snapshot | bool else
+                  'To patch it after a snapshot of its VM: patch_snapshot: true and patch_protected_with_snapshot (true, or a list naming it).')
+                 if not _patch_prot.allowed else
+                 ('Its VM was not found in vCenter, and a protected host is patched only after its own snapshot.' if patch_snapshot | bool else
+                  'To patch it after a snapshot of its VM: patch_snapshot: true (patch_protected_with_snapshot names it already).') }}
+          when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
 
-- name: Patch | VMware snapshot "{{ patch_snapshot_name }}" of its VM, right before the update (patch_snapshot)
-  ansible.builtin.include_role:
-    name: vmware_vm
-    tasks_from: patch_snapshot.yml
-    apply:
-      delegate_to: localhost
-      become: false
-  vars:
-    ansible_connection: local
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
-  when: patch_snapshot | bool
+        - name: Patch | mark it as left out on purpose (protected VM)
+          ansible.builtin.set_fact:
+            _patch_ended_on_purpose: protected VM
+          when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
 
-# each with how it starts (systemctl is-enabled): enabled ones start at boot and must run again after the update;
-# static, indirect or transient ones are started on demand (D-Bus, a socket, another unit) and end on their own
-- name: Patch | services running before the update
-  ansible.builtin.shell: >-
-    set -o pipefail;
-    systemctl list-units --type=service --state=running --no-legend --plain --no-pager
-    | awk '{print $1}' | { grep -vE {{ patch_ignore_services | quote }} || true; } | sort
-    | while read -r u; do printf '%s %s\n' "$u" "$(systemctl is-enabled "$u" 2>/dev/null || true)"; done
-  register: _patch_before_raw
-  changed_when: false
-  check_mode: false
+        - name: Patch | skip a protected VM (no patch_protected_with_snapshot for it, or no snapshot)
+          ansible.builtin.meta: end_host
+          when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
 
-- name: Patch | the ones that must run again (patch_compare_services)
-  ansible.builtin.set_fact:
-    _patch_before:
-      stdout_lines: >-
-        {{ _patch_before_raw.stdout_lines | map('split') | selectattr('1', 'defined')
-           | selectattr('1', 'in', ['enabled', 'enabled-runtime', 'generated', 'alias']) | map('first') | list
-           if patch_compare_services == 'enabled' else _patch_before_raw.stdout_lines | map('split') | map('first') | list }}
-    _patch_on_demand: >-
-      {{ _patch_before_raw.stdout_lines | map('split') | map('first') | list
-         | difference(_patch_before_raw.stdout_lines | map('split') | selectattr('1', 'defined')
-                      | selectattr('1', 'in', ['enabled', 'enabled-runtime', 'generated', 'alias']) | map('first') | list)
-         if patch_compare_services == 'enabled' else [] }}
+        - name: Patch | a protected VM, patched after its snapshot (patch_protected_with_snapshot)
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }} is protected ({{ _patch_prot.reason }}): patched after a snapshot of its VM, as patch_protected_with_snapshot says."
+          when: _patch_prot.reason | length > 0
 
-- name: Patch | dnf or yum (RHEL 7 and its clones have only yum)
-  ansible.builtin.setup:
-    gather_subset: ['!all', '!min', 'pkg_mgr', 'distribution']
-  check_mode: false
+        - name: Patch | step - the checks
+          ansible.builtin.set_fact:
+            _patch_step: the checks
 
-# ansible-core 2.16 says yum on RHEL 7; later ones (no yum module) say unknown there
-- name: Patch | which one
-  ansible.builtin.set_fact:
-    _patch_yum: >-
-      {{ ansible_facts.pkg_mgr == 'yum' or (ansible_facts.pkg_mgr not in ['dnf', 'dnf5']
-         and ansible_facts.os_family | default('') == 'RedHat' and ansible_facts.distribution_major_version | default('0') | int < 8) }}
+        - name: Patch | never patch the machine AAP is running this job from
+          ansible.builtin.assert:
+            that:
+              - ansible_connection | default('ssh') != 'local'
+              - inventory_hostname not in ['localhost', '127.0.0.1', '::1']
+            fail_msg: "Refusing to patch {{ inventory_hostname }}: it is the machine running this job (local connection)."
+            quiet: true
 
-- name: Patch | install the updates{{ ' (security only)' if patch_security_only | bool else '' }}
-  ansible.builtin.dnf:
-    name: "{{ _patch_pkgs }}"
-    state: latest
-    update_only: true
-    security: "{{ patch_security_only | bool }}"
-    exclude: "{{ _patch_excl }}"
-  register: _patch_dnf
-  when: not _patch_yum | bool
+        # 1.70.5: an alias of it too - ansible_host 127.0.0.1 over ssh, its own name or address, a name that resolves to it, or
+        # the same /etc/machine-id. Read once per batch on the AAP side (its facts kept on localhost, never on the host).
+        - name: Patch | the machine running this job - its names and addresses
+          ansible.builtin.setup:
+            gather_subset: ['!all', '!min', 'network']
+          delegate_to: localhost
+          delegate_facts: true
+          run_once: true
+          become: false
+          check_mode: false
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
-# yum itself, not a module: ansible-core 2.17 and later have no yum module. check-update: 100 = updates, 0 = none.
-- name: Patch | the updates yum has{{ ' (security only)' if patch_security_only | bool else '' }}
-  ansible.builtin.command:
-    argv: "{{ ['yum', '-q', 'check-update'] + _patch_yum_args }}"
-  register: _patch_yum_list
-  changed_when: false
-  failed_when: _patch_yum_list.rc not in [0, 100]
-  check_mode: false
-  when: _patch_yum | bool
+        - name: Patch | the machine running this job - its machine-id
+          ansible.builtin.slurp:
+            src: /etc/machine-id
+          delegate_to: localhost
+          run_once: true
+          become: false
+          check_mode: false
+          failed_when: false
+          register: _patch_ctl_mid
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
-- name: Patch | install the updates with yum{{ ' (security only)' if patch_security_only | bool else '' }}
-  ansible.builtin.command:
-    argv: "{{ ['yum', '-y', 'update'] + _patch_yum_args }}"
-  register: _patch_yum_run
-  changed_when: true
-  when: _patch_yum | bool and _patch_yum_list.rc == 100 and not ansible_check_mode
+        - name: Patch | this host's machine-id
+          ansible.builtin.slurp:
+            src: /etc/machine-id
+          check_mode: false
+          failed_when: false
+          register: _patch_host_mid
 
-- name: Patch | what yum updated, in the form the tasks below read
-  ansible.builtin.set_fact:
-    _patch_dnf:
-      changed: "{{ _patch_yum_list.rc == 100 }}"
-      results: >-
-        {{ _patch_yum_list.stdout_lines | map('trim') | select('match', '^\S+\.\S+\s+\S+\s+\S+$')
-           | map('split') | map('first') | map('regex_replace', '^', 'Updated: ') | list }}
-  when: _patch_yum | bool
+        - name: Patch | this host is not the machine running this job
+          ansible.builtin.assert:
+            that: _patch_ctl_why | length == 0
+            fail_msg: "Refusing to patch {{ inventory_hostname }}: {{ _patch_ctl_why }}. Leave it out of this job (Limit, or put it in no_patch)."
+            quiet: true
+          vars:
+            _patch_ctl:
+              names: "{{ [hostvars['localhost'].ansible_facts.hostname | default(''), hostvars['localhost'].ansible_facts.fqdn | default(''),
+                          hostvars['localhost'].ansible_facts.nodename | default('')] | select | list }}"
+              ips: "{{ hostvars['localhost'].ansible_facts.all_ipv4_addresses | default([]) + hostvars['localhost'].ansible_facts.all_ipv6_addresses | default([]) }}"
+              machine_id: "{{ (_patch_ctl_mid.content | default('') | b64decode | trim) if _patch_ctl_mid.content is defined else '' }}"
+              host_machine_id: "{{ (_patch_host_mid.content | default('') | b64decode | trim) if _patch_host_mid.content is defined else '' }}"
+            # where the job connects: ansible_host, else the inventory name
+            _patch_ctl_why: "{{ (ansible_host | default(inventory_hostname) | string) | patch_controller_hit(_patch_ctl) }}"
 
-- name: "Patch | what was updated{{ ' (dry run - what WOULD be updated)' if ansible_check_mode else '' }}"
-  ansible.builtin.debug:
-    msg: >-
-      {{ (('DRY RUN (Check mode), nothing was installed - would make ' if ansible_check_mode else '')
-          ~ (_patch_dnf.results | default([])) | length ~ ' change(s): ' ~ (_patch_dnf.results | default([]) | join('; ') | truncate(3000)))
-         if _patch_dnf.changed else 'nothing to update' }}
+        - name: Patch | free space in /var
+          ansible.builtin.command: df -P -m /var
+          register: _patch_df
+          changed_when: false
+          check_mode: false
 
-- name: Patch | does the host need a reboot now?
-  ansible.builtin.command: needs-restarting -r
-  register: _patch_needs
-  changed_when: false
-  failed_when: false
-  check_mode: false
+        - name: Patch | enough room for the update
+          ansible.builtin.assert:
+            that: (_patch_df.stdout_lines[-1].split()[3] | int) >= patch_min_free_mb | int
+            fail_msg: >-
+              Only {{ _patch_df.stdout_lines[-1].split()[3] }} MB free in /var (need {{ patch_min_free_mb }} MB):
+              not patching. Free space first (see the health check's disk findings).
+            quiet: true
 
-# needs-restarting -r: 0 = no reboot needed, 1 = needed. Anything else (not installed: dnf-utils / yum-utils, or
-# it failed) does not tell - after updates that counts as needed, never as "no reboot".
-- name: Patch | needs-restarting could not tell
-  ansible.builtin.debug:
-    msg: >-
-      needs-restarting -r did not answer (rc {{ _patch_needs.rc | default('?') }}: {{ (_patch_needs.stderr | default('')
-      or _patch_needs.msg | default('')) | truncate(200) }}) - install dnf-utils (RHEL 8/9: dnf-plugins-core; RHEL 7:
-      yum-utils). {{ 'Updates were installed, so a reboot counts as needed.' if _patch_dnf.changed else 'Nothing was updated.' }}
-  when: _patch_needs.rc | default(-1) not in [0, 1]
+        # patch_continue_on_failure false: the rollout stops at a host that failed or was lost - the others of its batch go no
+        # further than here (nothing changed on them yet), marked NOT STARTED; one already in its update finishes. The
+        # job's report says so, then the job fails.
+        - name: Patch | the rollout stopped (patch_continue_on_failure false) - not snapshot
+          ansible.builtin.set_fact:
+            patch_not_started: "the rollout stopped at {{ _patch_batch_bad | join(', ') }}, before its snapshot"
+          vars:
+            _patch_batch_bad: "{{ hostvars | patch_batch_bad(ansible_play_batch) }}"
+          when: not patch_continue_on_failure | bool and _patch_batch_bad | length > 0
 
-- name: Patch | decide
-  ansible.builtin.set_fact:
-    _patch_reboot_needed: >-
-      {{ _patch_needs.rc | default(-1) == 1 or patch_reboot == 'always'
-         or (_patch_needs.rc | default(-1) not in [0, 1] and _patch_dnf.changed | default(false)) }}
-    _patch_reboot_allowed: >-
-      {{ automatic_restarts | bool and patch_reboot != 'never'
-         and group_names | intersect(_patch_no_reboot) | length == 0 }}
+        - name: Patch | NOT STARTED - the rollout stopped before its snapshot
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }}: NOT STARTED - {{ patch_not_started }}"
+          when: patch_not_started is defined
 
-- name: Patch | reboot
-  ansible.builtin.reboot:
-    msg: "Rebooting after updates (Ansible Automation Platform job {{ awx_job_id | default('-') }})"
-    reboot_timeout: "{{ patch_reboot_timeout | int }}"
-  when: _patch_reboot_needed | bool and _patch_reboot_allowed | bool and group_names | intersect(['no_patch', 'aap', 'aap_hosts']) | length == 0
+        - name: Patch | not snapshot - the rollout stopped
+          ansible.builtin.meta: end_host
+          when: patch_not_started is defined
 
-- name: Patch | a reboot is needed but not allowed here
-  ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }} needs a reboot to finish the updates, but this playbook does not reboot it
-      ({{ 'automatic restarts are off: automatic_restarts is false' if not automatic_restarts | bool
-          else 'patch_reboot=never' if patch_reboot == 'never'
-          else 'it is in ' ~ (group_names | intersect(_patch_no_reboot) | join(', ')) }}).
-      Reboot it by hand in a maintenance window{{ ', or run again with automatic_restarts: true' if not automatic_restarts | bool else '' }}.
-  when: _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool)
+        - name: Patch | step - the snapshot
+          ansible.builtin.set_fact:
+            _patch_step: the snapshot
 
-- name: Patch | the services that were running are running again
-  ansible.builtin.shell: >-
-    set -o pipefail;
-    systemctl list-units --type=service --state=running --no-legend --plain --no-pager
-    | awk '{print $1}' | sort
-  register: _patch_after
-  changed_when: false
-  check_mode: false
-  until: _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | length == 0
-  retries: "{{ (patch_service_wait | int / 10) | int }}"
-  delay: 10
-  failed_when: false
+        - name: Patch | VMware snapshot "{{ patch_snapshot_name }}" of its VM, right before the update (patch_snapshot)
+          ansible.builtin.include_role:
+            name: vmware_vm
+            tasks_from: patch_snapshot.yml
+            apply:
+              delegate_to: localhost
+              become: false
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          when: patch_snapshot | bool
 
-- name: Patch | result
-  ansible.builtin.debug:
-    msg:
-      updated: "{{ ('would update (dry run - nothing was installed)' if ansible_check_mode else true) if _patch_dnf.changed else false }}"
-      rebooted: "{{ _patch_reboot_needed | bool and _patch_reboot_allowed | bool and not ansible_check_mode }}"
-      reboot_still_needed: "{{ _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool) }}"
-      services_not_back: "{{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) }}"
-      on_demand_not_running_now: "{{ _patch_on_demand | difference(_patch_after.stdout_lines) }}"
-      snapshot: "{{ _patch_snapshot | default('none (patch_snapshot is false)') }}"
+        # patch_continue_on_failure false: the rollout stops at a host that failed or was lost - the others of its batch go no
+        # further than here (nothing changed on them yet), marked NOT STARTED; one already in its update finishes. The
+        # job's report says so, then the job fails.
+        - name: Patch | the rollout stopped (patch_continue_on_failure false) - not update
+          ansible.builtin.set_fact:
+            patch_not_started: "the rollout stopped at {{ _patch_batch_bad | join(', ') }}, before its update"
+          vars:
+            _patch_batch_bad: "{{ hostvars | patch_batch_bad(ansible_play_batch) }}"
+          when: not patch_continue_on_failure | bool and _patch_batch_bad | length > 0
 
-# 1.70.5: a service that was running but does not start at boot (disabled - started by hand -, static or indirect - started
-# by another unit) and is gone now: said, never failed (patch_compare_services: enabled). It may be an application.
-- name: Patch | WARN - services that ran before (not enabled at boot) are not running now
-  ansible.builtin.debug:
-    msg: >-
-      WARN {{ inventory_hostname }}: these services were running before patching and are not running now:
-      {{ _patch_gone | join(', ') }}. They do not start at boot (disabled, static or indirect), so this is not a failure:
-      look whether they should run (systemctl status <service>), start them, or set patch_compare_services: all to fail
-      on them.
-  vars:
-    _patch_gone: "{{ _patch_on_demand | difference(_patch_after.stdout_lines) }}"
-  when: _patch_gone | length > 0
+        - name: Patch | NOT STARTED - the rollout stopped before its update
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }}: NOT STARTED - {{ patch_not_started }}"
+          when: patch_not_started is defined
 
-- name: Patch | FAIL - services that ran before the update are not running now
-  ansible.builtin.fail:
-    msg: >-
-      After patching {{ inventory_hostname }}, these services are not running:
-      {{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | join(', ') }}.
-      Look with: systemctl status <service>; journalctl -u <service> -b
-  when: _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | length > 0
+        - name: Patch | not update - the rollout stopped
+          ansible.builtin.meta: end_host
+          when: patch_not_started is defined
+
+        - name: Patch | step - the update
+          ansible.builtin.set_fact:
+            _patch_step: the update
+
+        # each with how it starts (systemctl is-enabled): enabled ones start at boot and must run again after the update;
+        # static, indirect or transient ones are started on demand (D-Bus, a socket, another unit) and end on their own
+        - name: Patch | services running before the update
+          ansible.builtin.shell: >-
+            set -o pipefail;
+            systemctl list-units --type=service --state=running --no-legend --plain --no-pager
+            | awk '{print $1}' | { grep -vE {{ patch_ignore_services | quote }} || true; } | sort
+            | while read -r u; do printf '%s %s\n' "$u" "$(systemctl is-enabled "$u" 2>/dev/null || true)"; done
+          register: _patch_before_raw
+          changed_when: false
+          check_mode: false
+
+        - name: Patch | the ones that must run again (patch_compare_services)
+          ansible.builtin.set_fact:
+            _patch_before:
+              stdout_lines: >-
+                {{ _patch_before_raw.stdout_lines | map('split') | selectattr('1', 'defined')
+                   | selectattr('1', 'in', ['enabled', 'enabled-runtime', 'generated', 'alias']) | map('first') | list
+                   if patch_compare_services == 'enabled' else _patch_before_raw.stdout_lines | map('split') | map('first') | list }}
+            _patch_on_demand: >-
+              {{ _patch_before_raw.stdout_lines | map('split') | map('first') | list
+                 | difference(_patch_before_raw.stdout_lines | map('split') | selectattr('1', 'defined')
+                              | selectattr('1', 'in', ['enabled', 'enabled-runtime', 'generated', 'alias']) | map('first') | list)
+                 if patch_compare_services == 'enabled' else [] }}
+
+        - name: Patch | dnf or yum (RHEL 7 and its clones have only yum)
+          ansible.builtin.setup:
+            gather_subset: ['!all', '!min', 'pkg_mgr', 'distribution']
+          check_mode: false
+          register: _patch_pm
+
+        # ansible-core 2.16 says yum on RHEL 7; later ones (no yum module) say unknown there
+        - name: Patch | which one
+          ansible.builtin.set_fact:
+            _patch_yum: >-
+              {{ ansible_facts.pkg_mgr == 'yum' or (ansible_facts.pkg_mgr not in ['dnf', 'dnf5']
+                 and ansible_facts.os_family | default('') == 'RedHat' and ansible_facts.distribution_major_version | default('0') | int < 8) }}
+
+        - name: Patch | install the updates{{ ' (security only)' if patch_security_only | bool else '' }}
+          ansible.builtin.dnf:
+            name: "{{ _patch_pkgs }}"
+            state: latest
+            update_only: true
+            security: "{{ patch_security_only | bool }}"
+            exclude: "{{ _patch_excl }}"
+          register: _patch_dnf
+          when: not _patch_yum | bool
+
+        # yum itself, not a module: ansible-core 2.17 and later have no yum module. check-update: 100 = updates, 0 = none.
+        - name: Patch | the updates yum has{{ ' (security only)' if patch_security_only | bool else '' }}
+          ansible.builtin.command:
+            argv: "{{ ['yum', '-q', 'check-update'] + _patch_yum_args }}"
+          register: _patch_yum_list
+          changed_when: false
+          failed_when: _patch_yum_list.rc not in [0, 100]
+          check_mode: false
+          when: _patch_yum | bool
+
+        - name: Patch | install the updates with yum{{ ' (security only)' if patch_security_only | bool else '' }}
+          ansible.builtin.command:
+            argv: "{{ ['yum', '-y', 'update'] + _patch_yum_args }}"
+          register: _patch_yum_run
+          changed_when: true
+          when: _patch_yum | bool and _patch_yum_list.rc == 100 and not ansible_check_mode
+
+        - name: Patch | what yum updated, in the form the tasks below read
+          ansible.builtin.set_fact:
+            _patch_dnf:
+              changed: "{{ _patch_yum_list.rc == 100 }}"
+              results: >-
+                {{ _patch_yum_list.stdout_lines | map('trim') | select('match', '^\S+\.\S+\s+\S+\s+\S+$')
+                   | map('split') | map('first') | map('regex_replace', '^', 'Updated: ') | list }}
+          when: _patch_yum | bool
+
+        - name: "Patch | what was updated{{ ' (dry run - what WOULD be updated)' if ansible_check_mode else '' }}"
+          ansible.builtin.debug:
+            msg: >-
+              {{ (('DRY RUN (Check mode), nothing was installed - would make ' if ansible_check_mode else '')
+                  ~ (_patch_dnf.results | default([])) | length ~ ' change(s): ' ~ (_patch_dnf.results | default([]) | join('; ') | truncate(3000)))
+                 if _patch_dnf.changed else 'nothing to update' }}
+
+        - name: Patch | step - the reboot
+          ansible.builtin.set_fact:
+            _patch_step: the reboot
+
+        - name: Patch | does the host need a reboot now?
+          ansible.builtin.command: needs-restarting -r
+          register: _patch_needs
+          changed_when: false
+          failed_when: false
+          check_mode: false
+
+        # needs-restarting -r: 0 = no reboot needed, 1 = needed. Anything else (not installed: dnf-utils / yum-utils, or
+        # it failed) does not tell - after updates that counts as needed, never as "no reboot".
+        - name: Patch | needs-restarting could not tell
+          ansible.builtin.debug:
+            msg: >-
+              needs-restarting -r did not answer (rc {{ _patch_needs.rc | default('?') }}: {{ (_patch_needs.stderr | default('')
+              or _patch_needs.msg | default('')) | truncate(200) }}) - install dnf-utils (RHEL 8/9: dnf-plugins-core; RHEL 7:
+              yum-utils). {{ 'Updates were installed, so a reboot counts as needed.' if _patch_dnf.changed else 'Nothing was updated.' }}
+          when: _patch_needs.rc | default(-1) not in [0, 1]
+
+        - name: Patch | decide
+          ansible.builtin.set_fact:
+            _patch_reboot_needed: >-
+              {{ _patch_needs.rc | default(-1) == 1 or patch_reboot == 'always'
+                 or (_patch_needs.rc | default(-1) not in [0, 1] and _patch_dnf.changed | default(false)) }}
+            _patch_reboot_allowed: >-
+              {{ automatic_restarts | bool and patch_reboot != 'never'
+                 and group_names | intersect(_patch_no_reboot) | length == 0 }}
+
+        - name: Patch | reboot
+          ansible.builtin.reboot:
+            msg: "Rebooting after updates (Ansible Automation Platform job {{ awx_job_id | default('-') }})"
+            reboot_timeout: "{{ patch_reboot_timeout | int }}"
+          register: _patch_reboot_run
+          when: _patch_reboot_needed | bool and _patch_reboot_allowed | bool and group_names | intersect(['no_patch', 'aap', 'aap_hosts']) | length == 0
+
+        - name: Patch | a reboot is needed but not allowed here
+          ansible.builtin.debug:
+            msg: >-
+              {{ inventory_hostname }} needs a reboot to finish the updates, but this playbook does not reboot it
+              ({{ 'automatic restarts are off: automatic_restarts is false' if not automatic_restarts | bool
+                  else 'patch_reboot=never' if patch_reboot == 'never'
+                  else 'it is in ' ~ (group_names | intersect(_patch_no_reboot) | join(', ')) }}).
+              Reboot it by hand in a maintenance window{{ ', or run again with automatic_restarts: true' if not automatic_restarts | bool else '' }}.
+          when: _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool)
+
+        - name: Patch | step - the services after the update
+          ansible.builtin.set_fact:
+            _patch_step: the services after the update
+
+        - name: Patch | the services that were running are running again
+          ansible.builtin.shell: >-
+            set -o pipefail;
+            systemctl list-units --type=service --state=running --no-legend --plain --no-pager
+            | awk '{print $1}' | sort
+          register: _patch_after
+          changed_when: false
+          check_mode: false
+          until: _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | length == 0
+          retries: "{{ (patch_service_wait | int / 10) | int }}"
+          delay: 10
+          failed_when: false
+
+        - name: Patch | result
+          ansible.builtin.debug:
+            msg:
+              updated: "{{ ('would update (dry run - nothing was installed)' if ansible_check_mode else true) if _patch_dnf.changed else false }}"
+              rebooted: "{{ _patch_reboot_needed | bool and _patch_reboot_allowed | bool and not ansible_check_mode }}"
+              reboot_still_needed: "{{ _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool) }}"
+              services_not_back: "{{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) }}"
+              on_demand_not_running_now: "{{ _patch_on_demand | difference(_patch_after.stdout_lines) }}"
+              snapshot: "{{ _patch_snapshot | default('none (patch_snapshot is false)') }}"
+
+        # what the report says of it (1.74.0): its updates, whether it was rebooted, the services that stopped
+        - name: Patch | done - what the report says
+          ansible.builtin.set_fact:
+            _patch_done:
+              updates: "{{ (_patch_dnf.results | default([]) | length) if _patch_dnf.changed | default(false) else 0 }}"
+              rebooted: "{{ _patch_reboot_needed | bool and _patch_reboot_allowed | bool and not ansible_check_mode }}"
+              reboot: >-
+                {{ ('needed - automatic_restarts is false' if not automatic_restarts | bool else 'needed - not allowed here')
+                   if _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool) else '' }}
+              warn_services: "{{ _patch_on_demand | difference(_patch_after.stdout_lines) }}"
+
+        # 1.70.5: a service that was running but does not start at boot (disabled - started by hand -, static or indirect - started
+        # by another unit) and is gone now: said, never failed (patch_compare_services: enabled). It may be an application.
+        - name: Patch | WARN - services that ran before (not enabled at boot) are not running now
+          ansible.builtin.debug:
+            msg: >-
+              WARN {{ inventory_hostname }}: these services were running before patching and are not running now:
+              {{ _patch_gone | join(', ') }}. They do not start at boot (disabled, static or indirect), so this is not a failure:
+              look whether they should run (systemctl status <service>), start them, or set patch_compare_services: all to fail
+              on them.
+          vars:
+            _patch_gone: "{{ _patch_on_demand | difference(_patch_after.stdout_lines) }}"
+          when: _patch_gone | length > 0
+
+        - name: Patch | FAIL - services that ran before the update are not running now
+          ansible.builtin.fail:
+            msg: >-
+              After patching {{ inventory_hostname }}, these services are not running:
+              {{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | join(', ') }}.
+              Look with: systemctl status <service>; journalctl -u <service> -b
+          when: _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | length > 0
+          vars:
+            _patch_down: "{{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) }}"
+
+    - name: Patch | LOST - the job lost it on the way
+      ansible.builtin.fail:
+        msg: "LOST at {{ _patch_lost_at[0] }}: {{ _patch_lost_at[1] }}"
+      when: _patch_lost_at | length > 0
+
+  # only facts here, on the AAP side: nothing touches the host again; its snapshot stays as it is
+  rescue:
+    - name: Patch | COULD NOT PATCH - why, and the step it got to
+      ansible.builtin.set_fact:
+        _patch_could_not:
+          reason: >-
+            {{ 'LOST mid-run' if _t.startswith('Patch | LOST') else
+               'DID NOT COME BACK after reboot' if _t == 'Patch | reboot' else
+               'PATCHED - SERVICES DOWN' if _t.startswith('Patch | FAIL - services') else
+               'REFUSED' if _t.startswith('Patch | never patch the machine') or _t.startswith('Patch | this host is not the machine') else
+               'NOT READY' if _t.startswith('Patch | enough room') or _t.startswith('Patch | free space') else
+               'NO SNAPSHOT' if _patch_step | default('') == 'the snapshot' else
+               'FAILED during update' if _patch_step | default('') == 'the update' and ('install the updates' in _t or 'updates yum has' in _t) else
+               'FAILED before the update' }}
+          step: >-
+            {{ ((ansible_failed_result.msg | default('') | string).split(': ')[0] | regex_replace('^LOST at ', ''))
+               if (ansible_failed_task.name | default('')).startswith('Patch | LOST') else _patch_step | default('the checks') }}
+          detail: >-
+            {%- set r = ansible_failed_result | default({}) -%}
+            {{ ((r.failures | default([]) | join(_nl)) ~ _nl ~ (r.stderr | default('')) ~ _nl ~ (r.msg | default('') | string)
+                ~ _nl ~ ((r.results | default([]) | select('string') | list)[-2:] | join(_nl))) | trim }}
+          services: "{{ _patch_before.stdout_lines | default([]) | difference(_patch_after.stdout_lines | default([])) }}"
+      vars:
+        _t: "{{ ansible_failed_task.name | default('') }}"
+        _nl: "\n"
+
+    - name: Patch | COULD NOT PATCH - the job goes on with the others (patch_continue_on_failure)
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ 'PATCHED - SERVICES DOWN' if _patch_could_not.reason == 'PATCHED - SERVICES DOWN' else 'COULD NOT PATCH' }}
+          - {{ _patch_could_not.reason }} at {{ _patch_could_not.step }}: {{ _patch_could_not.detail | regex_replace('\s+', ' ') | truncate(300) }}.
+          {{ 'The other hosts go on. The report lists it, and the job fails at its end (patch_fail_on_could_not).'
+             if patch_continue_on_failure | bool else
+             'The rollout stops here (patch_continue_on_failure: false): the report lists it, then the job fails.' }}
+          {{ ' Its snapshot is kept: ' ~ _patch_snapshot if _patch_snapshot | default('') is match('(took|reused) ') else '' }}

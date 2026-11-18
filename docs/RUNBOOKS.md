@@ -33,7 +33,7 @@ troubleshoot, Linux and Windows. Two cases still fail the job:
 The ACT and service fixes, the STIG Manager deploy and the Windows connection test always fail for a
 host they cannot reach: a workflow must not go on as if it had been fixed. *Patch hosts* leaves a host
 it cannot reach **when it starts** out and patches the others (`patch_skip_unreachable`, below).
-A host lost later in a job (it went down halfway) still fails it.
+Since 1.74.0 it also goes on past a host lost later, and its report lists every host it could not patch.
 
 **All settings** of this job, with their defaults: [site_findings](VARIABLES_REFERENCE.md#site_findings).
 
@@ -1067,21 +1067,24 @@ survey or `-e` (`kernel*`, `kernel*, glibc`): each name is kept whole (1.70.5). 
    With `automatic_restarts: true` such a host goes on, is rebooted and its services checked
    (`UP TO DATE, but a REBOOT IS PENDING`). Without it, the host is listed `up to date, REBOOT PENDING`.
 1. **One host at a time** by default. For batches, set `patch_serial` in the template's Variables
-   or the survey (`patch_serial: 10`; in `all.yml` it does nothing). The rollout **stops at the
-   first host that fails or is lost** (1.70.5): the rest of that batch stops too, and no later batch starts.
-   The job's message names the host (with batches: that batch's hosts, as Ansible does not say which one it
-   was). A host left out on purpose - a never-patch group, a protected VM, up to date, not reached - never
-   stops it (1.71.1).
+   or the survey (`patch_serial: 10`; in `all.yml` it does nothing).
+   **A host that fails or is lost goes in the report, and the others go on** (1.74.0,
+   `patch_continue_on_failure: true`). That is a dnf error, no return after its reboot, or a host lost mid-run.
+   It is marked **COULD NOT PATCH** with its reason and the step it got to, and nothing touches it again in
+   that run. Its snapshot is kept. The job fails at its end ("The report", below).
+   `patch_continue_on_failure: false`: the rollout **stops** at such a host, as before 1.74.0. The rest of its
+   batch goes no further than its next step, and no later batch starts. Those hosts are **NOT STARTED** in the
+   report. A host left out on purpose (a never-patch group, a protected VM, up to date) never stops it.
 2. **A host that cannot be reached when the job starts** (switched off, a firewall, ssh or its login
    refused) is listed as `NOT REACHED - <why>` and left out - not patched, no snapshot - and the
-   other hosts are patched; the job is not failed for it. Its last lines list them all:
+   other hosts are patched. The report lists it under *Could not patch* (1.74.0). Its last lines list them all:
    `2 host(s) not reached, not patched: web07... (...); web09... (...)` - fix the network, then run
-   it again for those (Limit). No host reached at all fails the job (look at the machine
-   credential). A host lost **later** (it went down halfway, or did not come back from its reboot)
-   still fails and stops the rollout. `patch_skip_unreachable: false`: a host not reached fails the
-   job, as before 0.87.0.
+   it again for those (Limit). No host reached at all: the report says so, and the job's message points at
+   the machine credential. A host lost **later** (it went down halfway, or did not come back from its reboot)
+   is listed as `LOST mid-run` or `DID NOT COME BACK after reboot` (step 1).
+   `patch_skip_unreachable: false`: a host not reached goes on to be patched, and is lost there.
    **A host with neither dnf nor yum** (not a RHEL-like Linux) is listed as `NO DNF OR YUM - <its OS>`
-   and left out the same way, the job not failed for it, and the last lines list them:
+   and left out the same way, and the last lines list them:
    `1 host(s) with neither dnf nor yum, not patched: ...`. `patch_skip_unsupported: false`: such a
    host fails at the update.
 3. **A host that is not ready** - it answers, but the job cannot become root on it (sudo refused,
@@ -1089,9 +1092,9 @@ survey or `-e` (`kernel*`, `kernel*, glibc`): each name is kept whole (1.70.5). 
    Method* `sudo` and, when sudo asks for one, the *Privilege Escalation Password*), or it has less
    than `patch_min_free_mb` free in `/var` - is listed as `NOT READY - <why>` (the login banner left
    out; for a refused sudo, sudo's own last line, such as `sudo: a password is required`) and left
-   out, the job not failed for it; nothing is changed or cleaned up on it. The last
+   out; nothing is changed or cleaned up on it. The last
    lines list them: `1 host(s) not ready, not patched: ...`. Fix it, then run again for those.
-   `patch_skip_not_ready: false`: such a host fails the job and stops the rollout, as before 0.89.0.
+   `patch_skip_not_ready: false`: such a host goes on to be patched, and fails there.
 4. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's
    Variables). Without it, a host that needs a reboot is listed ("reboot it by hand, or run again
    with automatic_restarts: true"). With it, the job reboots only when `needs-restarting -r` says
@@ -1099,8 +1102,9 @@ survey or `-e` (`kernel*`, `kernel*, glibc`): each name is kept whole (1.70.5). 
    (`aap_hosts`). A host without `needs-restarting` (install `dnf-utils`), or where it fails, counts
    as needing a reboot after updates were installed - the job says so.
 5. After the update (and reboot), **every service that was running before and starts at boot
-   (`systemctl is-enabled`: enabled) must be running again**. If one is not, the host fails and the
-   rollout stops. A service that was running but does not start at boot is a **WARN** line when it is
+   (`systemctl is-enabled`: enabled) must be running again**. If one is not, the host is
+   **PATCHED - SERVICES DOWN** in the report (1.74.0): it was patched, and needs a look before any roll back.
+   The others go on. A service that was running but does not start at boot is a **WARN** line when it is
    gone after, never a failure (1.70.5). That covers one started by hand (disabled), or by D-Bus, a socket
    or another unit (static, indirect). Look whether it should run.
    `patch_compare_services: all` fails on those too.
@@ -1127,6 +1131,43 @@ survey or `-e` (`kernel*`, `kernel*, glibc`): each name is kept whole (1.70.5). 
 Run it as **Job type: Check** first: it lists what would be updated and changes nothing
 ([DRY_RUNS.md](DRY_RUNS.md)).
 
+### The report (1.74.0)
+
+The job sends a report like the other jobs: the email (`report_email_to`), the website (`report_web_dest`) and the
+workbook. Then it fails when a host could not be patched or needs a look. That happens only after every other host
+is done and the report is sent. `patch_fail_on_could_not: false` keeps the job green.
+
+- **At a glance**: *Patched*, *Up to date*, *Could not patch* and *Skipped on purpose*. *Not started* shows only
+  when `patch_continue_on_failure: false` stopped the rollout.
+- **Start here**: the first three hosts that need a look.
+- **Could not patch or needs a look**, worst first: the host, its reason, the step it got to, what to do, and its
+  snapshot.
+- **Patched**: each host's updates, whether it was rebooted, and the services it stopped (WARN).
+- **Up to date** (a pending reboot flagged) and **Skipped on purpose** (no_patch, AAP, protected).
+
+| Reason | What it means |
+|---|---|
+| `LOST mid-run` | the job lost the host at a step. It may be half updated |
+| `DID NOT COME BACK after reboot` | the reboot did not finish in `patch_reboot_timeout` |
+| `PATCHED - SERVICES DOWN` | patched, but a service that starts at boot is not running |
+| `FAILED during update` | dnf or yum failed. The error's last lines are in the report |
+| `FAILED before the update` | a step before the update failed. Nothing was installed |
+| `NO SNAPSHOT` | the snapshot step failed (`patch_snapshot`) |
+| `VM NOT FOUND`, `TWO VMs`, `WHICH VM IS NOT SURE` | its VM in vCenter is not sure: set `vmware_vm_name` |
+| `OLD SNAPSHOT IN THE WAY` | its VM still has an old `patching` snapshot (`patch_snapshot_replace`) |
+| `REFUSED` | it is the machine running the job |
+| `NOT READY`, `NO DNF OR YUM`, `NOT REACHED` | left out before patching (steps 2 and 3) |
+| `NOT STARTED` | the rollout stopped first (`patch_continue_on_failure: false`) |
+
+A host's snapshot is never deleted or replaced for it. The report says `snapshot patching kept - roll back from it
+if needed`.
+
+**A dry run** (Job type Check) sends the same report, titled `DRY RUN - Patch hosts`. It goes on its own page
+and index line ("Patch hosts - dry run"), never over the real run's. The approver sees the hosts that could not be
+patched before approving. A dry run never fails the job, so the workflow's approval can follow it.
+
+The ServiceNow step of the workflow does not change: the report opens no incident.
+
 **The last lines** (1.1.0) are a table of every host: its updates (`3 pending`, `up to date`, or why it was left
 out: `NOT REACHED`, `NOT READY`, `NO DNF OR YUM`) and its snapshot (`took "patching" of VM web01`,
 `reused "patching" from 2026-11-09 08:12 UTC of VM web01`, `none - physical (...)`, `not needed - up to date`,
@@ -1148,21 +1189,26 @@ patch_snapshot: true    # a snapshot "patching" of each VM before it is patched
 **Each host's VM is found first, before any host is patched** (1.70.5: every piece of evidence is weighed):
 
 1. The host variable `vmware_vm_name`: the VM's name in vCenter (when the names differ). Nothing
-   else is tried. A `vmware_vm_name` that names no VM always stops the job: it is a mistake, never a physical server.
+   else is tried. A `vmware_vm_name` that names no VM is a mistake, never a physical server: that host could not
+   be patched (`VM NOT FOUND`).
 2. Strong evidence: the host's address among the VM's addresses, or its full name (`web01.yoursite.mil`) as the
    VM's guest host name (VMware Tools) or VM name. One VM with strong evidence wins over any short-name match.
 3. Else a VM named like the host (`web01`), then a VM whose guest host name is the host's short name.
 4. **Not sure**: strong evidence for two VMs, or a VM whose own guest host name or addresses say it is another machine.
-   The job stops, both VMs named: set `vmware_vm_name`.
+   Both VMs are named: set `vmware_vm_name`.
+
+Since 1.74.0 such a host is **COULD NOT PATCH** and left out, and the others go on. With
+`patch_continue_on_failure: false` the job stops here instead, before any host is patched, as before.
 
 **A host whose VM is in no vCenter is a physical server**: it is patched without a snapshot, and
 the plan says `NO VM - ... (a physical server: patched without a snapshot)`. Only when every
-vCenter was read: a vCenter that could not be read may hold its VM, so then the job stops (below).
-`patch_snapshot_required: true` stops the job for such a host too (every host must be a VM).
+vCenter was read: a vCenter that could not be read may hold its VM, so then that host is not patched (below).
+`patch_snapshot_required: true` leaves such a host out too (every host must be a VM).
 `patch_physical: true` (a host variable, 1.70.5) says outright that a server is no VM: it is not looked up, and it
 is patched without a snapshot, also with `patch_snapshot_required: true`.
 
-The job then **stops before any host is patched** when:
+Such a host is **COULD NOT PATCH** and left out, and the others go on (1.74.0). With `patch_continue_on_failure:
+false` the job **stops before any host is patched** instead, as before. The last two rows always stop the job.
 
 | The job says | What to do |
 |---|---|
@@ -1178,19 +1224,19 @@ The job then **stops before any host is patched** when:
 **Run again soon after** (1.1.0) - the job stopped at a host, or was run twice: a snapshot `patching` younger than
 `patch_snapshot_reuse_hours` (24) is that patching's own. It is **reused**: no second snapshot, nothing stopped,
 and the plan says `reusing the snapshot "patching" from <time> (N h ago)`. A host patched in full by the first run
-is up to date now, so it gets neither (rule 0). Older than that: the job stops as above (or
+is up to date now, so it gets neither (rule 0). Older than that: as above (or
 `patch_snapshot_replace`). `patch_snapshot_reuse_hours: 0` = never reused, as before 1.1.0.
 
 **Checked again at each host's turn** (1.70.5). A rollout in batches can take hours, so right before a host's snapshot
 the job reads its VM and snapshots again:
 
-- the VM's ID now has another name, or is gone: the job stops;
+- the VM's ID now has another name, or is gone: that host is not patched (`NO SNAPSHOT`);
 - the snapshot to reuse was deleted meanwhile: a new one is taken;
-- the snapshot to reuse is now older than `patch_snapshot_reuse_hours`: the job stops (or it is replaced, with
+- the snapshot to reuse is now older than `patch_snapshot_reuse_hours`: that host is not patched (or it is replaced, with
   `patch_snapshot_replace: true`).
 
-A snapshot that fails stops that host: it is **not** patched, and the rollout stops after its
-batch. The AAP hosts and the other protected groups are never patched, so they get no snapshot
+A snapshot that fails stops that host: it is **not** patched (`NO SNAPSHOT`), and the others go on
+(`patch_continue_on_failure: false`: the rollout stops). The AAP hosts and the other protected groups are never patched, so they get no snapshot
 either. A dry run (*Check*) finds the VMs and says which snapshots it would take, but takes none.
 The job result shows each host's `snapshot:` line (`took "patching" of VM web01`).
 
@@ -1212,7 +1258,7 @@ are never patched, whatever this says.
 left in place keeps growing and slows the VM. Use the snapshot cleanup with
 `vm_snapshot_cleanup_name_words: [patching]`: it deletes the `patching` snapshots 5 days or older
 (`vm_snapshot_max_age_days`), after an approval ([VMWARE.md](VMWARE.md), "Snapshots"). A VM that
-still has one when the next patching starts stops that run, as above.
+still has one when the next patching starts is not patched in that run, as above.
 
 **All settings** of this job, with their defaults: [patch](VARIABLES_REFERENCE.md#patch).
 

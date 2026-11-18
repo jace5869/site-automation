@@ -13,3 +13,6 @@ _copy_inv: "{{ report_web_host | default('') | string | trim in hostvars }}"
 _copy_host: "{{ report_web_host | trim if _copy_inv | bool else 'site-report-web' }}"
 _copy_conn: >-
   {{ (hostvars[report_web_host | trim].ansible_connection | default('winrm')) if _copy_inv | bool else report_web_host_connection }}
+# A dry run (Check mode) leaves the report as it is - nothing written, nothing attached - unless the job asks for its
+# report all the same (_report_check_live: true, with the include's check_mode false: Patch hosts' dry run, 1.74.0)
+_email_dry: "{{ ansible_check_mode and not _report_check_live | default(false) | bool }}"

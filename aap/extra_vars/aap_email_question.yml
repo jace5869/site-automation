@@ -72,6 +72,7 @@
 #   - ontap_health_report.yml
 #   - ontap_capacity_trends.yml
 #   - ontap_hardware_report.yml
+#   - patch_hosts.yml
 #   - pki_bundle_check.yml
 #   - ucs_inventory_report.yml
 #   - poam_status.yml

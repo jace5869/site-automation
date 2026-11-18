@@ -6,10 +6,16 @@
 # Meant for the "Patch with checks" workflow:
 #   [Health check: pre] -> [Approval] -> [THIS] -> [Health check: post] -> [ServiceNow tickets]
 #
-# - One host at a time (patch_serial), and the rollout STOPS at the first host that fails or is lost (any_errors_fatal:
-#   with patch_serial over 1 the rest of that batch stops too, and no later batch starts).
+# - One host at a time (patch_serial). A host that fails or is lost (a dnf error, no return after its reboot, lost
+#   mid-run) is listed as COULD NOT PATCH with its reason and the others go on (patch_continue_on_failure, default true;
+#   false = the rollout stops there: the rest of that batch goes no further, no later batch starts).
+# - The report (1.74.0): every host - patched, up to date, skipped on purpose, could not patch or needs a look - as the
+#   other reports (report_email_to, report_web_dest; the workbook). Then the job fails when a host could not be patched
+#   (patch_fail_on_could_not, default true) - after all the others are done and the report is sent. A dry run (Check
+#   mode) sends it too, as "DRY RUN - Patch hosts" (its own page), so the approver sees the problem hosts first - and
+#   stays green, so the workflow's approval follows it.
 # - A host that cannot be reached at the start is listed (NOT REACHED) and left out, and the job goes on with the
-#   others (patch_skip_unreachable; false = it fails and stops the rollout). A host lost later still fails it.
+#   others (patch_skip_unreachable; false = it goes on to the patch play and is lost there).
 # - RHEL 8 and later are patched with dnf, RHEL 7 and its clones with yum; a host with neither is listed (NO DNF OR YUM)
 #   and left out (patch_skip_unsupported).
 # - Every service that was running before the update must be running after it.
@@ -47,7 +53,8 @@
 
 - name: Patch hosts - which hosts answer (patch_skip_unreachable)
   # once, before any host is patched: a host that cannot be reached (switched off, a firewall, ssh refused) is listed
-  # as NOT REACHED and left out of the run - not patched, no snapshot, the job not failed for it. The hosts never
+  # as NOT REACHED and left out of the run - not patched, no snapshot - and the report lists it (1.74.0: the job fails at
+  # its end for it, patch_fail_on_could_not). The hosts never
   # patched here (patch_never_patch_groups, AAP) are not contacted. No host reached at all fails the job (the machine
   # credential?). patch_skip_unreachable: false = every host goes on, and one not reached fails and stops the rollout.
   hosts: "{{ target | default('patch_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
@@ -83,16 +90,18 @@
       ansible.builtin.set_fact:
         site_host_unreached: ""
 
-    - name: A host that cannot be reached is listed and left out - the job is not failed for it
+    - name: A host that cannot be reached is listed and left out - the others go on
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: reach.yml
+      vars:
+        site_reach_report_all: true            # none reached: the report lists them all, the job fails at its end
       when:
         - patch_skip_unreachable | default(true) | bool
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
     # a host with neither dnf nor yum (not a RHEL-like Linux) is not one this job patches: listed as NO DNF OR YUM and
-    # left out, the job not failed for it (patch_skip_unsupported; false = it fails at the update). RHEL 7 and its clones
+    # left out, the others go on (patch_skip_unsupported; false = it fails at the update). RHEL 7 and its clones
     # are patched with yum. A host the facts cannot be read from goes on and fails where it always did.
     - name: Its package manager (patch_skip_unsupported)
       ansible.builtin.setup:
@@ -107,7 +116,7 @@
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
     # ansible-core 2.16 says yum on RHEL 7; later ones say unknown there (as roles/patch decides)
-    - name: A host with neither dnf nor yum is listed and left out - the job is not failed for it
+    - name: A host with neither dnf nor yum is listed and left out - the others go on
       ansible.builtin.set_fact:
         patch_unsupported: >-
           {{ _f.ansible_distribution | default('?') }} {{ _f.ansible_distribution_version | default('') }}, {{ _f.ansible_pkg_mgr }}
@@ -121,7 +130,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }}: NO DNF OR YUM - {{ patch_unsupported }}. This job patches RHEL and its clones (dnf,
-          or yum on 7); left out of this run, the job is not failed for it. Patch it another way, or put it in no_patch.
+          or yum on 7); left out of this run, the others go on - the report lists it. Patch it another way, or put it in no_patch.
       when: patch_unsupported is defined
 
     - name: Leave it out
@@ -129,7 +138,7 @@
       when: patch_unsupported is defined
 
     # a host that answers but where the job cannot become root (sudo refused, its password wrong or missing), or with too
-    # little room in /var: listed as NOT READY and left out, the job not failed for it - nothing was changed on it.
+    # little room in /var: listed as NOT READY and left out, the others go on - nothing was changed on it.
     # Nothing is cleaned up; free the space or fix the account, then run again for it. patch_skip_not_ready: false =
     # it fails in the patch play, as before 0.89.0. A refused become fails the task before the command runs (failed_when
     # does not see it): ignore_errors keeps the host for the "Not ready" step, which lists it.
@@ -179,7 +188,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }}: NOT READY - {{ patch_not_ready }}. Nothing was changed on it; left out of this run,
-          the job is not failed for it. Fix that, then run again for it.
+          the others go on - the report lists it. Fix that, then run again for it.
       when: patch_not_ready is defined
 
     - name: Leave it out (not ready)
@@ -308,17 +317,29 @@
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
       when: _patch_vm_lookup | bool
 
+    # 1.74.0, patch_continue_on_failure: a host whose VM is not found or not sure, or whose old snapshot is in the way,
+    # is COULD NOT PATCH (patch_could_not, set by snapshot_vms.yml) and left out - the others go on
+    - name: Its VM is not sure - COULD NOT PATCH, left out
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: COULD NOT PATCH - {{ patch_could_not.reason }}: {{ patch_could_not.detail }}"
+      when: patch_could_not is defined
+
+    - name: Leave it out (its VM)
+      ansible.builtin.meta: end_host
+      when: patch_could_not is defined
+
 - name: Patch hosts
   hosts: "{{ target | default('patch_hosts') }}:&patch_reached{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   become: true
   gather_facts: false
   serial: "{{ patch_serial | default(1) }}"
-  # 1.70.5: a host that fails OR is lost (unreachable: max_fail_percentage does not count those) stops the rollout.
-  # any_errors_fatal stops the rest of its batch; it does not stop the later batches when the host was lost (ansible-core
-  # 2.16 and 2.22 alike), so each batch first checks that no host of an earlier one failed or was lost. A host left out
-  # before this play (NOT REACHED, NOT READY - an earlier play) is out from its start: noted once, never a reason to stop.
-  max_fail_percentage: 0
-  any_errors_fatal: true
+  # 1.74.0: roles/patch catches a host that fails or is lost (rescue, ignore_unreachable) and marks it COULD NOT PATCH,
+  # so no host fails here and the report always goes out: a failed play - every host of a batch failed or lost - would
+  # end the whole job, the report's play too. No any_errors_fatal / max_fail_percentage: any_errors_fatal ends the play
+  # even at a host lost that is caught (ansible-core 2.16 and 2.22), and 2.16 does not let a variable set them.
+  # patch_continue_on_failure: false - the rollout stops at such a host: each later batch first checks that no host of an
+  # earlier one could not be patched or was lost (1.70.5), and is then NOT STARTED; the job fails at its end. A host left
+  # out before this play (NOT REACHED, NOT READY - an earlier play) is out from its start: noted once, never a reason to stop.
   pre_tasks:
     - name: The hosts already out when the rollout starts (left out by an earlier play)
       ansible.builtin.set_fact:
@@ -332,9 +353,9 @@
     # first and is never counted (a Windows host never gets here: the first play leaves it out). With patch_serial
     # over 1, a host that failed or was lost takes the rest of its batch with it (any_errors_fatal); ansible-core does
     # not say which one it was, so the message says both.
-    - name: Stop the rollout - a host of an earlier batch failed or was lost
-      ansible.builtin.fail:
-        msg: >-
+    - name: Stop the rollout - a host of an earlier batch failed or was lost (patch_continue_on_failure false)
+      ansible.builtin.set_fact:
+        patch_not_started: >-
           {{ ('Not patched: ' ~ _patch_lost[0] ~ ' failed or was lost in an earlier batch, so the rollout stops here'
               ~ ' (patch_serial). Look at that host first, then run again for the rest.')
              if _patch_lost | length == 1 else
@@ -345,10 +366,32 @@
         _patch_on_purpose: >-
           {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_patch_ended_on_purpose', 'defined')
              | map(attribute='inventory_hostname') | list }}
+        # a host roles/patch could not patch (it fails no host: rescue) or that got no further than a batch's start
+        _patch_could_nots: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('_patch_could_not', 'defined')
+             | map(attribute='inventory_hostname') | list }}
         _patch_lost: >-
-          {{ ansible_play_hosts_all | difference(ansible_play_hosts)
-             | difference(hostvars['localhost']._patch_out_at_start | default([])) | difference(_patch_on_purpose) }}
-      when: _patch_lost | length > 0
+          {{ (ansible_play_hosts_all | difference(ansible_play_hosts)
+              | difference(hostvars['localhost']._patch_out_at_start | default([])) | difference(_patch_on_purpose))
+             | union(_patch_could_nots) }}
+      when: not patch_continue_on_failure | default(true) | bool and _patch_lost | length > 0
+
+    - name: Stop the rollout - not started
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: NOT STARTED - {{ patch_not_started }}"
+      when: patch_not_started is defined
+
+    - name: Not started (the rollout stopped)
+      ansible.builtin.meta: end_host
+      when: patch_not_started is defined
+
+    - name: Its VM is not sure - left out (COULD NOT PATCH, the VM step said why)
+      ansible.builtin.meta: end_host
+      when: patch_could_not is defined
+
+    - name: The rollout reached it
+      ansible.builtin.set_fact:
+        patch_started: true
 
     - name: Linux hosts only (this playbook never touches a Windows server)
       ansible.builtin.include_role:
@@ -362,7 +405,7 @@
   roles:
     - role: patch
 
-- name: Patch hosts - not reached, so not patched
+- name: Patch hosts - the report, and the job's end
   hosts: "{{ target | default('patch_hosts') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   tasks:
@@ -437,3 +480,76 @@
              | map(attribute='inventory_hostname') | list }}
       run_once: true
       when: _unsupported | length > 0
+
+    # 1.74.0: every host, as the other reports: the email, the website, the workbook. Once, from the AAP side, never
+    # touching a host. A dry run sends it too, under its own name, so the approver sees the hosts that could not be patched.
+    - name: Patch hosts | the report
+      ansible.builtin.set_fact:
+        _patch_report: >-
+          {{ hostvars | patch_host_facts(ansible_play_hosts_all) | patch_report({
+               'dry': ansible_check_mode, 'serial': patch_serial | default(1),
+               'continue_on_failure': patch_continue_on_failure | default(true) | bool,
+               'fail_on_could_not': patch_fail_on_could_not | default(true) | bool,
+               'snapshot': patch_snapshot | default(false) | bool, 'security_only': patch_security_only | default(false) | bool,
+               'automatic_restarts': automatic_restarts | default(false) | bool,
+               'stopped': ansible_play_hosts_all | map('extract', hostvars) | map(attribute='patch_not_started', default='')
+                          | select | first | default('')}) }}
+      delegate_to: localhost
+      delegate_facts: true
+      run_once: true
+
+    - name: "Patch hosts | {{ hostvars['localhost']._patch_report.title }}"
+      ansible.builtin.debug:
+        msg: "{{ (hostvars['localhost']._patch_report | report_text).splitlines() }}"
+      run_once: true
+
+    - name: Patch hosts | email the report, publish it (report_email_to, report_web_dest) - a dry run too
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+          check_mode: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: "{{ hostvars['localhost']._patch_report }}"
+        _report_xlsx: "{{ hostvars['localhost']._patch_report | report_xlsx_sheets }}"
+        _report_check_live: true
+        # a dry run: its own page, line on the index and workbook name - never the real run's latest page or history
+        _report_name: >-
+          {{ ((awx_job_template_name | default(tower_job_template_name | default('Patch hosts'))) ~ ' - dry run')
+             if ansible_check_mode else '' }}
+      when: >-
+        report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+        or report_web_dest | default('') | length > 0
+
+    - name: Patch hosts | no report sent (report_email_to and report_web_dest are not set)
+      ansible.builtin.debug:
+        msg: "No report sent: set report_email_to (the template's Variables) or report_web_dest (docs/EMAIL_REPORTS.md)."
+      run_once: true
+      when: >-
+        report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+        and report_web_dest | default('') | length == 0
+
+    # the job's end: failed when a host could not be patched or needs a look - after every other host and the report
+    - name: Patch hosts | the job fails - hosts could not be patched or need a look (patch_fail_on_could_not)
+      ansible.builtin.fail:
+        msg: >-
+          {{ _bad | length }} host(s) could not be patched or need a look:
+          {{ _bad | join(', ') }}. The report says why and what to do; the other hosts were patched.
+          {{ (' ' ~ _stopped) if _stopped else '' }}{{ (" No host could be reached: look first at the template's machine credential"
+          ~ " (user, password or key, expired?) and at the network from AAP to the hosts.") if _none_reached else '' }}
+          patch_fail_on_could_not: false keeps the job green.
+      vars:
+        _bad: "{{ hostvars['localhost']._patch_report.needs_look }}"
+        _none_reached: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | map(attribute='site_host_unreached', default='') | select | list | length
+             == ansible_play_hosts_all | length }}
+        _stopped: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | map(attribute='patch_not_started', default='') | select | first | default('') }}
+      delegate_to: localhost
+      run_once: true
+      # a dry run stays green: the workflow's approval follows it only on success, and its report is for the approver
+      when: patch_fail_on_could_not | default(true) | bool and _bad | length > 0 and not ansible_check_mode

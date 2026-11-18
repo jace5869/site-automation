@@ -392,7 +392,7 @@ class PlaybookList(unittest.TestCase):
         self.assertEqual(sorted(OWN_QUESTION - set(emailing_playbooks())), [])
         self.assertGreater(len(found), 40)
         self.assertIn("cert_report.yml", found)
-        self.assertNotIn("patch_hosts.yml", found)
+        self.assertIn("patch_hosts.yml", found)          # 1.74.0: its report
         self.assertEqual(sorted(set(found) - set(listed)), [], "can email, not in aap_email_question_playbooks")
         self.assertEqual(sorted(set(listed) - set(found)), [], "in aap_email_question_playbooks, but never emails")
 

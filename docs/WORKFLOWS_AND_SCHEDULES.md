@@ -317,7 +317,9 @@ example the second Wednesday at 20:00. The approval then waits for the on-call p
 
 ### 4. Patch with a dry run first
 
-The same as 3, but the approver sees exactly what will be installed before approving:
+The same as 3, but the approver sees exactly what will be installed before approving. Since 1.74.0 the dry run
+also sends its report, `DRY RUN - Patch hosts`, with the hosts it could not patch ([RUNBOOKS.md](RUNBOOKS.md#the-report-1740)).
+It stays green, so the approval follows it:
 
 ```workflow
 [Health check: pre]             health_checks = disk, mounts, services

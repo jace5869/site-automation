@@ -309,6 +309,12 @@ ucs_domains: [ucs01.yoursite.mil]
 # patch_serial: 10
 ## A VMware snapshot "patching" of each VM right before it is patched (attach a VMware vCenter credential too)
 # patch_snapshot: true
+## The report (1.74.0): who gets it - the website too with report_web_dest in all.yml
+# report_email_to: [patching-team@yoursite.mil]
+## A host that fails or is lost is listed and the others go on (false = the rollout stops there)
+# patch_continue_on_failure: true
+## The job fails at its end when a host could not be patched (false = green; the report still lists them)
+# patch_fail_on_could_not: true
 """),
     "poam_status.yml": ("POA&M status", "STIG Manager API (optional)", "", ""),
     "report_web_copy.yml": ("Report website - copy", "Machine (Windows), Red Hat Ansible Automation Platform", "", """\

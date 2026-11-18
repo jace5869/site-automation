@@ -47,6 +47,9 @@
 # logo goes where it has <!--site-report-logo-->. The email and the index still use _report.
 # report_web_copy: true = the page is not written here - the report is kept as the job artifact site_report_page for the
 # job "Report website - copy" (tasks/copy.yml), which writes it at the same address; nothing here reaches report_web_host.
+# _report_name: the report's own name instead of its template's (its folder, its line on the index, the workbook's
+# name), with no strip of past runs and no site_report_run artifact - a dry run beside its template's real runs (1.74.0).
+# _report_check_live: true = in Check mode too, the report is sent and written (with the include's check_mode false).
 - name: Email | who gets the report
   ansible.builtin.set_fact:
     # report_email_to, and report_email_also: the "Also email the report to" box asked at launch (this run only)
@@ -181,6 +184,7 @@
      or (_web_on | bool and _web_theme in _strip_looks)) and report_history | bool
     and report_history_runs | int > 1 and (awx_job_id | default(tower_job_id | default(''))) | string | length > 0
     and (awx_job_template_id | default(tower_job_template_id | default(''))) | string | length > 0
+    and _report_name | default('') | length == 0
 
 - name: Email | no strip of past runs
   ansible.builtin.debug:
@@ -205,7 +209,7 @@
   ansible.builtin.set_stats:
     data:
       site_report_run: "{{ _report | report_headline }}"
-  when: _report is defined
+  when: _report is defined and _report_name | default('') | length == 0
 
 - name: Email | the report as text (and HTML)
   ansible.builtin.set_fact:
@@ -225,7 +229,7 @@
     _web_files: >-
       {%- set t = now(utc=true) -%}
       {{ {'page': report_web_page, 'latest': report_web_latest, 'index': report_web_index} | report_web_files(
-           {'template': awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))),
+           {'template': _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true),
             'template_id': awx_job_template_id | default(tower_job_template_id | default('local')),
             'job': awx_job_id | default(tower_job_id | default('local')),
             'status': _web_report.status | default('info'),
@@ -245,7 +249,7 @@
 
 - name: Email | report_web_host, for the copy (the login - the Report website credential, else the Machine credential)
   ansible.builtin.include_tasks: web_host.yml
-  when: _web_win | bool and not ansible_check_mode
+  when: _web_win | bool and not _email_dry
 
 - name: Email | report_web_host - its folder, and the index there
   ansible.builtin.include_tasks: web_windows.yml
@@ -256,12 +260,12 @@
     _web_ps_config:
       dest: "{{ report_web_dest | trim }}"
       index: "{{ (_web_files.index[:-5] ~ '.json').split('/') if _web_files.index else [] }}"
-  when: _web_win | bool and not ansible_check_mode
+  when: _web_win | bool and not _email_dry
 
 - name: Email | report_web_host's answer
   ansible.builtin.set_fact:
     _web_win_read: "{{ ((_web_ps_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('###SITE-JSON### {}'))[16:] | from_json).read | default({}) }}"
-  when: _web_win | bool and not ansible_check_mode
+  when: _web_win | bool and not _email_dry
 
 - name: Email | report_web_host answered, and report_web_dest is there
   ansible.builtin.assert:
@@ -270,7 +274,7 @@
     quiet: true
   vars:
     _web_win_where: "{{ report_web_host | trim }} ({{ report_web_host_connection }}, port {{ report_web_host_port }})"
-  when: _web_win | bool and not ansible_check_mode
+  when: _web_win | bool and not _email_dry
 
 - name: Email | publish the report on the report website ({{ report_web_dest | default('') }})
   site_report_web:
@@ -303,14 +307,14 @@
     data:
       report: "{{ _web_report }}"
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
-      template: "{{ awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default(''))) }}"
+      template: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default(''))), true) }}"
       template_id: "{{ awx_job_template_id | default(tower_job_template_id | default('')) }}"
       when: "{{ _web_when }}"
       runs: "{{ _web_runs | default([]) }}"
       banner: "{{ _banner if _banner.on else {} }}"     # site_report_web puts it on the page and the index, as does the copy job
     entry:
       key: "{{ _web_files.latest or _web_files.page.split('/')[0] }}"
-      name: "{{ awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('Report'))) }}"
+      name: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('Report'))), true) }}"
       title: "{{ _web_report.title | default('') }}"
       status: "{{ _web_report.status | default('info') }}"
       when: "{{ _web_when }}"
@@ -323,7 +327,7 @@
     retry_delay: "{{ report_web_retry_delay | default(30) | int }}"
     required: "{{ report_web_required | default(false) | bool }}"
     windows_host: "{{ report_web_host | default('') | trim if _web_win | bool or _web_copy | bool else '' }}"
-    index_text: "{{ _web_win_read.index | default('', true) if _web_win | bool and not ansible_check_mode else '' }}"
+    index_text: "{{ _web_win_read.index | default('', true) if _web_win | bool and not _email_dry else '' }}"
   vars:
     # the web copy: its own look's logo size and strip (report_web_theme), the logo put inside the page
     _web_logo_cid: "{{ _email_logo_file | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"
@@ -349,7 +353,7 @@
   when: _web_failed | length > 0
 
 - name: Email | report_web_host - this run's pages written there
-  when: _web_win | bool and not ansible_check_mode
+  when: _web_win | bool and not _email_dry
   block:
     - name: Email | report_web_host - this run's pages
       ansible.builtin.include_tasks: web_windows.yml
@@ -378,23 +382,23 @@
     quiet: true
   vars:
     _web_win_where: "{{ report_web_host | trim }} ({{ report_web_host_connection }}, port {{ report_web_host_port }})"
-  when: _web_win | bool and not ansible_check_mode
+  when: _web_win | bool and not _email_dry
 
 - name: Email | report_web_host - not written (open there all that time - the next run writes it), or older runs' pages not deleted (Modify on the folder)
   ansible.builtin.debug:
     msg: "{{ _web_win_write.busy | default([]) + _web_win_write.left | default([]) }}"
-  when: _web_win | bool and not ansible_check_mode and (_web_win_write.busy | default([]) + _web_win_write.left | default([])) | length > 0
+  when: _web_win | bool and not _email_dry and (_web_win_write.busy | default([]) + _web_win_write.left | default([])) | length > 0
 
 - name: Email | the report, kept for the job Report website - copy (job artifact site_report_page, report_web_copy)
   ansible.builtin.set_stats:
     data:
       site_report_page: ["{{ _web_out.packed }}"]
-  when: _web_copy | bool and not ansible_check_mode and _web_out.packed | default('') | length > 0
+  when: _web_copy | bool and not _email_dry and _web_out.packed | default('') | length > 0
 
 - name: Email | the report's address
   ansible.builtin.debug:
     msg: >-
-      {%- if ansible_check_mode or (_web_copy | bool and not _web_out.packed | default('')) -%}
+      {%- if _email_dry or (_web_copy | bool and not _web_out.packed | default('')) -%}
       {{ _web_out.msg }}
       {%- elif _web_out.url -%}
       Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}{{ _web_old }}{{ _web_unlisted }}
@@ -417,14 +421,14 @@
     data:
       site_report_url: "{{ _web_out.url }}"
   when: >-
-    _web_on | bool and _web_out.url | default('') | length > 0 and not ansible_check_mode and _web_failed | length == 0
+    _web_on | bool and _web_out.url | default('') | length > 0 and not _email_dry and _web_failed | length == 0
     and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
 
 - name: Email | the email links its web copy
   ansible.builtin.set_fact:
     _email_web_url: >-
-      {{ _report_web_url if _report_web_url | default('') | length > 0 and not ansible_check_mode else
-         _web_out.url if _web_on | bool and not ansible_check_mode and _web_failed | length == 0
+      {{ _report_web_url if _report_web_url | default('') | length > 0 and not _email_dry else
+         _web_out.url if _web_on | bool and not _email_dry and _web_failed | length == 0
          and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
          else '' }}
   when: _email_to | length > 0
@@ -437,7 +441,7 @@
         sheets: "{{ _report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets }}"
         banner: "{{ _banner if _banner.on else {} }}"
       register: _email_xlsx
-      when: _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not ansible_check_mode
+      when: _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not _email_dry
 
     - name: Email | send the report to {{ _email_to | join(', ') }}
       site_mail:
@@ -464,7 +468,7 @@
       vars:
         # vm-inventory-report_2026-10-27.xlsx
         _email_xlsx_name: >-
-          {{ (_report_xlsx_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report')))))
+          {{ (_report_xlsx_name | default(_report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true)))
              | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}_{{ now(utc=true, fmt='%Y-%m-%d') }}.xlsx
         _email_web_line: "{{ ('\nIn a browser: ' ~ _email_web_url) if _email_web_url | default('') else '' }}"
       register: _email_sent
