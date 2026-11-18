@@ -33,13 +33,22 @@ assert any("already out" in n for n in names) and any(n.startswith("Stop the rol
 yaml.safe_dump(guard, open(out, "w"), sort_keys=False, width=1000)
 tasks = yaml.safe_load(open(repo + "/roles/patch/tasks/main.yml"))
 ends = 0
-for i, t in enumerate(tasks):
-    if t.get("ansible.builtin.meta") == "end_host":
-        ends += 1
-        prev = tasks[i - 1] if i else {}
-        sf = prev.get("ansible.builtin.set_fact") or {}
-        if "_patch_ended_on_purpose" not in sf or prev.get("when") != t.get("when"):
-            sys.exit("FAIL - roles/patch: %r is not marked first (_patch_ended_on_purpose, the same when)" % t.get("name"))
+def walk(tasks):                 # 1.74.0: the role's work is in a block (rescue, always) - every level is checked
+    global ends
+    for i, t in enumerate(tasks or []):
+        for k in ("block", "rescue", "always"):
+            if isinstance(t.get(k), list):
+                walk(t[k])
+        if t.get("ansible.builtin.meta") == "end_host":
+            ends += 1
+            if t.get("when") == "patch_not_started is defined":
+                continue         # 1.74.0 stop mode (patch_continue_on_failure false): NOT STARTED after a peer failed -
+                                 # the rollout is stopping anyway, so the guard may count it (it stops the later batches)
+            prev = tasks[i - 1] if i else {}
+            sf = prev.get("ansible.builtin.set_fact") or {}
+            if "_patch_ended_on_purpose" not in sf or prev.get("when") != t.get("when"):
+                sys.exit("FAIL - roles/patch: %r is not marked first (_patch_ended_on_purpose, the same when)" % t.get("name"))
+walk(tasks)
 assert ends, "no end_host in roles/patch/tasks/main.yml"
 print("ok   - the guard: %d tasks from the play; roles/patch: %d end_host, each marked first" % (len(guard), ends))
 EOF
@@ -63,7 +72,7 @@ closed=$("$py" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); p
 case_() {
     local name=$1 want=$2 msg=$3; shift 3
     ANSIBLE_HOST_KEY_CHECKING=False "$ap" -i "$work/inv.ini" "$here/serial_rollout.yml" \
-        -e "guard_file=$work/guard.yml" -e "closed_port=$closed" "$@" > "$work/out.txt" 2>&1
+        -e "guard_file=$work/guard.yml" -e "closed_port=$closed" -e patch_continue_on_failure=false "$@" > "$work/out.txt" 2>&1
     local got
     got=$(grep -o '"PATCHED host0[0-9]' "$work/out.txt" | sed 's/.*host0/0/' | sort | tr '\n' ' ' | sed 's/ $//')
     if [ "$got" != "$want" ]; then bad "$name: patched [$got], want [$want]"; tail -40 "$work/out.txt"; return; fi
@@ -86,7 +95,7 @@ case_ "serial 1, lost before, then host02 lost: stops"   ""            "Not patc
 # why the guard is there: without it this ansible-core starts the later batches after a lost host (any_errors_fatal
 # and max_fail_percentage 0 count failed hosts, not lost ones). A note, not a failure: a core that stops by itself is fine.
 ANSIBLE_HOST_KEY_CHECKING=False "$ap" -i "$work/inv.ini" "$here/serial_rollout.yml" -e "guard_file=$work/guard.yml" \
-    -e "closed_port=$closed" -e guard=false -e lost=host01.example.mil > "$work/out.txt" 2>&1
+    -e "closed_port=$closed" -e patch_continue_on_failure=false -e guard=false -e lost=host01.example.mil > "$work/out.txt" 2>&1
 if grep -q '"PATCHED host0[2-4]' "$work/out.txt"; then
     echo "note - without the guard this ansible-core goes on after a lost host (the guard is needed)"
 else
