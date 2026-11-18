@@ -489,6 +489,20 @@ jobs:
           if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
             echo "secret-looking content found"; exit 1; fi
 
+  answer-keys-rhel8-sandbox:
+    # 1.76.1: the STIG answer keys' trial sandbox on a real systemd 239 (RHEL 8): a UBI 8 init container as PID 1, the
+    # sandbox test as root inside - its systemd 239 profile (no PrivateIPC, ProtectProc ...: the same properties another
+    # way, the probe proving them)
+    name: STIG answer keys - the trial sandbox on systemd 239 (RHEL 8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The trial sandbox in a UBI 8 init container (systemd 239), as root
+        run: bash tests/stig/run_sandbox_239_container.sh
+      - name: If UBI 8 init cannot run systemd here - a Rocky Linux 8 init image instead
+        if: failure()
+        run: IMAGE=docker.io/rockylinux/rockylinux:8 bash tests/stig/run_sandbox_239_container.sh
+
   vmware-vcsim:
     # 1.50.0: its own job - the one job's steps passed GitHub's 6 hours a job (vcsim alone is about 2 hours)
     name: VMware jobs against vcsim (vCenter simulator), patching with snapshots, VMware ask

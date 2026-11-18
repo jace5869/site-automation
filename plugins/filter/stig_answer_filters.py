@@ -735,6 +735,7 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
                  "getent, id, an IPC setting, a user or group name, find and stat in /tmp) was read once outside it - the "
                  "exact commands the check allowed - and replayed inside; a code that reads the mount table, an IPC file, a "
                  "name through PowerShell or anything else in /tmp is not tried." % host,
+                 ("The read-only check and the trial ran with %s." % ev["pwsh"]) if ev.get("pwsh") else "",
                  "Evaluate-STIG on the host: %s%s. The blocks use %s." % (
                      "version " + ver if ev.get("found") else "not found",
                      (", its answer file template " + ev["template"]) if ev.get("template") else ", no answer file template found",
@@ -746,7 +747,7 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
                   "applies when ExpectedStatus is its own status. A key with ExpectedStatus Open is marked: %s." % (
                       (" - the compare is " + ev["expected"]["note"]) if (ev.get("expected") or {}).get("note") else "", OPEN_NOTE)),
                  "Statuses are NotAFinding, Open or Not_Applicable only. Nothing was written to STIG Manager, the share or the host."]
-    how = {"title": "How this was made", "collapsed": True, "lines": how_lines}
+    how = {"title": "How this was made", "collapsed": True, "lines": [x for x in how_lines if x]}
     base = {"title": title, "status": status, "subtitle": "%s %s, trial on %s, answer key %s" % (bench, rev or "", host, key),
             "summary": tiles}
     xlsx = [{"name": "Answer keys", "columns": ["Rule", "Drafted by", "Trial", "AnswerKey block"],
@@ -1002,7 +1003,7 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
             web_secs.append(nd)
         mail_secs += [dict(d["report"]["sections"][0], title=rw["title"])] + ([dict(d["report"]["sections"][1], title=nd["title"])] if nod else [])
         how += ["%s: %s; trial and read-only check on %s." % (tag, ", ".join(hosts), g.get("rep") or "-")] + \
-            ["%s: %s" % (g["label"], x) for x in hw.get("lines") or [] if x.startswith(("Evaluate-STIG", "Evaluate-STIG's"))]
+            ["%s: %s" % (g["label"], x) for x in hw.get("lines") or [] if x.startswith(("Evaluate-STIG", "Evaluate-STIG's", "The read-only check and the trial ran with"))]
         sheet = re.sub(r"[\[\]:*?/\\]", " ", g["label"])[:31] or "STIG"
         xlsx.append({"name": sheet, "columns": ["Rule", "Hosts", "Evaluate-STIG", "Drafted by", "Trial", "AnswerKey block"],
                      "rows": [["%s (%s)" % (r["v"], r["sv"]), ", ".join(r.get("hosts") or []), r.get("es") or "",
@@ -1046,7 +1047,7 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
     pick = ("Picked: automatically from STIG Manager (answer_keys_rules empty) - %s." % auto) if auto else \
         "Picked: the rules asked (answer_keys_rules)."
     how_all = [pick] + how + [x for x in how_base if not x.startswith(("Asked:", "Evaluate-STIG on the host", "Evaluate-STIG compares",
-                                                                      "Evaluate-STIG's code"))]
+                                                                      "Evaluate-STIG's code", "The read-only check and the trial ran with"))]
     howsec = {"title": "How this was made", "collapsed": True, "lines": how_all}
     base = {"title": title, "status": status, "subtitle": "answer key %s - %s" % (key, ", ".join(g["label"] for g in groups or []) or "no STIG"),
             "summary": tiles}

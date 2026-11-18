@@ -41,6 +41,7 @@ import base64
 import glob
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -62,6 +63,35 @@ $code = [IO.File]::ReadAllText($CodeFile)
 $why = New-Object System.Collections.Generic.List[string]
 $used = New-Object System.Collections.Generic.List[string]
 $calls = New-Object System.Collections.Generic.List[object]
+# 1.76.1: every path a file-reading cmdlet is given - {cmd, path, literal, recurse}: the module decides, per command, what
+# the trial can show as the host has it
+$paths = New-Object System.Collections.Generic.List[object]
+$pathCmdlets = @('Get-Content', 'Select-String', 'Test-Path', 'Get-Item', 'Get-ChildItem')
+$valued = @('Path', 'LiteralPath', 'TotalCount', 'Head', 'First', 'Tail', 'Last', 'Delimiter', 'Encoding', 'ReadCount', 'ErrorAction',
+            'Pattern', 'Context', 'InputObject', 'PathType', 'Filter', 'Include', 'Exclude', 'Depth')
+# a literal string, or a list of them (in parentheses, @( ), a comma list) -> their values; else $null
+function LitStrings($e) {
+    while ($e -is [System.Management.Automation.Language.ParenExpressionAst] -or $e -is [System.Management.Automation.Language.ArrayExpressionAst] -or
+           ($e -is [System.Management.Automation.Language.PipelineAst] -and $e.PipelineElements.Count -eq 1 -and $e.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) -or
+           ($e -is [System.Management.Automation.Language.CommandExpressionAst])) {
+        if ($e -is [System.Management.Automation.Language.ParenExpressionAst]) { $e = $e.Pipeline }
+        elseif ($e -is [System.Management.Automation.Language.ArrayExpressionAst]) {
+            if ($e.SubExpression.Statements.Count -ne 1) { return $null }; $e = $e.SubExpression.Statements[0]
+        }
+        elseif ($e -is [System.Management.Automation.Language.PipelineAst]) { $e = $e.PipelineElements[0].Expression }
+        else { $e = $e.Expression }
+    }
+    if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { return ,@($e.Value) }
+    if ($e -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+        $v = @(); foreach ($x in $e.Elements) { if ($x -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { return $null }; $v += $x.Value }
+        return ,$v
+    }
+    return $null
+}
+function AddPath([string] $c, $e, [bool] $rec) {
+    $lit = $e -is [System.Management.Automation.Language.StringConstantExpressionAst]
+    $paths.Add(@{ cmd = $c; path = $(if ($lit) { $e.Value } else { $e.Extent.Text }); literal = $lit; recurse = $rec })
+}
 function No([string] $w) { if (-not $why.Contains($w)) { $why.Add($w) } }
 # 1.75.0c: allow-lists only. A syntax node, a cmdlet, a cmdlet parameter, a program or a program argument that is not
 # listed here refuses the whole code.
@@ -265,6 +295,46 @@ foreach ($n in $ast.FindAll({ $true }, $true)) {
                         No ($c + ' is given -' + $e.ParameterName + ' (its allowed parameters: ' + ($cmdlets[$c] -join ', ') + ')')
                     }
                 }
+                if ($pathCmdlets -contains $c) {
+                    $rec = @($els | Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] -and @('Recurse', 'Depth') -contains $_.ParameterName }).Count -gt 0
+                    $patGiven = @($els | Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'Pattern' }).Count -gt 0
+                    $pos = 0; $got = 0; $i = 0
+                    while ($i -lt $els.Count) {
+                        $e = $els[$i]
+                        if ($e -is [System.Management.Automation.Language.CommandParameterAst]) {
+                            $arg = $e.Argument
+                            if ($null -eq $arg -and $valued -contains $e.ParameterName -and $i + 1 -lt $els.Count) { $i++; $arg = $els[$i] }
+                            if (@('Path', 'LiteralPath') -contains $e.ParameterName -and $null -ne $arg) { AddPath $c $arg $rec; $got++ }
+                            $i++; continue
+                        }
+                        $want = if ($c -eq 'Select-String' -and -not $patGiven) { 1 } else { 0 }
+                        if ($pos -eq $want) { AddPath $c $e $rec; $got++ }
+                        $pos++; $i++
+                    }
+                    $pl = $n.Parent
+                    $at = -1
+                    if ($pl -is [System.Management.Automation.Language.PipelineAst]) { for ($k = 0; $k -lt $pl.PipelineElements.Count; $k++) { if ($pl.PipelineElements[$k] -eq $n) { $at = $k } } }
+                    # no path, and nothing piped in: the current folder - not one the trial can name
+                    if ($got -eq 0 -and $at -eq 0 -and $c -ne 'Select-String') {
+                        $paths.Add(@{ cmd = $c; path = '(the current folder)'; literal = $false; recurse = $rec })
+                    }
+                    # 1.76.1b (Codex): a path piped in - a literal string (or a list of them) is that cmdlet's path; any other
+                    # input piped to a path cmdlet is not a path the trial can name. Select-String reads files only when
+                    # it is given them (Get-ChildItem / Get-Item piped in); text piped to it is text.
+                    if ($got -eq 0 -and $at -gt 0) {
+                        $prev = $pl.PipelineElements[$at - 1]
+                        if ($c -eq 'Select-String') {
+                            if ($prev -is [System.Management.Automation.Language.CommandAst] -and $prev.CommandElements[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                                @('Get-ChildItem', 'Get-Item') -contains $prev.CommandElements[0].Value) {
+                                $paths.Add(@{ cmd = $c; path = '(the files piped in)'; literal = $false; recurse = $rec })
+                            }
+                        } else {
+                            $ls = if ($prev -is [System.Management.Automation.Language.CommandExpressionAst]) { LitStrings $prev.Expression } else { $null }
+                            if ($null -ne $ls) { foreach ($v in $ls) { $paths.Add(@{ cmd = $c; path = $v; literal = $true; recurse = $rec }) } }
+                            else { $paths.Add(@{ cmd = $c; path = '(the input piped in)'; literal = $false; recurse = $rec }) }
+                        }
+                    }
+                }
                 if (@('ForEach-Object', 'Where-Object') -contains $c) {
                     # a literal script block only (positional, or after its parameter): a member's name or a variable there
                     # calls a method (ForEach-Object $m with $m = 'Delete')
@@ -351,7 +421,7 @@ foreach ($n in $ast.FindAll({ $true }, $true)) {
         }
     }
 }
-@{ ok = ($why.Count -eq 0); why = @($why); used = @($used); calls = $calls.ToArray() } | ConvertTo-Json -Compress -Depth 4
+@{ ok = ($why.Count -eq 0); why = @($why); used = @($used); calls = $calls.ToArray(); paths = $paths.ToArray() } | ConvertTo-Json -Compress -Depth 4
 '''
 
 # The trial: the code as Evaluate-STIG runs it - its result, and what it wrote with Write-Verbose (what it read)
@@ -388,20 +458,51 @@ IPC_KEYS = ["kernel.shmmax", "kernel.shmall", "kernel.shmmni", "kernel.shm_rmid_
 # PrivateIPC keeps SysV IPC and message queues off the host: inside, these show the sandbox's own - hidden
 IPC_PATHS = ["/proc/sysvipc", "/dev/mqueue"] + ["/proc/sys/" + k.replace(".", "/") for k in IPC_KEYS]
 TMP_ROOTS = ["/tmp", "/var/tmp", "/dev/shm"]
-SANDBOX = ["ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
-           "TemporaryFileSystem=/dev/shm", "PrivateIPC=yes"] + ["InaccessiblePaths=-%s" % x for x in IPC_PATHS] + [
-           "NoNewPrivileges=yes", "RestrictSUIDSGID=yes", "LockPersonality=yes", "RestrictNamespaces=yes",
-           "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectKernelLogs=yes", "ProtectControlGroups=yes",
-           "ProtectClock=yes", "ProtectHostname=yes",
-           # other UIDs' processes hidden; not ProcSubset=pid - it hides /proc/sys and /proc/cmdline, which checks read
-           "ProtectProc=invisible",
-           "SystemCallFilter=~@privileged @debug",
-           # no address family at all: an allow-list of AF_UNIX, then AF_UNIX taken out (systemd-run does not take "none")
-           "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
-           "CapabilityBoundingSet=CAP_DAC_READ_SEARCH"]
+# 1.76.1: two profiles, by systemd's version (systemd-run --version). Both: the whole file system read-only, its own
+# /tmp, /var/tmp and /dev/shm, no socket of any family, no new privileges, root's capabilities cut to reading.
+SANDBOX_COMMON = ["ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
+                  "TemporaryFileSystem=/dev/shm", "InaccessiblePaths=-/dev/mqueue",
+                  "NoNewPrivileges=yes", "RestrictNamespaces=yes",
+                  "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectControlGroups=yes",
+                  "SystemCallFilter=~@privileged @debug",
+                  # no address family at all: an allow-list of AF_UNIX, then AF_UNIX taken out (systemd-run does not take "none")
+                  "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
+                  "CapabilityBoundingSet=CAP_DAC_READ_SEARCH"]
+# systemd 248 and later (RHEL 9, 10): its own IPC (the IPC files in /proc then hidden - they would be its own), the
+# kernel's logs, clock and host name protected, no set-UID files, other UIDs' processes hidden
+SANDBOX_FULL = ["PrivateIPC=yes"] + ["InaccessiblePaths=-%s" % x for x in IPC_PATHS if x != "/dev/mqueue"] + [
+                # LockPersonality: systemd 239's systemd-run does not take it (a unit file would) - tried on the real 239
+                "LockPersonality=yes", "RestrictSUIDSGID=yes", "ProtectKernelLogs=yes", "ProtectClock=yes", "ProtectHostname=yes",
+                # other UIDs' processes hidden; not ProcSubset=pid - it hides /proc/sys and /proc/cmdline, which checks read
+                "ProtectProc=invisible"]
+# systemd before 248 (RHEL 8: 239) has none of those six; the same properties another way: no SysV IPC or message queue
+# can be made (their system calls refused - not all of @ipc: pwsh needs pipe), no clock set (@clock refused; no
+# CAP_SYS_TIME either); the kernel's logs: PrivateDevices hides /dev/kmsg, syslog(2) needs a capability it has not; set-UID
+# files: the file system is read-only, NoNewPrivileges; the host name: no CAP_SYS_ADMIN; other UIDs' processes: its own
+# UID, no CAP_SYS_PTRACE or CAP_KILL - the kernel refuses their environ, mem, fd and any signal. Without its own IPC the
+# IPC files in /proc are the host's: read as they are. A refused call fails (EPERM), it does not stop pwsh.
+IPC_CALLS = ["shmget", "shmat", "shmdt", "shmctl", "msgget", "msgsnd", "msgrcv", "msgctl", "semget", "semop",
+             "semtimedop", "semctl", "mq_open", "mq_unlink", "mq_timedsend", "mq_timedreceive", "mq_notify", "mq_getsetattr"]
+# LockPersonality: systemd 239's systemd-run does not take it (a unit file would) - personality(2) is refused instead
+SANDBOX_239 = ["SystemCallFilter=~" + " ".join(IPC_CALLS), "SystemCallFilter=~@clock personality", "SystemCallErrorNumber=EPERM"]
+FULL_FROM = 248
 # systemd 257 and later: a PID namespace of its own too (RHEL 10); before, the UID of its own is what keeps host
 # processes out of reach (no CAP_KILL, CAP_SYS_PTRACE: a signal to another UID is refused by the kernel)
 SANDBOX_PIDS = ["PrivatePIDs=yes"]
+# the tests may ask for the systemd 239 profile on a newer systemd (it holds there too): set here, never a setting
+FORCED_VERSION = None
+
+
+def profile_of(version):
+    """'full' (systemd 248+) or '239' (before)."""
+    return "full" if int(version or 0) >= FULL_FROM else "239"
+
+
+def sandbox_props(version):
+    v = FORCED_VERSION if FORCED_VERSION is not None else int(version or 0)
+    return list(SANDBOX_COMMON) + (SANDBOX_FULL if profile_of(v) == "full" else SANDBOX_239) + (SANDBOX_PIDS if v >= 257 else [])
+
+
 CAP_DAC_READ_SEARCH = 1 << 2
 # the trial's own UID (as root): high, past the container ranges (systemd: up to 1879048191), never a passwd entry
 UID_FIRST, UID_LAST = 2000000000, 2100000000
@@ -433,13 +534,33 @@ foreach ($u in @('/run/systemd/private', '/run/dbus/system_bus_socket')) {
 $ipc = @(foreach ($p in @(@IPC@)) { try { $null = Get-Content -LiteralPath $p -TotalCount 1 -ErrorAction Stop; $p } catch { } })
 $cap = ((Get-Content /proc/self/status | Where-Object { $_ -match '^CapEff:' }) -split '\s+')[1]
 $seen = @(Get-ChildItem -LiteralPath /proc -Directory | Where-Object { $_.Name -match '^[0-9]+$' }).Count
-@{ writable = $w; private = $priv; sockets = $sock; ipc = $ipc; uid = [string](& /usr/bin/id -u); capeff = $cap; seen = $seen } | ConvertTo-Json -Compress -Depth 3
+# 1.76.1: no SysV IPC object can be touched - shmctl/msgctl of an id that is not there: "invalid id" when the call is
+# allowed, "permission denied" when it is refused (nothing made, nothing removed)
+$ipcrm = @(foreach ($k in @('-m', '-q')) { if (Test-Path /usr/bin/ipcrm) { [string](@(& /usr/bin/ipcrm $k 2147483646 2>&1) -join ' ') } else { 'no ipcrm' } })
+# another UID's process it can see (none: its own PID namespace, or other UIDs hidden): its environment and open files
+# unreadable, no signal
+$me = [string](& /usr/bin/id -u)
+$other = ''
+foreach ($d in @(Get-ChildItem -LiteralPath /proc -Directory | Where-Object { $_.Name -match '^[0-9]+$' })) {
+    try { $u = ((Get-Content -LiteralPath ($d.FullName + '/status') -ErrorAction Stop | Where-Object { $_ -match '^Uid:' }) -split '\s+')[1] } catch { continue }
+    if ($u -and $u -ne $me) { $other = $d.Name; break }
+}
+$p1 = @(); $sig = $false
+if ($other) {
+    try { $null = [IO.File]::ReadAllBytes("/proc/$other/environ"); $p1 += "/proc/$other/environ" } catch { }
+    # its open files: the links resolved (needs ptrace access) - not their numbers, which CAP_DAC_READ_SEARCH may list
+    foreach ($fd in @('0', '1', '2')) { $t = @(& /usr/bin/readlink "/proc/$other/fd/$fd" 2>$null); if ($LASTEXITCODE -eq 0 -and $t) { $p1 += "/proc/$other/fd/$fd"; break } }
+    $null = @(& /usr/bin/kill -0 $other 2>&1); $sig = ($LASTEXITCODE -eq 0)
+}
+@{ writable = $w; private = $priv; sockets = $sock; ipc = $ipc; uid = [string](& /usr/bin/id -u); capeff = $cap; seen = $seen;
+   ipcrm = $ipcrm; p1 = $p1; signal = $sig } | ConvertTo-Json -Compress -Depth 3
 """
 # what a trial would read from the sandbox, not the host (the mount table, IPC, a file's user or group through PowerShell
 # - NSS - and the temporary folders, which are its own): such a code is not tried, never given a result the host would
 # not give. find and stat of a temporary folder are replayed instead (replays_for)
 TMP_RX = r"(?<![\w.-])(/var/tmp|/tmp|/dev/shm)(?![\w.-])"
 BLIND = [(r"/proc/(self/|thread-self/|\d+/)?mount|/etc/mtab|mountinfo", "the mount table (the sandbox's own)"),
+         (r"/proc/(self|thread-self|\d+)\b|\bGet-Process\b", "a process's /proc, or the processes (the sandbox's own)"),
          (r"/proc/sysvipc|/dev/mqueue|/proc/sys/kernel/(shm|msg|sem)|/proc/sys/fs/mqueue", "an IPC setting through a file (the sandbox's own IPC)"),
          (r"\.(User|Group)\b|Property\s+'?(User|Group)\b|-ExpandProperty\s+'?(User|Group)\b",
           "a file's user or group through PowerShell (names come from NSS - sssd or LDAP need a socket)")]
@@ -522,8 +643,12 @@ def sandbox_cmd(runner, seconds, binds=None, version=0):
     version: systemd's (257 and later: a PID namespace of its own too)."""
     root = os.geteuid() == 0
     cmd = [runner] + ([] if root else ["--user"]) + ["--pipe", "--wait", "--collect", "--quiet"]
-    props = list(SANDBOX) + (SANDBOX_PIDS if version >= 257 else []) + ["RuntimeMaxSec=%d" % seconds]
-    if root:
+    props = sandbox_props(version) + ["RuntimeMaxSec=%d" % seconds]
+    if root and profile_of(FORCED_VERSION if FORCED_VERSION is not None else version) == "239":
+        # systemd 239 refuses a numeric User= with no passwd entry (exit 217 - tried on the real 239): a dynamic user
+        # instead, its UID unique to the unit while it runs (and the private /tmp it implies we have anyway)
+        props += ["DynamicUser=yes", "AmbientCapabilities=CAP_DAC_READ_SEARCH"]
+    elif root:
         u = trial_uid()
         props += ["User=%d" % u, "Group=%d" % u, "AmbientCapabilities=CAP_DAC_READ_SEARCH"]
     for prog, shim in sorted((binds or {}).items()):
@@ -549,18 +674,26 @@ def _ps_list(xs):
     return ", ".join("'" + x.replace("'", "''") + "'" for x in xs)
 
 
-def sandbox_probe(runner, pwsh="/usr/bin/pwsh", version=None):
+def sandbox_probe(runner, pwsh=None, version=None):
     """Whether the sandbox works here and holds - looked at from inside, nothing written -> '' or why not."""
     if not runner:
         return "systemd-run was not found"
     if version is None:
         version = systemd_version(runner)
+    pwsh = pwsh or find_pwsh("")
+    if not pwsh:
+        return "pwsh was not found (%s)" % ("; ".join(PWSH_WHY) or "not on the PATH")
+    if PWSH_ID and not pwsh_same(pwsh):
+        return "pwsh %s changed since it was checked" % pwsh
     host = dict((p, "%d:%d" % (os.stat(p).st_dev, os.stat(p).st_ino)) for p in PROBE_PRIVATE if os.path.exists(p))
     ro = PROBE_RO + [os.path.expanduser("~")]
-    script = PROBE_PS1.replace("@RO@", _ps_list(ro)).replace("@IPC@", _ps_list([x for x in IPC_PATHS if x.startswith("/proc/sys/")]))
+    prof = profile_of(FORCED_VERSION if FORCED_VERSION is not None else version)
+    # the IPC files in /proc: its own (hidden) with the full profile; the host's (read as they are) with systemd 239
+    ipc_files = [x for x in IPC_PATHS if x.startswith("/proc/sys/")] if prof == "full" else []
+    script = PROBE_PS1.replace("@RO@", _ps_list(ro)).replace("@IPC@", _ps_list(ipc_files) or "@()")
     enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     try:
-        if os.geteuid() == 0 and not uid_free(trial_uid()):
+        if os.geteuid() == 0 and profile_of(FORCED_VERSION if FORCED_VERSION is not None else version) == "full" and not uid_free(trial_uid()):
             return "its UID %d is in use here" % trial_uid()
         r = subprocess.run(sandbox_cmd(runner, 60, version=version) + [pwsh, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, env=sandbox_env())
@@ -589,7 +722,7 @@ def sandbox_probe(runner, pwsh="/usr/bin/pwsh", version=None):
     uid = str(j.get("uid")).strip()
     if uid in ("", "0"):
         return "it runs as root"
-    if os.geteuid() == 0 and uid != str(trial_uid()):
+    if os.geteuid() == 0 and prof == "full" and uid != str(trial_uid()):
         return "it runs as UID %s, not its own %d" % (uid, trial_uid())
     try:
         cap = int(str(j.get("capeff") or ""), 16)
@@ -597,8 +730,21 @@ def sandbox_probe(runner, pwsh="/usr/bin/pwsh", version=None):
         return "its capabilities could not be read"
     if cap & ~CAP_DAC_READ_SEARCH:
         return "it keeps capabilities other than reading (CapEff %s)" % j.get("capeff")
-    if os.geteuid() == 0 and _uid_procs(trial_uid()):
+    p1 = j.get("p1") or []
+    p1 = [p1] if isinstance(p1, str) else p1
+    if p1:
+        return "another UID's process can be read in it (%s)" % ", ".join(p1)
+    if j.get("signal"):
+        return "it can signal another UID's process (kill -0)"
+    if prof == "239":
+        said = j.get("ipcrm") or []
+        said = [said] if isinstance(said, str) else said
+        if len(said) != 2 or not all("permission denied" in str(x).lower() for x in said):
+            return "SysV IPC is not closed in it (systemd %s: ipcrm said %s)" % (version, "; ".join(str(x) for x in said)[:160] or "nothing")
+    if os.geteuid() == 0 and prof == "full" and _uid_procs(trial_uid()):
         return "its UID %d owns a process here" % trial_uid()
+    if os.geteuid() == 0 and prof == "239" and uid.isdigit() and _uid_procs(int(uid)):
+        return "its dynamic UID %s owns a process here after it ended" % uid
     return ""
 
 
@@ -659,13 +805,66 @@ def _needs(argv):
     return False
 
 
+# 1.76.1 (Codex): the places the sandbox shows as its own, not the host's - /proc but its global files, which are the host's
+PRIVATE_ROOTS = ["/tmp", "/var/tmp", "/dev/shm", "/dev/mqueue", "/proc"]
+PROC_HOST = ["/proc/sys", "/proc/cmdline"]
+
+
+def _norm(path):
+    """A literal path -> (normalized: . .. // collapsed - up to its first component with a wildcard, wildcard?)."""
+    p = posixpath.normpath(re.sub(r"/+", "/", path))
+    keep, wild = [], False
+    for x in p.split("/"):
+        if re.search(r"[*?\[]", x):
+            wild = True
+            break
+        keep.append(x)
+    return ("/".join(keep) or "/"), wild
+
+
+def touch_of(path, recursive=False):
+    """-> the place of PRIVATE_ROOTS a path is in - or, for a program or cmdlet that walks down (recursive, or a
+    wildcard), above - normalized AND through the host's symlinks (realpath, looked at here, outside the sandbox: an
+    alias like /var/../tmp or a link into /tmp is the same place); '' when none. A path that is not absolute: '?'."""
+    if not str(path).startswith("/"):
+        return "?"
+    n, wild = _norm(str(path))
+    rec = recursive or wild
+    for q in (n, os.path.realpath(n)):
+        for t in PRIVATE_ROOTS:
+            if q == t or q.startswith(t + "/"):
+                if t == "/proc" and any(q == x or q.startswith(x + "/") for x in PROC_HOST):
+                    continue
+                return t
+            if rec and (q == "/" or t.startswith(q.rstrip("/") + "/")):
+                return t
+    return ""
+
+
+def path_snapshot(paths, calls):
+    """1.76.1b: the host's realpath of every literal path a code reads - its cmdlets' (paths) and its programs' arguments
+    that are paths (calls) - looked at here, outside the sandbox: taken before the trial and again after; a change means
+    the host's links moved during the trial, and its result is dropped."""
+    out = {}
+    for p in paths or []:
+        if isinstance(p, dict) and p.get("literal") and str(p.get("path") or "").startswith("/"):
+            n = _norm(str(p["path"]))[0]
+            out[n] = os.path.realpath(n)
+    for c in calls or []:
+        for x in (c or [])[1:]:
+            if str(x).startswith("/"):
+                n = _norm(str(x))[0]
+                out[n] = os.path.realpath(n)
+    return out
+
+
+def path_moved(before, after):
+    """The paths whose realpath changed between two snapshots -> ['path: was -> now'] ([] when none)."""
+    return ["%s: %s -> %s" % (k, v, after.get(k)) for k, v in sorted((before or {}).items()) if after.get(k) != v]
+
+
 def _touches_tmp(path, recursive):
-    """A path in /tmp, /var/tmp or /dev/shm - or above one, for a program that walks down (find, grep -r)."""
-    p = "/" + path.strip("/")
-    for t in TMP_ROOTS:
-        if p == t or p.startswith(t + "/") or (recursive and (t + "/").startswith(p.rstrip("/") + "/")):
-            return True
-    return False
+    return touch_of(path, recursive) != ""
 
 
 def replays_for(calls):
@@ -680,26 +879,41 @@ def replays_for(calls):
     return out
 
 
-def blind(code, calls=None):
-    """What a code would read from the sandbox and not the host -> '' or why it is not tried. calls: the read-only
-    check's command lines (find and stat of a temporary folder are replayed; grep there - it would read a host FIFO
-    outside - is not tried)."""
+PLACE = {"/tmp": "a temporary folder (/tmp, /var/tmp, /dev/shm: the sandbox has its own)",
+         "/var/tmp": "a temporary folder (/tmp, /var/tmp, /dev/shm: the sandbox has its own)",
+         "/dev/shm": "a temporary folder (/tmp, /var/tmp, /dev/shm: the sandbox has its own)",
+         "/dev/mqueue": "the message queues (the sandbox's own IPC)",
+         "/proc": "/proc of the processes (the sandbox sees its own, or none of other users)"}
+
+
+def blind(code, calls=None, paths=None):
+    """What a code would read from the sandbox and not the host -> '' or why it is not tried. 1.76.1 (Codex): per command,
+    from the read-only check's syntax tree - paths: each file-reading cmdlet's path {cmd, path, literal, recurse} - not
+    per line of text. Only a literal path may be read inside, one that is - normalized and through the host's symlinks -
+    in none of the sandbox's own places (touch_of); any other is not tried. calls: the programs' command lines - find
+    and stat there are replayed (replays_for), grep there is not tried (outside it would read a host FIFO)."""
     for rx, what in BLIND:
         if re.search(rx, code or "", re.I if "proc" in rx else 0):
             return "it reads %s - the trial cannot show it as the host has it" % what
-    tmp = "a temporary folder (/tmp, /var/tmp, /dev/shm: the sandbox has its own)"
-    for ln in (code or "").splitlines():
-        if re.search(TMP_RX, ln) and not re.search(r"/usr/bin/(find|stat)\b", ln):
-            return "it reads %s - the trial cannot show /tmp as the host has it" % tmp
-        # a walk down from /, /var or /dev reaches the temporary folders
-        if re.search(r"\bGet-ChildItem\b.*-Recurse|\bGet-ChildItem\b.*-Depth", ln, re.I) and \
-                re.search(r"""(?:^|[\s'"(])(/|/var/?|/dev/?)(?:['"\s)]|$)""", ln):
-            return "it reads %s - the trial cannot show /tmp as the host has it" % tmp
+    for p in paths or []:
+        if not isinstance(p, dict):
+            continue
+        if not p.get("literal"):
+            return "%s is given a path that is not a plain literal (%s) - the trial reads only literal paths" % (
+                p.get("cmd") or "a cmdlet", str(p.get("path") or "")[:80])
+        t = touch_of(p.get("path") or "", bool(p.get("recurse")))
+        if t == "?":
+            return "%s is given %s - not an absolute path" % (p.get("cmd") or "a cmdlet", str(p.get("path"))[:80])
+        if t:
+            return "it reads %s - the trial cannot show %s as the host has it (%s %s)" % (
+                PLACE[t], t, p.get("cmd") or "", str(p.get("path"))[:80])
     for c in calls or []:
         if c and c[0] == "/usr/bin/grep":
             rec = "-r" in c
-            if any(x.startswith("/") and _touches_tmp(x, rec) for x in c[1:]):
-                return "it reads %s - the trial cannot show /tmp as the host has it" % tmp
+            for x in c[1:]:
+                t = touch_of(x, rec) if x.startswith("/") else ""
+                if t:
+                    return "it reads %s - the trial cannot show %s as the host has it (grep %s)" % (PLACE[t], t, x[:80])
     return ""
 
 
@@ -757,6 +971,8 @@ def run_trial(pwsh, runner, code, seconds, binds=None, version=None):
     t = time.time()
     if version is None:
         version = systemd_version(runner)
+    if PWSH_ID and not pwsh_same(pwsh):
+        return None, "pwsh %s changed since it was checked - not run" % pwsh, 0
     try:
         p = subprocess.run(sandbox_cmd(runner, seconds, binds, version) + trial_command(pwsh, code),
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=seconds + 60,
@@ -775,13 +991,70 @@ def run_trial(pwsh, runner, code, seconds, binds=None, version=None):
         return None, err, round(time.time() - t, 1)
 
 
+PWSH_WHY = []
+PWSH_ID = {}
+
+
+def _secure_why(path, stat=os.stat):
+    """1.76.1b (Codex): a file root owns, no group or other user can write - nor any folder above it (a writable folder
+    lets the file be swapped, as sudo's secure_path checks) -> '' or why not."""
+    try:
+        st = stat(path)
+    except OSError as e:
+        return "%s: %s" % (path, e)
+    if st.st_uid != 0:
+        return "%s is not owned by root" % path
+    if st.st_mode & 0o022:
+        return "%s can be written by others than root" % path
+    d = os.path.dirname(path.rstrip("/")) or "/"
+    while True:
+        try:
+            sd = stat(d)
+        except OSError as e:
+            return "%s: %s" % (d, e)
+        if sd.st_uid != 0:
+            return "the folder %s (above %s) is not owned by root" % (d, path)
+        if sd.st_mode & 0o022:
+            return "the folder %s (above %s) can be written by others than root" % (d, path)
+        if d == "/":
+            return ""
+        d = os.path.dirname(d) or "/"
+
+
+def pwsh_trusted(path, stat=os.stat):
+    """The pwsh the check and the trial run (resolved): root's, and so is every folder above it -> '' or why not."""
+    return _secure_why(path, stat)
+
+
+def _identity(path):
+    st = os.stat(path)
+    return (st.st_dev, st.st_ino, st.st_uid, st.st_mode, st.st_size, st.st_mtime)
+
+
+def pwsh_same(path):
+    """Right before each run: the pwsh is still the file that was checked (device, inode, owner, mode, size, time)."""
+    try:
+        return path in PWSH_ID and _identity(path) == PWSH_ID[path]
+    except OSError:
+        return False
+
+
 def find_pwsh(path):
-    if path:
-        return path if os.path.isfile(path) else ""
-    for d in os.environ.get("PATH", "").split(os.pathsep) + ["/usr/bin", "/opt/microsoft/powershell/7"]:
-        p = os.path.join(d, "pwsh")
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
+    """pwsh - the given path (check_stig_pwsh), else the first on the host's PATH (then /usr/bin, /opt/microsoft/powershell/7),
+    resolved through its links; only one root owns that no one else can write, in folders the same - the given path's
+    and the resolved one's ('' = none; PWSH_WHY says why). Its identity is kept: each run checks it again (pwsh_same)."""
+    del PWSH_WHY[:]
+    cands = [path] if path else [os.path.join(d, "pwsh") for d in os.environ.get("PATH", "").split(os.pathsep) + ["/usr/bin", "/opt/microsoft/powershell/7"] if d]
+    for c in cands:
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            real = os.path.realpath(c)
+            bad = pwsh_trusted(real) or (_secure_why(os.path.dirname(os.path.abspath(c)) or "/") if c != real else "")
+            if not bad:
+                PWSH_ID[real] = _identity(real)
+                return real
+            PWSH_WHY.append(bad)
+            if path:
+                return ""
     return ""
 
 
@@ -901,6 +1174,8 @@ def expected_check(root):
 
 def run_ps(pwsh, script, code_file, seconds):
     t = time.time()
+    if PWSH_ID and not pwsh_same(pwsh):
+        return None, "pwsh %s changed since it was checked - not run" % pwsh, 0
     try:
         p = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-File", script, "-CodeFile", code_file],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=seconds)
@@ -939,7 +1214,9 @@ def main():
     pwsh = find_pwsh(p["pwsh"])
     gate, trial = {}, {}
     if not pwsh:
-        module.exit_json(changed=False, evaluate=ev, gate={}, trial={}, error="pwsh was not found on the host")
+        module.exit_json(changed=False, evaluate=ev, gate={}, trial={},
+                         error="pwsh was not found on the host" + ((" (" + "; ".join(PWSH_WHY) + ")") if PWSH_WHY else ""))
+    ev["pwsh"] = pwsh
     work = tempfile.mkdtemp(prefix="site-answer-keys-")
     os.chmod(work, 0o700)
     runner, no_sandbox, answers, version = None, "", {}, 0
@@ -973,7 +1250,8 @@ def main():
             # what the sandbox would show as its own, not the host's (the mount table, IPC files, names through
             # PowerShell): not tried - never a result the host would not give
             calls = [[str(x) for x in c] for c in (gate[cid].get("calls") or []) if isinstance(c, list)]
-            why_blind = blind(code, calls)
+            gp = gate[cid].get("paths") or []
+            why_blind = blind(code, calls, [gp] if isinstance(gp, dict) else gp)
             if why_blind:
                 trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0, "error": why_blind}
                 continue
@@ -990,7 +1268,14 @@ def main():
                     answers[tuple(argv)] = capture(argv, max(30, p["timeout"]))
             replayed = [" ".join(c) for c in todo]
             binds = write_shims(work, dict((tuple(c), answers[tuple(c)]) for c in todo))
+            snap = path_snapshot(gp if isinstance(gp, list) else [gp], calls)
             r, err, secs = run_trial(pwsh, runner, code, max(5, p["timeout"]), binds, version)
+            moved = path_moved(snap, path_snapshot(gp if isinstance(gp, list) else [gp], calls))
+            if moved:
+                # 1.76.1b: a link the check looked at moved during the trial - its result is not the host's as checked
+                trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": secs, "replayed": replayed,
+                              "error": "a path changed during the trial (%s)" % "; ".join(moved)[:240]}
+                continue
             if not isinstance(r, dict):
                 trial[cid] = {"ran": True, "ok": False, "valid": None, "read": "", "error": err, "seconds": secs}
             elif not r.get("ok"):

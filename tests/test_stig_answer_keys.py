@@ -389,7 +389,7 @@ class ReadOnlyCheck(unittest.TestCase):
         """1.76.0: the sandbox's command line - the whole file system read-only, its own /tmp, /var/tmp, /dev/shm, no
         socket of any family, no IP, only the right to read; as root a dynamic user (CAP_DAC_READ_SEARCH ambient), never
         CAP_AUDIT_CONTROL; the host's network namespace (net.* read is the host's). No systemd-run: no sandbox, said why."""
-        c = host.sandbox_cmd("/usr/bin/systemd-run", 60, {"/usr/bin/systemctl": "/w/replay-systemctl"})
+        c = host.sandbox_cmd("/usr/bin/systemd-run", 60, {"/usr/bin/systemctl": "/w/replay-systemctl"}, 252)
         props = [c[i + 1] for i, x in enumerate(c) if x == "-p"]
         for want in ("ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
                      "TemporaryFileSystem=/dev/shm", "PrivateIPC=yes", "ProtectProc=invisible", "SystemCallFilter=~@privileged @debug", "InaccessiblePaths=-/proc/sys/kernel/shmmax", "InaccessiblePaths=-/proc/sysvipc", "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
@@ -405,12 +405,24 @@ class ReadOnlyCheck(unittest.TestCase):
         self.assertNotIn("ProcSubset=pid", props)
         self.assertNotIn("PrivatePIDs=yes", props)
         v = host.sandbox_cmd("/usr/bin/systemd-run", 60, version=257)
+        # 1.76.1: systemd 239 (RHEL 8) - the six settings it lacks left out, the same properties another way; as root a
+        # dynamic user (239 refuses a numeric User= with no passwd entry - tried on the real 239)
+        p239 = [x for i, x in enumerate(host.sandbox_cmd("/usr/bin/systemd-run", 60, version=239)) if i and host.sandbox_cmd("/usr/bin/systemd-run", 60, version=239)[i - 1] == "-p"]
+        for gone in ("PrivateIPC=yes", "ProtectProc=invisible", "ProtectClock=yes", "ProtectKernelLogs=yes", "RestrictSUIDSGID=yes",
+                     "ProtectHostname=yes", "LockPersonality=yes", "PrivatePIDs=yes"):
+            self.assertNotIn(gone, p239)
+        for want in ("SystemCallFilter=~" + " ".join(host.IPC_CALLS), "SystemCallFilter=~@clock personality", "SystemCallErrorNumber=EPERM",
+                     "PrivateTmp=yes", "RestrictAddressFamilies=~AF_UNIX", "CapabilityBoundingSet=CAP_DAC_READ_SEARCH"):
+            self.assertIn(want, p239)
+        self.assertFalse([x for x in p239 if x.startswith("InaccessiblePaths=-/proc/sys")])     # the host's IPC files, read as they are
+        self.assertEqual((host.profile_of(239), host.profile_of(247), host.profile_of(248)), ("239", "239", "full"))
         self.assertIn("PrivatePIDs=yes", [v[i + 1] for i, x in enumerate(v) if x == "-p"])
         self.assertFalse([x for x in props if "AUDIT" in x])
         real = os.geteuid
         try:
             os.geteuid = lambda: 0
-            r = host.sandbox_cmd("/usr/bin/systemd-run", 60)
+            r = host.sandbox_cmd("/usr/bin/systemd-run", 60, version=252)
+            r239 = host.sandbox_cmd("/usr/bin/systemd-run", 60, version=239)
         finally:
             os.geteuid = real
         pr = [r[i + 1] for i, x in enumerate(r) if x == "-p"]
@@ -421,6 +433,9 @@ class ReadOnlyCheck(unittest.TestCase):
         self.assertIn("User=%d" % u, pr)
         self.assertIn("Group=%d" % u, pr)
         self.assertNotIn("User=nobody", pr)
+        p2 = [r239[i + 1] for i, x in enumerate(r239) if x == "-p"]
+        self.assertIn("DynamicUser=yes", p2)
+        self.assertFalse([x for x in p2 if x.startswith("User=")])
         self.assertTrue(host.uid_free(u))
         self.assertFalse(host.uid_free(0))
         self.assertFalse(host.uid_free(os.getuid()))           # this test's own: it owns a process
@@ -464,14 +479,47 @@ class ReadOnlyCheck(unittest.TestCase):
         self.assertEqual(len(host.replays_for([["/usr/bin/find", "/var", "-perm", "-0002", "-print"]])), 1)
         self.assertEqual(len(host.replays_for([["/usr/bin/stat", "-c", "%a", "/tmp"]])), 1)
         self.assertEqual(host.replays_for([["/usr/bin/find", "/etc", "-perm", "-0002", "-print"]]), [])
-        for code in ("Get-Content /tmp/x", "Test-Path '/var/tmp'", "Get-ChildItem /dev/shm", "Get-ChildItem / -Recurse -File",
-                     "Get-ChildItem -Path '/var' -Recurse"):
-            self.assertIn("cannot show /tmp", host.blind(code), code)
+        # 1.76.1 (Codex): per command, from the syntax tree - the read-only check reports each cmdlet's paths; only a
+        # literal one, outside the sandbox's own places after . .. // and the host's symlinks, is read inside
+        link = tempfile.mkdtemp(dir=os.path.expanduser("~"), prefix=".site-ak-link-")
+        os.symlink("/tmp", os.path.join(link, "to-tmp"))
+        try:
+            def blind_of(code):
+                g = self.run_ps(self.gate, code)
+                gp = g.get("paths") or []
+                return host.blind(code, [list(c) for c in g.get("calls") or []], [gp] if isinstance(gp, dict) else gp)
+            for code, word in (("$l = Get-Content /tmp/x; return $true", "cannot show /tmp"), ("return (Test-Path '/var/tmp')", "cannot show /var/tmp"),
+                               ("$a = Get-ChildItem /dev/shm; return $true", "cannot show /dev/shm"),
+                               ("$a = Get-ChildItem / -Recurse -File; return $true", "cannot show /tmp"),
+                               ("$a = Get-ChildItem -Path '/var' -Recurse; return $true", "cannot show /var/tmp"),
+                               ("$s = & /usr/bin/stat -c '%a' '/etc/x'; return (Test-Path /tmp/x)", "cannot show /tmp"),       # one line, two commands
+                               ("return (Test-Path '/var/../tmp/x')", "cannot show /tmp"), ("return (Test-Path '//tmp//x')", "cannot show /tmp"),
+                               ("return (Test-Path '%s/to-tmp/x')" % link, "cannot show /tmp"),                                   # a symlink into /tmp
+                               ("$p = '/etc/x'; return (Test-Path $p)", "not a plain literal"),
+                               ("return (Test-Path ('/et' + 'c/x'))", "not a plain literal"),
+                               ("$a = Get-ChildItem; return $true", "not a plain literal"),
+                               ("$l = Get-Content /proc/1/environ; return $true", "process"),
+                               ("$l = Select-String -Pattern x -Path '/proc/self/status'; return $true", "process"),
+                               # 1.76.1b (Codex): a path piped in is validated as the cmdlet's own; other input piped in is not tried
+                               ("return ('/tmp/x' | Test-Path)", "cannot show /tmp"), ("return (@('/etc/a', '/tmp/b') | Test-Path)", "cannot show /tmp"),
+                               ("$p = '/etc/x'; return ($p | Test-Path)", "not a plain literal"),
+                               ("$a = Get-ChildItem /etc/ssh | Get-Content; return $true", "not a plain literal"),
+                               ("$a = Get-ChildItem /etc/ssh | Select-String 'x'; return $true", "not a plain literal"),
+                               ("$a = Get-Item /etc/hosts | Get-Item; return $true", "not a plain literal")):
+                with self.subTest(code=code):
+                    self.assertIn(word, blind_of(code))
+            for code in ("$o = @(& /usr/bin/find /tmp -perm -0002 -print 2>&1); return $true", "$a = Get-ChildItem /etc -Recurse; return $true",
+                         "$l = Get-Content /etc/tmpfiles.d/x.conf; return $true", "$l = Get-Content /var/tmpx; return $true",
+                         "$l = Get-Content /proc/sys/kernel/x; return $true", "$l = Get-Content /proc/cmdline; return $true",
+                         "$l = Get-Content -LiteralPath '/etc/ssh/sshd_config' | Where-Object { $_ -match 'x' }; return $true",
+                         "$l = '/etc/x' | Get-Content; return $true", "$a = Get-Content /etc/x | Select-String 'x'; return $true",
+                         "$a = '/etc/y' | Get-Item; return $true", "$a = ('/etc/z') | Get-ChildItem; return $true"):
+                with self.subTest(code=code):
+                    self.assertEqual(blind_of(code), "")
+        finally:
+            shutil.rmtree(link, ignore_errors=True)
         self.assertIn("cannot show /tmp", host.blind("x", [["/usr/bin/grep", "-r", "-l", "a", "/"]]))
         self.assertIn("cannot show /tmp", host.blind("x", [["/usr/bin/grep", "-l", "a", "/tmp/x"]]))
-        for code in ("$o = @(& /usr/bin/find /tmp -perm -0002 -print)", "Get-ChildItem /etc -Recurse", "Get-Content /etc/tmpfiles.d/x.conf",
-                     "Get-Content /var/tmpx"):
-            self.assertEqual(host.blind(code), "", code)
         self.assertEqual(host.blind("x", [["/usr/bin/grep", "-l", "a", "/etc/x"]]), "")
         # what the sandbox shows as its own: not tried
         for code, word in (("Get-Content /proc/mounts", "mount table"), ("Get-Content /proc/self/mountinfo", "mount table"),
@@ -639,6 +687,92 @@ class Evaluate(unittest.TestCase):
             self.assertEqual(host.es_folder(os.path.join(d, "Evaluate-STIG.ps1")), d)
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+
+class Pwsh(unittest.TestCase):
+    """1.76.1: the pwsh the check and the trial run - the given one or the first on the PATH, through its links, only
+    root-owned and writable by root alone; How this was made names it."""
+    def test_found_and_trusted(self):
+        found = host.find_pwsh("")
+        self.assertTrue(found and found == os.path.realpath(found), found)
+        self.assertEqual(host.pwsh_trusted(found), "")
+        d = tempfile.mkdtemp()
+        try:
+            mine = os.path.join(d, "pwsh")
+            with open(mine, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(mine, 0o755)
+            if os.geteuid() != 0:
+                self.assertIn("not owned by root", host.pwsh_trusted(mine))
+                self.assertEqual(host.find_pwsh(mine), "")
+                self.assertIn("not owned by root", host.PWSH_WHY[0])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        doc = a.stig_answer_report([], "h", "DEFAULT", {"pwsh": "/opt/microsoft/powershell/7/pwsh"})
+        self.assertIn("The read-only check and the trial ran with /opt/microsoft/powershell/7/pwsh.", doc["web"]["sections"][-1]["lines"])
+
+
+class PwshSecure(unittest.TestCase):
+    """1.76.1b (Codex): pwsh and every folder above it root's and writable by root alone - a root-owned pwsh in a 0777
+    folder is refused (it could be swapped before it runs, as root); one under /usr/local/bin (root 0755) is not."""
+    class St(object):
+        def __init__(self, uid, mode):
+            self.st_uid, self.st_mode = uid, mode
+
+    def fake(self, tree):
+        def stat(p):
+            if p not in tree:
+                raise OSError(2, "no such file", p)
+            return self.St(*tree[p])
+        return stat
+
+    def test_folders_above(self):
+        ok = {"/": (0, 0o40755), "/usr": (0, 0o40755), "/usr/local": (0, 0o40755), "/usr/local/bin": (0, 0o40755), "/usr/local/bin/pwsh": (0, 0o100755)}
+        self.assertEqual(host.pwsh_trusted("/usr/local/bin/pwsh", self.fake(ok)), "")
+        bad = dict(ok, **{"/opt": (0, 0o41777), "/opt/pwsh": (0, 0o100755)})
+        self.assertIn("the folder /opt (above /opt/pwsh) can be written by others than root", host.pwsh_trusted("/opt/pwsh", self.fake(bad)))
+        mine = dict(ok, **{"/home": (0, 0o40755), "/home/u": (1000, 0o40700), "/home/u/pwsh": (0, 0o100755)})
+        self.assertIn("the folder /home/u (above /home/u/pwsh) is not owned by root", host.pwsh_trusted("/home/u/pwsh", self.fake(mine)))
+        self.assertIn("can be written by others", host.pwsh_trusted("/usr/local/bin/pwsh", self.fake(dict(ok, **{"/usr/local/bin/pwsh": (0, 0o100775)}))))
+
+    def test_changed_before_it_runs(self):
+        p = host.find_pwsh("")
+        self.assertTrue(host.pwsh_same(p))
+        host.PWSH_ID[p] = (0, 0, 0, 0, 0, 0)            # as if swapped since it was checked
+        try:
+            r, err, _ = host.run_ps(p, "/nonexistent.ps1", "/nonexistent", 10)
+            self.assertIsNone(r)
+            self.assertIn("changed since it was checked - not run", err)
+        finally:
+            host.find_pwsh("")
+
+
+class PathsMoved(unittest.TestCase):
+    """1.76.1b: the realpaths a code reads, before and after its trial - a link moved in between: the result is dropped."""
+    def test_a_link_that_moves(self):
+        d = tempfile.mkdtemp(dir=os.path.expanduser("~"), prefix=".site-ak-move-")
+        try:
+            os.makedirs(os.path.join(d, "a"))
+            os.makedirs(os.path.join(d, "b"))
+            ln = os.path.join(d, "now")
+            os.symlink(os.path.join(d, "a"), ln)
+            paths = [{"cmd": "Get-Content", "path": ln + "/x", "literal": True}, {"cmd": "Test-Path", "path": "$p", "literal": False}]
+            calls = [["/usr/bin/stat", "-c", "%a", ln + "/y"], ["/usr/sbin/sysctl", "-n", "kernel.x"]]
+            before = host.path_snapshot(paths, calls)
+            self.assertEqual(sorted(before), sorted([ln + "/x", ln + "/y"]))
+            self.assertEqual(host.path_moved(before, host.path_snapshot(paths, calls)), [])
+            os.remove(ln)
+            os.symlink(os.path.join(d, "b"), ln)
+            moved = host.path_moved(before, host.path_snapshot(paths, calls))
+            self.assertEqual(len(moved), 2)
+            self.assertIn("%s/x: %s/a/x -> %s/b/x" % (ln, d, d), moved)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        picks = [dict(v="V-1", sv="SV-1", title="Owner", ok=True, expected="Open", check_text=T_OWNER, es="Open")]
+        dr = a.stig_answer_drafts(picks, {}, False)
+        r = a.stig_answer_rows(picks, dr, {"gate": {"V-1": {"ok": True, "used": []}},
+                                           "trial": {"V-1": {"ran": False, "error": "a path changed during the trial (/x: /a -> /b)"}}}, "DEFAULT")[0]
+        self.assertEqual(r["why"], "Not drafted - not tried: a path changed during the trial (/x: /a -> /b).")
 
 
 class EvaluateWider(unittest.TestCase):

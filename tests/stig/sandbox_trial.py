@@ -15,6 +15,7 @@ shows the same write works there.
   python3 tests/stig/sandbox_trial.py           (exit 0: all held; AK_SANDBOX=none: only says there is none here)"""
 import importlib.util
 import os
+import re
 import shutil
 import socket
 import stat
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 here = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location(
@@ -40,6 +42,11 @@ def say(ok, text):
 
 pwsh = h.find_pwsh("")
 runner = h.find_sandbox("")
+# 1.76.1: AK_PROFILE=239 - the systemd 239 profile (RHEL 8) on this systemd too (it holds on a newer one as well)
+if os.environ.get("AK_PROFILE") == "239":
+    h.FORCED_VERSION = 239
+PROFILE = h.profile_of(h.FORCED_VERSION if h.FORCED_VERSION is not None else h.systemd_version(runner))
+print("profile: %s (systemd %s)" % (PROFILE, h.systemd_version(runner)))
 if not pwsh:
     print("SKIP - pwsh is not here")
     sys.exit(0)
@@ -132,7 +139,9 @@ for name, code in codes:
 r, err, _ = h.run_trial(pwsh, runner, "return ((Get-Content -LiteralPath %s) -eq 'x')" % q, 30)
 say(isinstance(r, dict) and r.get("values") == [True], "the code runs in there and reads the host's files (it read the file: %s)" % (r or err))
 r, err, _ = h.run_trial(pwsh, runner, "Set-Content -LiteralPath %s -Value y; return $true" % q, 30)
-say(isinstance(r, dict) and "Read-only file system" in str(r.get("error")), "the write is refused by the kernel: %s" % (str((r or {}).get("error"))[:120] or err))
+# (as root the code is another user than the file's owner: the kernel says permission denied before read-only)
+say(isinstance(r, dict) and re.search(r"Read-only file system|denied", str(r.get("error"))) is not None and open(victim).read() == "x\n",
+    "the write is refused by the kernel: %s" % (str((r or {}).get("error"))[:120] or err))
 # 1.76.0 (Codex): no socket, no privilege. A service of this test's own, then the real systemctl and auditctl (no replay
 # shim here: the test leaves it out) and systemd's and D-Bus's own sockets, tried from inside: nothing reaches them
 root = os.geteuid() == 0
@@ -195,7 +204,7 @@ except BlockingIOError:
 os.close(rd)
 say(isinstance(r, dict) and r.get("values") == [False] and got == b"", "a host FIFO and file in /tmp cannot be reached from inside (nothing reached the FIFO's reader)")
 say(not os.path.exists("/tmp/site-ak-inside"), "a write to /tmp inside does not reach the host's /tmp")
-say("cannot show /tmp" in h.blind("$l = Get-Content -LiteralPath '%s'" % ww), "a code that reads /tmp is not tried")
+say("cannot show /tmp" in h.blind("", [], [{"cmd": "Get-Content", "path": ww, "literal": True}]), "a code that reads /tmp is not tried")
 fcall = ["/usr/bin/find", wtmp, "-type", "f", "-perm", "-0002", "-print"]
 todo = h.replays_for([fcall])
 binds = h.write_shims(sh_dir, dict((tuple(c), h.capture(c)) for c in todo))
@@ -206,15 +215,25 @@ say(todo == [fcall] and isinstance(r, dict) and r.get("values") == [True],
 shutil.rmtree(wtmp, ignore_errors=True)
 # a process of this host cannot be signalled from inside: a sleeper of the test's own user (here: a PID namespace of
 # its own, systemd 257+), as root also one of nobody and one of another random UID (the trial's UID is its own)
-sleepers = [("the test's own user", subprocess.Popen(["/bin/sleep", "600"]))]
+sleepers = []
+if PROFILE == "full" or root:
+    sleepers.append(("the test's own user", subprocess.Popen(["/bin/sleep", "600"])))
+else:
+    # systemd 239 as a user: the trial runs as this same user, with no PID namespace of its own (systemd 257+) - the real
+    # job runs it as root with a UID of its own, which the root run below proves
+    print("SKIP - the test's own user's process: in user mode the systemd 239 profile runs as that user (the root run proves the UID of its own)")
 if root:
     import pwd
     nobody = pwd.getpwnam("nobody")
     nob = subprocess.Popen(["/usr/bin/setpriv", "--reuid=%d" % nobody.pw_uid, "--regid=%d" % nobody.pw_gid, "--clear-groups", "/bin/sleep", "600"])
-    other = h.UID_FIRST - 7
+    other = 54321          # another UID that owns nothing (inside a rootless container's mapped range too)
     oth = subprocess.Popen(["/usr/bin/setpriv", "--reuid=%d" % other, "--regid=%d" % other, "--clear-groups", "/bin/sleep", "600"])
     sleepers += [("nobody", nob), ("UID %d" % other, oth)]
+time.sleep(1)
 for who, sp in sleepers:
+    if sp.poll() is not None:
+        print("SKIP - a process of %s did not start here (setpriv exited %s)" % (who, sp.returncode))
+        continue
     r, err, _ = h.run_trial(pwsh, runner, "try { [System.Diagnostics.Process]::GetProcessById(%d).Kill() } catch { }; "
                                           "$null = @(& /usr/bin/kill -TERM %d 2>&1); return $true" % (sp.pid, sp.pid), 30)
     say(sp.poll() is None, "a process of %s (pid %d) cannot be signalled from inside: it still runs" % (who, sp.pid))
@@ -231,8 +250,15 @@ binds = h.write_shims(sh_dir, answers)
 want_pw = answers[("/usr/bin/getent", "passwd", "root")][0].decode().strip()
 r, err, _ = h.run_trial(pwsh, runner, "$v = [string](& /usr/sbin/sysctl -n kernel.shmmax); Write-Verbose $v; return ($v -eq '%s')" % host_shm, 30, binds)
 say(isinstance(r, dict) and r.get("values") == [True], "kernel.shmmax inside is the host's %s (replayed)" % host_shm)
-r, err, _ = h.run_trial(pwsh, runner, "try { $null = Get-Content /proc/sys/kernel/shmmax -ErrorAction Stop; return $true } catch { return $false }", 30)
-say(isinstance(r, dict) and r.get("values") == [False], "/proc/sys/kernel/shmmax cannot be read inside (it would be the sandbox's own)")
+if PROFILE == "full":
+    r, err, _ = h.run_trial(pwsh, runner, "try { $null = Get-Content /proc/sys/kernel/shmmax -ErrorAction Stop; return $true } catch { return $false }", 30)
+    say(isinstance(r, dict) and r.get("values") == [False], "/proc/sys/kernel/shmmax cannot be read inside (it would be the sandbox's own)")
+else:
+    # systemd 239: no IPC namespace of its own - the file is the host's, read as it is; no IPC object can be made
+    r, err, _ = h.run_trial(pwsh, runner, "return [string](Get-Content /proc/sys/kernel/shmmax)", 30)
+    say(isinstance(r, dict) and r.get("values") == [host_shm], "systemd 239: /proc/sys/kernel/shmmax inside is the host's (%s)" % host_shm)
+    r, err, _ = h.run_trial(pwsh, runner, "$o = @(& /usr/bin/ipcmk -M 4096 2>&1); Write-Verbose ($o -join ' '); return ($LASTEXITCODE -ne 0)", 30)
+    say(isinstance(r, dict) and r.get("values") == [True], "systemd 239: no SysV IPC object can be made inside (ipcmk: %s)" % ((r or {}).get("read") or err)[:80])
 r, err, _ = h.run_trial(pwsh, runner, "$v = [string](& /usr/bin/getent passwd root); return ($v -eq '%s')" % want_pw.replace("'", "''"), 30, binds)
 say(isinstance(r, dict) and r.get("values") == [True], "getent passwd root inside gives the answer read outside (replayed): %s" % want_pw.split(":")[0])
 say("mount table" in h.blind("Get-Content /proc/self/mountinfo") and "user or group" in h.blind("(Get-Item /etc/x).User"),
@@ -262,8 +288,13 @@ if root:
     # as root (CI's throwaway runner: sudo): it runs as a UID of its own that keeps only the right to read; the kernel's
     # settings stay as they are - the write fails inside, even of the key's own value; /etc stays as it is
     r, err, _ = h.run_trial(pwsh, runner, "return [string](& /usr/bin/id -u)", 30)
-    say(isinstance(r, dict) and r.get("values") == [str(h.trial_uid())],
-        "as root: the code runs as its own UID %d (in no passwd entry, owning no other process), not root: %s" % (h.trial_uid(), (r or {}).get("values") or err))
+    if PROFILE == "full":
+        say(isinstance(r, dict) and r.get("values") == [str(h.trial_uid())],
+            "as root: the code runs as its own UID %d (in no passwd entry, owning no other process), not root: %s" % (h.trial_uid(), (r or {}).get("values") or err))
+    else:
+        u = ((r or {}).get("values") or [""])[0]
+        say(isinstance(r, dict) and u.isdigit() and u != "0" and not h._uid_procs(int(u)),
+            "as root (systemd 239): the code runs as a dynamic user of its own (UID %s), not root, owning no process after" % u)
     say(not os.path.exists(etc_probe), "as root: nothing written in /etc")
     for name, args in (("sysctl -w (its own value)", "-w vm.swappiness=%s" % swap), ("sysctl -p FILE", "-p %s" % conf),
                        ("sysctl --system", "--system")):

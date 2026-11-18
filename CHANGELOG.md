@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.76.1 — 2026-11-19
+
+**To set up: nothing.** On RHEL 8 the trial now runs (it needs `systemd-run`, there by default).
+
+**STIG answer keys: the trial on RHEL 8 (systemd 239); only literal paths read inside** (docs/STIG_ANSWER_KEYS.md,
+"The trial").
+
+- RHEL 8's systemd 239 lacks six of the sandbox's settings. The job picks a profile by `systemd-run --version` and
+  holds the same properties another way:
+  - SysV IPC and message queue calls refused (the IPC files in `/proc` are then the host's, read as they are);
+  - the clock and `personality(2)` refused;
+  - a dynamic user of its own (239 does not start a numeric user with no passwd entry).
+  The probe proves it before the first trial: no IPC object touched, another user's process unreadable and not
+  signalled. Proved on a real systemd 239 (a RHEL 8 container as PID 1, the CI job `answer-keys-rhel8-sandbox`).
+- The trial reads only literal paths, decided per command from the code's syntax tree: a cmdlet's path that is not a
+  plain literal (a variable, an expression, the current folder) is not tried. A literal path is normalized (`.`,
+  `..`, `//`) and followed through the host's symbolic links: one in the sandbox's own places (`/tmp`, `/var/tmp`,
+  `/dev/shm`, `/dev/mqueue`, `/proc` but `/proc/sys` and `/proc/cmdline`) is not tried. A process's `/proc` is not
+  tried; `find` and `stat` there are replayed from outside.
+- A path piped into a cmdlet is checked as its own; other piped input is not tried. The host's links are looked at
+  again right after each trial: a path that changed drops the result.
+- pwsh: the given one or the first on the host's PATH; it and every folder above it root's and writable by root alone,
+  checked again right before each run. How this was made names it.
+- Every pattern code of RHEL 8 V2R9, 9 V2R10 and 10 V1R3 (and V2R6, V2R7) is still tried: none is left untried.
+
 ## 1.76.0 — 2026-11-19
 
 **To set up: nothing.** The STIG answer keys template takes a group as `target` now (Prompt on launch for the Limit

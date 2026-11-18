@@ -1,4 +1,4 @@
-# STIG answer keys (1.75.0; the trial and many hosts: 1.76.0)
+# STIG answer keys (1.75.0; the trial and many hosts: 1.76.0; RHEL 8: 1.76.1)
 
 The **STIG answer keys** job (`playbooks/stig_answer_keys.yml`) drafts an Evaluate-STIG `<AnswerKey>` block for each
 rule. You paste each block into your own answer file, under that rule's `<Vuln ID>`.
@@ -245,7 +245,18 @@ It runs in a **sandbox**: a transient systemd unit (`systemd-run`) that the kern
   257 (RHEL 10) it has its own process namespace (`PrivatePIDs`).
 - Its own SysV IPC and message queues (`PrivateIPC`), so a code cannot leave IPC objects on the host. The IPC files in
   `/proc` (`/proc/sys/kernel/shm*`, `msg*`, `sem*`, `/proc/sys/fs/mqueue`, `/proc/sysvipc`) are hidden inside.
-- RHEL 8's systemd (239) lacks several of these settings: there the sandbox does not start and nothing is tried.
+- **RHEL 8 (systemd 239)** lacks six of these settings: `PrivateIPC`, `ProtectProc`, `ProtectClock`,
+  `ProtectKernelLogs`, `RestrictSUIDSGID`, `ProtectHostname` (and `systemd-run` there takes no `LockPersonality`).
+  The job picks a profile by `systemd-run --version` and holds the same properties another way:
+  - no SysV IPC object or message queue can be made: their system calls are refused (`SystemCallFilter`, failing
+    with EPERM); the IPC files in `/proc` are then the host's, and read as they are;
+  - no clock set and no `personality(2)`: refused system calls;
+  - the kernel's logs and the host name: no capability for them; no set-UID file: the file system is read-only and
+    `NoNewPrivileges` is on;
+  - not root: a dynamic user of its own (`DynamicUser`; systemd 239 does not start a unit with a numeric user that has
+    no passwd entry), keeping only the right to read. Another user's process can be listed but not read (its
+    environment, its open files) and gets no signal: the kernel refuses another UID.
+  - Proved on a real systemd 239 (a RHEL 8 container as PID 1, the job's own CI test as root).
 
 **The rule:** an answer that depends on a namespace, a socket or a private mount is never read inside the sandbox. It
 is replayed, or the code is not tried.
@@ -262,15 +273,30 @@ is replayed, or the code is not tried.
     `/dev`): they look at file entries only and never open a file, so a host FIFO there is safe.
   - When one call of `sysctl`, `stat` or `find` needs it, all that code's calls of the program are replayed.
 - **Not tried** (*Not drafted - the trial cannot show it as the host has it*): a code that reads the mount table
-  (`/proc/mounts`, `mountinfo`, `/etc/mtab`), an IPC file, a file's user or group through PowerShell (`.User`,
-  `.Group`), or anything in `/tmp`, `/var/tmp` or `/dev/shm` other than by `find` or `stat`. That includes `grep`
-  there, and `Get-ChildItem -Recurse` from `/`, `/var` or `/dev`.
+  (`/proc/mounts`, `mountinfo`, `/etc/mtab`), an IPC file, a process's `/proc` (`/proc/<pid>`, `/proc/self`), a file's
+  user or group through PowerShell (`.User`, `.Group`), or anything in `/tmp`, `/var/tmp` or `/dev/shm` other than by
+  `find` or `stat`. That includes `grep` there, and `Get-ChildItem -Recurse` from `/`, `/var` or `/dev`.
+- **Only literal paths are read inside** (1.76.1): the check reports every path a cmdlet (`Get-Content`,
+  `Select-String`, `Test-Path`, `Get-Item`, `Get-ChildItem`) is given, command by command from the code's syntax tree.
+  - A path that is not a plain literal - a variable, `'/et' + 'c'`, or none (the current folder) - is not tried.
+  - A literal path is normalized (`.`, `..`, `//`) and followed through the host's symbolic links (looked at outside the
+    sandbox): `/var/../tmp/x`, or a link into `/tmp`, is `/tmp`. In any of the sandbox's own places it is not tried.
+  - `/proc/sys` and `/proc/cmdline` are the host's in the sandbox too, and read as they are.
+  - A path piped in counts as the cmdlet's own: `'/tmp/x' | Test-Path` is `/tmp`. Any other input piped into
+    `Get-Content`, `Test-Path`, `Get-Item` or `Get-ChildItem`, and files piped into `Select-String`, are not tried.
+  - Right after the trial the job looks at the host's links again: if one of the code's paths now leads elsewhere,
+    the result is dropped (*not tried: a path changed during the trial*).
+- **pwsh:** `check_stig_pwsh`, else the first on the host's PATH, followed through its links. It and every folder above
+  it must be root's and writable by root alone; it is checked again right before each run. *How this was made* names
+  it.
 - Before the first trial the job looks from inside, without writing, that the sandbox holds:
   - nothing of the host is writable, and `/tmp`, `/var/tmp`, `/dev/shm` are its own, not the host's;
   - no socket can be opened, and `/run/systemd/private` and D-Bus cannot be reached;
   - no IPC file can be read;
   - it is not root, and it keeps no capability but reading; as root, it runs as its own UID, and that UID owns no
-    process of the host.
+    process of the host;
+  - another user's process cannot be read (its environment, its open files) or signalled;
+  - systemd 239: no SysV IPC object can be touched (`ipcrm` of an id that is not there says *permission denied*).
 - If `systemd-run` is missing or any of that fails, nothing is tried: each rule is *Not drafted - not tried: no
   sandbox (why)*. There is never a trial outside the sandbox.
 
