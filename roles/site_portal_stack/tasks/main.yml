@@ -222,6 +222,7 @@
     - {src: start.sh, dest: start.sh}
     - {src: static/portal.js, dest: static/portal.js}
     - {src: static/portal.css, dest: static/portal.css}
+    - {src: static/portal-theme.js, dest: static/portal-theme.js}       # 1.75.2: the colours chosen last time
     - {src: static/stigman-go.js, dest: static/stigman-go.js}           # 1.68.1: a scorecard link's go page
     - {src: static/stigman-open.js, dest: static/stigman-open.js}       # 1.68.1: added to STIG Manager's page by nginx
     - {src: "{{ role_path }}/../../plugins/filter/site_portal_filters.py", dest: site_portal_filters.py}
@@ -336,6 +337,7 @@
     _settings:
       PORTAL_PATH: "{{ portal_path }}"
       PORTAL_TITLE: "{{ portal_title }}"
+      PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
       PORTAL_SELF_APPROVAL: "{{ '1' if portal_allow_self_approval | bool else '0' }}"

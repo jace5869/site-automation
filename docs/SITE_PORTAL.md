@@ -233,6 +233,8 @@ actions:
       finding_id: {kind: text, max: 120, pattern: '(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}'}
     limit_from: target                          # optional: the launch's limit
     approval: false                             # shown on the page; the workflow's approval node holds it
+    area: ACT                                   # optional: the group of the Actions page (left out: Other)
+    summary: ACT reads one finding and drafts the next step.   # optional: the card's one line
     who: any                                    # optional: any, or a list of CNs; left out = portal_requesters
 ```
 
@@ -241,6 +243,10 @@ actions:
 | `inventory_host` | a host of the AAP inventory `portal_inventory`, by its exact name (letters, digits, `.`, `-` and `_`) |
 | `choice` | one of `values` (a list); `default` when none is sent |
 | `text` | at most `max` characters (4000 when not set, 20000 at most); with `pattern`, the whole value must match it (a regular expression) |
+
+`area` (up to 40 characters) is the group an action sits in on the Actions page, and `summary` (up to 160) is the one line
+under its title. The groups of this version's actions are *STIG*, *Disk & services*, *fapolicyd*, *Tickets* and *ACT*,
+in that order; any other area follows by name, and an action with none sits in *Other*, last.
 
 Each var may also have `label` (the confirm page's name for it), `required` (default true) and `default`.
 
@@ -575,6 +581,26 @@ kinds of people see it: the person who started it, the approvers (`portal_approv
 allows (its `who`, else `portal_requesters`). The same rule holds for each step of a workflow and for the approvals
 list. Anyone else gets *Not here*, the same answer as for a job that does not exist, so the page never says that a
 job number is in use.
+
+## The look
+
+The portal's pages look like the report website: the same colours, cards, tables, status chips and bar. They follow
+`report_web_theme` (`ops`, `atlas` or `brief`; the default is `atlas`), so the portal and the reports are one product.
+
+- **The bar** has the portal's pages (*Actions*, *Reports*, *Approvals*), the person's name from the card, and the
+  **Auto / Light / Dark** switch. The choice is kept in the browser and is the same on the report pages.
+- **Actions** are cards by area. A card has the action's title and one line, an *Approval* badge where an approver
+  decides, and, when the action is off, a muted card that says why. *You started* is a table with each job's live status.
+- **The confirm page** has the values in one card and *What happens* in another. **Run** is the one main button.
+- **A job** has its status, where, who and AAP at the top; then the result (*Fixed*, *Still there* or *Not checked*), the
+  steps, the hosts and the output.
+- **Approvals** are a table with **Approve** and **Deny**. Refused and not-found pages are a card that says why.
+
+The pages run under the same strict content security policy as before: no inline script and no inline style, only the
+portal's own files. Nothing is loaded from outside, and the fonts are the system's. `static/portal.css` is made from
+`roles/site_portal_stack/files/portal.css.in` and the reports' palettes by `scripts/gen_portal_css.py`.
+
+Run **Site portal - deploy** again after you change `report_web_theme`.
 
 ## The banner and the times
 

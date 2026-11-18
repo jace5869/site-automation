@@ -32,7 +32,8 @@ TEXT_MAX = 4000                    # a text var's max when it names none
 TEXT_CEILING = 20000               # no text var may allow more (the request's size limit holds the rest)
 HOST_MAX = 255
 RESERVED = ("portal_requested_by",)
-ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes")
+SUMMARY_MAX, AREA_MAX = 160, 40
+ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes", "summary", "area")
 MODES = ("dry_run", "live", "off")
 KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 BUTTON_MAX = 40
@@ -171,6 +172,14 @@ def check_actions(actions):
         if not isinstance(kinds, list) or not all(isinstance(k, str) and KIND_RE.match(k) for k in kinds):
             problems.append("%s: kinds must be a list of finding kinds (lower case letters, digits and _)" % where)
             kinds = []
+        # 1.75.2: the portal's Actions page - each card's one line (summary) and the group it sits in (area, "Other" when left out)
+        summary, area = _text(a.get("summary")).strip(), _text(a.get("area")).strip()
+        if len(summary) > SUMMARY_MAX or templating(summary):
+            problems.append("%s: summary must be one short line (%d characters at most)" % (where, SUMMARY_MAX))
+            summary = ""
+        if len(area) > AREA_MAX or templating(area):
+            problems.append("%s: area must be a short name (%d characters at most)" % (where, AREA_MAX))
+            area = ""
         button = _text(a.get("button")).strip()
         if len(button) > BUTTON_MAX or templating(button):
             problems.append("%s: button must be a short label (%d characters at most)" % (where, BUTTON_MAX))
@@ -192,7 +201,7 @@ def check_actions(actions):
         if not isinstance(modes, dict) or not all(k in MODES and (v is None or (isinstance(v, str) and 0 < len(v) <= BUTTON_MAX and not templating(v)))
                                                   for k, v in modes.items()):
             problems.append("%s: modes must map dry_run, live or off to a short button label (or nothing: no button)" % where)
-        out[name] = {"name": name, "title": title, "description": _text(a.get("description")).strip(),
+        out[name] = {"name": name, "title": title, "description": _text(a.get("description")).strip(), "summary": summary, "area": area,
                      "kinds": kinds, "button": button, "when": when, "fixes": fixes,
                      "aap": {"type": aap.get("type"), "name": _text(aap.get("name")).strip()}, "vars": clean_vars,
                      "limit_from": limit_from or "", "approval": approval is True, "who": who}

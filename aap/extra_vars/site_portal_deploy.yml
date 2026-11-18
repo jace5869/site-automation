@@ -220,3 +220,20 @@ portal_public_url: https://stigman.example.mil/portal/
 ## the execution environment). An upload's or a share's login comes from a "Report website"
 ## credential (aap/credential_types/report_web.yml).
 # report_web_dest: ""
+
+## The website's look (docs/WEB_REPORTS.md, "The look"): atlas = made for a browser, never an email
+## - a wide page whose tables use all of it (columns sized by what they hold: numbers right-aligned,
+## short values whole, paths broken at / and \), a bar at the top that stays (the sections, Compact
+## / Comfortable rows, Light / Auto / Dark - the reader's own setting on Auto -, Print), status
+## chips with icons (a check mark for OK), Start here cards with a Copy button, tables that sort and
+## filter, rows as cards on a phone; the index page too. brief (0.92.0) = the same page read like a
+## morning brief, calm and soft (0.94.0): what it found as a chip, the key figures as one strip,
+## Start here as numbered steps, percentages as bars, soft greys in dark, translucent cards, the
+## logo larger. ops (1.69.0, opt-in) = the same page as an operations console: a header card (the
+## verdict in one bold line, the headline number on the right, SHOW for the details), status tiles
+## (a dot and a word, a big number, a line), Start here as 3 ranked cards (Open item, View details),
+## the sections as cards (short ones side by side, a footer with Explore), deep navy in dark and
+## grey-lavender in light, violet bars. The index page (1.72.0) is the same calm board in all three,
+## in the look's colours. Or one of the email looks: standard, command, portal or glass (as
+## report_email_theme - the index page is then in the portal look).
+# report_web_theme: atlas

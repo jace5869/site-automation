@@ -46,6 +46,7 @@ BODY_MAX = 65536                    # a POST's body
 TOKEN_HOURS = 8                     # a page's token is good this long
 DONE = ("successful", "failed", "error", "canceled")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+LOOKS = ("atlas", "brief", "ops")            # the report website's looks made for a browser (report_web_theme)
 PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
             "frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'")
 # the report pages: their own script file (site-report.js), and their <style> blocks
@@ -110,6 +111,9 @@ class Config(object):
         self.per_hour = max(1, int(g("PORTAL_LAUNCHES_PER_HOUR", "20")))
         self.events = max(20, min(2000, int(g("PORTAL_JOB_EVENTS", "300"))))
         self.title = g("PORTAL_TITLE", "Site portal")
+        # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
+        self.look = g("PORTAL_THEME", "atlas").strip().lower()
+        self.look = self.look if self.look in LOOKS else "atlas"
         # the reports' banner (report_banner, report_banner_text, report_banner_color, site_enclave), as the deploy
         # worked it out with plugins/module_utils/site_banner.py: {on, text, bg, fg}; off = no banner
         try:
@@ -743,47 +747,97 @@ def esc(s):
     return html.escape(str(s if s is not None else ""), quote=True)
 
 
+ICONS = {      # a status mark: drawn, never a colour alone (portal.js draws the same)
+    "ok": '<path d="M3.2 8.4l3 3 6.6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    "bad": '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+    "run": '<circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="20 12" stroke-linecap="round"/>',
+    "wait": '<circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 5v3.3l2 1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    "skip": '<circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.6 8h4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    "lock": '<rect x="3.4" y="7" width="9.2" height="6.2" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5.4a2.5 2.5 0 015 0V7" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+    "arrow": '<path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+}
+
+
+def icon(kind):
+    return '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % ICONS[kind]
+
+
 def shell(cfg, title, body, user="", token="", page="", data=None):
-    """A page: the banner, the header with who, the body; its script is static/portal.js (no inline script)."""
+    """A page in the report website's look: the banner, the bar (the portal's pages, who, the colours switch), the body; its
+    scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style)."""
     banner = ('<div class="banner">%s</div>' % esc(cfg.banner["text"])) if cfg.banner["on"] else ""
-    nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page == key else "", esc(text))
-                  for key, href, text in (("home", "", "Actions"), ("reports", "reports/", "Reports"),
-                                          ("approvals", "approvals", "Approvals")))
+    nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page in keys else "", esc(text))
+                  for keys, href, text in ((("home", "action"), "", "Actions"), (("reports",), "reports/", "Reports"),
+                                           (("approvals",), "approvals", "Approvals")))
     meta = '<meta name="portal-token" content="%s">' % esc(token) if token else ""
     meta += '<meta name="portal-base" content="%s">' % esc(cfg.path)
     if data is not None:
         meta += '<meta name="portal-data" content="%s">' % esc(json.dumps(data))
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    seg = "".join('<input type="radio" name="theme" id="theme-%s" value="%s"%s><label for="theme-%s">%s</label>'
+                  % (v, v, " checked" if v == "auto" else "", v, v.capitalize()) for v in ("auto", "light", "dark"))
+    bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s"><span class="mark" aria-hidden="true">%s</span>%s</a>'
+           '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who">%s</span>'
+           '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div></div>'
+           % (cfg.path, esc((cfg.title[:1] or "S").upper()), esc(cfg.title), nav, esc(user), seg))
+    return ('<!doctype html><html lang="en" data-look="%s"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
             '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
-            '<script src="%sstatic/portal.js" defer></script></head>'
-            '<body data-page="%s">%s<header class="top"><a class="home" href="%s">%s</a><nav>%s</nav>'
-            '<span class="who">%s</span></header><main>%s</main>%s</body></html>'
-            % (meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, esc(page), banner, cfg.path, esc(cfg.title), nav,
-               esc(user), body, banner))
+            '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script></head>'
+            '<body data-page="%s">%s%s<main>%s</main>%s</body></html>'
+            % (cfg.look, meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, cfg.path, esc(page), banner, bar, body, banner))
+
+
+def message_page(cfg, title, text, user="", kind="info"):
+    """The refused and not-here pages: a card in the look, the reason said."""
+    chip = {"bad": '<span class="chip s-critical">%s%s</span>' % (icon("bad"), "Not accepted"),
+            "info": '<span class="chip s-info">%s%s</span>' % (icon("skip"), "Not here")}[kind]
+    body = ('<div class="hero"><p class="crumb"><a href="%s">Actions</a></p><h1>%s</h1></div>'
+            '<div class="note%s" role="alert"><p>%s %s</p><p class="muted-line"><a href="%s">Back to the actions</a></p></div>'
+            % (cfg.path, esc(title), " bad" if kind == "bad" else "", chip, esc(text), cfg.path))
+    return shell(cfg, title, body, user, page="message")
+
+
+AREA_OTHER = "Other"
+AREA_FIRST = ("STIG", "Disk & services", "fapolicyd", "Tickets", "ACT")      # the areas of the role's actions.yml, in this order; others by name; Other last
 
 
 def home_page(cfg, portal, cn):
     acts = portal.mine(cn)
-    rows = []
+    groups = {}
     for a in sorted(acts, key=lambda x: x["title"].lower()):
-        _, off = portal.aap.ids.get(a["name"], (None, ""))
-        rows.append('<li class="action"><a href="%sactions/%s">%s</a>%s%s%s</li>' % (
-            cfg.path, esc(a["name"]), esc(a["title"]),
-            ('<span class="tag">Needs approval</span>' if a["approval"] else ""),
-            ('<p class="sub">%s</p>' % esc(a["description"])) if a["description"] else "",
-            ('<p class="off">Off: %s</p>' % esc(off)) if off else ""))
+        area = a.get("area") or AREA_OTHER
+        if area not in groups:
+            groups[area] = []
+        groups[area].append(a)
+    order = sorted(groups, key=lambda g: (g == AREA_OTHER, AREA_FIRST.index(g) if g in AREA_FIRST else len(AREA_FIRST), g.lower()))
+    secs = []
+    for area in order:
+        cards = []
+        for a in groups[area]:
+            _, off = portal.aap.ids.get(a["name"], (None, ""))
+            line = a.get("summary") or a.get("description") or ""
+            appr = '<span class="badge">Approval</span>' if a["approval"] else ""
+            if off:
+                cards.append('<li class="card act off"><div class="top"><h3>%s</h3><span class="badge off">Off</span></div>%s'
+                             '<p class="offline">%s<span>Off: %s</span></p></li>'
+                             % (esc(a["title"]), ('<p>%s</p>' % esc(line)) if line else "", icon("lock"), esc(off)))
+            else:
+                cards.append('<li><a class="card act" href="%sactions/%s"><div class="top"><h3>%s</h3>%s</div>%s<span class="go">Open %s</span></a></li>'
+                             % (cfg.path, esc(a["name"]), esc(a["title"]), appr, ('<p>%s</p>' % esc(line)) if line else "", icon("arrow")))
+        secs.append('<section class="sec"><h2>%s <span class="count">%d</span></h2><ul class="acts">%s</ul></section>'
+                    % (esc(area), len(cards), "".join(cards)))
     mine = [r for r in portal.log.read("launch") if r.get("user") == cn][-10:]
-    recent = "".join('<tr><td class="num"><a href="%sjobs/%d">%d</a></td><td>%s</td><td>%s</td></tr>' % (
-        cfg.path, int(r["job_id"]), int(r["job_id"]), esc(portal.actions.get(r.get("action"), {}).get("title", r.get("action"))),
-        esc(shown(cfg, r.get("at")))) for r in reversed(mine))
-    body = ('<h1>What you can start</h1>'
-            '<p class="lede">Each action asks you to confirm before it starts. The report pages link here with the values filled in.</p>'
-            '%s<h2>You started</h2>%s'
-            % (('<ul class="actions">%s</ul>' % "".join(rows)) if rows else
-               '<p class="empty">No action is open to you here. portal_requesters and each action\'s who say who may run what.</p>',
-               ('<table class="list"><thead><tr><th class="num">Job</th><th>Action</th><th>%s</th></tr></thead><tbody>%s</tbody></table>'
-                % (esc(site_time.column("When (UTC)", cfg.tz)), recent)) if recent else '<p class="empty">Nothing yet.</p>'))
+    recent = "".join('<tr><td class="num"><a href="%sjobs/%d">%d</a></td><td>%s</td><td class="nw"><span class="chip s-info" data-job="%d">%s%s</span></td>'
+                     '<td class="mono nw">%s</td></tr>' % (
+                         cfg.path, int(r["job_id"]), int(r["job_id"]), esc(portal.actions.get(r.get("action"), {}).get("title", r.get("action"))),
+                         int(r["job_id"]), icon("wait"), "Asking AAP", esc(shown(cfg, r.get("at")))) for r in reversed(mine))
+    table = ('<div class="tw"><table id="started"><thead><tr><th class="num">Job</th><th>Action</th><th>Status</th><th>%s</th></tr></thead><tbody>%s</tbody></table></div>'
+             % (esc(site_time.column("When (UTC)", cfg.tz)), recent)) if recent else '<p class="empty">Nothing yet.</p>'
+    body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
+            '<p class="lede">Each action asks you to confirm before it starts. The report pages link here with the values filled in.</p></div>'
+            '%s<section class="sec"><h2>You started%s</h2>%s</section>'
+            % ("".join(secs) if secs else '<p class="empty">No action is open to you here. portal_requesters and each action\'s who say who may run what.</p>',
+               (' <span class="count">%d</span>' % len(mine)) if mine else "", table))
     return shell(cfg, "Actions", body, cn, page="home")
 
 
@@ -826,37 +880,47 @@ def action_page(cfg, portal, cn, name, query):
                       'is doing this for this finding now. Follow it there; Run is off until it ends.</p>'
                       % (cfg.path, int(busy["job_id"]), int(busy["job_id"]), esc(busy.get("status", "")), esc(busy.get("user", ""))))
     target = values.get(a["limit_from"]) if a["limit_from"] else ""
-    facts = [("Runs in AAP", "%s %s" % ("Workflow" if a["aap"]["type"] == "workflow" else "Job template", a["aap"]["name"])),
-             ("On", target or ("the hosts the %s chooses" % ("workflow" if a["aap"]["type"] == "workflow" else "template"))),
-             ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No"),
-             ("Started as", cn)]
-    dl = "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (esc(k), esc(v)) for k, v in facts)
+    kind = "Workflow" if a["aap"]["type"] == "workflow" else "Job template"
+    facts = [("Runs in AAP", "%s %s" % (kind, a["aap"]["name"]), ""),
+             ("On", target or ("the hosts the %s chooses" % kind.lower()), " mono" if target else ""),
+             ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No", ""),
+             ("Started as", cn, " mono")]
+    dl = "".join('<dt>%s</dt><dd class="%s">%s</dd>' % (esc(k), c.strip(), esc(v)) for k, v, c in facts)
     can = allowed and not off and not busy
-    body = ('<p class="crumb"><a href="%s">Actions</a></p><h1>%s</h1>%s%s<dl class="facts">%s</dl>'
-            '<form id="run" data-action="%s" novalidate>%s<div class="go"><button type="submit" id="go"%s>Run</button>'
-            '<span class="state" id="state" aria-live="polite"></span></div></form>'
-            % (cfg.path, esc(a["title"]), ('<p class="lede">%s</p>' % esc(a["description"])) if a["description"] else "",
-               "".join(status), dl, esc(name), "".join(fields), "" if can else " disabled"))
+    line = a.get("summary") or a.get("description") or ""
+    body = ('<div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Confirm</span></p><h1>%s</h1>%s</div>%s'
+            '<div class="two"><div class="card panel"><h2>Values</h2><form id="run" data-action="%s" novalidate>%s'
+            '<div class="btns"><button type="submit" class="pri" id="go"%s>Run</button><a class="btn" href="%s">Cancel</a>'
+            '<span class="state" id="state" aria-live="polite"></span></div></form></div>'
+            '<div class="card panel"><h2>What happens</h2><dl class="def">%s</dl></div></div>'
+            % (cfg.path, esc(a["title"]), ('<p class="lede">%s</p>' % esc(line)) if line else "", "".join(status), esc(name),
+               "".join(fields) or '<p class="sub">This action takes no values.</p>', "" if can else " disabled", cfg.path, dl))
     return shell(cfg, a["title"], body, cn, token=portal.token(cn), page="action")
 
 
 def job_page(cfg, portal, cn, jid, via):
-    body = ('<p class="crumb"><a href="%s">Actions</a></p><div id="job" data-job="%d"%s>'
-            '<h1 id="j-title">Job %d</h1><p class="status" id="j-status" aria-live="polite">Asking AAP…</p>'
-            '<div class="result" id="j-result" hidden></div><p class="next" id="j-next" hidden></p><dl class="facts" id="j-facts"></dl><section id="j-links" hidden><h2>Results</h2><ul></ul></section><section id="j-steps" hidden><h2>Steps</h2><table class="list"><thead><tr>'
-            '<th>Step</th><th>Status</th><th class="num">Job</th></tr></thead><tbody></tbody></table></section>'
-            '<section id="j-hosts" hidden><h2>Hosts</h2><table class="list"><thead><tr><th>Host</th><th class="num">OK</th>'
-            '<th class="num">Changed</th><th class="num">Failed</th><th class="num">Unreachable</th><th class="num">Skipped</th>'
-            '</tr></thead><tbody></tbody></table></section>'
-            '<section id="j-out" hidden><h2>Output</h2><p class="sub" id="j-more" hidden>The last lines only - the whole of it is in AAP.</p>'
-            '<pre class="out" tabindex="0"></pre></section><section id="j-art" hidden><h2>Artifacts</h2><pre class="out"></pre></section></div>'
-            % (cfg.path, jid, (' data-via="%d"' % via) if via else "", jid))
+    body = ('<div id="job" data-job="%d"%s><div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Job %d</span></p>'
+            '<h1 id="j-title">Job %d</h1></div>'
+            '<div class="tiles" id="j-tiles"><div class="tile"><div class="k">Status</div><div class="v" id="j-status" aria-live="polite">Asking AAP…</div>'
+            '<div class="n" id="j-when"></div></div>'
+            '<div class="tile"><div class="k">On</div><div class="v" id="j-on"></div><div class="n" id="j-action"></div></div>'
+            '<div class="tile"><div class="k">Started by</div><div class="v mono" id="j-by"></div><div class="n" id="j-asked"></div></div>'
+            '<div class="tile"><div class="k">AAP</div><div class="v" id="j-aap"></div><div class="n" id="j-vals"></div></div></div>'
+            '<p class="next" id="j-next" hidden></p>'
+            '<section class="sec" id="j-result-sec" hidden><h2>Result</h2><div class="res one" id="j-result"></div></section>'
+            '<section class="sec" id="j-links" hidden><h2>Results</h2><ul></ul></section>'
+            '<section class="sec" id="j-steps" hidden><h2>Steps</h2><div class="tw"><table><thead><tr><th>Step</th><th>Status</th><th class="num">Job</th></tr></thead><tbody></tbody></table></div></section>'
+            '<section class="sec" id="j-hosts" hidden><h2>Hosts</h2><div class="tw"><table><thead><tr><th>Host</th><th class="num">OK</th>'
+            '<th class="num">Changed</th><th class="num">Failed</th><th class="num">Unreachable</th><th class="num">Skipped</th></tr></thead><tbody></tbody></table></div></section>'
+            '<section class="sec" id="j-out" hidden><h2>Output <span class="note" id="j-more" hidden>The last lines only - the whole of it is in AAP.</span></h2>'
+            '<pre class="out" tabindex="0"></pre></section><section class="sec" id="j-art" hidden><h2>Artifacts</h2><pre class="out"></pre></section></div>'
+            % (jid, (' data-via="%d"' % via) if via else "", cfg.path, jid, jid))
     return shell(cfg, "Job %d" % jid, body, cn, page="job")
 
 
 def approvals_page(cfg, portal, cn):
     approver = cn in cfg.approvers
-    body = ('<h1>Approvals</h1><p class="lede">The listed workflows waiting for a decision.%s</p>'
+    body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>Approvals</h1><p class="lede">The listed workflows waiting for a decision.%s</p></div>'
             '<p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
             'your name, the decision and the time.</p><p class="status" id="a-status" aria-live="polite">Asking AAP…</p>'
             '<div id="approvals" data-approver="%s"></div>'
@@ -914,8 +978,7 @@ def make_handler(cfg, portal, static_dir):
         def _deny(self, why, api):
             if api:
                 return self._send(403, {"error": why})
-            return self._send(403, shell(cfg, "Not accepted", '<h1>Not accepted</h1><p class="lede">%s</p>' % esc(why)),
-                              "text/html; charset=utf-8")
+            return self._send(403, message_page(cfg, "Not accepted", why, kind="bad"), "text/html; charset=utf-8")
 
         def _same_origin(self):
             """A POST from a page of this site: its Origin is exactly https://<this host>[:port] (no path, no user), or -
@@ -945,7 +1008,7 @@ def make_handler(cfg, portal, static_dir):
                 if not t:
                     return self._send(302, b"", "text/plain", [("Location", cfg.stigman_path)])
                 return self._send(200, stigman_go_page(cfg, t), "text/html; charset=utf-8")
-            if path in ("/static/portal.js", "/static/portal.css", "/static/stigman-go.js", "/static/stigman-open.js"):
+            if path in ("/static/portal.js", "/static/portal.css", "/static/portal-theme.js", "/static/stigman-go.js", "/static/stigman-open.js"):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
                     return self._send(200, fh.read(), TYPES[os.path.splitext(name)[1]], [("Cache-Control", "no-cache")])
@@ -960,8 +1023,8 @@ def make_handler(cfg, portal, static_dir):
             m = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)
             if m:
                 if m.group(1) not in portal.actions:
-                    return self._send(404, shell(cfg, "Not here", '<h1>Not here</h1><p class="lede">There is no action %s.</p>'
-                                                 % esc(m.group(1))), "text/html; charset=utf-8")
+                    return self._send(404, message_page(cfg, "Not here", "There is no action %s here." % m.group(1), cn),
+                                      "text/html; charset=utf-8")
                 q = urllib.parse.parse_qs(u.query, keep_blank_values=True, max_num_fields=50)
                 return self._send(200, action_page(cfg, portal, cn, m.group(1), q), "text/html; charset=utf-8")
             m = re.match(r"^/(api/)?jobs/(\d{1,12})$", path)
@@ -972,8 +1035,8 @@ def make_handler(cfg, portal, static_dir):
                     code, view = portal.job(int(m.group(2)), via, cn)
                     return self._send(code, view)
                 if not portal.visible(cn, int(m.group(2)), via):        # as a job the portal did not start: 404
-                    return self._send(404, shell(cfg, "Not here", '<h1>Not here</h1><p class="lede">There is no job %d here.</p>'
-                                                 % int(m.group(2))), "text/html; charset=utf-8")
+                    return self._send(404, message_page(cfg, "Not here", "There is no job %d here." % int(m.group(2)), cn),
+                                      "text/html; charset=utf-8")
                 return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via), "text/html; charset=utf-8")
             if path == "/approvals":
                 return self._send(200, approvals_page(cfg, portal, cn), "text/html; charset=utf-8")
@@ -983,7 +1046,7 @@ def make_handler(cfg, portal, static_dir):
             if path == "/api/me":
                 return self._send(200, {"user": cn, "approver": cn in cfg.approvers,
                                         "actions": [a["name"] for a in portal.mine(cn)]})
-            return self._send(404, {"error": "not found"} if api else shell(cfg, "Not here", "<h1>Not here</h1>"),
+            return self._send(404, {"error": "not found"} if api else message_page(cfg, "Not here", "There is nothing at this address.", cn),
                               "application/json" if api else "text/html; charset=utf-8")
 
         def _report(self, rel):

@@ -52,6 +52,7 @@ jobs:
           python tests/test_vmware_ask.py
           python tests/test_site_portal.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_site_portal.py
+          python tests/test_portal_fit.py
           python tests/test_act_switch.py
           python tests/test_banner.py
           python tests/test_xlsx_sparklines.py

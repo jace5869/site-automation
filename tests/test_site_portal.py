@@ -8,8 +8,10 @@ action AAP would not take, too many in an hour), the live job view, a workflow's
 not), the report website's files (and nothing outside its folder), and the log lines. Also the role's files: the
 actions file it ships, the nginx lines, the deploy's syntax on this ansible-core.
 Standard library and PyYAML only: python3 tests/test_site_portal.py"""
+import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,18 +39,19 @@ APPR = "CN=APPROVER.ALEX.B.3456789012,OU=USA,OU=PKI,O=U.S. Government,C=US"
 PPOE = "CN=POE.PAT.C.4567890123,OU=USAF,OU=PKI,O=U.S. Government,C=US"
 ACTIONS = {
     "stig_recheck": {"title": "Recheck this system", "aap": {"type": "job", "name": "Linux - recheck one host"},
-                     "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target", "approval": False},
-    "ckl_import": {"title": "Import the checklists", "aap": {"type": "workflow", "name": "Checklists imported into STIG Manager"},
+                     "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target", "approval": False,
+                     "area": "STIG", "summary": "Checks one host again."},
+    "ckl_import": {"title": "Import the checklists", "area": "STIG", "summary": "Imports the checklists into STIG Manager.", "aap": {"type": "workflow", "name": "Checklists imported into STIG Manager"},
                    "vars": {"stigman_ckl_import_mode": {"kind": "choice", "values": ["import", "import and scorecard", "scorecard"],
                                                         "default": "import", "label": "What to do"}},
                    "approval": True},
-    "act_triage": {"title": "Ask ACT about this finding", "aap": {"type": "workflow", "name": "ACT - triage finding"},
+    "act_triage": {"title": "Ask ACT about this finding", "area": "ACT", "summary": "ACT reads one finding and drafts the next step.", "aap": {"type": "workflow", "name": "ACT - triage finding"},
                    "vars": {"target": {"kind": "inventory_host"},
                             "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
                             "finding_id": {"kind": "text", "max": 120, "pattern": "(fapolicyd|eventlog):[A-Za-z0-9_.:-]{1,100}"}},
                    "limit_from": "target", "approval": False, "who": ["DOE.JANE.Q.1234567890", "POE.PAT.C.4567890123"],
                    "fixes": False, "kinds": ["fapolicyd", "eventlog"], "button": "Ask ACT"},
-    "disk_cleanup": {"title": "Clean up this mount", "aap": {"type": "job", "name": "Disk - clean up one mount"}, "button": "Clean up",
+    "disk_cleanup": {"title": "Clean up this mount", "area": "Disk & services", "summary": "Removes old files.", "aap": {"type": "job", "name": "Disk - clean up one mount"}, "button": "Clean up",
                      "kinds": ["disk_full"],
                      "vars": {"target": {"kind": "inventory_host"}, "report_job": {"kind": "text", "max": 12, "pattern": "[0-9]{1,12}"},
                               "finding_id": {"kind": "text", "max": 200, "pattern": "[A-Za-z0-9_.:/@-]{1,200}"}},
@@ -271,7 +274,7 @@ class Live(unittest.TestCase):
         self.assertIn('value="web01.example.mil"', t)
         self.assertIn("eventlog:disk-errors", t)
         self.assertIn("Workflow ACT - triage finding", t)
-        self.assertIn("<dt>Started as</dt><dd>DOE.JANE.Q.1234567890</dd>", t)        # the name only, not the variable's
+        self.assertIn("<dt>Started as</dt><dd class=\"mono\">DOE.JANE.Q.1234567890</dd>", t)        # the name only, not the variable's
         self.assertNotIn(' disabled>Run', t)
         code, raw, _ = self.req("/actions/act_triage?target=nothere.example.mil&report_job=907&finding_id=eventlog%3A%7B%7B7%7D%7D")
         t = raw.decode()
@@ -287,6 +290,57 @@ class Live(unittest.TestCase):
         self.assertIn(b"Off.", raw)
         code, raw, _ = self.req("/actions/nothing_here")
         self.assertEqual(code, 404)
+
+    def test_03b_actions_page_in_the_look(self):
+        """1.75.2: the Actions page - cards by area (Other last), each with its title and one line, the Approval badge, the Off
+        card muted with its reason - in the report website's look, with no inline script or style (the page's CSP)."""
+        code, raw, hdr = self.req("/")
+        t = raw.decode()
+        self.assertEqual(code, 200)
+        heads = re.findall(r'<section class="sec"><h2>(.*?) <span class="count">(\d+)</span>', t)
+        self.assertEqual(heads, [("STIG", "2"), ("Disk &amp; services", "1"), ("ACT", "1"), ("Other", "2")])        # the known areas in their order, Other last
+        self.assertIn('<h3>Import the checklists</h3><span class="badge">Approval</span></div><p>Imports the checklists into STIG Manager.</p>', t)
+        self.assertIn('<h3>Recheck this system</h3></div><p>Checks one host again.</p>', t)
+        self.assertRegex(t, r'<li class="card act off"><div class="top"><h3>A template that takes nothing</h3><span class="badge off">Off</span></div>.*?<span>Off: it does not take extra variables')
+        self.assertIn('data-look="atlas"', t)
+        self.assertIn('id="theme-auto"', t)
+        self.assertIn('id="theme-light"', t)
+        self.assertIn('id="theme-dark"', t)
+        self.assertIn("DOE.JANE.Q.1234567890", t)                                      # the card's name, as before
+        csp = hdr["Content-Security-Policy"]
+        self.assertIn("style-src 'self'", csp)
+        self.assertNotIn("unsafe-inline", csp)
+        for path in ("/", "/actions/act_triage?target=web01.example.mil", "/approvals", "/jobs/1", "/actions/nothing_here"):
+            page = self.req(path)[1].decode()
+            self.assertIsNone(re.search(r"<style|\sstyle=|\son[a-z]+=|<script(?![^>]*\ssrc=)", page), path)         # strict CSP: none inline
+
+    def test_03c_refused_and_not_here_pages(self):
+        code, raw, _ = self.req("/actions/nothing_here")
+        t = raw.decode()
+        self.assertEqual(code, 404)
+        self.assertIn('<div class="note" role="alert">', t)
+        self.assertIn("There is no action nothing_here here.", t)
+        self.assertIn('class="chip s-info"', t)
+        code, raw, _ = self.req("/", dn=None)
+        t = raw.decode()
+        self.assertEqual(code, 403)
+        self.assertIn('class="chip s-critical"', t)
+        self.assertIn("Not accepted", t)
+        self.assertNotIn("DOE.JANE", t)
+
+    def test_03d_the_other_pages(self):
+        t = self.req("/approvals", dn=APPR)[1].decode()
+        self.assertIn('id="approvals" data-approver="1"', t)
+        self.assertIn('class="note"', t)
+        t = sp.job_page(self.cfg, self.portal, "DOE.JANE.Q.1234567890", 77, 0)
+        self.assertIn('id="j-tiles"', t)
+        self.assertIn('id="j-result"', t)
+        js = self.req("/static/portal.js")[1].decode()
+        self.assertIn("function homePage", js)
+        self.assertIn("approvalsPage", js)
+        self.assertNotIn("innerHTML", js)                                               # text only, never HTML from AAP
+        self.assertEqual(self.req("/static/portal-theme.js")[0], 200)
+        self.assertEqual(self.req("/static/portal.css")[0], 200)
 
     def test_04_launch(self):
         code, r = self.post("/api/actions/stig_recheck", {"vars": {"target": "web01.example.mil"}})
@@ -674,6 +728,79 @@ class Live(unittest.TestCase):
         for v, want in (("", "/"), ("/", "/"), ("/stigman", "/stigman/"), ("stigman/", "/stigman/"), ("//evil.example.mil", "/"),
                         ("/a/../b", "/"), ("/x y", "/")):
             self.assertEqual(sp.Config({"PORTAL_STIGMAN_PATH": v}).stigman_path, want, v)
+
+
+class Look(unittest.TestCase):
+    """1.75.2: the portal's pages follow report_web_theme (ops, atlas, brief) with the report website's own colours."""
+
+    def test_the_look_is_the_websites(self):
+        for want, given in (("ops", "ops"), ("brief", "BRIEF"), ("atlas", "atlas"), ("atlas", ""), ("atlas", "command"), ("atlas", "x\"><b>")):
+            cfg = sp.Config({"PORTAL_THEME": given})
+            self.assertEqual(cfg.look, want, given)
+            self.assertIn('<html lang="en" data-look="%s">' % want, sp.shell(cfg, "T", "<p>x</p>"))
+        self.assertEqual(sp.Config({}).look, "atlas")                                   # report_web_theme's default
+
+    def test_portal_css_is_made_from_the_report_palettes(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import gen_portal_css as g
+        have = open(os.path.join(FILES, "static", "portal.css")).read()
+        self.assertEqual(have, g.build(), "scripts/gen_portal_css.py")
+        for look in ("atlas", "brief", "ops"):
+            light, dark = g.palette(look)
+            self.assertIn(':root[data-look="%s"]{%s}' % (look, light), have)
+            self.assertIn(':root[data-look="%s"][data-theme="dark"]{%s}' % (look, dark), have)
+            self.assertIn(':root[data-look="%s"]:has(#theme-dark:checked){%s}' % (look, dark), have)     # the switch works without the script
+            self.assertIn("--card:", light)
+            self.assertIn("--critical:", dark)
+        self.assertNotIn("@@", have)
+        self.assertIsNone(re.search(r"url\(|@import|https?://", have))               # offline: nothing outside
+
+    def test_every_real_action_has_its_line_and_area(self):
+        import yaml
+        with open(os.path.join(FILES, "actions.yml")) as fh:
+            doc = yaml.safe_load(fh)
+        acts, problems = rules.check_actions(doc["actions"])
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(acts), sorted(["stig_recheck", "ckl_import", "act_triage", "disk_cleanup", "service_restart", "fapolicyd_allow",
+                                               "disk_space_request", "open_ticket", "stig_recheck_update", "stig_fix_rule", "stigman_create_asset"]))
+        for n, a in acts.items():
+            self.assertTrue(a["summary"] and len(a["summary"]) <= 160, n)
+            self.assertTrue(a["area"], n)
+
+        class Aap(object):
+            ids = {}
+
+        class Log(object):
+            def read(self, kind=None):
+                return []
+
+        class Fake(object):
+            actions, aap, log = acts, Aap(), Log()
+
+            def mine(self, cn):
+                return list(acts.values())
+        cfg = sp.Config({"PORTAL_THEME": "ops"})
+        t = sp.home_page(cfg, Fake(), "DOE.JANE.Q.1234567890")
+        self.assertEqual(len(re.findall(r'<a class="card act" href="/portal/actions/', t)), 11)            # exactly the file's actions
+        heads = [h for h, _n in re.findall(r'<section class="sec"><h2>(.*?) <span class="count">(\d+)</span>', t)]
+        self.assertEqual(heads, ["STIG", "Disk &amp; services", "fapolicyd", "Tickets", "ACT"])
+        for a in acts.values():
+            self.assertIn(html.escape(a["title"]), t)
+        self.assertNotIn("Other", heads)
+        a = dict(acts["stig_recheck"], area="", summary="")                              # no area: Other; no line: no line
+        Fake.actions, Fake.mine = {"x": a}, lambda self, cn: [a]
+        t = sp.home_page(cfg, Fake(), "DOE.JANE.Q.1234567890")
+        self.assertIn("<h2>Other <span", t)
+        self.assertNotIn("<p></p>", t)
+
+    def test_area_and_summary_are_checked(self):
+        base = {"title": "T", "aap": {"type": "job", "name": "N"}}
+        _, problems = rules.check_actions({"a": dict(base, summary="x" * 161, area="y" * 41)})
+        self.assertEqual(len(problems), 2)
+        _, problems = rules.check_actions({"a": dict(base, summary="{{ 7 }}", area="{% x %}")})
+        self.assertEqual(len(problems), 2)
+        ok, problems = rules.check_actions({"a": dict(base, summary="One line.", area="STIG")})
+        self.assertEqual((problems, ok["a"]["summary"], ok["a"]["area"]), ([], "One line.", "STIG"))
 
 
 class RoleFiles(unittest.TestCase):

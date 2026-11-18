@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.75.2 — 2026-11-18
+
+**To set up:** run **Site portal - deploy** again (the pages, their style and one setting, `PORTAL_THEME`, are new).
+
+**The site portal looks like the report website** (docs/SITE_PORTAL.md, "The look").
+
+- The portal's pages follow `report_web_theme` (ops, atlas or brief) with the report website's own colours, cards,
+  tables, status chips, bar and **Auto / Light / Dark** switch (the choice is shared with the report pages). One product.
+  - **Actions:** cards by area (STIG, Disk & services, fapolicyd, Tickets, ACT; any other area by name; *Other* last),
+    each with its title, one line and an *Approval* badge where an approver decides. An action that is off is a muted
+    card that says why (the words are the same as before). *You started* is a table with each job's live status.
+  - **The confirm page:** the values in one card, *What happens* as a list in another, **Run** as the main button, **Cancel**.
+  - **A job:** its status, where, who and AAP in a strip; the result as *Fixed*, *Still there* or *Not checked*; the steps,
+    the hosts and the output in the report's table and code styles.
+  - **Approvals** are a table with **Approve** and **Deny**. The refused and not-found pages are a card that says why.
+  - The same strict content security policy (no inline script, no inline style), offline (the system's fonts), and the
+    card-name header as before.
+- **actions.yml has two new keys:** `area` (the Actions page's group, 40 characters at most, left out: *Other*) and
+  `summary` (the card's one line, 160 at most). All 11 actions have both. `portal_actions` may use them too.
+- `static/portal.css` is made by `scripts/gen_portal_css.py` from `portal.css.in` and the three looks' palettes, so the
+  portal and the report website keep one set of colours (a test checks the file is up to date).
+- Tests: `tests/test_site_portal.py` (the Actions page by area, the looks, the palettes, the 11 real actions, area and summary
+  checked, no inline script or style), `tests/test_portal_fit.py` (new: every page at 1280 and 800 px, light and dark, in the
+  three looks, nothing wider than its box), the portal's e2e on ansible-core 2.22 and 2.16.
+
 ## 1.75.1 — 2026-11-18
 
 **To set up: nothing.** The Satisfaction section no longer reads ServiceNow's `-1` as an answer.

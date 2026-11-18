@@ -4,6 +4,8 @@
 # shape) replaces it. Each playbook checks the values again (roles/portal_request): keep both in step
 # (tests/test_portal.py compares them). docs/SITE_PORTAL.md, "Actions".
 #   title       what the confirm page and the job list call it
+#   summary     one line of what it does (160 characters at most): the Actions page's card, under its title
+#   area        the group of the Actions page it sits in (40 characters at most); left out = "Other"
 #   aap         {type: workflow | job, name: the template's exact name in AAP}
 #   vars        each extra variable: kind inventory_host (a host of portal_inventory), choice (values), text (max,
 #               pattern: the whole value must match). The portal adds portal_requested_by (the person's certificate name).
@@ -19,6 +21,8 @@
 actions:
   stig_recheck:
     title: STIG recheck of one host
+    summary: Checks one host again against its STIG and shows what changed.
+    area: STIG
     aap: {type: workflow, name: "STIG - recheck one host"}          # workflow 45: the Linux and the Windows recheck
     fixes: false
     vars:
@@ -28,6 +32,8 @@ actions:
 
   ckl_import:
     title: Import checklists into STIG Manager
+    summary: Imports the checklists into STIG Manager, and updates the scorecard.
+    area: STIG
     aap: {type: workflow, name: "Checklists imported into STIG Manager"}   # workflow 40
     vars:
       stigman_ckl_import_mode:
@@ -39,6 +45,8 @@ actions:
 
   act_triage:
     title: Ask ACT about a finding
+    summary: ACT reads one finding and drafts what to do next. It runs nothing on the host.
+    area: ACT
     aap: {type: workflow, name: "ACT - triage finding"}             # workflow 44
     kinds: [fapolicyd, fapolicyd_deny, eventlog]
     button: Ask ACT
@@ -56,6 +64,8 @@ actions:
   # label by portal_ticket_mode - dry_run (the default), live, off (no button).
   disk_cleanup:
     title: Clean up a full filesystem (old files in the tmp folders)
+    summary: Removes old files in the tmp folders of a full filesystem, after an approver agrees.
+    area: "Disk & services"
     aap: {type: workflow, name: "Disk - clean up (approved)"}       # workflow 49: plan, approval, clean up, recheck
     kinds: [disk_full]
     when: {os: linux}
@@ -69,6 +79,8 @@ actions:
 
   service_restart:
     title: Restart a service that is down
+    summary: Restarts a service that is down, after an approver agrees, and checks it came up.
+    area: "Disk & services"
     aap: {type: workflow, name: "Service - restart"}                # workflow 50: look, approval, restart, status
     kinds: [service_down]
     button: Restart
@@ -81,6 +93,8 @@ actions:
 
   fapolicyd_allow:
     title: Let fapolicyd allow this one program
+    summary: Lets fapolicyd allow one program that it denied, after an approver agrees.
+    area: fapolicyd
     aap: {type: workflow, name: "fapolicyd - allow this"}           # workflow 51: check, approval, approved, re-read
     kinds: [fapolicyd_deny]
     button: Allow this
@@ -93,6 +107,8 @@ actions:
 
   disk_space_request:
     title: Write a request for more space (nothing is sent)
+    summary: Writes the request for more space. Nothing is sent.
+    area: "Disk & services"
     aap: {type: job, name: "Disk - space request"}
     kinds: [disk_full]
     button: Space request
@@ -106,6 +122,8 @@ actions:
 
   open_ticket:
     title: Open a ticket for a finding (a draft unless portal_ticket_mode is live)
+    summary: Opens a ticket for one finding. A draft unless portal_ticket_mode is live.
+    area: Tickets
     aap: {type: job, name: "Site portal - open ticket"}
     kinds: [any]                                                     # every kind of finding
     button: Ticket (dry run)
@@ -121,6 +139,8 @@ actions:
   # ---- 1.67.0 part D: the STIG actions (workflows 46-48; roles/portal_stig, docs/SITE_PORTAL.md "STIG actions")
   stig_recheck_update:
     title: Recheck the rule and update STIG Manager
+    summary: Checks one rule again and updates the result in STIG Manager, after an approver agrees.
+    area: STIG
     aap: {type: workflow, name: "STIG - recheck and update STIG Manager"}   # workflow 46
     kinds: [stig_fixed_open]
     button: Update STIG Manager
@@ -133,6 +153,8 @@ actions:
 
   stig_fix_rule:
     title: Fix one STIG rule (ACT proposes, you approve)
+    summary: ACT proposes a fix for one CAT II or III rule on a Linux host. An approver decides.
+    area: STIG
     aap: {type: workflow, name: "STIG - fix one rule"}                       # workflow 47
     kinds: [stig_rule_fail]
     button: Fix rule
@@ -146,6 +168,8 @@ actions:
 
   stigman_create_asset:
     title: Create the host's asset in STIG Manager
+    summary: Creates the host's asset in STIG Manager, after an approver agrees.
+    area: STIG
     aap: {type: workflow, name: "STIG - create the asset in STIG Manager"}  # workflow 48
     kinds: [stig_no_asset]
     button: Create asset

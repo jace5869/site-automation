@@ -26,7 +26,7 @@ def shoot(c, url, out, width, dark, settle):
         time.sleep(0.2)
     time.sleep(settle)
     errs = c.js("window.__errs || []")
-    if not c.js("!!document.querySelector('header.top') && !document.querySelector('.status.bad, .state.bad')"):
+    if not c.js("!!document.querySelector('.appbar') && !document.querySelector('.status.bad, .state.bad')"):
         errs = (errs or []) + ["not the portal's page, or the page says it failed: " + str(c.js("document.title"))]
     wide = c.js("document.documentElement.scrollWidth - document.documentElement.clientWidth")
     h = int(c.js("Math.ceil(document.documentElement.scrollHeight)") or 900)
