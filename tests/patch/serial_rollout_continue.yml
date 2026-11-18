@@ -1,0 +1,41 @@
+---
+# 1.75.1: the rollout of playbooks/patch_hosts.yml ("Patch hosts") with patch_continue_on_failure true (the default), in
+# batches (serial), on made-up hosts on this machine (the local connection). run_serial_rollout_test.sh writes:
+#   guard_file  the play's own guard tasks (taken from playbooks/patch_hosts.yml, never a copy)
+#   role_file   roles/patch's "Patch | this host" block: its own lost check (_patch_lost_at, "Patch | LOST"), its own
+#               two batch checkpoints (patch_batch_bad, before the snapshot and the update) and its own rescue
+#               (_patch_could_not), with stand-in steps around the checkpoints in place of the real ones
+# Like the real play: no any_errors_fatal and no max_fail_percentage. Then the report's data from the real filters
+# (patch_host_facts, patch_host_state, patch_report). The variables are those of serial_rollout.yml:
+#   lost      the host lost in its batch (registered as _patch_host_mid, the role's first remote step)
+#   failhost  the host that fails (a task failure)
+#   skip      the host left out on purpose (as roles/patch: _patch_ended_on_purpose, then meta: end_host)
+#   ser       patch_serial
+- name: Patch hosts (the rollout, patch_continue_on_failure true)
+  hosts: rollout
+  gather_facts: false
+  serial: "{{ ser | default(1) }}"
+  pre_tasks:
+    - name: The guard of playbooks/patch_hosts.yml
+      ansible.builtin.include_tasks: "{{ guard_file }}"
+  tasks:
+    - name: The block of roles/patch, with stand-in steps
+      ansible.builtin.include_tasks: "{{ role_file }}"
+
+- name: The report's data (the real filters)
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Each host's state
+      ansible.builtin.debug:
+        msg: "{{ ('REPORT ' ~ item.key ~ ' ' ~ _st.state ~ ' ' ~ _st.reason) | trim }}"
+      vars:
+        _st: "{{ item.value | patch_host_state }}"
+      loop: "{{ hostvars | patch_host_facts(groups['rollout']) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: The hosts that need a look
+      ansible.builtin.debug:
+        msg: "NEEDS LOOK {{ (hostvars | patch_host_facts(groups['rollout'])
+                             | patch_report({'serial': ser | default(1), 'continue_on_failure': true})).needs_look | join(' ') }}"
