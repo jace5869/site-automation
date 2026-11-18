@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.75.1 — 2026-11-18
+
+**To set up: nothing.** The Satisfaction section no longer reads ServiceNow's `-1` as an answer.
+
+**Satisfaction: a `-1` is "no number", and a question with no number is no rating** (docs/SERVICENOW_INSIGHTS.md,
+"Satisfaction").
+
+- ServiceNow stores `actual_value` -1 for an answer with no number: N/A, not answered, or a text question (its answer is
+  in `string_value`). Before, a text question read as a rating showed *0 to 10, average -1.00 of 10, Low*.
+  - A `-1` (also `"-1"` and `-1.0`) is never in an average, the lowest and highest answer, the scale or the
+    left-out counts and hint. With `servicenow_insights_survey_scale` set it is *not answered*, not *outside the scale*.
+  - A question with no number at all (every answer -1 or text, or a yes / no) is no rating: no average, no grade, not in
+    the headline. Its datatype (string, text, boolean) says so too.
+  - The section lists such a question under *Not ratings*: *Q4 · comments · 312 answered*. A rating question's row
+    shows *+N not answered*; the email notes the count; the workbook has a *Not answered (no number)* column.
+  - The scale shown is the question's own, or the one you set. It is never worked out from a `-1`.
+- The module `site_servicenow_insights` reads `string_value` and keeps the `-1`s per question (`na_rows`) beside the text
+  answers (`text_rows`).
+- **Changed:** a question named only in `servicenow_insights_survey_metrics` still shows as a rating. One that only has
+  text answers (a scale datatype, with `servicenow_insights_survey_scale` set) is now a comments question, not a rating.
+
+**STIG Manager: no credential is a clear message, not a traceback** (found in the first run of STIG answer keys).
+
+- Without the *STIG Manager API* credential (an empty token URL, client id or secret), `site_stigman_read` stopped with
+  `ValueError: unknown url type: ''`. It now fails before any request: *STIG Manager: no token URL - attach the
+  'STIG Manager API' credential to this template (or set check_stig_stigman_token_url)*. A URL that is not http(s)
+  is refused the same way.
+  - This covers every job that reads STIG Manager: drift, recheck, scorecard, texts and answer keys.
+- **STIG answer keys: the Limit can be the target.** With no `target` and a Limit of exactly one host, that host is the
+  target. Several hosts, or no Limit, give the same message as before.
+- Tests: `tests/test_stigman_inputs.py` (new), `tests/stig/run_stig_answer_keys_test.sh` (the Limit as the target).
+
 ## 1.75.0 — 2026-11-18
 
 **To set up:** a job template **STIG answer keys** (`playbooks/stig_answer_keys.yml`): credentials Machine, STIG Manager

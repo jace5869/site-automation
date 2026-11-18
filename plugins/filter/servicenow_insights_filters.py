@@ -1900,8 +1900,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
     close_after = float(_o(o, "close_after_days", 7))
     codes = [str(c).strip() for c in name_list(o.get("scrutiny_codes") or ["Duplicate", "Known Error", "No Resolution Provided"]) if str(c).strip()]
     review_code = str(o.get("review_code") or "No Resolution Provided").strip().lower()
-    survey_rows = [x for x in r.get("survey") or [] if isinstance(x, (list, tuple)) and len(x) >= 4]
-    survey_plan = survey_questions(survey_rows, r.get("survey_questions") or {}, o, since, until)
+    survey_rows, survey_meta = survey_numbers(r.get("survey"), r.get("survey_questions"))
+    survey_plan = survey_questions(survey_rows, survey_meta, o, since, until)
     risk_pct = float(_o(o, "sla_risk_pct", 75))
     open_slas = (r.get("sla") or {}).get("open") or {}
     omap = dict((" ".join(str(k).split()).lower(), str(v)) for k, v in (o.get("outcome_map") or OUTCOME_MAP).items())
@@ -3170,6 +3170,28 @@ def survey_scale(opts=None):
     return lo, hi
 
 
+def _no_number(v):
+    """1.75.2: ServiceNow's actual_value -1 ('-1', '-1.0', -1) is 'no number' (N/A, not answered, a text answer): never an answer."""
+    try:
+        return float(v) == -1.0
+    except (TypeError, ValueError):
+        return True
+
+
+def survey_numbers(rows, meta):
+    """1.75.2: the answers that are numbers, and the questions' meta with the -1s ('no number') of a read that kept them
+    counted as not answered (na_rows) - the module no longer returns them as rows. -> (rows, meta)."""
+    keep, na, meta = [], {}, dict(meta or {})
+    for x in rows or []:
+        if isinstance(x, (list, tuple)) and len(x) >= 4:
+            (na.setdefault(x[1], []) if _no_number(x[2]) else keep).append([x[0], x[3]] if _no_number(x[2]) else x)
+    for key, lst in na.items():
+        m_ = dict(meta.get(key) or {"name": str(key)})
+        m_["na_rows"] = list(m_.get("na_rows") or []) + lst
+        meta[key] = m_
+    return keep, meta
+
+
 def _in_scale(v, rng):
     return rng is None or rng[0] <= float(v) <= rng[1]
 
@@ -3245,10 +3267,9 @@ def survey_questions(rows, meta, opts, since, until):
             if not _in_scale(v, rng):
                 q["outside"] += 1
                 q["out_vals"][float(v)] = q["out_vals"].get(float(v), 0) + 1
-    if rng is not None:        # a question whose answers are all text has no numeric row: seeded from the metadata (its text_rows)
-        for key, m_ in meta.items():
-            if key not in qs and isinstance(m_, dict) and m_.get("text_rows"):
-                qs[key] = {"vals": [], "n": 0, "outside": 0, "out_vals": {}}
+    for key, m_ in meta.items():        # a question with no numeric row (comments, or not answered): seeded from the metadata
+        if key not in qs and isinstance(m_, dict) and (m_.get("text_rows") or m_.get("na_rows")):
+            qs[key] = {"vals": [], "n": 0, "outside": 0, "out_vals": {}}
     out = {}
     for key, q in qs.items():
         m = meta.get(key) or {}
@@ -3263,22 +3284,26 @@ def survey_questions(rows, meta, opts, since, until):
             rating, why = True, "named"
         elif dt:
             top = rmax if read else hi
-            rating = dt in ("scale", "numericscale", "template") and top is not None and top <= 10
+            rating = bool(q["vals"]) and dt in ("scale", "numericscale", "template") and top is not None and top <= 10
             why = "datatype %s%s" % (dt, "" if rating else (", up to %g" % top if top is not None and top > 10 else ""))
         else:
             whole = all(float(x) == int(x) for x in q["vals"])
             rating = bool(q["vals"]) and whole and lo >= 0 and hi <= 10 and len(set(q["vals"])) >= 3
             why = "the answers"
-        if not q["vals"] and not rating:
-            continue                            # only text answers, and not a rating question: nothing to show
+        rows_of = lambda k_: [r_ for r_ in m.get(k_) or [] if isinstance(r_, (list, tuple)) and len(r_) >= 2]    # noqa: E731
+        if not q["vals"] and not rating and not (rows_of("text_rows") or rows_of("na_rows")):
+            continue                            # no answer at all and not a rating question: nothing to show
         if rating and rng is not None:          # 1.70.4: the site's scale for every rating; the answers outside it left out
             scale = [rng[0], rng[1], "set"]
         # the answers that are not a number (the module's text_rows: [ticket, taken on]) - left out of the averages, counted
-        trows = [r_ for r_ in m.get("text_rows") or [] if isinstance(r_, (list, tuple)) and len(r_) >= 2] if rating and rng is not None else []
+        trows = rows_of("text_rows") if rating and rng is not None else []
+        crows, nrows = ([] if rating else rows_of("text_rows")), rows_of("na_rows")
         out[key] = {"key": key, "name": name, "survey": m.get("survey") or "", "state": m.get("state") or "", "datatype": dt,
                     "n": q["n"] - (q["outside"] if rating else 0), "lo": lo, "hi": hi, "scale": scale, "rating": rating, "why": why,
                     "outside": q["outside"] if rating else 0, "out_vals": out_pairs(q["out_vals"]) if rating else [],
-                    "text_rows": trows, "text": sum(1 for r_ in trows if _in(_t(r_[1]), since, until))}
+                    "text_rows": trows, "text": sum(1 for r_ in trows if _in(_t(r_[1]), since, until)),
+                    "comment_rows": crows, "comments": sum(1 for r_ in crows if _in(_t(r_[1]), since, until)),
+                    "na_rows": nrows, "na": sum(1 for r_ in nrows if _in(_t(r_[1]), since, until))}
     surveys = {}
     for q in sorted(out.values(), key=lambda q: (_nat(q["survey"]), _nat(q["name"]))):
         sv = surveys.setdefault((q["survey"], q["state"]), {"survey": q["survey"], "state": q["state"], "keys": [], "other": []})
@@ -3334,7 +3359,11 @@ def survey_read_lines(plan, opts=None):
             lo_ = (q.get("outside") or 0) + (q.get("text") or 0)
             out.append("%s - %s - %d answers - %s%s" % (who, q["name"], q["n"], _scale_label(q["scale"]) if q["scale"] else "scale not known: no grade",
                                                      (" - %d answer%s outside it, left out: %s" % (lo_, "" if lo_ == 1 else "s", out_detail(q.get("out_vals"), q.get("text") or 0)))
-                                                     if lo_ else ""))
+                                                     if lo_ else "") + (" - %d not answered (no number)" % q["na"] if q.get("na") else ""))
+        elif q["lo"] is None:
+            out.append("%s - %s - %s - not shown as a rating: it has no numeric answer" % (who, q["name"], ", ".join(
+                [x for x in ("%d comment%s" % (q["comments"], "" if q["comments"] == 1 else "s") if q.get("comments") else "",
+                             "%d not answered" % q["na"] if q.get("na") else "") if x]) or "no answer in the period"))
         else:
             out.append("%s - %s - %d answers - read, not shown as a rating (%s; values %g to %g): name it in "
                        "servicenow_insights_survey_metrics to show it" % (who, q["name"], q["n"], q["why"], q["lo"], q["hi"]))
@@ -3360,6 +3389,9 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
     def text_in(ks):          # the answers that are not a number: of these tickets, in the window, on these questions
         return sum(1 for k in ks if k in qs for r_ in qs[k].get("text_rows") or [] if r_[0] in mine_ids and _in(_t(r_[1]), since, until))
 
+    def rows_in(ks, field):    # a question's text or not-answered rows: of these tickets, in the window
+        return sum(1 for k in ks if k in qs for r_ in qs[k].get(field) or [] if r_[0] in mine_ids and _in(_t(r_[1]), since, until))
+
     def fig(keys, scale):
         ks = set(keys)
         now = [v for k_, q, v, t_ in mine if q in ks and _in(_t(t_), since, until)]
@@ -3377,7 +3409,7 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
                 grp.setdefault(grp_of.get(k_), []).append(v)
         avg = _r2(_avg(now))
         return {"n": len(now), "avg": avg, "prev": _r2(_avg(before)), "prev_n": len(before), "grade": survey_grade(avg, scale, len(now), o),
-                "outside": outside, "out_vals": out_pairs(ov), "text": text,
+                "outside": outside, "out_vals": out_pairs(ov), "text": text, "na": rows_in(ks, "na_rows"),
                 "months": [[k_, _r2(_avg(v)), len(v), survey_grade(_avg(v), scale, len(v), o)] for k_, v in sorted(mon.items())],
                 "by_group": sorted([{"group": g, "avg": _r2(_avg(v)), "n": len(v), "grade": survey_grade(_avg(v), scale, len(v), o)}
                                     for g, v in grp.items()], key=lambda e: (-e["n"], e["group"]))[:12]}
@@ -3403,10 +3435,13 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
     out["outside"] = sum(ov_all.values()) + out["text"]
     out["range"] = _scale_label([rng[0], rng[1], ""]) if rng else ""
     out["scale_set"] = [rng[0], rng[1]] if rng else None
-    for q in plan["other"]:
+    for q in plan["other"]:       # read, not a rating: numbers (a boolean, a count), comments, and the ones nobody answered (-1)
         n_ = sum(1 for k_, k, v, t_ in mine if k == q["key"] and _in(_t(t_), since, until))
-        if n_:
-            out["not_rating"].append({"survey": q["survey"], "name": q["name"], "n": n_, "lo": q["lo"], "hi": q["hi"], "why": q["why"]})
+        c_, na_ = rows_in([q["key"]], "comment_rows"), rows_in([q["key"]], "na_rows")
+        if not n_ and (c_ or na_):        # one with numbers (a yes / no, a count) stays as it was: read, not shown
+            out["not_rating"].append({"survey": q["survey"], "name": q["name"], "n": n_, "lo": q["lo"], "hi": q["hi"], "why": q["why"],
+                                      "comments": c_, "na": na_})
+    out["na"] = rows_in([k for k in qs if qs[k]["rating"]], "na_rows")
     return out
 
 
@@ -3969,7 +4004,8 @@ def servicenow_insights_doc(model, key="all", opts=None):
                         "status": {"Good": "ok", "Fair": "low", "Low": "critical"}.get(sv.get("grade"), ""),     # 1.56.0: Fair is low
                         "note": " · ".join(x for x in (sv.get("grade") or "", sv.get("label") or "", "%d answers" % sv["n"],
                                                         out_line(sv["outside"], sv.get("out_vals"), sv.get("text") or 0, sv.get("scale_set"),
-                                                                 sv.get("range")) if sv.get("outside") else "") if x)})
+                                                                 sv.get("range")) if sv.get("outside") else "",
+                                                        "%d not answered (no number, left out)" % sv["na"] if sv.get("na") else "") if x)})
     secs = breach_email(s.get("breach")) + [
         {"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
     # 1.7.0: what to act on first - the counts, and the first of each list
@@ -4393,12 +4429,15 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
                                 for x in wo["all"] for kind, lst in (("Incident", x["inc_cats"]), ("Request", x["req_items"])) for c_, v, p_ in lst]})
     # 1.70.4: the surveys - each question's average and the top of its scale ("3.78 of 4"), graded on it
     svy = s.get("survey") or {}
-    if svy.get("blocks"):
+    if svy.get("blocks") or svy.get("not_rating"):
         sheets.append({"name": "Satisfaction", "columns": ["Survey", "Question", "Average", "Of", "Scale", "Grade", "Answers", "Outside the scale",
-                                                     "Left out (outside the scale)"],
+                                                     "Left out (outside the scale)", "Not answered (no number)"],
                        "rows": [[b["survey"] or "Survey", q["name"], q["avg"], (q["scale"] or [None, None])[1], _scale_label(q["scale"]),
                                  q["grade"], q["n"], q.get("outside") or 0,
-                                 out_detail(q.get("out_vals"), q.get("text") or 0)] for b in svy["blocks"] for q in b["questions"]]})
+                                 out_detail(q.get("out_vals"), q.get("text") or 0), q.get("na") or 0] for b in svy["blocks"] for q in b["questions"]]
+                       + [[x["survey"] or "Survey", x["name"], None, None, "", "", x["n"], 0,
+                           ("%d comment%s" % (x["comments"], "" if x["comments"] == 1 else "s")) if x.get("comments") else "", x.get("na") or 0]
+                          for x in svy.get("not_rating") or []]})
     sheets.append({"name": "Hand-off paths", "columns": ["Path", "Incidents", "Most common issue", "Days added", "Examples"],
                    "rows": [[" > ".join(e["path"]), e["count"], e["issue"], e["added_days"], ", ".join(e["items"][:5])] for e in s["handoffs"]["paths"]]})
     # 1.9.0

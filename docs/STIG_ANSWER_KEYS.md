@@ -26,6 +26,8 @@ rule you pick. You paste each block into your own answer file, under that rule's
      world_writable_owners: [root, sys, bin, appuser]
    ```
 
+   With no `target` and a Limit of exactly one host, that host is the target.
+
    From a survey, a text field works too: `V-257777, V-257928`, and `root, sys, bin, appuser`. The values can be
    one text field as well: `min_release: 9.4`, one `name: value` per line.
 4. Open the report on the report website. Open a rule and press **Copy block**. Paste the block into a test answer

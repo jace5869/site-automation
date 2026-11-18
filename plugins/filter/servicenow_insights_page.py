@@ -2196,14 +2196,23 @@ def servicenow_insights_page(model, key="all", opts=None):
             qtab = table([("Question", "", ""), ("Average", "n", ""), ("Grade", "", ""), ("Answers", "n", "")],
                          [("", [td(e(r_[0]) + ('<span class="mut"> · %s</span>' % e(_scale_label(q["scale"])) if not b_["one_scale"] else "")),
                                 td(num(r_[1], q["scale"]), "n", r_[1] if r_[1] is not None else -1), td(grade(r_[3])),
-                                td(n(r_[2]) + (' <span class="mut">+%s left out</span>' % n(q["outside"]) if q.get("outside") else ""), "n", r_[2])])
+                                td(n(r_[2]) + (' <span class="mut">+%s left out</span>' % n(q["outside"]) if q.get("outside") else "") +
+                                   (' <span class="mut">+%s not answered</span>' % n(q["na"]) if q.get("na") else ""), "n", r_[2])])
                           for r_, q in zip(qrows, b_["questions"])], empty="No answers in the period.") if len(b_["questions"]) > 1 else ""
             mlab = b_["main_label"]
             blocks_html += head_ + qtab + '<div class="two"><div class="fig"><h3>By month · %s</h3>%s</div><div class="fig"><h3>By group · %s</h3>%s</div></div>' % (
                 e(mlab), gtable([(m_[0], m_[1], m_[2], m_[3]) for m_ in mn["months"]], "Month", bsc),
                 e(mlab), gtable([(g["group"], g["avg"], g["n"], g["grade"]) for g in mn["by_group"]], "Group", bsc, sortable=True))
-        if not sv.get("blocks"):
+        if not sv.get("blocks") and not sv.get("not_rating"):
             blocks_html = '<p class="mut">No answers in the period.</p>'
+        # 1.75.2: questions that are not ratings (comments; nobody gave a number) - listed, never averaged or graded
+        nr = sv.get("not_rating") or []
+        if nr:
+            def nr_line(x):
+                parts = (["comments", "%s answered" % n(x["comments"])] if x.get("comments") else []) + (["%s not answered" % n(x["na"])] if x.get("na") else [])
+                return " · ".join([("%s · %s" % (x["survey"], x["name"])) if x.get("survey") else x["name"]] + parts)
+            blocks_html += '<p class="mut svline">%s%s</p>' % (e("Not ratings, left out of every average: " + "; ".join(nr_line(x) for x in nr[:5])),
+                                                               e(" and %d more." % (len(nr) - 5)) if len(nr) > 5 else "")
         if sv.get("outside"):         # 1.70.4: never clipped - left out, counted and named
             blocks_html = '<p class="mut svline">%s</p>' % e(_sibling("servicenow_insights_filters").out_line(
                 sv["outside"], sv.get("out_vals"), sv.get("text") or 0, sv.get("scale_set"), sv.get("range"))) + blocks_html

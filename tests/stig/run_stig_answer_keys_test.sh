@@ -249,5 +249,10 @@ grep -q "Not tried: try each block on a test host first (the trial comes in 1.75
 run "no rule asked: stops, says what to set" fail -- "no rule asked: set answer_keys_rules"
 AK_INV="localhost,127.0.0.1," run "two hosts: stops - one host" fail -e target=all -e "$all6" -- "STIG answer keys run on ONE host, not 2"
 
+# 1.75.2: no target and a Limit of exactly one host: that host is the target; several hosts, or no Limit: the clear message
+run "no target, the Limit is one host: it is the target (the run goes on to the rules)" fail -e target= -l localhost -- "no rule asked: set answer_keys_rules" "!No target: set target"
+AK_INV="localhost,127.0.0.1," run "no target, the Limit is two hosts: the target message" fail -e target= -l localhost,127.0.0.1 -e "$all6" -- "No target: set target to the ONE Linux host" "Limit now: 'localhost,127.0.0.1'"
+run "no target and no Limit: the target message" fail -e target= -e "$all6" -- "No target: set target to the ONE Linux host"
+
 echo
 if [ $fails -eq 0 ]; then echo "all STIG answer keys scenarios passed"; else echo "$fails STIG answer keys scenario(s) FAILED"; exit 1; fi

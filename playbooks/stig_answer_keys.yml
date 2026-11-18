@@ -8,10 +8,35 @@
 # Nothing is written anywhere: STIG Manager is read with GET only; Evaluate-STIG runs for those rules alone, with no answer
 # files, none of check_stig_evaluate_args, its own output removed; nothing goes to the share. docs/STIG_ANSWER_KEYS.md.
 #
+# No target and a Limit of exactly one host: that host is the target (1.75.2).
 #   ansible-playbook playbooks/stig_answer_keys.yml -e target=rhel01.example.mil -l rhel01.example.mil \
 #     -e '{"answer_keys_rules": ["V-257777", "V-257900"], "answer_keys_values": {"min_release": "9.4"}}'
 - name: Leave out the hosts of site_exclude_hosts (1.67.0)
   ansible.builtin.import_playbook: site_exclude.yml
+
+# 1.75.2: no target, and a Limit of exactly one host: that host is the target (several hosts, or no Limit, keep the message below)
+- name: Target from the Limit
+  hosts: all,localhost
+  gather_facts: false
+  tasks:
+    - name: Target | the target given, else the Limit when it is exactly one host
+      ansible.builtin.set_fact:
+        ak_target: >-
+          {{ (target | default('') | string | trim) if (target | default('') | string | trim) else
+             (((ansible_limit | default('')) | string | trim) if (((ansible_limit | default('')) | string | trim) and
+              (query('ansible.builtin.inventory_hostnames', (ansible_limit | string | trim)) | length == 1)) else '') }}
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+
+    - name: Target | one is set
+      ansible.builtin.assert:
+        that: hostvars['localhost']['ak_target'] | default('') | length > 0
+        fail_msg: >-
+          No target: set target to the ONE Linux host (or a group of one) to make answer keys for, or give the job a Limit
+          of exactly one host (Limit now: '{{ ansible_limit | default('') }}').
+        quiet: true
+      run_once: true
 
 - name: Target check (stops with a clear message when target matches no host)
   hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
@@ -22,10 +47,10 @@
         name: site_findings
         tasks_from: target_check.yml
       vars:
-        _target_pattern: "{{ target | default('') }}"
+        _target_pattern: "{{ hostvars['localhost']['ak_target'] | default(target | default('')) }}"
 
 - name: STIG answer keys
-  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  hosts: "{{ (hostvars['localhost']['ak_target'] | default(target | default(''))) or 'no-target-given' }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: true
   vars:

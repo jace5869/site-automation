@@ -3664,7 +3664,8 @@ class SurveyLeftOut(unittest.TestCase):
 
 class SurveyTextOnly(unittest.TestCase):
     """1.74.2 (review): a rating question whose answers are all text has no numeric row; it is still read, listed with no
-    average and N not a number, and a text answer anywhere keeps the scale hint away."""
+    average and N not a number, and a text answer anywhere keeps the scale hint away. 1.75.2: such a question is a rating only
+    when it is named (servicenow_insights_survey_metrics); else it is a comments question (SurveyNoNumber)."""
 
     def test_text_only_question_beside_one_that_is_all_max_plus_one(self):
         x = site(surveys=True)
@@ -3676,7 +3677,7 @@ class SurveyTextOnly(unittest.TestCase):
         r["survey_questions"] = {"Overall satisfaction": r["survey_questions"]["Overall satisfaction"],
                                  "txt": {"name": "Comments score", "survey": "Service desk survey", "state": "active", "datatype": "numericscale",
                                          "min": 1.0, "max": 5.0, "template": "", "text_rows": [[i, "2026-10-15 10:00:00"] for i in inc]}}
-        o = dict(OPTS, survey_scale=[1, 3])
+        o = dict(OPTS, survey_scale=[1, 3], survey_metrics=["Comments score"])
         # the numbers left out of the first are all one value: 4 = max + 1 (for the hint)
         only4 = [w for w in rows if w[2] > 3]
         self.assertTrue(only4 and all(w[2] == 4.0 for w in only4))
@@ -3700,7 +3701,8 @@ class SurveyTextOnly(unittest.TestCase):
         self.assertIn("+3 left out", sec)
         self.assertTrue(any("Comments score" in w and "3 not a number" in w for w in m["surveys_read"]))
         sh = next(s_ for s_ in F.servicenow_insights_xlsx(m, r, None, x["mask"], o) if s_["name"] == "Satisfaction")
-        self.assertTrue(any(row[1] == "Comments score" and "3 not a number" in row[-1] for row in sh["rows"]))
+        lcol = sh["columns"].index("Left out (outside the scale)")
+        self.assertTrue(any(row[1] == "Comments score" and "3 not a number" in row[lcol] for row in sh["rows"]))
         # without the text, the same answers do say it
         r2 = copy.deepcopy(r)
         r2["survey_questions"]["txt"].pop("text_rows")
@@ -3710,14 +3712,124 @@ class SurveyTextOnly(unittest.TestCase):
         # no scale set: the text-only question is not read at all (as before)
         m3 = F.servicenow_insights_model(r, None, x["mask"], dict(OPTS, survey_scale=[]))
         self.assertEqual([q["name"] for b in m3["scopes"]["all"]["survey"]["blocks"] for q in b["questions"]], ["Overall satisfaction"])
+        self.assertEqual(m3["scopes"]["all"]["survey"]["not_rating"][0]["comments"], 3)        # 1.75.2: not named: a comments question
 
-    def test_a_text_only_question_that_is_no_rating_is_left_alone(self):
+    def test_a_text_only_question_is_no_rating_unless_named(self):
         since, until = rd_window(site())
         meta = {"k": {"name": "Contacted", "survey": "Desk", "datatype": "string", "text_rows": [["t1", "2026-10-02 10:00:00"]]}}
-        self.assertEqual(F.survey_questions([], meta, dict(OPTS, survey_scale=[1, 4]), since, until)["questions"], {})
-        meta["k"].update(datatype="scale", min=1.0, max=5.0)         # a scale ServiceNow gives: a rating without one numeric answer
-        q = F.survey_questions([], meta, dict(OPTS, survey_scale=[1, 4]), since, until)["questions"]["k"]
-        self.assertEqual((q["n"], q["text"], q["scale"]), (0, 1, [1.0, 4.0, "set"]))
+        o = dict(OPTS, survey_scale=[1, 4])
+        q = F.survey_questions([], meta, o, since, until)["questions"]["k"]
+        self.assertEqual((q["rating"], q["comments"], q["text"], q["n"]), (False, 1, 0, 0))
+        meta["k"].update(datatype="scale", min=1.0, max=5.0)         # a scale ServiceNow gives, but not one numeric answer: still no rating
+        self.assertFalse(F.survey_questions([], meta, o, since, until)["questions"]["k"]["rating"])
+        q = F.survey_questions([], meta, dict(o, survey_metrics=["Contacted"]), since, until)["questions"]["k"]     # named: the site says it is one
+        self.assertEqual((q["rating"], q["n"], q["text"], q["scale"]), (True, 0, 1, [1.0, 4.0, "set"]))
+
+
+class SurveyNoNumber(unittest.TestCase):
+    """1.75.2: asmt_metric_result.actual_value -1 is ServiceNow's 'no number' (N/A, not answered, or a text question whose
+    answer is in string_value): never in an average, the scale, the left-out counts or the hint; a question with no real
+    number (all -1, text, a yes / no) is no rating - comments are listed as such."""
+
+    T = "2026-10-15 10:00:00"
+
+    class Api(object):
+        url = "https://sn.example.mil"
+
+        def __init__(self, rows):
+            self.rows = rows
+
+        def get(self, path, params):
+            return {"result": self.rows if path.endswith("asmt_metric_result") else []}
+
+    @staticmethod
+    def res(inc, metric, actual, string="", dt="", mn="", mx="", taken="2026-10-22 10:00:00"):
+        v = lambda x: {"value": x, "display_value": x}                          # noqa: E731
+        return {"instance.trigger_id": v(inc), "metric": v(metric), "metric.name": v(metric), "metric.datatype": v(dt), "metric.min": v(mn),
+                "metric.max": v(mx), "actual_value": v(actual), "string_value": v(string), "instance.taken_on": v(taken)}
+
+    def test_the_module_never_reads_a_minus_one_as_a_number(self):
+        r = self.res
+        rows = [r("i1", "Q1", "4", dt="scale", mn="1", mx="5"), r("i2", "Q1", "-1", dt="scale", mn="1", mx="5"),
+                r("i3", "Q1", "-1.0", dt="scale", mn="1", mx="5"), r("i4", "Q1", " -1 ", dt="scale", mn="1", mx="5"),
+                r("i1", "Q4", "-1", "Fast and kind", dt="string"), r("i2", "Q4", "-1", "", dt="string"),
+                r("i3", "Q4", "", "Slow", dt="string"), r("i4", "Q4", "-1", "  ", dt="string"),
+                r("i1", "Q5", "-1", dt="scale", mn="0", mx="10")]
+        win = rd.window(6, 0, "2026-10-31", True, "", NOW)
+        sv, qs, err = rd.read_survey(self.Api(rows), win)
+        self.assertEqual(sv, [["i1", "Q1", 4.0, "2026-10-22 10:00:00"]])                # the -1s: not a row
+        self.assertEqual(qs["Q1"]["na_rows"], [["i2", "2026-10-22 10:00:00"], ["i3", "2026-10-22 10:00:00"], ["i4", "2026-10-22 10:00:00"]])
+        self.assertNotIn("text_rows", qs["Q1"])
+        self.assertEqual([x[0] for x in qs["Q4"]["text_rows"]], ["i1", "i3"])            # the answer is in string_value
+        self.assertEqual([x[0] for x in qs["Q4"]["na_rows"]], ["i2", "i4"])
+        self.assertEqual((qs["Q5"]["na_rows"], qs["Q5"].get("text_rows")), ([["i1", "2026-10-22 10:00:00"]], None))
+        self.assertIn("string_value", rd.SURVEY_FIELDS)
+
+    def model(self, scale=None, **opts):
+        x = site(surveys=True)
+        r = copy.deepcopy(x["r"])
+        q1 = next(k for k, m_ in r["survey_questions"].items() if m_["name"] == "Q1" and m_["state"] != "retired")
+        base = [w for w in r["survey"] if w[1] == q1]
+        ids = sorted(set(w[0] for w in base))
+        o = dict(OPTS, survey_scale=scale or [], **opts)
+        before = F.servicenow_insights_model(r, None, x["mask"], o)["scopes"]["all"]["survey"]
+        r["survey"] = r["survey"] + [[i, q1, v, self.T] for i, v in zip(ids[:6], (-1, -1.0, -1, -1.0, -1, -1.0))]          # not answered
+        r["survey_questions"][q1] = dict(r["survey_questions"][q1], na_rows=[[i, self.T] for i in ids[6:8]])
+        r["survey_questions"]["q4"] = {"name": "Comments", "survey": r["survey_questions"][q1]["survey"], "state": r["survey_questions"][q1]["state"],
+                                       "datatype": "scale", "min": 0.0, "max": 10.0, "template": "",
+                                       "text_rows": [[i, self.T] for i in ids[:5]], "na_rows": [[i, self.T] for i in ids[5:7]]}
+        r["survey_questions"]["yn"] = {"name": "Contacted again", "survey": r["survey_questions"][q1]["survey"], "state": r["survey_questions"][q1]["state"],
+                                       "datatype": "boolean", "min": None, "max": None, "template": ""}
+        r["survey"] += [[i, "yn", float(n_ % 2), self.T] for n_, i in enumerate(ids[:10])]
+        return x, r, o, before, F.servicenow_insights_model(r, None, x["mask"], o)
+
+    def test_minus_one_changes_no_average_and_a_comments_question_is_no_rating(self):
+        x, r, o, before, m = self.model()
+        sv = m["scopes"]["all"]["survey"]
+        self.assertEqual((sv["avg"], sv["n"], sv["grade"], sv["label"]), (before["avg"], before["n"], before["grade"], before["label"]))   # the headline: the first real rating
+        self.assertEqual(sv["scale"], before["scale"])                                  # never a scale from -1
+        q1 = [q for b in sv["blocks"] for q in b["questions"] if q["name"] == "Q1"][0]
+        self.assertEqual((q1["avg"], q1["n"], q1["na"]), ([q for b in before["blocks"] for q in b["questions"] if q["name"] == "Q1"][0]["avg"], q1["n"], 6 + 2))
+        names = [q["name"] for b in sv["blocks"] for q in b["questions"]]
+        self.assertEqual(names.count("Q4"), 2)      # the surveys' own Q4s (ratings) stay; the comments question is none
+        self.assertNotIn("Comments", names)                                                   # no average, no grade
+        self.assertNotIn("Contacted again", names)
+        self.assertEqual([(x_["name"], x_["comments"], x_["na"]) for x_ in sv["not_rating"]], [("Comments", 5, 2)])
+        self.assertEqual((sv["outside"], sv["out_vals"]), (0, []))                       # no scale set: nothing outside
+        self.assertTrue(any("Comments" in w and "5 comments" in w and "2 not answered" in w for w in m["surveys_read"]), m["surveys_read"])
+
+    def test_with_a_scale_set_it_is_not_answered_not_outside(self):
+        x, r, o, before, m = self.model(scale=[1, 4])
+        sv = m["scopes"]["all"]["survey"]
+        self.assertEqual(sv["outside"], before["outside"])                              # the -1s are not 'outside the scale'
+        self.assertEqual(sv["out_vals"], before["out_vals"])
+        self.assertNotIn(-1.0, [v for v, _n in sv["out_vals"]])
+        self.assertEqual(sv["text"], before["text"])                                    # Q4's comments are not left-out answers either
+        self.assertEqual((sv["avg"], sv["n"]), (before["avg"], before["n"]))
+        for v in (-1, -1.0, "-1", "-1.0", " -1 "):
+            self.assertTrue(F._no_number(v), v)
+        self.assertFalse(F._no_number(0))
+        self.assertFalse(F._no_number(-0.5))
+
+    def test_page_email_workbook(self):
+        x, r, o, before, m = self.model(scale=[1, 4])
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        sec = h[h.index('id="satisfaction"'):]
+        sec = sec[:sec.index("</section>")]
+        self.assertIn("Not ratings, left out of every average: ", sec)
+        self.assertRegex(sec, r"Service desk survey · Comments · comments · 5 answered · 2 not answered")
+        self.assertNotIn("-1.00", sec)
+        self.assertNotIn("Contacted again", sec)                                        # a yes / no stays unshown, as before
+        self.assertRegex(sec, r'<span class="mut">\+8 not answered</span>')             # Q1's row says how many
+        doc = F.servicenow_insights_doc(m, "all", o)
+        note = next(t_ for t_ in doc["summary"] if t_["label"] == "Satisfaction")["note"]
+        self.assertIn("not answered (no number, left out)", note)
+        sh = next(s_ for s_ in F.servicenow_insights_xlsx(m, r, None, x["mask"], o) if s_["name"] == "Satisfaction")
+        col = sh["columns"].index("Not answered (no number)")
+        row = next(w for w in sh["rows"] if w[1] == "Q1" and w[col])
+        self.assertEqual(row[col], 8)
+        crow = next(w for w in sh["rows"] if w[1] == "Comments")
+        self.assertEqual((crow[2], crow[col], "5 comments" in crow[sh["columns"].index("Left out (outside the scale)")]), (None, 2, True))
 
 
 class Release1704(unittest.TestCase):

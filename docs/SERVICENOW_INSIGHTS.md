@@ -848,10 +848,18 @@ scale.
 
 - **The scale** comes from ServiceNow: the question's min and max, or its template's values. When those can not be read,
   the answers' lowest and highest are used and the page says *as observed*.
-- **A rating** is a question ServiceNow calls a scale (scale, numericscale, template) up to 10. When that can not be read,
-  every answer must be a whole number from 0 to 10, with 3 or more different answers.
-- **Not a rating**: a yes / no, a 0 to 100 score, a count. Read, but not shown as a rating. *How this was made* lists it,
-  under *The surveys read*. To show one anyway, name it in `servicenow_insights_survey_metrics`.
+- **A rating** is a question ServiceNow calls a scale (scale, numericscale, template) up to 10, with at least one answer
+  that is a number. When that can not be read, every answer must be a whole number from 0 to 10, with 3 or more
+  different answers.
+- **Not a rating**: a yes / no, a 0 to 100 score, a count, a comments question. Read, but not shown as a rating.
+  *How this was made* lists it, under *The surveys read*. To show one anyway, name it in
+  `servicenow_insights_survey_metrics`.
+- **No number (1.75.1).** ServiceNow stores `-1` for an answer with no number: N/A, not answered, or a text question
+  (its answer is in `string_value`). A `-1` is never in an average, a scale, a left-out count or the scale hint.
+- A question with no number at all is no rating, whatever its datatype says: no average, no grade, not in the headline.
+  The section lists it under *Not ratings*: *Q4 · comments · 312 answered*, or *115 not answered*.
+- A rating question's row shows *+N not answered* for its `-1`s. The email says how many, and the workbook's
+  Satisfaction sheet has a *Not answered (no number)* column.
 - **A retired survey** keeps its own block, marked *retired*. Months before a switch of surveys show the old survey's
   figures on its own scale.
 - **The headline** (the tile, the email, the report database): the active survey with the most answers. Its overall
@@ -878,7 +886,7 @@ servicenow_insights_survey_scale: [1, 4]
 - An answer outside the scale (a 5) is left out of every average. It is never made a 4. The section says how many,
   and so does *The surveys read*.
 - The line names what was left out, the most first: *50 answers outside 1 to 4 left out of the averages: 48 answered 5,
-  2 answered 0*. An answer that is not a number counts as *not a number*.
+  2 answered 0*. An answer that is not a number counts as *not a number*. A `-1` is *not answered*, never outside the scale.
 - When every answer left out is one step above the top (or below the bottom), the line says which scale your surveys
   may be on: *set servicenow_insights_survey_scale: [1, 5]*. Each question row shows *+N left out*.
 - The email has the same line. The workbook's Satisfaction sheet has a *Left out (outside the scale)* column.

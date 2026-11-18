@@ -186,6 +186,20 @@ def reviews_of(rows, words=None):
     return out
 
 
+def check_inputs(p):
+    """1.75.2: '' (None, or only spaces) for good inputs, else why not: an empty token URL, client id or secret (the 'STIG Manager API'
+    credential not attached), or a URL that is not http(s) - said up front, never a urllib traceback ('unknown url type')."""
+    miss = [n for n, k in (("token URL", "token_url"), ("client id", "client_id"), ("secret", "client_secret")) if not str(p.get(k) or "").strip()]
+    if miss:
+        return ("STIG Manager: no %s - attach the 'STIG Manager API' credential to this template (or set check_stig_stigman_token_url)"
+                % " / ".join(miss))
+    bad = [("token URL", p["token_url"]), ("API URL", p.get("api"))]
+    for n, u in bad:
+        if not re.match(r"^https?://[^/\s]+", str(u or "").strip(), re.I):
+            return "STIG Manager: the %s '%s' is not an http(s) URL - check_stig_stigman_token_url / check_stig_stigman_api" % (n, str(u or "")[:80])
+    return ""
+
+
 class Client(object):
     def __init__(self, p):
         self.p = p
@@ -225,6 +239,9 @@ class Client(object):
             raise RuntimeError("%s did not answer JSON" % req.get_full_url().split("?")[0])
 
     def login(self):
+        bad = check_inputs(self.p)
+        if bad:
+            raise RuntimeError(bad)
         form = {"grant_type": "client_credentials", "client_id": self.p["client_id"], "client_secret": self.p["client_secret"]}
         if self.p["scope"]:
             form["scope"] = self.p["scope"]
@@ -527,6 +544,9 @@ def main():
         protect_words=dict(type="list", elements="str", default=list(PROTECT_WORDS)),
     ), supports_check_mode=True)
     p = module.params
+    bad = check_inputs(p)
+    if bad:
+        module.fail_json(msg=bad)
     client = Client(p)
     try:
         client.login()
