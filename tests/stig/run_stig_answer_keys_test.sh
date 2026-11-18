@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
-# STIG answer keys (1.75.0, playbooks/stig_answer_keys.yml) on this box as the host (the local connection, no
+# STIG answer keys (1.75.0, playbooks/stig_answer_keys.yml) on this box as the trial host (the local connection, no
 # sudo): a fake Evaluate-STIG_Bash.sh (writes the CKLB tests/stig/make_cklb.py makes; an Evaluate-STIG.ps1 with its
 # version and an answer file template beside it), the STIG Manager stand-in (tests/stig/stigman_mock.py: any request that
 # is not a GET - but the token's POST - FAILS the test), a fake ACT (tests/containers/fake_act.py) and pwsh. Checks: a
-# pattern-made block (stat), a rule that needs a site value (min_release) - then given,
+# pattern-made block (stat, true), a rule that needs a site value (min_release) - then given (false: "keeps it Open"),
 # ACT's draft offered and marked, ACT's draft the read-only check refuses (iex), a rule Not a Finding in STIG Manager, a
 # rule Evaluate-STIG passes; Evaluate-STIG given --SelectVuln, never --AFPath or the site's --AnswerKey; the template's
-# element names, the documented ones; one host only; ACT off. 1.75.0: no trial - every block "not tried", no code run
-# on the host (the trial comes in 1.75.1).
+# element names, the documented ones; one host only; ACT off. 1.76.0: the trial in its read-only sandbox (systemd-run;
+# tests/stig/sandbox_trial.py runs writes in it with the check left out), no sandbox - no trial.
 #   bash tests/stig/run_stig_answer_keys_test.sh     (ANSIBLE_PLAYBOOK=... to pick one; AK_KEEP=DIR keeps the outputs)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 py="${STIG_TEST_PYTHON:-$(command -v python3)}"
-command -v pwsh >/dev/null || { echo "SKIP - pwsh is not here (the read-only check needs PowerShell 7)"; exit 0; }
+command -v pwsh >/dev/null || { echo "SKIP - pwsh is not here (the read-only check and the trial need PowerShell 7)"; exit 0; }
 work="$(mktemp -d)"
+# 1.76.0: the trial runs in a read-only sandbox with its own /tmp - a file the trial reads lives outside /tmp
+mkdir -p "$HOME/.cache" && fx="$(mktemp -d "$HOME/.cache/site-ak-e2e-XXXXXX")"
 smtp_pid="" sm_pid="" act_pid=""
-cleanup() { [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$sm_pid" ] && kill "$sm_pid" 2>/dev/null; [ -n "$act_pid" ] && kill "$act_pid" 2>/dev/null; rm -rf "$work"; }
+cleanup() { [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$sm_pid" ] && kill "$sm_pid" 2>/dev/null; [ -n "$act_pid" ] && kill "$act_pid" 2>/dev/null; rm -rf "$work" "${fx:?}"; }
 trap cleanup EXIT
 fails=0
 port_sm="${AK_SM_PORT:-12641}" port_smtp="${AK_SMTP_PORT:-12642}" port_act="${AK_ACT_PORT:-12643}"
 major=$(. /etc/os-release && echo "${VERSION_ID%%.*}")
 mkdir -p "$work/es/AnswerFiles" "$work/mail" "$work/act" "$work/web"
-echo '{"SV-258999": "not_reviewed", "SV-257835": "not_reviewed", "SV-257985": "open", "SV-257883": "open", "SV-257821": "open"}' > "$work/es_results.json"
+echo '{"SV-258999": "not_reviewed", "SV-257835": "not_reviewed", "SV-257985": "open", "SV-257883": "open", "SV-257821": "open", "SV-257779": "open"}' > "$work/es_results.json"
 cat > "$work/es/Evaluate-STIG_Bash.sh" <<EOF
 #!/bin/bash
 # --SelectVuln (this Evaluate-STIG has it)
@@ -54,7 +56,7 @@ cat > "$work/es/AnswerFiles/AnswerFile_Template.xml" <<'EOF'
   </Vuln>
 </STIGComments>
 EOF
-printf 'PermitRootLogin no\n' > "$work/sshd_config"
+printf 'PermitRootLogin no\n' > "$fx/sshd_config"
 "$py" "$repo/tests/email/fake_smtp.py" "$port_smtp" "$work/mail" >/dev/null 2>&1 & smtp_pid=$!
 "$py" "$here/stigman_mock.py" "$port_sm" "$work/sm.json" "$work/sm.log" >/dev/null 2>&1 & sm_pid=$!
 # ACT's model URL: any HTTP answer shows the way is open (roles/site_act evidence_ask.yml); the fake ACT answers itself
@@ -80,7 +82,9 @@ cat > "$work/sm.json" <<EOF
    {"ruleId": "SV-257883r1_rule", "groupId": "V-257883", "version": "RHEL-09-412035", "severity": "medium", "title": "Sessions end after 10 minutes.",
     "check": "Verify the session timeout:\\n\\n\$ grep -i tmout /etc/profile.d/*\\n\\nTMOUT=600\\n\\nIf it is not set, this is a finding.", "fix": ""},
    {"ruleId": "SV-257821r1_rule", "groupId": "V-257821", "version": "RHEL-09-214020", "severity": "high", "title": "GPG check of local packages.", "check": "Check it.", "fix": ""},
-   {"ruleId": "SV-258176r1_rule", "groupId": "V-258176", "version": "RHEL-09-654225", "severity": "medium", "title": "Audit privileged commands.", "check": "Check it.", "fix": ""}]}}
+   {"ruleId": "SV-258176r1_rule", "groupId": "V-258176", "version": "RHEL-09-654225", "severity": "medium", "title": "Audit privileged commands.", "check": "Check it.", "fix": ""},
+   {"ruleId": "SV-257779r1_rule", "groupId": "V-257779", "version": "RHEL-09-211020", "severity": "medium", "title": "The journal service must be active.",
+    "check": "Verify the journal service is active with the following command:\\n\\n\$ systemctl is-active systemd-journald\\n\\nactive\\n\\nIf the systemd-journald service is not active, this is a finding.", "fix": ""}]}}
 EOF
 cat > "$work/settings.yml" <<EOF
 check_stig_scanner: evaluate_stig
@@ -106,7 +110,7 @@ target: localhost
 EOF
 all6='{"answer_keys_rules": ["V-258999", "SV-257835", "V-257985", "V-257883", "V-257821", "V-258176"]}'
 act() { printf '%s' "$1" > "$work/act/act.json"; rm -f "$work/act/fake-act-calls.log"; }
-ACT_OK='Here it is.\n```powershell\n$l = @(Get-Content -LiteralPath '"'"$work/sshd_config"'"' | Where-Object { $_ -match '"'"'^\\s*PermitRootLogin\\b'"'"' })\nWrite-Verbose ('"'"'read: '"'"' + ($l -join '"'"' | '"'"'))\nreturn ($l.Count -eq 1 -and $l[0] -match '"'"'\\bno$'"'"')\n```\nIt checks PermitRootLogin.'
+ACT_OK='Here it is.\n```powershell\n$l = @(Get-Content -LiteralPath '"'"$fx/sshd_config"'"' | Where-Object { $_ -match '"'"'^\\s*PermitRootLogin\\b'"'"' })\nWrite-Verbose ('"'"'read: '"'"' + ($l -join '"'"' | '"'"'))\nreturn ($l.Count -eq 1 -and $l[0] -match '"'"'\\bno$'"'"')\n```\nIt checks PermitRootLogin.'
 ACT_BAD='```powershell\niex '"'"'Get-Content /etc/profile'"'"'\nreturn $true\n```'
 run() {  # run NAME ok|fail [args...] -- TEXT...  (a TEXT starting with ! must not be there)
     local tname="$1" want="$2"; shift 2
@@ -157,11 +161,10 @@ run "six rules: a pattern's block, ACT's block, one needs a value, ACT's refused
     "V-257835 NOT DRAFTED: Not drafted - needs answer_keys_values.min_release (the RHEL 9 release the site supports, at least). Add to the template's Variables: answer_keys_values: {min_release:" \
     "V-257883 NOT DRAFTED: Not drafted - the read-only check refused the draft ACT wrote: it runs iex (not one of the allowed commands)" \
     "V-257821 NOT DRAFTED: Not a Finding in STIG Manager (accepted): answer keys are for Open and Not Reviewed rules only." \
-    "V-258176 NOT DRAFTED: Evaluate-STIG's own check says Not a Finding on the host: no answer key is needed." \
+    "V-258176 NOT DRAFTED: Evaluate-STIG's own check says Not a Finding on the trial host: no answer key is needed." \
     '<AnswerKey Name=\"SITEA\">' "<ExpectedStatus>Not_Reviewed</ExpectedStatus>" "<ExpectedStatus>Open</ExpectedStatus>" \
     "<!-- drafted by ACT - read it before you use it -->" "site-automation answer key (ACT draft): the ValidationCode returned true" \
-    "site-automation answer key: /etc/hostname is owned by root (stat)" "!Traceback" \
-    "Not tried: try each block on a test host first (the trial comes in 1.75.1)." "!systemd-run" "!ValidationCode gave"
+    "site-automation answer key: /etc/hostname is owned by root (stat)" "!Traceback"
 writes "ACT drafting included"
 untouched "ACT drafting included"
 args=$(cat "$work/es_args.txt")
@@ -186,7 +189,7 @@ import email, sys
 msg = email.message_from_binary_file(open(sys.argv[1], "rb"))
 text = "".join(p.get_payload(decode=True).decode("utf-8", "replace") for p in msg.walk() if p.get_content_type() in ("text/plain", "text/html"))
 names = [p.get_filename() or "" for p in msg.walk()]
-ok = "Answer keys to copy (2)" in text and "Not drafted (4)" in text and "<ValidationCode>" not in text and any(n.endswith(".xlsx") for n in names)
+ok = "answer keys to copy (2)" in text and "not drafted (4)" in text and "<ValidationCode>" not in text and any(n.endswith(".xlsx") for n in names)
 sys.exit(0 if ok else 1)
 PY
 then echo "ok   - the email: the two tables, the blocks only in the workbook (and on the website)"
@@ -194,16 +197,15 @@ else echo "FAIL - the email"; fails=$((fails + 1)); fi
 
 act '{"summary": "no code"}'
 # as a survey gives them: texts - the rules with commas and spaces, the values as a name: value line, ACT off as "false"
-run "the site value given (a survey's text), ACT off: the release rule offered (not tried), the rest by hand" ok \
+run "the site value given (a survey's text), ACT off: the release rule offered (false - it keeps it Open), the rest by hand" ok \
     -e '{"answer_keys_rules": "V-258999, SV-257835 V-257985,V-257883 V-257821 V-258176", "answer_keys_values": "min_release: 9.4", "answer_keys_act": "false"}' -- \
     "STIG answer keys: 2 ready to copy, 4 not drafted" "V-257835 ready: RHEL 9 must not have the telnet-server package installed." \
     "V-257985 NOT DRAFTED: Not drafted - no fixed pattern fits and ACT is off (answer_keys_act false): write this one by hand." \
     "the site's supported minimum" "!V-257985 ACT draft"
 [ -e "$work/act/fake-act-calls.log" ] && { echo "FAIL - ACT was asked with answer_keys_act false"; fails=$((fails + 1)); } || echo "ok   - ACT not asked with answer_keys_act false"
 page="$(command grep -rl 'Copy block' "$work/web" --include='*.html' | xargs -r ls -t | head -1)"
-t="$(pagetext "$page")"; case "$t" in *"Try each block on a test host first"*"Not tried - the trial on a host comes in 1.75.1: try this block on a test host before you rely on it"*"answer_keys_values.min_release = 9.4"*) true ;; *) false ;; esac \
-    && case "$t" in *"NotAFinding if true, Open if false"*"Try each block on a test host first. No block was tried"*) true ;; *) false ;; esac \
-    && echo "ok   - the website: not tried (try it on a test host first), what it would set, the site value each block used" || { echo "FAIL - not tried / value on the page"; fails=$((fails + 1)); }
+t="$(pagetext "$page")"; case "$t" in *"Open - the host fails it now: this key keeps it Open"*"answer_keys_values.min_release = 9.4"*) true ;; *) false ;; esac \
+    && echo "ok   - the website: the false trial keeps it Open, the site value each block used" || { echo "FAIL - false trial / value on the page"; fails=$((fails + 1)); }
 
 # an Evaluate-STIG whose template lacks an element and whose code does not show the ExpectedStatus compare
 sed -i '/ValidTrueComment/d' "$work/es/AnswerFiles/AnswerFile_Template.xml"
@@ -222,9 +224,10 @@ writes "every run"
 mkdir -p "$work/es_nosel"
 grep -v -- '--SelectVuln' "$work/es/Evaluate-STIG_Bash.sh" > "$work/es_nosel/Evaluate-STIG_Bash.sh"; chmod +x "$work/es_nosel/Evaluate-STIG_Bash.sh"
 : > "$work/es_args.txt"
-run "an Evaluate-STIG without -SelectVuln: not run, no key drafted (never a full scan)" ok -e "$all6" -e check_stig_evaluate="$work/es_nosel" -- \
-    "STIG answer keys: 0 ready to copy, 6 not drafted" \
-    "Not drafted - Evaluate-STIG could not run only the picked rules: Evaluate-STIG could not run only the picked rules: this Evaluate-STIG has no -SelectVuln option (not run in full: selected_only)"
+run "an Evaluate-STIG without -SelectVuln: not run, no key drafted (never a full scan) - no host worked: the job fails, says why" fail -e "$all6" -e check_stig_evaluate="$work/es_nosel" -- \
+    "STIG answer keys: 0 ready to copy, 0 not drafted - 0 STIGs, 0 hosts" \
+    "HOST localhost: Evaluate-STIG could not run only the picked rules: this Evaluate-STIG has no -SelectVuln option (not run in full: selected_only)" \
+    "STIG answer keys: no host worked"
 [ ! -s "$work/es_args.txt" ] && echo "ok   - ... Evaluate-STIG not run at all" || { echo "FAIL - Evaluate-STIG ran: $(cat "$work/es_args.txt")"; fails=$((fails + 1)); }
 mkdir -p "$work/es_empty"
 cat > "$work/es_empty/Evaluate-STIG_Bash.sh" <<EOF
@@ -234,25 +237,44 @@ echo "\$*" >> "$work/es_args.txt"; echo "nothing written"
 EOF
 chmod +x "$work/es_empty/Evaluate-STIG_Bash.sh"
 : > "$work/es_args.txt"
-run "an Evaluate-STIG that writes nothing with -SelectVuln: no key drafted, not run again in full" ok -e "$all6" -e check_stig_evaluate="$work/es_empty" -- \
-    "STIG answer keys: 0 ready to copy, 6 not drafted" "with -SelectVuln it wrote no checklist" "not run in full (selected_only)"
+run "an Evaluate-STIG that writes nothing with -SelectVuln: no key drafted, not run again in full" fail -e "$all6" -e check_stig_evaluate="$work/es_empty" -- \
+    "STIG answer keys: 0 ready to copy, 0 not drafted" "with -SelectVuln it wrote no checklist" "not run in full (selected_only)"
 [ "$(wc -l < "$work/es_args.txt")" -eq 1 ] && grep -q -- "--SelectVuln" "$work/es_args.txt" && echo "ok   - ... Evaluate-STIG run once, with --SelectVuln - no full run" \
     || { echo "FAIL - Evaluate-STIG runs: $(cat "$work/es_args.txt")"; fails=$((fails + 1)); }
 untouched "every run"
 
-# 1.75.0: no trial - no code runs on the host: no systemd-run, no pwsh but the read-only check's parser
-grep -q "Not tried: try each block on a test host first (the trial comes in 1.75.1)." "$work/out.txt" \
-    && ! grep -q "systemd-run\|ValidationCode gave" "$work/out.txt" \
-    && echo "ok   - not tried: the job output says to try each block on a test host first; no trial ran" \
-    || { echo "FAIL - not tried / a trial in the job output"; fails=$((fails + 1)); }
+# 1.76.0: no sandbox (no systemd-run that keeps the host read-only): no trial, so no key - never a trial outside it
+act "{\"summaries\": [$(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')]}"
+run "no sandbox: not tried, no key" ok -e '{"answer_keys_rules": ["V-257985"]}' -e _ak_sandbox=/nonexistent/systemd-run -- \
+    "STIG answer keys: 0 ready to copy, 1 not drafted" \
+    "V-257985 NOT DRAFTED: Not drafted - not tried: no sandbox (systemd-run was not found): a trial runs only in a read-only sandbox."
+untouched "no sandbox"
 
-run "no rule asked: stops, says what to set" fail -- "no rule asked: set answer_keys_rules"
-AK_INV="localhost,127.0.0.1," run "two hosts: stops - one host" fail -e target=all -e "$all6" -- "STIG answer keys run on ONE host, not 2"
+# 1.76.0: systemctl needs a daemon's socket - the sandbox has none: the exact command line the check allowed is run once
+# outside it, its answer replayed inside (a stand-in check text on a rule the fake scan knows; the trial true where systemd-journald runs)
+run "systemctl in a code: read once outside the sandbox, replayed inside" ok -e '{"answer_keys_rules": ["V-257779"], "answer_keys_act": false}' -- \
+    "STIG answer keys: 1 ready to copy, 0 not drafted" "V-257779 ready: RHEL 9 must display the Standard Mandatory DoD Notice and Consent Banner."
+page="$(command grep -rl 'Copy block' "$work/web" --include='*.html' | xargs -r ls -t | head -1)"
+t="$(pagetext "$page")"; case "$t" in *"Replayed in the trial"*"/usr/bin/systemctl is-active systemd-journald - read once outside the sandbox"*) true ;; *) false ;; esac \
+    && case "$t" in *"no socket of any kind, not root"*) true ;; *) false ;; esac \
+    && echo "ok   - the website: the systemctl answer replayed (read once outside), the sandbox described" || { echo "FAIL - the replay on the page"; fails=$((fails + 1)); }
 
-# 1.75.2: no target and a Limit of exactly one host: that host is the target; several hosts, or no Limit: the clear message
-run "no target, the Limit is one host: it is the target (the run goes on to the rules)" fail -e target= -l localhost -- "no rule asked: set answer_keys_rules" "!No target: set target"
-AK_INV="localhost,127.0.0.1," run "no target, the Limit is two hosts: the target message" fail -e target= -l localhost,127.0.0.1 -e "$all6" -- "No target: set target to the ONE Linux host" "Limit now: 'localhost,127.0.0.1'"
-run "no target and no Limit: the target message" fail -e target= -e "$all6" -- "No target: set target to the ONE Linux host"
+# 1.76.0: the sandbox itself - Codex's three writes and their variants run in it with the check left out (in the test):
+# nothing on the host changes
+"$py" "$here/sandbox_trial.py" > "$work/sandbox.txt" 2>&1; src=$?
+grep -E "^(ok|FAIL) " "$work/sandbox.txt" | sed 's/^/    /'
+[ $src -eq 0 ] && echo "ok   - the trial sandbox held: every write refused, nothing on the host changed" \
+    || { echo "FAIL - the trial sandbox: $(tail -1 "$work/sandbox.txt")"; fails=$((fails + 1)); }
+
+run "no rule asked and no STIG Manager: stops, says what to set" fail -e check_stig_stigman_api= -- "No rule asked and no STIG Manager to pick them from"
+run "more hosts than answer_keys_max_hosts: stops, says so" fail -e "$all6" -e answer_keys_max_hosts=0 -- "at most 0 (answer_keys_max_hosts)"
+
+# 1.76.0: many hosts - see run_stig_answer_keys_hosts_test.sh
+
+# 1.75.1 / 1.76.0: no target - the Limit is used (one host or many); neither a target nor a Limit: the clear message
+run "no target, the Limit is one host: it is the target" ok -e target= -l localhost -- "!No target: set target"
+AK_INV="localhost,127.0.0.1," run "no target, the Limit is two hosts: both are used" ok -e target= -l localhost,127.0.0.1 -e "$all6" -- "!No target: set target"
+run "no target and no Limit: the target message" fail -e target= -e "$all6" -- "No target: set target to the Linux host or group"
 
 echo
 if [ $fails -eq 0 ]; then echo "all STIG answer keys scenarios passed"; else echo "$fails STIG answer keys scenario(s) FAILED"; exit 1; fi

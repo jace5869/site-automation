@@ -1,9 +1,9 @@
 ---
 # STIG answer keys (1.75.0b), on the AAP side (playbooks/stig_answer_keys.yml: run_once, delegated to localhost): ACT drafts the ValidationCode of each rule no fixed
 # pattern fits (answer_keys_act) - in evidence mode, as the site portal's "Ask ACT": ACT reads DISA's check text and
-# answers, it runs NO command, here or on any host, and nothing is installed or changed on the host. Its code
-# comes back in a ```powershell block; the read-only check on the host decides whether it is offered
-# (marked "drafted by ACT - read it before you use it"). Input: _ak_for_act (the host's).
+# answers, it runs NO command, here or on any host, and nothing is installed or changed on the trial host. Its code
+# comes back in a ```powershell block; the read-only check and the trial on the host decide whether it is offered
+# (marked "drafted by ACT - read it before you use it"). Input: _ak_for_act (the trial host's).
 - name: Answer keys | no ACT draft asked yet
   ansible.builtin.set_fact:
     _ak_act: {}
@@ -13,4 +13,4 @@
   loop: "{{ _ak_for_act | default([]) }}"
   loop_control:
     loop_var: _ak_rule
-    label: "{{ _ak_rule.v }}"
+    label: "{{ _ak_rule.label | default('') }} {{ _ak_rule.v }}"

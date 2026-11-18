@@ -345,7 +345,7 @@ class H(BaseHTTPRequestHandler):
             if proj and self.client(d) in d.get("no_stig_read", []):
                 return self.send(403, {"error": "User has insufficient privilege to complete this request."})
             rows = []
-            for r in d["rules"][parts[3]]:
+            for r in d.get("rules_rev", {}).get(parts[3] + "/" + parts[5], d["rules"][parts[3]]):     # 1.76.0b: a revision's own
                 o = dict((k, v) for k, v in r.items() if k not in ("check", "fix", "discussion"))
                 if "check" in proj:
                     o["check"] = {"system": "C-" + str(r.get("ruleId")), "content": r.get("check", "")}

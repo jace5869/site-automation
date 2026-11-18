@@ -1,0 +1,111 @@
+---
+# STIG ANSWER KEYS (1.76.0), on the AAP side, once (playbooks/stig_answer_keys.yml: run_once, delegated to localhost):
+# every host's own (_ak_h, answer_keys.yml) grouped by STIG - benchmark and release - with each rule a host found merged
+# (stig_answer_merge: a key is wanted when one host wants it; its ExpectedStatus the majority's); DISA's check text of
+# each STIG's rules (STIG Manager, GET only); the rules already in the site's answer files left out
+# (answer_keys_skip_answered); the rules no fixed pattern fits - for ACT, once each. Output: _ak_m (the groups),
+# _ak_for_act, _ak_answered.
+- name: Answer keys | skip the rules already in your answer files? (answer_keys_skip_answered; unset - when check_stig_evaluate_answers is)
+  ansible.builtin.set_fact:
+    _ak_skip: "{{ (answer_keys_skip_answered | bool) if answer_keys_skip_answered is not none else (check_stig_evaluate_answers | default('') | length > 0) }}"
+
+- name: Answer keys | every host's own, grouped by STIG (benchmark and release)
+  ansible.builtin.set_fact:
+    _ak_m: >-
+      {%- set hs = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set _ = hs.append(hostvars[h]._ak_h | default({'host': h, 'ok': false, 'why': 'not reached (no answer from it)'})) -%}
+      {%- endfor -%}
+      {{ hs | stig_answer_merge(answer_keys_max_rules) }}
+
+- name: Answer keys | DISA's check text of each STIG's rules (STIG Manager, GET only)
+  site_stigman_read:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path }}"
+    timeout: "{{ check_stig_stigman_timeout | int }}"
+    text_timeout: "{{ check_stig_rule_texts_timeout | int }}"
+    hosts: []
+    # 1.76.0b (Codex): one read per STIG revision, kept apart - a rule id two revisions share has each its own text
+    texts: [{benchmark: "{{ g.bench }}", revision: "{{ g.rev }}", rules: "{{ g.picks | selectattr('ok') | map(attribute='sv') | list }}"}]
+  register: _ak_text
+  check_mode: false               # only reads
+  loop: "{{ _ak_m.groups }}"
+  loop_control:
+    loop_var: g
+    label: "{{ g.label }}"
+  when: check_stig_stigman_api | length > 0 and g.bench | length > 0
+
+- name: Answer keys | the site's answer files (answer_keys_skip_answered) - a folder of the job's own
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: site-answer-keys-af-
+  register: _ak_af_stage
+  check_mode: false
+  when: _ak_skip | bool
+
+- name: Answer keys | the site's answer files, read once from where they are (read-only)
+  site_answer_files:
+    src: "{{ check_stig_evaluate_answers }}"
+    dest: "{{ _ak_af_stage.path }}/files"
+    base: "{{ playbook_dir }}"
+    patterns: "{{ check_stig_evaluate_answers_patterns }}"
+    username: "{{ check_stig_evaluate_answers_user or lookup('ansible.builtin.env', 'SMB_SHARE_USERNAME') }}"
+    password: "{{ check_stig_evaluate_answers_password or lookup('ansible.builtin.env', 'SMB_SHARE_PASSWORD') }}"
+    auth: "{{ check_stig_evaluate_answers_auth }}"
+    encrypt: "{{ check_stig_evaluate_answers_encrypt | bool }}"
+  register: _ak_af
+  check_mode: false               # reads the share; writes only its own folder
+  failed_when: false
+  when: _ak_skip | bool
+
+- name: Answer keys | the rules already in your answer files (an AnswerKey of this Name)
+  ansible.builtin.set_fact:
+    _ak_in_files: "{{ (_ak_af_stage.path ~ '/files') | stig_answer_in_files(_ak_key) if _ak_skip | bool and not _ak_af.error | default('') else {} }}"
+
+- name: Answer keys | the site's answer files' folder removed
+  ansible.builtin.file:
+    path: "{{ _ak_af_stage.path }}"
+    state: absent
+  check_mode: false
+  when: _ak_skip | bool and _ak_af_stage.path is defined
+
+- name: Answer keys | the groups, with the check texts and without the rules already answered
+  ansible.builtin.set_fact:
+    _ak_m: >-
+      {%- set gs = [] -%}
+      {%- set answered = {} -%}
+      {%- for g in _ak_m.groups -%}
+      {%-   set texts = (_ak_text.results[loop.index0].texts | default({})) if _ak_text.results is defined else {} -%}
+      {%-   set ps = [] -%}
+      {%-   set done = [] -%}
+      {%-   for p in g.picks -%}
+      {%-     if p.ok and p.v in _ak_in_files -%}
+      {%-       set _ = done.append(p.v) -%}
+      {%-     else -%}
+      {%-       set _ = ps.append(p | combine({'check_text': (texts[p.sv].check | default('')) if p.sv in texts else p.check_text | default('')})) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%-   if done -%}{%- set _ = answered.update({g.label: done}) -%}{%- endif -%}
+      {%-   set _ = gs.append(g | combine({'picks': ps})) -%}
+      {%- endfor -%}
+      {{ _ak_m | combine({'groups': gs, 'answered': answered}) }}
+
+- name: Answer keys | the rules no fixed pattern fits - for ACT, once each (answer_keys_act)
+  ansible.builtin.set_fact:
+    # 1.76.0b: one per (benchmark, revision, rule) - each with its own STIG's check text
+    _ak_for_act: "{{ _ak_m.groups | stig_answer_for_act_groups(answer_keys_values, answer_keys_act | bool) }}"
+    _ak_reps: "{{ _ak_m.groups | map(attribute='rep') | list }}"
+
+- name: Answer keys | what the hosts gave
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for g in _ak_m.groups -%}{%- set _ = out.append(g.label ~ ': ' ~ (g.hosts | join(', '))) -%}{%- endfor -%}
+      {%- for f in _ak_m.failed -%}{%- set _ = out.append(f.host ~ ' DID NOT WORK: ' ~ f.why) -%}{%- endfor -%}
+      {%- if _ak_m.none -%}{%- set _ = out.append("in none of the hosts' STIGs: " ~ (_ak_m.none | join(', '))) -%}{%- endif -%}
+      {{ out }}

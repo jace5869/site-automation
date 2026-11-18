@@ -6,8 +6,10 @@ allow and the tricks it must refuse.
 from __future__ import absolute_import, division, print_function
 
 import importlib.util
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -160,7 +162,9 @@ class Rules(unittest.TestCase):
                          [{"v": "V-257777", "sv": "SV-257777"}, {"v": "V-257900", "sv": "SV-257900"}])
         self.assertIn("not a rule id", a.stig_answer_rules(["RHEL-09-211010"])["error"])
         self.assertIn("no rule asked", a.stig_answer_rules([])["error"])
-        self.assertIn("at most 25", a.stig_answer_rules(["V-%d" % i for i in range(1, 27)])["error"])
+        self.assertIn("at most 150", a.stig_answer_rules(["V-%d" % i for i in range(1, 152)])["error"])
+        self.assertIn("at most 3", a.stig_answer_rules(["V-1", "V-2", "V-3", "V-4"], most=3)["error"])
+        self.assertEqual(a.stig_answer_rules([], True), {"rules": [], "error": "", "auto": True})     # 1.76.0: none - the automatic pick
 
     def test_pick(self):
         rules = a.stig_answer_rules(["V-1", "V-2", "V-3", "V-4", "V-5"])["rules"]
@@ -221,7 +225,8 @@ class Act(unittest.TestCase):
         self.assertTrue(d["V-2"]["true"][1].startswith(a.PREFIX_ACT))
         off = a.stig_answer_drafts(picks, {}, False)
         self.assertIn("ACT is off (answer_keys_act false)", off["V-2"]["why"])
-        hr = {"gate": {"V-1": {"ok": True, "used": ["/usr/bin/stat"]}, "V-2": {"ok": False, "why": ["it runs iex (not one of the allowed commands)"]}}}
+        hr = {"gate": {"V-1": {"ok": True, "used": ["/usr/bin/stat"]}, "V-2": {"ok": False, "why": ["it runs iex (not one of the allowed commands)"]}},
+              "trial": {"V-1": {"ok": True, "valid": False, "read": "read: apache", "seconds": 0.1}}}
         rows = dict((r["v"], r) for r in a.stig_answer_rows(picks, d, hr, "DEFAULT"))
         self.assertIn('<AnswerKey Name="DEFAULT">', rows["V-1"]["block"])
         self.assertIn("refused the draft ACT wrote: it runs iex", rows["V-2"]["why"])
@@ -229,17 +234,7 @@ class Act(unittest.TestCase):
         self.assertEqual(doc["web"]["title"], "STIG answer keys: 1 ready to copy, 2 not drafted")
         web = doc["web"]["sections"][0]
         self.assertEqual(web["details"][0][0]["texts"][0]["button"], "Copy block")
-        # 1.75.0: no trial - every block "not tried", what it would set for true and for false, try it on a test host first
-        self.assertIn(["Trial", a.NOT_TRIED], web["details"][0][1]["rows"])
-        self.assertIn(["When the code returns true", "NotAFinding (ValidTrueStatus)"], web["details"][0][1]["rows"])
-        self.assertIn(["When it returns false", "Open (ValidFalseStatus) - the rule stays Open"], web["details"][0][1]["rows"])
-        self.assertEqual(web["rows"][0][-2:], [a.NOT_TRIED_SHORT, a.WOULD_SET])
-        self.assertTrue(web["text"].startswith("Try each block on a test host first"))
-        self.assertTrue(doc["report"]["sections"][0]["text"].startswith("Try each block on a test host first"))
-        self.assertTrue(doc["web"]["sections"][2]["lines"][0].startswith("Try each block on a test host first."))
-        self.assertEqual([t["value"] for t in doc["web"]["summary"] if t["label"] == "Trial"], ["not tried"])
-        self.assertIn("Not tried: try each block on a test host first (the trial comes in 1.75.1).", doc["lines"])
-        self.assertEqual(doc["xlsx"][0]["rows"][0][2:4], [a.NOT_TRIED_SHORT, a.WOULD_SET])
+        self.assertIn(["Status it would set", "Open - the host fails it now: this key keeps it Open"], web["details"][0][1]["rows"])
         self.assertIn(["Its ExpectedStatus is Open", a.OPEN_NOTE], web["details"][0][1]["rows"])
         self.assertNotIn("details", doc["report"]["sections"][0])
         self.assertIn("Nothing was written to STIG Manager, the share or the host.", doc["web"]["sections"][2]["lines"][-1])
@@ -380,15 +375,249 @@ class ReadOnlyCheck(unittest.TestCase):
                 g = self.run_ps(self.gate, code)
                 self.assertTrue(g["ok"], g)
 
-    def test_no_trial(self):
-        """1.75.0: no code is run on the host - no trial, no sandbox, no systemd-run (they come in 1.75.1): the module only
-        parses each code with the read-only check, and has no setting that could turn a trial on."""
-        src = open(host.__file__).read()
-        for word in ("systemd-run", "TRIAL_PS1", "EncodedCommand\", \"", "trial=dict", "[scriptblock]::Create($code)"):
-            self.assertNotIn(word, src)
-        self.assertEqual(sorted(k for k in ("trial", "timeout", "sandbox") if '%s=dict(' % k in src), [])
-        defaults = open(os.path.join(REPO, "roles", "check_stig", "defaults", "main.yml")).read()
-        self.assertNotIn("answer_keys_trial", defaults)
+    def test_the_trial(self):
+        """The trial's wrapper (in the module: always inside the sandbox; here only safe codes, without it)."""
+        def trial(code):
+            p = subprocess.run(host.trial_command(PWSH, code), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            return json.loads(p.stdout.decode().strip().splitlines()[-1])
+        r = trial("Write-Verbose 'read: x'\nreturn (1 -lt 2)")
+        self.assertEqual((r["ok"], r["values"], r["kinds"], r["read"]), (True, [True], ["Boolean"], "read: x"))
+        r = trial("'a'\nreturn $true")
+        self.assertEqual(r["values"], ["a", True])                  # two things on its output: not offered (the module)
+
+    def test_the_sandbox(self):
+        """1.76.0: the sandbox's command line - the whole file system read-only, its own /tmp, /var/tmp, /dev/shm, no
+        socket of any family, no IP, only the right to read; as root a dynamic user (CAP_DAC_READ_SEARCH ambient), never
+        CAP_AUDIT_CONTROL; the host's network namespace (net.* read is the host's). No systemd-run: no sandbox, said why."""
+        c = host.sandbox_cmd("/usr/bin/systemd-run", 60, {"/usr/bin/systemctl": "/w/replay-systemctl"})
+        props = [c[i + 1] for i, x in enumerate(c) if x == "-p"]
+        for want in ("ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
+                     "TemporaryFileSystem=/dev/shm", "PrivateIPC=yes", "ProtectProc=invisible", "SystemCallFilter=~@privileged @debug", "InaccessiblePaths=-/proc/sys/kernel/shmmax", "InaccessiblePaths=-/proc/sysvipc", "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
+                     "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
+                     "CapabilityBoundingSet=CAP_DAC_READ_SEARCH", "RuntimeMaxSec=60",
+                     "BindReadOnlyPaths=/w/replay-systemctl:/usr/bin/systemctl"):
+            self.assertIn(want, props)
+        self.assertEqual(props.index("RestrictAddressFamilies=~AF_UNIX"), props.index("RestrictAddressFamilies=AF_UNIX") + 1)
+        self.assertNotIn("PrivateNetwork=yes", props)
+        # 1.76.0 (Codex, round 3): /tmp, /var/tmp and /dev/shm are the sandbox's own, never the host's; not
+        # ProcSubset=pid (it hides /proc/sys and /proc/cmdline); a PID namespace of its own from systemd 257
+        self.assertNotIn("ReadOnlyPaths=/dev/shm", props)
+        self.assertNotIn("ProcSubset=pid", props)
+        self.assertNotIn("PrivatePIDs=yes", props)
+        v = host.sandbox_cmd("/usr/bin/systemd-run", 60, version=257)
+        self.assertIn("PrivatePIDs=yes", [v[i + 1] for i, x in enumerate(v) if x == "-p"])
+        self.assertFalse([x for x in props if "AUDIT" in x])
+        real = os.geteuid
+        try:
+            os.geteuid = lambda: 0
+            r = host.sandbox_cmd("/usr/bin/systemd-run", 60)
+        finally:
+            os.geteuid = real
+        pr = [r[i + 1] for i, x in enumerate(r) if x == "-p"]
+        self.assertNotIn("--user", r)
+        # its own UID: high, in no passwd or group entry, owning no process - never nobody (shared with host daemons)
+        u = host.trial_uid()
+        self.assertTrue(host.UID_FIRST <= u <= host.UID_LAST)
+        self.assertIn("User=%d" % u, pr)
+        self.assertIn("Group=%d" % u, pr)
+        self.assertNotIn("User=nobody", pr)
+        self.assertTrue(host.uid_free(u))
+        self.assertFalse(host.uid_free(0))
+        self.assertFalse(host.uid_free(os.getuid()))           # this test's own: it owns a process
+        self.assertIn("AmbientCapabilities=CAP_DAC_READ_SEARCH", pr)
+        self.assertFalse([x for x in pr if "AUDIT" in x])
+        self.assertEqual(host.find_sandbox("/nonexistent/systemd-run"), "")
+        self.assertEqual(host.find_sandbox("/usr/bin/env"), "")        # only a program named systemd-run
+        self.assertEqual(host.sandbox_probe(""), "systemd-run was not found")
+
+    def test_the_replay(self):
+        """1.76.0: only the check's own command lines are run outside the sandbox; the shim gives each its answer, any
+        other command line 'not captured' (exit 2)."""
+        for ok in (["/usr/sbin/auditctl", "-l"], ["/usr/bin/systemctl", "is-enabled", "sshd.service"],
+                   ["/usr/bin/systemctl", "show", "-p", "ActiveState", "auditd"]):
+            self.assertTrue(host.replay_ok(ok), ok)
+        for bad in (["/usr/sbin/auditctl", "-D"], ["/usr/sbin/auditctl", "-e", "0"], ["/usr/bin/systemctl", "stop", "sshd"],
+                    ["/usr/bin/systemctl", "is-active", "-H", "x"], ["/usr/bin/systemctl", "show", "-p", "A;B", "x"],
+                    ["/usr/bin/systemctl", "is-active", "--user", "x"], ["/usr/bin/rpm", "-q", "bash"]):
+            self.assertFalse(host.replay_ok(bad), bad)
+        # 1.76.0 (Codex): what depends on a namespace, a socket or NSS is replayed - an IPC setting, getent, id, a user or
+        # group name of stat or find (then all of that program's calls); the rest runs inside
+        rf = host.replays_for([["/usr/sbin/sysctl", "-n", "kernel.shmmax"], ["/usr/sbin/sysctl", "-n", "net.ipv4.ip_forward"],
+                               ["/usr/bin/rpm", "-q", "bash"], ["/usr/bin/getent", "passwd", "root"], ["/usr/bin/id", "-u", "root"],
+                               ["/usr/bin/stat", "-c", "%a", "/etc/shadow"]])
+        self.assertEqual(rf, [["/usr/sbin/sysctl", "-n", "kernel.shmmax"], ["/usr/sbin/sysctl", "-n", "net.ipv4.ip_forward"],
+                              ["/usr/bin/getent", "passwd", "root"], ["/usr/bin/id", "-u", "root"]])
+        self.assertEqual(host.replays_for([["/usr/sbin/sysctl", "-n", "net.ipv4.ip_forward"], ["/usr/bin/stat", "-c", "%a", "/x"]]), [])
+        self.assertEqual(len(host.replays_for([["/usr/bin/stat", "-c", "%U", "/x"], ["/usr/bin/stat", "-c", "%a", "/x"]])), 2)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-xdev", "-nouser", "-print"]])), 1)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-type", "d", "-printf", "%u %p\\n"]])), 1)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-type", "d", "-perm", "-0002", "-print"]])), 1)   # / holds /tmp
+        for ok in (["/usr/bin/getent", "passwd", "root"], ["/usr/bin/id", "-u", "-n", "root"], ["/usr/sbin/sysctl", "-n", "kernel.sem"],
+                   ["/usr/bin/stat", "-c", "%U %n", "/etc/shadow"], ["/usr/bin/find", "/home", "-nouser", "-print"]):
+            self.assertTrue(host.replay_ok(ok), ok)
+        for bad in (["/usr/bin/getent", "hosts", "x"], ["/usr/sbin/sysctl", "-w", "kernel.sem=1"], ["/usr/bin/find", "/", "-delete"],
+                    ["/usr/bin/stat", "--printf", "%U", "/x"], ["/usr/bin/id", "-Z"]):
+            self.assertFalse(host.replay_ok(bad), bad)
+        # 1.76.0 (Codex, round 3): /tmp, /var/tmp, /dev/shm are the sandbox's own - find and stat there replayed, any other
+        # read not tried (grep there too: outside it would read a host FIFO)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-xdev", "-type", "d", "-perm", "-0002", "-print"]])), 1)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/var", "-perm", "-0002", "-print"]])), 1)
+        self.assertEqual(len(host.replays_for([["/usr/bin/stat", "-c", "%a", "/tmp"]])), 1)
+        self.assertEqual(host.replays_for([["/usr/bin/find", "/etc", "-perm", "-0002", "-print"]]), [])
+        for code in ("Get-Content /tmp/x", "Test-Path '/var/tmp'", "Get-ChildItem /dev/shm", "Get-ChildItem / -Recurse -File",
+                     "Get-ChildItem -Path '/var' -Recurse"):
+            self.assertIn("cannot show /tmp", host.blind(code), code)
+        self.assertIn("cannot show /tmp", host.blind("x", [["/usr/bin/grep", "-r", "-l", "a", "/"]]))
+        self.assertIn("cannot show /tmp", host.blind("x", [["/usr/bin/grep", "-l", "a", "/tmp/x"]]))
+        for code in ("$o = @(& /usr/bin/find /tmp -perm -0002 -print)", "Get-ChildItem /etc -Recurse", "Get-Content /etc/tmpfiles.d/x.conf",
+                     "Get-Content /var/tmpx"):
+            self.assertEqual(host.blind(code), "", code)
+        self.assertEqual(host.blind("x", [["/usr/bin/grep", "-l", "a", "/etc/x"]]), "")
+        # what the sandbox shows as its own: not tried
+        for code, word in (("Get-Content /proc/mounts", "mount table"), ("Get-Content /proc/self/mountinfo", "mount table"),
+                           ("Get-Content /etc/mtab", "mount table"), ("Get-Content /proc/sys/kernel/shmmax", "IPC"),
+                           ("Get-ChildItem /dev/mqueue", "IPC"), ("(Get-Item /etc/x).User -eq 'root'", "user or group"),
+                           ("Get-Item /etc/x | Select-Object -ExpandProperty Group", "user or group")):
+            self.assertIn(word, host.blind(code), code)
+        self.assertEqual(host.blind("$o = @(& /usr/bin/stat -c '%U' '/etc/x' 2>$null); return ($o[0] -eq 'root')"), "")
+        g = self.run_ps(self.gate, "$a = @(& /usr/sbin/auditctl -l 2>&1); $e = & /usr/bin/systemctl is-enabled auditd; return $true")
+        self.assertEqual(g["calls"], [["/usr/sbin/auditctl", "-l"], ["/usr/bin/systemctl", "is-enabled", "auditd"]])
+        d = tempfile.mkdtemp()
+        try:
+            binds = host.write_shims(d, {("/usr/bin/systemctl", "is-active", "auditd"): (b"active\n", b"", 0),
+                                         ("/usr/bin/systemctl", "is-enabled", "x"): (b"", b"No such unit 'x'\n", 1)})
+            shim = binds.get("/usr/bin/systemctl")
+            self.assertTrue(shim and os.access(shim, os.X_OK))
+            run = lambda *a: subprocess.run(["/bin/sh", shim] + list(a), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            r = run("is-active", "auditd")
+            self.assertEqual((r.returncode, r.stdout), (0, b"active\n"))
+            r = run("is-enabled", "x")
+            self.assertEqual((r.returncode, r.stderr), (1, b"No such unit 'x'\n"))
+            r = run("stop", "auditd")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn(b"not captured", r.stderr)
+            r = run("is-active", "auditd", "x")
+            self.assertEqual(r.returncode, 2)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class ManyHosts(unittest.TestCase):
+    """1.76.0: the automatic pick, many hosts grouped by STIG, Copy all, the report."""
+    SM = {"status": "found", "collectionId": "1", "assetId": "12",
+          "rules": {"SV-1": {"v": "V-1", "severity": "high"}, "SV-2": {"v": "V-2", "severity": "medium"}, "SV-3": {"v": "V-3", "severity": "low"},
+                    "SV-4": {"v": "V-4", "severity": "medium"}, "SV-5": {"v": "V-5", "severity": "medium"}, "SV-6": {"v": "V-6", "severity": "medium"},
+                    "SV-7": {"v": "V-7", "severity": "medium"}},
+          "reviews": {"SV-2": {"result": "fail", "rule": "SV-2r1_rule"}, "SV-3": {"result": "pass"}, "SV-4": {"result": "fail", "protect": "RA"},
+                      "SV-5": {"result": "notchecked", "rule": "SV-5r1_rule"}, "SV-6": {"result": "notapplicable"}, "SV-7": {"result": "informational"}}}
+
+    def test_the_automatic_pick(self):
+        r = a.stig_answer_auto(self.SM, "both")
+        self.assertEqual([x["v"] for x in r["rules"]], ["V-1", "V-2", "V-5"])         # CAT I first; never pass, N/A, RA
+        # the default: Not Reviewed only - where Evaluate-STIG cannot decide, a key pays off
+        self.assertEqual([x["v"] for x in a.stig_answer_auto(self.SM)["rules"]], ["V-1", "V-5"])
+        self.assertEqual(r["protected"], ["V-4"])
+        self.assertEqual([x["v"] for x in a.stig_answer_auto(self.SM, "open")["rules"]], ["V-2"])
+        self.assertEqual([x["v"] for x in a.stig_answer_auto(self.SM, "not_reviewed")["rules"]], ["V-1", "V-5"])
+        self.assertEqual([x["v"] for x in a.stig_answer_auto(self.SM, "both", "CAT I")["rules"]], ["V-1"])
+        self.assertEqual([x["v"] for x in a.stig_answer_auto(self.SM, "both", [2, 3])["rules"]], ["V-2", "V-5"])
+        c = a.stig_answer_auto(self.SM, "both", most=2)
+        self.assertEqual((len(c["rules"]), c["left_out"]), (2, 1))
+        self.assertIn("STIG Manager: no asset", a.stig_answer_auto({"status": "not_found", "why": "no asset"})["why"])
+
+    def test_attachments_never_picked(self):
+        rules = a.stig_answer_auto(self.SM, "both")["rules"]
+        items = a.stig_answer_att_items(self.SM, rules)
+        self.assertEqual(items, [{"collectionId": "1", "assetId": "12", "ruleId": "SV-2r1_rule"}, {"collectionId": "1", "assetId": "12", "ruleId": "SV-5r1_rule"}])
+        d = a.stig_answer_drop_att(rules, self.SM, {"reviews": [{"ruleId": "SV-2r1_rule", "attachments": 1}, {"ruleId": "SV-5r1_rule", "attachments": 0}]})
+        self.assertEqual(([x["v"] for x in d["rules"]], d["dropped"]), (["V-1", "V-5"], ["V-2"]))
+        self.assertEqual(a.stig_answer_drop_att(rules, self.SM, {"error": "no token"})["rules"], [])     # not readable: none picked
+
+    def test_many_hosts_grouped_by_stig(self):
+        def pk(v, es, ok, exp):
+            return {"v": v, "sv": "S" + v, "title": "t", "cat": "CAT II", "es": es, "ok": ok, "expected": exp, "why": "" if ok else "x", "check_text": T_OWNER}
+        hosts = [{"host": "h8", "ok": True, "bench": "RHEL_8_STIG", "rev": "V2R9", "picks": [pk("V-230221", "Open", True, "Open"), pk("V-257777", "", False, "")]},
+                 {"host": "h9a", "ok": True, "bench": "RHEL_9_STIG", "rev": "V2R10", "picks": [pk("V-230221", "", False, ""), pk("V-257777", "Open", True, "Open")]},
+                 {"host": "h9b", "ok": True, "bench": "RHEL_9_STIG", "rev": "V2R10", "picks": [pk("V-230221", "", False, ""), pk("V-257777", "Not Reviewed", True, "Not_Reviewed")]},
+                 {"host": "h9c", "ok": True, "bench": "RHEL_9_STIG", "rev": "V2R10", "picks": [pk("V-230221", "", False, ""), pk("V-257777", "Not Reviewed", True, "Not_Reviewed")]},
+                 {"host": "dead", "ok": False, "why": "not reached"}]
+        m = a.stig_answer_merge(hosts)
+        self.assertEqual([(g["label"], g["hosts"], g["rep"]) for g in m["groups"]], [("RHEL 8 V2R9", ["h8"], "h8"), ("RHEL 9 V2R10", ["h9a", "h9b", "h9c"], "h9a")])
+        p9 = m["groups"][1]["picks"][0]
+        self.assertEqual((p9["v"], p9["expected"], p9["hosts"], p9["es"]), ("V-257777", "Not_Reviewed", ["h9a", "h9b", "h9c"], "Not Reviewed 2, Open 1"))
+        self.assertIn("Not Reviewed on 2 hosts, Open on 1 host - the key applies where Evaluate-STIG says Not_Reviewed", p9["expected_note"])
+        self.assertEqual(m["failed"], [{"host": "dead", "why": "not reached"}])
+        self.assertEqual(m["none"], [])
+        hosts.append({"host": "h10", "ok": True, "bench": "RHEL_10_STIG", "rev": "V1R3", "picks": [pk("V-999", "", False, "")]})
+        self.assertEqual(a.stig_answer_merge(hosts)["none"], ["V-999"])          # in none of the hosts' STIGs
+        # the report: a section per STIG, Copy all with every block in its own <Vuln ID>, a sheet per STIG
+        groups = []
+        for g in m["groups"]:
+            d = a.stig_answer_drafts(g["picks"], {}, False)
+            rows = a.stig_answer_rows(g["picks"], d, {"gate": dict((v, {"ok": True, "used": []}) for v in d),
+                                                      "trial": dict((v, {"ran": True, "ok": True, "valid": True}) for v in d)}, "SITEA")
+            groups.append(dict(g, rows=rows))
+        doc = a.stig_answer_report_multi(groups, "SITEA", False, m["failed"], ["V-999"], {"RHEL 9 V2R10": 3}, "answer_keys_pick both", {"RHEL 9 V2R10": ["V-1"]})
+        self.assertEqual(doc["web"]["title"], "STIG answer keys: 2 ready to copy, 1 not drafted - 2 STIGs, 4 hosts")
+        titles = [s["title"] for s in doc["web"]["sections"]]
+        for t in ("RHEL 8 V2R9 - answer keys to copy (1)", "RHEL 9 V2R10 - answer keys to copy (1)", "RHEL 9 V2R10 - copy all blocks (1)",
+                  "Hosts that did not work (1)", "In none of the hosts' STIGs (1)", "Already in your answer file (1)",
+                  "Left out: more than answer_keys_max_rules", "How this was made"):
+            self.assertIn(t, titles)
+        allx = [s for s in doc["web"]["sections"] if s["title"] == "RHEL 9 V2R10 - copy all blocks (1)"][0]["details"][0][0]["texts"][0]
+        self.assertEqual(allx["button"], "Copy all blocks for RHEL 9 V2R10")
+        self.assertIn('<Vuln ID="V-257777">\n  <AnswerKey Name="SITEA">', allx["cmd"])
+        self.assertTrue(allx["cmd"].rstrip().endswith("</Vuln>"))
+        sec9 = [s for s in doc["web"]["sections"] if s["title"] == "RHEL 9 V2R10 - answer keys to copy (1)"][0]
+        self.assertIn("Hosts", sec9["columns"])
+        self.assertEqual(len(sec9["columns"]), len(sec9["kinds"]))
+        self.assertEqual([x["name"] for x in doc["xlsx"]], ["RHEL 8 V2R9", "RHEL 9 V2R10", "Not drafted"])
+        self.assertIn("Picked: automatically from STIG Manager (answer_keys_rules empty) - answer_keys_pick both.", doc["web"]["sections"][-1]["lines"])
+
+    def test_the_cap_over_the_union(self):
+        """1.76.0b (Codex): host A has 150 CAT III, host B a CAT I (disjoint): the CAT I rule survives the cap, the
+        omitted count is exact."""
+        a3 = [{"v": "V-%d" % (1000 + i), "sv": "SV-%d" % (1000 + i), "cat": 3} for i in range(150)]
+        b1 = [{"v": "V-9", "sv": "SV-9", "cat": 1}, {"v": "V-1000", "sv": "SV-1000", "cat": 3}]          # one shared with A
+        c = a.stig_answer_cap([{"key": "RHEL_9_STIG|V2R10", "rules": a3}, {"key": "RHEL_9_STIG|V2R10", "rules": b1},
+                               {"key": "RHEL_8_STIG|V2R9", "rules": b1}], 150)
+        k = c["RHEL_9_STIG|V2R10"]
+        self.assertEqual(k["allowed"][0], "SV-9")
+        self.assertEqual((len(k["allowed"]), k["left_out"]), (150, 1))          # union 151 - 150
+        self.assertEqual(c["RHEL_8_STIG|V2R9"], {"allowed": ["SV-9", "SV-1000"], "left_out": 0})
+        self.assertEqual(a.stig_answer_auto(self.SM, "both", most=0)["rules"][0], {"v": "V-1", "sv": "SV-1", "cat": 1})
+
+    def test_one_draft_per_stig_revision(self):
+        """1.76.0b (Codex): a rule id two revisions share - each its own text, its own ACT draft (benchmark|revision|rule)."""
+        g7 = {"key": "RHEL_9_STIG|V2R7", "label": "RHEL 9 V2R7", "picks": [{"v": "V-2", "sv": "SV-2", "ok": True, "check_text": T_ASK}]}
+        g10 = {"key": "RHEL_9_STIG|V2R10", "label": "RHEL 9 V2R10", "picks": [{"v": "V-2", "sv": "SV-2", "ok": True, "check_text": T_ASK + " (V2R10)"}]}
+        fa = a.stig_answer_for_act_groups([g7, g10], {})
+        self.assertEqual([x["ak"] for x in fa], ["RHEL_9_STIG|V2R7|V-2", "RHEL_9_STIG|V2R10|V-2"])
+        self.assertTrue(fa[1]["check_text"].endswith("(V2R10)"))
+        act = {"RHEL_9_STIG|V2R7|V-2": {"code": "return $false"}, "RHEL_9_STIG|V2R10|V-2": {"code": "return $true"}}
+        self.assertEqual(a.stig_answer_act_of(act, g10), {"V-2": {"code": "return $true"}})
+        self.assertEqual(a.stig_answer_act_of(act, g7), {"V-2": {"code": "return $false"}})
+        self.assertEqual(a.stig_answer_for_act_groups([g7], {}, False), [])
+
+    def test_a_trial_host_that_failed(self):
+        """1.76.0b (Codex): its STIG's blocks are not tried, said why."""
+        picks = [dict(v="V-1", sv="SV-1", title="Owner", ok=True, expected="Open", check_text=T_OWNER, es="Open")]
+        d = a.stig_answer_drafts(picks, {}, False)
+        r = a.stig_answer_rows(picks, d, {"failed_host": "sandbox /bin/true is not systemd-run"}, "DEFAULT")[0]
+        self.assertEqual(r["why"], "Not drafted - not tried: the trial host failed (sandbox /bin/true is not systemd-run).")
+        self.assertEqual(r["block"], "")
+
+    def test_already_in_your_answer_file(self):
+        d = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(d, "RHEL9.xml"), "w") as f:
+                f.write('<STIGComments Name="RHEL9"><Vuln ID="V-1"><AnswerKey Name="SITEA"/></Vuln><Vuln ID="V-2"><AnswerKey Name="OTHER"/></Vuln></STIGComments>')
+            with open(os.path.join(d, "bad.xml"), "w") as f:
+                f.write("<not xml")
+            self.assertEqual(a.stig_answer_in_files(d, "SITEA"), {"V-1": "RHEL9.xml"})
+            self.assertEqual(a.stig_answer_in_files(os.path.join(d, "none"), "SITEA"), {})
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 class Evaluate(unittest.TestCase):
@@ -406,8 +635,37 @@ class Evaluate(unittest.TestCase):
                 f.write("# x\nif ($A.ExpectedStatus -eq $Status) { 1 }\n")
             self.assertEqual(host.es_version(d), "1.2607.0")
             self.assertEqual(host.template_names(d)[1], a.DOCUMENTED)
-            self.assertEqual(host.expected_check(d), {"found": True, "where": "Modules/M/M.psm1:2"})
+            self.assertEqual(host.expected_check(d), {"found": True, "where": "Modules/M/M.psm1:2", "note": ""})
             self.assertEqual(host.es_folder(os.path.join(d, "Evaluate-STIG.ps1")), d)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class EvaluateWider(unittest.TestCase):
+    """1.76.0 (a real host: Evaluate-STIG 1.2610.1, no template found; the compare only in its GUI script): the template
+    deeper or as a schema; the compare in the engine first - a GUI script is never proof for the command line runs."""
+    def test_schema_and_gui(self):
+        d = tempfile.mkdtemp()
+        try:
+            sch = os.path.join(d, "Src", "Evaluate-STIG", "Modules", "Master_Functions", "Schema")
+            os.makedirs(sch)
+            with open(os.path.join(sch, "AnswerFileSchema.xsd"), "w") as f:
+                f.write('<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="Vuln"><xs:complexType><xs:sequence>'
+                        '<xs:element name="AnswerKey"><xs:complexType><xs:sequence><xs:element name="ExpectedStatus"/>'
+                        '<xs:element name="ValidationCode"/><xs:element name="ValidTrueStatus"/><xs:element name="ValidTrueComment"/>'
+                        '<xs:element name="ValidFalseStatus"/><xs:element name="ValidFalseComment"/></xs:sequence></xs:complexType>'
+                        '</xs:element></xs:sequence></xs:complexType></xs:element></xs:schema>')
+            path, names = host.template_names(d)
+            self.assertTrue(path.endswith("AnswerFileSchema.xsd"))
+            self.assertEqual(names, ["ExpectedStatus", "ValidationCode", "ValidTrueStatus", "ValidTrueComment", "ValidFalseStatus", "ValidFalseComment"])
+            with open(os.path.join(d, "Src", "Evaluate-STIG", "Evaluate-STIG_GUI.ps1"), "w") as f:
+                f.write("x\nif ($a.ExpectedStatus -eq $s) { }\n")
+            e = host.expected_check(d)
+            self.assertEqual((e["found"], e["where"]), (False, "Src/Evaluate-STIG/Evaluate-STIG_GUI.ps1:2"))
+            self.assertIn("only in the GUI script", e["note"])
+            with open(os.path.join(d, "Src", "Evaluate-STIG", "Modules", "Master_Functions", "Master_Functions.psm1"), "w") as f:
+                f.write("\nif ($Answer.ExpectedStatus -eq $Status) { }\n")
+            self.assertEqual(host.expected_check(d), {"found": True, "where": "Src/Evaluate-STIG/Modules/Master_Functions/Master_Functions.psm1:2", "note": ""})
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

@@ -1,0 +1,61 @@
+---
+# STIG ANSWER KEYS (1.76.0), on the AAP side, once (playbooks/stig_answer_keys.yml: run_once, delegated to localhost): the
+# blocks of each STIG (the read-only check and trial of its first host - answer_keys_check.yml), the report grouped by
+# STIG - a Copy all per STIG, a workbook sheet per STIG, the hosts that did not work, the rules in none of the hosts'
+# STIGs - emailed and published as every report.
+- name: Answer keys | the blocks of each STIG
+  ansible.builtin.set_fact:
+    _ak_groups: >-
+      {%- set gs = [] -%}
+      {%- for g in _ak_m.groups -%}
+      {%-   set hc = hostvars[g.rep]._ak_hc | default({}) -%}
+      {%-   set nm = hc.evaluate.names | default([]) | stig_answer_names -%}
+      {%-   set rows = g.picks | stig_answer_rows(g.drafts, hc, _ak_key, nm.names, stigman_protect_words | default(none)) -%}
+      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm})) -%}
+      {%- endfor -%}
+      {{ gs }}
+
+- name: Answer keys | the report
+  ansible.builtin.set_fact:
+    _ak_doc: >-
+      {{ _ak_groups | stig_answer_report_multi(_ak_key, answer_keys_act | bool, _ak_m.failed, _ak_m.none, _ak_m.left_out,
+                                               ('answer_keys_pick ' ~ answer_keys_pick ~ ', answer_keys_cat ' ~ (answer_keys_cat | join(',') if answer_keys_cat is not string else answer_keys_cat)
+                                                ~ ', at most ' ~ answer_keys_max_rules ~ ' per STIG; never a review Not a Finding, Not Applicable, with RA / POA&M words or attachments')
+                                               if _ak_rules.auto | default(false) else '', _ak_m.answered | default({})) }}
+
+- name: Answer keys | what was made
+  ansible.builtin.debug:
+    msg: "{{ _ak_doc.lines }}"
+
+- name: Answer keys | the blocks to copy (also on the report website and in the workbook)
+  ansible.builtin.debug:
+    msg: "{{ (r.label ~ ' - ' ~ r.v ~ (' - drafted by ACT - read it before you use it' if r.by == 'ACT' else '') ~ ': paste under <Vuln ID=\"' ~ r.v ~ '\">').split('\n') + r.block.split('\n') }}"
+  loop: >-
+    {%- set out = [] -%}
+    {%- for g in _ak_groups -%}{%- for r in g.rows if r.block -%}{%- set _ = out.append(r | combine({'label': g.label})) -%}{%- endfor -%}{%- endfor -%}
+    {{ out }}
+  loop_control:
+    loop_var: r
+    label: "{{ r.label }} {{ r.v }}"
+
+- name: Answer keys | email the report, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _report: "{{ _ak_doc.report }}"
+    _report_web: "{{ _ak_doc.web }}"
+    _report_xlsx: "{{ _ak_doc.xlsx }}"
+
+- name: Answer keys | at least one host worked
+  ansible.builtin.assert:
+    that: _ak_groups | length > 0
+    fail_msg: >-
+      STIG answer keys: no host worked -
+      {{ _ak_m.failed | map(attribute='host') | zip(_ak_m.failed | map(attribute='why')) | map('join', ': ') | join('; ') | truncate(600) }}
+    quiet: true

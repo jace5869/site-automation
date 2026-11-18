@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.76.0 — 2026-11-19
+
+**To set up: nothing.** The STIG answer keys template takes a group as `target` now (Prompt on launch for the Limit
+too). The trial needs `systemd-run` on the hosts (every RHEL 8, 9 and 10 has it; RHEL 8's systemd 239 cannot hold the
+sandbox - there nothing is tried). New optional settings: `answer_keys_pick`, `answer_keys_cat`,
+`answer_keys_max_rules` (150), `answer_keys_max_hosts` (50), `answer_keys_skip_answered`, `answer_keys_trial_timeout`
+(60).
+
+**STIG answer keys across many hosts, and the rules picked from STIG Manager** (docs/STIG_ANSWER_KEYS.md).
+
+- `target` may be a group or many hosts (or the Limit): up to `answer_keys_max_hosts`, in parallel. One list of rules
+  may mix RHEL 8, 9 and 10 ids: each host takes those of its STIG.
+- The hosts are grouped by STIG and release (RHEL 8 V2R9, RHEL 9 V2R10, RHEL 10 V1R3): one block per rule per STIG
+  release, drafted once from that release's own check text. When the hosts disagree, ExpectedStatus is the
+  majority's, and the block says what the others said.
+- The read-only check and the trial run on one host per STIG, the first that worked. If it fails then, that STIG's
+  blocks are "not tried: the trial host failed (why)"; the other STIGs and the report go on.
+- A host that cannot be reached or fails is listed with why; the job stays green while one host worked. A rule in none
+  of the hosts' STIGs is said so.
+- **No rule asked: the automatic pick.** STIG Manager's Not Reviewed rules for each host (GET) - where Evaluate-STIG
+  cannot decide, so a key pays off; `answer_keys_pick` open or both adds the Open ones. `answer_keys_cat`, at most
+  `answer_keys_max_rules` per STIG release over all its hosts together (CAT I first; the rest counted, with how to
+  narrow). Never a rule Not a Finding or
+  Not Applicable, never a review with RA or POA&M words or attachments. Without STIG Manager: a clear stop.
+- With `check_stig_evaluate_answers` (or `answer_keys_skip_answered`), the rules your answer files already have a key
+  of this Name for are left out and listed.
+- The report: a section per STIG - the hosts each rule was found on, Evaluate-STIG's counts, Copy block - and **Copy
+  all blocks** per STIG (every block in its own `<Vuln ID>`, for one answer file). A workbook sheet per STIG.
+- A block with ExpectedStatus Open says Evaluate-STIG already checks the rule and found it Open: the key changes the
+  result only where the site's values differ. Each STIG's section counts them.
+- Evaluate-STIG's answer file template is looked for deeper, and in a schema (`*.xsd`); the ExpectedStatus compare in
+  the engine first - a GUI script alone is said, not taken as proof.
+
+**STIG answer keys: each block is now tried once on the host, in a sandbox** (docs/STIG_ANSWER_KEYS.md, "The trial").
+
+- Each block that passes the read-only check runs once on the host with pwsh, its result beside it: true (the status it
+  would set: NotAFinding) or false (offered, marked "this key keeps it Open"). No single true or false: not offered.
+- The trial runs in a sandbox (`systemd-run`) that the kernel holds to these limits:
+  - the whole file system read-only; its own `/tmp`, `/var/tmp` and `/dev/shm` (the host's are never shown inside);
+  - no socket of any kind: no network, D-Bus, systemd or audit socket (`net.*` settings read are the host's);
+  - as root, a UID of its own (random, in no passwd entry, owning no process), keeping only the right to read: it
+    cannot signal a host process; its own IPC, the IPC files in `/proc` hidden.
+- An answer that depends on a namespace, a socket or a private mount is never read inside: it is replayed (the exact
+  command line the check allowed, run once outside) or the code is not tried. Replayed: `auditctl -l`, `systemctl`,
+  `getent`, `id`, `sysctl -n` of an IPC setting, `stat` `%U %G`, `find` with a user or group, `find` and `stat` in or
+  above `/tmp`. Not tried: the mount table, an IPC file, a name through PowerShell, any other read of `/tmp`. The trial
+  says "Replayed in the trial".
+- Before the first trial the job looks from inside, writing nothing, that the sandbox holds (nothing writable, its own
+  `/tmp`, no socket, no IPC file, not root, its own UID owning no process, no capability but reading). If not, or
+  `systemd-run` is missing (or too old: RHEL 8's systemd 239): no trial - each rule is "Not drafted - not tried: no
+  sandbox (why)". There is never a trial outside the sandbox.
+- When you paste a block, your Evaluate-STIG still runs its code as root with no sandbox: the read-only check is what
+  guards that run.
+
 ## 1.75.3 — 2026-11-18
 
 **To set up:** run **Site portal - deploy** again. Give the portal's AAP account (`svc_site_portal`) **Auditor** on the organization of

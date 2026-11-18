@@ -1,42 +1,35 @@
 ---
-# STIG ANSWER KEYS (1.75.0): for the rules you pick (answer_keys_rules - Open or Not Reviewed), an Evaluate-STIG <AnswerKey>
-# block each, ready to copy into YOUR answer file under the rule's <Vuln ID>: ExpectedStatus (Evaluate-STIG's own result),
-# a ValidationCode that only reads, the status and comment for true and false. Linux, Evaluate-STIG with pwsh, ONE
-# host (target): each code is made from DISA's check text by a fixed pattern - or drafted by ACT (answer_keys_act),
-# marked so - then checked read-only (PowerShell's parser) on that host. 1.75.0 runs no code: no trial (1.75.1) - each
-# block says "not tried": try it on a test host before you rely on it.
-# Nothing is written anywhere: STIG Manager is read with GET only; Evaluate-STIG runs for those rules alone, with no answer
-# files, none of check_stig_evaluate_args, its own output removed; nothing goes to the share. docs/STIG_ANSWER_KEYS.md.
+# STIG ANSWER KEYS (1.75.0; 1.76.0: many hosts, the automatic pick): an Evaluate-STIG <AnswerKey> block per rule, ready to
+# copy into YOUR answer file under the rule's <Vuln ID>: ExpectedStatus (Evaluate-STIG's own result), a ValidationCode
+# that only reads, the status and comment for true and false. Linux, Evaluate-STIG with pwsh, on the hosts of target (a
+# group, many hosts) or the Limit, grouped by STIG (RHEL 8, 9, 10 and their releases): ONE block per rule per STIG. The
+# rules: answer_keys_rules - or none, then the rules STIG Manager has Open or Not Reviewed for each host
+# (answer_keys_pick, answer_keys_cat, answer_keys_max_rules). Each code is made from DISA's check text by a fixed pattern
+# - or drafted by ACT (answer_keys_act), marked so - then checked read-only (PowerShell's parser) and tried once on one
+# host per STIG (in a sandbox). Nothing is written anywhere: STIG Manager is read with GET only; Evaluate-STIG runs for
+# those rules alone, with no answer files, none of check_stig_evaluate_args, its own output removed; nothing goes to the
+# share. docs/STIG_ANSWER_KEYS.md.
 #
-# No target and a Limit of exactly one host: that host is the target (1.75.2).
-#   ansible-playbook playbooks/stig_answer_keys.yml -e target=rhel01.example.mil -l rhel01.example.mil \
-#     -e '{"answer_keys_rules": ["V-257777", "V-257900"], "answer_keys_values": {"min_release": "9.4"}}'
+#   ansible-playbook playbooks/stig_answer_keys.yml -e target=rhel_servers \
+#     -e '{"answer_keys_rules": ["V-257777", "V-230221"], "answer_keys_values": {"min_release": ["8.10", "9.4"]}}'
+#   ansible-playbook playbooks/stig_answer_keys.yml -e target=rhel_servers -e answer_keys_pick=open -e '{"answer_keys_cat": [1]}'
 - name: Leave out the hosts of site_exclude_hosts (1.67.0)
   ansible.builtin.import_playbook: site_exclude.yml
 
-# 1.75.2: no target, and a Limit of exactly one host: that host is the target (several hosts, or no Limit, keep the message below)
-- name: Target from the Limit
+# 1.76.0: target (a host or a group), else the Limit - one host or many; neither is a clear stop (1.75.1's message)
+- name: Target or Limit
   hosts: all,localhost
   gather_facts: false
   tasks:
-    - name: Target | the target given, else the Limit when it is exactly one host
-      ansible.builtin.set_fact:
-        ak_target: >-
-          {{ (target | default('') | string | trim) if (target | default('') | string | trim) else
-             (((ansible_limit | default('')) | string | trim) if (((ansible_limit | default('')) | string | trim) and
-              (query('ansible.builtin.inventory_hostnames', (ansible_limit | string | trim)) | length == 1)) else '') }}
-      run_once: true
-      delegate_to: localhost
-      delegate_facts: true
-
     - name: Target | one is set
       ansible.builtin.assert:
-        that: hostvars['localhost']['ak_target'] | default('') | length > 0
+        that: ((target | default('', true) | string | trim) ~ (ansible_limit | default('') | string | trim)) | length > 0
         fail_msg: >-
-          No target: set target to the ONE Linux host (or a group of one) to make answer keys for, or give the job a Limit
-          of exactly one host (Limit now: '{{ ansible_limit | default('') }}').
+          No target: set target to the Linux host or group to make answer keys for, or give the job a Limit
+          (one host or many).
         quiet: true
       run_once: true
+      delegate_to: localhost
 
 - name: Target check (stops with a clear message when target matches no host)
   hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
@@ -47,12 +40,16 @@
         name: site_findings
         tasks_from: target_check.yml
       vars:
-        _target_pattern: "{{ hostvars['localhost']['ak_target'] | default(target | default('')) }}"
+        # 1.76.0: target, else the Limit (a group, many hosts)
+        _target_pattern: "{{ target | default('', true) or ansible_limit | default('') }}"
 
 - name: STIG answer keys
-  hosts: "{{ (hostvars['localhost']['ak_target'] | default(target | default(''))) or 'no-target-given' }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  # 1.76.0: many hosts (target - a group - or the Limit), in parallel; a host not reached or failing is listed, never
+  # fails the job while one worked
+  hosts: "{{ target | default('', true) or ansible_limit | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
   become: true
+  ignore_unreachable: true
   vars:
     site_report_title: STIG answer keys
   pre_tasks:
@@ -61,14 +58,27 @@
         name: site_findings
         tasks_from: os_guard.yml
   tasks:
-    # 1.75.0b: nothing of ACT's on this host - no install, no copy, no clean-up of old copies
-    - name: The answer keys - Evaluate-STIG for the picked rules only, STIG Manager read, the patterns' drafts
+    # each host: the rules (asked, or STIG Manager's Open and Not Reviewed), Evaluate-STIG's own result for them alone
+    - name: The answer keys - each host - the rules, Evaluate-STIG for the picked rules only, STIG Manager read
       ansible.builtin.include_role:
         name: check_stig
         tasks_from: answer_keys.yml
 
-    # on the AAP side, once (run_once, delegated to localhost - a Limit of the host needs no localhost): ACT reads
-    # DISA's text and answers, in evidence mode - it runs no command, here or on any host
+    # on the AAP side, once: the hosts grouped by STIG, the check texts, the rules already in the answer files left out
+    - name: The answer keys - the hosts grouped by STIG, on the AAP side
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys_group.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    # on the AAP side, once (run_once, delegated to localhost - a Limit of the hosts needs no localhost): ACT reads
+    # DISA's text and answers, in evidence mode - it runs no command, here or on any host; once per rule
     - name: The answer keys - ACT drafts the rules no fixed pattern fits (answer_keys_act), on the AAP side
       ansible.builtin.include_role:
         name: check_stig
@@ -82,7 +92,19 @@
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
       when: _ak_for_act | default([]) | length > 0
 
-    - name: The answer keys - the read-only check of each draft, the report (no trial in 1.75.0)
+    - name: The answer keys - the read-only check and one trial of each draft, on one host per STIG
       ansible.builtin.include_role:
         name: check_stig
         tasks_from: answer_keys_check.yml
+
+    - name: The answer keys - the report, grouped by STIG, on the AAP side
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys_report.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

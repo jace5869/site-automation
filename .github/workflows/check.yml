@@ -325,8 +325,20 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_recheck_test.sh
       - name: STIG answer keys (1.75.0; pwsh, a stand-in Evaluate-STIG, a fake ACT, a stand-in STIG Manager that fails on any write)
         run: |
+          # 1.76.0: the trial runs in a systemd-run sandbox - here the runner user's own systemd (lingering), with user
+          # namespaces allowed (the Ubuntu runner's AppArmor restricts them by default)
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo loginctl enable-linger "$(id -un)"
+          for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
+          python3 tests/stig/sandbox_trial.py
+          # as root too, as the job runs it (a system unit): sysctl -w / -p / --system fail inside, /etc stays as it is,
+          # auditctl -l works inside - on this throwaway runner only
+          sudo apt-get install -y -q auditd >/dev/null && sudo systemctl start auditd || true
+          sudo env "PATH=$PATH" "$(command -v python3)" tests/stig/sandbox_trial.py
           bash tests/stig/run_stig_answer_keys_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_test.sh
+          bash tests/stig/run_stig_answer_keys_hosts_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_hosts_test.sh
       - name: Workflow 37 - STIG Manager updated after an approval (the recheck's plan, the update; a stand-in STIG Manager that writes for one client)
         run: |
           bash tests/stig/run_stig_update_test.sh

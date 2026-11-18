@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """1.75.0: STIG answer keys (playbooks/stig_answer_keys.yml) - for the rules a person picks, an Evaluate-STIG <AnswerKey>
-block each, ready to copy into their own answer file: ExpectedStatus (Evaluate-STIG's own result on the host), a
+block each, ready to copy into their own answer file: ExpectedStatus (Evaluate-STIG's own result on the trial host), a
 ValidationCode that only reads (made from DISA's check text by a fixed pattern, or drafted by ACT), and the status and
 comment for true and for false. Never a whole answer file; nothing is written anywhere (the job reads STIG Manager with
-GET only). The read-only check runs on the host (roles/check_stig/library/site_stig_answer_host.py); 1.75.0 runs no
-code there - no trial (1.75.1).
+GET only). The read-only check and the trial run on the host (roles/check_stig/library/site_stig_answer_host.py).
 
   stig_answer_rules     the rules asked (V- or SV- ids) -> [{v, sv}] or an error
   stig_answer_pick      each rule: allowed (Open or Not Reviewed in STIG Manager and in Evaluate-STIG's own result)?
@@ -21,10 +20,14 @@ import shlex
 
 STATUSES = ("NotAFinding", "Open", "Not_Applicable")          # never RA, POA&M, Not_Reviewed as an answer
 DOCUMENTED = ["ExpectedStatus", "ValidationCode", "ValidTrueStatus", "ValidTrueComment", "ValidFalseStatus", "ValidFalseComment"]
-RULES_MAX = 25
+RULES_MAX = 150
 PREFIX = "site-automation answer key:"
 PREFIX_ACT = "site-automation answer key (ACT draft):"
 ACT_MARK = "drafted by ACT - read it before you use it"
+# 1.76.0 (a real RHEL 10 run: every block Open): a rule Evaluate-STIG checks itself and found Open - its key re-checks the
+# same thing, the result stays Open but where the site's values differ
+DECIDED_NOTE = ("Evaluate-STIG already checks this rule and found it Open - this key changes the result only where your "
+                "site's values differ from its check (e.g. answer_keys_values)")
 OPEN_NOTE = "applies only if your Evaluate-STIG version runs ValidationCode for Open"
 CMD_WHAT = {"Get-Content": "reads a file", "Select-String": "searches text", "Test-Path": "asks whether a path is there",
             "Get-Item": "reads a file's details", "Get-ChildItem": "lists files", "Where-Object": "filters in memory",
@@ -39,10 +42,6 @@ CMD_WHAT = {"Get-Content": "reads a file", "Select-String": "searches text", "Te
             "/usr/sbin/getenforce": "reads SELinux's mode", "/usr/sbin/sestatus": "reads SELinux's state",
             "/usr/bin/grep": "searches a file (listed flags only, never -f)", "/usr/bin/getent": "reads an account",
             "/usr/bin/id": "reads an account", "/usr/sbin/auditctl": "lists the audit rules loaded (-l only)"}
-# 1.75.0: no trial on a host (it comes in 1.75.1) - every block offered says so
-NOT_TRIED = "Not tried - the trial on a host comes in 1.75.1: try this block on a test host before you rely on it"
-NOT_TRIED_SHORT = "not tried - try it on a test host first"
-WOULD_SET = "NotAFinding if true, Open if false"
 SM_WORD = {"fail": "Open", "pass": "Not a Finding", "notapplicable": "Not Applicable", "notchecked": "Not Reviewed",
            "informational": "Informational", "": "Not Reviewed"}
 ES_EXPECTED = {"fail": "Open", "notchecked": "Not_Reviewed"}
@@ -67,9 +66,11 @@ def _q(s):
 
 
 # ---- the rules asked --------------------------------------------------------------------------------------------------
-def stig_answer_rules(rules):
+def stig_answer_rules(rules, empty_ok=False, most=None):
     """answer_keys_rules (a list, or a text of ids) -> {rules: [{v, sv}], error}. V-257777 and SV-257777 are one rule; at most
-    RULES_MAX, never all of them."""
+    most (answer_keys_max_rules; RULES_MAX), never all of them. 1.76.0: empty_ok - none asked is the automatic pick (STIG
+    Manager's Open and Not Reviewed rules, stig_answer_auto)."""
+    most = int(most or RULES_MAX)
     if isinstance(rules, str):
         rules = re.split(r"[\s,;]+", rules)
     out, seen, bad = [], set(), []
@@ -87,14 +88,16 @@ def stig_answer_rules(rules):
     if bad:
         return {"rules": [], "error": "not a rule id (V-257777 or SV-257777): %s" % ", ".join(bad[:5])}
     if not out:
+        if empty_ok:
+            return {"rules": [], "error": "", "auto": True}
         return {"rules": [], "error": "no rule asked: set answer_keys_rules (V- or SV- ids, from the rules Open or Not Reviewed)"}
-    if len(out) > RULES_MAX:
-        return {"rules": [], "error": "%d rules asked: at most %d a run (answer_keys_rules)" % (len(out), RULES_MAX)}
+    if len(out) > most:
+        return {"rules": [], "error": "%d rules asked: at most %d a run (answer_keys_rules; answer_keys_max_rules)" % (len(out), most)}
     return {"rules": out, "error": ""}
 
 
 def stig_answer_pick(rules, items, sm=None, es_why=""):
-    """Each rule asked, with what STIG Manager and Evaluate-STIG's own run on the host say -> [{v, sv, title, cat,
+    """Each rule asked, with what STIG Manager and Evaluate-STIG's own run on the trial host say -> [{v, sv, title, cat,
     sm, es, expected, ok, why}]. A key is for a rule Open or Not Reviewed in both (STIG Manager not set: Evaluate-STIG
     alone); ExpectedStatus is Evaluate-STIG's own result (Open or Not_Reviewed)."""
     sm = sm or {}
@@ -114,9 +117,9 @@ def stig_answer_pick(rules, items, sm=None, es_why=""):
             x["why"] = "%s in STIG Manager (%s): answer keys are for Open and Not Reviewed rules only." % (
                 SM_WORD[rv["result"]], rv.get("status") or "")
         elif not it:
-            x["why"] = "Evaluate-STIG gave no result for it on the host (not in the STIG it checked)."
+            x["why"] = "Evaluate-STIG gave no result for it on the trial host (not in the STIG it checked)."
         elif not x["expected"]:
-            x["why"] = "Evaluate-STIG's own check says %s on the host: no answer key is needed." % x["es"]
+            x["why"] = "Evaluate-STIG's own check says %s on the trial host: no answer key is needed." % x["es"]
         else:
             x["ok"] = True
         out.append(x)
@@ -602,12 +605,12 @@ def stig_answer_codes(drafts):
 
 
 def stig_answer_rows(picks, drafts, host=None, key="DEFAULT", names=None, words=None):
-    """The report's rows (stig_answer_report): each rule with its block - its code through the read-only check (1.75.0:
-    no trial - each block "not tried") - or why it has none."""
+    """The report's rows (stig_answer_report): each rule with its block - its code through the read-only check and the
+    trial - or why it has none."""
     host, rows = host or {}, []
-    gate = host.get("gate") or {}
+    gate, trial = host.get("gate") or {}, host.get("trial") or {}
     for p in picks or []:
-        r = dict(p, by="", block="", gate={}, uses={})
+        r = dict(p, by="", block="", gate={}, trial={}, uses={})
         d = (drafts or {}).get(p["v"]) or {}
         if not p.get("ok"):
             rows.append(r)
@@ -616,16 +619,22 @@ def stig_answer_rows(picks, drafts, host=None, key="DEFAULT", names=None, words=
             r["why"] = d.get("why") or "Not drafted."
             rows.append(r)
             continue
-        g = gate.get(p["v"]) or {}
-        r.update(by=d["by"], gate=g, uses=d.get("uses") or {})
+        g, t = gate.get(p["v"]) or {}, trial.get(p["v"]) or {}
+        r.update(by=d["by"], gate=g, trial=t, uses=d.get("uses") or {})
         bad = stig_answer_check_words(d["true"], d["false"], words)
         if bad:
             r["why"] = "Not drafted - %s." % bad
+        elif host.get("failed_host"):
+            r["why"] = "Not drafted - not tried: the trial host failed (%s)." % host["failed_host"]
         elif not g:
             r["why"] = "Not drafted - the read-only check did not run on the host (%s)." % (host.get("error") or "no answer")
         elif not g.get("ok"):
             r["why"] = "Not drafted - the read-only check refused the %s: %s. Write this one by hand." % (
                 "draft ACT wrote" if d["by"] == "ACT" else "draft", "; ".join(g.get("why") or ["refused"]))
+        elif t.get("ran") is False:
+            r["why"] = "Not drafted - not tried: %s." % (t.get("error") or "it did not run")
+        elif not t.get("ok"):
+            r["why"] = "Not drafted - the trial on the host failed: %s." % (t.get("error") or "it did not run")
         else:
             r["block"] = stig_answer_block(key, p["expected"], d["code"], d["true"], d["false"], names, d["by"] == "ACT")
         rows.append(r)
@@ -634,39 +643,56 @@ def stig_answer_rows(picks, drafts, host=None, key="DEFAULT", names=None, words=
 
 # ---- the report ---------------------------------------------------------------------------------------------------------
 def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", names_from=None):
-    """rows: [{v, sv, title, cat, sm, es, expected, by (pattern/ACT/''), block, uses, gate {ok, why, used}, check_text,
-    why}] -> {report (the email), web, xlsx, lines}. 1.75.0: no trial - every block is "not tried"."""
+    """rows: [{v, sv, title, cat, sm, es, expected, by (pattern/ACT/''), block, uses, gate {ok, why, used}, trial {ok, valid,
+    read, error, seconds}, check_text, why}] -> {report (the email), web, xlsx, lines}."""
     ev, names_from = ev or {}, names_from or {}
     ready = [r for r in rows if r.get("block")]
     nod = [r for r in rows if not r.get("block")]
+    tv = [r for r in ready if (r.get("trial") or {}).get("valid") is True]
+    tf = [r for r in ready if (r.get("trial") or {}).get("valid") is False]
     open_unsure = not (ev.get("expected") or {}).get("found")
     title = "STIG answer keys: %d ready to copy, %d not drafted" % (len(ready), len(nod))
-    status = "warning" if nod else "info"          # 1.75.0: never "all good" - no block was tried
-    tiles = [{"label": "Ready to copy", "value": len(ready), "status": "info"},
+    status = "ok" if ready and not nod else ("warning" if nod else "info")
+    tiles = [{"label": "Ready to copy", "value": len(ready), "status": "ok" if ready else "info"},
              {"label": "Not drafted", "value": len(nod), "status": "warning" if nod else "ok", "note": "the reasons below" if nod else ""},
-             {"label": "Trial", "value": "not tried", "status": "warning" if ready else "info",
-              "note": "comes in 1.75.1 - try each block on a test host first"}]
+             {"label": "Trial", "value": "%d true, %d false" % (len(tv), len(tf)), "status": "info", "note": host}]
     by_act = [r for r in ready if r.get("by") == "ACT"]
     if by_act:
         tiles.append({"label": "Drafted by ACT", "value": len(by_act), "status": "warning", "note": "read them before you use them"})
 
     def row_of(r):
+        tr = r.get("trial") or {}
+        res = "True" if tr.get("valid") is True else "False" if tr.get("valid") is False else "-"
+        setto = "NotAFinding" if tr.get("valid") is True else ("Open - the host fails it now: this key keeps it Open"
+                                                                if tr.get("valid") is False else "-")
         by = "pattern" if r.get("by") == "pattern" else "ACT - read it before you use it"
-        return ["%s (%s)" % (r["v"], r["sv"]), r.get("cat") or "", r.get("title") or "", by, r.get("es") or "", NOT_TRIED_SHORT, WOULD_SET]
+        es = (r.get("es") or "") + (" - Evaluate-STIG decides it itself" if r.get("expected") == "Open" else "")
+        return ["%s (%s)" % (r["v"], r["sv"]), r.get("cat") or "", r.get("title") or "", by, es, res, setto]
 
     cols = ["Rule", "CAT", "What it checks", "Drafted by", "Evaluate-STIG now", "Trial", "Status it would set"]
     det = []
     for r in ready:
-        g = r.get("gate") or {}
+        tr, g = r.get("trial") or {}, r.get("gate") or {}
         label = "AnswerKey%s - paste under <Vuln ID=\"%s\">" % (" (" + ACT_MARK + ")" if r.get("by") == "ACT" else "", r["v"])
         blocks = [{"texts": [{"label": label, "text": r["block"], "button": "Copy block", "cmd": r["block"],
                               "title": "Copies this AnswerKey block", "note": ""}]}]
-        trial_rows = [["Trial", NOT_TRIED], ["When the code returns true", "NotAFinding (ValidTrueStatus)"],
-                      ["When it returns false", "Open (ValidFalseStatus) - the rule stays Open"]]
+        trial_rows = [["ValidationCode gave", "True" if tr.get("valid") is True else "False"],
+                      ["Status it would set", "NotAFinding" if tr.get("valid") is True else "Open - the host fails it now: this key keeps it Open"],
+                      ["What it read", tr.get("read") or "-"], ["Took", "%s s" % tr.get("seconds", "-")]]
+        if tr.get("replayed"):
+            trial_rows.append(["Replayed in the trial", "; ".join(tr["replayed"]) + " - read once outside the sandbox (the exact "
+                               "command the check allowed), its answer given to the code inside"])
         trial_rows += [["Site value used", "answer_keys_values.%s = %s" % (k, v)] for k, v in sorted((r.get("uses") or {}).items())]
+        if r.get("expected") == "Open":
+            trial_rows.append(["Evaluate-STIG decides it itself", DECIDED_NOTE])
         if r.get("expected") == "Open" and open_unsure:
             trial_rows.append(["Its ExpectedStatus is Open", OPEN_NOTE])
-        blocks.append({"columns": ["Before you use it", ""], "kinds": ["wrap", "wrap"], "rows": trial_rows})
+        blocks.append({"columns": ["Trial on " + host, ""], "kinds": ["wrap", "wrap"], "rows": trial_rows})
+        if r.get("hosts"):           # 1.76.0: many hosts - where it was found, what Evaluate-STIG said there
+            hrows = [["Found on (%d)" % len(r["hosts"]), ", ".join(r["hosts"])], ["Evaluate-STIG says", r.get("es") or "-"]]
+            if r.get("expected_note"):
+                hrows.append(["ExpectedStatus %s" % r.get("expected"), r["expected_note"]])
+            blocks.append({"columns": ["Hosts", ""], "kinds": ["wrap", "wrap"], "rows": hrows})
         reads = [[u, CMD_WHAT.get(u, "")] for u in g.get("used") or []]
         reads += [["Writes, network, other programs", "none (checked: the fixed read-only list)"],
                   ["Statuses", "NotAFinding / Open - never RA or POA&M"]]
@@ -676,29 +702,39 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
             blocks.append(tb)
         det.append(blocks)
     ready_rows = [row_of(r) for r in ready]
-    ready_web = {"title": "Answer keys to copy (%d)" % len(ready), "status": "info",
-                 "text": "Try each block on a test host first: no block was tried (the trial comes in 1.75.1). "
-                         "Open a rule for its AnswerKey block. Paste it into your answer file under the rule's <Vuln ID>. "
+    decided = len([r for r in ready if r.get("expected") == "Open"])
+    decided_line = ("%d of these %s Evaluate-STIG decides itself (it found %s Open): %s key changes the result only where "
+                    "your site's values differ. " % (decided, "is a rule" if decided == 1 else "are rules", "it" if decided == 1 else "them",
+                                                     "its" if decided == 1 else "their")) if decided else ""
+    many = any(r.get("hosts") for r in ready)
+    if many:                         # 1.76.0: a Hosts column (how many found it), after What it checks
+        cols = cols[:3] + ["Hosts"] + cols[3:]
+        ready_rows = [x[:3] + [len(r.get("hosts") or [])] + x[3:] for x, r in zip(ready_rows, ready)]
+    ready_web = {"title": "Answer keys to copy (%d)" % len(ready), "status": "ok" if ready else "info",
+                 "text": decided_line + "Open a rule for its AnswerKey block. Paste it into your answer file under the rule's <Vuln ID>. "
                          "Nothing was written to STIG Manager, the share or the host." + (
                              " Read every block drafted by ACT before you use it." if by_act else ""),
-                 "columns": [""] + cols, "kinds": ["x", "wrap", "", "wrap", "wrap", "wrap", "", "wrap"],
+                 "columns": [""] + cols, "kinds": ["x", "wrap", "", "wrap"] + (["num"] if many else []) + ["wrap", "wrap", "", "wrap"],
                  "rows": [[""] + x for x in ready_rows], "details": det, "cat_cells": True, "keep_case": True, "wrap": True}
-    ready_mail = {"title": "Answer keys to copy (%d)" % len(ready), "status": "info",
-                  "text": "Try each block on a test host first: no block was tried (the trial comes in 1.75.1). The blocks are "
-                          "on the report website and in the workbook (an email may change their text).",
+    ready_mail = {"title": "Answer keys to copy (%d)" % len(ready), "status": "ok" if ready else "info",
+                  "text": decided_line + "The blocks are on the report website and in the workbook (an email may change their text).",
                   "columns": cols, "rows": ready_rows, "wrap": True}
     nd = {"title": "Not drafted (%d)" % len(nod), "status": "warning" if nod else "ok", "columns": ["Rule", "What it checks", "Why not"],
           "kinds": ["wrap", "wrap", "wrap"], "wrap": True,
           "rows": [["%s (%s)" % (r["v"], r["sv"]), r.get("title") or "", r.get("why") or ""] for r in nod]}
     ver = ev.get("version") or "?"
-    how_lines = ["Try each block on a test host first. No block was tried: 1.75.0 runs no code on the host (the trial comes "
-                 "in 1.75.1).",
-                 "Asked: %d rules (answer_keys_rules), answer key %s (answer_keys_name), host %s." % (len(rows), key, host),
+    how_lines = ["Asked: %d rules (answer_keys_rules), answer key %s (answer_keys_name), trial host %s." % (len(rows), key, host),
                  "Read: DISA's check text and the host's reviews from STIG Manager (GET only), and Evaluate-STIG's own result for "
                  "these rules on the host (%s %s; its own output folder removed after)." % (bench, rev or ""),
                  "Each draft: a fixed pattern from DISA's check text first; %s." % (
                      "else ACT drafts it (diagnose: it changes nothing), marked as ACT's" if act_on else "ACT is off (answer_keys_act false)"),
                  "The read-only check reads each code's syntax tree (PowerShell's parser): only the allowed commands, no writes, no network.",
+                 "The trial ran each code that passed it once on %s with pwsh, inside a sandbox (systemd-run): the whole "
+                 "file system read-only, its own /tmp, no socket of any kind, not root - a UID of its own, only the right to "
+                 "read. No sandbox, no trial. What depends on a socket, a namespace, NSS or /tmp (auditctl -l, systemctl, "
+                 "getent, id, an IPC setting, a user or group name, find and stat in /tmp) was read once outside it - the "
+                 "exact commands the check allowed - and replayed inside; a code that reads the mount table, an IPC file, a "
+                 "name through PowerShell or anything else in /tmp is not tried." % host,
                  "Evaluate-STIG on the host: %s%s. The blocks use %s." % (
                      "version " + ver if ev.get("found") else "not found",
                      (", its answer file template " + ev["template"]) if ev.get("template") else ", no answer file template found",
@@ -706,21 +742,320 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
                      "the documented element names (" + (names_from.get("why") or ev.get("why") or "the template was not read") + ")"),
                  ("Evaluate-STIG compares an answer's ExpectedStatus with its own status before ValidationCode (%s): a key with "
                   "ExpectedStatus Open applies." % ev["expected"]["where"]) if not open_unsure else
-                 ("Evaluate-STIG's code did not show whether it runs ValidationCode for a rule it found Open. Documented: an answer "
-                  "applies when ExpectedStatus is its own status. A key with ExpectedStatus Open is marked: " + OPEN_NOTE + "."),
+                 ("Evaluate-STIG's code did not show whether it runs ValidationCode for a rule it found Open%s. Documented: an answer "
+                  "applies when ExpectedStatus is its own status. A key with ExpectedStatus Open is marked: %s." % (
+                      (" - the compare is " + ev["expected"]["note"]) if (ev.get("expected") or {}).get("note") else "", OPEN_NOTE)),
                  "Statuses are NotAFinding, Open or Not_Applicable only. Nothing was written to STIG Manager, the share or the host."]
     how = {"title": "How this was made", "collapsed": True, "lines": how_lines}
-    base = {"title": title, "status": status, "subtitle": "%s %s, %s, answer key %s - not tried" % (bench, rev or "", host, key),
+    base = {"title": title, "status": status, "subtitle": "%s %s, trial on %s, answer key %s" % (bench, rev or "", host, key),
             "summary": tiles}
-    xlsx = [{"name": "Answer keys", "columns": ["Rule", "Drafted by", "Trial", "Status it would set", "AnswerKey block"],
+    xlsx = [{"name": "Answer keys", "columns": ["Rule", "Drafted by", "Trial", "AnswerKey block"],
              "rows": [["%s (%s)" % (r["v"], r["sv"]), "pattern" if r.get("by") == "pattern" else "ACT - read it before you use it",
-                       NOT_TRIED_SHORT, WOULD_SET, r["block"]] for r in ready]},
+                       "True" if (r.get("trial") or {}).get("valid") else "False", r["block"]] for r in ready]},
             {"name": "Not drafted", "columns": nd["columns"], "rows": nd["rows"]}]
-    lines = [title, "Not tried: try each block on a test host first (the trial comes in 1.75.1)."] + \
-        ["%s %s: %s" % (r["v"], "ACT draft" if r.get("by") == "ACT" else "ready", r.get("title") or "") for r in ready] + \
+    lines = [title] + ["%s %s: %s" % (r["v"], "ACT draft" if r.get("by") == "ACT" else "ready", r.get("title") or "") for r in ready] + \
         ["%s NOT DRAFTED: %s" % (r["v"], r.get("why") or "") for r in nod]
     return {"report": dict(base, sections=[ready_mail, nd, how]), "web": dict(base, sections=[ready_web, nd, how]), "xlsx": xlsx,
             "lines": lines}
+
+
+# ---- 1.76.0: many hosts, grouped by STIG; the automatic pick ----------------------------------------------------------
+CAT_OF = {"high": 1, "medium": 2, "low": 3}
+
+
+def _cats(cats):
+    """answer_keys_cat: [1, 2, 3], 'CAT I, CAT II', '1 2' ... -> {1, 2, 3}."""
+    if isinstance(cats, str):
+        cats = re.split(r"[\s,;]+", cats)
+    out = set()
+    for c in cats or [1, 2, 3]:
+        m = re.search(r"(I{1,3}|[123])\s*$", str(c).strip().upper())
+        if m:
+            out.add({"I": 1, "II": 2, "III": 3}.get(m.group(1)) or int(m.group(1)))
+    return out or {1, 2, 3}
+
+
+def stig_answer_auto(sm, pick="not_reviewed", cats=None, most=150):
+    """The automatic pick (answer_keys_rules empty): from STIG Manager's reviews of the host's asset (GET), every rule of its
+    STIG revision that is Open (fail) or Not Reviewed (no review, notchecked) - answer_keys_pick both | open |
+    not_reviewed, answer_keys_cat - never one Not a Finding or Not Applicable, never a review with RA / POA&M words or
+    attachments (stigman_protect_words: protected). CAT I first, at most most (answer_keys_max_rules) ->
+    {rules: [{v, sv}], left_out, protected: [V-], why}."""
+    sm = sm or {}
+    if sm.get("status") != "found":
+        return {"rules": [], "left_out": 0, "protected": [], "why": "STIG Manager: %s" % (sm.get("why") or sm.get("status") or "not read")}
+    pick = str(pick or "both").strip().lower().replace("-", "_").replace(" ", "_")
+    pick = pick if pick in ("both", "open", "not_reviewed") else "not_reviewed"
+    cats, reviews, out, prot = _cats(cats), sm.get("reviews") or {}, [], []
+    rules = sorted((sm.get("rules") or {}).items(), key=lambda kv: (CAT_OF.get(kv[1].get("severity"), 4), kv[1].get("v") or kv[0]))
+    for sv, r in rules:
+        rv = reviews.get(sv) or {}
+        res = rv.get("result") or ""
+        kind = "open" if res == "fail" else ("not_reviewed" if res in ("", "notchecked") else "")
+        if not kind or (pick != "both" and kind != pick) or CAT_OF.get(r.get("severity"), 0) not in cats:
+            continue
+        v = r.get("v") or ("V-" + sv[3:])
+        if rv.get("protect"):
+            prot.append(v)
+            continue
+        out.append({"v": v, "sv": sv, "cat": CAT_OF.get(r.get("severity"), 4)})
+    if not most:                         # 1.76.0b: no cap here - over the union of the hosts of a STIG (stig_answer_cap)
+        return {"rules": out, "left_out": 0, "protected": prot, "why": ""}
+    most = int(most)
+    return {"rules": out[:most], "left_out": max(0, len(out) - most), "protected": prot, "why": ""}
+
+
+def stig_answer_att_items(sm, rules):
+    """The picked rules that have a review in STIG Manager -> [{collectionId, assetId, ruleId}] for site_stigman_attachments."""
+    sm, out = sm or {}, []
+    for r in rules or []:
+        rv = (sm.get("reviews") or {}).get(r["sv"]) or {}
+        if rv.get("rule") and sm.get("collectionId") and sm.get("assetId"):
+            out.append({"collectionId": sm["collectionId"], "assetId": sm["assetId"], "ruleId": rv["rule"]})
+    return out
+
+
+def stig_answer_drop_att(rules, sm, att):
+    """The automatic pick without the rules whose review has attachments (a person's evidence: never picked; one that
+    cannot be read counts as having them) -> {rules, dropped: [V-]}."""
+    sm, with_att = sm or {}, set()
+    for x in (att or {}).get("reviews") or []:
+        if x.get("attachments") or x.get("error"):
+            with_att.add(x.get("ruleId"))
+    if (att or {}).get("error"):
+        return {"rules": [], "dropped": [r["v"] for r in rules or []], "why": "STIG Manager's attachments could not be read: %s" % att["error"]}
+    keep, dropped = [], []
+    for r in rules or []:
+        rid = ((sm.get("reviews") or {}).get(r["sv"]) or {}).get("rule")
+        (dropped if rid and rid in with_att else keep).append(r["v"] if rid and rid in with_att else r)
+    return {"rules": keep, "dropped": dropped, "why": ""}
+
+
+def stig_answer_cap(entries, most=150):
+    """1.76.0b (Codex): the automatic pick's cap over the UNION of a STIG's hosts - entries [{key (benchmark|revision),
+    rules: [{v, sv, cat}]}] -> {key: {allowed: [SV-], left_out}}: every eligible rule of the key's hosts once, CAT I
+    first then by rule, at most most; left_out = the union's size - most."""
+    by = {}
+    for e in entries or []:
+        u = by.setdefault(e.get("key") or "", {})
+        for r in e.get("rules") or []:
+            u.setdefault(r["sv"], r)
+    out = {}
+    for key, u in by.items():
+        order = sorted(u.values(), key=lambda r: (int(r.get("cat") or 4), int(re.sub(r"\D", "", r["sv"]) or 0)))
+        n = int(most or 150)
+        out[key] = {"allowed": [r["sv"] for r in order[:n]], "left_out": max(0, len(order) - n)}
+    return out
+
+
+def stig_answer_act_key(group, v):
+    """ACT's draft of a rule is one per STIG revision: benchmark|revision|V- id."""
+    return "%s|%s" % ((group or {}).get("key") or "", v)
+
+
+def stig_answer_for_act_groups(groups, values=None, act_on=True):
+    """1.76.0b (Codex): the rules no fixed pattern fits, one per (benchmark, revision, rule) - each with its own STIG's
+    check text - for ACT ('ak': its key, 'label': the STIG)."""
+    out = []
+    if not act_on:
+        return out
+    for g in groups or []:
+        for p in stig_answer_for_act(g.get("picks") or [], values):
+            out.append(dict(p, ak=stig_answer_act_key(g, p["v"]), label=g.get("label") or ""))
+    return out
+
+
+def stig_answer_act_of(act, group):
+    """ACT's drafts of one STIG -> {V-: draft}, for stig_answer_drafts."""
+    pre = "%s|" % ((group or {}).get("key") or "")
+    return dict((k[len(pre):], d) for k, d in (act or {}).items() if k.startswith(pre))
+
+
+def stig_label(bench, rev=""):
+    """RHEL_9_STIG, V2R10 -> 'RHEL 9 V2R10'."""
+    m = re.match(r"^RHEL_(\d+)_STIG$", str(bench or ""))
+    return ("%s %s" % ("RHEL %s" % m.group(1) if m else (bench or "STIG ?"), rev or "")).strip()
+
+
+def stig_answer_merge(hosts, most=150):
+    """Each host's own (picks as stig_answer_pick made them, its STIG and release) -> the STIGs: one group per benchmark
+    and release with every rule of it a host found, merged: a key is wanted when one host wants it; its ExpectedStatus
+    is the majority's, the others said (expected_note). -> {groups: [{key, bench, rev, label, hosts, rep, picks}],
+    failed: [{host, why}], none: [V-] (asked or picked, in no host's STIG), left_out: {label: n}}."""
+    groups, order, failed, asked, found = {}, [], [], [], set()
+    for h in hosts or []:
+        if not h.get("ok"):
+            failed.append({"host": h.get("host") or "", "why": h.get("why") or "it did not run"})
+            continue
+        key = "%s|%s" % (h.get("bench") or "", h.get("rev") or "")
+        if key not in groups:
+            groups[key] = {"key": key, "bench": h.get("bench") or "", "rev": h.get("rev") or "",
+                           "label": stig_label(h.get("bench"), h.get("rev")), "hosts": [], "rep": "", "rules": {}, "auto": h.get("auto")}
+            order.append(key)
+        g = groups[key]
+        g["hosts"].append(h["host"])
+        g["left_host"] = max(g.get("left_host", 0), int(h.get("left_out") or 0))
+        for p in h.get("picks") or []:
+            if p["v"] not in asked:
+                asked.append(p["v"])
+            if not p.get("es") and not p.get("ok"):
+                continue                 # not in this host's STIG
+            found.add(p["v"])
+            x = g["rules"].setdefault(p["sv"], {"first": p, "hosts": [], "ok": [], "counts": {}})
+            x["hosts"].append(h["host"])
+            x["counts"][p.get("es") or "?"] = x["counts"].get(p.get("es") or "?", 0) + 1
+            if p.get("ok"):
+                x["ok"].append((h["host"], p.get("expected") or ""))
+                if not x["first"].get("ok"):
+                    x["first"] = p
+    out, left = [], {}
+    for key in order:
+        g = groups[key]
+        picks = []
+        for sv, x in g["rules"].items():
+            m = dict(x["first"], hosts=x["hosts"], es_counts=x["counts"],
+                     es=", ".join("%s %d" % (k, n) for k, n in sorted(x["counts"].items())))
+            if x["ok"]:
+                ex = {}
+                for _h, e in x["ok"]:
+                    ex[e] = ex.get(e, 0) + 1
+                best = sorted(ex.items(), key=lambda kv: (-kv[1], kv[0] != "Open"))[0][0]
+                m.update(ok=True, why="", expected=best, hosts_ok=[hh for hh, _e in x["ok"]])
+                if len(ex) > 1:
+                    m["expected_note"] = "%s - the key applies where Evaluate-STIG says %s (one AnswerKey of a Name has one " \
+                        "ExpectedStatus: Evaluate-STIG runs the key with the Name it is given, so a second key for the " \
+                        "others would need its own Name or answer file)" % (", ".join("%s on %d host%s" % (
+                            e.replace("_", " "), n, "" if n == 1 else "s") for e, n in sorted(ex.items())), best)
+            picks.append(m)
+        ok = [p for p in picks if p.get("ok")]
+        if g.get("left_host"):           # 1.76.0b: the cap over the union of the STIG's hosts, before the scan
+            left[g["label"]] = g["left_host"]
+        out.append(dict(dict((k, v) for k, v in g.items() if k not in ("rules", "left_host")), picks=picks, rep=g["hosts"][0]))
+    return {"groups": out, "failed": failed, "none": [v for v in asked if v not in found], "left_out": left}
+
+
+def stig_answer_in_files(folder, key):
+    """The site's answer files (a folder on the AAP side, read from the share by site_answer_files) -> {V-: file} of the
+    rules that already have an AnswerKey Name=key (answer_keys_skip_answered)."""
+    import xml.etree.ElementTree as ET
+    out = {}
+    if not folder or not os.path.isdir(folder):
+        return out
+    for n in sorted(os.listdir(folder)):
+        p = os.path.join(folder, n)
+        if not os.path.isfile(p) or os.path.getsize(p) > 20 * 1048576:
+            continue
+        try:
+            root = ET.parse(p).getroot()
+        except (ET.ParseError, OSError):
+            continue
+        for vuln in root.iter():
+            if vuln.tag.split("}")[-1] != "Vuln":
+                continue
+            for ak in vuln:
+                if ak.tag.split("}")[-1] == "AnswerKey" and (ak.get("Name") or "") == key:
+                    vid = vuln.get("ID") or ""
+                    if vid and vid not in out:
+                        out[vid] = n
+    return out
+
+
+def stig_answer_copy_all(rows, label):
+    """Every ready block of one STIG, each in its own <Vuln ID="...">, for one answer file's STIGComments."""
+    parts = []
+    for r in rows or []:
+        if r.get("block"):
+            parts.append('<Vuln ID="%s">\n%s\n</Vuln>' % (r["v"], "\n".join("  " + x for x in r["block"].split("\n"))))
+    return "\n".join(["<!-- site-automation answer keys: every ready block of %s - paste inside your answer file's <STIGComments> -->" % label] + parts) if parts else ""
+
+
+def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, left_out=None, auto=None, answered=None):
+    """1.76.0: the report of many hosts, grouped by STIG. groups: [{label, bench, rev, hosts, rep, rows, ev, names_from}]
+    (rows: stig_answer_rows of the group) -> {report (the email), web, xlsx, lines}."""
+    failed, none, left_out, answered = failed or [], none or [], left_out or {}, answered or {}
+    web_secs, mail_secs, xlsx, lines, how, how_base = [], [], [], [], [], []
+    n_ready = n_nod = 0
+    for g in groups or []:
+        d = stig_answer_report(g.get("rows") or [], g.get("rep") or "", key, g.get("ev") or {}, act_on, g.get("bench") or "",
+                               g.get("rev") or "", g.get("names_from") or {})
+        ready = [r for r in g.get("rows") or [] if r.get("block")]
+        nod = [r for r in g.get("rows") or [] if not r.get("block")]
+        n_ready, n_nod = n_ready + len(ready), n_nod + len(nod)
+        rw, nd, hw = d["web"]["sections"][0], d["web"]["sections"][1], d["web"]["sections"][2]
+        hosts = g.get("hosts") or []
+        tag = "%s (%d host%s)" % (g["label"], len(hosts), "" if len(hosts) == 1 else "s")
+        rw = dict(rw, title="%s - answer keys to copy (%d)" % (g["label"], len(ready)))
+        nd = dict(nd, title="%s - not drafted (%d)" % (g["label"], len(nod)))
+        web_secs += [rw]
+        allx = stig_answer_copy_all(ready, g["label"])
+        if allx:
+            web_secs.append({"title": "%s - copy all blocks (%d)" % (g["label"], len(ready)), "status": "info",
+                             "text": "Every ready block of %s, each in its own <Vuln ID>: paste them inside one answer file's "
+                                     "<STIGComments>. Try them on a test host first." % g["label"],
+                             "columns": ["", "What", "Blocks"], "kinds": ["x", "wrap", "num"],
+                             "rows": [["", "Every ready block of %s" % g["label"], len(ready)]],
+                             "details": [[{"texts": [{"label": "%s - %d blocks" % (g["label"], len(ready)), "text": allx,
+                                                      "button": "Copy all blocks for %s" % g["label"], "cmd": allx,
+                                                      "title": "Copies every ready block of this STIG", "note": ""}]}]],
+                             "wrap": True, "keep_case": True})
+        if nod:
+            web_secs.append(nd)
+        mail_secs += [dict(d["report"]["sections"][0], title=rw["title"])] + ([dict(d["report"]["sections"][1], title=nd["title"])] if nod else [])
+        how += ["%s: %s; trial and read-only check on %s." % (tag, ", ".join(hosts), g.get("rep") or "-")] + \
+            ["%s: %s" % (g["label"], x) for x in hw.get("lines") or [] if x.startswith(("Evaluate-STIG", "Evaluate-STIG's"))]
+        sheet = re.sub(r"[\[\]:*?/\\]", " ", g["label"])[:31] or "STIG"
+        xlsx.append({"name": sheet, "columns": ["Rule", "Hosts", "Evaluate-STIG", "Drafted by", "Trial", "AnswerKey block"],
+                     "rows": [["%s (%s)" % (r["v"], r["sv"]), ", ".join(r.get("hosts") or []), r.get("es") or "",
+                               "pattern" if r.get("by") == "pattern" else "ACT - read it before you use it",
+                               "True" if (r.get("trial") or {}).get("valid") is True else "False" if (r.get("trial") or {}).get("valid") is False else "-",
+                               r["block"]] for r in ready]})
+        lines += ["%s: %d ready to copy, %d not drafted (hosts: %s)" % (g["label"], len(ready), len(nod), ", ".join(hosts))] + \
+            ["  %s %s: %s" % (r["v"], "ACT draft" if r.get("by") == "ACT" else "ready", r.get("title") or "") for r in ready] + \
+            ["  %s NOT DRAFTED: %s" % (r["v"], r.get("why") or "") for r in nod]
+        if not how_base:
+            how_base.extend(hw.get("lines") or [])
+    extra = []
+    if failed:
+        extra.append({"title": "Hosts that did not work (%d)" % len(failed), "status": "warning", "columns": ["Host", "Why"],
+                      "kinds": ["wrap", "wrap"], "wrap": True, "rows": [[f["host"], f["why"]] for f in failed]})
+        lines += ["HOST %s: %s" % (f["host"], f["why"]) for f in failed]
+    if none:
+        extra.append({"title": "In none of the hosts' STIGs (%d)" % len(none), "status": "info", "columns": ["Rule", "Why"],
+                      "kinds": ["wrap", "wrap"], "wrap": True,
+                      "rows": [[v, "Not drafted - in none of the hosts' STIGs: no host's Evaluate-STIG checked it (a rule of "
+                                   "another RHEL release?)"] for v in none]})
+        lines += ["%s NOT DRAFTED: in none of the hosts' STIGs" % v for v in none]
+    if answered:
+        extra.append({"title": "Already in your answer file (%d)" % sum(len(v) for v in answered.values()), "status": "info",
+                      "columns": ["STIG", "Rules"], "kinds": ["wrap", "wrap"], "wrap": True,
+                      "rows": [[k, ", ".join(v)] for k, v in sorted(answered.items())]})
+    if left_out:
+        extra.append({"title": "Left out: more than answer_keys_max_rules", "status": "warning", "columns": ["STIG", "Left out"],
+                      "kinds": ["wrap", "num"], "wrap": True, "rows": [[k, n] for k, n in sorted(left_out.items())],
+                      "text": "CAT I first, then by rule. To get the rest: answer_keys_cat (one CAT at a time), answer_keys_pick "
+                              "(open or not_reviewed), a smaller Limit, or a higher answer_keys_max_rules."})
+    hosts_all = sum(len(g.get("hosts") or []) for g in groups or [])
+    title = "STIG answer keys: %d ready to copy, %d not drafted - %d STIG%s, %d host%s" % (
+        n_ready, n_nod + len(none), len(groups or []), "" if len(groups or []) == 1 else "s", hosts_all, "" if hosts_all == 1 else "s")
+    status = "warning" if (n_nod or failed or none) else ("ok" if n_ready else "info")
+    tiles = [{"label": "Ready to copy", "value": n_ready, "status": "ok" if n_ready else "info"},
+             {"label": "Not drafted", "value": n_nod + len(none), "status": "warning" if n_nod or none else "ok"},
+             {"label": "STIGs", "value": len(groups or []), "status": "info", "note": ", ".join(g["label"] for g in groups or [])},
+             {"label": "Hosts", "value": "%d worked" % hosts_all, "status": "warning" if failed else "ok",
+              "note": ("%d did not" % len(failed)) if failed else ""}]
+    pick = ("Picked: automatically from STIG Manager (answer_keys_rules empty) - %s." % auto) if auto else \
+        "Picked: the rules asked (answer_keys_rules)."
+    how_all = [pick] + how + [x for x in how_base if not x.startswith(("Asked:", "Evaluate-STIG on the host", "Evaluate-STIG compares",
+                                                                      "Evaluate-STIG's code"))]
+    howsec = {"title": "How this was made", "collapsed": True, "lines": how_all}
+    base = {"title": title, "status": status, "subtitle": "answer key %s - %s" % (key, ", ".join(g["label"] for g in groups or []) or "no STIG"),
+            "summary": tiles}
+    xlsx.append({"name": "Not drafted", "columns": ["STIG", "Rule", "What it checks", "Why not"],
+                 "rows": [[g["label"], "%s (%s)" % (r["v"], r["sv"]), r.get("title") or "", r.get("why") or ""]
+                          for g in groups or [] for r in g.get("rows") or [] if not r.get("block")] +
+                         [["-", v, "", "in none of the hosts' STIGs"] for v in none]})
+    return {"report": dict(base, sections=mail_secs + extra + [howsec]), "web": dict(base, sections=web_secs + extra + [howsec]),
+            "xlsx": xlsx, "lines": [title] + lines}
 
 
 class FilterModule(object):
@@ -732,4 +1067,9 @@ class FilterModule(object):
                 "stig_answer_drafts": stig_answer_drafts, "stig_answer_rows": stig_answer_rows,
                 "stig_answer_for_act": stig_answer_for_act, "stig_answer_codes": stig_answer_codes,
                 "stig_answer_values": stig_answer_values, "stig_answer_act_needs": stig_answer_act_needs,
-                "stig_answer_act_uses": stig_answer_act_uses}
+                "stig_answer_act_uses": stig_answer_act_uses, "stig_answer_auto": stig_answer_auto,
+                "stig_answer_merge": stig_answer_merge, "stig_answer_report_multi": stig_answer_report_multi,
+                "stig_answer_copy_all": stig_answer_copy_all, "stig_label": stig_label,
+                "stig_answer_att_items": stig_answer_att_items, "stig_answer_drop_att": stig_answer_drop_att,
+                "stig_answer_in_files": stig_answer_in_files, "stig_answer_cap": stig_answer_cap,
+                "stig_answer_for_act_groups": stig_answer_for_act_groups, "stig_answer_act_of": stig_answer_act_of}

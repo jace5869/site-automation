@@ -13,7 +13,7 @@
 - name: Answer keys | ACT's draft of {{ _ak_rule.v }}
   ansible.builtin.set_fact:
     _ak_act: >-
-      {{ _ak_act | combine({_ak_rule.v: {'code': '' if _needs else _code, 'needs': _needs,
+      {{ _ak_act | combine({_ak_rule.ak | default(_ak_rule.v): {'code': '' if _needs else _code, 'needs': _needs,
                                           'uses': _raw | stig_answer_act_uses(answer_keys_values),
                                           'why': ('is off (site_act_enabled false)' if _ea_off | default(false) | bool
                                                   else ('did not answer: ' ~ (_ea_reason | default('') | truncate(200)))

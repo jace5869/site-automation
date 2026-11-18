@@ -433,10 +433,16 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # evaluate_stig_update_keep: [AnswerFiles]          # your own answer files in Evaluate-STIG's folder, carried over
 """),
     "stig_answer_keys.yml": ("STIG answer keys", "Machine, STIG Manager API, ACT model key (with answer_keys_act)", "check_stig", """\
-## 1.75.0: the Evaluate-STIG answer keys for the rules you pick, ready to copy into YOUR answer file - nothing is written
-## anywhere. ONE Linux host with Evaluate-STIG (pwsh): target and the Limit. Prompt on launch (or a survey) for these:
-target: rhel01.example.mil
+## 1.75.0 / 1.76.0: the Evaluate-STIG answer keys, ready to copy into YOUR answer file - nothing is written anywhere.
+## The Linux hosts with Evaluate-STIG (pwsh): target - a group, many hosts (at most answer_keys_max_hosts) - or the Limit;
+## one block per rule per STIG (RHEL 8, 9, 10). Prompt on launch (or a survey) for these:
+target: rhel_servers
+## The rules: a list (RHEL 8, 9 and 10 ids mixed: each host takes those of its STIG) - or an empty list []: the rules
+## STIG Manager has Not Reviewed for each host (answer_keys_pick not_reviewed - the default; open or both too),
+## answer_keys_cat, at most answer_keys_max_rules per STIG
 answer_keys_rules: [V-257777, V-257928]
+# answer_keys_pick: both
+# answer_keys_cat: [1, 2]
 ## The site's own values some rules need (docs/STIG_ANSWER_KEYS.md, "Site values"); a survey may give them as text
 # answer_keys_values:
 #   min_release: '9.4'
