@@ -3174,6 +3174,59 @@ def _in_scale(v, rng):
     return rng is None or rng[0] <= float(v) <= rng[1]
 
 
+def _g(x):
+    return "%g" % float(x)
+
+
+def out_pairs(counts):
+    """The answers left out, by value: {value: n} -> [[value, n]], the most first (a tie: the higher value first)."""
+    return [[v, n_] for v, n_ in sorted(counts.items(), key=lambda kv: (-kv[1], -kv[0]))]
+
+
+def out_counts(pairs_list):
+    """Several [[value, n]] lists added together -> {value: n}."""
+    c = {}
+    for pr in pairs_list:
+        for v, n_ in pr or []:
+            c[float(v)] = c.get(float(v), 0) + n_
+    return c
+
+
+def out_detail(pairs, text=0, top=5):
+    """'48 answered 5, 2 answered 0, 3 not a number' - the most first; past `top` values: 'N more values'."""
+    pairs = list(pairs or [])
+    parts = ["%d answered %s" % (n_, _g(v)) for v, n_ in pairs[:top]]
+    if len(pairs) > top:
+        parts.append("%d answer%s in %d more values" % (sum(n_ for _v, n_ in pairs[top:]), "" if sum(n_ for _v, n_ in pairs[top:]) == 1 else "s", len(pairs) - top))
+    if text:
+        parts.append("%d not a number" % text)
+    return ", ".join(parts)
+
+
+def out_hint(pairs, text, rng, var="servicenow_insights_survey_scale"):
+    """When every answer left out sits one step above the top (or one below the bottom) of the set scale: the scale the
+    surveys may really be on. Mixed values, or a text answer: no hint."""
+    if rng is None or text or not pairs or len(pairs) != 1:
+        return ""
+    v = float(pairs[0][0])
+    if v == rng[1] + 1:
+        lo, hi = rng[0], v
+    elif v == rng[0] - 1:
+        lo, hi = v, rng[1]
+    else:
+        return ""
+    return "Your surveys may be on %s to %s: set %s: [%s, %s]" % (_g(lo), _g(hi), var, _g(lo), _g(hi))
+
+
+def out_line(total, pairs, text, rng, scale_label, var="servicenow_insights_survey_scale"):
+    """The Satisfaction line (page and email): what was left out, by value, and - when it says so - the scale to set."""
+    s_ = "%d answer%s outside %s left out of the averages" % (total, "" if total == 1 else "s", scale_label or "the scale")
+    d = out_detail(pairs, text)
+    s_ += (": %s (%s)." % (d, var)) if d else " (%s)." % var
+    h = out_hint(pairs, text, rng, var)
+    return s_ + (" " + h + ".") if h else s_
+
+
 def survey_questions(rows, meta, opts, since, until):
     """1.16.0: every question read -> {questions: {key: {...}}, surveys: [...], headline: {...}}. A question is a rating
     when ServiceNow says so (datatype scale, numericscale or template, its max 10 or less), or - its datatype not read -
@@ -3185,20 +3238,26 @@ def survey_questions(rows, meta, opts, since, until):
     rng = survey_scale(o)
     qs = {}
     for k_, key, v, t_ in rows:
-        q = qs.setdefault(key, {"vals": [], "n": 0, "outside": 0})
+        q = qs.setdefault(key, {"vals": [], "n": 0, "outside": 0, "out_vals": {}})
         q["vals"].append(v)
         if _in(_t(t_), since, until):
             q["n"] += 1
-            q["outside"] += 0 if _in_scale(v, rng) else 1
+            if not _in_scale(v, rng):
+                q["outside"] += 1
+                q["out_vals"][float(v)] = q["out_vals"].get(float(v), 0) + 1
+    if rng is not None:        # a question whose answers are all text has no numeric row: seeded from the metadata (its text_rows)
+        for key, m_ in meta.items():
+            if key not in qs and isinstance(m_, dict) and m_.get("text_rows"):
+                qs[key] = {"vals": [], "n": 0, "outside": 0, "out_vals": {}}
     out = {}
     for key, q in qs.items():
         m = meta.get(key) or {}
         name = m.get("name") or str(key)
         dt = str(m.get("datatype") or "").lower()
-        lo, hi = min(q["vals"]), max(q["vals"])
+        lo, hi = (min(q["vals"]), max(q["vals"])) if q["vals"] else (None, None)
         rmin, rmax = m.get("min"), m.get("max")
         read = rmin is not None and rmax is not None and rmax > rmin
-        observed = [lo, hi, "observed"] if hi > lo else None
+        observed = [lo, hi, "observed"] if q["vals"] and hi > lo else None
         scale = [rmin, rmax, "read"] if read else observed
         if name.lower() in named:
             rating, why = True, "named"
@@ -3208,13 +3267,18 @@ def survey_questions(rows, meta, opts, since, until):
             why = "datatype %s%s" % (dt, "" if rating else (", up to %g" % top if top is not None and top > 10 else ""))
         else:
             whole = all(float(x) == int(x) for x in q["vals"])
-            rating = whole and lo >= 0 and hi <= 10 and len(set(q["vals"])) >= 3
+            rating = bool(q["vals"]) and whole and lo >= 0 and hi <= 10 and len(set(q["vals"])) >= 3
             why = "the answers"
+        if not q["vals"] and not rating:
+            continue                            # only text answers, and not a rating question: nothing to show
         if rating and rng is not None:          # 1.70.4: the site's scale for every rating; the answers outside it left out
             scale = [rng[0], rng[1], "set"]
+        # the answers that are not a number (the module's text_rows: [ticket, taken on]) - left out of the averages, counted
+        trows = [r_ for r_ in m.get("text_rows") or [] if isinstance(r_, (list, tuple)) and len(r_) >= 2] if rating and rng is not None else []
         out[key] = {"key": key, "name": name, "survey": m.get("survey") or "", "state": m.get("state") or "", "datatype": dt,
                     "n": q["n"] - (q["outside"] if rating else 0), "lo": lo, "hi": hi, "scale": scale, "rating": rating, "why": why,
-                    "outside": q["outside"] if rating else 0}
+                    "outside": q["outside"] if rating else 0, "out_vals": out_pairs(q["out_vals"]) if rating else [],
+                    "text_rows": trows, "text": sum(1 for r_ in trows if _in(_t(r_[1]), since, until))}
     surveys = {}
     for q in sorted(out.values(), key=lambda q: (_nat(q["survey"]), _nat(q["name"]))):
         sv = surveys.setdefault((q["survey"], q["state"]), {"survey": q["survey"], "state": q["state"], "keys": [], "other": []})
@@ -3267,9 +3331,10 @@ def survey_read_lines(plan, opts=None):
     for q in sorted(qs.values(), key=lambda q: (q["state"] == "retired", _nat(q["survey"]), not q["rating"], _nat(q["name"]))):
         who = "%s%s" % (q["survey"] or "(survey not read)", " (retired)" if q["state"] == "retired" else "")
         if q["rating"]:
+            lo_ = (q.get("outside") or 0) + (q.get("text") or 0)
             out.append("%s - %s - %d answers - %s%s" % (who, q["name"], q["n"], _scale_label(q["scale"]) if q["scale"] else "scale not known: no grade",
-                                                     (" - %d answer%s outside it, left out" % (q["outside"], "" if q["outside"] == 1 else "s"))
-                                                     if q.get("outside") else ""))
+                                                     (" - %d answer%s outside it, left out: %s" % (lo_, "" if lo_ == 1 else "s", out_detail(q.get("out_vals"), q.get("text") or 0)))
+                                                     if lo_ else ""))
         else:
             out.append("%s - %s - %d answers - read, not shown as a rating (%s; values %g to %g): name it in "
                        "servicenow_insights_survey_metrics to show it" % (who, q["name"], q["n"], q["why"], q["lo"], q["hi"]))
@@ -3292,10 +3357,18 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
     allm = [x for x in rows if x[0] in mine_ids]
     mine = [x for x in allm if x[1] not in qs or not qs[x[1]]["rating"] or _in_scale(x[2], rng)]
 
+    def text_in(ks):          # the answers that are not a number: of these tickets, in the window, on these questions
+        return sum(1 for k in ks if k in qs for r_ in qs[k].get("text_rows") or [] if r_[0] in mine_ids and _in(_t(r_[1]), since, until))
+
     def fig(keys, scale):
         ks = set(keys)
         now = [v for k_, q, v, t_ in mine if q in ks and _in(_t(t_), since, until)]
-        outside = sum(1 for k_, q, v, t_ in allm if q in ks and _in(_t(t_), since, until) and not _in_scale(v, rng))
+        ov = {}
+        for k_, q, v, t_ in allm:
+            if q in ks and _in(_t(t_), since, until) and not _in_scale(v, rng):
+                ov[float(v)] = ov.get(float(v), 0) + 1
+        text = text_in(ks)
+        outside = sum(ov.values()) + text
         before = [v for k_, q, v, t_ in mine if q in ks and _in(_t(t_), prev, since)]
         mon, grp = {}, {}
         for k_, q, v, t_ in mine:
@@ -3304,7 +3377,7 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
                 grp.setdefault(grp_of.get(k_), []).append(v)
         avg = _r2(_avg(now))
         return {"n": len(now), "avg": avg, "prev": _r2(_avg(before)), "prev_n": len(before), "grade": survey_grade(avg, scale, len(now), o),
-                "outside": outside,
+                "outside": outside, "out_vals": out_pairs(ov), "text": text,
                 "months": [[k_, _r2(_avg(v)), len(v), survey_grade(_avg(v), scale, len(v), o)] for k_, v in sorted(mon.items())],
                 "by_group": sorted([{"group": g, "avg": _r2(_avg(v)), "n": len(v), "grade": survey_grade(_avg(v), scale, len(v), o)}
                                     for g, v in grp.items()], key=lambda e: (-e["n"], e["group"]))[:12]}
@@ -3316,13 +3389,20 @@ def survey_scope(plan, rows, mine_ids, grp_of, since, until, prev, tz, opts):
     for b in plan["blocks"]:
         msc = b["scale"] if b["one_scale"] else qs[b["main"][0]]["scale"]
         main = fig(b["main"], msc)
-        if not main["n"] and not any(x[1] in b["keys"] for x in mine):
+        if not main["n"] and not any(x[1] in b["keys"] for x in mine) and not text_in(b["keys"]):
             continue
         out["blocks"].append({"survey": b["survey"], "state": b["state"], "scale": b["scale"], "one_scale": b["one_scale"],
                               "main_label": b["main_label"], "main": main, "main_scale": msc, "overall": len(b["keys"]) > 1 and b["one_scale"],
                               "questions": [dict(fig([k], qs[k]["scale"]), name=qs[k]["name"], scale=qs[k]["scale"]) for k in b["keys"]]})
-    out["outside"] = sum(1 for k_, q, v, t_ in allm if q in qs and qs[q]["rating"] and _in(_t(t_), since, until) and not _in_scale(v, rng))
+    ov_all = {}
+    for k_, q, v, t_ in allm:
+        if q in qs and qs[q]["rating"] and _in(_t(t_), since, until) and not _in_scale(v, rng):
+            ov_all[float(v)] = ov_all.get(float(v), 0) + 1
+    out["out_vals"] = out_pairs(ov_all)
+    out["text"] = text_in([k for k in qs if qs[k]["rating"]])
+    out["outside"] = sum(ov_all.values()) + out["text"]
     out["range"] = _scale_label([rng[0], rng[1], ""]) if rng else ""
+    out["scale_set"] = [rng[0], rng[1]] if rng else None
     for q in plan["other"]:
         n_ = sum(1 for k_, k, v, t_ in mine if k == q["key"] and _in(_t(t_), since, until))
         if n_:
@@ -3888,8 +3968,8 @@ def servicenow_insights_doc(model, key="all", opts=None):
         summary.append({"label": "Satisfaction", "value": ("%.2f of %g" % (sv["avg"], top)) if top is not None else "%.2f" % sv["avg"],
                         "status": {"Good": "ok", "Fair": "low", "Low": "critical"}.get(sv.get("grade"), ""),     # 1.56.0: Fair is low
                         "note": " · ".join(x for x in (sv.get("grade") or "", sv.get("label") or "", "%d answers" % sv["n"],
-                                                        ("%d outside %s, left out" % (sv["outside"], sv.get("range") or "the scale"))
-                                                        if sv.get("outside") else "") if x)})
+                                                        out_line(sv["outside"], sv.get("out_vals"), sv.get("text") or 0, sv.get("scale_set"),
+                                                                 sv.get("range")) if sv.get("outside") else "") if x)})
     secs = breach_email(s.get("breach")) + [
         {"title": "What the period says" + (" (written by ACT)" if s.get("summary_by") == "act" else ""), "lines": s["summary"] or ["(nothing to say)"]}]
     # 1.7.0: what to act on first - the counts, and the first of each list
@@ -4314,9 +4394,11 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
     # 1.70.4: the surveys - each question's average and the top of its scale ("3.78 of 4"), graded on it
     svy = s.get("survey") or {}
     if svy.get("blocks"):
-        sheets.append({"name": "Satisfaction", "columns": ["Survey", "Question", "Average", "Of", "Scale", "Grade", "Answers", "Outside the scale"],
+        sheets.append({"name": "Satisfaction", "columns": ["Survey", "Question", "Average", "Of", "Scale", "Grade", "Answers", "Outside the scale",
+                                                     "Left out (outside the scale)"],
                        "rows": [[b["survey"] or "Survey", q["name"], q["avg"], (q["scale"] or [None, None])[1], _scale_label(q["scale"]),
-                                 q["grade"], q["n"], q.get("outside") or 0] for b in svy["blocks"] for q in b["questions"]]})
+                                 q["grade"], q["n"], q.get("outside") or 0,
+                                 out_detail(q.get("out_vals"), q.get("text") or 0)] for b in svy["blocks"] for q in b["questions"]]})
     sheets.append({"name": "Hand-off paths", "columns": ["Path", "Incidents", "Most common issue", "Days added", "Examples"],
                    "rows": [[" > ".join(e["path"]), e["count"], e["issue"], e["added_days"], ", ".join(e["items"][:5])] for e in s["handoffs"]["paths"]]})
     # 1.9.0

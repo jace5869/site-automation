@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.74.2 — 2026-11-18
+
+**To set up: nothing.** The Satisfaction section says more when `servicenow_insights_survey_scale` leaves answers out.
+
+**Satisfaction: what was left out is named** (docs/SERVICENOW_INSIGHTS.md, "Your own scale").
+
+- Before, *50 answers outside 1 to 4 left out* did not say what the 50 were. Now the line names them, the most first:
+  *48 answered 5, 2 answered 0*. A text answer counts as *not a number*.
+  - When every answer left out is one step above the top (or one below the bottom), the line says so: *Your surveys
+    may be on 1 to 5: set servicenow_insights_survey_scale: [1, 5]*.
+  - A question row with answers left out shows *+N left out*.
+  - A rating question whose answers are all text is listed too, with no average and *N not a number*. A text answer
+    anywhere keeps the scale hint away.
+  - The email has the same line. The workbook's Satisfaction sheet has a *Left out (outside the scale)* column.
+- The module `site_servicenow_insights` keeps the answers that are not a number (per question, in `text_rows`) so they
+  can be counted. They are never in an average.
 ## 1.74.1 — 2026-11-18
 
 **To set up:** in `all.yml`:

@@ -1223,6 +1223,8 @@ class ModuleReads(unittest.TestCase):
         sv, qs, err = rd.read_survey(api, win)
         self.assertEqual(sv, [["i1", "Overall satisfaction", 4.0, "2026-10-22 10:00:00"]])
         self.assertEqual(qs["Overall satisfaction"]["name"], "Overall satisfaction")
+        self.assertNotIn("text_rows", qs["Overall satisfaction"])
+        self.assertEqual(qs["Comments"]["text_rows"], [["i1", "2026-10-22 10:00:00"]])        # 1.74.2: not a number - kept to be counted, never a row
         self.assertTrue(all(p.startswith("api/now/table/") for p, _ in api.calls))
 
     def test_refused_task_sla_falls_back_to_the_targets(self):
@@ -3566,6 +3568,158 @@ class ResponseSkip(unittest.TestCase):
         self.assertEqual("does not start at zero" in cap, P.axis([bl], True)[0] > 0)
 
 
+class SurveyLeftOut(unittest.TestCase):
+    """1.74.2: the answers left out of the averages by servicenow_insights_survey_scale are named - by value, with the
+    scale the surveys may be on when every one is a step above the top (or below the bottom) - on the page, in the email
+    and in the workbook; an answer that is not a number is counted as such."""
+
+    SINCE_UNTIL = None
+
+    def plan(self, vals, scale=(1, 4), text=0):
+        since, until = rd_window(site())
+        rows = [["i%d" % i, "k", v, "2026-10-01 10:00:00"] for i, v in enumerate(vals)]
+        meta = {"k": {"name": "Overall", "survey": "Desk", "datatype": "scale", "min": 1.0, "max": 5.0,
+                      "text_rows": [["t%d" % i, "2026-10-02 10:00:00"] for i in range(text)]}}
+        return F.survey_questions(rows, meta, dict(OPTS, survey_scale=list(scale)), since, until)["questions"]["k"]
+
+    def test_counted_by_value_the_most_first(self):
+        q = self.plan([1, 2, 3, 4] + [5] * 48 + [0] * 2)
+        self.assertEqual((q["n"], q["outside"], q["out_vals"], q["text"]), (4, 50, [[5.0, 48], [0.0, 2]], 0))
+        self.assertEqual(F.out_detail(q["out_vals"], 0), "48 answered 5, 2 answered 0")
+        self.assertEqual(F.out_pairs({3.0: 2, 4.0: 2, 9.0: 5}), [[9.0, 5], [4.0, 2], [3.0, 2]])      # a tie: the higher value first
+        q = self.plan([1, 2, 3, 4, 5, 5])
+        self.assertEqual((q["outside"], q["out_vals"]), (2, [[5.0, 2]]))
+        self.assertEqual(self.plan([1, 2, 3, 4], scale=(1, 5))["out_vals"], [])        # nothing outside: nothing kept
+
+    def test_text_is_not_a_number(self):
+        q = self.plan([1, 2, 3, 4, 5], text=3)
+        self.assertEqual((q["n"], q["outside"], q["text"]), (4, 1, 3))                  # never in an average; counted apart
+        self.assertEqual(F.out_detail(q["out_vals"], q["text"]), "1 answered 5, 3 not a number")
+        self.assertEqual(F.out_detail([], 2), "2 not a number")
+        self.assertEqual(self.plan([1, 2, 3, 4], scale=(), text=3)["text"], 0)          # no scale set: no line, nothing counted
+        self.assertIn("1 answered 5, 3 not a number", "\n".join(F.survey_read_lines({"questions": {"k": self.plan([1, 2, 3, 4, 5], text=3)}})))
+
+    def test_the_hint(self):
+        r = (1.0, 4.0)
+        self.assertEqual(F.out_hint([[5.0, 48]], 0, r), "Your surveys may be on 1 to 5: set servicenow_insights_survey_scale: [1, 5]")   # all max + 1
+        self.assertEqual(F.out_hint([[0.0, 7]], 0, r), "Your surveys may be on 0 to 4: set servicenow_insights_survey_scale: [0, 4]")    # all min - 1
+        self.assertEqual(F.out_hint([[5.0, 48], [0.0, 2]], 0, r), "")                   # mixed: both sides
+        self.assertEqual(F.out_hint([[5.0, 48], [6.0, 2]], 0, r), "")                   # more than one value
+        self.assertEqual(F.out_hint([[6.0, 5]], 0, r), "")                              # not one step
+        self.assertEqual(F.out_hint([[5.0, 48]], 3, r), "")                             # a text answer too: not every one is a 5
+        self.assertEqual(F.out_hint([], 0, r), "")
+        self.assertEqual(F.out_hint([[5.0, 4]], 0, None), "")
+        self.assertEqual(F.out_hint([[5.0, 4]], 0, (0.5, 4.5)), "")                     # one step is 1: 5.5, not 5
+        self.assertEqual(F.out_hint([[5.5, 4]], 0, (1.5, 4.5)), "Your surveys may be on 1.5 to 5.5: set servicenow_insights_survey_scale: [1.5, 5.5]")
+
+    def test_the_line(self):
+        self.assertEqual(F.out_line(50, [[5.0, 48], [0.0, 2]], 0, (1.0, 4.0), "1 to 4"),
+                         "50 answers outside 1 to 4 left out of the averages: 48 answered 5, 2 answered 0 (servicenow_insights_survey_scale).")
+        self.assertEqual(F.out_line(48, [[5.0, 48]], 0, (1.0, 4.0), "1 to 4"),
+                         "48 answers outside 1 to 4 left out of the averages: 48 answered 5 (servicenow_insights_survey_scale). "
+                         "Your surveys may be on 1 to 5: set servicenow_insights_survey_scale: [1, 5].")
+        self.assertEqual(F.out_line(1, [[5.0, 1]], 0, (1.0, 4.0), "1 to 4").split(":")[0], "1 answer outside 1 to 4 left out of the averages")
+        self.assertEqual(F.out_line(3, [], 3, (1.0, 4.0), "1 to 4"),
+                         "3 answers outside 1 to 4 left out of the averages: 3 not a number (servicenow_insights_survey_scale).")
+        d = F.out_detail([[float(v), 10 - v] for v in range(8)], 0)                     # many values: the first 5, the rest counted
+        self.assertTrue(d.endswith("in 3 more values"), d)
+        self.assertEqual(len(d.split(", ")), 6)
+
+    def test_page_email_workbook(self):
+        x = site(surveys=True)
+        r = copy.deepcopy(x["r"])
+        inc = sorted(set(row[0] for row in r["survey"] if row[1] == "Q1" or row[1] == "am-sd-q1"))[:4]
+        taken = "2026-10-15 10:00:00"                                                   # inside the window
+        for k_ in ("am-sd-q1", "am-sd-q2"):
+            r["survey_questions"][k_]["text_rows"] = [[i, taken] for i in inc]          # four texts on each of two questions
+        o = dict(OPTS, survey_scale=[1, 3])
+        m = F.servicenow_insights_model(r, None, x["mask"], o)
+        sv = m["scopes"]["all"]["survey"]
+        plain = F.servicenow_insights_model(x["r"], None, x["mask"], o)["scopes"]["all"]["survey"]
+        self.assertEqual((sv["text"], sv["outside"] - plain["outside"]), (8, 8))
+        line = F.out_line(sv["outside"], sv["out_vals"], sv["text"], sv["scale_set"], sv["range"])
+        self.assertIn("8 not a number", line)
+        self.assertNotIn("Your surveys may be on", line)                                # text: not every answer is a step above
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        sec = h[h.index('id="satisfaction"'):]
+        sec = sec[:sec.index("</section>")]
+        self.assertIn(line, sec)
+        self.assertRegex(sec, r'<span class="mut">\+\d+ left out</span>')             # a question row says how many
+        doc = F.servicenow_insights_doc(m, "all", o)
+        self.assertIn(line, next(t_ for t_ in doc["summary"] if t_["label"] == "Satisfaction")["note"])
+        sh = next(s_ for s_ in F.servicenow_insights_xlsx(m, r, None, x["mask"], o) if s_["name"] == "Satisfaction")
+        col = sh["columns"].index("Left out (outside the scale)")
+        self.assertEqual(sh["columns"][col - 1], "Outside the scale")
+        self.assertTrue(any("not a number" in row[col] for row in sh["rows"]))
+        self.assertTrue(all((row[col] == "") == (not row[col - 1]) for row in sh["rows"] if "not a number" not in row[col]))
+        # one value a step above the top: the hint
+        one = [[a_, b_, 4.0 if v > 3 else v, t_] for a_, b_, v, t_ in x["r"]["survey"] for v in [v]]    # every answer above 3 becomes 4 (= max + 1)
+        r2 = dict(x["r"], survey=one)
+        s2 = F.servicenow_insights_model(r2, None, x["mask"], o)["scopes"]["all"]["survey"]
+        self.assertEqual(s2["out_vals"][0][0], 4.0)
+        self.assertEqual(len(s2["out_vals"]), 1)
+        h2 = P.servicenow_insights_page(F.servicenow_insights_model(r2, None, x["mask"], o), "all", {"links": page_links(m)})
+        self.assertIn("Your surveys may be on 1 to 4: set servicenow_insights_survey_scale: [1, 4].", h2)
+
+
+class SurveyTextOnly(unittest.TestCase):
+    """1.74.2 (review): a rating question whose answers are all text has no numeric row; it is still read, listed with no
+    average and N not a number, and a text answer anywhere keeps the scale hint away."""
+
+    def test_text_only_question_beside_one_that_is_all_max_plus_one(self):
+        x = site(surveys=True)
+        r = copy.deepcopy(x["r"])
+        rows = [[a_, b_, 4.0 if v > 3 else v, t_] for a_, b_, v, t_ in r["survey"] if b_ == "Overall satisfaction"]
+        rows = [w for w in rows if w[2] == 4.0 or w[2] <= 3]
+        r["survey"] = rows
+        inc = sorted(set(w[0] for w in rows))[:3]
+        r["survey_questions"] = {"Overall satisfaction": r["survey_questions"]["Overall satisfaction"],
+                                 "txt": {"name": "Comments score", "survey": "Service desk survey", "state": "active", "datatype": "numericscale",
+                                         "min": 1.0, "max": 5.0, "template": "", "text_rows": [[i, "2026-10-15 10:00:00"] for i in inc]}}
+        o = dict(OPTS, survey_scale=[1, 3])
+        # the numbers left out of the first are all one value: 4 = max + 1 (for the hint)
+        only4 = [w for w in rows if w[2] > 3]
+        self.assertTrue(only4 and all(w[2] == 4.0 for w in only4))
+        m = F.servicenow_insights_model(r, None, x["mask"], o)
+        sv = m["scopes"]["all"]["survey"]
+        self.assertEqual((sv["text"], len(sv["out_vals"])), (3, 1))
+        self.assertEqual(sv["out_vals"][0][0], 4.0)                                      # alone it would say: [1, 4]
+        line = F.out_line(sv["outside"], sv["out_vals"], sv["text"], sv["scale_set"], sv["range"])
+        self.assertIn("3 not a number", line)
+        self.assertNotIn("Your surveys may be on", line)
+        qs = [q["name"] for b in sv["blocks"] for q in b["questions"]]
+        self.assertEqual(sorted(qs), ["Comments score", "Overall satisfaction"])        # both listed
+        tq = next(q for b in sv["blocks"] for q in b["questions"] if q["name"] == "Comments score")
+        self.assertEqual((tq["n"], tq["avg"], tq["text"], tq["outside"]), (0, None, 3, 3))
+        h = P.servicenow_insights_page(m, "all", {"links": page_links(m)})
+        sec = h[h.index('id="satisfaction"'):]
+        sec = sec[:sec.index("</section>")]
+        self.assertIn(line, sec)
+        self.assertNotIn("Your surveys may be on", sec)
+        self.assertIn("Comments score", sec)
+        self.assertIn("+3 left out", sec)
+        self.assertTrue(any("Comments score" in w and "3 not a number" in w for w in m["surveys_read"]))
+        sh = next(s_ for s_ in F.servicenow_insights_xlsx(m, r, None, x["mask"], o) if s_["name"] == "Satisfaction")
+        self.assertTrue(any(row[1] == "Comments score" and "3 not a number" in row[-1] for row in sh["rows"]))
+        # without the text, the same answers do say it
+        r2 = copy.deepcopy(r)
+        r2["survey_questions"]["txt"].pop("text_rows")
+        m2 = F.servicenow_insights_model(r2, None, x["mask"], o)
+        s2 = m2["scopes"]["all"]["survey"]
+        self.assertIn("Your surveys may be on 1 to 4", F.out_line(s2["outside"], s2["out_vals"], s2["text"], s2["scale_set"], s2["range"]))
+        # no scale set: the text-only question is not read at all (as before)
+        m3 = F.servicenow_insights_model(r, None, x["mask"], dict(OPTS, survey_scale=[]))
+        self.assertEqual([q["name"] for b in m3["scopes"]["all"]["survey"]["blocks"] for q in b["questions"]], ["Overall satisfaction"])
+
+    def test_a_text_only_question_that_is_no_rating_is_left_alone(self):
+        since, until = rd_window(site())
+        meta = {"k": {"name": "Contacted", "survey": "Desk", "datatype": "string", "text_rows": [["t1", "2026-10-02 10:00:00"]]}}
+        self.assertEqual(F.survey_questions([], meta, dict(OPTS, survey_scale=[1, 4]), since, until)["questions"], {})
+        meta["k"].update(datatype="scale", min=1.0, max=5.0)         # a scale ServiceNow gives: a rating without one numeric answer
+        q = F.survey_questions([], meta, dict(OPTS, survey_scale=[1, 4]), since, until)["questions"]["k"]
+        self.assertEqual((q["n"], q["text"], q["scale"]), (0, 1, [1.0, 4.0, "set"]))
+
+
 class Release1704(unittest.TestCase):
     """1.70.4: servicenow_insights_survey_scale - one scale for every rating question, the answers outside it left out,
     counted and named, never clipped; Who opens what (Categories) - per member of a team, everything each opened in the
@@ -3627,17 +3781,19 @@ class Release1704(unittest.TestCase):
         sec = h[h.index('id="satisfaction"'):]
         sec = sec[:sec.index("</section>")]
         self.assertIn("%.2f of 3" % sv["avg"], sec)
-        self.assertIn("%d answers outside 1 to 3 left out of the averages (servicenow_insights_survey_scale)." % sv["outside"], sec)
+        self.assertIn(F.out_line(sv["outside"], sv["out_vals"], sv["text"], sv["scale_set"], sv["range"]), sec)       # 1.74.2: named by value
+        self.assertIn("%d answers outside 1 to 3 left out of the averages: " % sv["outside"], sec)
+        self.assertIn("answered 4", sec)
         self.assertIn("1 to 3 (servicenow_insights_survey_scale)", sec)
         doc = F.servicenow_insights_doc(m, "all", o)
         tile = next(t_ for t_ in doc["summary"] if t_["label"] == "Satisfaction")
         self.assertEqual(tile["value"], "%.2f of 3" % sv["avg"])
-        self.assertIn("%d outside 1 to 3, left out" % sv["outside"], tile["note"])
+        self.assertIn("%d answers outside 1 to 3 left out of the averages: " % sv["outside"], tile["note"])      # the email's line
         wb = F.servicenow_insights_xlsx(m, x["r"], None, x["mask"], o)
         sh = next(s_ for s_ in wb if s_["name"] == "Satisfaction")
         self.assertTrue(all(row[sh["columns"].index("Of")] == 3 for row in sh["rows"] if row[2] is not None))
         self.assertEqual(sum(row[sh["columns"].index("Outside the scale")] for row in sh["rows"]) >= sv["outside"], True)
-        self.assertTrue(any("outside it, left out" in line for line in m["surveys_read"]))
+        self.assertTrue(any("outside it, left out: " in line and "answered" in line for line in m["surveys_read"]))
         # [] (the default): each question on its own scale, as before
         self.assertEqual(F.servicenow_insights_model(x["r"], None, x["mask"], dict(OPTS, survey_scale=[]))["scopes"]["all"]["survey"],
                          x["model"]["scopes"]["all"]["survey"] | {"outside": 0, "range": ""})

@@ -877,6 +877,11 @@ servicenow_insights_survey_scale: [1, 4]
 - Every rating question is then on 1 to 4. The page, the email and the workbook say *3.78 of 4*, graded on 1 to 4.
 - An answer outside the scale (a 5) is left out of every average. It is never made a 4. The section says how many,
   and so does *The surveys read*.
+- The line names what was left out, the most first: *50 answers outside 1 to 4 left out of the averages: 48 answered 5,
+  2 answered 0*. An answer that is not a number counts as *not a number*.
+- When every answer left out is one step above the top (or below the bottom), the line says which scale your surveys
+  may be on: *set servicenow_insights_survey_scale: [1, 5]*. Each question row shows *+N left out*.
+- The email has the same line. The workbook's Satisfaction sheet has a *Left out (outside the scale)* column.
 - The months shown are worked out again on the new scale on the next run. No backfill is needed.
 - `[]` (the default): each question on its own scale, as above.
 - Anything but two numbers, the lower first, stops the job with the setting's name. `"1-4"`, `"14"` and `[true, false]`

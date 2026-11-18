@@ -107,7 +107,7 @@ survey: {description: "[[incident sys_id, metric, value (a number), taken (UTC t
 survey_error: {description: "Why the surveys were not read ('' = read, or not asked).", type: str}
 vip: {description: "1.43.0 - {tiers: [labels], of: {sys_user sys_id: tier index} (VIP people only), asked (people), error, hidden
   (the columns no record carried: not readable by the account, or not on sys_user)}.", type: dict}
-survey_questions: {description: "1.16.0 - each question read (its key in survey): name, survey, state, datatype, min, max.", type: dict}
+survey_questions: {description: "1.16.0 - each question read (its key in survey): name, survey, state, datatype, min, max; text_rows: [[incident sys_id, taken (UTC text)]] - its answers that are not a number.", type: dict}
 breach: {description: "1.59.0 - {asked, now, open: [rows], breached: [rows], open_more, breached_more, error, breached_error, days, horizon_h,
   time_zone, vip_error, vip_hidden, vip_tiers}; a row: sla_id, task_id, number, short, priority, priority_value, group, group_id, assignee,
   table, sla, target (response, resolution, ''), pct, left_s (business time left, None = none), planned_end (UTC text), vip.", type: dict}
@@ -1022,7 +1022,8 @@ SURVEY_FIELDS = ("instance.trigger_id,metric,metric.name,metric.datatype,metric.
 def read_survey(api, win, metrics=None, limit=20000, types=None):
     """The incident surveys' answers in the window and the one before (asmt_metric_result of assessments triggered by
     incidents; GET; best-effort) -> ([[incident sys_id, question key, value, taken]], {question key: {name, survey, state,
-    datatype, min, max, template}}, error). Only answers that are numbers. 1.16.0: each question (asmt_metric) with its survey
+    datatype, min, max, template}}, error). Only answers that are numbers are rows; the others (not empty) are kept per question,
+    qs[key]["text_rows"] = [[incident, taken]], to be counted, never averaged. 1.16.0: each question (asmt_metric) with its survey
     (asmt_metric_type: name, state / active) and what ServiceNow says of its scale (datatype, min, max; a template's values),
     dot-walked in the same read - so two surveys' "Q1" stay apart. types: only those surveys, by name."""
     q = "instance.trigger_table=incident^instance.taken_on>=%s^instance.taken_on<=%s" % (win["prev_since"], win["until"])
@@ -1042,10 +1043,13 @@ def read_survey(api, win, metrics=None, limit=20000, types=None):
         return [], {}, "GET api/now/table/asmt_metric_result: no result list in the answer"
     out, qs = [], {}
     for x in rows:
+        raw = str(_vd(x, "actual_value")[0]).strip()
         try:
-            val = float(str(_vd(x, "actual_value")[0]).strip())
+            val = float(raw)
         except ValueError:
-            continue
+            val = None
+            if not raw:
+                continue
         inc, taken = str(_vd(x, "instance.trigger_id")[0] or ""), str(_vd(x, "instance.taken_on")[0] or "")
         if not (inc and taken):
             continue
@@ -1061,6 +1065,9 @@ def read_survey(api, win, metrics=None, limit=20000, types=None):
                        "datatype": str(_vd(x, "metric.datatype")[0] or "").strip().lower(),
                        "min": _num(_vd(x, "metric.min")[0]), "max": _num(_vd(x, "metric.max")[0]),
                        "template": str(_vd(x, "metric.template")[0] or "")}
+        if val is None:          # an answer that is not a number: never an average, but counted (text_rows: [ticket, taken on])
+            qs[key].setdefault("text_rows", []).append([inc, taken])
+            continue
         out.append([inc, key, val, taken])
     # a template's (likert) scale: its definitions' values - best-effort, one GET
     tids = sorted(set(v["template"] for v in qs.values() if v["datatype"] == "template" and re.match(r"^[\w-]{1,64}$", v["template"])))

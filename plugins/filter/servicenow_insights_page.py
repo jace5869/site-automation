@@ -2195,7 +2195,8 @@ def servicenow_insights_page(model, key="all", opts=None):
             qrows = [(q["name"], q["avg"], q["n"], q["grade"]) for q in b_["questions"]]
             qtab = table([("Question", "", ""), ("Average", "n", ""), ("Grade", "", ""), ("Answers", "n", "")],
                          [("", [td(e(r_[0]) + ('<span class="mut"> · %s</span>' % e(_scale_label(q["scale"])) if not b_["one_scale"] else "")),
-                                td(num(r_[1], q["scale"]), "n", r_[1] if r_[1] is not None else -1), td(grade(r_[3])), td(n(r_[2]), "n", r_[2])])
+                                td(num(r_[1], q["scale"]), "n", r_[1] if r_[1] is not None else -1), td(grade(r_[3])),
+                                td(n(r_[2]) + (' <span class="mut">+%s left out</span>' % n(q["outside"]) if q.get("outside") else ""), "n", r_[2])])
                           for r_, q in zip(qrows, b_["questions"])], empty="No answers in the period.") if len(b_["questions"]) > 1 else ""
             mlab = b_["main_label"]
             blocks_html += head_ + qtab + '<div class="two"><div class="fig"><h3>By month · %s</h3>%s</div><div class="fig"><h3>By group · %s</h3>%s</div></div>' % (
@@ -2204,8 +2205,8 @@ def servicenow_insights_page(model, key="all", opts=None):
         if not sv.get("blocks"):
             blocks_html = '<p class="mut">No answers in the period.</p>'
         if sv.get("outside"):         # 1.70.4: never clipped - left out, counted and named
-            blocks_html = '<p class="mut svline">%s answer%s outside %s left out of the averages (servicenow_insights_survey_scale).</p>' % (
-                n(sv["outside"]), "" if sv["outside"] == 1 else "s", e(sv.get("range") or "the scale")) + blocks_html
+            blocks_html = '<p class="mut svline">%s</p>' % e(_sibling("servicenow_insights_filters").out_line(
+                sv["outside"], sv.get("out_vals"), sv.get("text") or 0, sv.get("scale_set"), sv.get("range"))) + blocks_html
         body.append(section("satisfaction", "Satisfaction", "the incident surveys' answers in the period · %s" % (
                                 e(", ".join(sorted(set((b_["survey"] or "Survey") for b_ in sv.get("blocks") or [])))) or "no answers"),
                             tiles(sat_tiles) + blocks_html +

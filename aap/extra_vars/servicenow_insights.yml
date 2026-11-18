@@ -353,8 +353,8 @@ servicenow_insights_months: 6
 
 ## The scale every rating question is on, [min, max] (1.70.4), e.g. [1, 4]: it replaces the scale
 ## ServiceNow gives or the answers show. The page, the email and the workbook say "3.78 of 4",
-## graded on it. An answer outside it is left out of the averages, and counted and named. [] = each
-## question's own scale.
+## graded on it. An answer outside it is left out of the averages, and counted and named by value
+## ("48 answered 5"; a text answer: "not a number"). [] = each question's own scale.
 # servicenow_insights_survey_scale: []
 
 ## Records per table at most, the newest kept; more: said on every page (1.16.0). Measured: 20000
