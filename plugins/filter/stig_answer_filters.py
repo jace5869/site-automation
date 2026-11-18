@@ -704,10 +704,11 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
                      "else ACT drafts it (diagnose: it changes nothing), marked as ACT's" if act_on else "ACT is off (answer_keys_act false)"),
                  "The read-only check reads each code's syntax tree (PowerShell's parser): only the allowed commands, no writes, no network.",
                  "The trial ran each code that passed it once on %s with pwsh, inside a sandbox (systemd-run): the whole "
-                 "file system read-only (the host's own /tmp too), no socket of any kind, not root - only the right to read. "
-                 "No sandbox, no trial. What depends on a socket, a namespace or NSS (auditctl -l, systemctl, getent, id, an "
-                 "IPC setting, a user or group name) was read once outside it - the exact commands the check allowed - and "
-                 "replayed inside; a code that reads the mount table, an IPC file or a name through PowerShell is not tried." % host,
+                 "file system read-only, its own /tmp, no socket of any kind, not root - a UID of its own, only the right to "
+                 "read. No sandbox, no trial. What depends on a socket, a namespace, NSS or /tmp (auditctl -l, systemctl, "
+                 "getent, id, an IPC setting, a user or group name, find and stat in /tmp) was read once outside it - the "
+                 "exact commands the check allowed - and replayed inside; a code that reads the mount table, an IPC file, a "
+                 "name through PowerShell or anything else in /tmp is not tried." % host,
                  "Evaluate-STIG on the host: %s%s. The blocks use %s." % (
                      "version " + ver if ev.get("found") else "not found",
                      (", its answer file template " + ev["template"]) if ev.get("template") else ", no answer file template found",

@@ -166,18 +166,22 @@ not offered.
 Each code that passes the check runs once on the trial host with pwsh, within `answer_keys_trial_timeout` (60
 seconds).
 
-It runs in a **sandbox**: a transient systemd unit (`systemd-run`) that the kernel holds to these limits. Inside it,
-the code sees the host as it is, read-only.
+It runs in a **sandbox**: a transient systemd unit (`systemd-run`) that the kernel holds to these limits.
 
 - The whole file system is read-only (`ProtectSystem=strict`, `ReadOnlyPaths=/`, `ProtectHome=read-only`), the
-  kernel's settings too (`ProtectKernelTunables`). `/tmp`, `/var/tmp` and `/dev/shm` are the host's own, read-only: a
-  `find /tmp -perm -0002` finds what is there. pwsh writes only in a scratch space of its own (a tmpfs over a folder of
-  the job's, removed after).
+  kernel's settings too (`ProtectKernelTunables`).
+- Its **own** `/tmp`, `/var/tmp` and `/dev/shm`, empty. The host's are never shown inside: a file or a FIFO there
+  cannot be reached.
 - **No socket of any kind** (`RestrictAddressFamilies` empty, `IPAddressDeny=any`): no network, no D-Bus, no systemd, no
   audit socket. It keeps the host's network namespace, so a `net.*` setting it reads is the host's.
-- **Not root:** it runs as `nobody`, keeping only the right to read (`CAP_DAC_READ_SEARCH`), with `NoNewPrivileges`.
+- **Not root, and no one else:** as root, the job runs the trial as a UID of its own. The UID is picked at random from
+  2,000,000,000 up, is in no passwd or group entry, and owns no process. It keeps only the right to read
+  (`CAP_DAC_READ_SEARCH`), so it cannot signal or trace a host process. Other processes are hidden
+  (`ProtectProc=invisible`), privileged and debugging system calls are refused (`SystemCallFilter`), and from systemd
+  257 (RHEL 10) it has its own process namespace (`PrivatePIDs`).
 - Its own SysV IPC and message queues (`PrivateIPC`), so a code cannot leave IPC objects on the host. The IPC files in
   `/proc` (`/proc/sys/kernel/shm*`, `msg*`, `sem*`, `/proc/sys/fs/mqueue`, `/proc/sysvipc`) are hidden inside.
+- RHEL 8's systemd (239) lacks several of these settings: there the sandbox does not start and nothing is tried.
 
 **The rule:** an answer that depends on a namespace, a socket or a private mount is never read inside the sandbox. It
 is replayed, or the code is not tried.
@@ -190,15 +194,19 @@ is replayed, or the code is not tried.
   - `sysctl -n` of an IPC setting: `kernel.shmmax`, `shmall`, `shmmni`, `shm_rmid_forced`, `msgmax`, `msgmnb`,
     `msgmni`, `sem` and the `fs.mqueue.*` limits;
   - `stat` with `%U` or `%G`, and `find` with `-user`, `-group`, `-nouser`, `-nogroup` or `-printf` `%u` `%g` (names).
+  - `find` and `stat` of a path in `/tmp`, `/var/tmp` or `/dev/shm`, and `find` from a folder above one (`/`, `/var`,
+    `/dev`): they look at file entries only and never open a file, so a host FIFO there is safe.
   - When one call of `sysctl`, `stat` or `find` needs it, all that code's calls of the program are replayed.
 - **Not tried** (*Not drafted - the trial cannot show it as the host has it*): a code that reads the mount table
-  (`/proc/mounts`, `mountinfo`, `/etc/mtab`), an IPC file, or a file's user or group through PowerShell (`.User`,
-  `.Group`).
+  (`/proc/mounts`, `mountinfo`, `/etc/mtab`), an IPC file, a file's user or group through PowerShell (`.User`,
+  `.Group`), or anything in `/tmp`, `/var/tmp` or `/dev/shm` other than by `find` or `stat`. That includes `grep`
+  there, and `Get-ChildItem -Recurse` from `/`, `/var` or `/dev`.
 - Before the first trial the job looks from inside, without writing, that the sandbox holds:
-  - nothing of the host is writable, `/tmp` included, and `/tmp`, `/var/tmp`, `/dev/shm` are the host's;
+  - nothing of the host is writable, and `/tmp`, `/var/tmp`, `/dev/shm` are its own, not the host's;
   - no socket can be opened, and `/run/systemd/private` and D-Bus cannot be reached;
   - no IPC file can be read;
-  - it is not root, and it keeps no capability but reading.
+  - it is not root, and it keeps no capability but reading; as root, it runs as its own UID, and that UID owns no
+    process of the host.
 - If `systemd-run` is missing or any of that fails, nothing is tried: each rule is *Not drafted - not tried: no
   sandbox (why)*. There is never a trial outside the sandbox.
 

@@ -9,7 +9,7 @@ the host's (replayed), the IPC files in /proc cannot be read inside. 1.75.1: a s
 its own survives systemctl stop (the real program) from inside, systemd's and D-Bus's sockets cannot be reached,
 auditctl -D and -e 0 fail, net.ipv4.ip_forward inside is the host's, and the replay gives inside the answer read
 outside (any other command line: not captured). Run as root (CI's throwaway runner, with sudo), it also proves the code
-runs as a dynamic user, not root, sysctl -w (the key's own value), -p and --system fail inside, nothing is written in
+runs as a UID of its own, not root, sysctl -w (the key's own value), -p and --system fail inside, nothing is written in
 /etc, auditctl -l replayed gives the host's rules and the audit rules are unchanged. A control run outside the sandbox
 shows the same write works there.
   python3 tests/stig/sandbox_trial.py           (exit 0: all held; AK_SANDBOX=none: only says there is none here)"""
@@ -175,18 +175,51 @@ r, err, _ = h.run_trial(pwsh, runner, "$a = & /usr/bin/systemctl is-active syste
                                       "$rc = $LASTEXITCODE; Write-Verbose ($a + ' ' + $rc); return ($a -eq '%s' -and $rc -eq 2)" % (unit, want), 30, binds)
 say(isinstance(r, dict) and r.get("values") == [True] and active() == "active",
     "the replay: systemctl is-active systemd-journald inside gives the answer read outside (%s); stop: not captured (exit 2)" % want)
-# 1.75.1 (Codex): the trial reads the HOST, never the sandbox's own. A world-writable file in the host's /tmp is found
+# 1.75.1 (Codex, round 3): /tmp, /var/tmp and /dev/shm inside are the sandbox's own - never the host's. A host FIFO and
+# a host file in /tmp cannot be reached; a write to /tmp inside does not reach the host; a code that reads /tmp is not
+# tried; find over /tmp is replayed - outside, it finds the host's world-writable file
 wtmp = tempfile.mkdtemp(prefix="site-ak-ww-", dir="/tmp")
-ww = os.path.join(wtmp, "ww")
+ww, fifo = os.path.join(wtmp, "ww"), os.path.join(wtmp, "fifo")
 with open(ww, "w") as f:
     f.write("x\n")
 os.chmod(ww, 0o666)
+os.mkfifo(fifo, 0o666)
+rd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)          # a reader of the host's FIFO: whatever is written, it gets
+r, err, _ = h.run_trial(pwsh, runner, "$a = Test-Path -LiteralPath '%s'; $b = Test-Path -LiteralPath '%s'; "
+                                      "try { [IO.File]::WriteAllText('%s', 'from the sandbox') } catch { }; "
+                                      "Set-Content -LiteralPath '/tmp/site-ak-inside' -Value y; return ($a -or $b)" % (fifo, ww, fifo), 30)
+try:
+    got = os.read(rd, 100)
+except BlockingIOError:
+    got = b""
+os.close(rd)
+say(isinstance(r, dict) and r.get("values") == [False] and got == b"", "a host FIFO and file in /tmp cannot be reached from inside (nothing reached the FIFO's reader)")
+say(not os.path.exists("/tmp/site-ak-inside"), "a write to /tmp inside does not reach the host's /tmp")
+say("cannot show /tmp" in h.blind("$l = Get-Content -LiteralPath '%s'" % ww), "a code that reads /tmp is not tried")
+fcall = ["/usr/bin/find", wtmp, "-type", "f", "-perm", "-0002", "-print"]
+todo = h.replays_for([fcall])
+binds = h.write_shims(sh_dir, dict((tuple(c), h.capture(c)) for c in todo))
 r, err, _ = h.run_trial(pwsh, runner, "$o = @(& /usr/bin/find '%s' -type f -perm -0002 -print 2>&1); Write-Verbose ($o -join ' '); "
-                                      "return ($LASTEXITCODE -eq 0 -and $o.Count -eq 1 -and $o[0] -eq '%s')" % (wtmp, ww), 30)
-say(isinstance(r, dict) and r.get("values") == [True], "a world-writable file in the host's /tmp is found from inside (%s)" % ((r or {}).get("read") or err)[:100])
-r, err, _ = h.run_trial(pwsh, runner, "try { Set-Content -LiteralPath '%s' -Value y -ErrorAction Stop; return $true } catch { return $false }" % ww, 30)
-say(isinstance(r, dict) and r.get("values") == [False] and open(ww).read() == "x\n", "the host's /tmp is read-only from inside: the file is as it was")
+                                      "return ($LASTEXITCODE -eq 0 -and $o.Count -eq 1 -and $o[0] -eq '%s')" % (wtmp, ww), 30, binds)
+say(todo == [fcall] and isinstance(r, dict) and r.get("values") == [True],
+    "find over the host's /tmp is replayed: it finds the world-writable file (%s)" % ((r or {}).get("read") or err)[:100])
 shutil.rmtree(wtmp, ignore_errors=True)
+# a process of this host cannot be signalled from inside: a sleeper of the test's own user (here: a PID namespace of
+# its own, systemd 257+), as root also one of nobody and one of another random UID (the trial's UID is its own)
+sleepers = [("the test's own user", subprocess.Popen(["/bin/sleep", "600"]))]
+if root:
+    import pwd
+    nobody = pwd.getpwnam("nobody")
+    nob = subprocess.Popen(["/usr/bin/setpriv", "--reuid=%d" % nobody.pw_uid, "--regid=%d" % nobody.pw_gid, "--clear-groups", "/bin/sleep", "600"])
+    other = h.UID_FIRST - 7
+    oth = subprocess.Popen(["/usr/bin/setpriv", "--reuid=%d" % other, "--regid=%d" % other, "--clear-groups", "/bin/sleep", "600"])
+    sleepers += [("nobody", nob), ("UID %d" % other, oth)]
+for who, sp in sleepers:
+    r, err, _ = h.run_trial(pwsh, runner, "try { [System.Diagnostics.Process]::GetProcessById(%d).Kill() } catch { }; "
+                                          "$null = @(& /usr/bin/kill -TERM %d 2>&1); return $true" % (sp.pid, sp.pid), 30)
+    say(sp.poll() is None, "a process of %s (pid %d) cannot be signalled from inside: it still runs" % (who, sp.pid))
+    sp.kill()
+    sp.wait()
 # the host's IPC settings: kernel.shmmax through sysctl is replayed (the sandbox's own IPC namespace would answer
 # otherwise); read straight from /proc inside, it is hidden - never the sandbox's own value
 host_shm = open("/proc/sys/kernel/shmmax").read().strip()
@@ -226,10 +259,11 @@ else:
 subprocess.run(sc + ["stop", unit], env=h.sandbox_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
 shutil.rmtree(sh_dir, ignore_errors=True)
 if root:
-    # as root (CI's throwaway runner: sudo): it runs as a dynamic user that keeps only the right to read; the kernel's
+    # as root (CI's throwaway runner: sudo): it runs as a UID of its own that keeps only the right to read; the kernel's
     # settings stay as they are - the write fails inside, even of the key's own value; /etc stays as it is
     r, err, _ = h.run_trial(pwsh, runner, "return [string](& /usr/bin/id -u)", 30)
-    say(isinstance(r, dict) and r.get("values") not in ([], ["0"]), "as root: the code runs as uid %s, not root" % ((r or {}).get("values") or err))
+    say(isinstance(r, dict) and r.get("values") == [str(h.trial_uid())],
+        "as root: the code runs as its own UID %d (in no passwd entry, owning no other process), not root: %s" % (h.trial_uid(), (r or {}).get("values") or err))
     say(not os.path.exists(etc_probe), "as root: nothing written in /etc")
     for name, args in (("sysctl -w (its own value)", "-w vm.swappiness=%s" % swap), ("sysctl -p FILE", "-p %s" % conf),
                        ("sysctl --system", "--system")):

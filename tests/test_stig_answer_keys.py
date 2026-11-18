@@ -389,19 +389,21 @@ class ReadOnlyCheck(unittest.TestCase):
         CAP_AUDIT_CONTROL; the host's network namespace (net.* read is the host's). No systemd-run: no sandbox, said why."""
         c = host.sandbox_cmd("/usr/bin/systemd-run", 60, {"/usr/bin/systemctl": "/w/replay-systemctl"})
         props = [c[i + 1] for i, x in enumerate(c) if x == "-p"]
-        for want in ("ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateDevices=yes", "ReadOnlyPaths=/dev/shm",
-                     "PrivateIPC=yes", "InaccessiblePaths=-/proc/sys/kernel/shmmax", "InaccessiblePaths=-/proc/sysvipc", "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
+        for want in ("ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
+                     "TemporaryFileSystem=/dev/shm", "PrivateIPC=yes", "ProtectProc=invisible", "SystemCallFilter=~@privileged @debug", "InaccessiblePaths=-/proc/sys/kernel/shmmax", "InaccessiblePaths=-/proc/sysvipc", "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
                      "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
                      "CapabilityBoundingSet=CAP_DAC_READ_SEARCH", "RuntimeMaxSec=60",
                      "BindReadOnlyPaths=/w/replay-systemctl:/usr/bin/systemctl"):
             self.assertIn(want, props)
         self.assertEqual(props.index("RestrictAddressFamilies=~AF_UNIX"), props.index("RestrictAddressFamilies=AF_UNIX") + 1)
         self.assertNotIn("PrivateNetwork=yes", props)
-        # 1.75.1 (Codex): /tmp, /var/tmp and /dev/shm are the host's (read-only) - pwsh writes only in its scratch tmpfs
-        self.assertFalse([x for x in props if x.startswith("PrivateTmp") or x == "TemporaryFileSystem=/dev/shm"])
-        sc = host.sandbox_cmd("/usr/bin/systemd-run", 60, scratch="/w/scratch")
-        self.assertIn("TemporaryFileSystem=/w/scratch:mode=1777", [sc[i + 1] for i, x in enumerate(sc) if x == "-p"])
-        self.assertIn("HOME=/w/scratch", [sc[i + 1] for i, x in enumerate(sc) if x == "-E"])
+        # 1.75.1 (Codex, round 3): /tmp, /var/tmp and /dev/shm are the sandbox's own, never the host's; not
+        # ProcSubset=pid (it hides /proc/sys and /proc/cmdline); a PID namespace of its own from systemd 257
+        self.assertNotIn("ReadOnlyPaths=/dev/shm", props)
+        self.assertNotIn("ProcSubset=pid", props)
+        self.assertNotIn("PrivatePIDs=yes", props)
+        v = host.sandbox_cmd("/usr/bin/systemd-run", 60, version=257)
+        self.assertIn("PrivatePIDs=yes", [v[i + 1] for i, x in enumerate(v) if x == "-p"])
         self.assertFalse([x for x in props if "AUDIT" in x])
         real = os.geteuid
         try:
@@ -411,9 +413,15 @@ class ReadOnlyCheck(unittest.TestCase):
             os.geteuid = real
         pr = [r[i + 1] for i, x in enumerate(r) if x == "-p"]
         self.assertNotIn("--user", r)
-        self.assertIn("User=nobody", pr)
-        self.assertIn("Group=%s" % host.nobody_group(), pr)          # RHEL nobody, Ubuntu nogroup
-        self.assertNotIn("DynamicUser=yes", pr)            # it brings a private /tmp
+        # its own UID: high, in no passwd or group entry, owning no process - never nobody (shared with host daemons)
+        u = host.trial_uid()
+        self.assertTrue(host.UID_FIRST <= u <= host.UID_LAST)
+        self.assertIn("User=%d" % u, pr)
+        self.assertIn("Group=%d" % u, pr)
+        self.assertNotIn("User=nobody", pr)
+        self.assertTrue(host.uid_free(u))
+        self.assertFalse(host.uid_free(0))
+        self.assertFalse(host.uid_free(os.getuid()))           # this test's own: it owns a process
         self.assertIn("AmbientCapabilities=CAP_DAC_READ_SEARCH", pr)
         self.assertFalse([x for x in pr if "AUDIT" in x])
         self.assertEqual(host.find_sandbox("/nonexistent/systemd-run"), "")
@@ -441,13 +449,28 @@ class ReadOnlyCheck(unittest.TestCase):
         self.assertEqual(len(host.replays_for([["/usr/bin/stat", "-c", "%U", "/x"], ["/usr/bin/stat", "-c", "%a", "/x"]])), 2)
         self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-xdev", "-nouser", "-print"]])), 1)
         self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-type", "d", "-printf", "%u %p\\n"]])), 1)
-        self.assertEqual(host.replays_for([["/usr/bin/find", "/", "-type", "d", "-perm", "-0002", "-print"]]), [])
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-type", "d", "-perm", "-0002", "-print"]])), 1)   # / holds /tmp
         for ok in (["/usr/bin/getent", "passwd", "root"], ["/usr/bin/id", "-u", "-n", "root"], ["/usr/sbin/sysctl", "-n", "kernel.sem"],
                    ["/usr/bin/stat", "-c", "%U %n", "/etc/shadow"], ["/usr/bin/find", "/home", "-nouser", "-print"]):
             self.assertTrue(host.replay_ok(ok), ok)
         for bad in (["/usr/bin/getent", "hosts", "x"], ["/usr/sbin/sysctl", "-w", "kernel.sem=1"], ["/usr/bin/find", "/", "-delete"],
                     ["/usr/bin/stat", "--printf", "%U", "/x"], ["/usr/bin/id", "-Z"]):
             self.assertFalse(host.replay_ok(bad), bad)
+        # 1.75.1 (Codex, round 3): /tmp, /var/tmp, /dev/shm are the sandbox's own - find and stat there replayed, any other
+        # read not tried (grep there too: outside it would read a host FIFO)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-xdev", "-type", "d", "-perm", "-0002", "-print"]])), 1)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/var", "-perm", "-0002", "-print"]])), 1)
+        self.assertEqual(len(host.replays_for([["/usr/bin/stat", "-c", "%a", "/tmp"]])), 1)
+        self.assertEqual(host.replays_for([["/usr/bin/find", "/etc", "-perm", "-0002", "-print"]]), [])
+        for code in ("Get-Content /tmp/x", "Test-Path '/var/tmp'", "Get-ChildItem /dev/shm", "Get-ChildItem / -Recurse -File",
+                     "Get-ChildItem -Path '/var' -Recurse"):
+            self.assertIn("cannot show /tmp", host.blind(code), code)
+        self.assertIn("cannot show /tmp", host.blind("x", [["/usr/bin/grep", "-r", "-l", "a", "/"]]))
+        self.assertIn("cannot show /tmp", host.blind("x", [["/usr/bin/grep", "-l", "a", "/tmp/x"]]))
+        for code in ("$o = @(& /usr/bin/find /tmp -perm -0002 -print)", "Get-ChildItem /etc -Recurse", "Get-Content /etc/tmpfiles.d/x.conf",
+                     "Get-Content /var/tmpx"):
+            self.assertEqual(host.blind(code), "", code)
+        self.assertEqual(host.blind("x", [["/usr/bin/grep", "-l", "a", "/etc/x"]]), "")
         # what the sandbox shows as its own: not tried
         for code, word in (("Get-Content /proc/mounts", "mount table"), ("Get-Content /proc/self/mountinfo", "mount table"),
                            ("Get-Content /etc/mtab", "mount table"), ("Get-Content /proc/sys/kernel/shmmax", "IPC"),
