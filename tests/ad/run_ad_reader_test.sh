@@ -156,14 +156,17 @@ for i in $(seq 1 20); do
 done
 [ -n "$not_yet" ] && { echo "the test domain did not settle: $not_yet"; exit 1; }
 echo "the domain settled (round $i): both DCs replicate from each other, DNS has both"
-# lockme locked out: five wrong passwords (the threshold)
-"$py" - "$p_ldaps1" <<'PY'
+# lockme locked out: five wrong passwords (the threshold), on DC01
+lock_out() {
+    "$py" - "$p_ldaps1" <<'PY'
 import ssl, sys, ldap3
 for _ in range(5):
     c = ldap3.Connection(ldap3.Server("127.0.0.1", port=int(sys.argv[1]), use_ssl=True, tls=ldap3.Tls(validate=ssl.CERT_NONE)),
                          user="lockme@corp.example.mil", password="wrong")
     c.bind()
 PY
+}
+lock_out
 
 # ---- the job -------------------------------------------------------------------------------------------------------------
 cat > "$work/inv.yml" <<INV
@@ -296,17 +299,37 @@ run "  ...a run writes it" ok "$hf" "no earlier list: the first run, or $hist co
 on1 samba-tool group addmembers "Domain Admins" jdoe > /dev/null
 run "  ...the next run: who joined since (the file)" ok "$hf" "the file $hist" 'Domain Admins  JOINED  jdoe' '!LEFT'
 
-# the accounts: gone disabled now (its creation outside the window: the replication metadata tells them apart)
+# the accounts: gone disabled now, lockme locked out now (both created before the report's window, both changed inside it).
+# The table's columns are as wide as its rows, so the case needs both rows: lockme's first lockout is older than the window
+# by now (the cases before took longer than ad_report_hours), so it is unlocked and locked out again, on DC01, with the disable.
 wait=$((made_at + 65 - $(date +%s)))
 [ "$wait" -gt 0 ] && sleep "$wait"
+changed_at=$(date +%s)
+on1 samba-tool user unlock lockme > /dev/null
+lock_out
 on1 samba-tool user disable gone > /dev/null
-# the job may read DC02: wait until the disable has replicated there (CI failed on the race)
-for _ in $(seq 1 30); do
+# the job may read DC02: wait, at most 120 s, until both changes have replicated there (pull from DC01, then look at DC02 and DC01)
+changes_seen() {  # 0 when this DC shows gone disabled and lockme locked out again (a lockoutTime after changed_at)
+    local d="$1" out
+    # the read must work (its exit status) and the attribute must be there: no line is not a pass
+    out="$("$d" samba-tool user show gone --attributes=userAccountControl 2>/dev/null)" || return 1
+    printf '%s\n' "$out" | awk '/^userAccountControl:/ { f = 1; ok = (int($2 / 2) % 2) } END { exit !(f && ok) }' || return 1
+    out="$("$d" samba-tool user show lockme --attributes=lockoutTime 2>/dev/null)" || return 1
+    printf '%s\n' "$out" | awk -v t="$(( (changed_at - 1 + 11644473600) * 10000000 ))" \
+        '/^lockoutTime:/ { f = 1; ok = ($2 > t) } END { exit !(f && ok) }'
+}
+replicated=""
+for _ in $(seq 1 120); do
     on2 samba-tool drs replicate dc02 dc01 "$nc" -U Administrator --password="$pass_admin" > /dev/null 2>&1
-    on2 samba-tool user show gone --attributes=userAccountControl 2>/dev/null \
-        | awk '/^userAccountControl:/ { exit !(int($2 / 2) % 2) }' && break
+    if changes_seen on1 && changes_seen on2; then replicated=1; break; fi
     sleep 1
 done
+age=$(( $(date +%s) - changed_at ))
+if [ -z "$replicated" ]; then
+    echo "FAIL - the accounts: the disable and the lockout did not replicate to DC02 in $age s"; fails=$((fails + 1))
+elif [ "$age" -gt 45 ]; then  # ad_report_hours 0.015 is 54 s: a change older than that is outside the report's window
+    echo "FAIL - the accounts: the changes took $age s to replicate, more than the report's window (ad_report_hours 0.015 = 54 s) allows"; fails=$((fails + 1))
+fi
 run "the accounts: disabled (replication metadata, on DC01), locked out now" ok '{"ad_health_mode": "reader", "ad_report_hours": 0.015}' \
     'gone    DISABLED    DC01     replication metadata' 'Accounts locked out now (1)' 'lockme'
 
