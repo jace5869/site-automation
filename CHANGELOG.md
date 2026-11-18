@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.75.0 — 2026-11-18
+
+**To set up:** a job template **STIG answer keys** (`playbooks/stig_answer_keys.yml`): credentials Machine, STIG Manager
+API and an ACT model key; Prompt on launch for Variables and Limit (or a survey). Its variables:
+`aap/extra_vars/stig_answer_keys.yml`. The client needs the scope `stig-manager:stig:read` (as the STIG recheck).
+Nothing else changes.
+
+**STIG answer keys: an Evaluate-STIG answer key for each rule you pick, checked read-only, ready to copy**
+(docs/STIG_ANSWER_KEYS.md). **1.75.0: no trial yet - it comes in 1.75.1.** Try each block on a test host first.
+
+- Linux (RHEL 8, 9 and 10), Evaluate-STIG with pwsh, one host. Only the rules you name (`answer_keys_rules`, at
+  most 25) that are Open or Not Reviewed in STIG Manager and in Evaluate-STIG's own result.
+- Each rule gets one `<AnswerKey>` block to paste into your own answer file, under its `<Vuln ID>`.
+  - ExpectedStatus: Evaluate-STIG's own result (Open or Not_Reviewed).
+  - The ValidationCode only reads, and returns true when the host is as DISA's check text wants.
+  - NotAFinding when true, Open when false. Only NotAFinding, Open or Not_Applicable are used, never RA or POA&M.
+- The code comes from a fixed pattern of DISA's check text first: a file's owner, group or mode, a kernel setting, a
+  package, a service, a setting or a directive line in a file, the audit rules loaded, a find, the release (per major
+  release), world-writable owners. A pattern covers every command of the check text, or there is none; a program
+  that fails or cannot look everywhere is false. Checked against DISA's RHEL 10 V1R3, RHEL 9 V2R10 and RHEL 8 V2R9
+  (and the earlier V2R7, V2R6): they fit 175 of 435, 181 of 445 and 55 of 371 check texts.
+  - Else ACT drafts it (`answer_keys_act`) on the AAP side, in evidence mode: it runs no command, and nothing of ACT's
+    is put on the host. Its block is marked "drafted by ACT - read it before you use it".
+  - ACT uses only the site values given; a missing one is named, never made up.
+- The site's own values (`answer_keys_values`: `min_release`, `world_writable_owners`) come from the template or a
+  survey. Each block says which it used; a missing one says the line to add.
+- A fixed read-only check: PowerShell's parser on the code's syntax tree, allow-lists only. The listed syntax, a plain
+  local variable for every assignment, `++` or `--`, the listed cmdlet parameters, and each program's exact argument
+  grammar (`rpm -q PACKAGE`, `sysctl -n KEY`, `auditctl -l` ...). Anything else is refused.
+- No trial yet: no block's code is run on the host. Each block is marked "Not tried - the trial on a host comes in
+  1.75.1: try this block on a test host before you rely on it", with the status it would set (NotAFinding if true,
+  Open if false).
+- The block's element names are those of the host's own Evaluate-STIG answer file template, with its version. If the
+  template is missing or lacks an element, the documented names are used, and the report says so.
+- Nothing is written anywhere: STIG Manager is read with GET only, and Evaluate-STIG runs for the picked rules only
+  (never in full), with no answer files and none of `check_stig_evaluate_args`. Its output folder is removed, nothing
+  goes to the share, and nothing is left on the host.
+- The report: the blocks with **Copy block** on the website, in the workbook and in the job output; the rules not
+  drafted and why.
+- New settings: `answer_keys_rules`, `answer_keys_values`, `answer_keys_name`, `answer_keys_act` (`true`).
+- 1.73.0's Copy rule: a prompt typed twice (`$ $ awk ...` in RHEL 9 V2R10 and RHEL 10 V1R3) copies the command alone.
+  Checked against all three new benchmarks: every check text has a command.
+
 ## 1.74.3 — 2026-11-18
 
 **To set up: nothing.**

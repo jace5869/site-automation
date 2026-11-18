@@ -1,0 +1,25 @@
+---
+# STIG answer keys (1.75.0b): ACT drafts one rule's ValidationCode (_ak_rule), on the AAP side, evidence mode.
+- name: Answer keys | ACT drafts {{ _ak_rule.v }} - it reads DISA's check text, runs no command
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: evidence_analysis.yml
+  vars:
+    _ea_items: [{id: "{{ _ak_rule.v }}"}]
+    _ea_evidence: "{{ 'DISA check text of ' ~ _ak_rule.v ~ ' (' ~ _ak_rule.sv ~ '):\n' ~ (_ak_rule.check_text | default('')) }}"
+    _ea_task: "{{ _ak_rule | stig_answer_act_task(answer_keys_values) }}"
+    _ea_names: ["{{ inventory_hostname }}"]
+
+- name: Answer keys | ACT's draft of {{ _ak_rule.v }}
+  ansible.builtin.set_fact:
+    _ak_act: >-
+      {{ _ak_act | combine({_ak_rule.v: {'code': '' if _needs else _code, 'needs': _needs,
+                                          'uses': _raw | stig_answer_act_uses(answer_keys_values),
+                                          'why': ('is off (site_act_enabled false)' if _ea_off | default(false) | bool
+                                                  else ('did not answer: ' ~ (_ea_reason | default('') | truncate(200)))
+                                                  if not _ea_ran | default(false) | bool
+                                                  else 'gave no ```powershell block')}}) }}
+  vars:
+    _raw: "{{ _ea_raw | default('') }}"
+    _code: "{{ _ea_raw | default('') | stig_answer_act_code }}"
+    _needs: "{{ _ea_raw | default('') | stig_answer_act_needs }}"

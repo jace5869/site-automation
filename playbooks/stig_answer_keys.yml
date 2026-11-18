@@ -1,0 +1,63 @@
+---
+# STIG ANSWER KEYS (1.75.0): for the rules you pick (answer_keys_rules - Open or Not Reviewed), an Evaluate-STIG <AnswerKey>
+# block each, ready to copy into YOUR answer file under the rule's <Vuln ID>: ExpectedStatus (Evaluate-STIG's own result),
+# a ValidationCode that only reads, the status and comment for true and false. Linux, Evaluate-STIG with pwsh, ONE
+# host (target): each code is made from DISA's check text by a fixed pattern - or drafted by ACT (answer_keys_act),
+# marked so - then checked read-only (PowerShell's parser) on that host. 1.75.0 runs no code: no trial (1.75.1) - each
+# block says "not tried": try it on a test host before you rely on it.
+# Nothing is written anywhere: STIG Manager is read with GET only; Evaluate-STIG runs for those rules alone, with no answer
+# files, none of check_stig_evaluate_args, its own output removed; nothing goes to the share. docs/STIG_ANSWER_KEYS.md.
+#
+#   ansible-playbook playbooks/stig_answer_keys.yml -e target=rhel01.example.mil -l rhel01.example.mil \
+#     -e '{"answer_keys_rules": ["V-257777", "V-257900"], "answer_keys_values": {"min_release": "9.4"}}'
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: STIG answer keys
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  become: true
+  vars:
+    site_report_title: STIG answer keys
+  pre_tasks:
+    - name: Linux hosts only (Evaluate-STIG with pwsh)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    # 1.75.0b: nothing of ACT's on this host - no install, no copy, no clean-up of old copies
+    - name: The answer keys - Evaluate-STIG for the picked rules only, STIG Manager read, the patterns' drafts
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys.yml
+
+    # on the AAP side, once (run_once, delegated to localhost - a Limit of the host needs no localhost): ACT reads
+    # DISA's text and answers, in evidence mode - it runs no command, here or on any host
+    - name: The answer keys - ACT drafts the rules no fixed pattern fits (answer_keys_act), on the AAP side
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys_act.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      when: _ak_for_act | default([]) | length > 0
+
+    - name: The answer keys - the read-only check of each draft, the report (no trial in 1.75.0)
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys_check.yml

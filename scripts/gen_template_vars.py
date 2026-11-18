@@ -432,6 +432,21 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # evaluate_stig_update_zip: files/evaluate-stig
 # evaluate_stig_update_keep: [AnswerFiles]          # your own answer files in Evaluate-STIG's folder, carried over
 """),
+    "stig_answer_keys.yml": ("STIG answer keys", "Machine, STIG Manager API, ACT model key (with answer_keys_act)", "check_stig", """\
+## 1.75.0: the Evaluate-STIG answer keys for the rules you pick, ready to copy into YOUR answer file - nothing is written
+## anywhere. ONE Linux host with Evaluate-STIG (pwsh): target and the Limit. Prompt on launch (or a survey) for these:
+target: rhel01.example.mil
+answer_keys_rules: [V-257777, V-257928]
+## The site's own values some rules need (docs/STIG_ANSWER_KEYS.md, "Site values"); a survey may give them as text
+# answer_keys_values:
+#   min_release: '9.4'
+#   world_writable_owners: [root, sys, bin, appuser]
+## The scanner's settings, as the STIG drift report (check_stig_evaluate ...); STIG Manager read with GET only
+check_stig_evaluate: /opt/Evaluate-STIG
+check_stig_stigman_api: https://STIGMAN-SERVER/api
+## No ACT drafts (a rule no fixed pattern fits is then written by hand)
+# answer_keys_act: false
+"""),
     "stig_recheck.yml": ("STIG recheck", "Machine, STIG Manager API; Windows file share with check_stig_evaluate_answers", "check_stig", """\
 ## What to check again is read from STIG Manager (the same settings and "STIG Manager API" credential as the STIG
 ## drift report); the scanner too (check_stig_scanner, check_stig_evaluate ...)

@@ -109,6 +109,10 @@ class Commands(unittest.TestCase):
         self.assertEqual(t.commands_of('Enter "%s".' % cmd2), cmd2)                            # in double quotes too
         self.assertEqual(t.commands_of('Enter "Get-Service W32Time. Then look at its status"'), "")   # prose outside quotes
 
+    def test_a_prompt_typed_twice(self):
+        """1.75.0: DISA's RHEL 9 V2R10 and RHEL 10 V1R3 have "$ $ awk ..." - the command alone."""
+        self.assertEqual(t.commands_of("Check:\n\n$ $ awk -F: '($3 > 0) {print $1}' /etc/passwd\n\nroot"), "awk -F: '($3 > 0) {print $1}' /etc/passwd")
+
     def test_registry(self):
         text = "\n".join(["Registry Hive: HKEY_LOCAL_MACHINE", "Registry Path: \\SOFTWARE\\Policies\\X\\", "", "Value Name: A",
                           "Value Name: Two Words", "Registry Path: \\SOFTWARE\\Y\\", "", "Value Type: REG_DWORD"])

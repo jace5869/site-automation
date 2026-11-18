@@ -714,6 +714,7 @@ class Python36(unittest.TestCase):
 # The playbooks that run ACT only on the AAP side (the execution environment has no /usr/local/bin/act), and why
 AAP_SIDE = {
     "playbooks/log_analysis.yml": "the analysis runs on localhost (delegate_to, run_once)",
+    "playbooks/stig_answer_keys.yml": "ACT drafts on localhost (delegate_to, run_once), evidence mode - nothing on the trial host",
     "playbooks/vm_log_analysis.yml": "on localhost",
     "playbooks/act_triage_finding.yml": "ACT runs on localhost (roles/portal_triage/tasks/side.yml: delegate_to, run_once), evidence mode",
 }

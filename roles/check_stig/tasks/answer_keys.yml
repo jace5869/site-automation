@@ -1,0 +1,146 @@
+---
+# STIG ANSWER KEYS (1.75.0, playbooks/stig_answer_keys.yml) on ONE Linux host (read only): for the rules a person picks
+# (answer_keys_rules), an Evaluate-STIG <AnswerKey> block each, ready to copy into their own answer file. Nothing is
+# written anywhere: STIG Manager is read with GET only, Evaluate-STIG runs for those rules alone with no answer files and
+# none of check_stig_evaluate_args (its own output folder removed after), nothing goes to the share.
+#   1. Evaluate-STIG's own result for the rules on the host (ExpectedStatus): only Open or Not Reviewed get a key
+#   2. STIG Manager: the host's reviews (Not a Finding / Not Applicable there: no key) and DISA's check text
+#   3. the draft: a fixed pattern from the check text (stig_answer_filters.py); else ACT (answer_keys_act), marked as such
+#   4. on the host (library/site_stig_answer_host.py): the fixed read-only check on each code (PowerShell's parser - no
+#      code is run: no trial in 1.75.0); and what the host's Evaluate-STIG is (its version, its template's names)
+#   5. the report: the blocks (the website, the job output, the workbook), the rules not drafted and why
+- name: Answer keys | one host
+  ansible.builtin.assert:
+    that: ansible_play_hosts_all | length == 1
+    fail_msg: >-
+      STIG answer keys run on ONE host, not {{ ansible_play_hosts_all | length }}: set target (and the Limit)
+      to one Linux host with Evaluate-STIG (docs/STIG_ANSWER_KEYS.md).
+    quiet: true
+
+- name: Answer keys | the rules asked
+  ansible.builtin.set_fact:
+    _ak_rules: "{{ answer_keys_rules | stig_answer_rules }}"
+    _ak_key: >-
+      {%- set a = check_stig_evaluate_args if check_stig_evaluate_args is not string else check_stig_evaluate_args.split() -%}
+      {%- set n = namespace(k='') -%}
+      {%- for x in a -%}{%- if loop.index0 > 0 and a[loop.index0 - 1] | lower in ['--answerkey', '-answerkey'] -%}{%- set n.k = x -%}{%- endif -%}{%- endfor -%}
+      {{ answer_keys_name | default('', true) | string | trim or n.k or 'DEFAULT' }}
+
+- name: Answer keys | the rules asked are right
+  ansible.builtin.assert:
+    that: _ak_rules.error | length == 0
+    fail_msg: "{{ _ak_rules.error }}"
+    quiet: true
+
+- name: Answer keys | Evaluate-STIG is the scanner here, with PowerShell 7
+  ansible.builtin.assert:
+    that: check_stig_evaluate | default('') | length > 0
+    fail_msg: "STIG answer keys need Evaluate-STIG on the host: set check_stig_evaluate (its folder) - docs/STIG_DRIFT.md, Evaluate-STIG."
+    quiet: true
+
+# Evaluate-STIG's own result for these rules only - no answer files, none of check_stig_evaluate_args (an -Output to STIG
+# Manager or a share there would write), a checklist of its own read and removed, nothing kept (save: false)
+- name: Answer keys | Evaluate-STIG's own result for these rules on the host (nothing kept, nothing sent)
+  site_stig_scan:
+    dir: "{{ check_stig_dir }}"
+    save: false
+    keep_report: false
+    keep_results: false
+    timeout: "{{ check_stig_timeout | int }}"
+    scanner: evaluate_stig
+    evaluate: "{{ check_stig_evaluate }}"
+    evaluate_select: "{{ check_stig_evaluate_select }}"
+    evaluate_args: []
+    evaluate_read: ""
+    evaluate_output: CKLB
+    evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
+    pwsh: "{{ check_stig_pwsh }}"
+    benchmarks: "{{ check_stig_stigman_benchmarks }}"
+    vulns: "{{ _ak_rules.rules | map(attribute='v') | list }}"
+    selected_only: true             # 1.75.0b: the picked rules or nothing - never a full scan
+    history: false
+  register: _ak_scan
+  check_mode: false               # only reads; keeps nothing (save: false)
+
+- name: Answer keys | Evaluate-STIG did not run only the picked rules - every rule not drafted, the report says why
+  ansible.builtin.debug:
+    msg: "Evaluate-STIG did not run on {{ inventory_hostname }}: {{ _ak_scan.why | default('unknown reason') }} - no key is drafted"
+  when: not _ak_scan.scanned | default(false)
+
+- name: Answer keys | the host's STIG Manager reviews (GET only, from the AAP side)
+  site_stigman_read:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope }}"
+    collections: "{{ check_stig_stigman_collections }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path }}"
+    timeout: "{{ check_stig_stigman_timeout | int }}"
+    hosts:
+      - host: "{{ inventory_hostname }}"
+        names: "{{ ([check_stig_stigman_asset] if check_stig_stigman_asset | default('') else [inventory_hostname, inventory_hostname.split('.')[0]]) | unique | list }}"
+        collection: "{{ check_stig_stigman_collection | default('') }}"
+        benchmark: "{{ _ak_bench }}"
+  register: _ak_sm
+  delegate_to: localhost
+  become: false
+  check_mode: false               # only reads
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _ak_bench: "{{ check_stig_stigman_benchmarks[_ak_scan.major | string] | default(_ak_scan.benchmark | default('')) }}"
+  when: check_stig_stigman_api | length > 0
+
+- name: Answer keys | DISA's check text of the rules (STIG Manager, GET only)
+  site_stigman_read:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path }}"
+    timeout: "{{ check_stig_stigman_timeout | int }}"
+    text_timeout: "{{ check_stig_rule_texts_timeout | int }}"
+    hosts: []
+    texts:
+      - benchmark: "{{ (_ak_sm.hosts | default({}))[inventory_hostname].benchmark | default(_ak_bench, true) }}"
+        revision: "{{ (_ak_sm.hosts | default({}))[inventory_hostname].revision | default('', true) }}"
+        rules: "{{ _ak_rules.rules | map(attribute='sv') | list }}"
+  register: _ak_text
+  delegate_to: localhost
+  become: false
+  check_mode: false               # only reads
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _ak_bench: "{{ check_stig_stigman_benchmarks[_ak_scan.major | string] | default(_ak_scan.benchmark | default('')) }}"
+  when: check_stig_stigman_api | length > 0
+
+- name: Answer keys | which rules may get a key, with their check text
+  ansible.builtin.set_fact:
+    _ak_picks: >-
+      {%- set texts = _ak_text.texts | default({}) -%}
+      {%- set out = [] -%}
+      {%- for p in _ak_rules.rules | stig_answer_pick(_ak_scan['items'] | default([]), _ak_sm_host,
+                                                        '' if _ak_scan.scanned | default(false) else _ak_scan.why | default('it did not run')) -%}
+      {%-   set _ = out.append(p | combine({'check_text': (texts[p.sv].check | default('')) if p.sv in texts else p.check_text})) -%}
+      {%- endfor -%}
+      {{ out }}
+  vars:
+    _ak_sm_host: "{{ (_ak_sm.hosts | default({}))[inventory_hostname] | default({}) if check_stig_stigman_api | length > 0 else {} }}"
+
+- name: Answer keys | STIG Manager - what was read
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'STIG Manager: ' ~ ((_ak_sm.hosts | default({}))[inventory_hostname].status | default(_ak_sm.error | default('not read')))
+         ~ '; check text read for ' ~ (_ak_text.texts | default({}) | length) ~ ' of ' ~ (_ak_rules.rules | length) ~ ' rules'
+         ~ ((' (' ~ _ak_text.texts_info.error ~ ')') if _ak_text.texts_info.error | default('') else '')
+         if check_stig_stigman_api | length > 0 else "STIG Manager: not set (check_stig_stigman_api) - Evaluate-STIG's own result decides" }}
+
+# 1.75.0b: ACT drafts them next, on the AAP side (evidence mode: it runs no command - nothing on this host)
+- name: Answer keys | the rules no fixed pattern fits - for ACT, on the AAP side (answer_keys_act)
+  ansible.builtin.set_fact:
+    _ak_for_act: "{{ _ak_picks | stig_answer_for_act(answer_keys_values) if answer_keys_act | bool else [] }}"

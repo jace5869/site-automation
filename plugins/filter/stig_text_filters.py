@@ -125,7 +125,8 @@ def commands_of(text, registry=True):
             continue
         m = _PROMPT.match(ln) or _ROOT.match(ln) or _PS.match(ln) or _WORDS.match(ln)
         if m:
-            more = add(m.group(1)) and out[-1].endswith("\\")
+            # 1.75.0: a prompt typed twice ("$ $ awk ..." in DISA's RHEL 9 V2R10 and RHEL 10 V1R3) - the command alone
+            more = add(re.sub(r"^(?:\$\s+)+", "", m.group(1))) and out[-1].endswith("\\")
             continue
         m = _SAYS.match(ln)
         q = _quoted(m.group(1)) if m else None

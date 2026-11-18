@@ -1,0 +1,58 @@
+---
+# STIG ANSWER KEYS (1.75.0), the last play, on the host again: every draft (the patterns', ACT's from the AAP side),
+# the read-only check of each on the host (no trial in 1.75.0 - 1.75.1), the report. See answer_keys.yml.
+- name: Answer keys | ACT's drafts (from the AAP side; none asked, none)
+  ansible.builtin.set_fact:
+    _ak_act: "{{ _ak_act | default({}) }}"
+
+- name: Answer keys | every draft
+  ansible.builtin.set_fact:
+    _ak_drafts: "{{ _ak_picks | stig_answer_drafts(answer_keys_values, answer_keys_act | bool, _ak_act) }}"
+
+- name: Answer keys | the read-only check of each draft, on the host (and what its Evaluate-STIG is) - no code is run
+  site_stig_answer_host:
+    evaluate: "{{ check_stig_evaluate }}"
+    pwsh: "{{ check_stig_pwsh }}"
+    codes: "{{ _ak_drafts | stig_answer_codes }}"
+  register: _ak_host
+  check_mode: false               # only reads (its own folder, removed)
+
+- name: Answer keys | the element names (the host's own template, else the documented ones)
+  ansible.builtin.set_fact:
+    _ak_names: "{{ _ak_host.evaluate.names | default([]) | stig_answer_names }}"
+
+- name: Answer keys | the blocks
+  ansible.builtin.set_fact:
+    _ak_doc: >-
+      {{ _ak_picks | stig_answer_rows(_ak_drafts, _ak_host, _ak_key, _ak_names.names, stigman_protect_words | default(none))
+         | stig_answer_report(inventory_hostname, _ak_key, _ak_host.evaluate | default({}), answer_keys_act | bool,
+                              _ak_bench, _ak_rev, _ak_names) }}
+  vars:
+    _ak_bench: "{{ check_stig_stigman_benchmarks[_ak_scan.major | string] | default(_ak_scan.benchmark | default('')) }}"
+    _ak_rev: "{{ (_ak_sm.hosts | default({}))[inventory_hostname].revision | default(_ak_scan.stig_version | default(''), true) }}"
+
+- name: Answer keys | what was made
+  ansible.builtin.debug:
+    msg: "{{ _ak_doc.lines }}"
+
+- name: Answer keys | the blocks to copy (also on the report website and in the workbook)
+  ansible.builtin.debug:
+    msg: "{{ (r.v ~ (' - ' ~ 'drafted by ACT - read it before you use it' if r.by == 'ACT' else '') ~ ': paste under <Vuln ID=\"' ~ r.v ~ '\">').split('\n') + r.block.split('\n') }}"
+  loop: "{{ _ak_picks | stig_answer_rows(_ak_drafts, _ak_host, _ak_key, _ak_names.names, stigman_protect_words | default(none)) | selectattr('block') | list }}"
+  loop_control:
+    loop_var: r
+    label: "{{ r.v }}"
+
+- name: Answer keys | email the report, publish it (report_email_to, report_web_dest) - from the AAP side
+  ansible.builtin.include_role:
+    name: site_email
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _report: "{{ _ak_doc.report }}"
+    _report_web: "{{ _ak_doc.web }}"
+    _report_xlsx: "{{ _ak_doc.xlsx }}"

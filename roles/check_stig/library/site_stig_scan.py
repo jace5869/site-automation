@@ -51,6 +51,7 @@ options:
   pwsh: {description: "PowerShell 7 for Evaluate-STIG.ps1 ('' = found in PATH).", type: str, default: ''}
   benchmarks: {description: "The STIG (its benchmark id) for each RHEL version ({'9': RHEL_9_STIG}): the checklist read.", type: dict, default: {}}
   vulns: {description: "Only these STIG rules (V-257985 ...); [] = every rule.", type: list, elements: str, default: []}
+  selected_only: {description: "1.75.0b: with vulns, those rules or nothing - no -SelectVuln, or nothing written with it: not scanned, never in full.", type: bool, default: false}
   history: {description: "Compare with the earlier scans and keep this one with them (false - the STIG recheck - neither).", type: bool, default: true}
   answers: {description: "Evaluate-STIG: the folder on the host its answer files were copied to for this run ('' = its own).", type: str, default: ''}
   answers_arg: {description: "Evaluate-STIG's option for that folder (checked in its script).", type: str, default: --AFPath}
@@ -592,6 +593,10 @@ class Scan(object):
             picked = bool(vulns) and takes_select_vuln(*[x for x in (ps1, script) if x])
             if vulns:
                 extra.update(selected=picked, vulns_asked=len(vulns))
+            if vulns and p.get("selected_only") and not picked:
+                # 1.75.0b (the STIG answer keys): the picked rules or nothing - never a full scan
+                return self.fail("Evaluate-STIG could not run only the picked rules: this Evaluate-STIG has no -SelectVuln option "
+                                 "(not run in full: selected_only)", selected=False, selected_only=True, **ident)
             def command(pick):
                 """Evaluate-STIG's command line, with -SelectVuln (pick) or without -> (cmd, the script it runs)."""
                 if pick and ps1 and pwsh:
@@ -624,6 +629,11 @@ class Scan(object):
                 if picked and not files and not [f for f in told["rejected"] if os.path.isfile(f)]:
                     # nothing written with -SelectVuln (a version that wants -SelectSTIG with it, say): once more, in full
                     first = " | ".join(told["lines"])[-300:] or said[-300:] or "no message"
+                    if p.get("selected_only"):   # 1.75.0b: never in full - say why, run nothing more
+                        shutil.rmtree(out_dir, ignore_errors=True)
+                        return self.fail("Evaluate-STIG could not run only the picked rules: with -SelectVuln it wrote no "
+                                         "checklist (exit %d: %s); not run in full (selected_only)" % (proc.returncode, first),
+                                         selected=False, selected_only=True, **ident)
                     extra.update(selected=False, select_note="with -SelectVuln it wrote no checklist (exit %d: %s), so it ran in full"
                                  % (proc.returncode, first))
                     shutil.rmtree(out_dir, ignore_errors=True)
@@ -794,6 +804,7 @@ def main():
         pwsh=dict(type="str", default=""),
         benchmarks=dict(type="dict", default={}),
         vulns=dict(type="list", elements="str", default=[]),
+        selected_only=dict(type="bool", default=False),
         history=dict(type="bool", default=True),
         answers=dict(type="str", default=""),
         answers_arg=dict(type="str", default="--AFPath"),
