@@ -195,12 +195,13 @@ if [ -n "$page" ] && [ "$(grep -o '<svg class="spark hu[0-9]"' "$page" | wc -l)"
     ok "  ...by platform: a line per platform, the Platform and Collection buttons, each collection opens"
 else bad "  ...the website page's platforms"; fi
 # 1.68.0: the names link to STIG Manager's plain address (no # or ?: 1.6.18's page would stop), the rule number's copy
-# button, a rule opened - its check and fix text with Copy check and Copy fix; each rule's text read once (9 have one)
+# button, a rule opened - its check and fix text with Copy check and Copy fix (1.73.0: a text with no command has no button,
+# only the line No command in this text); each rule's text read once (9 have one)
 if [ -n "$page" ] && grep -qF "href=\"http://127.0.0.1:$port/\" target=\"_blank\" rel=\"noopener\" title=\"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 &gt; RHEL_9_STIG &gt; SV-257985\"" "$page" \
    && grep -qF 'title="Opens STIG Manager in a new tab. Then: SITEA - Windows Server &gt; win03">' "$page" \
    && grep -qF 'data-copy="SV-257985">' "$page" && grep -qF '<h3 class="rth">Check text</h3>' "$page" \
    && grep -qF 'data-copy="sudo dnf install usbguard">Copy fix</button>' "$page" \
-   && grep -qF 'title="Copies the whole text: it has no command line">Copy fix</button>' "$page" \
+   && grep -qF '<p class="rtn">No command in this text</p>' "$page" && ! grep -qF 'Copies the whole text' "$page" \
    && ! grep -qE "href=\"http://127.0.0.1:$port/(api/?)?[#?]" "$page" && grep -qF "Check and fix text: 9 of 10 rules in" "$work/out.txt" \
    && [ "$(grep -c '^GET /api/stigs/rules/' "$work/sm.log")" = 10 ] && [ "$(grep '^GET /api/stigs/rules/' "$work/sm.log" | sort -u | wc -l)" = 10 ] \
    && grep -q '^GET /api/stigs/rules/SV-257985r1069364_rule?projection=check&projection=fix$' "$work/sm.log"; then
