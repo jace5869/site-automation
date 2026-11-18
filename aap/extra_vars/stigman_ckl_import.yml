@@ -182,8 +182,9 @@ stigman_ckl_import_collection: VMware
 
 ## 1.68.0: each open rule's check text and fix text (GET /stigs/rules/RULE - the client's scope
 ## stig-manager:stig:read), once per rule, the rules open on the most hosts first: a rule opened on
-## the website shows them with Copy check and Copy fix; the workbook's Rules across hosts gets a Fix
-## text column. The email is as before. false = no check or fix text
+## the website shows them with Copy check and Copy fix (1.73.0: the text's command lines only; a
+## text with no command has no button); the workbook's Rules across hosts gets a Fix text column.
+## The email is as before. false = no check or fix text
 # stigman_scorecard_texts: true
 
 ## seconds for all the rules' texts together; too slow: the rest have none

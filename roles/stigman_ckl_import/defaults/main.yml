@@ -101,7 +101,8 @@ stigman_scorecard_rules_timeout: 600        # seconds for a collection's open ru
 stigman_scorecard_hosts_timeout: 600        # seconds for a collection's rules' hosts (1.67.0: 120)
 # 1.68.0: each open rule's check text and fix text (GET /stigs/rules/RULE - the client's scope stig-manager:stig:read),
 # once per rule, the rules open on the most hosts first: a rule opened on the website shows them with Copy check and
-# Copy fix; the workbook's Rules across hosts gets a Fix text column. The email is as before.
+# Copy fix (1.73.0: the text's command lines only; a text with no command has no button); the workbook's Rules across
+# hosts gets a Fix text column. The email is as before.
 stigman_scorecard_texts: true               # false = no check or fix text
 stigman_scorecard_text_timeout: 120         # seconds for all the rules' texts together; too slow: the rest have none
 # 1.68.1: where the website's names go in STIG Manager. plain: its home page (a tooltip says where to look). open: the

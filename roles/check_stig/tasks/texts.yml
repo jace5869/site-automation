@@ -1,0 +1,66 @@
+---
+# 1.73.0 (check_stig_rule_texts): each STIG rule the report lists, with DISA's check text and fix text - the STIG drift
+# report (Linux, Windows) and the STIG recheck (Linux, Windows), last, once the report's tables are made
+# (site_report_sections; the website's, site_report_web_sections). From STIG Manager, read-only, once from the AAP
+# side: one read of each STIG revision's rules (the client's scope stig-manager:stig:read), only the rules listed kept.
+# A rule Evaluate-STIG failed has its checklist's texts already (no read for it). Then:
+#   the website (atlas, brief, ops): each rule's row opens to its texts, Copy copies a text's command lines only
+#   the email and the other looks: each rule once under its table (folded; the email keeps the first part of a text)
+#   the workbook: a Check text and a Fix text column, in full
+# A rule with no text (none in STIG Manager, OpenSCAP without STIG Manager): no block. Nothing is written anywhere.
+- name: STIG | the rules the report lists, and those of them with no text of their own
+  ansible.builtin.set_fact:
+    _stig_text_results: "{{ _results }}"
+    _stig_text_want: "{{ _results | stig_text_wanted }}"
+  vars:
+    _results: >-
+      {{ (ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
+          | map(attribute='check_stig_results') | flatten(levels=1) | list)
+         + (ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_result', 'defined')
+            | map(attribute='check_stig_result') | list) }}
+  run_once: true
+  when: check_stig_rule_texts | bool
+
+- name: STIG | their check and fix text from STIG Manager (read-only, once, from the AAP side)
+  site_stigman_read:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path }}"
+    timeout: "{{ check_stig_stigman_timeout | int }}"
+    hosts: []
+    texts: "{{ _stig_text_want }}"
+  register: _stig_text_read
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false             # only reads
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when: check_stig_rule_texts | bool and check_stig_stigman_api | length > 0 and _stig_text_want | length > 0
+
+- name: STIG | the texts, on the report's tables
+  ansible.builtin.set_fact:
+    _stig_texts: "{{ _texts }}"
+    site_report_web_sections: "{{ site_report_web_sections | default(site_report_sections | default([])) | stig_texts_sections(_texts, true) }}"
+    site_report_sections: "{{ site_report_sections | default([]) | stig_texts_sections(_texts, false) }}"
+  vars:
+    _texts: "{{ _stig_text_results | stig_texts_of(_stig_text_read.texts | default({})) }}"
+  run_once: true
+  when: check_stig_rule_texts | bool
+
+- name: STIG | check and fix text
+  ansible.builtin.debug:
+    msg: >-
+      {%- set asked = _stig_text_want | map(attribute='rules') | map('length') | sum -%}
+      {%- set info = _stig_text_read.texts_info | default({}) -%}
+      Check and fix text: {{ _stig_texts.keys() | select('match', '^SV-') | list | length }} rules have them on the report
+      {%- if asked %} ({{ info.read | default(0) }} of the {{ asked }} asked read from STIG Manager
+      {%- if check_stig_stigman_api | length == 0 %}: STIG Manager is not set (check_stig_stigman_api){% endif -%}
+      {%- if info.error | default('') or _stig_text_read.error | default('') %} - {{ info.error | default('') or _stig_text_read.error }}{% endif %}){% endif %}.
+  run_once: true
+  when: check_stig_rule_texts | bool

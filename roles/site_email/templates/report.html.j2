@@ -145,6 +145,8 @@
 <div style="padding:6px 0;color:#6b7280;">None.</div>
 {%- endif %}
 {%- endif %}
+{#- 1.73.0: a STIG rule's check text and fix text, each rule once (folded; the email keeps the first part) #}
+{%- if s.rule_texts is defined %}{{ s | report_rule_texts_html('#111827', '#4b5563', _page_runs is defined) }}{% endif %}
 {%- if s.lines | default([]) %}
 <ul style="margin:6px 0 8px 0;padding-left:20px;">
 {%- for l in s.lines if l | trim %}

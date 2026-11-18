@@ -101,6 +101,7 @@ jobs:
           python tests/test_stig.py
           python tests/test_stig_ckl_import.py
           python tests/test_stig_scorecard.py
+          python tests/test_stig_texts.py
           python tests/test_sso.py
           python tests/test_sso_cert_forms.py
           python tests/test_stigman_timeouts.py

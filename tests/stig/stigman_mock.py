@@ -335,7 +335,24 @@ class H(BaseHTTPRequestHandler):
         if len(parts) == 7 and parts[1:3] == ["api", "stigs"] and parts[4] == "revisions" and parts[6] == "rules":
             if parts[3] not in d.get("rules", {}):
                 return self.send(404, {"error": "no STIG " + parts[3]})
-            return self.send(200, d["rules"][parts[3]])
+            # 1.73.0: as STIG Manager, a revision's rules with the projections check and fix carry each rule's texts (the
+            # drift and recheck reports read them once per revision); without them, none. The same 400 and 403 as above.
+            proj = q.get("projection", [])
+            bad = [p for p in proj if p not in ("detail", "ccis", "check", "fix", "ruleIds", "stigs")]
+            if bad:
+                return self.send(400, {"error": "request/query/projection/%d must be equal to one of the allowed values: detail, ccis, "
+                                                "check, fix, ruleIds, stigs" % proj.index(bad[0])})
+            if proj and self.client(d) in d.get("no_stig_read", []):
+                return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+            rows = []
+            for r in d["rules"][parts[3]]:
+                o = dict((k, v) for k, v in r.items() if k not in ("check", "fix", "discussion"))
+                if "check" in proj:
+                    o["check"] = {"system": "C-" + str(r.get("ruleId")), "content": r.get("check", "")}
+                if "fix" in proj:
+                    o["fix"] = {"fixref": "F-" + str(r.get("ruleId")), "text": r.get("fix", "")}
+                rows.append(o)
+            return self.send(200, rows)
         self.send(404, {"error": "not here: " + u.path})
 
     def refuse(self):

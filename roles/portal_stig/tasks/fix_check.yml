@@ -78,6 +78,18 @@
           'fix': _ps_rule.rule.fix | default('')} }}
   when: _ps_gate.ok | bool
 
+# 1.73.0: the rule's DISA text in the job's output (the site portal's job page shows it), for the person who approves:
+# each text, then its command lines alone (what a report's Copy button copies) - or that it has none
+- name: Fix one rule | the rule's check text and fix text
+  ansible.builtin.debug:
+    msg: >-
+      {{ [_ps_text.id ~ ' - ' ~ _ps_text.title]
+         + (['CHECK TEXT:'] + _ps_text.check.split('\n') + ['CHECK COMMAND: ' ~ (_ps_text.check | stig_commands | replace('\n', ' ; ') or 'none (no command in this text)')]
+            if _ps_text.check | trim else ['CHECK TEXT: none in STIG Manager'])
+         + (['FIX TEXT:'] + _ps_text.fix.split('\n') + ['FIX COMMAND: ' ~ (_ps_text.fix | stig_commands(false) | replace('\n', ' ; ') or 'none (no command in this text)')]
+            if _ps_text.fix | trim else ['FIX TEXT: none in STIG Manager']) }}
+  when: _ps_gate.ok | bool
+
 - name: Fix one rule | and again, with its check and fix text
   ansible.builtin.set_fact:
     _ps_gate: "{{ _ps_text | stig_fix_gate({'cats': portal_stig_fix_cats, 'never': portal_stig_fix_never}) }}"

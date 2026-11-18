@@ -1923,6 +1923,77 @@ def report_cards_html(cards, ink="#111827", muted="#4b5563", accent="#0f6b4f"):
     return "".join(out)
 
 
+# 1.73.0: a STIG rule's check text and fix text in the email and in the looks with no rows that open (standard, command,
+# portal, glass) - a section's rule_texts (plugins/filter/stig_text_filters.py stig_texts_sections): each rule once, under
+# the table. The email keeps the first RULE_TEXT_EMAIL characters of a text and the first RULE_TEXTS_EMAIL rules; the
+# website's copy, every text in full. The command lines (what the website's Copy button copies) in a box of their own.
+RULE_TEXT_EMAIL = 700
+RULE_TEXTS_EMAIL = 40
+
+
+def _rule_text_cut(text, most):
+    text = str(text or "")
+    return text if len(text) <= most else text[:most].rsplit(" ", 1)[0].rstrip() + " ..."
+
+
+def report_rule_texts_html(sec, ink="#111827", muted="#4b5563", web=False):
+    """A section's rule_texts as HTML a mail client draws (every style inline): each rule folded (a details element - a
+    mail program that has none shows it open), its Check text and Fix text, and under each the command lines alone, or
+    one muted line: No command in this text. web: the whole texts; else the email's short form."""
+    from html import escape
+    items = list((sec or {}).get("rule_texts") or [])
+    if not items:
+        return ""
+    shown = items if web else items[:RULE_TEXTS_EMAIL]
+    mono = "font-family:Consolas,'Cascadia Mono',Menlo,'Courier New',monospace;"
+    box = ("%sfont-size:12px;color:%s;background:#f8fafc;border:1px solid #e3e7ec;border-radius:6px;padding:6px 8px;margin:2px 0 6px 0;"
+           "white-space:pre-wrap;word-break:break-word;" % (mono, ink))
+    out = ['<div style="margin:4px 0 10px 0;"><div style="font-size:13px;font-weight:bold;color:%s;margin:6px 0 4px 0;">'
+           'Check text and fix text (%d %s)</div>' % (ink, len(items), "rule" if len(items) == 1 else "rules")]
+    for it in shown:
+        out.append('<details style="border:1px solid #d1d5db;border-radius:6px;padding:4px 10px;margin:0 0 6px 0;">'
+                   '<summary style="cursor:pointer;font-size:13px;color:%s;"><b>%s</b>%s</summary>'
+                   % (ink, escape(str(it.get("rule") or "")), (" - " + escape(str(it["title"]))) if it.get("title") else ""))
+        for b in it.get("texts") or []:
+            full = str(b.get("text") or "")
+            text = full if web else _rule_text_cut(full, RULE_TEXT_EMAIL)
+            out.append('<div style="font-size:11px;font-weight:bold;letter-spacing:.06em;text-transform:uppercase;color:%s;margin-top:6px;">%s</div>'
+                       % (muted, escape(str(b.get("label") or ""))))
+            out.append('<div style="%s">%s</div>' % (box, escape(text)))
+            if text != full:
+                out.append('<div style="font-size:12px;color:%s;">The whole text: the report website, the workbook.</div>' % muted)
+            if b.get("cmd"):
+                out.append('<div style="font-size:12px;color:%s;">Command</div><div style="%s">%s</div>' % (muted, box, escape(str(b["cmd"]))))
+            else:
+                out.append('<div style="font-size:12px;color:%s;margin-bottom:4px;">%s</div>' % (muted, escape(str(b.get("note") or "No command in this text"))))
+        out.append('</details>')
+    if len(items) > len(shown):
+        out.append('<div style="font-size:12px;color:%s;">%d more rules: their texts are on the report website and in the workbook.</div>'
+                   % (muted, len(items) - len(shown)))
+    out.append('</div>')
+    return "".join(out)
+
+
+def report_rule_texts_text(sec):
+    """A section's rule_texts in the text email: each rule, its texts cut as in the HTML email, and the command lines."""
+    items = list((sec or {}).get("rule_texts") or [])
+    if not items:
+        return []
+    out = ["", "Check text and fix text (%d %s):" % (len(items), "rule" if len(items) == 1 else "rules")]
+    for it in items[:RULE_TEXTS_EMAIL]:
+        out += ["", "%s%s" % (it.get("rule") or "", (" - " + str(it["title"])) if it.get("title") else "")]
+        for b in it.get("texts") or []:
+            full = str(b.get("text") or "")
+            text = _rule_text_cut(full, RULE_TEXT_EMAIL)
+            out.append("  %s:" % (b.get("label") or ""))
+            out += ["    " + x for x in text.split("\n")]
+            out.append("  Command: " + " / ".join(x for x in str(b["cmd"]).split("\n") if x.strip()) if b.get("cmd") else
+                       "  " + str(b.get("note") or "No command in this text"))
+    if len(items) > RULE_TEXTS_EMAIL:
+        out.append("%d more rules: their texts are on the report website and in the workbook." % (len(items) - RULE_TEXTS_EMAIL))
+    return out
+
+
 def report_cards_text(cards):
     """A section's cards as plain text: numbered, the status and the title, the meta, the subject, Next."""
     out = []
@@ -2040,6 +2111,7 @@ def report_text(report, footer="", runs=None):
                 out += ["", fmt(cols), fmt(["-" * x for x in w])] + [fmt(row[:len(cols)]) for row in rows]
             else:
                 out.append("None.")
+        out += report_rule_texts_text(s)            # 1.73.0: a STIG rule's check and fix text
         out += ["- " + str(x) for x in s.get("lines") or [] if str(x).strip()]
     out += ["", "--"]
     if r.get("footer"):
@@ -2515,14 +2587,26 @@ def report_page_unpack(text):
     return doc
 
 
+def _sheet_of(s):
+    """A section's sheet. 1.73.0: a section with rule_texts (STIG rules) gets each row's Check text and Fix text, in full."""
+    cols, rows = list(s.get("columns") or []), list(s.get("rows") or [])
+    items = s.get("rule_texts") or []
+    if items and len(s.get("row_rule") or []) == len(rows):
+        def two(i):
+            b = dict((x.get("label"), str(x.get("text") or "")) for x in (items[i].get("texts") or [] if 0 <= i < len(items) else []))
+            return [b.get("Check text", "")[:32000], b.get("Fix text", "")[:32000]]
+        cols = cols + ["Check text", "Fix text"]
+        rows = [list(r) + two(i) for r, i in zip(rows, s["row_rule"])]
+    return {"name": s.get("title") or "Table", "columns": cols, "rows": rows}
+
+
 def report_xlsx_sheets(report, own=None):
     """A report's tables as the sheets of a workbook (report_email_xlsx; roles/site_email/library/site_xlsx.py): a sheet per
     section with columns, named by its title; a report with no table: one sheet of its lines. own: the report's own sheets
     (1.62.0: a table with its trend lines, sparklines) - one named as a section's title takes its place, the others follow."""
     rep = report or {}
     mine = [x for x in own or [] if isinstance(x, dict) and x.get("name")]
-    sheets = [{"name": s.get("title") or "Table", "columns": list(s.get("columns") or []), "rows": list(s.get("rows") or [])}
-              for s in rep.get("sections") or [] if isinstance(s, dict) and s.get("columns")]
+    sheets = [_sheet_of(s) for s in rep.get("sections") or [] if isinstance(s, dict) and s.get("columns")]
     if mine:
         by = dict((x["name"], x) for x in mine)
         sheets = [by.pop(x["name"], x) for x in sheets]
@@ -2536,7 +2620,7 @@ def report_xlsx_sheets(report, own=None):
 
 class FilterModule(object):
     def filters(self):
-        return {"report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
+        return {"report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
                 "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
                 "report_act_old": report_act_old,
                 "from_csv": from_csv, "days_until": days_until, "site_result": site_result,

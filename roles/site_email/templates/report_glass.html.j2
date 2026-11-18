@@ -354,6 +354,8 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 <div style="padding:10px 0 0 0;color:{{ muted }};">None.</div>
 {%- endif %}
 {%- endif %}
+{#- 1.73.0: a STIG rule's check text and fix text, each rule once (folded; the email keeps the first part) #}
+{%- if s.rule_texts is defined %}{{ s | report_rule_texts_html(ink, muted, _page_runs is defined) }}{% endif %}
 {%- if s.lines | default([]) %}
 <ul style="margin:10px 0 0 0;padding-left:22px;color:{{ ink }};">
 {%- for l in s.lines if l | trim %}

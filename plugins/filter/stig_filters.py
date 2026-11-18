@@ -211,7 +211,7 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
            "key": each, "benchmark": scan.get("benchmark", ""), "platform": scan.get("platform", ""),
            "checklist_time": scan.get("checklist_time", ""), "found_by": scan.get("found_by", ""),
            "profile": scan.get("profile_title") or scan.get("profile", ""), "counts": scan.get("counts") or {},
-           "saved": scan.get("saved") or {}, "stigman": {k: sm.get(k, "") for k in ("status", "why", "collection", "asset", "revision")},
+           "saved": scan.get("saved") or {}, "stigman": {k: sm.get(k, "") for k in ("status", "why", "collection", "asset", "benchmark", "revision")},
            "previous_time": (scan.get("previous") or {}).get("time", ""),
            "drift": [], "new": [], "disagree": [], "fixed_open": [], "unreviewed": [], "fixed": [], "ignored": [], "by_hand": None,
            "findings": []}

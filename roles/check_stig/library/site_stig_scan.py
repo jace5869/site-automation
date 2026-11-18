@@ -195,7 +195,8 @@ def _plain(s):
 
 def read_checklist(path):
     """An Evaluate-STIG checklist - CKLB (JSON, as STIG Viewer 3 and STIG Manager read it) or CKL (XML) -> its STIGs:
-    [{stig_id, title, version, release, rules: [{rule, v, stigid, severity, title, result, details, comments}]}]."""
+    [{stig_id, title, version, release, rules: [{rule, v, stigid, severity, title, result, details, comments, check_text,
+    fix_text}]}] (1.73.0: check_text and fix_text, DISA's words as the checklist carries them)."""
     with open(path, "rb") as f:
         data = f.read()
     out = []
@@ -207,7 +208,8 @@ def read_checklist(path):
                         "rules": [{"rule": r.get("rule_id") or "", "v": r.get("group_id") or "", "stigid": r.get("rule_version") or "",
                                    "severity": CKL_SEV.get(_plain(r.get("severity")), ""), "title": r.get("rule_title") or "",
                                    "result": CKL_STATUS.get(_plain(r.get("status")), "notchecked"),
-                                   "details": r.get("finding_details") or "", "comments": r.get("comments") or ""}
+                                   "details": r.get("finding_details") or "", "comments": r.get("comments") or "",
+                                   "check_text": r.get("check_content") or "", "fix_text": r.get("fix_text") or ""}
                                   for r in s.get("rules") or []]})
         return out
     root = ET.fromstring(data)
@@ -221,7 +223,7 @@ def read_checklist(path):
             rules.append({"rule": a.get("Rule_ID", ""), "v": a.get("Vuln_Num", ""), "stigid": a.get("Rule_Ver", ""),
                           "severity": CKL_SEV.get(_plain(a.get("Severity")), ""), "title": a.get("Rule_Title", ""),
                           "result": CKL_STATUS.get(_plain(v.findtext("STATUS")), "notchecked"), "details": v.findtext("FINDING_DETAILS") or "",
-                          "comments": v.findtext("COMMENTS") or ""})
+                          "comments": v.findtext("COMMENTS") or "", "check_text": a.get("Check_Content", ""), "fix_text": a.get("Fix_Text", "")})
         out.append({"stig_id": info.get("stigid", ""), "title": info.get("title", ""), "version": info.get("version", ""),
                     "release": info.get("releaseinfo", ""), "rules": rules})
     return out
@@ -274,6 +276,10 @@ def checklist_items(st, details_max=4000):
                    "title": r["title"], "result": r["result"], "scap": [], "scap_ids": []}
         if r["result"] == "fail" and r["details"].strip():
             by[key]["details"] = r["details"].strip()[:details_max]
+        if r["result"] == "fail":                # 1.73.0: DISA's check and fix text, for the report (a fail only)
+            for k in ("check_text", "fix_text"):
+                if str(r.get(k) or "").strip():
+                    by[key][k] = str(r[k]).strip()[:8000]
     return [by[k] for k in sorted(by)]
 
 

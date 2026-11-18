@@ -696,44 +696,30 @@ def _worst_stig(stigs):
     return sorted(ok, key=lambda x: (-_n(x[1][0]), -_n(x[1][1]), -_n(x[1][2]), x[0].lower()))[0][0] if ok else ""
 
 
-_PROMPT = re.compile(r"^\s*(?:\$\s+|(?:PS(?: [A-Za-z]:\\[^>]*)?|[A-Za-z]:\\[^>]*)>\s*)(\S.*)$")   # "$level = 1" is no prompt
-_ROOT = re.compile(r"^\s*#\s+([a-z/.][\w./-]*(?:\s.*)?)$")             # "# grep ..." (a root prompt), never "# A comment"
-_PS = re.compile(r"^\s*((?:Get|Set|New|Remove|Enable|Disable|Import|Export|Test|Install|Uninstall|Add|Start|Stop|Restart|Invoke|"
-                 r"Update|Clear|Register|Unregister)-[A-Z]\w+\b.*)$")
-_WORDS = re.compile(r"^\s*((?:sudo|auditpol|secedit|gpresult|esxcli|vim-cmd|reg (?:query|add|delete))\s.*)$")
+def _texts():
+    """1.73.0: plugins/filter/stig_text_filters.py, by its path (the check and fix text, and what Copy copies: one rule for
+    every report that lists STIG rules)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("stig_text_filters_for_scorecard",
+                                                  os.path.join(os.path.dirname(os.path.abspath(__file__)), "stig_text_filters.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_TX = _texts()
 
 
 def commands_of(text):
-    """1.68.0: the command lines in a rule's check or fix text, for its Copy button: a line after a prompt ($, #, PS>,
-    C:\\>) without the prompt, a PowerShell line (Get-..., Set-...), a line starting with sudo, auditpol, secedit, gpresult,
-    esxcli, vim-cmd or reg query/add/delete; a line ending in \\ goes on with the next. '' when there is none (the button
-    then copies the whole text)."""
-    out, more = [], False
-    for ln in str(text or "").split("\n"):
-        if more:
-            out[-1] += "\n" + ln.rstrip()
-            more = ln.rstrip().endswith("\\")
-            continue
-        m = _PROMPT.match(ln) or _ROOT.match(ln) or _PS.match(ln) or _WORDS.match(ln)
-        if m:
-            out.append(m.group(1).rstrip())
-            more = out[-1].endswith("\\")
-    return "\n".join(out)
+    """1.68.0: the command lines in a rule's check or fix text, for its Copy button ('' when it has none). 1.73.0: the rule
+    of every STIG report - stig_text_filters.commands_of."""
+    return _TX.commands_of(text)
 
 
 def _text_block(t):
-    """1.68.0: a rule opened - its check text and fix text, each with its Copy button (the command lines, or the whole text)."""
-    out = []
-    for key, label, button in (("check", "Check text", "Copy check"), ("fix", "Fix text", "Copy fix")):
-        text = str((t or {}).get(key) or "").strip()
-        if not text:
-            continue
-        cmd = commands_of(text)
-        n = len(cmd.split("\n")) if cmd else 0
-        out.append({"label": label, "text": text, "button": button, "cmd": cmd,
-                    "title": ("Copies the command line" if n == 1 else "Copies the %d command lines" % n) if cmd else
-                             "Copies the whole text: it has no command line"})
-    return {"texts": out} if out else None
+    """1.68.0: a rule opened - its check text and fix text. 1.73.0: Copy copies the command lines only; a text with no
+    command has no button, one muted line instead (stig_text_filters.text_block)."""
+    return _TX.text_block(t)
 
 
 def _day_year(v):

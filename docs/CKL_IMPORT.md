@@ -540,8 +540,10 @@ On the website:
   So the link opens its home page.
 - The copy button beside a rule's name copies its number (`SV-257985`). Paste it into the filter of STIG Manager's grid.
 - A rule opened shows its **Check text** and **Fix text**, then its hosts.
-- **Copy check** and **Copy fix** copy the command lines of that text, without the `$` or `#` prompt. A text with no
-  command line is copied whole. The button's tooltip says which.
+- **Copy check** and **Copy fix** copy the command lines of that text, without the `$` or `#` prompt. 1.73.0: they
+  never copy the prose, a file's lines or the output the check shows. A text with no command has no button, only one
+  muted line: *No command in this text*. Windows texts: the quoted command after *Enter* or *Run*, and a check's
+  registry value as `reg query "<key>" /v <value>` (docs/STIG_DRIFT.md, "Each rule's check text and fix text").
 
 How the text is read:
 

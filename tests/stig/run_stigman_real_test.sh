@@ -139,6 +139,12 @@ play() {
 play stig_recheck.yml -e '{"check_stig_update_workflow": true}'
 [ "$rc" = 2 ] && grep -q "NEEDS APPROVAL - 7 review(s) of 1 asset(s)" "$work/out.txt" && ok "the check: 7 reviews to write, NEEDS APPROVAL" \
     || { bad "the check: rc $rc"; grep -n "NEEDS\|fatal\|msg" "$work/out.txt" | head; }
+# 1.73.0: each listed rule's check and fix text from the real STIG Manager - one read of the revision's rules with the
+# projections check and fix (as STIG Manager answers it), on the report website's rows that open
+if grep -qE "Check and fix text: [1-9][0-9]* rules have them on the report \([1-9][0-9]* of the [1-9][0-9]* asked read from STIG Manager\)\." "$work/out.txt" \
+   && command grep -rqF 'class="rtx"' "$work/site" --include='*.html'
+then ok "the check and fix text: read from STIG Manager once per revision, on the website ($(grep -oE 'Check and fix text: [^.]*' "$work/out.txt" | head -1))"
+else bad "the check and fix text: $(grep -oE 'Check and fix text: .*' "$work/out.txt" | head -1)"; fi
 grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan.json"
 [ "$(rv SV-258176r1045388_rule)" = "fail accepted | POA&M 14: next change window | -" ] && ok "  ... nothing written by the check" || bad "the check wrote: $(rv SV-258176r1045388_rule)"
 

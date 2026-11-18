@@ -41,16 +41,25 @@ INV
 spec() {  # spec FIRST_RESULT: the server's checklists - Windows Server 2022, an IIS web site, Edge
     "$py" - "$1" > "$work/es/Evaluate-STIG/spec.json" <<'PY'
 import json, sys
-def r(sv, sev, status, details=""):
-    return {"sv": sv, "v": "V-" + sv[3:], "stigid": "WN22-00-" + sv[3:], "sev": sev, "title": "Rule %s must be set." % sv, "status": status, "details": details}
+def r(sv, sev, status, details="", check="", fix=""):
+    return {"sv": sv, "v": "V-" + sv[3:], "stigid": "WN22-00-" + sv[3:], "sev": sev, "title": "Rule %s must be set." % sv, "status": status, "details": details,
+            "check": check, "fix": fix}
+# 1.73.0: DISA's texts as the checklist carries them (Windows: a registry value, a PowerShell command after Enter)
+LM = ("If the following registry value does not exist or is not configured as specified, this is a finding:\n\nRegistry Hive: "
+      "HKEY_LOCAL_MACHINE\nRegistry Path: \\SYSTEM\\CurrentControlSet\\Control\\Lsa\\\n\nValue Name: LmCompatibilityLevel\n\n"
+      "Value Type: REG_DWORD\nValue: 0x00000005 (5)")
+LM_FIX = ("Configure the policy value for Computer Configuration >> Windows Settings >> Security Settings >> Local Policies >> "
+          "Security Options >> Network security: LAN Manager authentication level to Send NTLMv2 response only.")
+DB = 'Open "PowerShell".\n\nEnter "Get-WebConfigurationProperty -Filter system.webServer/directoryBrowse -Name enabled".\n\nIf it is True, this is a finding.'
+
 print(json.dumps({"host": "WIN01", "exit": 0, "checklists": [
     {"file": "WIN01_WinServer2022_V2R4", "stig_id": "Windows_Server_2022_STIG", "display_name": "Microsoft Windows Server 2022", "version": "2",
      "release": "Release: 4 Benchmark Date: 02 Jul 2026",
-     "rules": [r("SV-254238", "high", sys.argv[1], "Found: LmCompatibilityLevel is 3."), r("SV-254239", "medium", "fail", "Found: LegalNoticeText is empty."),
+     "rules": [r("SV-254238", "high", sys.argv[1], "Found: LmCompatibilityLevel is 3.", LM, LM_FIX), r("SV-254239", "medium", "fail", "Found: LegalNoticeText is empty."),
                r("SV-254240", "medium", "pass"), r("SV-254241", "low", "nr")]},
     {"file": "WIN01_IIS10Site_Default_Web_Site", "stig_id": "IIS_10-0_Site_STIG", "display_name": "Microsoft IIS 10.0 Site", "version": "2",
      "release": "Release: 9 Benchmark Date: 02 Jul 2026", "site": "Default Web Site", "instance": "",
-     "rules": [r("SV-218735", "medium", "pass"), r("SV-218736", "medium", "fail", "Found: directory browsing is on.")]},
+     "rules": [r("SV-218735", "medium", "pass"), r("SV-218736", "medium", "fail", "Found: directory browsing is on.", DB, "Set enabled to False.")]},
     {"file": "WIN01_MSEdge_V2R2", "stig_id": "MS_Edge_STIG", "display_name": "Microsoft Edge", "version": "2", "release": "Release: 2 Benchmark Date: 02 Jul 2026",
      "rules": [r("SV-235719", "medium", "fail", "Found: SmartScreen is off.")]}]}))
 PY
@@ -145,8 +154,11 @@ if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     if grep -q "Subject: .*Windows STIG drift report" "$m" && grep -q "1. Drifted - the host fails what STIG Manager has as Not a Finding" "$m" \
        && grep -q "win01 - Microsoft Windows Server 2022" "$m" && grep -q "win01 - Microsoft IIS 10.0 Site - Default Web Site" "$m" \
        && grep -q "Start here" "$m" && grep -q "Found: LmCompatibilityLevel is 3." "$m" && grep -q "Found: directory browsing is on." "$m" \
-       && grep -q "What Evaluate-STIG found - in full" "$m"
-    then echo "ok   - the email: drifted with what Evaluate-STIG found, each checklist named for its server and STIG"
+       && grep -q "What Evaluate-STIG found - in full" "$m" \
+       && grep -q 'Command: reg query "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Lsa" /v LmCompatibilityLevel' "$m" \
+       && grep -q "Get-WebConfigurationProperty -Filter system.webServer/directoryBrowse -Name enabled</div>" "$m" \
+       && grep -q "Check and fix text: 2 rules have them on the report" "$work/out.txt"
+    then echo "ok   - the email: drifted with what Evaluate-STIG found, each checklist named for its server and STIG; the checklists' check and fix text"
     else echo "FAIL - the email's content"; grep -i "subject\|drift\|win01\|start here\|found:" "$m" | head -10; fails=$((fails + 1)); fi
 else echo "FAIL - no email"; fails=$((fails + 1)); fi
 

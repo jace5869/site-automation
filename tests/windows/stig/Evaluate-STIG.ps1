@@ -5,7 +5,7 @@
 #   {"host": "WIN01", "exit": 0, "sleep": 0, "wrap": false, "say": ["lines it prints"], "reject": "" (a folder: its schema check
 #    rejects every checklist and moves it there, as Evaluate-STIG's Bad_CKL), "checklists": [{"file", "stig_id",
 #    "display_name", "version", "release", "site", "instance", "rules": [{"sv", "v", "stigid", "sev", "title", "status",
-#    "details"}]}]}
+#    "details", "check", "fix" (1.73.0: DISA's check and fix text, as a checklist carries them)}]}]}
 param([string[]] $Output = @('CKLB'), [string] $OutputPath = '', [string[]] $SelectSTIG = @(), [string[]] $ExcludeSTIG = @(),
       [string] $ScanType = 'Unclassified', [string] $AnswerKey = '', [string[]] $SelectVuln = @())
 $ErrorActionPreference = 'Stop'
@@ -35,7 +35,9 @@ foreach ($c in @($spec.checklists)) {
             $st = [string]$r.status
             if ($SelectVuln.Count -and $SelectVuln -notcontains [string]$r.v) { $st = 'nr' }
             $x += '<VULN>'
-            foreach ($kv in @(@('Vuln_Num', $r.v), @('Severity', $r.sev), @('Rule_ID', $r.sv + 'r1000_rule'), @('Rule_Ver', $r.stigid), @('Rule_Title', $r.title))) {
+            foreach ($kv in @(@('Vuln_Num', $r.v), @('Severity', $r.sev), @('Rule_ID', $r.sv + 'r1000_rule'), @('Rule_Ver', $r.stigid), @('Rule_Title', $r.title),
+                              @('Check_Content', [System.Security.SecurityElement]::Escape([string]$r.check)),
+                              @('Fix_Text', [System.Security.SecurityElement]::Escape([string]$r.fix)))) {
                 $x += '<STIG_DATA><VULN_ATTRIBUTE>' + $kv[0] + '</VULN_ATTRIBUTE><ATTRIBUTE_DATA>' + $kv[1] + '</ATTRIBUTE_DATA></STIG_DATA>'
             }
             $x += '<STATUS>' + $map[$st][1] + '</STATUS><FINDING_DETAILS>' + $r.details + '</FINDING_DETAILS><COMMENTS></COMMENTS></VULN>'
@@ -49,7 +51,8 @@ foreach ($c in @($spec.checklists)) {
             $st = [string]$r.status
             if ($SelectVuln.Count -and $SelectVuln -notcontains [string]$r.v) { $st = 'nr' }
             $rules += @(@{ rule_id = $r.sv + 'r1000_rule'; group_id = $r.v; rule_version = $r.stigid; severity = $r.sev; rule_title = $r.title
-                           status = $map[$st][0]; finding_details = [string]$r.details; comments = '' })
+                           status = $map[$st][0]; finding_details = [string]$r.details; comments = ''
+                           check_content = [string]$r.check; fix_text = [string]$r.fix })
         }
         $doc = @{ title = 'Evaluate-STIG'; cklb_version = '1.0'
                   target_data = @{ host_name = $spec.host; is_web_database = $web; web_db_site = [string]$c.site; web_db_instance = [string]$c.instance }

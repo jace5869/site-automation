@@ -32,6 +32,13 @@ options:
     type: list
     elements: dict
     required: true
+  texts:
+    description: "1.73.0: the check text and fix text of these rules - [{benchmark, revision ('' = latest), rules: [SV-257985, ...]}]:
+      one read of each revision's rules (GET /stigs/BENCHMARK/revisions/REVISION/rules with the projections check and fix -
+      the client's scope stig-manager:stig:read), only the rules asked kept. With hosts [] only the texts are read."
+    type: list
+    elements: dict
+    default: []
   collections: {description: "Only these collections are searched ([] = every collection the client can read).", type: list, elements: str, default: []}
   validate_certs: {description: Check the HTTPS certificates., type: bool, default: true}
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
@@ -56,6 +63,10 @@ hosts:
                 severity, title}}, create (with create, not found anywhere: {name, fqdn, collection, collectionId, benchmark,
                 revision} - and rules)}; with every: true {status, why, collection, collectionId, asset, checklists: [{asset, assetId,
                 benchmark, revision, site, instance, reviews, earlier, rules}]}"
+  type: dict
+  returned: always
+texts:
+  description: "1.73.0 (texts): {SV-257985: {check, fix}} - the rules STIG Manager has a text for; texts_info: {asked, read, error}."
   type: dict
   returned: always
 error:
@@ -212,6 +223,56 @@ class Client(object):
         req = Request(self.api + path + ("?" + q if q else ""),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
         return self._open(req)
+
+
+TEXT_MAX = 8000                 # characters of a check or fix text kept (DISA's longest are about 5000), as the scorecard
+
+
+def clean_text(t):
+    """A rule's text as STIG Manager keeps it: its line ends kept, the spaces at a line's end and the runs of empty lines
+    gone, capped at TEXT_MAX."""
+    lines = [ln.rstrip() for ln in str(t or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    t = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return t[:TEXT_MAX] + ("\n[... cut]" if len(t) > TEXT_MAX else "")
+
+
+def text_of(rule):
+    """A rule as GET .../rules?projection=check&projection=fix gives it -> {check, fix}: STIG Manager 1.6 gives check
+    {system, content} and fix {fixref, text}; a list of them (checks, fixes) is read too."""
+    a = rule if isinstance(rule, dict) else {}
+
+    def many(one, more, key):
+        xs = a.get(more) if isinstance(a.get(more), list) else ([a[one]] if isinstance(a.get(one), dict) else [])
+        return clean_text("\n\n".join(str((x or {}).get(key) or "").strip() for x in xs if isinstance(x, dict) and (x or {}).get(key)))
+    return {"check": many("check", "checks", "content"), "fix": many("fix", "fixes", "text")}
+
+
+def read_texts(want, client):
+    """1.73.0: the check and fix text of the rules asked, one read per STIG revision -> ({sv: {check, fix}}, info). A 401 or
+    403 stops it (the scope stig-manager:stig:read); a revision STIG Manager does not have gives no text."""
+    out, info = {}, {"asked": 0, "read": 0, "error": ""}
+    for w in want or []:
+        bench, rev = str((w or {}).get("benchmark") or ""), str((w or {}).get("revision") or "") or "latest"
+        rules = set(sv_of(x) for x in (w or {}).get("rules") or [] if sv_of(x))
+        if not bench or not rules:
+            continue
+        info["asked"] += len(rules - set(out))
+        try:
+            rows = client.get("/stigs/%s/revisions/%s/rules" % (quote(bench), quote(rev)), projection=["check", "fix"]) or []
+        except RuntimeError as e:
+            if re.search(r"HTTP 40[13]\b", str(e)):
+                info["error"] = "%s - the client needs the scope stig-manager:stig:read" % str(e)[:200]
+                break
+            info["error"] = info["error"] or str(e)[:200]
+            continue
+        for r in rows if isinstance(rows, list) else []:
+            sv = sv_of((r or {}).get("ruleId"))
+            if sv in rules and sv not in out:
+                t = text_of(r)
+                if t["check"] or t["fix"]:
+                    out[sv] = t
+    info["read"] = len(out)
+    return out, info
 
 
 def read(p, client):
@@ -404,7 +465,8 @@ def main():
         client_id=dict(type="str", required=True),
         client_secret=dict(type="str", required=True, no_log=True),
         scope=dict(type="str", default=""),
-        hosts=dict(type="list", elements="dict", required=True),
+        hosts=dict(type="list", elements="dict", default=[]),
+        texts=dict(type="list", elements="dict", default=[]),
         collections=dict(type="list", elements="str", default=[]),
         validate_certs=dict(type="bool", default=True),
         ca_path=dict(type="str", default=""),
@@ -416,12 +478,14 @@ def main():
     try:
         client.login()
     except RuntimeError as e:
-        module.exit_json(changed=False, hosts={}, error="no token for the client %s: %s" % (p["client_id"], e))
+        module.exit_json(changed=False, hosts={}, texts={}, texts_info={"asked": 0, "read": 0, "error": str(e)[:200]},
+                         error="no token for the client %s: %s" % (p["client_id"], e))
+    texts, tinfo = read_texts(p["texts"], client) if p["texts"] else ({}, {"asked": 0, "read": 0, "error": ""})
     try:
-        hosts = read(p, client)
+        hosts = read(p, client) if p["hosts"] else {}
     except RuntimeError as e:
-        module.exit_json(changed=False, hosts={}, error="STIG Manager could not be read: %s" % e)
-    module.exit_json(changed=False, hosts=hosts, error="")
+        module.exit_json(changed=False, hosts={}, texts=texts, texts_info=tinfo, error="STIG Manager could not be read: %s" % e)
+    module.exit_json(changed=False, hosts=hosts, texts=texts, texts_info=tinfo, error="")
 
 
 if __name__ == "__main__":

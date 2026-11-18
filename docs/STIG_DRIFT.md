@@ -41,6 +41,38 @@ website); no CAT I moved, no Start here - then a table per kind above (CAT II an
 chips with their icon (the drifted rule's **Fail** beside STIG Manager's **Not a Finding**), every host with its
 counts, and the hosts with nothing to report under *Healthy* with a check mark.
 
+### Each rule's check text and fix text (1.73.0)
+
+Every table of rules (drifted, new fails, disagree, fixed and still Open, left out, no review; the STIG recheck's
+tables too) gives each rule DISA's **Check text** and **Fix text**:
+
+- **On the website** (atlas, brief and ops): a rule's row opens to its two texts. The page stays short.
+  - **Copy check** and **Copy fix** copy that text's command lines only, without the `$` or `#` prompt. They never
+    copy the prose, a file's lines or the output the check shows.
+  - A text with no command has no Copy button. One muted line says *No command in this text*.
+  - Windows: the quoted command after *Enter* or *Run* (`AuditPol /get /category:*`, `Get-ADUser ...`), and a command
+    after *run the following command:*. Windows to open (`gpedit.msc`, `dsa.msc`) are not commands.
+  - Windows registry checks: Copy check copies `reg query "<Registry Hive>\<Registry Path>" /v <Value Name>`, the
+    command that reads that value. A fix text gets no made-up command.
+  - Printed: the rules you opened print with their texts, without the buttons.
+- **In the email** and the other looks (standard, command, portal, glass): each rule once, under its table, folded.
+  - Each text shows its command lines by themselves, or *No command in this text*.
+  - The email keeps the first 700 characters of a text and the first 40 rules of a table. The rest are on the website
+    and in the workbook.
+- **In the workbook**: a *Check text* and a *Fix text* column, in full.
+
+Where the texts come from:
+
+- **STIG Manager**: one read of each STIG revision's rules (`/stigs/<STIG>/revisions/<revision>/rules` with the
+  projections `check` and `fix`). Only the rules the report lists are kept. The client needs the scope
+  `stig-manager:stig:read`, as the STIG recheck does already.
+- **Evaluate-STIG's checklist** (CKL or CKLB): it carries DISA's texts. They are kept for a rule that fails, and no
+  read is made for it.
+- A rule with no text (OpenSCAP without STIG Manager, or a rule STIG Manager does not have) gets no text block.
+- The job output says how many: *Check and fix text: 2 rules have them on the report (2 of the 4 asked read from STIG
+  Manager)*. A client without the scope: the same line says so. The report is made as before.
+- `check_stig_rule_texts: false` turns it off.
+
 A rule is matched with STIG Manager by its **STIG rule ID** (`SV-257985`), whatever the revision
 (`SV-257985r1069364_rule` in the scan, `SV-257985r1045000_rule` in an older checklist): a new STIG
 release does not break the comparison. Only the reviews with a status in `check_stig_stigman_statuses` count as the
@@ -661,6 +693,7 @@ you are most likely to set:
 | `check_stig_disagree_severity` | `none` | a rule STIG Manager has as Not a Finding that never passed on the host: `none` = report only, `low` = a Low finding (listed, never fails), or `warning` / `critical` |
 | `check_stig_ignore_rules` | `[]` | rules OpenSCAP gets wrong at your site (SV-, V-, STIG id or SCAP check name): never a finding, listed as left out |
 | `check_stig_stigman_statuses` | saved, submitted, accepted | the reviews that count as the checklist |
+| `check_stig_rule_texts` | `true` | 1.73.0: each listed rule's check text and fix text (above); `false` = none |
 | `check_stig_dir`, `check_stig_keep` | `/var/lib/site-automation/stig`, 10 | where the scans are kept, and how many |
 | `check_stig_recheck` | `[open, not_reviewed]` | the STIG recheck: what STIG Manager has for a rule it checks again |
 | `check_stig_update_workflow` | `false` | `true` on workflow 37's check: what to write, handed on, `NEEDS APPROVAL` |

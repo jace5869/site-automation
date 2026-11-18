@@ -236,6 +236,13 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## review for
 # check_stig_list_max: 200
 
+## 1.73.0: each rule the report lists with DISA's check text and fix text - from STIG Manager (one
+## read per STIG revision; the client's scope stig-manager:stig:read) or Evaluate-STIG's checklist.
+## On the website a rule's row opens to them, and Copy copies a text's command lines only; the email
+## has each rule once, the first part of each text; the workbook has them in full. false = none
+## (tasks/texts.yml)
+# check_stig_rule_texts: true
+
 ## what is written once approved: fixed (Open, passes now: Not a Finding), now_na (Open, Not
 ## Applicable now), answered (Not Reviewed: as the scan says - a fail is Open)
 # check_stig_update: [fixed, now_na, answered]

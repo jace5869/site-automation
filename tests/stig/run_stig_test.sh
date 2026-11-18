@@ -70,7 +70,13 @@ sm_data() {  # sm_data ASSETS_JSON: two collections, the reviews of asset 11
    {"ruleId": "SV-258176r1045388_rule", "ruleIds": ["SV-258176r1045388_rule"], "result": "fail", "status": {"label": "accepted"}, "ts": "2026-08-15T10:00:00Z",
     "rule": {"ruleId": "SV-258176r1045388_rule", "version": "RHEL-09-654225", "severity": "medium", "title": "RHEL 9 must audit all uses of privileged commands."}},
    {"ruleId": "SV-258999r1000001_rule", "ruleIds": ["SV-258999r1000001_rule"], "result": "pass", "status": {"label": "accepted"}, "ts": "2026-08-15T10:00:00Z",
-    "rule": {"ruleId": "SV-258999r1000001_rule", "version": "RHEL-09-999990", "severity": "medium", "title": "A manual check: a document, never scanned."}}]}}
+    "rule": {"ruleId": "SV-258999r1000001_rule", "version": "RHEL-09-999990", "severity": "medium", "title": "A manual check: a document, never scanned."}}]},
+ "rules": {"RHEL_9_STIG": [
+   {"ruleId": "SV-257985r1069364_rule", "groupId": "V-257985", "version": "RHEL-09-255045", "severity": "medium", "title": "RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
+    "check": "Verify RHEL 9 does not allow a root login over SSH:\\n\\n\$ sudo grep -ir PermitRootLogin /etc/ssh/sshd_config\\n\\nPermitRootLogin no\\n\\nIf it is not no, this is a finding.",
+    "fix": "Set the following line in /etc/ssh/sshd_config:\\n\\nPermitRootLogin no"},
+   {"ruleId": "SV-257821r1015077_rule", "groupId": "V-257821", "version": "RHEL-09-214020", "severity": "high", "title": "RHEL 9 must check the GPG signature of locally installed software packages.",
+    "check": "Verify:\\n\\n\$ grep localpkg_gpgcheck /etc/dnf/dnf.conf\\n\\nlocalpkg_gpgcheck=1", "fix": ""}]}}
 EOF
 }
 web01='{"assetId": "11", "name": "localhost", "fqdn": "", "stigs": [{"benchmarkId": "RHEL_9_STIG", "revisionStr": "V2R7"}]}'
@@ -139,6 +145,27 @@ if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     then echo "ok   - the email: Start here with the command to check the rule again, drifted (last passed), every host (collection / asset, revision), no review"
     else echo "FAIL - the email's content"; grep -i "subject\|drift\|every host\|start here\|oscap" "$m" | head -8; fails=$((fails + 1)); fi
 else echo "FAIL - no email arrived"; fails=$((fails + 1)); fi
+sleep 1
+
+# 1.73.0: each listed rule's check and fix text, from STIG Manager (one read of RHEL_9_STIG V2R7's rules): the email has each
+# rule once with its command alone and no button; the website's rows open to them, Copy copies the command only
+rm -f "$work/mail"/*; mkdir -p "$work/web"
+n0=$(grep -c 'stigs/RHEL_9_STIG/revisions/V2R7/rules' "$work/sm.log")
+run "check and fix text: read once per STIG revision, on the report" fail -e "$sm_on" -e "report_web_dest=$work/web" -- \
+    "Check and fix text: 2 rules have them on the report (2 of the 4 asked read from STIG Manager)."
+decoded "$(ls "$work/mail"/* | head -1)"; m="$work/mail.txt"; page="$(command grep -rl 'Copy check' "$work/web" --include='*.html' | head -1)"
+if grep -q "Check text and fix text (2 rules)" "$m" && grep -q "sudo grep -ir PermitRootLogin /etc/ssh/sshd_config</div>" "$m" \
+   && grep -q "No command in this text" "$m" && ! grep -q 'class="copy"' "$m" && grep -q "  Command: sudo grep -ir PermitRootLogin" "$m" \
+   && [ "$(grep -c 'stigs/RHEL_9_STIG/revisions/V2R7/rules' "$work/sm.log")" -eq $((n0 + 1)) ]
+then echo "ok   - the email: each rule's texts once, its command alone, no button; one read of the revision's rules"
+else echo "FAIL - the email's check and fix text"; grep -n "Check text\|Command\|No command" "$m" | head; grep -c "revisions/V2R7/rules" "$work/sm.log"; fails=$((fails + 1)); fi
+if [ -n "$page" ] && grep -q 'data-copy="sudo grep -ir PermitRootLogin /etc/ssh/sshd_config">Copy check</button>' "$page" \
+   && grep -q '<p class="rtn">No command in this text</p>' "$page" && grep -q 'class="xb"' "$page" && ! grep -q "Copies the whole text" "$page"
+then echo "ok   - the website: a rule's row opens to its texts, Copy copies the command only, none - no button"
+else echo "FAIL - the website's check and fix text"; find "$work/web" -type f | head; f=$(find "$work/web" -name "*.html" ! -name index.html | head -1); [ -n "$f" ] && command grep -o "class=\"xb\"\|rtx\|data-copy=\"[^\"]*\"\|rule_texts\|Check text" "$f" | sort | uniq -c | head; fails=$((fails + 1)); fi
+run "check_stig_rule_texts: false - none read, none shown" fail -e "$sm_on" -e check_stig_rule_texts=false -- "!Check and fix text:"
+[ "$(grep -c 'revisions/V2R7/rules' "$work/sm.log")" -eq $((n0 + 1)) ] && echo "ok   - check_stig_rule_texts false: STIG Manager not asked" \
+    || { echo "FAIL - texts read with check_stig_rule_texts false"; fails=$((fails + 1)); }
 sleep 1
 
 run "the same fails on the next run: still drifted (they passed in an earlier scan), still a finding" fail -e "$sm_on" -- \

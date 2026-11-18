@@ -148,7 +148,8 @@
                            ansible_play_hosts_all | difference(ansible_play_hosts),
                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
                            _cert_timeline.sections | default([]) + site_report_sections | default([]) + _patch_age.sections | default([])) }}
-    # the website's copy (atlas, brief): patch age's squares too, the certificate timeline, and (1.67.0, report_portal_url)
+    # the website's copy (atlas, brief): patch age's squares too, the certificate timeline, a job's own web sections (1.73.0:
+    # the STIG rules' rows that open to their check and fix text), and (1.67.0, report_portal_url)
     # the site portal's "Ask ACT" links; the workbook (report_email_xlsx): every host's patch age, the by-group sheet with
     # its trend line (1.62.0), the Timeline sheet
     _report_web: >-
@@ -164,6 +165,7 @@
                              'actions': _sf_actions | default({}),
                              'os': dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars) | map(attribute='site_os', default='linux')))}))
          if _patch_age.web_sections is defined or _cert_timeline.web_sections is defined or report_portal_url | default('') | length > 0
+            or site_report_web_sections is defined
          else {} }}
     # findings of their own kinds that are no row of the findings table (a STIG rule, a fapolicyd denial): their buttons in
     # one section of their own (plugins/filter/finding_filters.py)

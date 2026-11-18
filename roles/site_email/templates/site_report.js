@@ -144,7 +144,8 @@
           P.push(l.join('\n')+(code?'\n'+code:''));H.push(l.map(function(x){return '<p>'+esc(x)+'</p>'}).join('')+(code?'<pre>'+esc(code)+'</pre>':''))});return}
       var t=one(el);if(t){W.push(t);WH.push('<p>'+esc(t)+'</p>')}});
     return P.length?[P.join('\n\n'),H.join('')]:[W.join('\n\n'),WH.join('')]}
-  /* 1.68.0: a rule's check or fix text - its command lines (data-copy) when it has some, else the whole text */
+  /* a rule's check or fix text: its command lines (data-copy) - 1.73.0: a text with no command has no button, never the
+     whole text; a Start here card: its command (the pre before the button) */
   all('.code .copy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
     put(c,c.hasAttribute('data-copy')?c.getAttribute('data-copy'):c.previousElementSibling.textContent,'')})});
   /* a command in a table (Look further, Command, Hint, Next step): its Copy button, the command alone */

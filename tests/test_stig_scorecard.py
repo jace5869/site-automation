@@ -1492,10 +1492,13 @@ class Links(unittest.TestCase):
             self.assertNotIn('href="https://stigman.example.mil/#', h)
             self.assertNotIn('href="https://stigman.example.mil/?', h)
             m = re.search(r'<h3 class="rth">Check text</h3><div class="code"><pre>Verify RHEL 9 does not allow a root login over SSH:'
-                          r'.*?</pre><button class="copy" type="button" hidden title="Copies the command line" '
+                          r'.*?</pre><button class="copy" type="button" hidden title="Copies the command" '
                           r'data-copy="sudo grep -ir PermitRootLogin /etc/ssh/sshd_config /etc/ssh/sshd_config.d/\*">Copy check</button>', h, re.S)
             self.assertTrue(m, tpl)
-            self.assertIn('title="Copies the whole text: it has no command line">Copy fix</button>', h)   # SV-257777's fix
+            # 1.73.0: SV-257777's fix has no command - no button, one muted line; never a button that copies the whole text
+            self.assertRegex(h, r'<h3 class="rth">Fix text</h3><div class="code nc"><pre>Upgrade to a supported release of RHEL 9\.</pre></div>'
+                                r'<p class="rtn">No command in this text</p>')
+            self.assertNotIn("Copies the whole text", h)
             self.assertIn('data-copy="Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True">Copy fix</button>', h)
             self.assertIn(".rtx{display:grid", h)
 
@@ -1658,7 +1661,7 @@ class OpenLinks(unittest.TestCase):
 
 
 class Commands(unittest.TestCase):
-    """1.68.0: Copy check and Copy fix copy the command lines of the text, without their prompt; none - the whole text."""
+    """1.68.0: Copy check and Copy fix copy the command lines of the text, without their prompt. 1.73.0: none - no button."""
     def test_the_fixtures_texts(self):
         got = dict((sv, (f.commands_of(c), f.commands_of(x))) for sv, (c, x) in fx.TEXTS.items())
         self.assertEqual(got["SV-257985"], ("sudo grep -ir PermitRootLogin /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*",
@@ -1684,10 +1687,11 @@ class Commands(unittest.TestCase):
     def test_the_blocks_and_their_buttons(self):
         b = f._text_block({"check": fx.TEXTS["SV-257777"][0], "fix": fx.TEXTS["SV-257777"][1]})["texts"]
         self.assertEqual([(x["label"], x["button"], x["cmd"], x["title"]) for x in b],
-                         [("Check text", "Copy check", "cat /etc/redhat-release", "Copies the command line"),
-                          ("Fix text", "Copy fix", "", "Copies the whole text: it has no command line")])
+                         [("Check text", "Copy check", "cat /etc/redhat-release", "Copies the command"),
+                          ("Fix text", "", "", "")])                       # 1.73.0: no command, no button
+        self.assertEqual([x["note"] for x in b], ["", "No command in this text"])
         two = f._text_block({"fix": "$ a\n$ b"})["texts"]
-        self.assertEqual([(x["label"], x["title"]) for x in two], [("Fix text", "Copies the 2 command lines")])
+        self.assertEqual([(x["label"], x["title"]) for x in two], [("Fix text", "Copies the 2 commands")])
         self.assertIsNone(f._text_block({"check": " ", "fix": ""}))
         self.assertIsNone(f._text_block(None))
 

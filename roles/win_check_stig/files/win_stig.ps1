@@ -263,12 +263,14 @@ function Get-Checklists([string] $Root) {
         Sort-Object -Property LastWriteTimeUtc -Descending)
 }
 
-function New-Rule($Rule, $V, $StigId, $Severity, $Title, $Status, $Details) {
+function New-Rule($Rule, $V, $StigId, $Severity, $Title, $Status, $Details, $Check, $Fix) {
     $res = $CKL_RESULT[(Get-Plain $Status)]
     if (-not $res) { $res = 'notchecked' }
     $sev = $CKL_SEV[(Get-Plain $Severity)]
     if (-not $sev) { $sev = '' }
-    return @{ rule = [string]$Rule; v = [string]$V; stigid = [string]$StigId; severity = $sev; title = [string]$Title; result = $res; details = [string]$Details }
+    # 1.73.0: DISA's check text and fix text, as the checklist carries them (the report shows them for a fail)
+    return @{ rule = [string]$Rule; v = [string]$V; stigid = [string]$StigId; severity = $sev; title = [string]$Title; result = $res; details = [string]$Details
+              check_text = [string]$Check; fix_text = [string]$Fix }
 }
 
 # A checklist -> its STIGs: @{stig_id, title, version, release, host, site, instance, rules}
@@ -288,7 +290,7 @@ function Read-Checklist([string] $Path) {
             $rules = @()
             foreach ($r in @($s.rules)) {
                 if ($null -eq $r) { continue }
-                $rules += @(New-Rule $r.rule_id $r.group_id $r.rule_version $r.severity $r.rule_title $r.status $r.finding_details)
+                $rules += @(New-Rule $r.rule_id $r.group_id $r.rule_version $r.severity $r.rule_title $r.status $r.finding_details $r.check_content $r.fix_text)
             }
             $title = [string]$s.display_name
             if (-not $title) { $title = [string]$s.stig_name }
@@ -316,7 +318,7 @@ function Read-Checklist([string] $Path) {
                 $k = Get-XText $sd.VULN_ATTRIBUTE
                 if (-not $a.ContainsKey($k)) { $a[$k] = Get-XText $sd.ATTRIBUTE_DATA }
             }
-            $rules += @(New-Rule $a['Rule_ID'] $a['Vuln_Num'] $a['Rule_Ver'] $a['Severity'] $a['Rule_Title'] (Get-XText $v.STATUS) (Get-XText $v.FINDING_DETAILS))
+            $rules += @(New-Rule $a['Rule_ID'] $a['Vuln_Num'] $a['Rule_Ver'] $a['Severity'] $a['Rule_Title'] (Get-XText $v.STATUS) (Get-XText $v.FINDING_DETAILS) $a['Check_Content'] $a['Fix_Text'])
         }
         $out += @(@{ stig_id = [string]$info['stigid']; title = [string]$info['title']; version = [string]$info['version']; release = [string]$info['releaseinfo']
                 host = $hostName; site = $site; instance = $inst; rules = $rules })
@@ -489,6 +491,10 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
             $it.title = $r.title
             $d = $r.details.Trim()
             if ($d) { if ($d.Length -gt $detailsMax) { $d = $d.Substring(0, $detailsMax) }; $it.details = $d }
+            foreach ($tk in @('check_text', 'fix_text')) {
+                $tt = ([string]$r[$tk]).Trim()
+                if ($tt) { if ($tt.Length -gt 8000) { $tt = $tt.Substring(0, 8000) }; $it[$tk] = $tt }
+            }
         }
         if ($prevItems.ContainsKey($k)) { $it.prev = $prevItems[$k] }
         if ($before.ContainsKey($k)) { $it.passed = $before[$k] }
