@@ -1047,14 +1047,14 @@ main{max-width:1240px;margin:0 auto;padding:18px 20px 40px}
 .hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:var(--card);border:1px solid var(--edge);border-radius:14px;overflow:hidden}
 .tile{padding:14px 18px 16px;display:flex;flex-direction:column;gap:4px;min-width:0;border-left:1px solid var(--line);position:relative}
 .tile:first-child{border-left:0}
-.tl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);display:flex;gap:6px;align-items:center}
+.tlab{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);display:flex;gap:6px;align-items:center}
 .tv{display:flex;align-items:baseline;gap:6px}
 .big{font:700 clamp(28px,2.6vw,36px)/1.05 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;letter-spacing:-.02em}
 .of{color:var(--mute);font-size:13px}
 .td{color:var(--mute);font-size:12.5px;overflow-wrap:anywhere}
-.t-good .tl .ic{color:var(--ok)}
+.t-good .tlab .ic{color:var(--ok)}
 .t-bad::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--crit-fill)}
-.t-bad .tl,.t-bad .big,.t-bad .tl .ic{color:var(--crit)}
+.t-bad .tlab,.t-bad .big,.t-bad .tlab .ic{color:var(--crit)}
 .t-bad .td{color:var(--ink2)}
 .totals{margin:10px 2px 0;color:var(--mute);font-size:12.5px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}
 .totals b{color:var(--ink);font-weight:600}
@@ -1374,17 +1374,17 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
     def more(names):
         return '' if len(names) < 2 else ' and %d more' % (len(names) - 1)
     tiles = (
-        '<div class="tile t-good"><span class="tl">%sRuns ok</span><span class="tv"><b class="big" data-tile="ok" data-n="%d">%d</b>'
+        '<div class="tile t-good"><span class="tlab">%sRuns ok</span><span class="tv"><b class="big" data-tile="ok" data-n="%d">%d</b>'
         '<span class="of">of %d</span></span><span class="td">ran on time and checked everything</span></div>'
         % (BOARD_ICON['ok'], s['runs_ok'], s['runs_ok'], s['total']) +
-        '<div class="tile %s"><span class="tl">%sNot checked</span><span class="tv"><b class="big">%d</b></span><span class="td">%s</span></div>'
+        '<div class="tile %s"><span class="tlab">%sNot checked</span><span class="tv"><b class="big">%d</b></span><span class="td">%s</span></div>'
         % ('t-bad' if nc else 't-good', BOARD_ICON['notchecked'], len(nc),
            ('%s: the last run could not check%s' % (e(nc[0]), more(nc))) if nc else 'every run could check') +
-        '<div class="tile %s"><span class="tl">%sCritical up since last run</span><span class="tv"><b class="big">%d</b><span class="of">%s</span></span>'
+        '<div class="tile %s"><span class="tlab">%sCritical up since last run</span><span class="tv"><b class="big">%d</b><span class="of">%s</span></span>'
         '<span class="td">%s</span></div>'
         % ('t-bad' if ups else 't-good', BOARD_ICON['up'], len(ups), 'report' if len(ups) == 1 else 'reports',
            ('%s: %d &rarr; %d critical%s' % (e(ups[0]['name']), ups[0]['before'], ups[0]['now'], more(ups))) if ups else 'no critical count went up') +
-        '<div class="tile t-good" data-tile-box="late"><span class="tl">%sDidn&#39;t run on time</span><span class="tv"><b class="big" data-tile="late">0</b>'
+        '<div class="tile t-good" data-tile-box="late"><span class="tlab">%sDidn&#39;t run on time</span><span class="tv"><b class="big" data-tile="late">0</b>'
         '</span><span class="td" data-tile-note="late">every report ran in its usual time</span></div>' % BOARD_ICON['late'])
     totals = ('<p class="totals"><span>Findings in the newest runs:</span><span class="ct"><i class="sh sh-c" aria-hidden="true"></i><b>%d</b> critical</span>'
               '<span class="ct"><i class="sh sh-w" aria-hidden="true"></i><b>%d</b> warning</span><span><b>%d</b> low</span>'
