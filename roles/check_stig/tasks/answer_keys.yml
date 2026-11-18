@@ -6,14 +6,14 @@
 #   1. Evaluate-STIG's own result for the rules on the host (ExpectedStatus): only Open or Not Reviewed get a key
 #   2. STIG Manager: the host's reviews (Not a Finding / Not Applicable there: no key) and DISA's check text
 #   3. the draft: a fixed pattern from the check text (stig_answer_filters.py); else ACT (answer_keys_act), marked as such
-#   4. on the host (library/site_stig_answer_host.py): the fixed read-only check on each code (PowerShell's parser - no
-#      code is run: no trial in 1.75.0); and what the host's Evaluate-STIG is (its version, its template's names)
+#   4. on the host (library/site_stig_answer_host.py): the fixed read-only check on each code (PowerShell's parser), one
+#      trial run of each that passes it; and what the host's Evaluate-STIG is (its version, its template's names)
 #   5. the report: the blocks (the website, the job output, the workbook), the rules not drafted and why
-- name: Answer keys | one host
+- name: Answer keys | one trial host
   ansible.builtin.assert:
     that: ansible_play_hosts_all | length == 1
     fail_msg: >-
-      STIG answer keys run on ONE host, not {{ ansible_play_hosts_all | length }}: set target (and the Limit)
+      STIG answer keys run on ONE host - the trial host - not {{ ansible_play_hosts_all | length }}: set target (and the Limit)
       to one Linux host with Evaluate-STIG (docs/STIG_ANSWER_KEYS.md).
     quiet: true
 

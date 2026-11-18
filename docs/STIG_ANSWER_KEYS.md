@@ -1,14 +1,14 @@
-# STIG answer keys (1.75.0)
+# STIG answer keys (1.75.0; the trial: 1.75.1)
 
 The **STIG answer keys** job (`playbooks/stig_answer_keys.yml`) drafts an Evaluate-STIG `<AnswerKey>` block for each
 rule you pick. You paste each block into your own answer file, under that rule's `<Vuln ID>`.
 
 - Linux only, RHEL 8, 9 and 10: Evaluate-STIG with PowerShell 7 (`pwsh`) on the host.
-- One host per run. Its Evaluate-STIG gives each rule's own result, and each block's code is checked there.
-- **Not tried yet:** 1.75.0 runs no block's code. Try each block on a test host first (the trial comes in 1.75.1).
+- One host per run: the **trial host**. Each block's code is tried once there, in a read-only sandbox with no socket
+  and no root, and its result is shown beside it.
 - Only the rules you name, and only those that are **Open** or **Not Reviewed**. Never all of them.
 - **Nothing is written anywhere.** STIG Manager is read with GET requests only. The job writes nothing to the share.
-  On the host it installs and keeps nothing: its temporary folders are removed, and nothing of ACT's is put there.
+  On the trial host it installs and keeps nothing: its temporary folders are removed, and nothing of ACT's is put there.
   It never writes a whole answer file.
 
 ## Run it
@@ -28,13 +28,11 @@ rule you pick. You paste each block into your own answer file, under that rule's
 
    From a survey, a text field works too: `V-257777, V-257928`, and `root, sys, bin, appuser`. The values can be
    one text field as well: `min_release: 9.4`, one `name: value` per line.
-4. Open the report on the report website. Open a rule and press **Copy block**. Paste the block into a test answer
-   file, under `<Vuln ID="V-257777">`.
-5. **Try each block on a test host first:** run Evaluate-STIG there with that answer file, and check the rule's status.
-   Only then copy it into your own answer file.
+4. Open the report on the report website. Open a rule and press **Copy block**. Paste the block into your answer file,
+   under `<Vuln ID="V-257777">`.
 
-Success looks like: *STIG answer keys: 2 ready to copy, 0 not drafted*. Each rule shows *not tried* and the status
-it would set: NotAFinding if true, Open if false.
+Success looks like: *STIG answer keys: 2 ready to copy, 0 not drafted*. Each rule shows its trial: true or false,
+the status it would set and what it read.
 
 ## What a block is
 
@@ -55,12 +53,12 @@ return ($LASTEXITCODE -eq 0 -and $o.Count -eq 1 -and $o[0] -eq 'root')
 ```
 
 - **Name**: `answer_keys_name`. If it is not set, the `--AnswerKey` of `check_stig_evaluate_args` is used, else `DEFAULT`.
-- **ExpectedStatus**: Evaluate-STIG's own result for the rule on the host, `Open` or `Not_Reviewed`.
+- **ExpectedStatus**: Evaluate-STIG's own result for the rule on the trial host, `Open` or `Not_Reviewed`.
 - **ValidationCode**: PowerShell that only reads. It returns `$true` when the host is as DISA's check text wants.
   It says what it read with `Write-Verbose`.
 - **The statuses**: `NotAFinding` for true and `Open` for false. Only `NotAFinding`, `Open` or `Not_Applicable` are ever
   used, never RA or POA&M. A comment never contains those words (`stigman_protect_words`).
-- **The element names** come from the answer file template of the host's own Evaluate-STIG (an XML file in its
+- **The element names** come from the answer file template of the trial host's own Evaluate-STIG (an XML file in its
   folder with an `AnswerKey` and a `ValidationCode`). If none is found, or one lacks an element, the documented names
   are used. *How this was made* says which.
 
@@ -92,7 +90,7 @@ return ($LASTEXITCODE -eq 0 -and $o.Count -eq 1 -and $o[0] -eq 'root')
    gets a pattern.
 2. **ACT drafts it** when no pattern fits (`answer_keys_act: true`, the default).
    - ACT runs on the AAP side, in evidence mode (as the site portal's *Ask ACT*): it reads DISA's check text and answers.
-     It runs no command, on the host or anywhere. Nothing of ACT's is installed or changed on the host.
+     It runs no command, on the trial host or anywhere. Nothing of ACT's is installed or changed on the trial host.
    - Its block is marked **drafted by ACT - read it before you use it**: in its row, in the block's own first line,
      and in its comments (`site-automation answer key (ACT draft):`).
    - ACT uses only the site values you gave. If a rule needs one you did not give, the rule is *Not drafted*, with the
@@ -114,8 +112,8 @@ Quote a release (`'8.10'`): unquoted, YAML reads `8.10` as the number 8.1.
 
 ## The read-only check
 
-Every code goes through a fixed check, a pattern's as much as ACT's. It runs on the host: PowerShell's own parser reads
-the code's syntax tree. The code itself is not run.
+Every code goes through a fixed check before its trial, a pattern's as much as ACT's. It runs on the trial host:
+PowerShell's own parser reads the code's syntax tree.
 
 It works by allow-lists only. Anything not on a list refuses the whole code, and the report says why. A refused code is
 not offered.
@@ -163,18 +161,54 @@ not offered.
 - **Also refused:** aliases (`iex`, `sc` ...), a command from a variable (`& $c`), dot-sourcing, backticks, a
   redirection to a file (only `2>$null`), `$ExecutionContext`, `$Host`.
 
-## Not tried yet (1.75.0)
+## The trial
 
-**Try each block on a test host first.** 1.75.0 runs no block's code on the host: there is no trial. The trial on a
-host comes in 1.75.1.
+Each code that passes the check runs once on the trial host with pwsh, within `answer_keys_trial_timeout` (60
+seconds).
 
-- Every block that passes the read-only check is offered, marked *Not tried - the trial on a host comes in 1.75.1: try
-  this block on a test host before you rely on it*.
-- Each shows the status it would set: **NotAFinding** if its code returns true, **Open** if false.
-- To try one: put it in a test answer file, run Evaluate-STIG with that answer file on a test host, and check the
-  rule's status and comment in the checklist it writes.
+It runs in a **sandbox**: a transient systemd unit (`systemd-run`) that the kernel holds to these limits. Inside it,
+the code sees the host as it is, read-only.
 
-## Evaluate-STIG on the host
+- The whole file system is read-only (`ProtectSystem=strict`, `ReadOnlyPaths=/`, `ProtectHome=read-only`), the
+  kernel's settings too (`ProtectKernelTunables`). `/tmp`, `/var/tmp` and `/dev/shm` are the host's own, read-only: a
+  `find /tmp -perm -0002` finds what is there. pwsh writes only in a scratch space of its own (a tmpfs over a folder of
+  the job's, removed after).
+- **No socket of any kind** (`RestrictAddressFamilies` empty, `IPAddressDeny=any`): no network, no D-Bus, no systemd, no
+  audit socket. It keeps the host's network namespace, so a `net.*` setting it reads is the host's.
+- **Not root:** it runs as `nobody`, keeping only the right to read (`CAP_DAC_READ_SEARCH`), with `NoNewPrivileges`.
+- Its own SysV IPC and message queues (`PrivateIPC`), so a code cannot leave IPC objects on the host. The IPC files in
+  `/proc` (`/proc/sys/kernel/shm*`, `msg*`, `sem*`, `/proc/sys/fs/mqueue`, `/proc/sysvipc`) are hidden inside.
+
+**The rule:** an answer that depends on a namespace, a socket or a private mount is never read inside the sandbox. It
+is replayed, or the code is not tried.
+
+- **Replayed:** the job runs the exact command lines the check allowed once, outside the sandbox (read-only), and gives
+  their answers to the code inside. A small stand-in is put over each program, read-only; any other command line there
+  gets *not captured*. The trial says *Replayed in the trial* with the command lines.
+  - `auditctl -l`, `systemctl is-enabled|is-active UNIT`, `systemctl show -p PROPERTY UNIT` (sockets);
+  - `getent` and `id` (user and group names come from NSS: sssd or LDAP need a socket);
+  - `sysctl -n` of an IPC setting: `kernel.shmmax`, `shmall`, `shmmni`, `shm_rmid_forced`, `msgmax`, `msgmnb`,
+    `msgmni`, `sem` and the `fs.mqueue.*` limits;
+  - `stat` with `%U` or `%G`, and `find` with `-user`, `-group`, `-nouser`, `-nogroup` or `-printf` `%u` `%g` (names).
+  - When one call of `sysctl`, `stat` or `find` needs it, all that code's calls of the program are replayed.
+- **Not tried** (*Not drafted - the trial cannot show it as the host has it*): a code that reads the mount table
+  (`/proc/mounts`, `mountinfo`, `/etc/mtab`), an IPC file, or a file's user or group through PowerShell (`.User`,
+  `.Group`).
+- Before the first trial the job looks from inside, without writing, that the sandbox holds:
+  - nothing of the host is writable, `/tmp` included, and `/tmp`, `/var/tmp`, `/dev/shm` are the host's;
+  - no socket can be opened, and `/run/systemd/private` and D-Bus cannot be reached;
+  - no IPC file can be read;
+  - it is not root, and it keeps no capability but reading.
+- If `systemd-run` is missing or any of that fails, nothing is tried: each rule is *Not drafted - not tried: no
+  sandbox (why)*. There is never a trial outside the sandbox.
+
+The check still matters most: when you paste a block, your Evaluate-STIG runs its code as root, with no sandbox.
+
+- **True:** the status it would set is NotAFinding.
+- **False:** the block is still offered, marked *the host fails it now - this key keeps it Open*.
+- **No single true or false** (an error, a timeout, more than one value): the rule is not offered.
+
+## Evaluate-STIG on the trial host
 
 - It runs for the rules asked only (`--SelectVuln`), with no answer files. None of `check_stig_evaluate_args` is given,
   so an `-Output` to STIG Manager or a share never applies here. It writes into its own folder, which is removed after.
@@ -193,7 +227,7 @@ host comes in 1.75.1.
 
 - **Website** (atlas, brief, ops):
   - the tiles;
-  - **Answer keys to copy**: a rule opens to its block (**Copy block** copies the block only), *not tried* and what it would set, its
+  - **Answer keys to copy**: a rule opens to its block (**Copy block** copies the block only), its trial, its
     read-only check and DISA's check text;
   - **Not drafted**, with why;
   - **How this was made**.
@@ -209,12 +243,12 @@ host comes in 1.75.1.
 | `answer_keys_values` | `{}` | the site values (above) |
 | `answer_keys_name` | empty | the AnswerKey's Name; empty = `--AnswerKey` of `check_stig_evaluate_args`, else `DEFAULT` |
 | `answer_keys_act` | `true` | ACT drafts the rules no pattern fits |
+| `answer_keys_trial_timeout` | `60` | seconds each code may run in its trial |
 
 The scanner and STIG Manager settings are the STIG drift report's (`check_stig_evaluate`, `check_stig_stigman_*`;
 docs/STIG_DRIFT.md).
 
 ## Not in this version
 
-- A trial of each block on the host (1.75.1). Until then, try each block on a test host first.
 - Windows servers (registry, AuditPol).
 - Writing an answer file, or anything to the share.

@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.75.1 — 2026-11-18
+
+**To set up: nothing.** The trial needs `systemd-run` on the host (every RHEL 8, 9 and 10 has it). A new setting,
+`answer_keys_trial_timeout` (60 seconds), is optional.
+
+**STIG answer keys: each block is now tried once on the host, in a sandbox** (docs/STIG_ANSWER_KEYS.md, "The trial").
+
+- Each block that passes the read-only check runs once on the host with pwsh, its result beside it: true (the status it
+  would set: NotAFinding) or false (offered, marked "this key keeps it Open"). No single true or false: not offered.
+- The trial runs in a sandbox (`systemd-run`) that the kernel holds to these limits. It sees the host, read-only:
+  - the whole file system read-only, `/tmp`, `/var/tmp` and `/dev/shm` the host's own; pwsh writes only in a scratch
+    tmpfs of its own;
+  - no socket of any kind: no network, D-Bus, systemd or audit socket (`net.*` settings read are the host's);
+  - not root: `nobody`, keeping only the right to read; its own IPC, the IPC files in `/proc` hidden.
+- An answer that depends on a namespace, a socket or a private mount is never read inside: it is replayed (the exact
+  command line the check allowed, run once outside) or the code is not tried. Replayed: `auditctl -l`, `systemctl`,
+  `getent`, `id`, `sysctl -n` of an IPC setting, `stat` `%U %G`, `find` with a user or group. Not tried: the mount
+  table, an IPC file, a user or group name through PowerShell. The trial says "Replayed in the trial".
+- Before the first trial the job looks from inside, writing nothing, that the sandbox holds (nothing writable, `/tmp`
+  the host's, no socket, no IPC file, not root, no capability but reading). If not, or `systemd-run` is missing: no
+  trial - each rule is "Not drafted - not tried: no sandbox (why)". There is never a trial outside the sandbox.
+- When you paste a block, your Evaluate-STIG still runs its code as root with no sandbox: the read-only check is what
+  guards that run.
+
 ## 1.75.0 — 2026-11-18
 
 **To set up:** a job template **STIG answer keys** (`playbooks/stig_answer_keys.yml`): credentials Machine, STIG Manager

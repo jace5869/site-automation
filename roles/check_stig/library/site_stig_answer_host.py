@@ -1,9 +1,11 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""1.75.0 (playbooks/stig_answer_keys.yml), on the host: what its Evaluate-STIG is (its version, its answer file
+"""1.75.0 (playbooks/stig_answer_keys.yml), on the trial host: what its Evaluate-STIG is (its version, its answer file
 template's element names, whether it compares ExpectedStatus before ValidationCode), then for each drafted
-ValidationCode the fixed read-only check - PowerShell's own parser on the code's syntax tree. It runs NO code: 1.75.0
-has no trial (it comes in 1.75.1). Writes nothing but its own folder (0700, removed at the end). Standard library only."""
+ValidationCode the fixed read-only check - PowerShell's own parser on the code's syntax tree - and, for the code that
+passes it, one trial run as Evaluate-STIG runs it (pwsh, as root here), inside a read-only sandbox (systemd-run: the
+kernel keeps the whole file system read-only; no sandbox, no trial). Writes nothing but its own folder (0700, removed at
+the end). Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -14,21 +16,28 @@ description:
   - Reads the host's Evaluate-STIG folder - its version, its answer file template's element names (an XML file of the
     folder with an AnswerKey and a ValidationCode), and whether its code compares ExpectedStatus.
   - For each code - the fixed read-only check (PowerShell's parser; allow-lists only - the syntax, the cmdlets and their
-    parameters, each program's exact arguments). The code itself is never run (1.75.0 has no trial).
+    parameters, each program's exact arguments) - and for the code that passes it, a trial run with pwsh, its own time
+    limit, inside a read-only sandbox (systemd-run, looked at first). No sandbox that keeps the host read-only - no trial.
   - Writes nothing but a folder of its own (0700), removed at the end.
 options:
   evaluate: {description: "Evaluate-STIG's folder or script on the host ('' = not read).", type: str, default: ''}
   pwsh: {description: "pwsh's path ('' = found on PATH).", type: str, default: ''}
   codes: {description: "[{id, code}]: the ValidationCodes.", type: list, elements: dict, default: []}
+  trial: {description: Run the code that passes the check., type: bool, default: true}
+  timeout: {description: "Seconds a trial may run.", type: int, default: 60}
+  sandbox: {description: "systemd-run's path ('' = /usr/bin/systemd-run). Without a sandbox that holds (looked at first), no trial.", type: str, default: ''}
 author: site automation
 '''
 
 RETURN = r'''
 evaluate: {description: "{found, script, version, template, names, why, expected: {found, where, note}}", type: dict, returned: always}
-gate: {description: "{id: {ok, why, used: [commands]}}", type: dict, returned: always}
+gate: {description: "{id: {ok, why, used: [commands], calls: [[program, args...]]}}", type: dict, returned: always}
+trial: {description: "{id: {ran, ok, valid, read, error, seconds, replayed: [command lines read outside, replayed inside]}}", type: dict, returned: always}
 error: {description: "Why nothing was checked ('' = checked).", type: str, returned: always}
+sandbox: {description: "{ok, why}: the trial's read-only sandbox (systemd-run), looked at before the first trial", type: dict, returned: when checked}
 '''
 
+import base64
 import glob
 import json
 import os
@@ -52,6 +61,7 @@ $ErrorActionPreference = 'Stop'
 $code = [IO.File]::ReadAllText($CodeFile)
 $why = New-Object System.Collections.Generic.List[string]
 $used = New-Object System.Collections.Generic.List[string]
+$calls = New-Object System.Collections.Generic.List[object]
 function No([string] $w) { if (-not $why.Contains($w)) { $why.Add($w) } }
 # 1.75.0c: allow-lists only. A syntax node, a cmdlet, a cmdlet parameter, a program or a program argument that is not
 # listed here refuses the whole code.
@@ -290,7 +300,8 @@ foreach ($n in $ast.FindAll({ $true }, $true)) {
             }
             if (-not $fixed) { continue }
             $bad = Gram $name $args2
-            if ($bad) { No ('it runs ' + $name + ' ' + ($args2 -join ' ') + ' - ' + $bad) } elseif (-not $used.Contains($name)) { $used.Add($name) }
+            if ($bad) { No ('it runs ' + $name + ' ' + ($args2 -join ' ') + ' - ' + $bad) }
+            else { $calls.Add([string[]](@($name) + @($args2))); if (-not $used.Contains($name)) { $used.Add($name) } }
         }
         'TypeExpressionAst' { if ($types -notcontains (TypeKey $n.TypeName.FullName)) { No ('it uses the type [' + $n.TypeName.FullName + ']') } }
         'TypeConstraintAst' { if ($types -notcontains (TypeKey $n.TypeName.FullName)) { No ('it uses the type [' + $n.TypeName.FullName + ']') } }
@@ -340,8 +351,340 @@ foreach ($n in $ast.FindAll({ $true }, $true)) {
         }
     }
 }
-@{ ok = ($why.Count -eq 0); why = @($why); used = @($used) } | ConvertTo-Json -Compress -Depth 3
+@{ ok = ($why.Count -eq 0); why = @($why); used = @($used); calls = $calls.ToArray() } | ConvertTo-Json -Compress -Depth 4
 '''
+
+# The trial: the code as Evaluate-STIG runs it - its result, and what it wrote with Write-Verbose (what it read)
+TRIAL_PS1 = r'''
+$code = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('@CODE@'))
+try {
+    $sb = [scriptblock]::Create($code)
+    $VerbosePreference = 'Continue'           # what the code says it read (Evaluate-STIG leaves it off: no effect there)
+    $all = @(& $sb 4>&1)
+    $read = @($all | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { [string]$_.Message })
+    $out = @($all | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+    $vals = @($out | ForEach-Object { if ($_ -is [bool]) { $_ } elseif ($null -eq $_) { 'null' } else { [string]$_ } })
+    $kinds = @($out | ForEach-Object { if ($null -eq $_) { 'null' } else { $_.GetType().Name } })
+    @{ ok = $true; values = $vals; kinds = $kinds; read = ($read -join "`n") } | ConvertTo-Json -Compress -Depth 4
+} catch {
+    @{ ok = $false; error = ([string]$_) } | ConvertTo-Json -Compress -Depth 3
+}
+'''
+
+
+# 1.75.1: the trial runs in a kernel-enforced sandbox (a transient systemd unit). It sees the HOST: the whole file system
+# read-only - /tmp, /var/tmp and /dev/shm too, the host's own (a find there finds what is there) - and the host's network
+# namespace (net.* settings are the host's). NO socket of any family (no D-Bus, no systemd, no audit, no network), not
+# root (as root: the user nobody that keeps only the right to read, CAP_DAC_READ_SEARCH), no new privileges. pwsh writes
+# only in a scratch tmpfs over a folder of the module's own. A code the read-only check let through by mistake still
+# cannot change the host. No sandbox: no trial.
+# The rule: an answer that depends on a namespace, a socket or a private mount is never read inside the sandbox - it is
+# replayed (run once outside, the exact command line the check allowed) or the code is not tried.
+IPC_KEYS = ["kernel.shmmax", "kernel.shmall", "kernel.shmmni", "kernel.shm_rmid_forced", "kernel.shm_next_id",
+            "kernel.msgmax", "kernel.msgmnb", "kernel.msgmni", "kernel.msg_next_id", "kernel.sem", "kernel.sem_next_id",
+            "fs.mqueue.msg_max", "fs.mqueue.msgsize_max", "fs.mqueue.queues_max", "fs.mqueue.msg_default",
+            "fs.mqueue.msgsize_default"]
+# PrivateIPC keeps SysV IPC and message queues off the host: inside, these show the sandbox's own - hidden
+IPC_PATHS = ["/proc/sysvipc", "/dev/mqueue"] + ["/proc/sys/" + k.replace(".", "/") for k in IPC_KEYS]
+SANDBOX = ["ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateDevices=yes", "ReadOnlyPaths=/dev/shm",
+           "PrivateIPC=yes"] + ["InaccessiblePaths=-%s" % x for x in IPC_PATHS] + [
+           "NoNewPrivileges=yes", "RestrictSUIDSGID=yes", "LockPersonality=yes", "RestrictNamespaces=yes",
+           "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectKernelLogs=yes", "ProtectControlGroups=yes",
+           "ProtectClock=yes", "ProtectHostname=yes",
+           # no address family at all: an allow-list of AF_UNIX, then AF_UNIX taken out (systemd-run does not take "none")
+           "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
+           "CapabilityBoundingSet=CAP_DAC_READ_SEARCH"]
+# not DynamicUser: it brings a private /tmp with it
+SANDBOX_ROOT = ["User=nobody", "AmbientCapabilities=CAP_DAC_READ_SEARCH"]
+
+
+def nobody_group():
+    """The primary group of the user nobody here (RHEL: nobody; Debian and Ubuntu: nogroup)."""
+    try:
+        import grp
+        import pwd
+        return grp.getgrgid(pwd.getpwnam("nobody").pw_gid).gr_name
+    except (ImportError, KeyError):
+        return "nobody"
+CAP_DAC_READ_SEARCH = 1 << 2
+# what is replayed: every call of these programs (a daemon's socket, the kernel's audit socket, NSS - sssd, LDAP)...
+REPLAY_ALWAYS = ["/usr/sbin/auditctl", "/usr/bin/systemctl", "/usr/bin/getent", "/usr/bin/id"]
+# ...and every call of these when one of a code's calls needs it: an IPC setting (the namespace), a user or group name
+# (NSS: stat %U %G, find -user -group -nouser -nogroup and -printf %u %g)
+REPLAY_IF = ["/usr/sbin/sysctl", "/usr/bin/sysctl", "/usr/bin/stat", "/usr/bin/find"]
+REPLAY_MAX = 1048576
+PROBE_RO = ["/", "/etc", "/usr", "/var", "/var/lib", "/var/log", "/opt", "/srv", "/root", "/home", "/boot", "/run",
+            "/tmp", "/var/tmp", "/dev/shm",
+            "/proc/sys/kernel/hostname", "/proc/sys/vm/swappiness", "/proc/sys/net/ipv4/ip_forward", "/sys/kernel", "/sys/fs/cgroup"]
+PROBE_HOST = ["/tmp", "/var/tmp", "/dev/shm"]
+# the probe, inside the sandbox, writing nothing: what is writable (test -w) - nothing but its scratch; that /tmp,
+# /var/tmp and /dev/shm are the host's; whether a socket of any family can be opened (and /run/systemd/private, D-Bus
+# reached); whether an IPC setting can be read; its uid and its effective capabilities
+PROBE_PS1 = r"""
+$w = @(foreach ($p in @(@RO@)) { if (Test-Path -LiteralPath $p) { & /usr/bin/test -w $p; if ($LASTEXITCODE -eq 0) { $p } } })
+$here = @{}
+foreach ($p in @('/tmp', '/var/tmp', '/dev/shm')) { $here[$p] = [string](& /usr/bin/stat -L -c '%d:%i' $p 2>$null) }
+$sock = @()
+foreach ($t in @(@('Unix', 'Stream'), @('Unix', 'Dgram'), @('InterNetwork', 'Stream'), @('InterNetwork', 'Dgram'), @('InterNetworkV6', 'Stream'),
+                @(16, 'Dgram'), @(16, 'Raw'), @(17, 'Raw'))) {
+    try { $s = [System.Net.Sockets.Socket]::new([System.Net.Sockets.AddressFamily]$t[0], [System.Net.Sockets.SocketType]$t[1], 'Unspecified'); $s.Dispose(); $sock += ('socket ' + $t[0] + '/' + $t[1]) } catch { }
+}
+foreach ($u in @('/run/systemd/private', '/run/dbus/system_bus_socket')) {
+    try { $s = [System.Net.Sockets.Socket]::new('Unix', 'Stream', 'Unspecified'); $s.Connect([System.Net.Sockets.UnixDomainSocketEndPoint]::new($u)); $sock += "connected $u" } catch { }
+}
+$ipc = @(foreach ($p in @(@IPC@)) { try { $null = Get-Content -LiteralPath $p -TotalCount 1 -ErrorAction Stop; $p } catch { } })
+$cap = ((Get-Content /proc/self/status | Where-Object { $_ -match '^CapEff:' }) -split '\s+')[1]
+@{ writable = $w; host = $here; sockets = $sock; ipc = $ipc; uid = [string](& /usr/bin/id -u); capeff = $cap } | ConvertTo-Json -Compress -Depth 3
+"""
+# what a trial would read from the sandbox, not the host (the mount table, IPC, a file's user or group through PowerShell
+# - NSS): such a code is not tried, never given a result the host would not give
+BLIND = [(r"/proc/(self/|thread-self/|\d+/)?mount|/etc/mtab|mountinfo", "the mount table (the sandbox's own)"),
+         (r"/proc/sysvipc|/dev/mqueue|/proc/sys/kernel/(shm|msg|sem)|/proc/sys/fs/mqueue", "an IPC setting through a file (the sandbox's own IPC)"),
+         (r"\.(User|Group)\b|Property\s+'?(User|Group)\b|-ExpandProperty\s+'?(User|Group)\b",
+          "a file's user or group through PowerShell (names come from NSS - sssd or LDAP need a socket)")]
+
+
+def find_sandbox(path):
+    """systemd-run's path ('' = not here)."""
+    for p in [path] if path else ["/usr/bin/systemd-run", "/bin/systemd-run"]:
+        if p and os.path.basename(p) == "systemd-run" and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return ""
+
+
+def sandbox_cmd(runner, seconds, binds=None, scratch=""):
+    """The systemd-run command line of one sandboxed run (as root: a system unit, the user nobody; as another user:
+    that user's own systemd). binds: {program path: its replay shim} - each bound read-only over the program. scratch: a
+    folder of the module's own that gets a tmpfs - pwsh's HOME and TMPDIR, the one place it can write."""
+    root = os.geteuid() == 0
+    cmd = [runner] + ([] if root else ["--user"]) + ["--pipe", "--wait", "--collect", "--quiet"]
+    props = list(SANDBOX) + (SANDBOX_ROOT + ["Group=%s" % nobody_group()] if root else []) + ["RuntimeMaxSec=%d" % seconds]
+    if scratch:
+        props.append("TemporaryFileSystem=%s:mode=1777" % scratch)
+    for prog, shim in sorted((binds or {}).items()):
+        props.append("BindReadOnlyPaths=%s:%s" % (shim, prog))
+    for x in props:
+        cmd += ["-p", x]
+    home = scratch or "/nonexistent"
+    for x in ["HOME=" + home, "TMPDIR=" + home, "XDG_CACHE_HOME=" + home, "XDG_DATA_HOME=" + home, "XDG_CONFIG_HOME=" + home,
+              "POWERSHELL_TELEMETRY_OPTOUT=1", "POWERSHELL_UPDATECHECK=Off", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+              "DOTNET_EnableDiagnostics=0", "LANG=C.UTF-8"]:
+        cmd += ["-E", x]
+    return cmd
+
+
+def sandbox_env():
+    env = dict(os.environ)
+    run = "/run/user/%d" % os.geteuid()
+    if os.geteuid() != 0 and os.path.exists(run + "/bus"):    # the user's own systemd (tests run so), not another bus
+        env.update(XDG_RUNTIME_DIR=run, DBUS_SESSION_BUS_ADDRESS="unix:path=%s/bus" % run)
+    return env
+
+
+def _ps_list(xs):
+    return ", ".join("'" + x.replace("'", "''") + "'" for x in xs)
+
+
+class Scratch(object):
+    """A folder of the module's own for the sandbox's scratch tmpfs (under work, or a new one - removed after)."""
+    def __init__(self, work=None):
+        self.own = work is None
+        self.base = tempfile.mkdtemp(prefix="site-answer-keys-") if self.own else work
+        self.path = os.path.join(self.base, "scratch")
+        if not os.path.isdir(self.path):
+            os.mkdir(self.path)
+
+    def done(self):
+        if self.own:
+            shutil.rmtree(self.base, ignore_errors=True)
+
+
+def sandbox_probe(runner, pwsh="/usr/bin/pwsh", work=None):
+    """Whether the sandbox works here and holds - looked at from inside, nothing written -> '' or why not."""
+    if not runner:
+        return "systemd-run was not found"
+    host = dict((p, "%d:%d" % (os.stat(p).st_dev, os.stat(p).st_ino)) for p in PROBE_HOST if os.path.exists(p))
+    ro = PROBE_RO + [os.path.expanduser("~")]
+    script = PROBE_PS1.replace("@RO@", _ps_list(ro)).replace("@IPC@", _ps_list([x for x in IPC_PATHS if x.startswith("/proc/sys/")]))
+    enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    sc = Scratch(work)
+    try:
+        r = subprocess.run(sandbox_cmd(runner, 60, scratch=sc.path) + [pwsh, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, env=sandbox_env())
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "systemd-run did not answer (%s)" % e
+    finally:
+        sc.done()
+    out = r.stdout.decode("utf-8", "replace").strip().splitlines()
+    try:
+        j = json.loads(out[-1])
+    except (ValueError, IndexError):
+        return "systemd-run could not start it (exit %d: %s)" % (r.returncode, (r.stderr.decode("utf-8", "replace").strip() or "no answer")[:200])
+    w = j.get("writable") or []
+    w = [w] if isinstance(w, str) else w
+    if w:
+        return "it left %s writable" % ", ".join(w)
+    for place, ident in sorted((j.get("host") or {}).items()):
+        if not ident or ident != host.get(place):
+            return "its %s is not the host's" % place
+    so = j.get("sockets") or []
+    so = [so] if isinstance(so, str) else so
+    if so:
+        return "a socket could be used in it (%s)" % ", ".join(so)
+    ipc = j.get("ipc") or []
+    ipc = [ipc] if isinstance(ipc, str) else ipc
+    if ipc:
+        return "an IPC setting can be read in it (%s) - it would be the sandbox's own" % ", ".join(ipc)
+    if str(j.get("uid")).strip() in ("", "0"):
+        return "it runs as root"
+    try:
+        cap = int(str(j.get("capeff") or ""), 16)
+    except ValueError:
+        return "its capabilities could not be read"
+    if cap & ~CAP_DAC_READ_SEARCH:
+        return "it keeps capabilities other than reading (CapEff %s)" % j.get("capeff")
+    return ""
+
+
+_UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:\\-]*$")
+_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9._-]*$")
+_PATH = re.compile(r"^/[A-Za-z0-9._/*?+@,:-]*$")
+FIND_NEVER = ("-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls")
+
+
+def replay_ok(argv):
+    """The command lines the module may run itself, outside the sandbox (checked again, as the read-only check did): all
+    read-only."""
+    if not argv:
+        return False
+    prog, a = argv[0], argv[1:]
+    if prog == "/usr/sbin/auditctl":
+        return a == ["-l"]
+    if prog == "/usr/bin/systemctl":
+        return (len(a) == 2 and a[0] in ("is-enabled", "is-active") and _UNIT.match(a[1]) is not None) or \
+            (len(a) == 4 and a[:2] == ["show", "-p"] and re.match(r"^[A-Za-z]+$", a[2]) is not None and _UNIT.match(a[3]) is not None)
+    if prog in ("/usr/sbin/sysctl", "/usr/bin/sysctl"):
+        return len(a) == 2 and a[0] == "-n" and re.match(r"^[a-z0-9_][a-z0-9_.]*$", a[1]) is not None
+    if prog == "/usr/bin/getent":
+        return 1 <= len(a) <= 2 and a[0] in ("passwd", "group", "shadow", "gshadow") and (len(a) == 1 or _NAME.match(a[1]) is not None)
+    if prog == "/usr/bin/id":
+        i = 0
+        while i < len(a) and a[i] in ("-u", "-g", "-G", "-n"):
+            i += 1
+        return i == len(a) or (i == len(a) - 1 and _NAME.match(a[i]) is not None)
+    if prog == "/usr/bin/stat":
+        return len(a) >= 3 and a[0] == "-c" and re.match(r"^(?=.*%)(?:%[UGaAugn]|[ :])+$", a[1]) is not None and \
+            all(_PATH.match(x) for x in a[2:])
+    if prog == "/usr/bin/find":
+        return len(a) >= 1 and a[0].startswith("/") and not any(x in FIND_NEVER for x in a)
+    return False
+
+
+def _needs(argv):
+    """Whether this call's answer depends on what the sandbox cannot see as the host has it."""
+    prog, a = argv[0], argv[1:]
+    if prog in REPLAY_ALWAYS:
+        return True
+    if prog in ("/usr/sbin/sysctl", "/usr/bin/sysctl"):
+        return len(a) == 2 and a[1] in IPC_KEYS
+    if prog == "/usr/bin/stat":
+        return len(a) >= 2 and re.search(r"%[UG]", a[1]) is not None
+    if prog == "/usr/bin/find":
+        return any(x in ("-user", "-group", "-nouser", "-nogroup") for x in a) or \
+            any(re.search(r"%[ug]", a[i + 1]) for i, x in enumerate(a[:-1]) if x == "-printf")
+    return False
+
+
+def replays_for(calls):
+    """A code's calls (the read-only check's exact command lines) -> the ones to run outside and replay inside: every call
+    of REPLAY_ALWAYS, and every call of a REPLAY_IF program when one of its calls needs it (its shim then answers all)."""
+    calls = [c for c in calls if c]
+    progs = set(c[0] for c in calls if c[0] in REPLAY_ALWAYS) | set(c[0] for c in calls if c[0] in REPLAY_IF and _needs(c))
+    out = []
+    for c in calls:
+        if c[0] in progs and c not in out:
+            out.append(c)
+    return out
+
+
+def blind(code):
+    """What a code would read from the sandbox and not the host -> '' or why it is not tried."""
+    for rx, what in BLIND:
+        if re.search(rx, code or "", re.I if "proc" in rx else 0):
+            return "it reads %s - the trial cannot show it as the host has it" % what
+    return ""
+
+
+def capture(argv, seconds=30):
+    """One read-only command line, run here (outside the sandbox) -> (stdout, stderr, exit code)."""
+    env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "SYSTEMD_PAGER": "", "SYSTEMD_COLORS": "0"}
+    try:
+        p = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=seconds, env=env)
+        return p.stdout[:REPLAY_MAX], p.stderr[:65536], p.returncode
+    except subprocess.TimeoutExpired:
+        return b"", b"no answer in %d seconds\n" % seconds, 124
+    except OSError as e:
+        return b"", ("%s\n" % e).encode("utf-8"), 127
+
+
+def shim_text(prog, answers):
+    """The replay shim of one program: answers {(args...): (stdout, stderr, rc)} -> a /bin/sh script."""
+    lines = ["#!/bin/sh",
+             "# site-automation answer keys (1.75.1): %s replayed - its answer was read once outside the sandbox" % prog,
+             "k=$(printf '%s\\n' \"$@\" | base64 -w0)", 'case "$k" in']
+    for args, (out, err, rc) in sorted(answers.items()):
+        key = base64.b64encode(("\n".join(args) + "\n").encode("utf-8")).decode("ascii")
+        lines.append("'%s') printf '%%s' '%s' | base64 -d; printf '%%s' '%s' | base64 -d >&2; exit %d ;;" % (
+            key, base64.b64encode(out).decode("ascii"), base64.b64encode(err).decode("ascii"), int(rc) & 255))
+    lines += ["esac", 'echo "not captured: %s $*" >&2' % prog, "exit 2", ""]
+    return "\n".join(lines)
+
+
+def write_shims(work, answers):
+    """A shim over each program a code's replayed calls use, plus auditctl and systemctl always (on this host) ->
+    {program: shim path}. answers: {argv tuple: result}."""
+    binds = {}
+    progs = set(REPLAY_ALWAYS) | set(a[0] for a in answers)
+    for prog in sorted(progs):
+        if not os.path.exists(prog):
+            continue
+        mine = dict((tuple(a[1:]), r) for a, r in answers.items() if a[0] == prog)
+        path = os.path.join(work, "replay-%s" % prog.strip("/").replace("/", "-"))
+        with open(path, "w") as f:
+            f.write(shim_text(prog, mine))
+        os.chmod(path, 0o755)
+        binds[prog] = path
+    return binds
+
+
+def trial_command(pwsh, code):
+    """pwsh with the trial (the code inside it, base64): no file the sandbox must see."""
+    wrapper = TRIAL_PS1.replace("@CODE@", base64.b64encode(code.encode("utf-8")).decode("ascii"))
+    return [pwsh, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.b64encode(wrapper.encode("utf-16-le")).decode("ascii")]
+
+
+def run_trial(pwsh, runner, code, seconds, binds=None, work=None):
+    """One trial of a code in the sandbox -> (json or None, error, seconds). binds: the replay shims. work: the module's
+    folder (its scratch for the tmpfs; none: one of its own, removed after)."""
+    t = time.time()
+    sc = Scratch(work)
+    try:
+        p = subprocess.run(sandbox_cmd(runner, seconds, binds, sc.path) + trial_command(pwsh, code),
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=seconds + 60,
+                           env=sandbox_env())
+    except subprocess.TimeoutExpired:
+        return None, "no answer in %d seconds" % seconds, round(time.time() - t, 1)
+    finally:
+        sc.done()
+    out = p.stdout.decode("utf-8", "replace").strip().splitlines()
+    try:
+        return json.loads(out[-1] if out else ""), "", round(time.time() - t, 1)
+    except ValueError:
+        err = (p.stderr.decode("utf-8", "replace").strip() or "pwsh gave no answer")[:300]
+        if time.time() - t >= seconds:
+            err = "no answer in %d seconds (stopped)" % seconds
+        return None, err, round(time.time() - t, 1)
+
 
 def find_pwsh(path):
     if path:
@@ -448,6 +791,9 @@ def main():
         evaluate=dict(type="str", default=""),
         pwsh=dict(type="str", default=""),
         codes=dict(type="list", elements="dict", default=[]),
+        trial=dict(type="bool", default=True),
+        timeout=dict(type="int", default=60),
+        sandbox=dict(type="str", default=""),
     ), supports_check_mode=True)
     p = module.params
     ev = {"found": False, "script": "", "version": "", "template": "", "names": [], "why": "", "expected": {"found": False, "where": ""}}
@@ -461,30 +807,76 @@ def main():
     else:
         ev["why"] = "Evaluate-STIG was not found (check_stig_evaluate: %s)" % (p["evaluate"] or "not set")
     pwsh = find_pwsh(p["pwsh"])
-    gate = {}
+    gate, trial = {}, {}
     if not pwsh:
-        module.exit_json(changed=False, evaluate=ev, gate={}, error="pwsh was not found on the host")
+        module.exit_json(changed=False, evaluate=ev, gate={}, trial={}, error="pwsh was not found on the host")
     work = tempfile.mkdtemp(prefix="site-answer-keys-")
     os.chmod(work, 0o700)
+    runner, no_sandbox, answers = None, "", {}
+    if any(c in work for c in " :,\"'"):
+        module.exit_json(changed=False, evaluate=ev, gate={}, trial={}, error="its temporary folder %s cannot be bound (a space, : or ,)" % work)
     try:
         gs = os.path.join(work, "gate.ps1")
         with open(gs, "w") as f:
             f.write(GATE_PS1)
         for i, c in enumerate(p["codes"]):
             cid, code = str(c.get("id") or i), str(c.get("code") or "")
-            if len(code) > CODE_MAX:
-                gate[cid] = {"ok": False, "why": ["it is over %d characters" % CODE_MAX], "used": []}
-                continue
             cf = os.path.join(work, "code-%d.ps1" % i)
             with open(cf, "w") as f:
                 f.write(code)
-            # the check only parses the code (PowerShell's parser); the code is never run here
+            if len(code) > CODE_MAX:
+                gate[cid] = {"ok": False, "why": ["it is over %d characters" % CODE_MAX], "used": []}
+                continue
             g, err, secs = run_ps(pwsh, gs, cf, 60)
             gate[cid] = g if isinstance(g, dict) else {"ok": False, "why": ["the read-only check did not answer: %s" % err], "used": []}
             gate[cid]["ok"] = bool(gate[cid].get("ok"))
+            if not (gate[cid]["ok"] and p["trial"]) or module.check_mode:
+                continue
+            if runner is None:       # once, before the first trial: no sandbox that keeps the host read-only - no trial
+                runner = find_sandbox(p["sandbox"])
+                no_sandbox = sandbox_probe(runner, pwsh, work)
+            if no_sandbox:
+                trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0,
+                              "error": "no sandbox (%s): a trial runs only in a read-only sandbox" % no_sandbox}
+                continue
+            # what the sandbox would show as its own, not the host's (the mount table, IPC files, names through
+            # PowerShell): not tried - never a result the host would not give
+            why_blind = blind(code)
+            if why_blind:
+                trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0, "error": why_blind}
+                continue
+            # what needs a socket, the host's IPC namespace or NSS: the exact command lines the check let through, run
+            # once here (read-only), their answers replayed inside the sandbox
+            calls = [[str(x) for x in c] for c in (gate[cid].get("calls") or []) if isinstance(c, list)]
+            todo = replays_for(calls)
+            bad = [" ".join(c) for c in todo if not replay_ok(c)]
+            if bad:
+                trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0,
+                              "error": "it runs %s, which is replayed only as the read-only check allows" % bad[0]}
+                continue
+            for argv in todo:
+                if tuple(argv) not in answers:
+                    answers[tuple(argv)] = capture(argv, max(30, p["timeout"]))
+            replayed = [" ".join(c) for c in todo]
+            binds = write_shims(work, dict((tuple(c), answers[tuple(c)]) for c in todo))
+            r, err, secs = run_trial(pwsh, runner, code, max(5, p["timeout"]), binds, work)
+            if not isinstance(r, dict):
+                trial[cid] = {"ran": True, "ok": False, "valid": None, "read": "", "error": err, "seconds": secs}
+            elif not r.get("ok"):
+                trial[cid] = {"ran": True, "ok": False, "valid": None, "read": "", "error": str(r.get("error") or "")[:300], "seconds": secs}
+            else:
+                vals = r.get("values")
+                vals = vals if isinstance(vals, list) else [vals]
+                kinds = r.get("kinds")
+                kinds = kinds if isinstance(kinds, list) else [kinds]
+                one = len(vals) == 1 and kinds == ["Boolean"] and isinstance(vals[0], bool)
+                trial[cid] = {"ran": True, "ok": one, "valid": vals[0] if one else None, "read": str(r.get("read") or "")[:300],
+                              "error": "" if one else "it gave %s, not one true or false" % (", ".join(str(v) for v in vals[:3]) or "nothing"),
+                              "seconds": secs}
+            trial[cid]["replayed"] = replayed
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    module.exit_json(changed=False, evaluate=ev, gate=gate, error="")
+    module.exit_json(changed=False, evaluate=ev, gate=gate, trial=trial, error="", sandbox={"ok": not no_sandbox and runner is not None and runner != "", "why": no_sandbox})
 
 
 if __name__ == "__main__":

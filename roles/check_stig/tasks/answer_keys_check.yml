@@ -1,6 +1,6 @@
 ---
-# STIG ANSWER KEYS (1.75.0), the last play, on the host again: every draft (the patterns', ACT's from the AAP side),
-# the read-only check of each on the host (no trial in 1.75.0 - 1.75.1), the report. See answer_keys.yml.
+# STIG ANSWER KEYS (1.75.0), the last play, on the trial host again: every draft (the patterns', ACT's from the AAP side),
+# the read-only check and one trial of each on the host, the report. See answer_keys.yml.
 - name: Answer keys | ACT's drafts (from the AAP side; none asked, none)
   ansible.builtin.set_fact:
     _ak_act: "{{ _ak_act | default({}) }}"
@@ -9,11 +9,14 @@
   ansible.builtin.set_fact:
     _ak_drafts: "{{ _ak_picks | stig_answer_drafts(answer_keys_values, answer_keys_act | bool, _ak_act) }}"
 
-- name: Answer keys | the read-only check of each draft, on the host (and what its Evaluate-STIG is) - no code is run
+- name: Answer keys | the read-only check and one trial of each draft, on the host (and what its Evaluate-STIG is)
   site_stig_answer_host:
     evaluate: "{{ check_stig_evaluate }}"
     pwsh: "{{ check_stig_pwsh }}"
     codes: "{{ _ak_drafts | stig_answer_codes }}"
+    trial: true
+    timeout: "{{ answer_keys_trial_timeout | int }}"
+    sandbox: "{{ _ak_sandbox | default('') }}"   # systemd-run (the tests give another path); no read-only sandbox: no trial
   register: _ak_host
   check_mode: false               # only reads (its own folder, removed)
 

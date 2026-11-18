@@ -6,8 +6,10 @@ allow and the tricks it must refuse.
 from __future__ import absolute_import, division, print_function
 
 import importlib.util
+import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -221,7 +223,8 @@ class Act(unittest.TestCase):
         self.assertTrue(d["V-2"]["true"][1].startswith(a.PREFIX_ACT))
         off = a.stig_answer_drafts(picks, {}, False)
         self.assertIn("ACT is off (answer_keys_act false)", off["V-2"]["why"])
-        hr = {"gate": {"V-1": {"ok": True, "used": ["/usr/bin/stat"]}, "V-2": {"ok": False, "why": ["it runs iex (not one of the allowed commands)"]}}}
+        hr = {"gate": {"V-1": {"ok": True, "used": ["/usr/bin/stat"]}, "V-2": {"ok": False, "why": ["it runs iex (not one of the allowed commands)"]}},
+              "trial": {"V-1": {"ok": True, "valid": False, "read": "read: apache", "seconds": 0.1}}}
         rows = dict((r["v"], r) for r in a.stig_answer_rows(picks, d, hr, "DEFAULT"))
         self.assertIn('<AnswerKey Name="DEFAULT">', rows["V-1"]["block"])
         self.assertIn("refused the draft ACT wrote: it runs iex", rows["V-2"]["why"])
@@ -229,17 +232,7 @@ class Act(unittest.TestCase):
         self.assertEqual(doc["web"]["title"], "STIG answer keys: 1 ready to copy, 2 not drafted")
         web = doc["web"]["sections"][0]
         self.assertEqual(web["details"][0][0]["texts"][0]["button"], "Copy block")
-        # 1.75.0: no trial - every block "not tried", what it would set for true and for false, try it on a test host first
-        self.assertIn(["Trial", a.NOT_TRIED], web["details"][0][1]["rows"])
-        self.assertIn(["When the code returns true", "NotAFinding (ValidTrueStatus)"], web["details"][0][1]["rows"])
-        self.assertIn(["When it returns false", "Open (ValidFalseStatus) - the rule stays Open"], web["details"][0][1]["rows"])
-        self.assertEqual(web["rows"][0][-2:], [a.NOT_TRIED_SHORT, a.WOULD_SET])
-        self.assertTrue(web["text"].startswith("Try each block on a test host first"))
-        self.assertTrue(doc["report"]["sections"][0]["text"].startswith("Try each block on a test host first"))
-        self.assertTrue(doc["web"]["sections"][2]["lines"][0].startswith("Try each block on a test host first."))
-        self.assertEqual([t["value"] for t in doc["web"]["summary"] if t["label"] == "Trial"], ["not tried"])
-        self.assertIn("Not tried: try each block on a test host first (the trial comes in 1.75.1).", doc["lines"])
-        self.assertEqual(doc["xlsx"][0]["rows"][0][2:4], [a.NOT_TRIED_SHORT, a.WOULD_SET])
+        self.assertIn(["Status it would set", "Open - the host fails it now: this key keeps it Open"], web["details"][0][1]["rows"])
         self.assertIn(["Its ExpectedStatus is Open", a.OPEN_NOTE], web["details"][0][1]["rows"])
         self.assertNotIn("details", doc["report"]["sections"][0])
         self.assertIn("Nothing was written to STIG Manager, the share or the host.", doc["web"]["sections"][2]["lines"][-1])
@@ -380,15 +373,108 @@ class ReadOnlyCheck(unittest.TestCase):
                 g = self.run_ps(self.gate, code)
                 self.assertTrue(g["ok"], g)
 
-    def test_no_trial(self):
-        """1.75.0: no code is run on the host - no trial, no sandbox, no systemd-run (they come in 1.75.1): the module only
-        parses each code with the read-only check, and has no setting that could turn a trial on."""
-        src = open(host.__file__).read()
-        for word in ("systemd-run", "TRIAL_PS1", "EncodedCommand\", \"", "trial=dict", "[scriptblock]::Create($code)"):
-            self.assertNotIn(word, src)
-        self.assertEqual(sorted(k for k in ("trial", "timeout", "sandbox") if '%s=dict(' % k in src), [])
-        defaults = open(os.path.join(REPO, "roles", "check_stig", "defaults", "main.yml")).read()
-        self.assertNotIn("answer_keys_trial", defaults)
+    def test_the_trial(self):
+        """The trial's wrapper (in the module: always inside the sandbox; here only safe codes, without it)."""
+        def trial(code):
+            p = subprocess.run(host.trial_command(PWSH, code), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            return json.loads(p.stdout.decode().strip().splitlines()[-1])
+        r = trial("Write-Verbose 'read: x'\nreturn (1 -lt 2)")
+        self.assertEqual((r["ok"], r["values"], r["kinds"], r["read"]), (True, [True], ["Boolean"], "read: x"))
+        r = trial("'a'\nreturn $true")
+        self.assertEqual(r["values"], ["a", True])                  # two things on its output: not offered (the module)
+
+    def test_the_sandbox(self):
+        """1.75.1: the sandbox's command line - the whole file system read-only, its own /tmp, /var/tmp, /dev/shm, no
+        socket of any family, no IP, only the right to read; as root a dynamic user (CAP_DAC_READ_SEARCH ambient), never
+        CAP_AUDIT_CONTROL; the host's network namespace (net.* read is the host's). No systemd-run: no sandbox, said why."""
+        c = host.sandbox_cmd("/usr/bin/systemd-run", 60, {"/usr/bin/systemctl": "/w/replay-systemctl"})
+        props = [c[i + 1] for i, x in enumerate(c) if x == "-p"]
+        for want in ("ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateDevices=yes", "ReadOnlyPaths=/dev/shm",
+                     "PrivateIPC=yes", "InaccessiblePaths=-/proc/sys/kernel/shmmax", "InaccessiblePaths=-/proc/sysvipc", "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
+                     "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
+                     "CapabilityBoundingSet=CAP_DAC_READ_SEARCH", "RuntimeMaxSec=60",
+                     "BindReadOnlyPaths=/w/replay-systemctl:/usr/bin/systemctl"):
+            self.assertIn(want, props)
+        self.assertEqual(props.index("RestrictAddressFamilies=~AF_UNIX"), props.index("RestrictAddressFamilies=AF_UNIX") + 1)
+        self.assertNotIn("PrivateNetwork=yes", props)
+        # 1.75.1 (Codex): /tmp, /var/tmp and /dev/shm are the host's (read-only) - pwsh writes only in its scratch tmpfs
+        self.assertFalse([x for x in props if x.startswith("PrivateTmp") or x == "TemporaryFileSystem=/dev/shm"])
+        sc = host.sandbox_cmd("/usr/bin/systemd-run", 60, scratch="/w/scratch")
+        self.assertIn("TemporaryFileSystem=/w/scratch:mode=1777", [sc[i + 1] for i, x in enumerate(sc) if x == "-p"])
+        self.assertIn("HOME=/w/scratch", [sc[i + 1] for i, x in enumerate(sc) if x == "-E"])
+        self.assertFalse([x for x in props if "AUDIT" in x])
+        real = os.geteuid
+        try:
+            os.geteuid = lambda: 0
+            r = host.sandbox_cmd("/usr/bin/systemd-run", 60)
+        finally:
+            os.geteuid = real
+        pr = [r[i + 1] for i, x in enumerate(r) if x == "-p"]
+        self.assertNotIn("--user", r)
+        self.assertIn("User=nobody", pr)
+        self.assertIn("Group=%s" % host.nobody_group(), pr)          # RHEL nobody, Ubuntu nogroup
+        self.assertNotIn("DynamicUser=yes", pr)            # it brings a private /tmp
+        self.assertIn("AmbientCapabilities=CAP_DAC_READ_SEARCH", pr)
+        self.assertFalse([x for x in pr if "AUDIT" in x])
+        self.assertEqual(host.find_sandbox("/nonexistent/systemd-run"), "")
+        self.assertEqual(host.find_sandbox("/usr/bin/env"), "")        # only a program named systemd-run
+        self.assertEqual(host.sandbox_probe(""), "systemd-run was not found")
+
+    def test_the_replay(self):
+        """1.75.1: only the check's own command lines are run outside the sandbox; the shim gives each its answer, any
+        other command line 'not captured' (exit 2)."""
+        for ok in (["/usr/sbin/auditctl", "-l"], ["/usr/bin/systemctl", "is-enabled", "sshd.service"],
+                   ["/usr/bin/systemctl", "show", "-p", "ActiveState", "auditd"]):
+            self.assertTrue(host.replay_ok(ok), ok)
+        for bad in (["/usr/sbin/auditctl", "-D"], ["/usr/sbin/auditctl", "-e", "0"], ["/usr/bin/systemctl", "stop", "sshd"],
+                    ["/usr/bin/systemctl", "is-active", "-H", "x"], ["/usr/bin/systemctl", "show", "-p", "A;B", "x"],
+                    ["/usr/bin/systemctl", "is-active", "--user", "x"], ["/usr/bin/rpm", "-q", "bash"]):
+            self.assertFalse(host.replay_ok(bad), bad)
+        # 1.75.1 (Codex): what depends on a namespace, a socket or NSS is replayed - an IPC setting, getent, id, a user or
+        # group name of stat or find (then all of that program's calls); the rest runs inside
+        rf = host.replays_for([["/usr/sbin/sysctl", "-n", "kernel.shmmax"], ["/usr/sbin/sysctl", "-n", "net.ipv4.ip_forward"],
+                               ["/usr/bin/rpm", "-q", "bash"], ["/usr/bin/getent", "passwd", "root"], ["/usr/bin/id", "-u", "root"],
+                               ["/usr/bin/stat", "-c", "%a", "/etc/shadow"]])
+        self.assertEqual(rf, [["/usr/sbin/sysctl", "-n", "kernel.shmmax"], ["/usr/sbin/sysctl", "-n", "net.ipv4.ip_forward"],
+                              ["/usr/bin/getent", "passwd", "root"], ["/usr/bin/id", "-u", "root"]])
+        self.assertEqual(host.replays_for([["/usr/sbin/sysctl", "-n", "net.ipv4.ip_forward"], ["/usr/bin/stat", "-c", "%a", "/x"]]), [])
+        self.assertEqual(len(host.replays_for([["/usr/bin/stat", "-c", "%U", "/x"], ["/usr/bin/stat", "-c", "%a", "/x"]])), 2)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-xdev", "-nouser", "-print"]])), 1)
+        self.assertEqual(len(host.replays_for([["/usr/bin/find", "/", "-type", "d", "-printf", "%u %p\\n"]])), 1)
+        self.assertEqual(host.replays_for([["/usr/bin/find", "/", "-type", "d", "-perm", "-0002", "-print"]]), [])
+        for ok in (["/usr/bin/getent", "passwd", "root"], ["/usr/bin/id", "-u", "-n", "root"], ["/usr/sbin/sysctl", "-n", "kernel.sem"],
+                   ["/usr/bin/stat", "-c", "%U %n", "/etc/shadow"], ["/usr/bin/find", "/home", "-nouser", "-print"]):
+            self.assertTrue(host.replay_ok(ok), ok)
+        for bad in (["/usr/bin/getent", "hosts", "x"], ["/usr/sbin/sysctl", "-w", "kernel.sem=1"], ["/usr/bin/find", "/", "-delete"],
+                    ["/usr/bin/stat", "--printf", "%U", "/x"], ["/usr/bin/id", "-Z"]):
+            self.assertFalse(host.replay_ok(bad), bad)
+        # what the sandbox shows as its own: not tried
+        for code, word in (("Get-Content /proc/mounts", "mount table"), ("Get-Content /proc/self/mountinfo", "mount table"),
+                           ("Get-Content /etc/mtab", "mount table"), ("Get-Content /proc/sys/kernel/shmmax", "IPC"),
+                           ("Get-ChildItem /dev/mqueue", "IPC"), ("(Get-Item /etc/x).User -eq 'root'", "user or group"),
+                           ("Get-Item /etc/x | Select-Object -ExpandProperty Group", "user or group")):
+            self.assertIn(word, host.blind(code), code)
+        self.assertEqual(host.blind("$o = @(& /usr/bin/stat -c '%U' '/etc/x' 2>$null); return ($o[0] -eq 'root')"), "")
+        g = self.run_ps(self.gate, "$a = @(& /usr/sbin/auditctl -l 2>&1); $e = & /usr/bin/systemctl is-enabled auditd; return $true")
+        self.assertEqual(g["calls"], [["/usr/sbin/auditctl", "-l"], ["/usr/bin/systemctl", "is-enabled", "auditd"]])
+        d = tempfile.mkdtemp()
+        try:
+            binds = host.write_shims(d, {("/usr/bin/systemctl", "is-active", "auditd"): (b"active\n", b"", 0),
+                                         ("/usr/bin/systemctl", "is-enabled", "x"): (b"", b"No such unit 'x'\n", 1)})
+            shim = binds.get("/usr/bin/systemctl")
+            self.assertTrue(shim and os.access(shim, os.X_OK))
+            run = lambda *a: subprocess.run(["/bin/sh", shim] + list(a), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            r = run("is-active", "auditd")
+            self.assertEqual((r.returncode, r.stdout), (0, b"active\n"))
+            r = run("is-enabled", "x")
+            self.assertEqual((r.returncode, r.stderr), (1, b"No such unit 'x'\n"))
+            r = run("stop", "auditd")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn(b"not captured", r.stderr)
+            r = run("is-active", "auditd", "x")
+            self.assertEqual(r.returncode, 2)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 class Evaluate(unittest.TestCase):

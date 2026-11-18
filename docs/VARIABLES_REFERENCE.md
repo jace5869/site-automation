@@ -721,10 +721,11 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_update_skip_attachments` | `true` | a review with attachments in STIG Manager (evidence a person attached) is left out of the plan and never written; false = written like the others |
 | `check_stig_update_detail_max` | `8000` | at most this many characters of what the scan found, as each review's detail |
 | `check_stig_update_create_assets` | `false` | A Linux host with no asset in STIG Manager (0.72.0): with check_stig_stigman_collection set, workflow 37's check scans it in full and plans its asset (named check_stig_stigman_asset, else the short name; the FQDN the inventory name) with its RHEL STIG, and the scan's answers as its reviews; created only after the appr… (all of it: the role file) |
-| `answer_keys_rules` | `[]` | ---- STIG answer keys (1.75.0, playbooks/stig_answer_keys.yml): Linux, Evaluate-STIG with pwsh, one host (read only) ----- the rules to draft an answer key for: V- or SV- ids (V-257777, SV-257900; from a survey: a text, a comma or space between), at most 25 - only those Open or Not Reviewed in STIG Manager and in Eval… (all of it: the role file) |
+| `answer_keys_rules` | `[]` | ---- STIG answer keys (1.75.0, playbooks/stig_answer_keys.yml): Linux, Evaluate-STIG with pwsh, one trial host ----- the rules to draft an answer key for: V- or SV- ids (V-257777, SV-257900; from a survey: a text, a comma or space between), at most 25 - only those Open or Not Reviewed in STIG Manager and in Evaluate-S… (all of it: the role file) |
 | `answer_keys_name` | (empty) | the AnswerKey's Name in the blocks; empty = the --AnswerKey of check_stig_evaluate_args, else DEFAULT |
 | `answer_keys_values` | `{}` | the site's own values a rule needs, e.g. {min_release: '9.4', world_writable_owners: [root, sys, bin, appuser]} (from a survey: a text, YAML or name: value lines; a list as names with a comma or space between) - each block says which it used; a rule that needs one not given is "Not drafted" with the line to add (docs/… (all of it: the role file) |
-| `answer_keys_act` | `true` | a rule no fixed pattern fits: ACT drafts its ValidationCode on the AAP side (evidence mode: it runs no command, nothing on the host), marked "drafted by ACT - read it before you use it"; false = written by hand |
+| `answer_keys_act` | `true` | a rule no fixed pattern fits: ACT drafts its ValidationCode on the AAP side (evidence mode: it runs no command, nothing on the trial host), marked "drafted by ACT - read it before you use it"; false = written by hand |
+| `answer_keys_trial_timeout` | `60` | seconds each ValidationCode may run in its trial on the host |
 
 ## check_time
 

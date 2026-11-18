@@ -1,10 +1,9 @@
 ---
 # STIG ANSWER KEYS (1.75.0): for the rules you pick (answer_keys_rules - Open or Not Reviewed), an Evaluate-STIG <AnswerKey>
 # block each, ready to copy into YOUR answer file under the rule's <Vuln ID>: ExpectedStatus (Evaluate-STIG's own result),
-# a ValidationCode that only reads, the status and comment for true and false. Linux, Evaluate-STIG with pwsh, ONE
+# a ValidationCode that only reads, the status and comment for true and false. Linux, Evaluate-STIG with pwsh, ONE trial
 # host (target): each code is made from DISA's check text by a fixed pattern - or drafted by ACT (answer_keys_act),
-# marked so - then checked read-only (PowerShell's parser) on that host. 1.75.0 runs no code: no trial (1.75.1) - each
-# block says "not tried": try it on a test host before you rely on it.
+# marked so - then checked read-only (PowerShell's parser) and tried once on that host, its result beside it.
 # Nothing is written anywhere: STIG Manager is read with GET only; Evaluate-STIG runs for those rules alone, with no answer
 # files, none of check_stig_evaluate_args, its own output removed; nothing goes to the share. docs/STIG_ANSWER_KEYS.md.
 #
@@ -57,7 +56,7 @@
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
       when: _ak_for_act | default([]) | length > 0
 
-    - name: The answer keys - the read-only check of each draft, the report (no trial in 1.75.0)
+    - name: The answer keys - the read-only check, one trial of each draft, the report
       ansible.builtin.include_role:
         name: check_stig
         tasks_from: answer_keys_check.yml
