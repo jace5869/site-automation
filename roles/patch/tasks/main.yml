@@ -345,8 +345,9 @@
             _patch_reboot_needed: >-
               {{ _patch_needs.rc | default(-1) == 1 or patch_reboot == 'always'
                  or (_patch_needs.rc | default(-1) not in [0, 1] and _patch_dnf.changed | default(false)) }}
+            # patch_reboot_allowed false (1.74.1): never, whatever automatic_restarts or patch_reboot say
             _patch_reboot_allowed: >-
-              {{ automatic_restarts | bool and patch_reboot != 'never'
+              {{ patch_reboot_allowed | bool and automatic_restarts | bool and patch_reboot != 'never'
                  and group_names | intersect(_patch_no_reboot) | length == 0 }}
 
         - name: Patch | reboot
@@ -360,10 +361,12 @@
           ansible.builtin.debug:
             msg: >-
               {{ inventory_hostname }} needs a reboot to finish the updates, but this playbook does not reboot it
-              ({{ 'automatic restarts are off: automatic_restarts is false' if not automatic_restarts | bool
+              ({{ 'patch_reboot_allowed is false: this job reboots no host' if not patch_reboot_allowed | bool
+                  else 'automatic restarts are off: automatic_restarts is false' if not automatic_restarts | bool
                   else 'patch_reboot=never' if patch_reboot == 'never'
                   else 'it is in ' ~ (group_names | intersect(_patch_no_reboot) | join(', ')) }}).
-              Reboot it by hand in a maintenance window{{ ', or run again with automatic_restarts: true' if not automatic_restarts | bool else '' }}.
+              Reboot it by hand in a maintenance window{{ ', or run again with automatic_restarts: true'
+              if not automatic_restarts | bool and patch_reboot_allowed | bool else '' }}.
           when: _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool)
 
         - name: Patch | step - the services after the update
@@ -400,7 +403,8 @@
               updates: "{{ (_patch_dnf.results | default([]) | length) if _patch_dnf.changed | default(false) else 0 }}"
               rebooted: "{{ _patch_reboot_needed | bool and _patch_reboot_allowed | bool and not ansible_check_mode }}"
               reboot: >-
-                {{ ('needed - automatic_restarts is false' if not automatic_restarts | bool else 'needed - not allowed here')
+                {{ ('Reboot needed - reboot by hand (patch_reboot_allowed is false)' if not patch_reboot_allowed | bool
+                    else 'needed - automatic_restarts is false' if not automatic_restarts | bool else 'needed - not allowed here')
                    if _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool) else '' }}
               warn_services: "{{ _patch_on_demand | difference(_patch_after.stdout_lines) }}"
 

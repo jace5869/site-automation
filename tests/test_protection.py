@@ -63,6 +63,31 @@ def run_checks():
     check(mods and set(mods) <= {"ansible.builtin.set_fact", "ansible.builtin.debug"},
           "roles/patch: the rescue only writes facts and says so - it never touches the host or its snapshot")
 
+    # 1.74.1: patch_reboot_allowed false - no reboot whatever automatic_restarts / patch_reboot say: in the role's decision
+    # (the only reboot task needs it) and for the up-to-date host that would go on to be rebooted
+    def walk(ts):
+        for t in ts or []:
+            yield t
+            for k in ("block", "rescue", "always"):
+                yield from walk(t.get(k))
+    rt = list(walk(role))
+    reboots = [t for t in rt if "ansible.builtin.reboot" in t]
+    decide = [t for t in rt if t.get("name") == "Patch | decide"]
+    check(len(reboots) == 1 and "_patch_reboot_allowed | bool" in str(reboots[0].get("when"))
+          and decide and str(decide[0]["ansible.builtin.set_fact"]["_patch_reboot_allowed"]).strip().startswith("{{ patch_reboot_allowed | bool and"),
+          "roles/patch: one reboot task, and patch_reboot_allowed false forbids it whatever automatic_restarts says (1.74.1)")
+    reach = [x for x in load("playbooks/patch_hosts.yml") if x.get("name") == "Patch hosts - which hosts answer (patch_skip_unreachable)"]
+    rtasks = reach[0]["tasks"] if reach else []
+    ro = [t for t in rtasks if "patch_reboot_only" in str(t.get("ansible.builtin.set_fact", ""))]
+    check(len(ro) == 1 and "patch_reboot_allowed" in str(ro[0].get("when")) and "patch_by_hand is not defined" in str(ro[0].get("when")),
+          "patch_hosts.yml: an up-to-date host goes on to its reboot only when patch_reboot_allowed, never one to patch by hand")
+    # 1.74.1: a host to patch by hand is left out before the hosts that go on (patch_reached): no VM step, no patch play
+    names = [t.get("name", "") for t in rtasks]
+    check("Leave it out (patch by hand)" in names and "The hosts that go on" in names
+          and names.index("Leave it out (patch by hand)") < names.index("The hosts that go on")
+          and rtasks[names.index("Leave it out (patch by hand)")].get("ansible.builtin.meta") == "end_host",
+          "patch_hosts.yml: a host to patch by hand never reaches the snapshot or the patch play (1.74.1)")
+
     wd = load("roles/win_patch/defaults/main.yml")
     check("patch_never_reboot_groups" in str(wd["win_patch_never_reboot_groups"]), "win_patch never-reboot list follows the Linux list")
 

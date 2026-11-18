@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.74.1 — 2026-11-18
+
+**To set up:** in `all.yml`:
+
+```yaml
+patch_by_hand_hosts: [db01, "app0?.example.mil"]   # your hosts that a person patches
+patch_reboot_allowed: false                        # Patch hosts never reboots a host
+```
+
+Then remove the `automatic_restarts` question from the *Patch hosts* survey. It has no effect with
+`patch_reboot_allowed: false`. `patch_by_hand_groups` takes inventory groups the same way.
+
+**Patch by hand, and never a reboot** (Patch hosts; docs/RUNBOOKS.md, "Patch by hand, and never a reboot").
+Windows patching is unchanged.
+
+- `patch_by_hand_hosts` and `patch_by_hand_groups`: hosts the job never patches or reboots, and takes no snapshot of.
+  The names are matched as in `site_exclude_hosts`: whole or short, `*` and `?`, any case.
+- The job still checks them, read-only: their updates (`dnf check-update`, with `patch_security_only` and
+  `patch_exclude`) and whether a reboot is pending (`needs-restarting -r`).
+- The report lists them under **Patch by hand**: the updates pending, a reboot pending, and *patch this one by hand*.
+  A *Patch by hand* tile sits beside *Skipped on purpose*. A dry run lists them the same way.
+- They never fail the job. One not reached is listed as *not reached - check by hand*.
+- `patch_reboot_allowed` (default `true`): `false` = no reboot, whatever `automatic_restarts`, `patch_reboot` or the
+  survey say. The job says so once at its start. A patched host that needs a reboot shows *Reboot needed - reboot by
+  hand (patch_reboot_allowed is false)*.
+
 ## 1.74.0 — 2026-11-18
 
 **To set up:** give the *Patch hosts* template `report_email_to` (its Variables, as for the other reports), or set

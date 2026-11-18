@@ -44,6 +44,12 @@ servicenow_assignment_group: Linux Operations
 site_exclude_hosts: []                    # e.g. [web02, "*.lab.example.mil"]: whole or short names, * and ?, any case
 site_exclude_groups: []                   # e.g. [retired]: every host in these inventory groups
 
+# ---- Patching by hand, and never a reboot (docs/RUNBOOKS.md, "Patch by hand") ---------------
+# Patch hosts never patches or reboots these, and takes no snapshot. It reads them and its report lists them.
+patch_by_hand_hosts: []                   # e.g. [db01, "app0?.example.mil"]: as site_exclude_hosts
+patch_by_hand_groups: []                  # e.g. [oracle_db]: every host in these inventory groups
+patch_reboot_allowed: true                # false = Patch hosts reboots no host, whatever automatic_restarts says
+
 # ---- ACT (only used with use_act=true; docs/ADDING_ACT.md) ----------------------------------
 site_act_level: explain
 site_act_provider: genai                  # genai | genai-beta (asksage: retired for now); the key comes from a credential

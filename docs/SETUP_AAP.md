@@ -598,7 +598,7 @@ updated and changes nothing.
 | Job type | Run, with **Prompt on launch** ticked, so you can pick *Check* (a dry run) |
 | Variables | **required**: `target: <group>`, the name of a **group (or host) inside the inventory** - not the inventory's own name. For example `target: stigman`, or `target: all` when the template's inventory holds only the servers to patch. Without it the job looks for a group called `patch_hosts`, and stops with a message that lists the groups your inventory does have |
 | Survey: `patch_security_only` | "Security updates only?" Choices `false`, `true`. Default `false` |
-| Survey: `automatic_restarts` | "Reboot hosts automatically when the updates need it?" Choices `no`, `yes`. Default `no` (no automatic restarts: the job lists the hosts that need a reboot) |
+| Survey: `automatic_restarts` | "Reboot hosts automatically when the updates need it?" Choices `no`, `yes`. Default `no` (no automatic restarts: the job lists the hosts that need a reboot). Leave this question out when `all.yml` has `patch_reboot_allowed: false` (1.74.1): then the job never reboots a host |
 | Survey: `patch_serial` (optional) | "How many hosts at a time?" *Integer*, minimum 1. Default `1`. Only here or in Variables: in `all.yml` it does nothing |
 | Survey: `patch_snapshot` (optional) | "VMware snapshot of each VM before it is patched?" Choices `false`, `true`. Needs the VMware vCenter credential |
 

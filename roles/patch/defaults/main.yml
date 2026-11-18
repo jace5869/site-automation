@@ -25,10 +25,20 @@ patch_fail_on_could_not: true
 automatic_restarts: false
 # Reboot (only with automatic_restarts: true): when_needed (needs-restarting says so) | never | always
 patch_reboot: when_needed
+# NEVER A REBOOT (1.74.1), set it in all.yml: false = this job reboots no host, whatever automatic_restarts,
+# patch_reboot or the survey say. A host that needs one is in the report as "Reboot needed - reboot by hand".
+# Linux only: Windows patch is unchanged.
+patch_reboot_allowed: true
 patch_reboot_timeout: 1800               # seconds to wait for the host to come back
 # Hosts in these groups are patched but NEVER rebooted by this playbook (reboot them by hand,
 # in a maintenance window). Add your own group names; the built-in protection below is on always.
 patch_never_reboot_groups: [aap, aap_hosts, sat, netapp, netapp_console_hosts]
+# PATCH BY HAND (1.74.1), set them in all.yml: hosts this job never patches or reboots, and takes no snapshot of.
+# Unlike site_exclude_hosts it reads them (dnf / yum check-update and needs-restarting -r, read-only) and the report
+# lists them under "Patch by hand", with their updates and whether a reboot is pending. Never a failure.
+# Names as in site_exclude_hosts: the whole or short name, * and ?, any case. A group: every host in it.
+patch_by_hand_hosts: []                  # e.g. [db01, "app0?.example.mil"]
+patch_by_hand_groups: []                 # e.g. [oracle_db]
 # Hosts in these groups are skipped entirely (Satellite is upgraded with satellite-maintain, not dnf).
 patch_never_patch_groups: [no_patch, aap, aap_hosts, sat, netapp, netapp_console_hosts]
 # BUILT IN, whatever you set above (roles/patch/vars/main.yml): no_patch and the AAP hosts (groups aap

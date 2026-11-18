@@ -1144,6 +1144,8 @@ is done and the report is sent. `patch_fail_on_could_not: false` keeps the job g
   snapshot.
 - **Patched**: each host's updates, whether it was rebooted, and the services it stopped (WARN).
 - **Up to date** (a pending reboot flagged) and **Skipped on purpose** (no_patch, AAP, protected).
+- **Patch by hand** (1.74.1): the hosts of `patch_by_hand_hosts` and `patch_by_hand_groups`, with their updates and
+  whether a reboot is pending (below).
 
 | Reason | What it means |
 |---|---|
@@ -1173,6 +1175,36 @@ The ServiceNow step of the workflow does not change: the report opens no inciden
 out: `NOT REACHED`, `NOT READY`, `NO DNF OR YUM`) and its snapshot (`took "patching" of VM web01`,
 `reused "patching" from 2026-11-09 08:12 UTC of VM web01`, `none - physical (...)`, `not needed - up to date`,
 `none (patch_snapshot is false)`; in a dry run: `would take`, `would reuse`).
+
+### Patch by hand, and never a reboot (1.74.1)
+
+Some hosts are patched by a person, never by the job. List them in `all.yml`:
+
+```yaml
+patch_by_hand_hosts: [db01, "app0?.example.mil"]   # whole or short names, * and ?, any case
+patch_by_hand_groups: [oracle_db]                  # every host in these inventory groups
+```
+
+- The job **never patches or reboots** them, and takes **no snapshot** of them.
+- It still **checks** them, read-only: `dnf check-update` (`yum` on RHEL 7) with `patch_security_only` and
+  `patch_exclude`, and `needs-restarting -r`.
+- The report lists them under **Patch by hand**: the updates pending, a reboot pending, and *patch this one by hand*.
+  A tile beside *Skipped on purpose* counts them. A dry run lists them the same way.
+- They **never fail the job**. One not reached is listed as *not reached - check by hand*.
+- The names are matched as in `site_exclude_hosts`. A host in `site_exclude_hosts` is never even read, and is not
+  in the report.
+
+To make sure the job **never reboots** a host, set this in `all.yml`:
+
+```yaml
+patch_reboot_allowed: false
+```
+
+- No reboot, whatever `automatic_restarts`, `patch_reboot` or the survey say.
+- The job says so once at its start.
+- A patched host that needs a reboot shows *Reboot needed - reboot by hand (patch_reboot_allowed is false)*.
+- Leave the `automatic_restarts` question out of the Patch hosts survey: it has no effect then.
+- Linux only. Windows patch is unchanged.
 
 ### Snapshot before patching
 

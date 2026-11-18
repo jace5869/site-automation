@@ -147,6 +147,51 @@ class Report(unittest.TestCase):
 
 
 
+class ByHand(unittest.TestCase):
+    """1.74.1: patch_by_hand_hosts / patch_by_hand_groups - listed with what the read-only checks found, never a failure;
+    patch_reboot_allowed false - the reboot is left to a person."""
+    def hosts(self):
+        return {"web01.example.mil": {"_patch_done": DONE, "patch_started": True},
+                "db01.example.mil": {"patch_by_hand": True, "patch_updates": 7, "patch_reboot_pending": True},
+                "db02.example.mil": {"patch_by_hand": True, "patch_updates": 0, "patch_reboot_pending": False},
+                "db03.example.mil": {"patch_by_hand": True, "site_host_unreached": "No route to host"},
+                "db04.example.mil": {"patch_by_hand": True, "patch_not_ready": "only 200 MB free in /var (need 1024 MB)"}}
+
+    def test_section_and_tile(self):
+        r = pr.patch_report(self.hosts(), {})
+        self.assertEqual((r["status"], r["needs_look"], r["counts"]["critical"]), ("ok", [], 0))     # never a failure
+        self.assertEqual(r["title"], "Patch hosts: 1 host patched, 4 to patch by hand")
+        self.assertEqual([(t["label"], t["value"]) for t in r["summary"]][-2:], [("Skipped on purpose", 0), ("Patch by hand", 4)])
+        sec = [x for x in r["sections"] if x["title"] == "Patch by hand"][0]
+        self.assertEqual(sec["columns"], ["Host", "Updates pending", "Reboot pending", "What to do"])
+        self.assertEqual(sec["rows"], [
+            ["db01.example.mil", "7", "REBOOT PENDING", "patch this one by hand"],
+            ["db02.example.mil", "0", "none pending", "patch this one by hand"],
+            ["db03.example.mil", "not checked", "-", "not reached - check by hand"],
+            ["db04.example.mil", "not checked", "-", "not ready (only 200 MB free in /var (need 1024 MB)) - check by hand"]])
+        self.assertEqual([c[2:] for c in sec["cell_status"]], [["warning", ""], ["", ""], ["", "warning"], ["", "warning"]])
+        self.assertNotIn("Could not patch or needs a look", [x["title"] for x in r["sections"]])
+        self.assertFalse(any("ends failed" in x for x in r["sections"][-1]["lines"]))
+
+    def test_a_dry_run_lists_them_too(self):
+        r = pr.patch_report(self.hosts(), {"dry": True})
+        self.assertIn("Patch by hand", [x["title"] for x in r["sections"]])
+        self.assertTrue(r["title"].startswith("DRY RUN - Patch hosts: 1 host would be patched, 4 to patch by hand"))
+
+    def test_by_hand_wins_over_its_problem(self):
+        st = pr.patch_host_state({"patch_by_hand": True, "patch_unsupported": "Ubuntu 24.04, apt"})
+        self.assertEqual((st["state"], st["updates"]), ("by_hand", "no dnf or yum"))
+        self.assertEqual(pr.patch_host_state({"patch_by_hand": True})["updates"], "not known (the check did not answer)")
+
+    def test_reboot_by_hand(self):
+        done = dict(DONE, rebooted=False, reboot=pr.REBOOT_BY_HAND)
+        r = pr.patch_report({"web01": {"_patch_done": done}}, {"reboot_allowed": False, "automatic_restarts": True})
+        patched = [x for x in r["sections"] if x["title"] == "Patched"][0]
+        self.assertEqual(patched["rows"][0][2], "Reboot needed - reboot by hand (patch_reboot_allowed is false)")
+        self.assertEqual(patched["cell_status"][0][2], "warning")
+        self.assertIn("reboots off (patch_reboot_allowed is false)", r["subtitle"])
+
+
 class BatchBad(unittest.TestCase):
     def test_lost_or_could_not(self):
         hv = {"a": {"_patch_df": {"unreachable": True, "msg": "x"}}, "b": {"_patch_could_not": {"reason": "FAILED during update"}},

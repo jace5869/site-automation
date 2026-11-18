@@ -315,6 +315,11 @@ ucs_domains: [ucs01.yoursite.mil]
 # patch_continue_on_failure: true
 ## The job fails at its end when a host could not be patched (false = green; the report still lists them)
 # patch_fail_on_could_not: true
+## Patch by hand (1.74.1, in all.yml): never patched or rebooted by this job, only checked and listed in the report
+# patch_by_hand_hosts: [db01, "app0?.example.mil"]
+# patch_by_hand_groups: [oracle_db]
+## Never a reboot (in all.yml): false = no reboot, whatever automatic_restarts or the survey say
+# patch_reboot_allowed: false
 """),
     "poam_status.yml": ("POA&M status", "STIG Manager API (optional)", "", ""),
     "report_web_copy.yml": ("Report website - copy", "Machine (Windows), Red Hat Ansible Automation Platform", "", """\

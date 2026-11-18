@@ -19,6 +19,9 @@
 # - RHEL 8 and later are patched with dnf, RHEL 7 and its clones with yum; a host with neither is listed (NO DNF OR YUM)
 #   and left out (patch_skip_unsupported).
 # - Every service that was running before the update must be running after it.
+# - Patch by hand (1.74.1): the hosts of patch_by_hand_hosts and patch_by_hand_groups (all.yml) are never patched or
+#   rebooted by this job, and get no snapshot. They are only checked, read-only (their updates, a reboot pending), and
+#   the report lists them under "Patch by hand". Never a failure. patch_reboot_allowed: false = no host is rebooted.
 # - Hosts in no_patch, and always the AAP hosts (aap, aap_hosts), are skipped: never patched, never
 #   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups (they add to these,
 #   never replace them).
@@ -86,6 +89,33 @@
         name: site_findings
         tasks_from: os_guard.yml
 
+    # 1.74.1: a host to patch by hand is checked like the others (reached, ready, its updates, a reboot pending - all
+    # read-only), whatever patch_skip_* say, then left out before any snapshot or update. Matched as site_exclude_hosts.
+    - name: Patch by hand - never patched or rebooted by this job, only checked (patch_by_hand_hosts, patch_by_hand_groups)
+      ansible.builtin.set_fact:
+        patch_by_hand: true
+      when:
+        - ([inventory_hostname] | site_exclude_match(patch_by_hand_hosts | default([], true), groups, patch_by_hand_groups | default([], true))) | length > 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
+
+    - name: Patch by hand - the hosts
+      ansible.builtin.debug:
+        msg: >-
+          {{ _hand | length }} host(s) to patch by hand (patch_by_hand_hosts, patch_by_hand_groups): {{ _hand | join(', ') }}.
+          This job only checks them: never patched, never rebooted, no snapshot. The report lists them.
+      vars:
+        _hand: "{{ ansible_play_hosts | map('extract', hostvars) | selectattr('patch_by_hand', 'defined') | map(attribute='inventory_hostname') | list }}"
+      run_once: true
+      when: _hand | length > 0
+
+    - name: No reboot by this job (patch_reboot_allowed is false)
+      ansible.builtin.debug:
+        msg: >-
+          patch_reboot_allowed is false: this job reboots no host, whatever automatic_restarts, patch_reboot or the survey
+          say. A host that needs a reboot is listed in the report: reboot it by hand.
+      run_once: true
+      when: not patch_reboot_allowed | default(true) | bool
+
     - name: Not contacted yet
       ansible.builtin.set_fact:
         site_host_unreached: ""
@@ -97,7 +127,7 @@
       vars:
         site_reach_report_all: true            # none reached: the report lists them all, the job fails at its end
       when:
-        - patch_skip_unreachable | default(true) | bool
+        - patch_skip_unreachable | default(true) | bool or patch_by_hand is defined
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
     # a host with neither dnf nor yum (not a RHEL-like Linux) is not one this job patches: listed as NO DNF OR YUM and
@@ -111,7 +141,7 @@
       check_mode: false
       register: _patch_pkg
       when:
-        - patch_skip_unsupported | default(true) | bool
+        - patch_skip_unsupported | default(true) | bool or patch_by_hand is defined
         - site_host_unreached | length == 0
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
@@ -152,7 +182,7 @@
       check_mode: false
       register: _patch_ready
       when:
-        - patch_skip_not_ready | default(true) | bool
+        - patch_skip_not_ready | default(true) | bool or patch_by_hand is defined
         - site_host_unreached | length == 0
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
@@ -182,7 +212,7 @@
         - _patch_ready.unreachable | default(false) or _patch_ready.failed | default(false) or _patch_ready.rc | default(0) != 0
           or (_patch_ready.stdout_lines[-1].split()[3] | int) < patch_min_free_mb | default(1024) | int
         # with patch_skip_unreachable: false a host not reached goes on, and fails the job in the patch play
-        - not _patch_ready.unreachable | default(false) or patch_skip_unreachable | default(true) | bool
+        - not _patch_ready.unreachable | default(false) or patch_skip_unreachable | default(true) | bool or patch_by_hand is defined
 
     - name: Not ready - the job goes on without it
       ansible.builtin.debug:
@@ -213,7 +243,7 @@
       check_mode: false
       register: _patch_check
       when:
-        - patch_update_check | default(true) | bool
+        - patch_update_check | default(true) | bool or patch_by_hand is defined
         - site_host_unreached | length == 0
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['no_patch', 'aap', 'aap_hosts']) | length == 0
 
@@ -244,7 +274,9 @@
       changed_when: false
       check_mode: false
       register: _patch_pending
-      when: _patch_check.rc | default(-1) == 0
+      when: >-
+        _patch_check.rc | default(-1) == 0
+        or (patch_by_hand is defined and _patch_check is not skipped and not _patch_check.unreachable | default(false))
 
     - name: Up to date, a reboot pending - it goes on to be rebooted (automatic_restarts)
       ansible.builtin.set_fact:
@@ -254,6 +286,8 @@
         - _patch_pending.rc | default(-1) == 1
         - automatic_restarts | default(false) | bool
         - patch_reboot | default('when_needed') != 'never'
+        - patch_reboot_allowed | default(true) | bool
+        - patch_by_hand is not defined
         - group_names | intersect((patch_never_reboot_groups | default(['aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
 
     - name: Up to date, a reboot pending - the job goes on with it, to reboot it
@@ -267,19 +301,37 @@
       ansible.builtin.set_fact:
         patch_up_to_date: true
         patch_reboot_pending: "{{ _patch_pending.rc | default(-1) == 1 }}"
-      when: _patch_check.rc | default(-1) == 0 and patch_reboot_only is not defined
+      when: _patch_check.rc | default(-1) == 0 and patch_reboot_only is not defined and patch_by_hand is not defined
 
     - name: Up to date - the job goes on without it
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }}: UP TO DATE - nothing to patch{{ ' (security updates only)' if patch_security_only | default(false) | bool else '' }}.
           No snapshot, not patched; the job is not failed for it.{{ (' A REBOOT IS STILL PENDING (needs-restarting -r):'
-          ~ ' reboot it by hand, or run again with automatic_restarts: true.') if patch_reboot_pending | bool else '' }}
+          ~ (' reboot it by hand (patch_reboot_allowed is false).' if not patch_reboot_allowed | default(true) | bool
+             else ' reboot it by hand, or run again with automatic_restarts: true.')) if patch_reboot_pending | bool else '' }}
       when: patch_up_to_date is defined
 
     - name: Leave it out (up to date)
       ansible.builtin.meta: end_host
       when: patch_up_to_date is defined
+
+    - name: Patch by hand - what it has
+      ansible.builtin.set_fact:
+        patch_reboot_pending: "{{ _patch_pending.rc == 1 }}"
+      when: patch_by_hand is defined and _patch_pending.rc | default(-1) in [0, 1]
+
+    - name: Patch by hand - checked, not patched
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: PATCH BY HAND - {{ (patch_updates ~ ' update(s) pending') if patch_updates is defined
+          else 'its updates not known (the check did not answer)' }}{{ ', a REBOOT IS PENDING' if patch_reboot_pending | default(false) | bool
+          else '' }}. Never patched or rebooted by this job, no snapshot: patch this one by hand.
+      when: patch_by_hand is defined
+
+    - name: Leave it out (patch by hand)
+      ansible.builtin.meta: end_host
+      when: patch_by_hand is defined
 
     - name: The hosts that go on
       ansible.builtin.group_by:
@@ -424,7 +476,9 @@
                           'up to date, reboot only' if v.patch_reboot_only is defined else
                           ((v.patch_updates ~ ' pending') if v.patch_updates | default(0) | int > 0 else
                            'not checked' if v.patch_updates is not defined else 'none pending') -%}
-          {%-   if v.site_host_unreached | default('') -%}{%- set upd = 'NOT REACHED' -%}
+          {%-   if v.patch_by_hand is defined -%}{%- set upd = 'BY HAND, ' ~ (('not reached' if v.site_host_unreached | default('') else
+                                                                     (v.patch_updates ~ ' pending') if v.patch_updates is defined else 'not checked')) -%}
+          {%-   elif v.site_host_unreached | default('') -%}{%- set upd = 'NOT REACHED' -%}
           {%-   elif v.patch_not_ready is defined -%}{%- set upd = 'NOT READY' -%}
           {%-   elif v.patch_unsupported is defined -%}{%- set upd = 'NO DNF OR YUM' -%}{%- endif -%}
           {%-   set snap = 'not needed - up to date' if v.patch_up_to_date is defined else
@@ -451,7 +505,7 @@
           {% for h in _unreached %}{{ h }} ({{ hostvars[h].site_host_unreached }}){{ '; ' if not loop.last else '' }}{% endfor %}
       vars:
         _unreached: >-
-          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('site_host_unreached', 'defined')
+          {{ ansible_play_hosts_all | map('extract', hostvars) | rejectattr('patch_by_hand', 'defined') | selectattr('site_host_unreached', 'defined')
              | rejectattr('site_host_unreached', 'equalto', '')
              | map(attribute='inventory_hostname') | list }}
       run_once: true
@@ -464,7 +518,7 @@
           {% for h in _not_ready %}{{ h }} ({{ hostvars[h].patch_not_ready }}){{ '; ' if not loop.last else '' }}{% endfor %}
       vars:
         _not_ready: >-
-          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('patch_not_ready', 'defined')
+          {{ ansible_play_hosts_all | map('extract', hostvars) | rejectattr('patch_by_hand', 'defined') | selectattr('patch_not_ready', 'defined')
              | map(attribute='inventory_hostname') | list }}
       run_once: true
       when: _not_ready | length > 0
@@ -476,10 +530,24 @@
           {% for h in _unsupported %}{{ h }} ({{ hostvars[h].patch_unsupported }}){{ '; ' if not loop.last else '' }}{% endfor %}
       vars:
         _unsupported: >-
-          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('patch_unsupported', 'defined')
+          {{ ansible_play_hosts_all | map('extract', hostvars) | rejectattr('patch_by_hand', 'defined') | selectattr('patch_unsupported', 'defined')
              | map(attribute='inventory_hostname') | list }}
       run_once: true
       when: _unsupported | length > 0
+
+    - name: Patch hosts | PATCH BY HAND - never patched or rebooted by this job (patch_by_hand_hosts, patch_by_hand_groups)
+      ansible.builtin.debug:
+        msg: >-
+          {{ _hand | length }} host(s) to patch by hand:
+          {% for h in _hand %}{{ h }} ({{ 'not reached - check by hand' if hostvars[h].site_host_unreached | default('')
+          else (hostvars[h].patch_updates ~ ' update(s) pending') if hostvars[h].patch_updates is defined else 'updates not known' }}{{
+          ', reboot pending' if hostvars[h].patch_reboot_pending | default(false) | bool else '' }}){{ '; ' if not loop.last else '' }}{% endfor %}
+      vars:
+        _hand: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('patch_by_hand', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+      run_once: true
+      when: _hand | length > 0
 
     # 1.74.0: every host, as the other reports: the email, the website, the workbook. Once, from the AAP side, never
     # touching a host. A dry run sends it too, under its own name, so the approver sees the hosts that could not be patched.
@@ -492,6 +560,7 @@
                'fail_on_could_not': patch_fail_on_could_not | default(true) | bool,
                'snapshot': patch_snapshot | default(false) | bool, 'security_only': patch_security_only | default(false) | bool,
                'automatic_restarts': automatic_restarts | default(false) | bool,
+               'reboot_allowed': patch_reboot_allowed | default(true) | bool,
                'stopped': ansible_play_hosts_all | map('extract', hostvars) | map(attribute='patch_not_started', default='')
                           | select | first | default('')}) }}
       delegate_to: localhost

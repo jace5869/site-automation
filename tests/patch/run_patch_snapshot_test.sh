@@ -477,6 +477,44 @@ for mode in --check ""; do
 done
 check "  ...and it is updated" "$(ver "${hosts[1]}")" "1.1"
 
+# ---- 1.74.1: patch by hand (patch_by_hand_hosts, patch_by_hand_groups), and never a reboot (patch_reboot_allowed) ----
+down10() {  # web01 and DC0_C0_RP0_VM1 back to sa-patch-pending 1.0: one update each
+    for h in "${hosts[0]}" "${hosts[1]}"; do
+        "$engine" exec "$h" sh -c 'rpm -q sa-patch-pending | grep -q -- -1.0- || rpm -U --oldpackage /opt/sa-patch-rpms/installed/sa-patch-pending-*.rpm' \
+            || { echo "ABORT - $h at 1.0"; exit 1; }
+    done
+}
+hand='{"patch_by_hand_hosts": ["WEB01", "down0?"]}'      # a short name in another case, and a wildcard
+for mode in --check ""; do
+    down10; rm -rf "${work:?}/site" && mkdir -p "$work/site"
+    NOVC=1 run "patch by hand${mode:+ (dry run)}: web01 and down01 (not reached) checked and listed, never patched; the others patched; green" ok $mode \
+        -e target=web01.example.mil:DC0_C0_RP0_VM1:down01.example.mil -e "$uc1" -e patch_packages=sa-patch-pending -e "$hand" -e "$site" \
+        -- 'web01.example.mil: PATCH BY HAND - 1 update(s) pending' '2 host(s) to patch by hand' 'down01.example.mil (not reached - check by hand)' '!could not be patched or need a look:'
+    check "  ...only the other host's update ran${mode:+ (dry run)}" "$(patched)" "DC0_C0_RP0_VM1"
+    check "  ...its section and tile${mode:+ (dry run)}" "$(DRY=${mode:+1} rep sec 'Patch by hand')|$(DRY=${mode:+1} rep tile 'Patch by hand')|$(DRY=${mode:+1} rep look)" \
+        "down01.example.mil web01.example.mil|2|"
+done
+check "  ...web01 not updated" "$(ver "${hosts[0]}")" "1.0"
+check "  ...DC0_C0_RP0_VM1 updated" "$(ver "${hosts[1]}")" "1.1"
+check "  ...the report's title" "$(rep title)" "Patch hosts: 1 host patched, 2 to patch by hand"
+down10
+NOVC=1 run "patch_by_hand_groups (a group, a wildcard, any case): every host by hand - nothing patched, green" ok \
+    -e target=web01.example.mil:DC0_C0_RP0_VM1 -e "$uc1" -e patch_packages=sa-patch-pending -e '{"patch_by_hand_groups": ["LIN*"]}' \
+    -- '2 host(s) to patch by hand' "!$installs" '!TASK [patch : Patch | reboot]'
+check "  ...both still at 1.0" "$(ver "${hosts[0]}") $(ver "${hosts[1]}")" "1.0 1.0"
+
+# patch_reboot_allowed false: no reboot, whatever automatic_restarts and patch_reboot say; the report says reboot by hand
+rm -rf "${work:?}/site" && mkdir -p "$work/site"
+NOVC=1 run "patch_reboot_allowed false, automatic_restarts true, patch_reboot always: patched, never rebooted" ok \
+    -e target=DC0_C0_RP0_VM1 -e "$uc1" -e patch_packages=sa-patch-pending -e patch_reboot_allowed=false -e automatic_restarts=true \
+    -e patch_reboot=always -e "$site" \
+    -- 'patch_reboot_allowed is false: this job reboots no host' "$installs" 'patch_reboot_allowed is false: this job reboots no host)'
+check "  ...the reboot task ran for no host" \
+    "$(awk '/^TASK \[patch : Patch \| reboot\]/{f=1; next} /^TASK /{f=0} f && /^(ok|changed): \[/' "$work/out.txt" | wc -l)" "0"
+check "  ...the report: reboot by hand" \
+    "$(command grep -q 'Reboot needed - reboot by hand (patch_reboot_allowed is false)' "$work/site/patch-hosts/latest.json" && echo yes)" "yes"
+check "  ...updated" "$(ver "${hosts[1]}")" "1.1"
+
 rm -rf "${work:?}/site" && mkdir -p "$work/site"
 NOVC=1 run "the default: a host not reached is listed, the others patched, and the job fails at its end" fail \
     -e target=web01.example.mil:down01.example.mil -e "$site" -- 'down01.example.mil: NOT REACHED' "$installs" \

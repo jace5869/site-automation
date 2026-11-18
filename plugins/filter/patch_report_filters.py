@@ -7,8 +7,9 @@ patch_report(hosts, opts) -> the report (title, status, summary, sections, count
 
 A state is one of: patched, would_patch (a dry run), up_to_date, skipped (on purpose), could_not, services_down
 (patched, but a service that starts at boot is not running), not_started (the rollout stopped first:
-patch_continue_on_failure false). could_not, services_down and not_started need a look: critical for the index,
-counted by patch_fail_on_could_not. Standard library only."""
+patch_continue_on_failure false), by_hand (1.74.1: patch_by_hand_hosts / patch_by_hand_groups - never patched or
+rebooted by the job, only checked). could_not, services_down and not_started need a look: critical for the index,
+counted by patch_fail_on_could_not. by_hand never is. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -17,7 +18,9 @@ import re
 # the hostvars each host's steps leave, the only ones read here
 PATCH_FACT_KEYS = ('site_host_unreached', 'patch_not_ready', 'patch_unsupported', 'patch_up_to_date', 'patch_reboot_pending',
                    'patch_reboot_only', 'patch_updates', '_patch_ended_on_purpose', '_patch_done', '_patch_could_not',
-                   'patch_could_not', '_patch_snapshot', 'patch_started', 'patch_not_started', 'group_names')
+                   'patch_could_not', '_patch_snapshot', 'patch_started', 'patch_not_started', 'group_names', 'patch_by_hand')
+BY_HAND = 'patch this one by hand'
+REBOOT_BY_HAND = 'Reboot needed - reboot by hand (patch_reboot_allowed is false)'
 
 # reason -> (order: worst first, what to do in one line)
 REASONS = {
@@ -76,6 +79,8 @@ def patch_host_state(facts, dry=False):
     def bad(state, reason, step, detail):
         out.update(state=state, reason=reason, step=step, detail=_short(detail), todo=REASONS.get(reason, (99, ''))[1])
         return out
+    if _bool(f.get('patch_by_hand')):
+        return _by_hand(f, out)
     if _s(f.get('site_host_unreached')):
         return bad('could_not', 'NOT REACHED', 'before patching (is it reached)', f['site_host_unreached'])
     if f.get('patch_not_ready'):
@@ -114,6 +119,23 @@ def patch_host_state(facts, dry=False):
     return out
 
 
+def _by_hand(f, out):
+    """A host to patch by hand (1.74.1): what the read-only checks found - never a failure."""
+    upd, reboot, todo = 'not checked', '-', BY_HAND
+    if _s(f.get('site_host_unreached')):
+        todo = 'not reached - check by hand'
+    elif f.get('patch_not_ready'):
+        todo = 'not ready (%s) - check by hand' % _short(f['patch_not_ready'], 80)
+    elif f.get('patch_unsupported'):
+        upd, todo = 'no dnf or yum', 'patch this one by hand (%s)' % _short(f['patch_unsupported'], 60)
+    else:
+        upd = _s(f.get('patch_updates')) if f.get('patch_updates') is not None else 'not known (the check did not answer)'
+        rp = f.get('patch_reboot_pending')
+        reboot = '-' if rp is None else ('REBOOT PENDING' if _bool(rp) else 'none pending')
+    out.update(state='by_hand', updates=upd, reboot=reboot, todo=todo)
+    return out
+
+
 def _bool(v):
     return v is True or _s(v).lower() in ('true', 'yes', '1')
 
@@ -134,7 +156,7 @@ def patch_report(hosts, opts=None):
         st['snapshot'] = _snap(hosts[name] if isinstance(hosts[name], dict) else {}, st['state'] in NEEDS_LOOK and not dry)
         rows.append(st)
     by = dict((k, [r for r in rows if r['state'] == k]) for k in
-              ('patched', 'would_patch', 'up_to_date', 'skipped', 'could_not', 'services_down', 'not_started'))
+              ('patched', 'would_patch', 'up_to_date', 'skipped', 'could_not', 'services_down', 'not_started', 'by_hand'))
     look = sorted(by['could_not'] + by['services_down'] + by['not_started'],
                   key=lambda r: (REASONS.get(r['reason'], (99,))[0], r['host'].lower()))
     patched = by['would_patch'] if dry else by['patched']
@@ -151,10 +173,13 @@ def patch_report(hosts, opts=None):
         parts.append('%d with services down' % len(by['services_down']))
     if by['not_started']:
         parts.append('%d not started' % len(by['not_started']))
+    if by['by_hand']:
+        parts.append('%d to patch by hand' % len(by['by_hand']))
     title = ('DRY RUN - ' if dry else '') + 'Patch hosts: ' + ', '.join(parts)
     sub = ['%s in this run' % _plural(len(rows), 'host', 'hosts'), 'patch_serial %s' % _s(o.get('serial') or 1),
            'snapshots %s' % ('on' if _bool(o.get('snapshot')) else 'off'),
            'security updates only' if _bool(o.get('security_only')) else 'all updates',
+           'reboots off (patch_reboot_allowed is false)' if not _bool(o.get('reboot_allowed', True)) else
            'reboots %s' % ('on (automatic_restarts)' if _bool(o.get('automatic_restarts')) else 'off')]
     if dry:
         sub.insert(0, 'Check mode: nothing was installed, no snapshot taken, nothing rebooted')
@@ -171,6 +196,8 @@ def patch_report(hosts, opts=None):
          ('see below' if by['could_not'] else 'none'),
          'status': 'critical' if (by['could_not'] or by['services_down']) else 'ok'},
         {'label': 'Skipped on purpose', 'value': len(by['skipped']), 'note': 'no_patch, AAP, protected'}]
+    if by['by_hand']:
+        summary.append({'label': 'Patch by hand', 'value': len(by['by_hand']), 'note': 'patch_by_hand_hosts, never by this job'})
     if by['not_started']:
         summary.append({'label': 'Not started', 'value': len(by['not_started']), 'note': 'the rollout stopped', 'status': 'critical'})
 
@@ -194,7 +221,8 @@ def patch_report(hosts, opts=None):
             'text': 'Each host with the updates it ' + ('has' if dry else 'got') + ('.' if dry else ', whether it was rebooted, and the services it stopped.'),
             'columns': ['Host', 'Updates', 'Rebooted', 'Services', 'Snapshot'],
             'rows': [[r['host'], _s(r['updates']) if r['updates'] is not None else '-',
-                      ('no (dry run)' if dry else (('yes' if r['rebooted'] else 'no') + ((' - ' + r['reboot']) if r['reboot'] else ''))),
+                      ('no (dry run)' if dry else r['reboot'] if r['reboot'] == REBOOT_BY_HAND else
+                       (('yes' if r['rebooted'] else 'no') + ((' - ' + r['reboot']) if r['reboot'] else ''))),
                       ('WARN stopped: ' + ', '.join(r['warn_services'])) if r['warn_services'] else ('-' if dry else 'all running again'),
                       r['snapshot']] for r in patched],
             'row_status': ['warning' if r['warn_services'] else '' for r in patched],
@@ -207,6 +235,18 @@ def patch_report(hosts, opts=None):
             'rows': [[r['host'], r['reboot'] or 'none pending'] for r in by['up_to_date']],
             'row_status': ['' for r in by['up_to_date']],
             'cell_status': [['', 'warning' if r['reboot'] else ''] for r in by['up_to_date']]})
+    if by['by_hand']:
+        hand = by['by_hand']
+        sections.append({
+            'title': 'Patch by hand',
+            'text': ('Never patched or rebooted by this job, and no snapshot (patch_by_hand_hosts, patch_by_hand_groups). '
+                     'Only checked, read-only: the updates it has and whether a reboot is pending.'),
+            'columns': ['Host', 'Updates pending', 'Reboot pending', 'What to do'],
+            'rows': [[r['host'], r['updates'], r['reboot'], r['todo']] for r in hand],
+            'row_status': ['' for r in hand],
+            'cell_status': [['', '', 'warning' if r['reboot'] == 'REBOOT PENDING' else '',
+                             'warning' if r['todo'] != BY_HAND else ''] for r in hand],
+            'kinds': ['', '', '', 'wrap']})
     if by['skipped']:
         sections.append({
             'title': 'Skipped on purpose', 'text': 'Never patched by this job: no_patch, the AAP hosts, a protected VM.',
