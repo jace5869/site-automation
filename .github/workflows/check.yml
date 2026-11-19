@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   ansible:
-    name: Ansible syntax + shell
+    name: Lint, syntax and unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -193,263 +193,6 @@ jobs:
         run: |
           python tests/test_protection.py
           bash tests/check_vendor.sh
-      - name: Findings, the apply-time guard (current ansible-core and 2.16)
-        run: |
-          bash tests/findings/run_findings_test.sh
-          PATH=/tmp/ac216/bin:$PATH bash tests/findings/run_findings_test.sh
-      - name: A host that cannot be reached - listed, the job not failed (current ansible-core and 2.16)
-        run: |
-          bash tests/findings/run_unreachable_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/findings/run_unreachable_test.sh
-      - name: MariaDB check, host and podman containers (fake podman; current ansible-core and 2.16)
-        run: |
-          bash tests/mariadb/run_mariadb_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/mariadb/run_mariadb_test.sh
-      - name: Auditd check, audit volume and the excluded accounts (fake audit logs; current ansible-core and 2.16)
-        run: |
-          bash tests/auditd/run_auditd_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/auditd/run_auditd_test.sh
-      - name: Email a report (fake mail relay; current ansible-core and 2.16)
-        run: |
-          bash tests/email/run_email_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_email_test.sh
-      - name: The report website - a report folder, an upload with PUT (fake website; current ansible-core and 2.16)
-        run: |
-          bash tests/email/run_web_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_web_test.sh
-      - name: The enclave and the classification banner - email, workbook, website (fake mail relay; current ansible-core and 2.16)
-        run: |
-          bash tests/enclave/run_enclave_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/enclave/run_enclave_test.sh
-      - name: The report website on a Windows file share over SMB, against Samba in a container (current ansible-core and 2.16)
-        run: |
-          pip install smbprotocol
-          /tmp/ac216/bin/pip -q install smbprotocol
-          bash tests/email/run_smb_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14452 bash tests/email/run_smb_test.sh
-      - name: Evaluate-STIG's answer files from a Windows file share over SMB (check_stig_evaluate_answers), against Samba in a container (current ansible-core and 2.16)
-        run: |
-          bash tests/stig/run_stig_answers_smb_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14462 bash tests/stig/run_stig_answers_smb_test.sh
-      - name: Workflow 40 as STIG Manager Watcher - checklists read and moved on a Windows file share over SMB, against Samba in a container (current ansible-core and 2.16)
-        run: |
-          bash tests/stig/run_ckl_import_smb_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14464 STIG_CKL_SM_PORT=12600 bash tests/stig/run_ckl_import_smb_test.sh
-      - name: Horizon - FSLogix profiles report, a Windows file share over SMB against Samba in a container (current ansible-core and 2.16)
-        run: |
-          bash tests/horizon/run_fslogix_smb_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14466 bash tests/horizon/run_fslogix_smb_test.sh
-      - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
-        run: |
-          bash tests/ad/run_ad_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_test.sh
-      - name: Active Directory health report, reader mode - a plain domain user against two real Samba AD DCs in docker (current ansible-core and 2.16)
-        run: |
-          sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq krb5-user > /dev/null
-          pip install ldap3 dnspython cryptography pywinrm
-          /tmp/ac216/bin/pip -q install ldap3 dnspython cryptography pywinrm
-          AD_TEST_RUNTIME=docker bash tests/ad/run_ad_reader_test.sh
-          AD_TEST_RUNTIME=docker ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_reader_test.sh
-      - name: Account lockout, the Ansible side with made-up DCs (current ansible-core and 2.16)
-        run: |
-          bash tests/ad/run_lockout_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_lockout_test.sh
-      - name: NetApp ONTAP health report against a fake ONTAP REST API (current ansible-core and 2.16)
-        run: |
-          bash tests/netapp/run_netapp_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_netapp_test.sh
-      - name: NetApp ONTAP capacity trends against a fake ONTAP and a fake AAP job history (current ansible-core and 2.16)
-        run: |
-          bash tests/netapp/run_capacity_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_capacity_test.sh
-      - name: Cisco UCS inventory against a fake UCS Manager XML API (current ansible-core and 2.16)
-        run: |
-          bash tests/ucs/run_ucs_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ucs/run_ucs_test.sh
-      - name: Outage AAR and SOP Word documents, emailed, with a scripted GenAI model (current ansible-core and 2.16)
-        run: |
-          bash tests/incident/run_incident_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/incident/run_incident_test.sh
-      - name: ACT old copies - an old act linked, kept, the saved model reported; UBI 9 and UBI 8 (Python 3.6) containers (current ansible-core and 2.16)
-        env:
-          ACT_TEST_COLLECTIONS: /home/runner/.ansible/collections
-        run: |
-          bash tests/galaxy_install.sh -r tests/patch/requirements.yml
-          bash tests/act/run_act_old_copies_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/act/run_act_old_copies_test.sh
-      - name: Disk space report and the tmp cleanup - UBI 9 containers, web01's /tmp on a real filesystem (current ansible-core and 2.16)
-        env:
-          DISK_TEST_COLLECTIONS: /home/runner/.ansible/collections
-        run: |
-          bash tests/galaxy_install.sh -r tests/patch/requirements.yml   # containers.podman (the patch step installed it before the split)
-          bash tests/disk/test_tmp_clean.sh
-          bash tests/disk/run_disk_report_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/disk/run_disk_report_test.sh
-      - name: Availability (STIG Manager, ServiceNow) and STIG Manager health against fake nodes, Keycloak and ServiceNow (current ansible-core and 2.16)
-        run: |
-          bash tests/availability/run_availability_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/availability/run_availability_test.sh
-      - name: Log analysis, this runner as a Linux host with made-up logs (stand-in journalctl and podman, fake ACT; current ansible-core and 2.16)
-        run: |
-          bash tests/logs/run_log_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/logs/run_log_test.sh
-      - name: The site portal's AAP side - workflow 44 with a fake AAP and a fake ACT, the refusals; the recheck and the import checking the portal's values (current ansible-core and 2.16)
-        run: |
-          bash tests/portal/run_portal_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal/run_portal_test.sh
-          bash tests/portal_setup/run_portal_setup_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_portal_setup_test.sh
-          bash tests/portal_setup/run_scorecard_setup_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_scorecard_setup_test.sh
-      - name: Containers check and Service watch, rootful and rootless (fake podman; current ansible-core and 2.16)
-        run: |
-          bash tests/containers/run_containers_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/containers/run_containers_test.sh
-      - name: fapolicyd denials with ACT, the report emailed (fake rpm/systemctl/ausearch, fake ACT; current ansible-core and 2.16)
-        run: |
-          bash tests/fapolicyd/run_fapolicyd_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_test.sh
-      - name: fapolicyd - getting it running, the fixes approved made, fapolicyd broken after a fix put back (fake rpm/systemctl/journalctl/restorecon; current ansible-core and 2.16)
-        run: |
-          bash tests/fapolicyd/run_fapolicyd_fix_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_fix_test.sh
-      - name: fapolicyd - blocks and would-be blocks, trust entries and rules approved, the rules files cleaned up, the workflow, ACT, a change that breaks fapolicyd put back (fakes; current ansible-core and 2.16)
-        run: |
-          bash tests/fapolicyd/run_fapolicyd_rules_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_rules_test.sh
-          bash tests/fapolicyd/run_denials_report_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_denials_report_test.sh
-      - name: Trust check against a made-up host tree (current ansible-core and 2.16)
-        run: |
-          bash tests/trust/run_trust_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/trust/run_trust_test.sh
-      - name: The STIG drift report (a fake oscap, a stand-in STIG Manager - read-only)
-        run: |
-          bash tests/stig/run_stig_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_test.sh
-      - name: The Windows STIG drift report (PowerShell 7 for Windows, a stand-in Evaluate-STIG and STIG Manager - read-only)
-        run: |
-          bash tests/stig/run_win_stig_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_test.sh
-      - name: The STIG recheck, Linux and Windows (a fake oscap, stand-in Evaluate-STIG and STIG Manager - read-only)
-        run: |
-          bash tests/stig/run_stig_recheck_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_recheck_test.sh
-          bash tests/stig/run_win_stig_recheck_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_recheck_test.sh
-      - name: STIG answer keys (1.75.0; pwsh, a stand-in Evaluate-STIG, a fake ACT, a stand-in STIG Manager that fails on any write)
-        run: |
-          # 1.76.0: the trial runs in a systemd-run sandbox - here the runner user's own systemd (lingering), with user
-          # namespaces allowed (the Ubuntu runner's AppArmor restricts them by default)
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          sudo loginctl enable-linger "$(id -un)"
-          for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
-          # 1.76.1c: as the runner user, below systemd 257 (this runner: 255) the module refuses the sandbox - the code
-          # could signal this user's other processes; sandbox_trial asserts that refusal (on 257 and later it must hold)
-          python3 tests/stig/sandbox_trial.py
-          # as root, as the job runs it (become: a system unit, a dynamic user): every write, signal and socket refused,
-          # sysctl -w / -p / --system fail inside, /etc stays as it is, auditctl -l replayed - on this throwaway runner only
-          sudo apt-get install -y -q auditd >/dev/null && sudo systemctl start auditd || true
-          sudo env "PATH=$PATH" "$(command -v python3)" tests/stig/sandbox_trial.py
-          # the answer keys as root too (the trial needs root here, as the job has it)
-          sudo env "PATH=$PATH" bash tests/stig/run_stig_answer_keys_test.sh
-          sudo env "PATH=$PATH" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_test.sh
-          sudo env "PATH=$PATH" bash tests/stig/run_stig_answer_keys_hosts_test.sh
-          sudo env "PATH=$PATH" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_hosts_test.sh
-      - name: Workflow 37 - STIG Manager updated after an approval (the recheck's plan, the update; a stand-in STIG Manager that writes for one client)
-        run: |
-          bash tests/stig/run_stig_update_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_update_test.sh
-      - name: Workflow 40 - checklists (CKL) imported into STIG Manager after an approval (the check's plan, the update; a stand-in STIG Manager)
-        run: |
-          bash tests/stig/run_ckl_import_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_ckl_import_test.sh
-      - name: Workflow 40 - the checklist import's routes, moves and STIG assignments (a stand-in STIG Manager that moves and assigns)
-        run: |
-          bash tests/stig/run_ckl_routes_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_ckl_routes_test.sh
-      - name: The STIG compliance scorecard in the checklist import's report (a stand-in STIG Manager and AAP; scorecard reads no folder, GET only)
-        run: |
-          bash tests/stig/run_scorecard_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_scorecard_test.sh
-      - name: The sso check against fake sssd, realm, Kerberos and adcli tools (current ansible-core and 2.16)
-        run: |
-          bash tests/sso/run_sso_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/sso/run_sso_test.sh
-      - name: vCenter single sign-on and OCSP (a stand-in vCenter REST API, openssl ocsp; current ansible-core and 2.16)
-        run: |
-          bash tests/vcsso/run_vcsso_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vcsso/run_vcsso_test.sh
-      - name: The network performance report (fake ping and iperf3, a real OCSP responder; current ansible-core and 2.16)
-        run: |
-          bash tests/netperf/run_netperf_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netperf/run_netperf_test.sh
-      - name: Every Linux check runs on this runner (no check-error)
-        run: bash tests/linux/run_linux_checks.sh
-      - name: update-from-release.sh (bash twin of the PowerShell update test)
-        run: bash tests/test_update_from_release.sh
-      - name: ee/build-ee.sh - the checks, the build arguments, ee-check, push and save (fake podman, ansible-builder, curl)
-        run: bash tests/ee/test_build_ee.sh
-      - name: Horizon 8 jobs against a fake Horizon REST API (tests/horizon/hzmock.py)
-        run: |
-          bash tests/horizon/run_horizon_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/horizon/run_horizon_test.sh
-      - name: Mail relay whitelist - format, plan -> approval -> apply, with a fake mail relay (current ansible-core and 2.16)
-        run: |
-          bash tests/mail_relay/run_mail_relay_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/mail_relay/run_mail_relay_test.sh
-      - name: Tenable.sc scan job against a fake Tenable.sc (tests/tenable/scmock.py; current ansible-core and 2.16)
-        run: |
-          bash tests/tenable/run_tenable_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/tenable/run_tenable_test.sh
-      - name: ServiceNow test ticket, tickets, VM request pickup and ServiceNow health (MID Servers) against a fake ServiceNow (current ansible-core and 2.16)
-        run: |
-          bash tests/servicenow/run_servicenow_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_servicenow_test.sh
-      - name: ServiceNow weekly activity report against a fake ServiceNow with a week of records (current ansible-core and 2.16)
-        run: |
-          bash tests/servicenow/run_war_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_war_test.sh
-      - name: NetApp ONTAP capacity trends' points in a real MySQL 8.4 (docker) - the table, the history, a database that is down (current ansible-core and 2.16)
-        run: |
-          pip install PyMySQL cryptography
-          /tmp/ac216/bin/pip -q install PyMySQL cryptography
-          docker pull -q mysql:8.4
-          CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 bash tests/netapp/run_capacity_db_test.sh
-          CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_capacity_db_test.sh
-      - name: Certificate report finding TLS ports and keystores by itself (in a private namespace)
-        run: |
-          # Ubuntu 24.04's AppArmor stops unprivileged user namespaces (unshare -rnp); allow them on this runner
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
-          bash tests/certs/run_certs_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_certs_test.sh
-      - name: Certificate renewal - CSRs on the ServiceNow tickets (test CA, fake ServiceNow; current ansible-core and 2.16)
-        run: |
-          bash tests/certs/run_cert_renew_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_renew_test.sh
-      - name: Certificate install - from the request to the port, with the approval, the rollbacks and the restore (test CA, fake ServiceNow, a stand-in web server; current ansible-core and 2.16)
-        run: |
-          bash tests/certs/run_cert_install_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_install_test.sh
-      - name: Network device certificates - report, sweep, incidents, Cisco CSRs (stand-in devices and IOS-XE CLI, fake ServiceNow; current ansible-core and 2.16)
-        run: |
-          pip install paramiko
-          /tmp/ac216/bin/pip -q install paramiko
-          bash tests/galaxy_install.sh cisco.ios ansible.netcommon
-          bash tests/netcerts/run_net_certs_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netcerts/run_net_certs_test.sh
-      - name: Network config backup and load - git, share, ServiceNow, IOS lines and restore (scp + configure replace), PAN-OS commit (stand-in devices; current ansible-core and 2.16)
-        run: |
-          pip install scp
-          /tmp/ac216/bin/pip -q install paramiko scp
-          bash tests/netconfig/run_net_config_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netconfig/run_net_config_test.sh
-      - name: Certificate inventory into SQL Server (a real SQL Server 2022 in docker)
-        run: |
-          pip install pymssql
-          bash tests/galaxy_install.sh community.general
-          docker pull -q mcr.microsoft.com/mssql/server:2022-latest
-          CERT_SQL_TEST_RUNTIME=docker bash tests/certinv/run_cert_inventory_sql_test.sh
       - name: Credential types and inventory are valid YAML
         run: |
           python - <<'PY'
@@ -484,6 +227,339 @@ jobs:
             foreach ($x in $e) { "$($f.Name):$($x.Extent.StartLineNumber): $($x.Message)"; $bad++ }
           }
           if ($bad) { exit 1 }
+      - name: No private keys or obvious secrets committed
+        run: |
+          # the header alone: a real key has its base64 on the NEXT line (git grep looks at one line at a time)
+          if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
+            echo "secret-looking content found"; exit 1; fi
+
+  ansible-stig-answers:
+    name: STIG drift, rechecks and answer keys
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: A pwsh the STIG answer keys trust (the runner's /opt is the runner user's - the job rightly refuses a pwsh below it)
+        run: |
+          # 1.76.1b: the read-only check and the trial run pwsh only if it and every folder above it are root's and
+          # writable by root alone (else it could be swapped before it runs, as root). This runner's /opt is owned by
+          # the runner user: a copy in a folder of root's, first on the PATH for the steps after
+          src="$(dirname "$(readlink -f "$(command -v pwsh)")")"
+          sudo rm -rf /usr/lib/site-ak-pwsh
+          sudo mkdir -p /usr/lib/site-ak-pwsh
+          sudo cp -a "$src" /usr/lib/site-ak-pwsh/7
+          sudo chown -R root:root /usr/lib/site-ak-pwsh
+          sudo chmod -R go-w /usr/lib/site-ak-pwsh
+          echo /usr/lib/site-ak-pwsh/7 >> "$GITHUB_PATH"
+          namei -l "$src/pwsh" /usr/lib/site-ak-pwsh/7/pwsh
+          /usr/lib/site-ak-pwsh/7/pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+      - name: Install the oldest supported ansible-core (2.16)
+        run: python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: Install SMB libraries for current ansible-core and 2.16
+        run: |
+          pip install smbprotocol
+          /tmp/ac216/bin/pip -q install smbprotocol
+      - name: Evaluate-STIG's answer files from a Windows file share over SMB (check_stig_evaluate_answers), against Samba in a container (current ansible-core and 2.16)
+        run: |
+          bash tests/stig/run_stig_answers_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14462 bash tests/stig/run_stig_answers_smb_test.sh
+      - name: The STIG drift report (a fake oscap, a stand-in STIG Manager - read-only)
+        run: |
+          bash tests/stig/run_stig_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_test.sh
+      - name: The Windows STIG drift report (PowerShell 7 for Windows, a stand-in Evaluate-STIG and STIG Manager - read-only)
+        run: |
+          bash tests/stig/run_win_stig_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_test.sh
+      - name: The STIG recheck, Linux and Windows (a fake oscap, stand-in Evaluate-STIG and STIG Manager - read-only)
+        run: |
+          bash tests/stig/run_stig_recheck_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_recheck_test.sh
+          bash tests/stig/run_win_stig_recheck_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_recheck_test.sh
+      - name: STIG answer keys (1.75.0; pwsh, a stand-in Evaluate-STIG, a fake ACT, a stand-in STIG Manager that fails on any write)
+        run: |
+          # 1.76.0: the trial runs in a systemd-run sandbox - here the runner user's own systemd (lingering), with user
+          # namespaces allowed (the Ubuntu runner's AppArmor restricts them by default)
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo loginctl enable-linger "$(id -un)"
+          for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
+          # 1.76.1c: as the runner user, below systemd 257 (this runner: 255) the module refuses the sandbox - the code
+          # could signal this user's other processes; sandbox_trial asserts that refusal (on 257 and later it must hold)
+          python3 tests/stig/sandbox_trial.py
+          # as root, as the job runs it (become: a system unit, a dynamic user): every write, signal and socket refused,
+          # sysctl -w / -p / --system fail inside, /etc stays as it is, auditctl -l replayed - on this throwaway runner only
+          sudo apt-get install -y -q auditd >/dev/null && sudo systemctl start auditd || true
+          sudo env "PATH=$PATH" "$(command -v python3)" tests/stig/sandbox_trial.py
+          # the answer keys as root too (the trial needs root here, as the job has it)
+          sudo env "PATH=$PATH" bash tests/stig/run_stig_answer_keys_test.sh
+          sudo env "PATH=$PATH" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_test.sh
+          sudo env "PATH=$PATH" bash tests/stig/run_stig_answer_keys_hosts_test.sh
+          sudo env "PATH=$PATH" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_hosts_test.sh
+
+  ansible-stig-import:
+    name: STIG imports, updates and scorecards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Install the oldest supported ansible-core (2.16)
+        run: python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: Install SMB libraries for current ansible-core and 2.16
+        run: |
+          pip install smbprotocol
+          /tmp/ac216/bin/pip -q install smbprotocol
+      - name: Workflow 40 as STIG Manager Watcher - checklists read and moved on a Windows file share over SMB, against Samba in a container (current ansible-core and 2.16)
+        run: |
+          bash tests/stig/run_ckl_import_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14464 STIG_CKL_SM_PORT=12600 bash tests/stig/run_ckl_import_smb_test.sh
+      - name: Workflow 37 - STIG Manager updated after an approval (the recheck's plan, the update; a stand-in STIG Manager that writes for one client)
+        run: |
+          bash tests/stig/run_stig_update_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_update_test.sh
+      - name: Workflow 40 - checklists (CKL) imported into STIG Manager after an approval (the check's plan, the update; a stand-in STIG Manager)
+        run: |
+          bash tests/stig/run_ckl_import_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_ckl_import_test.sh
+      - name: Workflow 40 - the checklist import's routes, moves and STIG assignments (a stand-in STIG Manager that moves and assigns)
+        run: |
+          bash tests/stig/run_ckl_routes_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_ckl_routes_test.sh
+      - name: The STIG compliance scorecard in the checklist import's report (a stand-in STIG Manager and AAP; scorecard reads no folder, GET only)
+        run: |
+          bash tests/stig/run_scorecard_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_scorecard_test.sh
+
+  ansible-portal-services:
+    name: Site portal, findings and ServiceNow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Install the oldest supported ansible-core (2.16)
+        run: python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: Findings, the apply-time guard (current ansible-core and 2.16)
+        run: |
+          bash tests/findings/run_findings_test.sh
+          PATH=/tmp/ac216/bin:$PATH bash tests/findings/run_findings_test.sh
+      - name: A host that cannot be reached - listed, the job not failed (current ansible-core and 2.16)
+        run: |
+          bash tests/findings/run_unreachable_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/findings/run_unreachable_test.sh
+      - name: Availability (STIG Manager, ServiceNow) and STIG Manager health against fake nodes, Keycloak and ServiceNow (current ansible-core and 2.16)
+        run: |
+          bash tests/availability/run_availability_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/availability/run_availability_test.sh
+      - name: The site portal's AAP side - workflow 44 with a fake AAP and a fake ACT, the refusals; the recheck and the import checking the portal's values (current ansible-core and 2.16)
+        run: |
+          bash tests/portal/run_portal_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal/run_portal_test.sh
+          bash tests/portal_setup/run_portal_setup_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_portal_setup_test.sh
+          bash tests/portal_setup/run_scorecard_setup_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_scorecard_setup_test.sh
+      - name: Tenable.sc scan job against a fake Tenable.sc (tests/tenable/scmock.py; current ansible-core and 2.16)
+        run: |
+          bash tests/tenable/run_tenable_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/tenable/run_tenable_test.sh
+      - name: ServiceNow test ticket, tickets, VM request pickup and ServiceNow health (MID Servers) against a fake ServiceNow (current ansible-core and 2.16)
+        run: |
+          bash tests/servicenow/run_servicenow_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_servicenow_test.sh
+      - name: ServiceNow weekly activity report against a fake ServiceNow with a week of records (current ansible-core and 2.16)
+        run: |
+          bash tests/servicenow/run_war_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_war_test.sh
+
+  ansible-reports:
+    name: Reports, web and storage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Install the oldest supported ansible-core (2.16)
+        run: python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: Email a report (fake mail relay; current ansible-core and 2.16)
+        run: |
+          bash tests/email/run_email_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_email_test.sh
+      - name: The report website - a report folder, an upload with PUT (fake website; current ansible-core and 2.16)
+        run: |
+          bash tests/email/run_web_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_web_test.sh
+      - name: The enclave and the classification banner - email, workbook, website (fake mail relay; current ansible-core and 2.16)
+        run: |
+          bash tests/enclave/run_enclave_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/enclave/run_enclave_test.sh
+      - name: The report website on a Windows file share over SMB, against Samba in a container (current ansible-core and 2.16)
+        run: |
+          pip install smbprotocol
+          /tmp/ac216/bin/pip -q install smbprotocol
+          bash tests/email/run_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14452 bash tests/email/run_smb_test.sh
+      - name: NetApp ONTAP health report against a fake ONTAP REST API (current ansible-core and 2.16)
+        run: |
+          bash tests/netapp/run_netapp_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_netapp_test.sh
+      - name: NetApp ONTAP capacity trends against a fake ONTAP and a fake AAP job history (current ansible-core and 2.16)
+        run: |
+          bash tests/netapp/run_capacity_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_capacity_test.sh
+      - name: Cisco UCS inventory against a fake UCS Manager XML API (current ansible-core and 2.16)
+        run: |
+          bash tests/ucs/run_ucs_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ucs/run_ucs_test.sh
+      - name: Outage AAR and SOP Word documents, emailed, with a scripted GenAI model (current ansible-core and 2.16)
+        run: |
+          bash tests/incident/run_incident_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/incident/run_incident_test.sh
+      - name: Mail relay whitelist - format, plan -> approval -> apply, with a fake mail relay (current ansible-core and 2.16)
+        run: |
+          bash tests/mail_relay/run_mail_relay_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/mail_relay/run_mail_relay_test.sh
+      - name: NetApp ONTAP capacity trends' points in a real MySQL 8.4 (docker) - the table, the history, a database that is down (current ansible-core and 2.16)
+        run: |
+          pip install PyMySQL cryptography
+          /tmp/ac216/bin/pip -q install PyMySQL cryptography
+          docker pull -q mysql:8.4
+          CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 bash tests/netapp/run_capacity_db_test.sh
+          CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_capacity_db_test.sh
+
+  ansible-linux:
+    name: Linux checks, ACT and remediation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Install the oldest supported ansible-core (2.16)
+        run: python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: MariaDB check, host and podman containers (fake podman; current ansible-core and 2.16)
+        run: |
+          bash tests/mariadb/run_mariadb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/mariadb/run_mariadb_test.sh
+      - name: Auditd check, audit volume and the excluded accounts (fake audit logs; current ansible-core and 2.16)
+        run: |
+          bash tests/auditd/run_auditd_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/auditd/run_auditd_test.sh
+      - name: ACT old copies - an old act linked, kept, the saved model reported; UBI 9 and UBI 8 (Python 3.6) containers (current ansible-core and 2.16)
+        env:
+          ACT_TEST_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/galaxy_install.sh -r tests/patch/requirements.yml
+          bash tests/act/run_act_old_copies_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/act/run_act_old_copies_test.sh
+      - name: Disk space report and the tmp cleanup - UBI 9 containers, web01's /tmp on a real filesystem (current ansible-core and 2.16)
+        env:
+          DISK_TEST_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/galaxy_install.sh -r tests/patch/requirements.yml   # containers.podman (the patch step installed it before the split)
+          bash tests/disk/test_tmp_clean.sh
+          bash tests/disk/run_disk_report_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/disk/run_disk_report_test.sh
+      - name: Log analysis, this runner as a Linux host with made-up logs (stand-in journalctl and podman, fake ACT; current ansible-core and 2.16)
+        run: |
+          bash tests/logs/run_log_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/logs/run_log_test.sh
+      - name: Containers check and Service watch, rootful and rootless (fake podman; current ansible-core and 2.16)
+        run: |
+          bash tests/containers/run_containers_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/containers/run_containers_test.sh
+      - name: fapolicyd denials with ACT, the report emailed (fake rpm/systemctl/ausearch, fake ACT; current ansible-core and 2.16)
+        run: |
+          bash tests/fapolicyd/run_fapolicyd_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_test.sh
+      - name: fapolicyd - getting it running, the fixes approved made, fapolicyd broken after a fix put back (fake rpm/systemctl/journalctl/restorecon; current ansible-core and 2.16)
+        run: |
+          bash tests/fapolicyd/run_fapolicyd_fix_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_fix_test.sh
+      - name: fapolicyd - blocks and would-be blocks, trust entries and rules approved, the rules files cleaned up, the workflow, ACT, a change that breaks fapolicyd put back (fakes; current ansible-core and 2.16)
+        run: |
+          bash tests/fapolicyd/run_fapolicyd_rules_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_rules_test.sh
+          bash tests/fapolicyd/run_denials_report_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_denials_report_test.sh
+      - name: Trust check against a made-up host tree (current ansible-core and 2.16)
+        run: |
+          bash tests/trust/run_trust_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/trust/run_trust_test.sh
+      - name: The sso check against fake sssd, realm, Kerberos and adcli tools (current ansible-core and 2.16)
+        run: |
+          bash tests/sso/run_sso_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/sso/run_sso_test.sh
+      - name: Every Linux check runs on this runner (no check-error)
+        run: bash tests/linux/run_linux_checks.sh
+      - name: update-from-release.sh (bash twin of the PowerShell update test)
+        run: bash tests/test_update_from_release.sh
+      - name: ee/build-ee.sh - the checks, the build arguments, ee-check, push and save (fake podman, ansible-builder, curl)
+        run: bash tests/ee/test_build_ee.sh
+
+  ansible-directory-horizon:
+    name: Directory, Horizon and Windows simulations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Install the oldest supported ansible-core (2.16)
+        run: python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: Install SMB libraries for current ansible-core and 2.16
+        run: |
+          pip install smbprotocol
+          /tmp/ac216/bin/pip -q install smbprotocol
+      - name: Horizon - FSLogix profiles report, a Windows file share over SMB against Samba in a container (current ansible-core and 2.16)
+        run: |
+          bash tests/horizon/run_fslogix_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14466 bash tests/horizon/run_fslogix_smb_test.sh
+      - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
+        run: |
+          bash tests/ad/run_ad_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_test.sh
+      - name: Active Directory health report, reader mode - a plain domain user against two real Samba AD DCs in docker (current ansible-core and 2.16)
+        run: |
+          sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq krb5-user > /dev/null
+          pip install ldap3 dnspython cryptography pywinrm
+          /tmp/ac216/bin/pip -q install ldap3 dnspython cryptography pywinrm
+          AD_TEST_RUNTIME=docker bash tests/ad/run_ad_reader_test.sh
+          AD_TEST_RUNTIME=docker ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_reader_test.sh
+      - name: Account lockout, the Ansible side with made-up DCs (current ansible-core and 2.16)
+        run: |
+          bash tests/ad/run_lockout_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_lockout_test.sh
+      - name: vCenter single sign-on and OCSP (a stand-in vCenter REST API, openssl ocsp; current ansible-core and 2.16)
+        run: |
+          bash tests/vcsso/run_vcsso_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vcsso/run_vcsso_test.sh
+      - name: The network performance report (fake ping and iperf3, a real OCSP responder; current ansible-core and 2.16)
+        run: |
+          bash tests/netperf/run_netperf_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netperf/run_netperf_test.sh
+      - name: Horizon 8 jobs against a fake Horizon REST API (tests/horizon/hzmock.py)
+        run: |
+          bash tests/horizon/run_horizon_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/horizon/run_horizon_test.sh
       - name: Windows checks with test data (PowerShell 7 on Linux, normal and constrained)
         run: |
           pwsh -NoProfile -File tests/windows/test_win_checks.ps1
@@ -500,11 +576,52 @@ jobs:
         run: bash tests/windows/trust_sim/run_trust_sim.sh
       - name: Windows patch age in the health report, simulated (stand-in Get-HotFix)
         run: bash tests/windows/patch_age_sim/run_patch_age_sim.sh
-      - name: No private keys or obvious secrets committed
+
+  ansible-certificates-network:
+    name: Certificates and network configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Install the oldest supported ansible-core (2.16)
+        run: python -m venv /tmp/ac216 && /tmp/ac216/bin/pip -q install 'ansible-core==2.16.*'
+      - name: Certificate report finding TLS ports and keystores by itself (in a private namespace)
         run: |
-          # the header alone: a real key has its base64 on the NEXT line (git grep looks at one line at a time)
-          if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
-            echo "secret-looking content found"; exit 1; fi
+          # Ubuntu 24.04's AppArmor stops unprivileged user namespaces (unshare -rnp); allow them on this runner
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+          bash tests/certs/run_certs_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_certs_test.sh
+      - name: Certificate renewal - CSRs on the ServiceNow tickets (test CA, fake ServiceNow; current ansible-core and 2.16)
+        run: |
+          bash tests/certs/run_cert_renew_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_renew_test.sh
+      - name: Certificate install - from the request to the port, with the approval, the rollbacks and the restore (test CA, fake ServiceNow, a stand-in web server; current ansible-core and 2.16)
+        run: |
+          bash tests/certs/run_cert_install_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_install_test.sh
+      - name: Network device certificates - report, sweep, incidents, Cisco CSRs (stand-in devices and IOS-XE CLI, fake ServiceNow; current ansible-core and 2.16)
+        run: |
+          pip install paramiko
+          /tmp/ac216/bin/pip -q install paramiko
+          bash tests/galaxy_install.sh cisco.ios ansible.netcommon
+          bash tests/netcerts/run_net_certs_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netcerts/run_net_certs_test.sh
+      - name: Network config backup and load - git, share, ServiceNow, IOS lines and restore (scp + configure replace), PAN-OS commit (stand-in devices; current ansible-core and 2.16)
+        run: |
+          pip install scp
+          /tmp/ac216/bin/pip -q install paramiko scp
+          bash tests/netconfig/run_net_config_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netconfig/run_net_config_test.sh
+      - name: Certificate inventory into SQL Server (a real SQL Server 2022 in docker)
+        run: |
+          pip install pymssql
+          bash tests/galaxy_install.sh community.general
+          docker pull -q mcr.microsoft.com/mssql/server:2022-latest
+          CERT_SQL_TEST_RUNTIME=docker bash tests/certinv/run_cert_inventory_sql_test.sh
 
   answer-keys-rhel8-sandbox:
     # 1.76.1: the STIG answer keys' trial sandbox on a real systemd 239 (RHEL 8): a UBI 8 init container as PID 1, the
