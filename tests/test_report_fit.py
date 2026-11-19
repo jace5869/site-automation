@@ -71,7 +71,7 @@ def render(look, doc):
                              autoescape=False)
     sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
     import site_filters as sf
-    env.filters.update(report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar,   # 1.57.0: the runway board
+    env.filters.update(report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar, report_hidden_columns=sf.report_hidden_columns,   # 1.57.0: the runway board
                        safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
     return env.get_template("report_%s.html.j2" % look).render(
         _report=doc, _email_footer="AAP job 9", _page_logo_cid="", _page_runs=[],

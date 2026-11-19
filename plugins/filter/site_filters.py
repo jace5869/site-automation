@@ -2792,11 +2792,35 @@ def report_cause_cards(parsed, items, opts=None):
     return {"cards": cards, "first": first, "web": web, "email": email, "by_item": by_item, "noise": noise,
             "sheet": {"name": "Causes", "columns": ["#", "Cause", noun.capitalize() + "s", "Hosts", "Confidence", "Step", "Do", "Command", "Why"],
                       "rows": sheet}}
+# 1.79.2: the wide hardware and capacity tables start with their least-used columns behind Columns, so the main ones fit a card at 1280 px
+# (the reader shows them again with Columns; the CSV and the workbook keep every column). {table title: columns that start hidden}; a table
+# whose columns do not include every one of these is left as it is.
+WIDE_HIDDEN = {
+    "Controllers": ["System ID", "HA partner", "SP / BMC", "NVRAM battery", "Flash Cache", "System firmware"],
+    "Servers": ["Serial", "Service profile", "Storage controllers", "CIMC"],
+    "Clusters: CPU and memory": ["Average VM", "Hosts recommended", "VMs +/- (30 d)", "Datacenter"],
+    "Datastores: runway": ["Datastore cluster", "Type", "Runway to 90%", "Trend fit"],
+    "ESXi hosts": ["Vendor", "Serial", "Storage adapters", "BIOS (date)"],
+    "Hosts": ["Datacenter", "Clock", "Maintenance", "HA agent"],
+    "Clusters": ["Datacenter", "vCLS", "Alarms on it"],
+}
+
+
+def report_hidden_columns(section):
+    """The columns of a table that start hidden: the ones its document names (hidden_columns), else WIDE_HIDDEN for a wide table of that title."""
+    if not isinstance(section, dict):
+        return []
+    own = section.get("hidden_columns")
+    if own:
+        return list(own)
+    cols = [str(c) for c in (section.get("columns") or [])]
+    want = WIDE_HIDDEN.get(str(section.get("title") or ""))
+    return list(want) if want and len(cols) >= 9 and all(w in cols for w in want) else []
 
 
 class FilterModule(object):
     def filters(self):
-        return {"report_cause_cards": report_cause_cards, "safe_link": safe_link, "safe_ref": safe_ref, "safe_site_url": safe_site_url, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
+        return {"report_cause_cards": report_cause_cards, "report_hidden_columns": report_hidden_columns, "safe_link": safe_link, "safe_ref": safe_ref, "safe_site_url": safe_site_url, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
                 "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
                 "report_act_old": report_act_old,
                 "from_csv": from_csv, "days_until": days_until, "site_result": site_result,

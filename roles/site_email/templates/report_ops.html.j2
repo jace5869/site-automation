@@ -1226,7 +1226,7 @@ footer{margin-top:32px}
 <div class="menu" role="group" aria-label="The columns of {{ s.title | e }}">
 {%- for c in s.columns %}
 {%- if not (s.kinds is defined and s.kinds | length > loop.index0 and s.kinds[loop.index0] == 'x') %}
-<label><input type="checkbox" class="c{{ loop.index }}"{{ '' if c in s.hidden_columns | default([]) else ' checked' }}>{{ (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else c) | e }}</label>
+<label><input type="checkbox" class="c{{ loop.index }}"{{ '' if c in s | report_hidden_columns else ' checked' }}>{{ (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else c) | e }}</label>
 {%- endif %}
 {%- endfor %}
 <button class="call" type="button" hidden>Show all</button></div></details>

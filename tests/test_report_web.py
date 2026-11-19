@@ -1469,5 +1469,32 @@ class Release1720(unittest.TestCase):
         self.assertTrue(got["copy"])
         self.assertFalse(got["open"])                                                  # Copy link copies, the line stays shut
 
+class WideTables(unittest.TestCase):
+    """1.79.2: the wide hardware and capacity tables start with their least-used columns behind Columns."""
+    COLS = ["Cluster", "Controller", "Model", "Serial", "System ID", "ONTAP", "HA partner", "CPU", "Memory", "System firmware", "SP / BMC",
+            "NVRAM battery", "Flash Cache", "Ports", "Up", "State"]
+
+    def test_a_wide_table_of_a_known_title(self):
+        sec = {"title": "Controllers", "columns": self.COLS}
+        self.assertEqual(sf.report_hidden_columns(sec), ["System ID", "HA partner", "SP / BMC", "NVRAM battery", "Flash Cache", "System firmware"])
+
+    def test_b_a_table_that_names_its_own_wins_and_others_are_left(self):
+        self.assertEqual(sf.report_hidden_columns({"title": "Controllers", "columns": self.COLS, "hidden_columns": ["Ports"]}), ["Ports"])
+        self.assertEqual(sf.report_hidden_columns({"title": "Controllers", "columns": ["Cluster", "Controller", "State"]}), [])          # a short table
+        self.assertEqual(sf.report_hidden_columns({"title": "Controllers", "columns": [c for c in self.COLS if c != "CPU"][:8]}), [])
+        self.assertEqual(sf.report_hidden_columns({"title": "Hosts", "columns": self.COLS}), [])                                          # other columns than the ones named
+        self.assertEqual(sf.report_hidden_columns(None), [])
+
+    def test_c_the_page_unchecks_them_and_keeps_the_rows(self):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(os.path.dirname(HERE), "roles", "site_email", "templates")), autoescape=False)
+        env.filters.update(report_hidden_columns=sf.report_hidden_columns, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar,
+                           safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+        doc = {"title": "T", "subtitle": "", "status": "ok", "sections": [{"title": "Controllers", "columns": self.COLS, "rows": [["x"] * len(self.COLS)]}]}
+        h = env.get_template("report_atlas.html.j2").render(_report=doc, _email_footer="x", _page_logo_cid="", _page_runs=[], report_email_header_text="S")
+        self.assertIn('<input type="checkbox" class="c5">System ID', h)                                                                  # unchecked: no " checked"
+        self.assertIn('<input type="checkbox" class="c1" checked>Cluster', h)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

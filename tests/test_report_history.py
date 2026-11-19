@@ -199,6 +199,7 @@ class CommandLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters["report_hidden_columns"] = sf.report_hidden_columns
         env.filters.update(safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM"], "rows": [["<x>"]]}]),
@@ -273,6 +274,7 @@ class PortalLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters["report_hidden_columns"] = sf.report_hidden_columns
         env.filters.update(safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
@@ -330,6 +332,7 @@ class GlassLook(PortalLook):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters["report_hidden_columns"] = sf.report_hidden_columns
         env.filters.update(safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 summary=REPORT["summary"] + [{"label": "Old <ones>", "value": 3, "status": "warning"}],
@@ -476,6 +479,7 @@ class AtlasLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters["report_hidden_columns"] = sf.report_hidden_columns
         env.filters.update(safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>", sections=[
                     {"title": "Start here", "status": "critical", "cards": [
@@ -672,6 +676,7 @@ class BriefLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters["report_hidden_columns"] = sf.report_hidden_columns
         env.filters.update(safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, status="critical", subtitle="<b>sub</b>", summary=[{"label": "Past <90%>", "value": 2, "status": "critical"},
                                                                                          {"label": "Hosts", "value": 12, "note": "read"}],
@@ -819,6 +824,7 @@ class WebColumns(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters["report_hidden_columns"] = sf.report_hidden_columns
         env.filters.update(safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, sections=[dict(self.SEC)]), "_email_footer": "AAP job 9", "_page_logo_cid": "",
                 "_page_runs": [], "report_email_header_text": "Site automation report"}

@@ -137,6 +137,8 @@ Since 0.63.0:
   for every table with the same columns - on this page, and the next report's - and a report may start some hidden
   (the VM inventory's `vm_inventory_hidden_columns`). A column with a short header (`Enc`) shows its full name when you
   point at it, in the Columns menu and on a phone's cards.
+  The wide hardware and capacity tables (ONTAP Controllers, UCS Servers, VM capacity, ESXi hosts, VM health Hosts and Clusters) start with their least-used columns hidden, so the main ones fit the card at 1280 px.
+  Tick them in Columns to see them (Print, Copy and CSV follow what is shown); the workbook keeps every column.
 - **Lists to choose from** (1.67.0) above a table that has them, next to the filter box: choose a host, a program ... and
   only the rows that have it stay. They work together with the box, and with sort, Columns and CSV. The fapolicyd denials
   report has a **Host** and a **Program** list.

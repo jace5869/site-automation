@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.79.2 — 2026-11-19
+
+**To set up:** nothing. Look only.
+
+- **Wide tables fit their card at 1280 px.** On the report website the tables with 13 to 16 columns - ONTAP Controllers, UCS Servers, VM capacity (Clusters: CPU and memory, Datastores: runway), ESXi hosts, VM health (Hosts, Clusters) - start with their least-used columns behind **Columns** (for example Serial, System ID, Datacenter, Trend fit). Tick a column to see it (Print, Copy and CSV follow what is shown); the workbook keeps every column. A document can still name its own `hidden_columns`, which wins (`report_hidden_columns` in `site_filters.py`, `WIDE_HIDDEN`).
+- Tests: `WideTables` (test_report_web); the fit test shows no table scrolling inside its card for these reports at 1280, 1366 and 1440 px, with the default fonts and DejaVu Sans.
+
 ## 1.79.1 — 2026-11-19
 
 **To set up: nothing.**
