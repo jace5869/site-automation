@@ -235,6 +235,9 @@ class Log(object):
 
 
 # ---- AAP --------------------------------------------------------------------------------------------------------------
+KEEP_WHOLE = 10                 # a whole read is kept through failed reads for this many portal_discover_seconds, then what could be read serves (said)
+
+
 class Aap(object):
     """AAP's API with the portal's account. Names resolved once (and again when AAP says 404)."""
 
@@ -314,39 +317,49 @@ class Aap(object):
 
     def _paged(self, path, pages_max=None):
         """All rows of a list (follows next) -> (rows, '' or why not). Never a partial list reported as whole."""
+        rows, why, _t = self._paged_t(path, pages_max)
+        return rows, why
+
+    def _paged_t(self, path, pages_max=None):
+        """Like _paged -> (rows, why, transient). transient is True when AAP did not really answer (no connection, a time-out, too many calls,
+        a server error): asking again may work. A refusal, a shape or a count that does not fit, or too many pages will be the same next time."""
         rows, nxt, pages, total = [], path, 0, 0
         while nxt:
             if pages >= (pages_max or self.PAGES_MAX):
-                return rows, "could not read every template from AAP (more than %d pages)" % (pages_max or self.PAGES_MAX)
+                return rows, "could not read every template from AAP (more than %d pages)" % (pages_max or self.PAGES_MAX), False
             code, data = self.call("GET", nxt)
             if code != 200:
-                return rows, "AAP could not be asked: %s" % site_aap.error_text(data)
+                return rows, "AAP could not be asked: %s" % site_aap.error_text(data), self._unsure(code)
             if not isinstance(data, dict) or not isinstance(data.get("results"), list):
-                return rows, "AAP's list had a shape the portal does not know (no results)"
+                return rows, "AAP's list had a shape the portal does not know (no results)", False
             if pages == 0:
                 total = data.get("count")
                 if isinstance(total, bool) or not isinstance(total, int) or total < 0:
-                    return rows, "AAP's list did not say how many rows it has"
+                    return rows, "AAP's list did not say how many rows it has", False
             rows += data["results"]
             raw_next = data.get("next") or ""
             nxt = self._relative(raw_next)
             if raw_next and not nxt:
-                return rows, "could not read every template from AAP (the next page's address was not understood)"
+                return rows, "could not read every template from AAP (the next page's address was not understood)", False
             pages += 1
         if len(rows) != total:                              # a short list with no next page is not the whole list
-            return rows, "AAP's list does not add up (read %d of %d)" % (len(rows), total)
-        return rows, ""
+            return rows, "AAP's list does not add up (read %d of %d)" % (len(rows), total), False
+        return rows, "", False
 
     def labels_of(self, kind, row):
         """The template's label names, or None when AAP could not give the whole list (a half list is never taken for the whole)."""
+        return self.labels_t(kind, row)[0]
+
+    def labels_t(self, kind, row):
+        """-> (the label names or None, transient): transient when AAP did not answer, so asking again may work."""
         sf = (row.get("summary_fields") or {}).get("labels") or {}
         names_ = [str(x.get("name") or "") for x in sf.get("results") or []]
         if int(sf.get("count") or 0) > len(names_):         # AAP lists 10 labels in a row: the rest are asked for
-            more, why = self._paged("%s/%d/labels/?page_size=200" % (kind, int(row["id"])))
+            more, why, tr = self._paged_t("%s/%d/labels/?page_size=200" % (kind, int(row["id"])))
             if why:
-                return None
+                return None, tr
             names_ = [str(x.get("name") or "") for x in more]
-        return names_
+        return names_, False
 
     @staticmethod
     def _unsure(code):
@@ -373,11 +386,11 @@ class Aap(object):
         out["seen"] = len(found)
         for typ, kind, r in sorted(found, key=lambda x: (str(x[2].get("name") or "").lower(), x[0], int(x[2].get("id") or 0))):
             tname = str(r.get("name") or "")
-            labels = self.labels_of(kind, r)
+            labels, tr = self.labels_t(kind, r)
             if labels is None:
                 out["skipped"].append((tname, "its labels could not be read completely"))
-                out["incomplete"] = True                    # AAP did not answer: the card is not gone, this pass is just not whole
-                continue
+                out["incomplete"] = out["incomplete"] or tr     # AAP did not answer: the card is not gone, this pass is just not whole. A template that is
+                continue                                        # unreadable every time is only left out (with its reason)
             if cfg.label not in labels:
                 out["skipped"].append((tname, "no label %s" % cfg.label))
                 continue
@@ -432,10 +445,10 @@ class Aap(object):
             marked = cfg.label_approval in labels or tname in cfg.approval_required
             sigf = dict(rules.exec_fields(r), approval_marked=bool(marked))
             if typ == "workflow":
-                shape = self.workflow_shape(tid)
+                shape, tr = self.workflow_shape_t(tid)
                 if shape is None:
                     out["skipped"].append((tname, "its steps could not be read"))
-                    out["incomplete"] = True
+                    out["incomplete"] = out["incomplete"] or tr
                     continue
                 sigf["steps"] = shape
             area = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
@@ -560,18 +573,22 @@ class Aap(object):
             iid = self._inventory_id()
             if iid is None:
                 return self.listing
-            rows, why = self._paged("inventories/%d/hosts/?enabled=true&order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
-            if why and self._keep_listing():
+            rows, why, tr = self._paged_t("inventories/%d/hosts/?enabled=true&order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
+            if why and not self._capped(why) and self._keep_listing():     # a failed read: the last whole listing stays (for a while)
+                return self.listing
+            if why and not rows and self.listing:                           # nothing could be read: an old listing still serves the picker (never a check)
+                with self.lock:
+                    self.listing["retry"] = time.time() + min(15, self.cfg.discover_seconds)
                 return self.listing
             hosts = sorted(set(str(r.get("name")) for r in rows if r.get("name") and r.get("enabled", True) is not False), key=str.lower)
-            grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
-            if gwhy and self._keep_listing():
+            grows, gwhy, gtr = self._paged_t("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
+            if gwhy and not self._capped(gwhy) and self._keep_listing():
                 return self.listing
             groups, trunc, bad = {}, bool(why or gwhy), set()
             for g in grows[:self.GROUPS_MAX]:
-                mem, w = self._paged("groups/%d/all_hosts/?enabled=true&page_size=200" % int(g["id"]), self.HOST_PAGES_MAX)
+                mem, w, wtr = self._paged_t("groups/%d/all_hosts/?enabled=true&page_size=200" % int(g["id"]), self.HOST_PAGES_MAX)
                 if w:                                           # a group read in part is no group: never counted short, never launched
-                    if self._keep_listing():
+                    if not self._capped(w) and self._keep_listing():
                         return self.listing
                     bad.add(str(g.get("name")))
                     continue
@@ -586,15 +603,20 @@ class Aap(object):
         finally:
             self.listing_lock.release()
 
+    @staticmethod
+    def _capped(why):
+        """The read stopped at the page limit: it will stop there again, so a whole listing is not waited for."""
+        return "more than" in str(why) and "pages" in str(why)
+
     def _keep_listing(self):
         """A read of the inventory failed: when a whole listing is kept it stays (asked again in a little while); True then. With none, the
         part that was read serves, said to be a part (truncated)."""
         with self.lock:
             hit = self.listing
-            if hit and not hit.get("truncated"):
+            if hit and not hit.get("truncated") and time.time() - hit["at"] < KEEP_WHOLE * self.cfg.discover_seconds:
                 hit["retry"] = time.time() + min(15, self.cfg.discover_seconds)
                 return True
-        return False
+        return False                                    # none, a part, or one too old to stand for the inventory: the new read serves
 
     def expand(self, items):
         """Names of hosts and groups -> (the hosts they stand for, unique, in order; '' or why not). Every name must be a host or a group of
@@ -656,13 +678,17 @@ class Aap(object):
 
     def workflow_shape(self, tid):
         """A fingerprint of a workflow's steps and how they connect (which job each runs, what follows each), or None when it could not be read."""
-        rows, why = self._paged("workflow_job_templates/%d/workflow_nodes/?order_by=id&page_size=200" % tid)
+        return self.workflow_shape_t(tid)[0]
+
+    def workflow_shape_t(self, tid):
+        """-> (the fingerprint or None, transient)."""
+        rows, why, tr = self._paged_t("workflow_job_templates/%d/workflow_nodes/?order_by=id&page_size=200" % tid)
         if why:
-            return None
+            return None, tr
         import hashlib
         doc = [[r.get("id"), r.get("unified_job_template"), sorted(r.get("success_nodes") or []), sorted(r.get("failure_nodes") or []),
                 sorted(r.get("always_nodes") or []), r.get("limit"), r.get("extra_data"), r.get("all_parents_must_converge")] for r in rows]
-        return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24]
+        return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24], False
 
     def inventory_items(self, text="", limit=200):
         """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}."""
@@ -1007,6 +1033,7 @@ class Portal(object):
         self.builtin = dict(self.actions)
         self.found = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0}
         self.found_at = 0.0
+        self.whole_at = 0.0
         self.found_whole = False                        # a whole read of AAP has been kept (an incomplete one never replaces it)
         self.found_ready = False                        # the first read of AAP has ended (found or not): until then a request waits for it
         self.found_lock = threading.Lock()
@@ -1055,37 +1082,40 @@ class Portal(object):
 
     # -- 1.78.0: the actions found in AAP (kept portal_discover_seconds), added to the built-in ones - which win on a name
     def refresh(self, force=False):
+        """Read AAP for the actions it offers -> True when this call read it, False when it did not (kept, or another read is running)."""
         if not self.cfg.label or not self.cfg.aap_url:
-            return
+            return False
         t = time.time()
         if self.found_ready and not force and t - self.found_at < self.cfg.discover_seconds:
-            return
+            return False
         if not self.found_lock.acquire(blocking=not self.found_ready):
-            return                                      # someone is asking AAP: this one uses what there is (a forced read too)
+            return False                                # someone is asking AAP: this one uses what there is (a forced read too)
         try:
             if self.found_ready and not force and time.time() - self.found_at < self.cfg.discover_seconds:
-                return
+                return False
             got = self.aap.discover(self.builtin)
             if got["error"]:                            # AAP did not answer: keep what was found, say so, ask again in a little while
                 self.found = dict(self.found, error=got["error"])
                 self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
-                return
-            if got.get("incomplete"):                   # a template could not be read just now: the last whole read stays, asked again soon
-                if self.found_whole:
+                return True
+            if got.get("incomplete"):                   # AAP did not answer for a template just now: the last whole read stays, asked again soon
+                if self.found_whole and time.time() - self.whole_at < KEEP_WHOLE * self.cfg.discover_seconds:
                     self.found = dict(self.found, error="AAP did not answer for every template just now; the list is as of the last full read")
                     self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
-                    return
-                got = dict(got, error="")
+                    return True
+                got = dict(got, error=("AAP has not answered for every template for a long time: the list is what could be read (see the deploy's list of what was left out)"
+                                       if self.found_whole else ""))
                 self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
             else:
                 self.found_whole = True
-                self.found_at = time.time()
+                self.whole_at = self.found_at = time.time()
             self.found = got
             old = set(k for k, a in self.actions.items() if a.get("discovered"))
             merged = dict((k, a) for k, a in self.actions.items() if k not in old)
             for k, a in got["actions"].items():
                 merged.setdefault(k, a)
             self.actions = merged
+            return True
         finally:
             self.found_ready = True
             self.found_lock.release()
@@ -1099,9 +1129,9 @@ class Portal(object):
             ago = time.time() - getattr(self, "forced_at", 0.0)
             if ago < self.FORCE_EVERY:
                 return max(1, int(ago))
+        if self.refresh(force=True):                    # another read was running: this click did not read, so it does not use the minute
             self.forced_at = time.time()
-        self.refresh(force=True)
-        self.last_at = 0
+            self.last_at = 0
         return 0
 
     # -- who may do what

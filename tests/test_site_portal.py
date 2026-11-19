@@ -2392,6 +2392,140 @@ class Codex1(unittest.TestCase):
         self.assertTrue(got["truncated"])
         self.assertIn("web_servers", got["bad"])                                 # a group read in part is no group
 
+    # follow-up: one template that can never be read must not freeze the catalog
+    def test_7_a_template_that_is_never_readable_is_only_left_out(self):
+        many = {"id": 12, "name": "Many labels", "survey_enabled": False, "ask_limit_on_launch": False,
+                "summary_fields": {"labels": {"count": 12, "results": [{"name": "x%d" % i} for i in range(10)]}}}
+        for code, incomplete in ((403, False), (404, False), (503, True), (-1, True)):
+            def route(m, path, body, code=code):
+                if path.startswith("job_templates/?role_level"):
+                    return page([many])
+                if path.startswith("workflow_job_templates/?role_level"):
+                    return page([])
+                return code, {"detail": "no"}
+            out = self.aap(route).discover({})
+            self.assertEqual(out["incomplete"], incomplete, code)
+            self.assertEqual(len(out["skipped"]), 1, code)
+        def route2(m, path, body):                                           # the labels list that does not add up: the same every time
+            if path.startswith("job_templates/?role_level"):
+                return page([many])
+            if path.startswith("workflow_job_templates/?role_level"):
+                return page([])
+            return page([{"name": "a"}], count=5)
+        out = self.aap(route2).discover({})
+        self.assertFalse(out["incomplete"])
+        self.assertIn("labels could not be read", out["skipped"][0][1])
+
+    def test_7_a_never_readable_workflow_is_only_left_out(self):
+        wf = {"id": 21, "name": "A workflow", "survey_enabled": False, "ask_limit_on_launch": False,
+              "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal"}]}}}
+        for code, incomplete in ((403, False), (500, True)):
+            def route(m, path, body, code=code):
+                if path.startswith("workflow_job_templates/?role_level"):
+                    return page([wf])
+                if path.startswith("job_templates/?role_level"):
+                    return page([])
+                if "/launch/" in path:
+                    return 200, {}
+                if "workflow_nodes" in path:
+                    return code, {"detail": "no"}
+                return 404, {}
+            out = self.aap(route).discover({})
+            self.assertEqual(out["incomplete"], incomplete, code)
+            self.assertEqual(out["actions"], {})
+            self.assertEqual(out["skipped"][0][1], "its steps could not be read")
+
+    def test_7_the_last_whole_read_is_not_kept_for_ever(self):
+        partial = dict(self.whole("jt_1"), incomplete=True, skipped=[("jt_2", "its survey could not be read: x")])
+        p = self.portal_with([self.whole("jt_1", "jt_2"), partial, partial])
+        p.refresh(force=True)
+        p.refresh(force=True)
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1", "jt_2"])
+        p.whole_at = time.time() - sp.KEEP_WHOLE * self.cfg.discover_seconds - 5            # too long ago to stand for AAP
+        p.refresh(force=True)
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1"])
+        self.assertIn("for a long time", p.found["error"])
+
+    def test_7_a_listing_that_keeps_failing_is_not_kept_for_ever(self):
+        state = {"fail": False}
+
+        def route(m, path, body):
+            if path.startswith("inventories/3/hosts/"):
+                return page([{"name": "web01", "enabled": True}])
+            if path.startswith("inventories/3/groups/"):
+                return (503, {"detail": "busy"}) if state["fail"] else page([])
+            return 404, {"detail": "no"}
+        a = self.aap(route)
+        good = a.inventory_listing(force=True)
+        state["fail"] = True
+        self.assertIs(a.inventory_listing(force=True), good)                              # a failed read: the whole one stays
+        good["at"] = time.time() - sp.KEEP_WHOLE * self.cfg.discover_seconds - 5
+        good.pop("retry", None)
+        got = a.inventory_listing(force=True)
+        self.assertIsNot(got, good)                                                         # too old: what could be read serves, said (truncated)
+        self.assertTrue(got["truncated"])
+
+    def test_7_when_nothing_can_be_read_the_old_listing_serves_the_picker(self):
+        state = {"fail": False}
+
+        def route(m, path, body):
+            if state["fail"]:
+                return 503, {"detail": "busy"}
+            if path.startswith("inventories/3/hosts/"):
+                return page([{"name": "web01", "enabled": True}])
+            return page([])
+        a = self.aap(route)
+        good = a.inventory_listing(force=True)
+        state["fail"] = True
+        good["at"] = time.time() - sp.KEEP_WHOLE * self.cfg.discover_seconds - 5
+        self.assertIs(a.inventory_listing(force=True), good)                              # an empty read does not replace it
+
+    def test_7_a_listing_over_the_page_cap_is_a_part_not_a_freeze(self):
+        def route(m, path, body):
+            if path.startswith("inventories/3/hosts/"):
+                n = int(re.search(r"page=(\d+)", path).group(1)) if "page=" in path else 1
+                return page([{"name": "h%d" % n, "enabled": True}], nxt="inventories/3/hosts/?enabled=true&page=%d" % (n + 1), count=999)
+            if path.startswith("inventories/3/groups/"):
+                return page([])
+            return 404, {"detail": "no"}
+        a = self.aap(route)
+        got = a.inventory_listing(force=True)
+        self.assertTrue(got["truncated"])
+        self.assertEqual(len(got["hosts"]), a.HOST_PAGES_MAX)
+
+    def test_7_a_whole_listing_is_not_waited_for_when_the_cap_stops_every_read(self):
+        state = {"big": False}
+
+        def route(m, path, body):
+            if path.startswith("inventories/3/hosts/"):
+                if state["big"]:
+                    n = int(re.search(r"page=(\d+)", path).group(1)) if "page=" in path else 1
+                    return page([{"name": "h%d" % n, "enabled": True}], nxt="inventories/3/hosts/?enabled=true&page=%d" % (n + 1), count=999)
+                return page([{"name": "web01", "enabled": True}])
+            if path.startswith("inventories/3/groups/"):
+                return page([])
+            return 404, {"detail": "no"}
+        a = self.aap(route)
+        good = a.inventory_listing(force=True)
+        state["big"] = True                                                                 # the inventory grew past the page cap: it will again
+        got = a.inventory_listing(force=True)
+        self.assertIsNot(got, good)
+        self.assertTrue(got["truncated"])
+
+    def test_7_a_refresh_that_did_not_read_does_not_use_the_minute(self):
+        p = self.portal_with([self.whole("jt_1")])
+        p.forced_at = 0.0
+        p.found_ready = True                                                                # asked once already: a forced read does not wait
+        p.found_lock.acquire()                                                              # another read is running
+        try:
+            self.assertEqual(p.refresh_now(), 0)
+            self.assertEqual(p.forced_at, 0.0)
+        finally:
+            p.found_lock.release()
+        self.assertEqual(p.refresh_now(), 0)                                                # now it reads, and uses the minute
+        self.assertGreater(p.forced_at, 0.0)
+        self.assertGreater(p.refresh_now(), 0)
+
     # P2: a survey maximum of 0
     def test_6_a_maximum_of_zero_stays_zero(self):
         v, _s = rules.survey_vars({"spec": [{"variable": "a", "question_name": "A", "type": "text", "max": 0},
