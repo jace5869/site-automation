@@ -290,6 +290,12 @@ jobs:
           for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
           # 1.76.1c: as the runner user, below systemd 257 (this runner: 255) the module refuses the sandbox - the code
           # could signal this user's other processes; sandbox_trial asserts that refusal (on 257 and later it must hold)
+          ( set -x; uname -r; systemctl --version | head -1
+            findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS,PROPAGATION /opt /home / || true
+            findmnt -R -o TARGET,FSTYPE,PROPAGATION / | head -60
+            stat -c '%a %U %n' /opt /home /home/runner; getfacl -p /opt 2>/dev/null | head; ls -la / | head -30
+            sudo systemd-run --pipe --wait --quiet -p DynamicUser=yes -p ProtectSystem=strict -p ReadOnlyPaths=/ -p TemporaryFileSystem=/run/user:ro sh -c 'id -u; findmnt -o TARGET,OPTIONS,PROPAGATION /opt; test -w /opt && echo opt-writable || echo opt-ro; touch /opt/x 2>&1' || true
+            sudo journalctl -n 40 --no-pager | tail -40 ) || true
           AK_USER_MAY_REFUSE=1 python3 tests/stig/sandbox_trial.py
           # as root, as the job runs it (become: a system unit, a dynamic user): every write, signal and socket refused,
           # sysctl -w / -p / --system fail inside, /etc stays as it is, auditctl -l replayed - on this throwaway runner only
