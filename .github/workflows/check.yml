@@ -290,6 +290,7 @@ jobs:
           for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
           # 1.76.1c: as the runner user, below systemd 257 (this runner: 255) the module refuses the sandbox - the code
           # could signal this user's other processes; sandbox_trial asserts that refusal (on 257 and later it must hold)
+          sudo env "PATH=$PATH" bash tests/stig/ci_bisect_props.sh "$(command -v python3)" || true
           AK_USER_MAY_REFUSE=1 python3 tests/stig/sandbox_trial.py
           # as root, as the job runs it (become: a system unit, a dynamic user): every write, signal and socket refused,
           # sysctl -w / -p / --system fail inside, /etc stays as it is, auditctl -l replayed - on this throwaway runner only
