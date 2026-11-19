@@ -228,7 +228,7 @@ File: `roles/aap_templates/defaults/main.yml`
 |---|---|---|
 | `aap_templates_organization` | `Default` | the organization the templates are made in |
 | `aap_templates_project` | `site-automation` | your site-automation project in AAP (its name) |
-| `aap_templates_inventory` | (empty) | the inventory a template is made with (its name) - required to make one |
+| `aap_templates_inventory` | (empty) | the inventory a template is made with (its name) - needed only to make one |
 | `aap_templates_ee` | `{}` | the execution environment of each kind the catalog names (all, windows, network); a kind left out: the project's {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"} |
 | `aap_templates_credentials` | `{}` | your credential of each kind the catalog names (machine, machine_windows, aap, stigman_api, servicenow, vmware, horizon, act_model_key, windows_share, ...); a template that needs a kind not here is skipped, said. A list for several. {machine: "Linux machine", aap: "AAP reader", stigman_api: "STIG Manager API"} |
 | `aap_templates_only` | `[]` | only the templates whose name matches one of these (* and ?, any case); [] = every template of the catalog ["STIG*", "Health check", "Troubleshoot"] |

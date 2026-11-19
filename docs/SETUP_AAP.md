@@ -676,13 +676,16 @@ and checks the ones already there. It never deletes a template.
 1. Make this one template by hand. Copy `aap/extra_vars/aap_templates_setup.yml` into its Variables box.
 2. Name the inventory new templates get (`aap_templates_inventory`) and your credential of each kind
    (`aap_templates_credentials`, for example `machine: Linux machine`, `stigman_api: STIG Manager API`). A template
-   that needs a kind you did not name is skipped, and the job says which kind.
+   that needs a kind you did not name is skipped, and the job says which kind. The project, the inventory and the
+   credentials are looked up in `aap_templates_organization` only (a credential or execution environment of no
+   organization too): one of another organization is never used. The inventory is needed only to make a template.
 3. Optional: `aap_templates_ee` (an execution environment for `all`, `windows`, `network`), `aap_templates_only`
    (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels).
 4. Launch it with Job type **Check**. It lists each template:
    - *WOULD CREATE* - with its playbook, project, credentials, prompts and execution environment;
-   - *DIFFERS* - field by field, *has X, should be Y* (the playbook, the project, a credential by kind, the prompts,
-     the execution environment);
+   - *DIFFERS* - field by field, *has X, should be Y* (the playbook, the project, a credential by kind, the prompts
+     for Limit, Variables, Inventory and Job type, the execution environment: a kind you did not map is the
+     project's);
    - *already right*;
    - *same playbook, other name* - a template of yours runs that playbook: it is not made twice. The site
      portal's workflows look for the catalog's name: `aap_templates_create_alias: true` makes it too;
@@ -692,12 +695,15 @@ and checks the ones already there. It never deletes a template.
      with the workflow that runs it. When the portal action runs that one template and a template of yours runs
      its playbook, the job also prints a line to copy instead: `portal_aap_names: {disk_space_request: 'Your name'}`
      (1.78.1 and later).
+   Two templates of one name in the organization stop the job before it writes anything: rename one.
 5. Launch it again with Job type **Run**. It makes the missing templates. A template that differs is left as it is;
-   set `aap_templates_overwrite: true` to bring it right.
+   set `aap_templates_overwrite: true` to bring it right. If a write fails, the job stops there and lists what it did
+   before it, down to each credential attached.
 
 What it never changes: a template's schedules and survey, its Variables once it is made, and a credential of a type
-the catalog does not name (a Teams webhook you added stays). A new template gets its Variables file with every setting
-switched off - switch on what you need.
+the catalog does not name (a Teams webhook you added stays). A template takes one credential of a type: an optional
+one of a type it already has (your Windows Machine credential beside the Linux one) is left off, and said. A new
+template gets its Variables file with every setting switched off - switch on what you need.
 
 ### Rename and attach credentials
 

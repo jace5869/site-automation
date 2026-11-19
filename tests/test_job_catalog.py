@@ -69,6 +69,18 @@ class Catalog(unittest.TestCase):
             self.assertEqual((sorted(got[0]), sorted(got[1])), (sorted(req), sorted(opt)), text)
         self.assertEqual(g.kinds_of("Machine, Red Hat Ansible Automation Platform", windows=True), (["machine_windows", "aap"], []))
 
+    def test_the_launch_contract(self):
+        # docs/SETUP_AAP.md's own section over what the credentials suggest (Codex)
+        by = dict((e["name"], e) for e in self.catalog())
+        self.assertFalse(by["ServiceNow health"]["ask_limit"])                 # "no Prompt on launch": it runs on the controller
+        self.assertEqual(by["ServiceNow health"]["optional_credentials"], ["machine_windows", "mariadb"])     # one Machine
+        self.assertEqual(by["ServiceNow health - nodes"]["optional_credentials"], ["mariadb", "machine"])
+        for n in ("Patch hosts", "Apply approved ACT fix", "Database health - MariaDB / MySQL", "ServiceNow - test ticket"):
+            self.assertTrue(by[n].get("ask_job_type"), n)
+        self.assertFalse(by["Troubleshoot"].get("ask_job_type"))
+        self.assertEqual([e["name"] for e in self.catalog() if e.get("portal_actions")],
+                         ["Disk - space request", "Site portal - open ticket"])
+
     def test_areas_and_portal(self):
         by = dict((e["name"], e) for e in self.catalog())
         self.assertEqual(by["STIG drift report"]["area"], "STIG")

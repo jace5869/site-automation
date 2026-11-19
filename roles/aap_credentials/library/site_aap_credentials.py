@@ -162,20 +162,24 @@ class Creds(object):
             if old == new:                                  # Codex: still one credential of that name, or a problem
                 self.one(olds, "credential", old)
                 continue
-            if not olds and self.credentials_named(new):
-                # renamed before: the old name is not there, the new one is. Said - and the new name is NOT taken to be
-                # that credential for this run's attaches (Codex): it is looked up by its name like any other
-                self.note("rename", old, new, "already done", "%r is not there and %r is" % (old, new))
-                continue
+            if not olds:
+                nn = self.credentials_named(new)
+                if nn:
+                    # renamed before: the old name is not there, the new one is - and only one of it (Codex: two is a
+                    # problem, as for any name). The new name is NOT taken to be that credential for this run's attaches:
+                    # it is looked up by its name like any other
+                    if self.one(nn, "credential", new):
+                        self.note("rename", old, new, "already done", "%r is not there and %r is" % (old, new))
+                    continue
             c = self.one(olds, "credential", old)
             if not c:
                 continue
             # Codex: the new name free where names are looked up - the organization, or every organization when none is set
-            clash = [x for x in self.all("credentials/?name=%s" % _q(new)) if x.get("name") == new and int(x["id"]) != int(c["id"])
-                     and (self.org_id is None or x.get("organization") == c.get("organization"))]
+            clash = [int(x["id"]) for x in self.all("credentials/?name=%s" % _q(new)) if x.get("name") == new
+                     and int(x["id"]) != int(c["id"]) and (self.org_id is None or x.get("organization") == c.get("organization"))]
             if clash:
                 self.problems.append("rename %r to %r: a credential of that name is there (id %s) - nothing is changed"
-                                     % (old, new, ", ".join(str(x["id"]) for x in clash)))
+                                     % (old, new, ", ".join(str(x) for x in clash)))
                 continue
             steps.append(("rename", c, new))
             by_name[new] = c

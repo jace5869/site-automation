@@ -21,6 +21,9 @@ with Admin on the organization; its Variables: `aap/extra_vars/aap_templates_set
   portal actions* (it makes it with its workflow). `aap_templates_create_alias: true` makes a catalog template even when
   your own runs its playbook under another name - the portal's workflows look for the catalog's name. When a portal
   action runs that one template, a line to copy is printed too: `portal_aap_names: {action: 'your name'}` (1.78.1+).
+- The job templates job looks up the project, inventory and credentials in its organization only. Every read and check
+  (labels too) comes before the first write. Two templates of one name stop it before it writes. A failure lists each
+  write done before it. The catalog carries the Job type prompt and the Limit prompt as SETUP_AAP.md gives them.
 
 **To set up:** a job template **AAP - set up credentials** (`playbooks/aap_credentials_setup.yml`, an AAP credential
 with Admin on the organization; its Variables: `aap/extra_vars/aap_credentials_setup.yml`).

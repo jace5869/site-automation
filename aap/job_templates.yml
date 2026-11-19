@@ -3,7 +3,8 @@
 #   name, playbook        as docs/JOB_TEMPLATES.md lists them
 #   credentials           the credential kinds it needs (aap_templates_credentials maps each to your credential's name)
 #   optional_credentials  attached when you map them; not needed
-#   ask_limit / ask_variables / ask_inventory   "Prompt on launch"
+#   ask_limit / ask_variables / ask_inventory / ask_job_type   "Prompt on launch" (Limit and Job type: as the template's
+#                         section in docs/SETUP_AAP.md says)
 #   ee                    the execution environment kind: all, windows or network (aap_templates_ee maps each to yours)
 #   variables_file        its Variables, put in (all switched off) when the template is made - never changed after
 #   extra_vars            Variables it always has (a second template of the same playbook)
@@ -43,6 +44,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/patch_hosts.yml
     area: Linux
+    ask_job_type: true
   - name: Linux - disk space report
     playbook: playbooks/disk_report.yml
     credentials: [machine]
@@ -83,6 +85,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/act_fix_approved.yml
     area: ACT
+    ask_job_type: true
   - name: Database health - MariaDB / MySQL
     playbook: playbooks/database_health.yml
     credentials: [machine]
@@ -93,6 +96,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/database_health.yml
     area: Linux
+    ask_job_type: true
   - name: Service watch - check
     playbook: playbooks/service_watch.yml
     credentials: [machine]
@@ -1354,6 +1358,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/servicenow_test_ticket.yml
     area: Tickets
+    ask_job_type: true
   - name: ServiceNow - catalog test
     playbook: playbooks/servicenow_catalog_test.yml
     credentials: [servicenow]
@@ -1377,8 +1382,8 @@ job_templates:
   - name: ServiceNow health
     playbook: playbooks/servicenow_health.yml
     credentials: [servicenow]
-    optional_credentials: [machine_windows, mariadb, machine]
-    ask_limit: true
+    optional_credentials: [machine_windows, mariadb]
+    ask_limit: false
     ask_variables: false
     ask_inventory: false
     ee: all
@@ -1387,7 +1392,7 @@ job_templates:
   - name: ServiceNow health - nodes
     playbook: playbooks/servicenow_health.yml
     credentials: [servicenow]
-    optional_credentials: [machine_windows, mariadb, machine]
+    optional_credentials: [mariadb, machine]
     ask_limit: true
     ask_variables: false
     ask_inventory: false

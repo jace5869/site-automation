@@ -28,7 +28,7 @@ def cred(i, name, typ, tname):
             "summary_fields": {"credential_type": {"id": typ, "name": tname}}}
 def jt(i, name, org, project, playbook, creds, ee=5):
     return {"id": i, "name": name, "organization": org, "project": project, "playbook": playbook, "inventory": 3, "ask_limit_on_launch": True,
-            "ask_variables_on_launch": False, "ask_inventory_on_launch": False, "execution_environment": ee, "credentials": creds, "labels": []}
+            "ask_variables_on_launch": False, "ask_inventory_on_launch": False, "ask_job_type_on_launch": False, "execution_environment": ee, "credentials": creds, "labels": []}
 s = {"next": 1000, "organizations": [{"id": 1, "name": "Default"}, {"id": 9, "name": "Lab"}],
      "projects": [{"id": 2, "name": "site-automation", "organization": 1}, {"id": 6, "name": "Old project", "organization": 1}],
      "inventories": [{"id": 3, "name": "Site hosts", "organization": 1}],
@@ -138,6 +138,40 @@ run -e '{"aap_templates_create_alias": true, "aap_templates_only": ["Service - r
 [ $rc = 0 ] && [ "$(tpl 'Service - restart' "['playbook']")" = "playbooks/service_restart.yml" ] && [ "$(tpl 'Restart a service' "['id']")" = 104 ] \
     && has "created - 'Service - restart'" && pass "aap_templates_create_alias: the portal's name made beside the site's own" \
     || fail "create_alias" "rc $rc; $(grep -E "created|other name|fatal" "$work/out.txt" | head -4)"
+
+# ---- a failure part way: what was done before it is said; the run after brings it right
+setst() { "$py" -c "import json; s=json.load(open('$work/state.json')); $1; json.dump(s, open('$work/state.json','w'))"; }
+nx="$(st "s['next'] + 1")"
+setst "s['fail_attach_paths']=['job_templates/$nx/credentials/']"
+run -e '{"aap_templates_only": ["Log analysis"]}'; rc=$?
+setst "s.pop('fail_attach_paths')"
+[ $rc != 0 ] && has "FAILED - 'Log analysis'" && has "done before it: made it" && [ "$(tpl 'Log analysis' "['id']")" = "$nx" ] \
+    && pass "a failure part way: the template made before it is said" \
+    || fail "failure part way" "rc $rc; $(grep -E "FAILED|done before|fatal" "$work/out.txt" | head -4)"
+# ---- an optional credential of a type the template has (the Windows Machine beside the Linux one): left off, said
+run -e '{"aap_templates_overwrite": true, "aap_templates_only": ["Log analysis"]}'; rc=$?
+[ $rc = 0 ] && [ "$(tpl 'Log analysis' "['credentials']")" = "[10, 14]" ] && has "fixed - 'Log analysis'" \
+    && has "not attached: Windows machine (machine_windows) - the template has a Machine credential already, and takes one" \
+    && pass "an optional Windows Machine credential beside the Linux one: left off, said" \
+    || fail "optional left off" "rc $rc; $(tpl 'Log analysis' "['credentials']"); $(grep -E "fixed|attached|fatal" "$work/out.txt" | head -4)"
+
+# ---- two templates of one name in the organization: a problem before any write (never one of them picked)
+setst "s['job_templates'].append(dict([j for j in s['job_templates'] if j['name'] == 'Troubleshoot'][0], id=190))"
+before="$(writes)"
+run -e '{"aap_templates_label_portal": "all", "aap_templates_only": ["Troubleshoot", "Windows*"]}'; rc=$?
+setst "s['job_templates']=[j for j in s['job_templates'] if j['id'] != 190]"
+[ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "AAP has 2 job templates named 'Troubleshoot' in the organization: rename one" \
+    && pass "two templates of one name: stopped before any write" || fail "two of a name" "rc $rc; $(writes) vs $before"
+
+# ---- no inventory: a run that makes nothing still checks; a project of another organization is never used
+run -e '{"aap_templates_inventory": "", "aap_templates_only": ["Troubleshoot"]}'; rc=$?
+[ $rc = 0 ] && has "already right - 'Troubleshoot'" && pass "no inventory set: the templates there still checked" \
+    || fail "no inventory" "rc $rc; $(grep -E "fatal|msg" "$work/out.txt" | head -3)"
+setst "s['projects'].append({'id': 20, 'name': 'Lab project', 'organization': 9})"
+before="$(writes)"
+run -e '{"aap_templates_project": "Lab project"}'; rc=$?
+[ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "project (aap_templates_project) 'Lab project': not found in organization 'Default'" \
+    && pass "a project of another organization: not found, nothing written" || fail "other organization" "rc $rc; $(grep -E "fatal|not found" "$work/out.txt" | head -3)"
 
 # ---- never a DELETE, never a secret
 grep -q '"DELETE"' "$work/writes.jsonl" && fail "a DELETE" "$(grep DELETE "$work/writes.jsonl" | head -2)" || pass "never a DELETE"

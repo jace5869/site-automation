@@ -92,7 +92,8 @@ def node_view(s, n):
 
 
 TPL_FIELDS = ("name", "description", "job_type", "project", "playbook", "inventory", "ask_variables_on_launch", "ask_limit_on_launch",
-              "become_enabled", "extra_vars", "execution_environment", "organization", "ask_inventory_on_launch")
+              "become_enabled", "extra_vars", "execution_environment", "organization", "ask_inventory_on_launch",
+              "ask_job_type_on_launch")
 WF_FIELDS = ("name", "description", "organization", "ask_variables_on_launch", "ask_limit_on_launch", "extra_vars")
 
 

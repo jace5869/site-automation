@@ -52,7 +52,7 @@ NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansibl
 DESC = "Made by AAP - set up job templates (aap/job_templates.yml)"
 SHOW = {"playbook": "playbook", "project": "project", "execution_environment": "execution environment",
         "ask_limit_on_launch": "prompt for Limit", "ask_variables_on_launch": "prompt for Variables",
-        "ask_inventory_on_launch": "prompt for Inventory"}
+        "ask_inventory_on_launch": "prompt for Inventory", "ask_job_type_on_launch": "prompt for Job Type"}
 
 
 def _q(s):
@@ -94,22 +94,29 @@ class Templates(object):
         return out
 
     def one(self, kind, name, what, org=True):
+        """The one object of that name in the organization (Codex: never one of another organization instead). Credentials and
+        execution environments may also be of no organization (global)."""
         rows = [r for r in self.all("%s/?name=%s" % (kind, _q(name))) if r.get("name") == name]
         if org and self.org_id is not None:
-            mine = [r for r in rows if r.get("organization") in (self.org_id, None)]
-            rows = mine or rows
+            ok = (self.org_id, None) if kind in ("credentials", "execution_environments") else (self.org_id,)
+            rows = [r for r in rows if r.get("organization") in ok]
         if len(rows) != 1:
-            self.problems.append("%s %r: %s" % (what, name, "not found" if not rows else "%d match - rename one in AAP" % len(rows)))
+            self.problems.append("%s %r: %s" % (what, name, ("not found" + self.in_org(org)) if not rows else "%d match - rename one in AAP" % len(rows)))
             return None
         return rows[0]
 
+    def in_org(self, org):
+        return (" in organization %r" % self.p["organization"]) if org and self.org_id is not None else ""
+
     def note(self, name, action, diff=None, why=""):
         self.results.append({"name": name, "action": action, "diff": diff or {}, "why": why})
+        return self.results[-1]
 
     def write(self, method, path, body=None):
         code, d = self.api.call(method, path, body)
         if code not in (200, 201, 202, 204):
             raise RuntimeError("%s %s: %s" % (method, path.split("?")[0], _why(code, d)))
+        self.wrote = True
         return d
 
     # ---- what the settings name: resolved first, every one
@@ -130,14 +137,15 @@ class Templates(object):
                 e = self.one("execution_environments", str(name), "execution environment %s (aap_templates_ee)" % kind)
                 if e:
                     self.ees[kind] = (int(e["id"]), str(name))
-        self.creds = {}                       # kind -> [(id, name, type)]
+        self.creds = {}                       # kind -> [(id, name, type, type name)]
         for kind, names in sorted((p["credentials"] or {}).items()):
             names = [names] if isinstance(names, str) else list(names or [])
             got = []
             for n in names:
                 c = self.one("credentials", str(n), "credential %s (aap_templates_credentials)" % kind)
                 if c:
-                    got.append((int(c["id"]), str(n), c.get("credential_type")))
+                    tn = str(((c.get("summary_fields") or {}).get("credential_type") or {}).get("name") or c.get("credential_type"))
+                    got.append((int(c["id"]), str(n), c.get("credential_type"), tn))
             if got:
                 self.creds[kind] = got
 
@@ -145,34 +153,41 @@ class Templates(object):
         pats = [str(x).casefold() for x in self.p["only"] or []]
         return not pats or any(fnmatch.fnmatchcase(e["name"].casefold(), x) for x in pats)
 
-    # ---- one template: made, checked, or left
+    @staticmethod
+    def multi(type_name):
+        """A credential type a job template may carry more than one of (Vault, each its own vault id)."""
+        return "vault" in str(type_name).lower()
+
+    # ---- the plan: every read and every check before any write
     def plan(self):
         self.resolve()
         if self.problems:
-            return []
-        if not self.inventory:
-            self.problems.append("aap_templates_inventory is not set: a job template is made with an inventory")
             return []
         tpls = self.all("job_templates/")
         by_name = {}
         for t in tpls:
             by_name.setdefault(t.get("name"), []).append(t)
+        self.catalog_names = set(e["name"] for e in self.p["catalog"])
+        self.left_off = {}
         steps = []
         self.tid = {}                          # name -> the template's id (ours, in the organization)
         for t in tpls:
             if t.get("organization") == self.org_id:
                 self.tid.setdefault(t.get("name"), int(t["id"]))
-        self.to_label = []                     # the catalog entries to label (label_portal)
+        to_label = []                          # the catalog entries to label (label_portal)
         for e in self.p["catalog"]:
             if not self.wanted(e):
                 continue
             name = e["name"]
+            ours = [t for t in by_name.get(name) or [] if t.get("organization") == self.org_id]
+            if len(ours) > 1:                  # Codex: a problem before any write - never one of them picked
+                self.problems.append("AAP has %d job templates named %r in the organization: rename one" % (len(ours), name))
+                continue
             if self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal")):
-                self.to_label.append(e)
+                to_label.append(e)
             if e.get("made_by"):
-                there = any(t.get("organization") == self.org_id for t in by_name.get(name) or [])
-                other = [] if there else self.same_playbook(tpls, e)
-                self.note(name, "left", why=("made by %s (its own job), and it is there" % e["made_by"]) if there else
+                other = [] if ours else self.same_playbook(tpls, e)
+                self.note(name, "left", why=("made by %s (its own job), and it is there" % e["made_by"]) if ours else
                           "NOT IN AAP - %s makes it, with the workflow that runs it: run that job%s"
                           % (e["made_by"], ("; %s runs its playbook" % ", ".join(repr(t["name"]) for t in other[:3])) if other else ""))
                 self.hint(e, other)
@@ -181,20 +196,44 @@ class Templates(object):
             if missing:
                 self.note(name, "skipped", why="credential kind %s not mapped (aap_templates_credentials)" % ", ".join(missing))
                 continue
-            kinds = list(e.get("credentials") or []) + [k for k in e.get("optional_credentials") or [] if k in self.creds]
-            want_creds = [c for k in kinds for c in self.creds[k]]
+            req = list(e.get("credentials") or [])
+            kinds, want_creds, left = list(req), [], []
+            for k in req:
+                for c in self.creds[k]:
+                    if c not in want_creds:
+                        want_creds.append(c)
+            # an optional kind whose credential is of a type the template already has (a Windows Machine beside the
+            # Linux one): left off - a template takes one of a type (Vault aside)
+            for k in [k for k in e.get("optional_credentials") or [] if k in self.creds]:
+                fit = [c for c in self.creds[k] if c not in want_creds
+                       and (self.multi(c[3]) or not any(w[2] == c[2] for w in want_creds))]
+                lost = [c for c in self.creds[k] if c not in want_creds and c not in fit]
+                if lost:
+                    left.append("%s (%s) - the template has a %s credential already, and takes one"
+                                % (", ".join(c[1] for c in lost), k, "/".join(sorted(set(str(c[3]) for c in lost)))))
+                if fit:
+                    kinds.append(k)
+                    want_creds.extend(fit)
+            if left:
+                self.left_off[name] = "not attached: %s" % "; ".join(left)
+            # Codex: two of one type on one template (two Machine credentials) - AAP takes one; said, never half written
+            by_type = {}
+            for c in want_creds:
+                by_type.setdefault((c[2], c[3]), []).append(c)
+            clash = [(tn, cs) for (ti, tn), cs in by_type.items() if len(cs) > 1 and not self.multi(tn)]
+            if clash:
+                self.note(name, "skipped", why="two credentials of one type: %s - a template takes one; map one (aap_templates_credentials)"
+                          % "; ".join("%s: %s" % (tn, ", ".join(c[1] for c in cs)) for tn, cs in clash))
+                continue
             ee = self.ees.get(e.get("ee") or "all")
             fields = {"playbook": e["playbook"], "project": self.project, "ask_limit_on_launch": bool(e.get("ask_limit")),
-                      "ask_variables_on_launch": bool(e.get("ask_variables")), "ask_inventory_on_launch": bool(e.get("ask_inventory"))}
-            if ee:
-                fields["execution_environment"] = ee[0]
+                      "ask_variables_on_launch": bool(e.get("ask_variables")), "ask_inventory_on_launch": bool(e.get("ask_inventory")),
+                      "ask_job_type_on_launch": bool(e.get("ask_job_type"))}
+            # an EE kind not mapped: the project's (none set on the template) - one set is said, cleared only with overwrite
+            fields["execution_environment"] = ee[0] if ee else None
             same = by_name.get(name) or []
-            ours = [t for t in same if t.get("organization") == self.org_id]
             if same and not ours:
                 self.note(name, "skipped", why="the name is used by a template of another organization")
-                continue
-            if len(ours) > 1:
-                self.note(name, "skipped", why="AAP has %d templates of that name: rename one" % len(ours))
                 continue
             if not ours:
                 other = self.same_playbook(tpls, e)
@@ -205,6 +244,10 @@ class Templates(object):
                                  if e.get("portal") else ""))
                     self.hint(e, other)
                     continue
+                if not self.inventory:          # Codex: needed only to make one - said before any write
+                    self.problems.append("aap_templates_inventory is not set: %r would be made, and a template is made with an "
+                                         "inventory" % name)
+                    continue
                 steps.append(("create", e, fields, want_creds, kinds))
                 continue
             t = ours[0]
@@ -213,24 +256,44 @@ class Templates(object):
                 if t.get(k) != v:
                     diff[SHOW[k]] = [self.show(k, t.get(k)), self.show(k, v)]
             have = [(int(c["id"]), c.get("name"), c.get("credential_type")) for c in self.all("job_templates/%d/credentials/" % int(t["id"]))]
-            cfix = []                             # (kind, the one there of that type or None, the one wanted)
-            for c in want_creds:
-                if any(h[0] == c[0] for h in have):
+            cfix = []                             # per type: (to attach, to take off) - a type compared as a set (Codex)
+            for (ti, tn), cs in sorted(by_type.items(), key=lambda x: str(x[0])):
+                want_ids = set(c[0] for c in cs)
+                add = [c for c in cs if not any(h[0] == c[0] for h in have)]
+                if not add:
                     continue
-                there = [h for h in have if h[2] == c[2]]
-                cfix.append((c, there))
-                diff["credential %s" % next(k for k in kinds if c in self.creds[k])] = [
-                    ", ".join(h[1] for h in there) or "none", c[1]]
+                drop = [] if self.multi(tn) else [h for h in have if h[2] == ti and h[0] not in want_ids]
+                cfix.append((add, drop))
+                kind = next(k for k in kinds if any(c in self.creds[k] for c in cs))
+                diff["credential %s" % kind] = [", ".join(h[1] for h in drop) or "none", ", ".join(c[1] for c in add)]
             if not diff:
                 self.note(name, "right")
                 continue
             steps.append(("fix", e, dict((k, v) for k, v in fields.items() if SHOW[k] in diff), cfix, int(t["id"]), diff))
+        # the labels: read now (their ids, each template's own) - only the writes are left for later (Codex)
+        self.label_plan = {}
+        if self.p["label_portal"] not in ("", "none") and not self.problems:
+            names = sorted(set(n for e in to_label for n in self.labels_for(e)))
+            self.label_id = {}
+            for n in names:
+                rows = [r for r in self.all("labels/?name=%s" % _q(n)) if r.get("name") == n and r.get("organization") == self.org_id]
+                self.label_id[n] = int(rows[0]["id"]) if rows else None
+            made = set(st[1]["name"] for st in steps if st[0] == "create")
+            for e in to_label:
+                tid = self.tid.get(e["name"])
+                if tid is None and e["name"] not in made:
+                    continue                     # not there and not made: nothing to label
+                have = set(r.get("name") for r in self.all("job_templates/%d/labels/" % tid)) if tid else set()
+                missing = [n for n in self.labels_for(e) if n not in have]
+                if missing:
+                    self.label_plan[e["name"]] = missing
         return steps
 
     def same_playbook(self, tpls, e):
-        """The site's own templates (the organization, the project) that run the catalog template's playbook under another name."""
+        """The site's own templates (the organization, the project) that run the catalog template's playbook under another name -
+        never another template of the catalog (a second template of one playbook: "ServiceNow health - nodes")."""
         return [t for t in tpls if t.get("playbook") == e["playbook"] and t.get("project") == self.project
-                and t.get("organization") == self.org_id and t.get("name") != e["name"]]
+                and t.get("organization") == self.org_id and t.get("name") != e["name"] and t.get("name") not in self.catalog_names]
 
     def hint(self, e, other):
         """A portal action that runs this one template: it may be pointed at the site's own (portal_aap_names, 1.78.1) -
@@ -274,62 +337,47 @@ class Templates(object):
             out.append("%s%s" % (self.p["portal_label_area"], e["area"]))
         return out
 
-    def label_ids(self, names):
-        """The organization's labels of these names -> {name: id}; one not there is made (not in check mode)."""
-        out = {}
-        for n in names:
-            rows = [r for r in self.all("labels/?name=%s" % _q(n)) if r.get("name") == n and r.get("organization") == self.org_id]
-            if rows:
-                out[n] = int(rows[0]["id"])
-            elif not self.check:
-                out[n] = int(self.write("POST", "labels/", {"name": n, "organization": self.org_id})["id"])
-        return out
+    def row_of(self, name):
+        r = next((x for x in self.results if x["name"] == name), None)
+        return r if r is not None else self.note(name, "right")
 
     def label_all(self):
-        """The portal's labels on each template to label: the ones it lacks are added (nothing is ever taken off)."""
-        done = {}
-        for e in self.to_label:
-            tid = self.tid.get(e["name"])
-            want = self.labels_for(e)
-            if not want:
+        """The portal's labels the templates lack: added one by one, each said as it is done (Codex) - none taken off."""
+        for name, missing in sorted(self.label_plan.items()):
+            r = self.row_of(name)
+            if self.check:
+                r["labels"] = list(missing)
                 continue
-            have = set()
-            if tid:
-                have = set(r.get("name") for r in self.all("job_templates/%d/labels/" % tid))
-            missing = [n for n in want if n not in have]
-            if not missing:
-                continue
-            if tid is None and not self.check:
-                continue                             # not made (skipped, other name, failed): nothing to label
-            if not self.check:
-                ids = self.label_ids(missing)
-                for n in missing:
-                    self.write("POST", "job_templates/%d/labels/" % tid, {"id": ids[n]})
-            done[e["name"]] = missing
-        return done
+            tid = self.tid.get(name)
+            if tid is None:
+                continue                         # it was to be made and was not (a failure before it, said)
+            r["labels"] = []
+            for n in missing:
+                if self.label_id.get(n) is None:
+                    self.label_id[n] = int(self.write("POST", "labels/", {"name": n, "organization": self.org_id})["id"])
+                self.write("POST", "job_templates/%d/labels/" % tid, {"id": self.label_id[n]})
+                r["labels"].append(n)
 
     def run(self):
+        try:
+            self.run_all()
+        finally:
+            for r in self.results:
+                if r["name"] in getattr(self, "left_off", {}):
+                    r.setdefault("also", self.left_off[r["name"]])
+
+    def run_all(self):
+        self.wrote = False
         steps = self.plan()
         if self.problems:
             return
         self.steps(steps)
         if self.problems or self.p["label_portal"] in ("", "none"):
             return
-        made = set(r["name"] for r in self.results if r["action"] in ("create",))
-        there = set(self.tid) | made
-        self.to_label = [e for e in self.to_label if e["name"] in there]
         try:
-            done = self.label_all()
+            self.label_all()
         except RuntimeError as ex:
-            self.problems.append("the portal labels: %s" % ex)
-            return
-        for r in self.results:
-            if r["name"] in done:
-                r["labels"] = done[r["name"]]
-        for name, lab in done.items():                 # a template labelled with no other change has a row too
-            if not any(r["name"] == name for r in self.results):
-                self.note(name, "right")
-                self.results[-1]["labels"] = lab
+            self.problems.append("the portal labels: %s (the labels added before it are listed)" % ex)
 
     def steps(self, steps):
         for st in steps:
@@ -347,26 +395,33 @@ class Templates(object):
                 else:
                     self.note(name, "fix", st[5], "would bring it right")
                 continue
+            done = []                            # Codex: each write said as it is done - a failure says what was done before it
             try:
                 if kind == "create":
                     body = dict(st[2], name=name, organization=self.org_id, inventory=self.inventory, job_type="run", description=DESC,
                                 extra_vars=self.variables(e))
                     tid = int(self.write("POST", "job_templates/", body)["id"])
                     self.tid[name] = tid
+                    done.append("made it")
                     for c in st[3]:
                         self.write("POST", "job_templates/%d/credentials/" % tid, {"id": c[0]})
+                        done.append("attached %s" % c[1])
                     self.note(name, "create", why="made")
                 else:
                     tid = st[4]
                     if st[2]:
                         self.write("PATCH", "job_templates/%d/" % tid, st[2])
-                    for c, there in st[3]:
-                        for h in there:          # the one of that type there is replaced (another type is never touched)
+                        done.append("changed %s" % ", ".join(SHOW[k] for k in sorted(st[2])))
+                    for add, drop in st[3]:
+                        for h in drop:           # one of that type the catalog does not want (another type: never touched)
                             self.write("POST", "job_templates/%d/credentials/" % tid, {"id": h[0], "disassociate": True})
-                        self.write("POST", "job_templates/%d/credentials/" % tid, {"id": c[0]})
+                            done.append("took off %s" % h[1])
+                        for c in add:
+                            self.write("POST", "job_templates/%d/credentials/" % tid, {"id": c[0]})
+                            done.append("attached %s" % c[1])
                     self.note(name, "fix", st[5], "brought right")
             except RuntimeError as ex:
-                self.note(name, "failed", why=str(ex))
+                self.note(name, "failed", why="%s%s" % (ex, (" - done before it: " + "; ".join(done)) if done else ""))
                 self.problems.append("stopped at %r: %s (what was done before it is listed)" % (name, ex))
                 return
 
@@ -395,7 +450,7 @@ def main():
         s.problems.append(str(ex))
     order = dict((e.get("name"), i) for i, e in enumerate(p["catalog"]))
     s.results.sort(key=lambda r: order.get(r["name"], 10 ** 6))
-    changed = any(r["action"] in ("create", "fix") or r.get("labels") for r in s.results)
+    changed = any(r["action"] in ("create", "fix") or r.get("labels") for r in s.results) or getattr(s, "wrote", False)
     module.exit_json(changed=changed, results=s.results, problems=s.problems)
 
 

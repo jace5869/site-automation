@@ -34,6 +34,9 @@
                       'skipped': 'SKIPPED', 'left': 'left to another job', 'failed': 'FAILED'} -%}
       {%- for r in _at.results -%}
       {%-   set _ = out.append(verb[r.action] ~ " - '" ~ r.name ~ "'" ~ ((' - ' ~ r.why) if r.why and r.action not in ['create', 'fix'] else '')) -%}
+      {%-   if r.also | default('') -%}
+      {%-     set _ = out.append('    ' ~ r.also) -%}
+      {%-   endif -%}
       {%-   if r.hint | default('') -%}
       {%-     set _ = out.append('    ' ~ r.hint) -%}
       {%-   endif -%}
