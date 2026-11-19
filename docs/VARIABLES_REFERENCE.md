@@ -11,7 +11,22 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [aap_portal_setup](#aap_portal_setup), [aap_template_audit](#aap_template_audit), [aap_workflow_gates](#aap_workflow_gates), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [api_availability](#api_availability), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [finding_ref](#finding_ref), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [portal_request](#portal_request), [portal_result](#portal_result), [portal_service](#portal_service), [portal_stig](#portal_stig), [portal_ticket](#portal_ticket), [portal_triage](#portal_triage), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_exclude](#site_exclude), [site_findings](#site_findings), [site_portal_stack](#site_portal_stack), [stigman_ckl_import](#stigman_ckl_import), [stigman_health](#stigman_health), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [workflow_gate](#workflow_gate), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_credentials](#aap_credentials), [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [aap_inventory_move](#aap_inventory_move), [aap_portal_setup](#aap_portal_setup), [aap_template_audit](#aap_template_audit), [aap_templates](#aap_templates), [aap_workflow_gates](#aap_workflow_gates), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [api_availability](#api_availability), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [finding_ref](#finding_ref), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [portal_request](#portal_request), [portal_result](#portal_result), [portal_service](#portal_service), [portal_stig](#portal_stig), [portal_ticket](#portal_ticket), [portal_triage](#portal_triage), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_exclude](#site_exclude), [site_findings](#site_findings), [site_portal_stack](#site_portal_stack), [stigman_ckl_import](#stigman_ckl_import), [stigman_health](#stigman_health), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [tmp_cleanup](#tmp_cleanup), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [workflow_gate](#workflow_gate), [settings of one host](#settings-of-one-host)
+
+## aap_credentials
+
+File: `roles/aap_credentials/defaults/main.yml`
+
+> ---- AAP - set up credentials (playbooks/aap_credentials_setup.yml; docs/SETUP_AAP.md "Rename and attach credentials") Renames credentials and attaches them to job templates or takes them off, through AAP's API. Never deletes a credential and never reads a secret (only names, ids, types). Everything is checked first: a name that matches nothing or more than one credential, or a rename onto a name that is there, and nothing is changed. Run it with Check first: it then only reads and says what it would do. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `aap_credential_renames` | `{}` | {old name: new name}, e.g. {"Report website": "Report website - nginx"} |
+| `aap_credential_attach` | `{}` | {credential name: [job template name, ...]}, e.g. {"AAP - site portal": ["Site portal - deploy"]} |
+| `aap_credential_detach` | `{}` | {credential name: [job template name, ...]}: takes only that credential off those templates |
+| `aap_credential_organization` | (empty) | the organization the names are looked up in; "" = any (a name in two organizations is then an error: set this) |
+| `aap_credential_replace_same_type` | `false` | a template that has a credential of the same type already: false = it keeps it, listed as "would replace ..."; true = that one is taken off and the new one attached |
+| `aap_credential_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
 
 ## aap_ee
 
@@ -157,6 +172,20 @@ File: `roles/aap_health/defaults/main.yml`
 | `aap_health_email` | `true` | Email the report like the other reports: to report_email_to, through the mail relay in all.yml (report_email_from, report_email_smtp_host ...; docs/EMAIL_REPORTS.md) - FAIL and WARN first, then every area, the sortable HTML attached. Nothing is sent while report_email_to is empty. false = never emailed (the launch box… (all of it: the role file) |
 | `aap_health_web` | `true` | Put the report on the report website as well (report_web_dest in all.yml, like the other reports; docs/WEB_REPORTS.md): FAIL and WARN first, then every area. Nothing happens while report_web_dest is empty. false = never on the website. |
 
+## aap_inventory_move
+
+File: `roles/aap_inventory_move/defaults/main.yml`
+
+> ---- AAP - move templates to another inventory (playbooks/aap_inventory_move.yml; docs/SETUP_AAP.md "Move templates to another inventory") Every job template, workflow, workflow node and schedule of the organization whose inventory is `from` gets `to` instead - only that field. Names are exact; both inventories must be in the organization, or nothing is changed. Run it with Check first: it then only reads, and lists every move. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `aap_inventory_replace` | `[]` | [{from: inventory name, to: inventory name}, ...], e.g. [{from: "rhel-hosts-old", to: "linux-hosts-idm"}] |
+| `aap_inventory_replace_organization` | `Default` | the organization: the inventories, templates and workflows in it |
+| `aap_inventory_replace_only` | `[]` | only the templates and workflows whose name matches one of these (* and ?, any case); a workflow node goes with its workflow's name, a schedule with its template's; [] = all |
+| `aap_inventory_replace_max` | `100` | more moves than this stop the job before any write |
+| `aap_inventory_replace_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
+
 ## aap_portal_setup
 
 File: `roles/aap_portal_setup/defaults/main.yml`
@@ -207,6 +236,28 @@ File: `roles/aap_template_audit/defaults/main.yml`
 | `aap_template_audit_ignore` | `[]` | settings never flagged |
 | `aap_template_audit_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
 | `aap_template_audit_fail` | `false` | true = the job fails when something is flagged or a part was not read (for a workflow's ticket step) |
+
+## aap_templates
+
+File: `roles/aap_templates/defaults/main.yml`
+
+> ---- AAP - set up job templates (playbooks/aap_templates_setup.yml; docs/SETUP_AAP.md "Create the job templates from the catalog") Makes the job templates of aap/job_templates.yml (one per template of docs/JOB_TEMPLATES.md) in AAP, or checks the ones there. A missing one is made; one that differs is listed field by field and brought right only with aap_templates_overwrite. Never deletes, and never touches a template's schedules, survey or Variables after it is made, nor a credential of a type the catalog does not name. Run it with Check first: it then only reads and says what it would make or change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `aap_templates_organization` | `Default` | the organization the templates are made in |
+| `aap_templates_project` | `site-automation` | your site-automation project in AAP (its name) |
+| `aap_templates_inventory` | (empty) | the inventory a template is made with (its name) - needed only to make one |
+| `aap_templates_ee` | `{}` | the execution environment of each kind the catalog names (all, windows, network); a kind left out: the project's {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"} |
+| `aap_templates_credentials` | `{}` | your credential of each kind the catalog names (machine, machine_windows, aap, stigman_api, servicenow, vmware, horizon, act_model_key, windows_share, ...); a template that needs a kind not here is skipped, said. A list for several. {machine: "Linux machine", aap: "AAP reader", stigman_api: "STIG Manager API"} |
+| `aap_templates_only` | `[]` | only the templates whose name matches one of these (* and ?, any case); [] = every template of the catalog ["STIG*", "Health check", "Troubleshoot"] |
+| `aap_templates_overwrite` | `false` | true = bring a template that differs right (only the fields this job sets) |
+| `aap_templates_create_alias` | `false` | true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions) |
+| `aap_templates_label_portal` | `none` | the site portal's labels (its own label and portal-area:<area>, so the portal finds the templates and groups them): none (the default), portal-actions (the templates the site portal launches) or all (every template made or matched) |
+| `aap_templates_portal_label` | `"{{ portal_label \| default('portal') }}"` | the site portal's label (as written, case too) |
+| `aap_templates_portal_label_area` | `"{{ portal_label_area \| default('portal-area:') }}"` | the prefix of its group label |
+| `aap_templates_catalog` | (empty) | "" = the repository's aap/job_templates.yml; a path here = your own catalog |
+| `aap_templates_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
 
 ## aap_workflow_gates
 

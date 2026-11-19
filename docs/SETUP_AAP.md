@@ -666,6 +666,117 @@ it changes that EE's **Image**, and every template already on it runs the new im
 node that has pulled a tag keeps it, so a rebuild pushed under the same tag would never reach the jobs. Its user
 needs **Admin** on the execution environment for this. (By hand: change the EE's **Image** in AAP.)
 
+### Create the job templates from the catalog
+
+One template - `AAP - set up job templates` (`playbooks/aap_templates_setup.yml`), with only the **Red Hat Ansible
+Automation Platform** credential (its user: **Admin** on the organization), any inventory, no Limit. It makes the job
+templates of `aap/job_templates.yml` - one for each row of [JOB_TEMPLATES.md](JOB_TEMPLATES.md) - instead of by hand,
+and checks the ones already there. It never deletes a template.
+
+1. Make this one template by hand. Copy `aap/extra_vars/aap_templates_setup.yml` into its Variables box.
+2. Name the inventory new templates get (`aap_templates_inventory`) and your credential of each kind
+   (`aap_templates_credentials`, for example `machine: Linux machine`, `stigman_api: STIG Manager API`). A template
+   that needs a kind you did not name is skipped, and the job says which kind. The project, the inventory and the
+   credentials are looked up in `aap_templates_organization` only (an execution environment of no organization too):
+   one of another organization, or a personal credential, is never used. The inventory is needed only to make a
+   template. Sync the project in AAP first: a playbook the project does not have yet stops the job before it writes.
+3. Optional: `aap_templates_ee` (an execution environment for `all`, `windows`, `network`), `aap_templates_only`
+   (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels).
+4. Launch it with Job type **Check**. It lists each template:
+   - *WOULD CREATE* - with its playbook, project, credentials, prompts and execution environment;
+   - *DIFFERS* - field by field, *has X, should be Y* (the playbook, the project, a credential by kind, the prompts
+     for Limit, Variables, Inventory and Job type, the execution environment: a kind you did not map is the
+     project's);
+   - *already right*;
+   - *same playbook, other name* - a template of yours runs that playbook: it is not made twice. For a workflow
+     of yours that names the catalog's template, `aap_templates_create_alias: true` makes it under that name too
+     (the site portal's own templates are the next item's);
+   - *SKIPPED* - a credential kind not named, or the name used in another organization;
+   - *left to another job* - the site portal's own templates. *NOT IN AAP* means it is missing: run
+     **AAP - set up portal actions** ([SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap)), which makes it
+     with the workflow that runs it. When the portal action runs that one template and a template of yours runs
+     its playbook, the job also prints a line to copy instead: `portal_aap_names: {disk_space_request: 'Your name'}`
+     (1.78.1 and later).
+   Two templates of one name in the organization stop the job before it writes anything: rename one.
+5. Launch it again with Job type **Run**. It makes the missing templates. A template that differs is left as it is;
+   set `aap_templates_overwrite: true` to bring it right. If a write fails, the job stops there and lists what it did
+   before it, down to each credential attached.
+
+What it never changes: a template's schedules and survey, its Variables once it is made, and a credential of a type
+the catalog does not name (a Teams webhook you added stays). A template takes one credential of a type: an optional
+one of a type it already has (your Windows Machine credential beside the Linux one) is left off, and said. A new
+template gets its Variables file with every setting switched off - switch on what you need.
+
+### Move templates to another inventory
+
+One template - `AAP - move templates to another inventory` (`playbooks/aap_inventory_move.yml`), with only the **Red
+Hat Ansible Automation Platform** credential (its user: **Admin** on the organization), any inventory, no Limit. It
+moves every job template, workflow, workflow node and schedule of the organization from one inventory to another -
+for example from `rhel-hosts-old` to `linux-hosts-idm`. It changes only the inventory: never a Limit, Variables,
+credential or anything else.
+
+1. Make this one template by hand. Copy `aap/extra_vars/aap_inventory_move.yml` into its Variables box.
+2. Name the move, with the inventories' exact names:
+
+   ```yaml
+   aap_inventory_replace:
+     - {from: "rhel-hosts-old", to: "linux-hosts-idm"}
+   ```
+
+   Both must be in `aap_inventory_replace_organization` (`Default` unless you set it). If one is not found, the job
+   stops before it changes anything.
+3. Optional: `aap_inventory_replace_only` (some templates and workflows, `*` and `?`; a workflow node goes with its
+   workflow's name, a schedule with its template's), `aap_inventory_replace_max` (default 100: more moves stop the job
+   before any write).
+4. Launch it with Job type **Check**. It lists each move and a total:
+
+   ```
+   would move: job template 'Patch hosts': rhel-hosts-old -> linux-hosts-idm
+   would move: workflow node 'Health check (in workflow Nightly)': rhel-hosts-old -> linux-hosts-idm
+   6 would move (job template: 3, schedule: 1, workflow: 1, workflow node: 1)
+   ```
+
+   A *warning* under a move means its Limit names a group or host the new inventory does not have: that job would
+   run on no host. Add the group to the new inventory, or change the Limit, before you run it.
+5. Launch it again with Job type **Run**. Each move is listed as *moved*. If a write fails, the job stops there; the
+   moves before it are listed, and a second run moves the rest.
+6. Launch it once more: it should say *nothing uses those inventories*.
+
+### Rename and attach credentials
+
+One template - `AAP - set up credentials` (`playbooks/aap_credentials_setup.yml`), with only the **Red Hat Ansible
+Automation Platform** credential (its user: **Admin** on the organization), any inventory, no Limit. It renames
+credentials, and attaches them to job templates or takes them off - instead of editing each one by hand. It never
+deletes a credential, and it never reads a secret: only names, IDs and types.
+
+1. Make the template. Copy `aap/extra_vars/aap_credentials_setup.yml` into its Variables box.
+2. Say what to do, by name. For example, to rename *Report website* and attach *AAP - site portal* to the portal's
+   deploy job:
+
+   ```yaml
+   aap_credential_renames:
+     "Report website": "Report website - nginx"
+   aap_credential_attach:
+     "AAP - site portal": ["Site portal - deploy"]
+   ```
+
+   `aap_credential_detach` takes a credential off templates, in the same shape.
+3. Launch it with Job type **Check**. It lists each step: *would rename*, *would attach*, *already done*, or
+   *NOT DONE* with why. Nothing is changed.
+4. Read the list. A template that has a credential of the same type already (another *Red Hat Ansible Automation
+   Platform* one, say) keeps it: *would replace 'AAP reader' - set aap_credential_replace_same_type: true*. Set that
+   when the new one should take its place.
+5. Launch it again with Job type **Run**. Success: each step says *done* (or *already done*).
+
+When it changes nothing at all:
+
+- A name that matches nothing, or a rename onto a name another credential has: the job fails and says which.
+- A name two organizations have: set `aap_credential_organization` to the one to look in.
+- A workflow named: a workflow has no credentials of its own in AAP - attach it to the job templates the workflow
+  runs.
+
+A write that fails part way stops the job; what was done before it is listed.
+
 ### Report website - copy
 
 Only when report templates run in an execution environment that cannot reach the report website's server (no WinRM

@@ -215,6 +215,9 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | AAP jobs - leave hosts out (site_exclude_hosts) | `playbooks/site_exclude.yml` | Not a job template: the first play every playbook on hosts imports (README, "Leave hosts out of every job") | [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#site_exclude) |
 | AAP - add workflow gates | `playbooks/aap_workflow_gates.yml` | Setup (Check first): the gate into your own workflows | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-gate-the-approval-only-when-the-check-has-a-plan-1670), step 103 |
 | AAP - set up portal actions | `playbooks/aap_portal_setup.yml` | Setup or test (Check first) | [SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap), step 102 |
+| AAP - set up job templates | `playbooks/aap_templates_setup.yml` | Setup (Check first): make the job templates from aap/job_templates.yml | [SETUP_AAP.md](SETUP_AAP.md#create-the-job-templates-from-the-catalog) |
+| AAP - move templates to another inventory | `playbooks/aap_inventory_move.yml` | Setup (Check first): job templates, workflows, nodes and schedules from one inventory to another | [SETUP_AAP.md](SETUP_AAP.md#move-templates-to-another-inventory) |
+| AAP - set up credentials | `playbooks/aap_credentials_setup.yml` | Setup (Check first): rename credentials, attach them to job templates | [SETUP_AAP.md](SETUP_AAP.md#rename-and-attach-credentials) |
 | AAP - health check | `playbooks/aap_health_check.yml` | Report | [AAP_HEALTH_CHECK.md](AAP_HEALTH_CHECK.md#set-it-up-in-aap) |
 | AAP - template variables audit | `playbooks/aap_template_audit.yml` | Report | [TEMPLATE_AUDIT.md](TEMPLATE_AUDIT.md#set-it-up-in-aap) |
 | Report website - copy | `playbooks/report_web_copy.yml` | Watch | [WEB_REPORTS.md](WEB_REPORTS.md#the-copy-job-report-templates-in-any-execution-environment) |

@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.79.0 — 2026-11-19
+
+**To set up:** a job template **AAP - set up job templates** (`playbooks/aap_templates_setup.yml`, an AAP credential
+with Admin on the organization; its Variables: `aap/extra_vars/aap_templates_setup.yml`) - run it with Check first.
+
+**AAP - set up job templates** (docs/SETUP_AAP.md, "Create the job templates from the catalog").
+
+- `aap/job_templates.yml`: a catalog of every job template of docs/JOB_TEMPLATES.md - its playbook, the credential
+  kinds it needs, the prompts, the execution environment kind, its Variables file and its site portal area. Made by
+  `scripts/gen_job_catalog.py`; a test keeps it the same as the docs.
+- The job makes the missing templates, and lists one that differs field by field (*has X, should be Y*); it brings it
+  right only with `aap_templates_overwrite: true`. A template running the same playbook under another name is not made
+  twice. A credential kind not named in `aap_templates_credentials` skips that template, said.
+- Never deletes, and never changes schedules, surveys, Variables after a template is made, or credentials of a type
+  the catalog does not name. A new template's Variables come all switched off.
+- `aap_templates_label_portal` (`portal-actions` or `all`): the site portal's label (`portal_label`) and
+  `portal-area:<area>`, so the portal finds the templates and groups them.
+- A site portal template the portal setup job makes, and that is missing, is said: *NOT IN AAP - run AAP - set up
+  portal actions* (it makes it with its workflow). `aap_templates_create_alias: true` makes a catalog template even when
+  your own runs its playbook under another name (for a workflow of yours that names the catalog's). When a portal
+  action runs that one template, a line to copy is printed too: `portal_aap_names: {action: 'your name'}` (1.78.1+).
+- The job templates job looks up the project, inventory and credentials in its organization only. Every read and check
+  (labels too) comes before the first write. Two templates of one name stop it before it writes. A failure lists each
+  write done before it. The catalog carries the Job type prompt and the Limit prompt as SETUP_AAP.md gives them.
+- Also stopped before any write: a personal credential (of no organization), a Variables file that cannot be read, a
+  playbook the project does not have as AAP has it synced. The catalog's Variables prompts follow each template's guide
+  (ticket insights, weekly activity, AD and ONTAP health); the Check-first jobs prompt for Job type.
+
+**To set up:** a job template **AAP - set up credentials** (`playbooks/aap_credentials_setup.yml`, an AAP credential
+with Admin on the organization; its Variables: `aap/extra_vars/aap_credentials_setup.yml`).
+
+**AAP - set up credentials** (docs/SETUP_AAP.md, "Rename and attach credentials").
+
+**AAP - move templates to another inventory** (docs/SETUP_AAP.md, "Move templates to another inventory"):
+`aap_inventory_replace: [{from: "rhel-hosts-old", to: "linux-hosts-idm"}]` moves every job template, workflow, workflow
+node and schedule of the organization - only the inventory. Check lists each move and a total, and warns when a
+Limit names a group the new inventory lacks. An inventory not found, or more than `aap_inventory_replace_max` (100)
+moves, stops it before any write. A new job template: `playbooks/aap_inventory_move.yml`, the AAP credential only.
+
+- `aap_credential_renames` {old name: new name} renames credentials; `aap_credential_attach` and `aap_credential_detach`
+  {credential: [job template, ...]} attach them to job templates or take them off.
+- A template with a credential of the same type already keeps it, said (*would replace ...*), unless
+  `aap_credential_replace_same_type: true`.
+- Names are looked up in `aap_credential_organization`, or in every organization (a name in two is then an error).
+- Everything is checked first: a name that matches nothing or more than one, or a rename onto a name that is there,
+  and nothing is changed. Check mode only lists what it would do. A write that fails stops the job; what was done is
+  listed.
+- Never deletes a credential; never reads a secret (only names, IDs and types).
+
 ## 1.78.4 — 2026-11-19
 
 **To set up:** run **Site portal - deploy** again. Nothing is required; `portal_inventories_max` (10) is new.

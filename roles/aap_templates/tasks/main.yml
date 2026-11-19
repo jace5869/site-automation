@@ -1,0 +1,63 @@
+---
+# AAP - set up job templates (library/site_aap_templates.py). Runs on localhost with the "Red Hat Ansible Automation
+# Platform" credential's variables. A Check run only reads.
+- name: Job templates | the catalog
+  ansible.builtin.set_fact:
+    _at_catalog: >-
+      {{ (lookup('ansible.builtin.file', aap_templates_catalog if aap_templates_catalog | length > 0
+                 else role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates }}
+
+- name: Job templates | made or checked, in AAP
+  site_aap_templates:
+    catalog: "{{ _at_catalog }}"
+    organization: "{{ aap_templates_organization }}"
+    project: "{{ aap_templates_project }}"
+    inventory: "{{ aap_templates_inventory }}"
+    ee: "{{ aap_templates_ee }}"
+    credentials: "{{ aap_templates_credentials }}"
+    only: "{{ aap_templates_only }}"
+    overwrite: "{{ aap_templates_overwrite | bool }}"
+    create_alias: "{{ aap_templates_create_alias | bool }}"
+    label_portal: "{{ aap_templates_label_portal }}"
+    portal_label: "{{ aap_templates_portal_label }}"
+    portal_label_area: "{{ aap_templates_portal_label_area }}"
+    variables_dir: "{{ role_path ~ '/../..' }}"
+    ca_path: "{{ aap_templates_ca_path }}"
+  register: _at
+
+- name: Job templates | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- set verb = {'create': ('WOULD CREATE' if ansible_check_mode else 'created'), 'fix': ('WOULD FIX' if ansible_check_mode else 'fixed'),
+                      'right': 'already right', 'differs': 'DIFFERS', 'other name': 'same playbook, other name',
+                      'skipped': 'SKIPPED', 'left': 'left to another job', 'failed': 'FAILED'} -%}
+      {%- for r in _at.results -%}
+      {%-   set _ = out.append(verb[r.action] ~ " - '" ~ r.name ~ "'" ~ ((' - ' ~ r.why) if r.why and r.action not in ['create', 'fix'] else '')) -%}
+      {%-   if r.also | default('') -%}
+      {%-     set _ = out.append('    ' ~ r.also) -%}
+      {%-   endif -%}
+      {%-   if r.hint | default('') -%}
+      {%-     set _ = out.append('    ' ~ r.hint) -%}
+      {%-   endif -%}
+      {%-   if r.labels | default([]) -%}
+      {%-     set _ = out.append('    ' ~ ('would label portal: ' if ansible_check_mode else 'labelled portal: ') ~ (r.labels | join(', '))) -%}
+      {%-   endif -%}
+      {%-   for f, v in r.diff | dictsort -%}
+      {%-     set _ = out.append('    ' ~ f ~ ': ' ~ ('has ' ~ (v[0] | string) ~ ', should be ' if v[0] is not none else '') ~ (v[1] | string)) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out or ['nothing in the catalog matches aap_templates_only'] }}
+
+- name: Job templates | in short
+  ansible.builtin.debug:
+    msg: >-
+      {%- set n = {} -%}
+      {%- for r in _at.results -%}{%- set _ = n.update({r.action: n.get(r.action, 0) + 1}) -%}{%- endfor -%}
+      {%- set nl = _at.results | selectattr('labels', 'defined') | selectattr('labels') | list | length -%}
+      {{ (n | dictsort | map('join', ': ') | join(', ') or 'nothing') ~ ((', ' ~ ('would label portal: ' if ansible_check_mode else 'labelled portal: ') ~ nl) if nl else '') }}
+
+- name: Job templates | a name not found, AAP not read, or a write that failed - see above
+  ansible.builtin.fail:
+    msg: "{{ _at.problems }}"
+  when: _at.problems | length > 0

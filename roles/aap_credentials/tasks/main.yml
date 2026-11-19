@@ -1,0 +1,45 @@
+---
+# AAP - set up credentials (library/site_aap_credentials.py). Runs on localhost with the "Red Hat Ansible Automation
+# Platform" credential's variables. A Check run only reads.
+- name: Credentials | something to do is set
+  ansible.builtin.assert:
+    that: (aap_credential_renames | length + aap_credential_attach | length + aap_credential_detach | length) > 0
+    fail_msg: >-
+      Nothing to do: set aap_credential_renames, aap_credential_attach or aap_credential_detach (docs/SETUP_AAP.md,
+      "Rename and attach credentials").
+    quiet: true
+
+- name: Credentials | rename, attach, take off - in AAP
+  site_aap_credentials:
+    renames: "{{ aap_credential_renames }}"
+    attach: "{{ aap_credential_attach }}"
+    detach: "{{ aap_credential_detach }}"
+    organization: "{{ aap_credential_organization }}"
+    replace_same_type: "{{ aap_credential_replace_same_type | bool }}"
+    ca_path: "{{ aap_credential_ca_path }}"
+  register: _cr
+
+- name: Credentials | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _cr.results -%}
+      {%-   set verb = {'rename': 'rename', 'attach': 'attach', 'replace': 'replace (same type)', 'detach': 'take off'}[r.action] -%}
+      {%-   set st = {'would do': 'would ' ~ verb, 'done': verb ~ ': done', 'already done': verb ~ ': already done',
+                      'not done': verb ~ ': NOT DONE', 'failed': verb ~ ': FAILED'}[r.state] -%}
+      {%-   set _ = out.append(st ~ " - '" ~ r.credential ~ "' " ~ ('to' if r.action == 'rename' else ('from' if r.action == 'detach' else 'on'))
+                               ~ " '" ~ r.target ~ "'" ~ ((' - ' ~ r.why) if r.why else '')) -%}
+      {%- endfor -%}
+      {{ out or ['nothing to do'] }}
+
+- name: Credentials | a name not found or not clear, a clash, or a write that failed - see above
+  ansible.builtin.fail:
+    msg: "{{ _cr.problems }}"
+  when: _cr.problems | length > 0
+
+- name: Credentials | left as they are - a template has a credential of that type already
+  ansible.builtin.debug:
+    msg: >-
+      {{ _cr.results | selectattr('state', 'eq', 'not done') | map(attribute='target') | list }}: see what was done, above.
+      aap_credential_replace_same_type: true takes the other one off and attaches the new one.
+  when: _cr.results | selectattr('state', 'eq', 'not done') | list | length > 0

@@ -12,7 +12,10 @@ one by hand. Under api/controller/v2/, Bearer FAKE_AAP_TOKEN. Not AAP: just enou
   <kind>/<id>/object_roles/                 GET (Execute, Approve, Admin)
   users/<id>/roles/                         GET, POST {id}
   <kind>/<id>/schedules/ GET, POST;  schedules/<id>/  PATCH
-Every write is a line in FAKE_AAP_LOG.  fake_aap_crud.py PORT"""
+  credentials/<id>/                         PATCH (a rename: 400 when the organization has that name - AAP Credentials setup)
+  a list GET filters on any other field too (?inventory=3);  schedules/ GET;  workflow_job_template_nodes/<id>/ PATCH;
+  inventories/<id>/groups/, inventories/<id>/hosts/   GET ?name= (the state's groups and hosts, each with its inventory)
+A write to a path in the state's "fail_paths" answers 500 (a failure mid-run). Every write is a line in FAKE_AAP_LOG.  fake_aap_crud.py PORT"""
 import json
 import os
 import re
@@ -88,11 +91,27 @@ def node_view(s, n):
         ujt = {}
     return {"id": n["id"], "identifier": n["identifier"], "workflow_job_template": n["wf"], "all_parents_must_converge": n["converge"],
             "success_nodes": n["success"], "failure_nodes": n["failure"], "always_nodes": n["always"],
-            "extra_data": n.get("extra_data") or {}, "summary_fields": {"unified_job_template": ujt}}
+            "extra_data": n.get("extra_data") or {}, "summary_fields": {"unified_job_template": ujt},
+            "inventory": n.get("inventory"), "limit": n.get("limit") or ""}
+
+
+def schedule_view(s, x):
+    par = next((r for r in s[x["kind"]] if r["id"] == x["obj"]), {})
+    return dict(x, unified_job_template=x["obj"], summary_fields={"unified_job_template": {
+        "id": x["obj"], "name": par.get("name"), "unified_job_type": "job" if x["kind"] == "job_templates" else "workflow_job"}})
+
+
+def by_fields(rows, q):
+    """The other query fields as filters (?inventory=3), as AAP's list views do."""
+    for k, v in q.items():
+        if k not in ("name", "username", "page_size", "page", "workflow_job_template"):
+            rows = [r for r in rows if str(r.get(k)) == v]
+    return rows
 
 
 TPL_FIELDS = ("name", "description", "job_type", "project", "playbook", "inventory", "ask_variables_on_launch", "ask_limit_on_launch",
-              "become_enabled", "extra_vars", "execution_environment")
+              "become_enabled", "extra_vars", "execution_environment", "organization", "ask_inventory_on_launch",
+              "ask_job_type_on_launch")
 WF_FIELDS = ("name", "description", "organization", "ask_variables_on_launch", "ask_limit_on_launch", "extra_vars")
 
 
@@ -137,22 +156,24 @@ class H(BaseHTTPRequestHandler):
             s = load()
             if p == "me/":
                 return self.send(200, {"results": [{"username": "setup-admin"}]})
-            m = re.match(r"^(organizations|projects|inventories|credentials|execution_environments|users|job_templates|workflow_job_templates)/$", p)
+            m = re.match(r"^(organizations|projects|inventories|credentials|execution_environments|users|job_templates|workflow_job_templates|labels)/$", p)
             if m:
                 want = q.get("name", q.get("username"))
-                rows = [dict((k, v) for k, v in r.items() if k != "roles") for r in s[m.group(1)]
+                rows = [dict((k, v) for k, v in r.items() if k != "roles") for r in s.get(m.group(1), [])
                         if want is None or r.get("name") == want or r.get("username") == want]
+                rows = by_fields(rows, q)
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
             m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/$", p)
             if m:
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                 return self.send(200, r) if r else self.send(404, {"detail": "Not found."})
             m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/labels/$", p)
-            if m:                                                                       # 1.78.1: the labels of a template or workflow
+            if m:                                                                       # 1.78.1 and the job-templates job: a template's labels
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                 if r is None:
                     return self.send(404, {"detail": "Not found."})
-                rows = [x for x in s.get("labels", []) if x["id"] in r.get("label_ids", [])]
+                ids = set(r.get("label_ids", [])) | set(x for x in r.get("labels", []) if isinstance(x, int))
+                rows = [x for x in s.get("labels", []) if x["id"] in ids]
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
             m = re.match(r"^job_templates/(\d+)/credentials/$", p)
             if m:
@@ -160,7 +181,23 @@ class H(BaseHTTPRequestHandler):
                 rows = [c for c in s["credentials"] if c["id"] in jt.get("credentials", [])]
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
             if p == "workflow_job_template_nodes/":
-                rows = [node_view(s, n) for n in s["nodes"] if str(n["wf"]) == q.get("workflow_job_template")]
+                rows = by_fields([node_view(s, n) for n in s["nodes"]
+                                  if "workflow_job_template" not in q or str(n["wf"]) == q.get("workflow_job_template")], q)
+                return self.send(200, {"count": len(rows), "results": rows, "next": None})
+            if p == "schedules/":
+                rows = by_fields([schedule_view(s, x) for x in s["schedules"]], q)
+                return self.send(200, {"count": len(rows), "results": rows, "next": None})
+            m = re.match(r"^projects/(\d+)/playbooks/$", p)
+            if m:                                           # as AAP: a bare list; the repository's own unless the state says
+                pbs = (s.get("project_playbooks") or {}).get(m.group(1))
+                if pbs is None:
+                    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+                    pbs = sorted("playbooks/" + f for f in os.listdir(os.path.join(root, "playbooks")) if f.endswith(".yml"))
+                return self.send(200, pbs)
+            m = re.match(r"^inventories/(\d+)/(groups|hosts)/$", p)
+            if m:
+                rows = [r for r in s.get(m.group(2), []) if r.get("inventory") == int(m.group(1))
+                        and ("name" not in q or r.get("name") == q["name"])]
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
             m = re.match(r"^(job_templates|workflow_job_templates|organizations)/(\d+)/object_roles/$", p)
             if m:
@@ -186,6 +223,9 @@ class H(BaseHTTPRequestHandler):
         log({"method": "POST", "path": p, "body": b})
         with LOCK:
             s = load()
+            if p in (s.get("fail_paths") or []) or (p in (s.get("fail_attach_paths") or []) and not b.get("disassociate")):
+                # a refusal that echoes a value back (as a validation answer may): what reads it must not print it
+                return self.send(500, {"detail": "a failure the test asked for", "inputs": {"password": "SECRET-PW-ECHO"}})
             try:
                 m = re.match(r"^(job_templates|workflow_job_templates)/$", p)
                 if m:
@@ -196,24 +236,38 @@ class H(BaseHTTPRequestHandler):
                     r["id"] = new_id(s)
                     if m.group(1) == "job_templates":
                         r["credentials"] = []
+                        if not r.get("inventory") and not r.get("ask_inventory_on_launch"):     # as AAP
+                            return self.send(400, {"inventory": ["Job Template must provide 'inventory' or allow prompting for it."]})
                     s[m.group(1)].append(r)
                     return self.send(201, r)
+                if p == "labels/":                              # AAP - set up job templates: a label of the organization
+                    lb = {"id": new_id(s), "name": b.get("name"), "organization": b.get("organization")}
+                    s.setdefault("labels", []).append(lb)
+                    return self.send(201, lb)
                 m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/labels/$", p)
-                if m:                                                                   # 1.78.1: a label made if new, then added; or taken off (never deleted)
+                if m:                                                                   # a label added by id or by name (made if new), or taken off (never deleted)
                     r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                     if r is None:
                         return self.send(404, {"detail": "Not found."})
                     labels = s.setdefault("labels", [])
                     ids = r.setdefault("label_ids", [])
+                    plain = r.setdefault("labels", [])
                     if b.get("disassociate"):
                         r["label_ids"] = [i for i in ids if i != b.get("id")]
+                        r["labels"] = [i for i in plain if i != b.get("id")]
                     else:
-                        lab = next((x for x in labels if x["name"] == b.get("name") and x.get("organization") == b.get("organization")), None)
-                        if lab is None:
-                            lab = {"id": new_id(s), "name": b.get("name"), "organization": b.get("organization")}
-                            labels.append(lab)
-                        if lab["id"] not in ids:
-                            ids.append(lab["id"])
+                        if b.get("name") is not None:
+                            lab = next((x for x in labels if x["name"] == b.get("name") and x.get("organization") == b.get("organization")), None)
+                            if lab is None:
+                                lab = {"id": new_id(s), "name": b.get("name"), "organization": b.get("organization")}
+                                labels.append(lab)
+                            lid = lab["id"]
+                        else:
+                            lid = b["id"]
+                        if lid not in ids:
+                            ids.append(lid)
+                        if lid not in plain:
+                            plain.append(lid)
                     return self.send(204)
                 m = re.match(r"^job_templates/(\d+)/credentials/$", p)
                 if m:
@@ -274,16 +328,29 @@ class H(BaseHTTPRequestHandler):
         log({"method": "PATCH", "path": p, "body": b})
         with LOCK:
             s = load()
-            m = re.match(r"^(job_templates|workflow_job_templates|schedules)/(\d+)/$", p)
+            if p in (s.get("fail_paths") or []):
+                return self.send(500, {"detail": "a failure the test asked for"})
+            m = re.match(r"^(job_templates|workflow_job_templates|schedules|credentials)/(\d+)/$", p)
             if m:
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                 if r is None:
                     return self.send(404, {"detail": "Not found."})
+                if m.group(1) == "credentials" and any(c["name"] == b.get("name") and c.get("organization") == r.get("organization")
+                                                       and c["id"] != r["id"] for c in s["credentials"]):
+                    return self.send(400, {"__all__": ["Credential with this Name and Organization already exists."]})
                 if m.group(1) == "schedules" and "rrule" in b and rrule_problem(b["rrule"]):
                     return self.send(400, {"rrule": [rrule_problem(b["rrule"])]})
                 r.update(b)
                 save(s)
                 return self.send(200, r)
+            m = re.match(r"^workflow_job_template_nodes/(\d+)/$", p)
+            if m:
+                n = next((x for x in s["nodes"] if x["id"] == int(m.group(1))), None)
+                if n is None:
+                    return self.send(404, {"detail": "Not found."})
+                n.update(dict((k, v) for k, v in b.items() if k in ("inventory", "limit")))
+                save(s)
+                return self.send(200, node_view(s, n))
         return self.send(404, {"detail": "Not found."})
 
     def do_DELETE(self):

@@ -1,0 +1,32 @@
+---
+# ---- AAP - set up job templates (playbooks/aap_templates_setup.yml; docs/SETUP_AAP.md "Create the job templates from the catalog")
+# Makes the job templates of aap/job_templates.yml (one per template of docs/JOB_TEMPLATES.md) in AAP, or checks the ones
+# there. A missing one is made; one that differs is listed field by field and brought right only with
+# aap_templates_overwrite. Never deletes, and never touches a template's schedules, survey or Variables after it is made,
+# nor a credential of a type the catalog does not name. Run it with Check first: it then only reads and says what it would
+# make or change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
+
+aap_templates_organization: Default            # the organization the templates are made in
+aap_templates_project: site-automation         # your site-automation project in AAP (its name)
+aap_templates_inventory: ""                    # the inventory a template is made with (its name) - needed only to make one
+# the execution environment of each kind the catalog names (all, windows, network); a kind left out: the project's
+#   {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
+aap_templates_ee: {}
+# your credential of each kind the catalog names (machine, machine_windows, aap, stigman_api, servicenow, vmware, horizon,
+# act_model_key, windows_share, ...); a template that needs a kind not here is skipped, said. A list for several.
+#   {machine: "Linux machine", aap: "AAP reader", stigman_api: "STIG Manager API"}
+aap_templates_credentials: {}
+# only the templates whose name matches one of these (* and ?, any case); [] = every template of the catalog
+#   ["STIG*", "Health check", "Troubleshoot"]
+aap_templates_only: []
+aap_templates_overwrite: false                 # true = bring a template that differs right (only the fields this job sets)
+# true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other
+# name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions)
+aap_templates_create_alias: false
+# the site portal's labels (its own label and portal-area:<area>, so the portal finds the templates and groups them):
+#   none (the default), portal-actions (the templates the site portal launches) or all (every template made or matched)
+aap_templates_label_portal: none
+aap_templates_portal_label: "{{ portal_label | default('portal') }}"            # the site portal's label (as written, case too)
+aap_templates_portal_label_area: "{{ portal_label_area | default('portal-area:') }}"   # the prefix of its group label
+aap_templates_catalog: ""                      # "" = the repository's aap/job_templates.yml; a path here = your own catalog
+aap_templates_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a CA file for AAP's own HTTPS certificate

@@ -1,0 +1,48 @@
+---
+# AAP - move templates to another inventory (library/site_aap_inventory_move.py). Runs on localhost with the "Red Hat
+# Ansible Automation Platform" credential's variables. A Check run only reads.
+- name: Inventory move | something to move is set
+  ansible.builtin.assert:
+    that: aap_inventory_replace | length > 0
+    fail_msg: >-
+      Nothing to do: set aap_inventory_replace, for example [{from: "rhel-hosts-old", to: "linux-hosts-idm"}]
+      (docs/SETUP_AAP.md, "Move templates to another inventory").
+    quiet: true
+
+- name: Inventory move | the templates, workflows, nodes and schedules - in AAP
+  site_aap_inventory_move:
+    replace: "{{ aap_inventory_replace }}"
+    organization: "{{ aap_inventory_replace_organization }}"
+    only: "{{ aap_inventory_replace_only }}"
+    max: "{{ aap_inventory_replace_max | int }}"
+    ca_path: "{{ aap_inventory_replace_ca_path }}"
+  register: _im
+
+- name: Inventory move | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _im.results -%}
+      {%-   set _ = out.append(('FAILED' if r.state == 'failed' else r.state) ~ ": " ~ r.kind ~ " '" ~ r.name ~ "': " ~ r['from']
+                               ~ " -> " ~ r.to ~ ((' - ' ~ r.why) if r.why else '')) -%}
+      {%-   if r.warn -%}
+      {%-     set _ = out.append('    warning: ' ~ r.warn) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out or ['nothing uses those inventories (in the organization, matching aap_inventory_replace_only)'] }}
+
+- name: Inventory move | in short
+  ansible.builtin.debug:
+    msg: >-
+      {%- set n = {} -%}
+      {%- for r in _im.results -%}{%- set _ = n.update({r.kind: n.get(r.kind, 0) + 1}) -%}{%- endfor -%}
+      {%- set done = _im.results | selectattr('state', 'eq', 'moved') | list | length -%}
+      {{ ('%d %s' | format(_im.results | length if ansible_check_mode else done, 'would move' if ansible_check_mode else 'moved'))
+         ~ ((' (' ~ (n | dictsort | map('join', ': ') | join(', ')) ~ ')') if n else '')
+         ~ ((', %d with a Limit warning' | format(_im.results | selectattr('warn') | list | length))
+            if _im.results | selectattr('warn') | list | length > 0 else '') }}
+
+- name: Inventory move | an inventory not found, too many moves, or a write that failed - see above
+  ansible.builtin.fail:
+    msg: "{{ _im.problems }}"
+  when: _im.problems | length > 0

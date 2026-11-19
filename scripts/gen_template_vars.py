@@ -117,6 +117,56 @@ portal_setup_credentials:
 ## The site portal's AAP account: Execute on these, Approve on the workflows with an approval node
 portal_setup_portal_user: svc_site_portal
 """),
+    "aap_templates_setup.yml": ("AAP - set up job templates", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## Run it with Check first: it then only reads, and lists every template it would make, fix or label. It never deletes.
+## The inventory a template is made with, and your site-automation project in AAP
+aap_templates_inventory: Site hosts
+# aap_templates_project: site-automation
+## Your credential of each kind the catalog (aap/job_templates.yml) names; a template needing a kind not here is skipped
+aap_templates_credentials:
+  machine: Linux machine
+  machine_windows: Windows machine
+  aap: AAP reader
+  stigman_api: STIG Manager API
+## The execution environment of each kind (all, windows, network); a kind left out: the project's
+# aap_templates_ee: {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
+## Only some templates (* and ?, any case)
+# aap_templates_only: ["STIG*", "Health check", "Troubleshoot"]
+## Bring the templates that differ right (only the fields this job sets)
+# aap_templates_overwrite: true
+## Make the catalog's name too when your own template runs that playbook (for a workflow that names it)
+# aap_templates_create_alias: true
+## The site portal's labels, so it finds the templates: portal-actions or all
+# aap_templates_label_portal: portal-actions
+"""),
+    "aap_credentials_setup.yml": ("AAP - set up credentials", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## Run it with Check first: it then only reads, and lists what it would rename, attach or take off. It never deletes a
+## credential and never reads a secret. A name that matches nothing or more than one, or a clash, changes nothing at all.
+## Rename: {old name: new name}
+aap_credential_renames:
+  "Report website": "Report website - nginx"
+## Attach to job templates: {credential: [template, ...]}
+aap_credential_attach:
+  "AAP - site portal": ["Site portal - deploy"]
+## Take off job templates: {credential: [template, ...]}
+# aap_credential_detach: {"Old credential": ["A template"]}
+## A name in two organizations: name the one to look in
+# aap_credential_organization: Default
+## A template with a credential of the same type already: true = take that one off, attach the new one
+# aap_credential_replace_same_type: true
+"""),
+    "aap_inventory_move.yml": ("AAP - move templates to another inventory", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## Run it with Check first: it then only reads, and lists every job template, workflow, workflow node and schedule it
+## would move, with a total. Only the inventory changes; names are exact; an inventory not found changes nothing.
+aap_inventory_replace:
+  - {from: "rhel-hosts-old", to: "linux-hosts-idm"}
+## The organization the inventories, templates and workflows are in
+# aap_inventory_replace_organization: Default
+## Only some templates and workflows (* and ?, any case); a node goes with its workflow, a schedule with its template
+# aap_inventory_replace_only: ["Patch*", "Health check"]
+## More moves than this stop the job before any write
+# aap_inventory_replace_max: 100
+"""),
     "aap_template_audit.yml": ("AAP - template variables audit", "Red Hat Ansible Automation Platform (Organization Auditor is enough)", "", """\
 ## Read-only: which settings in the templates' Variables belong somewhere else; a secret is named, never shown
 # aap_template_audit_project: "Site automation"   # only your project's job templates (workflows are all read)
