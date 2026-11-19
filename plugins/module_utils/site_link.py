@@ -26,3 +26,37 @@ def safe_link(url):
     if port is not None and not 0 < port < 65536:
         return ""
     return u
+
+
+def safe_ref(url):
+    """-> the address for a link other producers bring (STIG Manager, the portal): http or https or a plain relative one, no user or
+    password, no spaces or markup characters; javascript:, data: and any other scheme give ''. (An incident link asks safe_link.)"""
+    u = str(url or "").strip()
+    if not u or len(u) > 2000 or _BAD.search(u) or u.startswith("//"):          # //host would be read as an address by a browser
+        return ""
+    try:
+        parts = urlsplit(u)
+        parts.port
+    except ValueError:
+        return ""
+    if parts.scheme not in ("", "http", "https") or parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        return ""
+    if parts.scheme and not parts.hostname:
+        return ""
+    return u
+
+
+def safe_site(url):
+    """-> the address of the report website (_email_web_url) when it is http or https with a host and no user or password
+    (a report site may be http), else ''. Checked once, where the address is derived; a failing one gives no button and no text link."""
+    u = str(url or "").strip()
+    if not u or len(u) > 2000 or _BAD.search(u):
+        return ""
+    try:
+        parts = urlsplit(u)
+        parts.port
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        return ""
+    return u

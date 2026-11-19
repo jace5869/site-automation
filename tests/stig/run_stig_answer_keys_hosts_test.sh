@@ -94,6 +94,7 @@ check_stig_stigman_client_id: autostig
 check_stig_stigman_client_secret: s3cret
 check_stig_dir: $work/kept
 answer_keys_act: false
+answer_keys_trial: true
 report_email_to: [ops@example.mil]
 report_email_smtp_host: 127.0.0.1
 report_email_smtp_port: $port_smtp

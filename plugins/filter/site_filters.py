@@ -150,6 +150,8 @@ _spec = importlib.util.spec_from_file_location(
 _link = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_link)
 safe_link = _link.safe_link
+safe_ref = _link.safe_ref
+safe_site_url = _link.safe_site
 _DATA_KEY = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 
 
@@ -2663,7 +2665,7 @@ def report_xlsx_sheets(report, own=None):
 
 class FilterModule(object):
     def filters(self):
-        return {"safe_link": safe_link, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
+        return {"safe_link": safe_link, "safe_ref": safe_ref, "safe_site_url": safe_site_url, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
                 "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
                 "report_act_old": report_act_old,
                 "from_csv": from_csv, "days_until": days_until, "site_result": site_result,

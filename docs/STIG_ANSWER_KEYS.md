@@ -227,6 +227,16 @@ not offered.
 
 ## The trial
 
+**Off by default (1.76.4)** until the sandbox is hardened further: `answer_keys_trial: false`.
+
+- With the trial off, only the read-only check runs on the host. No sandbox is made, `systemd-run` is not run, and no
+  automount is touched.
+- Each block that passes the check is still offered. It is marked *not tried: the trial is off (answer_keys_trial) -
+  read it before you use it, try it on a test host*, in the block itself and in the report. The Trial tile says *off*.
+- Its ExpectedStatus is as drafted. Read each block, and run your Evaluate-STIG with it on a test host first.
+- To turn the trial on: `answer_keys_trial: true` in the template's Variables. The rest of this section is about the
+  trial when it is on.
+
 Each code that passes the check runs once on one host of its STIG (the first that worked) with pwsh, within `answer_keys_trial_timeout` (60
 seconds).
 

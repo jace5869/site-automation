@@ -436,6 +436,11 @@
          else '' }}
   when: _email_to | length > 0
 
+- name: Email | the web address checked once (http or https, a host, no user), else no link
+  ansible.builtin.set_fact:
+    _email_web_url: "{{ _email_web_url | default('') | safe_site_url }}"
+  when: _email_to | length > 0
+
 - name: Email | the report, sent
   when: _email_to | length > 0
   block:

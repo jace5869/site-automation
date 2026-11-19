@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.76.4 — 2026-11-19
+
+**To set up: nothing.** `answer_keys_trial: true` turns the answer keys' trial on.
+
+**STIG answer keys: the trial is off by default** (docs/STIG_ANSWER_KEYS.md, "The trial").
+
+- `answer_keys_trial` (new, default `false`): the read-only check only. No sandbox, no `systemd-run`, no automount is
+  touched on the host. Each block that passes the check is offered, marked *not tried: the trial is off - read it
+  before you use it, try it on a test host*; the Trial tile says *off*; ExpectedStatus is as drafted.
+- `answer_keys_trial: true`: tried in the read-only sandbox, as in 1.76.1.
+
+**AAP health check: memory per container** (from the review of 1.76.3).
+
+- `aap_health_container_mem_warn_mb` / `_fail_mb` given as text ("8192", as a survey gives them) apply; before they were
+  left out.
+- A container's own memory limit counts unless it is podman's "no limit" (the host's whole memory to the precision it
+  prints, `max`, or a huge number): a real limit of 58 GiB on a 64 GiB host was taken as none.
+- Sizes say GiB and MiB: they were counted in GiB and labelled GB.
+- The jobs at the check: AAP lists 200 at most; with more, the row says "at least" and that only the first were listed.
+
+**The report and email looks, after the release review (1.76.2's outage time line and links).**
+
+- Incident links (`cell_links` with `https_only`) and a card's `url` pass `safe_link` (https, a host, no user); other producers'
+  `cell_links` (STIG Manager, the portal) keep their old rules (`safe_ref`: http or https, escaped, never `javascript:`, `data:` or a user) -
+  the STIG Manager links of an http site are back.
+- The full-report address is checked once, where it is made (`safe_site_url`: http or https, a host, no user); one that fails gives no
+  button and no text link.
+- Every email look links the incident numbers in *The events* (the command, portal and glass looks too, https only); the tip's incident link
+  (`data-ev`) is parsed in the page like `safe_link`.
+- A fold needs the same vCenter, kind and related status; a problem and its clear, and a repeat, need the same vCenter.
+- An active search counts again when *Show*, the kinds or *Show every repeat* change; a click in a mark's list on a row the search hides
+  clears the search, and a row another filter hides gets a line saying which one.
+- Tests: `Codex3` (`tests/test_outage_timeline.py`), `RealChromeOutageLinks`, `RealChromeOutageFilters` (`tests/test_report_hover.py`).
+
 ## 1.76.3 — 2026-11-19
 
 **To set up: nothing** - unless you had set `aap_health_container_mem_warn_mb` or `_fail_mb`: they still apply

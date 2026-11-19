@@ -213,7 +213,7 @@ def _restarts(evs):
 
 def _pairs(evs, low_seconds):
     """A problem and its clear at the same place: cleared within low_seconds -> one Low event, '..., back after 40 s'
-    (the clear is not a row of its own); low_seconds 0 = never. -> (events, the hosts' down stretches [(host, from, to or None)])."""
+    (the clear is not a row of its own); low_seconds 0 = never. -> (events, the hosts' down stretches [(host, from, to or None, vCenter)])."""
     gone, downs, open_down = set(), [], {}
     for i, e in enumerate(evs):
         if e["role"] not in ("problem", "down"):
@@ -221,7 +221,7 @@ def _pairs(evs, low_seconds):
         want = "clear" if e["role"] == "problem" else "up"
         for j in range(i + 1, len(evs)):
             c = evs[j]
-            if j in gone or c["role"] != want or c["kind"] != e["kind"] or c["where"] != e["where"]:
+            if j in gone or c["role"] != want or c["kind"] != e["kind"] or c["where"] != e["where"] or c.get("vcenter", "") != e.get("vcenter", ""):
                 continue
             took = (c["t"] - e["t"]).total_seconds()
             if low_seconds > 0 and took <= low_seconds:
@@ -231,11 +231,12 @@ def _pairs(evs, low_seconds):
             break
     kept = [e for i, e in enumerate(evs) if i not in gone]
     for e in kept:
-        if e["role"] == "down" and not e.get("flap") and e["where"] not in open_down:
-            open_down[e["where"]] = e["t"]
-        elif e["role"] == "up" and e["where"] in open_down:
-            downs.append((e["where"], open_down.pop(e["where"]), e["t"]))
-    downs += [(h, t, None) for h, t in open_down.items()]
+        dk = (e.get("vcenter", ""), e["where"])               # the same name on two vCenters is two hosts
+        if e["role"] == "down" and not e.get("flap") and dk not in open_down:
+            open_down[dk] = e["t"]
+        elif e["role"] == "up" and dk in open_down:
+            downs.append((e["where"], open_down.pop(dk), e["t"], dk[0]))
+    downs += [(h[1], t, None, h[0]) for h, t in open_down.items()]
     downs.sort(key=lambda d: d[1])
     return kept, downs
 
@@ -244,7 +245,7 @@ def _same(evs):
     """The same event at the same place again within a minute: one row with a count."""
     out, last = [], {}
     for e in evs:
-        k = (e["lane"], e["level"], e["label"], e["where"])
+        k = (e["lane"], e["level"], e["label"], e["where"], e.get("vcenter", ""), e["kind"])
         p = last.get(k)
         if p is not None and (e["t"] - p["seen"]).total_seconds() <= SAME_S and not e.get("count"):
             p["n"] += 1
@@ -498,11 +499,11 @@ def _relate(evs, downs):
 
 
 def _fold(evs):
-    """Identical events one after another (the same lane, what, where and level) -> [(first index, [indexes])] for the runs of two or more."""
+    """Identical events one after another (the same lane, what, where, level, vCenter, kind and related status) -> [(first index, [indexes])] for the runs of two or more."""
     runs, i = [], 0
     while i < len(evs):
         j = i
-        k = lambda e: (e["lane"], e["label"], e["where"], e["level"])          # noqa: E731
+        k = lambda e: (e["lane"], e["label"], e["where"], e["level"], e.get("vcenter", ""), e.get("kind", ""), e.get("cls", ""), bool(e.get("related")))          # noqa: E731
         while j + 1 < len(evs) and k(evs[j + 1]) == k(evs[i]):
             j += 1
         if j > i:
@@ -564,7 +565,9 @@ def outage_timeline(events, tickets=None, opts=None):
     to_ticket = (opened["t"] - first["t"]).total_seconds() if first and opened and opened["t"] >= first["t"] else None
     still = [d for d in downs if d[2] is None]
     subject = _relate(evs, downs)
-    spans = [(h, a, b or end, b is None) for h, a, b in downs]
+    dup = set(w for w, _a, _b, v in downs if len(set(x[3] for x in downs if x[0] == w)) > 1)       # one name on two vCenters: told apart
+    shown = lambda d: "%s (%s)" % (d[0], (d[3] or "?").split(".")[0]) if d[0] in dup else d[0]      # noqa: E731
+    spans = [(shown(d), d[1], d[2] or end, d[2] is None) for d in downs]
     longest = max(spans, key=lambda d: (d[2] - d[1]).total_seconds()) if spans else None
     down_s = (longest[2] - longest[1]).total_seconds() if longest else 0
     hosts_down = sorted({d[0] for d in spans})
@@ -574,7 +577,7 @@ def outage_timeline(events, tickets=None, opts=None):
     numbers = {
         "events": len(evs), "first_signal": first["t"].strftime("%Y-%m-%dT%H:%M:%SZ") if first else "",
         "ticket": opened["ticket"] if opened else "", "signal_to_ticket_s": int(to_ticket) if to_ticket is not None else -1,
-        "down_s": int(down_s), "hosts_down": hosts_down, "still_down": sorted(d[0] for d in still), "ha_restarted": restarted,
+        "down_s": int(down_s), "hosts_down": hosts_down, "still_down": sorted(shown(d) for d in still), "ha_restarted": restarted,
         "back": back["t"].strftime("%Y-%m-%dT%H:%M:%SZ") if back else ""}
 
     window_text = "%s to %s" % (full(begin), full(end) if days else loc(end).strftime("%H:%M ") + zname(end))
@@ -640,7 +643,7 @@ def outage_timeline(events, tickets=None, opts=None):
     if first:
         if still:
             cards.append({"status": "critical", "chip": "Back to normal", "meta": "not yet",
-                          "title": "%s still down at the end of the window" % ", ".join(sorted(d[0] for d in still)[:3]),
+                          "title": "%s still down at the end of the window" % ", ".join(sorted(shown(d) for d in still)[:3]),
                           "next": "Run the review again when the host is back."})
         elif back:
             cards.append({"status": "ok", "chip": "Back to normal", "meta": "%s %s" % (hm(back["t"], True), zname(back["t"])),
@@ -733,7 +736,7 @@ def outage_timeline(events, tickets=None, opts=None):
                                if low_seconds > 0 else
                                "A problem and its clear are a row each (vm_watch_review_low_seconds is 0)."] + notes)}
     if evs and any(e.get("url") for e in evs):
-        table["cell_links"] = {"column": 4, "urls": [e.get("url") or "" for e in evs], "title": "Open the incident in ServiceNow"}
+        table["cell_links"] = {"column": 4, "urls": [e.get("url") or "" for e in evs], "title": "Open the incident in ServiceNow", "https_only": True}
     if not evs:
         table = {"title": "The events", "status": "ok", "lines": ["No outage event between %s." % window_text] + notes}
 
@@ -761,7 +764,7 @@ def outage_timeline(events, tickets=None, opts=None):
         cols = list(table["columns"]) + (["Related"] if known else [])
         urls = [e.get("url") or "" for e in evs]
         web_table = dict(table, columns=cols, row_tags=tags, outage_filter=True,
-                         **({"cell_links": {"column": 4, "urls": urls, "title": "Open the incident in ServiceNow"}} if any(urls) else {}),
+                         **({"cell_links": {"column": 4, "urls": urls, "title": "Open the incident in ServiceNow", "https_only": True}} if any(urls) else {}),
                          rows=[r + (["Related" if e["related"] else ""] if known else []) for r, e in zip(table["rows"], evs)],
                          kinds=list(table["kinds"]) + (["" ] if known else []),
                          cell_status=[c + (["info" if e["related"] else ""] if known else []) for c, e in zip(table["cell_status"], evs)],
@@ -774,7 +777,7 @@ def outage_timeline(events, tickets=None, opts=None):
         start = first_bad or first
         aar.append("Start (incident_start): %s - %s%s" % (full(start["t"]), start["what"], (" on " + start["where"]) if start["where"] else ""))
         aar.append("End (incident_end): %s" % (("%s - %s" % (full(back["t"]), back["what"])) if back else
-                                               "not yet - %s still down at the end of the window" % ", ".join(sorted(d[0] for d in still))
+                                               "not yet - %s still down at the end of the window" % ", ".join(sorted(shown(d) for d in still))
                                                if still else "not seen in the window - take it from the ticket or from vCenter"))
         det = "first signal at %s (%s: %s)" % (hm(first["t"]), LANE[first["lane"]], first["what"])
         if to_ticket is not None:

@@ -739,6 +739,7 @@ File: `roles/check_stig/defaults/main.yml`
 | `answer_keys_name` | (empty) | the AnswerKey's Name in the blocks; empty = the --AnswerKey of check_stig_evaluate_args, else DEFAULT |
 | `answer_keys_values` | `{}` | the site's own values a rule needs, e.g. {min_release: '9.4', world_writable_owners: [root, sys, bin, appuser]} (from a survey: a text, YAML or name: value lines; a list as names with a comma or space between) - each block says which it used; a rule that needs one not given is "Not drafted" with the line to add (docs/… (all of it: the role file) |
 | `answer_keys_act` | `true` | a rule no fixed pattern fits: ACT drafts its ValidationCode on the AAP side (evidence mode: it runs no command, nothing on the trial host), marked "drafted by ACT - read it before you use it"; false = written by hand |
+| `answer_keys_trial` | `false` | 1.76.4: try each draft once on the host, in a read-only sandbox (systemd-run; docs/STIG_ANSWER_KEYS.md, The trial) - off by default until the sandbox is hardened further: false = the read-only check only, nothing else runs on the host, and each block is offered marked "not tried" (read it, try it on a test host first)… (all of it: the role file) |
 | `answer_keys_trial_timeout` | `60` | seconds each ValidationCode may run in its trial on the host |
 
 ## check_time

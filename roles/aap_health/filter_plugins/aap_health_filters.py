@@ -136,10 +136,10 @@ def size_mb(text):
     """'1.234GB', '512.3MiB', '800kB', '12B' -> MiB (float), as /proc/meminfo counts (kB there are KiB). 1.76.3b: a
     decimal unit (kB, MB, GB, TB - podman's) is a power of 1000, a binary one (KiB, MiB, GiB) of 1024 - "33.36GB" is a
     32 GiB host's memory, not 33.36 GiB."""
-    m = re.match(r"\s*([\d.]+)\s*([kKmMgGtT]?)(i?)[bB]?\s*$", str(text or ""))
+    m = re.match(r"\s*([\d.]+)\s*([kKmMgGtTpPeE]?)(i?)[bB]?\s*$", str(text or ""))
     if not m:
         return 0.0
-    power = {"": 0, "k": 1, "m": 2, "g": 3, "t": 4}[m.group(2).lower()]
+    power = {"": 0, "k": 1, "m": 2, "g": 3, "t": 4, "p": 5, "e": 6}[m.group(2).lower()]      # 1.76.4: P, E (podman's "no limit")
     base = 1024.0 if m.group(3) else 1000.0
     return float(m.group(1)) * base ** power / 1048576.0
 
@@ -425,7 +425,7 @@ def os_checks(user_text, root_text, cfg):
         # 1.76.3: the headroom as a share of the memory there is too - whichever is worse (a 64 GB node is not a 4 GB one)
         pct = 100.0 * avail / total if total else 100.0
         st = worst(st, headroom_status(pct, cfg))
-        rows.append(row("os", "free memory", st, "%.0f MB available of %.0f MB (%.0f%%)" % (avail, total, pct),
+        rows.append(row("os", "free memory", st, "%.0f MiB available of %.0f MiB (%.0f%%)" % (avail, total, pct),
                         "" if st == "PASS" else "What uses it: ps -eo rss,user,comm --sort=-rss | head -15; as the AAP user: "
                         "podman stats --no-stream. Fewer jobs at once (instance forks/capacity), or more memory: 16 GB is the growth "
                         "topology's floor."))
@@ -629,20 +629,53 @@ def _pct_txt(v):
 
 
 def gb(mb):
-    """MB -> '9.1 GB' (or '512 MB' under 1 GB)."""
-    return ("%.1f GB" % (mb / 1024.0)) if mb >= 1024 else "%.0f MB" % mb
+    """MiB -> '9.1 GiB' (or '512 MiB' under 1 GiB). 1.76.4 (review): the sizes are counted in binary units (MemTotal's
+    KiB, size_mb's MiB) - so labelled, never GB / MB."""
+    return ("%.1f GiB" % (mb / 1024.0)) if mb >= 1024 else "%.0f MiB" % mb
+
+
+def _mb_setting(v):
+    """1.76.4 (review): an MB setting -> a number above 0, or None (off). A number, or a text of one ("8192", as a survey
+    gives it); blank, zero, not a number, true / false: off."""
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        f = float(str(v).strip()) if isinstance(v, str) else float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 else None
 
 
 JOB_CONTAINER = re.compile(r"^ansible_runner_(\d+)$")
 
 
+def no_limit(text, limit_mb, total_mb):
+    """1.76.4 (Codex): whether podman's "limit" is none - "max", nothing, a huge number (a decimal petabyte or
+    more), or the host's own memory to the precision podman wrote it ("68.72GB": within half its last digit). Any
+    other figure is a real limit, above or below the host's memory (63.0GiB on a 64 GiB host is one)."""
+    t = str(text or "").strip()
+    # podman's "no limit" as a number: about 9.2 EB (2^63 bytes) - any limit of a (decimal) petabyte or more, known
+    # without the host's memory too; nothing relative to the host (a 4 TiB limit is a limit on any host) (Codex)
+    if not limit_mb or t.lower() == "max" or limit_mb >= 1e15 / 1048576.0:
+        return True
+    if not total_mb:
+        return False
+    m = re.match(r"\s*\d+(?:\.(\d+))?\s*([kKmMgGtTpPeE]?)(i?)", t)
+    if not m:
+        return False
+    half = 0.5 * 10 ** -len(m.group(1) or "")                                  # half the last digit, in the text's unit
+    power = {"": 0, "k": 1, "m": 2, "g": 3, "t": 4, "p": 5, "e": 6}[m.group(2).lower()]
+    unit_mb = (1024.0 if m.group(3) else 1000.0) ** power / 1048576.0
+    return abs(limit_mb - total_mb) <= half * unit_mb * (1 + 1e-9)          # half the last digit, nothing more (Codex)
+
+
 def _mb_rule(mb, cfg):
     """Before 1.76.3: a fixed MB per container - only when aap_health_container_mem_*_mb is set (not empty)."""
-    w, f = cfg.get("mem_warn_mb"), cfg.get("mem_fail_mb")
+    w, f = _mb_setting(cfg.get("mem_warn_mb")), _mb_setting(cfg.get("mem_fail_mb"))
     st = "PASS"
-    if isinstance(f, (int, float)) and not isinstance(f, bool) and f > 0 and mb >= f:
+    if f is not None and mb >= f:
         st = "FAIL"
-    elif isinstance(w, (int, float)) and not isinstance(w, bool) and w > 0 and mb >= w:
+    elif w is not None and mb >= w:
         st = "WARN"
     return st
 
@@ -764,9 +797,10 @@ def containers(text, units, cfg):
             nm = x.get("name") or x.get("Name") or "?"
             use, _, lim = str(x.get("mem_usage") or x.get("MemUsage") or "").partition("/")
             limit = size_mb(lim) if lim.strip() else 0.0
-            # podman shows the host's memory as the limit when there is none (in its own units: 62.5 GiB of a 64 GB node) -
-            # a "limit" of 90 % of the host or more is none
-            if not limit or (total and limit >= total * 0.9):
+            # podman shows the host's memory as the limit when there is none (in its own units, or "max", or a huge number)
+            # - 1.76.4 (review): only that is none (no_limit); any other figure is a real limit (58 GiB on a 64 GiB host
+            # was taken as none at 90 %)
+            if no_limit(lim, limit, total):
                 limit = 0.0
             mb = size_mb(use)
             st_, why = container_mem(mb, limit, total, avail, nm, cfg)
@@ -1453,7 +1487,10 @@ def _jobs_on_containers(rows, resp):
     r = (resp or {}).get("jobs") or {}
     if r.get("status") != 200:
         return rows
-    running = [j for j in _results(r.get("json")) if j.get("status") == "running" and j.get("type") not in ("workflow_job", "workflow_approval")]
+    listed = _results(r.get("json"))
+    running = [j for j in listed if j.get("status") == "running" and j.get("type") not in ("workflow_job", "workflow_approval")]
+    # 1.76.4 (review): one page of the pending, waiting and running jobs - more than it holds: said, never taken as all
+    more = bool((r.get("json") or {}).get("next")) or int((r.get("json") or {}).get("count") or 0) > len(listed)
     names = dict((str(j.get("id")), j.get("name") or "?") for j in running)
     out = []
     for x in rows or []:
@@ -1462,8 +1499,11 @@ def _jobs_on_containers(rows, resp):
             continue
         x = dict(x)
         tpl = sorted(set(names.values()))
-        line = ("At the check: %d job(s) running in AAP (%s)" % (len(running), ", ".join(tpl[:8]) + (", ..." if len(tpl) > 8 else ""))
-                if running else "At the check: no job running in AAP")
+        line = ("At the check: %s%d job(s) running in AAP (%s)" % ("at least " if more else "", len(running),
+                                                                   ", ".join(tpl[:8]) + (", ..." if len(tpl) > 8 else ""))
+                if running else ("At the check: no running job among those listed" if more else "At the check: no job running in AAP"))
+        if more:
+            line += " - only the first %d pending, waiting or running jobs were listed" % len(listed)
         d = str(x.get("detail") or "")
         d = re.sub(r"At the check: (\d+ job container\(s\) running \(job [^)]*\)|no job container running)",
                    lambda m: line + "; here: " + m.group(0)[len("At the check: "):], d)

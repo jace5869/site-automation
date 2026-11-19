@@ -863,7 +863,8 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays, and a section's keep_case: EFI, BIOS) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- set cl = s.cell_links2 if s.cell_links2 is defined and s.cell_links2.column == loop.index0 else (s.cell_links if s.cell_links is defined else none) %}{#- 1.69.2: cell_links2 - a second column of links (Hosts: the Collection) #}
-{%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) | safe_link %}
+{%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) %}
+{%- set clu = clu | safe_link if (cl.https_only | default(false)) else clu | safe_ref %}
 {%- if kd == 'x' %}
 <td class="k-x">{% if dt %}<button class="xb" type="button" aria-expanded="false" aria-label="Open {{ (row[1] if row | length > 1 else '') | string | e }}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>{% endif %}</td>
 {%- elif kd in ['cat1', 'cat2', 'cat3'] %}

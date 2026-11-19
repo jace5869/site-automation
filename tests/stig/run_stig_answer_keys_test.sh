@@ -107,6 +107,7 @@ report_email_security: none
 report_email_from: aap@example.mil
 report_web_dest: $work/web
 target: localhost
+answer_keys_trial: true
 EOF
 all6='{"answer_keys_rules": ["V-258999", "SV-257835", "V-257985", "V-257883", "V-257821", "V-258176"]}'
 act() { printf '%s' "$1" > "$work/act/act.json"; rm -f "$work/act/fake-act-calls.log"; }
@@ -255,6 +256,24 @@ run "an Evaluate-STIG that writes nothing with -SelectVuln: no key drafted, not 
 [ "$(wc -l < "$work/es_args.txt")" -eq 1 ] && grep -q -- "--SelectVuln" "$work/es_args.txt" && echo "ok   - ... Evaluate-STIG run once, with --SelectVuln - no full run" \
     || { echo "FAIL - Evaluate-STIG runs: $(cat "$work/es_args.txt")"; fails=$((fails + 1)); }
 untouched "every run"
+
+# 1.76.4: the trial off (answer_keys_trial false, the default): the read-only check only - no systemd-run run at all (a
+# stand-in that would leave a mark), the blocks offered marked not tried, the Trial tile "off"
+mkdir -p "$work/sdoff"
+printf '#!/bin/sh\ntouch "%s/sdoff/ran"\nexit 1\n' "$work" > "$work/sdoff/systemd-run"
+chmod 755 "$work/sdoff/systemd-run"
+act "{\"summaries\": [$(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))'), $(printf '%s' "$ACT_BAD" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')]}"
+run "the trial off (the default): the check only, the block offered marked not tried, no systemd-run" ok \
+    -e "$all6" -e answer_keys_trial=false -e _ak_sandbox="$work/sdoff/systemd-run" -- \
+    "STIG answer keys: 2 ready to copy, 4 not drafted" "V-258999 ready (not tried): A manual check: a document." \
+    "V-257985 ACT draft (not tried):" "!no sandbox"
+[ ! -e "$work/sdoff/ran" ] && echo "ok   - ... systemd-run never ran" || { echo "FAIL - systemd-run ran with the trial off"; fails=$((fails + 1)); }
+t="$(pagetext "$(command grep -rl 'Copy block' "$work/web" --include='*.html' | xargs -r ls -t | head -1)")"
+case "$t" in *"not tried: the trial is off (answer_keys_trial) - read it before you use it, try it on a test host"*) \
+    case "$t" in *"The trial is off (answer_keys_trial)"*) echo "ok   - ... the website marks each block not tried and says the trial is off" ;;
+                 *) echo "FAIL - the website: the trial off not said"; fails=$((fails + 1)) ;; esac ;;
+    *) echo "FAIL - the website: a block not marked not tried"; fails=$((fails + 1)) ;; esac
+untouched "the trial off"
 
 # 1.76.0: no sandbox (no systemd-run that keeps the host read-only): no trial, so no key - never a trial outside it
 act "{\"summaries\": [$(printf '%s' "$ACT_OK" | "$py" -c 'import json,sys; print(json.dumps(sys.stdin.read().replace("\\n", "\n")))')]}"

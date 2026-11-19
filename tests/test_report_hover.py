@@ -713,6 +713,55 @@ class RealChromeOutageFilters(RealChromeOutage):
         self.assertFalse(self.c.js("document.querySelector('tr[data-rep]').classList.contains('ot-flash')"))
 
 
+    def test_e_an_active_search_counts_again_after_the_outage_controls(self):
+        """Release review 7: the search's rows, its sections' badges and "n found" follow Related only and the kinds."""
+        self.reset()
+        self.c.js("(() => {const f = document.getElementById('find'); f.value = 'e'; f.dispatchEvent(new Event('search'))})()")
+        before = self.c.js("document.querySelector('.found').textContent")
+        self.assertTrue(before.endswith("section") or "found" in before, before)
+        self.c.js("document.querySelector('input[name=ot-show][value=rel]').click()")
+        after = self.c.js("document.querySelector('.found').textContent")
+        shown = self.c.js("[...document.querySelectorAll('tr[data-cls]')].filter(r => !r.hidden).length")
+        self.assertNotEqual(before, after)                                  # fewer rows now: the count says so, without a new keystroke
+        self.c.js("(() => {const f = document.getElementById('find'); f.dispatchEvent(new Event('search'))})()")
+        self.assertEqual(self.c.js("document.querySelector('.found').textContent"), after)      # the same as asking again
+        badge = self.c.js("(() => {const a = document.querySelector('.rail a:not(.off) .m, nav a:not(.off) .m'); return a ? a.textContent : null})()")
+        self.assertEqual(self.c.js("[...document.querySelectorAll('tr[data-cls]')].filter(r => !r.hidden).length"), shown)
+        self.assertTrue(badge is None or badge.isdigit(), badge)
+        self.c.js("(() => {const f = document.getElementById('find'); f.value = ''; f.dispatchEvent(new Event('search'))})()")
+
+    def pin_list_line(self, n):
+        self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        self.c.js("(() => {const m = [...document.querySelectorAll('.ot-track .ot-m')].find(m => JSON.parse(m.getAttribute('data-ev')).some(e => e.n == %s)); m.click()})()" % n)
+
+    def test_f_a_row_the_search_or_the_filter_hides(self):
+        """Release review 8: a click in the pinned list on a hidden row clears the search, or says which filter hides it."""
+        self.reset()
+        n = self.c.js("document.querySelector('tr[data-cls]').getAttribute('data-num')")
+        line = "[...document.querySelectorAll('#site-tip .tt-ln')].find(l => l.querySelector('a.tt-t').getAttribute('href') === '#ot-row-%s').click()" % n
+        flashed = "document.getElementById('ot-row-%s').classList.contains('ot-flash')" % n
+        # the page's search hides it: the search is cleared and the row is shown
+        self.c.js("(() => {const f = document.getElementById('find'); f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('search'))})()")
+        self.assertTrue(self.c.js("document.getElementById('ot-row-%s').hidden" % n))
+        self.pin_list_line(n)
+        self.c.js(line)
+        self.assertEqual(self.c.js("document.getElementById('find').value"), "")
+        self.assertFalse(self.c.js("document.getElementById('ot-row-%s').hidden" % n))
+        self.assertTrue(self.c.js(flashed))
+        # the table's own filter box hides it: the list says so and stays
+        box = "document.querySelector('tr[data-cls]').closest('.tw').previousElementSibling.querySelector('.filter')"
+        self.c.js("(() => {const f = %s; f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
+        self.c.js("document.getElementById('ot-row-%s').classList.remove('ot-flash')" % n)
+        self.pin_list_line(n)
+        self.c.js(line)
+        note = self.c.js("(() => {const t = document.querySelector('#site-tip .tt-note'); return t && t.textContent})()")
+        self.assertIn("table's filter box", note or "")
+        self.assertFalse(self.c.js(flashed))
+        self.assertEqual(self.c.js("document.querySelectorAll('#site-tip .tt-note').length"), 1)
+        self.c.js("(() => {const f = %s; f.value = ''; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
+        self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+
+
 class RealChromeOutageGroups(RealChromeOutage):
     """Codex 6: a mark that stands for several events shows what is left of them."""
     test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_or_enter_pins_it_and_the_list_scrolls = None
@@ -797,6 +846,18 @@ class RealChromeOutageLinks(RealChromeOutage):
         card = self.c.js("(() => {const a = document.querySelector('.cards h3 a'); return [a.textContent, a.href, a.parentElement.textContent]})()")
         self.assertEqual(card[:2], ["INC0012345", self.URL])
         self.assertTrue(card[2].startswith("INC0012345 opened at"))
+
+
+    def test_b_a_data_ev_link_is_parsed(self):
+        """Release review 4: only https with a host and no user - the same question as safe_link - makes the number a link."""
+        self.assertGreaterEqual(self.c.js("[...document.querySelectorAll(%s)].findIndex(m => JSON.parse(m.getAttribute('data-ev'))[0].k)" % json.dumps(self.SEL)), 0)
+        probe = ("(u => {document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})); const m = [...document.querySelectorAll(%s)].find(m => m._ev && m._ev[0].k); "
+                 "m._ev[0].u = u; m.click(); const n = document.querySelectorAll('#site-tip .tt-inc').length; document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})); return n})" % json.dumps(self.SEL))
+        for u in ("https://u:pw@dev.service-now.example/x", "https://user@dev.service-now.example/x", "https:///x", "https://", "http://dev.service-now.example/x",
+                  "javascript:alert(1)", "https://dev.service-now.example/ x", "https://dev.service-now.example/<b>", "HTTPS:\\evil.example", ""):
+            self.assertEqual(self.c.js("%s(%s)" % (probe, json.dumps(u))), 0, u)
+        self.assertEqual(self.c.js("%s(%s)" % (probe, json.dumps(self.URL))), 1)
+        self.assertEqual(self.c.js("%s(%s)" % (probe, json.dumps(self.URL + "&back=a@b.example"))), 1)         # an @ after the host is not a user
 
 
 class RealChromeOutageBrief(RealChromeOutage):

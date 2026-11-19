@@ -1067,6 +1067,116 @@ class PathsMoved(unittest.TestCase):
         self.assertEqual(r["why"], "Not drafted - not tried: a path changed during the trial (/x: /a -> /b).")
 
 
+class TrialOff(unittest.TestCase):
+    """1.76.4: answer_keys_trial false (the default) - the read-only check only: no probe, no systemd-run, no automount
+    fired; each block that passed the check is offered, marked not tried; true: as before."""
+
+    @unittest.skipUnless(shutil.which("pwsh"), "no pwsh here")
+    def test_the_module_runs_no_sandbox(self):
+        def never(*a, **k):
+            raise AssertionError("the sandbox was touched with the trial off")
+        got = {}
+
+        class Module(object):                   # AnsibleModule as the module uses it (its arguments' defaults applied)
+            check_mode = False
+
+            def __init__(self, argument_spec=None, **k):
+                self.params = dict((n, o.get("default")) for n, o in argument_spec.items())
+                self.params.update(pwsh=shutil.which("pwsh"), trial=False, codes=[
+                    {"id": "V-1", "code": "$o = @(Get-Content -LiteralPath /etc/hostname); return ($o.Count -gt 0)"},
+                    {"id": "V-2", "code": "Remove-Item -LiteralPath /etc/hostname; return $true"}])
+
+            def exit_json(self, **r):
+                got.update(r)
+                raise SystemExit(0)
+
+            def fail_json(self, **r):
+                got.update(r, failed=True)
+                raise SystemExit(1)
+        names = ("find_sandbox", "sandbox_probe", "fire_automounts", "systemd_version", "run_trial", "refresh_autofs", "sandbox_cmd")
+        saved = dict((n, getattr(host, n)) for n in names + ("AnsibleModule",))
+        for n in names:
+            setattr(host, n, never)
+        host.AnsibleModule = Module
+        try:
+            with self.assertRaises(SystemExit):
+                host.main()
+        finally:
+            for n, f in saved.items():
+                setattr(host, n, f)
+        self.assertFalse(got.get("failed"), got)
+        self.assertTrue(got["gate"]["V-1"]["ok"], got["gate"]["V-1"])
+        self.assertEqual(got["trial"]["V-1"], {"ran": False, "off": True, "ok": False, "valid": None, "read": "", "seconds": 0,
+                                               "error": "the trial is off (answer_keys_trial)"})
+        self.assertFalse(got["gate"]["V-2"]["ok"])                      # the check still refuses a write
+        self.assertNotIn("V-2", got.get("trial") or {})
+
+    def rows(self, trial):
+        picks = [dict(v="V-1", sv="SV-1", title="Owner", ok=True, expected="Open", check_text=T_OWNER, es="Open")]
+        dr = a.stig_answer_drafts(picks, {}, False)
+        return a.stig_answer_rows(picks, dr, {"gate": {"V-1": {"ok": True, "used": []}}, "trial": {"V-1": trial}}, "DEFAULT")
+
+    def test_offered_marked_not_tried(self):
+        r = self.rows({"ran": False, "off": True, "error": "the trial is off (answer_keys_trial)"})[0]
+        self.assertTrue(r["untried"])
+        self.assertIn("<!-- not tried: the trial is off (answer_keys_trial) - read it before you use it, try it on a test host -->",
+                      r["block"])
+        self.assertIn("<ExpectedStatus>Open</ExpectedStatus>", r["block"])                 # as drafted
+        doc = a.stig_answer_report([r], "h1", "DEFAULT")
+        tile = [t for t in doc["web"]["summary"] if t["label"] == "Trial"][0]
+        self.assertEqual((tile["value"], tile["status"]), ("off", "warning"))
+        sec = doc["web"]["sections"][0]
+        self.assertIn("The trial is off (answer_keys_trial): this block was not tried on a host", sec["text"])
+        self.assertIn("not tried (off)", sec["rows"][0])
+        self.assertIn("(not tried - the trial is off)", sec["details"][0][0]["texts"][0]["label"])
+        self.assertEqual(doc["xlsx"][0]["rows"][0][2], "not tried")
+        self.assertTrue(any(x.startswith("The trial is off (answer_keys_trial false, the default)") for x in doc["web"]["sections"][-1]["lines"]))
+        self.assertIn("read-only check on h1", doc["web"]["subtitle"])
+        self.assertIn("V-1 ready (not tried):", "\n".join(doc["lines"]))
+        multi = a.stig_answer_report_multi([{"label": "RHEL 9 V2R10", "hosts": ["h1"], "rep": "h1", "rows": [r]}], "DEFAULT")
+        self.assertEqual([t["value"] for t in multi["web"]["summary"] if t["label"] == "Trial"], ["off"])
+        self.assertEqual(multi["xlsx"][0]["rows"][0][4], "not tried")
+        self.assertIn("RHEL 9 V2R10 (1 host): h1; read-only check (the trial is off) on h1.", multi["web"]["sections"][-1]["lines"])
+
+    def test_the_setting_decides_not_the_rows(self):
+        # 1.76.4 (Codex): every draft refused with the trial off - no row "not tried", the report still says off
+        picks = [dict(v="V-1", sv="SV-1", title="Owner", ok=True, expected="Open", check_text=T_OWNER, es="Open")]
+        dr = a.stig_answer_drafts(picks, {}, False)
+        r = a.stig_answer_rows(picks, dr, {"gate": {"V-1": {"ok": False, "why": ["a write"], "used": []}}}, "DEFAULT")[0]
+        doc = a.stig_answer_report([r], "h1", "DEFAULT", {"pwsh": "/usr/bin/pwsh"}, trial_on=False)
+        self.assertEqual([(t["value"], t["note"]) for t in doc["web"]["summary"] if t["label"] == "Trial"], [("off", "answer_keys_trial")])
+        how = doc["web"]["sections"][-1]["lines"]
+        self.assertIn("The read-only check ran with /usr/bin/pwsh.", how)
+        self.assertFalse([x for x in how if "and the trial ran" in x or x.startswith("The trial ran")])
+        multi = a.stig_answer_report_multi([{"label": "RHEL 9 V2R10", "hosts": ["h1"], "rep": "h1", "rows": [r]}], "DEFAULT", trial_on=False)
+        self.assertEqual([t["value"] for t in multi["web"]["summary"] if t["label"] == "Trial"], ["off"])
+        self.assertIn("RHEL 9 V2R10 (1 host): h1; read-only check (the trial is off) on h1.", multi["web"]["sections"][-1]["lines"])
+
+    def test_each_stig_its_own_setting(self):
+        # 1.76.4 (Codex): one STIG's host with the trial on, another's off - each group says its own, the tile "off for 1 of 2"
+        on = self.rows({"ran": True, "ok": True, "valid": True, "read": "x", "seconds": 1})[0]
+        off = self.rows({"ran": False, "off": True, "error": "the trial is off (answer_keys_trial)"})[0]
+        m = a.stig_answer_report_multi([{"label": "RHEL 9 V2R10", "hosts": ["h9"], "rep": "h9", "rows": [on], "trial_on": True},
+                                        {"label": "RHEL 8 V2R9", "hosts": ["h8"], "rep": "h8", "rows": [off], "trial_on": False}],
+                                       "DEFAULT", trial_on=False)
+        how = m["web"]["sections"][-1]["lines"]
+        self.assertIn("RHEL 9 V2R10 (1 host): h9; trial and read-only check on h9.", how)
+        self.assertIn("RHEL 8 V2R9 (1 host): h8; read-only check (the trial is off) on h8.", how)
+        self.assertEqual([t["value"] for t in m["web"]["summary"] if t["label"] == "Trial"], ["off for 1 of 2 STIGs"])
+        # each STIG's own trial paragraph under its label, never in the shared text (Codex)
+        self.assertTrue([x for x in how if x.startswith("RHEL 8 V2R9: The trial is off")])
+        self.assertTrue([x for x in how if x.startswith("RHEL 9 V2R10: The trial ran each code")])
+        self.assertFalse([x for x in how if x.startswith(("The trial is off", "The trial ran each code"))])
+
+    def test_on_as_before(self):
+        r = self.rows({"ran": True, "ok": True, "valid": True, "read": "x", "seconds": 1})[0]
+        self.assertFalse(r.get("untried"))
+        self.assertNotIn("not tried", r["block"])
+        doc = a.stig_answer_report([r], "h1", "DEFAULT")
+        self.assertEqual([t["value"] for t in doc["web"]["summary"] if t["label"] == "Trial"], ["1 true, 0 false"])
+        self.assertEqual(self.rows({"ran": False, "error": "no sandbox (x)"})[0]["why"], "Not drafted - not tried: no sandbox (x).")
+
+
 class EvaluateWider(unittest.TestCase):
     """1.76.0 (a real host: Evaluate-STIG 1.2610.1, no template found; the compare only in its GUI script): the template
     deeper or as a schema; the compare in the engine first - a GUI script is never proof for the command line runs."""

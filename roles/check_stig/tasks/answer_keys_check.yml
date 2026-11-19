@@ -21,12 +21,17 @@
 - name: Answer keys | the read-only check and the trial - on the first host of each STIG
   when: inventory_hostname in _ak_reps | default([])
   block:
+    # 1.76.4 (Codex): this host's own setting (an inventory group may differ), for the report
+    - name: Answer keys | the trial on this host? (answer_keys_trial)
+      ansible.builtin.set_fact:
+        _ak_trial_on: "{{ answer_keys_trial | bool }}"
+
     - name: Answer keys | the read-only check and one trial of each draft - on the first host of each STIG (and what its Evaluate-STIG is)
       site_stig_answer_host:
         evaluate: "{{ check_stig_evaluate }}"
         pwsh: "{{ check_stig_pwsh }}"
         codes: "{{ (_ak_m.groups | selectattr('rep', 'eq', inventory_hostname) | first).drafts | stig_answer_codes }}"
-        trial: true
+        trial: "{{ answer_keys_trial | bool }}"   # 1.76.4: off by default - the read-only check only, the blocks marked not tried
         timeout: "{{ answer_keys_trial_timeout | int }}"
         sandbox: "{{ _ak_sandbox | default('') }}"   # systemd-run (the tests give another path); no read-only sandbox: no trial
       register: _ak_hc

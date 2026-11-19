@@ -156,6 +156,12 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## DEFAULT
 # answer_keys_name: ""
 
+## 1.76.4: try each draft once on the host, in a read-only sandbox (systemd-run;
+## docs/STIG_ANSWER_KEYS.md, The trial) - off by default until the sandbox is hardened further:
+## false = the read-only check only, nothing else runs on the host, and each block is offered marked
+## "not tried" (read it, try it on a test host first); true = tried as in 1.76.1
+# answer_keys_trial: false
+
 ## seconds each ValidationCode may run in its trial on the host
 # answer_keys_trial_timeout: 60
 

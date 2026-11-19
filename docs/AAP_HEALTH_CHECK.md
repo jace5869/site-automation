@@ -50,11 +50,14 @@ A container's memory is judged against the host, not a fixed number of MB. A 64 
 
 - **Its share of the host:** a container using 25 % of MemTotal or more is big (50 %: very big).
 - **The host's headroom:** MemAvailable as a share of MemTotal. 15 % or less is short, 5 % or less very short.
-- **Its own limit:** a container with a memory limit, at 85 % of it or more: WARN (95 %: FAIL).
+- **Its own limit:** a container with a memory limit, at 85 % of it or more: WARN (95 %: FAIL). With no limit, podman
+  shows the host's whole memory, to the precision it prints (or `max`, or a huge number): that is no limit. Any
+  other figure is a real limit (1.76.4).
+- **Sizes** are in GiB and MiB, as the kernel counts them (1.76.4; they said GB and MB before).
 
 | The container | The host | Status |
 |---|---|---|
-| big | plenty free | INFO: *uses 9.1 GB of 64 GB - 41 GB free* |
+| big | plenty free | INFO: *9.1 GiB of 64.0 GiB (14%) - 41.0 GiB free* |
 | big | short | WARN, or FAIL (very big, or very short) |
 | small | short | PASS: not the cause |
 | near its own limit | any | WARN or FAIL |
@@ -62,10 +65,12 @@ A container's memory is judged against the host, not a fixed number of MB. A 64 
 | a job's | short | the host's status, named as a likely cause |
 
 The row says how many jobs were running at the check, with their templates (*At the check: 2 job(s) running in AAP
-(Patch Linux, Health)*), and each job container shows its job and template. The table: each container's memory, its
-share of the host, its own limit, and why. The settings: `aap_health_container_mem_*_pct`,
+(Patch Linux, Health)*), and each job container shows its job and template. AAP is asked for 200 pending, waiting or
+running jobs; with more, the row says *at least* and *only the first 200 ... were listed* (1.76.4). The table: each
+container's memory, its share of the host, its own limit, and why. The settings: `aap_health_container_mem_*_pct`,
 `aap_health_mem_headroom_*_pct`, `aap_health_container_limit_*_pct` (below). The fixed MB of before
-(`aap_health_container_mem_warn_mb`, `_fail_mb`) are off; set them and they apply too.
+(`aap_health_container_mem_warn_mb`, `_fail_mb`) are off; set them (a number, or a text of one such as "8192") and
+they apply too.
 
 ## Why an inventory's Hosts tab can return 503
 

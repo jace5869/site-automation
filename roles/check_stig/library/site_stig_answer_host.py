@@ -1405,7 +1405,8 @@ def main():
         sandbox=dict(type="str", default=""),
     ), supports_check_mode=True)
     p = module.params
-    if p.get("sandbox") and os.path.basename(p["sandbox"]) != "systemd-run" and os.path.exists(p["sandbox"]):
+    # 1.76.4 (Codex): the trial off - the sandbox's path is never looked at (a lookup may fire an automount)
+    if p["trial"] and p.get("sandbox") and os.path.basename(p["sandbox"]) != "systemd-run" and os.path.exists(p["sandbox"]):
         # 1.76.0b: only systemd-run is a sandbox - another program given is a setting's mistake, said, never run
         module.fail_json(msg="sandbox %s is not systemd-run: no trial with it" % p["sandbox"])
     ev = {"found": False, "script": "", "version": "", "template": "", "names": [], "why": "", "expected": {"found": False, "where": ""}}
@@ -1427,7 +1428,7 @@ def main():
     work = tempfile.mkdtemp(prefix="site-answer-keys-")
     os.chmod(work, 0o700)
     runner, no_sandbox, answers, version = None, "", {}, 0
-    if any(c in work for c in " :,\"'"):
+    if p["trial"] and any(c in work for c in " :,\"'"):     # 1.76.4 (Codex): bound only for a trial
         module.exit_json(changed=False, evaluate=ev, gate={}, trial={}, error="its temporary folder %s cannot be bound (a space, : or ,)" % work)
     try:
         gs = os.path.join(work, "gate.ps1")
@@ -1444,7 +1445,13 @@ def main():
             g, err, secs = run_ps(pwsh, gs, cf, 60)
             gate[cid] = g if isinstance(g, dict) else {"ok": False, "why": ["the read-only check did not answer: %s" % err], "used": []}
             gate[cid]["ok"] = bool(gate[cid].get("ok"))
-            if not (gate[cid]["ok"] and p["trial"]) or module.check_mode:
+            if gate[cid]["ok"] and not p["trial"]:
+                # 1.76.4: the trial is off (answer_keys_trial, the default) - no probe, no systemd-run, no automount fired:
+                # the block is offered, marked not tried
+                trial[cid] = {"ran": False, "off": True, "ok": False, "valid": None, "read": "", "seconds": 0,
+                              "error": "the trial is off (answer_keys_trial)"}
+                continue
+            if not gate[cid]["ok"] or module.check_mode:
                 continue
             if runner is None:       # once, before the first trial: no sandbox that keeps the host read-only - no trial
                 runner = find_sandbox(p["sandbox"])

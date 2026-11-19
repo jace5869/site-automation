@@ -135,7 +135,8 @@
 <tr style="background:{{ '#ffffff' if loop.index is odd else '#f9fafb' }};">
 {%- endif %}
 {%- for cell in row %}
-{%- set clu = (s.cell_links.urls[ri] if s.cell_links is defined and loop.index0 == s.cell_links.column and s.cell_links.urls | length > ri else '') | default('', true) | safe_link %}
+{%- set clu = (s.cell_links.urls[ri] if s.cell_links is defined and loop.index0 == s.cell_links.column and s.cell_links.urls | length > ri else '') | default('', true) %}
+{%- set clu = clu | safe_link if (s.cell_links is defined and s.cell_links.https_only | default(false)) else clu | safe_ref %}
 {%- set lab = ('<span class="sa-lab" style="display:none;mso-hide:all;font-size:10px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase;">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if k == 'S' else '' %}
 {%- set st = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- if st and st in colour %}

@@ -1068,5 +1068,135 @@ class Codex2(unittest.TestCase):
 
 
 
+class Codex3(unittest.TestCase):
+    """The release review: other producers' cell links keep the old contract (escape; no javascript:, data: or user), the incident
+    links the https-only one; the web address checked once; the incident links in every email look; vCenter in pairs, repeats and folds."""
+    INST = "https://dev.service-now.example"
+
+    def env(self):
+        import test_report_fit as T
+        return T.EmailTiles()._env()
+
+    def render(self, tpl, d):
+        return self.env().get_template(tpl).render(_report=d, _email_footer="AAP job 4714", _page_logo_cid="", _page_runs=[] if tpl.startswith("report_a") or tpl.startswith("report_b") or tpl.startswith("report_o") else None, report_email_header_text="x")
+
+    def doc(self, mutate, web=True):
+        d = ot.outage_timeline_doc(copy.deepcopy(WATCH), made(instance=self.INST), web, True)
+        mutate(d)
+        return d
+
+    URLS = ["http://stig.example.mil/a", "javascript:alert(1)", "https://u:p@x.example/b", "data:text/html,x", "https://stig.example.mil/c"]
+
+    def other_producer(self, d):
+        for sec in d.get("web_sections", d.get("sections", [])):
+            if sec.get("cell_links"):
+                sec["cell_links"].pop("https_only", None)
+                sec["cell_links"]["urls"] = [self.URLS[i % len(self.URLS)] for i in range(len(sec["cell_links"]["urls"]))]
+
+    def test_1_other_producers_keep_their_http_links(self):
+        for tpl, web in (("report_atlas.html.j2", True), ("report_brief.html.j2", True), ("report_ops.html.j2", True), ("report.html.j2", False)):
+            h = self.render(tpl, self.doc(self.other_producer, web))
+            self.assertIn('href="http://stig.example.mil/a"', h, tpl)           # http: kept
+            self.assertIn('href="https://stig.example.mil/c"', h, tpl)
+            for bad in ("javascript:", "u:p@", "data:text/html"):
+                self.assertNotIn(bad, h, tpl)
+
+    def test_1_an_incident_link_stays_https_only(self):
+        def http(d):
+            for sec in d.get("web_sections", d.get("sections", [])):
+                if sec.get("cell_links"):
+                    sec["cell_links"]["urls"] = ["http://evil.example/x" if u else "" for u in sec["cell_links"]["urls"]]
+        self.assertTrue(any(s.get("cell_links", {}).get("https_only") for s in made(instance=self.INST)["sections"]))
+        for tpl, web in (("report_atlas.html.j2", True), ("report_brief.html.j2", True), ("report_ops.html.j2", True), ("report.html.j2", False)):
+            self.assertNotIn("evil.example", self.render(tpl, self.doc(http, web)), tpl)
+
+    def test_1_the_checks(self):
+        import site_filters as sf
+        for u in ("http://a.example/x", "https://a.example/x", "/relative/x.html", "x.html"):
+            self.assertEqual(sf.safe_ref(u), u, u)
+        for u in ("", None, "//a.example/x", "///user@a.example/x", "javascript:alert(1)", "JavaScript:x", "data:text/html,x", "vbscript:x", "https://u@a.example/", "http://u:p@a.example/",
+                  "https://a.example/ x", "https://a.example/<b>", "ftp://a.example/", "http://", "https://a.example:99999/"):
+            self.assertEqual(sf.safe_ref(u), "", u)
+        for u in ("http://reports.example.mil/a.html", "https://reports.example.mil:8443/a.html"):
+            self.assertEqual(sf.safe_site_url(u), u, u)
+        for u in ("", None, "ftp://a.example/", "javascript:x", "//a.example/x", "/a.html", "https://u@a.example/", "https:///x", "https://a.example/ x", "https://a.example/\"x"):
+            self.assertEqual(sf.safe_site_url(u), "", u)
+
+    # 2: the web address, once
+    def test_2_the_web_address_is_checked_where_it_is_derived(self):
+        with open(os.path.join(REPO, "roles", "site_email", "tasks", "main.yml")) as f:
+            y = f.read()
+        i, j, k = y.index("_email_web_url: >-"), y.index("_email_web_url: \"{{ _email_web_url | default('') | safe_site_url }}\""), y.index("_email_web_top:")
+        self.assertLess(i, j)
+        self.assertLess(j, k)                                                         # before any link or text line uses it
+        import test_report_history as H2
+        c = H2.FullReportLink()
+        for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2", "report_glass.html.j2"):
+            import site_filters as sf
+            h = c.render(tpl, _email_web_url=sf.safe_site_url("javascript:alert(1)"))
+            self.assertNotIn("Open the full report", h, tpl)
+            self.assertEqual(c.render(tpl, _email_web_url="http://reports.example.mil/a.html").count("Open the full report"), 2, tpl)
+
+    # 3: the incident links in every email look
+    def test_3_every_email_look_links_the_incidents(self):
+        good = "https://dev.service-now.example/nav_to.do?uri=incident.do%3Fsys_id%3Da1"
+        for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2", "report_glass.html.j2"):
+            h = self.render(tpl, self.doc(lambda d: None, False))
+            self.assertIn('href="%s"' % good, h, tpl)
+            self.assertIn("INC0012345", h, tpl)
+        def http(d):
+            for sec in d.get("sections", []):
+                if sec.get("cell_links"):
+                    sec["cell_links"]["urls"] = ["http://evil.example/x" if u else "" for u in sec["cell_links"]["urls"]]
+        def js(d):
+            for sec in d.get("sections", []):
+                if sec.get("cell_links"):
+                    sec["cell_links"]["urls"] = ["javascript:alert(1)" if u else "" for u in sec["cell_links"]["urls"]]
+        for tpl in ("report_command.html.j2", "report_portal.html.j2", "report_glass.html.j2"):
+            self.assertNotIn("evil.example", self.render(tpl, self.doc(http, False)), tpl)
+            self.assertNotIn("javascript:", self.render(tpl, self.doc(js, False)), tpl)
+
+    # 5, 6: vCenter, kind and related status
+    def test_5_a_fold_needs_the_same_vcenter_kind_and_related(self):
+        def e(**k):
+            d = {"lane": "host", "label": "x", "where": "esx03", "level": "warning", "vcenter": "vc01", "kind": "conn", "cls": "host", "related": True}
+            d.update(k)
+            return d
+        self.assertEqual(ot._fold([e(), e(), e()]), [(0, [0, 1, 2])])
+        for k in ({"vcenter": "vc02"}, {"kind": "alarm:x"}, {"related": False}, {"cls": "vm"}):
+            self.assertEqual(ot._fold([e(), e(**k)]), [], k)
+            self.assertEqual(ot._fold([e(), e(), e(**k)]), [(0, [0, 1])], k)
+
+    def test_6_pairs_and_repeats_keep_the_vcenter(self):
+        a, b = "vc01.example.mil", "vc02.example.mil"
+        evs = ot._vcenter_events([
+            ev("01:00:00", "AlarmStatusChangedEvent", "esx03.example.mil", alarm="Host connection", entity="esx03.example.mil", to="red", vcenter=a, **{"from": "green"}),
+            ev("01:00:20", "AlarmStatusChangedEvent", "esx03.example.mil", alarm="Host connection", entity="esx03.example.mil", to="green", vcenter=b, **{"from": "red"})])
+        kept, _ = ot._pairs(evs, 120)
+        self.assertEqual(len(kept), 2)                                                # vc02's clear is not vc01's clear
+        both = ot._vcenter_events([
+            ev("01:00:00", "AlarmStatusChangedEvent", "esx03.example.mil", alarm="Host connection", entity="esx03.example.mil", to="red", vcenter=a, **{"from": "green"}),
+            ev("01:00:20", "AlarmStatusChangedEvent", "esx03.example.mil", alarm="Host connection", entity="esx03.example.mil", to="green", vcenter=a, **{"from": "red"})])
+        self.assertEqual(len(ot._pairs(both, 120)[0]), 1)                             # the same vCenter: one Low event
+        same = ot._vcenter_events([ev("01:00:00", "AlarmStatusChangedEvent", "esx03.example.mil", alarm="A", entity="esx03.example.mil", to="red", vcenter=v, **{"from": "green"})
+                                   for v in (a, b)])
+        self.assertEqual(len(ot._same(same)), 2)                                      # one event on each vCenter, not "x2"
+        self.assertEqual(len(ot._same(ot._vcenter_events([ev("01:00:00", "AlarmStatusChangedEvent", "esx03.example.mil", alarm="A", entity="esx03.example.mil", to="red", vcenter=a, **{"from": "green"})] * 2))), 1)
+
+    def test_6_two_hosts_of_one_name_are_two_hosts(self):
+        a, b = "vc01.example.mil", "vc02.example.mil"
+        r = made([ev("01:00:00", "HostConnectionLostEvent", H, vcenter=a), ev("01:00:30", "HostConnectionLostEvent", H, vcenter=b)], [])
+        self.assertEqual(r["numbers"]["hosts_down"], ["esx03 (vc01)", "esx03 (vc02)"])
+        self.assertEqual(r["numbers"]["still_down"], ["esx03 (vc01)", "esx03 (vc02)"])
+        r = made([ev("01:00:00", "HostConnectionLostEvent", H, vcenter=a)], [])
+        self.assertEqual(r["numbers"]["hosts_down"], ["esx03"])                       # one host: its name as it was
+
+    def test_6_two_vcenters_down_stretches(self):
+        a, b = "vc01.example.mil", "vc02.example.mil"
+        evs = ot._vcenter_events([ev("01:00:00", "HostConnectionLostEvent", H, vcenter=a), ev("01:10:00", "HostConnectedEvent", H, vcenter=b)])
+        _, downs = ot._pairs(evs, 120)
+        self.assertEqual([(d[2], d[3]) for d in downs if d[0] == "esx03"], [(None, a)])            # the boot on vc02 does not end vc01's stretch
+
+
 if __name__ == "__main__":
     unittest.main()

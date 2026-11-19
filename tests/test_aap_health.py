@@ -197,7 +197,7 @@ class ContainerMemory(unittest.TestCase):
 
     def test_the_matrix(self):
         st, why = self.cm(9318, 41984)                                   # 9.1 GB (14%): small
-        self.assertEqual((st, why), ("PASS", "9.1 GB of 64.0 GB (14%) - 41.0 GB free"))
+        self.assertEqual((st, why), ("PASS", "9.1 GiB of 64.0 GiB (14%) - 41.0 GiB free"))
         st, why = self.cm(26214, 41984)                                  # 25.6 GB (40%), 41 GB free: big, plenty free
         self.assertEqual(st, "INFO")
         self.assertIn("big, with plenty free", why)
@@ -207,7 +207,7 @@ class ContainerMemory(unittest.TestCase):
         self.assertEqual(self.cm(3000, 2048)[0], "PASS")                 # small, even when the host is short: not the cause
         st, why = self.cm(3700, 41984, limit=4096)                       # 90% of its own 4 GB limit, plenty free
         self.assertEqual(st, "WARN")
-        self.assertIn("near its own limit: 90% of 4.0 GB", why)
+        self.assertIn("near its own limit: 90% of 4.0 GiB", why)
         self.assertEqual(self.cm(4000, 41984, limit=4096)[0], "FAIL")    # 98%
         self.assertEqual(self.cm(2000, 41984, limit=4096)[0], "PASS")
 
@@ -225,6 +225,11 @@ class ContainerMemory(unittest.TestCase):
         self.assertEqual(st, "WARN")                                     # set: still applies - whichever is worse
         self.assertIn("over aap_health_container_mem_warn_mb", why)
         self.assertEqual(self.cm(9000, 41984, mem_warn_mb=4096, mem_fail_mb=8192)[0], "FAIL")
+        # 1.76.4 (review): as text (a survey's answer, an extra var) they apply too; blank, zero, not a number, a bool: off
+        self.assertEqual(self.cm(5000, 41984, mem_warn_mb="4096", mem_fail_mb=" 8192 ")[0], "WARN")
+        self.assertEqual(self.cm(9000, 41984, mem_warn_mb="4096", mem_fail_mb="8192")[0], "FAIL")
+        for off in ("", " ", "0", "lots", True, None):
+            self.assertEqual(self.cm(9000, 41984, mem_warn_mb=off, mem_fail_mb=off)[0], "PASS", off)
 
     def test_the_host_free_memory(self):
         def free(total_gb, avail_mb):
@@ -236,7 +241,7 @@ class ContainerMemory(unittest.TestCase):
         self.assertEqual(free(64, 2560)["status"], "FAIL")              # 2.5 GB of 64 (4%): the share is worse than the MB
         self.assertEqual(free(64, 40960)["status"], "PASS")
         self.assertEqual(free(4, 600)["status"], "FAIL")                # 600 MB of 4 GB: the MB is worse
-        self.assertEqual(free(64, 8192)["detail"], "8192 MB available of 65536 MB (12%)")
+        self.assertEqual(free(64, 8192)["detail"], "8192 MiB available of 65536 MiB (12%)")
         self.assertEqual(free(64, 8192)["status"], "WARN")
 
     def test_a_failing_enrichment_keeps_every_row(self):
@@ -255,13 +260,31 @@ class ContainerMemory(unittest.TestCase):
         self.assertEqual(f.container_mem(40000, 0, 65536.0, 4096, "x", dict(self.CFG, mem_warn_pct="", mem_fail_pct=0.0))[0], "PASS")
 
     def test_no_limit_is_the_hosts_memory(self):
-        # podman shows the host's memory as the limit when there is none, in its own units (62.5 GiB of a 64 GB node)
-        text = ("@@@ ps\n[]\n@@@ stats\n" + json.dumps([{"name": "a", "mem_usage": "9.1GB / 62.5GB", "cpu_percent": "1%"},
+        # podman shows the host's memory as the limit when there is none, in its own decimal units (a 64 GiB host:
+        # 68.72GB, or 68.7GB rounded), or "max", or a huge number; 1.76.4 (review): a real limit below the host's
+        # memory counts - 62.5GB is 58.2 GiB on this 64 GiB host (was taken as none at 90 %)
+        text = ("@@@ ps\n[]\n@@@ stats\n" + json.dumps([{"name": "a", "mem_usage": "9.1GB / 68.72GB", "cpu_percent": "1%"},
+                                                         {"name": "r", "mem_usage": "9.1GB / 68.7GB", "cpu_percent": "1%"},
+                                                         {"name": "m", "mem_usage": "9.1GB / max", "cpu_percent": "1%"},
+                                                         {"name": "h", "mem_usage": "9.1GB / 9.223EB", "cpu_percent": "1%"},
+                                                         {"name": "l", "mem_usage": "9.1GB / 62.5GB", "cpu_percent": "1%"},
+                                                         {"name": "g", "mem_usage": "9.1GB / 63.0GiB", "cpu_percent": "1%"},
+                                                         {"name": "o", "mem_usage": "9.1GB / 80GiB", "cpu_percent": "1%"},
                                                          {"name": "b", "mem_usage": "3.5GiB / 4GiB", "cpu_percent": "1%"}])
                 + "\n@@@ meminfo\nMemTotal: 67108864 kB\nMemAvailable: 42991616 kB\n")
         rows = f.containers(text, [], dict(self.CFG, user="aap", now=0, min_uptime_s=600, restart_warn=3, dangling_warn=10, top=10))
         tab = dict((x[0], x[3]) for x in [r for r in rows if r["check"] == "memory per container"][0]["items"]["rows"])
-        self.assertEqual(tab, {"a": "none", "b": "88% of 4.0 GB"})
+        self.assertEqual(tab, {"a": "none", "r": "none", "m": "none", "h": "none", "l": "15% of 58.2 GiB", "b": "88% of 4.0 GiB",
+                               "g": "13% of 63.0 GiB", "o": "11% of 80.0 GiB"})       # 1.76.4 (Codex): real limits, below and above
+        # at podman's printed precision only: a 4 GiB host prints 4.295GB - 4.294GB is a real limit; the huge sentinel
+        # is none without the host's memory too
+        four = 4 * 1024.0
+        self.assertTrue(f.no_limit("4.295GB", f.size_mb("4.295GB"), four))
+        self.assertFalse(f.no_limit("4.294GB", f.size_mb("4.294GB"), four))
+        self.assertTrue(f.no_limit("9.223EB", f.size_mb("9.223EB"), 0.0))
+        self.assertFalse(f.no_limit("4GiB", f.size_mb("4GiB"), 0.0))
+        self.assertTrue(f.no_limit("1PB", f.size_mb("1PB"), 0.0))                     # a decimal petabyte (Codex)
+        self.assertFalse(f.no_limit("4TiB", f.size_mb("4TiB"), four))                # a real limit on any host
 
     def test_the_jobs_at_the_check(self):
         text = ("@@@ ps\n[]\n@@@ stats\n" + json.dumps([
@@ -271,7 +294,7 @@ class ContainerMemory(unittest.TestCase):
         rows = f.containers(text, [], dict(self.CFG, user="aap", now=0, min_uptime_s=600, restart_warn=3, dangling_warn=10, top=10))
         mem = [r for r in rows if r["check"] == "memory per container"][0]
         self.assertEqual(mem["status"], "INFO")
-        self.assertIn("the host: 41.0 GB available of 64.0 GB (64%)", mem["detail"])
+        self.assertIn("the host: 41.0 GiB available of 64.0 GiB (64%)", mem["detail"])
         self.assertIn("At the check: 1 job container(s) running (job 103).", mem["detail"])
         jobs = {"status": 200, "json": {"results": [{"id": 103, "type": "job", "name": "Patch Linux", "status": "running"},
                                                     {"id": 104, "type": "job", "name": "Health", "status": "running"},
@@ -280,6 +303,16 @@ class ContainerMemory(unittest.TestCase):
         self.assertIn("At the check: 2 job(s) running in AAP (Health, Patch Linux); here: 1 job container(s) running (job 103).", mem["detail"])
         self.assertIn("ansible_runner_103 (job 103 'Patch Linux')", [x[0] for x in mem["items"]["rows"]])
         self.assertEqual(f.jobs_on_containers(rows, {}), rows)          # the jobs not read: as it was
+        # 1.76.4 (review): one page of the jobs, more there (AAP's count, its next page): at least, and said - never all
+        more = {"status": 200, "json": dict(jobs["json"], count=250, next="/api/controller/v2/unified_jobs/?page=2")}
+        mem = [r for r in f.jobs_on_containers(rows, {"jobs": more}) if r["check"] == "memory per container"][0]
+        self.assertIn("At the check: at least 2 job(s) running in AAP (Health, Patch Linux) - only the first 3 pending, waiting or "
+                      "running jobs were listed; here: 1 job container(s) running (job 103).", mem["detail"])
+        # a page with no running job and more after it: never "no job running in AAP" (one may be on the next page)
+        waiting = {"status": 200, "json": {"count": 400, "next": "/x?page=2", "results": [{"id": 9, "type": "job", "name": "W", "status": "pending"}]}}
+        mem = [r for r in f.jobs_on_containers(rows, {"jobs": waiting}) if r["check"] == "memory per container"][0]
+        self.assertIn("At the check: no running job among those listed - only the first 1 pending, waiting or running jobs were listed", mem["detail"])
+        self.assertNotIn("no job running in AAP", mem["detail"])
 
 
 class Formatting(unittest.TestCase):
@@ -301,7 +334,7 @@ class Formatting(unittest.TestCase):
         r = [x for x in f.containers(self.stats(), [], dict(self.CFG, mem_warn_pct=25, mem_fail_pct=50, headroom_warn_pct=15,
                                                             headroom_fail_pct=5)) if x["check"] == "memory per container"][0]
         self.assertEqual(r["status"], "FAIL")
-        self.assertTrue(r["detail"].startswith("25 container(s); the host: 1.0 GB available of 16.0 GB (6%). At the check: no job container running.\nctr-03: 8.5 GB of 16.0 GB (53%)"), r["detail"])
+        self.assertTrue(r["detail"].startswith("25 container(s); the host: 1.0 GiB available of 16.0 GiB (6%). At the check: no job container running.\nctr-03: 8.5 GiB of 16.0 GiB (53%)"), r["detail"])
         self.assertEqual([x[0] for x in r["items"]["rows"][:3]], ["ctr-03", "ctr-07", "ctr-24"])
         self.assertEqual(r["items"]["row_status"][:3], ["FAIL", "WARN", "PASS"])
         self.assertEqual(len(r["items"]["rows"]), 25)                  # all of them in the JSON
@@ -665,7 +698,7 @@ class Playbook(unittest.TestCase):
         # ContainerMemory); the job container named with its template, the jobs running at the check said
         mem = [r for r in rows if r["check"] == "memory per container"][0]
         self.assertIn(mem["status"], ("PASS", "INFO", "WARN", "FAIL"))
-        self.assertRegex(mem["detail"], r"^\d+ container\(s\); the host: [\d.]+ GB available of [\d.]+ GB \(\d+%\)")
+        self.assertRegex(mem["detail"], r"^\d+ container\(s\); the host: [\d.]+ GiB available of [\d.]+ GiB \(\d+%\)")
         self.assertIn("At the check: 2 job(s) running in AAP (Big, Health); here: 1 job container(s) running (job 103)", mem["detail"])
         self.assertEqual(mem["items"]["columns"], ["Container", "Memory", "Of the host", "Own limit", "CPU %", "Why"])
         names = [x[0] for x in mem["items"]["rows"]]

@@ -587,8 +587,9 @@
       var hide=!otVisible([ev]).length||(tr.hasAttribute('data-rep')&&!OT.rep);if(!!tr._ot!==hide){tr._ot=hide;vis(tr)}      /* one more input to vis(), beside the table's filter and the search */
       var f=tr.getAttribute('data-fold'),td=wi>=0?tr.cells[wi]:null;
       if(f&&td){var q=f.split('|'),sx=td._sx;if(!sx){sx=td._sx=document.createElement('span');sx.className='ot-fold';td.appendChild(sx)}      /* its own node: the cell's link stays */
-        sx.textContent=OT.rep?'':' \u00d7'+q[0]+', '+q[1]+(q[2]!==q[1]?'-'+q[2]:'');if(OT.rep)td.removeAttribute('title');else td.title=q[3]}});
+        sx.textContent=OT.rep?'':' \u00d7'+q[0]+', '+q[1]+(q[2]!==q[1]?'-'+q[2]:'');tr._t=undefined;if(OT.rep)td.removeAttribute('title');else td.title=q[3]}});
     counts.forEach(function(c){c()});                       /* the tables' "n of m" */
+    if(find&&find.value.trim()&&typeof run==='function')run();            /* an active search counts again: its rows, its sections' badges, "n found" */
     if(otCtl){all('input[name=ot-show]',otCtl).forEach(function(i){i.checked=i.value===OT.show});
       all('input[name=ot-kind]',otCtl).forEach(function(i){i.checked=!OT.off[i.value]});var r=otCtl.querySelector('input[name=ot-rep]');if(r)r.checked=OT.rep}};
   var otSave=function(){try{localStorage.setItem(OTK,JSON.stringify({show:OT.show,off:OT.off,rep:OT.rep}))}catch(e){}};
@@ -616,6 +617,10 @@
        time; each line links to its row in The events. Hover shows it; a click (or Enter) pins it so it can be scrolled; Esc or a click elsewhere closes */
     var RANKS={critical:4,warning:3,low:2,info:1,ok:0};
     var rowFor=function(n){var tr=document.getElementById('ot-row-'+n);if(tr&&tr.hasAttribute('data-rep')&&!OT.rep){var h=document.getElementById(tr.getAttribute('data-head')||'');if(h)tr=h}return tr};      /* a folded repeat: its head's row (data-head), whatever the sort */
+    /* an incident link (data-ev): parsed - https, a host, no user or password, no spaces or markup characters - as the report's safe_link asks */
+    var okUrl=function(u){if(typeof u!=='string'||!u||u.length>2000||/[\s\x00-\x1f\x7f<>"'`\\]/.test(u))return false;
+      if(!/^https:\/\/[^\/?#\\]/i.test(u))return false;      /* the host is written out: URL() would read https:///x as host x */
+      try{var a=new URL(u);return a.protocol==='https:'&&!!a.hostname&&!a.username&&!a.password&&u.replace(/^https:\/\//i,'').split(/[\/?#]/)[0].indexOf('@')<0}catch(x){return false}};
     var showList=function(el,x,y){var list=otVisible(el._ev||[]);if(!list.length){hide();return}
       if(owner&&owner!==el&&owner._off)owner._off();owner=el;tt.textContent='';tt.className='tt tt-list'+(pinned===el?' pin':'');
       var bytime=list.slice().sort(function(a,b){return a.n-b.n}),first=bytime[0].m,last=bytime[bytime.length-1].m;
@@ -627,11 +632,15 @@
         var i=document.createElement('span');i.className='tt-i ot-'+e.l;if(ic)i.appendChild(ic.cloneNode(true));i.setAttribute('aria-hidden','true');ln.appendChild(i);
         var w=document.createElement('span');w.className='tt-w';
         var at=e.u&&e.k?e.w.indexOf(e.k):-1;           /* an incident of ServiceNow: its number is a link (a new tab) */
-        if(at>=0&&/^https:\/\//.test(e.u)){w.appendChild(document.createTextNode(e.w.slice(0,at)));var inc=document.createElement('a');inc.className='tt-inc';inc.href=e.u;inc.target='_blank';
+        if(at>=0&&okUrl(e.u)){w.appendChild(document.createTextNode(e.w.slice(0,at)));var inc=document.createElement('a');inc.className='tt-inc';inc.href=e.u;inc.target='_blank';
           inc.rel='noopener noreferrer';inc.textContent=e.k;w.appendChild(inc);w.appendChild(document.createTextNode(e.w.slice(at+e.k.length)))}
         else w.appendChild(document.createTextNode(e.w));
         if(e.p){var p=document.createElement('small');p.textContent=e.p;w.appendChild(p)}ln.appendChild(w);
-        var go=function(ev){var tr=rowFor(e.n);if(!tr)return;ev.preventDefault();hide();var d=tr.closest('details');if(d)d.open=true;
+        var go=function(ev){var tr=rowFor(e.n);if(!tr)return;ev.preventDefault();
+          if(tr.hidden&&tr._s&&find&&typeof run==='function'){find.value='';run()}                   /* the search hides it: the search is cleared */
+          if(tr.hidden){var nt=tt.querySelector('.tt-note')||document.createElement('div');nt.className='tt-note';nt.setAttribute('role','status');
+            nt.textContent='Row '+e.n+' is hidden by '+(tr._f?"the table's filter box":tr._d?"the table's column filters":tr._p?'the filter buttons at the top of the page':tr._ot?"the time line's controls (Show, kinds, repeats)":'a filter')+'.';tt.appendChild(nt);return}
+          hide();var d=tr.closest('details');if(d)d.open=true;
           tr.scrollIntoView({block:'center'});tr.classList.add('ot-flash');setTimeout(function(){tr.classList.remove('ot-flash')},2200)};
         t.addEventListener('click',go);
         ln.addEventListener('click',function(ev){if(ev.target.closest&&ev.target.closest('a'))return;go(ev)});          /* the line goes to its row; the incident link opens ServiceNow */

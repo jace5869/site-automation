@@ -138,6 +138,8 @@
 {%- endfor %}
 </tr>
 {%- for row in s.rows %}
+{%- set ri = loop.index0 %}
+{%- set _cl = s.cell_links if s.cell_links is defined and s.cell_links.https_only | default(false) else none %}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
 {%- if rs in tint %}
@@ -146,12 +148,13 @@
 <tr style="background:{{ '#ffffff' if loop.index is odd else '#f6f8fb' }};">
 {%- endif %}
 {%- for cell in row %}
+{%- set clu = (_cl.urls[ri] if _cl and loop.index0 == _cl.column and _cl.urls | length > ri else '') | default('', true) | safe_link %}
 {%- set lab = ('<span class="sa-lab" style="display:none;mso-hide:all;font-size:10px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase;">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if k == 'S' else '' %}
 {%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- if cst and cst in colour %}
-<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} bgcolor="{{ colour[cst] }}" style="padding:{{ pad }};border:1px solid #c5cedb;vertical-align:top;background:{{ colour[cst] }};color:#ffffff;font-weight:bold;">{{ lab }}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}</td>
+<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} bgcolor="{{ colour[cst] }}" style="padding:{{ pad }};border:1px solid #c5cedb;vertical-align:top;background:{{ colour[cst] }};color:#ffffff;font-weight:bold;">{{ lab }}{% if clu %}<a href="{{ clu | e }}" style="color:inherit;" target="_blank" rel="noopener noreferrer">{% endif %}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}{% if clu %}</a>{% endif %}</td>
 {%- else %}
-<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} style="padding:{{ pad }};border:1px solid #c5cedb;vertical-align:top;">{{ lab }}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}</td>
+<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} style="padding:{{ pad }};border:1px solid #c5cedb;vertical-align:top;">{{ lab }}{% if clu %}<a href="{{ clu | e }}" style="color:inherit;" target="_blank" rel="noopener noreferrer">{% endif %}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}{% if clu %}</a>{% endif %}</td>
 {%- endif %}
 {%- endfor %}
 </tr>

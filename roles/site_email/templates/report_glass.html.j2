@@ -335,6 +335,8 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- endfor %}
 </tr>
 {%- for row in s.rows %}
+{%- set ri = loop.index0 %}
+{%- set _cl = s.cell_links if s.cell_links is defined and s.cell_links.https_only | default(false) else none %}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
 {%- set last = loop.last %}
@@ -344,14 +346,15 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 <tr>
 {%- endif %}
 {%- for cell in row %}
+{%- set clu = (_cl.urls[ri] if _cl and loop.index0 == _cl.column and _cl.urls | length > ri else '') | default('', true) | safe_link %}
 {%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set cellbd = '' if last else 'border-bottom:1px solid #edf2f6;' %}
 {%- set lab = ('<span class="g-lab" style="display:none;mso-hide:all;-webkit-user-select:none;user-select:none;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:' ~ label ~ ';">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if stack else '' %}
 {%- if cst and cst in pal %}
-<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;">{{ lab }}<span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if gk in 'LW' else text | e) }}</span></td>
+<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;">{{ lab }}<span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{% if clu %}<a href="{{ clu | e }}" style="color:inherit;" target="_blank" rel="noopener noreferrer">{% endif %}{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if gk in 'LW' else text | e) }}{% if clu %}</a>{% endif %}</span></td>
 {%- else %}
-<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ lab }}{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if gk in 'LW' else text | e) }}</td>
+<td{{ ' class="g-none"' if stack and not text | trim else '' }} style="padding:{{ pad }};{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ lab }}{% if clu %}<a href="{{ clu | e }}" style="color:inherit;" target="_blank" rel="noopener noreferrer">{% endif %}{{ text | report_cell_html if s.wrap | default(false) else (brk(text) if gk in 'LW' else text | e) }}{% if clu %}</a>{% endif %}</td>
 {%- endif %}
 {%- endfor %}
 </tr>

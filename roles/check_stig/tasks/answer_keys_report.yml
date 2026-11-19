@@ -11,7 +11,9 @@
       {%-   set hc = hostvars[g.rep]._ak_hc | default({}) -%}
       {%-   set nm = hc.evaluate.names | default([]) | stig_answer_names -%}
       {%-   set rows = g.picks | stig_answer_rows(g.drafts, hc, _ak_key, nm.names, stigman_protect_words | default(none)) -%}
-      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm})) -%}
+      {#- 1.76.4 (Codex): the trial's setting the host that tried this STIG had (answer_keys_check.yml) -#}
+      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm,
+                                          'trial_on': hostvars[g.rep]._ak_trial_on | default(answer_keys_trial) | bool})) -%}
       {%- endfor -%}
       {{ gs }}
 
@@ -21,7 +23,8 @@
       {{ _ak_groups | stig_answer_report_multi(_ak_key, answer_keys_act | bool, _ak_m.failed, _ak_m.none, _ak_m.left_out,
                                                ('answer_keys_pick ' ~ answer_keys_pick ~ ', answer_keys_cat ' ~ (answer_keys_cat | join(',') if answer_keys_cat is not string else answer_keys_cat)
                                                 ~ ', at most ' ~ answer_keys_max_rules ~ ' per STIG; never a review Not a Finding, Not Applicable, with RA / POA&M words or attachments')
-                                               if _ak_rules.auto | default(false) else '', _ak_m.answered | default({})) }}
+                                               if _ak_rules.auto | default(false) else '', _ak_m.answered | default({}),
+                                               answer_keys_trial | bool) }}
 
 - name: Answer keys | what was made
   ansible.builtin.debug:
