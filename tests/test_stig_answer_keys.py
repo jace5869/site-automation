@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -872,42 +873,109 @@ class EveryMount(unittest.TestCase):
         for not_ in ("ReadOnlyPaths=-/tmp", "ReadOnlyPaths=-/proc", "ReadOnlyPaths=-/run/user/1000", "ReadOnlyPaths=-/net"):
             self.assertNotIn(not_, props)
 
-    def test_no_sandbox_rather_than_a_partial_one(self):
-        for info, why in ((self.INFO + b"39 28 7:2 / /srv/my\\040data rw - ext4 /dev/loop2 rw\n", "cannot be given by name"),
-                          (self.INFO + b"41 28 7:4 / /srv/\xff rw - ext4 /dev/loop4 rw\n", "not UTF-8"),
-                          (b"garbage line\n", "not understood")):
-            with self.assertRaises(host.MountsError) as e:
-                self.with_info(info, host.probe_mounts)
-            self.assertIn(why, str(e.exception))
-        # a typographic quote is no quote to systemd, and the probe takes its paths as data: kept
-        self.assertIn("/srv/it\u2019s", self.with_info(self.INFO + b"40 28 7:3 / /srv/it\xe2\x80\x99s rw - ext4 /dev/loop3 rw\n",
-                                                          host.probe_mounts))
-        many = self.INFO + b"".join(b"%d 28 7:9 / /m/%d rw - ext4 /dev/x rw\n" % (100 + i, i) for i in range(1001))
+    def test_names_left_to_the_probe(self):
+        # 1.76.1g (review): a name systemd cannot be given, one not UTF-8, or more than MOUNTS_MAX: left out of the list by
+        # name - never a refusal for that; the probe reads the mount table inside and refuses only a writable mount
+        info = (self.INFO + b"39 28 7:2 / /srv/my\\040data rw - ext4 /dev/loop2 rw\n"
+                + b"40 28 7:3 / /srv/it\xe2\x80\x99s rw - ext4 /dev/loop3 rw\n" + b"41 28 7:4 / /srv/\xff rw - ext4 /dev/loop4 rw\n")
+        mps = self.with_info(info, host.probe_mounts)
+        self.assertNotIn("/srv/my data", mps)
+        self.assertIn("/srv/it\u2019s", mps)                                 # a typographic quote is no quote to systemd
+        self.assertEqual(len([m for m in mps if m.startswith("/srv/")]), 1)
+        many = self.INFO + b"".join(b"%d 28 7:9 / /m/%d rw - ext4 /dev/x rw\n" % (100 + i, i) for i in range(1100))
+        self.assertEqual(len(self.with_info(many, host.probe_mounts)), host.MOUNTS_MAX)
         with self.assertRaises(host.MountsError):
-            self.with_info(many, host.probe_mounts)
-        with self.assertRaises(host.MountsError):
-            self.with_info(self.INFO + b"39 28 7:2 / /srv/a\\040b rw - ext4 /dev/loop2 rw\n",
-                           lambda: host.sandbox_cmd("/usr/bin/systemd-run", 60, version=255))
+            self.with_info(b"garbage line\n", host.probe_mounts)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "no pwsh here")
+    def test_the_probe_reads_the_mount_table(self):
+        # the probe's own mount-table rule, run on a mount table given to it: a writable host mount is named, the
+        # sandbox's own places, its cgroup, an automount point, the kernel's privileged interfaces and what it cannot
+        # reach are not; a file is never exempt; /dev/pts (the host's devpts) is named
+        import base64
+        import subprocess
+        d = tempfile.mkdtemp(dir=os.path.expanduser("~"), prefix=".site-ak-mi-")
+        try:
+            sp = os.path.join(d, "a b")
+            os.makedirs(sp)
+            fil = os.path.join(d, "hosts")
+            with open(fil, "w") as f:
+                f.write("x")
+            lines = ["1 0 8:1 / / rw - ext4 /dev/sda1 rw", "2 1 8:1 / /etc/hosts ro - ext4 /dev/sda1 rw",
+                     "3 1 8:1 / %s rw - ext4 /dev/sda1 rw" % fil, "4 1 0:5 / /net rw - autofs systemd-1 rw",
+                     "5 1 0:6 / /dev/pts rw - devpts devpts rw", "6 1 0:7 / /sys/fs/selinux rw - selinuxfs selinuxfs rw",
+                     "7 1 0:8 / /sys rw - sysfs sysfs rw", "8 1 0:9 / /proc rw - proc proc rw", "9 8 0:9 / /proc/sys rw - proc proc rw",
+                     "10 1 0:10 / /tmp rw - tmpfs tmpfs rw", "11 1 8:2 / /nonexistent-site-ak rw - ext4 /dev/sdb rw",
+                     "12 1 8:3 / %s rw - ext4 /dev/sdc rw" % sp.replace(" ", "\\040"), "13 1 8:4 / /boot ro - ext4 /dev/sdd rw"]
+            mi = os.path.join(d, "mountinfo")
+            with open(mi, "w") as f:
+                f.write("\n".join(lines) + "\n")
+            script = host.PROBE_PS1.replace("@IPC@", "@()")
+            enc = base64.b64encode(script.encode("utf-16-le")).decode()
+            r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                               input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": mi}).encode(), stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=120)
+            got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
+            got = [got] if isinstance(got, str) else got
+            self.assertEqual(sorted(got), sorted(["/", fil, "/dev/pts", "/sys", "/proc/sys", sp]))
+            r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                               input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": os.path.join(d, "none")}).encode(),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
+            self.assertEqual([got] if isinstance(got, str) else got, ["(the mount table could not be read)"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
     def test_automounts_fired_within_one_budget(self):
-        state = {"n": 0}
-        real_run, real_m = host.subprocess.run, host.mounts
+        # 1.76.1g: each touch a process with a hard deadline, never waited on (a stat stuck on a dead NFS server cannot
+        # hold the job); the indirect map not touched; what is not mounted after: not tried
+        state = {"n": 0, "killed": [], "started": []}
+        real_popen, real_m = host.subprocess.Popen, host.mounts
 
         def mounts():
             state["n"] += 1
             base = [("/", "ext4", "rw"), ("/opt", "autofs", "rw,direct"), ("/net", "autofs", "rw,indirect"), ("/slow", "autofs", "rw,direct")]
             return base + ([("/opt", "ext4", "rw")] if state["n"] > 1 else [])          # /opt mounts; /slow never does
-        calls = []
+
+        class P(object):
+            def __init__(self, cmd, **k):
+                self.cmd = cmd
+                state["started"].append(cmd[2])
+
+            def poll(self):
+                return 0 if self.cmd[2] == "/opt/." else None                         # /slow hangs
+
+            def kill(self):
+                state["killed"].append(self.cmd[2])
+
+            def wait(self, *a, **k):
+                raise AssertionError("never waited on")
         host.mounts = mounts
-        host.subprocess.run = lambda cmd, **k: calls.append((cmd, k.get("timeout")))
+        host.subprocess.Popen = P
+        t = time.time()
         try:
-            self.assertEqual(host.fire_automounts(budget=30), ["/opt"])
-            self.assertEqual(sorted(host.AUTOFS_HIDDEN), ["/net", "/slow"])       # indirect, and not mounted
-            self.assertEqual([c[0][2] for c in calls], ["/opt/.", "/slow/."])     # an indirect map is not touched
-            self.assertTrue(all(0 < c[1] <= 30 for c in calls))
+            self.assertEqual(host.fire_automounts(budget=1), ["/opt"])
+            self.assertLess(time.time() - t, 3)
+            self.assertEqual(state["started"], ["/opt/.", "/slow/."])
+            self.assertEqual(state["killed"], ["/slow/."])
+            self.assertEqual(sorted(host.AUTOFS_HIDDEN), ["/net", "/slow"])
             self.assertIn("automount the sandbox cannot show", host.blind("", [], [{"cmd": "Get-Content", "path": "/net/srv/x", "literal": True}]))
         finally:
-            host.subprocess.run, host.mounts = real_run, real_m
+            host.subprocess.Popen, host.mounts = real_popen, real_m
+            del host.AUTOFS_HIDDEN[:]
+
+    def test_refresh_before_each_code(self):
+        # an automount that expired after the probe: not tried for the next code (the list is the mount table now)
+        real_m = host.mounts
+        host.mounts = lambda: [("/", "ext4", "rw"), ("/opt", "autofs", "rw,direct")]
+        try:
+            host.refresh_autofs()
+            self.assertEqual(host.AUTOFS_HIDDEN, ["/opt"])
+            host.mounts = lambda: [("/", "ext4", "rw"), ("/opt", "autofs", "rw,direct"), ("/opt", "ext4", "rw")]
+            host.refresh_autofs()
+            self.assertEqual(host.AUTOFS_HIDDEN, [])
+        finally:
+            host.mounts = real_m
             del host.AUTOFS_HIDDEN[:]
 
 

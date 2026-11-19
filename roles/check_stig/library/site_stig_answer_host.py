@@ -472,6 +472,10 @@ SANDBOX_COMMON = ["ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-o
                   # in past the read-only remount (tried on systemd 255). Automounts are fired before each run instead
                   # (fire_automounts), so they are mounted when the sandbox is made, and read-only in it.
                   "MountFlags=private",
+                  # 1.76.1g (review): /sys and its file systems (securityfs, configfs, pstore ...) stayed writable as root -
+                  # a ReadOnlyPaths= below "/" is dropped as a no-op by systemd, a read-only bind is not (tried, 255);
+                  # /dev/pts is the host's devpts (its users' terminals): an empty one of its own instead
+                  "BindReadOnlyPaths=/sys", "BindReadOnlyPaths=-/dev/hugepages", "TemporaryFileSystem=/dev/pts:ro",
                   "NoNewPrivileges=yes", "RestrictNamespaces=yes",
                   "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectControlGroups=yes",
                   "SystemCallFilter=~@privileged @debug",
@@ -538,18 +542,40 @@ PROBE_PS1 = r"""
 # 1.76.1f: its data - the places to look at, the job's PID - from stdin as JSON, never in this script's source
 $in = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $w = @(foreach ($p in @($in.ro)) { if (Test-Path -LiteralPath $p) { & /usr/bin/test -w $p; if ($LASTEXITCODE -eq 0) { $p } } })
-# 1.76.1f: every mount of the sandbox, as it sees them (the topmost at each point): one that can be written to (no
-# "ro" of its own) outside its own places - /proc, /sys, /dev (the kernel's, guarded by capabilities it has not),
-# /tmp, /var/tmp - is a host file system it could write, unless it cannot even enter it (a root-only folder)
-$top = [ordered]@{}
-foreach ($l in [IO.File]::ReadAllLines('/proc/self/mountinfo')) { $f = $l.Split(' '); if ($f.Count -gt 5) { $top[$f[4]] = $f[5] } }
-$rwm = @(foreach ($k in $top.Keys) {
-    $p = [regex]::Replace([string]$k, '\\([0-7]{3})', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 8) })
-    if (($top[$k].Split(',')) -notcontains 'rw') { continue }
-    if ($p -match '^/(proc|sys|dev|tmp|var/tmp)(/|$)') { continue }
-    & /usr/bin/test -x $p
-    if ($LASTEXITCODE -eq 0) { $p }
-})
+# 1.76.1f/g: every mount of the sandbox, as it sees them (the topmost at each point), with its file system type: one that
+# can be written to (no "ro" of its own) is a host file system it could write - but /proc itself, /dev (its own: no
+# host device, /dev/pts an empty one; a devpts there is the host's, refused), /tmp and /var/tmp (its own), its own
+# cgroup's files (systemd puts them there), an automount point (autofs: not mounted - a code that reads below one is
+# not tried), and a FOLDER it cannot even enter (a root-only one). A file is never exempt. Not read: refused.
+$top = [ordered]@{}; $fst = @{}
+$rwm = @()
+try {
+    $mi = $(if ($in.mountinfo) { [string]$in.mountinfo } else { '/proc/self/mountinfo' })
+    foreach ($l in [IO.File]::ReadAllLines($mi)) {
+        $f = $l.Split(' ')
+        $k = [array]::IndexOf($f, '-')
+        if ($f.Count -gt 5 -and $k -gt 5) { $top[$f[4]] = $f[5]; $fst[$f[4]] = $f[$k + 1] }
+    }
+    $mycg = ''
+    try { $mycg = ((Get-Content -LiteralPath '/proc/self/cgroup' -ErrorAction Stop | Where-Object { $_ -match '^0::' }) -replace '^0::', '') } catch { }
+    $rwm = @(foreach ($k in $top.Keys) {
+        $p = [regex]::Replace([string]$k, '\\([0-7]{3})', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 8) })
+        if (($top[$k].Split(',')) -notcontains 'rw') { continue }
+        if ($fst[$k] -eq 'autofs') { continue }
+        if ($fst[$k] -eq 'devpts') { $p; continue }
+        # the kernel's interfaces that take a write only from root or a capability (it has neither: CapEff is looked at)
+        if (@('selinuxfs', 'securityfs', 'configfs', 'pstore', 'fusectl', 'efivarfs', 'debugfs', 'tracefs', 'bpf', 'binfmt_misc', 'hugetlbfs', 'mqueue') -contains $fst[$k]) { continue }
+        if ($p -eq '/proc' -or $p -match '^/(dev|tmp|var/tmp)(/|$)') { continue }
+        if ($mycg -and $p.StartsWith('/sys/fs/cgroup' + $mycg + '/')) { continue }
+        # a place it cannot reach at all (not even look at), or a folder it cannot enter: nothing below can be written
+        & /usr/bin/test -e $p
+        if ($LASTEXITCODE -ne 0) { continue }
+        & /usr/bin/test -d $p
+        if ($LASTEXITCODE -eq 0) { & /usr/bin/test -x $p; if ($LASTEXITCODE -ne 0) { continue } }
+        $p
+    })
+    if ($top.Count -eq 0) { $rwm = @('(no mount table)') }
+} catch { $rwm = @('(the mount table could not be read)') }
 $priv = @{}
 foreach ($p in @('/tmp', '/var/tmp', '/dev/shm')) { $priv[$p] = [string](& /usr/bin/stat -L -c '%d:%i' $p 2>$null) }
 $sock = @()
@@ -1038,7 +1064,7 @@ def mounts():
         try:
             mp = raw.decode("utf-8")
         except UnicodeDecodeError:
-            raise MountsError("a mount point's name is not UTF-8: %r" % raw[:80])
+            continue                    # 1.76.1g: left to the probe (it reads the mount table inside)
         out.append((mp, a[sep + 1].decode("ascii", "replace") if len(a) > sep + 1 else "",
                     a[sep + 3].decode("ascii", "replace") if len(a) > sep + 3 else ""))
     return out
@@ -1059,13 +1085,11 @@ def probe_mounts():
     for mp, fs, _ in mounts():
         if fs == "autofs" or any(mp == x or mp.startswith(x + "/") for x in OWN_MOUNTS) or mp in out:
             continue
-        if not SAFE_PATH.match(mp):
-            raise MountsError("a mount point systemd cannot be given by name (%r) - no trial rather than one it may "
-                              "leave writable" % mp[:120])
-        out.append(mp)
-    if len(out) > MOUNTS_MAX:
-        raise MountsError("more than %d mount points (%d) - no trial rather than one with some left out" % (MOUNTS_MAX, len(out)))
-    return out
+        # 1.76.1g: a name systemd cannot be given is left out of the list - the probe still looks at it (its own
+        # mount table): never a refusal for a name or a count, only for a mount that is writable inside
+        if SAFE_PATH.match(mp):
+            out.append(mp)
+    return out[:MOUNTS_MAX]
 
 
 # 1.76.1f: automounts the sandbox cannot show as the host has them - an indirect map (its keys are mounted on demand,
@@ -1073,44 +1097,59 @@ def probe_mounts():
 AUTOFS_HIDDEN = []
 
 
+def refresh_autofs():
+    """1.76.1g: AUTOFS_HIDDEN from the mount table now - each automount point with nothing mounted on it (an indirect map,
+    one that did not mount, or one that expired since): a code that reads below one is not tried. Before each code's
+    blind(), so it is never a list of before."""
+    try:
+        now = mounts()
+    except MountsError:
+        return
+    real = set(mp for mp, fs, _ in now if fs != "autofs")
+    del AUTOFS_HIDDEN[:]
+    AUTOFS_HIDDEN.extend(sorted(set(mp for mp, fs, opts in now if fs == "autofs" and (mp not in real or "indirect" in opts.split(",")))))
+
+
 def fire_automounts(budget=30):
-    """1.76.1f: each direct automount of the host (autofs) fired here, outside the sandbox, within one budget of seconds
-    for them all, then looked for in the mount table: mounted when the sandbox is made, read-only in it
-    (MountFlags=private: none fires inside, none arrives later). An indirect map, or one that did not mount in time,
-    goes to AUTOFS_HIDDEN - a code that reads below it is not tried. -> the ones mounted."""
+    """1.76.1f: each direct automount of the host (autofs) fired here, outside the sandbox, so it is mounted when the
+    sandbox is made, read-only in it (MountFlags=private: none fires inside, none arrives later). 1.76.1g: once per
+    job (the probe), within one budget for them all - each touch a process given a hard deadline and never waited on
+    (one stuck on a dead NFS server cannot hold the job). An indirect map, or one that did not mount: AUTOFS_HIDDEN.
+    -> the ones mounted."""
     try:
         before = mounts()
     except MountsError:
         return []
-    auto = [(mp, opts) for mp, fs, opts in before if fs == "autofs"]
+    auto = [(mp, opts) for mp, fs, opts in before if fs == "autofs" and "indirect" not in opts.split(",")]
     end = time.time() + budget
-    hidden = []
-    for mp, opts in auto:
-        if "indirect" in opts.split(",") or time.time() >= end:
-            hidden.append(mp)
-            continue
+    for mp, _ in auto:
+        if time.time() >= end:
+            break
         try:
-            subprocess.run(["/usr/bin/stat", "-f", mp + "/."], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=max(1, end - time.time()))
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+            pr = subprocess.Popen(["/usr/bin/stat", "-f", mp + "/."], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+        except OSError:
+            continue
+        while pr.poll() is None and time.time() < end:
+            time.sleep(0.05)
+        if pr.poll() is None:
+            try:
+                pr.kill()                       # not waited on: a process in D state may never go
+            except OSError:
+                pass
+    refresh_autofs()
+    real = set()
     try:
-        now = mounts()
+        real = set(mp for mp, fs, _ in mounts() if fs != "autofs")
     except MountsError:
-        now = []
-    real = set(mp for mp, fs, _ in now if fs != "autofs")
-    fired = [mp for mp, opts in auto if mp in real and mp not in hidden]
-    hidden += [mp for mp, opts in auto if mp not in real and mp not in hidden]
-    del AUTOFS_HIDDEN[:]
-    AUTOFS_HIDDEN.extend(hidden)
-    return fired
+        pass
+    return [mp for mp, _ in auto if mp in real]
 
 
 def run_trial(pwsh, runner, code, seconds, binds=None, version=None):
     """One trial of a code in the sandbox -> (json or None, error, seconds). binds: the replay shims. version:
     systemd's (None: asked)."""
     t = time.time()
-    fire_automounts()
     if version is None:
         version = systemd_version(runner)
     if PWSH_ID and not pwsh_same(pwsh):
@@ -1393,6 +1432,7 @@ def main():
             # PowerShell): not tried - never a result the host would not give
             calls = [[str(x) for x in c] for c in (gate[cid].get("calls") or []) if isinstance(c, list)]
             gp = gate[cid].get("paths") or []
+            refresh_autofs()            # 1.76.1g: the automounts as they are now, not as at the probe
             why_blind = blind(code, calls, [gp] if isinstance(gp, dict) else gp)
             if why_blind:
                 trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0, "error": why_blind}

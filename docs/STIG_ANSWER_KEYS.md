@@ -234,15 +234,17 @@ It runs in a **sandbox**: a transient systemd unit (`systemd-run`) that the kern
 
 - The whole file system is read-only (`ProtectSystem=strict`, `ReadOnlyPaths=/`, `ProtectHome=read-only`), the
   kernel's settings too (`ProtectKernelTunables`).
-  - Every mount point of the host is made read-only by name as well (`ReadOnlyPaths=` each, from
-    `/proc/self/mountinfo`): `/var`, `/var/log/audit`, `/home`, `/opt` of their own, and `/run/lock`. With
-    `ProtectKernelTunables`, systemd 255 left `/run/lock` writable under `ReadOnlyPaths=/` alone (1.76.1f).
+  - Every mount point of the host is also named read-only (`ReadOnlyPaths=` each, from `/proc/self/mountinfo`):
+    with `ProtectKernelTunables`, systemd 255 left `/run/lock` writable under `ReadOnlyPaths=/` alone, and naming it
+    closed that. systemd drops some of these names as repeats, so they are a help, not the guard: the guard is the
+    check below (the sandbox's own mount table). `/sys` is a read-only bind (`BindReadOnlyPaths=/sys`: a name there
+    was dropped and `/sys` stayed writable), and `/dev/pts` an empty folder (it was the host's terminals).
   - No mount of the host reaches the sandbox after it starts (`MountFlags=private`). A direct automount is fired
-    outside before each run (30 seconds for them all), so it is mounted, and read-only, when the sandbox is made; one
-    fired inside would mount writable. An indirect map, or an automount that did not mount, is a place the trial
-    cannot show: a code that reads below it is not tried.
-  - A mount point systemd cannot be given by name (a space, a quote), more than 1000 mount points, or a mount table
-    that cannot be read: no sandbox, so no trial - never one with a mount left out.
+    outside once per job (30 seconds for them all; one that hangs is left, never waited on), so it is mounted, and
+    read-only, when the sandbox is made; one fired inside would mount writable. An indirect map, or an automount not
+    mounted when a code is looked at, is a place the trial cannot show: a code that reads below it is not tried.
+  - A mount point systemd cannot be given by name (a space, a quote) is left out of the names; the check below still
+    looks at it.
 - Its **own** `/tmp`, `/var/tmp` and `/dev/shm`, empty. The host's are never shown inside: a file or a FIFO there
   cannot be reached.
 - **No socket of any kind** (`RestrictAddressFamilies` empty, `IPAddressDeny=any`): no network, no D-Bus, no systemd, no
@@ -315,9 +317,12 @@ is replayed, or the code is not tried.
   it must be root's and writable by root alone; it is checked again right before each run. *How this was made* names
   it.
 - Before the first trial the job looks from inside, without writing, that the sandbox holds:
-  - nothing of the host is writable: the sandbox's own mount table, read inside, has every mount read-only but its
-    own places (`/proc`, `/sys`, `/dev`, `/tmp`, `/var/tmp`) and those it cannot even enter; and `/tmp`, `/var/tmp`,
-    `/dev/shm` are its own, not the host's;
+  - nothing of the host is writable: the sandbox's own mount table, read inside, has every mount read-only - but
+    `/proc` itself, `/dev` (its own; a terminal file system there is the host's: refused), `/tmp`, `/var/tmp`, its own
+    cgroup's files, an automount point (not tried below it), the kernel's interfaces that take a write only from root
+    or a capability (SELinux, security, configfs ...), and a place it cannot reach or a folder it cannot enter. A
+    file is never let through, `/sys`, the cgroups and `/proc/sys` must be read-only, and a mount table it cannot read
+    refuses the sandbox; `/tmp`, `/var/tmp`, `/dev/shm` are its own, not the host's;
   - no socket can be opened, and `/run/systemd/private` and D-Bus cannot be reached;
   - it is not root, and it keeps no capability but reading; as root, it runs as a dynamic user that owns no process
     of the host after it ends;
