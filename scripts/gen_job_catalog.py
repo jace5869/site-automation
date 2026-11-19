@@ -158,6 +158,8 @@ def area_of(name, playbook):
         return "ACT"
     if n.startswith(("windows", "active directory")) or pb.startswith("win_"):
         return "Windows"
+    if n.startswith("aap - ") and "report" not in n:
+        return "Linux"                                   # the AAP setup jobs, together
     if "report" in n or "inventory" in n or "analysis" in n:
         return "Reports"
     return "Linux"

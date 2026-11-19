@@ -705,6 +705,41 @@ the catalog does not name (a Teams webhook you added stays). A template takes on
 one of a type it already has (your Windows Machine credential beside the Linux one) is left off, and said. A new
 template gets its Variables file with every setting switched off - switch on what you need.
 
+### Move templates to another inventory
+
+One template - `AAP - move templates to another inventory` (`playbooks/aap_inventory_move.yml`), with only the **Red
+Hat Ansible Automation Platform** credential (its user: **Admin** on the organization), any inventory, no Limit. It
+moves every job template, workflow, workflow node and schedule of the organization from one inventory to another -
+for example from `rhel-hosts-old` to `linux-hosts-idm`. It changes only the inventory: never a Limit, Variables,
+credential or anything else.
+
+1. Make this one template by hand. Copy `aap/extra_vars/aap_inventory_move.yml` into its Variables box.
+2. Name the move, with the inventories' exact names:
+
+   ```yaml
+   aap_inventory_replace:
+     - {from: "rhel-hosts-old", to: "linux-hosts-idm"}
+   ```
+
+   Both must be in `aap_inventory_replace_organization` (`Default` unless you set it). If one is not found, the job
+   stops before it changes anything.
+3. Optional: `aap_inventory_replace_only` (some templates and workflows, `*` and `?`; a workflow node goes with its
+   workflow's name, a schedule with its template's), `aap_inventory_replace_max` (default 100: more moves stop the job
+   before any write).
+4. Launch it with Job type **Check**. It lists each move and a total:
+
+   ```
+   would move: job template 'Patch hosts': rhel-hosts-old -> linux-hosts-idm
+   would move: workflow node 'Health check (in workflow Nightly)': rhel-hosts-old -> linux-hosts-idm
+   6 would move (job template: 3, schedule: 1, workflow: 1, workflow node: 1)
+   ```
+
+   A *warning* under a move means its Limit names a group or host the new inventory does not have: that job would
+   run on no host. Add the group to the new inventory, or change the Limit, before you run it.
+5. Launch it again with Job type **Run**. Each move is listed as *moved*. If a write fails, the job stops there; the
+   moves before it are listed, and a second run moves the rest.
+6. Launch it once more: it should say *nothing uses those inventories*.
+
 ### Rename and attach credentials
 
 One template - `AAP - set up credentials` (`playbooks/aap_credentials_setup.yml`), with only the **Red Hat Ansible

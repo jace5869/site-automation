@@ -1,0 +1,17 @@
+---
+# AAP - MOVE TEMPLATES TO ANOTHER INVENTORY. Every job template, workflow, workflow node and schedule of the organization
+# whose inventory is one named inventory gets another one (aap_inventory_replace: [{from: ..., to: ...}]), through AAP's
+# API - only that field. Names are exact; an inventory not found, or more moves than aap_inventory_replace_max, and
+# nothing is changed. A Limit naming a group or host the new inventory lacks is warned about. Run it with Check first:
+# it then only reads, and lists every move. docs/SETUP_AAP.md, "Move templates to another inventory".
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: Admin on the organization);
+# no Limit.
+#   ansible-playbook playbooks/aap_inventory_move.yml --check -e '{"aap_inventory_replace": [{"from": "A", "to": "B"}]}'
+- name: AAP - move templates to another inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Move the templates, workflows, nodes and schedules
+      ansible.builtin.include_role:
+        name: aap_inventory_move

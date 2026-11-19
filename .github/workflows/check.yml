@@ -376,6 +376,8 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_credentials_test.sh
           bash tests/portal_setup/run_aap_templates_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_templates_test.sh
+          bash tests/portal_setup/run_aap_inventory_move_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_inventory_move_test.sh
       - name: Tenable.sc scan job against a fake Tenable.sc (tests/tenable/scmock.py; current ansible-core and 2.16)
         run: |
           bash tests/tenable/run_tenable_test.sh

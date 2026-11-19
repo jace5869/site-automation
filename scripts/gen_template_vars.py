@@ -155,6 +155,18 @@ aap_credential_attach:
 ## A template with a credential of the same type already: true = take that one off, attach the new one
 # aap_credential_replace_same_type: true
 """),
+    "aap_inventory_move.yml": ("AAP - move templates to another inventory", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## Run it with Check first: it then only reads, and lists every job template, workflow, workflow node and schedule it
+## would move, with a total. Only the inventory changes; names are exact; an inventory not found changes nothing.
+aap_inventory_replace:
+  - {from: "rhel-hosts-old", to: "linux-hosts-idm"}
+## The organization the inventories, templates and workflows are in
+# aap_inventory_replace_organization: Default
+## Only some templates and workflows (* and ?, any case); a node goes with its workflow, a schedule with its template
+# aap_inventory_replace_only: ["Patch*", "Health check"]
+## More moves than this stop the job before any write
+# aap_inventory_replace_max: 100
+"""),
     "aap_template_audit.yml": ("AAP - template variables audit", "Red Hat Ansible Automation Platform (Organization Auditor is enough)", "", """\
 ## Read-only: which settings in the templates' Variables belong somewhere else; a secret is named, never shown
 # aap_template_audit_project: "Site automation"   # only your project's job templates (workflows are all read)

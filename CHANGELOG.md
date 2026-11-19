@@ -30,6 +30,12 @@ with Admin on the organization; its Variables: `aap/extra_vars/aap_credentials_s
 
 **AAP - set up credentials** (docs/SETUP_AAP.md, "Rename and attach credentials").
 
+**AAP - move templates to another inventory** (docs/SETUP_AAP.md, "Move templates to another inventory"):
+`aap_inventory_replace: [{from: "rhel-hosts-old", to: "linux-hosts-idm"}]` moves every job template, workflow, workflow
+node and schedule of the organization - only the inventory. Check lists each move and a total, and warns when a
+Limit names a group the new inventory lacks. An inventory not found, or more than `aap_inventory_replace_max` (100)
+moves, stops it before any write. A new job template: `playbooks/aap_inventory_move.yml`, the AAP credential only.
+
 - `aap_credential_renames` {old name: new name} renames credentials; `aap_credential_attach` and `aap_credential_detach`
   {credential: [job template, ...]} attach them to job templates or take them off.
 - A template with a credential of the same type already keeps it, said (*would replace ...*), unless
