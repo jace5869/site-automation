@@ -59,6 +59,7 @@
     publish_label: "{{ portal_label | default('portal', true) }}"
     area_label: "{{ portal_label_area | default('portal-area:', true) }}"
     publish_max: "{{ portal_publish_max | int }}"
+    publish_organization: "{{ portal_publish_organization | default('') | string }}"
     ca_path: "{{ portal_setup_aap_ca_path }}"
   register: _ps
 
@@ -73,7 +74,7 @@
                         'remove': 'would remove the label' if ansible_check_mode else 'label removed',
                         'update': 'would be changed' if ansible_check_mode else 'changed',
                         'unchanged': ('already done' if own else 'as it should be') if not r.why or own else 'left', 'hand-edited': 'CHANGED BY HAND - left as it is', 'not ours': 'NOT MADE BY THIS JOB - left as it is',
-                        'skipped': 'skipped', 'failed': 'FAILED'}.get(r.action, r.action) -%}
+                        'info': 'applies', 'skipped': 'skipped', 'failed': 'FAILED'}.get(r.action, r.action) -%}
       {%-   set _ = out.append(r.kind ~ " '" ~ r.name ~ "': " ~ verb ~ ((' - ' ~ r.why) if r.why else '')) -%}
       {%-   for f, v in r.diff | dictsort -%}
       {%-     set _ = out.append('    ' ~ f ~ ': ' ~ (v[0] | string | truncate(80)) ~ ' -> ' ~ (v[1] | string | truncate(80))) -%}

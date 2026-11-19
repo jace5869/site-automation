@@ -30,6 +30,17 @@ against a list at most that old (one value for both).
 - Tests: `tests/test_portal_publish.py` (22: the patterns, Check, the max, unpublish, the areas, the name mapping and its clash), 5 more in
   `tests/test_site_portal.py` (the back-off, the cap, the stale list), and the portal-setup e2e (labels, roles, the max, unpublish) on both cores.
 
+**An organization in one setting, and card titles (1.78.1c)** (docs/SITE_PORTAL.md, "Put a whole organization on the portal" and "Card titles without renaming").
+
+- `portal_publish_organization`: an organization's name. When set, only the job templates and workflows of that organization are matched by
+  `portal_publish_templates` and `portal_unpublish_templates`; with `["*"]`, every one of them. The Check list starts with a line that says so. An
+  organization that is not in AAP is an error naming the setting. `portal_publish_max` still stops a list that is too long (raise it to 500).
+- `portal_titles`: `{"AAP template name": "Portal card title"}`, matched by the exact name (any case), nothing renamed in AAP. A title is 1 to 80
+  characters; an empty or longer one stops the deploy, naming `portal_titles`. A label `portal-title:<text>` does the same; the setting wins.
+- To set up: nothing. Set the options you want, run **AAP - set up portal actions** with Check first, then **Site portal - deploy** for `portal_titles`.
+- Tests: `tests/test_portal_publish.py` (`Organization`, `Titles`), `tests/test_site_portal.py` (`Titles1781c`), the portal setup e2e (an organization's three
+  templates, the stop, an organization that is not there).
+
 ## 1.78.0 — 2026-11-19
 
 **To set up:** run **Site portal - deploy** again. Then, for each job you want on the portal, in AAP: add the label `portal` to the

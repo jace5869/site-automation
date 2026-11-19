@@ -24,18 +24,22 @@ class FakeApi(object):
     """The few endpoints publish reads and writes: lists, labels, object roles and a user's roles - kept in memory."""
     base = "/api/controller/v2/"
 
-    def __init__(self, names, kinds=None):
+    ORGS = [{"id": 1, "name": "Default"}, {"id": 2, "name": "platforms-org"}, {"id": 3, "name": "other-org"}]
+
+    def __init__(self, names, kinds=None, orgs=None):
         self.rows, self.labels, self.roles, self.user_roles, self.writes = {"job_templates": [], "workflow_job_templates": []}, {}, {}, set(), []
         self.next = 100
         for n in names:
             kind = (kinds or {}).get(n, "job_templates")
             self.next += 1
-            self.rows[kind].append({"id": self.next, "name": n, "organization": 1, "label_ids": []})
+            self.rows[kind].append({"id": self.next, "name": n, "organization": (orgs or {}).get(n, 1), "label_ids": []})
 
     def call(self, method, path, body=None):
         import re
         p = path.split("?")[0]
         if method == "GET":
+            if p == "organizations/":
+                return 200, {"count": len(self.ORGS), "next": None, "results": self.ORGS}
             m = re.match(r"^(job_templates|workflow_job_templates)/$", p)
             if m:
                 return 200, {"count": len(self.rows[m.group(1)]), "next": None, "results": self.rows[m.group(1)]}
@@ -359,6 +363,126 @@ class Names(unittest.TestCase):
         m = self.merge({"stig_recheck": "Our recheck"})
         _a, problems = rules.check_actions(m["actions"])
         self.assertEqual(problems, [])
+
+
+class Organization(unittest.TestCase):
+    """1.78.1c: portal_publish_organization - only the templates and workflows of that organization are matched; ["*"] is all of them."""
+    ORGS = {"Site - health linux": 2, "Site - health windows": 2, "site - cleanup": 2, "Other tool": 3, "Weekly report": 1}
+
+    def api(self):
+        return FakeApi(NAMES, kinds={"Weekly report": "workflow_job_templates"}, orgs=self.ORGS)
+
+    def test_star_with_an_organization_is_every_template_of_it(self):
+        a = self.api()
+        s = setup(a, publish=["*"], publish_organization="platforms-org")
+        self.assertEqual(s.problems, [])
+        self.assertEqual(a.labels_of("Site - health linux"), ["portal"])
+        self.assertEqual(a.labels_of("site - cleanup"), ["portal"])
+        self.assertEqual(a.labels_of("Other tool"), [])                       # another organization: not matched
+        self.assertEqual(a.labels_of("Weekly report"), [])
+        self.assertEqual(sorted(r["name"] for r in s.results if r["kind"] == "label"), ["Site - health linux: portal", "Site - health windows: portal", "site - cleanup: portal"])
+
+    def test_the_list_says_so(self):
+        s = setup(self.api(), check=True, publish=["*"], publish_organization="platforms-org")
+        first = s.results[0]
+        self.assertEqual((first["kind"], first["action"]), ("publish", "info"))
+        self.assertIn("platforms-org", first["name"])
+        self.assertIn("only the job templates and workflows of this organization", first["why"])
+        self.assertIn("(3 of them)", first["why"])
+
+    def test_without_an_organization_any_is_matched(self):
+        a = self.api()
+        s = setup(a, publish=["*"])
+        self.assertEqual(s.problems, [])
+        self.assertEqual(a.labels_of("Other tool"), ["portal"])
+        self.assertFalse([r for r in s.results if r["action"] == "info"])
+
+    def test_the_stop_stays(self):
+        a = self.api()
+        s = setup(a, publish=["*"], publish_organization="platforms-org", publish_max=2)
+        self.assertTrue(any("more than portal_publish_max (2)" in x for x in s.problems), s.problems)
+        self.assertEqual(a.writes, [])
+        a = self.api()
+        s = setup(a, publish=["*"], publish_organization="platforms-org", publish_max=500)
+        self.assertEqual(s.problems, [])
+
+    def test_an_organization_that_is_not_there_is_a_problem(self):
+        a = self.api()
+        s = setup(a, publish=["*"], publish_organization="no-such-org")
+        self.assertTrue(any("portal_publish_organization" in x and "no-such-org" in x for x in s.problems), s.problems)
+        self.assertEqual(a.writes, [])
+
+    def test_unpublish_is_limited_too(self):
+        a = self.api()
+        setup(a, publish=["*"])
+        setup(a, unpublish=["*"], publish_organization="platforms-org")
+        self.assertEqual(a.labels_of("Site - health linux"), [])
+        self.assertEqual(a.labels_of("Other tool"), ["portal"])               # another organization: left alone
+
+    def test_a_blank_organization_does_not_widen_the_scope(self):
+        for blank in (" ", "   ", "\t"):
+            a = self.api()
+            s = setup(a, publish=["*"], publish_organization=blank)
+            self.assertTrue(any("portal_publish_organization is blank" in x for x in s.problems), (blank, s.problems))
+            self.assertEqual(a.writes, [])
+            self.assertEqual(a.labels_of("Other tool"), [])
+        a = self.api()
+        self.assertEqual(setup(a, publish=["*"], publish_organization="").problems, [])      # "" is the documented "any"
+
+    def test_the_list_is_asked_for_by_organization(self):
+        a = self.api()
+        asked = []
+        orig = a.call
+        a.call = lambda m, p, b=None: (asked.append(p), orig(m, p, b))[1]
+        setup(a, publish=["*"], publish_organization="platforms-org")
+        self.assertIn("job_templates/?organization=2&page_size=200", asked)
+        self.assertIn("workflow_job_templates/?organization=2&page_size=200", asked)
+        asked[:] = []
+        setup(a, publish=["*"])
+        self.assertIn("job_templates/?page_size=200", asked)
+
+    def test_the_setting_is_passed_and_documented(self):
+        with open(os.path.join(REPO, "roles", "aap_portal_setup", "tasks", "main.yml")) as f:
+            self.assertIn("publish_organization: \"{{ portal_publish_organization", f.read())
+        with open(os.path.join(REPO, "roles", "aap_portal_setup", "defaults", "main.yml")) as f:
+            self.assertIn("portal_publish_organization: \"\"", f.read())
+
+
+class Titles(unittest.TestCase):
+    """1.78.1c: portal_titles - the card's title without renaming anything in AAP."""
+    def test_a_map_and_its_problems(self):
+        r = rules.site_portal_titles({"Our STIG recheck": " STIG - recheck  a host ", "x": "t"})
+        self.assertEqual(r["problems"], [])
+        self.assertEqual(r["titles"], {"our stig recheck": "STIG - recheck a host", "x": "t"})
+        for bad, word in (({"a": ""}, "empty"), ({"a": "   "}, "empty"), ({"a": "x" * 81}, "81 characters"), ({"": "t"}, "must be text"), ({"a": 5}, "empty"),
+                          ({"A": "one", "a": "two"}, "two different titles"), (["a"], "must be a mapping")):
+            r = rules.site_portal_titles(bad)
+            self.assertTrue(r["problems"] and all("portal_titles" in x for x in r["problems"]), (bad, r))
+            self.assertIn(word, " ".join(r["problems"]), bad)
+        self.assertEqual(rules.site_portal_titles({"a": "x" * 80})["problems"], [])
+        self.assertEqual(rules.site_portal_titles(None), {"titles": {}, "problems": []})
+        self.assertEqual(rules.site_portal_titles({"A": "t", "a": "t"})["problems"], [])
+        two = rules.site_portal_titles({"Nightly audit": "One", "Nightly  audit": "Two"})              # names that differ in spacing are two names
+        self.assertEqual((two["problems"], two["titles"]), ([], {"nightly audit": "One", "nightly  audit": "Two"}))
+
+    def test_the_label_reads_the_same_way(self):
+        f = rules.site_portal_title_label
+        self.assertEqual(f("portal-title:  Recheck a host ", "portal-title:"), "Recheck a host")
+        self.assertEqual(f("portal-title:", "portal-title:"), "")
+        self.assertEqual(f("portal-title:" + "x" * 81, "portal-title:"), "")
+        self.assertEqual(f("portal-area:STIG", "portal-title:"), "")
+        self.assertEqual(f("portal-title:x", ""), "")
+
+    def test_the_deploy_checks_and_hands_the_service_the_map(self):
+        with open(os.path.join(REPO, "roles", "site_portal_stack", "tasks", "main.yml")) as f:
+            y = f.read()
+        self.assertIn("portal_titles is not right - nothing was changed", y)
+        self.assertIn('PORTAL_TITLES: "{{ (portal_titles | site_portal_titles).titles | to_json }}"', y)
+        self.assertIn('PORTAL_LABEL_TITLE: "{{ portal_label_title }}"', y)
+        with open(os.path.join(REPO, "roles", "site_portal_stack", "defaults", "main.yml")) as f:
+            d = f.read()
+        self.assertIn("portal_titles: {}", d)
+        self.assertIn('portal_label_title: "portal-title:"', d)
 
 
 if __name__ == "__main__":

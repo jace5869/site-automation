@@ -670,7 +670,46 @@ def mask(action, values):
     return out
 
 
+TITLE_MAX = 80
+
+
+def site_portal_titles(titles):
+    """1.78.1c, for the deploy and the service: portal_titles {"AAP template name": "Portal card title"} -> {'titles': {casefolded AAP name: title},
+    'problems': [...]}. A name or title that is not text, an empty one, or a title over 80 characters is a problem, said with the setting's name;
+    two names that differ only in case are one name (a problem when their titles differ)."""
+    problems, out = [], {}
+    if titles in (None, ""):
+        return {"titles": {}, "problems": []}
+    if not isinstance(titles, dict):
+        return {"titles": {}, "problems": ["portal_titles must be a mapping of AAP template names to card titles"]}
+    for k, v in titles.items():
+        if not isinstance(k, str) or not k.strip():
+            problems.append("portal_titles: the AAP template name %r must be text" % (k,))
+            continue
+        if not isinstance(v, str) or not " ".join(v.split()):
+            problems.append("portal_titles: the title of %r is empty (or not text)" % k)
+            continue
+        t = " ".join(v.split())
+        if len(t) > TITLE_MAX:
+            problems.append("portal_titles: the title of %r is %d characters; %d at most" % (k, len(t), TITLE_MAX))
+            continue
+        key = k.casefold()                          # the exact name: two names that differ in spacing are two templates
+        if key in out and out[key] != t:
+            problems.append("portal_titles: %r is given two different titles (names are matched without regard to case)" % k)
+            continue
+        out[key] = t
+    return {"titles": out, "problems": problems}
+
+
+def site_portal_title_label(label, prefix):
+    """The card title a label gives ('portal-title:<text>') -> the text, or '' (no such label, empty, or over 80 characters)."""
+    if not prefix or not str(label).startswith(prefix):
+        return ""
+    t = " ".join(str(label)[len(prefix):].split())
+    return t if 0 < len(t) <= TITLE_MAX else ""
+
+
 class FilterModule(object):
     def filters(self):
-        return {"site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
+        return {"site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
                 "site_portal_spec_merge": site_portal_spec_merge}

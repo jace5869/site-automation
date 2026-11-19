@@ -95,6 +95,15 @@ portal_public_url: https://stigman.example.mil/portal/
 ## it.
 # portal_aap_names: {}
 
+## 1.78.1c: card titles without renaming anything in AAP: {"AAP template name": "Portal card title"}
+## (matched by the exact name, any case; a title is 1 to 80 characters). A label "portal-
+## title:<text>" on the template does the same; this setting wins. A title that is empty or too long
+## is an error.
+# portal_titles: {}
+
+## the label that gives a card its title (the rest of the label is the title)
+# portal_label_title: "portal-title:"
+
 ## 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened
 ## with no values, asks for the host(s) and lists what the report jobs found there (their
 ## site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each

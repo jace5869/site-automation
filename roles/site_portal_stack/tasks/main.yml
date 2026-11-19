@@ -178,6 +178,12 @@
     fail_msg: "The actions are not right - nothing was changed: {{ _portal_merge.problems | join(' | ') }}"
     quiet: true
 
+- name: Actions | portal_titles is right (1.78.1c)
+  ansible.builtin.assert:
+    that: (portal_titles | site_portal_titles).problems | length == 0
+    fail_msg: "portal_titles is not right - nothing was changed: {{ (portal_titles | site_portal_titles).problems | join(' | ') }}"
+    quiet: true
+
 - name: Actions | the actions the portal serves
   ansible.builtin.set_fact:
     _portal_actions_raw: "{{ _portal_merge.actions }}"
@@ -359,6 +365,8 @@
       PORTAL_DISCOVER_SECONDS: "{{ portal_discover_seconds }}"
       PORTAL_LABEL_APPROVAL: "{{ portal_label_approval }}"
       PORTAL_LABEL_AREA: "{{ portal_label_area }}"
+      PORTAL_LABEL_TITLE: "{{ portal_label_title }}"
+      PORTAL_TITLES: "{{ (portal_titles | site_portal_titles).titles | to_json }}"
       PORTAL_APPROVAL_REQUIRED: "{{ portal_approval_required }}"
       PORTAL_LIMIT_MAX: "{{ portal_limit_max }}"
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
