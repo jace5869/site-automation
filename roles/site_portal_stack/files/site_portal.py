@@ -19,6 +19,7 @@ only (no port on the server). No SUCCESS, or no CN: refused. As roles/vmware_ask
 AAP is asked with the portal's own account (its token: a podman secret, PORTAL_AAP_TOKEN). The browser never gets it,
 and only the listed actions can be launched. Every launch, refusal and decision is a JSON line in
 PORTAL_DATA/portal-log.jsonl and in the journal. Standard library only."""
+import collections
 import datetime
 import fnmatch
 import hashlib
@@ -252,6 +253,7 @@ class Aap(object):
         self.inv_id = None
         self.hosts = {}                 # host name -> (known, when asked)
         self.listing = None             # 1.78.0: the inventory's hosts and groups (inventory_listing)
+        self.estimates = {}             # template id -> (tasks of its last good run, when asked)
         self.listing_lock = threading.Lock()
 
     def connect(self):
@@ -426,6 +428,8 @@ class Aap(object):
                 "name": name, "title": tname[:120], "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area,
                 "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
                 "limit_from": rules.LIMIT_VAR if limit else "", "who": None, "discovered": True, "tid": tid, "started_by": named,
+                "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area)))[:8],
+                "last": ((r.get("summary_fields") or {}).get("last_job") or {}),
                 "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
                 "approval": cfg.label_approval in labels or tname in cfg.approval_required}
         return out
@@ -459,6 +463,64 @@ class Aap(object):
                 return None
             self.inv_id = int(rows[0]["id"])
         return self.inv_id
+
+    def last_info(self, tids):
+        """tids {"job_templates": [ids], "workflow_job_templates": [ids]} -> {(kind, id): {id, status, finished}} - the last run of each, one call per kind."""
+        out = {}
+        for kind, ids in tids.items():
+            if not ids:
+                continue
+            code, data = self.call("GET", "%s/?id__in=%s&page_size=200" % (kind, ",".join(str(int(i)) for i in sorted(ids))))
+            if code != 200:
+                continue
+            for r in data.get("results") or []:
+                lj = (r.get("summary_fields") or {}).get("last_job") or {}
+                out[(kind, int(r["id"]))] = {"id": lj.get("id"), "status": lj.get("status", ""), "finished": lj.get("finished") or lj.get("created") or ""}
+        return out
+
+    def recent_runs(self, kind, tid, n=5):
+        """The last n runs of a template, newest first -> [{id, status, started, elapsed}] ([] when AAP cannot be asked)."""
+        path = ("workflow_jobs/?workflow_job_template=%d&order_by=-created&page_size=%d" if kind == "workflow_job_templates"
+                else "jobs/?job_template=%d&order_by=-created&page_size=%d") % (tid, n)
+        code, data = self.call("GET", path)
+        return [{"id": int(r["id"]), "status": r.get("status", ""), "started": r.get("started") or "", "elapsed": r.get("elapsed")}
+                for r in (data.get("results") or [])[:n]] if code == 200 else []
+
+    # ---- 1.78.0: a running job's events, and the step estimate (the last good run of its template)
+    def events_after(self, jid, after, pages=5):
+        """The job's events after counter `after` (oldest first; at most `pages` of 200 per call) -> (events, '' or why not)."""
+        out, nxt, n = [], "jobs/%d/job_events/?counter__gt=%d&order_by=counter&page_size=200" % (jid, int(after)), 0
+        while nxt and n < pages:
+            code, data = self.call("GET", nxt)
+            if code != 200:
+                return out, "AAP could not be asked: %s" % site_aap.error_text(data)
+            out += data.get("results") or []
+            raw = data.get("next") or ""
+            nxt = self._relative(raw)
+            n += 1
+        return out, ""
+
+    def task_estimate(self, jid, tid=None):
+        """How many tasks the last successful run of this job's template started (None when there is none): the "about N" of "Step 4 of about N"."""
+        if tid is None:
+            code, j = self.call("GET", "jobs/%d/" % jid)
+            tid = int(j.get("job_template") or 0) if code == 200 else 0
+        if not tid:
+            return None
+        t = time.time()
+        with self.lock:
+            hit = self.estimates.get(tid)
+            if hit and t - hit[1] < 600:
+                return hit[0]
+        code, rows = self.call("GET", "jobs/?job_template=%d&status=successful&order_by=-finished&page_size=2" % tid)
+        last = next((int(r["id"]) for r in (rows.get("results") or []) if int(r["id"]) != jid), None) if code == 200 else None
+        n = None
+        if last:
+            c2, ev = self.call("GET", "jobs/%d/job_events/?event=playbook_on_task_start&page_size=1" % last)
+            n = int(ev.get("count") or 0) or None if c2 == 200 else None
+        with self.lock:
+            self.estimates[tid] = (n, t)
+        return n
 
     # ---- 1.78.0: the inventory's hosts and groups, read once and kept with the discovery cache (the picker's list, and what every pick is checked against)
     GROUPS_MAX = 400
@@ -774,6 +836,109 @@ def clean(text, limit=None):
     return t if limit is None else t[-limit:]
 
 
+# ---- 1.78.0: a running job in plain words (the Jobs page: Now, the hosts, what just happened) ------------------------------------
+STEP_WORD = {"successful": "Done", "failed": "Failed", "error": "Failed", "running": "Running", "pending": "Pending", "waiting": "Pending", "canceled": "Canceled",
+             "not run": "Skipped"}
+LINES_MAX = 8                                   # "What just happened": the last this many lines
+
+
+def task_what(name):
+    """A task's name as a person reads it: our names are "Area | what" - the part after the bar."""
+    t = " ".join(str(name or "").split())
+    if "|" in t:
+        t = t.split("|", 1)[1].strip()
+    return t[:80]
+
+
+def cause_class(event, res):
+    """The plain cause of a failure - never the module's own message (it can hold anything): could not connect, timed out, or failed."""
+    if event == "runner_on_unreachable":
+        return "could not connect"
+    msg = str((res or {}).get("msg") or "").lower()
+    return "timed out" if ("timed out" in msg or "timeout" in msg) else "failed"
+
+
+def event_line(e):
+    """One AAP job event as a plain line -> {k: ok | changed | bad | unreach | skip, host, text} or None (an event that says nothing a person needs).
+    Failed lines carry the host, the task and the cause class only."""
+    ev, d = str(e.get("event") or ""), e.get("event_data") or {}
+    host = str(e.get("host_name") or d.get("host") or "")
+    what = task_what(d.get("task"))
+    if not host or not what:
+        return None
+    if ev == "runner_on_ok":
+        return {"k": "changed" if e.get("changed") else "ok", "host": host, "text": what + (" (changed something)" if e.get("changed") else "")}
+    if ev == "runner_on_failed":
+        return {"k": "bad", "host": host, "text": "%s: %s" % (what, cause_class(ev, d.get("res")))}
+    if ev == "runner_on_unreachable":
+        return {"k": "unreach", "host": host, "text": cause_class(ev, d.get("res"))}
+    if ev == "runner_on_skipped":
+        return {"k": "skip", "host": host, "text": what + " (skipped)"}
+    return None
+
+
+class Progress(object):
+    """What one running job has done so far, read from its events: the task it is on (and how many it has started), each host's state, the
+    last lines. Fed with the events after its counter, so a poll asks AAP for what is new only."""
+
+    def __init__(self):
+        self.counter, self.tasks, self.what, self.host = 0, 0, "", ""
+        self.hosts = collections.OrderedDict()          # host -> running | failed | unreachable | done
+        self.lines = collections.deque(maxlen=LINES_MAX)
+        self.stats = False
+        self.first_bad = None                           # the first host to fail or not answer: {host, what, cause}
+
+    def feed(self, events):
+        for e in events:
+            self.counter = max(self.counter, int(e.get("counter") or 0))
+            ev, d = str(e.get("event") or ""), e.get("event_data") or {}
+            if ev == "playbook_on_task_start":
+                self.tasks += 1
+                self.what = task_what(d.get("task"))
+                continue
+            if ev == "playbook_on_stats":
+                self.stats = True
+                for h, st in list(self.hosts.items()):
+                    if st == "running":
+                        self.hosts[h] = "done"
+                continue
+            if not ev.startswith("runner_on_"):
+                continue
+            host = str(e.get("host_name") or d.get("host") or "")
+            if not host:
+                continue
+            self.host = host
+            if ev == "runner_on_failed":
+                self.hosts[host] = "failed"
+            elif ev == "runner_on_unreachable":
+                self.hosts[host] = "unreachable"
+            else:
+                self.hosts.setdefault(host, "running")
+            line = event_line(e)
+            if line:
+                self.lines.append(line)
+                if line["k"] in ("bad", "unreach") and self.first_bad is None:
+                    self.first_bad = {"host": host, "what": task_what(d.get("task")), "cause": cause_class(ev, d.get("res"))}
+
+    def view(self, est, finished):
+        done = [h for h, s in self.hosts.items() if s != "running"]
+        return {"step": self.tasks, "est": est, "what": self.what, "host": self.host if not finished else "",
+                "hosts": [{"host": h, "state": s} for h, s in self.hosts.items()], "hosts_done": len(done), "hosts_n": len(self.hosts),
+                "lines": list(reversed(self.lines)), "first_bad": self.first_bad}
+
+
+def now_line(step, est, what, host):
+    """'Step 4 of about 12 - Checking free space on web01' ('Step 4 - ...' without an estimate)."""
+    head = "Step %d of about %d" % (step, est) if est and est >= step else "Step %d" % step
+    return "%s - %s%s" % (head, what or "working", (" on " + host) if host and what else "")
+
+
+def pct(step, est, finished):
+    if finished:
+        return 100
+    return min(95, int(step * 100 / est)) if est else None
+
+
 def links_in(obj, out=None, depth=0, parent=""):
     """The addresses in a job's artifacts (a report's url, ...) -> [(label, url)]: http(s) only. The label is the key, or
     for a key named url the key it is under (site_report)."""
@@ -813,6 +978,8 @@ class Portal(object):
         self.key = self._key()
         self.lock = threading.Lock()
         self.recent = {}                # CN -> [launch times]
+        self.prog = collections.OrderedDict()           # 1.78.0: job id -> Progress (the last 60 jobs followed)
+        self.polls = {}                 # CN -> [times of its progress calls]
         self.key_locks = {}             # not twice: (action, finding_id, target) -> a lock held from the check to the log
 
     def _key(self):
@@ -1071,6 +1238,131 @@ class Portal(object):
             out["warning"] = "AAP ignored %s: the template's launch settings changed since the portal started." % ", ".join(sorted(ignored))
         return 201, out
 
+    # -- 1.78.0: the cards of the Actions page
+    LAST_TTL = 60
+
+    def catalog(self, cn):
+        """The actions this person may run, as the cards show them: [{name, title, line, type, approval, labels, last: {status, finished}, off, dialog}]."""
+        acts = self.mine(cn)
+        t = time.time()
+        if t - getattr(self, "last_at", 0) > self.LAST_TTL:
+            self.last_at = t
+            need = [a for a in acts if not a.get("discovered") and a["name"] not in self.aap.ids]
+            if need:
+                self.aap.resolve(dict((a["name"], a) for a in need))
+            tids = {"job_templates": set(), "workflow_job_templates": set()}
+            keyed = {}
+            for a in acts:
+                tid = a["tid"] if a.get("discovered") else (self.aap.ids.get(a["name"]) or (None, ""))[0]
+                if tid:
+                    kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
+                    tids[kind].add(int(tid))
+                    keyed[a["name"]] = (kind, int(tid))
+            info = self.aap.last_info(tids)
+            self.last = dict((n, info.get(k, {})) for n, k in keyed.items())
+        out = []
+        for a in sorted(acts, key=lambda x: x["title"].lower()):
+            _, off = self.aap.ids.get(a["name"], (None, ""))
+            last = (getattr(self, "last", {}) or {}).get(a["name"]) or a.get("last") or {}
+            out.append({"name": a["name"], "title": a["title"], "line": a.get("summary") or a.get("description") or "", "wf": a["aap"]["type"] == "workflow",
+                        "approval": bool(a["approval"]) and a["aap"]["type"] == "workflow", "labels": a.get("labels") or [], "area": a.get("area") or AREA_OTHER,
+                        "last": {"status": last.get("status", ""), "finished": last.get("finished", "")} if last.get("status") else {}, "off": off,
+                        "dialog": not picker_vars(a)})
+        return out
+
+    # -- 1.78.0: a job followed live (the Jobs page polls every 3 s while it runs)
+    POLLS_PER_MINUTE = 90
+
+    def poll_ok(self, cn):
+        """A person's progress calls are limited per minute (their page asks every 3 s: 20 a minute for one job)."""
+        t = time.time()
+        with self.lock:
+            mine = [x for x in self.polls.get(cn, []) if t - x < 60]
+            if len(mine) >= self.POLLS_PER_MINUTE:
+                self.polls[cn] = mine
+                return False
+            self.polls[cn] = mine + [t]
+        return True
+
+    def progress(self, jid, cn, via=None):
+        """-> (HTTP code, {status, done, now, pct, hosts, hosts_line, lines, steps, banner...}). Only for a job this person may see (as job())."""
+        code, view = self.job(jid, via, cn)
+        if code != 200:
+            return code, view
+        done = bool(view.get("done"))
+        out = {"id": jid, "status": view.get("status", ""), "done": done, "type": view.get("type", ""), "hosts": [], "lines": [], "steps": [], "now": "",
+               "pct": None, "hosts_line": "", "result_line": ""}
+        if view.get("type") == "workflow_job":
+            steps = []
+            for s in view.get("steps") or []:
+                approval = s.get("type") == "workflow_approval"
+                word = "Waiting for approval" if approval and s.get("status") in ("pending", "running") else STEP_WORD.get(s.get("status"), "Pending")
+                steps.append({"name": s.get("name") or "", "type": "Approval" if approval else "Job", "status": s.get("status"), "word": word, "job": s.get("job"),
+                              "note": "Must be approved by an approver of the portal" if word == "Waiting for approval" else ""})
+            out["steps"] = steps
+            n, finished = len(steps), len([s for s in steps if s["word"] in ("Done", "Skipped")])
+            cur = next((s for s in steps if s["word"] not in ("Done", "Skipped")), None)
+            if cur and not done:
+                out["now"] = "Step %d of %d - %s" % (finished + 1, n, "waiting for an approver" if cur["word"] == "Waiting for approval" else cur["name"])
+            out["pct"] = pct(finished, n, done) if n else None
+            out["lines"] = [{"k": "wait", "host": "", "text": "waiting for an approver"}] if any(s["word"] == "Waiting for approval" for s in steps) else []
+            bad = next((s for s in steps if s["word"] == "Failed"), None)
+            out["result_line"] = ("%s failed (step %d of %d)" % (bad["name"], steps.index(bad) + 1, n)) if bad else ""
+            out["steps_done"], out["steps_n"] = finished, n
+            return 200, out
+        if view.get("type") != "job":
+            return 200, out
+        with self.lock:
+            pr = self.prog.get(jid)
+            if pr is None:
+                pr = self.prog[jid] = Progress()
+                while len(self.prog) > 60:
+                    self.prog.popitem(last=False)
+            else:
+                self.prog.move_to_end(jid)
+        ev, why = self.aap.events_after(jid, pr.counter)
+        pr.feed(ev)
+        est = self.aap.task_estimate(jid)
+        v = pr.view(est, done)
+        out.update(hosts=v["hosts"], lines=v["lines"], pct=pct(v["step"], est, done), step=v["step"], est=est, hosts_done=v["hosts_done"], hosts_n=v["hosts_n"])
+        if not done:
+            out["now"] = now_line(v["step"], est, v["what"], v["host"]) if v["step"] else "Starting"
+        if v["hosts_n"]:
+            bad = len([h for h in v["hosts"] if h["state"] in ("failed", "unreachable")])
+            by = lambda st: len([h for h in v["hosts"] if h["state"] == st])          # noqa: E731
+            out["hosts_line"] = "%d of %d hosts done" % (v["hosts_done"], v["hosts_n"]) + ((" \u00b7 %d failed" % by("failed")) if by("failed") else "") + \
+                ((" \u00b7 %d unreachable" % by("unreachable")) if by("unreachable") else "")
+        fb = v["first_bad"]
+        if done and view.get("failed") and fb:
+            out["result_line"] = "%s on %s (%s)" % (fb["what"] or "A task", fb["host"], fb["cause"])
+        if why:
+            out["note"] = why
+        return 200, out
+
+    GROUPS = (("running", "Running"), ("succeeded", "Succeeded"), ("failed", "Failed"), ("other", "Other"))
+
+    @staticmethod
+    def status_group(st):
+        return {"pending": "running", "waiting": "running", "running": "running", "successful": "succeeded", "failed": "failed", "error": "failed"}.get(st, "other")
+
+    def job_list(self, cn, scope="mine", limit=100):
+        """The jobs the portal started that this person may see, newest first -> [{id, title, status, group, started, elapsed, by}] with AAP's status.
+        scope all: every person's (the approvers only); mine: this person's."""
+        every = scope == "all" and cn in self.cfg.approvers
+        recs = [r for r in reversed(self.log.read("launch")) if r.get("job_id") is not None and (every or r.get("user") == cn) and self.may_see(cn, r)][:limit]
+        rows = {}
+        if recs:
+            code, data = self.aap.call("GET", "unified_jobs/?id__in=%s&page_size=%d" % (",".join(str(int(r["job_id"])) for r in recs), len(recs)))
+            if code == 200:
+                rows = dict((int(x["id"]), x) for x in data.get("results") or [])
+        out = []
+        for r in recs:
+            u = rows.get(int(r["job_id"])) or {}
+            st = u.get("status") or "unknown"
+            out.append({"id": int(r["job_id"]), "title": self.actions.get(r.get("action"), {}).get("title", r.get("action", "")), "status": st, "group": self.status_group(st),
+                        "started": u.get("started") or r.get("at") or "", "elapsed": u.get("elapsed"), "by": r.get("user", "")})
+        return out
+
     # -- what was started
     def launched(self):
         return {int(r["job_id"]): r for r in self.log.read("launch") if r.get("job_id") is not None}
@@ -1312,6 +1604,9 @@ ICONS = {      # a status mark: drawn, never a colour alone (portal.js draws the
     "skip": '<circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.6 8h4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
     "lock": '<rect x="3.4" y="7" width="9.2" height="6.2" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5.4a2.5 2.5 0 015 0V7" fill="none" stroke="currentColor" stroke-width="1.5"/>',
     "arrow": '<path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+    "refresh": '<path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+    "job": '<rect x="2.5" y="3" width="11" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 7l2 1.7L5 10.4M8.6 10.4H11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
+    "wf": '<circle cx="4" cy="4" r="1.7" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="8" r="1.7" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="4" cy="12" r="1.7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.6 4.6L10.4 7.4M5.6 11.4l4.8-2.8" fill="none" stroke="currentColor" stroke-width="1.5"/>',
 }
 
 
@@ -1324,7 +1619,7 @@ def shell(cfg, title, body, user="", token="", page="", data=None):
     scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style)."""
     banner = ('<div class="banner">%s</div>' % esc(cfg.banner["text"])) if cfg.banner["on"] else ""
     nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page in keys else "", esc(text))
-                  for keys, href, text in ((("home", "action"), "", "Actions"), (("reports",), "reports/", "Reports"),
+                  for keys, href, text in ((("home", "action"), "", "Actions"), (("jobs", "job"), "jobs", "Jobs"), (("reports",), "reports/", "Reports"),
                                            (("approvals",), "approvals", "Approvals")))
     meta = '<meta name="portal-token" content="%s">' % esc(token) if token else ""
     meta += '<meta name="portal-base" content="%s">' % esc(cfg.path)
@@ -1358,47 +1653,108 @@ AREA_OTHER = "Other"
 AREA_FIRST = ("STIG", "Disk & services", "fapolicyd", "Tickets", "ACT")      # the areas of the role's actions.yml, in this order; others by name; Other last
 
 
-def home_page(cfg, portal, cn):
-    acts = portal.mine(cn)
-    groups = {}
-    for a in sorted(acts, key=lambda x: x["title"].lower()):
-        area = a.get("area") or AREA_OTHER
-        if area not in groups:
-            groups[area] = []
-        groups[area].append(a)
-    order = sorted(groups, key=lambda g: (g == AREA_OTHER, AREA_FIRST.index(g) if g in AREA_FIRST else len(AREA_FIRST), g.lower()))
-    secs = []
-    for area in order:
-        cards = []
-        for a in groups[area]:
-            _, off = portal.aap.ids.get(a["name"], (None, ""))
-            line = a.get("summary") or a.get("description") or ""
-            appr = '<span class="badge">Approval</span>' if a["approval"] else ""
-            if off:
-                cards.append('<li class="card act off"><div class="top"><h3>%s</h3><span class="badge off">Off</span></div>%s'
-                             '<p class="offline">%s<span>Off: %s</span></p></li>'
-                             % (esc(a["title"]), ('<p>%s</p>' % esc(line)) if line else "", icon("lock"), esc(off)))
-            else:
-                cards.append('<li><a class="card act" href="%sactions/%s"><div class="top"><h3>%s</h3>%s</div>%s<span class="go">Open %s</span></a></li>'
-                             % (cfg.path, esc(a["name"]), esc(a["title"]), appr, ('<p>%s</p>' % esc(line)) if line else "", icon("arrow")))
-        secs.append('<section class="sec"><h2>%s <span class="count">%d</span></h2><ul class="acts">%s</ul></section>'
-                    % (esc(area), len(cards), "".join(cards)))
-    mine = [r for r in portal.log.read("launch") if r.get("user") == cn][-10:]
-    recent = "".join('<tr><td class="num"><a href="%sjobs/%d">%d</a></td><td>%s</td><td class="nw"><span class="chip s-info" data-job="%d">%s%s</span></td>'
-                     '<td class="mono nw">%s</td></tr>' % (
-                         cfg.path, int(r["job_id"]), int(r["job_id"]), esc(portal.actions.get(r.get("action"), {}).get("title", r.get("action"))),
-                         int(r["job_id"]), icon("wait"), "Asking AAP", esc(shown(cfg, r.get("at")))) for r in reversed(mine))
-    table = ('<div class="tw"><table id="started"><thead><tr><th class="num">Job</th><th>Action</th><th>Status</th><th>%s</th></tr></thead><tbody>%s</tbody></table></div>'
-             % (esc(site_time.column("When (UTC)", cfg.tz)), recent)) if recent else '<p class="empty">Nothing yet.</p>'
+def clock(cfg, t=None):
+    """A time of day in report_time_zone (UTC without one): 06:01."""
+    d = datetime.datetime.fromtimestamp(time.time() if t is None else t, cfg.tz or datetime.timezone.utc)
+    return d.strftime("%H:%M")
+
+
+def last_run_html(cfg, last):
+    if not last:
+        return '<div class="meta">Never run</div>'
+    return '<div class="meta">Last run %s <span>%s</span></div>' % (status_chip(last.get("status", "")), esc(shown(cfg, last.get("finished")) or ""))
+
+
+def home_page(cfg, portal, cn, query=None):
+    """The Actions page: the strip (AAP and its refresh), the filter tiles, the search, a card for each action. The tiles and the search are links and a form
+    (they work without scripts); the page's script filters the same cards at once."""
+    q = query or {}
+    show = (q.get("show") or [""])[-1]
+    text = " ".join((q.get("q") or [""])[-1].split()).lower()[:80]
+    cards = portal.catalog(cn)
+    jt = [c for c in cards if not c["wf"]]
+    wf = [c for c in cards if c["wf"]]
+    bad = [c for c in cards if c["last"].get("status") in ("failed", "error")]
+    err = portal.found.get("error") if cfg.label else ""
+    ok = not portal.aap.ready and not err
+    strip = ('<div class="card strip"><div class="l">%s<span>%s</span></div><div class="r"><span>Last refreshed %s</span>'
+             '<form method="post" action="%srefresh"><input type="hidden" name="portal-token" value="%s"><button type="submit" id="refresh">%s Refresh</button></form></div></div>'
+             % (('<span class="chip s-ok">%s Connected</span>' % icon("ok")) if ok else ('<span class="chip s-critical">%s Not connected</span>' % icon("bad")),
+                ("AAP: <b>%d job%s found</b>" % (len(cards), "" if len(cards) == 1 else "s")) if ok else esc(err or portal.aap.ready or "AAP could not be asked"),
+                clock(cfg, getattr(portal, "last_at", None) or portal.found_at or None), cfg.path, esc(portal.token(cn)), icon("refresh")))
+    def tile(key, word, n, extra=""):
+        return '<a class="ft%s" href="%s%s" data-show="%s" aria-current="%s"><span class="k">%s</span><span class="v">%d</span></a>' % (
+            extra, cfg.path, ("?show=" + key) if key else "", key, "true" if show == key else "false", word, n)
+    tiles = '<div class="ftiles" id="ftiles" role="group" aria-label="Filter">%s%s%s%s</div>' % (
+        tile("", "All", len(cards)), tile("job", "Job templates", len(jt)), tile("workflow", "Workflows", len(wf)), tile("failed", "Last run failed", len(bad), " bad"))
+    def shown_card(c):
+        if show == "job" and c["wf"] or show == "workflow" and not c["wf"] or show == "failed" and c not in bad:
+            return False
+        hay = " ".join([c["title"], c["line"]] + c["labels"]).lower()
+        return not text or text in hay
+    vis = [c for c in cards if shown_card(c)]
+    find = ('<form class="find" method="get" action="%s"><input type="search" id="aq" name="q" value="%s" placeholder="Search name, description or label" aria-label="Search the actions" autocomplete="off">'
+            '%s<kbd title="Press / to search">/</kbd><span class="cnt" id="acount" aria-live="polite">%d of %d</span></form>'
+            % (cfg.path, esc(text), ('<input type="hidden" name="show" value="%s">' % esc(show)) if show else "", len(vis), len(cards)))
+    def card(c):
+        picks = "" if c["dialog"] else ' data-pick="1"'
+        off = c["off"]
+        return ('<li data-wf="%d" data-failed="%d" data-q="%s"%s><article class="card tcard%s"><div class="top"><span class="ico">%s</span><h3>%s</h3></div>'
+                '<div class="meta"><span class="ty">%s</span>%s</div>%s%s%s<div class="acts2"><a class="btn" href="%sactions/%s/details" data-details>Details</a>%s</div></article></li>'
+                % (1 if c["wf"] else 0, 1 if c in bad else 0, esc(" ".join([c["title"], c["line"]] + c["labels"]).lower()), "" if c in vis else " hidden", " off" if off else "",
+                   icon("wf" if c["wf"] else "job"), esc(c["title"]), "Workflow" if c["wf"] else "Job template",
+                   ('<span class="badge">Approval</span>' if c["approval"] else "") + ('<span class="badge off">Off</span>' if off else ""),
+                   ('<p>%s</p>' % esc(c["line"])) if c["line"] else '<p class="none">No description</p>', last_run_html(cfg, c["last"]) if not off else
+                   '<p class="offline">%s<span>Off: %s</span></p>' % (icon("lock"), esc(off)),
+                   ('<div class="lab">%s</div>' % "".join('<span class="tg">%s</span>' % esc(l) for l in c["labels"])) if c["labels"] else "",
+                   cfg.path, esc(c["name"]),
+                   ('<a class="btn pri" href="%sactions/%s"%s data-run>Run %s</a>' % (cfg.path, esc(c["name"]), picks, icon("arrow"))) if not off else ""))
+    grid = '<ul class="acts cols3" id="agrid">%s</ul>' % "".join(card(c) for c in cards)
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
-            '<p class="lede">Each action asks you to confirm before it starts. The report pages link here with the values filled in.</p></div>'
-            '%s<section class="sec"><h2>You started%s</h2>%s</section>'
-            % ("".join(secs) if secs else '<p class="empty">No action is open to you here. portal_requesters and each action\'s who say who may run what.</p>',
-               (' <span class="count">%d</span>' % len(mine)) if mine else "", table))
-    return shell(cfg, "Actions", body, cn, page="home")
+            '<p class="lede">Every job from AAP that the portal\'s account may run and that carries the portal label, and the portal\'s own actions. Run asks you to confirm.</p></div>'
+            '%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
+            % (strip, tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. portal_requesters and each action\'s who say who may run what.</p>'))
+    return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home")
 
 
-def action_page(cfg, portal, cn, name, query):
+def details_html(cfg, portal, cn, name):
+    """What an action is, for the Details panel (and its page without scripts): its line, type, labels, what it asks for, the survey's questions (names and
+    types only - never a default), its last five runs, and Run."""
+    a = portal.actions.get(name)
+    if a is None or not rules.may_run(a, cn, cfg.requesters):
+        return None
+    kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
+    tid = a["tid"] if a.get("discovered") else (portal.state(name, a) or (None, ""))[0]
+    runs = portal.aap.recent_runs(kind, int(tid), 5) if tid else []
+    word = {"text": "Text", "choice": "Multiple choice", "multichoice": "Multi select", "integer": "Integer", "float": "Number", "password": "Password",
+            "inventory_host": "Host", "hosts": "Hosts"}
+    qs = "".join("<tr><td>%s%s</td><td>%s</td></tr>" % (esc(v["label"]), " *" if v.get("required") else "",
+                                                       esc("Text (several lines)" if v.get("multiline") else word.get(v["kind"], v["kind"]))) for vn, v in a["vars"].items() if vn != rules.LIMIT_VAR)
+    hosts = [v for vn, v in a["vars"].items() if vn == rules.LIMIT_VAR or v["kind"] == "inventory_host"]
+    asks = "".join("<li>%s</li>" % esc(t) for t in (
+        ("Hosts (1 to %d hosts or groups)" % int(a["vars"][rules.LIMIT_VAR].get("max") or rules.LIMIT_MAX)) if rules.LIMIT_VAR in a["vars"] else ("A host of the portal's inventory" if hosts else ""),
+        "An approver decides before it goes on" if a["approval"] and a["aap"]["type"] == "workflow" else "") if t) or "<li>Nothing: it takes no values.</li>"
+    rs = "".join('<li>%s %s%s</li>' % (status_chip(r["status"]), esc(shown(cfg, r["started"]) or ""), (" \u00b7 " + esc(dur_text(r["elapsed"]))) if r.get("elapsed") else "") for r in runs) or '<li class="muted-line">No run yet.</li>'
+    line = a.get("summary") or a.get("description") or ""
+    labels = "".join('<span class="tg">%s</span>' % esc(l) for l in a.get("labels") or [])
+    run = ('<a class="btn pri" href="%sactions/%s" data-run%s>Run %s</a>' % (cfg.path, esc(name), "" if not picker_vars(a) else ' data-pick="1"', icon("arrow")))
+    return ('<div class="dbody"><div class="hd2"><h2 id="dt">%s</h2><a class="btn" href="%s" data-close>Close</a></div><div class="meta"><span class="ty">%s</span></div>%s'
+            '<h3>Labels</h3>%s<h3>Asks for</h3><ul class="plain">%s</ul>%s<h3>Last 5 runs</h3><ul class="plain runs">%s</ul><div class="btns">%s</div></div>'
+            % (esc(a["title"]), cfg.path, "Workflow" if a["aap"]["type"] == "workflow" else "Job template",
+               ("<p>%s</p>" % esc(line)) if line else '<p class="muted-line">No description</p>', ('<div class="lab">%s</div>' % labels) if labels else '<p class="muted-line">None</p>', asks,
+               ('<h3>The form (from the survey in AAP)</h3><table class="q"><thead><tr><th>Question</th><th>Type</th></tr></thead><tbody>%s</tbody></table>' % qs) if qs else "",
+               rs, run))
+
+
+def details_page(cfg, portal, cn, name):
+    frag = details_html(cfg, portal, cn, name)
+    if frag is None:
+        return message_page(cfg, "Not here", "There is no action %s here." % name, cn)
+    body = '<div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Details</span></p><h1>What this action is</h1></div><div class="card panel drawer-page">%s</div>' % (cfg.path, frag)
+    return shell(cfg, "Details", body, cn, page="action")
+
+
+def action_page(cfg, portal, cn, name, query, embed=False):
     a = portal.actions.get(name)
     if a is None:                                   # taken off just now (a refresh of the cards)
         return message_page(cfg, "Not here", "There is no action %s here." % name, cn)
@@ -1469,6 +1825,14 @@ def action_page(cfg, portal, cn, name, query):
     dl = "".join('<dt>%s</dt><dd class="%s">%s</dd>' % (esc(k), c.strip(), esc(v)) for k, v, c in facts)
     can = allowed and not off and not busy
     line = a.get("summary") or a.get("description") or ""
+    if embed:                                           # 1.78.0: the Run dialog's content (the page's script puts it in a <dialog>)
+        sub = "This form is made from the template's survey in AAP." if a.get("discovered") else line
+        return ('<div class="dbody"><h2 id="dlg-t">%s</h2>%s<form id="run" data-action="%s" method="post" action="%sactions/%s"><input type="hidden" name="portal-token" value="%s">'
+                '<input type="hidden" name="portal-sig" value="%s">%s%s<div class="note info">%s<span>Runs in AAP under the portal\'s account. The portal records you (<b>%s</b>) as the person who asked for it.</span></div>'
+                '<div class="btns"><button type="button" data-close>Cancel</button><button type="submit" class="pri" id="go"%s>Launch job</button>'
+                '<span class="state" id="state" aria-live="polite"></span></div></form></div>'
+                % (esc(a["title"]), ('<p class="sub">%s</p>' % esc(sub)) if sub else "", esc(name), cfg.path, esc(name), esc(portal.token(cn)), esc(a.get("sig", "")),
+                   "".join(status), "".join(fields), icon("wait"), esc(cn), "" if can else " disabled"))
     body = ('<div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Confirm</span></p><h1>%s</h1>%s</div>%s'
             '<div class="two"><div class="card panel"><h2>Values</h2><form id="run" data-action="%s" method="post" action="%sactions/%s"><input type="hidden" name="portal-token" value="%s"><input type="hidden" name="portal-sig" value="%s">%s'
             '<div class="btns"><button type="submit" class="pri" id="go"%s>Run</button><a class="btn" href="%s">Cancel</a>'
@@ -1683,24 +2047,146 @@ def picker_route(cfg, portal, cn, name, query):
     titles = dict((h, dict((it["id"], it["title"]) for it in r["current"] + r["older"])) for h, r in res["hosts"].items())
     return "page", pick_confirm_many(cfg, portal, cn, name, a, hv, [(h, job, fid, titles.get(h, {}).get(fid, fid)) for h, job, fid in chosen])
 
-def job_page(cfg, portal, cn, jid, via):
-    body = ('<div id="job" data-job="%d"%s><div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Job %d</span></p>'
-            '<h1 id="j-title">Job %d</h1></div>'
-            '<div class="tiles" id="j-tiles"><div class="tile"><div class="k">Status</div><div class="v" id="j-status" aria-live="polite">Asking AAP…</div>'
-            '<div class="n" id="j-when"></div></div>'
-            '<div class="tile"><div class="k">On</div><div class="v" id="j-on"></div><div class="n" id="j-action"></div></div>'
-            '<div class="tile"><div class="k">Started by</div><div class="v mono" id="j-by"></div><div class="n" id="j-asked"></div></div>'
-            '<div class="tile"><div class="k">AAP</div><div class="v" id="j-aap"></div><div class="n" id="j-vals"></div></div></div>'
-            '<p class="next" id="j-next" hidden></p>'
-            '<section class="sec" id="j-result-sec" hidden><h2>Result</h2><div class="res one" id="j-result"></div></section>'
-            '<section class="sec" id="j-links" hidden><h2>Results</h2><ul></ul></section>'
-            '<section class="sec" id="j-steps" hidden><h2>Steps</h2><div class="tw"><table><thead><tr><th>Step</th><th>Status</th><th class="num">Job</th></tr></thead><tbody></tbody></table></div></section>'
-            '<section class="sec" id="j-hosts" hidden><h2>Hosts</h2><div class="tw"><table><thead><tr><th>Host</th><th class="num">OK</th>'
-            '<th class="num">Changed</th><th class="num">Failed</th><th class="num">Unreachable</th><th class="num">Skipped</th></tr></thead><tbody></tbody></table></div></section>'
-            '<section class="sec" id="j-out" hidden><h2>Output <span class="note" id="j-more" hidden>The last lines only - the whole of it is in AAP.</span></h2>'
-            '<pre class="out" tabindex="0"></pre></section><section class="sec" id="j-art" hidden><h2>Artifacts</h2><pre class="out"></pre></section></div>'
-            % (jid, (' data-via="%d"' % via) if via else "", cfg.path, jid, jid))
-    return shell(cfg, "Job %d" % jid, body, cn, page="job")
+def dur_text(sec):
+    """A duration as a person says it: 41 s, 2 min 41 s, 1 h 05 min."""
+    try:
+        s = int(round(float(sec)))
+    except (TypeError, ValueError):
+        return ""
+    if s < 60:
+        return "%d s" % s
+    if s < 3600:
+        return "%d min %02d s" % (s // 60, s % 60)
+    return "%d h %02d min" % (s // 3600, (s % 3600) // 60)
+
+
+GROUP_DOT = {"running": "run", "succeeded": "ok", "failed": "bad", "other": "wait"}
+STATUS_CHIP = {"successful": ("ok", "s-ok", "Succeeded"), "failed": ("bad", "s-critical", "Failed"), "error": ("bad", "s-critical", "Failed"), "running": ("run", "s-info", "Running"),
+               "pending": ("wait", "s-info", "Starting"), "waiting": ("wait", "s-info", "Starting"), "canceled": ("skip", "s-info", "Canceled")}
+
+
+def status_chip(st, approval=False):
+    kind, cls, word = ("wait", "s-warning", "Waiting for approval") if approval else STATUS_CHIP.get(st, ("skip", "s-info", str(st or "Unknown").capitalize()))
+    return '<span class="chip %s">%s%s</span>' % (cls, icon(kind), esc(word))
+
+
+def job_list_html(cfg, portal, cn, items, sel, scope):
+    approver = cn in cfg.approvers
+    counts = dict((g, len([x for x in items if x["group"] == g])) for g, _w in portal.GROUPS)
+    seg = '<div class="seg2" role="group" aria-label="Whose jobs"><a class="%s" href="%sjobs?scope=mine">My jobs</a>%s</div>' % (
+        "on" if scope != "all" else "", cfg.path,
+        ('<a class="%s" href="%sjobs?scope=all">All jobs</a>' % ("on" if scope == "all" else "", cfg.path)) if approver else "")
+    chips = '<button type="button" data-st="" aria-pressed="true">All %d</button>' % len(items) + "".join(
+        '<button type="button" data-st="%s" aria-pressed="false">%s %d</button>' % (g, w, counts[g]) for g, w in portal.GROUPS)
+    rows = "".join('<li data-st="%s" data-q="%s"%s><a href="%sjobs/%d?scope=%s"><span class="d %s" aria-hidden="true"></span><span class="t">%s<small>Job %d%s</small></span>'
+                   '<span class="r">%s<small>%s</small></span></a></li>'
+                   % (x["group"], esc(("%s %d %s" % (x["title"], x["id"], x["by"])).lower()), ' class="on" aria-current="true"' if x["id"] == sel else "", cfg.path, x["id"],
+                      "all" if scope == "all" else "mine", GROUP_DOT[x["group"]], esc(x["title"]), x["id"],
+                      (" \u00b7 " + esc(x["by"])) if scope == "all" else "", esc(shown(cfg, x["started"])), esc(dur_text(x["elapsed"]) if x["group"] != "running" else "running"))
+                   for x in items)
+    return ('<aside class="card jl" id="jl" data-scope="%s">%s<div class="find"><input type="search" id="jq" placeholder="Search job, job id or who started it" aria-label="Search the jobs" autocomplete="off">'
+            '</div><div class="chips" id="jchips" role="group" aria-label="Status">%s</div><ul class="jrows" id="jrows">%s</ul>%s</aside>'
+            % (esc(scope), seg, chips, rows, "" if items else '<p class="empty">Nothing started yet.</p>'))
+
+
+def note_pct(pc, est):
+    if pc is None or not est:
+        return ""
+    word = "Just started" if pc < 10 else "About a quarter done" if pc < 30 else "About a third done" if pc < 45 else "About half done" if pc < 60 else \
+        "About two thirds done" if pc < 80 else "Nearly done"
+    return "%s (estimated from this job's last good run)." % word
+
+
+def job_pane_html(cfg, portal, cn, jid, via=None):
+    """The right pane of the Jobs page for one job - rendered here, so the page shows the latest snapshot without scripts, and the script swaps this
+    same HTML in every 3 s while the job runs (data-done tells it to stop)."""
+    code, view = portal.progress(jid, cn, via)
+    if code != 200:
+        return '<section class="card jd" id="jd" data-done="1"><p class="empty">%s</p></section>' % esc(view.get("error", "Not available."))
+    j = portal.job(jid, via, cn)[1]
+    pg, done = view, bool(view.get("done"))
+    st = j.get("status", "")
+    approval_wait = any(s_["word"] == "Waiting for approval" for s_ in pg.get("steps") or [])
+    wf = j.get("type") == "workflow_job"
+    title = j.get("action_title") or j.get("name") or "Job %d" % jid
+    if done:
+        ok = st == "successful"
+        if wf:
+            msg = ("<b>Succeeded</b> - AAP reports the workflow successful: %d of %d steps succeeded." % (pg.get("steps_done", 0), pg.get("steps_n", 0))) if ok else \
+                  "<b>Failed</b> - %s." % esc(pg.get("result_line") or "AAP reports the workflow %s" % st)
+        else:
+            msg = ("<b>Succeeded</b> - AAP reports the job successful%s." % ((": %s" % pg["hosts_line"]) if pg.get("hosts_line") else "")) if ok else \
+                  "<b>%s</b> - %s." % ("Failed" if st in ("failed", "error") else esc(st.capitalize()), esc(pg.get("result_line") or "AAP reports the job %s" % st))
+        cls, ik = ("ok", "ok") if ok else ("bad", "bad")
+    elif approval_wait:
+        msg, cls, ik = "<b>Waiting for approval</b> - an approver must decide before it goes on.", "run", "wait"
+    else:
+        step = pg.get("now", "").split(" - ")[0].lower()
+        msg, cls, ik = "<b>Running</b>%s%s" % ((" - " + esc(step)) if step else "", (" \u00b7 " + esc(pg["hosts_line"])) if pg.get("hosts_line") else ""), "run", "run"
+    banner = '<div class="banner2 %s">%s<span>%s</span></div>' % (cls, icon(ik), msg)
+    nowbox = ""
+    if not done and pg.get("now"):
+        pc = pg.get("pct")
+        bar = '<progress class="pb" max="100"%s aria-label="Progress, an estimate"></progress>' % ((' value="%d"' % pc) if pc is not None else "")
+        nowbox = '<div class="now"><div class="nl"><b>Now</b> \u00b7 %s</div>%s%s</div>' % (esc(pg["now"]), bar, ('<p class="muted-line">%s</p>' % esc(note_pct(pc, pg.get("est")))) if pc is not None and pg.get("est") else "")
+    hosts = ""
+    if pg.get("hosts"):
+        chips = "".join('<span class="hc %s">%s<b>%s</b> %s</span>' % ({"done": "ok", "failed": "bad", "unreachable": "wait", "running": "run"}[h["state"]],
+                                                                        icon({"done": "ok", "failed": "bad", "unreachable": "wait", "running": "run"}[h["state"]]), esc(h["host"]), esc(h["state"]))
+                        for h in pg["hosts"])
+        hosts = '<div><h3>Hosts</h3><div class="hosts">%s</div><p class="muted-line">%s</p></div>' % (chips, esc(pg.get("hosts_line", "")))
+    steps = ""
+    if pg.get("steps"):
+        rows = "".join('<tr><td>%s</td><td>%s</td><td>%s%s</td><td class="mono">%s</td></tr>' % (
+            esc(s_["name"]), esc(s_["type"]), status_chip(s_["status"], s_["word"] == "Waiting for approval") if s_["word"] != "Pending" else '<span class="chip s-info">Pending</span>',
+            ('<div class="muted-line">%s</div>' % esc(s_["note"])) if s_["note"] else "",
+            ('<a href="%sjobs/%d?via=%d">%d</a>' % (cfg.path, int(s_["job"]), jid, int(s_["job"]))) if s_.get("job") else "-") for s_ in pg["steps"])
+        steps = '<div><h3>Steps</h3><div class="tw"><table><thead><tr><th>Step</th><th>Type</th><th>Status</th><th>AAP job</th></tr></thead><tbody>%s</tbody></table></div></div>' % rows
+    ev = "".join('<li class="ev %s">%s<span>%s</span></li>' % ("ok" if x["k"] in ("ok", "changed") else "bad" if x["k"] == "bad" else "wait" if x["k"] in ("unreach",) else "skip",
+                                                               icon("ok" if x["k"] in ("ok", "changed") else "bad" if x["k"] == "bad" else "wait" if x["k"] == "unreach" else "skip"),
+                                                               ("<b>%s</b> - %s" % (esc(x["host"]), esc(x["text"])) if x["host"] else esc(x["text"]))) for x in pg.get("lines") or [])
+    happened = '<div><h3>What just happened</h3><ul class="evs">%s</ul></div>' % ev if ev else ""
+    when = shown(cfg, j.get("started")) or "-"
+    facts = ('<div class="facts"><div><div class="k">Job ID</div><div class="v mono"><span id="jid">%d</span> <button type="button" class="btn sm" data-copy="%d">Copy</button></div></div>'
+             '<div><div class="k">Started</div><div class="v">%s</div></div><div><div class="k">Ended</div><div class="v">%s</div></div>'
+             '<div><div class="k">Duration</div><div class="v">%s</div></div><div class="wide"><div class="k">Requested by</div><div class="v mono">%s</div></div></div>'
+             % (jid, jid, esc(when), esc(shown(cfg, j.get("finished")) or "-"), esc(dur_text(j.get("elapsed")) or "-"), esc(j.get("requested_by", ""))))
+    vals = j.get("values") or {}
+    answers = ('<div><h3>Answers - what the run was started with</h3><dl>%s</dl></div>' % "".join(
+        "<dt>%s</dt><dd>%s</dd>" % (esc(k), esc(vals[k] if len(str(vals[k])) <= 200 else str(vals[k])[:200] + "...")) for k in vals)) if vals else ""
+    result = ""
+    r = j.get("result")
+    if r:
+        kind = {"true": ("ok", "s-ok", "Fixed"), "false": ("bad", "s-critical", "Still there")}.get(r.get("fixed"), ("skip", "s-info", "Not checked"))
+        parts = "".join("<p>%s</p>" % esc(t) for t in (("Before: " + r["before"]) if r.get("before") else "", ("After: " + r["after"]) if r.get("after") else "", r.get("summary", "")) if t)
+        result = '<div><h3>Result</h3><div class="res one"><span class="chip %s">%s%s</span>%s</div></div>' % (kind[1], icon(kind[0]), esc(kind[2]), parts)
+    nxt = ('<p class="next"><a class="btn pri" href="%s">%s</a></p>' % (esc(j["next"]["url"]), esc(j["next"]["label"]))) if j.get("next") else ""
+    links = ('<div><h3>Results</h3><ul class="plain">%s</ul></div>' % "".join('<li><a href="%s" rel="noopener">%s</a></li>' % (esc(x["url"]), esc(x["label"])) for x in j["links"])) if j.get("links") else ""
+    tech = '<p class="muted-line">Technical output: available after the next update.</p>'
+    aap = ('<a class="btn" href="%s" rel="noopener">Open in AAP</a>' % esc(j["aap_link"])) if j.get("aap_link") else ""
+    foot = ('<div class="btns pane-btns"><a class="btn" href="%sjobs/%d%s">%s Refresh</a><button type="button" class="btn" data-copylink>Copy link</button><button type="button" class="btn" data-print>Print</button>%s'
+            '<span class="foot" id="upd" data-at="%d">Updated %s%s</span></div>'
+            % (cfg.path, jid, ("?via=%d" % via) if via else "", icon("refresh"), aap, int(time.time()), esc(time.strftime("%H:%M:%S", time.gmtime())) + " UTC",
+               "" if done else " \u00b7 refreshes every 3 s while it runs"))
+    return ('<section class="card jd" id="jd" data-job="%d"%s data-done="%d" data-status="%s"><div class="hd"><div><h2>%s</h2><p class="muted-line">%s \u00b7 asked for through the portal</p></div>%s</div>'
+            '%s%s%s%s%s%s%s%s%s%s%s%s</section>'
+            % (jid, (' data-via="%d"' % via) if via else "", 1 if done else 0, esc(st), esc(title), "Workflow" if wf else "Job template", status_chip(st, approval_wait and not done),
+               banner, nowbox, hosts, steps, happened, nxt, result, facts, answers, links, tech, foot))
+
+
+def jobs_page(cfg, portal, cn, sel=None, scope="mine", via=None):
+    scope = "all" if scope == "all" and cn in cfg.approvers else "mine"
+    items = portal.job_list(cn, scope)
+    if sel is None and items:
+        sel = items[0]["id"]
+    right = job_pane_html(cfg, portal, cn, sel, via) if sel is not None else '<section class="card jd" id="jd" data-done="1"><p class="empty">Nothing started yet. Run an action from the Actions page.</p></section>'
+    body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>Jobs</h1><p class="lede">What the portal started, and what AAP says about it now.</p></div>'
+            '<div class="two-pane">%s%s</div>' % (job_list_html(cfg, portal, cn, items, sel, scope), right))
+    return shell(cfg, "Jobs", body, cn, page="jobs")
+
+
+def job_page(cfg, portal, cn, jid, via, scope="mine"):
+    return jobs_page(cfg, portal, cn, jid, scope, via)
 
 
 def approvals_page(cfg, portal, cn):
@@ -1803,7 +2289,15 @@ def make_handler(cfg, portal, static_dir):
                 return None
             portal.refresh()                                # 1.78.0: the actions AAP offers (cached portal_discover_seconds)
             if path == "/":
-                return self._send(200, home_page(cfg, portal, cn), "text/html; charset=utf-8")
+                return self._send(200, home_page(cfg, portal, cn, urllib.parse.parse_qs(u.query, max_num_fields=20)), "text/html; charset=utf-8")
+            m = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})/details$", path)
+            if m:                                       # 1.78.0: what an action is (the Details panel fetches ?embed=1)
+                frag = details_html(cfg, portal, cn, m.group(1))
+                if frag is None:
+                    return self._send(404, message_page(cfg, "Not here", "There is no action %s here." % m.group(1), cn), "text/html; charset=utf-8")
+                if urllib.parse.parse_qs(u.query).get("embed"):
+                    return self._send(200, frag, "text/html; charset=utf-8")
+                return self._send(200, details_page(cfg, portal, cn, m.group(1)), "text/html; charset=utf-8")
             if path == "/reports" or path.startswith("/reports/"):
                 return self._report(path[len("/reports"):] or "/")
             m = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)
@@ -1812,21 +2306,41 @@ def make_handler(cfg, portal, static_dir):
                     return self._send(404, message_page(cfg, "Not here", "There is no action %s here." % m.group(1), cn),
                                       "text/html; charset=utf-8")
                 q = urllib.parse.parse_qs(u.query, keep_blank_values=True, max_num_fields=50)
+                if q.get("embed") and portal.actions[m.group(1)] and not picker_vars(portal.actions[m.group(1)]):          # 1.78.0: the Run dialog's content
+                    return self._send(200, action_page(cfg, portal, cn, m.group(1), dict((k, v) for k, v in q.items() if k != "embed"), True), "text/html; charset=utf-8")
                 step = picker_route(cfg, portal, cn, m.group(1), q)          # 1.75.3: pick a host, then a finding
                 if step and step[0] == "redirect":
                     return self._send(302, b"", "text/plain", [("Location", step[1])])
                 return self._send(200, step[1] if step else action_page(cfg, portal, cn, m.group(1), q), "text/html; charset=utf-8")
-            m = re.match(r"^/(api/)?jobs/(\d{1,12})$", path)
+            if path == "/jobs":
+                q = urllib.parse.parse_qs(u.query)
+                scope = (q.get("scope") or ["mine"])[-1]
+                if (q.get("list") or [""])[-1]:
+                    items = portal.job_list(cn, "all" if scope == "all" and cn in cfg.approvers else "mine")
+                    return self._send(200, job_list_html(cfg, portal, cn, items, None, "all" if scope == "all" and cn in cfg.approvers else "mine"), "text/html; charset=utf-8")
+                return self._send(200, jobs_page(cfg, portal, cn, None, scope), "text/html; charset=utf-8")
+            m = re.match(r"^/(api/)?jobs/(\d{1,12})(/progress)?$", path)
             if m:
                 q = urllib.parse.parse_qs(u.query)
                 via = int(q["via"][0]) if re.match(r"^\d{1,12}$", (q.get("via") or [""])[0]) else None
+                if m.group(3):                          # 1.78.0: the live progress (JSON), rate limited per person
+                    if not m.group(1):
+                        return self._send(404, {"error": "not found"})
+                    if not portal.poll_ok(cn):
+                        return self._send(429, {"error": "Too many updates: wait a few seconds."})
+                    code, view = portal.progress(int(m.group(2)), cn, via)
+                    return self._send(code, view)
                 if m.group(1):
                     code, view = portal.job(int(m.group(2)), via, cn)
                     return self._send(code, view)
                 if not portal.visible(cn, int(m.group(2)), via):        # as a job the portal did not start: 404
                     return self._send(404, message_page(cfg, "Not here", "There is no job %d here." % int(m.group(2)), cn),
                                       "text/html; charset=utf-8")
-                return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via), "text/html; charset=utf-8")
+                if (q.get("pane") or [""])[-1]:                # the right pane only: the page's script swaps it in while the job runs
+                    if not portal.poll_ok(cn):
+                        return self._send(429, b"", "text/plain")
+                    return self._send(200, job_pane_html(cfg, portal, cn, int(m.group(2)), via), "text/html; charset=utf-8")
+                return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via, (q.get("scope") or ["mine"])[-1]), "text/html; charset=utf-8")
             if path == "/approvals":
                 return self._send(200, approvals_page(cfg, portal, cn), "text/html; charset=utf-8")
             if path == "/api/approvals":
@@ -1902,11 +2416,32 @@ def make_handler(cfg, portal, static_dir):
             return self._send(code if code in (400, 403, 404, 409, 429, 503) else 502,
                               message_page(cfg, "Not started", out.get("error", "Not started."), cn, "bad"), "text/html; charset=utf-8")
 
+        def _refresh_post(self):
+            cn = self._who(api=False)
+            if not cn:
+                return None
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            ok = self._same_origin() and ctype == "application/x-www-form-urlencoded" and 0 <= n <= 4096
+            form = urllib.parse.parse_qs(self.rfile.read(n).decode("utf-8", "replace")) if ok else {}
+            if not ok or not portal.token_ok(cn, (form.get("portal-token") or [""])[-1]):
+                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": "/refresh", "why": "not from a portal page (CSRF check)"})
+                return self._send(403, message_page(cfg, "Not accepted", "Send it from the portal's page: reload the page and try again.", cn, "bad"), "text/html; charset=utf-8")
+            if portal.poll_ok(cn):                       # the same per-person limit as the progress calls
+                portal.refresh(force=True)
+                portal.last_at = 0
+            return self._send(303, b"", "text/plain", [("Location", cfg.path)])
+
         def do_POST(self):
             path = urllib.parse.urlsplit(self.path).path
             m_form = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)
             if m_form:
                 return self._form_post(m_form.group(1))
+            if path == "/refresh":                      # 1.78.0: read AAP again now (the Actions page's Refresh)
+                return self._refresh_post()
             m_act = re.match(r"^/api/actions/([A-Za-z0-9_]{1,64})$", path)
             m_dec = re.match(r"^/api/approvals/(\d{1,12})/(approve|deny)$", path)
             if not m_act and not m_dec:

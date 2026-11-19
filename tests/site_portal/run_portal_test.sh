@@ -319,6 +319,22 @@ r2="$(c "$k/jdoe" wait "$wf2")"
 if [ "$(echo "$r" | jq_ 'd["code"]')" = 200 ] && [ "$(echo "$r2" | jq_ 'd.get("status")')" = "failed" ]; then pass "deny by an approver: the workflow stops"
 else fail "deny by an approver" "$r $r2"; fi
 
+# ---- 1.78.0: the Actions page, Details, the Jobs page and a job followed live
+r="$(c "$k/jdoe" get "/portal/")"
+case "$r" in *'"code": 200'*'class=\"card strip\"'*'data-show=\"workflow\"'*'id=\"agrid\"'*) pass "the Actions page: the strip, the filter tiles, the cards";; *) fail "the Actions page" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/actions/stig_recheck/details?embed=1")"
+case "$r" in *'"code": 200'*'class=\"dbody\"'*'Last 5 runs'*) pass "Details: what the action is, its last runs";; *) fail "Details" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/actions/stig_recheck?embed=1")"
+case "$r" in *"as the person who asked for it"*"Launch job"*) pass "the Run dialog's content: the form, Launch job, who is recorded";; *) fail "the Run dialog's content" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/jobs/$job")"
+case "$r" in *'"code": 200'*'class=\"card jl\"'*'id=\"jd\"'*'Requested by'*) pass "the Jobs page: the list and the job, in one";; *) fail "the Jobs page" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/api/jobs/$job/progress")"
+if [ "$(echo "$r" | jq_ '(d["json"]["done"], d["json"]["pct"])')" = "(True, 100)" ] && ! echo "$r" | grep -q "extra_vars\|event_data"; then
+    pass "a job's progress in plain words (JSON): done, 100%, no raw event, no answer"
+else fail "a job's progress" "$r"; fi
+r="$(c "$k/stranger" get "/portal/api/jobs/$job/progress")"
+[ "$(echo "$r" | jq_ 'd["code"]')" != 200 ] && pass "the progress call: no card, no answer" || fail "the progress call without a card" "$r"
+
 # ---- 1.78.0: the actions AAP offers (Execute + the label) -------------------------------------------------------------------
 if grep -q "Found in AAP (Execute + the label portal): 1 of 3" "$work/out.txt" && grep -q "Odd survey (found) - f: survey type file is not handled" "$work/out.txt" \
     && grep -q "1 more may be run by the account but have no label portal" "$work/out.txt"; then
@@ -390,7 +406,7 @@ if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head
     c "$k/jdoe" wait "$fix" >/dev/null
     if (cd "$repo" && "$py" "$here/portal_shots.py" "https://localhost:$shot_port/portal/" "$shots" \
             "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "jobs-result=jobs/$fix" "jobs-triage=jobs/$job" "approvals=approvals" \
-            "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=" \
+            "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=" "jobs-index=jobs" "details=actions/disk_cleanup/details" \
             "pick-host=actions/disk_cleanup" "pick-finding=actions/disk_cleanup?hosts=web01.example.mil" \
             "pick-many=actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fhome&pick1=9001~disk_full%3Aweb03.example.mil%3A%2Fsrv") > "$work/shots.txt" 2>&1; then
         pass "screenshots: jobs, approvals, the confirm page, home - 1280 and 800, light and dark, no script error, no side scroll ($shots)"

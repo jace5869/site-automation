@@ -98,6 +98,8 @@ class Front(BaseHTTPRequestHandler):
                  ("found-form", "/portal/actions/" + NAME["Quick check (found)"]),
                  ("found-bad", "/portal/actions/" + NAME["Quick check (found)"] + "?portal_limit=web01.example.mil&rounds=9&secret=nope"),
                  ("found-wide", "/portal/actions/" + NAME["Rotate the service account password across every host of the long-named enclave group"]),
+                 ("jobs", "/portal/jobs"), ("job-running", "/portal/jobs/%d" % ids["recheck"]), ("jobs-all", "/portal/jobs?scope=all&__who=appr"),
+                 ("details", "/portal/actions/disk_cleanup/details"), ("home-failed", "/portal/?show=failed"),
                  ("pick-two-hosts", "/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil")]
         frames = [(n, u, th, w) for w in widths for th in ("light", "dark") for n, u in pages]
         html_ = ["<!doctype html><meta charset=utf-8><body>"]

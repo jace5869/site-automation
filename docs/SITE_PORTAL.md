@@ -5,8 +5,8 @@ One web place for the reports and what people may start from them. People open i
 - **The report website**, at `/portal/reports/`: the same pages the report jobs write.
 - **Actions**: a report's button opens a confirm page with the values filled in. The person presses **Run**, and AAP
   runs the workflow or job template behind it. Only the actions you list exist.
-- **The live view** of what they started, at `/portal/jobs/<id>`: its status, its steps, its output, then its result
-  and links.
+- **The Jobs page**, at `/portal/jobs`: a list of what they started on the left, the job on the right. A job that runs is
+  followed live, in plain words (*Watching a job run*, below).
 - **Approvals**, at `/portal/approvals`: the listed workflows waiting for a decision. Approvers press Approve or Deny.
 
 It lives **behind the reverse proxy you have** - STIG Manager's nginx - at **`/portal/`**:
@@ -668,6 +668,44 @@ portal_setup_templates_extra:
 
 Without the setup job, make the template in AAP yourself (Prompt on launch for **Variables** and **Limit**, and give the
 account **Execute**); the deploy then says *Off* with the reason until it is there.
+
+## The Actions page, Run and Details
+
+The Actions page (`/portal/`) is the portal's front door. It shows every job from AAP that the account may run and that carries the
+label, and the portal's own actions.
+
+1. **The strip** says *Connected - AAP: 25 jobs found* (or why AAP could not be asked) and when it was last read. **Refresh** reads AAP again now.
+2. **The four tiles** are filters: All, Job templates, Workflows, and *Last run failed*. They are links, so they work without scripts.
+3. **The search** looks in the name, the description and the labels. Press **/** to jump to it; *13 of 13* says how many cards show.
+4. **A card** has its type (*Job template* or *Workflow*), *Approval* on a workflow that waits for a person, the last run with its status,
+   the template's labels (not the portal's own), **Details** and **Run**. A template with no description says *No description*.
+
+**Run** opens a dialog: the survey's questions (required ones with a star), the host picker where the template has a Limit, a note
+(*Runs in AAP under the portal's account. The portal records you as the person who asked for it.*), **Cancel** and **Launch job**.
+Without scripts, Run is a link to the confirm page. An action that asks for a host and then a finding keeps its own steps.
+
+**Details** is a panel (a page without scripts) with the description, the type, the labels, what it asks for, the survey's questions
+(names and types only - never a default), its last five runs and Run.
+
+## Watching a job run
+
+The Jobs page (`/portal/jobs`) lists the jobs the portal started: **My jobs**, or **All jobs** for the approvers. The chips (*Running*,
+*Succeeded*, *Failed*, *Other*) and the search (job, job id or who started it) filter the list. The job is on the right.
+
+While a job runs, its page asks the portal every 3 seconds, only while the page is open, and stops when the job ends. It shows:
+
+| What | Where it comes from |
+|---|---|
+| **Now** - *Step 4 of about 12 - Checking free space on web01* | the task AAP is on; our task names are *Area \| what*, so the part after the bar |
+| The bar | the step against the task count of the template's last good run; without one, no bar fills and the step is just counted |
+| **Hosts** - done, running, failed, unreachable | the host results in the events; *unreachable* is a host that did not answer, *failed* a task that ran and failed |
+| **What just happened** | the last 8 events as plain lines, for example *web03 - could not connect*; a failure shows the host, the task and the plain cause only |
+| **Steps** (a workflow) | pending, running, done, failed, or *waiting for approval* with who may decide |
+
+At the end the banner says **Succeeded** or **Failed**, with what failed and on which host in one line. The portal asks AAP with its own
+token (the browser never talks to AAP), at most 90 times a minute for one person, and only for jobs the person may see. It never shows
+the extra variables, a password or a survey answer in this view: a password is *(hidden)* in the answers. Without scripts the page shows the
+latest snapshot, and **Refresh** reloads it. The module's own error text and the raw output are not shown yet (*available after the next update*).
 
 ## Add a job to the portal from AAP
 
