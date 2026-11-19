@@ -69,15 +69,26 @@ KINDS = [("Machine (Windows)", "machine_windows"), ("Red Hat Ansible Automation 
 OPTIONAL = re.compile(r"optional|\bwith\b|\bonly\b", re.I)
 
 
+# The launch prompts a template's own guide gives in its words, not in a SETUP_AAP.md table (Codex): Prompt on launch for
+# Variables (a schedule or a first try gives them), or none for Limit (it runs on the controller)
+LAUNCH_DOCS = {
+    "Active Directory health report": {"ask_variables": True},        # docs/ACTIVE_DIRECTORY.md, Set it up
+    "NetApp ONTAP health report": {"ask_variables": True},            # docs/NETAPP.md, Set it up (one cluster first)
+    "ServiceNow - weekly activity report": {"ask_variables": True},   # docs/SERVICENOW_WAR.md, Step 2
+    "ServiceNow - ticket insights": {"ask_variables": True},          # docs/SERVICENOW_INSIGHTS.md, every hour
+    "Network device certificate renewal": {"ask_limit": False},       # docs/SETUP_AAP.md: runs on the controller
+}
+
+
 def doc_rows():
-    """docs/JOB_TEMPLATES.md -> [(name, playbook, fixed variables)] - its job templates (not "Not a job template" rows)."""
+    """docs/JOB_TEMPLATES.md -> [(name, playbook, fixed variables, what)] - its job templates (not "Not a job template" rows)."""
     out = []
     for line in open(DOC, encoding="utf-8"):
         m = re.match(r"^\| (.+?) \| `playbooks/([^`]+)`(.*?)\| (.+?) \| (.+?) \|$", line.rstrip())
         if not m or m.group(4).startswith("Not a job template"):
             continue
         fixed = dict(re.findall(r"`([a-z_]+): ([^`]+)`", m.group(3)))
-        out.append((m.group(1).strip(), m.group(2).strip(), fixed))
+        out.append((m.group(1).strip(), m.group(2).strip(), fixed, m.group(4)))
     return out
 
 
@@ -194,7 +205,7 @@ def build():
     pbooks = set(os.path.basename(t.get("playbook") or "") for t in ptpl.values())
     rows = setup_rows()
     out = []
-    for name, playbook, fixed in doc_rows():
+    for name, playbook, fixed, what in doc_rows():
         tpl = gtv.TEMPLATES.get(playbook)
         cred_text = tpl[1] if tpl else ""
         windows = name.lower().startswith("windows") or " windows " in (" " + name.lower() + " ")
@@ -205,6 +216,9 @@ def build():
              "ask_limit": hosts, "ask_variables": False, "ask_inventory": False, "ee": ee_kind(playbook, req),
              "variables_file": varfile if os.path.isfile(os.path.join(ROOT, varfile)) else "", "area": area_of(name, playbook)}
         launch_contract(e, rows.get(name) or {})
+        if "Check first" in what:
+            e["ask_job_type"] = True                      # its guide says to launch it as Check first
+        e.update(LAUNCH_DOCS.get(name) or {})
         if fixed:
             e["extra_vars"] = fixed
         if name in ptpl:

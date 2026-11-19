@@ -173,6 +173,30 @@ run -e '{"aap_templates_project": "Lab project"}'; rc=$?
 [ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "project (aap_templates_project) 'Lab project': not found in organization 'Default'" \
     && pass "a project of another organization: not found, nothing written" || fail "other organization" "rc $rc; $(grep -E "fatal|not found" "$work/out.txt" | head -3)"
 
+# ---- Codex final round: a personal credential (no organization) is never used; a Variables file that cannot be read and
+# a playbook the project does not have (as AAP has it synced) stop the job before any write
+setst "s['credentials'].append({'id': 70, 'name': 'Personal key', 'organization': None, 'credential_type': 1, 'summary_fields': {'credential_type': {'id': 1, 'name': 'Machine'}}})"
+before="$(writes)"
+run -e '{"aap_templates_credentials": {"machine": "Personal key"}, "aap_templates_only": ["Troubleshoot"]}'; rc=$?
+[ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "credential machine (aap_templates_credentials) 'Personal key': not found in organization 'Default'" \
+    && pass "a personal credential (no organization): not used, nothing written" || fail "personal credential" "rc $rc; $(grep -E "fatal|not found" "$work/out.txt" | head -3)"
+"$py" - "$repo/aap/job_templates.yml" "$work/catalog.yml" <<'PYEND2'
+import sys, yaml
+c = yaml.safe_load(open(sys.argv[1]))["job_templates"]
+one = [dict(e, name="Made first") for e in c if e["name"] == "Troubleshoot"][0]
+two = dict(one, name="Bad Variables", variables_file="aap/extra_vars/not-there.yml")
+yaml.safe_dump({"job_templates": [one, two]}, open(sys.argv[2], "w"))
+PYEND2
+run -e "{\"aap_templates_catalog\": \"$work/catalog.yml\", \"aap_templates_only\": [], \"aap_templates_create_alias\": true}"; rc=$?
+[ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "'Bad Variables': its Variables file aap/extra_vars/not-there.yml could not be read" \
+    && ! has "created - 'Made first'" && pass "a Variables file that cannot be read: stopped before the first write" \
+    || fail "Variables file" "rc $rc; $(writes) vs $before; $(grep -E "fatal|Variables|created" "$work/out.txt" | head -3)"
+setst "s['project_playbooks']={'2': ['playbooks/troubleshoot.yml']}"
+run --check -e '{"aap_templates_only": ["Patch hosts"]}'; rc=$?
+setst "s.pop('project_playbooks')"
+[ $rc != 0 ] && [ "$(writes)" = "$before" ] && has "not in project 'site-automation' as AAP has it: playbooks/patch_hosts.yml - sync the project" \
+    && pass "a playbook the project lacks: said in Check, before any write" || fail "playbook" "rc $rc; $(grep -E "fatal|not in project" "$work/out.txt" | head -3)"
+
 # ---- never a DELETE, never a secret
 grep -q '"DELETE"' "$work/writes.jsonl" && fail "a DELETE" "$(grep DELETE "$work/writes.jsonl" | head -2)" || pass "never a DELETE"
 grep -q "SECRET-PW" "$work/all-out.txt" "$work/writes.jsonl" && fail "a secret" "$(grep -n SECRET-PW "$work/all-out.txt" | head -2)" \

@@ -24,6 +24,9 @@ with Admin on the organization; its Variables: `aap/extra_vars/aap_templates_set
 - The job templates job looks up the project, inventory and credentials in its organization only. Every read and check
   (labels too) comes before the first write. Two templates of one name stop it before it writes. A failure lists each
   write done before it. The catalog carries the Job type prompt and the Limit prompt as SETUP_AAP.md gives them.
+- Also stopped before any write: a personal credential (of no organization), a Variables file that cannot be read, a
+  playbook the project does not have as AAP has it synced. The catalog's Variables prompts follow each template's guide
+  (ticket insights, weekly activity, AD and ONTAP health); the Check-first jobs prompt for Job type.
 
 **To set up:** a job template **AAP - set up credentials** (`playbooks/aap_credentials_setup.yml`, an AAP credential
 with Admin on the organization; its Variables: `aap/extra_vars/aap_credentials_setup.yml`).

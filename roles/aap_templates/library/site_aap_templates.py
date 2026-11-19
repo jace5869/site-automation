@@ -94,11 +94,11 @@ class Templates(object):
         return out
 
     def one(self, kind, name, what, org=True):
-        """The one object of that name in the organization (Codex: never one of another organization instead). Credentials and
-        execution environments may also be of no organization (global)."""
+        """The one object of that name in the organization (Codex: never one of another organization instead, nor a
+        personal credential). Only an execution environment may also be of no organization (a global one)."""
         rows = [r for r in self.all("%s/?name=%s" % (kind, _q(name))) if r.get("name") == name]
         if org and self.org_id is not None:
-            ok = (self.org_id, None) if kind in ("credentials", "execution_environments") else (self.org_id,)
+            ok = (self.org_id, None) if kind == "execution_environments" else (self.org_id,)
             rows = [r for r in rows if r.get("organization") in ok]
         if len(rows) != 1:
             self.problems.append("%s %r: %s" % (what, name, ("not found" + self.in_org(org)) if not rows else "%d match - rename one in AAP" % len(rows)))
@@ -248,7 +248,11 @@ class Templates(object):
                     self.problems.append("aap_templates_inventory is not set: %r would be made, and a template is made with an "
                                          "inventory" % name)
                     continue
-                steps.append(("create", e, fields, want_creds, kinds))
+                text, why = self.read_variables(e)          # Codex: read now, never half way through the writes
+                if why:
+                    self.problems.append("%r: %s" % (name, why))
+                    continue
+                steps.append(("create", e, fields, want_creds, kinds, text))
                 continue
             t = ours[0]
             diff = {}
@@ -270,6 +274,18 @@ class Templates(object):
                 self.note(name, "right")
                 continue
             steps.append(("fix", e, dict((k, v) for k, v in fields.items() if SHOW[k] in diff), cfix, int(t["id"]), diff))
+        # the playbooks to set: in the project as AAP has it synced (Codex) - a missing one stops before any write
+        need = sorted(set(st[2]["playbook"] for st in steps if "playbook" in st[2]))
+        if need and not self.problems:
+            code, d = self.api.call("GET", "projects/%d/playbooks/" % self.project)
+            have = d.get("results") if isinstance(d, dict) else None            # AAP's bare list (site_aap wraps it)
+            if code != 200 or not isinstance(have, list):
+                self.problems.append("the project's playbooks could not be read: %s" % _why(code, d))
+            else:
+                gone = [x for x in need if x not in have]
+                if gone:
+                    self.problems.append("not in project %r as AAP has it: %s - sync the project in AAP (or update it), then "
+                                         "run this again" % (self.p["project"], ", ".join(gone)))
         # the labels: read now (their ids, each template's own) - only the writes are left for later (Codex)
         self.label_plan = {}
         if self.p["label_portal"] not in ("", "none") and not self.problems:
@@ -318,18 +334,22 @@ class Templates(object):
             return "yes" if v else "no"
         return v
 
-    def variables(self, e):
+    def read_variables(self, e):
+        """A new template's Variables -> (text, why not): its file with every setting switched off, and its fixed settings.
+        A file named and not readable is a problem - Variables are set only when a template is made."""
         text = ""
         vf = e.get("variables_file") or ""
         if vf and self.p["variables_dir"]:
             path = os.path.join(self.p["variables_dir"], vf)
-            if os.path.isfile(path):
-                with open(path) as f:
+            try:
+                with open(path, encoding="utf-8") as f:
                     text = off(f.read())
+            except (OSError, UnicodeError) as ex:
+                return "", "its Variables file %s could not be read (%s)" % (vf, type(ex).__name__)
         fixed = e.get("extra_vars") or {}
         if fixed:
             text = "---\n" + "".join("%s: %s\n" % (k, json.dumps(v)) for k, v in sorted(fixed.items())) + re.sub(r"(?m)^---\n", "", text)
-        return text
+        return text, ""
 
     def labels_for(self, e):
         out = [self.p["portal_label"]] if self.p["portal_label"] else []
@@ -399,7 +419,7 @@ class Templates(object):
             try:
                 if kind == "create":
                     body = dict(st[2], name=name, organization=self.org_id, inventory=self.inventory, job_type="run", description=DESC,
-                                extra_vars=self.variables(e))
+                                extra_vars=st[5])
                     tid = int(self.write("POST", "job_templates/", body)["id"])
                     self.tid[name] = tid
                     done.append("made it")

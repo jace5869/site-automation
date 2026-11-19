@@ -75,6 +75,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/act_old_copies.yml
     area: ACT
+    ask_job_type: true
   - name: Apply approved ACT fix
     playbook: playbooks/act_fix_approved.yml
     credentials: [machine]
@@ -323,6 +324,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/evaluate_stig_update.yml
     area: STIG
+    ask_job_type: true
   - name: STIG Manager - update
     playbook: playbooks/stigman_update.yml
     credentials: [stigman_api]
@@ -483,7 +485,7 @@ job_templates:
     credentials: [machine_windows]
     optional_credentials: []
     ask_limit: true
-    ask_variables: false
+    ask_variables: true
     ask_inventory: false
     ee: windows
     variables_file: aap/extra_vars/ad_health_report.yml
@@ -712,7 +714,7 @@ job_templates:
     playbook: playbooks/net_cert_renew.yml
     credentials: [servicenow]
     optional_credentials: [machine]
-    ask_limit: true
+    ask_limit: false
     ask_variables: false
     ask_inventory: false
     ee: network
@@ -1298,12 +1300,13 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/mail_relay_format.yml
     area: Linux
+    ask_job_type: true
   - name: NetApp ONTAP health report
     playbook: playbooks/ontap_health_report.yml
     credentials: [ontap]
     optional_credentials: []
     ask_limit: false
-    ask_variables: false
+    ask_variables: true
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/ontap_health_report.yml
@@ -1415,7 +1418,7 @@ job_templates:
     credentials: [servicenow]
     optional_credentials: [act_model_key]
     ask_limit: false
-    ask_variables: false
+    ask_variables: true
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_war.yml
@@ -1425,7 +1428,7 @@ job_templates:
     credentials: [servicenow]
     optional_credentials: [act_model_key, report_db]
     ask_limit: false
-    ask_variables: false
+    ask_variables: true
     ask_inventory: false
     ee: all
     variables_file: aap/extra_vars/servicenow_insights.yml
@@ -1460,6 +1463,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_workflow_gates.yml
     area: Linux
+    ask_job_type: true
   - name: AAP - set up portal actions
     playbook: playbooks/aap_portal_setup.yml
     credentials: [aap]
@@ -1470,6 +1474,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_portal_setup.yml
     area: Linux
+    ask_job_type: true
   - name: AAP - set up job templates
     playbook: playbooks/aap_templates_setup.yml
     credentials: [aap]
@@ -1480,6 +1485,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_templates_setup.yml
     area: Linux
+    ask_job_type: true
   - name: AAP - move templates to another inventory
     playbook: playbooks/aap_inventory_move.yml
     credentials: [aap]
@@ -1490,6 +1496,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_inventory_move.yml
     area: Linux
+    ask_job_type: true
   - name: AAP - set up credentials
     playbook: playbooks/aap_credentials_setup.yml
     credentials: [aap]
@@ -1500,6 +1507,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/aap_credentials_setup.yml
     area: Linux
+    ask_job_type: true
   - name: AAP - health check
     playbook: playbooks/aap_health_check.yml
     credentials: [machine, aap]

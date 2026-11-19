@@ -23,7 +23,7 @@ class Catalog(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout.decode())
 
     def test_the_same_templates_as_the_docs(self):
-        docs = [(n, "playbooks/" + p) for n, p, _ in g.doc_rows()]
+        docs = [(n, "playbooks/" + p) for n, p, _, _ in g.doc_rows()]
         cat = [(e["name"], e["playbook"]) for e in self.catalog()]
         self.assertEqual(cat, docs)
         self.assertGreater(len(cat), 100)
@@ -78,6 +78,11 @@ class Catalog(unittest.TestCase):
         for n in ("Patch hosts", "Apply approved ACT fix", "Database health - MariaDB / MySQL", "ServiceNow - test ticket"):
             self.assertTrue(by[n].get("ask_job_type"), n)
         self.assertFalse(by["Troubleshoot"].get("ask_job_type"))
+        for n in g.LAUNCH_DOCS:
+            self.assertIn(n, by)                                       # each name still a template of the docs
+        self.assertTrue(by["ServiceNow - ticket insights"]["ask_variables"])
+        self.assertFalse(by["Network device certificate renewal"]["ask_limit"])
+        self.assertTrue(by["AAP - move templates to another inventory"].get("ask_job_type"))   # "Check first"
         self.assertEqual([e["name"] for e in self.catalog() if e.get("portal_actions")],
                          ["Disk - space request", "Site portal - open ticket"])
 

@@ -677,8 +677,9 @@ and checks the ones already there. It never deletes a template.
 2. Name the inventory new templates get (`aap_templates_inventory`) and your credential of each kind
    (`aap_templates_credentials`, for example `machine: Linux machine`, `stigman_api: STIG Manager API`). A template
    that needs a kind you did not name is skipped, and the job says which kind. The project, the inventory and the
-   credentials are looked up in `aap_templates_organization` only (a credential or execution environment of no
-   organization too): one of another organization is never used. The inventory is needed only to make a template.
+   credentials are looked up in `aap_templates_organization` only (an execution environment of no organization too):
+   one of another organization, or a personal credential, is never used. The inventory is needed only to make a
+   template. Sync the project in AAP first: a playbook the project does not have yet stops the job before it writes.
 3. Optional: `aap_templates_ee` (an execution environment for `all`, `windows`, `network`), `aap_templates_only`
    (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels).
 4. Launch it with Job type **Check**. It lists each template:

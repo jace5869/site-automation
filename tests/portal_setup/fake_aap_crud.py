@@ -183,6 +183,13 @@ class H(BaseHTTPRequestHandler):
             if p == "schedules/":
                 rows = by_fields([schedule_view(s, x) for x in s["schedules"]], q)
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
+            m = re.match(r"^projects/(\d+)/playbooks/$", p)
+            if m:                                           # as AAP: a bare list; the repository's own unless the state says
+                pbs = (s.get("project_playbooks") or {}).get(m.group(1))
+                if pbs is None:
+                    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+                    pbs = sorted("playbooks/" + f for f in os.listdir(os.path.join(root, "playbooks")) if f.endswith(".yml"))
+                return self.send(200, pbs)
             m = re.match(r"^inventories/(\d+)/(groups|hosts)/$", p)
             if m:
                 rows = [r for r in s.get(m.group(2), []) if r.get("inventory") == int(m.group(1))
