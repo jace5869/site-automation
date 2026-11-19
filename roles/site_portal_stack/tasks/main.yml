@@ -206,6 +206,7 @@
     - {name: portal_action_max_hosts, max: 500}
     - {name: portal_pick_max_launches, max: 200}
     - {name: portal_limit_max, max: 500}
+    - {name: portal_inventories_max, max: 50}
   loop_control:
     label: "{{ item.name }}"
 
@@ -233,6 +234,29 @@
     (portal_publish_templates | default([]) | length > 0 or portal_publish_organization | default('') | length > 0
      or portal_unpublish_templates | default([]) | length > 0 or portal_publish_area | default({}) | length > 0
      or (portal_publish_max | default(50) | int) != 50)
+
+- name: Actions | portal_area_rules is right (1.78.4)
+  ansible.builtin.assert:
+    that: (portal_area_rules | site_portal_area_rules).problems | length == 0
+    fail_msg: "portal_area_rules is not right - nothing was changed: {{ (portal_area_rules | site_portal_area_rules).problems | join(' | ') }}"
+    quiet: true
+
+# the area of each playbook in the job-template catalog (aap/job_templates.yml, an 'area' on each entry), when the repository has it
+- name: Areas | the job-template catalog
+  ansible.builtin.stat:
+    path: "{{ role_path }}/../../aap/job_templates.yml"
+  register: _portal_catalog_stat
+  delegate_to: localhost
+  become: false
+
+- name: Areas | the area of each playbook
+  ansible.builtin.set_fact:
+    _portal_playbook_areas: >-
+      {{ dict((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates | default([])
+              | selectattr('area', 'defined') | selectattr('playbook', 'defined') | map(attribute='playbook') | list
+              | zip((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates | default([])
+                    | selectattr('area', 'defined') | selectattr('playbook', 'defined') | map(attribute='area') | list)) }}
+  when: _portal_catalog_stat.stat.exists | default(false)
 
 - name: Actions | the actions the portal serves
   ansible.builtin.set_fact:
@@ -447,6 +471,8 @@
       PORTAL_DISCOVER_SECONDS: "{{ portal_discover_seconds }}"
       PORTAL_LABEL_APPROVAL: "{{ portal_label_approval }}"
       PORTAL_LABEL_AREA: "{{ portal_label_area }}"
+      PORTAL_AREA_RULES: "{{ portal_area_rules | default([]) | to_json }}"
+      PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"
       PORTAL_MOTION: "{{ _portal_motion }}"
       PORTAL_PUBLISH_ORGANIZATION: "{{ portal_publish_organization | default('') }}"
       PORTAL_LABEL_TITLE: "{{ portal_label_title }}"
@@ -454,6 +480,7 @@
       PORTAL_LOGO: "{{ '/etc/site-portal/logo' if _portal_logo_on | default(false) | bool else '' }}"
       PORTAL_APPROVAL_REQUIRED: "{{ portal_approval_required }}"
       PORTAL_LIMIT_MAX: "{{ portal_limit_max }}"
+      PORTAL_INVENTORIES_MAX: "{{ portal_inventories_max }}"
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"

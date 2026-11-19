@@ -1962,8 +1962,10 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_label` | `portal` | 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account has Execute on AND that carries the AAP label below is added to the portal - no edit here, no redeploy; take Execute or the label away and it goes at the next refresh. The form is the template's survey; the card's area is a… (all of it: the role file) |
 | `portal_discover_seconds` | `60` | how long what was found is kept (10 to 3600) |
 | `portal_label_approval` | `portal-approval` | a template with this label too is marked "approval" on its card |
+| `portal_area_rules` | `[]` | 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area: label and no area for its playbook (* and ? only, any case, first match wins) |
 | `portal_label_area` | `"portal-area:"` | a label that starts with this puts the card in an area (the rest of the label is its name) |
 | `portal_approval_required` | `[]` | template names that are marked "approval" without the label |
+| `portal_inventories_max` | `10` | 1.78.4: found templates' Limits are checked against their own inventory; at most this many distinct inventories (1 to 50), the rest are skipped with a reason |
 | `portal_limit_max` | `50` | a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500) |
 | `portal_finding_playbooks` | (worked out by the role; see its file) | the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from) |
 | `portal_inventory` | (empty) | the AAP inventory whose hosts an action's inventory_host values must be (by name; required when an action has one) |

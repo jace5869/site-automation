@@ -89,8 +89,10 @@ portal_action_max_hosts: 50                       # 1.78.2: the hosts one built-
 portal_label: portal                              # the AAP label that marks a template for the portal ('' = no discovery)
 portal_discover_seconds: 60                       # how long what was found is kept (10 to 3600)
 portal_label_approval: portal-approval            # a template with this label too is marked "approval" on its card
+portal_area_rules: []                             # 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area: label and no area for its playbook (* and ? only, any case, first match wins)
 portal_label_area: "portal-area:"                 # a label that starts with this puts the card in an area (the rest of the label is its name)
 portal_approval_required: []                      # template names that are marked "approval" without the label
+portal_inventories_max: 10                        # 1.78.4: found templates' Limits are checked against their own inventory; at most this many distinct inventories (1 to 50), the rest are skipped with a reason
 portal_limit_max: 50                              # a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500)
 # the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from)
 portal_finding_playbooks: >-

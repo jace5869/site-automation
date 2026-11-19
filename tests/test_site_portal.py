@@ -762,6 +762,114 @@ class Live(unittest.TestCase):
         finally:
             self.cfg.self_approval = False
 
+    def _scheduled_approval(self, **kw):
+        """An approval of a run nobody started in the portal (a schedule in AAP) for the listed workflow ckl_import."""
+        tid = self.states["ckl_import"][0]
+        wid, aid = fake_aap.new_id(), fake_aap.new_id()
+        fake_aap.STATE["jobs"][wid] = {"id": wid, "type": "workflow_job", "name": "Checklists imported (daily)", "created": time.time(), "nodes": [aid], "template": tid,
+                                       "launch_type": "scheduled", "schedule": "Daily import"}
+        fake_aap.STATE["jobs"][aid] = {"id": aid, "type": "workflow_approval", "name": "Approve the daily import", "created": time.time(), "status": "pending"}
+        ap = {"id": aid, "name": "Approve the daily import", "description": "The scorecard is rebuilt after this.", "status": "pending", "created": time.time(), "workflow": wid,
+              "expires": time.time() + 3 * 3600}
+        ap.update(kw)
+        fake_aap.STATE["approvals"][aid] = ap
+        return wid, aid
+
+    def _gone(self, wid, aid):
+        fake_aap.STATE["approvals"].pop(aid, None)
+        fake_aap.STATE["jobs"].pop(aid, None)
+        fake_aap.STATE["jobs"].pop(wid, None)
+
+    def test_13a_every_pending_approval_is_listed(self):
+        wid, aid = self._scheduled_approval()
+        try:
+            a = next(x for x in json.loads(self.req("/api/approvals", dn=APPR)[1])["approvals"] if x["id"] == aid)
+            self.assertEqual((a["launched_in"], a["requested_by"], a["action"]), ("AAP schedule: Daily import", "", "ckl_import"))
+            self.assertEqual((a["name"], a["description"]), ("Approve the daily import", "The scorecard is rebuilt after this."))
+            self.assertRegex(a["time_left"], r"^(2 h 5\d min|3 h 00 min|2 h 59 min)$")                 # the time left before its timeout
+            self.assertEqual((a["may_decide"], a["reason"]), (True, ""))
+            self.assertEqual(self.post("/api/approvals/%d/deny" % aid, {}, dn=APPR)[0], 200)            # decided from the portal, though the portal did not start it
+        finally:
+            self._gone(wid, aid)
+
+    def test_13b_not_an_approver_is_a_grey_row(self):
+        wid, aid = self._scheduled_approval()
+        try:
+            a = next(x for x in json.loads(self.req("/api/approvals")[1])["approvals"] if x["id"] == aid)               # a person who is no approver sees it, cannot decide it
+            self.assertEqual((a["may_decide"], a["reason"]), (False, "Only the approvers decide - decide it in AAP."))
+            self.assertEqual(self.post("/api/approvals/%d/approve" % aid, {})[0], 403)
+        finally:
+            self._gone(wid, aid)
+
+    def test_13c_no_approve_role_is_a_grey_row_and_refused(self):
+        wid, aid = self._scheduled_approval(caps={"approve": False})
+        try:
+            a = next(x for x in json.loads(self.req("/api/approvals", dn=APPR)[1])["approvals"] if x["id"] == aid)
+            self.assertEqual(a["may_decide"], False)
+            self.assertIn("no Approve role", a["reason"])
+            code, r = self.post("/api/approvals/%d/approve" % aid, {}, dn=APPR)
+            self.assertEqual(code, 403)
+            self.assertIn("no Approve role", r["error"])
+            self.assertTrue(any("Approve role" in x.get("why", "") for x in self.log("refused")))
+        finally:
+            self._gone(wid, aid)
+
+    def test_13d_an_expired_one_is_hidden(self):
+        wid, aid = self._scheduled_approval(expires=time.time() - 60)
+        try:
+            self.assertNotIn(aid, [x["id"] for x in json.loads(self.req("/api/approvals", dn=APPR)[1])["approvals"]])
+        finally:
+            self._gone(wid, aid)
+
+    def test_13e_the_report_of_the_steps_before_it(self):
+        wid, aid = self._scheduled_approval()
+        jid = fake_aap.new_id()
+        fake_aap.STATE["jobs"][jid] = {"id": jid, "type": "job", "name": "Check - step", "created": time.time() - 900, "template_id": 1}
+        fake_aap.STATE["jobs"][wid]["nodes"].insert(0, jid)
+        try:
+            a = next(x for x in json.loads(self.req("/api/approvals", dn=APPR)[1])["approvals"] if x["id"] == aid)
+            self.assertIsNotNone(a["report"])
+            self.assertTrue(a["report"]["url"].startswith("https://reports.example.mil/linux-health/"))
+        finally:
+            fake_aap.STATE["jobs"].pop(jid, None)
+            self._gone(wid, aid)
+
+    def test_13f_the_summary_for_the_badges_and_toasts(self):
+        self.portal.summaries.clear()
+        jid = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[1]["job_id"]
+        wid, aid = self._scheduled_approval()
+        try:
+            self.portal.summaries.clear()
+            r = json.loads(self.req("/api/summary", dn=APPR)[1])
+            self.assertGreaterEqual(r["approvals"], 1)                                                   # the approver's count includes the scheduled one
+            self.portal.summaries.clear()
+            r = json.loads(self.req("/api/summary")[1])
+            self.assertIn(jid, [j["id"] for j in r["recent"]])
+            self.assertEqual(set(r["recent"][0]), {"id", "title", "group"})
+            self.assertEqual(r["approvals"], 0)                                                          # not an approver: nothing to decide
+            self.assertEqual(self.req("/api/summary", dn=None)[0], 403)
+        finally:
+            self._gone(wid, aid)
+            self.portal.summaries.clear()
+            self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+
+    def test_13g_run_again_with_the_same_answers(self):
+        code, r = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})
+        jid = r["job_id"]
+        time.sleep(fake_aap.RUN + 0.4)
+        code, raw, _ = self.req("/jobs/%d" % jid)
+        self.assertRegex(raw.decode(), r'<a class="btn pri" href="/portal/actions/stig_recheck\?target=web03\.example\.mil" data-again')
+        self.assertIn("Run again with the same answers", raw.decode())
+        run = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[1]["job_id"]    # still running: no button yet
+        code, raw, _ = self.req("/jobs/%d" % run)
+        self.assertNotIn("data-again", raw.decode())
+        time.sleep(fake_aap.RUN + 0.4)
+        self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
+
+    def test_13h_the_picker_reads_only_inventories_of_the_callers_actions(self):
+        code, raw, _ = self.req("/api/inventory?inv=999&q=")
+        self.assertEqual(code, 404)
+
     def test_13_times_in_report_time_zone(self):
         jid = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[1]["job_id"]
         v = json.loads(self.req("/api/jobs/%d" % jid)[1])
@@ -1285,10 +1393,9 @@ class Found(unittest.TestCase):
         p = sp.Portal(cfg, aap=sp.Aap(cfg), log=sp.Log(""))
         p.aap.connect()
         p.refresh(force=True)
-        self.assertNotIn("Health check - Linux", [a["title"] for a in p.actions.values()])          # it asks for a Limit
-        self.assertIn("Weekly cleanup", [a["title"] for a in p.actions.values()])                  # it does not
-        why = dict(p.found["skipped"])
-        self.assertIn("needs portal_inventory for its Limit", why["Health check - Linux"])
+        self.assertIn("Health check - Linux", [a["title"] for a in p.actions.values()])            # 1.78.4: its Limit is checked against its own inventory, portal_inventory or not
+        self.assertIn("Weekly cleanup", [a["title"] for a in p.actions.values()])
+        self.assertEqual(p.actions[self.nm("Health check - Linux")]["limit_inv"], 3)
         a = self.portal.actions[self.nm("Health check - Linux")]
         v, pr = rules.check_values(a, {"portal_limit": "web01.example.mil", "ticket": "INC1", "env": "dev", "pw": "x"}, None)
         self.assertIn("portal_inventory is not set", pr["portal_limit"])                           # and the rule refuses too
@@ -1563,8 +1670,8 @@ class Found(unittest.TestCase):
         fake_aap.STATE["templates"]["job_templates"][-1]["ask_inventory"] = True
         self.portal.refresh(force=True)
         why = dict(self.portal.found["skipped"])
-        self.assertIn("its inventory is not portal_inventory", why["Other inventory"])
-        self.assertIn("its inventory is not portal_inventory", why["Asks inventory"])
+        self.assertIn("cannot be read by the portal's account", why["Other inventory"])            # 1.78.4: not portal_inventory, but one it cannot read
+        self.assertIn("ask_inventory_on_launch", why["Asks inventory"])
         self.assertEqual(self.nm("Other inventory"), "gone")
 
     def test_34_an_old_listing_checks_nothing(self):
@@ -1640,7 +1747,180 @@ class Found(unittest.TestCase):
         fake_aap.add_template("workflow_job_templates", "Workflow with Limit", ["portal"], None, limit=True)
         self.portal.refresh(force=True)
         self.assertEqual(self.nm("Workflow with Limit"), "gone")
-        self.assertIn("workflow's Limit", dict(self.portal.found["skipped"])["Workflow with Limit"])
+        self.assertIn("no job template step", dict(self.portal.found["skipped"])["Workflow with Limit"])
+
+    # ---- 1.78.4: a template's own inventory, a workflow's Limit, the exact reason for what a template asks at launch
+    def _node(self, nid, jt, name, kind="job", inv=None, limit=""):
+        return {"id": nid, "unified_job_template": jt, "success_nodes": [], "failure_nodes": [], "always_nodes": [], "inventory": inv, "limit": limit,
+                "summary_fields": {"unified_job_template": {"name": name, "unified_job_type": kind}}}
+
+    def _clean(self, names):
+        for kind in ("job_templates", "workflow_job_templates"):
+            fake_aap.STATE["templates"][kind][:] = [t for t in fake_aap.STATE["templates"][kind] if t["name"] not in names]
+        fake_aap.STATE["inventories"][:] = [i for i in fake_aap.STATE["inventories"] if i["id"] < 50]
+
+    def test_80_a_template_on_another_inventory_uses_that_inventory(self):
+        fake_aap.STATE["inventories"].append({"id": 51, "name": "Lab hosts", "hosts": ["lab01.example.mil", "lab02.example.mil"], "groups": {"lab_all": ["lab01.example.mil", "lab02.example.mil"]}})
+        fake_aap.add_template("job_templates", "On the lab inventory", ["portal"], None, limit=True, inventory=51)
+        try:
+            self.portal.refresh(force=True)
+            nm = self.nm("On the lab inventory")
+            a = self.portal.actions[nm]
+            self.assertEqual((a["limit_inv"], a["limit_inv_name"]), (51, "Lab hosts"))
+            self.assertIn("Hosts or groups of the inventory Lab hosts", a["vars"]["portal_limit"]["help"])
+            v, p = self.portal.check(nm, {"portal_limit": ["lab_all"]})
+            self.assertEqual((p, v["portal_limit"]), ({}, ["lab_all"]))
+            v, p = self.portal.check(nm, {"portal_limit": ["web01.example.mil"]})                           # a host of the portal inventory is not a host of this one
+            self.assertIn("not a host or a group of the portal's inventory", p["portal_limit"])
+            self.assertEqual(self.portal.aap.expand_now(["lab_all"], 51)[0], ["lab01.example.mil", "lab02.example.mil"])
+            items = self.portal.aap.inventory_items("", 50, iid=51)["items"]
+            self.assertEqual(sorted(i["name"] for i in items), ["lab01.example.mil", "lab02.example.mil", "lab_all"])    # the picker lists that inventory
+            self.assertIn(51, [k for k in self.portal.aap.listings if k != "default"])                              # one listing for each inventory
+            code, out = self.portal.launch(self.cn, "192.0.2.5", nm, {"portal_limit": ["lab_all"]}, a["sig"])
+            self.assertEqual(code, 201, out)
+            with open(fake_aap.LOG) as fh:
+                sent = [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x][-1]["body"]
+            self.assertEqual(sent["limit"], "lab01.example.mil,lab02.example.mil")
+        finally:
+            self._clean(["On the lab inventory"])
+            self.portal.refresh(force=True)
+
+    def test_81_no_more_than_portal_inventories_max(self):
+        for i in range(3):
+            fake_aap.STATE["inventories"].append({"id": 60 + i, "name": "Inv %d" % i, "hosts": ["h%d.example.mil" % i], "groups": {}})
+            fake_aap.add_template("job_templates", "Zone %d" % i, ["portal"], None, limit=True, inventory=60 + i)
+        keep = self.portal.cfg.inventories_max
+        self.portal.cfg.inventories_max = 2                                                              # the default inventory (3) counts when it is used
+        try:
+            self.portal.refresh(force=True)
+            why = dict(self.portal.found["skipped"])
+            used = [n for n in ("Zone 0", "Zone 1", "Zone 2") if self.nm(n) != "gone"]
+            self.assertLessEqual(len(used), 1)
+            self.assertTrue(any("portal_inventories_max is 2" in why.get(n, "") for n in ("Zone 0", "Zone 1", "Zone 2")), why)
+        finally:
+            self.portal.cfg.inventories_max = keep
+            self._clean(["Zone 0", "Zone 1", "Zone 2"])
+            self.portal.refresh(force=True)
+
+    def test_82_a_workflow_limit_when_its_steps_share_one_inventory(self):
+        j1 = fake_aap.add_template("job_templates", "Step one", [], None, limit=True, inventory=3)
+        j2 = fake_aap.add_template("job_templates", "Step two", [], None, limit=True, inventory=3, ask_inventory=True)     # asks: the workflow's own
+        wf = fake_aap.add_template("workflow_job_templates", "Shared inventory flow", ["portal"], None, limit=True, inventory=3,
+                                   nodes=[self._node(1, j1, "Step one"), self._node(2, 0, "Approve", "workflow_approval"), self._node(3, j2, "Step two")])
+        try:
+            self.portal.refresh(force=True)
+            a = self.portal.actions[self.nm("Shared inventory flow")]
+            self.assertEqual((a["limit_inv"], a["aap"]["type"]), (3, "workflow"))
+            self.assertIn("portal_limit", a["vars"])
+        finally:
+            self._clean(["Step one", "Step two", "Shared inventory flow"])
+            self.portal.refresh(force=True)
+
+    def test_83_a_workflow_limit_is_refused_naming_the_step(self):
+        fake_aap.STATE["inventories"].append({"id": 52, "name": "Other", "hosts": [], "groups": {}})
+        ok = fake_aap.add_template("job_templates", "Plain step", [], None, limit=True, inventory=3)
+        other = fake_aap.add_template("job_templates", "Own inventory step", [], None, limit=True, inventory=52)
+        nolim = fake_aap.add_template("job_templates", "No limit step", [], None, limit=False, inventory=3)
+        sliced = fake_aap.add_template("job_templates", "Sliced step", [], None, limit=True, inventory=3, slices=3)
+        cases = {
+            "WF two inventories": [self._node(1, ok, "Plain step"), self._node(2, other, "Own inventory step")],
+            "WF nested": [self._node(1, ok, "Plain step"), self._node(2, 77, "Inner flow", "workflow_job")],
+            "WF no limit": [self._node(1, nolim, "No limit step")],
+            "WF sliced": [self._node(1, sliced, "Sliced step")],
+            "WF node limit": [self._node(1, ok, "Plain step", limit="web01")],
+            "WF project sync": [self._node(1, ok, "Plain step"), self._node(2, 5, "Sync it", "project_update")],
+        }
+        for name, nodes in cases.items():
+            fake_aap.add_template("workflow_job_templates", name, ["portal"], None, limit=True, inventory=3, nodes=nodes)
+        try:
+            self.portal.refresh(force=True)
+            why = dict(self.portal.found["skipped"])
+            for name, word in (("WF two inventories", "step 'Plain step' uses inventory 3 and step 'Own inventory step' uses inventory 52"),
+                               ("WF nested", "step 'Inner flow' is a nested workflow"), ("WF no limit", "step 'No limit step' does not take a Limit at launch"),
+                               ("WF sliced", "step 'Sliced step' is a sliced job"), ("WF node limit", "step 'Plain step' has a Limit of its own"),
+                               ("WF project sync", "step 'Sync it' is a project_update step")):
+                self.assertIn(word, why[name], name)
+                self.assertEqual(self.nm(name), "gone", name)
+        finally:
+            self._clean(["Plain step", "Own inventory step", "No limit step", "Sliced step"] + list(cases))
+            self.portal.refresh(force=True)
+
+    def test_84_a_workflow_that_changed_its_inventory_is_refused_at_launch(self):
+        j1 = fake_aap.add_template("job_templates", "Drift step", [], None, limit=True, inventory=3)
+        fake_aap.add_template("workflow_job_templates", "Drift flow", ["portal"], None, limit=True, inventory=3, nodes=[self._node(1, j1, "Drift step")])
+        try:
+            self.portal.refresh(force=True)
+            nm = self.nm("Drift flow")
+            a = self.portal.actions[nm]
+            fake_aap.STATE["inventories"].append({"id": 53, "name": "Moved", "hosts": ["m.example.mil"], "groups": {}})
+            next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == j1)["inventory"] = 53            # the step moved: the form is out of date
+            code, out = self.portal.launch(self.cn, "192.0.2.5", nm, {"portal_limit": ["web01.example.mil"]}, a["sig"])
+            self.assertEqual(code, 409, out)
+            self.assertIn("changed in AAP", out["error"])
+        finally:
+            self._clean(["Drift step", "Drift flow"])
+            self.portal.refresh(force=True)
+
+    def test_86_a_step_with_its_own_limit_or_slices_is_refused_from_both_sides(self):
+        """Codex 1.78.4: a Limit in the step's TEMPLATE or a slice count on the NODE are refused, as the node's Limit and the template's slices are."""
+        from unittest import mock
+        u = {"unified_job_type": "job", "name": "Step"}
+        for node_extra, jt, word in (({}, {"limit": "web*", "ask_limit_on_launch": True, "inventory": 3}, "has a Limit of its own"),
+                                     ({"job_slice_count": 3}, {"ask_limit_on_launch": True, "inventory": 3}, "is a sliced job")):
+            node = dict({"id": 1, "unified_job_template": 9, "summary_fields": {"unified_job_template": u}}, **node_extra)
+            with mock.patch.object(self.portal.aap, "_paged_t", return_value=([node], "", False)), \
+                    mock.patch.object(self.portal.aap, "call", return_value=(200, jt)):
+                inv, why, _t = self.portal.aap.workflow_inventory(1, {"inventory": 3})
+            self.assertIsNone(inv)
+            self.assertIn(word, why)
+
+    def test_89_the_controllers_word_on_approving(self):
+        can = sp.Portal._can_approve
+        self.assertTrue(can({}))                                                           # AAP says nothing: shown, and AAP refuses at the decision if need be
+        self.assertTrue(can({"can_approve_or_deny": True}))
+        self.assertFalse(can({"can_approve_or_deny": False, "summary_fields": {"user_capabilities": {"approve": True}}}))
+        self.assertFalse(can({"summary_fields": {"user_capabilities": {"approve": False}}}))
+        self.assertTrue(can({"summary_fields": {"user_capabilities": {"approve": True}}}))
+
+    def test_90_a_node_inventory_its_template_no_longer_accepts_is_refused(self):
+        from unittest import mock
+        u = {"unified_job_type": "job", "name": "Step"}
+        node = {"id": 1, "unified_job_template": 9, "inventory": 7, "summary_fields": {"unified_job_template": u}}
+        jt = {"ask_limit_on_launch": True, "inventory": 3, "ask_inventory_on_launch": False}
+        with mock.patch.object(self.portal.aap, "_paged_t", return_value=([node], "", False)), \
+                mock.patch.object(self.portal.aap, "call", return_value=(200, jt)):
+            inv, why, _t = self.portal.aap.workflow_inventory(1, {"inventory": 3})
+        self.assertIsNone(inv)
+        self.assertIn("no longer accepts", why)
+        jt["ask_inventory_on_launch"] = True                                                 # now the node's own is the one
+        with mock.patch.object(self.portal.aap, "_paged_t", return_value=([node], "", False)), \
+                mock.patch.object(self.portal.aap, "call", return_value=(200, jt)):
+            self.assertEqual(self.portal.aap.workflow_inventory(1, {"inventory": 3})[0], 7)
+
+    def test_88_a_transient_inventory_read_keeps_the_catalog(self):
+        from unittest import mock
+        self.portal.aap.inv_names.pop(777, None)
+        with mock.patch.object(self.portal.aap, "call", return_value=(503, {})):
+            name, why, tr = self.portal.aap._inventory_ok(777, set())
+        self.assertEqual((name, tr), ("", True))
+        self.assertIn("could not be read just now", why)
+        self.assertNotIn(777, self.portal.aap.inv_names)                                    # not remembered as "cannot read"
+
+    def test_85_the_reason_names_what_the_template_asks_for(self):
+        fake_aap.add_template("job_templates", "Needs inventory", ["portal"], None, needs_inventory=True)
+        fake_aap.add_template("job_templates", "Needs credential", ["portal"], None, needs_credential=True)
+        fake_aap.add_template("job_templates", "Needs password", ["portal"], None, password_credential="Machine - ssh")
+        try:
+            self.portal.refresh(force=True)
+            why = dict(self.portal.found["skipped"])
+            self.assertIn("an inventory (it has none, or Prompt on launch for Inventory - ask_inventory_on_launch - is ticked without one) at launch", why["Needs inventory"])
+            self.assertIn("a credential (Prompt on launch for Credentials - ask_credential_on_launch - is ticked, or it has none) at launch", why["Needs credential"])
+            self.assertIn('a password for credential "Machine - ssh" at launch', why["Needs password"])
+            self.assertEqual(sp.launch_needs({"inventory_needed_to_start": True, "credential_needed_to_start": True}).count(" and "), 1)
+            self.assertEqual(sp.launch_needs({}), "")
+        finally:
+            self._clean(["Needs inventory", "Needs credential", "Needs password"])
+            self.portal.refresh(force=True)
 
     def test_42_a_cleared_optional_text_is_an_answer(self):
         a = self.portal.actions[self.nm("Health check - Linux")]
@@ -1975,7 +2255,7 @@ class Found(unittest.TestCase):
         code, h, _ = self.get("/?q=nothing-matches-this")
         self.assertIn(">0 of ", h)
         code, h, _ = self.get("/?q=health+check")
-        self.assertRegex(h, r'<li data-wf="0" data-failed="0" data-q="[^"]*health check[^"]*">')
+        self.assertRegex(h, r'<li data-wf="0" data-failed="0" data-q="[^"]*health check[^"]*" data-name="[^"]+" data-title="[^"]+">')
 
     def test_72_details(self):
         name = self.nm("Health check - Linux")
@@ -3405,6 +3685,157 @@ class Follow1783(unittest.TestCase):
         cfg2 = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "x"})
         P.found = dict(P.found, labelled=0)
         self.assertNotIn("Nothing labelled yet", sp.why_panel(cfg2, P()))                                   # no publish organization: no line
+
+
+class Areas1784(unittest.TestCase):
+    """1.78.4: a found template's area - label, playbook (job catalog), your rule, name, Other - and where it came from."""
+
+    def test_1_the_order(self):
+        pa = {"playbooks/health_check.yml": "Linux"}
+        rl = [("Special - *", "Mine"), ("Linux - *", "Rule Linux")]
+        f = rules.area_for
+        self.assertEqual(f("Linux - x", "playbooks/health_check.yml", "Labelled", pa, rl), ("Labelled", "label"))          # 1. the label
+        self.assertEqual(f("Special - x", "playbooks/health_check.yml", "", pa, rl), ("Linux", "playbook"))              # 2. the playbook's area
+        self.assertEqual(f("Linux - x", "playbooks/other.yml", "", pa, rl), ("Rule Linux", "your rule"))                 # 3. your rule beats the name's
+        self.assertEqual(f("Linux - x", "playbooks/other.yml", "", pa, []), ("Linux", "name"))                           # 4. the name
+        self.assertEqual(f("Something else", "playbooks/other.yml", "", pa, rl), ("", ""))                               # 5. none: Other
+        self.assertEqual(f("Special - x", "x.yml", "", pa, rl), ("Mine", "your rule"))
+        self.assertEqual(f("x", "playbooks/health_check.yml", "  ", pa, []), ("Linux", "playbook"))                      # a blank label says nothing
+
+    def test_2_the_playbook_by_path_or_name(self):
+        pa = {"playbooks/health_check.yml": "Linux", "backup.yml": "Disk & services"}
+        self.assertEqual(rules.area_for("x", "playbooks/health_check.yml", "", pa)[0], "Linux")
+        self.assertEqual(rules.area_for("x", "health_check.yml", "", pa)[0], "Linux")                                  # a template whose playbook is at the project's root
+        self.assertEqual(rules.area_for("x", "playbooks/backup.yml", "", pa)[0], "Disk & services")                  # by the file's name
+        self.assertEqual(rules.area_for("x", "", "", pa), ("", ""))
+
+    def test_3_your_rules_are_globs_first_match_wins_any_case(self):
+        rl = [("vm *", "A"), ("VM *", "B"), ("*patch?", "C")]
+        self.assertEqual(rules.area_for("VM - rightsize", "", "", None, rl), ("A", "your rule"))
+        self.assertEqual(rules.area_for("Weekly patch1", "", "", None, rl), ("C", "your rule"))
+        self.assertEqual(rules.area_for("Weekly patch12", "", "", None, rl), ("", ""))                                # ? is one character
+        self.assertEqual(rules.area_for("a.b", "", "", None, [("a.b", "X")]), ("X", "your rule"))                       # a dot is a dot
+        self.assertEqual(rules.area_for("axb", "", "", None, [("a.b", "X")]), ("", ""))
+
+    def test_4_the_built_in_prefixes(self):
+        for name, want in (("Linux - health", "Linux"), ("Windows - health", "Windows"), ("VMware - deploy", "VMware"), ("VM - ask", "VMware"), ("ACT - triage", "ACT"),
+                           ("STIG recheck", "STIG"), ("stig - fix", "STIG"), ("AAP - set up", "Admin"), ("fapolicyd daily", "fapolicyd"), ("Renew the certificate now", "Certificates"),
+                           ("Certificates due", "")):
+            self.assertEqual(rules.area_for(name)[0], want, name)
+
+    def test_5_the_rules_are_checked_naming_the_setting(self):
+        ok = rules.site_portal_area_rules([{"match": "Linux - *", "area": " Linux "}])
+        self.assertEqual((ok["problems"], ok["rules"]), ([], [("Linux - *", "Linux")]))
+        for bad in ("x", [{"match": "a"}], [{"area": "A"}], [{"match": "", "area": "A"}], [{"match": "a", "area": "x" * 60}], [{"match": "a", "area": "{{ x }}"}], ["a"]):
+            r = rules.site_portal_area_rules(bad)
+            self.assertTrue(r["problems"] and all("portal_area_rules" in x for x in r["problems"]), bad)
+        self.assertEqual(rules.site_portal_area_rules(None), {"rules": [], "problems": []})
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        self.assertIn("portal_area_rules is not right - nothing was changed", y)
+        self.assertIn("aap/job_templates.yml", y)                                                                      # read when the repository has it, skipped otherwise
+        self.assertIn('PORTAL_AREA_RULES: "{{ portal_area_rules | default([]) | to_json }}"', y)
+
+    def test_6_in_discovery_and_the_details(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "actions.json"), "w") as fh:
+            json.dump({"actions": {}}, fh)
+        cfg = sp.Config({"PORTAL_DATA": os.path.join(d, "data"), "PORTAL_REPORTS": d, "PORTAL_ACTIONS": os.path.join(d, "actions.json"), "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                         "PORTAL_AAP_TOKEN": "x", "PORTAL_AREA_RULES": json.dumps([{"match": "Mine - *", "area": "Custom"}]),
+                         "PORTAL_PLAYBOOK_AREAS": json.dumps({"playbooks/cat.yml": "Reports"})})
+
+        def tpl(i, name, playbook, *labels):
+            return {"id": i, "name": name, "playbook": playbook, "survey_enabled": False, "ask_limit_on_launch": False,
+                    "summary_fields": {"labels": {"count": len(labels) + 1, "results": [{"name": "portal"}] + [{"name": l} for l in labels]}}}
+
+        def route(m, path, body):
+            if path.startswith("job_templates/?role_level"):
+                return page([tpl(1, "Anything", "playbooks/cat.yml"), tpl(2, "Mine - one", "playbooks/z.yml"), tpl(3, "Linux - two", "playbooks/z.yml"),
+                             tpl(4, "Odd", "playbooks/z.yml"), tpl(5, "Tagged", "playbooks/cat.yml", "portal-area:Chosen")])
+            if path.startswith("workflow_job_templates/?role_level"):
+                return page([])
+            if path.endswith("/launch/"):
+                return 200, {}
+            return 404, {"detail": "no"}
+        a = sp.Aap(cfg, api=StubApi(route))
+        a.inv_id = 3
+        out = a.discover({})
+        got = dict((x["aap"]["name"], (x["area"], x["area_from"])) for x in out["actions"].values())
+        self.assertEqual(got, {"Anything": ("Reports", "playbook"), "Mine - one": ("Custom", "your rule"), "Linux - two": ("Linux", "name"), "Odd": ("", ""),
+                               "Tagged": ("Chosen", "label")})
+        acts = dict((x["aap"]["name"], x) for x in out["actions"].values())
+        self.assertIn("Area: Chosen (from its portal-area: label)", sp.area_line(acts["Tagged"]))
+        self.assertIn("Area: Reports (from its playbook's area in the job catalog)", sp.area_line(acts["Anything"]))
+        self.assertIn("Area: Custom (from your rule (portal_area_rules))", sp.area_line(acts["Mine - one"]))
+        self.assertIn("Area: Linux (from its name)", sp.area_line(acts["Linux - two"]))
+        self.assertIn("Area: Other (no label, rule or name says", sp.area_line(acts["Odd"]))
+        self.assertIn("(from the actions file)", sp.area_line({"area": "STIG", "discovered": False}))
+        self.assertEqual(sp.Config({"PORTAL_AREA_RULES": "not json"}).area_rules, [])                                  # a wrong setting is dropped, never a crash
+        shutil.rmtree(d, ignore_errors=True)
+
+
+class OffState1784(unittest.TestCase):
+    """1.78.4: what can be started and what cannot look different in every look; the text passes WCAG AA, light and dark."""
+
+    @staticmethod
+    def lum(h):
+        h = h.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        r, g, b = [int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+        f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4          # noqa: E731
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+    def ratio(self, a, b):
+        la, lb = sorted((self.lum(a), self.lum(b)), reverse=True)
+        return (la + 0.05) / (lb + 0.05)
+
+    def test_1_the_off_card_and_the_available_card_are_styled_apart(self):
+        with open(os.path.join(FILES, "static", "portal.css")) as fh:
+            c = fh.read()
+        self.assertIn(".tcard:not(.off){border-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent),var(--shadow)}", c)
+        self.assertIn(".tcard:not(.off) .btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}", c)
+        off = re.search(r"\.tcard\.off\{[^}]*\}", c).group(0)
+        self.assertIn("border:1px dashed", off)
+        self.assertIn("background:var(--card-strong)", off)
+        rules = " ".join(re.findall(r"\.tcard\.off[^{]*\{[^}]*\}", c))
+        self.assertNotIn("var(--accent", rules)                                                      # the disabled state never uses the accent colour
+        self.assertNotIn("var(--btn", rules)
+
+    def test_2_the_markup_of_an_off_card(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "actions.json"), "w") as fh:
+            json.dump({"actions": {}}, fh)
+        cfg = sp.Config({"PORTAL_DATA": os.path.join(d, "data"), "PORTAL_REPORTS": d, "PORTAL_ACTIONS": os.path.join(d, "actions.json"), "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                         "PORTAL_AAP_TOKEN": "x", "PORTAL_LABEL": ""})
+        p = sp.Portal(cfg)
+        p.aap.ready = ""
+        mk = lambda n, off: {"name": n, "title": "Title " + n, "area": "STIG", "line": "A line", "wf": False, "labels": [], "approval": False, "off": off, "dialog": True, "last": {}}   # noqa: E731
+        p.catalog = lambda cn: [mk("on", ""), mk("off", "the template is not in AAP (Disk - clean up one mount)")]
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
+        on = re.search(r'<li [^>]*data-name="on".*?</li>', h, re.S).group(0)
+        off = re.search(r'<li [^>]*data-name="off".*?</li>', h, re.S).group(0)
+        self.assertIn("data-run", on)
+        self.assertNotIn("data-run", off)                                                            # no Run on an off card, only Details
+        self.assertIn("data-details", off)
+        self.assertRegex(off, r'<span class="badge off"><svg class="ic"[^>]*>.*?</svg> Off</span>')   # a chip with a lock
+        self.assertIn('<p class="offline" title="the template is not in AAP (Disk - clean up one mount)"><span>Off: the template is not in AAP (Disk - clean up one mount)</span></p>', off)
+        shutil.rmtree(d, ignore_errors=True)
+
+    def test_3_the_text_passes_aa_in_every_look_and_theme(self):
+        with open(os.path.join(FILES, "static", "portal.css")) as fh:
+            c = fh.read()
+        seen = 0
+        for sel, body in re.findall(r'(:root\[data-look="(?:atlas|brief|ops)"\](?:\[data-theme="dark"\])?)\{([^}]*)\}', c):
+            v = dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{3,6})\b", body))
+            if not ("accent" in v and "accent-ink" in v and "muted" in v and "card-strong" in v and "ink" in v):
+                continue
+            seen += 1
+            self.assertGreaterEqual(self.ratio(v["accent"], v["accent-ink"]), 4.5, sel + " Run")               # the filled Run button
+            self.assertGreaterEqual(self.ratio(v["muted"], v["card-strong"]), 4.5, sel + " off text")          # the off card's muted text
+            self.assertGreaterEqual(self.ratio(v["ink"], v["card-strong"]), 4.5, sel + " off reason")         # its reason line and chip
+            self.assertGreaterEqual(self.ratio(v["accent"], v.get("card", "#ffffff")), 3.0, sel + " border")   # the border against the card (a graphic: 3:1)
+        self.assertGreaterEqual(seen, 4)                                                                     # atlas and ops, light and dark (brief's tokens are not all plain hex)
 
 
 class Motion1783(unittest.TestCase):

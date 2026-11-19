@@ -60,13 +60,15 @@ PAGE_CAP = int(os.environ.get("FAKE_AAP_PAGE_CAP", "200"))          # the bigges
 AUDITOR = os.environ.get("FAKE_AAP_AUDITOR", "1") != "0"          # the account's Auditor role of an organization (0: not given)
 
 
-def add_template(kind, name, labels=(), spec=None, limit=False, execute=True, description="", tid=None, many_labels=0, needs_inventory=False, inventory=3):
+def add_template(kind, name, labels=(), spec=None, limit=False, execute=True, description="", tid=None, many_labels=0, needs_inventory=False, inventory=3,
+                 ask_inventory=False, slices=1, needs_credential=False, password_credential="", nodes=None):
     """1.78.0: a template the account may (execute=True) or may not run, with its labels and a survey spec ([{variable, type, ...}]) -> its id.
     many_labels: that many more labels (AAP lists only 10 of them in a row; the rest are at <kind>/<id>/labels/)."""
     tid = tid or new_id()
     t = {"id": tid, "name": name, "ask_variables_on_launch": False, "ask_limit_on_launch": bool(limit), "survey_enabled": spec is not None,
          "labels": ["extra-%d" % i for i in range(many_labels)] + list(labels), "execute": execute, "description": description,
-         "spec": spec, "survey": [q["variable"] for q in (spec or [])], "needs_inventory": needs_inventory, "inventory": inventory}
+         "spec": spec, "survey": [q["variable"] for q in (spec or [])], "needs_inventory": needs_inventory, "inventory": inventory,
+         "ask_inventory": ask_inventory, "slices": slices, "needs_credential": needs_credential, "password_credential": password_credential, "nodes": list(nodes or [])}
     STATE["templates"][kind].append(t)
     return tid
 
@@ -76,6 +78,7 @@ def row_of(t):
     return {"id": t["id"], "name": t["name"], "description": t.get("description", ""), "survey_enabled": t["survey_enabled"],
             "ask_limit_on_launch": t["ask_limit_on_launch"], "ask_variables_on_launch": t["ask_variables_on_launch"],
             "inventory": t.get("inventory", 3), "playbook": t.get("playbook", "a.yml"), "ask_inventory_on_launch": bool(t.get("ask_inventory")),
+            "job_slice_count": t.get("slices", 1),
             "summary_fields": {"labels": {"count": len(labs), "results": labs[:10]}}}
 
 
@@ -164,6 +167,13 @@ def view(j):
             out["artifacts"]["act_triage_finding"] = {"next_action": ev["next_action"]}
     if j["type"] == "workflow_job":
         out["workflow_job_template"] = j["template"]
+        out["launch_type"] = j.get("launch_type", "manual")
+        sf = {}
+        if j.get("schedule"):
+            sf["schedule"] = {"name": j["schedule"]}
+        if j.get("created_by"):
+            sf["created_by"] = {"username": j["created_by"]}
+        out["summary_fields"] = sf
     return out
 
 
@@ -332,7 +342,15 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"spec": t["spec"] if t.get("spec") is not None else [{"variable": v} for v in t.get("survey", [])]})
             out = {k: t[k] for k in ("ask_variables_on_launch", "ask_limit_on_launch", "survey_enabled")}
             out["inventory_needed_to_start"] = bool(t.get("needs_inventory"))
+            out["credential_needed_to_start"] = bool(t.get("needs_credential"))
+            if t.get("password_credential"):                                   # 1.78.4: a credential that asks for a password at launch
+                out["passwords_needed_to_start"] = ["ssh_password"]
+                out["defaults"] = {"credentials": [{"id": 9, "name": t["password_credential"], "passwords_needed": ["ssh_password"]}]}
             return self._send(200, out)
+        mi = re.match(r"^inventories/(\d+)/$", p)
+        if mi:                                                           # 1.78.4: one inventory (the portal reads the name of the one a Limit is checked against)
+            inv = next((i for i in STATE["inventories"] if i["id"] == int(mi.group(1)) and not i.get("unreadable")), None)
+            return self._send(200, {"id": inv["id"], "name": inv["name"]}) if inv else self._send(403, {"detail": "You do not have permission to perform this action."})
         if p == "inventories/":
             rows = [{"id": i["id"], "name": i["name"]} for i in STATE["inventories"] if i["name"] == q.get("name")]
             return self._send(200, {"count": len(rows), "results": rows})
@@ -346,16 +364,21 @@ class H(BaseHTTPRequestHandler):
         m = re.match(r"^inventories/(\d+)/groups/$", p)
         if m:
             inv = next((i for i in STATE["inventories"] if i["id"] == int(m.group(1))), {"groups": {}})
-            rows = [{"id": 2000 + n, "name": g} for n, g in enumerate(sorted(inv.get("groups", {})))]
+            base = 2000 if inv is STATE["inventories"][0] else 2000 + int(inv.get("id", 0)) * 100               # a group id is its inventory's, so two inventories can have groups
+            rows = [{"id": base + n, "name": g} for n, g in enumerate(sorted(inv.get("groups", {})))]
             if q.get("name"):
                 rows = [r for r in rows if r["name"] == q["name"]]
             return self._paged_list(q, "inventories/%s/groups/" % m.group(1), rows)
         m = re.match(r"^groups/(\d+)/all_hosts/$", p)
         if m:
-            inv = STATE["inventories"][0]
-            names = sorted(inv.get("groups", {}))
-            g = names[int(m.group(1)) - 2000] if 0 <= int(m.group(1)) - 2000 < len(names) else None
-            return self._paged_list(q, p, [{"name": h} for h in sorted(inv["groups"].get(g, []))])
+            gid, hosts = int(m.group(1)), []
+            for k, inv in enumerate(STATE["inventories"]):
+                base = 2000 if k == 0 else 2000 + int(inv.get("id", 0)) * 100
+                names = sorted(inv.get("groups", {}))
+                if 0 <= gid - base < len(names):
+                    hosts = sorted(inv["groups"].get(names[gid - base], []))
+                    break
+            return self._paged_list(q, p, [{"name": h} for h in hosts])
         if p == "unified_jobs/" and q.get("id__in"):                  # 1.78.0: the Jobs page's list, one call
             rows = [view(STATE["jobs"][int(i)]) for i in q["id__in"].split(",") if i.isdigit() and int(i) in STATE["jobs"]]
             return self._send(200, {"count": len(rows), "results": rows})
@@ -419,9 +442,10 @@ class H(BaseHTTPRequestHandler):
                 if q.get("status") and a["status"] != q["status"]:
                     continue
                 wf = STATE["jobs"][a["workflow"]]
-                rows.append({"id": a["id"], "name": a["name"], "status": a["status"], "created": iso(a["created"]),
-                             "approval_expiration": None,
-                             "summary_fields": {"source_workflow_job": {"id": wf["id"], "name": wf["name"], "status": job_status(wf)}}})
+                sf = {"source_workflow_job": {"id": wf["id"], "name": wf["name"], "status": job_status(wf)}}
+                sf["user_capabilities"] = dict(a["caps"]) if a.get("caps") is not None else {"approve": True}      # 1.78.4: what the portal's account may do with it (AAP always says)
+                rows.append({"id": a["id"], "name": a["name"], "description": a.get("description", ""), "status": a["status"], "created": iso(a["created"]),
+                             "approval_expiration": iso(a["expires"]) if a.get("expires") else None, "summary_fields": sf})
             return self._send(200, {"count": len(rows), "results": rows})
         return self._send(404, {"detail": "Not found."})
 

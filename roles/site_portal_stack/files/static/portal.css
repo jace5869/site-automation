@@ -239,6 +239,29 @@ textarea.hosts{min-height:84px}
 .grp{margin-top:clamp(18px,2vw,28px)}
 .grp:first-child{margin-top:4px}
 .grp[hidden]{display:none}
+.grp>h2{cursor:default}.js-on .grp>h2{cursor:pointer}
+.grp>h2 .chev{font-size:12px;color:var(--muted);width:14px;display:inline-block}
+.grp.folded:not(.peek)>ul{display:none}
+.grp.pinned>h2{color:var(--ink)}
+.tcard .top .pin{margin-left:auto;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:6px}
+.tcard .top .pin:hover{color:var(--ink);background:var(--card-strong)}
+.tcard .top .pin.on{color:var(--warning)}
+.tcard.off .top .pin{display:none}
+/* 1.78.4: the live badges and toasts, the keyboard list, a locked approval */
+.nav .bdg,.appbar .nav a .bdg{display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font:700 11px/1 var(--mono);padding:0 5px;margin-left:6px}
+.nav a[href$="approvals"] .bdg{background:var(--warning);color:#fff}
+.toasts{position:fixed;right:20px;bottom:20px;z-index:50;display:grid;gap:10px;width:min(340px,calc(100vw - 40px))}
+.toast{background:var(--card-solid);border:1px solid var(--edge);border-left:4px solid var(--ok);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.22);padding:12px 36px 12px 14px;position:relative}
+.toast.bad{border-left-color:var(--critical)}
+.toast b{display:block;font-size:14px}.toast p{margin:3px 0 6px;font-size:13px;color:var(--muted)}.toast a{font-weight:650;font-size:13px}
+.toast .tx{position:absolute;right:6px;top:4px;border:0;background:none;font-size:20px;line-height:1;color:var(--muted);cursor:pointer;padding:2px 6px}
+.keys{position:fixed;left:50%;top:90px;transform:translateX(-50%);width:min(420px,calc(100vw - 32px));background:var(--card-solid);border:1px solid var(--edge);border-radius:14px;box-shadow:0 16px 40px rgba(0,0,0,.25);padding:16px 20px;z-index:60}
+.keys h3{margin:0 0 8px}.keys dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:13.5px}.keys dd{margin:0}
+.keys kbd{font:600 12px var(--mono);border:1px solid var(--edge);border-bottom-width:2px;border-radius:6px;padding:1px 7px}
+tr.locked td{color:var(--muted);background:var(--card-strong)}
+tr.locked td b,tr.locked td a{color:var(--ink)}
+tr.locked .lockline{display:inline-flex;gap:6px;align-items:flex-start;white-space:normal;color:var(--ink)}
+@media print{.toasts,.keys,.bdg{display:none}}
 .grp>h2{margin:0;padding:6px 0 12px;font-family:var(--display);font-size:clamp(17px,1.3vw,20px);font-weight:650;letter-spacing:-.015em;display:flex;align-items:baseline;gap:10px}
 .grp>h2 .count{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--muted)}
 details.hlp{margin:0 0 14px;padding:0}
@@ -276,6 +299,18 @@ details.hlp code{font-family:var(--mono);font-size:12.5px}
 .ico{display:inline-flex;width:34px;height:34px;border-radius:10px;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent-ink);flex:none}
 .ico svg{width:18px;height:18px}
 .tcard[hidden],.acts.cols3>li[hidden]{display:none}
+/* 1.78.4: what can be started and what cannot look different in every look. Available: a solid accent border and top bar, a filled Run. Off: a neutral grey surface, a dashed
+   border, muted ink, a lock chip and its reason on one line, no Run; the accent colour is never used for it. */
+.tcard:not(.off){border-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent),var(--shadow)}
+.tcard:not(.off) .btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.tcard:not(.off) .btn.pri:hover{filter:brightness(.9)}
+.tcard.off{background:var(--card-strong);border:1px dashed var(--muted);box-shadow:none}
+.tcard.off h3,.tcard.off p,.tcard.off .meta,.tcard.off .ty{color:var(--muted)}
+.tcard.off .ico{background:var(--line);color:var(--muted)}
+.tcard.off .btn{background:transparent;color:var(--ink);border-color:var(--muted)}
+.tcard.off .badge.off{display:inline-flex;align-items:center;gap:4px;border-style:solid;border-color:var(--muted);background:transparent;color:var(--ink)}
+.tcard.off .badge.off svg{width:12px;height:12px}
+.tcard.off p.offline{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;color:var(--ink)}
 dialog.dlg{width:min(640px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);padding:22px 24px}
 dialog.dlg::backdrop{background:rgba(10,12,16,.55)}
 dialog.dlg h2{margin:0 0 4px;font-family:var(--display);font-size:20px}
