@@ -466,6 +466,10 @@ def _point_actions(merged, names, extras):
             continue
         a = dict(merged[action])
         a["aap"] = dict(a.get("aap") or {}, name=name.strip(), **({"type": typ} if typ else {}))
+        if a.get("approval") and a["aap"].get("type") != "workflow":
+            problems.append("portal_aap_names: %r needs an approval, and only a workflow has an approval step: point it at a workflow of yours (a job template "
+                            "would start with no approval while the card says there is one)" % action)
+            continue
         merged[action] = a
         pointed[action] = (a["aap"].get("type"), a["aap"]["name"])
     if pointed:

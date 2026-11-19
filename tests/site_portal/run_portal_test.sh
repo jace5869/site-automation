@@ -137,7 +137,11 @@ if deploy -e '{"portal_aap_names": {"no_such_action": "x"}}'; then fail "portal_
 elif grep -q "portal_aap_names: 'no_such_action' is not one of the actions" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "portal_aap_names with a name that is no action: refused before anything is written, said"
 else fail "portal_aap_names refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
-if deploy -e '{"portal_aap_names": {"stig_recheck": "Same", "ckl_import": {"type": "job", "name": "Same"}}}'; then fail "two actions on one template refused" "$(tail -20 "$work/out.txt")"
+if deploy -e '{"portal_aap_names": {"ckl_import": {"type": "job", "name": "Our job"}}}'; then fail "an approval action on a job template refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "needs an approval, and only a workflow has an approval step" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_aap_names: an action with an approval on a job template: refused, said"
+else fail "portal_aap_names approval refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"stig_recheck": {"type": "job", "name": "Same"}, "act_triage": {"type": "job", "name": "Same"}}}'; then fail "two actions on one template refused" "$(tail -20 "$work/out.txt")"
 elif grep -q "would all run the job template 'Same'" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "portal_aap_names: two actions on one template: refused, said"
 else fail "portal_aap_names clash refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi

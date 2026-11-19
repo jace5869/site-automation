@@ -60,7 +60,6 @@ results: {description: "Each object: {kind (template|workflow|grant|schedule), n
 problems: {description: What could not be done (a project, inventory or credential not found, AAP not reached)., type: list}
 '''
 
-import fnmatch
 import hashlib
 import json
 import re
@@ -428,13 +427,19 @@ class Setup(object):
     # ---- 1.78.1: put your own jobs on the portal by name patterns (the label + Execute), take them off again (the label only)
     @staticmethod
     def _matches(pattern, name):
-        return fnmatch.fnmatchcase(str(name).lower(), str(pattern).strip().lower())
+        """The whole name matches the pattern, any case. Only * (any text) and ? (one character) are special: a [ ] is the character itself."""
+        rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in str(pattern).strip().casefold())
+        return re.fullmatch(rx, str(name).casefold(), re.DOTALL) is not None
 
     def publish_plan(self):
         """Read-only, before any change -> {publish: [(api_kind, row, [areas])], unpublish: [(api_kind, row)]} or None when a setting is wrong
         (a problem is said and nothing is changed): a pattern that is not text, one that matches more than publish_max, a template in both lists."""
         p = self.p
         pubs, unpubs, areas = list(p.get("publish") or []), list(p.get("unpublish") or []), dict(p.get("publish_area") or {})
+        mx = p.get("publish_max")
+        if isinstance(mx, bool) or not isinstance(mx, int) or not 1 <= mx <= 500:
+            self.problems.append("portal_publish_max must be a number from 1 to 500, not %r (nothing was changed)" % (mx,))
+            return None
         if not pubs and not unpubs:
             return {"publish": [], "unpublish": [], "pats": {}}
         for label, pats in (("portal_publish_templates", pubs), ("portal_unpublish_templates", unpubs)):
@@ -448,7 +453,6 @@ class Setup(object):
         rows = []
         for api_kind in ("job_templates", "workflow_job_templates"):
             rows += [(api_kind, r) for r in self.all(api_kind + "/")]
-        mx = max(1, int(p.get("publish_max") or 50))
         found = {}
         for label, pats in (("portal_publish_templates", pubs), ("portal_unpublish_templates", unpubs)):
             for pat in pats:
@@ -497,11 +501,12 @@ class Setup(object):
             for api_kind, row in plan["publish"]:
                 name, oid = str(row.get("name")), int(row["id"])
                 org = row.get("organization") or ((row.get("summary_fields") or {}).get("organization") or {}).get("id")
+                if not org:                                   # a label is held by an organization: without one, nothing of it is done
+                    self.note("label", "%s: %s" % (name, label), "skipped", why="no organization (nothing was done for it)")
+                    continue
                 have = [n for _i, n in self.labels_on(api_kind, row)]
                 if label in have:
                     self.note("label", "%s: %s" % (name, label), "unchanged", why="already done")
-                elif not org:
-                    self.note("label", "%s: %s" % (name, label), "skipped", why="it has no organization to hold the label")
                 else:
                     self.write("POST", "%s/%d/labels/" % (api_kind, oid), {"name": label, "organization": int(org)})
                     self.note("label", "%s: %s" % (name, label), "create")
@@ -513,7 +518,7 @@ class Setup(object):
                         self.note("label", "%s: %s" % (name, want), "unchanged", why="already done")
                     elif has_area:
                         self.note("label", "%s: %s" % (name, want), "skipped", why="it is already in the area %r (an area label is never changed here)" % has_area[0][len(prefix):])
-                    elif org:
+                    else:
                         self.write("POST", "%s/%d/labels/" % (api_kind, oid), {"name": want, "organization": int(org)})
                         self.note("label", "%s: %s" % (name, want), "create")
                 if uid:
