@@ -755,6 +755,21 @@ template. If the template (its playbook, variables, survey, Limit prompt or labe
 password at launch, is left out. So is a template with a Limit whose inventory is not `portal_inventory`, a workflow with a Limit (use a job template), and one whose launch settings cannot be read. The deploy lists each one with the reason. A built-in action with the same template name wins:
 there is one card, and the deploy says so.
 
+**When AAP does not answer.** A read of AAP that fails for a moment (a time-out, a server error, too many calls), or a list that does not add up
+(a page without its rows, fewer rows than AAP counted), is never taken as "the template is gone". The portal keeps the cards and the host list it
+had from the last whole read, says so on the page, and asks again in a few seconds. A refusal (403, 404) is an answer: the template is left out.
+
+**Limits.** A person's page and progress calls to the portal share one limit of 90 a minute (`/jobs`, `/jobs/N`, `/api/jobs/N` and the
+progress call each ask AAP). **Refresh** reads AAP once a minute for everyone: a click inside that minute shows *Refreshed N s ago* and the cards
+the last read made. Two tabs on one running job count its events once.
+
+**Hosts.** Only enabled hosts of `portal_inventory` can be picked. A host named `all` or `ungrouped` (any case) is never sent in a Limit, because
+Ansible reads those names as groups. A Limit is always the list of hosts the portal counted, so a name cannot mean more than one host.
+
+**When AAP refuses a start.** The person sees the status and a short reason of the portal's own (*AAP did not accept the answers*, *the portal's
+AAP account may not start it*). AAP's own words can repeat what was typed, so they are not shown. The log keeps them with every answer replaced
+by *(answer)*, and not at all when the form has a password.
+
 **Safety.** The account keeps **Execute** and **Organization Auditor** only, never a write role. Approval, the rate limit,
 *Running already* and the job pages work as for every other action.
 

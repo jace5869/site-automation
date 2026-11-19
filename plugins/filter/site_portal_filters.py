@@ -21,6 +21,7 @@ An action (roles/site_portal_stack/files/actions.yml, or the setting portal_acti
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import json
 import re
 import unicodedata
 
@@ -45,6 +46,15 @@ VAR_KEYS = ("kind", "values", "max", "pattern", "label", "required", "default")
 PATTERN_MAX = 300                  # a text var's pattern: this many characters at most
 # what a host name may hold: letters, digits, . - _ (an inventory name); nothing a limit pattern reads as more
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+# names Ansible reads as more than one host: a pattern, or an implicit group (a host of this name would put "all" in a Limit)
+RESERVED_HOSTS = ("all", "ungrouped")
+
+
+def host_usable(name):
+    """A host name that may go into a Limit as it is: plain characters (no pattern: * ? [ ] , : ! & ~ or a space), and not the name of an
+    implicit group - 'all', 'ungrouped' (any case)."""
+    n = str(name or "")
+    return bool(HOST_RE.fullmatch(n)) and n.lower() not in RESERVED_HOSTS
 
 
 def templating(value):
@@ -234,7 +244,7 @@ def value_problem(var, value):
             return "is not in the expected form"
         return ""
     if k == "inventory_host":
-        return "" if HOST_RE.match(value) else "is not a host name (letters, digits, dots, - and _)"
+        return "" if host_usable(value) else "is not a host name (letters, digits, dots, - and _; not all or ungrouped)"
     if k == "password":                 # 1.78.0: never echoed - the message names no part of the value
         if len(value) > var["max"]:
             return "is longer than %d characters" % var["max"]
@@ -511,7 +521,7 @@ def survey_vars(spec):
         dflt = q.get("default")
         mn, mx = _num(q.get("min")), _num(q.get("max"))
         if typ in ("text", "textarea", "password"):
-            v.update(kind="password" if typ == "password" else "text", max=int(mx) if mx is not None and mx >= 1 else 1024,
+            v.update(kind="password" if typ == "password" else "text", max=1024 if mx is None else max(0, int(mx)),      # 1024 only when AAP gives no maximum
                      min=int(mn) if mn is not None and mn > 0 else 0, multiline=typ == "textarea")
             v["max"] = min(v["max"], TEXT_CEILING)
             v["empty_ok"] = typ != "password" and not v["required"] and v["min"] == 0          # a cleared optional field is an answer: "" (not the default)
@@ -569,6 +579,37 @@ def slug(text, taken=()):
         name = "%s_%d" % (base, n)
         n += 1
     return name
+
+
+_REASONS = {400: "AAP did not accept the answers", 401: "the portal's AAP account was refused", 403: "the portal's AAP account may not start it",
+            404: "AAP does not have it any more", 405: "AAP would not take it", 409: "AAP is busy with it or it is not ready to start",
+            429: "AAP has too many calls just now"}
+
+
+def launch_failure_reason(code):
+    """What a person is told when AAP did not start a job: the status, and a short reason of the portal's own words. Never AAP's text (it can
+    repeat what was submitted, a password too)."""
+    try:
+        c = int(code)
+    except (TypeError, ValueError):
+        c = 0
+    return _REASONS.get(c) or ("AAP had a problem on its side" if c >= 500 else "AAP did not start it")
+
+
+def launch_failure_log(action, values, data, limit=300):
+    """What the log keeps of AAP's answer to a refused launch: nothing when the survey asked for a password (the answer can repeat it);
+    otherwise the text with every submitted answer replaced, whole, by (answer)."""
+    vars_ = (action or {}).get("vars") or {}
+    if any(v.get("kind") == "password" for v in vars_.values()):
+        return "(not kept: the form has a password)"
+    text = data if isinstance(data, str) else json.dumps(data, sort_keys=True, default=str)
+    answers = []
+    for v in (values or {}).values():
+        answers += [str(x) for x in (v if isinstance(v, list) else [v])]
+    for a in sorted(set(x for x in answers if x.strip()), key=len, reverse=True):          # the longest first, so a part is not left of a whole
+        for form in (a, json.dumps(a)[1:-1]):                                               # as typed, and as JSON writes it
+            text = text.replace(form, "(answer)")
+    return text[:limit]
 
 
 def mask(action, values):
