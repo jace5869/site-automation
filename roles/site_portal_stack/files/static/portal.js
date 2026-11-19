@@ -90,7 +90,9 @@ function facts(dl, pairs) {
 const qa = (node, sel) => Array.from(Element.prototype.querySelectorAll.call(node, sel));
 function actionPage() {
   const f = $("run");
-  if (!f) return;
+  if (f) initRun(f);
+}
+function initRun(f) {                  // the confirm page's form, or the Run dialog's (the same handler)
   EventTarget.prototype.addEventListener.call(f, "submit", async (ev) => {          // a survey variable can be named like a form property: the form is read with the prototypes
     ev.preventDefault();
     const go = $("go");
@@ -125,114 +127,62 @@ function actionPage() {
   });
 }
 
-// ---- a job, live: the service asks AAP; the page asks the service every few seconds until it is done
-function jobPage() {
-  const box = $("job");
+// ---- the Jobs page (1.78.0): a list on the left (My jobs | All jobs, search, status chips), the job on the right. The server renders both
+// (the page reads the same without scripts); while the job runs this swaps the server's pane in every 3 s - and stops when it says it is done.
+const swapIn = (old, html, sel) => {         // the server's own HTML, parsed as a document (never assigned as markup): the new element replaces the old
+  const fresh = new DOMParser().parseFromString(html, "text/html").querySelector(sel);
+  if (fresh && old && old.parentNode) { old.replaceWith(document.importNode(fresh, true)); return document.querySelector(sel); }
+  return null;
+};
+function jobList() {                         // the chips and the search filter the rows already on the page
+  const box = $("jl");
   if (!box) return;
-  const id = box.dataset.job;
-  const via = box.dataset.via ? "?via=" + encodeURIComponent(box.dataset.via) : "";
-  let wait = 2000;
-  const out = box.querySelector("#j-out pre");
-  const say = (id_, v) => { const n = $(id_); if (n) n.textContent = v === undefined || v === null ? "" : String(v); };
+  const q = $("jq"), rows = $("jrows");
+  let st = "";
+  const apply = () => {
+    const t = (q.value || "").trim().toLowerCase();
+    for (const li of rows.children) li.hidden = !((!st || li.dataset.st === st) && (!t || (li.dataset.q || "").indexOf(t) >= 0));
+    for (const b of $("jchips").children) b.setAttribute("aria-pressed", b.dataset.st === st ? "true" : "false");
+  };
+  q.addEventListener("input", apply);
+  $("jchips").addEventListener("click", (ev) => { const b = ev.target.closest && ev.target.closest("button"); if (b) { st = b.dataset.st; apply(); } });
+}
+function jobsPage() {
+  jobList();
+  document.addEventListener("click", (ev) => {
+    const b = ev.target.closest && ev.target.closest("button");
+    if (!b) return;
+    if (b.dataset.copy && navigator.clipboard) navigator.clipboard.writeText(b.dataset.copy).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); }, () => {});
+    if (b.hasAttribute("data-copylink") && navigator.clipboard) navigator.clipboard.writeText(location.href).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy link"; }, 1500); }, () => {});
+    if (b.hasAttribute("data-print")) window.print();
+  });
+  let pane = $("jd"), wait = 3000;
+  if (!pane || pane.dataset.done !== "0") return;
+  const id = pane.dataset.job, via = pane.dataset.via ? "&via=" + encodeURIComponent(pane.dataset.via) : "";
   async function tick() {
-    let v;
+    if (document.hidden) { setTimeout(tick, wait); return; }                // only while the page is open to be seen
+    let r;
     try {
-      v = await call("api/jobs/" + id + via);
-    } catch (e) {
-      $("j-status").textContent = e.message;
-      $("j-status").className = "v status bad";
-      if (e.status && e.status < 500) return;
-      setTimeout(tick, 10000);
+      r = await fetch(BASE + "jobs/" + encodeURIComponent(id) + "?pane=1" + via, {credentials: "same-origin", headers: {"Accept": "text/html"}});
+    } catch (e) { wait = Math.min(wait * 2, 30000); setTimeout(tick, wait); return; }
+    if (r.status === 429) { wait = 10000; setTimeout(tick, wait); return; }
+    if (!r.ok) return;
+    wait = 3000;
+    const next = swapIn(pane, await r.text(), "#jd");
+    if (!next) return;
+    pane = next;
+    if (pane.dataset.done !== "0") {                                         // finished: no more asking; the list shows its end too
+      try {
+        const l = await fetch(BASE + "jobs?list=1&scope=" + encodeURIComponent($("jl").dataset.scope), {credentials: "same-origin"});
+        if (l.ok) { const n = swapIn($("jl"), await l.text(), "#jl"); if (n) jobList(); }
+      } catch (e) { /* the list is as it was */ }
       return;
     }
-    document.title = (v.name || ("Job " + v.id)) + " - " + (STATUS[v.status] ? STATUS[v.status][2] : v.status);
-    $("j-title").textContent = v.name || ("Job " + v.id);
-    $("j-status").className = "v";
-    $("j-status").replaceChildren(chip(v.status));
-    say("j-when", v.done ? "Finished " + when(v.finished_text) + (v.elapsed ? ", took " + took(v.elapsed) : "") + "."
-                         : v.started ? "Started " + when(v.started_text) + ". This page follows it." : "Waiting to start.");
-    say("j-on", v.limit || "the hosts the " + (v.type === "workflow_job" ? "workflow" : "template") + " chooses");
-    $("j-on").className = v.limit ? "v mono" : "v";
-    say("j-action", (v.action_title || v.action || "") + (v.type === "workflow_job" ? " (workflow)" : ""));
-    say("j-by", v.requested_by || "not through the portal");
-    say("j-asked", when(v.requested_at_text) ? "Asked " + when(v.requested_at_text) : "");
-    const vals = Object.entries(v.values || {}).map(([k, x]) => k + ": " + (String(x).length > 120 ? String(x).slice(0, 120) + "…" : x)).join("; ");
-    say("j-vals", [vals, v.via ? "Step of workflow job " + v.via : ""].filter(Boolean).join(" · "));
-    const aap = $("j-aap");
-    if (v.aap_link) { const link = el("a", "", "Open in AAP"); link.href = v.aap_link; link.rel = "noopener"; aap.replaceChildren(link); }
-    // part C: what came of the fix (its portal_result) and the action ACT names next
-    if (v.result) {
-      const r = {true: ["ok", "s-ok", "Fixed", "ok"], false: ["bad", "s-critical", "Still there", "bad"]}[v.result.fixed] || ["skip", "s-info", "Not checked", "mid"];
-      const card = el("div", "card rc " + r[3]);
-      card.append(mark(r[0], r[1], r[2]));
-      const parts = [];
-      if (v.result.before) parts.push("Before: " + v.result.before);
-      if (v.result.after) parts.push("After: " + v.result.after);
-      if (parts.length) card.append(el("span", "ba", parts.join(" \u2192 ")));
-      if (v.result.summary) card.append(el("p", "", v.result.summary));
-      $("j-result").replaceChildren(card);
-      $("j-result-sec").hidden = false;
-    }
-    if (v.next) {
-      const p = $("j-next");
-      const a = el("a", "btn pri", v.next.label);
-      a.href = v.next.url;
-      p.replaceChildren(el("span", "sub", "ACT suggests next: "), a);
-      p.hidden = false;
-    }
-    if (v.steps) {
-      const sec = $("j-steps");
-      sec.hidden = false;
-      const tb = sec.querySelector("tbody");
-      tb.replaceChildren();
-      for (const s of v.steps) {
-        const tr = el("tr");
-        const td = el("td", "num");
-        if (s.job && s.type === "job") { const a = el("a", "", s.job); a.href = BASE + "jobs/" + s.job + "?via=" + v.id; td.append(a); }
-        else td.textContent = s.job || "";
-        const sc = el("td", "nw"); sc.append(chip(s.status));
-        tr.append(el("td", "", s.name + (s.type === "workflow_approval" ? " (approval)" : "")), sc, td);
-        tb.append(tr);
-      }
-    }
-    if (v.hosts && v.hosts.length) {
-      const sec = $("j-hosts");
-      sec.hidden = false;
-      const tb = sec.querySelector("tbody");
-      tb.replaceChildren();
-      for (const h of v.hosts) {
-        const tr = el("tr", h.failed || h.unreachable ? "hot-critical" : "");
-        tr.append(el("td", "mono", h.host));
-        for (const k of ["ok", "changed", "failed", "unreachable", "skipped"]) tr.append(el("td", "num", h[k]));
-        tb.append(tr);
-      }
-    }
-    if (v.links && v.links.length) {
-      const sec = $("j-links");
-      sec.hidden = false;
-      const ul = sec.querySelector("ul");
-      ul.replaceChildren();
-      for (const l of v.links) { const li = el("li"); const a = el("a", "", l.label + ": " + l.url); a.href = l.url; a.rel = "noopener"; li.append(a); ul.append(li); }
-    }
-    if (typeof v.output === "string") {
-      $("j-out").hidden = false;
-      $("j-more").hidden = !v.output_more;
-      const atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 8;
-      if (out.textContent !== v.output) {
-        out.textContent = v.output || (v.done ? "(no output)" : "(no output yet)");
-        if (atEnd) out.scrollTop = out.scrollHeight;
-      }
-    }
-    if (v.artifacts && Object.keys(v.artifacts).length) {
-      $("j-art").hidden = false;
-      box.querySelector("#j-art pre").textContent = JSON.stringify(v.artifacts, null, 2).slice(0, 50000);
-    }
-    if (!v.done) { setTimeout(tick, wait); wait = Math.min(wait + 1000, 5000); }
+    setTimeout(tick, wait);
   }
-  tick();
+  setTimeout(tick, wait);
 }
 
-// ---- pick a host, then a finding (1.75.3): the typeahead of the host field (without this script the field is a plain one)
 // ---- the host picker (1.78.0): a searchable list of the inventory's hosts and groups, to tick one or many. The server renders a plain
 // multi-select (it works without scripts); this puts the search box, the chips and the list in its place. Every pick is checked again by the service.
 function hostPickers() {
@@ -365,29 +315,77 @@ function manyPage() {
 }
 
 // ---- the Actions page: the status of the jobs you started, live (the same call the job page makes)
-function homePage() {
-  const chips = Array.from(document.querySelectorAll("#started [data-job]"));
-  if (!chips.length) return;
-  async function ask() {
-    let open = 0;
-    for (const c of chips) {
-      if (c.dataset.done) continue;
-      try {
-        const v = await call("api/jobs/" + c.dataset.job);
-        const n = chip(v.status);
-        n.dataset.job = c.dataset.job;
-        if (v.done) n.dataset.done = "1"; else open++;
-        c.replaceWith(n);
-        const tr = n.closest("tr");
-        if (tr) tr.className = v.status === "failed" || v.status === "error" ? "hot-critical" : (v.status === "waiting" || v.status === "pending" ? "hot-warning" : "");
-        chips[chips.indexOf(c)] = n;
-      } catch (e) {
-        c.lastChild.textContent = "Not read";
-      }
+// ---- the Actions page (1.78.0): the tiles and the search filter the cards (links and a form without scripts); Run opens a dialog with the form
+// (fetched from the server, which renders it); Details is a panel. Without scripts: the confirm page and the details page.
+async function fetchFrag(url) {
+  const r = await fetch(url, {credentials: "same-origin", headers: {"Accept": "text/html"}});
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+  const n = doc.querySelector(".dbody");
+  if (!n) throw new Error("no content");
+  return document.importNode(n, true);
+}
+function homeActions() {
+  const grid = $("agrid"), q = $("aq"), tiles = $("ftiles");
+  if (!grid || !q || !tiles) return;
+  const cards = Array.from(grid.children), params = new URLSearchParams(location.search);
+  let show = params.get("show") || "";
+  q.value = params.get("q") || q.value;
+  const apply = () => {
+    const t = q.value.trim().toLowerCase();
+    let n = 0;
+    for (const li of cards) {
+      const d = li.dataset;
+      const ok = (!show || (show === "job" && d.wf === "0") || (show === "workflow" && d.wf === "1") || (show === "failed" && d.failed === "1")) && (!t || (d.q || "").indexOf(t) >= 0);
+      li.hidden = !ok;
+      if (ok) n++;
     }
-    if (open) setTimeout(ask, 10000);
-  }
-  ask();
+    $("acount").textContent = n + " of " + cards.length;
+    for (const a of tiles.children) a.setAttribute("aria-current", a.dataset.show === show ? "true" : "false");
+  };
+  tiles.addEventListener("click", (ev) => { const a = ev.target.closest && ev.target.closest("a[data-show]"); if (!a) return; ev.preventDefault(); show = a.dataset.show; apply(); });
+  q.addEventListener("input", apply);
+  q.form.addEventListener("submit", (ev) => { ev.preventDefault(); apply(); });
+  document.addEventListener("keydown", (ev) => {
+    const tag = (document.activeElement && document.activeElement.tagName) || "";
+    if (ev.key === "/" && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) { ev.preventDefault(); q.focus(); q.select(); }
+  });
+  apply();
+  const dlg = $("dlg"), drawer = $("drawer");
+  if (!dlg || !dlg.showModal) return;                                     // an old browser: the links go to the pages
+  const open = async (box, url, after) => {
+    try {
+      const n = await fetchFrag(url);
+      box.replaceChildren(n);
+      if (after) after(n);
+      if (!box.open) box.showModal();
+    } catch (e) { return false; }
+    return true;
+  };
+  document.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (t === dlg || t === drawer) { t.close(); return; }                 // a click on the dark around it
+    const c = t.closest && t.closest("[data-close]");
+    if (c) { const box = c.closest("dialog"); if (box) { ev.preventDefault(); box.close(); } return; }
+    const run = t.closest && t.closest("a[data-run]");
+    if (run && !run.hasAttribute("data-pick")) {
+      ev.preventDefault();
+      if (drawer.open) drawer.close();
+      const ok = await open(dlg, run.getAttribute("href") + (run.getAttribute("href").indexOf("?") < 0 ? "?embed=1" : "&embed=1"), (n) => { const f = n.querySelector("#run"); if (f) { initRun(f); hostPickers(); } });
+      if (!ok) location.assign(run.getAttribute("href"));
+      return;
+    }
+    const d = t.closest && t.closest("a[data-details]");
+    if (d) {
+      ev.preventDefault();
+      const ok = await open(drawer, d.getAttribute("href") + "?embed=1");
+      if (!ok) location.assign(d.getAttribute("href"));
+    }
+  });
+}
+
+function homePage() {
+  homeActions();
 }
 
 // ---- approvals: the listed workflows waiting; Approve / Deny for the approvers
@@ -475,6 +473,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const p = document.body.dataset.page;
   if (p === "home") homePage();
   if (p === "action") { actionPage(); hostPickers(); pickList(); manyPage(); }
-  if (p === "job") jobPage();
+  if (p === "jobs") jobsPage();
   if (p === "approvals") approvalsPage();
 });

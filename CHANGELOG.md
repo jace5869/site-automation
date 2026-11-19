@@ -26,6 +26,22 @@ Nothing else is required.
 - A card's address is `jt_<AAP id>` or `wf_<AAP id>`; a template (or its survey or Limit prompt) changed after the form was opened is not
   started. A template with a Limit needs `portal_inventory`. A number that is not finite, or a host list that is not text, is a field error.
   A read of AAP that could not finish keeps the cards it had, and says so. A template with a Limit must be a job template that runs on `portal_inventory` (a workflow with a Limit is left out); the Limit is sent as the concrete hosts the portal counted once (never empty, never over `portal_limit_max`), and a form's signature (the template's playbook, variables, prompts and survey) is required; the groups are read again at launch. Approval marks a workflow only: a job template marked for approval is left out, since it starts at once.
+- **The Actions page, Run and Details** (docs/SITE_PORTAL.md, "The Actions page, Run and Details"): a strip (*Connected - AAP: N jobs found*, last
+  refreshed, Refresh), four filter tiles (All, Job templates, Workflows, Last run failed) that are links, a search (**/** jumps to it; name,
+  description, label), and cards with the type, the last run, the labels, **Details** and **Run**. Run opens a dialog with the survey's form,
+  the host picker, who is recorded, Cancel and Launch job (the confirm page without scripts). Details is a panel (a page without scripts): the
+  description, labels, what it asks for, the survey's questions (names and types, never a default) and the last five runs. The Approval chip is on
+  workflows only.
+- **The Jobs page and a job followed live** (docs/SITE_PORTAL.md, "Watching a job run"): a list (My jobs | All jobs, search, status chips) and the
+  job beside it. While it runs the page asks every 3 seconds, only while it is open: *Now - Step 4 of about 12 - Checking free space on web01*
+  (the step estimate is the task count of the template's last good run), a bar, one chip per host (done, running, failed, unreachable), the
+  last 8 events in plain lines, a workflow's steps (waiting for approval with who decides). The banner ends as Succeeded or Failed with what
+  failed and where. A failed line shows the host, the task and the plain cause only (could not connect, timed out, failed), never the module's
+  message; nothing shows the extra variables or a password. The portal makes the calls with its own token, 90 a minute for one person, for the
+  jobs that person may see. "Show technical output" waits for the next update (it needs the redaction of 1.77.0).
+- Tests: `tests/test_site_portal.py` (the event lines and cause classes, what a job has done, the Now line, the estimate, a job followed to its
+  end, who may see it, the rate limit, the Jobs page, the cards, the tiles and the search without scripts, Details, the Run dialog's content,
+  Refresh), `tests/test_portal_fit.py` (19 pages), the portal e2e.
 - Settings: `portal_label`, `portal_discover_seconds`, `portal_label_approval`, `portal_label_area`, `portal_approval_required`, `portal_limit_max`.
 - Tests: `tests/test_site_portal.py` (survey to form, label and Execute filter, paging, the cache, a password never shown, a built-in
   name clash, the card's name replacing a posted `portal_requested_by`), `tests/test_portal_fit.py`, the portal e2e, on ansible-core 2.22 and 2.16.

@@ -35,9 +35,9 @@ class Fit(unittest.TestCase):
         try:
             line = srv.stdout.readline()
             self.assertTrue(line.startswith("READY"), line + srv.stderr.read() if srv.poll() is not None else line)
-            out = subprocess.run([browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--dump-dom", "--virtual-time-budget=30000",
+            out = subprocess.run([browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--dump-dom", "--virtual-time-budget=90000",
                                   "http://127.0.0.1:%d/__fit?w=1280,800" % port], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                 universal_newlines=True, timeout=180).stdout
+                                 universal_newlines=True, timeout=400).stdout
             m = re.search(r"FIT(\[.*\])END", out, re.S)
             self.assertTrue(m, "the fit page did not finish: " + out[-300:])
             return json.loads(m.group(1).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
@@ -48,7 +48,7 @@ class Fit(unittest.TestCase):
     def test_every_page_fits_in_every_look(self):
         for i, look in enumerate(("ops", "atlas", "brief")):
             rows = self.run_look(look, PORT + i)
-            self.assertEqual(len(rows), 14 * 2 * 2, look)                         # fourteen pages, light and dark, two widths
+            self.assertEqual(len(rows), 19 * 2 * 2, look)                         # nineteen pages, light and dark, two widths
             for r in rows:
                 self.assertEqual(r["look"], look, r)
                 self.assertTrue(r["h1"], r)                                       # the page drew (its script ran, its heading is there)

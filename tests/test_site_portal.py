@@ -299,11 +299,19 @@ class Live(unittest.TestCase):
         code, raw, hdr = self.req("/")
         t = raw.decode()
         self.assertEqual(code, 200)
-        heads = re.findall(r'<section class="sec"><h2>(.*?) <span class="count">(\d+)</span>', t)
-        self.assertEqual(heads, [("STIG", "2"), ("Disk &amp; services", "1"), ("ACT", "1"), ("Other", "2")])        # the known areas in their order, Other last
-        self.assertIn('<h3>Import the checklists</h3><span class="badge">Approval</span></div><p>Imports the checklists into STIG Manager.</p>', t)
-        self.assertIn('<h3>Recheck this system</h3></div><p>Checks one host again.</p>', t)
-        self.assertRegex(t, r'<li class="card act off"><div class="top"><h3>A template that takes nothing</h3><span class="badge off">Off</span></div>.*?<span>Off: it does not take extra variables')
+        self.assertIn('class="card strip"', t)                                       # the strip: AAP, when it was read, Refresh
+        self.assertIn("Connected", t)
+        self.assertRegex(t, r"AAP: <b>\d+ jobs? found</b>")
+        self.assertRegex(t, r"Last refreshed \d\d:\d\d")
+        self.assertIn('name="portal-token"', t)
+        self.assertEqual(re.findall(r'data-show="(\w*)"', t), ["", "job", "workflow", "failed"])      # the four tiles, links without scripts
+        self.assertIn('id="aq" name="q"', t)
+        self.assertIn('<h3>Import the checklists</h3></div><div class="meta"><span class="ty">Workflow</span><span class="badge">Approval</span></div><p>Imports the checklists into STIG Manager.</p>', t)
+        self.assertIn('<h3>Recheck this system</h3></div><div class="meta"><span class="ty">Job template</span></div><p>Checks one host again.</p>', t)
+        self.assertRegex(t, r'class="card tcard off"><div class="top"><span class="ico">.*?<h3>A template that takes nothing</h3>.*?<span>Off: it does not take extra variables')
+        self.assertIn('href="/portal/actions/stig_recheck/details" data-details>Details</a>', t)
+        self.assertIn('data-run>Run', t)
+        self.assertIn('<dialog class="dlg" id="dlg"', t)
         self.assertIn('data-look="atlas"', t)
         self.assertIn('id="theme-auto"', t)
         self.assertIn('id="theme-light"', t)
@@ -335,8 +343,8 @@ class Live(unittest.TestCase):
         self.assertIn('id="approvals" data-approver="1"', t)
         self.assertIn('class="note"', t)
         t = sp.job_page(self.cfg, self.portal, "DOE.JANE.Q.1234567890", 77, 0)
-        self.assertIn('id="j-tiles"', t)
-        self.assertIn('id="j-result"', t)
+        self.assertIn('class="card jl"', t)                                             # the Jobs page: the list, and the pane of the job
+        self.assertIn('id="jd"', t)
         js = self.req("/static/portal.js")[1].decode()
         self.assertIn("function homePage", js)
         self.assertIn("approvalsPage", js)
@@ -758,8 +766,9 @@ class Live(unittest.TestCase):
         jid = self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[1]["job_id"]
         v = json.loads(self.req("/api/jobs/%d" % jid)[1])
         self.assertRegex(v["requested_at_text"], r"^\d{4}-\d\d-\d\d \d\d:\d\d E[SD]T$")
-        code, raw, _ = self.req("/")
-        self.assertIn(b"<th>When</th>", raw)                                             # each time says its zone
+        code, raw, _ = self.req("/jobs/%d" % jid)
+        self.assertIn(b"E", raw)                                                         # the Jobs page: a time says its zone (the same shown())
+        self.assertRegex(raw.decode(), r"\d{4}-\d\d-\d\d \d\d:\d\d E[SD]T")
         self.assertEqual(sp.shown(sp.Config({}), "2026-11-15T19:06:30.123456Z"), "2026-11-15 19:06 UTC")
         self.assertEqual(sp.shown(self.cfg, "2026-07-15T19:06:30Z"), "2026-07-15 15:06 EDT")
         self.assertEqual(sp.shown(self.cfg, None), "")
@@ -982,6 +991,65 @@ class Live(unittest.TestCase):
         for v, want in (("", "/"), ("/", "/"), ("/stigman", "/stigman/"), ("stigman/", "/stigman/"), ("//evil.example.mil", "/"),
                         ("/a/../b", "/"), ("/x y", "/")):
             self.assertEqual(sp.Config({"PORTAL_STIGMAN_PATH": v}).stigman_path, want, v)
+
+
+class Plain(unittest.TestCase):
+    """1.78.0: a running job in plain words - the event lines, the cause classes, what a job has done so far, the "Now" line."""
+
+    def e(self, ev, host="web01", task="Disk | Checking free space", changed=False, res=None, counter=1):
+        return {"counter": counter, "event": ev, "host_name": host, "changed": changed, "event_data": {"task": task, "host": host, "res": res or {}}}
+
+    def test_the_lines(self):
+        self.assertEqual(sp.event_line(self.e("runner_on_ok")), {"k": "ok", "host": "web01", "text": "Checking free space"})
+        self.assertEqual(sp.event_line(self.e("runner_on_ok", changed=True))["text"], "Checking free space (changed something)")
+        self.assertEqual(sp.event_line(self.e("runner_on_failed", res={"msg": "boom"})), {"k": "bad", "host": "web01", "text": "Checking free space: failed"})
+        self.assertEqual(sp.event_line(self.e("runner_on_failed", res={"msg": "Connection timed out"}))["text"], "Checking free space: timed out")
+        self.assertEqual(sp.event_line(self.e("runner_on_unreachable", res={"msg": "ssh: connect to host web01 port 22"})),
+                         {"k": "unreach", "host": "web01", "text": "could not connect"})
+        self.assertEqual(sp.event_line(self.e("runner_on_skipped"))["text"], "Checking free space (skipped)")
+        self.assertIsNone(sp.event_line(self.e("playbook_on_task_start")))
+        self.assertIsNone(sp.event_line(self.e("runner_on_ok", host="")))
+        self.assertIsNone(sp.event_line(self.e("runner_on_ok", task="")))
+
+    def test_a_failed_line_never_carries_the_modules_message(self):
+        for res in ({"msg": "password=Hunter2 token=abc"}, {"msg": "x" * 500}, {"msg": "Authorization: Bearer abc.def"}):
+            line = sp.event_line(self.e("runner_on_failed", res=res))
+            self.assertEqual(line["text"], "Checking free space: failed")
+            self.assertNotIn("Hunter2", json.dumps(line))
+
+    def test_the_task_name(self):
+        self.assertEqual(sp.task_what("Disk | Checking free space"), "Checking free space")
+        self.assertEqual(sp.task_what("Verify | AAP | what"), "AAP | what")
+        self.assertEqual(sp.task_what("No area here"), "No area here")
+        self.assertEqual(sp.task_what("  A  |   spaced   out "), "spaced out")
+        self.assertEqual(len(sp.task_what("A | " + "x" * 300)), 80)
+
+    def test_what_a_job_has_done(self):
+        p = sp.Progress()
+        p.feed([{"counter": 1, "event": "playbook_on_play_start", "event_data": {}},
+                {"counter": 2, "event": "playbook_on_task_start", "event_data": {"task": "Disk | Checking free space"}},
+                self.e("runner_on_ok", "web01", counter=3), self.e("runner_on_ok", "web02", counter=4),
+                {"counter": 5, "event": "playbook_on_task_start", "event_data": {"task": "Time | Checking the clock"}},
+                self.e("runner_on_failed", "web02", "Time | Checking the clock", counter=6, res={"msg": "x"}),
+                self.e("runner_on_unreachable", "web03", "Time | Checking the clock", counter=7)])
+        v = p.view(12, False)
+        self.assertEqual((v["step"], v["what"], p.counter), (2, "Checking the clock", 7))
+        self.assertEqual([(h["host"], h["state"]) for h in v["hosts"]], [("web01", "running"), ("web02", "failed"), ("web03", "unreachable")])
+        self.assertEqual((v["hosts_done"], v["hosts_n"]), (2, 3))
+        self.assertEqual([x["host"] for x in v["lines"]], ["web03", "web02", "web02", "web01"])         # newest first
+        self.assertEqual(v["first_bad"], {"host": "web02", "what": "Checking the clock", "cause": "failed"})
+        p.feed([{"counter": 8, "event": "playbook_on_stats", "event_data": {}}])
+        self.assertEqual([h["state"] for h in p.view(12, True)["hosts"]], ["done", "failed", "unreachable"])
+        q = sp.Progress()
+        q.feed([self.e("runner_on_ok", "h%d" % i, counter=i + 1) for i in range(20)])
+        self.assertEqual(len(q.view(None, False)["lines"]), 8)                                          # the last eight only
+
+    def test_the_now_line_and_the_bar(self):
+        self.assertEqual(sp.now_line(4, 12, "Checking free space", "web01"), "Step 4 of about 12 - Checking free space on web01")
+        self.assertEqual(sp.now_line(4, None, "Checking free space", ""), "Step 4 - Checking free space")
+        self.assertEqual(sp.now_line(14, 12, "More than guessed", "web01"), "Step 14 - More than guessed on web01")        # past the estimate: no "about"
+        self.assertEqual((sp.pct(4, 12, False), sp.pct(4, None, False), sp.pct(11, 12, True), sp.pct(30, 12, False)), (33, None, 100, 95))
+
 
 
 class Found(unittest.TestCase):
@@ -1712,6 +1780,233 @@ class Found(unittest.TestCase):
         html_ = sp.action_page(self.cfg, self.portal, self.cn, "jt_999999", {})
         self.assertIn("There is no action jt_999999 here.", html_)
 
+    # ---- 1.78.0: a job followed live
+    def run_job(self, hosts, wait=True):
+        name = self.nm("Health check - Linux")
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, {"portal_limit": hosts, "ticket": "INC5", "env": "dev", "pw": "Hunter2-not-a-real-password"})
+        self.assertEqual(code, 201, out)
+        if wait:
+            time.sleep(fake_aap.RUN + 0.4)
+        return out["job_id"]
+
+    def test_60_progress_of_a_finished_job_and_the_estimate(self):
+        inv = fake_aap.STATE["inventories"][0]
+        inv["hosts"].append("down01.example.mil")
+        try:
+            self.portal.aap.inventory_listing(force=True)
+            first = self.run_job(["web01.example.mil"])
+            code, p = self.portal.progress(first, self.cn)
+            self.assertEqual(code, 200, p)
+            self.assertEqual((p["done"], p["pct"], p["now"], p["hosts_line"]), (True, 100, "", "1 of 1 hosts done"))
+            self.assertEqual([h["state"] for h in p["hosts"]], ["done"])
+            self.assertEqual(len(p["lines"]), 8)
+            # the second run of the template: its estimate is the first run's 12 tasks
+            second = self.run_job(["fail01.example.mil", "down01.example.mil", "web03.example.mil"], wait=False)
+            time.sleep(0.5)
+            code, p = self.portal.progress(second, self.cn)
+            self.assertEqual(code, 200, p)
+            self.assertFalse(p["done"])
+            self.assertRegex(p["now"], r"^Step [0-9]+ of about 12 - ")
+            self.assertTrue(0 < p["pct"] < 100)
+            time.sleep(fake_aap.RUN)
+            code, p = self.portal.progress(second, self.cn)
+            self.assertEqual((p["done"], p["pct"]), (True, 100))
+            self.assertEqual(sorted((h["host"], h["state"]) for h in p["hosts"]),
+                             [("down01.example.mil", "unreachable"), ("fail01.example.mil", "failed"), ("web03.example.mil", "done")])
+            self.assertEqual(p["hosts_line"], "3 of 3 hosts done \u00b7 1 failed \u00b7 1 unreachable")
+            self.assertEqual(p["result_line"], "Checking the services on down01.example.mil (could not connect)")   # the first to stop: what failed, on which host
+            blob = json.dumps(p)
+            for secret in ("Hunter2", "password", "INC5", "extra_vars", "event_data"):
+                self.assertNotIn(secret, blob)                                                               # no answer, no module message, no raw event
+        finally:
+            inv["hosts"].remove("down01.example.mil")
+            self.portal.aap.inventory_listing(force=True)
+
+    def test_61_only_the_people_who_may_see_the_job(self):
+        jid = self.run_job(["web01.example.mil"])
+        self.assertEqual(self.portal.progress(jid, "ROE.RICHARD.A.2345678901")[0], 200)                       # portal_requesters is empty: any card may
+        self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890"]
+        try:
+            self.assertEqual(self.portal.progress(jid, "ROE.RICHARD.A.2345678901")[0], 404)                   # not listed: not even said to exist
+            self.assertEqual(self.portal.progress(jid, self.cn)[0], 200)
+            self.assertEqual(self.portal.progress(99999, self.cn)[0], 404)                                    # a job the portal did not start
+        finally:
+            self.portal.cfg.requesters = []
+
+    def test_62_the_rate_limit(self):
+        keep = self.portal.POLLS_PER_MINUTE
+        self.portal.POLLS_PER_MINUTE = 3
+        try:
+            self.portal.polls.pop("RATE.TEST.A.1", None)
+            got = [self.portal.poll_ok("RATE.TEST.A.1") for _ in range(5)]
+            self.assertEqual(got, [True, True, True, False, False])
+            self.assertTrue(self.portal.poll_ok("RATE.TEST.B.2"))                                             # another person has their own
+        finally:
+            self.portal.POLLS_PER_MINUTE = keep
+
+    # ---- 1.78.0: the Jobs page
+    def get(self, path, dn=JDOE):
+        r = urllib.request.Request("http://%s%s" % (self.host, path), headers=cert(dn))
+        try:
+            with NO_REDIRECT.open(r, timeout=20) as f:
+                return f.status, f.read().decode(), dict(f.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode(), dict(e.headers)
+
+    def test_63_the_jobs_page_of_a_job_that_ran(self):
+        jid = self.run_job(["web01.example.mil", "fail01.example.mil"])
+        code, h, _ = self.get("/jobs/%d" % jid)
+        self.assertEqual(code, 200)
+        for needle in ('class="card jl"', 'id="jd"', 'data-done="1"', "My jobs", "Search job, job id or who started it", "Hosts", "What just happened",
+                       "Job ID", "Requested by", "DOE.JANE.Q.1234567890", "Answers - what the run was started with", "(hidden)", "Technical output: available after the next update.",
+                       'class="chip s-ok"', "2 of 2 hosts done"):
+            self.assertIn(needle, h, needle)
+        self.assertNotIn("Hunter2", h)                                                              # a password: never
+        self.assertNotIn("refreshes every 3 s", h)                                                  # it is over: nothing to refresh
+        self.assertIn("<b>fail01.example.mil</b> failed</span>", h)                                 # its chip: a task ran and failed
+        self.assertNotIn("14 minutes off", h)                                                       # never the module's own words
+        self.assertIn('href="/portal/jobs/%d"' % jid, h)                                            # Refresh without scripts
+
+    def test_64_a_running_job_and_the_pane(self):
+        jid = self.run_job(["web01.example.mil", "web03.example.mil"], wait=False)
+        time.sleep(0.6)
+        code, h, _ = self.get("/jobs/%d?pane=1" % jid)
+        self.assertEqual(code, 200)
+        self.assertTrue(h.startswith('<section class="card jd" id="jd"'), h[:80])                    # the pane only: no page around it
+        self.assertIn('data-done="0"', h)
+        self.assertIn("<b>Now</b> \u00b7 Step ", h)
+        self.assertIn("<progress", h)
+        self.assertIn("<b>Running</b>", h)
+        self.assertIn("refreshes every 3 s while it runs", h)
+        time.sleep(fake_aap.RUN + 0.3)
+        code, h, _ = self.get("/jobs/%d?pane=1" % jid)
+        self.assertIn('data-done="1"', h)                                                          # it says it is done: the script stops asking
+        self.assertNotIn("<progress", h)
+        self.assertIn("<b>Succeeded</b>", h)
+
+    def test_65_the_list_and_who_may_see_all(self):
+        self.run_job(["web01.example.mil"])
+        code, h, _ = self.get("/jobs")
+        self.assertEqual(code, 200)
+        self.assertIn('class="on" href="/portal/jobs?scope=mine"', h)
+        self.assertNotIn("All jobs", h)                                                             # not an approver
+        code, h, _ = self.get("/jobs?scope=all")
+        self.assertIn('data-scope="mine"', h)                                                       # asked for all: gets their own
+        self.portal.cfg.approvers = ["APPROVER.ALEX.B.3456789012"]
+        try:
+            code, h, _ = self.get("/jobs?scope=all", dn=APPR)
+            self.assertIn('data-scope="all"', h)
+            self.assertIn("All jobs", h)
+            code, frag, _ = self.get("/jobs?list=1&scope=all", dn=APPR)
+            self.assertTrue(frag.startswith('<aside class="card jl"'))
+        finally:
+            self.portal.cfg.approvers = []
+        code, h, _ = self.get("/jobs/999999")
+        self.assertEqual(code, 404)
+
+    def test_66_the_progress_call(self):
+        jid = self.run_job(["web01.example.mil"])
+        code, raw, _ = self.get("/api/jobs/%d/progress" % jid)
+        d = json.loads(raw)
+        self.assertEqual((code, d["done"], d["pct"]), (200, True, 100))
+        self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 200)
+        self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890"]
+        try:
+            self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 403)                     # not on the list of people: refused
+            self.portal.cfg.requesters = ["DOE.JANE.Q.1234567890", "ROE.RICHARD.A.2345678901"]
+            self.assertEqual(self.get("/api/jobs/%d/progress" % jid, dn=RROE)[0], 200)                     # on the list: may see what the action allows (as every job page)
+            self.assertEqual(self.get("/api/jobs/999999/progress", dn=RROE)[0], 404)                       # a job the portal did not start: not even said to exist
+        finally:
+            self.portal.cfg.requesters = []
+        keep = self.portal.POLLS_PER_MINUTE
+        self.portal.POLLS_PER_MINUTE = 2
+        self.portal.polls.pop("DOE.JANE.Q.1234567890", None)
+        try:
+            codes = [self.get("/api/jobs/%d/progress" % jid)[0] for _ in range(4)]
+            self.assertEqual(codes, [200, 200, 429, 429])                                          # a person's calls are limited
+        finally:
+            self.portal.POLLS_PER_MINUTE = keep
+            self.portal.polls.clear()
+
+    def test_67_the_script_stops_asking_when_done(self):
+        js = open(os.path.join(FILES, "static", "portal.js")).read()
+        self.assertIn('pane.dataset.done !== "0"', js)
+        self.assertIn("document.hidden", js)                                                        # not while the page is hidden
+        self.assertNotIn("innerHTML", js)
+        self.assertNotIn("<script>", self.get("/jobs")[1])
+
+    # ---- 1.78.0: the Actions page - cards, Details, the Run dialog, Refresh
+    def test_70_cards_with_the_last_run_and_labels(self):
+        name = self.nm("Health check - Linux")
+        self.run_job(["web01.example.mil"])
+        self.portal.last_at = 0
+        code, h, _ = self.get("/")
+        self.assertEqual(code, 200)
+        card = h.split("<h3>Health check - Linux</h3>")[1].split("</article>")[0]
+        self.assertIn('<span class="ty">Job template</span>', card)
+        self.assertIn("Last run", card)
+        self.assertIn("Succeeded", card)
+        self.assertIn('href="/portal/actions/%s/details" data-details>Details' % name, card)
+        self.assertIn('href="/portal/actions/%s" data-run>Run' % name, card)
+        self.assertNotIn('class="badge">Approval', card)                                              # a job template: nothing holds it
+        self.assertNotIn('<span class="tg">portal</span>', h)                                         # the portal's own labels are not shown
+        self.assertIn('<span class="tg">extra-0</span>', h.split("<h3>Late label</h3>")[1].split("</article>")[0])
+
+    def test_71_the_tiles_and_the_search_without_scripts(self):
+        code, h, _ = self.get("/?show=workflow")
+        self.assertIn(" hidden", h.split('id="agrid"')[1].split("</li>")[0])                           # the first card (a job template) is hidden
+        self.assertRegex(h, r'id="acount" aria-live="polite">\d+ of \d+<')
+        shown = re.search(r'id="acount" aria-live="polite">(\d+) of (\d+)<', h)
+        self.assertLess(int(shown.group(1)), int(shown.group(2)))
+        code, h, _ = self.get("/?q=nothing-matches-this")
+        self.assertIn(">0 of ", h)
+        code, h, _ = self.get("/?q=health+check")
+        self.assertRegex(h, r'<li data-wf="0" data-failed="0" data-q="[^"]*health check[^"]*">')
+
+    def test_72_details(self):
+        name = self.nm("Health check - Linux")
+        code, frag, _ = self.get("/actions/%s/details?embed=1" % name)
+        self.assertEqual(code, 200)
+        self.assertTrue(frag.startswith('<div class="dbody">'))
+        for needle in ("Health check - Linux", "Job template", "Hosts (1 to 50 hosts or groups)", "Ticket number *", "Multiple choice", "Password", "Last 5 runs", "data-run>Run"):
+            self.assertIn(needle, frag, needle)
+        for secret in ("routine", "Hunter2", "dev", "prod"):
+            self.assertNotIn(">" + secret + "<", frag)                                               # names and types only: no default, no choice
+        code, page, _ = self.get("/actions/%s/details" % name)
+        self.assertIn('<html', page)                                                                # without scripts: a page
+        self.assertEqual(self.get("/actions/nothing/details")[0], 404)
+        self.assertEqual(self.get("/actions/%s/details" % name, dn=RROE)[0], 200)
+
+    def test_73_the_run_dialog_content(self):
+        name = self.nm("Health check - Linux")
+        code, frag, _ = self.get("/actions/%s?embed=1" % name)
+        self.assertEqual(code, 200)
+        for needle in ("This form is made from the template&#x27;s survey in AAP.", 'type="password"', "Launch job", "data-close>Cancel",
+                       "The portal records you (<b>DOE.JANE.Q.1234567890</b>) as the person who asked for it.", 'name="portal-sig"', 'data-picker="portal_limit"'):
+            self.assertIn(needle, frag, needle)
+        self.assertNotIn("<html", frag)
+        code, frag2, _ = self.get("/actions/disk_cleanup?embed=1")
+        self.assertNotIn('<div class="dbody">', frag2)                                              # an action that picks a host, then a finding: its own steps, no dialog
+
+    def test_74_refresh(self):
+        tok = self.portal.token(self.cn)
+        keep = self.portal.found_at
+        code, body, h = self._post_form("/refresh", {"portal-token": tok})
+        self.assertEqual((code, h.get("Location")), (303, "/portal/"))
+        self.assertGreater(self.portal.found_at, keep)                                              # AAP read again now
+        self.assertEqual(self._post_form("/refresh", {"portal-token": "1.bad"})[0], 403)
+        self.assertEqual(self._post_form("/refresh", {})[0], 403)
+
+    def _post_form(self, path, fields, origin="https://portal.example.mil"):
+        data = urllib.parse.urlencode(fields, doseq=True).encode()
+        hd = dict(cert(JDOE), **{"Content-Type": "application/x-www-form-urlencoded", "Host": "portal.example.mil", "Origin": origin})
+        r = urllib.request.Request("http://%s%s" % (self.host, path), data=data, method="POST", headers=hd)
+        try:
+            with NO_REDIRECT.open(r, timeout=20) as f:
+                return f.status, f.read().decode(), dict(f.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode(), dict(e.headers)
+
 
 class Look(unittest.TestCase):
     """1.75.2: the portal's pages follow report_web_theme (ops, atlas, brief) with the report website's own colours."""
@@ -1759,21 +2054,25 @@ class Look(unittest.TestCase):
 
         class Fake(object):
             actions, aap, log = acts, Aap(), Log()
+            found, found_at, last_at, LAST_TTL, last = {"error": ""}, 0, 0, 60, {}
+            catalog = sp.Portal.catalog
 
             def mine(self, cn):
                 return list(acts.values())
+
+            def token(self, cn):
+                return "tok"
+        Aap.ready, Aap.resolve, Aap.last_info = "", lambda self, a: {}, lambda self, t: {}
         cfg = sp.Config({"PORTAL_THEME": "ops"})
         t = sp.home_page(cfg, Fake(), "DOE.JANE.Q.1234567890")
-        self.assertEqual(len(re.findall(r'<a class="card act" href="/portal/actions/', t)), 11)            # exactly the file's actions
-        heads = [h for h, _n in re.findall(r'<section class="sec"><h2>(.*?) <span class="count">(\d+)</span>', t)]
-        self.assertEqual(heads, ["STIG", "Disk &amp; services", "fapolicyd", "Tickets", "ACT"])
+        self.assertEqual(len(re.findall(r'<article class="card tcard', t)), 11)                          # exactly the file's actions
         for a in acts.values():
             self.assertIn(html.escape(a["title"]), t)
-        self.assertNotIn("Other", heads)
-        a = dict(acts["stig_recheck"], area="", summary="")                              # no area: Other; no line: no line
+        self.assertEqual(t.count('<span class="badge">Approval</span>'), len([a for a in acts.values() if a["approval"] and a["aap"]["type"] == "workflow"]))
+        a = dict(acts["stig_recheck"], area="", summary="")                              # no line: "No description"
         Fake.actions, Fake.mine = {"x": a}, lambda self, cn: [a]
         t = sp.home_page(cfg, Fake(), "DOE.JANE.Q.1234567890")
-        self.assertIn("<h2>Other <span", t)
+        self.assertIn('<p class="none">No description</p>', t)
         self.assertNotIn("<p></p>", t)
 
     def test_area_and_summary_are_checked(self):
