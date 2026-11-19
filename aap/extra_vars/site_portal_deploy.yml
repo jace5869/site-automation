@@ -57,6 +57,11 @@ portal_public_url: https://stigman.example.mil/portal/
 ## Add one only after a test
 # portal_stigman_open_versions: ["1.6.16", "1.6.17", "1.6.18"]
 
+## 1.78.3: the running icons and the progress stripe turn. auto: unless the system asks for reduced
+## motion (as now); always: even then (their image may turn animations off by policy - use it only
+## if the site agrees); off: never. Print is still in every mode. auto | always | off
+# portal_motion: auto
+
 ## the pages' title
 # portal_title: Site portal
 
@@ -64,8 +69,9 @@ portal_public_url: https://stigman.example.mil/portal/
 ## = portal_title). portal_logo is a PNG, JPEG, GIF or WebP file (1 MB at most) ON THE PORTAL
 ## SERVER, e.g. "{{ portal_config_dir }}/logo.png"; portal_logo_src is a file on the controller (in
 ## your own .site-local or group_vars area, never in the repo) that the deploy copies there. "" =
-## the badge. the image on the portal server ("" = the badge)
-# portal_logo: ""
+## the badge. the image on the portal server; with portal_logo_src set: portal_config_dir/logo + its
+## extension; "" = the badge
+# portal_logo: "{{ (portal_config_dir ~ '/logo' ~ (portal_logo_src | splitext)[1]) if portal_logo_src | length > 0 else '' }}"
 
 ## the image on the controller, copied to portal_logo by the deploy ("" = nothing copied)
 # portal_logo_src: ""
@@ -259,6 +265,30 @@ portal_public_url: https://stigman.example.mil/portal/
 ## credential's user needs Admin on the organization to give it. false (the default) = you give it
 ## in AAP yourself. Never a write role.
 # portal_setup_portal_auditor: false
+
+## 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (*
+## and ?, any case) of AAP names: each match gets the label portal_label and Execute for
+## portal_setup_portal_user. Run with Check first: it says would label / would grant / already done
+## / skipped. Nothing is ever removed by this; a pattern that matches nothing is said; one that
+## matches more than portal_publish_max stops with the list and changes nothing. The credential
+## needs Admin on the templates' organization, as for the rest of this job. Set these in the
+## Variables of AAP - set up portal actions, not of Site portal - deploy (the deploy does not apply
+## them). e.g. ["Site - health *", "Weekly cleanup"]
+# portal_publish_templates: []
+
+## {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})
+# portal_publish_area: {}
+
+## an organization's name: only its templates and workflows are matched (with ["*"]: all of them);
+## "" = any
+# portal_publish_organization: ""
+
+## the most one pattern may match
+# portal_publish_max: 50
+
+## Take templates off the portal again (the label only; the roles stay and nothing is deleted): the
+## same shape.
+# portal_unpublish_templates: []
 
 # ---- site_exclude --------------------------------------------------------------------------------
 ## ---- Leave hosts out of every job (1.67.0; playbooks/site_exclude.yml, README "Leave hosts out of

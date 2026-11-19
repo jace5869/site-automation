@@ -90,8 +90,9 @@ portal_setup_portal_user: svc_site_portal
 ## portal_setup_portal_user. Run with Check first: it says would label / would grant / already done
 ## / skipped. Nothing is ever removed by this; a pattern that matches nothing is said; one that
 ## matches more than portal_publish_max stops with the list and changes nothing. The credential
-## needs Admin on the templates' organization, as for the rest of this job. e.g. ["Site - health *",
-## "Weekly cleanup"]
+## needs Admin on the templates' organization, as for the rest of this job. Set these in the
+## Variables of AAP - set up portal actions, not of Site portal - deploy (the deploy does not apply
+## them). e.g. ["Site - health *", "Weekly cleanup"]
 # portal_publish_templates: []
 
 ## {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})

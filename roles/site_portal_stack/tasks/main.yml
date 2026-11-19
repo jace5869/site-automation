@@ -184,6 +184,17 @@
     fail_msg: "portal_titles is not right - nothing was changed: {{ (portal_titles | site_portal_titles).problems | join(' | ') }}"
     quiet: true
 
+# YAML reads an unquoted off as false: portal_motion: off means off
+- name: Settings | portal_motion is auto, always or off
+  ansible.builtin.set_fact:
+    _portal_motion: "{{ 'off' if portal_motion is sameas false else (portal_motion | string | lower) }}"
+
+- name: Settings | portal_motion is auto, always or off (checked)
+  ansible.builtin.assert:
+    that: _portal_motion in ['auto', 'always', 'off']
+    fail_msg: "portal_motion is {{ portal_motion }}; it must be auto, always or off - nothing was changed"
+    quiet: true
+
 # 1.78.2: the caps are settings; one outside its range stops the deploy, naming the setting
 - name: Settings | {{ item.name }} is in its range
   ansible.builtin.assert:
@@ -198,11 +209,30 @@
   loop_control:
     label: "{{ item.name }}"
 
-- name: Logo | portal_logo_src needs portal_logo
+# the source is found as report_logo_file is: a full path as it is, else under the playbooks folder (files/x.png is playbooks/files/x.png)
+- name: Logo | where the source file is
+  ansible.builtin.set_fact:
+    _portal_logo_src_path: >-
+      {%- set f = portal_logo_src | default('') | string | trim -%}
+      {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
+
+- name: Logo | the source file is checked before anything is copied (size, first bytes)
   ansible.builtin.assert:
-    that: portal_logo_src | default('') | length == 0 or portal_logo | default('') | length > 0
-    fail_msg: "portal_logo_src is set but portal_logo is not: portal_logo is the path on the portal server the image is copied to (e.g. {{ portal_config_dir }}/logo.png)"
+    that: (_portal_logo_src_path | site_portal_logo_check) == ''
+    fail_msg: "{{ _portal_logo_src_path | site_portal_logo_check }}"
     quiet: true
+  when: _portal_logo_src_path | length > 0
+
+# 1.78.3: portal_logo_src alone is enough (portal_logo then defaults to portal_config_dir/logo.<its extension>); one line says what applies publish settings
+- name: Site portal | portal_publish_* is applied by the setup job, not by this deploy
+  ansible.builtin.debug:
+    msg: >-
+      portal_publish_* is applied by the job AAP - set up portal actions (Check first, then Run), not by this deploy:
+      this deploy only reads what AAP then shows.
+  when: >-
+    (portal_publish_templates | default([]) | length > 0 or portal_publish_organization | default('') | length > 0
+     or portal_unpublish_templates | default([]) | length > 0 or portal_publish_area | default({}) | length > 0
+     or (portal_publish_max | default(50) | int) != 50)
 
 - name: Actions | the actions the portal serves
   ansible.builtin.set_fact:
@@ -273,28 +303,34 @@
   register: _portal_app_files
 
 # ---------------------------------------------------------------- the site's logo (portal_logo, 1.78.2)
+- name: Logo | where the image goes on this server
+  ansible.builtin.set_fact:
+    _portal_logo_dest: >-
+      {{ portal_logo if portal_logo | default('') | length > 0 else
+         ((portal_config_dir ~ '/logo' ~ (portal_logo_src | splitext)[1]) if portal_logo_src | default('') | length > 0 else '') }}
+
 - name: Logo | the image, from the controller (portal_logo_src) to the portal server (portal_logo)
   ansible.builtin.copy:
-    src: "{{ portal_logo_src }}"
-    dest: "{{ portal_logo }}"
+    src: "{{ _portal_logo_src_path }}"
+    dest: "{{ _portal_logo_dest }}"
     mode: "0644"
   register: _portal_logo_file
-  when: portal_logo_src | default('') | length > 0
+  when: _portal_logo_src_path | length > 0
 
 - name: Logo | is the image on this server
   ansible.builtin.stat:
-    path: "{{ portal_logo }}"
+    path: "{{ _portal_logo_dest }}"
   register: _portal_logo_stat
-  when: portal_logo | default('') | length > 0
+  when: _portal_logo_dest | length > 0
 
 - name: Logo | portal_logo is set and the file is not there - the badge is shown
   ansible.builtin.debug:
-    msg: "portal_logo {{ portal_logo }} is not on this server: the pages show the badge. Put the image there, or set portal_logo_src (a file on the controller) and deploy again."
-  when: portal_logo | default('') | length > 0 and not (_portal_logo_stat.stat.exists | default(false)) and not (_portal_logo_file is changed)
+    msg: "portal_logo {{ _portal_logo_dest }} is not on this server: the pages show the badge. Put the image there, or set portal_logo_src (a file on the controller) and deploy again."
+  when: _portal_logo_dest | length > 0 and not (_portal_logo_stat.stat.exists | default(false)) and not (_portal_logo_file is changed)
 
 - name: Logo | on
   ansible.builtin.set_fact:
-    _portal_logo_on: "{{ portal_logo | default('') | length > 0 and ((_portal_logo_stat.stat.exists | default(false)) or (_portal_logo_file is changed)) }}"
+    _portal_logo_on: "{{ _portal_logo_dest | length > 0 and ((_portal_logo_stat.stat.exists | default(false)) or (_portal_logo_file is changed)) }}"
 
 # ---------------------------------------------------------------- the CAs the service trusts (AAP's certificate)
 - name: Trust | what this server trusts
@@ -411,6 +447,8 @@
       PORTAL_DISCOVER_SECONDS: "{{ portal_discover_seconds }}"
       PORTAL_LABEL_APPROVAL: "{{ portal_label_approval }}"
       PORTAL_LABEL_AREA: "{{ portal_label_area }}"
+      PORTAL_MOTION: "{{ _portal_motion }}"
+      PORTAL_PUBLISH_ORGANIZATION: "{{ portal_publish_organization | default('') }}"
       PORTAL_LABEL_TITLE: "{{ portal_label_title }}"
       PORTAL_TITLES: "{{ (portal_titles | site_portal_titles).titles | to_json }}"
       PORTAL_LOGO: "{{ '/etc/site-portal/logo' if _portal_logo_on | default(false) | bool else '' }}"
@@ -759,9 +797,11 @@
           else ('on the podman network ' ~ portal_network)) ~ '. AAP: ' ~ ('answered (the account ' ~ _portal_aap.account | default('') ~ ')'
           if _portal_aap.aap | default('') == 'ok' else 'NOT REACHED - ' ~ _portal_aap.aap | default('')) ~ '. Every launch is in journalctl'
           ~ (' --user' if portal_scope == 'user' else '') ~ ' -u site-portal-app and in the data volume (portal-log.jsonl).']
+         + (['The logo: ' ~ ('on (' ~ _portal_logo_dest ~ ')' if _logo == 'on' else (_logo | default('not shown', true)))] if _portal_logo_dest | length > 0 else [])
          + (['Actions and their state in AAP: ' ~ (_acts | dict2items | map(attribute='key') | zip(_acts | dict2items
               | map(attribute='value')) | map('join', ' - ') | join('; ')) ~ '.'] if _acts else ['No action is listed.']) }}
     _acts: "{{ _portal_aap.actions | default({}) }}"
+    _logo: "{{ (_portal_ready.stdout | default('{}') | from_json).logo | default('') }}"
     _tail: >-
       {{ ['The portal: ' ~ portal_public_url] if portal_own_nginx | bool else
          ['Once, by hand: read the lines of ' ~ portal_config_dir ~ '/nginx-portal.conf (below) into the server block of your'

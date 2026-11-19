@@ -472,8 +472,10 @@ class Setup(object):
             for pat in pats:
                 hit = [(k, r) for k, r in rows if self._matches(pat, r.get("name"))]
                 if len(hit) > mx:
-                    self.problems.append("%s: %r matches %d templates and workflows, more than portal_publish_max (%d): %s - narrow the pattern; nothing was changed" % (
-                        label, pat, len(hit), mx, ", ".join(sorted(r["name"] for _k, r in hit)[:20]) + (", ..." if len(hit) > 20 else "")))
+                    self.problems.append("%s: %r matches %d templates and workflows, more than portal_publish_max (%d): %s - %s; nothing was changed" % (
+                        label, pat, len(hit), mx, ", ".join(sorted(r["name"] for _k, r in hit)[:20]) + (", ..." if len(hit) > 20 else ""),
+                        ("set portal_publish_max: %d (up to 500) and run again, or narrow the pattern" % len(hit)) if len(hit) <= 500
+                        else "narrow the pattern: portal_publish_max is 500 at most"))
                     return None
                 found[(label, pat)] = hit
         both = set((k, r["id"]) for pat in pubs for k, r in found[("portal_publish_templates", pat)]) & \

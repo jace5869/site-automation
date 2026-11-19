@@ -624,6 +624,7 @@ AAP yourself). It never gives a write role.
 | `portal_finding_days` | 7 | how far back the report jobs are read (14 at most) |
 | `portal_finding_jobs` | 5 | the last this many runs of each report playbook |
 | `portal_finding_playbooks` | the report playbooks of `finding_ref` | which playbooks count as reports |
+| `portal_motion` | `auto` | `auto`: the running icons and the stripe turn unless the system asks for reduced motion. `always` overrides the system's reduced-motion request (use only if the site agrees; a Windows image may turn animations off by policy). `off`: never. Print is still in every mode |
 | `portal_pick_max_launches` | 10 | jobs one confirm page may start (1 to 200) |
 | `portal_pick_max_hosts` | 50 | the hosts the finding steps take at once, groups counted by their hosts (1 to 500) |
 | `portal_setup_portal_auditor` | false | the setup job gives the account Auditor on `portal_setup_organization` |
@@ -723,7 +724,7 @@ or **Open ticket INC0012345 →**. The known results are `site_report_url` (and 
 An address must be http or https with a host and no user name; anything else is not linked.
 
 **What is running turns.** The running icon (the status chip, the host chips, the *Now* line) and the ring in the jobs list turn, and the bar has a
-moving stripe. All of it stops under the browser's *reduce motion* setting and in print.
+moving stripe. All of it stops under the browser's *reduce motion* setting and in print; `portal_motion` changes that (see the settings table).
 
 ## Add a job to the portal from AAP
 
@@ -822,7 +823,7 @@ Your jobs are already in AAP. Instead of adding the label `portal` to each one b
 
 2. Run **AAP - set up portal actions** with **Check** (*Job type: Check*) first. It only reads, and says one line for each template:
    *would label*, *would grant*, *already done* or *skipped* with the reason. A pattern that matches nothing is said too.
-3. Read the lines. If a pattern matches more than `portal_publish_max` (50) templates, the job stops with the list and changes nothing: narrow the pattern.
+3. Read the lines. If a pattern matches more than `portal_publish_max` (50) templates, the job stops with the list and changes nothing, and says the fix: *set portal_publish_max: N (up to 500) and run again*, or narrow the pattern.
 4. Run it again without Check. Each match gets the label `portal` (and `portal-area:<area>` when you gave one) and Execute for `portal_setup_portal_user`.
 5. Open the portal: the cards appear within `portal_discover_seconds` (a minute), or press **Refresh**.
 
@@ -865,6 +866,8 @@ portal_titles:
 ```
 
 The name must be the AAP name (capitals do not matter). A title is 1 to 80 characters; an empty or longer one stops the deploy, naming `portal_titles`. A label `portal-title:<text>` on the template does the same; when both are there, `portal_titles` wins. Run **Site portal - deploy**, or wait for the next refresh when you used the label.
+
+**Where it is applied.** `portal_publish_*` is applied by the job **AAP - set up portal actions** (Check first, then Run), not by **Site portal - deploy**; the deploy says so in one line when any of them is set. Until that job has run, the cards do not appear, and the panel *Why isn't my template here?* says *Nothing labelled yet* when `portal_publish_organization` is set.
 
 ## Use your own template names
 
@@ -920,16 +923,17 @@ Run **Site portal - deploy** again after you change `report_web_theme`.
 
 The header can show your site's logo instead of the letter badge. The image is yours: keep it in your own `.site-local` or `group_vars` area, never in the repository.
 
-1. Put the image on the portal server, or let the deploy copy it from the controller:
+1. Name the image on the controller. This one line is enough; a full path is used as it is, and `files/crest.png` means `playbooks/files/crest.png`, the same as `report_logo_file`:
 
    ```yaml
-   portal_logo: /etc/site-portal/logo.png                          # on the portal server
-   portal_logo_src: "{{ playbook_dir }}/../.site-local/logo.png"   # on the controller; copied to portal_logo
+   portal_logo_src: "{{ playbook_dir }}/../.site-local/logo.png"
    ```
 
-2. Run **Site portal - deploy**. The file is copied only when `portal_logo_src` is set, and the service restarts when the image changes.
+2. Run **Site portal - deploy**. The file is copied to `portal_config_dir/logo.png` (the source's own extension) and the service restarts when the image changes. It is copied only when `portal_logo_src` is set.
 
-The image is a PNG, JPEG, GIF or WebP file of 1 MB at most, checked by its first bytes (no SVG). It is shown at most 40 px tall, with the site title as its alt text,
+To keep the image somewhere else on the portal server, also set `portal_logo` to that path; with no `portal_logo_src`, the file must already be there.
+
+The image is a PNG, JPEG, GIF or WebP file of 1 MB at most, checked by its first bytes (no SVG): the deploy checks the source first and stops with the reason (*2.4 MB, over 1 MB - save a smaller copy, about 200 px wide*), and its summary says *The logo: on* or why not. It is shown at most 40 px tall, with the site title as its alt text,
 and served from the portal's own `static/logo` path, so the content security policy is unchanged. A file that is missing or not an image leaves the badge, and the deploy says so.
 
 ## The banner and the times
