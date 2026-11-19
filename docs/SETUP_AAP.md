@@ -666,6 +666,41 @@ it changes that EE's **Image**, and every template already on it runs the new im
 node that has pulled a tag keeps it, so a rebuild pushed under the same tag would never reach the jobs. Its user
 needs **Admin** on the execution environment for this. (By hand: change the EE's **Image** in AAP.)
 
+### Rename and attach credentials
+
+One template - `AAP - set up credentials` (`playbooks/aap_credentials_setup.yml`), with only the **Red Hat Ansible
+Automation Platform** credential (its user: **Admin** on the organization), any inventory, no Limit. It renames
+credentials, and attaches them to job templates or takes them off - instead of editing each one by hand. It never
+deletes a credential, and it never reads a secret: only names, IDs and types.
+
+1. Make the template. Copy `aap/extra_vars/aap_credentials_setup.yml` into its Variables box.
+2. Say what to do, by name. For example, to rename *Report website* and attach *AAP - site portal* to the portal's
+   deploy job:
+
+   ```yaml
+   aap_credential_renames:
+     "Report website": "Report website - nginx"
+   aap_credential_attach:
+     "AAP - site portal": ["Site portal - deploy"]
+   ```
+
+   `aap_credential_detach` takes a credential off templates, in the same shape.
+3. Launch it with Job type **Check**. It lists each step: *would rename*, *would attach*, *already done*, or
+   *NOT DONE* with why. Nothing is changed.
+4. Read the list. A template that has a credential of the same type already (another *Red Hat Ansible Automation
+   Platform* one, say) keeps it: *would replace 'AAP reader' - set aap_credential_replace_same_type: true*. Set that
+   when the new one should take its place.
+5. Launch it again with Job type **Run**. Success: each step says *done* (or *already done*).
+
+When it changes nothing at all:
+
+- A name that matches nothing, or a rename onto a name another credential has: the job fails and says which.
+- A name two organizations have: set `aap_credential_organization` to the one to look in.
+- A workflow named: a workflow has no credentials of its own in AAP - attach it to the job templates the workflow
+  runs.
+
+A write that fails part way stops the job; what was done before it is listed.
+
 ### Report website - copy
 
 Only when report templates run in an execution environment that cannot reach the report website's server (no WinRM

@@ -1,0 +1,20 @@
+---
+# ---- AAP - set up credentials (playbooks/aap_credentials_setup.yml; docs/SETUP_AAP.md "Rename and attach credentials")
+# Renames credentials and attaches them to job templates or takes them off, through AAP's API. Never deletes a credential
+# and never reads a secret (only names, ids, types). Everything is checked first: a name that matches nothing or more than
+# one credential, or a rename onto a name that is there, and nothing is changed. Run it with Check first: it then only
+# reads and says what it would do. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the
+# organization.
+
+# {old name: new name}, e.g. {"Report website": "Report website - nginx"}
+aap_credential_renames: {}
+# {credential name: [job template name, ...]}, e.g. {"AAP - site portal": ["Site portal - deploy"]}
+aap_credential_attach: {}
+# {credential name: [job template name, ...]}: takes only that credential off those templates
+aap_credential_detach: {}
+# the organization the names are looked up in; "" = any (a name in two organizations is then an error: set this)
+aap_credential_organization: ""
+# a template that has a credential of the same type already: false = it keeps it, listed as "would replace ...";
+# true = that one is taken off and the new one attached
+aap_credential_replace_same_type: false
+aap_credential_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a CA file for AAP's own HTTPS certificate

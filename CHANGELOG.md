@@ -1,5 +1,22 @@
 # Changelog
 
+## Next (numbered at release) — 2026-11-19
+
+**To set up:** a job template **AAP - set up credentials** (`playbooks/aap_credentials_setup.yml`, an AAP credential
+with Admin on the organization; its Variables: `aap/extra_vars/aap_credentials_setup.yml`).
+
+**AAP - set up credentials** (docs/SETUP_AAP.md, "Rename and attach credentials").
+
+- `aap_credential_renames` {old name: new name} renames credentials; `aap_credential_attach` and `aap_credential_detach`
+  {credential: [job template, ...]} attach them to job templates or take them off.
+- A template with a credential of the same type already keeps it, said (*would replace ...*), unless
+  `aap_credential_replace_same_type: true`.
+- Names are looked up in `aap_credential_organization`, or in every organization (a name in two is then an error).
+- Everything is checked first: a name that matches nothing or more than one, or a rename onto a name that is there,
+  and nothing is changed. Check mode only lists what it would do. A write that fails stops the job; what was done is
+  listed.
+- Never deletes a credential; never reads a secret (only names, IDs and types).
+
 ## 1.76.4 — 2026-11-19
 
 **To set up: nothing.** `answer_keys_trial: true` turns the answer keys' trial on.

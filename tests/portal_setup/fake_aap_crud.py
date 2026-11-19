@@ -11,7 +11,8 @@ one by hand. Under api/controller/v2/, Bearer FAKE_AAP_TOKEN. Not AAP: just enou
   <kind>/<id>/object_roles/                 GET (Execute, Approve, Admin)
   users/<id>/roles/                         GET, POST {id}
   <kind>/<id>/schedules/ GET, POST;  schedules/<id>/  PATCH
-Every write is a line in FAKE_AAP_LOG.  fake_aap_crud.py PORT"""
+  credentials/<id>/                         PATCH (a rename: 400 when the organization has that name - AAP Credentials setup)
+A write to a path in the state's "fail_paths" answers 500 (a failure mid-run). Every write is a line in FAKE_AAP_LOG.  fake_aap_crud.py PORT"""
 import json
 import os
 import re
@@ -178,6 +179,9 @@ class H(BaseHTTPRequestHandler):
         log({"method": "POST", "path": p, "body": b})
         with LOCK:
             s = load()
+            if p in (s.get("fail_paths") or []) or (p in (s.get("fail_attach_paths") or []) and not b.get("disassociate")):
+                # a refusal that echoes a value back (as a validation answer may): what reads it must not print it
+                return self.send(500, {"detail": "a failure the test asked for", "inputs": {"password": "SECRET-PW-ECHO"}})
             try:
                 m = re.match(r"^(job_templates|workflow_job_templates)/$", p)
                 if m:
@@ -249,11 +253,16 @@ class H(BaseHTTPRequestHandler):
         log({"method": "PATCH", "path": p, "body": b})
         with LOCK:
             s = load()
-            m = re.match(r"^(job_templates|workflow_job_templates|schedules)/(\d+)/$", p)
+            if p in (s.get("fail_paths") or []):
+                return self.send(500, {"detail": "a failure the test asked for"})
+            m = re.match(r"^(job_templates|workflow_job_templates|schedules|credentials)/(\d+)/$", p)
             if m:
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                 if r is None:
                     return self.send(404, {"detail": "Not found."})
+                if m.group(1) == "credentials" and any(c["name"] == b.get("name") and c.get("organization") == r.get("organization")
+                                                       and c["id"] != r["id"] for c in s["credentials"]):
+                    return self.send(400, {"__all__": ["Credential with this Name and Organization already exists."]})
                 if m.group(1) == "schedules" and "rrule" in b and rrule_problem(b["rrule"]):
                     return self.send(400, {"rrule": [rrule_problem(b["rrule"])]})
                 r.update(b)

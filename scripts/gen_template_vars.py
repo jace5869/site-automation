@@ -117,6 +117,22 @@ portal_setup_credentials:
 ## The site portal's AAP account: Execute on these, Approve on the workflows with an approval node
 portal_setup_portal_user: svc_site_portal
 """),
+    "aap_credentials_setup.yml": ("AAP - set up credentials", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## Run it with Check first: it then only reads, and lists what it would rename, attach or take off. It never deletes a
+## credential and never reads a secret. A name that matches nothing or more than one, or a clash, changes nothing at all.
+## Rename: {old name: new name}
+aap_credential_renames:
+  "Report website": "Report website - nginx"
+## Attach to job templates: {credential: [template, ...]}
+aap_credential_attach:
+  "AAP - site portal": ["Site portal - deploy"]
+## Take off job templates: {credential: [template, ...]}
+# aap_credential_detach: {"Old credential": ["A template"]}
+## A name in two organizations: name the one to look in
+# aap_credential_organization: Default
+## A template with a credential of the same type already: true = take that one off, attach the new one
+# aap_credential_replace_same_type: true
+"""),
     "aap_template_audit.yml": ("AAP - template variables audit", "Red Hat Ansible Automation Platform (Organization Auditor is enough)", "", """\
 ## Read-only: which settings in the templates' Variables belong somewhere else; a secret is named, never shown
 # aap_template_audit_project: "Site automation"   # only your project's job templates (workflows are all read)
