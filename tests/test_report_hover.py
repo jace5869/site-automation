@@ -754,7 +754,12 @@ class RealChromeOutageFilters(RealChromeOutage):
         self.c.js("document.getElementById('ot-row-%s').classList.remove('ot-flash')" % n)
         self.pin_list_line(n)
         self.c.js(line)
-        note = self.c.js("(() => {const t = document.querySelector('#site-tip .tt-note'); return t && t.textContent})()")
+        note = ""
+        for _ in range(40):                                                    # the note is drawn by the click's handler: a slow runner gets up to 4 s
+            note = self.c.js("(() => {const t = document.querySelector('#site-tip .tt-note'); return t && t.textContent})()") or ""
+            if note:
+                break
+            time.sleep(0.1)
         self.assertIn("table's filter box", note or "")
         self.assertFalse(self.c.js(flashed))
         self.assertEqual(self.c.js("document.querySelectorAll('#site-tip .tt-note').length"), 1)

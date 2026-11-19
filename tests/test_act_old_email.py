@@ -25,7 +25,7 @@ class OldCopiesInTheEmail(unittest.TestCase):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
         env.filters["report_cell_html"] = site_filters.report_cell_html
-        env.filters.update(safe_link=site_filters.safe_link, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
+        env.filters.update(safe_link=site_filters.safe_link, report_tidy=site_filters.report_tidy, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
         return env.get_template(tpl).render(_report=report, _act_old=act_old, _email_footer="AAP job 9", _email_logo_cid="",
                                             _email_runs=[], report_email_header_text="Site automation report")
 

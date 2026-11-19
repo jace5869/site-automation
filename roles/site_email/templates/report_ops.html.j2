@@ -11,7 +11,7 @@
     both; status colours for status only, always with their word or icon. The system's own fonts, a mono face for the
     small upper-case labels. Input as report_brief.html.j2: _report, _page_logo_cid/_page_logo_size, _page_runs,
     _page_job/_page_template, _email_footer. Every value is escaped. -#}
-{%- set r = _page_report | default(_report) -%}
+{%- set r = (_page_report | default(_report)) | report_tidy(false) -%}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
 {%- set runs = _page_runs | default(_email_runs | default([])) -%}
@@ -185,7 +185,9 @@ a{color:var(--accent);text-underline-offset:2px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:none;max-width:34%}
 .logo{display:block;border-radius:8px;height:auto;max-height:52px;width:auto}
 .brand b{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:0}
-.nav{flex:1;min-width:0;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:10px 0;mask-image:linear-gradient(90deg,#000 94%,transparent)}
+.nav{position:relative;flex:1;min-width:0;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:10px 0;mask-image:linear-gradient(90deg,#000 94%,transparent)}
+/* 1.76.5: the section chips of the bar show whole or not at all (no clipped fragment): what does not fit wraps under and is cut off */
+@media (min-width:1200px){.nav{flex-wrap:wrap;overflow:hidden;align-content:flex-start;max-height:46px;padding:10px 0 0;mask-image:none}}
 .nav::-webkit-scrollbar{display:none}
 .nav a{flex:none;display:inline-flex;align-items:center;gap:7px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:600;
   border-radius:8px;padding:5px 10px;white-space:nowrap}
@@ -314,7 +316,16 @@ ul.passed .ic{width:16px;height:16px}
 .rail{display:none}
 .rail .lbl{font-size:11px;padding:4px 10px 8px}
 .rail a{display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;line-height:1.35;position:relative}
-.rail a .dot{margin-top:5px}
+.rail a .dot{margin-top:3px;width:14px;height:14px;display:grid;place-items:center}
+.rail a .dot:after{content:attr(data-g);color:var(--card);font:700 9px/1 var(--mono)}
+th button:has(.hsub){flex-wrap:wrap;row-gap:0;white-space:nowrap}th .hsub{display:block;flex-basis:100%;font-weight:400;font-size:10.5px;letter-spacing:0;text-transform:none;color:var(--muted)}
+.capbar{margin:8px 0 0;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0;max-width:100%}.capbar .btn{max-width:100%;white-space:normal}@media print{.capbar{display:none}tr.capped[hidden]{display:table-row}}
+@media (min-width:801px){
+.tw td.cl .cv{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;min-width:0;max-width:100%}.tw td.cl{cursor:pointer}.tw td.cl:after{content:"more";display:block;grid-column:1/-1;margin-top:2px;color:var(--accent);font-size:12px;font-weight:600}
+.tw td.cl.open .cv{display:block;-webkit-line-clamp:unset}.tw td.cl.open:after{content:"less"}
+}
+@media print{.tw td.cl .cv{display:block;-webkit-line-clamp:unset}.tw td.cl:after{content:none}}
+.snote{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.5;min-width:0;max-width:100%;overflow-wrap:anywhere}.snote p{margin:0 0 4px;min-width:0;overflow-wrap:anywhere}.snm summary{cursor:pointer;color:var(--accent);font-weight:600;font-size:12.5px;list-style:none}.snm summary::-webkit-details-marker{display:none}.snm[open] summary{margin-bottom:4px}
 .rail a .t{flex:1;min-width:0;overflow-wrap:anywhere}
 .rail a .n,.rail a .m{flex:none;font-size:12px;font-weight:500;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .rail a .m:not(:empty){color:var(--accent-ink);background:var(--accent);border-radius:999px;padding:0 7px}
@@ -485,6 +496,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
   /* a word wider than the card breaks inside it (1.24.0b: wider fonts); a date, an address, a number stay whole */
   .tw td .w{white-space:normal}.tw td .clw,.tw td .clw>a{white-space:normal}
   .tw td .chip{min-width:0;max-width:100%}.tw td .chip>span{min-width:0;overflow-wrap:anywhere}
+  .tw td .cv,.tw td .cv *,.tw td .lw,.tw td a,.tw td code{min-width:0;max-width:100%;overflow-wrap:anywhere}
   .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr);gap:10px;align-items:start;background:none!important;overflow-wrap:break-word}
   .tw td:before{content:attr(data-l);font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);padding-top:3px}
   .tw td .chip,.tw td .pct{justify-self:start}
@@ -729,7 +741,11 @@ ul.blist .bh .bv{font-weight:600}
 .start.auto .sh{display:flex;align-items:center;gap:8px;margin:0 2px 12px}.start.auto .sh .sp{flex:1}
 .todo .from{margin-top:12px;font-size:12.5px;color:var(--muted)}.todo .from+h3{margin-top:2px}
 .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0;font-size:13px}
-.kv dt{color:var(--muted);white-space:nowrap}.kv dd{margin:0;overflow-wrap:anywhere}
+.kv dt{color:var(--muted);white-space:nowrap}.kv dd{margin:0;overflow-wrap:break-word;word-break:normal}
+/* 1.76.5: an opened card takes the whole row (the others flow after it), its details in columns that read; a long value breaks at \\ / - _ . (the template puts <wbr> there), not in the middle of a word */
+.todo:has(.cdx:checked){grid-column:1/-1}
+.todo:has(.cdx:checked) .kv{grid-template-columns:repeat(2,minmax(140px,max-content) minmax(0,1fr));column-gap:18px}
+@media (max-width:800px){.todo:has(.cdx:checked) .kv{grid-template-columns:auto minmax(0,1fr)}}
 .cdx{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
 .cdd{display:none;margin-top:12px}
 .cdx:checked~.cdd{display:block}
@@ -791,7 +807,7 @@ footer{margin-top:32px}
 {%- for s in secs %}
 {%- if s.rail | default(true) %}
 {%- set ss = s.status | default('') %}
-<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}"></span>{% endif %}{{ s.title | e }}{% if s.rows is defined and s.rows %} <span class="n">{{ s.rows | length }}</span>{% endif %}</a>
+<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}{{ s.title | e }}{% if s.rows is defined and s.rows %} <span class="n">{{ s.rows | length }}</span>{% endif %}</a>
 {%- endif %}
 {%- endfor %}
 </nav>
@@ -826,7 +842,7 @@ footer{margin-top:32px}
 {%- for i in g[1] %}
 {%- set s = secs[i - 1] %}
 {%- set ss = s.status | default('') %}
-<a href="#s{{ i }}">{% if ss in words %}<span class="dot c-{{ ss }}"></span>{% endif %}<span class="t">{{ s.title | e }}</span><span class="m"></span>{% if s.rows is defined and s.rows %}<span class="n">{{ s.rows | length }}</span>{% endif %}</a>
+<a href="#s{{ i }}">{% if ss in words %}<span class="dot c-{{ ss }}" data-g="{{ {'critical': '!', 'warning': '\u25b4', 'ok': '\u2713', 'info': 'i', 'low': '-', 'unknown': '?'}[ss] }}" aria-hidden="true"></span><span class="vh">{{ words[ss] }}: </span>{% endif %}<span class="t">{{ s.title | e }}</span><span class="m"></span>{% if s.rows is defined and s.rows %}<span class="n">{{ s.rows | length }}</span>{% endif %}</a>
 {%- endfor %}
 </details>
 {%- endfor %}
@@ -1039,11 +1055,18 @@ footer{margin-top:32px}
 {%- for x in cells[1:] if x[2] | length > lg.t | length and x[2] not in ['CAT I', 'CAT II', 'CAT III'] %}{% set lg.t = x[2] %}{% endfor %}
 <p class="next">{{ lg.t | truncate(200) | e }}</p>
 {%- endif %}
-{%- if cells | length > 1 %}
+{#- 1.76.5: the details list leaves out a value the card already shows - the heading, the cells the next line printed, the longest value it printed,
+    a value twice - and a card with nothing left has no View details #}
+{%- set dets = [] %}
+{%- set seen = namespace(v=[cells[0][2] if cells else '']) %}
+{%- for h in hotc[:3] %}{% set seen.v = seen.v + [h[2]] %}{% endfor %}
+{%- if not hotc and cells | length > 1 and lg.t | length <= 200 %}{% set seen.v = seen.v + [lg.t] %}{% endif %}
+{%- for x in cells[1:8] if not (x[2] in seen.v and x[2] | length > 3 and (x[2] | length <= 200 or x[2] != lg.t)) %}{% set _ = dets.append(x) %}{% set seen.v = seen.v + [x[2]] %}{% endfor %}
+{%- if dets %}
 <input type="checkbox" class="cdx" id="cda{{ loop.index }}" aria-label="View the details of step {{ loop.index }}">
-<div class="cdd"><dl class="kv">{% for x in cells[1:8] %}<dt>{{ x[1] | e }}</dt><dd>{{ x[2] | e }}</dd>{% endfor %}</dl></div>
+<div class="cdd"><dl class="kv">{% for x in dets %}<dt>{{ x[1] | e }}</dt><dd>{% if x[2] | length > 24 %}{{ x[2] | e | replace('\\', '\\<wbr>') | replace('/', '/<wbr>') | replace('_', '_<wbr>') | replace('-', '-<wbr>') | replace('.', '.<wbr>') }}{% else %}{{ x[2] | e }}{% endif %}</dd>{% endfor %}</dl></div>
 {%- endif %}
-<div class="lnk"><a href="#{{ (tg.id | default('', true) or ('s' ~ c[2] ~ 'r' ~ c[3])) | e }}" title="To its row in {{ s.title | e }}">Open item &rarr;</a>{% if cells | length > 1 %}<label for="cda{{ loop.index }}"><span class="o">View details &rarr;</span><span class="c">Hide details &uarr;</span></label>{% endif %}</div>
+<div class="lnk"><a href="#{{ (tg.id | default('', true) or ('s' ~ c[2] ~ 'r' ~ c[3])) | e }}" title="To its row in {{ s.title | e }}">Open item &rarr;</a>{% if dets %}<label for="cda{{ loop.index }}"><span class="o">View details &rarr;</span><span class="c">Hide details &uarr;</span></label>{% endif %}</div>
 </article>
 {%- endfor %}
 </div>
@@ -1228,13 +1251,13 @@ footer{margin-top:32px}
 {%- endif %}
 <button class="btn csv" type="button" hidden title="Download the rows shown as a CSV file (opens in Excel)"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.5 12.2v1.3h11v-1.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>CSV</span></button>
 </div>
-<div class="tw"><table{% if s.compact | default(false) or s.details is defined %} class="{{ 'cc' if s.compact | default(false) else '' }}{{ ' xt' if s.details is defined else '' }}"{% endif %}>
+<div class="tw"><table{% if s.compact | default(false) or s.details is defined %} class="{{ 'cc' if s.compact | default(false) else '' }}{{ ' xt' if s.details is defined else '' }}"{% endif %}{% if s.cell_keys | default(false) %} data-keys="{{ s.cell_keys | tojson | forceescape }}"{% endif %}>
 <thead><tr>
 {%- for c in s.columns %}
 {%- if kinds[loop.index0] == 'x' %}
 <th class="k-x" scope="col"><span class="vh">Open</span></th>
 {%- else %}
-<th class="k-{{ ('num' if kinds[loop.index0] == 'pct' else kinds[loop.index0]) | e }}" scope="col"{% if s.column_titles is defined and s.column_titles | length > loop.index0 and s.column_titles[loop.index0] != c %} title="{{ s.column_titles[loop.index0] | e }}"{% endif %}><button type="button">{{ c | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+<th class="k-{{ ('num' if kinds[loop.index0] == 'pct' else kinds[loop.index0]) | e }}" scope="col"{% if s.column_titles is defined and s.column_titles | length > loop.index0 and s.column_titles[loop.index0] != c %} title="{{ s.column_titles[loop.index0] | e }}"{% endif %}><button type="button">{% set hp = c.split(": ", 1) %}{% if hp | length > 1 and hp[1] | length <= 16 %}{{ hp[0] | e }} <span class="hsub">{{ hp[1] | e }}</span>{% else %}{{ c | e }}{% endif %}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
 {%- endif %}
 {%- endfor %}
 </tr></thead>
@@ -1340,6 +1363,9 @@ footer{margin-top:32px}
 </details>
 {%- endfor %}
 </div>
+{%- endif %}
+{%- if s.note | default('') %}
+<div class="snote"><p>{{ s.note | e }}</p>{% if s.note_more | default('') %}<details class="snm"><summary>More</summary><p>{{ s.note_more | e }}</p></details>{% endif %}</div>
 {%- endif %}
 {%- if s.lines | default([]) and not s.glance | default([]) %}
 <ul class="lines">
