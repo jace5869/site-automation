@@ -20,7 +20,8 @@ TPL = os.path.join(REPO, "roles", "site_email", "templates")
 def render(doc, **v):
     import jinja2
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(TPL), autoescape=False)
-    env.filters.update(report_cell_html=sf.report_cell_html, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar)
+    env.filters.update(report_cell_html=sf.report_cell_html, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar,
+                       safe_link=sf.safe_link, safe_data=sf.safe_data)
     base = {"_report": doc, "_email_footer": "AAP job 9 (Linux - Disk), started by admin, 2026-11-17 06:00 UTC.", "_page_logo_cid": "",
             "_page_runs": [], "_page_template": "Linux - Disk <space>", "_page_job": "9", "report_email_header_text": "Site <automation> report"}
     base.update(v)
@@ -349,7 +350,8 @@ class Escaping(unittest.TestCase):
         import glob
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(TPL), autoescape=False)
-        env.filters.update(report_cell_html=sf.report_cell_html, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar)
+        env.filters.update(report_cell_html=sf.report_cell_html, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar,
+                       safe_link=sf.safe_link, safe_data=sf.safe_data)
         files = sorted(glob.glob(os.path.join(REPO, "tests", "fixtures", "report_fit", "*.json")))
         self.assertGreater(len(files), 100)
         for look in ("ops", "atlas", "brief"):

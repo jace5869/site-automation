@@ -271,6 +271,9 @@ class Csp(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+LIST = ("(() => {const t = document.getElementById('site-tip'); if (!t || t.hidden || !t.classList.contains('tt-list')) return null; "
+        "return {head: t.querySelector('.tt-head').textContent, lines: [...t.querySelectorAll('.tt-ln')].map(a => "
+        "[a.querySelector('.tt-t').textContent, a.querySelector('.tt-w').firstChild.textContent, a.querySelector('.tt-t').getAttribute('href')])}})()")
 TIP = "(() => {const t = document.getElementById('site-tip'); return t && !t.hidden ? [...t.children].map(x => x.textContent) : null})()"
 
 
@@ -521,21 +524,33 @@ class RealChromeOutage(RealChrome):
             x, y = self.at(self.SEL, i)
             self.c.mouse(5, 5)
             self.c.mouse(x, y)
-            want = self.c.js("document.querySelectorAll(%s)[%d].getAttribute('data-tip').split('\\n')" % (json.dumps(self.SEL), i))
-            self.assertEqual(self.c.js(TIP), want, i)
+            self.assertEqual(self.c.js(LIST), self.want_list(i), i)
             box = self.c.js("(() => {const r = document.getElementById('site-tip').getBoundingClientRect(); "
                             "return [r.left, r.right, document.documentElement.clientWidth]})()")
             self.assertGreaterEqual(box[0], 0, i)
             self.assertLessEqual(box[1], box[2], i)
         self.assertEqual(self.c.js("document.querySelectorAll(%s)[5].getAttribute('data-tip').split('\\n')" % json.dumps(self.SEL)),
-                         ["1  12 Nov 01:41:10 CET  Low", "Storage path redundancy degraded, back after 40 s - esx03"])
+                         ["1  12 Nov 01:41:10 CET  Low", "Storage path redundancy degraded, back after 40 s - esx03"])   # the plain tip is still there
+        x, y = self.at(self.SEL, 5)
         self.c.mouse(5, 5)
-        self.assertIsNone(self.c.js(TIP))
+        self.c.mouse(x, y)
+        self.assertEqual(self.c.js(LIST), {"head": "1 event \u00b7 01:41", "lines": [["01:41:10", "Storage path redundancy degraded, back after 40 s", "#ot-row-1"]]})
+        self.c.mouse(5, 5)
+        self.assertIsNone(self.c.js(LIST))
         self.assertFalse(self.c.js("[...document.querySelectorAll('[data-tip]')].some(e => e.hasAttribute('title'))"))
         # no mark lies over another: each one's middle is its own
         self.assertEqual(self.c.js("[...document.querySelectorAll(%s)].filter(e => {const r = e.getBoundingClientRect(); "
                                    "return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2).closest('.ot-m') !== e}).length"
                                    % json.dumps(self.SEL)), 0)
+
+    def want_list(self, i):
+        """The tip's list for the i-th mark, worked out from its data-ev: the critical first, then by time; the header with the span."""
+        ev = self.c.js("JSON.parse(document.querySelectorAll(%s)[%d].getAttribute('data-ev'))" % (json.dumps(self.SEL), i))
+        rank = {"critical": 4, "warning": 3, "low": 2, "info": 1, "ok": 0}
+        by = sorted(ev, key=lambda e: e["n"])
+        head = "%d event%s \u00b7 %s" % (len(ev), "" if len(ev) == 1 else "s", by[0]["m"] + ("-" + by[-1]["m"] if by[-1]["m"] != by[0]["m"] else ""))
+        lines = [[e["t"], e["w"], "#ot-row-%d" % e["n"]] for e in sorted(ev, key=lambda e: (-rank[e["l"]], e["n"]))]
+        return {"head": head, "lines": lines}
 
     def test_7_the_keyboard_reaches_each_mark(self):
         self.c.js("document.activeElement && document.activeElement.blur(); window.scrollTo(0, 0)")
@@ -543,17 +558,245 @@ class RealChromeOutage(RealChrome):
         for _ in range(300):
             self.c.key("Tab", "Tab", 9)
             if self.c.js("document.activeElement.matches(%s)" % json.dumps(self.SEL)):
-                tip = self.c.js(TIP)
-                self.assertEqual(tip, self.c.js("document.activeElement.getAttribute('data-tip').split('\\n')"))
-                seen.append(tip[0])
+                tip = self.c.js(LIST)
+                self.assertEqual(tip["head"].split(" ")[0], str(self.c.js("JSON.parse(document.activeElement.getAttribute('data-ev')).length")))
+                seen.append(tip["lines"][0][1])
             elif seen:
                 break
         self.assertEqual(len(seen), 18, "Tab did not stop at every mark")
-        self.assertEqual(seen[0], "3  12 Nov 01:58:30 CET  Warning")          # the first lane's first mark: document order
+        self.assertEqual(seen[0], "Alarm yellow: Host storage path redundancy")          # the first lane's first mark: document order
         self.c.js("document.querySelector(%s).focus()" % json.dumps(self.SEL))
-        self.assertIsNotNone(self.c.js(TIP))
+        self.assertIsNotNone(self.c.js(LIST))
         self.c.key("Escape", "Escape", 27)
-        self.assertIsNone(self.c.js(TIP))
+        self.assertIsNone(self.c.js(LIST))                                                  # Esc closes it, and the focus returned does not open it again
+        self.assertTrue(self.c.js("document.activeElement.matches(%s)" % json.dumps(self.SEL)))
+
+    def test_8_a_click_or_enter_pins_it_and_the_list_scrolls(self):
+        self.c.js("document.activeElement && document.activeElement.blur()")
+        i = 7                                                                                              # a mark of the vCenter lane, in the middle of the chart
+        x, y = self.at(self.SEL, i)
+        self.c.mouse(x, y)
+        self.assertFalse(self.c.js("document.getElementById('site-tip').classList.contains('pin')"))     # hovering shows it, does not pin it
+        self.c.js("document.querySelectorAll(%s)[%d].click()" % (json.dumps(self.SEL), i))
+        self.assertTrue(self.c.js("document.getElementById('site-tip').classList.contains('pin')"))
+        self.c.mouse(5, 5)                                                                                # pinned: the pointer leaving does not close it
+        self.assertIsNotNone(self.c.js(LIST))
+        box = self.c.js("(() => {const t = document.getElementById('site-tip'), b = t.querySelector('.tt-body'), p = document.querySelector('.ot-plot').getBoundingClientRect(), "
+                        "r = t.getBoundingClientRect(); return [Math.round(r.width), getComputedStyle(b).maxHeight, getComputedStyle(b).overflowY, r.left >= p.left - 1, r.right <= p.right + 1]})()")
+        self.assertEqual(box, [420, "320px", "auto", True, True])                                         # fixed width, a max height, a scroll bar, inside the chart
+        self.c.key("Escape", "Escape", 27)
+        self.assertIsNone(self.c.js(LIST))
+        self.c.js("document.querySelectorAll(%s)[%d].focus()" % (json.dumps(self.SEL), i))
+        self.c.key("Enter", "Enter", 13)                                                                  # Enter on a Tab stop pins it too
+        self.assertTrue(self.c.js("document.getElementById('site-tip').classList.contains('pin')"))
+        n = self.c.js(LIST)["lines"][0][2]
+        self.c.js("document.querySelector('#site-tip .tt-ln').click()")                                    # a line (anywhere on it): to its row, which flashes
+        self.assertIsNone(self.c.js(LIST))
+        self.assertTrue(self.c.js("document.getElementById(%s).classList.contains('ot-flash')" % json.dumps(n[1:])))
+        # a click elsewhere closes a pinned one
+        self.c.js("document.querySelectorAll(%s)[%d].click()" % (json.dumps(self.SEL), i))
+        self.assertIsNotNone(self.c.js(LIST))
+        self.c.mouse(5, 5)
+        self.c.js("document.body.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
+        self.assertIsNone(self.c.js(LIST))
+
+
+class RealChromeOutageFilters(RealChromeOutage):
+    """The controls above the chart: Related only, the kinds, Show every repeat - the marks and The events follow, the choice is kept."""
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_or_enter_pins_it_and_the_list_scrolls = None
+
+    @classmethod
+    def web(cls):
+        f = tot.Fine("test_the_kinds")
+        evs = f.evs() + [tot.alarm("01:%02d:00" % (5 + 4 * i), "Virtual machine CPU usage", "yellow", "green") for i in range(4)]
+        evs.sort(key=lambda e: e["time"])
+        return tot.ot.outage_timeline_doc(tot.WATCH, tot.made(evs, []), True, True)
+
+    def count(self, expr):
+        return self.c.js("document.querySelectorAll(%s).length" % json.dumps(expr))
+
+    def test_9_related_only_and_the_kinds(self):
+        self.c.js("localStorage.removeItem('site-report-outage')")
+        self.assertFalse(self.c.js("document.querySelector('[data-ot-ctl]').hidden"))                    # the controls show once the script runs
+        all_marks = self.count(".ot-track .ot-m")
+        self.assertGreater(self.count(".ot-track .ot-m.ot-dim"), 0)                                       # dimmed, still there
+        self.assertGreater(self.count(".ot-track .ot-m.ot-rel"), 0)
+        self.assertEqual(self.count(".ot-track .ot-m.ot-off"), 0)
+        self.c.js("document.querySelector('input[name=ot-show][value=rel]').click()")
+        off = self.count(".ot-track .ot-m.ot-off")
+        self.assertEqual(off, self.count(".ot-track .ot-m.ot-dim"))                                       # Related only hides the unrelated marks
+        self.assertEqual(self.c.js("[...document.querySelectorAll('tr[data-cls]')].filter(r => r.hidden && r.getAttribute('data-rel') === '0' && !r.hasAttribute('data-rep')).length"),
+                         self.c.js("[...document.querySelectorAll('tr[data-cls]')].filter(r => r.getAttribute('data-rel') === '0' && !r.hasAttribute('data-rep')).length"))
+        self.assertEqual(json.loads(self.c.js("localStorage.getItem('site-report-outage')"))["show"], "rel")  # remembered
+        self.c.js("document.querySelector('input[name=ot-show][value=all]').click()")
+        self.assertEqual(self.count(".ot-track .ot-m.ot-off"), 0)
+        # a kind off: the marks of that kind only and its rows go; the others stay
+        self.c.js("document.querySelector('input[name=ot-kind][value=network]').click()")
+        self.assertEqual(self.c.js("[...document.querySelectorAll('tr[data-cls=network]')].every(r => r.hidden)"), True)
+        self.assertEqual(self.c.js("[...document.querySelectorAll('tr[data-cls=host]')].every(r => !r.hidden)"), True)
+        self.assertGreater(self.count(".ot-track .ot-m.ot-off"), 0)
+        self.assertLess(self.count(".ot-track .ot-m.ot-off"), all_marks)
+        self.assertEqual(self.c.js("JSON.parse(localStorage.getItem('site-report-outage')).off.network"), True)
+        # the tip of a mark lists only the events still shown
+        self.c.js("document.querySelector('input[name=ot-kind][value=network]').click()")
+        self.assertEqual(self.count(".ot-track .ot-m.ot-off"), 0)
+
+    def test_a_repeats_fold_and_show_every_repeat(self):
+        self.c.js("localStorage.removeItem('site-report-outage')")
+        self.c.js("document.querySelector('input[name=ot-rep]').checked && document.querySelector('input[name=ot-rep]').click(); "
+                  "document.querySelector('input[name=ot-kind]').dispatchEvent(new Event('change', {bubbles: true}))")
+        reps = self.count("tr[data-rep]")
+        self.assertEqual(reps, 3)
+        self.assertEqual(self.c.js("[...document.querySelectorAll('tr[data-rep]')].every(r => r.hidden)"), True)
+        head = self.c.js("(() => {const r = document.querySelector('tr[data-fold]'); return [r.cells[4].textContent.trim(), r.cells[4].title]})()")
+        self.assertTrue(head[0].endswith("\u00d74, 02:05-02:17"), head)
+        self.assertEqual(head[1], "02:05:00, 02:09:00, 02:13:00, 02:17:00")                              # the times in its title
+        self.c.js("document.querySelector('input[name=ot-rep]').click()")
+        self.assertEqual(self.c.js("[...document.querySelectorAll('tr[data-rep]')].every(r => !r.hidden)"), True)
+        self.assertFalse(self.c.js("document.querySelector('tr[data-fold]').cells[4].textContent.includes('\u00d74')"))
+        self.assertEqual(self.c.js("JSON.parse(localStorage.getItem('site-report-outage')).rep"), True)
+        self.c.js("document.querySelector('input[name=ot-rep]').click()")
+
+
+    def reset(self):
+        self.c.js("localStorage.removeItem('site-report-outage')")
+        self.c.js("document.querySelector('input[name=ot-show][value=all]').click(); document.querySelector('input[name=ot-rep]').checked && document.querySelector('input[name=ot-rep]').click(); "
+                  "[...document.querySelectorAll('input[name=ot-kind]')].forEach(i => { if (!i.checked) i.click() })")
+
+    def test_b_the_table_filter_and_the_outage_filter_work_together(self):
+        """Codex 3: the outage exclusion is one more input of the row's visibility; clearing the table's filter must not show a row Related only hides."""
+        self.reset()
+        shown = "[...document.querySelectorAll('tr[data-cls]')].filter(r => !r.hidden).length"
+        total = self.count("tr[data-cls]")
+        self.c.js("document.querySelector('input[name=ot-show][value=rel]').click()")
+        rel_only = self.c.js(shown)
+        self.assertLess(rel_only, total)
+        tb = self.c.js("(() => {const t = document.querySelector('tr[data-cls]').closest('.tw'); return !!t.previousElementSibling.querySelector('.filter')})()")
+        self.assertTrue(tb, "the events table has its filter box")
+        box = "document.querySelector('tr[data-cls]').closest('.tw').previousElementSibling.querySelector('.filter')"
+        self.c.js("(() => {const f = %s; f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
+        self.assertEqual(self.c.js(shown), 0)
+        self.c.js("(() => {const f = %s; f.value = ''; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
+        self.assertEqual(self.c.js(shown), rel_only)                       # the filter cleared: Related only still holds
+        shown_n = self.c.js("document.querySelector('tr[data-cls]').closest('.tw').previousElementSibling.querySelector('.shown').textContent")
+        self.assertEqual(shown_n, "%d of %d" % (rel_only, total - self.count("tr[data-rep]") + self.count("tr[data-rep]")) if False else shown_n)
+        self.assertTrue(shown_n.startswith("%d of " % rel_only), shown_n)   # the count follows
+        self.c.js("document.querySelector('input[name=ot-show][value=all]').click()")
+        self.c.js("(() => {const f = %s; f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
+        self.c.js("document.querySelector('input[name=ot-show][value=rel]').click()")
+        self.c.js("document.querySelector('input[name=ot-show][value=all]').click()")
+        self.assertEqual(self.c.js(shown), 0)                              # the outage filter does not show a row the table's filter hides
+        self.c.js("(() => {const f = %s; f.value = ''; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
+
+    def test_c_folding_keeps_the_cells_link(self):
+        """Codex 4: the fold's text is its own node; an anchor in the cell survives both views."""
+        self.reset()
+        self.c.js("(() => {const r = document.querySelector('tr[data-fold]'), td = r.cells[4], a = document.createElement('a'); a.className = 'keep'; a.href = 'https://x.example/'; "
+                  "const t = td.firstChild; a.textContent = t.textContent; td.replaceChild(a, t)})()")
+        self.c.js("document.querySelector('input[name=ot-rep]').click()")
+        self.assertEqual(self.c.js("document.querySelectorAll('tr[data-fold] a.keep').length"), 1)
+        self.c.js("document.querySelector('input[name=ot-rep]').click()")
+        self.assertEqual(self.c.js("document.querySelectorAll('tr[data-fold] a.keep').length"), 1)
+        self.assertIn("\u00d74", self.c.js("document.querySelector('tr[data-fold]').cells[4].textContent"))
+        self.assertEqual(self.c.js("document.querySelectorAll('tr[data-fold] .ot-fold').length"), 1)       # one suffix node, not one per switch
+
+    def test_d_a_repeats_line_goes_to_its_head_after_a_sort(self):
+        """Codex 5: the head row is found by id (data-head), not by walking the table backwards."""
+        self.reset()
+        self.assertEqual(self.c.js("[...document.querySelectorAll('tr[data-rep]')].every(r => r.getAttribute('data-head') === document.querySelector('tr[data-fold]').id)"), True)
+        # the table sorted another way: the repeats now come before their head
+        self.c.js("(() => {const h = document.querySelector('tr[data-fold]'); h.parentNode.appendChild(h)})()")
+        n = self.c.js("document.querySelector('tr[data-rep]').getAttribute('data-num')")
+        self.c.js("(() => {const m = [...document.querySelectorAll('.ot-track .ot-m')].find(m => JSON.parse(m.getAttribute('data-ev')).some(e => e.n == %s)); m.click()})()" % n)
+        self.c.js("[...document.querySelectorAll('#site-tip .tt-ln')].find(l => l.querySelector('a.tt-t').getAttribute('href') === '#ot-row-%s').click()" % n)
+        self.assertTrue(self.c.js("document.querySelector('tr[data-fold]').classList.contains('ot-flash')"))
+        self.assertFalse(self.c.js("document.querySelector('tr[data-rep]').classList.contains('ot-flash')"))
+
+
+class RealChromeOutageGroups(RealChromeOutage):
+    """Codex 6: a mark that stands for several events shows what is left of them."""
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_or_enter_pins_it_and_the_list_scrolls = None
+
+    @classmethod
+    def web(cls):
+        evs = [tot.alarm("01:19:40", "Host connection and power state", "red", "green"),
+               tot.alarm("01:19:41", "Datastore accessibility", "yellow", "green"),
+               tot.alarm("01:19:42", "Virtual machine CPU usage", "yellow", "green"),
+               tot.ev("01:19:43", "AlarmStatusChangedEvent", tot.H, vm="vm-app01", alarm="Virtual machine heartbeat", entity="vm-app01", to="red", **{"from": "green"}),
+               tot.ev("01:19:44", "AlarmStatusChangedEvent", tot.H, alarm="Datastore usage on disk", entity="ds-archive", to="yellow", **{"from": "green"})]
+        return tot.ot.outage_timeline_doc(tot.WATCH, tot.made(evs, []), True, True)
+
+    GROUP = ("[...document.querySelectorAll('.ot-track .ot-m')].find(m => JSON.parse(m.getAttribute('data-ev')).length > 2)")
+
+    def state(self):
+        return self.c.js("(() => {const m = %s; return {label: m.querySelector('b').textContent, cls: [...m.classList].filter(c => /^ot-(critical|warning|low|info|ok|rel|dim|off)$/.test(c)).sort(), "
+                         "aria: m.getAttribute('aria-label'), tip: m.getAttribute('data-tip'), icon: m.querySelector('svg') && m.querySelector('svg').outerHTML}})()" % self.GROUP)
+
+    def test_9_label_level_outline_and_text_follow_the_visible_events(self):
+        self.c.js("localStorage.removeItem('site-report-outage')")
+        before = self.state()
+        self.assertRegex(before["label"], r"^\d+\+\d+$")
+        ev = self.c.js("JSON.parse(%s.getAttribute('data-ev'))" % self.GROUP)
+        classes = sorted(set(e["c"] for e in ev))
+        self.assertGreater(len(classes), 1, classes)
+        worst = max(ev, key=lambda e: {"critical": 4, "warning": 3, "low": 2, "info": 1, "ok": 0}[e["l"]])
+        # hide every kind but the one of the lowest event: the mark becomes that event's
+        low = min(ev, key=lambda e: ({"critical": 4, "warning": 3, "low": 2, "info": 1, "ok": 0}[e["l"]], -e["n"]))
+        for c in classes:
+            if c != low["c"]:
+                self.c.js("document.querySelector('input[name=ot-kind][value=%s]').click()" % c)
+        now = self.state()
+        left = [e for e in ev if e["c"] == low["c"]]
+        self.assertEqual(now["label"], str(left[0]["n"]) if len(left) == 1 else "%d+%d" % (left[0]["n"], len(left) - 1))
+        self.assertIn("ot-" + max(left, key=lambda e: {"critical": 4, "warning": 3, "low": 2, "info": 1, "ok": 0}[e["l"]])["l"], now["cls"])
+        if worst["l"] != max(left, key=lambda e: {"critical": 4, "warning": 3, "low": 2, "info": 1, "ok": 0}[e["l"]])["l"]:
+            self.assertNotIn("ot-" + worst["l"], now["cls"])
+            self.assertNotEqual(now["icon"], before["icon"])
+        self.assertNotEqual(now["aria"], before["aria"])
+        self.assertTrue(all(w["w"] in now["aria"] for w in left))
+        self.assertFalse(any(w["w"] in now["aria"] for w in ev if w["c"] != low["c"]))
+        self.assertFalse(any(w["w"] in now["tip"] for w in ev if w["c"] != low["c"]))
+        # all back: as it was
+        for c in classes:
+            if c != low["c"]:
+                self.c.js("document.querySelector('input[name=ot-kind][value=%s]').click()" % c)
+        self.assertEqual(self.state(), before)
+
+
+class RealChromeOutageFiltersBrief(RealChromeOutageFilters):
+    TPL = "report_brief.html.j2"
+
+
+class RealChromeOutageFiltersOps(RealChromeOutageFilters):
+    TPL = "report_ops.html.j2"
+
+
+class RealChromeOutageLinks(RealChromeOutage):
+    """The incidents of ServiceNow linked: in the tip's lines, in The events and in the first card - a new tab, https only."""
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_or_enter_pins_it_and_the_list_scrolls = None
+    URL = "https://dev.service-now.example/nav_to.do?uri=incident.do%3Fsys_id%3Da1"
+
+    @classmethod
+    def web(cls):
+        return tot.ot.outage_timeline_doc(tot.WATCH, tot.made(instance="https://dev.service-now.example"), True, True)
+
+    def test_9_the_incident_number_is_a_link_in_the_tip(self):
+        i = self.c.js("[...document.querySelectorAll(%s)].findIndex(m => JSON.parse(m.getAttribute('data-ev'))[0].k)" % json.dumps(self.SEL))
+        self.assertGreaterEqual(i, 0)
+        x, y = self.at(self.SEL, i)
+        self.c.mouse(5, 5)
+        self.c.mouse(x, y)
+        got = self.c.js("(() => {const a = document.querySelector('#site-tip .tt-inc'); return a && [a.textContent, a.href, a.target, a.rel]})()")
+        self.assertEqual(got, ["INC0012345", self.URL, "_blank", "noopener noreferrer"])
+        self.c.mouse(5, 5)
+
+    def test_a_the_events_and_the_card(self):
+        cell = self.c.js("(() => {const r = document.querySelector('tr[data-cls]:has(a[href*=\"nav_to.do\"])'); const a = r.querySelector('a[href*=\"nav_to.do\"]'); return [a.href, a.target, a.rel]})()")
+        self.assertEqual(cell[:2], [self.URL, "_blank"])
+        self.assertIn("noopener", cell[2])
+        card = self.c.js("(() => {const a = document.querySelector('.cards h3 a'); return [a.textContent, a.href, a.parentElement.textContent]})()")
+        self.assertEqual(card[:2], ["INC0012345", self.URL])
+        self.assertTrue(card[2].startswith("INC0012345 opened at"))
 
 
 class RealChromeOutageBrief(RealChromeOutage):

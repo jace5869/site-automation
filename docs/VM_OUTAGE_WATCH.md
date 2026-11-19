@@ -191,6 +191,42 @@ Leave `vm_watch_review` off on the schedule. A scheduled run that finds somethin
 | For the after-action report | lines to paste into the AAR job's survey, each named by its variable |
 | The watch's own sections | *Down or hung now* and the rest, below, as in every watch report |
 
+### The list, the related events and the filters
+
+The time line is easier to read when you know what it is about. The review works out the outage's **subject** from its own events: the hosts that
+went down, and the VMs with a critical event of their own.
+
+**The list.** Hover a mark, or Tab to it. The tip is a list:
+
+1. A header, for example *26 events · 17:20-17:24*.
+2. One line per event: time, level icon, what, and where. The critical ones come first, then by time.
+3. Click the mark (or press Enter) to keep the list open so you can scroll it. Esc or a click elsewhere closes it.
+4. Click a line to go to its row in *The events*.
+
+**Related.** A mark about the subject, its ESXi host, its cluster, or the datastores and port groups that events of its host name has an outline ring
+and full colour. The other marks are dimmed but stay there and can be hovered. The legend says what is outlined, and *The events* gets a
+*Related* column. A snapshot is related only when it is on a subject VM itself, because a snapshot commit can stun a VM. If no subject can be worked out,
+nothing is marked and a muted line says why.
+
+**Filters.** Above the chart, in two rows:
+
+| Control | What it does |
+|---|---|
+| Show: All / Related only | hides the unrelated marks and rows |
+| Kinds | ticks for Host, HA, Datastore and storage, Network, VM power and heartbeat, CPU and memory usage, Snapshots, Other; the kind comes from the event's type and words |
+| Show every repeat | lists every row of a repeat (below) |
+
+The controls filter the chart and *The events* together. The choice is kept in this browser.
+
+**Repeats.** Identical events one after another (the same lane, what, where and level) fold into one row, for example *×4, 17:21-17:40*; the times
+are in the row's title. *Show every repeat* lists them all. Without the script every row shows. The email and the workbook are unchanged.
+
+**Incidents are links.** With the ServiceNow credential attached, every incident number opens the incident in ServiceNow (a new tab, read only): in the list's lines
+of the ServiceNow and ACT lanes, in *The events*, and in the card *First signal to ticket*. The email's table and card link the same numbers. The link is
+`https://<instance>/nav_to.do?uri=incident.do%3Fsys_id%3D<sys_id>`; the instance is the credential's `SN_HOST` (https only). If the instance is not
+known, the number shows without a link. Without the credential the review says so and how to fix it: *Attach the ServiceNow API credential to the
+outage watch template to see and link its incidents (read only).*
+
 The four lanes:
 
 | Lane | What it holds |
@@ -200,8 +236,8 @@ The four lanes:
 | ServiceNow | the tickets the health workflows opened (`servicenow_correlation_prefix`), their work notes, when each was resolved |
 | ACT | ACT's analysis and review notes in those tickets |
 
-- **Hover a mark**, or Tab to it: the time, the lane, where and what. Marks that would overlap share one mark with
-  their count.
+- **Hover a mark**, or Tab to it: a list of its events. Marks that would overlap share one mark with their count ("11+3").
+  See *The list, the related events and the filters* below.
 - **Levels** are words and icons, never colour alone: Critical, Warning, Low, Note, Back to normal.
 - **Low:** a problem that cleared within `vm_watch_review_low_seconds` (120) is one Low event, "back after 40 s".
 - **The email** and the other looks have no chart: the boxes, the short list and the events table.

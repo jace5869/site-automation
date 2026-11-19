@@ -7,7 +7,8 @@ which runs need a look, each report's findings and its last runs, with a tab per
 on it.
 
 It works **without email**: set `report_web_dest` and leave `report_email_to` empty. With both set, the email
-carries a link to its page ("Open this report in a browser").
+links to its page at the top and the bottom (**Open the full report**, 1.76.2); the text email has *Full report:*
+and the address as its first line and its last.
 
 Each report job writes its own pages. When some report templates run in an execution environment that cannot reach
 the web server (a Windows server needs WinRM, and with NTLM blocked Kerberos, in the execution environment), let
@@ -771,8 +772,8 @@ then writes those pages - the same pages, at the same address. So:
   (by the same name), it reaches it the way your Windows jobs do - that host's connection settings
   (`ansible_port`, `ansible_winrm_transport` ...) and the template's Machine credential. The `report_web_host_*`
   settings are not needed then;
-- each report job still prints the page's address, keeps it as `site_report_url`, and its email gets the button
-  (**Open the full report**, *Open this report in a browser*) - the page is there once the copy job has run, so a
+- each report job still prints the page's address, keeps it as `site_report_url`, and its email gets the link at the
+  top and the bottom (**Open the full report**) - the page is there once the copy job has run, so a
   link opened before that answers *not found*.
 
 ### Setting it up

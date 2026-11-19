@@ -1108,7 +1108,7 @@ footer{margin-top:32px}
 {%- set tgt = tg.i or tg.j %}
 <article class="todo c-{{ cst }}{{ ' later' if loop.index > 3 else '' }}">
 <div class="row1"><span class="num" aria-hidden="true"></span><span class="lbl">{{ ('Up next' if loop.first else c.meta | default('Then', true)) | e }}</span><span class="stc s-{{ cst }}"><span class="d" aria-hidden="true"></span>{{ c.chip | default(opsword[cst], true) | e }}</span></div>
-<h3>{{ c.title | default('') | e }}</h3>
+<h3>{% if c.url | default('') | safe_link and c.url_text | default('') and c.url_text in c.title | default('') %}{% set tp = c.title.split(c.url_text, 1) %}{{ tp[0] | e }}<a href="{{ c.url | safe_link | e }}" target="_blank" rel="noopener noreferrer">{{ c.url_text | e }}</a>{{ tp[1] | e }}{% else %}{{ c.title | default('') | e }}{% endif %}</h3>
 {%- if c.next | default('') %}
 <p class="next">{{ c.next | e }}</p>
 {%- endif %}
@@ -1245,7 +1245,7 @@ footer{margin-top:32px}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
 {%- set tg = (s.row_tags[ri] if s.row_tags is defined and s.row_tags | length > ri else {}) | default({}, true) %}
-<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% if tg.pf | default('') %} data-pf="{{ tg.pf | e }}"{% endif %}{% if tg.col | default('') %} data-col="{{ tg.col | e }}"{% endif %} id="{{ tg.id | e if tg.id | default('') else 's' ~ si ~ 'r' ~ ri }}"{% if 'cat' in tg and tg.cat is not none %} data-cat="{{ tg.cat | e }}"{% endif %}{% if tg.h | default('') %} data-h="{{ tg.h | lower | e }}"{% endif %}{% if s.row_filters is defined and s.row_filters | length > ri %}{% for vals in s.row_filters[ri] %} data-f{{ loop.index0 }}="|{{ vals | join('|') | e }}|"{% endfor %}{% endif %}>
+<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}{% if tg.pf | default('') %} data-pf="{{ tg.pf | e }}"{% endif %}{% set tgd = tg.data | default({}) | safe_data %}{% for k in tgd %} data-{{ k | e }}="{{ tgd[k] | e }}"{% endfor %}{% if tg.col | default('') %} data-col="{{ tg.col | e }}"{% endif %} id="{{ tg.id | e if tg.id | default('') else 's' ~ si ~ 'r' ~ ri }}"{% if 'cat' in tg and tg.cat is not none %} data-cat="{{ tg.cat | e }}"{% endif %}{% if tg.h | default('') %} data-h="{{ tg.h | lower | e }}"{% endif %}{% if s.row_filters is defined and s.row_filters | length > ri %}{% for vals in s.row_filters[ri] %} data-f{{ loop.index0 }}="|{{ vals | join('|') | e }}|"{% endfor %}{% endif %}>
 {%- for cell in row %}
 {%- set text = ('' if cell is none else cell) | string %}
 {%- set lbl = (s.column_titles[loop.index0] if s.column_titles is defined and s.column_titles | length > loop.index0 else s.columns[loop.index0] | default('')) | string %}
@@ -1266,7 +1266,7 @@ footer{margin-top:32px}
 {#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays, and a section's keep_case: EFI, BIOS) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- set cl = s.cell_links2 if s.cell_links2 is defined and s.cell_links2.column == loop.index0 else (s.cell_links if s.cell_links is defined else none) %}{#- 1.69.2: cell_links2 - a second column of links (Hosts: the Collection) #}
-{%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) %}
+{%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) | safe_link %}
 {%- if clu %}
 {%- set cpy = (cl.copies[ri] if cl.copies is defined and cl.copies | length > ri else '') | default('', true) %}
 <td class="k-{{ kd | e }} k-cl" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if cpy %}<span class="clw">{% endif %}<a class="hl cv" href="{{ clu | e }}" target="_blank" rel="noopener" title="{{ (cl.titles[ri] if cl.titles is defined and cl.titles | length > ri else cl.title | default('')) | e }}">{% if kd == 'wrap' %}{% set ws = text.split(' ') %}{% for w in ws[:-1] %}<span class="w">{{ nbw(w) }}</span> <wbr>{% endfor %}{% if ws[-1] | length <= 16 %}<span class="w">{{ nbw(ws[-1]) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{% else %}{{ dw(ws[-1], false) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}{% else %}{{ breakable(text) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}</a>{% if cpy %}<button class="ccopy" type="button" hidden title="Copy {{ cpy | e }}" aria-label="Copy {{ cpy | e }}" data-copy="{{ cpy | e }}">{{ copyicons() }}</button></span>{% endif %}</td>

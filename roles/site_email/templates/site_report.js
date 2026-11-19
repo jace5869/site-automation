@@ -210,7 +210,7 @@
   fit('grow');
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
   /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
-  function vis(r){var h=!!(r._f||r._s||r._p||r._d);if(r.hidden!==h)r.hidden=h;
+  function vis(r){var h=!!(r._f||r._s||r._p||r._d||r._ot);if(r.hidden!==h)r.hidden=h;
     /* 1.68.0: a row that opens (tr.xr after it): shown when its row is and it was opened */
     if(r._x){var xh=h||!r._o;if(r._x.hidden!==xh)r._x.hidden=xh}}
   /* the open button of such a row: its rules, or its hosts, under it; its small table fitted */
@@ -554,27 +554,104 @@
      it); it stays inside the window.
      An element's title is taken off (no second tip). Every tip says what the page has elsewhere - the line's numbers
      are in the table under it */
+  /* 1.76.2, the outage review's time line: the controls above the chart (Show All / Related only, the kinds, Show every repeat) filter
+     the marks and The events; the choice is kept in this browser (localStorage, in try/catch). Folded repeats: identical rows one after
+     another show as one, "x4, 17:21-17:40", the times in its title. A mark's events (data-ev) feed its tip's list (below). */
+  var OT={show:'all',off:{},rep:false},OTK='site-report-outage',otMarks=all('.ot-m[data-ev]'),otCtl=document.querySelector('[data-ot-ctl]');
+  var otRows=all('tr[data-cls]');
+  var OTLV=['critical','warning','low','info','ok'],OTR={critical:4,warning:3,low:2,info:1,ok:0},OTW={critical:'Critical',warning:'Warning',low:'Low',info:'Note',ok:'Back to normal'};
+  otMarks.forEach(function(m){try{m._ev=JSON.parse(m.getAttribute('data-ev'))}catch(e){m._ev=null}
+    var b=m.querySelector('b');m._b=b;m._lab0=b?b.textContent:'';m._svg0=m.querySelector('svg');m._tip0=m.getAttribute('data-tip')||'';m._aria0=m.getAttribute('aria-label')||'';
+    m._lv0=OTLV.filter(function(l){return m.classList.contains('ot-'+l)})[0]||'info';m._sub=m.classList.contains('ot-rel')||m.classList.contains('ot-dim')});
+  var otVisible=function(list){return list.filter(function(e){return !(OT.show==='rel'&&!e.r)&&!OT.off[e.c]})};
+  /* a mark that stands for several events shows what is left of them: its number (first+others), its worst level and icon, whether the
+     rest are related (the outline), and its tip and aria text - as it was when all of them show */
+  var otMark=function(m,v){
+    var full=v.length===m._ev.length,vs=v.slice().sort(function(a,b){return a.n-b.n}),lv=m._lv0,lab=m._lab0,tip=m._tip0,aria=m._aria0,rel=null;
+    if(!full){lv=vs.reduce(function(a,e){return (OTR[e.l]||0)>(OTR[a]||0)?e.l:a},vs[0].l);if(OTLV.indexOf(lv)<0)lv='info';
+      lab=vs.length===1?String(vs[0].n):vs[0].n+'+'+(vs.length-1);
+      tip=vs.map(function(e){return e.n+'  '+e.t+'  '+(OTW[e.l]||'Note')+'\n'+e.w+(e.p?' - '+e.p:'')}).join('\n');aria=tip.replace(/\n/g,', ')}
+    OTLV.forEach(function(l){m.classList.toggle('ot-'+l,l===lv)});
+    if(m._sub){rel=full?null:(vs.every(function(e){return e.r})?2:vs.some(function(e){return e.r})?1:0);
+      if(rel===null){m.classList.toggle('ot-rel',m._rel0>0);m.classList.toggle('ot-dim',!(m._rel0>0))}
+      else{m.classList.toggle('ot-rel',rel>0);m.classList.toggle('ot-dim',!(rel>0))}}
+    if(m._b&&m._b.textContent!==lab)m._b.textContent=lab;
+    var cur=m.querySelector('svg'),ic=full?m._svg0:(document.querySelector('.ot-legend .ot-'+lv+' svg')||cur);
+    if(cur&&ic&&cur!==ic){var nw=full?ic:ic.cloneNode(true);m.replaceChild(nw,cur)}
+    m.setAttribute('data-tip',tip);m.setAttribute('aria-label',aria)};
+  otMarks.forEach(function(m){m._rel0=m.classList.contains('ot-rel')?1:0});
+  var otApply=function(){
+    otMarks.forEach(function(m){if(!m._ev)return;var v=otVisible(m._ev);m.classList.toggle('ot-off',!v.length);if(v.length)otMark(m,v)});
+    var wi=-1;otRows.forEach(function(tr){var t=tr.closest('table');if(t&&wi<0){var h=all('thead th',t).map(function(x){return x.textContent.trim()});wi=h.findIndex(function(x){return x.indexOf('What happened')===0})}
+      var ev={r:tr.getAttribute('data-rel')==='1'?1:0,c:tr.getAttribute('data-cls')};
+      var hide=!otVisible([ev]).length||(tr.hasAttribute('data-rep')&&!OT.rep);if(!!tr._ot!==hide){tr._ot=hide;vis(tr)}      /* one more input to vis(), beside the table's filter and the search */
+      var f=tr.getAttribute('data-fold'),td=wi>=0?tr.cells[wi]:null;
+      if(f&&td){var q=f.split('|'),sx=td._sx;if(!sx){sx=td._sx=document.createElement('span');sx.className='ot-fold';td.appendChild(sx)}      /* its own node: the cell's link stays */
+        sx.textContent=OT.rep?'':' \u00d7'+q[0]+', '+q[1]+(q[2]!==q[1]?'-'+q[2]:'');if(OT.rep)td.removeAttribute('title');else td.title=q[3]}});
+    counts.forEach(function(c){c()});                       /* the tables' "n of m" */
+    if(otCtl){all('input[name=ot-show]',otCtl).forEach(function(i){i.checked=i.value===OT.show});
+      all('input[name=ot-kind]',otCtl).forEach(function(i){i.checked=!OT.off[i.value]});var r=otCtl.querySelector('input[name=ot-rep]');if(r)r.checked=OT.rep}};
+  var otSave=function(){try{localStorage.setItem(OTK,JSON.stringify({show:OT.show,off:OT.off,rep:OT.rep}))}catch(e){}};
+  if(otCtl){
+    try{var sv=JSON.parse(localStorage.getItem(OTK)||'null');if(sv&&typeof sv==='object'){if(sv.show==='rel'&&otCtl.querySelector('input[value=rel]'))OT.show='rel';
+      if(sv.off&&typeof sv.off==='object')OT.off=sv.off;OT.rep=!!sv.rep}}catch(e){}
+    otCtl.hidden=false;otApply();
+    otCtl.addEventListener('change',function(e){var i=e.target;if(i.name==='ot-show')OT.show=i.value;else if(i.name==='ot-kind'){if(i.checked)delete OT.off[i.value];else OT.off[i.value]=true}
+      else if(i.name==='ot-rep')OT.rep=i.checked;otSave();otApply()})}
+  else if(otRows.length){otApply()}
   var tips=all('[data-tip]'),sparks=all('svg.spark[data-points]');
   if(tips.length||sparks.length){
-    var tt=document.createElement('div'),owner=null,NS='http://www.w3.org/2000/svg';
+    var tt=document.createElement('div'),owner=null,pinned=null,NS='http://www.w3.org/2000/svg';
     tt.className='tt';tt.id='site-tip';tt.setAttribute('role','tooltip');tt.hidden=true;document.body.appendChild(tt);
     var place=function(x,y){var w=tt.offsetWidth,h=tt.offsetHeight,vw=document.documentElement.clientWidth,vh=window.innerHeight,
-        l=Math.min(Math.max(8,x-w/2),vw-w-8),t=y-h-12;if(t<8)t=Math.min(y+16,vh-h-8);
+        lo=8,hi=vw-w-8,box=owner&&owner.closest&&tt.classList.contains('tt-list')?owner.closest('.ot-plot'):null;
+      if(box){var b=box.getBoundingClientRect();lo=Math.max(8,b.left);hi=Math.min(hi,b.right-w);if(hi<lo)hi=Math.max(8,vw-w-8),lo=8}
+      var l=Math.min(Math.max(lo,x-w/2),hi),t=y-h-12;if(t<8)t=Math.min(y+16,vh-h-8);
       tt.style.transform='translate('+Math.round(Math.max(8,l))+'px,'+Math.round(Math.max(8,t))+'px)'};
-    var hide=function(){if(owner&&owner._off)owner._off();owner=null;tt.hidden=true};
-    var show=function(el,lines,x,y){if(owner&&owner!==el&&owner._off)owner._off();owner=el;tt.textContent='';
+    var hide=function(){var o=owner;if(owner&&owner._off)owner._off();owner=null;pinned=null;tt.hidden=true;tt.className='tt';tt.removeAttribute('aria-label');tt.removeAttribute('tabindex')};
+    var show=function(el,lines,x,y){if(owner&&owner!==el&&owner._off)owner._off();owner=el;tt.className='tt';tt.textContent='';
       lines.forEach(function(l,i){var d=document.createElement('div');if(!i)d.className='tt-h';d.textContent=l;tt.appendChild(d)});
       tt.hidden=false;place(x,y)};
+    /* a mark's events as a list: a header ("26 events . 17:20-17:24"), one line each - time, level icon, what, where - the critical first, then by
+       time; each line links to its row in The events. Hover shows it; a click (or Enter) pins it so it can be scrolled; Esc or a click elsewhere closes */
+    var RANKS={critical:4,warning:3,low:2,info:1,ok:0};
+    var rowFor=function(n){var tr=document.getElementById('ot-row-'+n);if(tr&&tr.hasAttribute('data-rep')&&!OT.rep){var h=document.getElementById(tr.getAttribute('data-head')||'');if(h)tr=h}return tr};      /* a folded repeat: its head's row (data-head), whatever the sort */
+    var showList=function(el,x,y){var list=otVisible(el._ev||[]);if(!list.length){hide();return}
+      if(owner&&owner!==el&&owner._off)owner._off();owner=el;tt.textContent='';tt.className='tt tt-list'+(pinned===el?' pin':'');
+      var bytime=list.slice().sort(function(a,b){return a.n-b.n}),first=bytime[0].m,last=bytime[bytime.length-1].m;
+      var hd=document.createElement('div');hd.className='tt-head';hd.textContent=list.length+(list.length===1?' event':' events')+' \u00b7 '+first+(last!==first?'-'+last:'');tt.appendChild(hd);
+      var body=document.createElement('div');body.className='tt-body';
+      list.slice().sort(function(a,b){return (RANKS[b.l]||0)-(RANKS[a.l]||0)||a.n-b.n}).forEach(function(e){
+        var ln=document.createElement('div'),ic=document.querySelector('.ot-legend .ot-'+e.l+' svg');ln.className='tt-ln'+(e.r?' rel':'');
+        var t=document.createElement('a');t.className='tt-t';t.href='#ot-row-'+e.n;t.textContent=e.t;t.title='Go to row '+e.n+' of The events';ln.appendChild(t);
+        var i=document.createElement('span');i.className='tt-i ot-'+e.l;if(ic)i.appendChild(ic.cloneNode(true));i.setAttribute('aria-hidden','true');ln.appendChild(i);
+        var w=document.createElement('span');w.className='tt-w';
+        var at=e.u&&e.k?e.w.indexOf(e.k):-1;           /* an incident of ServiceNow: its number is a link (a new tab) */
+        if(at>=0&&/^https:\/\//.test(e.u)){w.appendChild(document.createTextNode(e.w.slice(0,at)));var inc=document.createElement('a');inc.className='tt-inc';inc.href=e.u;inc.target='_blank';
+          inc.rel='noopener noreferrer';inc.textContent=e.k;w.appendChild(inc);w.appendChild(document.createTextNode(e.w.slice(at+e.k.length)))}
+        else w.appendChild(document.createTextNode(e.w));
+        if(e.p){var p=document.createElement('small');p.textContent=e.p;w.appendChild(p)}ln.appendChild(w);
+        var go=function(ev){var tr=rowFor(e.n);if(!tr)return;ev.preventDefault();hide();var d=tr.closest('details');if(d)d.open=true;
+          tr.scrollIntoView({block:'center'});tr.classList.add('ot-flash');setTimeout(function(){tr.classList.remove('ot-flash')},2200)};
+        t.addEventListener('click',go);
+        ln.addEventListener('click',function(ev){if(ev.target.closest&&ev.target.closest('a'))return;go(ev)});          /* the line goes to its row; the incident link opens ServiceNow */
+        body.appendChild(ln)});
+      tt.appendChild(body);if(pinned===el){body.tabIndex=0;body.setAttribute('aria-label','Events of this mark')}
+      tt.hidden=false;place(x,y);if(pinned===el)body.focus()};
+    var pin=function(el){if(!el._ev)return;pinned=el;var r=el.getBoundingClientRect();showList(el,r.left+r.width/2,r.top)};
     var keyed=function(el){try{return el.matches(':focus-visible')}catch(e){return true}};
     tips.forEach(function(el){if(!el.hasAttribute('tabindex'))el.tabIndex=0;el.removeAttribute('title');el.setAttribute('aria-describedby','site-tip');
       var ln=function(){return el.getAttribute('data-tip').split('\n')};
-      var at=el._at=function(){var r=el.getBoundingClientRect();show(el,ln(),r.left+r.width/2,r.top)};
-      el.addEventListener('pointerenter',function(e){if(e.pointerType==='mouse')show(el,ln(),e.clientX,e.clientY)});
-      el.addEventListener('pointermove',function(e){if(e.pointerType==='mouse'&&owner===el)place(e.clientX,e.clientY)});
-      el.addEventListener('pointerleave',function(e){if(e.pointerType==='mouse'&&owner===el)hide()});
+      var emit=function(x,y){if(el._ev)showList(el,x,y);else show(el,ln(),x,y)};
+      var at=el._at=function(){var r=el.getBoundingClientRect();emit(r.left+r.width/2,r.top)};
+      el.addEventListener('pointerenter',function(e){if(e.pointerType==='mouse'&&!pinned)emit(e.clientX,e.clientY)});
+      el.addEventListener('pointermove',function(e){if(e.pointerType==='mouse'&&owner===el&&!pinned)place(e.clientX,e.clientY)});
+      el.addEventListener('pointerleave',function(e){if(e.pointerType==='mouse'&&owner===el&&!pinned)hide()});
       el.addEventListener('pointerup',function(e){if(e.pointerType!=='mouse'&&owner!==el)at()});
-      el.addEventListener('focus',function(){if(keyed(el))at()});
-      el.addEventListener('blur',function(){if(owner===el)hide()})});
+      el.addEventListener('focus',function(){if(el._quiet){el._quiet=0;return}if(keyed(el)&&!pinned)at()});
+      el.addEventListener('blur',function(){if(owner===el&&!pinned)hide()});
+      if(el._ev){el.addEventListener('click',function(){if(pinned===el)hide();else pin(el)});
+        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();if(pinned===el)hide();else pin(el)}})}});
     sparks.forEach(function(svg){var d;try{d=JSON.parse(svg.getAttribute('data-points'))}catch(e){return}if(!d||!d.length)return;
       var name=svg.getAttribute('data-label')||'',vb=svg.viewBox.baseVal,cur=-1,g=document.createElementNS(NS,'line'),dot=document.createElementNS(NS,'circle');
       g.setAttribute('class','hg');g.setAttribute('y1','0');g.setAttribute('y2',String(vb.height));dot.setAttribute('class','hd');dot.setAttribute('r','4');
@@ -594,10 +671,10 @@
       svg.addEventListener('blur',function(){if(owner===svg)hide()});
       svg.addEventListener('keydown',function(e){var k={ArrowLeft:cur-1,ArrowRight:cur+1,Home:0,End:d.length-1}[e.key];
         if(k!==undefined){e.preventDefault();at(k)}})});
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!tt.hidden)hide()});
-    document.addEventListener('pointerdown',function(e){if(owner&&!owner.contains(e.target))hide()});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!tt.hidden){var o=owner;hide();if(o&&o.focus&&o._ev){o._quiet=1;o.focus()}}});
+    document.addEventListener('pointerdown',function(e){if(owner&&!owner.contains(e.target)&&!(pinned&&tt.contains(e.target)))hide()});
     /* a scroll hides it - but the element with the keyboard's focus keeps it, moved with it (Tab scrolls to it) */
     window.addEventListener('scroll',function(){if(tt.hidden)return;
-      if(owner&&owner===document.activeElement&&owner._at)owner._at();else hide()},{passive:true})}
+      if(pinned&&owner&&owner._at)owner._at();else if(owner&&owner===document.activeElement&&owner._at)owner._at();else hide()},{passive:true})}
   });
 })();

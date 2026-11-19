@@ -424,7 +424,7 @@ for d in sys.argv[1:]:
     assert sorted(m) == ["lead-net@example.mil", "lead-win@example.mil", "ops@example.mil"], (d, sorted(m))
     for lead, url in link.items():
         assert len(m[lead]) == 1 and m[lead][0][0] == lead, (d, lead, m[lead][0][0])
-        assert "In a browser: " + url in m[lead][0][1], (d, lead, m[lead][0][1][-400:])
+        assert "Full report: " + url in m[lead][0][1], (d, lead, m[lead][0][1][-400:])
     assert len(m["ops@example.mil"]) == 1 and "All assignment groups" in m["ops@example.mil"][0][1]
     got[d] = dict((k, norm(v[0][1])) for k, v in m.items() if k in link)
 a, b = got.values()
@@ -557,7 +557,7 @@ for d in sys.argv[1:]:
     assert sorted(m) == ["ops@example.mil", "pat.lee@example.mil", "vdi-list@example.mil"], (d, sorted(m))
     lee, vdi = m["pat.lee@example.mil"], m["vdi-list@example.mil"]
     assert len(lee) == 1 and lee[0][0] == "pat.lee@example.mil", (d, lee[0][0])
-    assert "Group manager: Pat Lee" in lee[0][1] and "In a browser: https://reports.example.mil/r/servicenow-ticket-insights/ops/other/windows/latest.html" in lee[0][1], lee[0][1][:600]
+    assert "Group manager: Pat Lee" in lee[0][1] and "Full report: https://reports.example.mil/r/servicenow-ticket-insights/ops/other/windows/latest.html" in lee[0][1], lee[0][1][:600]
     assert len(vdi) == 1 and "Group manager: Sam Ray" in vdi[0][1], vdi[0][1][:400]        # team_email_to won: the list, not Sam
     assert "Group manager" not in m["ops@example.mil"][0][1]
     got[d] = dict((k, norm(v[0][1])) for k, v in m.items())

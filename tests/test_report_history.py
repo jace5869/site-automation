@@ -199,6 +199,7 @@ class CommandLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters.update(safe_link=sf.safe_link, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM"], "rows": [["<x>"]]}]),
                 "_email_footer": "AAP job 9", "_email_logo_cid": "", "_email_runs": [],
@@ -272,6 +273,7 @@ class PortalLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters.update(safe_link=sf.safe_link, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
                                            "cell_status": [["", "critical"]]},
@@ -328,6 +330,7 @@ class GlassLook(PortalLook):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters.update(safe_link=sf.safe_link, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 summary=REPORT["summary"] + [{"label": "Old <ones>", "value": 3, "status": "warning"}],
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
@@ -423,6 +426,48 @@ def _wrap_columns(case):
     case.assertIn('<td data-l="Takeover possible" data-v="no (partner down)" class="nw">', h)
 
 
+class FullReportLink(unittest.TestCase):
+    """1.76.2: every email look links its full web report at the top and the bottom - exactly two links when the email
+    has its address (_email_web_url), none without; never on the web page itself (_page_runs); the text email: "Full
+    report: <url>" as its first line and its last."""
+    URL = "https://reports.example.mil/a/2026-11-19_0601_job-9.html"
+
+    def render(self, tpl, **v):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
+                                 autoescape=False)
+        env.filters.update(sf.FilterModule().filters())
+        base = {"_report": dict(REPORT, sections=[{"title": "Deleted", "status": "ok", "columns": ["VM"], "rows": [["x"]]}]),
+                "_email_footer": "AAP job 9", "_email_logo_cid": "", "_email_runs": [], "report_email_header_text": "Site automation report"}
+        base.update(v)
+        return env.get_template(tpl).render(**base)
+
+    def test_two_links_in_every_email_none_on_the_page(self):
+        for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2", "report_glass.html.j2"):
+            with self.subTest(tpl=tpl):
+                h = self.render(tpl, _email_web_url=self.URL)
+                self.assertEqual(h.count('<a href="%s"' % self.URL), 2)
+                self.assertEqual(h.count("Open the full report"), 2)
+                self.assertNotIn("Open this report in a browser", h)
+                top, bottom = h.index("Open the full report"), h.rindex("Open the full report")
+                self.assertLess(top, h.index(">Deleted<"))                 # above the first section
+                self.assertGreater(bottom, h.index(">Deleted<"))
+                self.assertLess(bottom, h.index("AAP job 9"))              # above the footer
+                self.assertEqual(self.render(tpl).count("Open the full report"), 0)
+                self.assertEqual(self.render(tpl, _email_web_url=self.URL, _page_runs=[], _page_logo_cid="").count("Open the full report"), 0)
+
+    def test_the_text_email(self):
+        with open(os.path.join(REPO, "roles", "site_email", "tasks", "main.yml")) as f:
+            y = f.read()
+        self.assertIn("_email_web_top: \"{{ ('Full report: ' ~ _email_web_url ~ ", y)
+        self.assertIn("_email_web_line: \"{{ ('\\nFull report: ' ~ _email_web_url)", y)
+        self.assertIn("{{ (_email_web_top ~ (_report", y)
+        t = sf.report_text(dict(REPORT, sections=[]), "AAP job 9" + "\nFull report: " + self.URL)
+        self.assertTrue(t.rstrip().endswith("Full report: " + self.URL), t[-200:])
+        self.assertEqual(sf.report_banner_text("Full report: %s\n\n%s" % (self.URL, t), {"on": True, "text": "UNCLASSIFIED"}).split("\n")[2],
+                         "Full report: " + self.URL)                       # the first line after the banner's
+
+
 class AtlasLook(unittest.TestCase):
     """roles/site_email/templates/report_atlas.html.j2 (the report website's look), rendered with plain Jinja."""
 
@@ -431,6 +476,7 @@ class AtlasLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters.update(safe_link=sf.safe_link, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>", sections=[
                     {"title": "Start here", "status": "critical", "cards": [
                         {"status": "critical", "chip": "Critical", "meta": "Certificate", "title": "<t>", "subject": "web01",
@@ -626,6 +672,7 @@ class BriefLook(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters.update(safe_link=sf.safe_link, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, status="critical", subtitle="<b>sub</b>", summary=[{"label": "Past <90%>", "value": 2, "status": "critical"},
                                                                                          {"label": "Hosts", "value": 12, "note": "read"}],
                                 sections=[
@@ -772,6 +819,7 @@ class WebColumns(unittest.TestCase):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
+        env.filters.update(safe_link=sf.safe_link, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, sections=[dict(self.SEC)]), "_email_footer": "AAP job 9", "_page_logo_cid": "",
                 "_page_runs": [], "report_email_header_text": "Site automation report"}
         base.update(v)

@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.76.2 — 2026-11-19
+
+**To set up: nothing.** Run the outage review again to see it (**VM - outage watch** with `vm_watch_review: true`).
+
+**The outage review's time line, fine-tuned** (docs/VM_OUTAGE_WATCH.md, "The list, the related events and the filters"). The website's
+look only; At a glance and the email are as they were.
+
+- **A list for a mark's tip.** Header *26 events · 17:20-17:24*, then one line per event: time, level icon, what, where; the critical first,
+  then by time. 420 px wide, 320 px tall with a scroll bar, inside the chart. A click (or Enter) keeps it open to scroll; Esc or a click elsewhere
+  closes it. Each line links to its row in *The events*.
+- **Related.** The subject is worked out from the review's own events (the hosts that went down, the VMs with a critical event of their
+  own). Marks about it, its ESXi host, cluster, datastores and port groups are outlined and in full colour; the others are dimmed (45%) but
+  still hoverable. A legend item and a *Related* column in *The events*. A snapshot is related only on a subject VM. No subject: everything as
+  before, with one muted line saying why.
+- **Filters** in two rows above the chart: *Show: All | Related only*, ticks by kind (Host, HA, Datastore and storage, Network, VM power
+  and heartbeat, CPU and memory usage, Snapshots, Other), *Show every repeat*. They filter the chart and *The events*; the choice is kept
+  in the browser (localStorage).
+- **Repeats fold.** Identical events in a row fold into one row, *×4, 17:21-17:40*, the times in its title.
+- **The ServiceNow incidents are links** (a new tab, `rel="noopener"`, https only): every incident number in the ServiceNow and ACT lanes' list
+  lines, in *The events*, in the card *First signal to ticket*, and in the email's table and card (plain `<a>`). The link is
+  `https://<instance>/nav_to.do?uri=incident.do%3Fsys_id%3D<sys_id>`; `site_outage_tickets` returns the instance (`instance`: https, host and
+  port only, never a user or a path) and the review builds the link; no instance, no link. Without the ServiceNow credential the "not read" line
+  now also says: *Attach the ServiceNow API credential to the outage watch template to see and link its incidents (read only).*
+- Tests: `tests/test_outage_timeline.py` (the kinds, the related set, a VM's host and cluster, no subject, the marks' events, the folding, the
+  row ids, the page in the three looks), `tests/test_report_hover.py` (the list on hover and Tab, the pin, Esc, a line to its row, the filters,
+  the kept choice, the folded rows; atlas, brief and ops).
+- **Checked after review.** A row's `data-` names (`row_tags[].data`) must be a lower-case letter, then letters, digits and `-` (31 at most), or
+  they are dropped. Every link that data brings (a card's `url`, a column's `cell_links` in the email) passes one check, `safe_link`:
+  https, a host, no user, no spaces; otherwise the text shows without a link. The incident link follows `servicenow_table`
+  (`<table>.do`; a table name that is not plain gets no link). Related names are told apart by their vCenter, so two vCenters with a
+  VM of the same name no longer collide. On the page, *Related only* and the kinds now work with the table's filter and the search
+  (one more input to the row's visibility, and the "n of m" count follows); the fold's text is a node of its own, so a cell's link stays; a
+  repeat's line goes to its head row by id (it survives a sort); a mark that stands for several events shows the number, worst level,
+  icon, outline and tip of the events that are left.
+- The rows of a table may now carry `data-` attributes (`row_tags[].data`) in the atlas, brief and ops looks; a card may link a number in its
+  title (`url`, `url_text`); the email's table links a column's cells (`cell_links`).
+
+**Report emails: the full web report linked at the top and the bottom** (docs/WEB_REPORTS.md).
+
+- Every report email with a web page (`report_web_dest`, or `_report_web_url`) links to it twice: under the title,
+  before the first section, and above the footer - one small **Open the full report** link in the look's colour (the
+  glass look: its button, at the top too). A long email no longer hides it at the end. The old footer line is gone.
+- The text email: *Full report:* and the address as its first line (after a banner's) and its last.
+- Never on the web page itself.
+
 ## 1.76.1 — 2026-11-19
 
 **To set up: nothing.** On RHEL 8 the trial now runs (it needs `systemd-run`, there by default). Run the job as root

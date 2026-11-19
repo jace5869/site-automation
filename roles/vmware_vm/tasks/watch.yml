@@ -131,7 +131,8 @@
                 'time_zone': report_time_zone | default('', true) | string,
                 'low_seconds': vm_watch_review_low_seconds | float,
                 'tickets_asked': _vm_w_tk.asked | default(false), 'tickets_error': _vm_w_tk.error | default(''),
-                'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_ev.capped,
+                'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_ev.capped, 'instance': _vm_w_tk.instance | default(''),
+                'table': servicenow_table | default('incident', true) | string,
                 'report_on': vm_watch_report_on | name_list,
                 'min_severity': servicenow_min_severity | default('warning', true)}) }}
   rescue:

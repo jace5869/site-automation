@@ -40,6 +40,28 @@
 "to": 70.52
 }
 ],
+"kinds": [
+{
+"count": 5,
+"key": "host",
+"name": "Host"
+},
+{
+"count": 2,
+"key": "ha",
+"name": "HA"
+},
+{
+"count": 14,
+"key": "storage",
+"name": "Datastore and storage"
+},
+{
+"count": 4,
+"key": "other",
+"name": "Other"
+}
+],
 "label": "Outage time line, 12 Nov 01:30 to 12 Nov 03:45 CET",
 "lanes": [
 {
@@ -47,55 +69,125 @@
 "marks": [
 {
 "at": 21.11,
+"data": "[{\"n\":3,\"t\":\"01:58:30\",\"m\":\"01:58\",\"l\":\"warning\",\"w\":\"Alarm yellow: Host storage path redundancy\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "warning",
+"m": "01:58",
+"n": 3,
+"p": "esx03",
+"r": 1,
+"t": "01:58:30",
+"w": "Alarm yellow: Host storage path redundancy"
+}
+],
 "label": "3",
 "level": "warning",
 "nums": [
 3
 ],
+"rel": 2,
 "row": 0,
 "tip": "3  12 Nov 01:58:30 CET  Warning\nAlarm yellow: Host storage path redundancy - esx03",
 "x": 21.11
 },
 {
 "at": 36.98,
+"data": "[{\"n\":6,\"t\":\"02:19:55\",\"m\":\"02:19\",\"l\":\"critical\",\"w\":\"Alarm red: Host connection and power state\",\"p\":\"esx03\",\"r\":1,\"c\":\"host\"}]",
+"ev": [
+{
+"c": "host",
+"l": "critical",
+"m": "02:19",
+"n": 6,
+"p": "esx03",
+"r": 1,
+"t": "02:19:55",
+"w": "Alarm red: Host connection and power state"
+}
+],
 "label": "6",
 "level": "critical",
 "nums": [
 6
 ],
+"rel": 2,
 "row": 0,
 "tip": "6  12 Nov 02:19:55 CET  Critical\nAlarm red: Host connection and power state - esx03",
 "x": 36.98
 },
 {
 "at": 37.84,
+"data": "[{\"n\":8,\"t\":\"02:21:05\",\"m\":\"02:21\",\"l\":\"warning\",\"w\":\"HA restarted 14 VMs\",\"p\":\"cluster1\",\"r\":1,\"c\":\"ha\"}]",
+"ev": [
+{
+"c": "ha",
+"l": "warning",
+"m": "02:21",
+"n": 8,
+"p": "cluster1",
+"r": 1,
+"t": "02:21:05",
+"w": "HA restarted 14 VMs"
+}
+],
 "label": "8",
 "level": "warning",
 "nums": [
 8
 ],
+"rel": 2,
 "row": 1,
 "tip": "8  12 Nov 02:21:05 CET  Warning\nHA restarted 14 VMs - cluster1",
 "x": 37.84
 },
 {
 "at": 71.48,
+"data": "[{\"n\":18,\"t\":\"03:06:30\",\"m\":\"03:06\",\"l\":\"ok\",\"w\":\"Alarm back to green: Host connection and power state\",\"p\":\"esx03\",\"r\":1,\"c\":\"host\"}]",
+"ev": [
+{
+"c": "host",
+"l": "ok",
+"m": "03:06",
+"n": 18,
+"p": "esx03",
+"r": 1,
+"t": "03:06:30",
+"w": "Alarm back to green: Host connection and power state"
+}
+],
 "label": "18",
 "level": "ok",
 "nums": [
 18
 ],
+"rel": 2,
 "row": 0,
 "tip": "18  12 Nov 03:06:30 CET  Back to normal\nAlarm back to green: Host connection and power state - esx03",
 "x": 71.48
 },
 {
 "at": 71.67,
+"data": "[{\"n\":19,\"t\":\"03:06:45\",\"m\":\"03:06\",\"l\":\"ok\",\"w\":\"Alarm back to green: Host storage path redundancy\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "ok",
+"m": "03:06",
+"n": 19,
+"p": "esx03",
+"r": 1,
+"t": "03:06:45",
+"w": "Alarm back to green: Host storage path redundancy"
+}
+],
 "label": "19",
 "level": "ok",
 "nums": [
 19
 ],
+"rel": 2,
 "row": 1,
 "tip": "19  12 Nov 03:06:45 CET  Back to normal\nAlarm back to green: Host storage path redundancy - esx03",
 "x": 71.67
@@ -110,83 +202,224 @@
 "marks": [
 {
 "at": 8.27,
+"data": "[{\"n\":1,\"t\":\"01:41:10\",\"m\":\"01:41\",\"l\":\"low\",\"w\":\"Storage path redundancy degraded, back after 40 s\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "low",
+"m": "01:41",
+"n": 1,
+"p": "esx03",
+"r": 1,
+"t": "01:41:10",
+"w": "Storage path redundancy degraded, back after 40 s"
+}
+],
 "label": "1",
 "level": "low",
 "nums": [
 1
 ],
+"rel": 2,
 "row": 0,
 "tip": "1  12 Nov 01:41:10 CET  Low\nStorage path redundancy degraded, back after 40 s - esx03",
 "x": 8.27
 },
 {
 "at": 20.77,
+"data": "[{\"n\":2,\"t\":\"01:58:02\",\"m\":\"01:58\",\"l\":\"warning\",\"w\":\"Storage path redundancy lost\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "warning",
+"m": "01:58",
+"n": 2,
+"p": "esx03",
+"r": 1,
+"t": "01:58:02",
+"w": "Storage path redundancy lost"
+}
+],
 "label": "2",
 "level": "warning",
 "nums": [
 2
 ],
+"rel": 2,
 "row": 0,
 "tip": "2  12 Nov 01:58:02 CET  Warning\nStorage path redundancy lost - esx03",
 "x": 20.77
 },
 {
 "at": 36.35,
+"data": "[{\"n\":4,\"t\":\"02:19:04\",\"m\":\"02:19\",\"l\":\"critical\",\"w\":\"All paths down to a storage device\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "critical",
+"m": "02:19",
+"n": 4,
+"p": "esx03",
+"r": 1,
+"t": "02:19:04",
+"w": "All paths down to a storage device"
+}
+],
 "label": "4",
 "level": "critical",
 "nums": [
 4
 ],
+"rel": 2,
 "row": 0,
 "tip": "4  12 Nov 02:19:04 CET  Critical\nAll paths down to a storage device - esx03",
 "x": 36.35
 },
 {
 "at": 36.79,
+"data": "[{\"n\":5,\"t\":\"02:19:40\",\"m\":\"02:19\",\"l\":\"critical\",\"w\":\"Host not responding\",\"p\":\"esx03\",\"r\":1,\"c\":\"host\"}]",
+"ev": [
+{
+"c": "host",
+"l": "critical",
+"m": "02:19",
+"n": 5,
+"p": "esx03",
+"r": 1,
+"t": "02:19:40",
+"w": "Host not responding"
+}
+],
 "label": "5",
 "level": "critical",
 "nums": [
 5
 ],
+"rel": 2,
 "row": 1,
 "tip": "5  12 Nov 02:19:40 CET  Critical\nHost not responding - esx03",
 "x": 36.79
 },
 {
 "at": 37.41,
+"data": "[{\"n\":7,\"t\":\"02:20:30\",\"m\":\"02:20\",\"l\":\"critical\",\"w\":\"HA: host failed\",\"p\":\"esx03\",\"r\":1,\"c\":\"ha\"}]",
+"ev": [
+{
+"c": "ha",
+"l": "critical",
+"m": "02:20",
+"n": 7,
+"p": "esx03",
+"r": 1,
+"t": "02:20:30",
+"w": "HA: host failed"
+}
+],
 "label": "7",
 "level": "critical",
 "nums": [
 7
 ],
+"rel": 2,
 "row": 2,
 "tip": "7  12 Nov 02:20:30 CET  Critical\nHA: host failed - esx03",
 "x": 37.41
 },
 {
 "at": 44.44,
+"data": "[{\"n\":9,\"t\":\"02:30:00\",\"m\":\"02:30\",\"l\":\"warning\",\"w\":\"Datastore heartbeat timed out\",\"p\":\"esx-production-cluster-node-03\",\"r\":0,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "warning",
+"m": "02:30",
+"n": 9,
+"p": "esx-production-cluster-node-03",
+"r": 0,
+"t": "02:30:00",
+"w": "Datastore heartbeat timed out"
+}
+],
 "label": "9",
 "level": "warning",
 "nums": [
 9
 ],
+"rel": 0,
 "row": 0,
 "tip": "9  12 Nov 02:30:00 CET  Warning\nDatastore heartbeat timed out - esx-production-cluster-node-03",
 "x": 44.44
 },
 {
 "at": 45.19,
+"data": "[{\"n\":10,\"t\":\"02:31:00\",\"m\":\"02:31\",\"l\":\"warning\",\"w\":\"Datastore heartbeat timed out\",\"p\":\"esx-production-cluster-node-04\",\"r\":0,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "warning",
+"m": "02:31",
+"n": 10,
+"p": "esx-production-cluster-node-04",
+"r": 0,
+"t": "02:31:00",
+"w": "Datastore heartbeat timed out"
+}
+],
 "label": "10",
 "level": "warning",
 "nums": [
 10
 ],
+"rel": 0,
 "row": 1,
 "tip": "10  12 Nov 02:31:00 CET  Warning\nDatastore heartbeat timed out - esx-production-cluster-node-04",
 "x": 45.19
 },
 {
 "at": 45.93,
+"data": "[{\"n\":11,\"t\":\"02:32:00\",\"m\":\"02:32\",\"l\":\"warning\",\"w\":\"Datastore heartbeat timed out\",\"p\":\"esx-production-cluster-node-05\",\"r\":0,\"c\":\"storage\"},{\"n\":12,\"t\":\"02:33:00\",\"m\":\"02:33\",\"l\":\"warning\",\"w\":\"Datastore heartbeat timed out\",\"p\":\"esx-production-cluster-node-06\",\"r\":0,\"c\":\"storage\"},{\"n\":13,\"t\":\"02:34:00\",\"m\":\"02:34\",\"l\":\"warning\",\"w\":\"Datastore heartbeat timed out\",\"p\":\"esx-production-cluster-node-07\",\"r\":0,\"c\":\"storage\"},{\"n\":14,\"t\":\"02:35:00\",\"m\":\"02:35\",\"l\":\"warning\",\"w\":\"Datastore heartbeat timed out\",\"p\":\"esx-production-cluster-node-08\",\"r\":0,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "warning",
+"m": "02:32",
+"n": 11,
+"p": "esx-production-cluster-node-05",
+"r": 0,
+"t": "02:32:00",
+"w": "Datastore heartbeat timed out"
+},
+{
+"c": "storage",
+"l": "warning",
+"m": "02:33",
+"n": 12,
+"p": "esx-production-cluster-node-06",
+"r": 0,
+"t": "02:33:00",
+"w": "Datastore heartbeat timed out"
+},
+{
+"c": "storage",
+"l": "warning",
+"m": "02:34",
+"n": 13,
+"p": "esx-production-cluster-node-07",
+"r": 0,
+"t": "02:34:00",
+"w": "Datastore heartbeat timed out"
+},
+{
+"c": "storage",
+"l": "warning",
+"m": "02:35",
+"n": 14,
+"p": "esx-production-cluster-node-08",
+"r": 0,
+"t": "02:35:00",
+"w": "Datastore heartbeat timed out"
+}
+],
 "label": "11+3",
 "level": "warning",
 "more": 3,
@@ -196,39 +429,82 @@
 13,
 14
 ],
+"rel": 0,
 "row": 2,
 "tip": "11  12 Nov 02:32:00 CET  Warning\nDatastore heartbeat timed out - esx-production-cluster-node-05\n12  12 Nov 02:33:00 CET  Warning\nDatastore heartbeat timed out - esx-production-cluster-node-06\n13  12 Nov 02:34:00 CET  Warning\nDatastore heartbeat timed out - esx-production-cluster-node-07\n14  12 Nov 02:35:00 CET  Warning\nDatastore heartbeat timed out - esx-production-cluster-node-08",
 "x": 45.93
 },
 {
 "at": 70.52,
+"data": "[{\"n\":15,\"t\":\"03:05:12\",\"m\":\"03:05\",\"l\":\"ok\",\"w\":\"Host connected again\",\"p\":\"esx03\",\"r\":1,\"c\":\"host\"}]",
+"ev": [
+{
+"c": "host",
+"l": "ok",
+"m": "03:05",
+"n": 15,
+"p": "esx03",
+"r": 1,
+"t": "03:05:12",
+"w": "Host connected again"
+}
+],
 "label": "15",
 "level": "ok",
 "nums": [
 15
 ],
+"rel": 2,
 "row": 0,
 "tip": "15  12 Nov 03:05:12 CET  Back to normal\nHost connected again - esx03",
 "x": 70.52
 },
 {
 "at": 70.86,
+"data": "[{\"n\":16,\"t\":\"03:05:40\",\"m\":\"03:05\",\"l\":\"ok\",\"w\":\"Storage paths are back\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "ok",
+"m": "03:05",
+"n": 16,
+"p": "esx03",
+"r": 1,
+"t": "03:05:40",
+"w": "Storage paths are back"
+}
+],
 "label": "16",
 "level": "ok",
 "nums": [
 16
 ],
+"rel": 2,
 "row": 1,
 "tip": "16  12 Nov 03:05:40 CET  Back to normal\nStorage paths are back - esx03",
 "x": 70.86
 },
 {
 "at": 71.23,
+"data": "[{\"n\":17,\"t\":\"03:06:10\",\"m\":\"03:06\",\"l\":\"ok\",\"w\":\"Storage path redundancy is back\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "ok",
+"m": "03:06",
+"n": 17,
+"p": "esx03",
+"r": 1,
+"t": "03:06:10",
+"w": "Storage path redundancy is back"
+}
+],
 "label": "17",
 "level": "ok",
 "nums": [
 17
 ],
+"rel": 2,
 "row": 2,
 "tip": "17  12 Nov 03:06:10 CET  Back to normal\nStorage path redundancy is back - esx03",
 "x": 71.23
@@ -243,55 +519,125 @@
 "marks": [
 {
 "at": 77.04,
+"data": "[{\"n\":20,\"t\":\"03:14:00\",\"m\":\"03:14\",\"l\":\"critical\",\"w\":\"Ticket INC0012345 opened\",\"p\":\"esx03\",\"r\":1,\"c\":\"host\"}]",
+"ev": [
+{
+"c": "host",
+"l": "critical",
+"m": "03:14",
+"n": 20,
+"p": "esx03",
+"r": 1,
+"t": "03:14:00",
+"w": "Ticket INC0012345 opened"
+}
+],
 "label": "20",
 "level": "critical",
 "nums": [
 20
 ],
+"rel": 2,
 "row": 0,
 "tip": "20  12 Nov 03:14:00 CET  Critical\nTicket INC0012345 opened - esx03",
 "x": 77.04
 },
 {
 "at": 85.19,
+"data": "[{\"n\":22,\"t\":\"03:25:00\",\"m\":\"03:25\",\"l\":\"info\",\"w\":\"Work note in INC0012345: On site, checking the cabling of esx03.\",\"p\":\"esx03\",\"r\":1,\"c\":\"other\"}]",
+"ev": [
+{
+"c": "other",
+"l": "info",
+"m": "03:25",
+"n": 22,
+"p": "esx03",
+"r": 1,
+"t": "03:25:00",
+"w": "Work note in INC0012345: On site, checking the cabling of esx03."
+}
+],
 "label": "22",
 "level": "info",
 "nums": [
 22
 ],
+"rel": 2,
 "row": 1,
 "tip": "22  12 Nov 03:25:00 CET  Note\nWork note in INC0012345: On site, checking the cabling of esx03. - esx03",
 "x": 85.19
 },
 {
 "at": 88.89,
+"data": "[{\"n\":23,\"t\":\"03:30:00\",\"m\":\"03:30\",\"l\":\"info\",\"w\":\"Work note in INC0012345: Checked the fabric switch: port 0/14 logs a loss of signal since 01:19 UTC; port 0/14 logs a loss of signal since 01:19\u2026\",\"p\":\"esx03\",\"r\":1,\"c\":\"other\"}]",
+"ev": [
+{
+"c": "other",
+"l": "info",
+"m": "03:30",
+"n": 23,
+"p": "esx03",
+"r": 1,
+"t": "03:30:00",
+"w": "Work note in INC0012345: Checked the fabric switch: port 0/14 logs a loss of signal since 01:19 UTC; port 0/14 logs a loss of signal since 01:19\u2026"
+}
+],
 "label": "23",
 "level": "info",
 "nums": [
 23
 ],
+"rel": 2,
 "row": 0,
 "tip": "23  12 Nov 03:30:00 CET  Note\nWork note in INC0012345: Checked the fabric switch: port 0/14 logs a loss of signal since 01:19 UTC; port 0/14 logs a loss of signal since 01:19\u2026 - esx03",
 "x": 88.89
 },
 {
 "at": 92.59,
+"data": "[{\"n\":24,\"t\":\"03:35:00\",\"m\":\"03:35\",\"l\":\"ok\",\"w\":\"INC0012345: the check passes again\",\"p\":\"esx03\",\"r\":1,\"c\":\"other\"}]",
+"ev": [
+{
+"c": "other",
+"l": "ok",
+"m": "03:35",
+"n": 24,
+"p": "esx03",
+"r": 1,
+"t": "03:35:00",
+"w": "INC0012345: the check passes again"
+}
+],
 "label": "24",
 "level": "ok",
 "nums": [
 24
 ],
+"rel": 2,
 "row": 2,
 "tip": "24  12 Nov 03:35:00 CET  Back to normal\nINC0012345: the check passes again - esx03",
 "x": 92.59
 },
 {
 "at": 96.3,
+"data": "[{\"n\":25,\"t\":\"03:40:00\",\"m\":\"03:40\",\"l\":\"ok\",\"w\":\"Ticket INC0012345 resolved: Fibre channel cable of the second adapter reseated; paths back.\",\"p\":\"esx03\",\"r\":1,\"c\":\"other\"}]",
+"ev": [
+{
+"c": "other",
+"l": "ok",
+"m": "03:40",
+"n": 25,
+"p": "esx03",
+"r": 1,
+"t": "03:40:00",
+"w": "Ticket INC0012345 resolved: Fibre channel cable of the second adapter reseated; paths back."
+}
+],
 "label": "25",
 "level": "ok",
 "nums": [
 25
 ],
+"rel": 2,
 "row": 1,
 "tip": "25  12 Nov 03:40:00 CET  Back to normal\nTicket INC0012345 resolved: Fibre channel cable of the second adapter reseated; paths back. - esx03",
 "x": 96.12
@@ -306,11 +652,25 @@
 "marks": [
 {
 "at": 77.04,
+"data": "[{\"n\":21,\"t\":\"03:14:00\",\"m\":\"03:14\",\"l\":\"info\",\"w\":\"ACT analysis in INC0012345: The host lost every path to its storage device before vCenter lost the host. Check the fabric switch port of the host's second adapter.\",\"p\":\"esx03\",\"r\":1,\"c\":\"storage\"}]",
+"ev": [
+{
+"c": "storage",
+"l": "info",
+"m": "03:14",
+"n": 21,
+"p": "esx03",
+"r": 1,
+"t": "03:14:00",
+"w": "ACT analysis in INC0012345: The host lost every path to its storage device before vCenter lost the host. Check the fabric switch port of the host's second adapter."
+}
+],
 "label": "21",
 "level": "info",
 "nums": [
 21
 ],
+"rel": 2,
 "row": 0,
 "tip": "21  12 Nov 03:14:00 CET  Note\nACT analysis in INC0012345: The host lost every path to its storage device before vCenter lost the host. Check the fabric switch port of the host's second adapter. - esx03",
 "x": 77.04
@@ -343,6 +703,7 @@
 "word": "Back to normal"
 }
 ],
+"legend_rel": "Outlined: about esx03 or its host, cluster, datastores",
 "none": "",
 "overview": {
 "begin": "11 Nov 21:45",
@@ -453,6 +814,8 @@
 "text": "The whole window, 2026-11-11 21:45 CET to 2026-11-12 03:45 CET. The box is the part shown below: 12 Nov 01:30 to 12 Nov 03:45.",
 "to": 100.0
 },
+"related_note": "",
+"subject": "esx03",
 "ticks": [
 {
 "at": 0.0,
@@ -493,166 +856,7 @@
 "",
 "",
 "",
-"low"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"critical"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"critical"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"critical"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"critical"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"warning"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"ok"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"ok"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"ok"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"ok"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"ok"
-],
-[
-"",
-"",
-"",
-"",
-"",
-"critical"
-],
-[
-"",
-"",
-"",
-"",
-"",
+"low",
 "info"
 ],
 [
@@ -661,6 +865,7 @@
 "",
 "",
 "",
+"warning",
 "info"
 ],
 [
@@ -669,6 +874,7 @@
 "",
 "",
 "",
+"warning",
 "info"
 ],
 [
@@ -677,7 +883,8 @@
 "",
 "",
 "",
-"ok"
+"critical",
+"info"
 ],
 [
 "",
@@ -685,7 +892,188 @@
 "",
 "",
 "",
-"ok"
+"critical",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"warning",
+""
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"critical",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"info",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"info",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"info",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"info"
+],
+[
+"",
+"",
+"",
+"",
+"",
+"ok",
+"info"
 ]
 ],
 "columns": [
@@ -694,7 +1082,8 @@
 "Source",
 "Where",
 "What happened",
-"Level"
+"Level",
+"Related"
 ],
 "kinds": [
 "num",
@@ -702,8 +1091,10 @@
 "",
 "",
 "wrap",
+"",
 ""
 ],
+"outage_filter": true,
 "row_status": [
 "low",
 "warning",
@@ -731,6 +1122,208 @@
 "",
 ""
 ],
+"row_tags": [
+{
+"data": {
+"cls": "storage",
+"num": "1",
+"rel": "1"
+},
+"id": "ot-row-1"
+},
+{
+"data": {
+"cls": "storage",
+"num": "2",
+"rel": "1"
+},
+"id": "ot-row-2"
+},
+{
+"data": {
+"cls": "storage",
+"num": "3",
+"rel": "1"
+},
+"id": "ot-row-3"
+},
+{
+"data": {
+"cls": "storage",
+"num": "4",
+"rel": "1"
+},
+"id": "ot-row-4"
+},
+{
+"data": {
+"cls": "host",
+"num": "5",
+"rel": "1"
+},
+"id": "ot-row-5"
+},
+{
+"data": {
+"cls": "host",
+"num": "6",
+"rel": "1"
+},
+"id": "ot-row-6"
+},
+{
+"data": {
+"cls": "ha",
+"num": "7",
+"rel": "1"
+},
+"id": "ot-row-7"
+},
+{
+"data": {
+"cls": "ha",
+"num": "8",
+"rel": "1"
+},
+"id": "ot-row-8"
+},
+{
+"data": {
+"cls": "storage",
+"num": "9",
+"rel": "0"
+},
+"id": "ot-row-9"
+},
+{
+"data": {
+"cls": "storage",
+"num": "10",
+"rel": "0"
+},
+"id": "ot-row-10"
+},
+{
+"data": {
+"cls": "storage",
+"num": "11",
+"rel": "0"
+},
+"id": "ot-row-11"
+},
+{
+"data": {
+"cls": "storage",
+"num": "12",
+"rel": "0"
+},
+"id": "ot-row-12"
+},
+{
+"data": {
+"cls": "storage",
+"num": "13",
+"rel": "0"
+},
+"id": "ot-row-13"
+},
+{
+"data": {
+"cls": "storage",
+"num": "14",
+"rel": "0"
+},
+"id": "ot-row-14"
+},
+{
+"data": {
+"cls": "host",
+"num": "15",
+"rel": "1"
+},
+"id": "ot-row-15"
+},
+{
+"data": {
+"cls": "storage",
+"num": "16",
+"rel": "1"
+},
+"id": "ot-row-16"
+},
+{
+"data": {
+"cls": "storage",
+"num": "17",
+"rel": "1"
+},
+"id": "ot-row-17"
+},
+{
+"data": {
+"cls": "host",
+"num": "18",
+"rel": "1"
+},
+"id": "ot-row-18"
+},
+{
+"data": {
+"cls": "storage",
+"num": "19",
+"rel": "1"
+},
+"id": "ot-row-19"
+},
+{
+"data": {
+"cls": "host",
+"num": "20",
+"rel": "1"
+},
+"id": "ot-row-20"
+},
+{
+"data": {
+"cls": "storage",
+"num": "21",
+"rel": "1"
+},
+"id": "ot-row-21"
+},
+{
+"data": {
+"cls": "other",
+"num": "22",
+"rel": "1"
+},
+"id": "ot-row-22"
+},
+{
+"data": {
+"cls": "other",
+"num": "23",
+"rel": "1"
+},
+"id": "ot-row-23"
+},
+{
+"data": {
+"cls": "other",
+"num": "24",
+"rel": "1"
+},
+"id": "ot-row-24"
+},
+{
+"data": {
+"cls": "other",
+"num": "25",
+"rel": "1"
+},
+"id": "ot-row-25"
+}
+],
 "rows": [
 [
 1,
@@ -738,7 +1331,8 @@
 "Host events",
 "esx03",
 "Storage path redundancy degraded, back after 40 s",
-"Low"
+"Low",
+"Related"
 ],
 [
 2,
@@ -746,7 +1340,8 @@
 "Host events",
 "esx03",
 "Storage path redundancy lost",
-"Warning"
+"Warning",
+"Related"
 ],
 [
 3,
@@ -754,7 +1349,8 @@
 "vCenter alarms",
 "esx03",
 "Alarm yellow: Host storage path redundancy",
-"Warning"
+"Warning",
+"Related"
 ],
 [
 4,
@@ -762,7 +1358,8 @@
 "Host events",
 "esx03",
 "All paths down to a storage device",
-"Critical"
+"Critical",
+"Related"
 ],
 [
 5,
@@ -770,7 +1367,8 @@
 "Host events",
 "esx03",
 "Host not responding",
-"Critical"
+"Critical",
+"Related"
 ],
 [
 6,
@@ -778,7 +1376,8 @@
 "vCenter alarms",
 "esx03",
 "Alarm red: Host connection and power state",
-"Critical"
+"Critical",
+"Related"
 ],
 [
 7,
@@ -786,7 +1385,8 @@
 "Host events",
 "esx03",
 "HA: host failed",
-"Critical"
+"Critical",
+"Related"
 ],
 [
 8,
@@ -794,7 +1394,8 @@
 "vCenter alarms",
 "cluster1",
 "HA restarted 14 VMs",
-"Warning"
+"Warning",
+"Related"
 ],
 [
 9,
@@ -802,7 +1403,8 @@
 "Host events",
 "esx-production-cluster-node-03",
 "Datastore heartbeat timed out",
-"Warning"
+"Warning",
+""
 ],
 [
 10,
@@ -810,7 +1412,8 @@
 "Host events",
 "esx-production-cluster-node-04",
 "Datastore heartbeat timed out",
-"Warning"
+"Warning",
+""
 ],
 [
 11,
@@ -818,7 +1421,8 @@
 "Host events",
 "esx-production-cluster-node-05",
 "Datastore heartbeat timed out",
-"Warning"
+"Warning",
+""
 ],
 [
 12,
@@ -826,7 +1430,8 @@
 "Host events",
 "esx-production-cluster-node-06",
 "Datastore heartbeat timed out",
-"Warning"
+"Warning",
+""
 ],
 [
 13,
@@ -834,7 +1439,8 @@
 "Host events",
 "esx-production-cluster-node-07",
 "Datastore heartbeat timed out",
-"Warning"
+"Warning",
+""
 ],
 [
 14,
@@ -842,7 +1448,8 @@
 "Host events",
 "esx-production-cluster-node-08",
 "Datastore heartbeat timed out",
-"Warning"
+"Warning",
+""
 ],
 [
 15,
@@ -850,7 +1457,8 @@
 "Host events",
 "esx03",
 "Host connected again",
-"Back to normal"
+"Back to normal",
+"Related"
 ],
 [
 16,
@@ -858,7 +1466,8 @@
 "Host events",
 "esx03",
 "Storage paths are back",
-"Back to normal"
+"Back to normal",
+"Related"
 ],
 [
 17,
@@ -866,7 +1475,8 @@
 "Host events",
 "esx03",
 "Storage path redundancy is back",
-"Back to normal"
+"Back to normal",
+"Related"
 ],
 [
 18,
@@ -874,7 +1484,8 @@
 "vCenter alarms",
 "esx03",
 "Alarm back to green: Host connection and power state",
-"Back to normal"
+"Back to normal",
+"Related"
 ],
 [
 19,
@@ -882,7 +1493,8 @@
 "vCenter alarms",
 "esx03",
 "Alarm back to green: Host storage path redundancy",
-"Back to normal"
+"Back to normal",
+"Related"
 ],
 [
 20,
@@ -890,7 +1502,8 @@
 "ServiceNow",
 "esx03",
 "Ticket INC0012345 opened",
-"Critical"
+"Critical",
+"Related"
 ],
 [
 21,
@@ -898,7 +1511,8 @@
 "ACT",
 "esx03",
 "ACT analysis in INC0012345: The host lost every path to its storage device before vCenter lost the host. Check the fabric switch port of the host's second adapter.",
-"Note"
+"Note",
+"Related"
 ],
 [
 22,
@@ -906,7 +1520,8 @@
 "ServiceNow",
 "esx03",
 "Work note in INC0012345: On site, checking the cabling of esx03.",
-"Note"
+"Note",
+"Related"
 ],
 [
 23,
@@ -914,7 +1529,8 @@
 "ServiceNow",
 "esx03",
 "Work note in INC0012345: Checked the fabric switch: port 0/14 logs a loss of signal since 01:19 UTC; port 0/14 logs a loss of signal since 01:19\u2026",
-"Note"
+"Note",
+"Related"
 ],
 [
 24,
@@ -922,7 +1538,8 @@
 "ServiceNow",
 "esx03",
 "INC0012345: the check passes again",
-"Back to normal"
+"Back to normal",
+"Related"
 ],
 [
 25,
@@ -930,10 +1547,11 @@
 "ServiceNow",
 "esx03",
 "Ticket INC0012345 resolved: Fibre channel cable of the second adapter reseated; paths back.",
-"Back to normal"
+"Back to normal",
+"Related"
 ]
 ],
-"text": "Every mark of the time line is one row here, by its number. A problem that cleared within 2 min is one Low row (vm_watch_review_low_seconds).",
+"text": "Every mark of the time line is one row here, by its number. A problem that cleared within 2 min is one Low row (vm_watch_review_low_seconds). Related: about esx03 or its host, cluster, datastores.",
 "title": "The events"
 },
 {

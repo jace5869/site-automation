@@ -284,6 +284,7 @@ class Fits(unittest.TestCase):
         doc = F.servicenow_insights_breach_doc(F.breach_model(seed_input(), {}))
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
         env.filters["report_cell_html"] = site_filters.report_cell_html
+        env.filters.update(safe_link=site_filters.safe_link, safe_data=site_filters.safe_data)
         probe = '<script>addEventListener("load",function(){document.title="R "+document.documentElement.scrollWidth+" "+innerWidth})</script></body>'
         for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2"):
             h = env.get_template(tpl).render(_report=doc, _email_footer="AAP job 9", _email_logo_cid="", _email_runs=[],

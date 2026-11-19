@@ -38,7 +38,7 @@
 # _report_email_to_override: [addresses] = To these instead of report_email_to - even one given as an extra variable (the
 # template's Variables), which an include's vars cannot beat - and no report_email_also; report_email_cc as usual (1.14.0:
 # the ticket insights' team leads).
-# _report_web_url: the address the email links ("Open this report in a browser") when this run does not write the page
+# _report_web_url: the address the email links ("Open the full report", at the top and the bottom) when this run does not write the page
 # itself (_report_web_skip) - a page written another way (1.14.0: the insights pages in one go).
 # _report_web_skip: true = never on the website, whatever report_web_dest says (the outage AAR's documents).
 # _report_web: the website's version of _report (more columns, which the atlas and brief looks' Columns menu can hide - an email
@@ -455,13 +455,14 @@
         to: "{{ _email_to }}"
         cc: "{{ _email_cc }}"
         subject: "{{ _email_subject }}"
+        # 1.76.2: "Full report: <url>" first (after a banner's line) and last
         body: >-
-          {{ (_report | report_notice(_email_notice) | report_act_off(_act_off | bool) | report_act_old(_act_old)
+          {{ (_email_web_top ~ (_report | report_notice(_email_notice) | report_act_off(_act_off | bool) | report_act_old(_act_old)
               | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
               if _report is defined else
               ((_email_notice ~ '\n\n') if _email_notice else '') ~ _report_body ~ (('\n\nACT is off (site_act_enabled false).') if _act_off | bool else '')
               ~ (('\n\nACT old copies:\n' ~ (_act_old | join('\n'))) if _act_old | length > 0 else '')
-              ~ '\n\n--\n' ~ _email_footer ~ _email_web_line) | report_banner_text(_banner) }}
+              ~ '\n\n--\n' ~ _email_footer ~ _email_web_line)) | report_banner_text(_banner) }}
         html: "{{ lookup('ansible.builtin.template', _email_template) | report_banner_html(_banner) if _email_html | bool else omit }}"
         images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
         # the workbook, and the files the job hands over (_report_attachments: [{path, filename}] - the outage AAR's Word documents)
@@ -473,7 +474,8 @@
         _email_xlsx_name: >-
           {{ (_report_xlsx_name | default(_report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true)))
              | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}_{{ now(utc=true, fmt='%Y-%m-%d') }}.xlsx
-        _email_web_line: "{{ ('\nIn a browser: ' ~ _email_web_url) if _email_web_url | default('') else '' }}"
+        _email_web_line: "{{ ('\nFull report: ' ~ _email_web_url) if _email_web_url | default('') else '' }}"
+        _email_web_top: "{{ ('Full report: ' ~ _email_web_url ~ '\n\n') if _email_web_url | default('') else '' }}"
       register: _email_sent
 
     - name: Email | result

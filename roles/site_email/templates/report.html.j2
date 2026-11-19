@@ -80,6 +80,10 @@
 </td><td width="{{ logo_size[0] + 16 }}" align="right" valign="middle" style="padding-left:16px;"><img src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="" style="display:block;border:0;width:{{ logo_size[0] }}px;height:{{ logo_size[1] }}px;"></td></tr></table>
 {%- endif %}
 </td></tr>
+{#- 1.76.2: the email links its full web report at the top and the bottom (_email_web_url; never on the web page itself) #}
+{%- if _email_web_url | default('') and _page_runs is not defined %}
+<tr><td style="padding:12px 20px 0 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="border:1px solid #1d4ed8;border-radius:16px;padding:5px 14px;"><a href="{{ _email_web_url | e }}" style="color:#1d4ed8;font-size:13px;font-weight:600;text-decoration:none;display:inline-block;">Open the full report &rarr;</a></td></tr></table></td></tr>
+{%- endif %}
 {%- if r.summary | default([]) %}
 <tr><td style="padding:16px 20px 4px 20px;">
 {#- 1.30.0: four or more boxes - four equal columns over the width (a short last row keeps them: empty cells) #}
@@ -122,6 +126,7 @@
 {%- endfor %}
 </tr>
 {%- for row in s.rows %}
+{%- set ri = loop.index0 %}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
 {%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
 {%- if rs in tint %}
@@ -130,12 +135,13 @@
 <tr style="background:{{ '#ffffff' if loop.index is odd else '#f9fafb' }};">
 {%- endif %}
 {%- for cell in row %}
+{%- set clu = (s.cell_links.urls[ri] if s.cell_links is defined and loop.index0 == s.cell_links.column and s.cell_links.urls | length > ri else '') | default('', true) | safe_link %}
 {%- set lab = ('<span class="sa-lab" style="display:none;mso-hide:all;font-size:10px;font-weight:bold;letter-spacing:.5px;text-transform:uppercase;">' ~ (s.columns[loop.index0] if s.columns | length > loop.index0 else '') | e ~ '&nbsp;</span>') if k == 'S' else '' %}
 {%- set st = cs[loop.index0] if cs | length > loop.index0 else '' %}
 {%- if st and st in colour %}
-<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} bgcolor="{{ colour[st] }}" style="padding:{{ pad }};border:1px solid #c9d1dd;vertical-align:top;background:{{ colour[st] }};color:#ffffff;font-weight:bold;">{{ lab }}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}</td>
+<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} bgcolor="{{ colour[st] }}" style="padding:{{ pad }};border:1px solid #c9d1dd;vertical-align:top;background:{{ colour[st] }};color:#ffffff;font-weight:bold;">{{ lab }}{% if clu %}<a href="{{ clu | e }}" style="color:inherit;" target="_blank" rel="noopener noreferrer">{% endif %}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}{% if clu %}</a>{% endif %}</td>
 {%- else %}
-<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} style="padding:{{ pad }};border:1px solid #c9d1dd;vertical-align:top;">{{ lab }}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}</td>
+<td{{ ' class="sa-none"' if k == 'S' and not ('' if cell is none else cell) | string | trim else '' }} style="padding:{{ pad }};border:1px solid #c9d1dd;vertical-align:top;">{{ lab }}{% if clu %}<a href="{{ clu | e }}" style="color:inherit;" target="_blank" rel="noopener noreferrer">{% endif %}{{ cell | report_cell_html if s.wrap | default(false) else (brk(cell) if k == 'L' else ('' if cell is none else cell) | string | e) }}{% if clu %}</a>{% endif %}</td>
 {%- endif %}
 {%- endfor %}
 </tr>
@@ -158,9 +164,12 @@
 {%- endif %}
 </td></tr>
 {%- endfor %}
+{%- if _email_web_url | default('') and _page_runs is not defined %}
+<tr><td style="padding:14px 20px 14px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="border:1px solid #1d4ed8;border-radius:16px;padding:5px 14px;"><a href="{{ _email_web_url | e }}" style="color:#1d4ed8;font-size:13px;font-weight:600;text-decoration:none;display:inline-block;">Open the full report &rarr;</a></td></tr></table></td></tr>
+{%- endif %}
 <tr><td style="padding:12px 20px 16px 20px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
-{{ _email_footer | e }}{% if _email_web_url | default('') %}<br><a href="{{ _email_web_url | e }}" style="color:inherit;">Open this report in a browser</a>{% endif %}
+{{ _email_footer | e }}
 </td></tr>
 </table>
 </td></tr>

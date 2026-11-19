@@ -144,6 +144,23 @@ _spec = importlib.util.spec_from_file_location(
     "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
 _time = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_time)
+# the one check for a link that data brought (an incident, a card): https only, a host, no user - shared the same way
+_spec = importlib.util.spec_from_file_location(
+    "site_link", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_link.py"))
+_link = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_link)
+safe_link = _link.safe_link
+_DATA_KEY = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
+
+
+def safe_data(tags):
+    """A row's extra data attributes (row_tags[].data) -> only the names that are plain: a lower-case letter, then letters, digits and
+    '-' (31 characters at most); a value is its text. The template writes each as data-<name>="...", so a name can never open an attribute."""
+    if not isinstance(tags, dict):
+        return {}
+    return {str(k): ("" if v is None else str(v)) for k, v in tags.items() if isinstance(k, str) and _DATA_KEY.fullmatch(k)}
+
+
 ACT_OFF = "ACT is off (site_act_enabled false)."
 ACT_OLD = "ACT old copies"
 
@@ -1911,7 +1928,14 @@ def report_cards_html(cards, ink="#111827", muted="#4b5563", accent="#0f6b4f"):
                    'padding:1px 8px;font-size:12px;font-weight:700;">%s</span></td>'
                    '<td align="right" valign="middle" style="font-size:12px;color:%s;">%s</td></tr></table>'
                    % (bg, fg, bd, escape(str(c.get("chip") or word)), muted, escape(str(c.get("meta") or ""))))
-        out.append('<div style="font-size:15px;font-weight:700;color:%s;margin-top:8px;line-height:1.35;">%s</div>' % (ink, escape(str(c.get("title") or ""))))
+        title, link, ltxt = str(c.get("title") or ""), str(c.get("url") or ""), str(c.get("url_text") or "")
+        link = safe_link(link)
+        if link and ltxt and ltxt in title:                      # a number in the title linked (an incident): a plain <a>
+            a, b = title.split(ltxt, 1)
+            title_html = '%s<a href="%s" style="color:inherit;" target="_blank" rel="noopener noreferrer">%s</a>%s' % (escape(a), escape(link, quote=True), escape(ltxt), escape(b))
+        else:
+            title_html = escape(title)
+        out.append('<div style="font-size:15px;font-weight:700;color:%s;margin-top:8px;line-height:1.35;">%s</div>' % (ink, title_html))
         if c.get("subject"):
             out.append('<div style="%sfont-size:13px;color:%s;margin-top:4px;word-break:break-word;">%s</div>' % (mono, muted, escape(str(c["subject"]))))
         if c.get("next") or c.get("code"):
@@ -2639,7 +2663,7 @@ def report_xlsx_sheets(report, own=None):
 
 class FilterModule(object):
     def filters(self):
-        return {"report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
+        return {"safe_link": safe_link, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
                 "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
                 "report_act_old": report_act_old,
                 "from_csv": from_csv, "days_until": days_until, "site_result": site_result,

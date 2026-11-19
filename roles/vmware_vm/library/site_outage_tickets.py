@@ -42,6 +42,7 @@ tickets:
 asked: {description: True when the credential was there and ServiceNow was asked., type: bool, returned: always}
 error: {description: "Why the tickets were not read ('' = read).", type: str, returned: always}
 notes_error: {description: "Why the work notes were not read ('' = read, or nothing to read).", type: str, returned: always}
+instance: {description: "The instance's base address (https://host[:port], never a user or a path) for the report's links to the incidents; '' when it is not https or not known.", type: str, returned: always}
 '''
 
 import datetime
@@ -49,7 +50,7 @@ import json
 import socket
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from ansible.module_utils.basic import AnsibleModule, env_fallback
 from ansible.module_utils.urls import open_url
@@ -114,6 +115,18 @@ class Api(object):
         if not isinstance(rows, list):
             raise SnError("GET %s: no result list in the answer" % path)
         return rows
+
+
+def instance_url(host):
+    """The instance as a link base: https://host[:port] - no user, no path, only https - or ''."""
+    try:
+        u = urlsplit(base_url(host))
+        port = u.port
+    except ValueError:
+        return ""
+    if u.scheme != "https" or not u.hostname:
+        return ""
+    return "https://%s%s" % (u.hostname, (":%d" % port) if port else "")
 
 
 def base_url(host):
@@ -202,7 +215,7 @@ def main():
         supports_check_mode=True,
     )
     p = module.params
-    out = {"changed": False, "tickets": [], "asked": False, "error": "", "notes_error": ""}
+    out = {"changed": False, "tickets": [], "asked": False, "error": "", "notes_error": "", "instance": instance_url(p["host"]) if p["host"] else ""}
     if not (p["host"] and p["username"] and p["password"]):
         out["error"] = "not read: attach the ServiceNow API credential to the job template"
         module.exit_json(**out)

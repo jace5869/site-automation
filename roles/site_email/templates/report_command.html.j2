@@ -98,6 +98,10 @@
 </td></tr>
 {%- endif %}
 <tr><td bgcolor="{{ accent }}" height="3" style="background:{{ accent }};height:3px;line-height:3px;font-size:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
+{#- 1.76.2: the email links its full web report at the top and the bottom (_email_web_url; never on the web page itself) #}
+{%- if _email_web_url | default('') and _page_runs is not defined %}
+<tr><td style="padding:12px 20px 0 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{{ navy }}" style="background:{{ navy }};border:1px solid {{ accent }};border-radius:16px;padding:5px 14px;"><a href="{{ _email_web_url | e }}" style="color:{{ accent }};font-size:13px;font-weight:600;text-decoration:none;display:inline-block;">Open the full report &rarr;</a></td></tr></table></td></tr>
+{%- endif %}
 {%- if r.summary | default([]) %}
 {%- for chunk in r.summary | batch(5) %}
 <tr><td style="padding:{{ '14px' if loop.first else '6px' }} 20px 4px 20px;">
@@ -170,9 +174,12 @@
 {%- endif %}
 </td></tr>
 {%- endfor %}
+{%- if _email_web_url | default('') and _page_runs is not defined %}
+<tr><td style="padding:14px 20px 14px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{{ navy }}" style="background:{{ navy }};border:1px solid {{ accent }};border-radius:16px;padding:5px 14px;"><a href="{{ _email_web_url | e }}" style="color:{{ accent }};font-size:13px;font-weight:600;text-decoration:none;display:inline-block;">Open the full report &rarr;</a></td></tr></table></td></tr>
+{%- endif %}
 <tr><td bgcolor="{{ navy }}" style="background:{{ navy }};color:#b6c4d8;padding:10px 20px;font-size:12px;">
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
-{{ _email_footer | e }}{% if _email_web_url | default('') %}<br><a href="{{ _email_web_url | e }}" style="color:inherit;">Open this report in a browser</a>{% endif %}
+{{ _email_footer | e }}
 </td></tr>
 </table>
 </td></tr>

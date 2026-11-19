@@ -8,6 +8,7 @@ normal run, the event types the module reads, the ticket reader (GET only) and t
     python3 tests/test_outage_timeline.py"""
 import ast
 import copy
+import json
 import os
 import sys
 import unittest
@@ -350,7 +351,8 @@ class Tickets(unittest.TestCase):
 
     def test_servicenow_not_read(self):
         r = made(None, [], tickets_asked=False)
-        self.assertEqual(r["lines"][-1], "ServiceNow was not read: attach the ServiceNow API credential to the job template.")
+        self.assertEqual(r["lines"][-1], "ServiceNow was not read: attach the ServiceNow API credential to the job template. "
+                                         "Attach the ServiceNow API credential to the outage watch template to see and link its incidents (read only).")
         self.assertEqual(r["cards"][1]["next"], r["lines"][-1])
         self.assertTrue(r["title"].endswith("46 min down"))                   # nobody looked: not "no ticket"
         lanes = r["web_sections"][1]["outage"]["lanes"]
@@ -664,6 +666,407 @@ class Looks(unittest.TestCase):
         # ... and its email
         email = ot.outage_timeline_doc(copy.deepcopy(WATCH), self.long_night(), False, True)
         self.assertEqual(len(email["sections"][1]["rows"]), 25)
+
+
+class Fine(unittest.TestCase):
+    """The fine-tuning of the time line: what an event is about (its kind), which events are about the outage (the related set), the
+    marks' lists of events, the website's events table (a Related column, folded repeats)."""
+    H5 = "esx05.example.mil"
+
+    def evs(self):
+        return [
+            ev("00:50:02", "AlarmStatusChangedEvent", self.H5, alarm="Datastore usage on disk", entity="ds-archive", to="yellow", **{"from": "green"}),
+            ev("00:52:30", "esx.problem.net.redundancy.degraded", self.H5, msg="Uplink redundancy degraded on vmnic3"),
+            alarm("01:05:00", "Virtual machine CPU usage", "yellow", "green"),
+            ev("01:19:40", "HostConnectionLostEvent", H, msg="Host esx03.example.mil is not responding"),
+            alarm("01:19:55", "Host connection and power state", "red", "green"),
+            ev("01:20:10", "AlarmStatusChangedEvent", H, vm="vm-app01", alarm="Virtual machine heartbeat", entity="vm-app01", to="red", **{"from": "green"}),
+            ev("01:20:20", "AlarmStatusChangedEvent", H, alarm="Datastore accessibility", entity="ds-prod-01", to="red", **{"from": "green"}),
+            ev("01:30:00", "AlarmStatusChangedEvent", "esx01.example.mil", vm="vm-db02", alarm="Virtual machine snapshot consolidation needed",
+               entity="vm-db02", to="yellow", **{"from": "green"}),
+            ev("01:34:00", "AlarmStatusChangedEvent", "esx01.example.mil", vm="vm-app01", alarm="Virtual machine snapshot consolidation needed",
+               entity="vm-app01", to="yellow", **{"from": "green"}),
+            ev("02:05:12", "HostConnectedEvent", H, msg="Connected to esx03.example.mil"),
+        ]
+
+    def made_(self, evs=None):
+        return made(evs if evs is not None else self.evs(), [])
+
+    def table(self, r):
+        return next(s for s in r["web_sections"] if s.get("title") == "The events")
+
+    def chart(self, r):
+        return next(s for s in r["web_sections"] if s.get("outage"))["outage"]
+
+    def by_where(self, r):
+        t = self.table(r)
+        return dict(((row[3], row[4]), (tag["data"]["cls"], tag["data"]["rel"])) for row, tag in zip(t["rows"], t["row_tags"]))
+
+    def test_the_kinds(self):
+        cases = [({"type": "HostConnectionLostEvent", "label": "Host not responding"}, "host"),
+                 ({"type": "com.vmware.vc.ha.VmRestartedByHAEvent", "label": "HA restarted a VM"}, "ha"),
+                 ({"type": "esx.problem.storage.apd.start", "label": "All paths down to a storage device"}, "storage"),
+                 ({"type": "esx.problem.vmfs.heartbeat.timedout", "label": "Datastore heartbeat timed out"}, "storage"),
+                 ({"type": "esx.problem.net.redundancy.lost", "label": "Uplink redundancy lost"}, "network"),
+                 ({"type": "AlarmStatusChangedEvent", "label": "Alarm red: Virtual machine heartbeat", "vm": "vm-app01"}, "vm"),
+                 ({"type": "AlarmStatusChangedEvent", "label": "Alarm yellow: Virtual machine CPU usage"}, "usage"),
+                 ({"type": "AlarmStatusChangedEvent", "label": "Alarm yellow: Host memory usage"}, "usage"),
+                 ({"type": "AlarmStatusChangedEvent", "label": "Alarm red: Virtual machine snapshot consolidation needed"}, "snapshot"),
+                 ({"type": "AlarmStatusChangedEvent", "label": "Alarm red: Host connection and power state"}, "host"),
+                 ({"type": "AlarmStatusChangedEvent", "label": "Alarm red: Datastore accessibility"}, "storage"),
+                 ({"type": "x", "label": "Ticket INC0012345 opened"}, "other")]
+        for e, want in cases:
+            self.assertEqual(ot._classify(e), want, e)
+        self.assertEqual([k for k, _n in ot.CLASSES], ["host", "ha", "storage", "network", "vm", "usage", "snapshot", "other"])
+
+    def test_the_related_set(self):
+        r = self.made_()
+        rel = self.by_where(r)
+        self.assertEqual(self.chart(r)["subject"], "esx03, vm-app01")                              # the host that went down, the VM with a critical event
+        self.assertEqual(rel[("esx03", "Host not responding")], ("host", "1"))
+        self.assertEqual(rel[("vm-app01", "Alarm red: Virtual machine heartbeat")], ("vm", "1"))
+        self.assertEqual(rel[("ds-prod-01", "Alarm red: Datastore accessibility")], ("storage", "1"))   # a datastore of a related host
+        self.assertEqual(rel[("ds-archive", "Alarm yellow: Datastore usage on disk")][1], "0")           # another host's
+        self.assertEqual(rel[("esx05", "Uplink redundancy degraded")], ("network", "0"))
+        self.assertEqual(rel[("vm-db02", "Alarm yellow: Virtual machine snapshot consolidation needed")], ("snapshot", "0"))   # a snapshot on another VM
+        self.assertEqual(rel[("vm-app01", "Alarm yellow: Virtual machine snapshot consolidation needed")], ("snapshot", "1"))  # on the outage VM itself
+        self.assertEqual(rel[("esx03", "Host connected again")][1], "1")
+
+    def test_a_vm_and_its_host_and_cluster(self):
+        evs = [ev("01:20:10", "AlarmStatusChangedEvent", "esx02.example.mil", vm="vm-app01", alarm="Virtual machine heartbeat", entity="vm-app01",
+                  to="red", **{"from": "green"}),
+               ev("01:21:00", "HostShutdownEvent", "esx02.example.mil", msg="Host shut down"),
+               ev("01:22:00", "HostShutdownEvent", "esx09.example.mil", msg="Host shut down", cluster="cluster2"),
+               ev("01:23:00", "com.vmware.vc.HA.ClusterFailoverActionInitiatedEvent", "", msg="failover", cluster="cluster1")]
+        evs[3]["host"] = ""
+        r = made(evs, [])
+        self.assertEqual(self.chart(r)["subject"], "vm-app01")
+        t = self.table(r)
+        wheres = dict((row[3] + "/" + row[4], tag["data"]["rel"]) for row, tag in zip(t["rows"], t["row_tags"]))
+        self.assertEqual(wheres["esx02/Host shut down on request"], "1")                           # the VM's ESXi host
+        self.assertEqual(wheres["esx09/Host shut down on request"], "0")
+        self.assertEqual(wheres["cluster1/HA started a failover"], "1")                            # its cluster (an event about the cluster itself)
+
+    def test_no_subject_no_marking(self):
+        r = made([ev("01:00:00", "esx.problem.net.redundancy.lost", self.H5, msg="Uplink redundancy lost")], [])
+        ch = self.chart(r)
+        self.assertEqual(ch["subject"], "")
+        self.assertIn("could not be worked out", ch["related_note"])
+        self.assertEqual(ch["legend_rel"], "")
+        t = self.table(r)
+        self.assertNotIn("Related", t["columns"])                                                  # the table as it is, with the one muted line
+        self.assertIn("could not be worked out", t["text"])
+        self.assertTrue(all(tag["data"]["rel"] == "0" for tag in t["row_tags"]))
+
+    def test_the_marks_carry_their_events(self):
+        r = made(self.evs()[:2] + self.evs()[3:], [])
+        ch = self.chart(r)
+        marks = [m for g in ch["lanes"] for m in g["marks"]]
+        for m in marks:
+            self.assertEqual([x["n"] for x in m["ev"]], m["nums"])
+            self.assertEqual(json.loads(m["data"]), m["ev"])
+            self.assertIn(m["rel"], (0, 1, 2))
+        host = next(m for m in marks if "Host not responding" in m["tip"])
+        self.assertEqual((host["rel"], host["ev"][0]["l"], host["ev"][0]["t"], host["ev"][0]["m"]), (2, "critical", "02:19:40", "02:19"))   # local time, no date
+        other = next(m for m in marks if "Uplink" in m["tip"])
+        self.assertEqual(other["rel"], 0)
+        self.assertEqual(sum(k["count"] for k in ch["kinds"]), r["events"])                         # every event has exactly one kind
+
+    def test_a_grouped_mark_lists_every_event(self):
+        r = made(self.long_dense(), [])
+        marks = [m for g in self.chart(r)["lanes"] for m in g["marks"]]
+        grouped = [m for m in marks if "+" in m["label"]]
+        self.assertTrue(grouped)
+        for m in grouped:
+            self.assertEqual(len(m["ev"]), len(m["nums"]))
+            self.assertEqual(m["tip"].count("\n") + 1, 2 * len(m["ev"]))
+
+    def long_dense(self):
+        return [ev("01:2%d:%02d" % (i // 60, i % 60), "com.vmware.vc.ha.VmRestartedByHAEvent", "esx01.example.mil", vm="vm-app%02d" % i) for i in range(30)] + \
+               [alarm("01:20:%02d" % i, "Host storage path redundancy %d" % i, "red", "green") for i in range(10)]
+
+    def test_repeats_fold(self):
+        evs = [alarm("01:%02d:00" % (5 + 4 * i), "Virtual machine CPU usage", "yellow", "green") for i in range(4)] + [
+            ev("01:30:00", "HostConnectionLostEvent", H, msg="x"), alarm("01:35:00", "Virtual machine CPU usage", "yellow", "green")]
+        r = made(evs, [])
+        t = self.table(r)
+        d = [tag["data"] for tag in t["row_tags"]]
+        self.assertEqual(d[0]["fold"].split("|")[:3], ["4", "02:05", "02:17"])                       # the first row of the four: x4, 02:05-02:17
+        self.assertEqual(d[0]["fold"].split("|")[3], "02:05:00, 02:09:00, 02:13:00, 02:17:00")       # its times, for its title
+        self.assertEqual([("rep" in x) for x in d], [False, True, True, True, False, False])         # the other three are repeats; the last is not "in a row"
+        self.assertNotIn("fold", d[4])
+        self.assertEqual(ot._fold([{"lane": "vcenter", "label": "a", "where": "x", "level": "low"}] * 2 +
+                                  [{"lane": "vcenter", "label": "b", "where": "x", "level": "low"}]), [(0, [0, 1])])
+        self.assertEqual(ot._fold([]), [])
+
+    def test_the_row_ids_and_the_email(self):
+        r = self.made_()
+        t = self.table(r)
+        self.assertEqual([tag["id"] for tag in t["row_tags"]][:2], ["ot-row-1", "ot-row-2"])
+        email = next(x for x in r["sections"] if x.get("title") == "The events")
+        self.assertNotIn("Related", email["columns"])                                              # the email's table as it was
+        self.assertNotIn("row_tags", email)
+
+    def test_the_page(self):
+        import test_report_fit as T
+        env, r = T.EmailTiles()._env(), self.made_()
+        for look in ("atlas", "brief", "ops"):
+            h = env.get_template("report_%s.html.j2" % look).render(
+                _report=ot.outage_timeline_doc(copy.deepcopy(WATCH), r, True, True), _email_footer="AAP job 4714", _page_logo_cid="",
+                _page_runs=[], report_email_header_text="x")
+            self.assertIn("Outlined: about esx03, vm-app01 or its host, cluster, datastores", h, look)
+            self.assertIn('data-ot-ctl hidden', h)
+            self.assertIn('name="ot-show" value="rel"', h)
+            self.assertIn('name="ot-rep"', h)
+            self.assertEqual(h.count('name="ot-kind"'), len(self.chart(r)["kinds"]))
+            self.assertIn('class="ot-m ot-critical r', h)
+            self.assertIn(" ot-rel", h)
+            self.assertIn(" ot-dim", h)
+            self.assertIn('data-ev="', h)
+            self.assertIn('id="ot-row-1"', h, look)
+            self.assertIn('data-cls="host"', h, look)
+            self.assertIn("<th", h)
+            self.assertIn(">Related<", h, look)
+            self.assertNotIn("<script>", h.split('class="ot-ctl"')[1].split('class="ot-over"')[0] if 'class="ot-over"' in h else "")
+        none = made([ev("01:00:00", "esx.problem.net.redundancy.lost", self.H5, msg="Uplink redundancy lost")], [])
+        h = env.get_template("report_atlas.html.j2").render(
+            _report=ot.outage_timeline_doc(copy.deepcopy(WATCH), none, True, True), _email_footer="AAP job 4714", _page_logo_cid="",
+            _page_runs=[], report_email_header_text="x")
+        self.assertNotIn("Outlined:", h)
+        self.assertNotIn('name="ot-show"', h)
+        self.assertNotIn(" ot-dim", h)
+        self.assertIn("could not be worked out", h)
+
+
+
+class Links(unittest.TestCase):
+    """The incidents of ServiceNow linked: https://<instance>/nav_to.do?uri=incident.do%3Fsys_id%3D<sys_id>, only for an https instance."""
+    INST = "https://dev.service-now.example"
+    URL = INST + "/nav_to.do?uri=incident.do%3Fsys_id%3Da1"
+
+    def web_table(self, r):
+        return next(x for x in r["web_sections"] if x.get("title") == "The events")
+
+    def test_the_link_is_built(self):
+        self.assertEqual(ot._ticket_url(self.INST, "a1"), self.URL)
+        self.assertEqual(ot._ticket_url(self.INST + "/", "a1"), self.URL)                       # a slash at the end
+        self.assertEqual(ot._ticket_url("https://dev.service-now.example:8443", "0a1b"),
+                         "https://dev.service-now.example:8443/nav_to.do?uri=incident.do%3Fsys_id%3D0a1b")
+
+    def test_no_link_without_a_safe_instance_and_a_plain_sys_id(self):
+        for inst in ("", None, "http://dev.service-now.example", "dev.service-now.example", "https://user:pw@dev.service-now.example",
+                     "https://dev.service-now.example/evil", "https://dev.service-now.example?x=1", "javascript:alert(1)", "https://a b.example"):
+            self.assertEqual(ot._ticket_url(inst, "a1"), "", inst)
+        for sid in ("", None, "a1&x=<script>", "a1\"onmouseover=\"x", "a 1", "../a1", "a" * 65):
+            self.assertEqual(ot._ticket_url(self.INST, sid), "", sid)
+
+    def test_where_it_shows(self):
+        r = made(instance=self.INST)
+        t = self.web_table(r)
+        urls = t["cell_links"]["urls"]
+        self.assertEqual((t["cell_links"]["column"], len(urls)), (4, len(t["rows"])))
+        self.assertEqual(t["columns"][4], "What happened")
+        rows = [(row[2], row[4], u) for row, u in zip(t["rows"], urls)]
+        for lane, what, u in rows:
+            self.assertEqual(bool(u), lane in ("ServiceNow", "ACT"), (lane, what))                # every row of an incident, no other
+        self.assertTrue(all(u in ("", self.URL) for u in urls))
+        email = next(x for x in r["sections"] if x.get("title") == "The events")
+        self.assertEqual(email["cell_links"]["urls"], urls)                                          # the email's table links the same
+        card = next(c for c in r["cards"] if c["chip"] == "First signal to ticket")
+        self.assertEqual((card["url"], card["url_text"]), (self.URL, "INC0012345"))
+        self.assertTrue(card["title"].startswith("INC0012345 opened at"))
+        marks = [m for g in next(x for x in r["web_sections"] if x.get("outage"))["outage"]["lanes"] if g["key"] in ("servicenow", "act") for m in g["marks"]]
+        ev = [e for m in marks for e in m["ev"]]
+        self.assertTrue(ev and all(e["u"] == self.URL and e["k"] == "INC0012345" for e in ev))
+        vc = [e for g in next(x for x in r["web_sections"] if x.get("outage"))["outage"]["lanes"] if g["key"] == "vcenter" for m in g["marks"] for e in m["ev"]]
+        self.assertTrue(vc and not any("u" in e for e in vc))
+
+    def test_without_an_instance_the_number_is_plain(self):
+        for kw in ({}, {"instance": "http://dev.service-now.example"}):
+            r = made(**kw)
+            t = self.web_table(r)
+            self.assertNotIn("cell_links", t)
+            self.assertNotIn("url", next(c for c in r["cards"] if c["chip"] == "First signal to ticket"))
+            self.assertNotIn("cell_links", next(x for x in r["sections"] if x.get("title") == "The events"))
+            marks = [m for g in next(x for x in r["web_sections"] if x.get("outage"))["outage"]["lanes"] for m in g["marks"]]
+            self.assertFalse(any("u" in e for m in marks for e in m["ev"]))
+
+    def test_the_pages_and_the_email(self):
+        import test_report_fit as T
+        env, r = T.EmailTiles()._env(), made(instance=self.INST)
+        for look in ("atlas", "brief", "ops"):
+            h = env.get_template("report_%s.html.j2" % look).render(
+                _report=ot.outage_timeline_doc(copy.deepcopy(WATCH), r, True, True), _email_footer="AAP job 4714", _page_logo_cid="",
+                _page_runs=[], report_email_header_text="x")
+            self.assertIn('href="%s"' % self.URL, h, look)
+            self.assertIn('<a href="%s" target="_blank" rel="noopener noreferrer">INC0012345</a> opened at' % self.URL, h, look)   # the card
+            self.assertNotIn("<script>" + self.INST, h)
+        em = env.get_template("report.html.j2").render(
+            _report=ot.outage_timeline_doc(copy.deepcopy(WATCH), r, False, True), _email_footer="AAP job 4714", _page_logo_cid="", _page_runs=[],
+            report_email_header_text="x")
+        self.assertIn('href="%s"' % self.URL.replace("&", "&amp;"), em)                           # plain <a> in the email's table
+        self.assertIn('<a href="%s"' % self.URL, em)
+        self.assertIn(">INC0012345</a> opened at", em)                                              # and in the card
+        r2 = made()
+        em2 = env.get_template("report.html.j2").render(
+            _report=ot.outage_timeline_doc(copy.deepcopy(WATCH), r2, False, True), _email_footer="AAP job 4714", _page_logo_cid="", _page_runs=[],
+            report_email_header_text="x")
+        self.assertNotIn("nav_to.do", em2)
+
+    def test_the_reader_returns_the_instance(self):
+        sys.path.insert(0, os.path.join(REPO, "roles", "vmware_vm", "library"))
+        try:
+            import site_outage_tickets as m
+        except ImportError as e:
+            self.skipTest("ansible-core not importable: %s" % e)
+        self.assertEqual(m.instance_url("dev.service-now.example"), "https://dev.service-now.example")
+        self.assertEqual(m.instance_url("https://dev.service-now.example/"), "https://dev.service-now.example")
+        self.assertEqual(m.instance_url("https://user:pw@dev.service-now.example:8443/x?y=1"), "https://dev.service-now.example:8443")   # never the user
+        self.assertEqual(m.instance_url("http://dev.service-now.example"), "")
+        self.assertEqual(m.instance_url(""), "")
+        self.assertEqual(m.instance_url("https://dev.service-now.example:99999"), "")
+
+
+class Codex2(unittest.TestCase):
+    """The review of c8acac4b: data keys and links checked before they are written, the same-named VMs of two vCenters, the table of the link."""
+    INST = "https://dev.service-now.example"
+
+    def env(self):
+        import test_report_fit as T
+        return T.EmailTiles()._env()
+
+    def doc(self, mutate, web=True):
+        r = made(instance=self.INST)
+        d = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, web, True)
+        mutate(d)
+        return d
+
+    def render(self, tpl, d):
+        return self.env().get_template(tpl).render(_report=d, _email_footer="AAP job 4714", _page_logo_cid="", _page_runs=[], report_email_header_text="x")
+
+    # 1: the names of data attributes
+    def test_1_data_names_are_checked(self):
+        import site_filters as sf
+        got = sf.safe_data({"num": 3, "cls": "host", "x onload=alert(1) y": "1", "A": "1", "1a": "1", "a" * 40: "1", "ok-1": None, "q\"": "v", 5: "v"})
+        self.assertEqual(got, {"num": "3", "cls": "host", "ok-1": ""})
+        self.assertEqual(sf.safe_data(None), {})
+        self.assertEqual(sf.safe_data("x"), {})
+        self.assertEqual(sf.safe_data({"name\n": "1", "ok": "1"}), {"ok": "1"})                  # "$" would let a last line end through
+
+    def test_1_the_pages_drop_a_bad_name(self):
+        def bad(d):
+            for s in d["sections"] if False else []:
+                pass
+            for sec in d.get("web_sections", d.get("sections", [])):
+                if sec.get("row_tags"):
+                    sec["row_tags"][0]["data"]['x onmouseover=alert(1) y'] = "1"
+                    sec["row_tags"][0]["data"]["good-name"] = "fine"
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
+            h = self.render(tpl, self.doc(bad))
+            self.assertNotIn("onmouseover", h, tpl)
+            self.assertIn('data-good-name="fine"', h, tpl)
+
+    # 2: one check for every link
+    def test_2_the_shared_check(self):
+        import site_filters as sf
+        ok = "https://dev.service-now.example/nav_to.do?uri=incident.do%3Fsys_id%3Da1"
+        self.assertEqual(sf.safe_link(ok), ok)
+        self.assertEqual(sf.safe_link("https://dev.service-now.example:8443/x"), "https://dev.service-now.example:8443/x")
+        for u in ("", None, "http://a.example/x", "javascript:alert(1)", "//a.example/x", "https://user@a.example/x", "https://user:pw@a.example/x",
+                  "https:///x", "https://", "https://a.example/ x", "https://a.example/x\ny", "https://a.example/\"onclick=\"x", "https://a.example:99999/x",
+                  "https://a.example/<b>", "ftp://a.example/", "data:text/html,x", "https://a.example/" + "a" * 2100):
+            self.assertEqual(sf.safe_link(u), "", u)
+
+    def test_2_a_bad_link_shows_as_text(self):
+        bad = "http://evil.example/x"
+        def card(d):
+            for c in d.get("cards", []):
+                if c.get("url"):
+                    c["url"] = bad
+        def cell(d):
+            for sec in d.get("web_sections", d.get("sections", [])):
+                if sec.get("cell_links"):
+                    sec["cell_links"]["urls"] = [bad if u else "" for u in sec["cell_links"]["urls"]]
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
+            h = self.render(tpl, self.doc(card))
+            self.assertNotIn(bad, h, tpl)
+            self.assertIn("INC0012345", h)
+        for web, tpl in ((False, "report.html.j2"),):
+            h = self.render(tpl, self.doc(lambda d: (card(d), cell(d)), web))
+            self.assertNotIn(bad, h, tpl)
+            self.assertIn("INC0012345", h)
+        import site_filters as sf
+        html = sf.report_cards_html([{"title": "INC0012345 opened at 02:14", "url": bad, "url_text": "INC0012345", "chip": "x", "status": "ok"}])
+        self.assertNotIn("evil", html)
+        self.assertIn("INC0012345", html)
+
+    def test_2_the_web_looks_table_links_pass_the_check_too(self):
+        bad, good = "http://evil.example/x", "https://dev.service-now.example/nav_to.do?uri=incident.do%3Fsys_id%3Da1"
+        def cell(d):
+            for sec in d.get("web_sections", d.get("sections", [])):
+                if sec.get("cell_links"):
+                    sec["cell_links"]["urls"] = [bad if i % 2 else good for i, u in enumerate(sec["cell_links"]["urls"])]
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
+            h = self.render(tpl, self.doc(cell))
+            self.assertNotIn(bad, h, tpl)
+            self.assertIn('href="%s"' % good, h, tpl)
+            self.assertNotIn("javascript:", h)
+
+    # 7: two vCenters, the same names
+    def test_7_same_names_in_two_vcenters(self):
+        a, b = "vc01.example.mil", "vc02.example.mil"
+        evs = [ev("01:19:50", "AlarmStatusChangedEvent", "esx01.example.mil", vm="vm-app01", alarm="Virtual machine heartbeat", entity="vm-app01",
+                  to="red", vcenter=a, **{"from": "green"}),
+               ev("01:19:51", "AlarmStatusChangedEvent", "esx09.example.mil", vm="vm-app01", alarm="Virtual machine heartbeat", entity="vm-app01",
+                  to="yellow", vcenter=b, **{"from": "green"})]
+        r = made(evs, [])
+        t = next(s for s in r["web_sections"] if s.get("title") == "The events")
+        by = [(row[3], tag["data"]["rel"]) for row, tag in zip(t["rows"], t["row_tags"])]
+        self.assertEqual(by, [("vm-app01", "1"), ("vm-app01", "0")])   # the other vCenter's VM of the same name is not the subject
+        self.assertEqual(ot._relate(copy.deepcopy(ot._vcenter_events(evs)), [])["names"], ["vm-app01"])   # shown by name, once
+
+    def test_7_a_name_is_told_apart_by_its_vcenter(self):
+        a = {"vcenter": "vc01", "where": "esx03", "vm": "", "names": []}
+        b = {"vcenter": "vc02", "where": "esx03", "vm": "", "names": []}
+        t = {"vcenter": "", "where": "esx03", "vm": "", "names": []}
+        keys = {("vc01", "esx03")}
+        self.assertTrue(ot._has(keys, a, "esx03"))
+        self.assertFalse(ot._has(keys, b, "esx03"))                                  # the same name in another vCenter
+        self.assertTrue(ot._has(keys, t, "esx03"))                                   # a ticket has no vCenter: the name alone
+        self.assertFalse(ot._has(keys, t, ""))
+        self.assertEqual(ot._about(a), {("vc01", "esx03")})
+
+    def test_7_only_the_subject_vcenter_is_related(self):
+        a, b = "vc01.example.mil", "vc02.example.mil"
+        evs = [ev("01:19:40", "HostConnectionLostEvent", H, msg="Host esx03.example.mil is not responding", vcenter=a),
+               ev("01:20:00", "AlarmStatusChangedEvent", "esx07.example.mil", vm="vm-web", alarm="Virtual machine heartbeat", entity="vm-web",
+                  to="red", vcenter=a, **{"from": "green"}),
+               ev("01:21:00", "esx.problem.storage.apd.start", H, msg="Device naa.1 has entered the All Paths Down state", vcenter=b)]
+        r = made(evs, [])
+        t = next(s for s in r["web_sections"] if s.get("title") == "The events")
+        by = dict((row[2] + "|" + row[4], tag["data"]["rel"]) for row, tag in zip(t["rows"], t["row_tags"]))
+        apd = [v for k, v in by.items() if "storage" in k.lower() or "paths down" in k.lower()]
+        self.assertEqual(apd, ["0"])                                                  # esx03 of vc02 did not go down: its event is not about this outage
+
+    # 8: the table of the link
+    def test_8_the_table_of_the_link(self):
+        self.assertEqual(ot._ticket_url(self.INST, "a1", "incident"), self.INST + "/nav_to.do?uri=incident.do%3Fsys_id%3Da1")
+        self.assertEqual(ot._ticket_url(self.INST, "a1", ""), self.INST + "/nav_to.do?uri=incident.do%3Fsys_id%3Da1")
+        self.assertEqual(ot._ticket_url(self.INST, "a1", "u_site_ticket"), self.INST + "/nav_to.do?uri=u_site_ticket.do%3Fsys_id%3Da1")
+        for t in ("x/y", "a.b", "../incident", "Incident", "1abc", "a b", "a&b=1", "a" * 81, "inc;x"):
+            self.assertEqual(ot._ticket_url(self.INST, "a1", t), "", t)
+
+    def test_8_the_review_uses_the_table(self):
+        r = made(instance=self.INST, table="change_request")
+        card = next(c for c in r["cards"] if c["chip"] == "First signal to ticket")
+        self.assertIn("uri=change_request.do%3Fsys_id%3Da1", card["url"])
+        r = made(instance=self.INST, table="a/b")
+        self.assertNotIn("url", next(c for c in r["cards"] if c["chip"] == "First signal to ticket"))
+        with open(os.path.join(REPO, "roles", "vmware_vm", "tasks", "watch.yml")) as f:
+            y = f.read()
+        self.assertIn("'table': servicenow_table | default('incident', true) | string", y)
+
+
 
 if __name__ == "__main__":
     unittest.main()

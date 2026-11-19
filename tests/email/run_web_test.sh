@@ -92,7 +92,7 @@ check "the page: the atlas look (the default), the logo inside it (data:), no ci
     && grep -q 'src=\"data:image/png;base64,' '$d/$page' && ! grep -q 'cid:' '$d/$page' && grep -q 'width=\"42\" height=\"56\"' '$d/$page' \
     && grep -q 'class=\"seg\" id=\"theme\"' '$d/$page' && grep -q 'prefers-color-scheme:dark' '$d/$page'"
 check "the page: nothing from elsewhere (no web fonts, scripts or styles from another address)" bash -c "! grep -Eq '<link|src=\"https?:|@import|url\\(https?:' '$d/$page'"
-check "the page does not link to itself" bash -c "! grep -q 'Open this report in a browser' '$d/$page'"
+check "the page does not link to itself" bash -c "! grep -q 'Open the full report' '$d/$page'"
 check "the JSON beside it: the report, the job, the address" "$py" -c 'import json, sys
 j = json.load(open(sys.argv[1]))
 assert j["report"]["title"] == "Test formatted report" and str(j["job"]) == "907" and j["template"].startswith("Linux")
@@ -265,8 +265,15 @@ run "an email and the website: the email links the page" ok \
     "Report: https://reports.example.mil/linux-certificate-trust-report/"
 check "one email" test "$(mails)" = 1
 part html "$work/mail/1.eml" > "$work/html.txt"; part plain "$work/mail/1.eml" > "$work/plain.txt"
-check "HTML: a link to the page" grep -qE '<a href="https://reports.example.mil/linux-certificate-trust-report/[^"]*_job-907.html" style="color:inherit;">Open this report in a browser</a>' "$work/html.txt"
-check "text: In a browser: the page" grep -qE '^In a browser: https://reports.example.mil/linux-certificate-trust-report/.*_job-907.html$' "$work/plain.txt"
+# 1.76.2: the link at the top and the bottom - exactly two; the text email: "Full report:" its first line and its last
+check "HTML: a link to the page, at the top and the bottom" "$py" -c 'import re, sys
+h = open(sys.argv[1]).read()
+links = re.findall(r"<a href=\"https://reports.example.mil/linux-certificate-trust-report/[^\"]*_job-907.html\"[^>]*>Open the full report &rarr;</a>", h)
+assert len(links) == 2 and h.count("Open the full report") == 2 and "Open this report in a browser" not in h, len(links)' "$work/html.txt"
+check "text: Full report: the page, first and last" "$py" -c 'import re, sys
+t = [x for x in open(sys.argv[1]).read().splitlines() if x.strip()]
+rx = r"^Full report: https://reports.example.mil/linux-certificate-trust-report/.*_job-907.html$"
+assert re.match(rx, t[0]) and re.match(rx, t[-1]), (t[0], t[-1])' "$work/plain.txt"
 check "the email keeps its logo attached (cid:)" grep -q 'Content-ID: <site-report-logo>' "$work/mail/1.eml"
 
 # On a Windows server (report_web_host): the read script and the script site_report_web makes, run by pwsh here in
@@ -349,7 +356,7 @@ check "text: the notice, before the report's own sections" "$py" -c 'import sys
 t = open(sys.argv[1]).read()
 i, j = t.find("The report website copy failed: "), t.find("Fix: convert the guest to EFI")
 assert 0 < i < j, (i, j)' "$work/plain.txt"
-check "no link to a page that is not there" bash -c "! grep -q 'In a browser:' '$work/plain.txt'"
+check "no link to a page that is not there" bash -c "! grep -q 'Full report:' '$work/plain.txt' && ! grep -q 'Open the full report' '$work/html.txt'"
 check "no address artifact (site_report_url), the run's artifact there" "$py" -c 'import json, sys
 run = [x for x in open(sys.argv[1]).read().splitlines() if x.startswith("\tRUN: ")]
 a = json.loads(run[-1][6:])

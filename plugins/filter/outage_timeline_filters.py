@@ -10,6 +10,7 @@ __metaclass__ = type
 
 import datetime
 import importlib.util
+import json
 import os
 import re
 
@@ -17,6 +18,10 @@ _spec = importlib.util.spec_from_file_location(
     "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
 _tm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tm)
+_spec = importlib.util.spec_from_file_location(
+    "site_link", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_link.py"))
+_lk = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_lk)
 
 UTC = datetime.timezone.utc
 LANES = [("vcenter", "vCenter alarms"), ("host", "Host events"), ("servicenow", "ServiceNow"), ("act", "ACT")]
@@ -73,6 +78,7 @@ SAME_S = 60                # the same event at the same place again within this 
 STEPS_MIN = (1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 10080)
 TRACK_PX = 580.0           # the narrowest track the marks must fit (the 800 px window)
 ROWS = 3
+ATTACH = "Attach the ServiceNow API credential to the outage watch template to see and link its incidents (read only)."
 
 
 def _short(name):
@@ -173,7 +179,7 @@ def _vcenter_events(events):
             label = message[:120] or typ
         out.append({"t": t, "lane": lane, "level": level, "label": label, "where": where, "kind": kind, "role": role,
                     "type": typ, "message": message, "vcenter": str(e.get("vcenter") or ""), "vm": vm, "cluster": cluster,
-                    "host": host, "n": 1, "names": []})
+                    "host": host, "entity": _short(e.get("entity")), "n": 1, "names": []})
     out.sort(key=lambda x: x["t"])
     return out
 
@@ -280,8 +286,9 @@ def _lower_first(text):
     return text[:1].lower() + text[1:] if text[1:2].islower() else text
 
 
-def _ticket_events(tickets, begin, end):
-    """-> (events, tickets opened before the stretch and still open in it, the first root-cause text found)."""
+def _ticket_events(tickets, begin, end, instance="", table=""):
+    """-> (events, tickets opened before the stretch and still open in it, the first root-cause text found). Each event of a ticket carries
+    its link ("url", when the instance is known)."""
     out, before, cause = [], [], ""
     for k in tickets or []:
         if not isinstance(k, dict):
@@ -292,7 +299,8 @@ def _ticket_events(tickets, begin, end):
         sev = (m.group(1).lower() if m else "warning")
         sev = sev if sev in ("critical", "warning", "low") else "warning"
         opened = _time(k.get("opened"))
-        base = {"where": where, "kind": "", "role": "", "type": "", "vcenter": "", "n": 1, "names": [], "ticket": num}
+        base = {"where": where, "kind": "", "role": "", "type": "", "vcenter": "", "n": 1, "names": [], "ticket": num,
+                "url": _ticket_url(instance, k.get("sys_id"), table)}
         act = _act_block(desc)
         if opened is not None and begin <= opened <= end:
             out.append(dict(base, t=opened, lane="servicenow", level=sev, label="Ticket %s opened" % num, message=short, role="ticket"))
@@ -383,10 +391,124 @@ def _place(marks):
             p["label"] = "%s+%d" % (p["nums"][0], p["more"])
             p["nums"].append(m["nums"][0])
             p["tip"] += "\n" + m["tip"]
+            p["ev"] += m["ev"]
             if RANK[m["level"]] > RANK[p["level"]]:
                 p["level"] = m["level"]
             ends[p["row"]] = max(ends[p["row"]], p["x"] + (30 + 7.5 * len(p["label"])) * 50.0 / TRACK_PX)
     return placed
+
+
+def _ticket_url(instance, sys_id, table="incident"):
+    """A link to a ticket in ServiceNow: https://<instance>/nav_to.do?uri=<table>.do%3Fsys_id%3D<sys_id> - table is servicenow_table
+    ('incident' when empty); only an https instance (no user, no path), a plain table name and a plain sys_id; '' for anything
+    else (the number then shows without a link). The address passes the shared check (module_utils/site_link)."""
+    inst, sid = str(instance or "").strip().rstrip("/"), str(sys_id or "").strip()
+    tbl = str(table or "").strip() or "incident"
+    if not re.match(r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$", inst) or not re.match(r"^[A-Za-z0-9]{1,64}$", sid) \
+            or not re.match(r"^[a-z][a-z0-9_]{0,79}$", tbl):
+        return ""
+    return _lk.safe_link("%s/nav_to.do?uri=%s.do%%3Fsys_id%%3D%s" % (inst, tbl, sid))
+
+
+# ---- what an event is about, and whether it is about the outage (the fine-tuning of the time line) --------------------
+
+CLASSES = [("host", "Host"), ("ha", "HA"), ("storage", "Datastore and storage"), ("network", "Network"),
+           ("vm", "VM power and heartbeat"), ("usage", "CPU and memory usage"), ("snapshot", "Snapshots"), ("other", "Other")]
+CLASS_NAME = dict(CLASSES)
+_STORAGE = ("datastore", "storage", "scsi", "vmfs", "apd", "pdl", "multipath", "path redundancy", "lun", "disk", "naa.")
+_NETWORK = ("network", "uplink", "port group", "portgroup", "vswitch", "vmnic", "esx.problem.net", "esx.clear.net", "nic ")
+_HA = ("vsphere ha", "ha ", ".ha.", "dashost", "vmrestartedby", "vmrestartedonalternate", "vmfailover", "vmdasbeing", "clusterfailover", "failover")
+_USAGE = ("cpu", "memory", "usage", "utilization", "balloon", "swap")
+
+
+def _classify(e):
+    """The kind of an event, by its vCenter type and its words: host, ha, storage, network, vm, usage, snapshot, other."""
+    text = (" ".join([str(e.get("type") or ""), str(e.get("label") or ""), str(e.get("message") or "")]) + " ").lower()
+    if "snapshot" in text:
+        return "snapshot"
+    if any(w in text for w in _NETWORK):
+        return "network"
+    if any(w in text for w in _STORAGE):
+        return "storage"
+    if any(w in text for w in _HA):
+        return "ha"
+    if any(w in text for w in _USAGE):
+        return "usage"
+    if "virtual machine" not in text and (str(e.get("type") or "").startswith(("Host", "EnteredMaintenance", "ExitMaintenance")) or "host" in text):
+        return "host"
+    if e.get("vm") or any(w in text for w in ("virtual machine", "heartbeat", "power", "guest", "vmware tools")):
+        return "vm"
+    return "other"
+
+
+def _key(e, name):
+    """A name as one vCenter knows it: (vCenter, name). Two vCenters can hold VMs and hosts with the same name."""
+    return (str(e.get("vcenter") or ""), name)
+
+
+def _has(keys, e, name):
+    """Is `name` (as e's vCenter knows it) in keys? An event without a vCenter (a ticket) matches on the name alone."""
+    if not name:
+        return False
+    vc = str(e.get("vcenter") or "")
+    return _key(e, name) in keys or (not vc and any(k[1] == name for k in keys))
+
+
+def _about(e):
+    """The names an event is about, each with its vCenter: where it happened, its VM, the VMs HA restarted."""
+    return set(_key(e, x) for x in [e.get("where"), e.get("vm")] + list(e.get("names") or []) if x)
+
+
+def _relate(evs, downs):
+    """The outage's subject, worked out from the events themselves, and which events are about it -> {names, text, note}; each event gets
+    "cls" (its kind) and "related". The subject: the hosts that went down and the VMs with a critical event of their own; related: the
+    subject, the ESXi host of a subject VM, their cluster, and the datastores and port groups that events of their host name. A snapshot is
+    related only when it is on a subject VM itself (a snapshot commit can stun a VM). Names are told apart by their vCenter."""
+    for e in evs:
+        e["cls"] = _classify(e)
+    down_names = set(d[0] for d in downs)
+    hosts = set(_key(e, e["where"]) for e in evs if e["role"] == "down" and not e.get("flap") and e["where"] in down_names)
+    vms = set(_key(e, e["vm"]) for e in evs if e["lane"] in ("vcenter", "host") and e["level"] == "critical" and e.get("vm") and e["role"] != "restart")
+    vms |= set(_key(e, e["where"]) for e in evs if e["cls"] == "vm" and e["level"] == "critical" and e["lane"] in ("vcenter", "host")
+               and str(e.get("kind") or "").startswith("alarm:") and e["where"] and e["where"] not in down_names)
+    if not hosts and not vms:
+        for e in evs:
+            e["related"] = False
+        return {"names": [], "text": "", "note": "The subject of the outage could not be worked out (no host went down and no VM has a critical event of its own), "
+                                                  "so nothing is marked as related."}
+    related = set(hosts) | set(vms)
+    for e in evs:                                           # the ESXi host of a subject VM, and the cluster of the subject
+        if (_has(vms, e, e.get("vm")) or _has(vms, e, e.get("where"))) and e.get("host"):
+            related.add(_key(e, e["host"]))
+    for e in evs:
+        if (_has(related, e, e.get("host")) or _has(vms, e, e.get("vm"))) and e.get("cluster"):
+            related.add(_key(e, e["cluster"]))
+    for e in evs:                                           # datastores and port groups named by events of a related host
+        if e["cls"] in ("storage", "network") and (_has(related, e, e.get("host")) or _has(related, e, e.get("where"))):
+            ent = e.get("entity")
+            if ent and ent != e.get("host"):
+                related.add(_key(e, ent))
+    for e in evs:
+        if e["cls"] == "snapshot":
+            e["related"] = bool(_has(vms, e, e.get("vm")) or _has(vms, e, e.get("where")))
+        else:
+            e["related"] = bool(any(_has(related, e, n[1]) for n in _about(e)))
+    names = sorted(set(k[1] for k in hosts | vms))
+    return {"names": names, "text": ", ".join(names[:4]) + (" and %d more" % (len(names) - 4) if len(names) > 4 else ""), "note": ""}
+
+
+def _fold(evs):
+    """Identical events one after another (the same lane, what, where and level) -> [(first index, [indexes])] for the runs of two or more."""
+    runs, i = [], 0
+    while i < len(evs):
+        j = i
+        k = lambda e: (e["lane"], e["label"], e["where"], e["level"])          # noqa: E731
+        while j + 1 < len(evs) and k(evs[j + 1]) == k(evs[i]):
+            j += 1
+        if j > i:
+            runs.append((i, list(range(i, j + 1))))
+        i = j + 1
+    return runs
 
 
 # ---- the review -------------------------------------------------------------------------------------------
@@ -394,7 +516,7 @@ def _place(marks):
 def outage_timeline(events, tickets=None, opts=None):
     """What vCenter (events: site_vmware_outage_events) and ServiceNow (tickets: site_outage_tickets) recorded between
     opts.begin and opts.end -> {title, numbers, boxes, cards, sections (an email), web_sections (the website: with the
-    chart), sheet (the workbook), lines (the job's output), aar}. opts: begin, end, time_zone, low_seconds, review,
+    chart), sheet (the workbook), lines (the job's output), aar}. opts: begin, end, instance and table (the ServiceNow address and table, for the links to the incidents), time_zone, low_seconds, review,
     tickets_asked, tickets_error, notes_error, capped, report_on, min_severity, job."""
     o = dict(opts or {})
     begin, end = _time(o.get("begin")), _time(o.get("end"))
@@ -423,11 +545,13 @@ def outage_timeline(events, tickets=None, opts=None):
     vc = [e for e in _vcenter_events(events) if begin <= e["t"] <= end]
     vc, restarted = _restarts(vc)
     vc, downs = _pairs(vc, low_seconds)
-    tk, before, cause = _ticket_events(tickets, begin, end)
+    instance = o.get("instance") or ""
+    tk, before, cause = _ticket_events(tickets, begin, end, instance, o.get("table") or "")
     evs = _same(sorted(vc + tk, key=lambda e: (e["t"], [x[0] for x in LANES].index(e["lane"]))))
     for i, e in enumerate(evs):
         e["num"] = i + 1
         e["what"] = e["label"] + ((" (x%d)" % e["n"]) if e["n"] > 1 else "")
+    subject = None
 
     # the numbers
     signals = [e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] in BAD]
@@ -439,6 +563,7 @@ def outage_timeline(events, tickets=None, opts=None):
     resolved = [e for e in evs if e["role"] == "resolved"]
     to_ticket = (opened["t"] - first["t"]).total_seconds() if first and opened and opened["t"] >= first["t"] else None
     still = [d for d in downs if d[2] is None]
+    subject = _relate(evs, downs)
     spans = [(h, a, b or end, b is None) for h, a, b in downs]
     longest = max(spans, key=lambda d: (d[2] - d[1]).total_seconds()) if spans else None
     down_s = (longest[2] - longest[1]).total_seconds() if longest else 0
@@ -506,9 +631,11 @@ def outage_timeline(events, tickets=None, opts=None):
         cards.append({"status": "warning" if to_ticket > 900 else "ok", "chip": "First signal to ticket", "meta": _span(to_ticket),
                       "title": "%s opened at %s %s" % (opened["ticket"], hm(opened["t"]), zname(opened["t"])), "subject": opened["where"],
                       "next": "Row %d of the events." % opened["num"]})
+        if opened.get("url"):
+            cards[-1].update(url=opened["url"], url_text=opened["ticket"])
     elif first:
         why = (str(o.get("tickets_error")) if o.get("tickets_error") else "No ticket of the health workflows was opened in the window."
-               if o.get("tickets_asked") else "ServiceNow was not read: attach the ServiceNow API credential to the job template.")
+               if o.get("tickets_asked") else "ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
         cards.append({"status": "info", "chip": "First signal to ticket", "meta": "-", "title": "No ticket to measure", "next": why})
     if first:
         if still:
@@ -534,12 +661,24 @@ def outage_timeline(events, tickets=None, opts=None):
         if days and (i == 0 or t.date() != tks[i - 1].date()):
             text = t.strftime("%d %b %H:%M")
         ticks.append({"at": _pct(t, z0, z1), "text": text, "wide": len(tks) > 5 and i % 2 == 1})
+    def evd(e):
+        """One event as a mark's list line (the page's script reads it): n, time, minute, level, what, where, related, kind - and, for an incident
+        of ServiceNow, its number and link."""
+        d = {"n": e["num"], "t": loc(e["t"]).strftime("%H:%M:%S"), "m": loc(e["t"]).strftime("%H:%M"), "l": e["level"], "w": e["what"], "p": e["where"],
+             "r": 1 if e["related"] else 0, "c": e["cls"]}
+        if e.get("url"):
+            d.update(k=e["ticket"], u=e["url"])
+        return d
     lanes = []
     for key, name in LANES:
         mine = [e for e in evs if e["lane"] == key]
         marks = _place([{"at": _pct(e["t"], z0, z1), "level": e["level"], "label": str(e["num"]), "nums": [e["num"]],
+                         "ev": [evd(e)],
                          "tip": "%d  %s %s  %s\n%s%s" % (e["num"], hm(e["t"], True), zname(e["t"]), WORD[e["level"]], e["what"],
                                                          (" - " + e["where"]) if e["where"] else "")} for e in mine])
+        for m in marks:
+            m["rel"] = 2 if all(x["r"] for x in m["ev"]) else 1 if any(x["r"] for x in m["ev"]) else 0
+            m["data"] = json.dumps(m["ev"], ensure_ascii=False, separators=(",", ":"))
         sub = "%d event%s" % (len(mine), "" if len(mine) == 1 else "s") if mine else "nothing"
         if key in ("servicenow", "act"):
             if not o.get("tickets_asked"):
@@ -565,6 +704,9 @@ def outage_timeline(events, tickets=None, opts=None):
              "overview": overview, "zone": zname(z0),
              "legend": [{"level": k, "word": WORD[k]} for k in ("critical", "warning", "low", "info", "ok")],
              "band_word": down_word,
+             "subject": subject["text"], "related_note": subject["note"],
+             "legend_rel": ("Outlined: about %s or its host, cluster, datastores" % subject["text"]) if subject["text"] else "",
+             "kinds": [{"key": k, "name": n, "count": len([e for e in evs if e["cls"] == k])} for k, n in CLASSES if any(e["cls"] == k for e in evs)],
              "none": "" if evs else "No outage event in vCenter between %s. Nothing to draw." % window_text}
 
     # the events table: the source
@@ -590,8 +732,41 @@ def outage_timeline(events, tickets=None, opts=None):
                                "A problem that cleared within %s is one Low row (vm_watch_review_low_seconds)." % _span(low_seconds)
                                if low_seconds > 0 else
                                "A problem and its clear are a row each (vm_watch_review_low_seconds is 0)."] + notes)}
+    if evs and any(e.get("url") for e in evs):
+        table["cell_links"] = {"column": 4, "urls": [e.get("url") or "" for e in evs], "title": "Open the incident in ServiceNow"}
     if not evs:
         table = {"title": "The events", "status": "ok", "lines": ["No outage event between %s." % window_text] + notes}
+
+    # the website's table: the same rows with a "Related" column, and the data the page's script folds and filters by (the rows stay
+    # complete without it); the email keeps the table above
+    web_table = table
+    if evs:
+        folds = dict((i, idx) for i, idx in _fold(evs))
+        heads = {}
+        for head_i, idx in folds.items():
+            for j in idx[1:]:
+                heads[j] = head_i
+        known = bool(subject["names"])
+        tags = []
+        for i, e in enumerate(evs):
+            d = {"num": str(e["num"]), "cls": e["cls"], "rel": "1" if e["related"] else "0"}
+            if i in folds:
+                span = [evs[j] for j in folds[i]]
+                d["fold"] = "%d|%s|%s|%s" % (len(span), loc(span[0]["t"]).strftime("%H:%M"), loc(span[-1]["t"]).strftime("%H:%M"),
+                                           ", ".join(loc(x["t"]).strftime("%H:%M:%S") for x in span[:60]))
+            if i in heads:
+                d["rep"] = "1"
+                d["head"] = "ot-row-%d" % evs[heads[i]]["num"]          # the row it is folded into (the script resolves it by id, whatever the sort)
+            tags.append({"id": "ot-row-%d" % e["num"], "data": d})
+        cols = list(table["columns"]) + (["Related"] if known else [])
+        urls = [e.get("url") or "" for e in evs]
+        web_table = dict(table, columns=cols, row_tags=tags, outage_filter=True,
+                         **({"cell_links": {"column": 4, "urls": urls, "title": "Open the incident in ServiceNow"}} if any(urls) else {}),
+                         rows=[r + (["Related" if e["related"] else ""] if known else []) for r, e in zip(table["rows"], evs)],
+                         kinds=list(table["kinds"]) + (["" ] if known else []),
+                         cell_status=[c + (["info" if e["related"] else ""] if known else []) for c, e in zip(table["cell_status"], evs)],
+                         text=table["text"] + (" Related: about %s or its host, cluster, datastores." % subject["text"] if known else
+                                                (" " + subject["note"] if subject["note"] else "")))
 
     # for the after-action report
     aar = []
@@ -619,7 +794,7 @@ def outage_timeline(events, tickets=None, opts=None):
             "text": "" if evs else chart["none"]}
     card_section = {"title": "The outage in short", "cards": cards} if cards else None
     email = [s for s in (card_section, table, aar_section) if s]
-    web = [s for s in (card_section, line if evs else None, table, aar_section) if s]
+    web = [s for s in (card_section, line if evs else None, web_table, aar_section) if s]
     sheet = {"name": "Timeline",
              "columns": ["#", "Time (UTC)", "Time (%s)" % (o.get("time_zone") or "UTC"), "Source", "Where", "What happened", "Level", "Count",
                          "Ticket", "vCenter", "Event type", "Message"],
@@ -634,7 +809,7 @@ def outage_timeline(events, tickets=None, opts=None):
     if len(evs) > 60:
         out.append("  ... and %d more event(s): the report's table and the workbook have every one." % (len(evs) - 60))
     if not o.get("tickets_asked"):
-        out.append("ServiceNow was not read: attach the ServiceNow API credential to the job template.")
+        out.append("ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
     out += notes
     return {"title": title, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
             "lines": out, "aar": aar, "window": window_text, "events": len(evs)}
