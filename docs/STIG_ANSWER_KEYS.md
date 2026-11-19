@@ -234,6 +234,15 @@ It runs in a **sandbox**: a transient systemd unit (`systemd-run`) that the kern
 
 - The whole file system is read-only (`ProtectSystem=strict`, `ReadOnlyPaths=/`, `ProtectHome=read-only`), the
   kernel's settings too (`ProtectKernelTunables`).
+  - Every mount point of the host is made read-only by name as well (`ReadOnlyPaths=` each, from
+    `/proc/self/mountinfo`): `/var`, `/var/log/audit`, `/home`, `/opt` of their own, and `/run/lock`. With
+    `ProtectKernelTunables`, systemd 255 left `/run/lock` writable under `ReadOnlyPaths=/` alone (1.76.1f).
+  - No mount of the host reaches the sandbox after it starts (`MountFlags=private`). A direct automount is fired
+    outside before each run (30 seconds for them all), so it is mounted, and read-only, when the sandbox is made; one
+    fired inside would mount writable. An indirect map, or an automount that did not mount, is a place the trial
+    cannot show: a code that reads below it is not tried.
+  - A mount point systemd cannot be given by name (a space, a quote), more than 1000 mount points, or a mount table
+    that cannot be read: no sandbox, so no trial - never one with a mount left out.
 - Its **own** `/tmp`, `/var/tmp` and `/dev/shm`, empty. The host's are never shown inside: a file or a FIFO there
   cannot be reached.
 - **No socket of any kind** (`RestrictAddressFamilies` empty, `IPAddressDeny=any`): no network, no D-Bus, no systemd, no
@@ -306,7 +315,9 @@ is replayed, or the code is not tried.
   it must be root's and writable by root alone; it is checked again right before each run. *How this was made* names
   it.
 - Before the first trial the job looks from inside, without writing, that the sandbox holds:
-  - nothing of the host is writable, and `/tmp`, `/var/tmp`, `/dev/shm` are its own, not the host's;
+  - nothing of the host is writable: the sandbox's own mount table, read inside, has every mount read-only but its
+    own places (`/proc`, `/sys`, `/dev`, `/tmp`, `/var/tmp`) and those it cannot even enter; and `/tmp`, `/var/tmp`,
+    `/dev/shm` are its own, not the host's;
   - no socket can be opened, and `/run/systemd/private` and D-Bus cannot be reached;
   - it is not root, and it keeps no capability but reading; as root, it runs as a dynamic user that owns no process
     of the host after it ends;

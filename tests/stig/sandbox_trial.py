@@ -218,6 +218,49 @@ os.close(rd)
 say(isinstance(r, dict) and r.get("values") == [False] and got == b"", "a host FIFO and file in /tmp cannot be reached from inside (nothing reached the FIFO's reader)")
 say(not os.path.exists("/tmp/site-ak-inside"), "a write to /tmp inside does not reach the host's /tmp")
 say("cannot show /tmp" in h.blind("", [], [{"cmd": "Get-Content", "path": ww, "literal": True}]), "a code that reads /tmp is not tried")
+# 1.76.1f: every mount point of this host read-only inside - not a fixed list (a STIG'd host has /var, /var/log,
+# /var/log/audit, /home, /opt ... of their own; /run/lock is a tmpfs of its own); an automount is mounted before the
+# trial (fired outside) and read-only in it, and no mount reaches the sandbox after it starts (MountFlags=private)
+mps = h.probe_mounts()
+r, err, _ = h.run_trial(pwsh, runner, "$w = @(foreach ($p in @(%s)) { & /usr/bin/test -w $p; if ($LASTEXITCODE -eq 0) { $p } }); "
+                        "Write-Verbose ($w -join ' '); return ($w.Count -eq 0)" % ", ".join("'%s'" % m.replace("'", "''") for m in mps), 60)
+say(isinstance(r, dict) and r.get("values") == [True], "every mount point of this host (%d: %s) is read-only inside%s" % (
+    len(mps), ", ".join(mps[:12]) + (" ..." if len(mps) > 12 else ""), "" if isinstance(r, dict) and r.get("values") == [True] else
+    " - writable: %s" % ((r or {}).get("read") or err)[:200]))
+# 1.76.1f (CI's runner: /opt 777 on the root file system stayed writable as root with systemd 259): as root, a folder
+# everyone may write, on the root file system - the probe finds it and holds, and a write into it fails inside
+if root:
+    wwroot = "/site-ak-wwroot-%d" % os.getpid()
+    os.mkdir(wwroot)
+    os.chmod(wwroot, 0o777)
+    try:
+        say(not h.sandbox_probe(runner), "a folder everyone may write on the root file system (%s, 777): the probe holds - "
+            "the root file system is read-only in it (the mount table inside)" % wwroot)
+        r, err, _ = h.run_trial(pwsh, runner, "try { Set-Content -LiteralPath '%s/x' -Value y -ErrorAction Stop; return $true } "
+                                              "catch { return $false }" % wwroot, 30)
+        say(isinstance(r, dict) and r.get("values") == [False] and not os.path.exists(wwroot + "/x"),
+            "... a write into it fails inside, nothing there on the host")
+    finally:
+        shutil.rmtree(wwroot, ignore_errors=True)
+autos = [m for m, fs, _ in h.mounts() if fs == "autofs" and not re.search(r"['\u2018\u2019\u201a\u201b]", m)]
+for am in autos[:3]:
+    h.fire_automounts()
+    if am in h.AUTOFS_HIDDEN:
+        say("cannot show" in h.blind("", [], [{"cmd": "Get-ChildItem", "path": am + "/x", "literal": True}]),
+            "the automount %s: not mounted (an indirect map, or no answer) - a code that reads below it is not tried" % am)
+        continue
+    try:
+        host_n = len(os.listdir(am))
+    except OSError:
+        host_n = -1
+    r, err, _ = h.run_trial(pwsh, runner, "& /usr/bin/test -w '%s'; $w = ($LASTEXITCODE -eq 0); "
+                                          "$n = @(Get-ChildItem -LiteralPath '%s' -Force -ErrorAction SilentlyContinue).Count; "
+                                          "return ([string]$n + ' ' + [string]$w)" % (am, am), 60)
+    say(isinstance(r, dict) and r.get("values") == ["%d False" % host_n],
+        "the automount %s: mounted before the trial, read inside as on the host (%d entries), not writable (%s)" % (
+            am, host_n, (r or {}).get("values") if isinstance(r, dict) else err))
+if not autos:
+    print("SKIP - no automount on this host (an automounted /opt is how 1.76.1f was found)")
 fcall = ["/usr/bin/find", wtmp, "-type", "f", "-perm", "-0002", "-print"]
 todo = h.replays_for([fcall])
 binds = h.write_shims(sh_dir, dict((tuple(c), h.capture(c)) for c in todo))

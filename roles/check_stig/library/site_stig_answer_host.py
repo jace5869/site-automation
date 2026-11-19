@@ -467,6 +467,11 @@ TMP_ROOTS = ["/tmp", "/var/tmp", "/dev/shm"]
 # never skipped), the devices and the PID namespace looked at by the probe.
 SANDBOX_COMMON = ["ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
                   "TemporaryFileSystem=/dev/shm", "TemporaryFileSystem=/run/user:ro", "InaccessiblePaths=-/dev/mqueue",
+                  # 1.76.1f: no mount of the host reaches the sandbox after it starts - an automount fired inside (or
+                  # one that expires and fires again) mounts in the host's namespace, writable, and would propagate
+                  # in past the read-only remount (tried on systemd 255). Automounts are fired before each run instead
+                  # (fire_automounts), so they are mounted when the sandbox is made, and read-only in it.
+                  "MountFlags=private",
                   "NoNewPrivileges=yes", "RestrictNamespaces=yes",
                   "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectControlGroups=yes",
                   "SystemCallFilter=~@privileged @debug",
@@ -530,7 +535,21 @@ PROBE_PRIVATE = ["/tmp", "/var/tmp", "/dev/shm"]
 # own; whether a socket of any family can be opened (and /run/systemd/private, D-Bus reached); whether an IPC setting
 # can be read; its uid, its effective capabilities, how many processes it sees
 PROBE_PS1 = r"""
-$w = @(foreach ($p in @(@RO@)) { if (Test-Path -LiteralPath $p) { & /usr/bin/test -w $p; if ($LASTEXITCODE -eq 0) { $p } } })
+# 1.76.1f: its data - the places to look at, the job's PID - from stdin as JSON, never in this script's source
+$in = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$w = @(foreach ($p in @($in.ro)) { if (Test-Path -LiteralPath $p) { & /usr/bin/test -w $p; if ($LASTEXITCODE -eq 0) { $p } } })
+# 1.76.1f: every mount of the sandbox, as it sees them (the topmost at each point): one that can be written to (no
+# "ro" of its own) outside its own places - /proc, /sys, /dev (the kernel's, guarded by capabilities it has not),
+# /tmp, /var/tmp - is a host file system it could write, unless it cannot even enter it (a root-only folder)
+$top = [ordered]@{}
+foreach ($l in [IO.File]::ReadAllLines('/proc/self/mountinfo')) { $f = $l.Split(' '); if ($f.Count -gt 5) { $top[$f[4]] = $f[5] } }
+$rwm = @(foreach ($k in $top.Keys) {
+    $p = [regex]::Replace([string]$k, '\\([0-7]{3})', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 8) })
+    if (($top[$k].Split(',')) -notcontains 'rw') { continue }
+    if ($p -match '^/(proc|sys|dev|tmp|var/tmp)(/|$)') { continue }
+    & /usr/bin/test -x $p
+    if ($LASTEXITCODE -eq 0) { $p }
+})
 $priv = @{}
 foreach ($p in @('/tmp', '/var/tmp', '/dev/shm')) { $priv[$p] = [string](& /usr/bin/stat -L -c '%d:%i' $p 2>$null) }
 $sock = @()
@@ -566,9 +585,9 @@ if ($other) {
 $dev = @(@(& /usr/bin/find /dev -xdev -type b 2>$null) + @(foreach ($d in @('/dev/mem', '/dev/kmem', '/dev/port', '/dev/kmsg')) { if (Test-Path -LiteralPath $d) { $d } }) | Select-Object -First 4)
 # 1.76.1c: the job's own process (as a user other than root, the same UID): seen in it - no PID namespace of its own
 $job = ''
-try { $job = ((Get-Content -LiteralPath '/proc/@JOBPID@/stat' -ErrorAction Stop) -replace '^.*\) ', '' -split ' ')[19] } catch { }
+try { $job = ((Get-Content -LiteralPath ('/proc/' + [string][int]$in.jobpid + '/stat') -ErrorAction Stop) -replace '^.*\) ', '' -split ' ')[19] } catch { }
 @{ writable = $w; private = $priv; sockets = $sock; ipc = $ipc; uid = [string](& /usr/bin/id -u); capeff = $cap; seen = $seen;
-   ipcrm = $ipcrm; p1 = $p1; signal = $sig; dev = $dev; job = $job } | ConvertTo-Json -Compress -Depth 3
+   ipcrm = $ipcrm; p1 = $p1; signal = $sig; dev = $dev; job = $job; rwmounts = $rwm } | ConvertTo-Json -Compress -Depth 3
 """
 # what a trial would read from the sandbox, not the host (the mount table, IPC, a file's user or group through PowerShell
 # - NSS - and the temporary folders, which are its own): such a code is not tried, never given a result the host would
@@ -629,6 +648,10 @@ def sandbox_cmd(runner, seconds, binds=None, version=0):
         # passwd entry is refused before systemd 257 (exit 217 - tried on the real 239 and 255): 1.76.0's root trial on
         # RHEL 9 never ran
         props += ["DynamicUser=yes", "AmbientCapabilities=CAP_DAC_READ_SEARCH"]
+    # 1.76.1f: every mount point of the host read-only by name too - ReadOnlyPaths=/ alone did not hold: with
+    # ProtectKernelTunables, ProtectControlGroups or ProtectProc, systemd 255 left /run/lock (a tmpfs of its own)
+    # writable (tried). A mount point systemd cannot be given by name: MountsError - no sandbox
+    props += ["ReadOnlyPaths=-%s" % m for m in probe_mounts()]
     for prog, shim in sorted((binds or {}).items()):
         props.append("BindReadOnlyPaths=%s:%s" % (shim, prog))
     for x in props:
@@ -677,10 +700,16 @@ def sandbox_probe(runner, pwsh=None, version=None):
     if PWSH_ID and not pwsh_same(pwsh):
         return "pwsh %s changed since it was checked" % pwsh
     host = dict((p, "%d:%d" % (os.stat(p).st_dev, os.stat(p).st_ino)) for p in PROBE_PRIVATE if os.path.exists(p))
+    fire_automounts()
+    try:
+        mps = probe_mounts()
+    except MountsError as e:
+        return str(e)
     ro = PROBE_RO + [os.path.expanduser("~")]
-    prof = profile_of(FORCED_VERSION if FORCED_VERSION is not None else version)
+    ro += [m for m in mps if m not in ro]
+    data = json.dumps({"ro": ro, "jobpid": os.getpid()}).encode("utf-8")
     # the IPC files in /proc: the host's (1.76.1c: no IPC namespace of its own with any profile), read as they are
-    script = PROBE_PS1.replace("@RO@", _ps_list(ro)).replace("@IPC@", "@()").replace("@JOBPID@", str(os.getpid()))
+    script = PROBE_PS1.replace("@IPC@", "@()")
     enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     # 1.76.1c: as a user other than root, the code runs as that user: only a PID namespace of its own (systemd 257) keeps
     # that user's other processes - the job's own - out of its reach (a signal to one's own UID is allowed)
@@ -690,8 +719,8 @@ def sandbox_probe(runner, pwsh=None, version=None):
                 "this user's other processes - run the job as root (become: true)" % (v or "not known"))
     try:
         r = subprocess.run(sandbox_cmd(runner, 60, version=version) + [pwsh, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, env=sandbox_env())
-    except (OSError, subprocess.TimeoutExpired, RuntimeError) as e:
+                           input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, env=sandbox_env())
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, MountsError) as e:
         return "systemd-run did not answer (%s)" % e
     out = r.stdout.decode("utf-8", "replace").strip().splitlines()
     try:
@@ -702,6 +731,10 @@ def sandbox_probe(runner, pwsh=None, version=None):
     w = [w] if isinstance(w, str) else w
     if w:
         return "it left %s writable" % ", ".join(w)
+    rwm = j.get("rwmounts") or []
+    rwm = [rwm] if isinstance(rwm, str) else rwm
+    if rwm:
+        return "a mount of the host can be written to in it: %s" % ", ".join(rwm[:10])
     for place, ident in sorted((j.get("private") or {}).items()):
         if not ident or ident == host.get(place):
             return "its %s is the host's, not its own" % place
@@ -837,7 +870,7 @@ def touch_of(path, recursive=False):
     n, wild = _norm(str(path))
     rec = recursive or wild
     for q in (n, os.path.realpath(n)):
-        for t in PRIVATE_ROOTS:
+        for t in PRIVATE_ROOTS + AUTOFS_HIDDEN:
             if q == t or q.startswith(t + "/"):
                 if any(q == x or q.startswith(x + "/") for x in HOST_INSIDE):
                     continue
@@ -917,14 +950,14 @@ def blind(code, calls=None, paths=None):
             return "%s is given %s - not an absolute path" % (p.get("cmd") or "a cmdlet", str(p.get("path"))[:80])
         if t:
             return "it reads %s - the trial cannot show %s as the host has it (%s %s)" % (
-                PLACE[t], t, p.get("cmd") or "", str(p.get("path"))[:80])
+                PLACE.get(t, "an automount the sandbox cannot show as the host has it"), t, p.get("cmd") or "", str(p.get("path"))[:80])
     for c in calls or []:
         if c and c[0] == "/usr/bin/grep":
             rec = "-r" in c
             for x in c[1:]:
                 t = touch_of(x, rec) if x.startswith("/") else ""
                 if t:
-                    return "it reads %s - the trial cannot show %s as the host has it (grep %s)" % (PLACE[t], t, x[:80])
+                    return "it reads %s - the trial cannot show %s as the host has it (grep %s)" % (PLACE.get(t, "an automount the sandbox cannot show as the host has it"), t, x[:80])
     return ""
 
 
@@ -976,10 +1009,108 @@ def trial_command(pwsh, code):
     return [pwsh, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.b64encode(wrapper.encode("utf-16-le")).decode("ascii")]
 
 
+class MountsError(RuntimeError):
+    """1.76.1f: the host's mounts could not be read or passed to systemd as they are - no sandbox."""
+
+
+MOUNTS_MAX = 1000
+
+
+def mounts():
+    """1.76.1f: the host's mount points (/proc/self/mountinfo, here, outside the sandbox) -> [(mount point, fs type,
+    super options)]. Read as bytes, each record split on ASCII spaces (a mount name may hold any other character), the
+    path's octal escapes (\\040 a space ...) undone. Not read -> MountsError (no sandbox)."""
+    try:
+        with open("/proc/self/mountinfo", "rb") as f:
+            data = f.read()
+    except (OSError, IOError) as e:
+        raise MountsError("the host's mounts could not be read (/proc/self/mountinfo: %s)" % e)
+    out = []
+    for line in data.split(b"\n"):
+        if not line:
+            continue
+        a = line.split(b" ")
+        try:
+            sep = a.index(b"-", 6)
+        except ValueError:
+            raise MountsError("the host's mounts could not be read (a mountinfo line not understood)")
+        raw = re.sub(rb"\\([0-7]{3})", lambda m: bytes([int(m.group(1), 8)]), a[4])
+        try:
+            mp = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise MountsError("a mount point's name is not UTF-8: %r" % raw[:80])
+        out.append((mp, a[sep + 1].decode("ascii", "replace") if len(a) > sep + 1 else "",
+                    a[sep + 3].decode("ascii", "replace") if len(a) > sep + 3 else ""))
+    return out
+
+
+# the sandbox's own: not the host's to keep read-only - the kernel's file systems (guarded by capabilities it has not)
+# and the places the sandbox replaces with its own (no host data shown)
+OWN_MOUNTS = ("/proc", "/sys", "/dev", "/run/user", "/tmp", "/var/tmp")
+# what systemd's property parser takes as a path: no space, quote, backslash or control character (else no sandbox)
+SAFE_PATH = re.compile(r"^/[^\s\"'\\\x00-\x1f\x7f]*$")
+
+
+def probe_mounts():
+    """1.76.1f: every mount point of the host the sandbox shows - each made read-only by name in it (sandbox_cmd) and
+    looked at by the probe: all but the sandbox's own places, whatever their name (a container's storage too). One
+    systemd cannot be given, or more than MOUNTS_MAX -> MountsError: no sandbox rather than one with a mount left out."""
+    out = []
+    for mp, fs, _ in mounts():
+        if fs == "autofs" or any(mp == x or mp.startswith(x + "/") for x in OWN_MOUNTS) or mp in out:
+            continue
+        if not SAFE_PATH.match(mp):
+            raise MountsError("a mount point systemd cannot be given by name (%r) - no trial rather than one it may "
+                              "leave writable" % mp[:120])
+        out.append(mp)
+    if len(out) > MOUNTS_MAX:
+        raise MountsError("more than %d mount points (%d) - no trial rather than one with some left out" % (MOUNTS_MAX, len(out)))
+    return out
+
+
+# 1.76.1f: automounts the sandbox cannot show as the host has them - an indirect map (its keys are mounted on demand,
+# and none is after the sandbox starts), or a direct one that did not mount: a code that reads below one is not tried
+AUTOFS_HIDDEN = []
+
+
+def fire_automounts(budget=30):
+    """1.76.1f: each direct automount of the host (autofs) fired here, outside the sandbox, within one budget of seconds
+    for them all, then looked for in the mount table: mounted when the sandbox is made, read-only in it
+    (MountFlags=private: none fires inside, none arrives later). An indirect map, or one that did not mount in time,
+    goes to AUTOFS_HIDDEN - a code that reads below it is not tried. -> the ones mounted."""
+    try:
+        before = mounts()
+    except MountsError:
+        return []
+    auto = [(mp, opts) for mp, fs, opts in before if fs == "autofs"]
+    end = time.time() + budget
+    hidden = []
+    for mp, opts in auto:
+        if "indirect" in opts.split(",") or time.time() >= end:
+            hidden.append(mp)
+            continue
+        try:
+            subprocess.run(["/usr/bin/stat", "-f", mp + "/."], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=max(1, end - time.time()))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    try:
+        now = mounts()
+    except MountsError:
+        now = []
+    real = set(mp for mp, fs, _ in now if fs != "autofs")
+    fired = [mp for mp, opts in auto if mp in real and mp not in hidden]
+    hidden += [mp for mp, opts in auto if mp not in real and mp not in hidden]
+    del AUTOFS_HIDDEN[:]
+    AUTOFS_HIDDEN.extend(hidden)
+    return fired
+
+
 def run_trial(pwsh, runner, code, seconds, binds=None, version=None):
     """One trial of a code in the sandbox -> (json or None, error, seconds). binds: the replay shims. version:
     systemd's (None: asked)."""
     t = time.time()
+    fire_automounts()
     if version is None:
         version = systemd_version(runner)
     if PWSH_ID and not pwsh_same(pwsh):

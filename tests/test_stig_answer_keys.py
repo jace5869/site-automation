@@ -826,6 +826,91 @@ class HiddenPlaces(unittest.TestCase):
         self.assertEqual(host.replays_for([fc]), [fc])
 
 
+class EveryMount(unittest.TestCase):
+    """1.76.1f: every mount point of the host read-only in the sandbox by name (ReadOnlyPaths=/ alone left /run/lock - a
+    tmpfs of its own - writable with ProtectKernelTunables on systemd 255, and CI's runner a 777 folder on / on 259),
+    no host mount after it starts (MountFlags=private: an automount fired inside mounted writable), automounts fired
+    before within one budget, and no sandbox at all when the mounts cannot be read or named - never a partial list."""
+    INFO = (b"22 1 0:21 / /proc rw,nosuid shared:5 - proc proc rw\n"
+            b"28 1 252:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw\n"
+            b"30 28 0:25 / /run rw,nosuid shared:12 - tmpfs tmpfs rw\n"
+            b"31 30 0:26 / /run/lock rw,nosuid shared:13 - tmpfs tmpfs rw\n"
+            b"32 30 0:27 / /run/user/1000 rw,nosuid shared:14 - tmpfs tmpfs rw\n"
+            b"33 28 0:28 / /opt rw,relatime shared:15 - autofs systemd-1 rw,fd=5,direct\n"
+            b"34 33 7:0 / /opt rw,relatime shared:16 - ext4 /dev/loop0 rw\n"
+            b"35 28 7:1 / /var/log/audit rw,nosuid shared:17 master:3 - ext4 /dev/loop1 rw\n"
+            b"36 28 0:29 / /tmp rw shared:18 - tmpfs tmpfs rw\n"
+            b"37 28 0:30 / /var/lib/containers/storage/overlay/ab/merged rw - overlay overlay rw\n"
+            b"38 28 0:31 / /net rw - autofs systemd-1 rw,fd=7,indirect\n")
+
+    def with_info(self, info, fn):
+        import builtins
+        import io
+        real = builtins.open
+
+        def fake(path, *a, **k):
+            if path == "/proc/self/mountinfo":
+                return io.BytesIO(info) if "b" in (a[0] if a else k.get("mode", "r")) else io.StringIO(info.decode())
+            return real(path, *a, **k)
+        builtins.open = fake
+        try:
+            return fn()
+        finally:
+            builtins.open = real
+
+    def test_the_mount_points(self):
+        got = self.with_info(self.INFO, host.mounts)
+        self.assertIn(("/opt", "autofs", "rw,fd=5,direct"), got)
+        self.assertIn(("/var/log/audit", "ext4", "rw"), got)                # an optional field (master:3) before the -
+        mps = self.with_info(self.INFO, host.probe_mounts)
+        self.assertEqual(mps, ["/", "/run", "/run/lock", "/opt", "/var/log/audit", "/var/lib/containers/storage/overlay/ab/merged"])
+        c = self.with_info(self.INFO, lambda: host.sandbox_cmd("/usr/bin/systemd-run", 60, version=255))
+        props = [c[i + 1] for i, x in enumerate(c) if x == "-p"]
+        for want in ("MountFlags=private", "ReadOnlyPaths=/", "ReadOnlyPaths=-/", "ReadOnlyPaths=-/run/lock", "ReadOnlyPaths=-/opt",
+                     "ReadOnlyPaths=-/var/log/audit", "ReadOnlyPaths=-/var/lib/containers/storage/overlay/ab/merged"):
+            self.assertIn(want, props)                                       # visible: protected whatever its name
+        for not_ in ("ReadOnlyPaths=-/tmp", "ReadOnlyPaths=-/proc", "ReadOnlyPaths=-/run/user/1000", "ReadOnlyPaths=-/net"):
+            self.assertNotIn(not_, props)
+
+    def test_no_sandbox_rather_than_a_partial_one(self):
+        for info, why in ((self.INFO + b"39 28 7:2 / /srv/my\\040data rw - ext4 /dev/loop2 rw\n", "cannot be given by name"),
+                          (self.INFO + b"41 28 7:4 / /srv/\xff rw - ext4 /dev/loop4 rw\n", "not UTF-8"),
+                          (b"garbage line\n", "not understood")):
+            with self.assertRaises(host.MountsError) as e:
+                self.with_info(info, host.probe_mounts)
+            self.assertIn(why, str(e.exception))
+        # a typographic quote is no quote to systemd, and the probe takes its paths as data: kept
+        self.assertIn("/srv/it\u2019s", self.with_info(self.INFO + b"40 28 7:3 / /srv/it\xe2\x80\x99s rw - ext4 /dev/loop3 rw\n",
+                                                          host.probe_mounts))
+        many = self.INFO + b"".join(b"%d 28 7:9 / /m/%d rw - ext4 /dev/x rw\n" % (100 + i, i) for i in range(1001))
+        with self.assertRaises(host.MountsError):
+            self.with_info(many, host.probe_mounts)
+        with self.assertRaises(host.MountsError):
+            self.with_info(self.INFO + b"39 28 7:2 / /srv/a\\040b rw - ext4 /dev/loop2 rw\n",
+                           lambda: host.sandbox_cmd("/usr/bin/systemd-run", 60, version=255))
+
+    def test_automounts_fired_within_one_budget(self):
+        state = {"n": 0}
+        real_run, real_m = host.subprocess.run, host.mounts
+
+        def mounts():
+            state["n"] += 1
+            base = [("/", "ext4", "rw"), ("/opt", "autofs", "rw,direct"), ("/net", "autofs", "rw,indirect"), ("/slow", "autofs", "rw,direct")]
+            return base + ([("/opt", "ext4", "rw")] if state["n"] > 1 else [])          # /opt mounts; /slow never does
+        calls = []
+        host.mounts = mounts
+        host.subprocess.run = lambda cmd, **k: calls.append((cmd, k.get("timeout")))
+        try:
+            self.assertEqual(host.fire_automounts(budget=30), ["/opt"])
+            self.assertEqual(sorted(host.AUTOFS_HIDDEN), ["/net", "/slow"])       # indirect, and not mounted
+            self.assertEqual([c[0][2] for c in calls], ["/opt/.", "/slow/."])     # an indirect map is not touched
+            self.assertTrue(all(0 < c[1] <= 30 for c in calls))
+            self.assertIn("automount the sandbox cannot show", host.blind("", [], [{"cmd": "Get-Content", "path": "/net/srv/x", "literal": True}]))
+        finally:
+            host.subprocess.run, host.mounts = real_run, real_m
+            del host.AUTOFS_HIDDEN[:]
+
+
 class PathsMoved(unittest.TestCase):
     """1.76.1b: the realpaths a code reads, before and after its trial - a link moved in between: the result is dropped."""
     def test_a_link_that_moves(self):

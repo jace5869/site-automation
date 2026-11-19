@@ -16,6 +16,10 @@
   listed, but not read, and gets no signal). The CI job `answer-keys-rhel8-sandbox` runs it on a real 239.
 - Never a sandbox systemd quietly left out: when the kernel gives no namespace, systemd skips some settings with no
   error. The sandbox has mounts systemd insists on (`TemporaryFileSystem=/run/user:ro`): no namespace, no trial.
+- Every mount of the host read-only inside: an automount fired inside mounted writable (now fired before each run,
+  and `MountFlags=private`), and `/run/lock` stayed writable under `ReadOnlyPaths=/` (now each mount point by name).
+  The probe reads the sandbox's own mount table: any host mount left writable refuses the sandbox. A mount that
+  cannot be named to systemd, or a mount table that cannot be read: no trial.
 - SysV IPC, message queues, the clock and the host name: their system calls refused with every profile (systemd may
   skip `PrivateIPC`; as root its own `/proc` showed the IPC files). The IPC files are the host's, read as they are.
 - What the sandbox hides is never read as the host's: `/run/user`, a dynamic user's `/var/lib/private`,
