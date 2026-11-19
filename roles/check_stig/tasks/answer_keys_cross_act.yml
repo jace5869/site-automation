@@ -1,0 +1,27 @@
+---
+# STIG ANSWER KEYS - THE CROSS-CHECK (1.77.0), on the AAP side, once (playbooks/stig_answer_keys.yml: run_once, delegated
+# to localhost): ACT on its own - for each call of _akx_asks (answer_keys_cross.yml), DISA's check text and the host's
+# read-only evidence, never the code, its result or Evaluate-STIG's status; ACT runs no command (evidence mode). Then the
+# four sources side by side, rule by rule (_akx_doc), for answer_keys_report.yml.
+- name: Answer keys cross-check | no ACT answer yet
+  ansible.builtin.set_fact:
+    _akx_answers: {}
+
+- name: Answer keys cross-check | ACT on its own - once per rule and evidence (it reads the evidence, runs no command)
+  ansible.builtin.include_tasks: answer_keys_cross_act_one.yml
+  loop: "{{ _akx_asks.asks | default([]) }}"
+  loop_control:
+    loop_var: _akx_ask
+    label: "{{ _akx_ask.label }} {{ _akx_ask.v }} ({{ _akx_ask.hosts | length }} host{{ '' if _akx_ask.hosts | length == 1 else 's' }})"
+
+- name: Answer keys cross-check | the four sources side by side, rule by rule
+  ansible.builtin.set_fact:
+    _akx_doc: >-
+      {{ _ak_groups | stig_answer_cross_join(_akx_info, _akx_reads, _akx_asks, _akx_answers, _akx_now)
+         | stig_answer_cross_rules
+         | stig_answer_cross_report(answer_keys_cross_check_act_max | int, _akx_reads | stig_answer_cross_ran,
+                                    answer_keys_evidence | default('web')) }}
+
+- name: Answer keys cross-check | what it found
+  ansible.builtin.debug:
+    msg: "{{ _akx_doc.lines }}"

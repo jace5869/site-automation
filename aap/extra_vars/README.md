@@ -100,6 +100,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | STIG - fix one rule - apply | `playbooks/stig_fix_apply.yml` | [stig_fix_apply.yml](stig_fix_apply.yml) |
 | STIG - recheck one finding | `playbooks/stig_finding_recheck.yml` | [stig_finding_recheck.yml](stig_finding_recheck.yml) |
 | STIG answer keys | `playbooks/stig_answer_keys.yml` | [stig_answer_keys.yml](stig_answer_keys.yml) |
+| STIG answer keys - try my answer file | `playbooks/stig_answer_keys_try.yml` | [stig_answer_keys_try.yml](stig_answer_keys_try.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | [stigman_availability.yml](stigman_availability.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |

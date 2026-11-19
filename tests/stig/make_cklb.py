@@ -5,7 +5,8 @@ the same file, as Evaluate-STIG's combined checklists have.
   make_cklb.py OUT.cklb '{"SV-257985": "open", ...}' [V2R10] [cklb|ckl]
 A rule not given is not_a_finding; a status is not_a_finding, open, not_applicable or not_reviewed - "af:" before it:
 answered from an answer file (its comment says so, as Evaluate-STIG writes it). An open rule's finding details say what
-was found."""
+was found. "|TEXT" after a status (1.77.0b): what the answer file's ValidationCode printed - in the comment, and in the
+finding details under a ValidationCode heading, as Evaluate-STIG keeps its Write-Verbose output."""
 import json
 import os
 import re
@@ -32,11 +33,13 @@ def rules(results):
             if key in seen:
                 continue
             seen.add(key)
-            st = results.get(key, "not_a_finding")
+            st, extra = (results.get(key, "not_a_finding").split("|", 1) + [""])[:2]
             af = st.startswith("af:")
             st = st[3:] if af else st
-            out.append({"comments": (AF_COMMENT % CKL[st]) if af else "", "rule_id": sv, "group_id": vs.split()[i], "rule_version": ids.split()[i], "severity": sev, "rule_title": title,
-                        "status": st, "finding_details": (FOUND % key) if st == "open" else "Compliant."})
+            fd = (FOUND % key) if st == "open" else "Compliant."
+            out.append({"comments": ((AF_COMMENT % CKL[st]) if af else "") + ("\n" + extra if extra else ""), "rule_id": sv, "group_id": vs.split()[i],
+                        "rule_version": ids.split()[i], "severity": sev, "rule_title": title, "status": st,
+                        "finding_details": ("ValidationCode output (Write-Verbose):\n%s\n--------------------\n%s" % (extra, fd)) if extra else fd})
     out.append({"rule_id": "SV-258999r1000001_rule", "group_id": "V-258999", "rule_version": "RHEL-09-999990", "severity": "medium",
                 "rule_title": "A manual check: a document.", "status": results.get("SV-258999", "not_reviewed").replace("af:", ""), "finding_details": "",
                 "comments": (AF_COMMENT % CKL[results["SV-258999"][3:]]) if results.get("SV-258999", "").startswith("af:") else ""})

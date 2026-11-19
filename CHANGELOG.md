@@ -1,5 +1,120 @@
 # Changelog
 
+## 1.77.0 — 2026-11-19
+
+**To set up:** a job template **STIG answer keys - try my answer file** (`playbooks/stig_answer_keys_try.yml`):
+credentials Machine, and "Windows file share" when your answer files are on a share. Prompt on launch for Variables and
+Limit (or a survey). Its variables: `aap/extra_vars/stig_answer_keys_try.yml`. It reads your answer files from
+`check_stig_evaluate_answers`, as the STIG drift scan does. The cross-check in the STIG answer keys job is on by default
+and needs nothing new (it uses the template's ACT model key); `answer_keys_cross_check: false` turns it off.
+A new setting `answer_keys_evidence` (`web` by default) needs nothing set: `none` keeps every host's text in the AAP job.
+
+**STIG answer keys: the cross-check - four sources side by side for each block** (docs/STIG_ANSWER_KEYS.md, "The
+cross-check"). It tells you which blocks to read again. It never changes a block.
+
+- Evaluate-STIG's own status: shown, not counted (a key is there because the rule is Open or Not Reviewed).
+- STIG Manager: the host's review and its age. Counted only when a person wrote it after the asset's last scan. A
+  scan's own import (a result engine) is shown as *from the scan* and not counted. With no scan time to compare, or
+  the same time as the scan, the review is shown and not counted. Times are compared to the fraction of a second.
+- The code: its result in the trial, on the trial host.
+- ACT, on its own: DISA's check text, the host's read-only evidence and the site values used. Never the code, its
+  result or Evaluate-STIG's status. It answers NF, Open, NA or unsure.
+- **Agree** (two counted sources the same on a host, none differ anywhere), **Need a look** (two differ on a host,
+  named: *code NF, ACT Open on rhel02*), **Too little to compare**.
+- The evidence: the command lines of DISA's check text that fit the read-only list, else the code's own. Each is
+  checked against the read-only check's fixed list and run once as root, as a literal command, never through a
+  shell (`site_stig_answer_reads`). Only on the trial host and where a person reviewed the rule after the scan.
+  Output cut at 4 KB, secrets removed on the host. How this was made lists every command and its hosts.
+- Hosts with the same evidence share one ACT call. At most `answer_keys_cross_check_act_max` calls a run (50); past
+  it, *not asked (the cap)*.
+- The report: a Cross-check tile first, the cross-check by STIG, each STIG's rules (disagreements first) opening to
+  each host's sources, ACT's why and what ACT was given; a Cross-check column in each STIG's answer keys to copy. The
+  email: by STIG and the rules that need a look. The workbook: a Cross-check sheet.
+- `site_stigman_read` keeps each review's result engine (`engine`).
+- New settings: `answer_keys_cross_check` (`true`), `answer_keys_cross_check_act_max` (50).
+- docs/STIG_ANSWER_KEYS.md: `answer_keys_pick`'s default is `not_reviewed` in the settings table (it said `both`).
+
+**Try my answer file: what your own answer files do on test hosts** (docs/STIG_ANSWER_KEYS.md, "Try my answer file").
+
+- Evaluate-STIG runs twice on each test host, for the rules you pick only (`answer_keys_rules`). First without answer
+  files, then with yours. It is Evaluate-STIG's own path, so RHEL 8 works too.
+- It runs the ValidationCode of your answer files, as a scan with them does. Nothing else runs.
+- Your AnswerKey is the `--AnswerKey` pair of `check_stig_evaluate_args`. No other argument of it is used, so no
+  `--Output` to STIG Manager or a share applies.
+- Nothing is written to STIG Manager or the share. The answer files go to a root-only folder of this run on each host.
+  It and Evaluate-STIG's output folder are removed after.
+- At most `answer_keys_try_hosts` hosts (10) in one run. More is refused with the reason.
+- The report, each rule and host in one row:
+  - **Need a look:** a key applied and left the rule Open or Not Reviewed. Or no key applied and the rule is still
+    Open or Not Reviewed. Or the rule is missing from one of the two runs.
+  - **Changed by your answer file:** a key applied and the rule is Not a Finding or Not Applicable.
+  - **No key needed:** Evaluate-STIG passes the rule on its own.
+  - **Your answer files:** each file's name, sha256 and when it changed.
+  - **Not tried:** a host where Evaluate-STIG did not run or the answer files could not be read, with why.
+- Each rule opens to its AnswerKey, the comment Evaluate-STIG wrote and what the code read (its `Write-Verbose`).
+  When Evaluate-STIG did not keep that, the report says *Evaluate-STIG did not keep what the code read*.
+- `site_stig_scan`: a new option `rule_texts` keeps each rule's finding details and comments (4000 characters each).
+- The answer files are copied inside the step that removes them. A copy that fails part way is cleaned up too.
+- New setting: `answer_keys_try_hosts` (10).
+
+**STIG answer keys: secrets removed from what a host returns** (docs/STIG_ANSWER_KEYS.md, "Secrets in what a host
+returns").
+
+- One redaction, `plugins/module_utils/site_redact.py`, for every path. It runs on the host, and again in the filters
+  that build the page, workbook, email and ACT's task.
+- The paths: the cross-check's evidence, the trial's *What it read*, and the comments and `Write-Verbose` text of
+  *Try my answer file*.
+- Error text too: Evaluate-STIG's and oscap's own messages, STIG Manager's answers, a trial's error, the values a code
+  returned, and why a host failed.
+- It removes crypt and GRUB 2 hashes, the hash in a shadow-like line, PEM private keys, values named password,
+  secret, token and the like (camelCase too: `authPass`, `clientSecret`), LDAP and sssd bind passwords, keytab keys,
+  SNMP communities (`trapsink`, `snmpget -c` too) and pass phrases (`-A`, `-X`), chrony keys and smbpasswd hashes.
+- Also gshadow hashes, OpenPGP private keys, short `klist -K` keys, HTTP Authorization headers and Bearer tokens,
+  an option named like a secret (`--db-pass x`), and a secret's XML attributes.
+- A value over several lines goes whole: a `[` or `{` opened on its name's line, a YAML value's indented lines, an
+  XML element whose tag spans lines or holds CDATA.
+- Also a `reg query` value, a URL's password, `<password>` elements and a YAML block under a secret's name.
+- When in doubt, more is removed. After a secret's name the rest of the line goes, whatever is in it.
+- A line that still holds a secret's word, and is not understood, goes whole: `<line removed: may hold a secret>`.
+  Known evidence lines stay (passwd and shadow records, PAM lines, audit rules, settings with a yes, no, number or
+  path value, sudoers' Defaults and rules, and more: see the doc). A number is no exception for a secret's name:
+  `password 1234` goes. Neither is a yes or no (`my_password no` goes).
+- PAM lines stay when their arguments are PAM options or paths. sshd's `AuthenticationMethods`, a comment with no
+  secret's word after an evidence line, and an iptables rule stay too.
+- The command shown for each read is redacted too. A text read only in part ends at a line's end.
+- The tasks that read a host keep their raw result out of the job's output. A module's unexpected error shows only
+  its redacted text.
+- A host's text is never in the email or its workbook: statuses, counts and rule ids only. The report website shows
+  it redacted, at most 20 lines and 2000 characters a rule. `answer_keys_evidence: none` shows it nowhere but the AAP
+  job's output, and the cross-check then asks ACT nothing.
+- The redaction's known limits are listed in the doc ("Known limits").
+- Only a JSON `"name": "value"` keeps the rest of its line. Its string is removed whole, escapes and all.
+- A value is kept only when it is exactly a marker the redaction writes. A value that only holds one is removed.
+- A locked password (`!`, `*`) and an audit rule's `key=` are kept as evidence.
+- A line may start with grep's prefix (`file:`, `12:`, `file:12:`). The secret after it is removed too.
+- `passwd:` is kept only for an nsswitch.conf source list (`files sss`). Any other value is removed.
+- The whole text is redacted first, then cut to its size. A cut can no longer leave half a value bare.
+- A failed rule's finding details in the STIG drift scan are redacted too.
+- Text from STIG Manager and the checklist is redacted too: a rule's title, check and fix text, and a review's
+  comment. Only exact secrets are masked there, so DISA's own lines about passwords stay. ACT reads it so.
+- The email and its workbook use fixed reasons: why a host did not work, why a draft was refused, why ACT was not
+  asked. An answer key named in a comment shows as the job's own key, or *another key*. A STIG Manager result it
+  does not know shows as *unknown result*.
+- The email's *How this was made* counts the cross-check's commands. The website lists them.
+- ACT's answer is redacted before the job keeps it. *Try my answer file*'s two runs keep their raw result out of the
+  job's output.
+
+**STIG drift scan and STIG recheck: the answer files' folders removed after a failed copy.**
+
+- The answer files are copied inside the step that removes them, as in *Try my answer file*.
+- A copy that fails part way (a full disk) no longer leaves the folder on the host.
+- Answer files that could not be read: the report still says *its answer files could not be read*. The share's own
+  error (a failed login names the account) is only in the job's output, under *answer files - what was read*.
+
+**Changed**
+
+- Finding details: a line that may hold a secret is shown as `<line removed: may hold a secret>`, in every STIG report.
+
 ## 1.76.4 — 2026-11-19
 
 **To set up: nothing.** `answer_keys_trial: true` turns the answer keys' trial on.

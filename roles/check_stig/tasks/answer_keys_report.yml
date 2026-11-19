@@ -3,7 +3,8 @@
 # blocks of each STIG (the read-only check and trial of its first host - answer_keys_check.yml), the report grouped by
 # STIG - a Copy all per STIG, a workbook sheet per STIG, the hosts that did not work, the rules in none of the hosts'
 # STIGs - emailed and published as every report.
-- name: Answer keys | the blocks of each STIG
+- name: Answer keys | the blocks of each STIG (the cross-check made them already)
+  when: _ak_groups is not defined
   ansible.builtin.set_fact:
     _ak_groups: >-
       {%- set gs = [] -%}
@@ -24,7 +25,12 @@
                                                ('answer_keys_pick ' ~ answer_keys_pick ~ ', answer_keys_cat ' ~ (answer_keys_cat | join(',') if answer_keys_cat is not string else answer_keys_cat)
                                                 ~ ', at most ' ~ answer_keys_max_rules ~ ' per STIG; never a review Not a Finding, Not Applicable, with RA / POA&M words or attachments')
                                                if _ak_rules.auto | default(false) else '', _ak_m.answered | default({}),
-                                               answer_keys_trial | bool) }}
+                                               answer_keys_trial | bool, answer_keys_evidence | default('web')) }}
+
+- name: Answer keys | the cross-check in the report (1.77.0, answer_keys_cross_check) - its tile, sections, column, sheet
+  ansible.builtin.set_fact:
+    _ak_doc: "{{ _ak_doc | stig_answer_cross_into(_akx_doc) }}"
+  when: _akx_doc is defined
 
 - name: Answer keys | what was made
   ansible.builtin.debug:

@@ -118,6 +118,11 @@ jobs:
           python tests/test_stig_scorecard.py
           python tests/test_stig_texts.py
           python tests/test_stig_answer_keys.py
+          python tests/test_stig_answer_try.py
+          python tests/test_stig_answer_cross.py
+          python tests/test_site_redact.py
+          python tests/test_site_redact_table.py
+          python tests/test_stig_answer_evidence.py
           python tests/test_sso.py
           python tests/test_sso_cert_forms.py
           python tests/test_stigman_timeouts.py
@@ -300,6 +305,9 @@ jobs:
           sudo env "PATH=$PATH" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_test.sh
           sudo env "PATH=$PATH" bash tests/stig/run_stig_answer_keys_hosts_test.sh
           sudo env "PATH=$PATH" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_keys_hosts_test.sh
+          # 1.77.0: try my answer file runs Evaluate-STIG on the host, not the trial sandbox - as the runner user
+          bash tests/stig/run_stig_answer_try_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_answer_try_test.sh
 
   ansible-stig-import:
     name: STIG imports, updates and scorecards

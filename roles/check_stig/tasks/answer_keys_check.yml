@@ -36,12 +36,15 @@
         sandbox: "{{ _ak_sandbox | default('') }}"   # systemd-run (the tests give another path); no read-only sandbox: no trial
       register: _ak_hc
       check_mode: false               # only reads (its own folder, removed)
+      # 1.77.0h: its raw result stays out of the job's output - a failure's text (a connection's, a traceback's) is shown
+      # only as the rescue below redacts it
+      no_log: true
 
     - name: Answer keys | the trial host could not be reached any more - its STIG not tried
       ansible.builtin.set_fact:
-        _ak_hc: {failed_host: "{{ ('not reached: ' ~ (_ak_hc.msg | default('no answer') | string))[:300] }}"}
+        _ak_hc: {failed_host: "{{ ('not reached: ' ~ (_ak_hc.msg | default('no answer') | string | site_redact))[:300] }}"}
       when: _ak_hc.unreachable | default(false)
   rescue:
     - name: Answer keys | the trial host failed - its STIG not tried, the others go on
       ansible.builtin.set_fact:
-        _ak_hc: {failed_host: "{{ (ansible_failed_result.msg | default('it failed') | string)[:300] }}"}
+        _ak_hc: {failed_host: "{{ (ansible_failed_result.msg | default('it failed') | string | site_redact)[:300] }}"}

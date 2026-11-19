@@ -1,4 +1,4 @@
-# STIG answer keys (1.75.0; the trial and many hosts: 1.76.0; RHEL 8: 1.76.1)
+# STIG answer keys (1.75.0; the trial and many hosts: 1.76.0; RHEL 8: 1.76.1; the cross-check: 1.77.0)
 
 The **STIG answer keys** job (`playbooks/stig_answer_keys.yml`) drafts an Evaluate-STIG `<AnswerKey>` block for each
 rule. You paste each block into your own answer file, under that rule's `<Vuln ID>`.
@@ -10,6 +10,8 @@ rule. You paste each block into your own answer file, under that rule's `<Vuln I
   then the rules STIG Manager has **Not Reviewed** for each host (or Open too: `answer_keys_pick`). Never one Not a
   Finding or Not Applicable.
 - Each block's code is tried once on one host of its STIG, in a read-only sandbox, and its result is shown beside it.
+- **The cross-check (1.77.0):** for each block, Evaluate-STIG, STIG Manager, the code and ACT side by side. It says
+  which blocks to read again. It never changes a block.
 - **Nothing is written anywhere.** STIG Manager is read with GET requests only. The job writes nothing to the share.
   On the hosts it installs and keeps nothing: its temporary folders are removed, and nothing of ACT's is put there.
   It never writes a whole answer file.
@@ -355,7 +357,7 @@ The check still matters most: when you paste a block, your Evaluate-STIG runs it
 ## Evaluate-STIG on the hosts
 
 - It runs for the rules asked only (`--SelectVuln`), with no answer files. None of `check_stig_evaluate_args` is given,
-  so an `-Output` to STIG Manager or a share never applies here. It writes into its own folder, which is removed after.
+  so an `--Output` to STIG Manager or a share never applies here. It writes into its own folder, which is removed after.
 - **Never a full scan.** An Evaluate-STIG without `-SelectVuln`, or one that writes no checklist with it, is not run (again):
   every rule is *Not drafted - Evaluate-STIG could not run only the picked rules*, with why.
 - RHEL 10: STIG Manager's benchmark is `RHEL_10_STIG` (`check_stig_stigman_benchmarks` has it). If you scan only the
@@ -375,8 +377,9 @@ The check still matters most: when you paste a block, your Evaluate-STIG runs it
 ## The report
 
 - **Website** (atlas, brief, ops):
-  - the tiles: ready to copy, not drafted, the STIGs, the hosts that worked;
-  - for each STIG, **answer keys to copy**: a rule shows how many hosts it was found on and what Evaluate-STIG said
+  - the tiles: the cross-check (1.77.0), ready to copy, not drafted, the STIGs, the hosts that worked;
+  - **the cross-check** (1.77.0): by STIG, then each STIG's rules, the ones that need a look first (below);
+  - for each STIG, **answer keys to copy**: a rule shows its cross-check word, how many hosts it was found on and what Evaluate-STIG said
     there; it opens to its block (**Copy block** copies the block only), the hosts by name, its trial, its read-only
     check and DISA's check text;
   - for each STIG, **copy all blocks**: every ready block of it in one text, each in its own `<Vuln ID>`
@@ -385,8 +388,9 @@ The check still matters most: when you paste a block, your Evaluate-STIG runs it
   - the hosts that did not work, the rules in none of the hosts' STIGs, the rules already in your answer file, the
     rules left out (more than `answer_keys_max_rules`);
   - **How this was made**: how the rules were picked, each STIG's hosts and the host its trial ran on.
-- **Email**: the tables. The blocks are on the website and in the workbook, because an email may change their text.
-- **Workbook**: a sheet per STIG with each rule's block in full, its hosts and what Evaluate-STIG said; a sheet of the
+- **Email**: the tables, and the cross-check by STIG with the rules that need a look. The blocks are on the website and
+  in the workbook, because an email may change their text.
+- **Workbook**: a Cross-check sheet (a row per rule and host), a sheet per STIG with each rule's block in full, its hosts and what Evaluate-STIG said; a sheet of the
   rules not drafted.
 - **Job output**: each block too.
 
@@ -395,7 +399,7 @@ The check still matters most: when you paste a block, your Evaluate-STIG runs it
 | Setting | Default | |
 |---|---|---|
 | `answer_keys_rules` | `[]` | the rules, V- or SV- ids (RHEL 8, 9 and 10 mixed); `[]` = the automatic pick |
-| `answer_keys_pick` | `both` | the automatic pick: `both`, `open` or `not_reviewed` |
+| `answer_keys_pick` | `not_reviewed` | the automatic pick: `not_reviewed`, `open` or `both` |
 | `answer_keys_cat` | `[1, 2, 3]` | the automatic pick: the CATs |
 | `answer_keys_max_rules` | `150` | at most this many rules per STIG (and in `answer_keys_rules`) |
 | `answer_keys_max_hosts` | `50` | at most this many hosts a run |
@@ -404,9 +408,265 @@ The check still matters most: when you paste a block, your Evaluate-STIG runs it
 | `answer_keys_name` | empty | the AnswerKey's Name; empty = `--AnswerKey` of `check_stig_evaluate_args`, else `DEFAULT` |
 | `answer_keys_act` | `true` | ACT drafts the rules no pattern fits |
 | `answer_keys_trial_timeout` | `60` | seconds each code may run in its trial |
+| `answer_keys_cross_check` | `true` | the cross-check (below); `false` = none |
+| `answer_keys_cross_check_act_max` | `50` | at most this many ACT calls a run for the cross-check |
+| `answer_keys_evidence` | `web` | a host's text in the reports: `web` or `none` ("How much of a host's text you see") |
 
 The scanner and STIG Manager settings are the STIG drift report's (`check_stig_evaluate`, `check_stig_stigman_*`;
 docs/STIG_DRIFT.md).
+
+## The cross-check (1.77.0)
+
+The cross-check puts four sources side by side for each rule with a block. It tells you which blocks to read again.
+It never changes a block. Turn it off with `answer_keys_cross_check: false`.
+
+| Source | What it is | Counted |
+|---|---|---|
+| Evaluate-STIG | its own status for the rule, without answer files | no: a key is there because it is Open or Not Reviewed |
+| STIG Manager | the host's review, with its age | only when a person wrote it after the asset's last scan |
+| The code | the block's result in the trial | on the trial host (one per STIG) |
+| ACT, on its own | DISA's check text and the host's read-only evidence | when ACT answers NF, Open or NA |
+
+- **Agree:** two counted sources give the same answer on a host, and none differ anywhere.
+- **Need a look:** two counted sources differ on a host. The cell names them: *code NF, ACT Open on rhel02*.
+- **Too little to compare:** no host has two counted sources.
+
+A scan's own import into STIG Manager is not a second opinion. A review a result engine wrote (Evaluate-STIG, SCAP) is
+shown as *from the scan* and not counted.
+
+A person's review counts only when it is newer than the asset's last scan. Times are compared to the fraction of a
+second, in UTC. Otherwise it is shown and not counted:
+
+- *older than the scan*, or *same time as the scan*;
+- *no scan time to compare*: STIG Manager holds no review a result engine wrote for that asset;
+- *age unknown*: the review has no time.
+
+### What ACT gets
+
+ACT never sees the code, its result or Evaluate-STIG's status. It gets three things:
+
+- DISA's check text;
+- the host's read-only evidence for the rule;
+- the site values the block used.
+
+It answers NF, Open, NA or unsure, with one line of why. Unsure counts as no answer.
+
+### The evidence
+
+The job collects it, never ACT.
+
+- **DISA's commands first.** The command lines of DISA's check text that fit the read-only list. Example: `$ sudo stat -c
+  "%U" /etc/group-` runs as `/usr/bin/stat -c %U /etc/group-`.
+- **Else the code's own reads.** The command lines the read-only check let through.
+- **Else none.** ACT is not asked, and the rule says why.
+
+Each command is checked against the read-only check's fixed list (stat -c, sysctl -n, rpm -q, systemctl is-enabled,
+grep with its flags, find without -exec, auditctl -l ...). It runs once, as root, as a literal command line, never
+through a shell. A pipe (`|`) of such commands is taken, and `2>/dev/null`. Anything else is not run.
+The evidence is the last command's output. Its errors show only when it printed nothing else, and never after
+`2>/dev/null`. An earlier command's errors are not shown.
+
+- It runs on the trial host, and on each host whose review a person wrote after the scan. Nowhere else.
+- Each output is cut at 4 KB. Secrets are removed on the host (see *Secrets in what a host returns*).
+- **How this was made** lists every command and the hosts it ran on.
+
+### ACT calls
+
+- Hosts that return the same evidence share one call.
+- At most `answer_keys_cross_check_act_max` calls a run (50). Past it, the rule says *not asked (the cap)*.
+- With ACT off (`site_act_enabled: false`), nothing is read and ACT is not asked.
+
+## Try my answer file (1.77.0)
+
+The job **STIG answer keys - try my answer file** (`playbooks/stig_answer_keys_try.yml`) shows what your own answer
+files do on test hosts. It is Evaluate-STIG's own path, so it works on RHEL 8 too.
+
+- Evaluate-STIG runs twice on each host, for the rules you pick only: first without answer files, then with yours.
+- It runs the ValidationCode of **your** answer files, as a scan with them does. Nothing else is run.
+- Nothing is written to STIG Manager or the share. The host keeps nothing.
+
+### Run it
+
+1. Make the job template **STIG answer keys - try my answer file** (`playbooks/stig_answer_keys_try.yml`).
+   Credentials: Machine, and the "Windows file share" credential when your answer files are on a share.
+   Its variables: `aap/extra_vars/stig_answer_keys_try.yml`.
+2. Set **Prompt on launch** for Variables and Limit, or give it a survey.
+3. Launch it with your test hosts as the target and the Limit, and the rules:
+
+   ```yaml
+   target: rhel81.example.mil,rhel82.example.mil
+   answer_keys_rules: [V-230221, V-230318]
+   ```
+
+4. Open the report on the report website. Open a rule for its comment and what its code read.
+
+Success looks like: *Try my answer file: 2 changed by a key, 0 need a look*.
+
+### What it uses
+
+- **Your answer files:** `check_stig_evaluate_answers`, as the STIG drift scan reads them (docs/STIG_DRIFT.md). They are
+  copied to a folder of this run on each host (root only) and removed after.
+- **Your AnswerKey:** the `--AnswerKey` of `check_stig_evaluate_args`, as your scans give it. No other argument of it is
+  used, so an `--Output` to STIG Manager or a share never applies here.
+- **At most `answer_keys_try_hosts` hosts** (10). It is for test hosts.
+
+### The report
+
+| Section | What it says |
+|---|---|
+| Need a look | a key that applied and left the rule Open or Not Reviewed, or no key on a rule still Open |
+| Changed by your answer file | a key set the rule Not a Finding or Not Applicable |
+| No key needed | Evaluate-STIG passes the rule on its own |
+| Your answer files | each file's name, sha256 and when it changed |
+
+Each rule opens to the AnswerKey that applied, its comment as Evaluate-STIG wrote it, and what the code read.
+
+- **What the code read** is its `Write-Verbose` output. It is shown only when Evaluate-STIG keeps it in the checklist.
+  Otherwise the report says *Evaluate-STIG did not keep what the code read*.
+- A host where Evaluate-STIG did not run, or where the answer files could not be read, is in **Not tried**, with why.
+- Secrets in the comment or in what the code read are removed on the host (see the next section).
+
+## Secrets in what a host returns
+
+Both jobs show text a host returned: the cross-check's evidence, the trial's *What it read*, and the comments and
+`Write-Verbose` text of *Try my answer file*. They also show error text: Evaluate-STIG's own messages, STIG Manager's
+answers, and why a host failed. One redaction (`plugins/module_utils/site_redact.py`) removes secrets from all of it.
+It runs on the host, before the text leaves it. It runs again before the page, workbook, email or ACT's task is built.
+
+When in doubt, it removes more. Hiding some evidence is better than showing part of a secret.
+
+| Removed | Shown as |
+|---|---|
+| Crypt hashes (`$6$`, `$y$`, `$2b$` ...) | `$<hash removed>` |
+| GRUB 2 hashes (`grub.pbkdf2.sha512...`) | `grub.pbkdf2.<hash removed>` |
+| The hash in a shadow-like line (`name:hash:...`) | `name:<hash removed>:...` |
+| The hash in a gshadow record (`group:hash:admins:members`) | `group:<hash removed>:...` |
+| PEM and OpenPGP private keys | the BEGIN and END lines around `<removed>` |
+| Values named password, passwd, pw, secret, token, authtok, community, `*_key`, `*_pass` | `name=<removed>` |
+| A JSON string under such a name | `"name": "<removed>"` |
+| `bindpw`, `rootpw`, `ldap_default_authtok`, SNMP communities | the directive, then `<removed>` |
+| SNMP pass phrases after `-A` and `-X` (`trapsess`, `snmpwalk`) | `-A <removed>` |
+| An snmp command's community after `-c` (`snmpget -v2c -c x`) | `-c <removed>` |
+| The community of `trapsink`, `trap2sink` and `informsink` | `trapsink host <removed> 162` |
+| Both hashes of an smbpasswd record (`pdbedit -Lw` too) | `alice:1000:<removed>:<removed>:[U ]:...` |
+| chrony keys (`1 MD5 key`, `HEX:...`) | `1 MD5 <removed>`, `HEX:<removed>` |
+| `reg query` values under such a name | `REG_SZ    <removed>` |
+| The password in a URL | `https://user:<removed>@host` |
+| `<password>...</password>` | `<password><removed></password>` |
+| A secret's tag's attributes, or a value beside `key="password"` | `<password value="<removed>"/>` |
+| An option named like a secret (`--db-pass x`) | `--db-pass <removed>` |
+| An HTTP Authorization header, a Bearer token | `Authorization: Bearer <removed>` |
+| A YAML block under such a name (`password: \|`) | each line `<removed>` |
+| Keytab keys (`klist -K`) | `(0x<removed>)` |
+
+- The name and the user stay, so the evidence still reads.
+- A locked or empty password (`!`, `!!`, `*`) is kept. It is what a check looks for.
+- A bare `key=` is kept. Audit rules use it for their names (`-F key=privileged`).
+
+How it reads a line:
+
+- A line may start with grep's prefix: `file:`, `12:`, `file:12:` or `file-12-`. The secret after it is removed.
+- After a secret's name, the rest of the line is removed. A comma, `;`, `]`, `#` or a quote never ends the value.
+- A name may end in one or two digits: `wep-key0`, `psk1`.
+- camelCase names count: `authPass`, `privPass`, `bindPassword`, `clientSecret`, `apiToken`.
+  `Pass` counts after a small letter or a digit. `bypass` is no name.
+- `-A` and `-X` are SNMP pass phrases on an snmp line, next to `-a SHA`, `-x AES` or `-l authPriv`,
+  or when both are on the line.
+- A line with `-A` and only a `-u` name or `-v 3`, or a line of `-A` and `-X` alone, goes whole.
+  An iptables rule (`-A INPUT ... -j ACCEPT`) stays.
+- Two 32-hex fields joined by a colon go too: `<removed>:<removed>`.
+- A quoted value goes whole: `-A "a b"` becomes `-A <removed>`.
+- A value that opens `[` or `{` on its name's line goes on to its closing bracket, over lines.
+- A YAML value goes on over the lines indented more than its key.
+- An XML opening tag may span lines. A `</password>` inside CDATA or a comment closes nothing.
+- Only a JSON string ends sooner: `"name": "value"` loses the string, and the rest of the line stays.
+- A value is kept only when it is empty (`""`) or exactly a marker this redaction writes (`<removed>`).
+- A value that is one whole crypt or GRUB hash shows which kind it was: `$<hash removed>`.
+- `passwd:` is kept only when its words are nsswitch.conf sources (`files sss`). Any other value is removed.
+- A passwd or shadow entry of a user named like a secret (`svc_token:x:...`) keeps its `x`, `!` or empty field.
+- The whole text is redacted first, then cut to its size. A cut never leaves half a value bare.
+- A text read only in part (over 1 MiB) ends at a line's end. The line the cut would split is left out.
+
+When a line is not understood, it goes whole:
+
+- A line that still holds a secret's word is replaced with `<line removed: may hold a secret>`.
+  The words: password, passwd, passphrase, pwd, secret, token, authtok, credential, community, bindpw, rootpw,
+  pbkdf2, keytab, psk, `_key`, PRIVATE KEY, and crypt prefixes like `$6$`.
+  `Pass` after a small letter or a digit counts too (`authPass Hunter2` goes).
+  So do `-key`, `-pass` and a whole `pw` (`api-key x`, `pw x` go).
+- It stays when every such word is a name whose value was removed, or sits in a file's path (`/etc/passwd`).
+- It stays when it is a known evidence line:
+
+| Kept as it is | For example |
+|---|---|
+| A passwd or shadow record | `root:x:0:0:root:/root:/bin/bash`, `locked:!!:19000:0:99999:7:::` |
+| nsswitch.conf's sources and actions | `passwd: files [NOTFOUND=return] sss` |
+| A PAM line, its arguments PAM options or paths | `password requisite pam_pwquality.so try_first_pass` |
+| An audit rule | `-a always,exit -F path=/usr/bin/passwd -k privileged-passwd` |
+| A setting with a yes or no value, its name not a secret's | `PermitEmptyPasswords no` |
+| A setting with a number or a path | `offline_credentials_expiration = 1`, `krb5_keytab = /etc/krb5.keytab` |
+| sshd's root login values | `PermitRootLogin prohibit-password` |
+| sshd's authentication methods | `AuthenticationMethods publickey,password` |
+| sssd's cached logins | `cache_credentials = True` |
+| sssd's token type | `ldap_default_authtok_type = password` |
+| sudoers' Defaults and rules | `Defaults !rootpw`, `%wheel ALL=(ALL) /bin/id, NOPASSWD: ALL` |
+| `chage -l` and `passwd -S` lines | `Password expires : never` |
+| An RPM package, klist's header | `passwd-0.80-4.el8.x86_64`, `Keytab name: FILE:/etc/krb5.keytab` |
+
+- A number, a path or a yes is no exception when the name is a secret's: `password 1234` goes.
+- A comment after an evidence line stays when it holds no secret's word: `PasswordAuthentication no # policy`.
+- An iptables rule stays, an snmp word in its comment too.
+- grep's prefix stays before the removed line when it is a path or a line number.
+- A command line in the evidence (DISA's own text) keeps its words. A value it quotes is removed.
+
+In the job's output:
+
+- The tasks that read a host keep their raw result out of the job's output (`no_log`).
+- A host module's error it did not expect shows only its type and redacted text, never a traceback.
+- On ansible-core 2.19 and later, Ansible prints a failed task's message even under `no_log`.
+  So the modules write only redacted text in their messages.
+
+### How much of a host's text you see
+
+A host's text is what the trial or the code read, Evaluate-STIG's comment, and the cross-check's evidence.
+`answer_keys_evidence` sets where it shows. Both jobs use it.
+
+| Where | `web` (the default) | `none` |
+|---|---|---|
+| The email and its workbook | never: statuses, counts, rule ids | never |
+| The report website | redacted, at most 20 lines and 2000 characters a rule | not shown |
+| ACT (the cross-check) | the redacted evidence, as above | not asked |
+| The AAP job's output | the modules' results, redacted | the same |
+
+- Past 20 lines or 2000 characters, the website says *(more in the job's artifacts)*.
+- A reason that quotes a host (a trial's error, a host that was not reached) is short in the email: *the trial failed*.
+  Why a host failed, why a draft was refused and why ACT was not asked are fixed words there too.
+- An AnswerKey named in Evaluate-STIG's comment shows as your key (or `DEFAULT`). Any other name shows as *another key*.
+- The email's *How this was made* counts the commands the cross-check ran. The website lists them, as the host ran them.
+- Text from STIG Manager is redacted too: a rule's title and check text before ACT reads it, and a review's comment.
+  Only exact secrets are masked there, so DISA's own lines about passwords stay.
+- ACT's answer is redacted before the job keeps it.
+- `none` keeps every host's text in the AAP job, which only its admins can open.
+
+### Known limits
+
+The redaction removes the shapes above. It cannot know every way a program prints a secret, so the website caps what
+it shows and the email shows none of it. These shapes are known to pass. They are rare in what a RHEL STIG check reads:
+
+- An XML element whose tag has another attribute first: `<password label="x">` then the value on the next line.
+- An XML tag over lines whose secret is named by an attribute: `<entry key="password"` then `value="x"/>`.
+- A secret's XML element on a line that starts inside another element: `</token><password attr="x"/>`.
+- An XML element with a namespace: `<cfg:password>`.
+- An XML opening tag left open at a Windows line end (`<password` then CR LF).
+- A JSON value on the next line after another property: `{"user":"x","password":` then `"x"}`.
+- A shell assignment whose quoted value goes on to the next line: `export PASSWORD="a` then `b"`.
+- A backslash inside a quoted value or before a blank: `--password "a\"b"`, `-c one\ two`.
+- An snmp command whose quoted pass phrase holds an iptables option: `snmpwalk -A "a -j b"`.
+- An HTTP Authorization header folded onto the next line.
+- An apostrophe in a URL's user name: `https://o'brien:x@host`.
+- A URL whose password holds `",` outside JSON.
+- Free text after an audit rule or in an iptables rule's comment.
+- An evidence line with a comment after it is read as a value first: `passwd: files sss # local` is removed.
 
 ## Not in this version
 

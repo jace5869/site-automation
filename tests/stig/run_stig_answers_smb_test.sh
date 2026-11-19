@@ -131,7 +131,7 @@ grep -q -- '--AFPath' "$work/es_args.txt" && { echo "FAIL - given answer files w
 
 SMB_PW=Not-it-9 run "a wrong password: Evaluate-STIG not run, the host not scanned, said why" fail -- \
     'NOT READ - Evaluate-STIG is not run: logging in to 127.0.0.1 as svc_stig' 'the user name or password is wrong' \
-    '[WARNING] stig: the STIG scan did not run: Evaluate-STIG was not run: its answer files could not be read'
+    '[WARNING] stig: the STIG scan did not run: Evaluate-STIG was not run: its answer files could not be read (check_stig_evaluate_answers'
 [ ! -e "$work/es_args.txt" ] && echo "ok   - ... Evaluate-STIG was not run" || { echo "FAIL - it ran without its answer files"; fails=$((fails + 1)); }
 SMB_USER= SMB_PW= run "no credential: said which to attach" fail -- 'no login for the share' 'Windows file share' 'credential (user@YOURDOMAIN.MIL and its password)'
 run "a folder that is not there: said" fail -e "{\"check_stig_evaluate_answers\": \"\\\\\\\\127.0.0.1\\\\stig\\\\Nope\"}" -- \

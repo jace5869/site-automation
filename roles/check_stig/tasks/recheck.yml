@@ -33,12 +33,14 @@
                                                | map(attribute='_stig_recheck_vulns', default=[]) | select | list) }}
   run_once: true
 
-- name: STIG | answer files - read, and copied to each host for this run
-  ansible.builtin.include_tasks: answers.yml
-  when: _stig_af_on | bool
-
-- name: STIG | the scan, then the answer files' folders removed
+# 1.77.0c: the answer files are staged inside the block, so a copy that fails part way (a full disk) still has its
+# folders removed by the always below (as Try my answer file does)
+- name: STIG | answer files staged, the scan, then the answer files' folders removed
   block:
+    - name: STIG | answer files - read, and copied to each host for this run
+      ansible.builtin.include_tasks: answers.yml
+      when: _stig_af_on | bool
+
     - name: STIG recheck | check those rules again on the host (only those - the scan's history is left alone)
       site_stig_scan:
         dir: "{{ check_stig_dir }}"

@@ -1,0 +1,78 @@
+---
+# STIG ANSWER KEYS - THE CROSS-CHECK (1.77.0, answer_keys_cross_check), after the read-only check and the trial
+# (answer_keys_check.yml): for each rule with a block, four sources side by side - Evaluate-STIG's own status (shown, not
+# counted), the host's STIG Manager review (counted when a person wrote it after the last scan), the code in the trial,
+# and ACT on its own (DISA's check text and the host's read-only evidence, never the code). It never changes a block.
+# This file runs on EACH host: the evidence is read on the trial host (it has the code) and on each host whose review a
+# person wrote after the scan (it has STIG Manager) - nowhere else. Each command is DISA's (or, when none of DISA's fits,
+# the code's own), checked against the read-only check's fixed grammar and run once as a literal argv, never through a
+# shell (site_stig_answer_reads). ACT is asked on the AAP side, after (answer_keys_cross_act.yml).
+- name: Answer keys cross-check | the blocks of each STIG, and what each host gave (its STIG Manager review, Evaluate-STIG's word)
+  ansible.builtin.set_fact:
+    _ak_groups: >-
+      {%- set gs = [] -%}
+      {%- for g in _ak_m.groups -%}
+      {%-   set hc = hostvars[g.rep]._ak_hc | default({}) -%}
+      {%-   set nm = hc.evaluate.names | default([]) | stig_answer_names -%}
+      {%-   set rows = g.picks | stig_answer_rows(g.drafts, hc, _ak_key, nm.names, stigman_protect_words | default(none)) -%}
+      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm})) -%}
+      {%- endfor -%}
+      {{ gs }}
+    _akx_info: >-
+      {%- set o = {} -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set es = {} -%}
+      {%-   for p in (hostvars[h]._ak_h | default({})).picks | default([]) -%}{%- set _ = es.update({p.v: p.es | default('')}) -%}{%- endfor -%}
+      {%-   set _ = o.update({h: {'sm': hostvars[h]._ak_smh | default({}), 'es': es}}) -%}
+      {%- endfor -%}
+      {{ o }}
+    _akx_now: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    # 1.77.0h: answer_keys_evidence none - no host's text leaves the job: ACT is asked nothing (no evidence is read for it)
+    _akx_act_on: "{{ site_act_enabled | default(true) | bool and answer_keys_evidence | default('web') != 'none' }}"
+  run_once: true
+
+- name: Answer keys cross-check | which rules each host reads evidence for (the trial host, and where a person reviewed it after the scan)
+  ansible.builtin.set_fact:
+    _akx_plan: "{{ _ak_groups | stig_answer_cross_plan(_akx_info, _akx_now, _akx_act_on) }}"
+  run_once: true
+
+# a host that fails or cannot be reached here never fails the job: its rows say "not asked: the reads failed"
+- name: Answer keys cross-check | the read-only evidence on this host
+  when: (_akx_plan[inventory_hostname] | default([])) | length > 0
+  block:
+    - name: Answer keys cross-check | DISA's commands (else the code's) - the read-only grammar, a literal argv each, run once, never a shell
+      site_stig_answer_reads:
+        rules: "{{ _akx_plan[inventory_hostname] }}"
+      register: _akx_r
+      check_mode: false               # only reads; writes nothing
+      # 1.77.0h: its raw result stays out of the job's output - a failure's text (a connection's, a traceback's) is shown
+      # only as the rescue below redacts it
+      no_log: true
+
+    - name: Answer keys cross-check | the host could not be reached any more
+      ansible.builtin.set_fact:
+        _akx_r: {failed: "{{ ('not reached: ' ~ (_akx_r.msg | default('no answer') | string | site_redact))[:300] }}"}
+      when: _akx_r.unreachable | default(false)
+  rescue:
+    - name: Answer keys cross-check | the reads failed on this host - its rows say so, the others go on
+      ansible.builtin.set_fact:
+        _akx_r: {failed: "{{ (ansible_failed_result.msg | default('it failed') | string | site_redact)[:300] }}"}
+
+- name: Answer keys cross-check | every host's evidence, and the ACT calls (one per rule and evidence, at most answer_keys_cross_check_act_max)
+  ansible.builtin.set_fact:
+    _akx_reads: >-
+      {%- set o = {} -%}
+      {%- for h in _akx_plan -%}
+      {%-   set r = hostvars[h]._akx_r | default({'failed': 'no answer from it'}) -%}
+      {%-   set _ = o.update({h: {'failed': r.failed} if r.failed is defined and r.failed is string else {'reads': r.reads | default({})}}) -%}
+      {%- endfor -%}
+      {{ o }}
+  run_once: true
+
+- name: Answer keys cross-check | the ACT calls
+  ansible.builtin.set_fact:
+    _akx_asks: >-
+      {{ _ak_groups | stig_answer_cross_asks(_akx_reads, answer_keys_cross_check_act_max | int, _akx_act_on,
+                                             'ACT is off (site_act_enabled false)' if not site_act_enabled | default(true) | bool
+                                             else 'not asked (answer_keys_evidence: none)') }}
+  run_once: true

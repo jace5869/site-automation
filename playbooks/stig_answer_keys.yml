@@ -8,7 +8,9 @@
 # - or drafted by ACT (answer_keys_act), marked so - then checked read-only (PowerShell's parser) and tried once on one
 # host per STIG (in a sandbox). Nothing is written anywhere: STIG Manager is read with GET only; Evaluate-STIG runs for
 # those rules alone, with no answer files, none of check_stig_evaluate_args, its own output removed; nothing goes to the
-# share. docs/STIG_ANSWER_KEYS.md.
+# share. 1.77.0: the cross-check (answer_keys_cross_check) puts four sources side by side for each block - Evaluate-STIG,
+# STIG Manager, the code in the trial, ACT on its own (DISA's commands read on the host, never the code).
+# docs/STIG_ANSWER_KEYS.md.
 #
 #   ansible-playbook playbooks/stig_answer_keys.yml -e target=rhel_servers \
 #     -e '{"answer_keys_rules": ["V-257777", "V-230221"], "answer_keys_values": {"min_release": ["8.10", "9.4"]}}'
@@ -96,6 +98,28 @@
       ansible.builtin.include_role:
         name: check_stig
         tasks_from: answer_keys_check.yml
+
+    # 1.77.0 (answer_keys_cross_check): the cross-check - the read-only evidence on the trial host and where a person
+    # reviewed the rule after the scan (DISA's commands, else the code's; the fixed grammar, never a shell), then ACT on
+    # its own on the AAP side (never the code); it never changes a block
+    - name: The answer keys - the cross-check's read-only evidence (answer_keys_cross_check)
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys_cross.yml
+      when: answer_keys_cross_check | default(true) | bool
+
+    - name: The answer keys - the cross-check - ACT on its own, the sources side by side, on the AAP side
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys_cross_act.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      when: answer_keys_cross_check | default(true) | bool
 
     - name: The answer keys - the report, grouped by STIG, on the AAP side
       ansible.builtin.include_role:

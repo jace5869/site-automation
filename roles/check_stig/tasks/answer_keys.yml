@@ -8,6 +8,13 @@
 #   1. the rules: asked, or picked from STIG Manager (its reviews of the host's asset, GET)
 #   2. Evaluate-STIG's own result for them on the host (ExpectedStatus): only Open or Not Reviewed get a key
 #   3. _ak_h: what this host gave - its STIG and release, each rule's result - for answer_keys_group.yml (the AAP side)
+- name: Answer keys | answer_keys_evidence is web or none
+  ansible.builtin.assert:
+    that: answer_keys_evidence | default('web') in ['web', 'none']
+    fail_msg: "answer_keys_evidence is web (the host's text on the report website, capped; never in the email) or none (only in the AAP job's output), not {{ answer_keys_evidence }}."
+    quiet: true
+  run_once: true
+
 - name: Answer keys | at most answer_keys_max_hosts hosts
   ansible.builtin.assert:
     that: ansible_play_hosts_all | length <= answer_keys_max_hosts | int
@@ -54,10 +61,16 @@
     gather_subset: [min]
   register: _ak_reach
   ignore_errors: true
+  # 1.77.0h: a connection's failure text is shown only as the task below redacts it
+  no_log: true
 
 - name: Answer keys | not reached
   ansible.builtin.set_fact:
-    _ak_h: {host: "{{ inventory_hostname }}", ok: false, why: "{{ 'not reached' if _ak_reach.unreachable | default(false) else 'it failed' }}: {{ (_ak_reach.msg | default('no answer') | string)[:240] }}"}
+    _ak_h:
+      host: "{{ inventory_hostname }}"
+      ok: false
+      why: "{{ 'not reached' if _ak_reach.unreachable | default(false) else 'it failed' }}: {{ (_ak_reach.msg | default('no answer') | string | site_redact)[:240] }}"
+      why_mail: "{{ 'not reached' if _ak_reach.unreachable | default(false) else 'it failed' }} (the job's output has why)"
   when: _ak_reach.unreachable | default(false) or _ak_reach.failed | default(false)
 
 - name: Answer keys | this host
@@ -144,7 +157,8 @@
   rescue:
     - name: Answer keys | this host failed - listed, the others go on
       ansible.builtin.set_fact:
-        _ak_h: {host: "{{ inventory_hostname }}", ok: false, why: "{{ (ansible_failed_result.msg | default('it failed') | string)[:300] }}"}
+        _ak_h: {host: "{{ inventory_hostname }}", ok: false, why: "{{ (ansible_failed_result.msg | default('it failed') | string | site_redact)[:300] }}",
+                why_mail: "reading its STIG and its reviews failed (the job's output has why)"}
 
 # 1.76.0b (Codex): the automatic pick's cap over the UNION of each STIG's hosts - every eligible rule once, CAT I first
 # then by rule, at most answer_keys_max_rules; the rest counted (once, for every host: run_once - no condition here, so
@@ -220,4 +234,5 @@
   rescue:
     - name: Answer keys | this host failed - listed, the others go on
       ansible.builtin.set_fact:
-        _ak_h: {host: "{{ inventory_hostname }}", ok: false, why: "{{ (ansible_failed_result.msg | default('it failed') | string)[:300] }}"}
+        _ak_h: {host: "{{ inventory_hostname }}", ok: false, why: "{{ (ansible_failed_result.msg | default('it failed') | string | site_redact)[:300] }}",
+                why_mail: "Evaluate-STIG for its rules failed (the job's output has why)"}
