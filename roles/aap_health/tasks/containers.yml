@@ -14,6 +14,7 @@
           echo "@@@ dangling_images"; timeout "$T" podman images -q -f dangling=true 2>/dev/null | wc -l
           echo "@@@ dangling_volumes"; timeout "$T" podman volume ls -q -f dangling=true 2>/dev/null | wc -l
           echo "@@@ systemdf"; timeout "$T" podman system df --format json 2>&1
+          echo "@@@ meminfo"; cat /proc/meminfo 2>&1
           exit 0
       changed_when: false
       check_mode: false
@@ -31,8 +32,14 @@
           now: "{{ _aaph.now }}"
           min_uptime_s: "{{ aap_health_min_uptime_minutes | int * 60 }}"
           restart_warn: "{{ aap_health_restart_warn | int }}"
-          mem_warn_mb: "{{ aap_health_container_mem_warn_mb | float }}"
-          mem_fail_mb: "{{ aap_health_container_mem_fail_mb | float }}"
+          mem_warn_mb: "{{ aap_health_container_mem_warn_mb }}"
+          mem_fail_mb: "{{ aap_health_container_mem_fail_mb }}"
+          mem_warn_pct: "{{ aap_health_container_mem_warn_pct | float }}"
+          mem_fail_pct: "{{ aap_health_container_mem_fail_pct | float }}"
+          limit_warn_pct: "{{ aap_health_container_limit_warn_pct | float }}"
+          limit_fail_pct: "{{ aap_health_container_limit_fail_pct | float }}"
+          headroom_warn_pct: "{{ aap_health_mem_headroom_warn_pct | float }}"
+          headroom_fail_pct: "{{ aap_health_mem_headroom_fail_pct | float }}"
           dangling_warn: "{{ aap_health_dangling_warn | int }}"
           top: "{{ aap_health_top | int }}"
   rescue:

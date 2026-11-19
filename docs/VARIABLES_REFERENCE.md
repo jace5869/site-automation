@@ -80,6 +80,8 @@ File: `roles/aap_health/defaults/main.yml`
 | `aap_health_last_seen_minutes` | `10` | an instance not seen for longer: WARN |
 | `aap_health_mem_warn_mb` | `2048` | OS MemAvailable below: WARN |
 | `aap_health_mem_fail_mb` | `1024` | below: FAIL |
+| `aap_health_mem_headroom_warn_pct` | `15` | 1.76.3: MemAvailable as a % of MemTotal, at or below: WARN (with the MB values above: whichever is worse; the containers' memory uses the same headroom) |
+| `aap_health_mem_headroom_fail_pct` | `5` | at or below: FAIL |
 | `aap_health_swap_warn_pct` | `25` | swap used at or above: WARN |
 | `aap_health_swap_fail_pct` | `75` | at or above: FAIL |
 | `aap_health_load_warn` | `1.0` | 5-minute load per CPU |
@@ -93,8 +95,12 @@ File: `roles/aap_health/defaults/main.yml`
 | `aap_health_dnf_recent_days` | `7` | a dnf transaction this recent, and fapolicyd denials today: WARN |
 | `aap_health_fapolicyd_required` | `false` | fapolicyd not running: INFO; true (a site that must run it) = FAIL |
 | `aap_health_fqdn` | (empty) | the host's name to resolve; empty = hostname -f |
-| `aap_health_container_mem_warn_mb` | `4096` | Containers one container using more: WARN |
-| `aap_health_container_mem_fail_mb` | `8192` | one container using more: FAIL |
+| `aap_health_container_mem_warn_pct` | `25` | Containers 1.76.3: a container's memory is judged against the host - its share of MemTotal, and only a problem when the host is short of memory (its headroom, above) or the container is near its own limit. A big container with plenty free is INFO. Job containers (ansible_runner_<job id>) are INFO unless the host is sh… (all of it: the role file) |
+| `aap_health_container_mem_fail_pct` | `50` | ... and this much is very big: WARN / FAIL when the headroom is low too |
+| `aap_health_container_limit_warn_pct` | `85` | a container with its own memory limit using this much of it: WARN |
+| `aap_health_container_limit_fail_pct` | `95` | ... FAIL |
+| `aap_health_container_mem_warn_mb` | (empty) | Before 1.76.3: a fixed MB per container (4096 / 8192). Empty (the default): the shares above only. Set them and they apply too - whichever is worse. empty: off; MB - one container using more: WARN (as before 1.76.3) |
+| `aap_health_container_mem_fail_mb` | (empty) | empty: off; MB - one container using more: FAIL |
 | `aap_health_min_uptime_minutes` | `10` | a container up for less: WARN (restarted?) |
 | `aap_health_restart_warn` | `3` | restarts (podman or systemd) at or above: WARN |
 | `aap_health_dangling_warn` | `10` | dangling images or volumes at or above: WARN |

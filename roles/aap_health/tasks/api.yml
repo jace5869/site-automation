@@ -93,7 +93,8 @@
 
     - name: AAP health | API - results
       ansible.builtin.set_fact:
-        _aaph_rows: "{{ _aaph_rows + (_aaph_resp | aap_health_api(_aaph_timings, _aaph_cfg)) }}"
+        # 1.76.3: the memory per container row names the jobs running at the check (their templates)
+        _aaph_rows: "{{ (_aaph_rows + (_aaph_resp | aap_health_api(_aaph_timings, _aaph_cfg))) | aap_health_jobs_on_containers(_aaph_resp) }}"
       vars:
         _aaph_resp: >-
           {%- set out = {} -%}

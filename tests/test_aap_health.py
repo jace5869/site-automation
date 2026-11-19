@@ -87,9 +87,15 @@ class Parsers(unittest.TestCase):
         self.assertEqual((n, top[0][0]), (1, "/usr/bin/python3.9 -> /home/ansible/.ansible/tmp/x.py"))
 
     def test_sizes_and_times(self):
-        self.assertAlmostEqual(f.size_mb("1.5GB"), 1536.0)
+        # 1.76.3b: a decimal unit (podman's GB, MB, kB) is a power of 1000, a binary one (GiB, MiB, KiB) of 1024; -> MiB
+        self.assertAlmostEqual(f.size_mb("1.5GiB"), 1536.0)
+        self.assertAlmostEqual(f.size_mb("1.5GB"), 1.5e9 / 1048576)
+        self.assertAlmostEqual(f.size_mb("33.36GB"), 33.36e9 / 1048576)              # podman on a 32 GiB host: 31.07 GiB
         self.assertAlmostEqual(f.size_mb("512MiB"), 512.0)
-        self.assertAlmostEqual(f.size_mb("800kB"), 0.78125)
+        self.assertAlmostEqual(f.size_mb("512MB"), 512e6 / 1048576)
+        self.assertAlmostEqual(f.size_mb("800kB"), 800e3 / 1048576)
+        self.assertAlmostEqual(f.size_mb("800KiB"), 0.78125)
+        self.assertAlmostEqual(f.size_mb("12B"), 12 / 1048576.0)
         self.assertEqual(f.parse_time("2025-11-04T23:46:40.123456789Z"), NOW + 0.123456)
         self.assertEqual(f.parse_time("2025-11-04T23:46:40+00"), NOW)
         self.assertIsNone(f.parse_time(None))
@@ -178,22 +184,124 @@ class Parsers(unittest.TestCase):
                                           "inventory to where the cert lives now, or stage the file again.")
 
 
+class ContainerMemory(unittest.TestCase):
+    """1.76.3: a container's memory against the host's - its share of MemTotal, the host's headroom (MemAvailable), its own
+    limit - not a fixed MB: big + plenty free = INFO, big + short = WARN/FAIL, near its own limit = WARN/FAIL, a job's
+    container INFO unless the host is short."""
+    CFG = {"mem_warn_pct": 25, "mem_fail_pct": 50, "headroom_warn_pct": 15, "headroom_fail_pct": 5, "limit_warn_pct": 85,
+           "limit_fail_pct": 95, "mem_warn_mb": "", "mem_fail_mb": ""}
+    T = 65536.0                     # a 64 GB node
+
+    def cm(self, mb, avail, limit=0.0, name="automation-controller-web", **cfg):
+        return f.container_mem(mb, limit, self.T, avail, name, dict(self.CFG, **cfg))
+
+    def test_the_matrix(self):
+        st, why = self.cm(9318, 41984)                                   # 9.1 GB (14%): small
+        self.assertEqual((st, why), ("PASS", "9.1 GB of 64.0 GB (14%) - 41.0 GB free"))
+        st, why = self.cm(26214, 41984)                                  # 25.6 GB (40%), 41 GB free: big, plenty free
+        self.assertEqual(st, "INFO")
+        self.assertIn("big, with plenty free", why)
+        self.assertEqual(self.cm(26214, 8192)[0], "WARN")                # big + short (12.5% free)
+        self.assertEqual(self.cm(36000, 8192)[0], "FAIL")                # very big (55%) + short
+        self.assertEqual(self.cm(26214, 2048)[0], "FAIL")                # big + very short (3%)
+        self.assertEqual(self.cm(3000, 2048)[0], "PASS")                 # small, even when the host is short: not the cause
+        st, why = self.cm(3700, 41984, limit=4096)                       # 90% of its own 4 GB limit, plenty free
+        self.assertEqual(st, "WARN")
+        self.assertIn("near its own limit: 90% of 4.0 GB", why)
+        self.assertEqual(self.cm(4000, 41984, limit=4096)[0], "FAIL")    # 98%
+        self.assertEqual(self.cm(2000, 41984, limit=4096)[0], "PASS")
+
+    def test_a_job_container(self):
+        st, why = self.cm(1200, 41984, name="ansible_runner_103")
+        self.assertEqual(st, "INFO")
+        self.assertIn("job 103", why)
+        st, why = self.cm(1200, 8192, name="ansible_runner_103")
+        self.assertEqual(st, "WARN")                                     # the host short: its status, named as a cause
+        self.assertIn("job 103; the host is short of memory - a likely cause", why)
+
+    def test_the_old_mb_settings_when_set(self):
+        self.assertEqual(self.cm(5000, 41984)[0], "PASS")                # empty: percent mode only
+        st, why = self.cm(5000, 41984, mem_warn_mb=4096, mem_fail_mb=8192)
+        self.assertEqual(st, "WARN")                                     # set: still applies - whichever is worse
+        self.assertIn("over aap_health_container_mem_warn_mb", why)
+        self.assertEqual(self.cm(9000, 41984, mem_warn_mb=4096, mem_fail_mb=8192)[0], "FAIL")
+
+    def test_the_host_free_memory(self):
+        def free(total_gb, avail_mb):
+            mi = "@@@ meminfo\nMemTotal: %d kB\nMemAvailable: %d kB\n" % (total_gb * 1048576, avail_mb * 1024)
+            cfg = {"mem_warn_mb": 2048, "mem_fail_mb": 1024, "mem_headroom_warn_pct": 15, "mem_headroom_fail_pct": 5,
+                   "swap_warn_pct": 25, "swap_fail_pct": 75, "load_warn": 1, "load_fail": 2, "disk_warn_pct": 80,
+                   "disk_fail_pct": 90, "time_warn_s": 1, "time_fail_s": 5, "top": 10, "user": "aap"}
+            return [r for r in f.os_checks(mi, "", cfg) if r["check"] == "free memory"][0]
+        self.assertEqual(free(64, 2560)["status"], "FAIL")              # 2.5 GB of 64 (4%): the share is worse than the MB
+        self.assertEqual(free(64, 40960)["status"], "PASS")
+        self.assertEqual(free(4, 600)["status"], "FAIL")                # 600 MB of 4 GB: the MB is worse
+        self.assertEqual(free(64, 8192)["detail"], "8192 MB available of 65536 MB (12%)")
+        self.assertEqual(free(64, 8192)["status"], "WARN")
+
+    def test_a_failing_enrichment_keeps_every_row(self):
+        # 1.76.3b: an odd API answer (HTML for the jobs) - the rows as they were, never one row in place of them all;
+        # the receptor check keeps its own guard
+        rows = [{"area": "os", "check": "free memory", "status": "PASS", "detail": "x", "hint": ""},
+                {"area": "containers", "check": "memory per container", "status": "INFO", "detail": "At the check: no job container running.",
+                 "hint": "", "items": {"rows": [["a", "1 GB"]]}}]
+        self.assertEqual(f.jobs_on_containers(rows, {"jobs": {"status": 200, "json": "<html>"}}), rows)
+        self.assertEqual(f.jobs_on_containers(rows, {"jobs": {"status": 200, "json": {"results": [None, 5]}}}), rows)
+        bad = f.receptor(None, None)
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0]["area"], "receptor")                       # guarded: one FAIL row of its own, no exception
+
+    def test_a_blank_share_setting_is_off(self):
+        self.assertEqual(f.container_mem(40000, 0, 65536.0, 4096, "x", dict(self.CFG, mem_warn_pct="", mem_fail_pct=0.0))[0], "PASS")
+
+    def test_no_limit_is_the_hosts_memory(self):
+        # podman shows the host's memory as the limit when there is none, in its own units (62.5 GiB of a 64 GB node)
+        text = ("@@@ ps\n[]\n@@@ stats\n" + json.dumps([{"name": "a", "mem_usage": "9.1GB / 62.5GB", "cpu_percent": "1%"},
+                                                         {"name": "b", "mem_usage": "3.5GiB / 4GiB", "cpu_percent": "1%"}])
+                + "\n@@@ meminfo\nMemTotal: 67108864 kB\nMemAvailable: 42991616 kB\n")
+        rows = f.containers(text, [], dict(self.CFG, user="aap", now=0, min_uptime_s=600, restart_warn=3, dangling_warn=10, top=10))
+        tab = dict((x[0], x[3]) for x in [r for r in rows if r["check"] == "memory per container"][0]["items"]["rows"])
+        self.assertEqual(tab, {"a": "none", "b": "88% of 4.0 GB"})
+
+    def test_the_jobs_at_the_check(self):
+        text = ("@@@ ps\n[]\n@@@ stats\n" + json.dumps([
+            {"name": "automation-controller-web", "mem_usage": "9.1GB / 64GB", "cpu_percent": "2%"},
+            {"name": "ansible_runner_103", "mem_usage": "1.2GB / 64GB", "cpu_percent": "40%"}])
+            + "\n@@@ meminfo\nMemTotal: 67108864 kB\nMemAvailable: 42991616 kB\n")
+        rows = f.containers(text, [], dict(self.CFG, user="aap", now=0, min_uptime_s=600, restart_warn=3, dangling_warn=10, top=10))
+        mem = [r for r in rows if r["check"] == "memory per container"][0]
+        self.assertEqual(mem["status"], "INFO")
+        self.assertIn("the host: 41.0 GB available of 64.0 GB (64%)", mem["detail"])
+        self.assertIn("At the check: 1 job container(s) running (job 103).", mem["detail"])
+        jobs = {"status": 200, "json": {"results": [{"id": 103, "type": "job", "name": "Patch Linux", "status": "running"},
+                                                    {"id": 104, "type": "job", "name": "Health", "status": "running"},
+                                                    {"id": 105, "type": "job", "name": "Later", "status": "pending"}]}}
+        mem = [r for r in f.jobs_on_containers(rows, {"jobs": jobs}) if r["check"] == "memory per container"][0]
+        self.assertIn("At the check: 2 job(s) running in AAP (Health, Patch Linux); here: 1 job container(s) running (job 103).", mem["detail"])
+        self.assertIn("ansible_runner_103 (job 103 'Patch Linux')", [x[0] for x in mem["items"]["rows"]])
+        self.assertEqual(f.jobs_on_containers(rows, {}), rows)          # the jobs not read: as it was
+
+
 class Formatting(unittest.TestCase):
     """The report website's and the email's cells and sections: one line per check, the lists as their own tables
     (containers by memory, slow paths) or lines, long tokens cut so a table does not scroll sideways."""
     CFG = {"user": "aap", "now": NOW, "min_uptime_s": 600, "restart_warn": 3, "mem_warn_mb": 4096, "mem_fail_mb": 8192,
            "dangling_warn": 10, "top": 10}
 
-    def stats(self, n=25):
+    def stats(self, n=25, total_gb=16, avail_gb=1):
         st = [{"name": "ctr-%02d" % i, "mem_usage": "%dMB / 16GB" % (100 + i), "mem_percent": "0.%d%%" % i, "cpu_percent": "1%"}
               for i in range(n)]
-        st[3]["mem_usage"], st[7]["mem_usage"] = "8.5GB / 16GB", "5GB / 16GB"
-        return "@@@ ps\n[]\n@@@ stats\n" + json.dumps(st)
+        st[3]["mem_usage"], st[7]["mem_usage"] = "8.5GiB / 16GiB", "5GiB / 16GiB"
+        mi = "MemTotal: %d kB\nMemAvailable: %d kB\n" % (total_gb * 1048576, avail_gb * 1048576)
+        return "@@@ ps\n[]\n@@@ stats\n" + json.dumps(st) + "\n@@@ meminfo\n" + mi
 
     def test_memory_per_container_largest_first(self):
-        r = [x for x in f.containers(self.stats(), [], self.CFG) if x["check"] == "memory per container"][0]
+        # 1.76.3: a 16 GB host with 1 GB free (6%: WARN headroom); ctr-03 8.5 GB (53%: very big) - FAIL, ctr-07 5 GB (31%) -
+        # WARN; the old MB settings, set here, agree
+        r = [x for x in f.containers(self.stats(), [], dict(self.CFG, mem_warn_pct=25, mem_fail_pct=50, headroom_warn_pct=15,
+                                                            headroom_fail_pct=5)) if x["check"] == "memory per container"][0]
         self.assertEqual(r["status"], "FAIL")
-        self.assertEqual(r["detail"], "25 container(s); over 4096 MB: ctr-03 8704 MB, ctr-07 5120 MB")
+        self.assertTrue(r["detail"].startswith("25 container(s); the host: 1.0 GB available of 16.0 GB (6%). At the check: no job container running.\nctr-03: 8.5 GB of 16.0 GB (53%)"), r["detail"])
         self.assertEqual([x[0] for x in r["items"]["rows"][:3]], ["ctr-03", "ctr-07", "ctr-24"])
         self.assertEqual(r["items"]["row_status"][:3], ["FAIL", "WARN", "PASS"])
         self.assertEqual(len(r["items"]["rows"]), 25)                  # all of them in the JSON
@@ -553,11 +661,16 @@ class Playbook(unittest.TestCase):
         self.assertEqual(st(rows, "containers", "automation-controller-task"), "WARN")        # up 3 minutes
         self.assertEqual(st(rows, "containers", "automation-hub-api"), "WARN")                # 5 restarts
         self.assertEqual(st(rows, "containers", "postgresql"), "PASS")
+        # 1.76.3: judged against this host's own memory (read here: the status depends on it - the matrix is in
+        # ContainerMemory); the job container named with its template, the jobs running at the check said
         mem = [r for r in rows if r["check"] == "memory per container"][0]
-        self.assertEqual(mem["status"], "WARN")                                                   # controller-web 5.1 GB
-        self.assertIn("over 4096 MB: automation-controller-web 5222 MB", mem["detail"])
-        self.assertEqual(mem["items"]["rows"][0], ["automation-controller-web", "5222 MB", "30.91%", "2.0%"])
-        self.assertEqual(mem["items"]["row_status"][:2], ["WARN", "PASS"])
+        self.assertIn(mem["status"], ("PASS", "INFO", "WARN", "FAIL"))
+        self.assertRegex(mem["detail"], r"^\d+ container\(s\); the host: [\d.]+ GB available of [\d.]+ GB \(\d+%\)")
+        self.assertIn("At the check: 2 job(s) running in AAP (Big, Health); here: 1 job container(s) running (job 103)", mem["detail"])
+        self.assertEqual(mem["items"]["columns"], ["Container", "Memory", "Of the host", "Own limit", "CPU %", "Why"])
+        names = [x[0] for x in mem["items"]["rows"]]
+        self.assertIn("ansible_runner_103 (job 103 'Big')", names)
+        self.assertIn("automation-controller-web", names)
         self.assertIn("someone-elses", [r for r in rows if r["check"] == "other containers"][0]["detail"])
         # logs
         five = [r for r in rows if r["check"] == "gateway proxy 5xx"][0]
@@ -575,8 +688,9 @@ class Playbook(unittest.TestCase):
         self.assertEqual(web["status"], "FAIL")
         self.assertIn("HARAKIRI 3, worker killed 1, Traceback 1, OperationalError 1", web["detail"])   # not the 2 recycles
         self.assertIn("2 request(s) killed (HARAKIRI)", web["detail"])
-        self.assertIn("; 2 worker(s) recycled (uWSGI max-requests or reload-on-rss); memory per container is over its limit "
-                      "too: recycling because of memory, see memory per container", web["detail"])
+        self.assertIn("; 2 worker(s) recycled (uWSGI max-requests or reload-on-rss)", web["detail"])
+        # the memory row's own status (1.76.3: it depends on this host's memory): said with the recycles when it warns
+        self.assertEqual("memory per container is over its limit too" in web["detail"], mem["status"] in ("WARN", "FAIL"))
         self.assertEqual(web["items"]["lines"][:3], ["requests killed (HARAKIRI), by path:", "    1  /api/controller/v2/inventories/8/hosts/",
                                                      "    1  /api/v2/inventories/8/hosts/"])
         self.assertEqual(st(rows, "logs", "controller-task"), "WARN")

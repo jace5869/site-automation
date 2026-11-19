@@ -133,12 +133,15 @@ def kb(n):
 
 
 def size_mb(text):
-    """'1.234GB', '512.3MiB', '800kB', '12B' -> MB (float)."""
-    m = re.match(r"\s*([\d.]+)\s*([kKmMgGtT]?)i?[bB]?\s*$", str(text or ""))
+    """'1.234GB', '512.3MiB', '800kB', '12B' -> MiB (float), as /proc/meminfo counts (kB there are KiB). 1.76.3b: a
+    decimal unit (kB, MB, GB, TB - podman's) is a power of 1000, a binary one (KiB, MiB, GiB) of 1024 - "33.36GB" is a
+    32 GiB host's memory, not 33.36 GiB."""
+    m = re.match(r"\s*([\d.]+)\s*([kKmMgGtT]?)(i?)[bB]?\s*$", str(text or ""))
     if not m:
         return 0.0
-    f = {"": 1.0 / 1048576, "k": 1.0 / 1024, "m": 1.0, "g": 1024.0, "t": 1048576.0}[m.group(2).lower()]
-    return float(m.group(1)) * f
+    power = {"": 0, "k": 1, "m": 2, "g": 3, "t": 4}[m.group(2).lower()]
+    base = 1024.0 if m.group(3) else 1000.0
+    return float(m.group(1)) * base ** power / 1048576.0
 
 
 def parse_time(v):
@@ -419,7 +422,10 @@ def os_checks(user_text, root_text, cfg):
         avail = mem.get("MemAvailable", mem.get("MemFree", 0)) / 1024.0
         total = mem.get("MemTotal", 0) / 1024.0
         st = "FAIL" if avail < cfg["mem_fail_mb"] else "WARN" if avail < cfg["mem_warn_mb"] else "PASS"
-        rows.append(row("os", "free memory", st, "%.0f MB available of %.0f MB" % (avail, total),
+        # 1.76.3: the headroom as a share of the memory there is too - whichever is worse (a 64 GB node is not a 4 GB one)
+        pct = 100.0 * avail / total if total else 100.0
+        st = worst(st, headroom_status(pct, cfg))
+        rows.append(row("os", "free memory", st, "%.0f MB available of %.0f MB (%.0f%%)" % (avail, total, pct),
                         "" if st == "PASS" else "What uses it: ps -eo rss,user,comm --sort=-rss | head -15; as the AAP user: "
                         "podman stats --no-stream. Fewer jobs at once (instance forks/capacity), or more memory: 16 GB is the growth "
                         "topology's floor."))
@@ -600,6 +606,87 @@ def _units_show(text):
     return out
 
 
+def headroom_status(pct, cfg):
+    """1.76.3: the host's MemAvailable as a % of MemTotal -> PASS / WARN / FAIL (aap_health_mem_headroom_*_pct)."""
+    if "mem_headroom_fail_pct" in cfg or "headroom_fail_pct" in cfg:
+        fail = float(cfg.get("mem_headroom_fail_pct", cfg.get("headroom_fail_pct", 5)))
+        warn = float(cfg.get("mem_headroom_warn_pct", cfg.get("headroom_warn_pct", 15)))
+        return "FAIL" if pct <= fail else "WARN" if pct <= warn else "PASS"
+    return "PASS"
+
+
+def _pct_or_none(v):
+    """A % setting -> a float above 0, or None (blank, zero, not a number: off)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 else None
+
+
+def _pct_txt(v):
+    return ("%g" % float(v)) if str(v).strip() else "?"
+
+
+def gb(mb):
+    """MB -> '9.1 GB' (or '512 MB' under 1 GB)."""
+    return ("%.1f GB" % (mb / 1024.0)) if mb >= 1024 else "%.0f MB" % mb
+
+
+JOB_CONTAINER = re.compile(r"^ansible_runner_(\d+)$")
+
+
+def _mb_rule(mb, cfg):
+    """Before 1.76.3: a fixed MB per container - only when aap_health_container_mem_*_mb is set (not empty)."""
+    w, f = cfg.get("mem_warn_mb"), cfg.get("mem_fail_mb")
+    st = "PASS"
+    if isinstance(f, (int, float)) and not isinstance(f, bool) and f > 0 and mb >= f:
+        st = "FAIL"
+    elif isinstance(w, (int, float)) and not isinstance(w, bool) and w > 0 and mb >= w:
+        st = "WARN"
+    return st
+
+
+def container_mem(mb, limit_mb, total_mb, avail_mb, name, cfg):
+    """1.76.3: one container's memory -> (status, why). Its share of the host's memory (big: aap_health_container_mem_*_pct)
+    counts only when the host is short (its headroom: aap_health_mem_headroom_*_pct): big + short = WARN / FAIL (the
+    worse of the two), big + plenty free = INFO. Near its own limit (when it has one): WARN / FAIL on its own. A job
+    container (ansible_runner_<job id>) is INFO unless the host is short - then the host's status, named as the cause.
+    The fixed MB of the settings before 1.76.3, when set: whichever is worse."""
+    bits = []
+    host = headroom_status(100.0 * avail_mb / total_mb, cfg) if total_mb else "PASS"
+    share = 100.0 * mb / total_mb if total_mb else 0.0
+    wp, fp = _pct_or_none(cfg.get("mem_warn_pct", 25)), _pct_or_none(cfg.get("mem_fail_pct", 50))
+    big = ("FAIL" if fp is not None and share >= fp else "WARN" if wp is not None and share >= wp else "") if total_mb else ""
+    job = JOB_CONTAINER.match(name or "")
+    if total_mb:
+        bits.append("%s of %s (%.0f%%) - %s free" % (gb(mb), gb(total_mb), share, gb(avail_mb)))
+    else:
+        bits.append(gb(mb))
+    if job:
+        st = host if host != "PASS" else "INFO"
+        bits.append("job %s%s" % (job.group(1), "; the host is short of memory - a likely cause" if host != "PASS" else ""))
+    elif big and host != "PASS":
+        st = worst(big, host)
+        bits.append("a big share while the host is short of memory")
+    elif big:
+        st = "INFO"
+        bits.append("big, with plenty free")
+    else:
+        st = "PASS"
+    if limit_mb:
+        lp = 100.0 * mb / limit_mb
+        lim = "FAIL" if lp >= float(cfg.get("limit_fail_pct", 95)) else "WARN" if lp >= float(cfg.get("limit_warn_pct", 85)) else "PASS"
+        if lim != "PASS":
+            st = worst(st, lim)
+            bits.append("near its own limit: %.0f%% of %s" % (lp, gb(limit_mb)))
+    old = _mb_rule(mb, cfg)
+    if old != "PASS":
+        st = worst(st, old)
+        bits.append("over aap_health_container_mem_%s_mb" % ("fail" if old == "FAIL" else "warn"))
+    return st, "; ".join(bits)
+
+
 def mem_hint(units, cfg):
     """memory per container's hint: where the cause shows (other rows of this report) and what frees the memory."""
     web = [u["unit"] for u in units or [] if "controller-web" in u.get("container", "")]
@@ -659,30 +746,73 @@ def containers(text, units, cfg):
     if extra:
         rows.append(row("containers", "other containers", "PASS",
                         "not started by an AAP unit: " + ", ".join("%s (%s)" % (n, by[n].get("State", "?")) for n in sorted(extra))))
-    # memory per container: the largest first, the top ones as a table, the containers over the limits named
+    # memory per container (1.76.3): judged against the host - its share of MemTotal, the host's headroom
+    # (MemAvailable), its own limit when it has one; the largest first, the ones that matter named
     stats = _json(_sec(s, "stats")["out"])
+    mem = {}
+    for line in _sec(s, "meminfo")["out"].splitlines():
+        k, _, v = line.partition(":")
+        if v.split():
+            mem[k.strip()] = _int(v.split()[0], 0)
+    total = mem.get("MemTotal", 0) / 1024.0
+    avail = mem.get("MemAvailable", mem.get("MemFree", 0)) / 1024.0
     if stats == []:
         rows.append(row("containers", "memory per container", "PASS", "no running containers"))
     elif isinstance(stats, list):
         lines = []
         for x in stats:
             nm = x.get("name") or x.get("Name") or "?"
-            use = str(x.get("mem_usage") or x.get("MemUsage") or "").split("/")[0]
+            use, _, lim = str(x.get("mem_usage") or x.get("MemUsage") or "").partition("/")
+            limit = size_mb(lim) if lim.strip() else 0.0
+            # podman shows the host's memory as the limit when there is none (in its own units: 62.5 GiB of a 64 GB node) -
+            # a "limit" of 90 % of the host or more is none
+            if not limit or (total and limit >= total * 0.9):
+                limit = 0.0
+            mb = size_mb(use)
+            st_, why = container_mem(mb, limit, total, avail, nm, cfg)
             pct = str(x.get("mem_percent") or x.get("MemPerc") or "").strip() or "-"
-            lines.append((size_mb(use), nm, pct, str(x.get("cpu_percent") or x.get("CPU") or "-").strip()))
+            lines.append((mb, nm, pct, str(x.get("cpu_percent") or x.get("CPU") or "-").strip(), st_, why, limit))
         lines.sort(key=lambda t: (-t[0], t[1]))
-        over = lambda mb: "FAIL" if mb >= cfg["mem_fail_mb"] else "WARN" if mb >= cfg["mem_warn_mb"] else "PASS"   # noqa: E731
-        big = [(mb, nm) for mb, nm, _, _ in lines if over(mb) != "PASS"]
-        st = worst(*[over(mb) for mb, _ in big]) if big else "PASS"
-        shown = [t for t in lines if over(t[0]) != "PASS"] + [t for t in lines if over(t[0]) == "PASS"]
-        summary = ("%d container(s); over %d MB: %s" % (len(lines), cfg["mem_warn_mb"], ", ".join("%s %.0f MB" % (nm, mb) for mb, nm in big))
-                   if big else "%d container(s), all under %d MB; the largest %s %.0f MB" % (len(lines), cfg["mem_warn_mb"], lines[0][1], lines[0][0])
-                   if lines else "no container answered")
-        rows.append(row("containers", "memory per container", st, summary,
-                        "" if st == "PASS" else mem_hint(units, cfg),
-                        {"columns": ["Container", "Memory", "Memory %", "CPU %"],
-                         "rows": [[nm, "%.0f MB" % mb, pct, cpu] for mb, nm, pct, cpu in shown],
-                         "row_status": [over(mb) for mb, _, _, _ in shown]}))
+        order = {"FAIL": 0, "WARN": 1, "INFO": 2, "PASS": 3}
+        shown = sorted(lines, key=lambda t: (order.get(t[4], 3), -t[0], t[1]))
+        st = worst(*[t[4] for t in lines]) if lines else "PASS"
+        host = headroom_status(100.0 * avail / total, cfg) if total else "PASS"
+        jobs = [JOB_CONTAINER.match(t[1]).group(1) for t in lines if JOB_CONTAINER.match(t[1])]
+        parts = []
+        if total:
+            parts.append("%d container(s); the host: %s available of %s (%.0f%%)" % (len(lines), gb(avail), gb(total), 100.0 * avail / total))
+        else:
+            parts.append("%d container(s); the host's memory not read" % len(lines))
+        named = [t for t in shown if t[4] in ("FAIL", "WARN", "INFO") and not JOB_CONTAINER.match(t[1])]
+        if not named and lines:
+            parts.append("The largest %s %s" % (lines[0][1], gb(lines[0][0])))
+        # the snapshot depends on the moment: the jobs running at the check (their names: the API step adds them)
+        parts.append(("At the check: %d job container(s) running (job %s)%s" % (
+            len(jobs), ", ".join(jobs[:10]), " - the host is short of memory: a likely cause" if host != "PASS" else ""))
+            if jobs else "At the check: no job container running")
+        # the first line: the host and the jobs (the report's text over the table); then each container that matters
+        more_lines = ["%s: %s" % (t[1], t[5]) for t in named[:5]]
+        hint = ""
+        if st == "INFO":
+            hint = ("Nothing to do now: a job's container, or a big one with plenty of memory free, is information only. It is a "
+                    "warning when the host's free memory falls to aap_health_mem_headroom_warn_pct (%s%%), or a container nears "
+                    "its own limit." % _pct_txt(cfg.get("headroom_warn_pct", 15)))
+        if st in ("WARN", "FAIL"):
+            hint = mem_hint(units, cfg)
+            if jobs and host != "PASS":
+                hint = ("The jobs running take memory too: fewer at once (the instance's forks and capacity) leaves more. "
+                        + hint)
+        mrow = row("containers", "memory per container", st, ". ".join(parts) + "." + "".join("\n" + x for x in more_lines), hint,
+                        {"columns": ["Container", "Memory", "Of the host", "Own limit", "CPU %", "Why"],
+                         "rows": [[("%s (job %s)" % (nm, JOB_CONTAINER.match(nm).group(1))) if JOB_CONTAINER.match(nm) else nm,
+                                   gb(mb), ("%.0f%%" % (100.0 * mb / total)) if total else pct,
+                                   ("%.0f%% of %s" % (100.0 * mb / lim_, gb(lim_))) if lim_ else "none",
+                                   cpu, "" if st_ == "PASS" else why]
+                                  for mb, nm, pct, cpu, st_, why, lim_ in shown],
+                         "row_status": [t[4] for t in shown]})
+        if st == "INFO":
+            mrow["items"]["list_info"] = True
+        rows.append(mrow)
     else:
         rows.append(row("containers", "memory per container", "WARN",
                         "podman stats did not answer: %s" % (_sec(s, "stats")["out"].strip()[:200] or "no output"),
@@ -1309,6 +1439,45 @@ def api(resp, timings, cfg):
 # ---------------------------------------------------------------------------------------------------------------
 # receptor
 
+def jobs_on_containers(rows, resp):
+    """1.76.3: the memory per container row, after the API is read: the jobs running in AAP at the check (their templates),
+    and each job container's template - the reader knows the snapshot depends on the moment. As it is when the API's
+    jobs were not read - or on any error (1.76.3b): the rows of every area are never lost to it."""
+    try:
+        return _jobs_on_containers(rows, resp)
+    except Exception:          # noqa: BLE001 - the report as it was; nothing of it is dropped
+        return rows
+
+
+def _jobs_on_containers(rows, resp):
+    r = (resp or {}).get("jobs") or {}
+    if r.get("status") != 200:
+        return rows
+    running = [j for j in _results(r.get("json")) if j.get("status") == "running" and j.get("type") not in ("workflow_job", "workflow_approval")]
+    names = dict((str(j.get("id")), j.get("name") or "?") for j in running)
+    out = []
+    for x in rows or []:
+        if not (isinstance(x, dict) and x.get("area") == "containers" and x.get("check") == "memory per container"):
+            out.append(x)
+            continue
+        x = dict(x)
+        tpl = sorted(set(names.values()))
+        line = ("At the check: %d job(s) running in AAP (%s)" % (len(running), ", ".join(tpl[:8]) + (", ..." if len(tpl) > 8 else ""))
+                if running else "At the check: no job running in AAP")
+        d = str(x.get("detail") or "")
+        d = re.sub(r"At the check: (\d+ job container\(s\) running \(job [^)]*\)|no job container running)",
+                   lambda m: line + "; here: " + m.group(0)[len("At the check: "):], d)
+        x["detail"] = d
+        items = x.get("items")
+        if isinstance(items, dict) and items.get("rows"):
+            items = dict(items)
+            items["rows"] = [[re.sub(r"\(job (\d+)\)$", lambda m: "(job %s '%s')" % (m.group(1), names[m.group(1)]) if m.group(1) in names
+                                     else m.group(0), str(rw[0]))] + list(rw[1:]) for rw in items["rows"]]
+            x["items"] = items
+        out.append(x)
+    return out
+
+
 @guarded("receptor")
 def receptor(text, cfg):
     s = sections(text)
@@ -1510,7 +1679,7 @@ def extra(r, top=10):
         n = max(it.get("top") or top, len(flagged))
         sec = {"title": title, "columns": it["columns"], "rows": [[cut(c, 120) for c in x] for x in rs[:n]]}
         if it.get("row_status"):
-            sec["row_status"] = [EMAIL_STATUS.get(x, "") if x in ("FAIL", "WARN") else "" for x in it["row_status"][:n]]
+            sec["row_status"] = [EMAIL_STATUS.get(x, "") if x in ("FAIL", "WARN", "INFO") else "" for x in it["row_status"][:n]]
         sec["text"] = cut(lines[0] if lines else "", 300) + (" - and %d more (all of them in the JSON beside the HTML report)" % (len(rs) - n)
                                                              if len(rs) > n else "")
     elif it.get("lines") or len(lines) > 1:
@@ -1582,7 +1751,8 @@ def email_sections(rows, order, top=10):
                     "columns": ["Status", "Check", "Detail", "Hint"], "rows": [cells(r) + [first(r)] for r in rs],
                     "row_status": [EMAIL_STATUS.get(r["status"], "") for r in rs]})
         for r in rs:
-            if r.get("status") in ("FAIL", "WARN"):
+            # 1.76.3: an INFO row that asks for it (memory per container: each container, its share, its job) is listed too
+            if r.get("status") in ("FAIL", "WARN") or (r.get("status") == "INFO" and (r.get("items") or {}).get("list_info")):
                 sec = extra(r, top)
                 if sec:
                     out.append(sec)
@@ -1605,6 +1775,7 @@ class FilterModule(object):
             "aap_health_logs": logs,
             "aap_health_db": db,
             "aap_health_api": api,
+            "aap_health_jobs_on_containers": jobs_on_containers,
             "aap_health_receptor": receptor,
             "aap_health_certs": certs,
             "aap_health_counts": counts,

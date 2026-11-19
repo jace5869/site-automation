@@ -22,7 +22,7 @@ are the two reports. It runs two ways:
 | Area (tag) | Checks |
 |---|---|
 | `os` | free memory, swap, load per CPU; OOM kills in the last 24 h; space and inodes of `/`, `/home`, `/var`, `/tmp`, the podman storage and the postgres data folder (WARN 80 %, FAIL 90 %); chrony (as root: a STIG `chrony.conf` has `cmdport 0`), else `timedatectl`; the host's name in DNS; the rootless prerequisites (linger, `user.max_user_namespaces`, `/etc/subuid` and `/etc/subgid`, the SELinux login mapping); SELinux AVC and fapolicyd denials today, with the top offenders (fapolicyd not running: INFO, or FAIL with `aap_health_fapolicyd_required: true`); the last dnf transactions |
-| `containers` | every AAP systemd user unit and its container: up, exited, restarting, missing; started less than 10 minutes ago; restart counts; memory per container (`podman stats`); dangling images and volumes, image size |
+| `containers` | every AAP systemd user unit and its container: up, exited, restarting, missing; started less than 10 minutes ago; restart counts; memory per container (`podman stats`, judged against the host: below); dangling images and volumes, image size |
 | `logs` | over `aap_health_log_since` (2 h): the gateway proxy's (Envoy) 5xx responses by path and its slowest requests (over 5 s); controller-web's HARAKIRI, killed workers, Tracebacks, OperationalError, timeouts (the last 10) - a worker uWSGI recycles (`worker N killed successfully` with no HARAKIRI, SIGKILL or signal 9 near it: max-requests or reload-on-rss) is counted apart, INFO alone; as root, the kernel's OOM kills of `uwsgi` in the last 2 h (FAIL); controller-task's dispatcher and callback receiver errors; Tracebacks and ERRORs of the gateway, hub and EDA containers, each with the 5 lines after it, grouped by message (times, request IDs and process IDs taken out): the top 5 with counts, the most frequent in full under *How to look* |
 | `db` | per inventory: hosts, total / average / largest `variables` and `ansible_facts` (average over 10 KB or a host over 100 KB: WARN); database size and largest tables; connections against `max_connections`; queries running over 30 s; sessions idle in a transaction; job events and jobs kept (is the cleanup running?) |
 | `api` | the controller's ping and instances (state, capacity, health check errors, last seen); jobs pending or waiting over 15 minutes, running over 4 hours (an approval waiting for a person, and its workflow, are not counted); inventory sources and projects whose last update failed; the two cleanup system jobs - there, scheduled, run lately; **each inventory's `hosts/?page_size=100` timed against `hosts/?page_size=1`** (over 5 s or not 200: FAIL); the gateway's ping and its service clusters |
@@ -41,6 +41,31 @@ Finding the install and writing the report always run, so `--tags db` (or `os,lo
 - receptor's control socket: from the receptor container's `receptor.conf`.
 
 The job's first lines say what it found.
+
+
+### Memory per container (1.76.3)
+
+A container's memory is judged against the host, not a fixed number of MB. A 64 GB node runs bigger containers than a
+16 GB one, and what is running depends on the jobs at that moment.
+
+- **Its share of the host:** a container using 25 % of MemTotal or more is big (50 %: very big).
+- **The host's headroom:** MemAvailable as a share of MemTotal. 15 % or less is short, 5 % or less very short.
+- **Its own limit:** a container with a memory limit, at 85 % of it or more: WARN (95 %: FAIL).
+
+| The container | The host | Status |
+|---|---|---|
+| big | plenty free | INFO: *uses 9.1 GB of 64 GB - 41 GB free* |
+| big | short | WARN, or FAIL (very big, or very short) |
+| small | short | PASS: not the cause |
+| near its own limit | any | WARN or FAIL |
+| a job's (`ansible_runner_<job id>`) | plenty free | INFO |
+| a job's | short | the host's status, named as a likely cause |
+
+The row says how many jobs were running at the check, with their templates (*At the check: 2 job(s) running in AAP
+(Patch Linux, Health)*), and each job container shows its job and template. The table: each container's memory, its
+share of the host, its own limit, and why. The settings: `aap_health_container_mem_*_pct`,
+`aap_health_mem_headroom_*_pct`, `aap_health_container_limit_*_pct` (below). The fixed MB of before
+(`aap_health_container_mem_warn_mb`, `_fail_mb`) are off; set them and they apply too.
 
 ## Why an inventory's Hosts tab can return 503
 
@@ -154,7 +179,10 @@ The main ones; every setting with its default: [VARIABLES_REFERENCE.md](VARIABLE
 | `aap_health_api_slow_s` | `5` | a hosts page slower than this: FAIL |
 | `aap_health_log_since` | `2h` | the logs' window (`podman logs --since`) |
 | `aap_health_slow_ms` | `5000` | a proxied request slower than this is listed |
-| `aap_health_container_mem_warn_mb` | `4096` | one container using more memory: WARN |
+| `aap_health_mem_headroom_warn_pct`, `_fail_pct` | `15`, `5` | the host's MemAvailable as a % of MemTotal: WARN, FAIL (with `aap_health_mem_warn_mb` / `_fail_mb`: whichever is worse) |
+| `aap_health_container_mem_warn_pct`, `_fail_pct` | `25`, `50` | a container this big a share of the host's memory: WARN / FAIL only when the host is short too, else INFO |
+| `aap_health_container_limit_warn_pct`, `_fail_pct` | `85`, `95` | a container with its own memory limit, this near it: WARN, FAIL |
+| `aap_health_container_mem_warn_mb`, `_fail_mb` | empty | the fixed MB per container before 1.76.3: set, they apply too (whichever is worse) |
 | `aap_health_log_context_lines` | `5` | lines kept after each matching log line (an ERROR's message is often on the next lines) |
 | `aap_health_log_error_groups` | `5` | the containers' ERRORs grouped by message: this many listed, with counts |
 | `aap_health_log_oom_journal` | `true` | as root (`journalctl -k`, read-only): the OOM kills of the last 2 h; without root it is skipped quietly |

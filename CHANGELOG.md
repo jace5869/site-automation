@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.76.3 — 2026-11-19
+
+**To set up: nothing** - unless you had set `aap_health_container_mem_warn_mb` or `_fail_mb`: they still apply
+(whichever is worse), and you may now leave them out.
+
+**AAP health check: memory per container judged against the host** (docs/AAP_HEALTH_CHECK.md, "Memory per container").
+
+- A container's memory counts as its share of the host's memory (big: 25 %, very big: 50 %) and only matters when the
+  host is short too (MemAvailable 15 % or less: WARN, 5 %: FAIL). A big container with plenty free is INFO, e.g.
+  *uses 9.1 GB of 64 GB - 41 GB free*. Near its own memory limit (85 %, 95 %): WARN, FAIL.
+- Job containers (`ansible_runner_<job id>`) show their job and template; INFO unless the host is short, then named as
+  a likely cause. The row says the jobs running at the check: *At the check: 2 job(s) running in AAP (...)*.
+- Free memory on the host: the same headroom in percent as well as `aap_health_mem_warn_mb` / `_fail_mb` - whichever
+  is worse, so a 64 GB node is not judged as a 4 GB one.
+- Sizes as podman gives them: "33.36GB" is decimal (a 32 GiB host's memory), MemTotal binary - both read as such.
+- The fixed 4096 / 8192 MB per container is no longer the default (`aap_health_container_mem_warn_mb`, `_fail_mb`:
+  empty). New settings: `aap_health_container_mem_warn_pct`, `_fail_pct` (25, 50), `aap_health_mem_headroom_warn_pct`,
+  `_fail_pct` (15, 5), `aap_health_container_limit_warn_pct`, `_fail_pct` (85, 95).
+
 ## 1.76.2 — 2026-11-19
 
 **To set up: nothing.** Run the outage review again to see it (**VM - outage watch** with `vm_watch_review: true`).

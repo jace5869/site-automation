@@ -105,9 +105,11 @@ def main(a):
             for n, _, _, _, _, m in C:
                 out("/" + n + "".join(" %s=%s" % x for x in m))
     elif cmd == "stats":
+        # 1.76.3: and a job's container (ansible-runner names it for the job: ansible_runner_<job id>)
         out(json.dumps([{"name": n, "mem_usage": "5.1GB / 16.5GB" if n == "automation-controller-web" else "300.5MB / 16.5GB",
                          "mem_percent": "30.91%" if n == "automation-controller-web" else "1.78%",
-                         "cpu_percent": "2.0%"} for n, st, *_ in C if st == "running"]))
+                         "cpu_percent": "2.0%"} for n, st, *_ in C if st == "running"]
+                       + [{"name": "ansible_runner_103", "mem_usage": "1.2GB / 16.5GB", "mem_percent": "7.27%", "cpu_percent": "40.0%"}]))
     elif cmd == "images":
         out("a\nb")
     elif cmd == "volume":

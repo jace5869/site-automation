@@ -72,6 +72,8 @@
           top: "{{ aap_health_top | int }}"
           mem_warn_mb: "{{ aap_health_mem_warn_mb | float }}"
           mem_fail_mb: "{{ aap_health_mem_fail_mb | float }}"
+          mem_headroom_warn_pct: "{{ aap_health_mem_headroom_warn_pct | float }}"
+          mem_headroom_fail_pct: "{{ aap_health_mem_headroom_fail_pct | float }}"
           swap_warn_pct: "{{ aap_health_swap_warn_pct | float }}"
           swap_fail_pct: "{{ aap_health_swap_fail_pct | float }}"
           load_warn: "{{ aap_health_load_warn | float }}"

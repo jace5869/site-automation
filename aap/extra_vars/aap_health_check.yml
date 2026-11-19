@@ -94,6 +94,13 @@
 ## below: FAIL
 # aap_health_mem_fail_mb: 1024
 
+## 1.76.3: MemAvailable as a % of MemTotal, at or below: WARN (with the MB values above: whichever
+## is worse; the containers' memory uses the same headroom)
+# aap_health_mem_headroom_warn_pct: 15
+
+## at or below: FAIL
+# aap_health_mem_headroom_fail_pct: 5
+
 ## swap used at or above: WARN
 # aap_health_swap_warn_pct: 25
 
@@ -133,11 +140,29 @@
 ## the host's name to resolve; empty = hostname -f
 # aap_health_fqdn: ""
 
-## Containers one container using more: WARN
-# aap_health_container_mem_warn_mb: 4096
+## Containers 1.76.3: a container's memory is judged against the host - its share of MemTotal, and
+## only a problem when the host is short of memory (its headroom, above) or the container is near
+## its own limit. A big container with plenty free is INFO. Job containers (ansible_runner_<job id>)
+## are INFO unless the host is short; then they are named as the cause. a container using this share
+## of the host's memory or more is big ...
+# aap_health_container_mem_warn_pct: 25
 
-## one container using more: FAIL
-# aap_health_container_mem_fail_mb: 8192
+## ... and this much is very big: WARN / FAIL when the headroom is low too
+# aap_health_container_mem_fail_pct: 50
+
+## a container with its own memory limit using this much of it: WARN
+# aap_health_container_limit_warn_pct: 85
+
+## ... FAIL
+# aap_health_container_limit_fail_pct: 95
+
+## Before 1.76.3: a fixed MB per container (4096 / 8192). Empty (the default): the shares above
+## only. Set them and they apply too - whichever is worse. empty: off; MB - one container using
+## more: WARN (as before 1.76.3)
+# aap_health_container_mem_warn_mb: ""
+
+## empty: off; MB - one container using more: FAIL
+# aap_health_container_mem_fail_mb: ""
 
 ## a container up for less: WARN (restarted?)
 # aap_health_min_uptime_minutes: 10
