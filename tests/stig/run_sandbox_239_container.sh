@@ -33,7 +33,9 @@ echo "the container's systemd: $("$engine" exec "$name" systemctl --version | he
   curl -fsSL https://packages.microsoft.com/config/rhel/8/prod.repo -o /etc/yum.repos.d/microsoft-prod.repo
   dnf -y -q install powershell >/dev/null
   python3.11 -m pip -q install "ansible-core==2.16.*" >/dev/null
-  mkdir -p /repo/roles/check_stig/library /repo/tests/stig'
+  mkdir -p /repo/roles/check_stig/library /repo/tests/stig /repo/plugins/module_utils'
 "$engine" cp "$repo/roles/check_stig/library/site_stig_answer_host.py" "$name:/repo/roles/check_stig/library/"
 "$engine" cp "$repo/tests/stig/sandbox_trial.py" "$name:/repo/tests/stig/"
+# 1.77.0: the module imports site_redact (ansible.module_utils.site_redact; sandbox_trial.py adds the folder)
+"$engine" cp "$repo/plugins/module_utils/site_redact.py" "$name:/repo/plugins/module_utils/"
 "$engine" exec "$name" bash -c 'cd /repo && python3.11 tests/stig/sandbox_trial.py'

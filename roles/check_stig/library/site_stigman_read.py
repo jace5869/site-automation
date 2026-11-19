@@ -59,7 +59,8 @@ hosts:
   description: "Per host (per id): {status: found / not_found / no_stig (the asset is there, without this STIG) / several /
                 no_benchmark / error, why, collection, collectionId, asset, assetId, revision, reviews: {SV-257985: {result,
                 status, ts, rule, comment (true: it has one), version, severity, title, ours (1.69.1: our line in its comment),
-                ours_said (the result that line gave), protect (why it is never written, or empty)}}, earlier: {SV-257985: the same, and revision} (with rules: true -
+                ours_said (the result that line gave), protect (why it is never written, or empty), engine (1.77.0: {product, type} of a
+                scanner's import, null for a person's review)}}, earlier: {SV-257985: the same, and revision} (with rules: true -
                 a review of the rule in an earlier revision of the STIG, whose check changed since:
                 STIG Manager does not carry it to the revision in use), rules (with rules: true): {SV-257985: {v, rule, version,
                 severity, title}}, create (with create, not found anywhere: {name, fqdn, collection, collectionId, benchmark,
@@ -87,6 +88,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode, quote
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
+from ansible.module_utils.site_redact import head, redact, run_main
 from ansible.module_utils.site_stig_comment import split as comment_split, what_it_said, protected, PROTECT_WORDS
 
 SV_RE = re.compile(r"(SV-\d+)")
@@ -162,6 +164,14 @@ def revision_key(rev):
     return (int(m.group(1)), int(m.group(2))) if m else (-1, -1)
 
 
+def engine_of(eng):
+    """STIG Manager's resultEngine -> {product, type}, or None (a person's review)."""
+    if not isinstance(eng, dict) or not (eng.get("product") or eng.get("type")):
+        return None
+    # 1.77.0h: the server's own words - redacted (the cross-check needs only whether there is an engine)
+    return {"product": redact(str(eng.get("product") or ""))[:120], "type": redact(str(eng.get("type") or ""))[:60]}
+
+
 def reviews_of(rows, words=None):
     """STIG Manager's reviews of one asset -> {SV id: record}; a review that covers several revisions of a rule
     (ruleIds) counts for each of them. words: stigman_protect_words (None: the default list)."""
@@ -169,16 +179,21 @@ def reviews_of(rows, words=None):
     for r in rows or []:
         rule = r.get("rule") or {}
         st = r.get("status") or {}
-        ours = comment_split(r.get("comment"))[0][:600]
+        raw = comment_split(r.get("comment"))[0]
+        # 1.77.0i (Codex P1): our line as shown is redacted whole, then cut; what it said is read from the line as written
+        ours = redact(raw, backstop=False)[:600]
         rec = {"result": r.get("result") or "", "status": st.get("label", "") if isinstance(st, dict) else str(st),
                "ts": r.get("ts") or r.get("touchTs") or "", "rule": r.get("ruleId") or "", "comment": bool(r.get("comment")),
                "version": rule.get("version") or "", "severity": rule.get("severity") or "", "title": rule.get("title") or "",
                # 1.69.1: our line in its comment (an earlier run's - the STIG recheck's or the import's) and the result it gave:
                # a review we wrote as Open that is not Open now was changed by a person after us
-               "ours": ours, "ours_said": what_it_said(ours),
+               "ours": ours, "ours_said": what_it_said(raw[:600]),
                # 1.69.1: a review whose detail or comment says RA, Risk Acceptance, POAM or POA&M (stigman_protect_words)
                # is never written - why, or ''
-               "protect": protected(words, r.get("detail"), r.get("comment"))}
+               "protect": protected(words, r.get("detail"), r.get("comment")),
+               # 1.77.0: what made the result - a scanner's import ({product, type}: Evaluate-STIG, OpenSCAP ...) or a
+               # person (None). The answer keys' cross-check counts a person only, never the scan's own import.
+               "engine": engine_of(r.get("resultEngine"))}
         for rid in [r.get("ruleId")] + list(r.get("ruleIds") or []):
             k = sv_of(rid)
             if k and k not in out:
@@ -228,13 +243,19 @@ class Client(object):
                 body.append(b)
             return json.loads(b"".join(body).decode("utf-8") or "null")
         except HTTPError as e:
-            body = e.read().decode("utf-8", "replace")[:300]
-            raise RuntimeError("HTTP %d from %s: %s" % (e.code, req.get_full_url().split("?")[0], body.strip() or e.reason))
+            raw = e.read(65537)
+            body = raw[:65536].decode("utf-8", "replace")
+            if len(raw) > 65536:
+                body = head(body, len(body) - 1)      # 1.77.0h: read in part - the line the read split is left out
+            # 1.77.0d: what the server answered, its secrets removed (site_redact) - it reaches the job's output and
+            # reports; 1.77.0h: the reason too (it is the server's text)
+            raise RuntimeError("HTTP %d from %s: %s" % (e.code, req.get_full_url().split("?")[0],
+                                                       redact(body.strip())[:300] or redact(str(e.reason or ""))[:200]))
         except URLError as e:
-            raise RuntimeError("cannot reach %s: %s" % (req.get_full_url().split("?")[0], e.reason))
+            raise RuntimeError("cannot reach %s: %s" % (req.get_full_url().split("?")[0], redact(str(e.reason))[:200]))
         except (OSError, TimeoutError) as e:     # a read that timed out or a dropped connection: not a URLError (1.67.0)
             raise RuntimeError("no answer from %s in time (%s): %s" % (req.get_full_url().split("?")[0],
-                                                                       "a slow answer: raise check_stig_stigman_timeout" if isinstance(e, TimeoutError) or "timed out" in str(e) else "the connection dropped", e))
+                                                                       "a slow answer: raise check_stig_stigman_timeout" if isinstance(e, TimeoutError) or "timed out" in str(e) else "the connection dropped", redact(str(e))[:200]))
         except ValueError:
             raise RuntimeError("%s did not answer JSON" % req.get_full_url().split("?")[0])
 
@@ -331,7 +352,7 @@ def read_texts(want, client, budget=120, clock=None):
             if re.search(r"HTTP 404\b", str(e)):
                 info["error"] = info["error"] or "STIG Manager has no %s %s" % (bench, rev)
                 continue
-            info["error"] = str(e)[:200] + (" - the client needs the scope stig-manager:stig:read"
+            info["error"] = redact(str(e))[:200] + (" - the client needs the scope stig-manager:stig:read"
                                              if re.search(r"HTTP 40[13]\b", str(e)) else "")
             break
         for r in rows if isinstance(rows, list) else []:
@@ -411,7 +432,7 @@ def read(p, client):
                     bare += assets(col, "")
                 bare = match_assets(names, bare)
         except RuntimeError as e:
-            out[hid] = {"status": "error", "why": str(e)}
+            out[hid] = {"status": "error", "why": redact(str(e))}
             continue
         if not found and bare:
             a = bare[0]
@@ -438,7 +459,7 @@ def read(p, client):
             rv = reviews(a, bench)
             rl = rules(bench, rev) if h.get("rules") else None
         except RuntimeError as e:
-            out[hid] = {"status": "error", "why": str(e), "collection": a["_col"].get("name"), "asset": a.get("name")}
+            out[hid] = {"status": "error", "why": redact(str(e)), "collection": a["_col"].get("name"), "asset": a.get("name")}
             continue
         out[hid] = {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "collectionId": str(a["_col"].get("collectionId", "")),
                      "asset": a.get("name", ""),
@@ -470,7 +491,7 @@ def to_create(h, names, bench, col, cols, assets, rules, client):
             rev = (client.get("/stigs/%s/revisions/latest" % quote(bench)) or {}).get("revisionStr") or ""
         rl = rules(bench, rev)
     except RuntimeError as e:
-        why = str(e)
+        why = redact(str(e))
         if "HTTP 404" in why:
             why = "STIG Manager has no %s - import the STIG first" % bench
         return {"why": "no asset in %s, and none created: %s" % (col["name"], why)}
@@ -522,7 +543,7 @@ def every(h, names, by_name, cols, assets, rules, reviews, earlier):
                               "reviews": rv, "earlier": earlier(x, bench, s.get("revisionStr") or "", rv),
                               "rules": rules(bench, s.get("revisionStr") or "")})
     except RuntimeError as e:
-        return {"status": "error", "why": str(e)}
+        return {"status": "error", "why": redact(str(e))}
     return {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "collectionId": str(a["_col"].get("collectionId", "")),
             "asset": a.get("name", ""), "checklists": lists}
 
@@ -551,15 +572,15 @@ def main():
     try:
         client.login()
     except RuntimeError as e:
-        module.exit_json(changed=False, hosts={}, texts={}, texts_info={"asked": 0, "read": 0, "error": str(e)[:200]},
-                         error="no token for the client %s: %s" % (p["client_id"], e))
+        module.exit_json(changed=False, hosts={}, texts={}, texts_info={"asked": 0, "read": 0, "error": redact(str(e))[:200]},
+                         error="no token for the client %s: %s" % (p["client_id"], redact(str(e))))
     texts, tinfo = read_texts(p["texts"], client, p["text_timeout"]) if p["texts"] else ({}, {"asked": 0, "read": 0, "error": ""})
     try:
         hosts = read(p, client) if p["hosts"] else {}
     except RuntimeError as e:
-        module.exit_json(changed=False, hosts={}, texts=texts, texts_info=tinfo, error="STIG Manager could not be read: %s" % e)
+        module.exit_json(changed=False, hosts={}, texts=texts, texts_info=tinfo, error="STIG Manager could not be read: %s" % redact(str(e)))
     module.exit_json(changed=False, hosts=hosts, texts=texts, texts_info=tinfo, error="")
 
 
 if __name__ == "__main__":
-    main()
+    run_main(main)     # 1.77.0h: an unexpected error redacted, no raw traceback

@@ -86,7 +86,7 @@ run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...  (a TEXT starting with 
     local tname="$1" want="$2"; shift 2
     local args=() texts=() seen=0
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
-    (cd "$repo" && ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
+    (cd "$repo" && env ${st_lib:+ANSIBLE_LIBRARY="$st_lib"} ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
         "$ap" -i localhost, -c local playbooks/stig_drift_report.yml -e ansible_become=false -e "ansible_python_interpreter=$py" \
         -e "@$work/settings.yml" -e '{"awx_job_id": 4713}' "${args[@]}") > "$work/out.txt" 2>&1
     local rc=$?
@@ -279,6 +279,33 @@ afd="$(sed -n 's/.*--AFPath \([^ ]*\).*/\1/p' "$work/es_args.txt")"
 [ "$(head -1 "$work/es_af.txt")" = RHEL_9.xml ] && [ "$(wc -l < "$work/es_af.txt")" = 2 ] && [ "$(tail -1 "$work/es_af.txt")" = 700 ] && [ -n "$afd" ] && [ ! -e "$afd" ] \
     && echo "ok   - ... only the .xml there, in a root-only folder of this run, removed after the scan" \
     || { echo "FAIL - the answer files' folder: $(cat "$work/es_af.txt") ($afd)"; fails=$((fails + 1)); }
+rm -f "$work/es_args.txt"
+# 1.77.0c: the copy of the answer files fails part way (a stand-in copy module writes one file, then fails): the host's
+# folder of this run is removed all the same (the staging is inside the block whose always removes it)
+mkdir -p "$work/lib"
+cat > "$work/lib/copy.py" <<PYEOF
+#!/usr/bin/python
+import json, os, sys
+from ansible.module_utils.basic import _load_params
+p = _load_params()
+dest = p.get("dest") or ""
+with open("$work/copied.txt", "a") as f:
+    f.write(dest + "\n")
+path = os.path.join(dest, "partial.xml") if os.path.isdir(dest) else dest
+if path and os.path.isdir(os.path.dirname(path)):
+    with open(path, "w") as f:
+        f.write("partial")
+print(json.dumps({"failed": True, "msg": "the stand-in copy failed part way (a full disk)"}))
+sys.exit(1)
+PYEOF
+st_lib="$work/lib"
+run "the answer files' copy fails part way: the host's folder still removed" fail -e "$es_on" \
+    -e check_stig_evaluate_answers="$work/answers" -e check_stig_dir="$work/kept3" -- "the stand-in copy failed part way" "this run's folders removed"
+st_lib=""
+cdest="$(head -1 "$work/copied.txt" 2>/dev/null)"
+cdir="${cdest%/}"; [ "$cdir" = "$cdest" ] && cdir="$(dirname "$cdest")"     # the host's folder: dest itself, or its folder
+if [ -n "$cdest" ] && [ ! -e "$cdir" ]; then echo "ok   - ... the stand-in wrote into the host's folder ($cdest), that folder is gone"
+else echo "FAIL - the host's answer files folder after a failed copy: '$cdest'"; [ -n "$cdest" ] && ls -la "$cdir"; fails=$((fails + 1)); fi
 rm -f "$work/es_args.txt"
 run "answer files that cannot be read: Evaluate-STIG not run, not scanned (a warning) - not scanned without them" fail -e "$es_on" \
     -e check_stig_evaluate_answers="$work/no-answers" -e check_stig_dir="$work/kept3" -- \

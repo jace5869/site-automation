@@ -50,6 +50,7 @@ import time
 import xml.etree.ElementTree as ET
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_redact import head, redact, run_main
 
 DOCUMENTED = ["ExpectedStatus", "ValidationCode", "ValidTrueStatus", "ValidTrueComment", "ValidFalseStatus", "ValidFalseComment"]
 CODE_MAX = 6000
@@ -775,7 +776,7 @@ def sandbox_probe(runner, pwsh=None, version=None):
     try:
         j = json.loads(out[-1])
     except (ValueError, IndexError):
-        return "systemd-run could not start it (exit %d: %s)" % (r.returncode, (r.stderr.decode("utf-8", "replace").strip() or "no answer")[:200])
+        return "systemd-run could not start it (exit %d: %s)" % (r.returncode, redact(r.stderr.decode("utf-8", "replace").strip() or "no answer")[:200])
     w = j.get("writable") or []
     w = [w] if isinstance(w, str) else w
     if w:
@@ -815,7 +816,9 @@ def sandbox_probe(runner, pwsh=None, version=None):
     said = j.get("ipcrm") or []
     said = [said] if isinstance(said, str) else said
     if len(said) != 2 or not all("permission denied" in str(x).lower() for x in said):
-        return "SysV IPC is not closed in it (systemd %s: ipcrm said %s)" % (version, "; ".join(str(x) for x in said)[:160] or "nothing")
+        # 1.77.0i (Codex P1): what ipcrm said, redacted whole, then cut
+        return "SysV IPC is not closed in it (systemd %s: ipcrm said %s)" % (
+            version, redact("; ".join(str(x) for x in said), backstop=False)[:160] or "nothing")
     dev = j.get("dev") or []
     dev = [dev] if isinstance(dev, str) else dev
     if dev:
@@ -993,21 +996,29 @@ def blind(code, calls=None, paths=None):
             continue
         if not p.get("literal"):
             return "%s is given a path that is not a plain literal (%s) - the trial reads only literal paths" % (
-                p.get("cmd") or "a cmdlet", str(p.get("path") or "")[:80])
+                p.get("cmd") or "a cmdlet", redact(str(p.get("path") or ""), backstop=False)[:80])   # 1.77.0h: redacted, then cut
         t = touch_of(p.get("path") or "", bool(p.get("recurse")))
         if t == "?":
-            return "%s is given %s - not an absolute path" % (p.get("cmd") or "a cmdlet", str(p.get("path"))[:80])
+            return "%s is given %s - not an absolute path" % (p.get("cmd") or "a cmdlet", redact(str(p.get("path")), backstop=False)[:80])
         if t:
             return "it reads %s - the trial cannot show %s as the host has it (%s %s)" % (
-                PLACE.get(t, "an automount the sandbox cannot show as the host has it"), t, p.get("cmd") or "", str(p.get("path"))[:80])
+                PLACE.get(t, "an automount the sandbox cannot show as the host has it"), t, p.get("cmd") or "", redact(str(p.get("path")), backstop=False)[:80])
     for c in calls or []:
         if c and c[0] == "/usr/bin/grep":
             rec = "-r" in c
             for x in c[1:]:
                 t = touch_of(x, rec) if x.startswith("/") else ""
                 if t:
-                    return "it reads %s - the trial cannot show %s as the host has it (grep %s)" % (PLACE.get(t, "an automount the sandbox cannot show as the host has it"), t, x[:80])
+                    return "it reads %s - the trial cannot show %s as the host has it (grep %s)" % (PLACE.get(t, "an automount the sandbox cannot show as the host has it"), t, redact(x, backstop=False)[:80])
     return ""
+
+
+def _whole_lines(b, limit):
+    """At most limit bytes of an output, to a line's end (site_redact.head, for bytes)."""
+    if len(b) <= limit:
+        return b
+    k = b.rfind(b"\n", 0, limit)
+    return b[:k + 1] if k >= 0 else b""
 
 
 def capture(argv, seconds=30):
@@ -1015,7 +1026,8 @@ def capture(argv, seconds=30):
     env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "SYSTEMD_PAGER": "", "SYSTEMD_COLORS": "0"}
     try:
         p = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=seconds, env=env)
-        return p.stdout[:REPLAY_MAX], p.stderr[:65536], p.returncode
+        # 1.77.0h: cut at a line's end - a line the cut would split is left out (what the trial reads may be shown)
+        return _whole_lines(p.stdout, REPLAY_MAX), _whole_lines(p.stderr, 65536), p.returncode
     except subprocess.TimeoutExpired:
         return b"", b"no answer in %d seconds\n" % seconds, 124
     except OSError as e:
@@ -1192,7 +1204,8 @@ def run_trial(pwsh, runner, code, seconds, binds=None, version=None):
     try:
         return json.loads(out[-1] if out else ""), "", round(time.time() - t, 1)
     except ValueError:
-        err = (p.stderr.decode("utf-8", "replace").strip() or "pwsh gave no answer")[:300]
+        # 1.77.0c: whole (to 64 KiB) - the caller removes the secrets, then cuts it
+        err = (head(p.stderr.decode("utf-8", "replace"), 65536).strip() or "pwsh gave no answer")
         if time.time() - t >= seconds:
             err = "no answer in %d seconds (stopped)" % seconds
         return None, err, round(time.time() - t, 1)
@@ -1392,7 +1405,8 @@ def run_ps(pwsh, script, code_file, seconds):
     try:
         return json.loads(out[-1] if out else ""), "", round(time.time() - t, 1)
     except ValueError:
-        return None, (p.stderr.decode("utf-8", "replace").strip() or "pwsh gave no answer")[:300], round(time.time() - t, 1)
+        # 1.77.0d: pwsh's message may quote the code it parsed - redacted, then cut
+        return None, redact(p.stderr.decode("utf-8", "replace").strip() or "pwsh gave no answer")[:300], round(time.time() - t, 1)
 
 
 def main():
@@ -1459,7 +1473,7 @@ def main():
                 no_sandbox = sandbox_probe(runner, pwsh, version)
             if no_sandbox:
                 trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0,
-                              "error": "no sandbox (%s): a trial runs only in a read-only sandbox" % no_sandbox}
+                              "error": "no sandbox (%s): a trial runs only in a read-only sandbox" % redact(no_sandbox)[:300]}
                 continue
             # what the sandbox would show as its own, not the host's (the mount table, IPC files, names through
             # PowerShell): not tried - never a result the host would not give
@@ -1471,7 +1485,7 @@ def main():
                 continue
             why_blind = blind(code, calls, [gp] if isinstance(gp, dict) else gp)
             if why_blind:
-                trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0, "error": why_blind}
+                trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0, "error": redact(why_blind)[:300]}
                 continue
             # what needs a socket, the host's IPC namespace or NSS: the exact command lines the check let through, run
             # once here (read-only), their answers replayed inside the sandbox
@@ -1479,7 +1493,7 @@ def main():
             bad = [" ".join(c) for c in todo if not replay_ok(c)]
             if bad:
                 trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0,
-                              "error": "it runs %s, which is replayed only as the read-only check allows" % bad[0]}
+                              "error": "it runs %s, which is replayed only as the read-only check allows" % redact(bad[0], backstop=False)[:200]}
                 continue
             for argv in todo:
                 if tuple(argv) not in answers:
@@ -1492,26 +1506,33 @@ def main():
             if moved:
                 # 1.76.1b: a link the check looked at moved during the trial - its result is not the host's as checked
                 trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": secs, "replayed": replayed,
-                              "error": "a path changed during the trial (%s)" % "; ".join(moved)[:240]}
+                              "error": "a path changed during the trial (%s)" % redact("; ".join(moved))[:240]}
                 continue
             if not isinstance(r, dict):
-                trial[cid] = {"ran": True, "ok": False, "valid": None, "read": "", "error": err, "seconds": secs}
+                trial[cid] = {"ran": True, "ok": False, "valid": None, "read": "", "error": redact(err)[:300], "seconds": secs}
             elif not r.get("ok"):
-                trial[cid] = {"ran": True, "ok": False, "valid": None, "read": "", "error": str(r.get("error") or "")[:300], "seconds": secs}
+                trial[cid] = {"ran": True, "ok": False, "valid": None, "read": "", "error": redact(str(r.get("error") or ""))[:300], "seconds": secs}
             else:
                 vals = r.get("values")
                 vals = vals if isinstance(vals, list) else [vals]
                 kinds = r.get("kinds")
                 kinds = kinds if isinstance(kinds, list) else [kinds]
                 one = len(vals) == 1 and kinds == ["Boolean"] and isinstance(vals[0], bool)
-                trial[cid] = {"ran": True, "ok": one, "valid": vals[0] if one else None, "read": str(r.get("read") or "")[:300],
-                              "error": "" if one else "it gave %s, not one true or false" % (", ".join(str(v) for v in vals[:3]) or "nothing"),
+                trial[cid] = {"ran": True, "ok": one, "valid": vals[0] if one else None, "read": redact(str(r.get("read") or ""))[:300],
+                              "error": "" if one else "it gave %s, not one true or false" % (
+                                  redact(", ".join(str(v) for v in vals[:3]))[:300] or "nothing"),
                               "seconds": secs}
             trial[cid]["replayed"] = replayed
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    module.exit_json(changed=False, evaluate=ev, gate=gate, trial=trial, error="", sandbox={"ok": not no_sandbox and runner is not None and runner != "", "why": no_sandbox})
+    # 1.77.0h: the read-only check's reasons are the code's words (a command it refused may quote a value): redacted at
+    # the module's edge, as command lines; the trial's texts were redacted where they were made
+    for g in gate.values():
+        if isinstance(g, dict) and isinstance(g.get("why"), list):
+            g["why"] = [redact(str(w), backstop=False)[:300] for w in g["why"]]
+    module.exit_json(changed=False, evaluate=ev, gate=gate, trial=trial, error="",
+                     sandbox={"ok": not no_sandbox and runner is not None and runner != "", "why": redact(no_sandbox or "")[:300]})
 
 
 if __name__ == "__main__":
-    main()
+    run_main(main)     # 1.77.0h: an unexpected error redacted, no raw traceback

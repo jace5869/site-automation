@@ -741,6 +741,10 @@ File: `roles/check_stig/defaults/main.yml`
 | `answer_keys_act` | `true` | a rule no fixed pattern fits: ACT drafts its ValidationCode on the AAP side (evidence mode: it runs no command, nothing on the trial host), marked "drafted by ACT - read it before you use it"; false = written by hand |
 | `answer_keys_trial` | `false` | 1.76.4: try each draft once on the host, in a read-only sandbox (systemd-run; docs/STIG_ANSWER_KEYS.md, The trial) - off by default until the sandbox is hardened further: false = the read-only check only, nothing else runs on the host, and each block is offered marked "not tried" (read it, try it on a test host first)… (all of it: the role file) |
 | `answer_keys_trial_timeout` | `60` | seconds each ValidationCode may run in its trial on the host |
+| `answer_keys_cross_check` | `true` | 1.77.0, the cross-check: for each block, Evaluate-STIG, STIG Manager (a person's review after the last scan), the code in the trial and ACT on its own side by side - Agree, Need a look or Too little to compare; never changes a block. ACT gets DISA's check text and the host's read-only evidence (DISA's commands on the… (all of it: the role file) |
+| `answer_keys_cross_check_act_max` | `50` | 1.77.0: at most this many ACT calls a run for the cross-check (hosts with the same evidence share one); past it the rule says "not asked (the cap, answer_keys_cross_check_act_max)" |
+| `answer_keys_evidence` | `web` | 1.77.0: a host's text in the reports of both answer keys jobs (what the trial or the code read, Evaluate-STIG's comment, the cross-check's evidence) - web: on the report website, redacted, at most 20 lines and 2000 characters a rule; never in the email or its workbook (statuses, counts and rule ids only); none: nowher… (all of it: the role file) |
+| `answer_keys_try_hosts` | `10` | ---- STIG answer keys - try my answer file (1.77.0, playbooks/stig_answer_keys_try.yml): your answer files on test hosts ----- at most this many test hosts in one run (target and the Limit); Evaluate-STIG runs twice on each, with and without your answer files (check_stig_evaluate_answers) |
 
 ## check_time
 

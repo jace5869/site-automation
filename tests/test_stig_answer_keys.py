@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 sys.path.insert(0, os.path.join(REPO, "plugins", "module_utils"))
 sys.path.insert(0, HERE)
 import ansible.module_utils  # noqa: E402,F401
+ansible.module_utils.__path__.append(os.path.join(REPO, "plugins", "module_utils"))   # as ansible.cfg gives them (site_redact)
 import stig_answer_filters as a  # noqa: E402
 
 spec = importlib.util.spec_from_file_location("site_stig_answer_host", os.path.join(REPO, "roles", "check_stig", "library", "site_stig_answer_host.py"))
@@ -601,7 +602,7 @@ class ManyHosts(unittest.TestCase):
         p9 = m["groups"][1]["picks"][0]
         self.assertEqual((p9["v"], p9["expected"], p9["hosts"], p9["es"]), ("V-257777", "Not_Reviewed", ["h9a", "h9b", "h9c"], "Not Reviewed 2, Open 1"))
         self.assertIn("Not Reviewed on 2 hosts, Open on 1 host - the key applies where Evaluate-STIG says Not_Reviewed", p9["expected_note"])
-        self.assertEqual(m["failed"], [{"host": "dead", "why": "not reached"}])
+        self.assertEqual(m["failed"], [{"host": "dead", "why": "not reached", "why_mail": "it did not work (the job's output has why)"}])
         self.assertEqual(m["none"], [])
         hosts.append({"host": "h10", "ok": True, "bench": "RHEL_10_STIG", "rev": "V1R3", "picks": [pk("V-999", "", False, "")]})
         self.assertEqual(a.stig_answer_merge(hosts)["none"], ["V-999"])          # in none of the hosts' STIGs

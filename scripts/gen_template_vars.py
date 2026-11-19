@@ -452,6 +452,23 @@ check_stig_evaluate: /opt/Evaluate-STIG
 check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## No ACT drafts (a rule no fixed pattern fits is then written by hand)
 # answer_keys_act: false
+## 1.77.0, the cross-check: Evaluate-STIG, STIG Manager, the code and ACT side by side for each block (ACT gets
+## DISA's check text and the host's read-only evidence, never the code); at most this many ACT calls a run
+# answer_keys_cross_check: false
+# answer_keys_cross_check_act_max: 50
+"""),
+    "stig_answer_keys_try.yml": ("STIG answer keys - try my answer file", "Machine, Windows file share (when the answer files are on a share)", "check_stig", """\
+## 1.77.0: what YOUR answer files do on test hosts - Evaluate-STIG twice for the rules you pick (without them, then with
+## them); nothing is written anywhere, the hosts keep nothing. Test hosts: target and the Limit. Prompt on launch for these:
+target: rhel81.example.mil,rhel82.example.mil
+answer_keys_rules: [V-230221, V-230318]
+## Your answer files and Evaluate-STIG, as the STIG drift report reads them (docs/STIG_DRIFT.md)
+check_stig_evaluate: /opt/Evaluate-STIG
+check_stig_evaluate_answers: '\\\\fileserver.yourdomain.mil\\stig\\AnswerFiles'
+## Your AnswerKey (only this pair of check_stig_evaluate_args is used here)
+# check_stig_evaluate_args: [--AnswerKey, SITEA]
+## At most this many test hosts in one run
+# answer_keys_try_hosts: 10
 """),
     "stig_recheck.yml": ("STIG recheck", "Machine, STIG Manager API; Windows file share with check_stig_evaluate_answers", "check_stig", """\
 ## What to check again is read from STIG Manager (the same settings and "STIG Manager API" credential as the STIG

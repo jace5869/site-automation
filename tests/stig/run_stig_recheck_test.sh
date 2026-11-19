@@ -93,7 +93,7 @@ run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...  (a TEXT starting with 
     local tname="$1" want="$2"; shift 2
     local args=() texts=() seen=0
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
-    (cd "$repo" && ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
+    (cd "$repo" && env ${st_lib:+ANSIBLE_LIBRARY="$st_lib"} ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
         "$ap" -i localhost, -c local playbooks/stig_recheck.yml -e ansible_become=false -e "ansible_python_interpreter=$py" \
         -e "@$work/settings.yml" -e '{"awx_job_id": 4715}' "${args[@]}") > "$work/out.txt" 2>&1
     local rc=$?
@@ -194,6 +194,32 @@ run "the recheck with answer files (check_stig_evaluate_answers): Evaluate-STIG 
     "localhost: given 1 answer file(s) from $work/answers; none of the rules checked again"
 grep -q -- "--SelectVuln V-257779,.* --AFPath /" "$work/es_args.txt" && echo "ok   - ... --AFPath with --SelectVuln" \
     || { echo "FAIL - the recheck's Evaluate-STIG arguments"; cat "$work/es_args.txt"; fails=$((fails + 1)); }
+# 1.77.0c: the copy of the answer files fails part way (a stand-in copy module writes one file, then fails): the host's
+# folder of this run is removed all the same (the staging is inside the block whose always removes it)
+mkdir -p "$work/lib"
+cat > "$work/lib/copy.py" <<PYEOF
+#!/usr/bin/python
+import json, os, sys
+from ansible.module_utils.basic import _load_params
+p = _load_params()
+dest = p.get("dest") or ""
+with open("$work/copied.txt", "a") as f:
+    f.write(dest + "\n")
+path = os.path.join(dest, "partial.xml") if os.path.isdir(dest) else dest
+if path and os.path.isdir(os.path.dirname(path)):
+    with open(path, "w") as f:
+        f.write("partial")
+print(json.dumps({"failed": True, "msg": "the stand-in copy failed part way (a full disk)"}))
+sys.exit(1)
+PYEOF
+st_lib="$work/lib"
+run "the answer files' copy fails part way: the host's folder still removed" fail -e "$es_on" \
+    -e check_stig_evaluate_answers="$work/answers" -- "the stand-in copy failed part way" "this run's folders removed"
+st_lib=""
+cdest="$(head -1 "$work/copied.txt" 2>/dev/null)"
+cdir="${cdest%/}"; [ "$cdir" = "$cdest" ] && cdir="$(dirname "$cdest")"     # the host's folder: dest itself, or its folder
+if [ -n "$cdest" ] && [ ! -e "$cdir" ]; then echo "ok   - ... the stand-in wrote into the host's folder ($cdest), that folder is gone"
+else echo "FAIL - the host's answer files folder after a failed copy: '$cdest'"; [ -n "$cdest" ] && ls -la "$cdir"; fails=$((fails + 1)); fi
 run "an Evaluate-STIG without --SelectVuln: run in full, the same answers" ok -e "$es_on" -e check_stig_evaluate="$work/es_old" -- \
     "fixed 1, now n/a 0, answered 4, still open 1, by hand 1" "checked: in full - this Evaluate-STIG has no -SelectVuln"
 grep -q "SelectVuln" "$work/es_old_args.txt" && { echo "FAIL - --SelectVuln given to an Evaluate-STIG without it"; fails=$((fails + 1)); } \

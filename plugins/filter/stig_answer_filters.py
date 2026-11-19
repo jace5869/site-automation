@@ -14,9 +14,34 @@ GET only). The read-only check and the trial run on the host (roles/check_stig/l
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import importlib.util
 import os
 import re
 import shlex
+
+# 1.77.0b: the one redaction the host modules use (plugins/module_utils/site_redact.py; there: ansible.module_utils.site_redact),
+# again here before a text goes into a page, workbook, email or ACT's task
+_spec = importlib.util.spec_from_file_location(
+    "site_redact", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_redact.py"))
+_redact = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_redact)
+redact = _redact.redact
+cap = _redact.cap
+EVIDENCE_OFF = _redact.EVIDENCE_OFF
+
+
+def _why(r, evidence="web", mail=False):
+    """1.77.0h: a row's reason as it is shown - the email (and answer_keys_evidence: none) take the short one, without
+    the host's words (why_mail); the web the whole one, redacted."""
+    return (r.get("why_mail") or r.get("why") or "") if mail or evidence == "none" else (r.get("why") or "")
+
+
+def _fail_mail(f):
+    """1.77.0i (Codex P1): why a host did not work, for the email and none - the reason its producer set without the
+    host's words (why_mail), never a cut of the message."""
+    return f.get("why_mail") or "it did not work (the job's output has why)"
+
+
 
 STATUSES = ("NotAFinding", "Open", "Not_Applicable")          # never RA, POA&M, Not_Reviewed as an answer
 DOCUMENTED = ["ExpectedStatus", "ValidationCode", "ValidTrueStatus", "ValidTrueComment", "ValidFalseStatus", "ValidFalseComment"]
@@ -105,7 +130,8 @@ def stig_answer_pick(rules, items, sm=None, es_why=""):
     sm = sm or {}
     if es_why:                           # 1.75.0b: Evaluate-STIG did not run the picked rules only - never in full: no key
         return [dict(r, title="", cat="", sm="", es="", expected="", check_text="", ok=False,
-                     why="Not drafted - Evaluate-STIG could not run only the picked rules: %s" % es_why) for r in rules or []]
+                     why="Not drafted - Evaluate-STIG could not run only the picked rules: %s" % redact(es_why),
+                     why_mail="Not drafted - Evaluate-STIG could not run only the picked rules.") for r in rules or []]
     reviews = sm.get("reviews") or {} if sm.get("status") == "found" else {}
     by = dict((str(it.get("key") or ""), it) for it in items or [] if isinstance(it, dict))
     out = []
@@ -470,7 +496,7 @@ def stig_answer_act_task(rule, values=None):
     vals = "; ".join("%s = %s" % (k, v) for k, v in sorted(stig_answer_values(values).items())) or "none given"
     return "\n".join([
         "Write an Evaluate-STIG answer file ValidationCode (PowerShell 7 on Linux, run as root) for the STIG rule %s (%s): %s"
-        % (rule.get("v"), rule.get("sv"), rule.get("title") or ""),
+        % (rule.get("v"), rule.get("sv"), redact(str(rule.get("title") or ""), backstop=False)),
         "It must return $true when the host is as DISA's check text below wants (Not a Finding), else $false - one value, nothing else on the output.",
         "Say what it read with Write-Verbose. It must only read: no change to the host, no network, no sudo, no Invoke-Expression, no aliases, no backticks,",
         "no command from a variable, no functions, no hashtables, no script block except the one given to ForEach-Object or Where-Object,",
@@ -485,7 +511,8 @@ def stig_answer_act_task(rule, values=None):
         "Put the code alone in one ```powershell block. Below it, one line: what it checks; then a line VALUES USED: the names (or none).",
         "",
         "DISA's check text:",
-        str(rule.get("check_text") or "(none)")])
+        # 1.77.0i (Codex P1, as the cross-check's): the rule's text from STIG Manager, its secrets masked before ACT
+        redact(str(rule.get("check_text") or ""), backstop=False) or "(none)"])
 
 
 def stig_answer_act_needs(summary):
@@ -630,19 +657,26 @@ def stig_answer_rows(picks, drafts, host=None, key="DEFAULT", names=None, words=
             r["why"] = "Not drafted - %s." % bad
         elif host.get("failed_host"):
             r["why"] = "Not drafted - not tried: the trial host failed (%s)." % host["failed_host"]
+            r["why_mail"] = "Not drafted - not tried: the trial host failed."
         elif not g:
             r["why"] = "Not drafted - the read-only check did not run on the host (%s)." % (host.get("error") or "no answer")
+            r["why_mail"] = "Not drafted - the read-only check did not run on the host."
         elif not g.get("ok"):
             r["why"] = "Not drafted - the read-only check refused the %s: %s. Write this one by hand." % (
-                "draft ACT wrote" if d["by"] == "ACT" else "draft", "; ".join(g.get("why") or ["refused"]))
+                "draft ACT wrote" if d["by"] == "ACT" else "draft", redact("; ".join(g.get("why") or ["refused"]), backstop=False))
+            # 1.77.0i (Codex P1): the email's, without the gate's words (a parser's diagnostic may quote the host)
+            r["why_mail"] = "Not drafted - the read-only check refused the %s. Write this one by hand." % (
+                "draft ACT wrote" if d["by"] == "ACT" else "draft")
         elif t.get("off"):
             # 1.76.4: the trial is off - offered, marked not tried (ExpectedStatus as drafted)
             r["untried"] = True
             r["block"] = stig_answer_block(key, p["expected"], d["code"], d["true"], d["false"], names, d["by"] == "ACT", True)
         elif t.get("ran") is False:
-            r["why"] = "Not drafted - not tried: %s." % (t.get("error") or "it did not run")
+            r["why"] = "Not drafted - not tried: %s." % (redact(t.get("error")) or "it did not run")
+            r["why_mail"] = "Not drafted - not tried in the trial."
         elif not t.get("ok"):
-            r["why"] = "Not drafted - the trial on the host failed: %s." % (t.get("error") or "it did not run")
+            r["why"] = "Not drafted - the trial on the host failed: %s." % (redact(t.get("error")) or "it did not run")
+            r["why_mail"] = "Not drafted - the trial on the host failed."
         else:
             r["block"] = stig_answer_block(key, p["expected"], d["code"], d["true"], d["false"], names, d["by"] == "ACT")
         rows.append(r)
@@ -650,9 +684,11 @@ def stig_answer_rows(picks, drafts, host=None, key="DEFAULT", names=None, words=
 
 
 # ---- the report ---------------------------------------------------------------------------------------------------------
-def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", names_from=None, trial_on=None):
+def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", names_from=None, trial_on=None, evidence="web"):
     """rows: [{v, sv, title, cat, sm, es, expected, by (pattern/ACT/''), block, uses, gate {ok, why, used}, trial {ok, valid,
-    read, error, seconds}, check_text, why}] -> {report (the email), web, xlsx, lines}."""
+    read, error, seconds}, check_text, why}] -> {report (the email), web, xlsx, lines}. evidence (answer_keys_evidence,
+    1.77.0h): web - what the trial read on the web and in the workbook, at most 20 lines and 2000 characters; none - only
+    in the AAP job's output. The email never has it, nor a reason's host words."""
     ev, names_from = ev or {}, names_from or {}
     ready = [r for r in rows if r.get("block")]
     nod = [r for r in rows if not r.get("block")]
@@ -698,7 +734,8 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
         else:
             trial_rows = [["ValidationCode gave", "True" if tr.get("valid") is True else "False"],
                           ["Status it would set", "NotAFinding" if tr.get("valid") is True else "Open - the host fails it now: this key keeps it Open"],
-                          ["What it read", tr.get("read") or "-"], ["Took", "%s s" % tr.get("seconds", "-")]]
+                          ["What it read", (EVIDENCE_OFF if evidence == "none" else cap(redact(tr.get("read")))) or "-"],
+                          ["Took", "%s s" % tr.get("seconds", "-")]]
         if tr.get("replayed"):
             trial_rows.append(["Replayed in the trial", "; ".join(tr["replayed"]) + " - read once outside the sandbox (the exact "
                                "command the check allowed), its answer given to the code inside"])
@@ -741,7 +778,8 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
                   "columns": cols, "rows": ready_rows, "wrap": True}
     nd = {"title": "Not drafted (%d)" % len(nod), "status": "warning" if nod else "ok", "columns": ["Rule", "What it checks", "Why not"],
           "kinds": ["wrap", "wrap", "wrap"], "wrap": True,
-          "rows": [["%s (%s)" % (r["v"], r["sv"]), r.get("title") or "", r.get("why") or ""] for r in nod]}
+          "rows": [["%s (%s)" % (r["v"], r["sv"]), r.get("title") or "", _why(r, evidence)] for r in nod]}
+    nd_mail = dict(nd, rows=[["%s (%s)" % (r["v"], r["sv"]), r.get("title") or "", _why(r, evidence, True)] for r in nod])
     ver = ev.get("version") or "?"
     how_lines = ["Asked: %d rules (answer_keys_rules), answer key %s (answer_keys_name), trial host %s." % (len(rows), key, host),
                  "Read: DISA's check text and the host's reviews from STIG Manager (GET only), and Evaluate-STIG's own result for "
@@ -776,11 +814,11 @@ def stig_answer_report(rows, host, key, ev=None, act_on=True, bench="", rev="", 
     xlsx = [{"name": "Answer keys", "columns": ["Rule", "Drafted by", "Trial", "AnswerKey block"],
              "rows": [["%s (%s)" % (r["v"], r["sv"]), "pattern" if r.get("by") == "pattern" else "ACT - read it before you use it",
                        "not tried" if r.get("untried") else "True" if (r.get("trial") or {}).get("valid") else "False", r["block"]] for r in ready]},
-            {"name": "Not drafted", "columns": nd["columns"], "rows": nd["rows"]}]
+            {"name": "Not drafted", "columns": nd["columns"], "rows": nd_mail["rows"]}]   # 1.77.0h: it goes with the email
     lines = [title] + ["%s %s%s: %s" % (r["v"], "ACT draft" if r.get("by") == "ACT" else "ready", " (not tried)" if r.get("untried") else "",
                                         r.get("title") or "") for r in ready] + \
         ["%s NOT DRAFTED: %s" % (r["v"], r.get("why") or "") for r in nod]
-    return {"report": dict(base, sections=[ready_mail, nd, how]), "web": dict(base, sections=[ready_web, nd, how]), "xlsx": xlsx,
+    return {"report": dict(base, sections=[ready_mail, nd_mail, how]), "web": dict(base, sections=[ready_web, nd, how]), "xlsx": xlsx,
             "lines": lines}
 
 
@@ -910,7 +948,8 @@ def stig_answer_merge(hosts, most=150):
     groups, order, failed, asked, found = {}, [], [], [], set()
     for h in hosts or []:
         if not h.get("ok"):
-            failed.append({"host": h.get("host") or "", "why": h.get("why") or "it did not run"})
+            failed.append({"host": h.get("host") or "", "why": h.get("why") or "it did not run",
+                           "why_mail": h.get("why_mail") or "it did not work (the job's output has why)"})
             continue
         key = "%s|%s" % (h.get("bench") or "", h.get("rev") or "")
         if key not in groups:
@@ -1000,7 +1039,7 @@ PER_STIG = ("Evaluate-STIG", "Evaluate-STIG's", "Evaluate-STIG on the host", "Ev
             "The read-only check and the trial ran with", "The read-only check ran with", "The trial is off", "The trial ran each code")
 
 
-def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, left_out=None, auto=None, answered=None, trial_on=None):
+def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, left_out=None, auto=None, answered=None, trial_on=None, evidence="web"):
     """1.76.0: the report of many hosts, grouped by STIG. groups: [{label, bench, rev, hosts, rep, rows, ev, names_from}]
     (rows: stig_answer_rows of the group) -> {report (the email), web, xlsx, lines}."""
     failed, none, left_out, answered = failed or [], none or [], left_out or {}, answered or {}
@@ -1011,7 +1050,7 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
         # 1.76.4 (Codex): each STIG's own setting (the host that tried it), else the job's
         g_on = g["trial_on"] if isinstance(g.get("trial_on"), bool) else trial_on
         d = stig_answer_report(g.get("rows") or [], g.get("rep") or "", key, g.get("ev") or {}, act_on, g.get("bench") or "",
-                               g.get("rev") or "", g.get("names_from") or {}, g_on)
+                               g.get("rev") or "", g.get("names_from") or {}, g_on, evidence)
         ready = [r for r in g.get("rows") or [] if r.get("block")]
         nod = [r for r in g.get("rows") or [] if not r.get("block")]
         n_ready, n_nod = n_ready + len(ready), n_nod + len(nod)
@@ -1054,10 +1093,14 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
             ["  %s NOT DRAFTED: %s" % (r["v"], r.get("why") or "") for r in nod]
         if not how_base:
             how_base.extend(hw.get("lines") or [])
-    extra = []
+    extra, failed_mail = [], None
     if failed:
-        extra.append({"title": "Hosts that did not work (%d)" % len(failed), "status": "warning", "columns": ["Host", "Why"],
-                      "kinds": ["wrap", "wrap"], "wrap": True, "rows": [[f["host"], f["why"]] for f in failed]})
+        # 1.77.0h: why a host did not work - its words (a connection's, a module's) on the web only
+        hw_sec = {"title": "Hosts that did not work (%d)" % len(failed), "status": "warning", "columns": ["Host", "Why"],
+                  "kinds": ["wrap", "wrap"], "wrap": True,
+                  "rows": [[f["host"], _fail_mail(f) if evidence == "none" else f["why"]] for f in failed]}
+        extra.append(hw_sec)
+        failed_mail = dict(hw_sec, rows=[[f["host"], _fail_mail(f)] for f in failed])
         lines += ["HOST %s: %s" % (f["host"], f["why"]) for f in failed]
     if none:
         extra.append({"title": "In none of the hosts' STIGs (%d)" % len(none), "status": "info", "columns": ["Rule", "Why"],
@@ -1093,10 +1136,11 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
     base = {"title": title, "status": status, "subtitle": "answer key %s - %s" % (key, ", ".join(g["label"] for g in groups or []) or "no STIG"),
             "summary": tiles}
     xlsx.append({"name": "Not drafted", "columns": ["STIG", "Rule", "What it checks", "Why not"],
-                 "rows": [[g["label"], "%s (%s)" % (r["v"], r["sv"]), r.get("title") or "", r.get("why") or ""]
+                 "rows": [[g["label"], "%s (%s)" % (r["v"], r["sv"]), r.get("title") or "", _why(r, evidence, True)]
                           for g in groups or [] for r in g.get("rows") or [] if not r.get("block")] +
                          [["-", v, "", "in none of the hosts' STIGs"] for v in none]})
-    return {"report": dict(base, sections=mail_secs + extra + [howsec]), "web": dict(base, sections=web_secs + extra + [howsec]),
+    extra_mail = [failed_mail if (failed_mail and x is extra[0]) else x for x in extra]
+    return {"report": dict(base, sections=mail_secs + extra_mail + [howsec]), "web": dict(base, sections=web_secs + extra + [howsec]),
             "xlsx": xlsx, "lines": [title] + lines}
 
 
@@ -1112,6 +1156,8 @@ class FilterModule(object):
                 "stig_answer_act_uses": stig_answer_act_uses, "stig_answer_auto": stig_answer_auto,
                 "stig_answer_merge": stig_answer_merge, "stig_answer_report_multi": stig_answer_report_multi,
                 "stig_answer_copy_all": stig_answer_copy_all, "stig_label": stig_label,
+                # 1.77.0d: the one redaction (site_redact), for an error text a task cuts: redact first, then cut
+                "site_redact": redact,
                 "stig_answer_att_items": stig_answer_att_items, "stig_answer_drop_att": stig_answer_drop_att,
                 "stig_answer_in_files": stig_answer_in_files, "stig_answer_cap": stig_answer_cap,
                 "stig_answer_for_act_groups": stig_answer_for_act_groups, "stig_answer_act_of": stig_answer_act_of}

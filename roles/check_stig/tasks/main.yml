@@ -42,12 +42,14 @@
     msg: "{{ check_stig_scanner | stig_answers_why(check_stig_evaluate_answers, check_stig_evaluate_read | default('')) }}"
   run_once: true
 
-- name: STIG | answer files - read, and copied to each host for this run
-  ansible.builtin.include_tasks: answers.yml
-  when: _stig_af_on | bool
-
-- name: STIG | the scan, then the answer files' folders removed
+# 1.77.0c: the answer files are staged inside the block, so a copy that fails part way (a full disk) still has its
+# folders removed by the always below (as Try my answer file does)
+- name: STIG | answer files staged, the scan, then the answer files' folders removed
   block:
+    - name: STIG | answer files - read, and copied to each host for this run
+      ansible.builtin.include_tasks: answers.yml
+      when: _stig_af_on | bool
+
     - name: STIG | scan (oscap with the STIG profile, or Evaluate-STIG) and keep the result on the host
       site_stig_scan:
         dir: "{{ check_stig_dir }}"

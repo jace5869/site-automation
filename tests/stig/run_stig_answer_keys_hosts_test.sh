@@ -7,7 +7,9 @@
 # grouped; the ExpectedStatus of the majority, the others said; Copy all per STIG; a workbook sheet per STIG; the
 # unreachable host listed, the job green; a rule in none of the hosts' STIGs. The automatic pick (no rule asked): STIG
 # Manager's Open and Not Reviewed - never Not a Finding, a review with RA words or attachments, a CAT left out;
-# answer_keys_pick open; the cap (answer_keys_max_rules); the rules already in the answer files left out.
+# answer_keys_pick open; the cap (answer_keys_max_rules); the rules already in the answer files left out. 1.77.0, the
+# cross-check (a fake ACT, tests/containers/fake_act.py): DISA's command read on the trial host and on the host a person
+# reviewed after the scan, one ACT call for the same evidence, never the code; a disagreement named; the cap.
 #   bash tests/stig/run_stig_answer_keys_hosts_test.sh     (ANSIBLE_PLAYBOOK=... to pick one; AK_KEEP=DIR keeps the outputs)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -16,13 +18,13 @@ ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 py="${STIG_TEST_PYTHON:-$(command -v python3)}"
 command -v pwsh >/dev/null || { echo "SKIP - pwsh is not here (the read-only check needs PowerShell 7)"; exit 0; }
 work="$(mktemp -d)"
-smtp_pid="" sm_pid=""
-cleanup() { [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$sm_pid" ] && kill "$sm_pid" 2>/dev/null; rm -rf "$work"; }
+smtp_pid="" sm_pid="" act_pid=""
+cleanup() { for p in "$smtp_pid" "$sm_pid" "$act_pid"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done; rm -rf "$work"; }
 trap cleanup EXIT
 fails=0
-port_sm="${AKH_SM_PORT:-12645}" port_smtp="${AKH_SMTP_PORT:-12646}"
+port_sm="${AKH_SM_PORT:-12645}" port_smtp="${AKH_SMTP_PORT:-12646}" port_act="${AKH_ACT_PORT:-12647}"
 major=$(. /etc/os-release && echo "${VERSION_ID%%.*}")
-mkdir -p "$work/mail" "$work/web" "$work/tmp" "$work/rtmp" "$work/ltmp" "$work/answers"
+mkdir -p "$work/mail" "$work/web" "$work/tmp" "$work/rtmp" "$work/ltmp" "$work/answers" "$work/act" "$work/actweb"
 CHK='Verify the owner of /etc/hostname:\n\n$ sudo stat -c \"%U %n\" /etc/hostname\n\nroot /etc/hostname\n\nIf it is not root, this is a finding.'
 # fake Evaluate-STIGs: es8 (RHEL 8 V2R9), es9a and es9b (RHEL 9 V2R10), es10 (RHEL 10 V1R3)
 fake_es() {  # fake_es DIR STIG VERSION RULES_JSON
@@ -52,6 +54,7 @@ fake_es "$work/es9old" RHEL_9_STIG V2R7 "[$(r SV-257777 open)]"
 CHK7='Verify the owner of /etc/hosts:\n\n$ sudo stat -c \"%U %n\" /etc/hosts\n\nroot /etc/hosts\n\nIf it is not root, this is a finding.'
 "$py" "$repo/tests/email/fake_smtp.py" "$port_smtp" "$work/mail" >/dev/null 2>&1 & smtp_pid=$!
 "$py" "$here/stigman_mock.py" "$port_sm" "$work/sm.json" "$work/sm.log" >/dev/null 2>&1 & sm_pid=$!
+"$py" -m http.server "$port_act" --bind 127.0.0.1 --directory "$work/actweb" >/dev/null 2>&1 & act_pid=$!   # ACT's address answers
 sleep 1
 rv() {  # rv SV RESULT [EXTRA_JSON]
     printf '{"ruleId": "%sr1_rule", "ruleIds": ["%sr1_rule"], "result": "%s", "status": {"label": "submitted"}, "ts": "2026-10-01T10:00:00Z", "rule": {"ruleId": "%sr1_rule", "severity": "medium", "title": "x"}%s}' "$1" "$1" "$2" "$1" "${3:-}"
@@ -95,6 +98,10 @@ check_stig_stigman_client_secret: s3cret
 check_stig_dir: $work/kept
 answer_keys_act: false
 answer_keys_trial: true
+answer_keys_cross_check: false          # 1.77.0: on in its own scenario below (with the fake ACT)
+act_triage_script_src: $repo/tests/containers/fake_act.py
+act_triage_poll: 1
+site_act_url: http://127.0.0.1:$port_act/v1/chat/completions
 report_email_to: [ops@example.mil]
 report_email_smtp_host: 127.0.0.1
 report_email_smtp_port: $port_smtp
@@ -110,8 +117,8 @@ run() {  # run NAME ok|fail [args...] -- TEXT...  (a TEXT starting with ! must n
     rm -f "$work/mail"/* "$work"/es*/args.txt
     (cd "$repo" && TMPDIR="$work/tmp" ANSIBLE_REMOTE_TMP="$work/rtmp" ANSIBLE_LOCAL_TEMP="$work/ltmp" \
         ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
-        ANSIBLE_HOST_KEY_CHECKING=False "$ap" -i "${AKH_INV:-$work/inv.yml}" playbooks/stig_answer_keys.yml -e ansible_become=false -e "ansible_python_interpreter=$py" \
-        -e "@$work/settings.yml" -e '{"awx_job_id": 4901}' "${args[@]}") > "$work/out.txt" 2>&1
+        ANSIBLE_HOST_KEY_CHECKING=False FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json" GENAI_KEY=test-key "$ap" -i "${AKH_INV:-$work/inv.yml}" playbooks/stig_answer_keys.yml -e ansible_become=false -e "ansible_python_interpreter=$py" \
+        -e "@$work/settings.yml" -e '{"awx_job_id": 4901, "awx_user_name": "aap.admin"}' "${args[@]}") > "$work/out.txt" 2>&1
     local rc=$?
     [ -n "${AK_KEEP:-}" ] && { mkdir -p "$AK_KEEP"; cp "$work/out.txt" "$AK_KEEP/$(printf '%s' "$tname" | tr -c 'A-Za-z0-9' '_' | cut -c1-50).txt"
                                p="$(lastpage)"; [ -n "$p" ] && cp "$p" "$AK_KEEP/$(printf '%s' "$tname" | tr -c 'A-Za-z0-9' '_' | cut -c1-50).html"; }
@@ -197,6 +204,45 @@ printf '<?xml version="1.0"?>\n<STIGComments Name="RHEL9"><Vuln ID="V-257777"><A
 run "the rules already in your answer file: left out, listed" ok -e target=h9a -e answer_keys_pick=both -e '{"answer_keys_cat": [1, 2]}' -e check_stig_evaluate_answers="$work/answers" -- \
     "RHEL 9 V2R10: 2 ready to copy" "!V-257777 ready"
 t="$(pagetext "$(lastpage)")"; case "$t" in *"Already in your answer file (1)"*"V-257777"*) echo "ok   - ... listed: already in your answer file" ;; *) echo "FAIL - already answered"; fails=$((fails + 1)) ;; esac
+
+# 4. 1.77.0, the cross-check: h9b's review of SV-258999 is a person's (no result engine), newer than its last scan import
+# (SV-257777's, by Evaluate-STIG); the code is tried on h9a (the trial host). Both hosts are this box: the same evidence.
+cp "$work/sm.json" "$work/sm.json.keep"
+"$py" - "$work/sm.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+eng = {"type": "script", "product": "Evaluate-STIG", "version": "1.2610.1"}
+d["reviews"]["13"] = [dict(d["reviews"]["13"][0], resultEngine=eng, ts="2026-10-01T10:00:00Z"),
+                      {"ruleId": "SV-258999r1_rule", "ruleIds": ["SV-258999r1_rule"], "result": "fail", "status": {"label": "submitted"},
+                       "ts": "2026-11-10T10:00:00Z", "resultEngine": None, "rule": {"ruleId": "SV-258999r1_rule", "severity": "medium", "title": "x"}}]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+xc='{"answer_keys_rules": ["V-258999"]}'
+printf '%s' '{"summary": "NF\nroot owns /etc/hostname, as the check text wants."}' > "$work/act/act.json"; rm -f "$work/act/fake-act-calls.log"
+run "the cross-check: code NF and ACT NF on h9a, a person's Open in STIG Manager and ACT NF on h9b - need a look" ok \
+    -e target=h9a,h9b -e "$xc" -e answer_keys_cross_check=true -- \
+    "STIG answer keys: 1 ready to copy, 1 need a look in the cross-check, 0 not drafted - 1 STIG, 2 hosts" \
+    "Cross-check: 0 agree, 1 need a look, 0 too little to compare" "V-258999 CROSS-CHECK: STIG Manager Open, ACT NF on h9b"
+[ "$(grep -c call "$work/act/fake-act-calls.log" 2>/dev/null)" = 1 ] && echo "ok   - ... one ACT call: the two hosts returned the same evidence" \
+    || { echo "FAIL - cross-check ACT calls: $(cat "$work/act/fake-act-calls.log" 2>/dev/null | wc -l)"; fails=$((fails + 1)); }
+tk="$(cat "$work/act/fake-act-task.txt" 2>/dev/null)"
+case "$tk" in *"\$ /usr/bin/stat -c '%U %n' /etc/hostname   (exit 0)"*"root /etc/hostname"*) echo "ok   - ... ACT got DISA's command and what the host returned" ;;
+    *) echo "FAIL - what ACT got: $(printf '%s' "$tk" | head -c 600)"; fails=$((fails + 1)) ;; esac
+case "$tk" in *ValidationCode*|*powershell*|*AnswerKey*|*Get-Content*|*"Not Reviewed"*) echo "FAIL - ACT saw the code or Evaluate-STIG's status"; fails=$((fails + 1)) ;;
+    *) echo "ok   - ... never the code, its result or Evaluate-STIG's status" ;; esac
+t="$(pagetext "$(lastpage)")"; xmiss=0
+for want in "Cross-check by STIG" "Cross-check — RHEL 9 V2R10 (1 rule, 1 need a look)" "⚠ Need a look: STIG Manager Open, ACT NF on h9b" \
+            "Open (a person," "Ran on h9a, h9b: /usr/bin/stat -c '%U %n' /etc/hostname" "answer_keys_cross_check_act_max"; do
+    case "$t" in *"$want"*) true ;; *) echo "FAIL - the cross-check page: missing '$want'"; xmiss=1 ;; esac
+done
+[ $xmiss -eq 0 ] && echo "ok   - ... the website: the cross-check sections, the disagreement, every command and the host it ran on" || fails=$((fails + 1))
+rm -f "$work/act/fake-act-calls.log"
+run "the cross-check, answer_keys_cross_check_act_max 0: ACT not asked, said with the setting" ok \
+    -e target=h9a,h9b -e "$xc" -e answer_keys_cross_check=true -e answer_keys_cross_check_act_max=0 -- \
+    "Cross-check: 0 agree, 0 need a look, 1 too little to compare"
+[ -e "$work/act/fake-act-calls.log" ] && { echo "FAIL - ACT asked past the cap"; fails=$((fails + 1)); } || echo "ok   - ... no ACT call"
+t="$(pagetext "$(lastpage)")"; case "$t" in *"not asked (the cap)"*) echo "ok   - ... the website: not asked (the cap)" ;; *) echo "FAIL - the cap not said"; fails=$((fails + 1)) ;; esac
+cp "$work/sm.json.keep" "$work/sm.json"
 
 grep -qvE "^(GET |POST /token)" "$work/sm.log" && { echo "FAIL - a request that is not a GET reached STIG Manager"; fails=$((fails + 1)); } || echo "ok   - every run: only GET requests reached STIG Manager"
 now="$(leftovers)"; [ "$now" = "$before_left" ] && [ ! -e "$work/kept" ] && echo "ok   - every run: the hosts as they were (no folder of the job left, nothing kept)" \

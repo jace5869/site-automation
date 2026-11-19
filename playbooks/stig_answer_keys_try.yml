@@ -1,0 +1,40 @@
+---
+# STIG ANSWER KEYS - TRY MY ANSWER FILE (1.77.0): on one or more Linux TEST hosts, for the rules you pick
+# (answer_keys_rules), Evaluate-STIG runs twice - without answer files, then with yours (check_stig_evaluate_answers) -
+# and the report says for each rule and host: the status without and with, the AnswerKey that applied, its comment,
+# whether it changed the result, and what its code read (when Evaluate-STIG keeps it). Evaluate-STIG's own path: it runs
+# YOUR answer files' ValidationCode, as a scan with them does - so it works on RHEL 8 too. Nothing is written to STIG
+# Manager or the share; the host keeps nothing. docs/STIG_ANSWER_KEYS.md.
+#
+#   ansible-playbook playbooks/stig_answer_keys_try.yml -e target=rhel81.example.mil -l rhel81.example.mil \
+#     -e '{"answer_keys_rules": ["V-230221", "V-230318"]}'
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('') }}"
+
+- name: STIG answer keys - try my answer file
+  hosts: "{{ target | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  become: true
+  vars:
+    site_report_title: STIG answer keys - try my answer file
+  pre_tasks:
+    - name: Linux hosts only (Evaluate-STIG with pwsh)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Try my answer file - Evaluate-STIG without and with your answer files, the report
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_keys_try.yml

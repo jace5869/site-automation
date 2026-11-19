@@ -52,6 +52,7 @@ options:
   benchmarks: {description: "The STIG (its benchmark id) for each RHEL version ({'9': RHEL_9_STIG}): the checklist read.", type: dict, default: {}}
   vulns: {description: "Only these STIG rules (V-257985 ...); [] = every rule.", type: list, elements: str, default: []}
   selected_only: {description: "1.75.0b: with vulns, those rules or nothing - no -SelectVuln, or nothing written with it: not scanned, never in full.", type: bool, default: false}
+  rule_texts: {description: "1.77.0: every rule's item keeps its comment and finding details (the first 4000 characters each), not only a fail's details - what an answer file did (STIG answer keys - try my answer file).", type: bool, default: false}
   history: {description: "Compare with the earlier scans and keep this one with them (false - the STIG recheck - neither).", type: bool, default: true}
   answers: {description: "Evaluate-STIG: the folder on the host its answer files were copied to for this run ('' = its own).", type: str, default: ''}
   answers_arg: {description: "Evaluate-STIG's option for that folder (checked in its script).", type: str, default: --AFPath}
@@ -106,6 +107,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_redact import redact, run_main
 
 X = "{http://checklists.nist.gov/xccdf/1.2}"
 # worst first: the result a STIG rule gets from its SCAP rules
@@ -255,7 +257,8 @@ def answered_from_files(st):
         if AF_RE.search(text):
             rules.append(r["v"] or r["rule"])
             keys.update(a or b for a, b in AF_KEY_RE.findall(text))
-    return {"used": len(rules), "keys": sorted(k for k in keys if k), "rules": sorted(rules)[:200]}
+    # 1.77.0h: a key is read from the checklist's comment as it came - redacted as the comment is (a name, not a line)
+    return {"used": len(rules), "keys": sorted(set(redact(k, backstop=False) for k in keys if k)), "rules": sorted(rules)[:200]}
 
 
 def checklist_version(st):
@@ -265,22 +268,31 @@ def checklist_version(st):
     return "V%sR%s" % (v, m.group(1)) if v and m else stig_version(st.get("title"), st.get("release"))
 
 
-def checklist_items(st, details_max=4000):
-    """One item per STIG rule of the checklist (by its SV id); what Evaluate-STIG found is kept for the fails."""
+def checklist_items(st, details_max=4000, texts=False):
+    """One item per STIG rule of the checklist (by its SV id); what Evaluate-STIG found is kept for the fails. texts
+    (1.77.0, rule_texts): every rule keeps its comment and finding details, their secrets removed (site_redact)."""
     by = {}
     for r in st["rules"]:
         m = SV_RE.search(r["rule"])
         if not m:
             continue
         key = m.group(1)
+        # 1.77.0i (Codex P1): the title as the checklist carries it, its secrets removed (precise masking: DISA's own
+        # words about a password stay)
         by[key] = {"key": key, "v": r["v"] or "V-" + key[3:], "rule": r["rule"], "stigid": r["stigid"], "severity": r["severity"],
-                   "title": r["title"], "result": r["result"], "scap": [], "scap_ids": []}
+                   "title": redact(str(r["title"] or ""), backstop=False), "result": r["result"], "scap": [], "scap_ids": []}
         if r["result"] == "fail" and r["details"].strip():
-            by[key]["details"] = r["details"].strip()[:details_max]
+            # 1.77.0d: what the host printed leaves it only with its secrets removed, the whole text first, then cut
+            by[key]["details"] = redact(r["details"].strip())[:details_max]
+        if texts:
+            # 1.77.0b: what an answer file's code printed leaves the host only with its secrets removed (site_redact);
+            # 1.77.0c: the whole text redacted, then cut (a cut inside a quoted value would leave the rest of it bare)
+            by[key]["details"] = redact(str(r.get("details") or "").strip())[:details_max]
+            by[key]["comments"] = redact(str(r.get("comments") or "").strip())[:details_max]
         if r["result"] == "fail":                # 1.73.0: DISA's check and fix text, for the report (a fail only)
             for k in ("check_text", "fix_text"):
                 if str(r.get(k) or "").strip():
-                    by[key][k] = str(r[k]).strip()[:8000]
+                    by[key][k] = redact(str(r[k]).strip(), backstop=False)[:8000]    # 1.77.0i: redacted, then cut
     return [by[k] for k in sorted(by)]
 
 
@@ -356,9 +368,18 @@ def evaluate_said(text):
     rejected = [os.path.join(where, os.path.basename(n)) for n in BAD_RE.findall(text or "")] if where else []
     failed = sorted(set("V-" + v[1:] for v in CHECK_FAILED_RE.findall(text or "")))
     log = os.path.join(os.path.dirname(where), "Evaluate-STIG.log") if where else ""
-    lines = [ln.strip() for ln in (text or "").splitlines()
+    # 1.77.0d: the lines shown come from the whole text with its secrets removed (site_redact) - never one cut first
+    lines = [ln.strip() for ln in redact(text or "").splitlines()
              if re.search(r"error|failed|total checklists", ln, re.I)]
     return {"rejected": rejected, "failed": failed, "log": log if log and os.path.isfile(log) else "", "lines": lines}
+
+
+def heard(proc):
+    """What Evaluate-STIG printed -> (the text with its secrets removed, evaluate_said of it). 1.77.0d: removed from the
+    whole text before any tail of it is cut (a cut inside a quoted value would leave the rest of it bare); the paths and
+    rule ids evaluate_said finds are read from the text as printed, the lines it shows from the redacted text."""
+    raw = proc.stdout.decode("utf-8", "replace").strip()
+    return redact(raw), evaluate_said(raw)
 
 
 def checklists_in(d):
@@ -473,7 +494,7 @@ class Scan(object):
         self.p = module.params
 
     def fail(self, why, **kw):
-        return dict(scanned=False, why=why, items=[], previous={}, **kw)
+        return dict(scanned=False, why=redact(why), items=[], previous={}, **kw)
 
     def run(self):
         p = self.p
@@ -530,7 +551,7 @@ class Scan(object):
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=p["timeout"])
         except subprocess.TimeoutExpired:
             return self.fail("the scan took longer than %d seconds (check_stig_timeout)" % p["timeout"], datastream=ds, **ident)
-        err = proc.stderr.decode("utf-8", "replace").strip()
+        err = redact(proc.stderr.decode("utf-8", "replace").strip())     # 1.77.0d: before its tail is cut
         # oscap: 0 = every rule passed, 2 = at least one failed, 1 = it could not scan
         if proc.returncode not in (0, 2) or not os.path.isfile(res_xml):
             return self.fail("oscap could not scan (exit %d): %s" % (proc.returncode, err[-600:] or "no message"),
@@ -623,8 +644,7 @@ class Scan(object):
                                       cwd=os.path.dirname(os.path.abspath(ran)))
             try:
                 proc = run(picked)
-                said = proc.stdout.decode("utf-8", "replace").strip()
-                told = evaluate_said(said)
+                said, told = heard(proc)
                 files = checklists_in(out_dir)
                 if picked and not files and not [f for f in told["rejected"] if os.path.isfile(f)]:
                     # nothing written with -SelectVuln (a version that wants -SelectSTIG with it, say): once more, in full
@@ -639,8 +659,7 @@ class Scan(object):
                     shutil.rmtree(out_dir, ignore_errors=True)
                     os.makedirs(out_dir)
                     proc = run(False)
-                    said = proc.stdout.decode("utf-8", "replace").strip()
-                    told = evaluate_said(said)
+                    said, told = heard(proc)
                     files = checklists_in(out_dir)
             except subprocess.TimeoutExpired:
                 return self.fail("Evaluate-STIG took longer than %d seconds (check_stig_timeout)" % p["timeout"], **ident)
@@ -682,7 +701,7 @@ class Scan(object):
                 "checklist": os.path.basename(path)}
         if p["evaluate_read"]:
             info["checklist_time"] = datetime.datetime.fromtimestamp(os.path.getmtime(path), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        return {"items_": checklist_items(st), "results_": path, "results_ext": os.path.splitext(path)[1].lower(), "report_": "",
+        return {"items_": checklist_items(st, texts=p.get("rule_texts")), "results_": path, "results_ext": os.path.splitext(path)[1].lower(), "report_": "",
                 "info": info, "extra": extra}
 
     def finish(self, ident, got):
@@ -805,6 +824,7 @@ def main():
         benchmarks=dict(type="dict", default={}),
         vulns=dict(type="list", elements="str", default=[]),
         selected_only=dict(type="bool", default=False),
+        rule_texts=dict(type="bool", default=False),
         history=dict(type="bool", default=True),
         answers=dict(type="str", default=""),
         answers_arg=dict(type="str", default="--AFPath"),
@@ -813,8 +833,11 @@ def main():
         answers_count=dict(type="int", default=0),
     ), supports_check_mode=True)
     result = Scan(module).run()
+    for k in ("why", "stderr", "select_note"):     # 1.77.0d: every free text it returns, whatever path wrote it
+        if isinstance(result.get(k), str):
+            result[k] = redact(result[k])
     module.exit_json(changed=False, **result)
 
 
 if __name__ == "__main__":
-    main()
+    run_main(main)     # 1.77.0h: an unexpected error redacted, no raw traceback

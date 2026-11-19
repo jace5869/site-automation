@@ -33,6 +33,10 @@ check_stig_evaluate: /opt/Evaluate-STIG
 check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## No ACT drafts (a rule no fixed pattern fits is then written by hand)
 # answer_keys_act: false
+## 1.77.0, the cross-check: Evaluate-STIG, STIG Manager, the code and ACT side by side for each block (ACT gets
+## DISA's check text and the host's read-only evidence, never the code); at most this many ACT calls a run
+# answer_keys_cross_check: false
+# answer_keys_cross_check_act_max: 50
 
 # ---- check_stig ----------------------------------------------------------------------------------
 ## seconds the scan may take (OpenSCAP: one to five minutes; Evaluate-STIG: more)
@@ -164,6 +168,13 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 
 ## seconds each ValidationCode may run in its trial on the host
 # answer_keys_trial_timeout: 60
+
+## 1.77.0: a host's text in the reports of both answer keys jobs (what the trial or the code read,
+## Evaluate-STIG's comment, the cross-check's evidence) - web: on the report website, redacted, at
+## most 20 lines and 2000 characters a rule; never in the email or its workbook (statuses, counts
+## and rule ids only); none: nowhere but the AAP job's output (admin-only), and the cross-check asks
+## ACT nothing
+# answer_keys_evidence: web
 
 # ---- site_exclude --------------------------------------------------------------------------------
 ## ---- Leave hosts out of every job (1.67.0; playbooks/site_exclude.yml, README "Leave hosts out of

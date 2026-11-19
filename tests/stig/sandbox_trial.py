@@ -26,6 +26,9 @@ import threading
 import time
 
 here = os.path.dirname(os.path.abspath(__file__))
+import ansible.module_utils  # noqa: E402
+# as ansible.cfg gives them (1.77.0: the module imports site_redact)
+ansible.module_utils.__path__.append(os.path.join(here, "..", "..", "plugins", "module_utils"))
 spec = importlib.util.spec_from_file_location(
     "site_stig_answer_host", os.path.join(here, "..", "..", "roles", "check_stig", "library", "site_stig_answer_host.py"))
 h = importlib.util.module_from_spec(spec)

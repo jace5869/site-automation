@@ -137,6 +137,15 @@ class StigManager(unittest.TestCase):
         self.assertEqual(r["SV-2"]["status"], "saved")
         self.assertEqual(smr.sv_of("SV-257985r1069364_rule"), "SV-257985")
 
+    def test_reviews_keep_what_made_the_result(self):
+        r = smr.reviews_of([{"ruleId": "SV-1r1_rule", "result": "fail", "resultEngine": {"type": "script", "product": "Evaluate-STIG",
+                                                                                         "version": "1.2507.0"}},
+                            {"ruleId": "SV-2r1_rule", "result": "pass", "resultEngine": None},
+                            {"ruleId": "SV-3r1_rule", "result": "pass", "resultEngine": {}}])
+        self.assertEqual(r["SV-1"]["engine"], {"product": "Evaluate-STIG", "type": "script"})
+        self.assertIsNone(r["SV-2"]["engine"])
+        self.assertIsNone(r["SV-3"]["engine"])
+
 
 def scanned(res, prev=None, before=None):
     """A scan: res the SCAP rules' results, prev the last scan's ({key: result}), before passed_before (None: what passed in prev)."""

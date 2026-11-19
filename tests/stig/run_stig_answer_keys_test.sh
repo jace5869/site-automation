@@ -97,6 +97,7 @@ check_stig_stigman_token_url: http://127.0.0.1:$port_sm/token
 check_stig_stigman_client_id: autostig
 check_stig_stigman_client_secret: s3cret
 check_stig_dir: $work/kept
+answer_keys_cross_check: false          # 1.77.0: this test counts ACT's drafting calls; the cross-check: run_stig_answer_keys_hosts_test.sh
 act_triage_script_src: $repo/tests/containers/fake_act.py
 act_triage_poll: 1
 site_act_url: http://127.0.0.1:$port_act/v1/chat/completions

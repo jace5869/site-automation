@@ -1,0 +1,131 @@
+---
+# STIG ANSWER KEYS - TRY MY ANSWER FILE (1.77.0, playbooks/stig_answer_keys_try.yml) on one or more Linux test hosts: for the
+# rules picked (answer_keys_rules), Evaluate-STIG runs twice - without answer files, then with the site's
+# (check_stig_evaluate_answers) - and the report says, for each rule and host, what the answer file did. This is
+# Evaluate-STIG's own path: it runs the ValidationCode of YOUR answer files, as a scan with them does. Nothing is written
+# anywhere: no -Output (none of check_stig_evaluate_args but its --AnswerKey), nothing to STIG Manager or the share; the
+# answer files' folder on the host (root only) and Evaluate-STIG's own output folder are removed after.
+- name: Answer keys try | the rules asked
+  ansible.builtin.set_fact:
+    _akt_rules: "{{ answer_keys_rules | stig_answer_rules }}"
+    # the site's own AnswerKey (as its scans give it): the --AnswerKey pair of check_stig_evaluate_args, as written there
+    _akt_key_args: >-
+      {%- set a = check_stig_evaluate_args if check_stig_evaluate_args is not string else check_stig_evaluate_args.split() -%}
+      {%- set out = [] -%}
+      {%- for x in a -%}{%- if loop.index0 > 0 and a[loop.index0 - 1] | lower in ['--answerkey', '-answerkey'] -%}
+      {%-   set _ = out.extend([a[loop.index0 - 1], x]) -%}{%- endif -%}{%- endfor -%}
+      {{ out[-2:] }}
+
+- name: Answer keys try | answer_keys_evidence is web or none
+  ansible.builtin.assert:
+    that: answer_keys_evidence | default('web') in ['web', 'none']
+    fail_msg: "answer_keys_evidence is web (the host's text on the report website, capped; never in the email) or none (only in the AAP job's output), not {{ answer_keys_evidence }}."
+    quiet: true
+  run_once: true
+
+- name: Answer keys try | the rules asked are right, and where the answer files are
+  ansible.builtin.assert:
+    that:
+      - _akt_rules.error | length == 0
+      - check_stig_evaluate | default('') | length > 0
+      - check_stig_evaluate_answers | default('') | length > 0
+    fail_msg: >-
+      {{ _akt_rules.error if _akt_rules.error else
+         'Try my answer file needs Evaluate-STIG on the host (check_stig_evaluate) and your answer files
+         (check_stig_evaluate_answers: the share or folder they are in) - docs/STIG_ANSWER_KEYS.md.' }}
+    quiet: true
+
+- name: Answer keys try | at most answer_keys_try_hosts test hosts
+  ansible.builtin.assert:
+    that: ansible_play_hosts_all | length <= answer_keys_try_hosts | int
+    fail_msg: >-
+      Try my answer file runs on test hosts: {{ ansible_play_hosts_all | length }} is more than answer_keys_try_hosts
+      ({{ answer_keys_try_hosts }}). Set target (and the Limit) to your test hosts.
+    quiet: true
+  run_once: true
+
+# 1.77.0b (Codex P2): the answer files are staged inside the block, so a copy that fails part way (a full disk) still
+# has its folders removed by the always below
+- name: Answer keys try | your answer files staged, Evaluate-STIG twice, then the answer files' folders removed
+  block:
+    # the same tasks as the STIG drift scan's: read once on the AAP side, copied to a folder of this run on each host
+    - name: Answer keys try | your answer files - read, and copied to each host for this run
+      ansible.builtin.include_tasks: answers.yml
+
+    - name: Answer keys try | Evaluate-STIG without answer files (the picked rules only; nothing kept, nothing sent)
+      site_stig_scan: &akt_scan
+        dir: "{{ check_stig_dir }}"
+        save: false
+        keep_report: false
+        keep_results: false
+        timeout: "{{ check_stig_timeout | int }}"
+        scanner: evaluate_stig
+        evaluate: "{{ check_stig_evaluate }}"
+        evaluate_select: "{{ check_stig_evaluate_select }}"
+        evaluate_args: "{{ _akt_key_args }}"
+        evaluate_read: ""
+        evaluate_output: CKLB
+        evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
+        pwsh: "{{ check_stig_pwsh }}"
+        benchmarks: "{{ check_stig_stigman_benchmarks }}"
+        vulns: "{{ _akt_rules.rules | map(attribute='v') | list }}"
+        selected_only: true           # the picked rules or nothing - never a full scan
+        history: false
+        rule_texts: true              # each rule's comment and finding details: what an answer file did
+      register: _akt_without
+      check_mode: false               # only reads; keeps nothing (save: false)
+      # 1.77.0i (Codex P1): its raw result stays out of the job's output - a connection's failure text (UNREACHABLE) too;
+      # the report shows a failure only redacted (stig_answer_try_rows)
+      no_log: true
+
+    - name: Answer keys try | Evaluate-STIG with your answer files (the same rules; nothing kept, nothing sent)
+      site_stig_scan:
+        <<: *akt_scan
+        answers: "{{ _stig_af_host.path | default('') }}"
+        answers_arg: "{{ check_stig_evaluate_answers_arg }}"
+        answers_error: "{{ _stig_af.error | default('') }}"
+        answers_source: "{{ check_stig_evaluate_answers }}"
+        answers_count: "{{ _stig_af.files | default([]) | length }}"
+      register: _akt_with
+      check_mode: false
+      no_log: true                    # 1.77.0i: as the first run
+      when: _akt_without.scanned | default(false)
+  always:
+    - name: Answer keys try | your answer files - this run's folders removed
+      ansible.builtin.include_tasks: answers_done.yml
+
+- name: Answer keys try | what was tried, every host (from the AAP side)
+  ansible.builtin.set_fact:
+    _akt_doc: >-
+      {%- set runs = [] -%}
+      {%- for h in ansible_play_hosts_all if hostvars[h]._akt_without is defined -%}
+      {%-   set _ = runs.append({'host': h, 'without': hostvars[h]._akt_without,
+                                 'with': hostvars[h]._akt_with if hostvars[h]._akt_with.scanned is defined else
+                                         {'scanned': false, 'why': 'not run (the first run did not)'}}) -%}
+      {%- endfor -%}
+      {%- set first = (runs | map(attribute='without') | selectattr('scanned', 'defined') | selectattr('scanned') | list + [{}]) | first -%}
+      {{ runs | stig_answer_try_rows(_akt_rules.rules | map(attribute='v') | list)
+         | stig_answer_try_report({'key': (_akt_key_args | last) if _akt_key_args else 'DEFAULT',
+                                   'source': check_stig_evaluate_answers, 'files': _stig_af.files | default([]),
+                                   'stig': (first.benchmark | default('')) ~ ' ' ~ (first.stig_version | default(''))},
+                                  answer_keys_evidence | default('web')) }}
+  run_once: true
+
+- name: Answer keys try | what happened
+  ansible.builtin.debug:
+    msg: "{{ _akt_doc.lines }}"
+  run_once: true
+
+- name: Answer keys try | email the report, publish it (report_email_to, report_web_dest) - from the AAP side
+  ansible.builtin.include_role:
+    name: site_email
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _report: "{{ _akt_doc.report }}"
+    _report_web: "{{ _akt_doc.web }}"
+    _report_xlsx: "{{ _akt_doc.xlsx }}"
