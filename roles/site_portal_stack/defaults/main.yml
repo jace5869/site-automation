@@ -58,6 +58,10 @@ portal_actions: {}
 # has is an error), and built-in actions to hide (a list of their names). docs/SITE_PORTAL.md, "Adding your own action".
 portal_actions_extra: {}
 portal_actions_off: []                            # built-in actions to hide: a list of their names (one that is no action is an error)
+# 1.78.1: point a built-in action at your own template or workflow name in AAP, so nothing is renamed there: {action: "Your name"} or
+# {action: {type: job|workflow, name: "Your name"}} (the type stays the built-in's unless given). An action that is no action is an
+# error; two actions that would run one template are an error. The deploy says "points at <name>" and whether AAP has it.
+portal_aap_names: {}
 # 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened with no values, asks for the host(s) and
 # lists what the report jobs found there (their site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each
 # report playbook that finished within portal_finding_days (at most finding_ref_max_age_days, 14) are read: successful and failed (a report

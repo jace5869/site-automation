@@ -104,6 +104,13 @@
 #                     aap: {type: job, name: "Health check - Linux (portal)"}, vars: {target: {kind: inventory_host, label: Host}},
 #                     limit_from: target, approval: false, fixes: false}
 # portal_actions_off: []                    # built-in actions to hide, by name
+# portal_aap_names:                         # point a built-in action at your own template or workflow name in AAP (no renaming there)
+#   stig_recheck: "Our STIG recheck"
+#   ckl_import: {type: workflow, name: "Our checklist import"}
+# portal_publish_templates: []              # "AAP - set up portal actions" labels these (name patterns: * ? any case) and gives the portal Execute
+# portal_publish_area: {}                   # {pattern: area}: also the label portal-area:<area>
+# portal_publish_max: 50                    # a pattern matching more stops the job, nothing changed
+# portal_unpublish_templates: []            # take these off the portal again (the label only)
 # portal_setup_templates_extra: []          # job templates for "AAP - set up portal actions" to make (the shape of workflows.yml)
 # portal_setup_workflows_extra: []          # workflows for it to make
 # portal_setup_portal_auditor: false        # true: it gives the portal's account Auditor on the organization (reads the report jobs)

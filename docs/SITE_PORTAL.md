@@ -782,6 +782,66 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_approval_required` | `[]` | template names marked *Approval* without the label |
 | `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
 
+## Add your jobs in bulk
+
+Your jobs are already in AAP. Instead of adding the label `portal` to each one by hand, name them with patterns and let the job
+**AAP - set up portal actions** label them and give the portal's account **Execute** on them.
+
+1. In `playbooks/group_vars/all.yml`, list the names. A pattern is a whole name with `*` (any text) and `?` (one character); capitals do not matter.
+
+   ```yaml
+   portal_publish_templates:
+     - "Site - health *"
+     - "Weekly cleanup"
+   portal_publish_area:                  # optional: the area (the portal-area: label) of the matches
+     "Site - health *": "Health"
+   ```
+
+2. Run **AAP - set up portal actions** with **Check** (*Job type: Check*) first. It only reads, and says one line for each template:
+   *would label*, *would grant*, *already done* or *skipped* with the reason. A pattern that matches nothing is said too.
+3. Read the lines. If a pattern matches more than `portal_publish_max` (50) templates, the job stops with the list and changes nothing: narrow the pattern.
+4. Run it again without Check. Each match gets the label `portal` (and `portal-area:<area>` when you gave one) and Execute for `portal_setup_portal_user`.
+5. Open the portal: the cards appear within `portal_discover_seconds` (a minute), or press **Refresh**.
+
+It never removes anything. A template that is already in another area keeps its area, and the job says so. The credential of the job needs
+**Admin** on the organization of the templates, as for the rest of this job.
+
+To take a job off the portal, list it the same way and run the job again (Check first):
+
+```yaml
+portal_unpublish_templates:
+  - "Site - health windows"
+```
+
+That removes the label `portal` from the match and nothing else: the roles stay, the area label stays, and nothing is deleted.
+
+## Use your own template names
+
+The built-in actions (*Recheck this system*, *Import the checklists* and the rest) run templates and workflows named as in
+`workflows.yml`. If your site already has its own, point the action at them and nothing is renamed in AAP.
+
+1. In `playbooks/group_vars/all.yml`, give each action your name. The type (job or workflow) stays the action's own.
+
+   ```yaml
+   portal_aap_names:
+     stig_recheck: "Our STIG recheck"
+     ckl_import: {type: workflow, name: "Our checklist import"}     # the type only when it differs
+   ```
+
+2. Run **Site portal - deploy**. The summary says, for each one, *stig_recheck points at "Our STIG recheck" - AAP: ok*, or why AAP has no such template.
+3. Run **AAP - set up portal actions** to give the portal's account Execute on your templates (it grants by the name you gave).
+
+An action name that is not an action is an error naming `portal_aap_names`. So is a name two actions would share. The setup job still makes the
+templates of `workflows.yml` under their own names; leave them, or hide the actions you do not use with `portal_actions_off`.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_publish_templates` | `[]` | name patterns of the jobs and workflows to put on the portal |
+| `portal_publish_area` | `{}` | `{pattern: area}`: also the label `portal-area:<area>` |
+| `portal_publish_max` | 50 | the most one pattern may match; more stops the job, nothing changed |
+| `portal_unpublish_templates` | `[]` | name patterns to take off: the label only |
+| `portal_aap_names` | `{}` | `{action: "your name"}` or `{action: {type, name}}` for a built-in action |
+
 ## The look
 
 The portal's pages look like the report website: the same colours, cards, tables, status chips and bar. They follow

@@ -404,10 +404,13 @@ def site_portal_actions_check(actions):
     return {"actions": a, "problems": p}
 
 
-def site_portal_actions_merge(base, extra=None, off=None):
+def site_portal_actions_merge(base, extra=None, off=None, names=None):
     """1.75.3, for the deploy and the setup job: the built-in actions (or portal_actions) without the names in `off` (portal_actions_off),
     with `extra` (portal_actions_extra) added -> {'actions': the merged mapping (the file's order, then the extras'), 'problems': [...]}.
     Every problem is said with the setting's name: an extra with a built-in name, an off name that is no action, a mapping that is not one.
+    1.78.1: `names` (portal_aap_names) {action: "AAP name"} or {action: {type, name}} points a built-in action at the site's own template or
+    workflow: the type stays the action's unless given. An action that is not one, a name that is not text, a type that is not job or
+    workflow, and two actions that would run the same template (one of them pointed there) are problems, said with the setting's name.
     The merged actions are checked with check_actions (the same rules) by the caller."""
     problems = []
     base = dict(base) if isinstance(base, dict) else {}
@@ -432,7 +435,49 @@ def site_portal_actions_merge(base, extra=None, off=None):
     for k, v in extra.items():
         if k not in merged:
             merged[k] = v
+    problems += _point_actions(merged, names, set(extra))
     return {"actions": merged, "problems": problems}
+
+
+def _point_actions(merged, names, extras):
+    """portal_aap_names applied to the merged actions (in place) -> [problems]."""
+    names = names if names not in (None, "") else {}
+    if not isinstance(names, dict):
+        return ["portal_aap_names must be a mapping of action name -> the name of your template or workflow in AAP (or {type: job|workflow, name: ...})"]
+    problems, pointed = [], {}
+    for action, want in names.items():
+        if action not in merged:
+            problems.append("portal_aap_names: %r is not one of the actions (they are: %s)" % (action, ", ".join(sorted(merged)) or "none"))
+            continue
+        if action in extras:
+            problems.append("portal_aap_names: %r is an action of your own (portal_actions_extra): name its template there" % action)
+            continue
+        typ, name = None, want
+        if isinstance(want, dict):
+            if set(want) - {"type", "name"}:
+                problems.append("portal_aap_names: %r takes type and name only" % action)
+                continue
+            typ, name = want.get("type"), want.get("name")
+        if not isinstance(name, str) or not name.strip():
+            problems.append("portal_aap_names: %r needs the name of a template or workflow in AAP (text)" % action)
+            continue
+        if typ is not None and typ not in ("job", "workflow"):
+            problems.append("portal_aap_names: %r type must be job or workflow, not %r" % (action, typ))
+            continue
+        a = dict(merged[action])
+        a["aap"] = dict(a.get("aap") or {}, name=name.strip(), **({"type": typ} if typ else {}))
+        merged[action] = a
+        pointed[action] = (a["aap"].get("type"), a["aap"]["name"])
+    if pointed:
+        by = {}
+        for k, a in merged.items():
+            t = (a.get("aap") or {}) if isinstance(a, dict) else {}
+            by.setdefault((t.get("type"), t.get("name")), []).append(k)
+        for key, users in sorted(by.items(), key=lambda x: str(x[0])):
+            if len(users) > 1 and any(u in pointed for u in users):
+                problems.append("portal_aap_names: %s would all run the %s %r: point each action at a template of its own" % (
+                    " and ".join(sorted(users)), "workflow" if key[0] == "workflow" else "job template", key[1]))
+    return problems
 
 
 def site_portal_spec_merge(spec, templates_extra=None, workflows_extra=None):

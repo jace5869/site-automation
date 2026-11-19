@@ -235,6 +235,11 @@ class Log(object):
 
 
 # ---- AAP --------------------------------------------------------------------------------------------------------------
+def backoff(fails, cap):
+    """Seconds to wait before asking AAP again after `fails` failed reads in a row: 15, 30, 60, ... never more than cap (portal_discover_seconds)."""
+    return max(1, min(int(cap), 15 * (2 ** max(0, int(fails) - 1))))
+
+
 KEEP_WHOLE = 10                 # a whole read is kept through failed reads for this many portal_discover_seconds, then what could be read serves (said)
 
 
@@ -578,7 +583,8 @@ class Aap(object):
                 return self.listing
             if why and not rows and self.listing:                           # nothing could be read: an old listing still serves the picker (never a check)
                 with self.lock:
-                    self.listing["retry"] = time.time() + min(15, self.cfg.discover_seconds)
+                    self.listing["fails"] = self.listing.get("fails", 0) + 1
+                    self.listing["retry"] = time.time() + backoff(self.listing["fails"], self.cfg.discover_seconds)
                 return self.listing
             hosts = sorted(set(str(r.get("name")) for r in rows if r.get("name") and r.get("enabled", True) is not False), key=str.lower)
             grows, gwhy, gtr = self._paged_t("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
@@ -603,6 +609,10 @@ class Aap(object):
         finally:
             self.listing_lock.release()
 
+    def listing_max_age(self):
+        """How old a listing may be to stand for the inventory - kept through failed reads, and used to check a pick: one value for both."""
+        return max(300, KEEP_WHOLE * self.cfg.discover_seconds)
+
     @staticmethod
     def _capped(why):
         """The read stopped at the page limit: it will stop there again, so a whole listing is not waited for."""
@@ -613,8 +623,9 @@ class Aap(object):
         part that was read serves, said to be a part (truncated)."""
         with self.lock:
             hit = self.listing
-            if hit and not hit.get("truncated") and time.time() - hit["at"] < KEEP_WHOLE * self.cfg.discover_seconds:
-                hit["retry"] = time.time() + min(15, self.cfg.discover_seconds)
+            if hit and not hit.get("truncated") and time.time() - hit["at"] < self.listing_max_age():
+                hit["fails"] = hit.get("fails", 0) + 1                  # asked again later each time: 15 s, 30, 60 ... up to portal_discover_seconds
+                hit["retry"] = time.time() + backoff(hit["fails"], self.cfg.discover_seconds)
                 return True
         return False                                    # none, a part, or one too old to stand for the inventory: the new read serves
 
@@ -624,7 +635,7 @@ class Aap(object):
         inv = self.inventory_listing()
         if inv is None:
             return None, "could not be looked up in AAP's inventory just now - try again"
-        if time.time() - inv["at"] > max(300, 3 * self.cfg.discover_seconds):         # an old read serves the list, never a check
+        if time.time() - inv["at"] > self.listing_max_age():                       # an old read serves the list, never a check
             return None, "could not be checked against the inventory just now - try again"
         hostset, out, seen = set(inv["hosts"]), [], set()
         for name in items:
@@ -698,8 +709,11 @@ class Aap(object):
         t = str(text or "").strip().lower()[:64]
         rows = [(h, "host", 1) for h in inv["hosts"]] + [(g, "group", len(m)) for g, m in inv["groups"].items()]
         rows = sorted((r for r in rows if t in r[0].lower()), key=lambda r: (r[0].lower(), r[1]))
-        return {"items": [{"name": n, "kind": k, "count": c} for n, k, c in rows[:limit]], "matches": len(rows), "total": len(inv["hosts"]) + len(inv["groups"]),
-                "truncated": bool(inv["truncated"])}
+        out = {"items": [{"name": n, "kind": k, "count": c} for n, k, c in rows[:limit]], "matches": len(rows), "total": len(inv["hosts"]) + len(inv["groups"]),
+               "truncated": bool(inv["truncated"])}
+        if inv.get("fails"):                                    # reads are failing: what is shown is the last one, and says when it is from
+            out["stale"] = "Host list from %s, AAP not answering." % time.strftime("%H:%M", time.localtime(inv["at"]))
+        return out
 
     def host_search(self, text, limit=8):
         """Host names of portal_inventory that contain text (the typeahead): [] when AAP cannot be asked or the text is too short."""
@@ -1034,6 +1048,7 @@ class Portal(object):
         self.found = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0}
         self.found_at = 0.0
         self.whole_at = 0.0
+        self.found_fails = 0                            # failed reads in a row (the back-off)
         self.found_whole = False                        # a whole read of AAP has been kept (an incomplete one never replaces it)
         self.found_ready = False                        # the first read of AAP has ended (found or not): until then a request waits for it
         self.found_lock = threading.Lock()
@@ -1094,18 +1109,30 @@ class Portal(object):
             if self.found_ready and not force and time.time() - self.found_at < self.cfg.discover_seconds:
                 return False
             got = self.aap.discover(self.builtin)
-            if got["error"]:                            # AAP did not answer: keep what was found, say so, ask again in a little while
-                self.found = dict(self.found, error=got["error"])
-                self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
+            if got["error"] or got.get("incomplete"):
+                self.found_fails += 1                   # asked again later each time: 15 s, 30, 60 ... up to portal_discover_seconds
+            else:
+                self.found_fails = 0
+            later = backoff(self.found_fails, self.cfg.discover_seconds)
+            if got["error"]:                            # the list of templates could not be read: the last whole read stays for a while, then it is said
+                if self.found_whole and time.time() - self.whole_at < KEEP_WHOLE * self.cfg.discover_seconds:
+                    self.found = dict(self.found, error=got["error"])
+                    self.found_at = time.time() - self.cfg.discover_seconds + later
+                    return True
+                got = dict(got, error="could not read the template list from AAP: %s" % got["error"])
+                self.found_at = time.time() - self.cfg.discover_seconds + later
+                self.found = got
+                old = set(k for k, a in self.actions.items() if a.get("discovered"))
+                self.actions = dict((k, a) for k, a in self.actions.items() if k not in old)
                 return True
             if got.get("incomplete"):                   # AAP did not answer for a template just now: the last whole read stays, asked again soon
                 if self.found_whole and time.time() - self.whole_at < KEEP_WHOLE * self.cfg.discover_seconds:
                     self.found = dict(self.found, error="AAP did not answer for every template just now; the list is as of the last full read")
-                    self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
+                    self.found_at = time.time() - self.cfg.discover_seconds + later
                     return True
                 got = dict(got, error=("AAP has not answered for every template for a long time: the list is what could be read (see the deploy's list of what was left out)"
                                        if self.found_whole else ""))
-                self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
+                self.found_at = time.time() - self.cfg.discover_seconds + later
             else:
                 self.found_whole = True
                 self.whole_at = self.found_at = time.time()

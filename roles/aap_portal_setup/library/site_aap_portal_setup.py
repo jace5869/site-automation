@@ -43,6 +43,12 @@ options:
   overwrite: {description: Also bring up to date what was made or changed by hand., type: bool, default: false}
   schedules: {description: "[{name, target (a template or workflow of the spec), every_minutes, extra_data}].", type: list, elements: dict, default: []}
   scorecard: {description: "{name, schedule ('weekly Mon 06:00', 'daily 06:00' or ''), schedule_name, time_zone, split}; {} = none.", type: dict, default: {}}
+  publish: {description: "1.78.1: patterns (case-insensitive, * and ?) of the names of job templates and workflows to put on the portal: each gets the label (publish_label) and Execute for portal_user. Nothing is removed.", type: list, elements: str, default: []}
+  publish_area: {description: "1.78.1: {pattern: area} - a published template whose name matches gets the label <area_label><area> (the first pattern wins; an area label already there stays).", type: dict, default: {}}
+  unpublish: {description: "1.78.1: patterns of the names to take off the portal: the label (publish_label) is removed, never a role.", type: list, elements: str, default: []}
+  publish_label: {description: The label that marks a template for the portal (portal_label)., type: str, default: portal}
+  area_label: {description: The start of an area label (portal_label_area)., type: str, default: "portal-area:"}
+  publish_max: {description: "1.78.1: the most templates one pattern may match; more, and nothing is changed (the list is said).", type: int, default: 50}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
 author: site automation
@@ -54,6 +60,7 @@ results: {description: "Each object: {kind (template|workflow|grant|schedule), n
 problems: {description: What could not be done (a project, inventory or credential not found, AAP not reached)., type: list}
 '''
 
+import fnmatch
 import hashlib
 import json
 import re
@@ -401,22 +408,126 @@ class Setup(object):
         return oid
 
     # ---- grants: Execute (and Approve on a workflow with an approval node) for the portal's account
-    def grant(self, api_kind, oid, name, roles, uid):
+    def grant(self, api_kind, oid, name, roles, uid, kind="grant"):
         if oid < 0:                                       # check mode: made by this run, so none of its roles is given yet
             for role in roles:
-                self.note("grant", "%s: %s" % (name, role), "create")
+                self.note(kind, "%s: %s" % (name, role), "create")
             return
         have = set(int(r["id"]) for r in self.all("users/%d/roles/" % uid))
         avail = dict((r.get("name"), int(r["id"])) for r in self.all("%s/%d/object_roles/" % (api_kind, oid)))
         for role in roles:
             rid = avail.get(role)
             if rid is None:
-                self.note("grant", "%s: %s" % (name, role), "failed", why="AAP has no %s role on it" % role)
+                self.note(kind, "%s: %s" % (name, role), "failed", why="AAP has no %s role on it" % role)
             elif rid in have:
-                self.note("grant", "%s: %s" % (name, role), "unchanged")
+                self.note(kind, "%s: %s" % (name, role), "unchanged")
             else:
                 self.write("POST", "users/%d/roles/" % uid, {"id": rid})
-                self.note("grant", "%s: %s" % (name, role), "create")
+                self.note(kind, "%s: %s" % (name, role), "create")
+
+    # ---- 1.78.1: put your own jobs on the portal by name patterns (the label + Execute), take them off again (the label only)
+    @staticmethod
+    def _matches(pattern, name):
+        return fnmatch.fnmatchcase(str(name).lower(), str(pattern).strip().lower())
+
+    def publish_plan(self):
+        """Read-only, before any change -> {publish: [(api_kind, row, [areas])], unpublish: [(api_kind, row)]} or None when a setting is wrong
+        (a problem is said and nothing is changed): a pattern that is not text, one that matches more than publish_max, a template in both lists."""
+        p = self.p
+        pubs, unpubs, areas = list(p.get("publish") or []), list(p.get("unpublish") or []), dict(p.get("publish_area") or {})
+        if not pubs and not unpubs:
+            return {"publish": [], "unpublish": [], "pats": {}}
+        for label, pats in (("portal_publish_templates", pubs), ("portal_unpublish_templates", unpubs)):
+            if not all(isinstance(x, str) and x.strip() for x in pats):
+                self.problems.append("%s must be a list of name patterns (text)" % label)
+                return None
+        for pat, area in areas.items():
+            if not isinstance(area, str) or not area.strip() or len(area) > 60 or "\n" in area:
+                self.problems.append("portal_publish_area: the area of %r must be short text" % pat)
+                return None
+        rows = []
+        for api_kind in ("job_templates", "workflow_job_templates"):
+            rows += [(api_kind, r) for r in self.all(api_kind + "/")]
+        mx = max(1, int(p.get("publish_max") or 50))
+        found = {}
+        for label, pats in (("portal_publish_templates", pubs), ("portal_unpublish_templates", unpubs)):
+            for pat in pats:
+                hit = [(k, r) for k, r in rows if self._matches(pat, r.get("name"))]
+                if len(hit) > mx:
+                    self.problems.append("%s: %r matches %d templates and workflows, more than portal_publish_max (%d): %s - narrow the pattern; nothing was changed" % (
+                        label, pat, len(hit), mx, ", ".join(sorted(r["name"] for _k, r in hit)[:20]) + (", ..." if len(hit) > 20 else "")))
+                    return None
+                found[(label, pat)] = hit
+        both = set((k, r["id"]) for pat in pubs for k, r in found[("portal_publish_templates", pat)]) & \
+            set((k, r["id"]) for pat in unpubs for k, r in found[("portal_unpublish_templates", pat)])
+        if both:
+            names = sorted(r["name"] for k, r in rows if (k, r["id"]) in both)
+            self.problems.append("portal_publish_templates and portal_unpublish_templates both match: %s (nothing was changed)" % ", ".join(names[:10]))
+            return None
+        pub, unpub, seen_p, seen_u = [], [], set(), set()
+        for pat in pubs:
+            hit = found[("portal_publish_templates", pat)]
+            if not hit:
+                self.note("publish", pat, "skipped", why="matches no job template or workflow")
+            for k, r in hit:
+                if (k, r["id"]) not in seen_p:
+                    seen_p.add((k, r["id"]))
+                    pub.append((k, r))
+        for pat in unpubs:
+            hit = found[("portal_unpublish_templates", pat)]
+            if not hit:
+                self.note("unpublish", pat, "skipped", why="matches no job template or workflow")
+            for k, r in hit:
+                if (k, r["id"]) not in seen_u:
+                    seen_u.add((k, r["id"]))
+                    unpub.append((k, r))
+        return {"publish": pub, "unpublish": unpub, "areas": areas}
+
+    def labels_on(self, api_kind, row):
+        """[(label id, name)] of a template or workflow (all of them: AAP lists ten in the row)."""
+        return [(int(x["id"]), str(x.get("name") or "")) for x in self.all("%s/%d/labels/" % (api_kind, int(row["id"])))]
+
+    def publish_apply(self, plan):
+        p = self.p
+        label, prefix = p.get("publish_label") or "portal", p.get("area_label") or "portal-area:"
+        uid = None
+        if plan["publish"]:
+            if p["portal_user"]:
+                uid = self.one_id("users", p["portal_user"], "User")
+            for api_kind, row in plan["publish"]:
+                name, oid = str(row.get("name")), int(row["id"])
+                org = row.get("organization") or ((row.get("summary_fields") or {}).get("organization") or {}).get("id")
+                have = [n for _i, n in self.labels_on(api_kind, row)]
+                if label in have:
+                    self.note("label", "%s: %s" % (name, label), "unchanged", why="already done")
+                elif not org:
+                    self.note("label", "%s: %s" % (name, label), "skipped", why="it has no organization to hold the label")
+                else:
+                    self.write("POST", "%s/%d/labels/" % (api_kind, oid), {"name": label, "organization": int(org)})
+                    self.note("label", "%s: %s" % (name, label), "create")
+                area = next((a for pat, a in plan["areas"].items() if self._matches(pat, name)), None)
+                if area:
+                    want = prefix + area.strip()
+                    has_area = [n for n in have if n.startswith(prefix)]
+                    if want in have:
+                        self.note("label", "%s: %s" % (name, want), "unchanged", why="already done")
+                    elif has_area:
+                        self.note("label", "%s: %s" % (name, want), "skipped", why="it is already in the area %r (an area label is never changed here)" % has_area[0][len(prefix):])
+                    elif org:
+                        self.write("POST", "%s/%d/labels/" % (api_kind, oid), {"name": want, "organization": int(org)})
+                        self.note("label", "%s: %s" % (name, want), "create")
+                if uid:
+                    self.grant(api_kind, oid, name, ["Execute"], uid, kind="publish grant")
+                elif not p["portal_user"]:
+                    self.note("publish grant", "%s: Execute" % name, "skipped", why="portal_setup_portal_user is not set: no role is given")
+        for api_kind, row in plan["unpublish"]:
+            name, oid = str(row.get("name")), int(row["id"])
+            mine = [i for i, n in self.labels_on(api_kind, row) if n == label]
+            if not mine:
+                self.note("label", "%s: %s" % (name, label), "unchanged", why="already done")
+            else:
+                self.write("POST", "%s/%d/labels/" % (api_kind, oid), {"id": mine[0], "disassociate": True})
+                self.note("label", "%s: %s" % (name, label), "remove")
 
     # ---- schedules
     def schedule(self, s, ids):
@@ -460,6 +571,9 @@ class Setup(object):
                 except ValueError as e:
                     self.problems.append("portal_setup_scorecard_schedule: %s (nothing was changed)" % e)
                     return
+        plan = self.publish_plan()                       # read-only, before any change: a pattern that matches too many stops everything
+        if plan is None:
+            return
         org = self.one_id("organizations", p["organization"], "Organization")
         proj = self.one_id("projects", p["project"], "Project")
         ee = self.one_id("execution_environments", p["execution_environment"], "Execution environment") if p["execution_environment"] else None
@@ -532,6 +646,7 @@ class Setup(object):
                 self.grant("organizations", org, p["organization"], ["Auditor"], uid)
         for s in p["schedules"] or []:
             self.schedule(s, ids)
+        self.publish_apply(plan)
 
 
 def check_spec(spec):
@@ -647,6 +762,9 @@ def main():
                            credentials=dict(type="dict", default={}), portal_user=dict(type="str", default=""), portal_auditor=dict(type="bool", default=False),
                            overwrite=dict(type="bool", default=False), schedules=dict(type="list", elements="dict", default=[]),
                            scorecard=dict(type="dict", default={}),
+                           publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}),
+                           unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
+                           area_label=dict(type="str", default="portal-area:"), publish_max=dict(type="int", default=50),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params
@@ -662,7 +780,7 @@ def main():
         s.run()
     except RuntimeError as e:
         s.problems.append(str(e))
-    changed = any(r["action"] in ("create", "update") for r in s.results) and not module.check_mode
+    changed = any(r["action"] in ("create", "update", "remove") for r in s.results) and not module.check_mode
     module.exit_json(changed=changed, results=s.results, problems=s.problems, api=api.base)
 
 

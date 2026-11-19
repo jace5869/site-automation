@@ -40,3 +40,12 @@ portal_setup_workflows_extra: []                  # your own workflows, added to
 portal_setup_portal_auditor: false
 portal_setup_workflows: {}                       # {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it
 portal_setup_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a CA file for AAP's own HTTPS certificate
+# 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (* and ?, any case) of AAP names: each match gets
+# the label portal_label and Execute for portal_setup_portal_user. Run with Check first: it says would label / would grant / already done /
+# skipped. Nothing is ever removed by this; a pattern that matches nothing is said; one that matches more than portal_publish_max stops with
+# the list and changes nothing. The credential needs Admin on the templates' organization, as for the rest of this job.
+portal_publish_templates: []                      # e.g. ["Site - health *", "Weekly cleanup"]
+portal_publish_area: {}                           # {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})
+portal_publish_max: 50                            # the most one pattern may match
+# Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape.
+portal_unpublish_templates: []

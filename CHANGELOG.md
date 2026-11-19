@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.78.1 — 2026-11-19
+
+**To set up:** nothing is required. To use the new settings: add them to `playbooks/group_vars/all.yml` (docs/SITE_PORTAL.md, "Add your jobs
+in bulk" and "Use your own template names"), run **AAP - set up portal actions** with Check, then without; run **Site portal - deploy** again
+for `portal_aap_names`.
+
+**Your jobs on the portal in one go.** **AAP - set up portal actions** can label your own job templates and workflows by name pattern and give
+the portal's account Execute on them.
+
+- `portal_publish_templates`: patterns (`*`, `?`, any case) of AAP names. Each match gets the label `portal_label` and Execute for
+  `portal_setup_portal_user`. `portal_publish_area` `{pattern: area}` adds `portal-area:<area>`; an area label already there stays.
+- Check first says, per template, *would label*, *would grant*, *already done* or *skipped* (with the reason). A pattern that matches nothing is said.
+  A pattern that matches more than `portal_publish_max` (50) stops with the list and changes nothing. A template in both lists is an error.
+- Never removes anything. `portal_unpublish_templates` removes the label `portal` only, never a role or an area label.
+- The credential needs Admin on the templates' organization, as for the rest of the job.
+
+**Your own template names.** `portal_aap_names` `{action: "name"}` (or `{action: {type, name}}`) points a built-in action at your own template
+or workflow, so nothing is renamed in AAP. An unknown action, a bad type or two actions on one template is an error naming the setting; the
+deploy says *points at "<name>" - AAP: ok*.
+
+**The portal's reads, kept honest** (from the review of 1.78.0). A failed read keeps the last whole one for at most 10 x `portal_discover_seconds`
+and asks again after 15 s, 30 s, 60 s ... (never more than `portal_discover_seconds`); a template list that cannot be read for that long gives an
+empty catalog and the reason. The host picker says *Host list from HH:MM, AAP not answering* when it shows an old list, and a pick is checked
+against a list at most that old (one value for both).
+
+- Tests: `tests/test_portal_publish.py` (22: the patterns, Check, the max, unpublish, the areas, the name mapping and its clash), 5 more in
+  `tests/test_site_portal.py` (the back-off, the cap, the stale list), and the portal-setup e2e (labels, roles, the max, unpublish) on both cores.
+
 ## 1.78.0 — 2026-11-19
 
 **To set up:** run **Site portal - deploy** again. Then, for each job you want on the portal, in AAP: add the label `portal` to the

@@ -2526,6 +2526,67 @@ class Codex1(unittest.TestCase):
         self.assertGreater(p.forced_at, 0.0)
         self.assertGreater(p.refresh_now(), 0)
 
+    # review of 219caff8: the top-level list, the back-off, a stale host list, one listing age
+    def test_8_backoff(self):
+        self.assertEqual([sp.backoff(n, 60) for n in range(0, 7)], [15, 15, 30, 60, 60, 60, 60])
+        self.assertEqual(sp.backoff(5, 300), 240)
+        self.assertEqual(sp.backoff(9, 300), 300)
+        self.assertEqual(sp.backoff(1, 10), 10)
+
+    def test_8_a_template_list_that_cannot_be_read_is_kept_then_said(self):
+        err = dict(self.whole(), error="AAP could not be asked: busy")
+        p = self.portal_with([self.whole("jt_1"), err, err, err])
+        p.refresh(force=True)
+        p.refresh(force=True)
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1"])          # kept at first
+        self.assertEqual(p.found["error"], "AAP could not be asked: busy")
+        p.whole_at = time.time() - sp.KEEP_WHOLE * self.cfg.discover_seconds - 5
+        p.refresh(force=True)
+        self.assertEqual([k for k, a in p.actions.items() if a.get("discovered")], [])                       # then an empty catalog, with the reason
+        self.assertEqual(p.found["error"], "could not read the template list from AAP: AAP could not be asked: busy")
+
+    def test_8_the_retry_gets_longer_and_a_whole_pass_resets_it(self):
+        bad = dict(self.whole("jt_1"), incomplete=True)
+        p = self.portal_with([self.whole("jt_1"), bad, bad, bad, self.whole("jt_1")])
+        gaps = []
+        p.refresh(force=True)
+        for _ in range(3):
+            p.refresh(force=True)
+            gaps.append(round(self.cfg.discover_seconds - (time.time() - p.found_at)))
+        self.assertEqual(gaps, [15, 30, 60])
+        p.refresh(force=True)
+        self.assertEqual(p.found_fails, 0)
+
+    def test_8_a_stale_host_list_says_so_and_backs_off(self):
+        state = {"fail": False}
+
+        def route(m, path, body):
+            if state["fail"]:
+                return 503, {"detail": "busy"}
+            if path.startswith("inventories/3/hosts/"):
+                return page([{"name": "web01", "enabled": True}])
+            return page([])
+        a = self.aap(route)
+        self.assertNotIn("stale", a.inventory_items(""))
+        a.inventory_listing(force=True)
+        state["fail"] = True
+        gaps = []
+        for _ in range(3):
+            a.inventory_listing(force=True)
+            gaps.append(round(a.listing["retry"] - time.time()))
+        self.assertEqual(gaps, [15, 30, 60])
+        self.assertRegex(a.inventory_items("")["stale"], r"^Host list from [0-9]{2}:[0-9]{2}, AAP not answering\.$")
+        self.assertEqual(len(a.inventory_items("")["items"]), 1)                                              # still serves the picker
+
+    def test_8_the_listing_is_kept_and_checked_for_the_same_time(self):
+        a = self.aap(lambda m, p, b: (503, {"detail": "busy"}))                                              # AAP does not answer: the listing is what there is
+        self.assertEqual(a.listing_max_age(), max(300, sp.KEEP_WHOLE * self.cfg.discover_seconds))
+        a.listing = {"hosts": ["web01"], "groups": {}, "bad": set(), "truncated": False, "at": time.time() - a.listing_max_age() + 5}
+        self.assertEqual(a.expand(["web01"])[1], "")                                                         # still fresh enough to check with
+        a.listing["at"] -= 10
+        self.assertIn("could not be checked", a.expand(["web01"])[1])                                        # and not a second longer
+        self.assertIn("web01", json.dumps(a.inventory_items("")))                                            # (the picker may still show it)
+
     # P2: a survey maximum of 0
     def test_6_a_maximum_of_zero_stays_zero(self):
         v, _s = rules.survey_vars({"spec": [{"variable": "a", "question_name": "A", "type": "text", "max": 0},
