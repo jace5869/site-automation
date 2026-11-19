@@ -32,6 +32,10 @@ Nothing else is required.
   survey has a password. A read that fails for a moment (survey, labels, launch settings, steps) or a list that does not add up (no `results`,
   fewer rows than `count`) keeps the last whole read of the cards and of the inventory's hosts and groups, says so, and asks again in 15 seconds.
   A survey maximum of 0 stays 0 (1024 only when there is none).
+  Only a read that AAP did not answer (no connection, a time-out, 429, a server error) makes a pass or a listing "not whole". A template that
+  is refused (403, 404) or whose lists never add up is left out with its reason, so it cannot hold the catalog still, and the last whole read
+  is kept for 10 x `portal_discover_seconds` at most (then what could be read is shown, with a line saying so). A listing past the page cap is
+  shown as a part. A Refresh that found another read running does not use the minute.
   Also: two viewers of one running job count its events once (*Step 30 of 12* is gone); every page or call that asks AAP for a job (`/jobs`,
   `/jobs/N`, `/api/jobs/N`, the pane and the progress call) is under the 90-a-minute limit; **Refresh** reads AAP once a minute for everyone, a
   later click says *Refreshed N s ago*, and a forced read never waits behind another.
