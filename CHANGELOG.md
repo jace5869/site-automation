@@ -17,6 +17,10 @@ with Admin on the organization; its Variables: `aap/extra_vars/aap_templates_set
   the catalog does not name. A new template's Variables come all switched off.
 - `aap_templates_label_portal` (`portal-actions` or `all`): the site portal's label (`portal_label`) and
   `portal-area:<area>`, so the portal finds the templates and groups them.
+- A site portal template the portal setup job makes, and that is missing, is said: *NOT IN AAP - run AAP - set up
+  portal actions* (it makes it with its workflow). `aap_templates_create_alias: true` makes a catalog template even when
+  your own runs its playbook under another name - the portal's workflows look for the catalog's name. When a portal
+  action runs that one template, a line to copy is printed too: `portal_aap_names: {action: 'your name'}` (1.78.1+).
 
 **To set up:** a job template **AAP - set up credentials** (`playbooks/aap_credentials_setup.yml`, an AAP credential
 with Admin on the organization; its Variables: `aap/extra_vars/aap_credentials_setup.yml`).

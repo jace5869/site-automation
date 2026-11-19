@@ -40,7 +40,9 @@ s = {"next": 1000, "organizations": [{"id": 1, "name": "Default"}, {"id": 9, "na
      "job_templates": [jt(100, "Health check", 1, 6, "playbooks/health_check.yml", [15, 16]),
                        jt(101, "STIG - drift report", 1, 2, "playbooks/stig_drift_report.yml", [10, 13]),
                        jt(102, "Troubleshoot", 1, 2, "playbooks/troubleshoot.yml", [10]),
-                       jt(103, "Windows health check", 9, 2, "playbooks/win_health_check.yml", [])],
+                       jt(103, "Windows health check", 9, 2, "playbooks/win_health_check.yml", []),
+                       jt(104, "Restart a service", 1, 2, "playbooks/service_restart.yml", [10, 12]),
+                       jt(105, "Ask for disk space", 1, 2, "playbooks/disk_space_request.yml", [10, 12])],
      "workflow_job_templates": [], "nodes": [], "approvals": [], "schedules": [], "roles": [], "users": [], "labels": []}
 json.dump(s, open(sys.argv[1], "w"), indent=1)
 PYEND
@@ -53,7 +55,8 @@ cat > "$work/vars.json" <<'EOF'
  "aap_templates_credentials": {"machine": "Linux machine", "machine_windows": "Windows machine", "aap": "AAP - jobs",
                                "stigman_api": "STIG Manager API", "act_model_key": "ACT model key", "servicenow": "ServiceNow API"},
  "aap_templates_only": ["Health check", "Troubleshoot", "STIG drift report", "Windows health check", "VM - restart", "ACT - triage finding",
-                        "Database health*", "poa&m STATUS", "ServiceNow health - nodes", "Windows troubleshoot"]}
+                        "Database health*", "poa&m STATUS", "ServiceNow health - nodes", "Windows troubleshoot", "Service - restart",
+                        "Disk - space request"]}
 EOF
 run() {
     (cd "$repo" && CONTROLLER_HOST="http://127.0.0.1:$port" CONTROLLER_OAUTH_TOKEN=setup-token ANSIBLE_NOCOLOR=1 \
@@ -73,7 +76,11 @@ if [ "$(writes)" = 0 ] && has "DIFFERS - 'Health check' - aap_templates_overwrit
     && has "project: has 'Old project', should be site-automation" && has "credential machine: has Old machine, should be Linux machine" \
     && has "already right - 'Troubleshoot'" && has "WOULD CREATE - 'POA&M status'" && has "WOULD CREATE - 'Database health - MariaDB / MySQL'" \
     && has "same playbook, other name - 'STIG drift report' - 'STIG - drift report' runs its playbook - not made twice" \
-    && has "left to another job - 'ACT - triage finding'" && has "SKIPPED - 'Windows health check' - the name is used by a template of another organization" \
+    && has "left to another job - 'ACT - triage finding' - NOT IN AAP - AAP - set up portal actions makes it, with the workflow that runs it: run that job" \
+    && has "left to another job - 'Disk - space request' - NOT IN AAP - AAP - set up portal actions makes it, with the workflow that runs it: run that job; 'Ask for disk space' runs its playbook" \
+    && has "# or: portal_aap_names: {disk_space_request: 'Ask for disk space'} (1.78.1+)" \
+    && has "same playbook, other name - 'Service - restart' - 'Restart a service' runs its playbook - not made twice; the site portal looks for 'Service - restart' by name: aap_templates_create_alias: true makes it too" \
+    && has "SKIPPED - 'Windows health check' - the name is used by a template of another organization" \
     && has "SKIPPED - 'VM - restart' - credential kind vmware not mapped (aap_templates_credentials)" \
     && has "would label portal: portal, portal-area:STIG" && grep -qE "would label portal: [0-9]+" "$work/out.txt"; then
     pass "Check: would create, differs (field by field), right, other name, left, skipped, would label - nothing written"
@@ -82,7 +89,7 @@ else fail "Check" "$(writes) writes; $(grep -E "WOULD|DIFFERS|already|SKIPPED|ot
 # ---- the run: made; the one that differs left as it is
 run; rc=$?
 nt="$(st "len([j for j in s['job_templates'] if j['organization'] == 1])")"
-if [ $rc = 0 ] && [ "$nt" = 7 ] && [ "$(tpl 'POA&M status' "['credentials']")" = "[13]" ] && [ "$(tpl 'Health check' "['project']")" = 6 ] \
+if [ $rc = 0 ] && [ "$nt" = 9 ] && [ "$(tpl 'POA&M status' "['credentials']")" = "[13]" ] && [ "$(tpl 'Health check' "['project']")" = 6 ] \
     && [ "$(tpl 'Windows troubleshoot' "['execution_environment']")" = 7 ] && [ "$(tpl 'Windows troubleshoot' "['credentials']")" = "[11]" ]; then
     pass "a run: the missing ones made (credentials by kind, the Windows EE), the one that differs left as it is"
 else fail "the run" "rc $rc; $nt templates; $(grep -E "created|DIFFERS|fatal|msg" "$work/out.txt" | head -10)"; fi
@@ -125,6 +132,12 @@ else fail "all" "rc $rc; $(labels_of 'Health check') $(labels_of 'POA&M status')
 before="$(writes)"
 run -e '{"aap_templates_label_portal": "all", "aap_templates_only": ["Health check", "POA&M status"]}'; rc=$?
 [ $rc = 0 ] && [ "$(writes)" = "$before" ] && ! has "labelled portal" && pass "... again: nothing written" || fail "labels again" "rc $rc"
+
+# ---- aap_templates_create_alias: the catalog's name made too (the portal's workflows look for it), the site's own kept
+run -e '{"aap_templates_create_alias": true, "aap_templates_only": ["Service - restart"]}'; rc=$?
+[ $rc = 0 ] && [ "$(tpl 'Service - restart' "['playbook']")" = "playbooks/service_restart.yml" ] && [ "$(tpl 'Restart a service' "['id']")" = 104 ] \
+    && has "created - 'Service - restart'" && pass "aap_templates_create_alias: the portal's name made beside the site's own" \
+    || fail "create_alias" "rc $rc; $(grep -E "created|other name|fatal" "$work/out.txt" | head -4)"
 
 # ---- never a DELETE, never a secret
 grep -q '"DELETE"' "$work/writes.jsonl" && fail "a DELETE" "$(grep DELETE "$work/writes.jsonl" | head -2)" || pass "never a DELETE"

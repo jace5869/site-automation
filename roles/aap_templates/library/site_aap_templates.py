@@ -21,6 +21,8 @@ options:
   credentials: {description: "{kind: credential name} (a list of names for several).", type: dict, default: {}}
   only: {description: "Only the templates whose name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
   overwrite: {description: "Bring a template that differs right (only the fields this job sets).", type: bool, default: false}
+  create_alias: {description: "Make the catalog's template even when its playbook already runs under another name (the site
+    portal's workflows look for the catalog's names).", type: bool, default: false}
   label_portal: {description: "none, portal-actions (the templates the site portal launches) or all (every template made or matched):
     the portal's label (portal_label) and portal-area:<area>, so the site portal finds them.", type: str, default: none}
   portal_label: {description: "The site portal's own label for the templates it reads (matched as written, case too).", type: str, default: portal}
@@ -168,7 +170,12 @@ class Templates(object):
             if self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal")):
                 self.to_label.append(e)
             if e.get("made_by"):
-                self.note(name, "left", why="made by %s (its own job) - not here" % e["made_by"])
+                there = any(t.get("organization") == self.org_id for t in by_name.get(name) or [])
+                other = [] if there else self.same_playbook(tpls, e)
+                self.note(name, "left", why=("made by %s (its own job), and it is there" % e["made_by"]) if there else
+                          "NOT IN AAP - %s makes it, with the workflow that runs it: run that job%s"
+                          % (e["made_by"], ("; %s runs its playbook" % ", ".join(repr(t["name"]) for t in other[:3])) if other else ""))
+                self.hint(e, other)
                 continue
             missing = [k for k in e.get("credentials") or [] if k not in self.creds]
             if missing:
@@ -190,11 +197,13 @@ class Templates(object):
                 self.note(name, "skipped", why="AAP has %d templates of that name: rename one" % len(ours))
                 continue
             if not ours:
-                other = [t for t in tpls if t.get("playbook") == e["playbook"] and t.get("project") == self.project
-                         and t.get("organization") == self.org_id and t.get("name") != name]
-                if other:
-                    self.note(name, "other name", why="%s runs its playbook - not made twice"
-                              % ", ".join(repr(t["name"]) for t in other[:3]))
+                other = self.same_playbook(tpls, e)
+                if other and not self.p["create_alias"]:
+                    self.note(name, "other name", why="%s runs its playbook - not made twice%s"
+                              % (", ".join(repr(t["name"]) for t in other[:3]),
+                                 ("; the site portal looks for %r by name: aap_templates_create_alias: true makes it too" % name)
+                                 if e.get("portal") else ""))
+                    self.hint(e, other)
                     continue
                 steps.append(("create", e, fields, want_creds, kinds))
                 continue
@@ -217,6 +226,18 @@ class Templates(object):
                 continue
             steps.append(("fix", e, dict((k, v) for k, v in fields.items() if SHOW[k] in diff), cfix, int(t["id"]), diff))
         return steps
+
+    def same_playbook(self, tpls, e):
+        """The site's own templates (the organization, the project) that run the catalog template's playbook under another name."""
+        return [t for t in tpls if t.get("playbook") == e["playbook"] and t.get("project") == self.project
+                and t.get("organization") == self.org_id and t.get("name") != e["name"]]
+
+    def hint(self, e, other):
+        """A portal action that runs this one template: it may be pointed at the site's own (portal_aap_names, 1.78.1) -
+        said as a line to copy; an action of several templates or an approval: only AAP - set up portal actions."""
+        if other and e.get("portal_actions"):
+            self.results[-1]["hint"] = "# or: portal_aap_names: {%s} (1.78.1+)" % ", ".join(
+                "%s: '%s'" % (a, str(other[0]["name"]).replace("'", "''")) for a in e["portal_actions"])
 
     def show(self, k, v):
         if k == "project":
@@ -356,6 +377,7 @@ def main():
                            project=dict(type="str", required=True), inventory=dict(type="str", default=""),
                            ee=dict(type="dict", default={}), credentials=dict(type="dict", default={}),
                            only=dict(type="list", elements="str", default=[]), overwrite=dict(type="bool", default=False),
+                           create_alias=dict(type="bool", default=False),
                            label_portal=dict(type="str", default="none", choices=["none", "portal-actions", "all"]),
                            portal_label=dict(type="str", default="portal"), portal_label_area=dict(type="str", default="portal-area:"),
                            variables_dir=dict(type="str", default=""),

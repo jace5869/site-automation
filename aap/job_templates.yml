@@ -10,6 +10,7 @@
 #   made_by               another job makes it (AAP - set up portal actions): left to that job
 #   portal                the site portal launches this playbook (aap_templates_label_portal: portal-actions labels these)
 #   area                  the site portal's group: its label portal-area:<area> (with aap_templates_label_portal)
+#   portal_actions        the portal actions that run this one template (portal_aap_names may name yours instead)
 ---
 job_templates:
   - name: Health check
@@ -246,6 +247,7 @@ job_templates:
     area: Disk & services
     made_by: AAP - set up portal actions
     portal: true
+    portal_actions: [disk_space_request]
   - name: Site portal - open ticket
     playbook: playbooks/portal_open_ticket.yml
     credentials: [aap]
@@ -258,6 +260,7 @@ job_templates:
     area: Tickets
     made_by: AAP - set up portal actions
     portal: true
+    portal_actions: [open_ticket]
   - name: STIG - recheck one finding
     playbook: playbooks/stig_finding_recheck.yml
     credentials: [machine, stigman_api, aap]

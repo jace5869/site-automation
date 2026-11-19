@@ -684,9 +684,14 @@ and checks the ones already there. It never deletes a template.
    - *DIFFERS* - field by field, *has X, should be Y* (the playbook, the project, a credential by kind, the prompts,
      the execution environment);
    - *already right*;
-   - *same playbook, other name* - a template of yours runs that playbook: it is not made twice;
+   - *same playbook, other name* - a template of yours runs that playbook: it is not made twice. The site
+     portal's workflows look for the catalog's name: `aap_templates_create_alias: true` makes it too;
    - *SKIPPED* - a credential kind not named, or the name used in another organization;
-   - *left to another job* - the site portal's own templates (*AAP - set up portal actions* makes them).
+   - *left to another job* - the site portal's own templates. *NOT IN AAP* means it is missing: run
+     **AAP - set up portal actions** ([SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap)), which makes it
+     with the workflow that runs it. When the portal action runs that one template and a template of yours runs
+     its playbook, the job also prints a line to copy instead: `portal_aap_names: {disk_space_request: 'Your name'}`
+     (1.78.1 and later).
 5. Launch it again with Job type **Run**. It makes the missing templates. A template that differs is left as it is;
    set `aap_templates_overwrite: true` to bring it right.
 
