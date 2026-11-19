@@ -2696,6 +2696,8 @@ def _step_line(st):
     do, cmd = str(st.get("do") or "").strip(), str(st.get("cmd") or "").strip().splitlines()
     if not cmd:
         return do
+    if len(cmd) > 1:                    # Codex: never the first line of a longer command - it is whole on the website
+        return "%s (a command of %d lines: on the report website)" % (do.rstrip(".: ") or "Run the command", len(cmd))
     return ("%s: %s" % (do.rstrip(".: "), cmd[0])) if do else cmd[0]
 
 

@@ -81,6 +81,17 @@ class Cards(unittest.TestCase):
         self.assertEqual(sorted(p for c in m["causes"] for p in c["patterns"]), ["P1", "P2", "P3"])
         self.assertEqual((m["by_id"]["P2"]["cause"], m["by_id"]["P3"]["cause"]), ("DNS down", "DNS down"))
 
+    def test_a_long_command_never_cut(self):
+        import vmware_alarm_filters as va
+        heredoc = "cat > /etc/x <<'EOF'\na = 1\nEOF"
+        ans = {"causes": [{"key": "k", "title": "T", "patterns": ["P1"], "confidence": 80,
+                           "steps": [{"do": "Write the file.", "cmd": heredoc}, {"do": "Check it.", "cmd": "cat /etc/x"}]}]}
+        self.assertEqual(sf._step_line({"do": "Write the file.", "cmd": heredoc}),
+                         "Write the file (a command of 3 lines: on the report website)")
+        r = va.act_analysis_parse(ans, [{"id": "P1"}])["by_id"]["P1"]
+        self.assertEqual(r["fix"], "1. Write the file. (a command of 3 lines: in steps) 2. Check it. (cat /etc/x)")
+        self.assertEqual(r["steps"][0]["cmd"], heredoc)
+
     def test_on_every_look(self):
         import test_report_fit as T
         env = T.EmailTiles()._env()

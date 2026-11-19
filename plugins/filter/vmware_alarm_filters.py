@@ -694,11 +694,13 @@ def _records(cz):
     """Causes (act_causes' shape) -> by_id: each pattern's record from the cause that explains it, noise as noise."""
     by_id = {}
     for c in cz["causes"]:
-        fix = " ".join("%d. %s%s" % (i + 1, s["do"], (" (" + s["cmd"].splitlines()[0] + ")") if s["cmd"] else "")
-                       for i, s in enumerate(c["steps"]))
+        # a one-line command in the text; a longer one never cut (Codex): whole in steps, the text says so
+        fix = " ".join("%d. %s%s" % (i + 1, s["do"], ((" (" + s["cmd"] + ")") if "\n" not in s["cmd"] else
+                                                      " (a command of %d lines: in steps)" % len(s["cmd"].splitlines()))
+                                     if s["cmd"] else "") for i, s in enumerate(c["steps"]))
         for p in c["patterns"]:
             by_id[p] = {"cause": c["title"], "evidence": " | ".join(c["evidence"]), "fix": fix, "confidence": c["confidence"],
-                        "cause_key": c["key"]}
+                        "cause_key": c["key"], "steps": [dict(s) for s in c["steps"]]}
     for p in cz["noise"]:
         by_id[p] = {"cause": "Noise" + ((": " + cz["noise_why"][p]) if cz["noise_why"].get(p) else ""), "evidence": "",
                     "fix": "", "confidence": None, "noise": True}
