@@ -48,6 +48,7 @@ options:
   unpublish: {description: "1.78.1: patterns of the names to take off the portal: the label (publish_label) is removed, never a role.", type: list, elements: str, default: []}
   publish_label: {description: The label that marks a template for the portal (portal_label)., type: str, default: portal}
   area_label: {description: The start of an area label (portal_label_area)., type: str, default: "portal-area:"}
+  publish_organization: {description: "1.78.1c: an organization's name; when set, only the job templates and workflows of that organization are matched by publish and unpublish (with [\"*\"], every one of them). Empty = any organization.", type: str, default: ""}
   publish_max: {description: "1.78.1: the most templates one pattern may match; more, and nothing is changed (the list is said).", type: int, default: 50}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
@@ -450,9 +451,22 @@ class Setup(object):
             if not isinstance(area, str) or not area.strip() or len(area) > 60 or "\n" in area:
                 self.problems.append("portal_publish_area: the area of %r must be short text" % pat)
                 return None
+        raw = p.get("publish_organization")
+        orgn, oid = str(raw or "").strip(), None
+        if raw not in (None, "") and not orgn:             # "" alone means any organization; blanks must not widen the scope
+            self.problems.append("portal_publish_organization is blank: give an organization's name, or \"\" for any organization (nothing was changed)")
+            return None
+        if orgn:                                          # only that organization's templates and workflows are matched; the list says so
+            oid = self.one_id("organizations", orgn, "Organization (portal_publish_organization)")
+            if oid is None:
+                return None
         rows = []
         for api_kind in ("job_templates", "workflow_job_templates"):
-            rows += [(api_kind, r) for r in self.all(api_kind + "/")]
+            # asked for the organization's own list, so the page limit of a big controller never cuts it; checked again on each row
+            got = self.all(api_kind + "/" + (("?organization=%d" % oid) if oid else ""))
+            rows += [(api_kind, r) for r in got if not oid or int(r.get("organization") or ((r.get("summary_fields") or {}).get("organization") or {}).get("id") or 0) == oid]
+        if oid:
+            self.note("publish", "organization %s" % orgn, "info", why="only the job templates and workflows of this organization are matched (%d of them)" % len(rows))
         found = {}
         for label, pats in (("portal_publish_templates", pubs), ("portal_unpublish_templates", unpubs)):
             for pat in pats:
@@ -767,7 +781,7 @@ def main():
                            credentials=dict(type="dict", default={}), portal_user=dict(type="str", default=""), portal_auditor=dict(type="bool", default=False),
                            overwrite=dict(type="bool", default=False), schedules=dict(type="list", elements="dict", default=[]),
                            scorecard=dict(type="dict", default={}),
-                           publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}),
+                           publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""),
                            unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
                            area_label=dict(type="str", default="portal-area:"), publish_max=dict(type="int", default=50),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),

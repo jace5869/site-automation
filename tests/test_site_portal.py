@@ -2818,5 +2818,80 @@ class RoleFiles(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout)
 
 
+class Titles1781c(unittest.TestCase):
+    """1.78.1c: a card's title from portal_titles (by the exact AAP name, any case), or from a label portal-title:<text>; the setting wins."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        with open(os.path.join(cls.tmp, "actions.json"), "w") as fh:
+            json.dump({"actions": ACTIONS}, fh)
+        cls.env = {"PORTAL_DATA": os.path.join(cls.tmp, "data"), "PORTAL_REPORTS": cls.tmp, "PORTAL_ACTIONS": os.path.join(cls.tmp, "actions.json"),
+                   "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "fake-token", "PORTAL_INVENTORY": "Site hosts", "PORTAL_REQUESTERS": "[]"}
+        sp.sys.stdout = open(os.devnull, "w")
+
+    @classmethod
+    def tearDownClass(cls):
+        sp.sys.stdout = sys.__stdout__
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def found(self, titles, tpls):
+        cfg = sp.Config(dict(self.env, PORTAL_TITLES=json.dumps(titles)))
+
+        def route(m, path, body):
+            if path.startswith("job_templates/?role_level"):
+                return page(tpls)
+            if path.startswith("workflow_job_templates/?role_level"):
+                return page([])
+            if path.endswith("/launch/"):
+                return 200, {}
+            return 404, {"detail": "no"}
+        a = sp.Aap(cfg, api=StubApi(route))
+        a.inv_id = 3
+        return a.discover({})
+
+    @staticmethod
+    def tpl(i, name, *labels):
+        return {"id": i, "name": name, "survey_enabled": False, "ask_limit_on_launch": False,
+                "summary_fields": {"labels": {"count": len(labels) + 1, "results": [{"name": "portal"}] + [{"name": l} for l in labels]}}}
+
+    def titles(self, out):
+        return dict((a["aap"]["name"], a["title"]) for a in out["actions"].values())
+
+    def test_1_the_setting_titles_a_card_by_the_exact_name(self):
+        out = self.found(rules.site_portal_titles({"Our STIG recheck": "STIG - recheck a host"})["titles"],
+                         [self.tpl(1, "our stig RECHECK"), self.tpl(2, "Our STIG recheck 2")])
+        self.assertEqual(self.titles(out), {"our stig RECHECK": "STIG - recheck a host", "Our STIG recheck 2": "Our STIG recheck 2"})
+
+    def test_2_a_label_titles_it_and_the_setting_wins(self):
+        out = self.found(rules.site_portal_titles({"Both": "From the setting"})["titles"],
+                         [self.tpl(1, "Labelled", "portal-title:  From the label "), self.tpl(2, "Both", "portal-title:From the label"),
+                          self.tpl(3, "Too long", "portal-title:" + "x" * 81), self.tpl(4, "Empty", "portal-title:")])
+        self.assertEqual(self.titles(out), {"Labelled": "From the label", "Both": "From the setting", "Too long": "Too long", "Empty": "Empty"})
+
+    def test_3_the_title_label_is_not_a_tag_and_nothing_else_changes(self):
+        out = self.found({}, [self.tpl(1, "T", "portal-title:Nice", "weekly")])
+        a = next(iter(out["actions"].values()))
+        self.assertEqual(a["labels"], ["weekly"])
+        self.assertEqual(a["name"], "jt_1")                                               # the action's own name never follows the title
+        self.assertEqual(a["aap"]["name"], "T")                                           # the template launched is the AAP one
+
+    def test_5_names_that_differ_in_spacing_are_two_templates(self):
+        out = self.found(rules.site_portal_titles({"Nightly audit": "One", "Nightly  audit": "Two"})["titles"],
+                         [self.tpl(1, "Nightly audit"), self.tpl(2, "Nightly  audit")])
+        self.assertEqual(self.titles(out), {"Nightly audit": "One", "Nightly  audit": "Two"})
+
+    def test_6_the_settings_file_may_hold_the_mapping_itself(self):
+        for raw in ({"Audit": "Weekly audit"}, json.dumps({"Audit": "Weekly audit"})):
+            cfg = sp.Config(dict(self.env, PORTAL_TITLES=raw))
+            self.assertEqual(cfg.titles, {"audit": "Weekly audit"})
+        self.assertEqual(sp.Config(dict(self.env, PORTAL_TITLES="not json")).titles, {})
+        self.assertEqual(sp.Config(dict(self.env, PORTAL_TITLES=["x"])).titles, {})
+
+    def test_4_a_setting_the_deploy_refuses_is_dropped_by_the_service(self):
+        out = self.found({"a": "x" * 81}, [self.tpl(1, "a")])
+        self.assertEqual(self.titles(out), {"a": "a"})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

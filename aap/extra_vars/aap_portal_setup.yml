@@ -97,6 +97,10 @@ portal_setup_portal_user: svc_site_portal
 ## {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})
 # portal_publish_area: {}
 
+## an organization's name: only its templates and workflows are matched (with ["*"]: all of them);
+## "" = any
+# portal_publish_organization: ""
+
 ## the most one pattern may match
 # portal_publish_max: 50
 

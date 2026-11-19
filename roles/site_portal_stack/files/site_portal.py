@@ -131,6 +131,13 @@ class Config(object):
         self.discover_seconds = max(10, min(3600, int(g("PORTAL_DISCOVER_SECONDS", "60"))))
         self.label_approval = g("PORTAL_LABEL_APPROVAL", "portal-approval").strip()
         self.label_area = g("PORTAL_LABEL_AREA", "portal-area:").strip()
+        self.label_title = g("PORTAL_LABEL_TITLE", "portal-title:").strip()
+        tj = g("PORTAL_TITLES", "{}")                           # 1.78.1c: {casefolded AAP name: card title}; an entry the deploy would refuse is dropped here
+        try:
+            tj = json.loads(tj) if isinstance(tj, str) else tj          # the settings file may hold the mapping itself
+        except ValueError:
+            tj = {}
+        self.titles = rules.site_portal_titles(tj if isinstance(tj, dict) else {})["titles"]
         self.approval_required = names(g("PORTAL_APPROVAL_REQUIRED", "[]"))
         # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
         self.look = g("PORTAL_THEME", "atlas").strip().lower()
@@ -459,12 +466,15 @@ class Aap(object):
             area = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
                          and l[len(cfg.label_area):].strip()), "")[:rules.AREA_MAX]
             name = "%s_%d" % ("wf" if typ == "workflow" else "jt", tid)         # the id never moves to another template
+            title = cfg.titles.get(tname.casefold()) or next(
+                (t for t in (rules.site_portal_title_label(l, cfg.label_title) for l in sorted(labels)) if t), "") or tname[:120]
             desc = " ".join(str(r.get("description") or "").split())
             out["actions"][name] = {
-                "name": name, "title": tname[:120], "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area,
+                "name": name, "title": title, "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area,
                 "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
                 "limit_from": rules.LIMIT_VAR if limit else "", "who": None, "discovered": True, "tid": tid, "started_by": named,
-                "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area)))[:8],
+                "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area))
+                                 and not (cfg.label_title and l.startswith(cfg.label_title)))[:8],
                 "last": ((r.get("summary_fields") or {}).get("last_job") or {}),
                 "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
                 "approval": cfg.label_approval in labels or tname in cfg.approval_required}

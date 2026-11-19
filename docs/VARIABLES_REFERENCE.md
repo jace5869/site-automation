@@ -178,6 +178,7 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_setup_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
 | `portal_publish_templates` | `[]` | 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (* and ?, any case) of AAP names: each match gets the label portal_label and Execute for portal_setup_portal_user. Run with Check first: it says would label / would grant / already done / skipped. Nothing is ever removed by thi… (all of it: the role file) |
 | `portal_publish_area` | `{}` | {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"}) |
+| `portal_publish_organization` | (empty) | an organization's name: only its templates and workflows are matched (with ["*"]: all of them); "" = any |
 | `portal_publish_max` | `50` | the most one pattern may match |
 | `portal_unpublish_templates` | `[]` | Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape. |
 
@@ -1948,6 +1949,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_actions_extra` | `{}` | 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked by the same rules; a name a built-in has is an error), and built-in actions to hide (a list of their names). docs/SITE_PORTAL.md, "Adding your own action". |
 | `portal_actions_off` | `[]` | built-in actions to hide: a list of their names (one that is no action is an error) |
 | `portal_aap_names` | `{}` | 1.78.1: point a built-in action at your own template or workflow name in AAP, so nothing is renamed there: {action: "Your name"} or {action: {type: job\|workflow, name: "Your name"}} (the type stays the built-in's unless given). An action that is no action is an error; two actions that would run one template are an err… (all of it: the role file) |
+| `portal_titles` | `{}` | 1.78.1c: card titles without renaming anything in AAP: {"AAP template name": "Portal card title"} (matched by the exact name, any case; a title is 1 to 80 characters). A label "portal-title:<text>" on the template does the same; this setting wins. A title that is empty or too long is an error. |
+| `portal_label_title` | `"portal-title:"` | the label that gives a card its title (the rest of the label is the title) |
 | `portal_finding_days` | `7` | 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened with no values, asks for the host(s) and lists what the report jobs found there (their site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each report playbook that finished within portal_… (all of it: the role file) |
 | `portal_finding_jobs` | `5` | the last this many runs of each report playbook are read (10 at most) |
 | `portal_pick_max_launches` | `10` | one confirm page starts this many jobs at most (one per ticked finding); over it the page says so |

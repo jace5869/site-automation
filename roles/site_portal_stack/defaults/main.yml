@@ -62,6 +62,10 @@ portal_actions_off: []                            # built-in actions to hide: a 
 # {action: {type: job|workflow, name: "Your name"}} (the type stays the built-in's unless given). An action that is no action is an
 # error; two actions that would run one template are an error. The deploy says "points at <name>" and whether AAP has it.
 portal_aap_names: {}
+# 1.78.1c: card titles without renaming anything in AAP: {"AAP template name": "Portal card title"} (matched by the exact name, any case; a title is
+# 1 to 80 characters). A label "portal-title:<text>" on the template does the same; this setting wins. A title that is empty or too long is an error.
+portal_titles: {}
+portal_label_title: "portal-title:"               # the label that gives a card its title (the rest of the label is the title)
 # 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened with no values, asks for the host(s) and
 # lists what the report jobs found there (their site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each
 # report playbook that finished within portal_finding_days (at most finding_ref_max_age_days, 14) are read: successful and failed (a report

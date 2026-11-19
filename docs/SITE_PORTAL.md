@@ -815,6 +815,34 @@ portal_unpublish_templates:
 
 That removes the label `portal` from the match and nothing else: the roles stay, the area label stays, and nothing is deleted.
 
+## Put a whole organization on the portal
+
+When one organization holds exactly the jobs you want on the portal, name the organization once and match everything in it.
+
+1. In `playbooks/group_vars/all.yml`, set the organization and `["*"]`:
+
+   ```yaml
+   portal_publish_organization: "platforms-org"
+   portal_publish_templates: ["*"]
+   ```
+
+2. Run **AAP - set up portal actions** with **Check** (*Job type: Check*). It only reads.
+3. Read the list. It starts with *publish 'organization platforms-org': applies - only the job templates and workflows of this organization are matched (N of them)*, then says *would label* and *would grant* for each one. If more than `portal_publish_max` (50) match, it stops with the list; raise the limit (500 at most) when that is what you want.
+4. Run it again without Check, then open the portal and press **Refresh**.
+
+Only the templates and workflows of that organization are matched, for putting on the portal and for taking off. An organization that is not in AAP is an error that names the setting. Leave `portal_publish_organization` as `""` to match any organization again.
+
+## Card titles without renaming
+
+A card shows the template's name. To show another title, say it in `portal_titles` and nothing is renamed in AAP.
+
+```yaml
+portal_titles:
+  "Our STIG recheck": "STIG - recheck a host"
+```
+
+The name must be the AAP name (capitals do not matter). A title is 1 to 80 characters; an empty or longer one stops the deploy, naming `portal_titles`. A label `portal-title:<text>` on the template does the same; when both are there, `portal_titles` wins. Run **Site portal - deploy**, or wait for the next refresh when you used the label.
+
 ## Use your own template names
 
 The built-in actions (*Recheck this system*, *Import the checklists* and the rest) run templates and workflows named as in
@@ -838,8 +866,10 @@ templates of `workflows.yml` under their own names; leave them, or hide the acti
 |---|---|---|
 | `portal_publish_templates` | `[]` | name patterns of the jobs and workflows to put on the portal |
 | `portal_publish_area` | `{}` | `{pattern: area}`: also the label `portal-area:<area>` |
+| `portal_publish_organization` | `""` | an organization's name: only its templates and workflows are matched (`["*"]` = all of them) |
 | `portal_publish_max` | 50 | the most one pattern may match (1 to 500); more stops the job, nothing changed |
 | `portal_unpublish_templates` | `[]` | name patterns to take off: the label only |
+| `portal_titles` | `{}` | `{"AAP name": "Card title"}` (80 characters at most); the label `portal-title:<text>` does the same |
 | `portal_aap_names` | `{}` | `{action: "your name"}` or `{action: {type, name}}` for a built-in action |
 
 ## The look

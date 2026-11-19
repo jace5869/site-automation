@@ -46,6 +46,7 @@ portal_setup_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a
 # the list and changes nothing. The credential needs Admin on the templates' organization, as for the rest of this job.
 portal_publish_templates: []                      # e.g. ["Site - health *", "Weekly cleanup"]
 portal_publish_area: {}                           # {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})
+portal_publish_organization: ""                   # an organization's name: only its templates and workflows are matched (with ["*"]: all of them); "" = any
 portal_publish_max: 50                            # the most one pattern may match
 # Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape.
 portal_unpublish_templates: []
