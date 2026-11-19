@@ -133,6 +133,14 @@ if deploy -e '{"portal_actions_off": ["no_such_action"]}'; then fail "portal_act
 elif grep -q "portal_actions_off: 'no_such_action' is not one of the actions" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "portal_actions_off with a name that is no action: refused, said"
 else fail "portal_actions_off refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"no_such_action": "x"}}'; then fail "portal_aap_names with no such action refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_aap_names: 'no_such_action' is not one of the actions" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_aap_names with a name that is no action: refused before anything is written, said"
+else fail "portal_aap_names refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"stig_recheck": "Same", "ckl_import": {"type": "job", "name": "Same"}}}'; then fail "two actions on one template refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "would all run the job template 'Same'" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_aap_names: two actions on one template: refused, said"
+else fail "portal_aap_names clash refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 if deploy -e '{"portal_actions": {"bad": {"title": "", "aap": {"type": "job", "name": "x"}}}}'; then fail "a wrong action refused" "$(tail -20 "$work/out.txt")"
 elif grep -q "The actions are not right - nothing was changed: action bad: title is required" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "a wrong action: refused before anything is written, said"
@@ -196,6 +204,12 @@ started() { podman inspect portal-test-nginx --format '{{.State.StartedAt}}'; }
 before="$(started)"
 if deploy && grep -q "changed=0 " "$work/out.txt"; then pass "a second deploy changes nothing"
 else fail "a second deploy changes nothing" "$(grep -E 'changed:|PLAY RECAP' -A1 "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"stig_recheck": "Our STIG recheck", "ckl_import": {"type": "workflow", "name": "Our checklist import"}}}' \
+    && grep -q 'stig_recheck points at .*Our STIG recheck.* (job) - AAP: ' "$work/out.txt" && grep -q 'ckl_import points at .*Our checklist import.* (workflow)' "$work/out.txt" \
+    && grep -q "Job template 'Our STIG recheck' is not there in AAP" "$work/out.txt"; then
+    pass "portal_aap_names: the deploy says what each action points at, and that AAP has no such template"
+else fail "portal_aap_names points at" "$(grep -E "points at|fatal" "$work/out.txt" | head -5)"; fi
+deploy > /dev/null 2>&1                                  # back to the built-in names for what follows
 if deploy -e '{"portal_title": "Site portal (test)"}' && grep -q "changed: \[localhost\]" <(grep -A1 "restart the service" "$work/out.txt") \
     && [ "$(started)" = "$before" ]; then
     pass "a setting changed: the service restarted, the proxy's nginx not touched"

@@ -8,6 +8,7 @@ one by hand. Under api/controller/v2/, Bearer FAKE_AAP_TOKEN. Not AAP: just enou
   workflow_job_templates/<id>/workflow_nodes/   POST;  workflow_job_template_nodes/?workflow_job_template=  GET
   workflow_job_template_nodes/<id>/         DELETE;  <id>/create_approval_template/, <id>/{success,failure,always}_nodes/ POST
                                             ({id}, or {id, disassociate: true}: the link removed)
+  <kind>/<id>/labels/                       GET;  POST {name, organization} (made if new, then added) or {id, disassociate: true}  (1.78.1)
   <kind>/<id>/object_roles/                 GET (Execute, Approve, Admin)
   users/<id>/roles/                         GET, POST {id}
   <kind>/<id>/schedules/ GET, POST;  schedules/<id>/  PATCH
@@ -146,6 +147,13 @@ class H(BaseHTTPRequestHandler):
             if m:
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                 return self.send(200, r) if r else self.send(404, {"detail": "Not found."})
+            m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/labels/$", p)
+            if m:                                                                       # 1.78.1: the labels of a template or workflow
+                r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
+                if r is None:
+                    return self.send(404, {"detail": "Not found."})
+                rows = [x for x in s.get("labels", []) if x["id"] in r.get("label_ids", [])]
+                return self.send(200, {"count": len(rows), "results": rows, "next": None})
             m = re.match(r"^job_templates/(\d+)/credentials/$", p)
             if m:
                 jt = next(r for r in s["job_templates"] if r["id"] == int(m.group(1)))
@@ -190,6 +198,23 @@ class H(BaseHTTPRequestHandler):
                         r["credentials"] = []
                     s[m.group(1)].append(r)
                     return self.send(201, r)
+                m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/labels/$", p)
+                if m:                                                                   # 1.78.1: a label made if new, then added; or taken off (never deleted)
+                    r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
+                    if r is None:
+                        return self.send(404, {"detail": "Not found."})
+                    labels = s.setdefault("labels", [])
+                    ids = r.setdefault("label_ids", [])
+                    if b.get("disassociate"):
+                        r["label_ids"] = [i for i in ids if i != b.get("id")]
+                    else:
+                        lab = next((x for x in labels if x["name"] == b.get("name") and x.get("organization") == b.get("organization")), None)
+                        if lab is None:
+                            lab = {"id": new_id(s), "name": b.get("name"), "organization": b.get("organization")}
+                            labels.append(lab)
+                        if lab["id"] not in ids:
+                            ids.append(lab["id"])
+                    return self.send(204)
                 m = re.match(r"^job_templates/(\d+)/credentials/$", p)
                 if m:
                     jt = next(r for r in s["job_templates"] if r["id"] == int(m.group(1)))

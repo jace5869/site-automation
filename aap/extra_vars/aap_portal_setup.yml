@@ -85,6 +85,25 @@ portal_setup_portal_user: svc_site_portal
 ## a CA file for AAP's own HTTPS certificate
 # portal_setup_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"
 
+## 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (*
+## and ?, any case) of AAP names: each match gets the label portal_label and Execute for
+## portal_setup_portal_user. Run with Check first: it says would label / would grant / already done
+## / skipped. Nothing is ever removed by this; a pattern that matches nothing is said; one that
+## matches more than portal_publish_max stops with the list and changes nothing. The credential
+## needs Admin on the templates' organization, as for the rest of this job. e.g. ["Site - health *",
+## "Weekly cleanup"]
+# portal_publish_templates: []
+
+## {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})
+# portal_publish_area: {}
+
+## the most one pattern may match
+# portal_publish_max: 50
+
+## Take templates off the portal again (the label only; the roles stay and nothing is deleted): the
+## same shape.
+# portal_unpublish_templates: []
+
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
 ## -----------------------
@@ -97,6 +116,24 @@ portal_setup_portal_user: svc_site_portal
 
 ## built-in actions to hide: a list of their names (one that is no action is an error)
 # portal_actions_off: []
+
+## 1.78.1: point a built-in action at your own template or workflow name in AAP, so nothing is
+## renamed there: {action: "Your name"} or {action: {type: job|workflow, name: "Your name"}} (the
+## type stays the built-in's unless given). An action that is no action is an error; two actions
+## that would run one template are an error. The deploy says "points at <name>" and whether AAP has
+## it.
+# portal_aap_names: {}
+
+## 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account
+## has Execute on AND that carries the AAP label below is added to the portal - no edit here, no
+## redeploy; take Execute or the label away and it goes at the next refresh. The form is the
+## template's survey; the card's area is a label "portal-area:STIG" (else Other), its title the
+## template's name, its line the description. the AAP label that marks a template for the portal (''
+## = no discovery)
+# portal_label: portal
+
+## a label that starts with this puts the card in an area (the rest of the label is its name)
+# portal_label_area: "portal-area:"
 
 ## the AAP inventory whose hosts an action's inventory_host values must be (by name; required when
 ## an action has one)

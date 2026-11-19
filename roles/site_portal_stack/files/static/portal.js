@@ -205,7 +205,7 @@ function hostPickers() {
     all.type = "button";
     const bar = el("div", "pk-bar"); bar.append(all, note);
     box.append(chips, q, list, foot, bar, hid);
-    let rows = [], on = 0, seq = 0, timer = 0, matches = 0;
+    let rows = [], on = 0, seq = 0, timer = 0, matches = 0, stale = "";
     const total = () => { let n = 0; for (const c of picked.values()) n += c; return n; };
     function sync() {
       chips.replaceChildren();
@@ -238,7 +238,7 @@ function hostPickers() {
         list.append(li);
       });
       if (!rows.length) list.append(el("li", "pk-empty", "Nothing matches."));
-      foot.textContent = matches > rows.length ? (matches - rows.length) + " more - type to narrow." : "";
+      foot.textContent = (stale ? stale + " " : "") + (matches > rows.length ? (matches - rows.length) + " more - type to narrow." : "");
       all.disabled = !rows.some((r) => !picked.has(r.name) && fits(r) && total() + r.count <= cap);
     }
     function toggle(r) {
@@ -250,7 +250,7 @@ function hostPickers() {
       let r;
       try { r = await call("api/inventory?q=" + encodeURIComponent(q.value.trim())); } catch (e) { foot.textContent = "The inventory could not be read just now."; return; }
       if (my !== seq) return;
-      rows = r.items || []; matches = r.matches || rows.length; on = 0;
+      rows = r.items || []; matches = r.matches || rows.length; stale = r.stale || ""; on = 0;
       draw();
     }
     all.addEventListener("click", () => {
