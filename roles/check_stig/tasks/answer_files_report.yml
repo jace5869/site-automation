@@ -1,0 +1,28 @@
+---
+# 1.77.1: which answer files Evaluate-STIG was given, and which answered which rule - on the report after "Every host"
+# (the website: the tables; the email: one line; the workbook: every row), its note last of all
+# (plugins/filter/stig_answer_file_filters.py). Read from each host's scan; nothing is read again, nothing written.
+- name: STIG | answer files - what Evaluate-STIG was given, and what it used
+  ansible.builtin.set_fact:
+    _stig_af_report: "{{ _results | stig_answer_files_report(_stig_af | default({}), check_stig_list_max | default(200) | int) }}"
+  vars:
+    _results: >-
+      {{ (ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
+          | map(attribute='check_stig_results') | flatten(levels=1) | list)
+         + (ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_result', 'defined')
+            | map(attribute='check_stig_result') | list) }}
+  run_once: true
+
+- name: STIG | answer files - on the report
+  ansible.builtin.set_fact:
+    site_report_web_sections: "{{ site_report_web_sections | default(site_report_sections | default([])) | stig_answer_files_place(_stig_af_report.web) }}"
+    site_report_sections: "{{ site_report_sections | default([]) | stig_answer_files_place(_stig_af_report.email) }}"
+    site_report_sheets: "{{ site_report_sheets | default([]) + _stig_af_report.sheets }}"
+  run_once: true
+  when: _stig_af_report.web | length > 0
+
+- name: STIG | answer files
+  ansible.builtin.debug:
+    msg: "{{ _stig_af_report.line }}"
+  run_once: true
+  when: _stig_af_report.line | length > 0

@@ -158,6 +158,12 @@
         name: check_stig
         tasks_from: texts.yml
 
+    # 1.77.1: which answer files Evaluate-STIG was given, and which answered which rule (after "Every host"; the email: a line)
+    - name: The answer files Evaluate-STIG was given, and what each answered
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: answer_files_report.yml
+
   post_tasks:
     # 1.67.0: one finding of the site portal's (playbooks/stig_finding_recheck.yml, workflows 46-48): fixed, still there
     # or not checked, for its job page - before the report and NEEDS APPROVAL, which end the host

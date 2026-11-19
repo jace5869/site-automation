@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.77.1 — 2026-11-19
+
+**To set up: nothing.** The STIG reports made from an Evaluate-STIG run show the answer files on their own.
+
+**Which answer files Evaluate-STIG was given, and which answered which rule** (docs/STIG_DRIFT.md, "Which answer files
+were used").
+
+- The STIG drift report and the recheck, after *Every host* (and *STIG answer keys - try my answer file*, after its
+  results, for its run with your answer files):
+  - each answer file: its STIG, rules, keys, when it changed, its SHA-256, where it came from, what it answered;
+  - the same rule in two files: Info when both give the same answer, a warning when they differ;
+  - each rule an answer file set, with the file and key: named in the checklist, or matched (said as matched).
+  A short note on how they are read is the last section. Info by default.
+- The email: one line with the files, the rules answered and the conflicts. The workbook: three Answer files sheets
+  with every row.
+- From the share (`check_stig_evaluate_answers`), the folder `check_stig_evaluate_args` gives, or Evaluate-STIG's own
+  `AnswerFiles` folder. Only names, Vuln IDs, keys and statuses are read: never a file's comments or code.
+- A CKL names the file each rule was answered from; a CKLB does when it carries Evaluate-STIG's object on the rule.
+- Windows servers too (the Windows STIG drift report and recheck): Evaluate-STIG's own `AnswerFiles` folder on the
+  server, or the `-AFPath` in `win_check_stig_evaluate_args`.
+- Read with care: only UTF-8 answer files (another encoding is not read), never one with a DTD; errors say where, not
+  what a file says; a status that is no status is "invalid status". A rule counts as answered from a file only on
+  Evaluate-STIG's own marker or words (a marker with no AFMod: its words decide). A folder that cannot be read is
+  said, in the workbook too; so is a `-AFPath` folder that is not there. Its hash is of what was read (Windows: read
+  in place, never copied; a file that changed while it was read is not read).
+  Windows: reads the answer files in Constrained Language Mode too, never fails a scan, and does not read a checklist
+  with a DTD (a "<!DOCTYPE" in a comment or a finding's text is no DTD).
+
 ## 1.77.0 — 2026-11-19
 
 **To set up:** a job template **STIG answer keys - try my answer file** (`playbooks/stig_answer_keys_try.yml`):

@@ -176,11 +176,14 @@
                                     awx_job_id | default(tower_job_id | default('')) | string, 'What you can do from here', 200,
                                     ['stig_rule_fail', 'stig_fixed_open', 'stig_no_asset', 'fapolicyd_deny'])
          if report_portal_url | default('') | length > 0 else none }}
+    # 1.77.1: a job's own sheets too (site_report_sheets: the STIG reports' Answer files - every row, where the email has a line)
     _report_xlsx: >-
       {{ (_report | report_xlsx_sheets([_patch_age.group_sheet] if _patch_age.group_sheet is defined else []))
                                         + ([_patch_age.sheet] if _patch_age.sheet is defined else [])
                                         + ([_cert_timeline.sheet] if _cert_timeline.sheet is defined else [])
-         if (_patch_age.sheet is defined or _cert_timeline.sheet is defined) and report_email_xlsx | default(false) | bool else [] }}
+                                        + (site_report_sheets | default([]))
+         if (_patch_age.sheet is defined or _cert_timeline.sheet is defined or site_report_sheets | default([]) | length > 0)
+            and report_email_xlsx | default(false) | bool else [] }}
   run_once: true
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 

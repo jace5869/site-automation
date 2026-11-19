@@ -111,6 +111,18 @@
                                   answer_keys_evidence | default('web')) }}
   run_once: true
 
+# 1.77.1: which answer files Evaluate-STIG was given in the run with them, and which answered which rule - the Answer
+# files sections in place of the report's own list of your files (stig_answer_files_try)
+- name: Answer keys try | the answer files Evaluate-STIG was given, and what each answered
+  ansible.builtin.set_fact:
+    _akt_doc: >-
+      {%- set res = [] -%}
+      {%- for h in ansible_play_hosts_all if (hostvars[h]._akt_with.answer_files | default({})) -%}
+      {%-   set _ = res.append({'host': h, 'answer_files': hostvars[h]._akt_with.answer_files}) -%}
+      {%- endfor -%}
+      {{ _akt_doc | stig_answer_files_try(res | stig_answer_files_report(_stig_af | default({}), check_stig_list_max | default(200) | int)) }}
+  run_once: true
+
 - name: Answer keys try | what happened
   ansible.builtin.debug:
     msg: "{{ _akt_doc.lines }}"

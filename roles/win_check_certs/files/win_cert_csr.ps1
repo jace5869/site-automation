@@ -25,7 +25,7 @@ function Get-Setting([string] $Name, $Default) {
     return $Default
 }
 function Write-Result {
-    '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 6 -Compress)
+    '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 12 -Compress)
 }
 # A program (auditpol, net, w32tm, netsh, certreq ...): its output lines and exit code. Windows PowerShell 5.1
 # makes each line a program writes to stderr an error when 2>&1 is used, and with 'Stop' above that ends the

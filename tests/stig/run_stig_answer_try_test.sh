@@ -100,7 +100,9 @@ check "nothing kept in the job's temporary places" "$( [ -z "$(leftovers)" ]; ec
 page="$work/web/stig-answer-keys-try-my-answer-file/latest.html"
 if [ -f "$page" ]; then
     txt="$("$py" -c 'import html, re, sys; print(html.unescape(re.sub(r"<[^>]+>", " ", open(sys.argv[1]).read())))' "$page" | tr -s ' \n' ' ')"
-    for x in "Need a look 2" "Changed by your answer file 1" "No key needed 1" "Your answer files" "SITEA_RHEL9.xml" \
+    # 1.77.1: the Answer files sections in place of the list of your files (which file answered which rule), the note last
+    for x in "Need a look 2" "Changed by your answer file 1" "No key needed 1" "Answer files - what Evaluate-STIG was given" \
+             "How the answer files are read" "SITEA_RHEL9.xml" \
              "Approved by the site's ISSM" "Evaluate-STIG did not keep what the code read" "1 host, 4 rules, answer key SITEA."; do
         grep -qF -- "$x" <<< "$txt" || { echo "FAIL - the page: missing '$x'"; fails=$((fails + 1)); }
     done

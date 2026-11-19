@@ -208,6 +208,7 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
            "stig_version": scan.get("stig_version", ""), "ssg_version": scan.get("ssg_version", ""),
            "scanner": scan.get("scanner", "OpenSCAP"), "scanner_before": scan.get("scanner_before", ""),
            "evaluate_note": evaluate_note(scan), "label": ("%s - %s" % (host, scan["label"])) if scan.get("label") else "",
+           "answer_files": scan.get("answer_files") or {},      # 1.77.1: the report's Answer files sections
            "key": each, "benchmark": scan.get("benchmark", ""), "platform": scan.get("platform", ""),
            "checklist_time": scan.get("checklist_time", ""), "found_by": scan.get("found_by", ""),
            "profile": scan.get("profile_title") or scan.get("profile", ""), "counts": scan.get("counts") or {},
@@ -795,6 +796,7 @@ def _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label, carry=False
            "scanned": bool(scan and scan.get("scanned")), "why": (scan or {}).get("why", ""),
            "scanner": (scan or {}).get("scanner", ""), "stig_version": (scan or {}).get("stig_version", ""),
            "how": _recheck_how(scan or {}), "evaluate_note": evaluate_note(scan or {}), "saved": (scan or {}).get("saved") or {},
+           "answer_files": (scan or {}).get("answer_files") or {},      # 1.77.1
            "stigman": {"status": sm.get("status", ""), "why": sm.get("why", ""), "collection": sm.get("collection", ""),
                        "asset": smc.get("asset", "") or sm.get("asset", ""), "revision": smc.get("revision", "")},
            # what a write needs (playbooks/stigman_update.yml): the collection's and the asset's ids, when the scan answered

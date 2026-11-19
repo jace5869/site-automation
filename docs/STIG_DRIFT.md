@@ -243,6 +243,43 @@ web01.yoursite.mil: given 2 answer file(s) from \\fileserver.yourdomain.mil\stig
   `--ListSupportedProducts` names it) and holds answer keys - `DEFAULT`, or one you give with
   `check_stig_evaluate_args: ["--AnswerKey", "SITE"]`. A file for another STIG, or another key, answers nothing here.
 
+### Which answer files were used (1.77.1)
+
+Every report made from an Evaluate-STIG run (the STIG drift report, the recheck, and *STIG answer keys - try my
+answer file*) shows the answer files after *Every host* (Try my answer file: after its results, in place of its own
+list of your files). It does this whether the files came from your share or from Evaluate-STIG's own `AnswerFiles` folder.
+
+- **Answer files - what Evaluate-STIG was given, and what it used**: one row per file.
+  - Columns: its STIG (`STIGComments Name`), how many rules it has, its keys, when it changed, the first 12 characters
+    of its SHA-256, where it came from, and **Answered** (how many rules it set, on how many hosts).
+  - A file that answered nothing is said, not a warning: *none on 2 hosts of its STIG*, or *none - no host of its
+    STIG*.
+- **Answer files - the same rule in two files**: shown when two files answer the same rule for the same key.
+  - Both give the same answer: *same answer in both* (Info).
+  - They differ (another ExpectedStatus or status): **differ**, a warning. Keep each rule in one file.
+  - *Evaluate-STIG used* names the file the checklist names, on which hosts.
+- **Rules answered from an answer file**: each rule, the status it set, and *file · key*.
+  - *Named in the checklist*: Evaluate-STIG wrote the file's name with the rule.
+  - *Matched*: the checklist names only the key; one file has this rule and key with the status set. Most likely
+    that one, not certain.
+  - The first `check_stig_list_max` rows; the workbook has all.
+- **Answer files - the folder could not be read**: shown when a host's answer-file folder could not be listed. The
+  scan itself still counts.
+- **How the answer files are read**: a short note, last on the page.
+
+The email has one line, for example *Answer files: 4 files given (3 STIGs), 68 rules answered, 1 conflict*. The
+workbook (`report_email_xlsx`) has three sheets: *Answer files*, *Answer files - same rule*, *Answer files - rules*.
+
+Only names, Vuln IDs, keys and statuses are read from a file: never its comments or its code. A file must be UTF-8 (or
+ASCII): another encoding is *not read: not UTF-8*, and one with a DTD is *not read: has a DTD*. A file that is not
+valid XML says where (*XML error at line 4, col 12*), never what is there. A status that is not one of the four is
+*invalid status*. A rule counts as answered only when Evaluate-STIG's own marker (`AFMod` true) or words say so; a
+marker with no `AFMod` (an older Evaluate-STIG): its words decide. An empty file is not read. A file's SHA-256 is of
+what was read (on Windows, a copy taken first). With `check_stig_evaluate_read` the files listed are those in
+Evaluate-STIG's folder now; what it had when it wrote the checklist is not known. Windows servers (the Windows STIG
+drift report and recheck): the files in Evaluate-STIG's own `AnswerFiles` folder on the server (or the `-AFPath` in
+`win_check_stig_evaluate_args`).
+
 **If the share cannot be read** (it is down, the password is wrong, the folder is not there), Evaluate-STIG is **not
 run**. Each host is then listed as not scanned, with the reason and what to check. Scanning without the answers would
 mark Open everything they answer, and that would show as drift.

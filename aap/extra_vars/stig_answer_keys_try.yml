@@ -80,6 +80,10 @@ check_stig_evaluate_answers: '\\fileserver.yourdomain.mil\stig\AnswerFiles'
 ## the STIG Manager benchmark (STIG) for each RHEL version
 # check_stig_stigman_benchmarks: {"8": RHEL_8_STIG, "9": RHEL_9_STIG, "10": RHEL_10_STIG}
 
+## at most this many rows in the report's tables of rules left out and of fails STIG Manager has no
+## review for
+# check_stig_list_max: 200
+
 ## 1.77.0: a host's text in the reports of both answer keys jobs (what the trial or the code read,
 ## Evaluate-STIG's comment, the cross-check's evidence) - web: on the report website, redacted, at
 ## most 20 lines and 2000 characters a rule; never in the email or its workbook (statuses, counts

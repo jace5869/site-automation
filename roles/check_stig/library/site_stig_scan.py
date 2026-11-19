@@ -96,6 +96,7 @@ passed_before:
 
 import datetime
 import glob
+import hashlib
 import gzip
 import json
 import os
@@ -105,6 +106,7 @@ import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_redact import redact, run_main
@@ -196,6 +198,140 @@ def _plain(s):
     return re.sub(r"[^a-z]", "", (s or "").lower())
 
 
+# 1.77.1: how Evaluate-STIG marks a rule it set from an answer file. A CKL carries, in the rule's VULN, an XML comment
+# <Evaluate-STIG><AnswerFile>name</AnswerFile><AFMod>True</AFMod><OldStatus>...</OldStatus>...</Evaluate-STIG> (as STIG
+# Manager's own checklist reader takes it); a CKLB, an "evaluate-stig" object on the rule, read the same way when it is
+# there. Else the rule's comment says only "Evaluate-STIG answer file for Key 'NAME'": the key, not the file.
+ES_COMMENT_RE = re.compile(r"^\s*(<Evaluate-STIG>.*?</Evaluate-STIG>)\s*$", re.S)
+
+
+class XmlRefused(Exception):
+    """1.77.1c: an XML file not read - its reason in fixed words (never the file's own text)."""
+
+
+XML_ENC = re.compile(br"^(?:\xef\xbb\xbf)?\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']*)[\"']")
+
+
+def safe_xml(data):
+    """1.77.1c: XML bytes -> an ElementTree root, or XmlRefused. Only UTF-8 (or ASCII): another encoding - UTF-16 with or
+    without its mark, one named in the declaration - is refused, never decoded. A first pass with expat alone refuses
+    any DOCTYPE or entity declaration, whatever the encoding, before ElementTree reads it (an older expat - RHEL 8's
+    Python 3.6 - does not stop an entity expanding). Errors say where, never what the file says."""
+    head = data[:4]
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff") or b"\x00" in head:
+        raise XmlRefused("not read: not UTF-8")
+    m = XML_ENC.match(data[:512])
+    if m and m.group(1).strip().lower() not in (b"utf-8", b"utf8", b"us-ascii", b"ascii"):
+        raise XmlRefused("not read: not UTF-8")
+
+    def no_dtd(*a):
+        raise XmlRefused("not read: has a DTD")
+
+    def decl(version, encoding, standalone):
+        # 1.77.1e: the declaration as the parser reads it (wherever its encoding falls), not a prefix of the file
+        if encoding and encoding.strip().lower() not in ("utf-8", "utf8", "us-ascii", "ascii"):
+            raise XmlRefused("not read: not UTF-8")
+    # read as UTF-8 whatever the file says: a byte that is not UTF-8 is an error, never decoded another way
+    x = expat.ParserCreate("UTF-8")
+    x.XmlDeclHandler = decl
+    x.StartDoctypeDeclHandler = no_dtd
+    x.EntityDeclHandler = no_dtd
+    try:
+        x.Parse(data, True)
+    except expat.ExpatError as e:
+        raise XmlRefused("not read: XML error at line %s, col %s" % (getattr(e, "lineno", "?"), getattr(e, "offset", "?")))
+    except (LookupError, ValueError):
+        raise XmlRefused("not read: unknown encoding")
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError as e:
+        ln, col = getattr(e, "position", ("?", "?"))
+        raise XmlRefused("not read: XML error at line %s, col %s" % (ln, col))
+    except (LookupError, ValueError):
+        raise XmlRefused("not read: unknown encoding")
+
+
+class _CommentsByVuln(ET.TreeBuilder):
+    """A tree builder that keeps the comments inside each VULN, in the order of the VULNs (1.77.1c: from the parsed
+    elements themselves - a "<VULN >" or a VULN in a comment cannot shift them)."""
+    def __init__(self):
+        ET.TreeBuilder.__init__(self)
+        self.vulns, self.depth, self.cur = [], 0, None
+
+    def start(self, tag, attrs):
+        if tag == "VULN":
+            self.cur = []
+            self.vulns.append(self.cur)
+        return ET.TreeBuilder.start(self, tag, attrs)
+
+    def end(self, tag):
+        if tag == "VULN":
+            self.cur = None
+        return ET.TreeBuilder.end(self, tag)
+
+    def comment(self, text):
+        if self.cur is not None:
+            self.cur.append(text or "")
+
+
+def _norm_keys(d):
+    """{'AnswerFile': x, 'AF-Mod': y} -> {'answerfile': x, 'afmod': y} (any case, no - or _)."""
+    return dict((re.sub(r"[-_ ]", "", str(k)).lower(), v) for k, v in (d or {}).items())
+
+
+def af_marker(obj):
+    """An Evaluate-STIG marker (a CKLB rule's object, or a CKL comment's elements as a dict) -> {file, mod, old} or {}."""
+    d = _norm_keys(obj)
+    f = d.get("answerfile") or d.get("afname") or ""
+    if isinstance(f, dict):
+        f = f.get("name") or f.get("path") or ""
+    # 1.77.1e: a marker with AFMod and no file name is still a marker (its file not known)
+    if not f and str(d.get("afmod", "")).strip() == "":
+        return {}
+    mod = str(d.get("afmod", "")).strip().lower()
+    # 1.77.1d: no AFMod (an older Evaluate-STIG): None - not known, Evaluate-STIG's own words decide
+    mod = True if mod in ("true", "1", "yes") else (False if mod in ("false", "0", "no") else None)
+    return {"file": os.path.basename(str(f).replace("\\", "/")) if f else "", "mod": mod,
+            "old": str(d.get("oldstatus") or "")}
+
+
+def _ckl_markers(data):
+    """A CKL's bytes -> each VULN's Evaluate-STIG marker, in the order of the VULNs ({} where none) - from the comments the
+    parser found inside each VULN element."""
+    tb = _CommentsByVuln()
+    p = ET.XMLParser(target=tb)
+    try:
+        p.feed(data)
+        p.close()
+    except (ET.ParseError, LookupError, ValueError):
+        return []
+    out = []
+    for comments in tb.vulns:
+        got = {}
+        for c in comments:
+            m = ES_COMMENT_RE.match(c)
+            if not m:
+                continue
+            try:
+                el = safe_xml(m.group(1).encode("utf-8"))
+                got = af_marker(dict((x.tag, x.text or "") for x in el.iter() if x is not el))
+            except XmlRefused:
+                got = {}
+            break
+        out.append(got)
+    return out
+
+
+def _cklb_marker(r):
+    """A CKLB rule -> its Evaluate-STIG marker: an object on the rule whose name says evaluate-stig (any case)."""
+    for k, v in r.items():
+        if isinstance(v, dict) and "evaluate" in str(k).lower():
+            got = af_marker(v)
+            if got:
+                return got
+    return af_marker(dict((k, v) for k, v in r.items() if not isinstance(v, (dict, list))))
+
+
 def read_checklist(path):
     """An Evaluate-STIG checklist - CKLB (JSON, as STIG Viewer 3 and STIG Manager read it) or CKL (XML) -> its STIGs:
     [{stig_id, title, version, release, rules: [{rule, v, stigid, severity, title, result, details, comments, check_text,
@@ -212,10 +348,21 @@ def read_checklist(path):
                                    "severity": CKL_SEV.get(_plain(r.get("severity")), ""), "title": r.get("rule_title") or "",
                                    "result": CKL_STATUS.get(_plain(r.get("status")), "notchecked"),
                                    "details": r.get("finding_details") or "", "comments": r.get("comments") or "",
-                                   "check_text": r.get("check_content") or "", "fix_text": r.get("fix_text") or ""}
+                                   "check_text": r.get("check_content") or "", "fix_text": r.get("fix_text") or "",
+                                   "af": _cklb_marker(r)}
                                   for r in s.get("rules") or []]})
         return out
-    root = ET.fromstring(data)
+    try:
+        root = safe_xml(data)
+    except XmlRefused as e:
+        raise ET.ParseError(str(e))
+    marks = _ckl_markers(data)
+    n = [0]
+
+    def mark():
+        i = n[0]
+        n[0] += 1
+        return marks[i] if i < len(marks) else {}
     for ist in root.iter("iSTIG"):
         info = dict(((sd.findtext("SID_NAME") or ""), (sd.findtext("SID_DATA") or "")) for sd in ist.iter("SI_DATA"))
         rules = []
@@ -226,7 +373,8 @@ def read_checklist(path):
             rules.append({"rule": a.get("Rule_ID", ""), "v": a.get("Vuln_Num", ""), "stigid": a.get("Rule_Ver", ""),
                           "severity": CKL_SEV.get(_plain(a.get("Severity")), ""), "title": a.get("Rule_Title", ""),
                           "result": CKL_STATUS.get(_plain(v.findtext("STATUS")), "notchecked"), "details": v.findtext("FINDING_DETAILS") or "",
-                          "comments": v.findtext("COMMENTS") or "", "check_text": a.get("Check_Content", ""), "fix_text": a.get("Fix_Text", "")})
+                          "comments": v.findtext("COMMENTS") or "", "check_text": a.get("Check_Content", ""), "fix_text": a.get("Fix_Text", ""),
+                          "af": mark()})
         out.append({"stig_id": info.get("stigid", ""), "title": info.get("title", ""), "version": info.get("version", ""),
                     "release": info.get("releaseinfo", ""), "rules": rules})
     return out
@@ -244,21 +392,137 @@ def pick_stig(stigs, want, major):
     return None
 
 
-AF_RE = re.compile(r"answer\s*file", re.I)
-AF_KEY_RE = re.compile(r"answer\s*file for key\s*'([^']+)'|answer\s*key\s*:\s*(\S+)", re.I)
+# 1.77.1c: what says an answer file set the rule - Evaluate-STIG's own words, not any prose that mentions answer files
+AF_SAID = re.compile(r"Evaluate-STIG answer file for Key '([^'\n]+)'")
+AF_KEY_LINE = re.compile(r"^\s*Answer\s*Key\s*:\s*(\S+)\s*$", re.I | re.M)
 
 
-def answered_from_files(st):
-    """The rules Evaluate-STIG answered from an answer file - their checklist entry names one (its comment: "Evaluate-STIG
-    answer file for Key 'DEFAULT' ...") -> {used, keys, rules (V ids)}: the answer files were not only given, they were used."""
-    rules, keys = [], set()
+def answered_from_files(st, wanted=None):
+    """The rules Evaluate-STIG answered from an answer file -> {used, keys, rules (V ids)}: the answer files were not only
+    given, they were used. 1.77.1e (Codex): the same rows as the Answer files sections (answered_rules: Evaluate-STIG's
+    own marker or words - never any prose about answer files such as "No answer file was used"; the recheck: its rules)."""
+    rows = answered_rules(st, wanted)
+    return {"used": len(rows), "keys": sorted(set(r["key"] for r in rows if r["key"])), "rules": sorted(r["v"] for r in rows)[:200]}
+
+
+def answered_rules(st, wanted=None):
+    """1.77.1: each rule Evaluate-STIG set from an answer file -> [{v, key, file, status}]: the file when the checklist
+    names it (af), else '' (the report matches it to a file by rule, key and status, and says so); the key from the
+    comment ("answer file for Key 'NAME'"). 1.77.1c: set from a file = its marker with AFMod true, or Evaluate-STIG's
+    own words ("Evaluate-STIG answer file for Key '...'") - not any prose about answer files; a marker with AFMod false:
+    the file did not set it. wanted: the rules checked (the recheck) - only those."""
+    out = []
     for r in st["rules"]:
+        v = r["v"] or r["rule"]
+        if wanted and v not in wanted:
+            continue
         text = (r.get("comments") or "") + "\n" + (r.get("details") or "")
-        if AF_RE.search(text):
-            rules.append(r["v"] or r["rule"])
-            keys.update(a or b for a, b in AF_KEY_RE.findall(text))
-    # 1.77.0h: a key is read from the checklist's comment as it came - redacted as the comment is (a name, not a line)
-    return {"used": len(rules), "keys": sorted(set(redact(k, backstop=False) for k in keys if k)), "rules": sorted(rules)[:200]}
+        af = r.get("af") or {}
+        said = AF_SAID.findall(text)
+        mod = af.get("mod")
+        if mod is False:
+            continue                    # Evaluate-STIG's marker: no answer file set it
+        # 1.77.1e: AFMod true - set from a file (named, or not known); no AFMod (None): Evaluate-STIG's words decide,
+        # and only then is the file named - each whether or not the marker names a file
+        if not (mod is True or said):
+            continue
+        keys = said or AF_KEY_LINE.findall(text)
+        # 1.77.0h: a key (and a file's name) read from the checklist as it came - redacted as the comment is (a name)
+        out.append({"v": v, "key": redact(keys[0], backstop=False) if keys else "", "file": redact(af.get("file") or "", backstop=False),
+                    "status": r.get("result") or "", "old": af.get("old", ""), "severity": r.get("severity") or "",
+                    "stigid": r.get("stigid") or ""})
+    return out
+
+
+AF_STATUS = {"notafinding": "NotAFinding", "open": "Open", "notapplicable": "Not_Applicable", "notreviewed": "Not_Reviewed"}
+
+
+def _status_word(s):
+    """An answer file's status (NotAFinding, Not_Applicable, Open, Not_Reviewed, any case) -> the same, as Evaluate-STIG
+    writes it; empty stays empty; 1.77.1c: anything else is "invalid status" - never the file's own text."""
+    t = (s or "").strip()
+    if not t:
+        return ""
+    return AF_STATUS.get(re.sub(r"[^a-z]", "", t.lower()), "invalid status")
+
+
+def answer_file_summary(path, max_mb=20):
+    """1.77.1: one answer file -> {name, size, sha256, modified (UTC), stig (STIGComments Name), keys, vulns: {V-id:
+    {key: [ExpectedStatus, ValidTrueStatus, ValidFalseStatus]}}, error}. Only names, ids, keys and statuses - never its
+    comments or code."""
+    out = {"name": os.path.basename(path), "size": 0, "sha256": "", "modified": "", "stig": "", "keys": [], "vulns": {}, "error": ""}
+    try:
+        st = os.stat(path)
+        out["size"] = st.st_size
+        out["modified"] = datetime.datetime.fromtimestamp(st.st_mtime, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cap = max_mb * 1024 * 1024
+        with open(path, "rb") as f:
+            data = f.read(cap + 1)                  # 1.77.1c: the cap on what is read, not on what stat said
+        if len(data) > cap:
+            out["error"] = "larger than %d MB - not read" % max_mb
+            return out
+        out["sha256"] = hashlib.sha256(data).hexdigest()
+        root = safe_xml(data)
+    except XmlRefused as e:
+        out["error"] = str(e)
+        return out
+    except (OSError, IOError) as e:
+        out["error"] = "not read: %s" % (e.strerror or "could not be opened")
+        return out
+    except Exception:          # noqa: BLE001 - one file, never the host's scan
+        out["error"] = "not read"
+        return out
+    sc = root if root.tag == "STIGComments" else root.find(".//STIGComments")
+    out["stig"] = (sc.get("Name") if sc is not None else "") or ""
+    keys = set()
+    # 1.77.1 (Codex P1): a Vuln of STIGComments and an AnswerKey of its Vuln - their own children only, never an element
+    # inside a comment's or a ValidationCode's markup
+    for v in (sc if sc is not None else root).findall("Vuln"):
+        vid = (v.get("ID") or "").strip()
+        if not vid:
+            continue
+        for k in v.findall("AnswerKey"):
+            name = (k.get("Name") or "").strip()
+            keys.add(name)
+            out["vulns"].setdefault(vid, {})[name] = [_status_word(k.findtext("ExpectedStatus")), _status_word(k.findtext("ValidTrueStatus")),
+                                                      _status_word(k.findtext("ValidFalseStatus"))]
+    out["keys"] = sorted(k for k in keys if k)
+    return out
+
+
+# the template Evaluate-STIG ships in its AnswerFiles folder (not an answer file of the site): only that name is left out
+AF_TEMPLATES = ("answerfile_template.xml",)
+
+
+def answer_files_in(folder, max_files=200, max_mb=20):
+    """The answer files in a folder (*.xml, not Evaluate-STIG's template) -> ([summaries], how many more were left out,
+    '' or why the folder could not be read - 1.77.1c: an unreadable folder is said, not shown as an empty one)."""
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.lower().endswith(".xml") and n.lower() not in AF_TEMPLATES
+                       and os.path.isfile(os.path.join(folder, n)))
+    except OSError as e:
+        return [], 0, "folder not read: %s" % (e.strerror or "could not be listed")
+    return [answer_file_summary(os.path.join(folder, n), max_mb) for n in names[:max_files]], max(0, len(names) - max_files), ""
+
+
+def af_folder(answers, args, script, af_arg="AFPath"):
+    """The folder Evaluate-STIG read its answer files from -> (folder, given): the job's copy (check_stig_evaluate_answers),
+    the folder check_stig_evaluate_args gives it (relative: from the folder of the script run - script[0]), or its own
+    AnswerFiles folder ('' when none is there)."""
+    if answers:
+        return answers, "staged"
+    want = af_arg.lstrip("-").lower()
+    for i, a in enumerate(args or []):
+        if str(a).lstrip("-").lower() == want and i + 1 < len(args):
+            f = str(args[i + 1])
+            if not os.path.isabs(f) and script and script[0]:
+                # Evaluate-STIG runs in its own folder: a relative folder is from there, not from this module's
+                f = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(script[0])), f))
+            return f, "args"
+    for d in [os.path.dirname(x) for x in script if x]:
+        if os.path.isdir(os.path.join(d, "AnswerFiles")):
+            return os.path.join(d, "AnswerFiles"), "own"
+    return "", ""
 
 
 def checklist_version(st):
@@ -643,6 +907,7 @@ class Scan(object):
 
             def run(pick):
                 cmd, ran = command(pick)
+                extra["evaluate_ran"] = ran          # 1.77.1: its folder is Evaluate-STIG's working folder (a relative --AFPath)
                 return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=p["timeout"],
                                       cwd=os.path.dirname(os.path.abspath(ran)))
             try:
@@ -698,7 +963,23 @@ class Scan(object):
         else:
             return self.fail("no checklist of %s %s" % (what, how), **ident)
         if extra.get("answers"):
-            extra["answers"].update(answered_from_files(st))
+            extra["answers"].update(answered_from_files(st, set(p["vulns"] or [])))
+        # 1.77.1: the answer files Evaluate-STIG read (names, ids, keys - never their comments or code), and each rule it
+        # set from one - for the report's Answer files sections
+        a2 = p["evaluate_args"] or []
+        a2 = shlex.split(a2) if isinstance(a2, str) else [str(a) for a in a2]
+        sc = [x for x in (extra.get("evaluate_ran") or "", extra.get("evaluate") or "",
+                          find_evaluate(p["evaluate"]) if p["evaluate"] else "") if x]
+        folder, given = af_folder(p["answers"], a2, sc + [evaluate_ps1(x) for x in sc], p["answers_arg"])
+        if p["evaluate_read"] and given != "staged":
+            given = "read"             # its own run, on its own schedule: what it was given then is not known here
+        afs, more, ferr = answer_files_in(folder) if folder else ([], 0, "")
+        here = set(r["v"] for r in st["rules"] if r.get("v"))
+        for f in afs:
+            f["in_checklist"] = len(here.intersection(f["vulns"]))      # its rules this host's STIG has: a host of its STIG
+        # 1.77.1c: the recheck - only the rules it checked
+        extra["answer_files"] = {"folder": folder, "given": given, "files": afs, "more": more, "error": ferr,
+                                 "rules": answered_rules(st, set(p["vulns"] or []))}
         info = {"scanner": "Evaluate-STIG", "datastream": "", "profile": "", "profile_title": st["title"],
                 "stig_version": checklist_version(st), "ssg_version": "", "benchmark": st["stig_id"], "tailoring": "",
                 "checklist": os.path.basename(path)}

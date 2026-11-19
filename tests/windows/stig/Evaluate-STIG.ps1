@@ -5,7 +5,8 @@
 #   {"host": "WIN01", "exit": 0, "sleep": 0, "wrap": false, "say": ["lines it prints"], "reject": "" (a folder: its schema check
 #    rejects every checklist and moves it there, as Evaluate-STIG's Bad_CKL), "checklists": [{"file", "stig_id",
 #    "display_name", "version", "release", "site", "instance", "rules": [{"sv", "v", "stigid", "sev", "title", "status",
-#    "details", "check", "fix" (1.73.0: DISA's check and fix text, as a checklist carries them)}]}]}
+#    "details", "check", "fix" (1.73.0: DISA's check and fix text, as a checklist carries them), "af" (1.77.1: set from this
+#    answer file, which the checklist names), "afk" (1.77.1: set from an answer file, its key only)}]}]}
 param([string[]] $Output = @('CKLB'), [string] $OutputPath = '', [string[]] $SelectSTIG = @(), [string[]] $ExcludeSTIG = @(),
       [string] $ScanType = 'Unclassified', [string] $AnswerKey = '', [string[]] $SelectVuln = @())
 $ErrorActionPreference = 'Stop'
@@ -35,12 +36,15 @@ foreach ($c in @($spec.checklists)) {
             $st = [string]$r.status
             if ($SelectVuln.Count -and $SelectVuln -notcontains [string]$r.v) { $st = 'nr' }
             $x += '<VULN>'
+            $cm = ''
+            if ($r.af -or $r.afk) { $cm = "Evaluate-STIG answer file for Key 'DEFAULT' is changing the Status from Open to " + $map[$st][1] }
+            if ($r.af) { $x += '<!--<Evaluate-STIG><AnswerFile>' + $r.af + '</AnswerFile><AFMod>True</AFMod><OldStatus>Open</OldStatus><NewStatus>' + $map[$st][1] + '</NewStatus></Evaluate-STIG>-->' }
             foreach ($kv in @(@('Vuln_Num', $r.v), @('Severity', $r.sev), @('Rule_ID', $r.sv + 'r1000_rule'), @('Rule_Ver', $r.stigid), @('Rule_Title', $r.title),
                               @('Check_Content', [System.Security.SecurityElement]::Escape([string]$r.check)),
                               @('Fix_Text', [System.Security.SecurityElement]::Escape([string]$r.fix)))) {
                 $x += '<STIG_DATA><VULN_ATTRIBUTE>' + $kv[0] + '</VULN_ATTRIBUTE><ATTRIBUTE_DATA>' + $kv[1] + '</ATTRIBUTE_DATA></STIG_DATA>'
             }
-            $x += '<STATUS>' + $map[$st][1] + '</STATUS><FINDING_DETAILS>' + $r.details + '</FINDING_DETAILS><COMMENTS></COMMENTS></VULN>'
+            $x += '<STATUS>' + $map[$st][1] + '</STATUS><FINDING_DETAILS>' + $r.details + '</FINDING_DETAILS><COMMENTS>' + $cm + '</COMMENTS></VULN>'
         }
         $x += '</iSTIG></STIGS></CHECKLIST>'
         Set-Content -LiteralPath (Join-Path $dest ($c.file + '.ckl')) -Value ($x -join '') -Encoding UTF8
@@ -50,9 +54,12 @@ foreach ($c in @($spec.checklists)) {
         foreach ($r in @($c.rules)) {
             $st = [string]$r.status
             if ($SelectVuln.Count -and $SelectVuln -notcontains [string]$r.v) { $st = 'nr' }
-            $rules += @(@{ rule_id = $r.sv + 'r1000_rule'; group_id = $r.v; rule_version = $r.stigid; severity = $r.sev; rule_title = $r.title
-                           status = $map[$st][0]; finding_details = [string]$r.details; comments = ''
-                           check_content = [string]$r.check; fix_text = [string]$r.fix })
+            $one = @{ rule_id = $r.sv + 'r1000_rule'; group_id = $r.v; rule_version = $r.stigid; severity = $r.sev; rule_title = $r.title
+                      status = $map[$st][0]; finding_details = [string]$r.details; comments = ''
+                      check_content = [string]$r.check; fix_text = [string]$r.fix }
+            if ($r.af -or $r.afk) { $one.comments = "Evaluate-STIG answer file for Key 'DEFAULT' is changing the Status from Open to " + $map[$st][1] }
+            if ($r.af) { $one['evaluate-stig'] = @{ answer_file = [string]$r.af; afmod = $true; old_status = 'Open'; new_status = $map[$st][1] } }
+            $rules += @($one)
         }
         $doc = @{ title = 'Evaluate-STIG'; cklb_version = '1.0'
                   target_data = @{ host_name = $spec.host; is_web_database = $web; web_db_site = [string]$c.site; web_db_instance = [string]$c.instance }

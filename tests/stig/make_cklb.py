@@ -3,7 +3,8 @@
 the STIG drift tests: the STIG rules of make_results.py, each with the status given, plus another STIG (Firefox) in
 the same file, as Evaluate-STIG's combined checklists have.
   make_cklb.py OUT.cklb '{"SV-257985": "open", ...}' [V2R10] [cklb|ckl]
-A rule not given is not_a_finding; a status is not_a_finding, open, not_applicable or not_reviewed - "af:" before it:
+A rule not given is not_a_finding; a status is not_a_finding, open, not_applicable or not_reviewed - "afn:FILE:" before it
+(1.77.1): answered from FILE, which the checklist names; "af:" before it:
 answered from an answer file (its comment says so, as Evaluate-STIG writes it). An open rule's finding details say what
 was found. "|TEXT" after a status (1.77.0b): what the answer file's ValidationCode printed - in the comment, and in the
 finding details under a ValidationCode heading, as Evaluate-STIG keeps its Write-Verbose output."""
@@ -34,12 +35,21 @@ def rules(results):
                 continue
             seen.add(key)
             st, extra = (results.get(key, "not_a_finding").split("|", 1) + [""])[:2]
+            # 1.77.1: "afn:FILE:status" - answered from FILE, and the checklist names it (a CKLB rule's evaluate-stig
+            # object; a CKL's <Evaluate-STIG> comment in the VULN)
+            named = ""
+            if st.startswith("afn:"):
+                named, st = st[4:].rsplit(":", 1)
+                st = "af:" + st
             af = st.startswith("af:")
             st = st[3:] if af else st
             fd = (FOUND % key) if st == "open" else "Compliant."
-            out.append({"comments": ((AF_COMMENT % CKL[st]) if af else "") + ("\n" + extra if extra else ""), "rule_id": sv, "group_id": vs.split()[i],
-                        "rule_version": ids.split()[i], "severity": sev, "rule_title": title, "status": st,
-                        "finding_details": ("ValidationCode output (Write-Verbose):\n%s\n--------------------\n%s" % (extra, fd)) if extra else fd})
+            rule = {"comments": ((AF_COMMENT % CKL[st]) if af else "") + ("\n" + extra if extra else ""), "rule_id": sv,
+                    "group_id": vs.split()[i], "rule_version": ids.split()[i], "severity": sev, "rule_title": title, "status": st,
+                    "finding_details": ("ValidationCode output (Write-Verbose):\n%s\n--------------------\n%s" % (extra, fd)) if extra else fd}
+            if named:
+                rule["evaluate-stig"] = {"answer_file": named, "afmod": True, "old_status": "Open", "new_status": CKL[st]}
+            out.append(rule)
     out.append({"rule_id": "SV-258999r1000001_rule", "group_id": "V-258999", "rule_version": "RHEL-09-999990", "severity": "medium",
                 "rule_title": "A manual check: a document.", "status": results.get("SV-258999", "not_reviewed").replace("af:", ""), "finding_details": "",
                 "comments": (AF_COMMENT % CKL[results["SV-258999"][3:]]) if results.get("SV-258999", "").startswith("af:") else ""})
@@ -67,6 +77,10 @@ def write(out, results, version="V2R10", fmt="cklb"):
         parts.append("</STIG_INFO>")
         for x in s["rules"]:
             parts.append("<VULN>")
+            if x.get("evaluate-stig"):
+                e = x["evaluate-stig"]
+                parts.append("<!--<Evaluate-STIG><AnswerFile>%s</AnswerFile><AFMod>True</AFMod><OldStatus>%s</OldStatus><NewStatus>%s</NewStatus>"
+                             "</Evaluate-STIG>-->" % (escape(e["answer_file"]), e["old_status"], e["new_status"]))
             for k, val in (("Vuln_Num", x["group_id"]), ("Severity", x["severity"]), ("Rule_ID", x["rule_id"]), ("Rule_Ver", x["rule_version"]),
                            ("Rule_Title", x["rule_title"]), ("CCI_REF", "CCI-000001"), ("CCI_REF", "CCI-000002")):
                 parts.append("<STIG_DATA><VULN_ATTRIBUTE>%s</VULN_ATTRIBUTE><ATTRIBUTE_DATA>%s</ATTRIBUTE_DATA></STIG_DATA>" % (k, escape(val)))

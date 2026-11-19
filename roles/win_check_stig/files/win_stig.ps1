@@ -25,7 +25,7 @@ function Get-Setting([string] $Name, $Default) {
     return $Default
 }
 function Write-Result {
-    '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 6 -Compress)
+    '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 12 -Compress)
 }
 # A program (auditpol, net, w32tm, netsh, certreq ...): its output lines and exit code. Windows PowerShell 5.1
 # makes each line a program writes to stderr an error when 2>&1 is used, and with 'Stop' above that ends the
@@ -155,6 +155,49 @@ $searchIn = @(Get-Setting 'search' @() | Where-Object { $_ })
 $shellSet = [string](Get-Setting 'powershell' '')
 $vulns = @(Get-Setting 'vulns' @() | Where-Object { $_ } | ForEach-Object { [string]$_ })
 $history = [bool](Get-Setting 'history' $true)
+# 1.77.1: the answer files Evaluate-STIG read (Set-AfFolder) - for the report's Answer files sections
+$script:afFolder = ''; $script:afGiven = ''; $script:afRead = @{ files = @(); more = 0 }
+# 1.77.1c: in read mode, the Evaluate-STIG whose scheduled task writes to the folder read; one task only: that one;
+# several and none of them that: '' (not known - the report says so)
+function Get-AfTaskScript($Tasks, [string] $Where) {
+    $with = @($Tasks | Where-Object { $_.script })
+    $w = ([string]$Where).TrimEnd('\', '/').ToLower()
+    # 1.77.1d: the folder read is the task's output folder or one below it (<out>\HOST\Checklist); the deepest wins
+    $w = ($w -replace '\\', '/')
+    $hit = @($with | Where-Object { $_.output } | Where-Object {
+        $o = ([string]$_.output).TrimEnd('\', '/').ToLower() -replace '\\', '/'
+        $w -eq $o -or $w.StartsWith($o + '/') } | Sort-Object -Property @{ Expression = { ([string]$_.output).Length } } -Descending)
+    if ($hit.Count -ge 1) { return [string]$hit[0].script }
+    if ($with.Count -eq 1) { return [string]$with[0].script }
+    return ''
+}
+
+function Set-AfFolder([string] $Script, [string] $Given) {
+    # 1.77.1c: CLM-safe (no .NET path calls), and never fails the scan - an error is the folder's, said in the report
+    try {
+        $base = ''
+        if ($Script) { $base = Split-Path -Parent $Script }
+        for ($i = 0; $i -lt $extra.Count - 1; $i++) {
+            if (([string]$extra[$i]).TrimStart('-').ToLower() -eq 'afpath') {
+                $f = [string]$extra[$i + 1]
+                $script:afGiven = $(if ($Given -eq 'read') { 'read' } else { 'args' })
+                if ($f -notmatch '^([A-Za-z]:[\\/]|[\\/])') {
+                    # Evaluate-STIG runs in its own folder: a relative folder is from there - not known: not read
+                    if (-not $base) { $script:afFolder = $f; $script:afRead = @{ files = @(); more = 0; error = "folder not read: a relative -AFPath, and Evaluate-STIG's own folder is not known" }; return }
+                    $f = Join-Path $base $f
+                }
+                $script:afFolder = $f
+                $script:afRead = Read-AnswerFiles $f $true      # 1.77.1e: given - not there is said
+                return
+            }
+        }
+        if ($base -and (Test-Path -LiteralPath (Join-Path $base 'AnswerFiles') -PathType Container)) {
+            $script:afFolder = Join-Path $base 'AnswerFiles'; $script:afGiven = $Given
+            $script:afRead = Read-AnswerFiles $script:afFolder
+        }
+    }
+    catch { $script:afRead = @{ files = @(); more = 0; error = 'folder not read' } }
+}
 $wanted = @{}
 foreach ($v in $vulns) { $wanted[$v] = $true }
 $pickVulns = $false
@@ -263,14 +306,241 @@ function Get-Checklists([string] $Root) {
         Sort-Object -Property LastWriteTimeUtc -Descending)
 }
 
-function New-Rule($Rule, $V, $StigId, $Severity, $Title, $Status, $Details, $Check, $Fix) {
+# 1.77.1: whether an answer file set a rule - its key from the comment ("Evaluate-STIG answer file for Key 'NAME'"), and its
+# file when the checklist names it (a CKL's <Evaluate-STIG><AnswerFile> comment in the VULN, a CKLB rule's evaluate-stig
+# object) -> @{answered; key; file}. The comment itself is not kept.
+function Get-AfOf([string] $Comments, [string] $File, [string] $Mod = '') {
+    # 1.77.1c: set from a file = its marker with AFMod true, or Evaluate-STIG's own words ("Evaluate-STIG answer file for
+    # Key '...'") - not any prose about answer files; a marker with AFMod false: the file did not set it
+    $key = ''
+    $said = [regex]::Match($Comments, "Evaluate-STIG answer file for Key '([^'\n]+)'")
+    if ($said.Success) { $key = $said.Groups[1].Value }
+    else { $kl = [regex]::Match($Comments, '(?im)^\s*Answer\s*Key\s*:\s*(\S+)\s*$'); if ($kl.Success) { $key = $kl.Groups[1].Value } }
+    if ($File) { $File = ($File -replace '\\', '/').Split('/')[-1] }
+    # 1.77.1e: the marker's AFMod decides whether or not it names a file - false: no answer file set it; true: one did
+    # (its name, or not known); none (an older Evaluate-STIG): Evaluate-STIG's own words decide, and only then the file
+    if ($Mod -match '^\s*(?i)(false|0|no)\s*$') { return @{ answered = $false; key = $key; file = '' } }
+    if ($Mod -match '^\s*(?i)(true|1|yes)\s*$') { return @{ answered = $true; key = $key; file = [string]$File } }
+    if (-not $said.Success) { $File = '' }
+    return @{ answered = [bool]$said.Success; key = $key; file = [string]$File }
+}
+
+function Get-AfFileOfObject($Rule) {
+    # -> @(file, afmod) of a CKLB rule's evaluate-stig object ('' '' when none)
+    foreach ($p in @($Rule.PSObject.Properties)) {
+        if ($p.Name -notmatch 'evaluate' -or $null -eq $p.Value -or $p.Value -isnot [System.Management.Automation.PSCustomObject]) { continue }
+        $f = ''; $m = ''
+        foreach ($q in @($p.Value.PSObject.Properties)) {
+            $n = (($q.Name -replace '[-_ ]', '').ToLower())
+            if ($n -in @('answerfile', 'afname') -and $q.Value) { $f = [string]$q.Value }
+            if ($n -eq 'afmod') { $m = [string]$q.Value }
+        }
+        if ($f -or $m) { return @($f, $m) }     # 1.77.1e: AFMod alone is a marker too
+    }
+    return @('', '')
+}
+
+$AF_STATUS = @{ notafinding = 'NotAFinding'; open = 'Open'; notapplicable = 'Not_Applicable'; notreviewed = 'Not_Reviewed' }
+function Get-AfStatus($Value) {
+    # 1.77.1c: a status element's own text, through PowerShell's XML adapter: a plain text -> the known status, empty ->
+    # ''; an element with elements in it (its InnerText would carry them) or an unknown word -> 'invalid status'
+    if ($null -eq $Value) { return '' }
+    if ($Value -isnot [string]) { return 'invalid status' }
+    $t = $Value.Trim()
+    if (-not $t) { return '' }
+    $w = $AF_STATUS[(Get-Plain $t)]
+    if ($w) { return $w }
+    return 'invalid status'
+}
+
+# 1.77.1: the answer files in a folder - each one's name, size, SHA-256, time, STIGComments Name, Vuln IDs, keys and
+# each key's ExpectedStatus / ValidTrueStatus / ValidFalseStatus; never its comments or code. Not Evaluate-STIG's own
+# template; at most 200. A file with a DOCTYPE or entities is not parsed; the others with DTDs prohibited.
+# 1.77.1e: XML helpers that Constrained Language Mode allows (no XPath, no .NET method of the XML types)
+# A DTD is a DOCTYPE declaration in the prolog - before the root element; "<!DOCTYPE" in a comment or a text is none
+function Test-XDtd([string] $Text) {
+    # 1.77.1e (Codex): a scan, not a regex - each prolog token consumed once, to its FIRST end (no backtracking, no stall);
+    # it stops at the root element (what follows - a comment or a finding's text - is never looked at), and goes to the
+    # end of the input however many tokens (each step moves on). Characters compared by their code (ordinal: never the
+    # culture's rules, under which an ignorable character could hide a delimiter); no [Math] or static calls (CLM)
+    $i = 0; $n = $Text.Length
+    if ($n -gt 0 -and [int]$Text[0] -eq 0xFEFF) { $i = 1 }
+    while ($true) {
+        while ($i -lt $n -and " `t`r`n".IndexOf($Text[$i]) -ge 0) { $i++ }
+        if ($i -ge $n) { return $false }
+        if (Test-XAt $Text $i '<?') { $e = Find-XEnd $Text ($i + 2) '?>'; if ($e -lt 0) { return $false }; $i = $e + 2; continue }
+        if (Test-XAt $Text $i '<!--') { $e = Find-XEnd $Text ($i + 4) '-->'; if ($e -lt 0) { return $false }; $i = $e + 3; continue }
+        return (Test-XAt $Text $i '<!DOCTYPE')
+    }
+}
+# the text at position P is W, character by character (by code)
+function Test-XAt([string] $T, [int] $P, [string] $W) {
+    if ($P + $W.Length -gt $T.Length) { return $false }
+    for ($q = 0; $q -lt $W.Length; $q++) { if ([int]$T[$P + $q] -ne [int]$W[$q]) { return $false } }
+    return $true
+}
+# the first W at or after FROM (IndexOf of one char is ordinal), or -1
+function Find-XEnd([string] $T, [int] $From, [string] $W) {
+    # the first W at or after FROM, searched whole and ordinal in one call (Codex: no function call per character)
+    return $T.IndexOf($W, $From, [StringComparison]::Ordinal)
+}
+# an element's own attribute - never a child element or the element's own name, as the XML adapter would give
+function Get-XAttr($Node, [string] $Name) {
+    # an element's own attribute: of no namespace, its name equal ordinal (never a prefixed meta:ID, never a name that
+    # only compares equal linguistically) - through psbase, never a child element the XML adapter shows by that name
+    if ($null -eq $Node) { return '' }
+    foreach ($at in @($Node.psbase.Attributes)) {
+        if ($null -ne $at -and -not [string]$at.psbase.NamespaceURI -and ([string]$at.psbase.LocalName).Equals($Name, [StringComparison]::Ordinal)) {
+            return [string]$at.psbase.Value
+        }
+    }
+    return ''
+}
+# 1.77.1e (Codex): an element of that exact name - no namespace, equal ordinal (as Linux's tag compare)
+function Test-XName($Node, [string] $Name) {
+    return ($null -ne $Node -and [string]$Node.psbase.NodeType -eq 'Element' -and -not [string]$Node.psbase.NamespaceURI -and
+            ([string]$Node.psbase.LocalName).Equals($Name, [StringComparison]::Ordinal))
+}
+# every element of that name below a node (as Linux's iter), depth-first, at most 64 levels
+function Find-XElems($Node, [string] $Name) {
+    # every element of that name below a node, in document order (as Linux's iter) - walked with a stack of its own, no
+    # recursion (PowerShell's call depth would cap it) and no depth cut-off; each match written out as found (Codex)
+    if ($null -eq $Node) { return }
+    $st = @{}; $top = 0
+    $kids = @($Node.psbase.ChildNodes)
+    for ($q = $kids.Count - 1; $q -ge 0; $q--) { $st[$top] = $kids[$q]; $top++ }
+    while ($top -gt 0) {
+        $top--; $c = $st[$top]; $st.Remove($top)
+        if ($null -eq $c -or [string]$c.psbase.NodeType -ne 'Element') { continue }
+        if (Test-XName $c $Name) { $c }
+        $kids = @($c.psbase.ChildNodes)
+        for ($q = $kids.Count - 1; $q -ge 0; $q--) { $st[$top] = $kids[$q]; $top++ }
+    }
+}
+# 1.77.1 (Codex P1): the element children of that name of a node - its own, never one inside a comment's or a
+# ValidationCode's markup (a Vuln of STIGComments, an AnswerKey of its Vuln)
+function Get-XKids($Node, [string] $Name) {
+    if ($null -eq $Node) { return }
+    foreach ($c in @($Node.psbase.ChildNodes)) { if (Test-XName $c $Name) { $c } }
+}
+# a status: the text of the first child element of that name; one with elements in it: 'invalid status'
+function Get-XStatus($Node, [string] $Name) {
+    foreach ($c in @($Node.psbase.ChildNodes)) {
+        if (-not (Test-XName $c $Name)) { continue }
+        foreach ($g in @($c.psbase.ChildNodes)) { if ($null -ne $g -and [string]$g.psbase.NodeType -eq 'Element') { return 'invalid status' } }
+        return (Get-AfStatus ([string]$c.psbase.InnerText))
+    }
+    return ''
+}
+
+# every U+FFFD in the text is one the file holds as written (the bytes EF BF BD as many times) - else one was a byte that
+# is not UTF-8. Only when the text has one (rare): the bytes read and counted
+function Test-OnlyWrittenFffd([string] $Path, [string] $Text) {
+    # 1.77.1e (Codex): the bytes read in chunks of 64 KiB (Windows PowerShell 5.1 boxes each byte: never the whole file at
+    # once), the last two bytes of a chunk carried to the next
+    $want = $Text.Split([char]0xFFFD).Count - 1
+    $have = 0; $carry = @()
+    if ($PSVersionTable.PSVersion.Major -ge 6) { $chunks = Get-Content -LiteralPath $Path -AsByteStream -ReadCount 65536 -ErrorAction Stop }
+    else { $chunks = Get-Content -LiteralPath $Path -Encoding Byte -ReadCount 65536 -ErrorAction Stop }
+    foreach ($ch in $chunks) {
+        $buf = @($carry) + @($ch); $x = 0
+        while ($x -le $buf.Count - 3) {
+            if ($buf[$x] -eq 0xEF -and $buf[$x + 1] -eq 0xBF -and $buf[$x + 2] -eq 0xBD) { $have++; $x += 3 } else { $x++ }
+        }
+        $carry = $(if ($x -lt $buf.Count) { @($buf[$x..($buf.Count - 1)]) } else { @() })
+    }
+    return ($have -eq $want)
+}
+
+function Read-AnswerFiles([string] $Folder, [bool] $Named = $false) {
+    $out = @(); $more = 0
+    if (-not $Folder -or -not (Test-Path -LiteralPath $Folder -PathType Container)) {
+        # 1.77.1e: a folder given (-AFPath) that is not there, or not a folder: said - never shown as an empty one
+        return @{ files = @(); more = 0; error = $(if ($Named -and $Folder) { 'folder not read: not found or not a folder' } else { '' }) }
+    }
+    try {
+        $names = @(Get-ChildItem -LiteralPath $Folder -File -ErrorAction Stop | Where-Object {
+            $_.Name.ToLower().EndsWith('.xml') -and $_.Name.ToLower() -ne 'answerfile_template.xml' } | Sort-Object -Property Name)
+    } catch { return @{ files = @(); more = 0; error = 'folder not read' } }
+    if ($names.Count -gt 200) { $more = $names.Count - 200; $names = $names[0..199] }
+    foreach ($f in $names) {
+        $one = @{ name = $f.Name; size = [int64]$f.Length; sha256 = ''; modified = $f.LastWriteTimeUtc.ToString('yyyy-MM-dd\THH:mm:ss\Z')
+                  stig = ''; keys = @(); vulns = @{}; error = '' }
+        try {
+            if ($f.Length -gt 20MB) { $one.error = 'larger than 20 MB - not read'; $out += @($one); continue }
+            # 1.77.1 (Codex P1): read where it is - no copy written anywhere; its hash taken before and after its bytes and
+            # text are read: a file that changed meanwhile is "not read: changed while read" (cmdlets only: Constrained
+            # Language Mode)
+            $snap = $f.FullName
+            try {
+                if ([int64](Get-Item -LiteralPath $snap -ErrorAction Stop).Length -gt 20MB) { $one.error = 'larger than 20 MB - not read'; $out += @($one); continue }
+                $one.sha256 = ([string](Get-FileHash -LiteralPath $snap -Algorithm SHA256 -ErrorAction Stop).Hash).ToLower()
+                # UTF-8 (or ASCII) only - another encoding is refused, never decoded; a DTD is refused before it is read
+                if ($PSVersionTable.PSVersion.Major -ge 6) { $h4 = @(Get-Content -LiteralPath $snap -AsByteStream -TotalCount 4 -ErrorAction Stop) }
+                else { $h4 = @(Get-Content -LiteralPath $snap -Encoding Byte -TotalCount 4 -ErrorAction Stop) }
+                if (($h4.Count -ge 2 -and (($h4[0] -eq 0xFF -and $h4[1] -eq 0xFE) -or ($h4[0] -eq 0xFE -and $h4[1] -eq 0xFF))) -or ($h4 -contains 0)) {
+                    $one.error = 'not read: not UTF-8'; $out += @($one); continue
+                }
+                $text = Get-Content -LiteralPath $snap -Raw -Encoding UTF8 -ErrorAction Stop
+                if ($null -eq $text) { $text = '' }         # an empty file: nothing at all, not ''
+                $text = [string]$text
+                # a byte that is not UTF-8 was read as U+FFFD (the cmdlet does not stop on it): not UTF-8, not read; a
+                # U+FFFD written in the file (EF BF BD) is a character like any other - only the bytes tell them apart
+                if ($text.Contains([string][char]0xFFFD) -and -not (Test-OnlyWrittenFffd $snap $text)) { $one.error = 'not read: not UTF-8'; $out += @($one); continue }
+                if (([string](Get-FileHash -LiteralPath $snap -Algorithm SHA256 -ErrorAction Stop).Hash).ToLower() -ne $one.sha256) {
+                    $one.error = 'not read: changed while read'; $out += @($one); continue
+                }
+            } finally { }
+            $em = [regex]::Match($text, '^\uFEFF?\s*<\?xml[^>]*?encoding\s*=\s*["'']([^"'']*)["'']')
+            if ($em.Success -and @('utf-8', 'utf8', 'us-ascii', 'ascii') -notcontains $em.Groups[1].Value.Trim().ToLower()) {
+                $one.error = 'not read: not UTF-8'; $out += @($one); continue
+            }
+            if (Test-XDtd $text) { $one.error = 'not read: has a DTD'; $out += @($one); continue }
+            if (-not $text.Trim()) { $one.error = 'not read: XML error at line 1, col 1'; $out += @($one); continue }
+            $doc = [xml]$text
+            $root = $doc.psbase.DocumentElement
+            if ($null -eq $root) { $one.error = 'not read: XML error at line 1, col 1'; $out += @($one); continue }
+            # 1.77.1e: STIGComments wherever it is (a wrapper around it too), as on Linux; attributes only
+            $sc = $(if (Test-XName $root 'STIGComments') { $root } else { @(Find-XElems $root 'STIGComments')[0] })
+            $one.stig = Get-XAttr $sc 'Name'
+            $keys = @{}
+            foreach ($vn in @(Get-XKids $(if ($null -ne $sc) { $sc } else { $root }) 'Vuln')) {
+                $vid = (Get-XAttr $vn 'ID').Trim()
+                if (-not $vid) { continue }
+                foreach ($kn in @(Get-XKids $vn 'AnswerKey')) {
+                    $kname = (Get-XAttr $kn 'Name').Trim()
+                    if ($kname) { $keys[$kname] = $true }
+                    if (-not $one.vulns.ContainsKey($vid)) { $one.vulns[$vid] = @{} }
+                    $one.vulns[$vid][$kname] = @((Get-XStatus $kn 'ExpectedStatus'), (Get-XStatus $kn 'ValidTrueStatus'), (Get-XStatus $kn 'ValidFalseStatus'))
+                }
+            }
+            $one.keys = @($keys.psbase.Keys | Sort-Object)
+        }
+        catch {
+            # 1.77.1c: where, never what the file says
+            if (-not $one.error) {
+                $x = $_.Exception
+                while ($null -ne $x -and $x -isnot [System.Xml.XmlException] -and $null -ne $x.InnerException) { $x = $x.InnerException }
+                if ($x -is [System.Xml.XmlException]) {
+                    if ([string]$x.Message -match 'DTD') { $one.error = 'not read: has a DTD' }
+                    else { $one.error = 'not read: XML error at line ' + $x.LineNumber + ', col ' + $x.LinePosition }
+                } else { $one.error = 'not read' }
+            }
+        }
+        $out += @($one)
+    }
+    return @{ files = $out; more = $more; error = '' }
+}
+
+function New-Rule($Rule, $V, $StigId, $Severity, $Title, $Status, $Details, $Check, $Fix, $Af = $null) {
     $res = $CKL_RESULT[(Get-Plain $Status)]
     if (-not $res) { $res = 'notchecked' }
     $sev = $CKL_SEV[(Get-Plain $Severity)]
     if (-not $sev) { $sev = '' }
     # 1.73.0: DISA's check text and fix text, as the checklist carries them (the report shows them for a fail)
+    if ($null -eq $Af) { $Af = @{ answered = $false; key = ''; file = '' } }
     return @{ rule = [string]$Rule; v = [string]$V; stigid = [string]$StigId; severity = $sev; title = [string]$Title; result = $res; details = [string]$Details
-              check_text = [string]$Check; fix_text = [string]$Fix }
+              check_text = [string]$Check; fix_text = [string]$Fix; af = $Af }
 }
 
 # A checklist -> its STIGs: @{stig_id, title, version, release, host, site, instance, rules}
@@ -290,7 +560,10 @@ function Read-Checklist([string] $Path) {
             $rules = @()
             foreach ($r in @($s.rules)) {
                 if ($null -eq $r) { continue }
-                $rules += @(New-Rule $r.rule_id $r.group_id $r.rule_version $r.severity $r.rule_title $r.status $r.finding_details $r.check_content $r.fix_text)
+                $fo = @('', '')
+                try { $fo = @(Get-AfFileOfObject $r) } catch { $fo = @('', '') }
+                $rules += @(New-Rule $r.rule_id $r.group_id $r.rule_version $r.severity $r.rule_title $r.status $r.finding_details $r.check_content $r.fix_text `
+                                     (Get-AfOf ([string]$r.comments) ([string]$fo[0]) ([string]$fo[1])))
             }
             $title = [string]$s.display_name
             if (-not $title) { $title = [string]$s.stig_name }
@@ -299,6 +572,7 @@ function Read-Checklist([string] $Path) {
         }
         return $out
     }
+    if (Test-XDtd $text) { throw 'checklist not read: has a DTD' }       # 1.77.1d/e: as on Linux
     $x = [xml]$text
     $hostName = ''; $site = ''; $inst = ''
     $asset = $x.CHECKLIST.ASSET
@@ -318,7 +592,24 @@ function Read-Checklist([string] $Path) {
                 $k = Get-XText $sd.VULN_ATTRIBUTE
                 if (-not $a.ContainsKey($k)) { $a[$k] = Get-XText $sd.ATTRIBUTE_DATA }
             }
-            $rules += @(New-Rule $a['Rule_ID'] $a['Vuln_Num'] $a['Rule_Ver'] $a['Severity'] $a['Rule_Title'] (Get-XText $v.STATUS) (Get-XText $v.FINDING_DETAILS) $a['Check_Content'] $a['Fix_Text'])
+            # 1.77.1c: the VULN's own comments, through its child nodes (no XPath: Constrained Language Mode refuses it);
+            # the marker is optional - an error here never fails the scan
+            $afFile = ''; $afMod = ''; $afSeen = $false
+            try {
+                foreach ($cn in @($v.psbase.ChildNodes)) {
+                    if ([string]$cn.psbase.NodeType -ne 'Comment') { continue }
+                    # 1.77.1e: Evaluate-STIG's marker, its file and its AFMod each read alone (either may be missing)
+                    $cv = [string]$cn.psbase.Value
+                    if ($afSeen -or $cv -notmatch '^\s*<Evaluate-STIG>') { continue }
+                    $afSeen = $true
+                    $mm = [regex]::Match($cv, '<AnswerFile>([^<]*)</AnswerFile>')
+                    if ($mm.Success) { $afFile = $mm.Groups[1].Value }
+                    $md = [regex]::Match($cv, '<AFMod>([^<]*)</AFMod>')
+                    if ($md.Success) { $afMod = $md.Groups[1].Value }
+                }
+            } catch { $afFile = ''; $afMod = '' }
+            $rules += @(New-Rule $a['Rule_ID'] $a['Vuln_Num'] $a['Rule_Ver'] $a['Severity'] $a['Rule_Title'] (Get-XText $v.STATUS) (Get-XText $v.FINDING_DETAILS) $a['Check_Content'] $a['Fix_Text'] `
+                                 (Get-AfOf (Get-XText $v.COMMENTS) $afFile $afMod))
         }
         $out += @(@{ stig_id = [string]$info['stigid']; title = [string]$info['title']; version = [string]$info['version']; release = [string]$info['releaseinfo']
                 host = $hostName; site = $site; instance = $inst; rules = $rules })
@@ -517,6 +808,27 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
         history = 'items'; os = $facts.os; counts = $counts; items = $items; previous = @{ time = $prevTime }; saved = @{}
         checklist = (Split-Path -Leaf $File.FullName) }
     if ($ReadMode) { $scan.checklist_time = $File.LastWriteTimeUtc.ToString('yyyy-MM-dd\THH:mm:ss\Z') }
+    # 1.77.1: the answer files Evaluate-STIG read, how many of each one's rules this STIG has, and each rule one set
+    $here = @{}
+    foreach ($r in $S.rules) { if ($r.v) { $here[[string]$r.v] = $true } }
+    $afl = @()
+    foreach ($f in @($script:afRead.files)) {
+        $n = 0
+        foreach ($vid in @($f.vulns.psbase.Keys)) { if ($here.ContainsKey([string]$vid)) { $n++ } }
+        # psbase: the summary has an entry named "keys", which $f.Keys would give instead of its own keys
+        $c = @{}; foreach ($k in @($f.psbase.Keys)) { $c[$k] = $f[$k] }
+        $c.in_checklist = $n
+        $afl += @($c)
+    }
+    $ans = @()
+    foreach ($r in $S.rules) {
+        if ($vulns.Count -and -not $wanted.ContainsKey([string]$r.v)) { continue }     # 1.77.1c: the recheck - its rules only
+        if ($r.af -and $r.af.answered) {
+            $ans += @(@{ v = $r.v; key = $r.af.key; file = $r.af.file; status = $r.result; severity = $r.severity; stigid = $r.stigid })
+        }
+    }
+    $scan.answer_files = @{ folder = $script:afFolder; given = $script:afGiven; files = $afl; more = [int]$script:afRead.more; rules = $ans
+                            error = [string]$script:afRead.error }
     if (-not $history) {
         $scan.history = ''
         if ($save) {
@@ -687,6 +999,7 @@ try {
                 throw $why
             }
             $how = 'run by ' + $ran.how
+            Set-AfFolder $script 'own'
             # read before the run folder goes (Get-Scan copies each checklist it keeps)
             $seen = @{}
             foreach ($f in $files) {
@@ -702,6 +1015,17 @@ try {
         finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
     }
     if ($readMode) {
+        # its own run, on its own schedule: the answer files in its folder now - what it had then is not known here
+        $es = ''
+        $ev = [string](Get-Setting 'evaluate' '')
+        try {
+            if ($ev) { $es = Find-EvaluateIn $ev }
+            if (-not $es) { $es = Get-AfTaskScript $tasks $where }
+        } catch { $es = '' }
+        if (-not $es -and @($tasks | Where-Object { $_.script }).Count -gt 1) {
+            $script:afGiven = 'read'
+            $script:afRead = @{ files = @(); more = 0; error = 'folder not read: several Evaluate-STIG tasks, and none writes to the folder read' }
+        } else { Set-AfFolder $es 'read' }
         $seen = @{}
         foreach ($f in $files) {
             try { $stigs = @(Read-Checklist $f.FullName) } catch { continue }

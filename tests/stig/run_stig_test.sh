@@ -269,12 +269,23 @@ grep -q "first scan with it, after OpenSCAP" "$work/mail.txt" && echo "ok   - th
 run "Evaluate-STIG not there: not scanned, a warning" fail -e "$es_on" -e check_stig_evaluate="$work/nope" -e check_stig_dir="$work/kept3" -- \
     "[WARNING] stig: the STIG scan did not run: Evaluate-STIG is not at $work/nope: no Evaluate-STIG_Bash.sh or Evaluate-STIG.ps1 there"
 # ---- answer files (check_stig_evaluate_answers, 0.55.0): copied down for the run, Evaluate-STIG given them, removed after ----
-mkdir -p "$work/answers" && echo '<answers/>' > "$work/answers/RHEL_9.xml" && echo 'x' > "$work/answers/readme.txt"
+# 1.77.1: a real answer file - its STIG, rules and keys read for the report (never its comments)
+afx() {  # afx FILE V-ID STATUS [V-ID STATUS ...]: an answer file of RHEL_9_STIG, key DEFAULT, each rule set to STATUS
+    local f="$1"; shift
+    { echo '<?xml version="1.0" encoding="utf-8"?>'; echo '<STIGComments Name="RHEL_9_STIG">'
+      while [ $# -gt 1 ]; do
+          printf '<Vuln ID="%s"><AnswerKey Name="DEFAULT"><ExpectedStatus>Open</ExpectedStatus><ValidationCode /><ValidTrueStatus>%s</ValidTrueStatus><ValidTrueComment>Approved by the ISSM.</ValidTrueComment><ValidFalseStatus /><ValidFalseComment /></AnswerKey></Vuln>\n' "$1" "$2"
+          shift 2
+      done; echo '</STIGComments>'; } > "$f"
+}
+mkdir -p "$work/answers" && afx "$work/answers/RHEL_9.xml" V-257985 NotAFinding && echo 'x' > "$work/answers/readme.txt"
+afsize="$(wc -c < "$work/answers/RHEL_9.xml")"
 echo '{"SV-257985": "af:not_a_finding"}' > "$work/es_results.json"   # a rule answered from an answer file (0.58.0)
 run "answer files from a folder: copied to the host for this run, Evaluate-STIG given them (--AFPath), said in the report" ok -e "$es_on" \
     -e check_stig_evaluate_answers="$work/answers" -e check_stig_dir="$work/kept3" -- \
-    "answer files: USED - read from $work/answers" "1 answer file(s) from $work/answers: RHEL_9.xml" "RHEL_9.xml - 11 bytes, changed 20" \
-    "Evaluate-STIG: with 1 answer file from $work/answers; 1 rule answered from them (answer key DEFAULT)"
+    "answer files: USED - read from $work/answers" "1 answer file(s) from $work/answers: RHEL_9.xml" "RHEL_9.xml - $afsize bytes, changed 20" \
+    "Evaluate-STIG: with 1 answer file from $work/answers; 1 rule answered from them (answer key DEFAULT)" \
+    "Answer files: 1 file given (1 STIG), 1 rule answered - the report's Answer files sections" "!Approved by the ISSM"
 afd="$(sed -n 's/.*--AFPath \([^ ]*\).*/\1/p' "$work/es_args.txt")"
 [ "$(head -1 "$work/es_af.txt")" = RHEL_9.xml ] && [ "$(wc -l < "$work/es_af.txt")" = 2 ] && [ "$(tail -1 "$work/es_af.txt")" = 700 ] && [ -n "$afd" ] && [ ! -e "$afd" ] \
     && echo "ok   - ... only the .xml there, in a root-only folder of this run, removed after the scan" \
@@ -306,6 +317,39 @@ cdest="$(head -1 "$work/copied.txt" 2>/dev/null)"
 cdir="${cdest%/}"; [ "$cdir" = "$cdest" ] && cdir="$(dirname "$cdest")"     # the host's folder: dest itself, or its folder
 if [ -n "$cdest" ] && [ ! -e "$cdir" ]; then echo "ok   - ... the stand-in wrote into the host's folder ($cdest), that folder is gone"
 else echo "FAIL - the host's answer files folder after a failed copy: '$cdest'"; [ -n "$cdest" ] && ls -la "$cdir"; fails=$((fails + 1)); fi
+
+# 1.77.1: two files answer the same STIG - one rule the same in both (Info), one different (a conflict); the checklist
+# names the file it used (a CKLB rule's evaluate-stig object): on the website after "Every host", the email a line, the
+# note last; the workbook every row; no comment of a file anywhere
+mkdir -p "$work/answers2" && afx "$work/answers2/RHEL_9.xml" V-257985 NotAFinding V-257900 Open \
+    && afx "$work/answers2/RHEL_9_extra.xml" V-257985 NotAFinding V-257900 NotAFinding
+echo '{"SV-257985": "afn:RHEL_9_extra.xml:not_a_finding"}' > "$work/es_results.json"
+rm -f "$work/mail"/*; mkdir -p "$work/web-af"
+run "answer files: which file answered which rule, the same rule in two files - Info when the same, a Warning when not" ok -e "$es_on" \
+    -e check_stig_evaluate_answers="$work/answers2" -e check_stig_dir="$work/kept3" -e report_web_dest="$work/web-af" -e report_email_xlsx=true -- \
+    "Answer files: 2 files given (1 STIG), 1 rule answered, 1 conflict, 1 rule in two files, same answer - the report's Answer files sections" \
+    "!Approved by the ISSM"
+afpage="$(command grep -rl 'Answer files - what Evaluate-STIG was given' "$work/web-af" --include='*.html' | head -1)"
+aft="$(sed 's/<[^>]*>/ /g; s/&middot;/·/g; s/  */ /g' "$afpage" 2>/dev/null | tr -s ' \n' ' ')"
+case "$aft" in *"Every host"*"Answer files - what Evaluate-STIG was given"*"RHEL_9_extra.xml"*"Answer files - the same rule in two files"*"V-257900"*"differ"*"V-257985"*"same answer in both"*"RHEL_9_extra.xml on"*"Rules answered from an answer file"*"RHEL_9_extra.xml · DEFAULT"*"named in the checklist"*"How the answer files are read"*) true ;; *) false ;; esac \
+    && ! grep -q "Approved by the ISSM" "$afpage" \
+    && echo "ok   - the website: the files, the same rule in two files, the rules each answered (named), the note last; no file's comment" \
+    || { echo "FAIL - answer files on the website ($afpage)"; fails=$((fails + 1)); }
+mf="$(ls "$work/mail"/* 2>/dev/null | head -1)"; [ -n "$mf" ] && decoded "$mf"
+sheets="$("$py" - "$mf" <<'PY'
+import email, io, re, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"))
+for p in m.walk():
+    if (p.get_filename() or "").endswith(".xlsx"):
+        z = zipfile.ZipFile(io.BytesIO(p.get_payload(decode=True)))
+        print("|".join(re.findall(r'<sheet name="([^"]+)"', z.read("xl/workbook.xml").decode())))
+        print(sum(1 for n in z.namelist() if n.startswith("xl/") and b"Approved by the ISSM" in z.read(n)))
+PY
+)"
+grep -q "Answer files: 2 files given" "$work/mail.txt" && ! grep -q "Answer files - the same rule in two files" "$work/mail.txt" \
+    && case "$sheets" in *"Answer files|Answer files - same rule|Answer files - rules"*$'\n'0) true ;; *) false ;; esac \
+    && echo "ok   - the email: one line; the workbook: the Answer files sheets (every row), no file's comment" \
+    || { echo "FAIL - answer files in the email / workbook ($sheets)"; fails=$((fails + 1)); }
 rm -f "$work/es_args.txt"
 run "answer files that cannot be read: Evaluate-STIG not run, not scanned (a warning) - not scanned without them" fail -e "$es_on" \
     -e check_stig_evaluate_answers="$work/no-answers" -e check_stig_dir="$work/kept3" -- \

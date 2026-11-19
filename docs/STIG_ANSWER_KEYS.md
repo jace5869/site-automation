@@ -517,7 +517,7 @@ Success looks like: *Try my answer file: 2 changed by a key, 0 need a look*.
 | Need a look | a key that applied and left the rule Open or Not Reviewed, or no key on a rule still Open |
 | Changed by your answer file | a key set the rule Not a Finding or Not Applicable |
 | No key needed | Evaluate-STIG passes the rule on its own |
-| Your answer files | each file's name, sha256 and when it changed |
+| Answer files (1.77.1) | each answer file Evaluate-STIG was given in the run with them: its STIG, rules, keys, when it changed, its SHA-256 and what it answered; then each rule an answer file set, with the file and key ([STIG_DRIFT.md](STIG_DRIFT.md#which-answer-files-were-used-1771)). When Evaluate-STIG says nothing of its answer files: *Your answer files*, each file's name, sha256 and when it changed |
 
 Each rule opens to the AnswerKey that applied, its comment as Evaluate-STIG wrote it, and what the code read.
 

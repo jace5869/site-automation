@@ -139,6 +139,30 @@ if [ "$(kept Windows_Server_2022_STIG)" -eq 1 ] && [ "$(kept IIS_10-0_Site_STIG_
 else echo "FAIL - what was kept"; ls -R "$work/kept" | head -20; fails=$((fails + 1)); fi
 sleep 1
 
+# 1.77.1: the answer files in Evaluate-STIG's own AnswerFiles folder, and the rule one set - named in the checklist (CKLB
+# and CKL) - in the report; no comment of a file anywhere
+af="$work/es/Evaluate-STIG/AnswerFiles"; mkdir -p "$af"
+printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<STIGComments Name="Windows_Server_2022_STIG"><Vuln ID="V-254240"><AnswerKey Name="DEFAULT"><ExpectedStatus>Open</ExpectedStatus><ValidationCode /><ValidTrueStatus>NotAFinding</ValidTrueStatus><ValidTrueComment>Approved by the ISSM.</ValidTrueComment></AnswerKey></Vuln></STIGComments>' > "$af/Win2022_site.xml"
+printf '<x/>' > "$af/AnswerFile_Template.xml"
+# a billion laughs: listed, never parsed (not read: has a DTD)
+printf '%s' '<?xml version="1.0"?><!DOCTYPE l [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">]><STIGComments Name="&c;"/>' > "$af/z-bomb.xml"
+for fmt in CKLB CKL; do
+    spec pass
+    "$py" - "$work/es/Evaluate-STIG/spec.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for r in d["checklists"][0]["rules"]:
+    if r["sv"] == "SV-254240":
+        r["af"] = "C:\\Evaluate-STIG\\AnswerFiles\\Win2022_site.xml"
+json.dump(d, open(sys.argv[1], "w"))
+PY
+    run "answer files ($fmt): Evaluate-STIG's own AnswerFiles, the rule one set named in the checklist" ok -e win_check_stig_evaluate_output=$fmt -- \
+        "Answer files: 2 files given (1 STIG), 1 rule answered - the report's Answer files sections" "!Approved by the ISSM" "!AnswerFile_Template" \
+        "!aaaaaaaaaaaaaaaaaaaa"
+done
+rm -rf "${af:?}"
+sleep 1
+
 spec fail
 run "a rule that passed fails now: new, CAT I critical, named for its STIG" fail -- \
     "[CRITICAL] stig: Microsoft Windows Server 2022: 1 STIG rule passed in an earlier scan (last 20" "V-254238 CAT I" "!Microsoft Edge: 1 STIG"
