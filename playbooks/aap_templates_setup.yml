@@ -1,0 +1,19 @@
+---
+# AAP - SET UP JOB TEMPLATES. Makes the job templates of aap/job_templates.yml - one per template of
+# docs/JOB_TEMPLATES.md - in AAP, or checks the ones there: the playbook, the project, the credentials by kind, the
+# prompts and the execution environment. A missing one is made; one that differs is listed field by field and brought
+# right only with aap_templates_overwrite: true. Never deletes; never touches schedules, surveys, Variables after a
+# template is made, or credentials of a type the catalog does not name. A template running the same playbook under
+# another name is listed, not made twice. Run it with Check first: it then only reads, and says what it would do.
+# docs/SETUP_AAP.md, "Create the job templates from the catalog".
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: Admin on the organization);
+# no Limit.
+#   ansible-playbook playbooks/aap_templates_setup.yml --check -e aap_templates_inventory="Site hosts"
+- name: AAP - set up job templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The job templates of the catalog
+      ansible.builtin.include_role:
+        name: aap_templates

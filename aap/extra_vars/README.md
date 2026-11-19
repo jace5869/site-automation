@@ -18,6 +18,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | AAP - report email question | `playbooks/aap_email_question.yml` | [aap_email_question.yml](aap_email_question.yml) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | [aap_ee.yml](aap_ee.yml) |
 | AAP - set up credentials | `playbooks/aap_credentials_setup.yml` | [aap_credentials_setup.yml](aap_credentials_setup.yml) |
+| AAP - set up job templates | `playbooks/aap_templates_setup.yml` | [aap_templates_setup.yml](aap_templates_setup.yml) |
 | AAP - set up portal actions | `playbooks/aap_portal_setup.yml` | [aap_portal_setup.yml](aap_portal_setup.yml) |
 | AAP - template variables audit | `playbooks/aap_template_audit.yml` | [aap_template_audit.yml](aap_template_audit.yml) |
 | AAP jobs - leave hosts out (site_exclude_hosts) | `playbooks/site_exclude.yml` | [site_exclude.yml](site_exclude.yml) |

@@ -92,7 +92,7 @@ def node_view(s, n):
 
 
 TPL_FIELDS = ("name", "description", "job_type", "project", "playbook", "inventory", "ask_variables_on_launch", "ask_limit_on_launch",
-              "become_enabled", "extra_vars", "execution_environment")
+              "become_enabled", "extra_vars", "execution_environment", "organization", "ask_inventory_on_launch")
 WF_FIELDS = ("name", "description", "organization", "ask_variables_on_launch", "ask_limit_on_launch", "extra_vars")
 
 
@@ -137,16 +137,21 @@ class H(BaseHTTPRequestHandler):
             s = load()
             if p == "me/":
                 return self.send(200, {"results": [{"username": "setup-admin"}]})
-            m = re.match(r"^(organizations|projects|inventories|credentials|execution_environments|users|job_templates|workflow_job_templates)/$", p)
+            m = re.match(r"^(organizations|projects|inventories|credentials|execution_environments|users|job_templates|workflow_job_templates|labels)/$", p)
             if m:
                 want = q.get("name", q.get("username"))
-                rows = [dict((k, v) for k, v in r.items() if k != "roles") for r in s[m.group(1)]
+                rows = [dict((k, v) for k, v in r.items() if k != "roles") for r in s.get(m.group(1), [])
                         if want is None or r.get("name") == want or r.get("username") == want]
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
             m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/$", p)
             if m:
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)
                 return self.send(200, r) if r else self.send(404, {"detail": "Not found."})
+            m = re.match(r"^job_templates/(\d+)/labels/$", p)
+            if m:
+                jt = next(r for r in s["job_templates"] if r["id"] == int(m.group(1)))
+                rows = [x for x in s.get("labels", []) if x["id"] in jt.get("labels", [])]
+                return self.send(200, {"count": len(rows), "results": rows, "next": None})
             m = re.match(r"^job_templates/(\d+)/credentials/$", p)
             if m:
                 jt = next(r for r in s["job_templates"] if r["id"] == int(m.group(1)))
@@ -192,8 +197,21 @@ class H(BaseHTTPRequestHandler):
                     r["id"] = new_id(s)
                     if m.group(1) == "job_templates":
                         r["credentials"] = []
+                        if not r.get("inventory") and not r.get("ask_inventory_on_launch"):     # as AAP
+                            return self.send(400, {"inventory": ["Job Template must provide 'inventory' or allow prompting for it."]})
                     s[m.group(1)].append(r)
                     return self.send(201, r)
+                if p == "labels/":                              # AAP - set up job templates: a label of the organization
+                    lb = {"id": new_id(s), "name": b.get("name"), "organization": b.get("organization")}
+                    s.setdefault("labels", []).append(lb)
+                    return self.send(201, lb)
+                m = re.match(r"^job_templates/(\d+)/labels/$", p)
+                if m:
+                    jt = next(r for r in s["job_templates"] if r["id"] == int(m.group(1)))
+                    jt.setdefault("labels", [])
+                    if b["id"] not in jt["labels"]:
+                        jt["labels"].append(b["id"])
+                    return self.send(204)
                 m = re.match(r"^job_templates/(\d+)/credentials/$", p)
                 if m:
                     jt = next(r for r in s["job_templates"] if r["id"] == int(m.group(1)))

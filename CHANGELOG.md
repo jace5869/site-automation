@@ -2,6 +2,22 @@
 
 ## Next (numbered at release) — 2026-11-19
 
+**To set up:** a job template **AAP - set up job templates** (`playbooks/aap_templates_setup.yml`, an AAP credential
+with Admin on the organization; its Variables: `aap/extra_vars/aap_templates_setup.yml`) - run it with Check first.
+
+**AAP - set up job templates** (docs/SETUP_AAP.md, "Create the job templates from the catalog").
+
+- `aap/job_templates.yml`: a catalog of every job template of docs/JOB_TEMPLATES.md - its playbook, the credential
+  kinds it needs, the prompts, the execution environment kind, its Variables file and its site portal area. Made by
+  `scripts/gen_job_catalog.py`; a test keeps it the same as the docs.
+- The job makes the missing templates, and lists one that differs field by field (*has X, should be Y*); it brings it
+  right only with `aap_templates_overwrite: true`. A template running the same playbook under another name is not made
+  twice. A credential kind not named in `aap_templates_credentials` skips that template, said.
+- Never deletes, and never changes schedules, surveys, Variables after a template is made, or credentials of a type
+  the catalog does not name. A new template's Variables come all switched off.
+- `aap_templates_label_portal` (`portal-actions` or `all`): the site portal's label (`portal_label`) and
+  `portal-area:<area>`, so the portal finds the templates and groups them.
+
 **To set up:** a job template **AAP - set up credentials** (`playbooks/aap_credentials_setup.yml`, an AAP credential
 with Admin on the organization; its Variables: `aap/extra_vars/aap_credentials_setup.yml`).
 

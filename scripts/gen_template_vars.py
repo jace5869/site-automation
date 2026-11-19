@@ -117,6 +117,26 @@ portal_setup_credentials:
 ## The site portal's AAP account: Execute on these, Approve on the workflows with an approval node
 portal_setup_portal_user: svc_site_portal
 """),
+    "aap_templates_setup.yml": ("AAP - set up job templates", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## Run it with Check first: it then only reads, and lists every template it would make, fix or label. It never deletes.
+## The inventory a template is made with, and your site-automation project in AAP
+aap_templates_inventory: Site hosts
+# aap_templates_project: site-automation
+## Your credential of each kind the catalog (aap/job_templates.yml) names; a template needing a kind not here is skipped
+aap_templates_credentials:
+  machine: Linux machine
+  machine_windows: Windows machine
+  aap: AAP reader
+  stigman_api: STIG Manager API
+## The execution environment of each kind (all, windows, network); a kind left out: the project's
+# aap_templates_ee: {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
+## Only some templates (* and ?, any case)
+# aap_templates_only: ["STIG*", "Health check", "Troubleshoot"]
+## Bring the templates that differ right (only the fields this job sets)
+# aap_templates_overwrite: true
+## The site portal's labels, so it finds the templates: portal-actions or all
+# aap_templates_label_portal: portal-actions
+"""),
     "aap_credentials_setup.yml": ("AAP - set up credentials", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
 ## Run it with Check first: it then only reads, and lists what it would rename, attach or take off. It never deletes a
 ## credential and never reads a secret. A name that matches nothing or more than one, or a clash, changes nothing at all.

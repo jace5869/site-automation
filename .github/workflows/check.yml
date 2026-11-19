@@ -189,6 +189,8 @@ jobs:
         run: python tests/test_variable_reference.py
       - name: aap/extra_vars (each template's settings, to paste into its Variables) is generated and up to date
         run: python tests/test_template_vars.py
+      - name: aap/job_templates.yml (the catalog AAP - set up job templates makes) is generated and the same as docs/JOB_TEMPLATES.md
+        run: python tests/test_job_catalog.py
       - name: AAP hosts are protected everywhere; vendored ACT is what its VERSION and checksums say
         run: |
           python tests/test_protection.py
@@ -372,6 +374,8 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_scorecard_setup_test.sh
           bash tests/portal_setup/run_aap_credentials_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_credentials_test.sh
+          bash tests/portal_setup/run_aap_templates_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_templates_test.sh
       - name: Tenable.sc scan job against a fake Tenable.sc (tests/tenable/scmock.py; current ansible-core and 2.16)
         run: |
           bash tests/tenable/run_tenable_test.sh

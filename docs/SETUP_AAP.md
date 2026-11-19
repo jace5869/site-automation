@@ -666,6 +666,34 @@ it changes that EE's **Image**, and every template already on it runs the new im
 node that has pulled a tag keeps it, so a rebuild pushed under the same tag would never reach the jobs. Its user
 needs **Admin** on the execution environment for this. (By hand: change the EE's **Image** in AAP.)
 
+### Create the job templates from the catalog
+
+One template - `AAP - set up job templates` (`playbooks/aap_templates_setup.yml`), with only the **Red Hat Ansible
+Automation Platform** credential (its user: **Admin** on the organization), any inventory, no Limit. It makes the job
+templates of `aap/job_templates.yml` - one for each row of [JOB_TEMPLATES.md](JOB_TEMPLATES.md) - instead of by hand,
+and checks the ones already there. It never deletes a template.
+
+1. Make this one template by hand. Copy `aap/extra_vars/aap_templates_setup.yml` into its Variables box.
+2. Name the inventory new templates get (`aap_templates_inventory`) and your credential of each kind
+   (`aap_templates_credentials`, for example `machine: Linux machine`, `stigman_api: STIG Manager API`). A template
+   that needs a kind you did not name is skipped, and the job says which kind.
+3. Optional: `aap_templates_ee` (an execution environment for `all`, `windows`, `network`), `aap_templates_only`
+   (some templates, `*` and `?`), `aap_templates_label_portal: portal-actions` (the site portal's labels).
+4. Launch it with Job type **Check**. It lists each template:
+   - *WOULD CREATE* - with its playbook, project, credentials, prompts and execution environment;
+   - *DIFFERS* - field by field, *has X, should be Y* (the playbook, the project, a credential by kind, the prompts,
+     the execution environment);
+   - *already right*;
+   - *same playbook, other name* - a template of yours runs that playbook: it is not made twice;
+   - *SKIPPED* - a credential kind not named, or the name used in another organization;
+   - *left to another job* - the site portal's own templates (*AAP - set up portal actions* makes them).
+5. Launch it again with Job type **Run**. It makes the missing templates. A template that differs is left as it is;
+   set `aap_templates_overwrite: true` to bring it right.
+
+What it never changes: a template's schedules and survey, its Variables once it is made, and a credential of a type
+the catalog does not name (a Teams webhook you added stays). A new template gets its Variables file with every setting
+switched off - switch on what you need.
+
 ### Rename and attach credentials
 
 One template - `AAP - set up credentials` (`playbooks/aap_credentials_setup.yml`), with only the **Red Hat Ansible
