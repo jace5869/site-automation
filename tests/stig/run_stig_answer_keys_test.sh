@@ -197,15 +197,28 @@ else echo "FAIL - the email"; fails=$((fails + 1)); fi
 
 act '{"summary": "no code"}'
 # as a survey gives them: texts - the rules with commas and spaces, the values as a name: value line, ACT off as "false"
+# 1.76.1c: the release rule's block reads /etc/redhat-release - on a host without it (CI's Ubuntu runner) its trial fails
+# there, and the key is not drafted, said why
+if [ -e /etc/redhat-release ]; then
+    rel_want=("STIG answer keys: 2 ready to copy, 4 not drafted" "V-257835 ready: RHEL 9 must not have the telnet-server package installed." "the site's supported minimum")
+else
+    rel_want=("STIG answer keys: 1 ready to copy, 5 not drafted" "V-257835 NOT DRAFTED: Not drafted - the trial on the host failed: Cannot find path '/etc/redhat-release'")
+fi
 run "the site value given (a survey's text), ACT off: the release rule offered (false - it keeps it Open), the rest by hand" ok \
     -e '{"answer_keys_rules": "V-258999, SV-257835 V-257985,V-257883 V-257821 V-258176", "answer_keys_values": "min_release: 9.4", "answer_keys_act": "false"}' -- \
-    "STIG answer keys: 2 ready to copy, 4 not drafted" "V-257835 ready: RHEL 9 must not have the telnet-server package installed." \
+    "${rel_want[@]}" \
     "V-257985 NOT DRAFTED: Not drafted - no fixed pattern fits and ACT is off (answer_keys_act false): write this one by hand." \
-    "the site's supported minimum" "!V-257985 ACT draft"
+    "!V-257985 ACT draft"
 [ -e "$work/act/fake-act-calls.log" ] && { echo "FAIL - ACT was asked with answer_keys_act false"; fails=$((fails + 1)); } || echo "ok   - ACT not asked with answer_keys_act false"
 page="$(command grep -rl 'Copy block' "$work/web" --include='*.html' | xargs -r ls -t | head -1)"
-t="$(pagetext "$page")"; case "$t" in *"Open - the host fails it now: this key keeps it Open"*"answer_keys_values.min_release = 9.4"*) true ;; *) false ;; esac \
-    && echo "ok   - the website: the false trial keeps it Open, the site value each block used" || { echo "FAIL - false trial / value on the page"; fails=$((fails + 1)); }
+t="$(pagetext "$page")"
+if [ -e /etc/redhat-release ]; then
+    case "$t" in *"Open - the host fails it now: this key keeps it Open"*"answer_keys_values.min_release = 9.4"*) true ;; *) false ;; esac \
+        && echo "ok   - the website: the false trial keeps it Open, the site value each block used" || { echo "FAIL - false trial / value on the page"; fails=$((fails + 1)); }
+else
+    case "$t" in *"V-257835"*"the trial on the host failed"*) true ;; *) false ;; esac \
+        && echo "ok   - the website: no /etc/redhat-release here - the release rule's trial failed, said on the page" || { echo "FAIL - the failed trial on the page"; fails=$((fails + 1)); }
+fi
 
 # an Evaluate-STIG whose template lacks an element and whose code does not show the ExpectedStatus compare
 sed -i '/ValidTrueComment/d' "$work/es/AnswerFiles/AnswerFile_Template.xml"

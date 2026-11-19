@@ -392,11 +392,14 @@ class ReadOnlyCheck(unittest.TestCase):
         c = host.sandbox_cmd("/usr/bin/systemd-run", 60, {"/usr/bin/systemctl": "/w/replay-systemctl"}, 252)
         props = [c[i + 1] for i, x in enumerate(c) if x == "-p"]
         for want in ("ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
-                     "TemporaryFileSystem=/dev/shm", "PrivateIPC=yes", "ProtectProc=invisible", "SystemCallFilter=~@privileged @debug", "InaccessiblePaths=-/proc/sys/kernel/shmmax", "InaccessiblePaths=-/proc/sysvipc", "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
+                     "TemporaryFileSystem=/dev/shm", "ProtectProc=invisible", "SystemCallFilter=~@privileged @debug", "NoNewPrivileges=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
                      "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
                      "CapabilityBoundingSet=CAP_DAC_READ_SEARCH", "RuntimeMaxSec=60",
                      "BindReadOnlyPaths=/w/replay-systemctl:/usr/bin/systemctl"):
             self.assertIn(want, props)
+        # 1.76.1c: no IPC namespace of its own (systemd may skip it; as root ProtectProc's /proc showed the files hidden)
+        self.assertNotIn("PrivateIPC=yes", props)
+        self.assertFalse([x for x in props if x.startswith("InaccessiblePaths=-/proc/sys")])
         self.assertEqual(props.index("RestrictAddressFamilies=~AF_UNIX"), props.index("RestrictAddressFamilies=AF_UNIX") + 1)
         self.assertNotIn("PrivateNetwork=yes", props)
         # 1.76.0 (Codex, round 3): /tmp, /var/tmp and /dev/shm are the sandbox's own, never the host's; not
@@ -411,9 +414,15 @@ class ReadOnlyCheck(unittest.TestCase):
         for gone in ("PrivateIPC=yes", "ProtectProc=invisible", "ProtectClock=yes", "ProtectKernelLogs=yes", "RestrictSUIDSGID=yes",
                      "ProtectHostname=yes", "LockPersonality=yes", "PrivatePIDs=yes"):
             self.assertNotIn(gone, p239)
-        for want in ("SystemCallFilter=~" + " ".join(host.IPC_CALLS), "SystemCallFilter=~@clock personality", "SystemCallErrorNumber=EPERM",
+        for want in ("SystemCallFilter=~" + " ".join(host.IPC_CALLS), "SystemCallFilter=~@clock sethostname setdomainname",
+                     "SystemCallFilter=~personality", "SystemCallErrorNumber=EPERM",
                      "PrivateTmp=yes", "RestrictAddressFamilies=~AF_UNIX", "CapabilityBoundingSet=CAP_DAC_READ_SEARCH"):
             self.assertIn(want, p239)
+        # 1.76.1c: fail closed where systemd may skip a setting - a mount it insists on (no namespace: no run), and the
+        # IPC calls, the clock and the host name refused by the system call filter with every profile
+        for want in ("TemporaryFileSystem=/run/user:ro", "SystemCallFilter=~" + " ".join(host.IPC_CALLS),
+                     "SystemCallFilter=~@clock sethostname setdomainname", "SystemCallErrorNumber=EPERM"):
+            self.assertIn(want, props)
         self.assertFalse([x for x in p239 if x.startswith("InaccessiblePaths=-/proc/sys")])     # the host's IPC files, read as they are
         self.assertEqual((host.profile_of(239), host.profile_of(247), host.profile_of(248)), ("239", "239", "full"))
         self.assertIn("PrivatePIDs=yes", [v[i + 1] for i, x in enumerate(v) if x == "-p"])
@@ -427,23 +436,20 @@ class ReadOnlyCheck(unittest.TestCase):
             os.geteuid = real
         pr = [r[i + 1] for i, x in enumerate(r) if x == "-p"]
         self.assertNotIn("--user", r)
-        # its own UID: high, in no passwd or group entry, owning no process - never nobody (shared with host daemons)
-        u = host.trial_uid()
-        self.assertTrue(host.UID_FIRST <= u <= host.UID_LAST)
-        self.assertIn("User=%d" % u, pr)
-        self.assertIn("Group=%d" % u, pr)
-        self.assertNotIn("User=nobody", pr)
+        # 1.76.1c: a dynamic user on every systemd - a numeric User= with no passwd entry is refused before 257 (exit
+        # 217 on the real 239 and 255); never nobody (shared with host daemons)
         p2 = [r239[i + 1] for i, x in enumerate(r239) if x == "-p"]
-        self.assertIn("DynamicUser=yes", p2)
-        self.assertFalse([x for x in p2 if x.startswith("User=")])
-        self.assertTrue(host.uid_free(u))
-        self.assertFalse(host.uid_free(0))
-        self.assertFalse(host.uid_free(os.getuid()))           # this test's own: it owns a process
+        for q in (pr, p2):
+            self.assertIn("DynamicUser=yes", q)
+            self.assertFalse([x for x in q if x.startswith(("User=", "Group="))])
         self.assertIn("AmbientCapabilities=CAP_DAC_READ_SEARCH", pr)
         self.assertFalse([x for x in pr if "AUDIT" in x])
         self.assertEqual(host.find_sandbox("/nonexistent/systemd-run"), "")
         self.assertEqual(host.find_sandbox("/usr/bin/env"), "")        # only a program named systemd-run
         self.assertEqual(host.sandbox_probe(""), "systemd-run was not found")
+        # 1.76.1c: as a user other than root below systemd 257 (no PID namespace of its own): refused, said why
+        if os.geteuid() != 0 and host.find_pwsh(""):
+            self.assertIn("needs systemd 257 or later (here 255)", host.sandbox_probe("/usr/bin/systemd-run", version=255))
 
     def test_the_replay(self):
         """1.76.0: only the check's own command lines are run outside the sandbox; the shim gives each its answer, any
@@ -694,8 +700,16 @@ class Pwsh(unittest.TestCase):
     root-owned and writable by root alone; How this was made names it."""
     def test_found_and_trusted(self):
         found = host.find_pwsh("")
-        self.assertTrue(found and found == os.path.realpath(found), found)
-        self.assertEqual(host.pwsh_trusted(found), "")
+        if found:
+            self.assertEqual(found, os.path.realpath(found))
+            self.assertEqual(host.pwsh_trusted(found), "")
+        else:
+            # 1.76.1c: the host's own pwsh may sit below a folder another user can write (CI's runner: /opt is the
+            # runner user's) - then it is refused, and said why; never a pwsh found that is not trusted
+            on = shutil.which("pwsh")
+            if on:
+                self.assertTrue(host.PWSH_WHY, "a pwsh on the PATH refused with no reason")
+                self.assertTrue(any(("not owned by root" in w or "can be written by others" in w) for w in host.PWSH_WHY), host.PWSH_WHY)
         d = tempfile.mkdtemp()
         try:
             mine = os.path.join(d, "pwsh")
@@ -736,15 +750,29 @@ class PwshSecure(unittest.TestCase):
         self.assertIn("can be written by others", host.pwsh_trusted("/usr/local/bin/pwsh", self.fake(dict(ok, **{"/usr/local/bin/pwsh": (0, 0o100775)}))))
 
     def test_changed_before_it_runs(self):
-        p = host.find_pwsh("")
-        self.assertTrue(host.pwsh_same(p))
-        host.PWSH_ID[p] = (0, 0, 0, 0, 0, 0)            # as if swapped since it was checked
+        # 1.76.1c: on a file of the test's own (not the host's pwsh, which may not be trusted here): its identity kept,
+        # then as if swapped since it was checked - not run
+        d = tempfile.mkdtemp()
+        saved = dict(host.PWSH_ID)
         try:
+            p = os.path.join(d, "pwsh")
+            with open(p, "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(p, 0o755)
+            host.PWSH_ID[p] = host._identity(p)
+            self.assertTrue(host.pwsh_same(p))
+            with open(p, "a") as f:
+                f.write("# swapped\n")
+            self.assertFalse(host.pwsh_same(p))
+            host.PWSH_ID[p] = (0, 0, 0, 0, 0, 0)
             r, err, _ = host.run_ps(p, "/nonexistent.ps1", "/nonexistent", 10)
             self.assertIsNone(r)
             self.assertIn("changed since it was checked - not run", err)
+            self.assertFalse(host.pwsh_same(os.path.join(d, "never-checked")))
         finally:
-            host.find_pwsh("")
+            host.PWSH_ID.clear()
+            host.PWSH_ID.update(saved)
+            shutil.rmtree(d, ignore_errors=True)
 
 
 class PathsMoved(unittest.TestCase):

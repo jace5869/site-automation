@@ -238,25 +238,33 @@ It runs in a **sandbox**: a transient systemd unit (`systemd-run`) that the kern
   cannot be reached.
 - **No socket of any kind** (`RestrictAddressFamilies` empty, `IPAddressDeny=any`): no network, no D-Bus, no systemd, no
   audit socket. It keeps the host's network namespace, so a `net.*` setting it reads is the host's.
-- **Not root, and no one else:** as root, the job runs the trial as a UID of its own. The UID is picked at random from
-  2,000,000,000 up, is in no passwd or group entry, and owns no process. It keeps only the right to read
-  (`CAP_DAC_READ_SEARCH`), so it cannot signal or trace a host process. Other processes are hidden
-  (`ProtectProc=invisible`), privileged and debugging system calls are refused (`SystemCallFilter`), and from systemd
-  257 (RHEL 10) it has its own process namespace (`PrivatePIDs`).
-- Its own SysV IPC and message queues (`PrivateIPC`), so a code cannot leave IPC objects on the host. The IPC files in
-  `/proc` (`/proc/sys/kernel/shm*`, `msg*`, `sem*`, `/proc/sys/fs/mqueue`, `/proc/sysvipc`) are hidden inside.
-- **RHEL 8 (systemd 239)** lacks six of these settings: `PrivateIPC`, `ProtectProc`, `ProtectClock`,
-  `ProtectKernelLogs`, `RestrictSUIDSGID`, `ProtectHostname` (and `systemd-run` there takes no `LockPersonality`).
-  The job picks a profile by `systemd-run --version` and holds the same properties another way:
-  - no SysV IPC object or message queue can be made: their system calls are refused (`SystemCallFilter`, failing
-    with EPERM); the IPC files in `/proc` are then the host's, and read as they are;
-  - no clock set and no `personality(2)`: refused system calls;
-  - the kernel's logs and the host name: no capability for them; no set-UID file: the file system is read-only and
-    `NoNewPrivileges` is on;
-  - not root: a dynamic user of its own (`DynamicUser`; systemd 239 does not start a unit with a numeric user that has
-    no passwd entry), keeping only the right to read. Another user's process can be listed but not read (its
-    environment, its open files) and gets no signal: the kernel refuses another UID.
-  - Proved on a real systemd 239 (a RHEL 8 container as PID 1, the job's own CI test as root).
+- **Not root, and no one else:** as root (the job's way, `become: true`), the trial runs as a **dynamic user** of its
+  own (`DynamicUser`): a UID systemd gives the unit while it runs, in no passwd entry, owning no other process. It keeps
+  only the right to read (`CAP_DAC_READ_SEARCH`), so it cannot signal or trace a host process. Other processes are
+  hidden (`ProtectProc=invisible`), privileged and debugging system calls are refused (`SystemCallFilter`), and from
+  systemd 257 (RHEL 10) it has its own process namespace (`PrivatePIDs`).
+  - 1.76.0 ran it as a numeric UID with no passwd entry. systemd before 257 refuses that (exit 217, tried on the real
+    239 and 255), so on RHEL 9 every rule was *not tried: no sandbox*. 1.76.1 uses a dynamic user on every systemd.
+- **As a user other than root** (`become: false`), the code runs as that same user. Only a process namespace of its own
+  keeps that user's other processes (the job's own) out of its reach, so below systemd 257 the job refuses the sandbox:
+  *as a user other than root the trial needs systemd 257 or later*. Run the job as root.
+- **No SysV IPC object or message queue** can be made, attached or removed: their system calls are refused
+  (`SystemCallFilter`, failing with EPERM). The IPC files in `/proc` are the host's, read as they are; a code that
+  reads one is still not tried (below).
+- **No clock set, no host name set:** refused system calls; the kernel's logs: no capability for them; no set-UID
+  file: the file system is read-only and `NoNewPrivileges` is on.
+- **Never a sandbox that systemd quietly left out.** When the kernel will not give systemd a namespace (restricted user
+  namespaces, a container), systemd skips some settings with no error ("assuming containerized execution"): a unit with
+  only `ProtectSystem` then runs with the host writable. The sandbox has mounts systemd insists on
+  (`TemporaryFileSystem=/dev/shm`, `TemporaryFileSystem=/run/user:ro`): without a mount namespace it does not run.
+  What else may be skipped is held by the system call filter (IPC, clock, host name), which systemd never skips, or
+  looked at by the check below (the devices, the process namespace).
+- **RHEL 8 (systemd 239)** also lacks `ProtectProc`, `ProtectClock`, `ProtectKernelLogs`, `RestrictSUIDSGID`,
+  `ProtectHostname`, and its `systemd-run` takes no `LockPersonality`; `personality(2)` is refused instead. Another
+  user's process can be listed there but not read (its environment, its open files), and gets no signal: the kernel
+  refuses another UID.
+  - Proved on a real systemd 239 (a RHEL 8 container as PID 1, the job's own CI test as root), and on a real systemd
+    255 (an Ubuntu 24.04 VM, as root: the sandbox test and both answer-keys tests).
 
 **The rule:** an answer that depends on a namespace, a socket or a private mount is never read inside the sandbox. It
 is replayed, or the code is not tried.
@@ -292,11 +300,12 @@ is replayed, or the code is not tried.
 - Before the first trial the job looks from inside, without writing, that the sandbox holds:
   - nothing of the host is writable, and `/tmp`, `/var/tmp`, `/dev/shm` are its own, not the host's;
   - no socket can be opened, and `/run/systemd/private` and D-Bus cannot be reached;
-  - no IPC file can be read;
-  - it is not root, and it keeps no capability but reading; as root, it runs as its own UID, and that UID owns no
-    process of the host;
+  - it is not root, and it keeps no capability but reading; as root, it runs as a dynamic user that owns no process
+    of the host after it ends;
   - another user's process cannot be read (its environment, its open files) or signalled;
-  - systemd 239: no SysV IPC object can be touched (`ipcrm` of an id that is not there says *permission denied*).
+  - no SysV IPC object can be touched (`ipcrm` of an id that is not there says *permission denied*);
+  - no host device is in it (no block device, `/dev/mem`, `/dev/kmsg`); as a user other than root, the job's own
+    process cannot be seen in it.
 - If `systemd-run` is missing or any of that fails, nothing is tried: each rule is *Not drafted - not tried: no
   sandbox (why)*. There is never a trial outside the sandbox.
 
