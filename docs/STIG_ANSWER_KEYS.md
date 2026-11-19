@@ -316,13 +316,16 @@ is replayed, or the code is not tried.
 - **pwsh:** `check_stig_pwsh`, else the first on the host's PATH, followed through its links. It and every folder above
   it must be root's and writable by root alone; it is checked again right before each run. *How this was made* names
   it.
-- Before the first trial the job looks from inside, without writing, that the sandbox holds:
+- Before the first trial the job looks from inside that the sandbox holds. Writable means a write that works: it
+  tries to make a new file of a random name in each place (removed at once; it fails when the sandbox holds), never
+  `test -w` (the Rust coreutils of Ubuntu 25.10 and later judge by permission bits, not by the mount). It checks:
   - nothing of the host is writable: the sandbox's own mount table, read inside, has every mount read-only - but
     `/proc` itself, `/dev` (its own; a terminal file system there is the host's: refused), `/tmp`, `/var/tmp`, its own
     cgroup's files, an automount point (not tried below it), the kernel's interfaces that take a write only from root
     or a capability (SELinux, security, configfs ...), and a place it cannot reach or a folder it cannot enter. A
-    file is never let through, `/sys`, the cgroups and `/proc/sys` must be read-only, and a mount table it cannot read
-    refuses the sandbox; `/tmp`, `/var/tmp`, `/dev/shm` are its own, not the host's;
+    file is never let through, `/sys`, the cgroups and `/proc/sys` must be read-only; a writable mount whose name is not
+    UTF-8, a mount table line it does not understand, or a mount table it cannot read refuses the sandbox; `/tmp`,
+    `/var/tmp`, `/dev/shm` are its own, not the host's;
   - no socket can be opened, and `/run/systemd/private` and D-Bus cannot be reached;
   - it is not root, and it keeps no capability but reading; as root, it runs as a dynamic user that owns no process
     of the host after it ends;

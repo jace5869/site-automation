@@ -20,6 +20,8 @@
   and `MountFlags=private`), and `/run/lock` stayed writable under `ReadOnlyPaths=/` (now each mount point by name).
   The probe reads the sandbox's own mount table: any host mount left writable refuses the sandbox (a file always,
   `/sys`, the cgroups, `/proc/sys`; automount points are not tried). `/sys` a read-only bind, `/dev/pts` empty.
+  Writable means a write that works (a new file of a random name, removed), never `test -w`: Ubuntu 25.10+ ships the
+  Rust coreutils, whose `test -w` called a 777 `/opt` on a read-only mount writable (CI's runner, systemd 259).
 - SysV IPC, message queues, the clock and the host name: their system calls refused with every profile (systemd may
   skip `PrivateIPC`; as root its own `/proc` showed the IPC files). The IPC files are the host's, read as they are.
 - What the sandbox hides is never read as the host's: `/run/user`, a dynamic user's `/var/lib/private`,
@@ -86,7 +88,7 @@ sandbox - there nothing is tried). New optional settings: `answer_keys_pick`, `a
   `getent`, `id`, `sysctl -n` of an IPC setting, `stat` `%U %G`, `find` with a user or group, `find` and `stat` in or
   above `/tmp`. Not tried: the mount table, an IPC file, a name through PowerShell, any other read of `/tmp`. The trial
   says "Replayed in the trial".
-- Before the first trial the job looks from inside, writing nothing, that the sandbox holds (nothing writable, its own
+- Before the first trial the job looks from inside that the sandbox holds (nothing writable - a write tried, its own
   `/tmp`, no socket, no IPC file, not root, its own UID owning no process, no capability but reading). If not, or
   `systemd-run` is missing (or too old: RHEL 8's systemd 239): no trial - each rule is "Not drafted - not tried: no
   sandbox (why)". There is never a trial outside the sandbox.

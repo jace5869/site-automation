@@ -222,7 +222,12 @@ say("cannot show /tmp" in h.blind("", [], [{"cmd": "Get-Content", "path": ww, "l
 # /var/log/audit, /home, /opt ... of their own; /run/lock is a tmpfs of its own); an automount is mounted before the
 # trial (fired outside) and read-only in it, and no mount reaches the sandbox after it starts (MountFlags=private)
 mps = h.probe_mounts()
-r, err, _ = h.run_trial(pwsh, runner, "$w = @(foreach ($p in @(%s)) { & /usr/bin/test -w $p; if ($LASTEXITCODE -eq 0) { $p } }); "
+# 1.76.1h: writable = a write that works (a new file of a random name, removed) - never test -w: the Rust coreutils of
+# Ubuntu 25.10+ read permission bits (a 777 folder on a read-only mount: "writable")
+WTRY = ("function Test-Write($p) { if (-not [IO.Directory]::Exists($p)) { return $false }; "
+        "$t = [IO.Path]::Combine($p, '.site-ak-w-' + [guid]::NewGuid().ToString('N')); "
+        "try { [IO.File]::Open($t, 'CreateNew', 'Write').Dispose(); [IO.File]::Delete($t); return $true } catch { return $false } }; ")
+r, err, _ = h.run_trial(pwsh, runner, WTRY + "$w = @(foreach ($p in @(%s)) { if (Test-Write $p) { $p } }); "
                         "Write-Verbose ($w -join ' '); return ($w.Count -eq 0)" % ", ".join("'%s'" % m.replace("'", "''") for m in mps), 60)
 say(isinstance(r, dict) and r.get("values") == [True], "every mount point of this host (%d: %s) is read-only inside%s" % (
     len(mps), ", ".join(mps[:12]) + (" ..." if len(mps) > 12 else ""), "" if isinstance(r, dict) and r.get("values") == [True] else
@@ -253,7 +258,7 @@ for am in autos[:3]:
         host_n = len(os.listdir(am))
     except OSError:
         host_n = -1
-    r, err, _ = h.run_trial(pwsh, runner, "& /usr/bin/test -w '%s'; $w = ($LASTEXITCODE -eq 0); "
+    r, err, _ = h.run_trial(pwsh, runner, WTRY + "$w = Test-Write '%s'; "
                                           "$n = @(Get-ChildItem -LiteralPath '%s' -Force -ErrorAction SilentlyContinue).Count; "
                                           "return ([string]$n + ' ' + [string]$w)" % (am, am), 60)
     say(isinstance(r, dict) and r.get("values") == ["%d False" % host_n],

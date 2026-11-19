@@ -535,13 +535,27 @@ REPLAY_MAX = 1048576
 PROBE_RO = ["/", "/etc", "/usr", "/var", "/var/lib", "/var/log", "/opt", "/srv", "/root", "/home", "/boot", "/run",
             "/proc/sys/kernel/hostname", "/proc/sys/vm/swappiness", "/proc/sys/net/ipv4/ip_forward", "/sys/kernel", "/sys/fs/cgroup"]
 PROBE_PRIVATE = ["/tmp", "/var/tmp", "/dev/shm"]
-# the probe, inside the sandbox, writing nothing: what is writable (test -w); that /tmp, /var/tmp and /dev/shm are its
+# the probe, inside the sandbox: what is writable (a write tried - a new file of a random name, removed at once); that /tmp, /var/tmp and /dev/shm are its
 # own; whether a socket of any family can be opened (and /run/systemd/private, D-Bus reached); whether an IPC setting
 # can be read; its uid, its effective capabilities, how many processes it sees
 PROBE_PS1 = r"""
 # 1.76.1f: its data - the places to look at, the job's PID - from stdin as JSON, never in this script's source
 $in = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$w = @(foreach ($p in @($in.ro)) { if (Test-Path -LiteralPath $p) { & /usr/bin/test -w $p; if ($LASTEXITCODE -eq 0) { $p } } })
+# 1.76.1h: writable = a write that works, never a guess from permission bits (test -w: the Rust coreutils of Ubuntu
+# 25.10+ said a 777 /opt was writable on a read-only mount). A folder: a new file of a random name created there
+# (CreateNew - never an existing one) and removed at once; a file: opened for writing, nothing written.
+$w = @(foreach ($p in @($in.ro)) {
+    if ([IO.Directory]::Exists($p)) {
+        $t = [IO.Path]::Combine($p, '.site-ak-probe-' + [guid]::NewGuid().ToString('N'))
+        $fs = $null
+        try { $fs = [IO.File]::Open($t, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write) } catch { }
+        if ($null -ne $fs) { $fs.Dispose(); try { [IO.File]::Delete($t) } catch { }; $p }
+    } elseif ([IO.File]::Exists($p)) {
+        $fs = $null
+        try { $fs = [IO.File]::Open($p, [IO.FileMode]::Open, [IO.FileAccess]::Write) } catch { }
+        if ($null -ne $fs) { $fs.Dispose(); $p }
+    }
+})
 # 1.76.1f/g: every mount of the sandbox, as it sees them (the topmost at each point), with its file system type: one that
 # can be written to (no "ro" of its own) is a host file system it could write - but /proc itself, /dev (its own: no
 # host device, /dev/pts an empty one; a devpts there is the host's, refused), /tmp and /var/tmp (its own), its own
@@ -551,10 +565,14 @@ $top = [ordered]@{}; $fst = @{}
 $rwm = @()
 try {
     $mi = $(if ($in.mountinfo) { [string]$in.mountinfo } else { '/proc/self/mountinfo' })
+    $bad = @()
     foreach ($l in [IO.File]::ReadAllLines($mi)) {
+        if (-not $l) { continue }
         $f = $l.Split(' ')
         $k = [array]::IndexOf($f, '-')
-        if ($f.Count -gt 5 -and $k -gt 5) { $top[$f[4]] = $f[5]; $fst[$f[4]] = $f[$k + 1] }
+        # 1.76.1h: a line not understood refuses the table (as the host side does), never skipped
+        if ($f.Count -le 5 -or $k -le 5 -or $f.Count -le $k + 1) { $bad += @('(a mount table line not understood)'); continue }
+        $top[$f[4]] = $f[5]; $fst[$f[4]] = $f[$k + 1]
     }
     $mycg = ''
     try { $mycg = ((Get-Content -LiteralPath '/proc/self/cgroup' -ErrorAction Stop | Where-Object { $_ -match '^0::' }) -replace '^0::', '') } catch { }
@@ -562,19 +580,23 @@ try {
         $p = [regex]::Replace([string]$k, '\\([0-7]{3})', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 8) })
         if (($top[$k].Split(',')) -notcontains 'rw') { continue }
         if ($fst[$k] -eq 'autofs') { continue }
+        # 1.76.1h: a name that is not UTF-8 (read as U+FFFD) cannot be looked at by name: writable is refused
+        if ($p.Contains([string][char]0xFFFD)) { $p; continue }
         if ($fst[$k] -eq 'devpts') { $p; continue }
         # the kernel's interfaces that take a write only from root or a capability (it has neither: CapEff is looked at)
-        if (@('selinuxfs', 'securityfs', 'configfs', 'pstore', 'fusectl', 'efivarfs', 'debugfs', 'tracefs', 'bpf', 'binfmt_misc', 'hugetlbfs', 'mqueue') -contains $fst[$k]) { continue }
+        if (@('selinuxfs', 'securityfs', 'configfs', 'pstore', 'fusectl', 'efivarfs', 'debugfs', 'tracefs', 'bpf', 'binfmt_misc') -contains $fst[$k]) { continue }
         if ($p -eq '/proc' -or $p -match '^/(dev|tmp|var/tmp)(/|$)') { continue }
         if ($mycg -and $p.StartsWith('/sys/fs/cgroup' + $mycg + '/')) { continue }
         # a place it cannot reach at all (not even look at), or a folder it cannot enter: nothing below can be written
-        & /usr/bin/test -e $p
-        if ($LASTEXITCODE -ne 0) { continue }
-        & /usr/bin/test -d $p
-        if ($LASTEXITCODE -eq 0) { & /usr/bin/test -x $p; if ($LASTEXITCODE -ne 0) { continue } }
+        # (1.76.1h: by the kernel's own answer - a stat of the place, and of "folder/." which needs the right to enter
+        # it - never test's reading of permission bits)
+        $isDir = [IO.Directory]::Exists($p)
+        if (-not $isDir -and -not [IO.File]::Exists($p)) { continue }
+        if ($isDir -and -not [IO.Directory]::Exists($p.TrimEnd('/') + '/.')) { continue }
         $p
     })
     if ($top.Count -eq 0) { $rwm = @('(no mount table)') }
+    if ($bad.Count) { $rwm = @($bad[0]) + $rwm }
 } catch { $rwm = @('(the mount table could not be read)') }
 $priv = @{}
 foreach ($p in @('/tmp', '/var/tmp', '/dev/shm')) { $priv[$p] = [string](& /usr/bin/stat -L -c '%d:%i' $p 2>$null) }
@@ -715,7 +737,8 @@ def _starttime(pid):
 
 
 def sandbox_probe(runner, pwsh=None, version=None):
-    """Whether the sandbox works here and holds - looked at from inside, nothing written -> '' or why not."""
+    """Whether the sandbox works here and holds - looked at from inside (1.76.1h: a write is tried, a new file of a
+    random name, removed at once - it fails when the sandbox holds) -> '' or why not."""
     if not runner:
         return "systemd-run was not found"
     if version is None:
@@ -1104,10 +1127,11 @@ def refresh_autofs():
     try:
         now = mounts()
     except MountsError:
-        return
+        return False            # 1.76.1h: not known now - the caller runs no trial (never an old list)
     real = set(mp for mp, fs, _ in now if fs != "autofs")
     del AUTOFS_HIDDEN[:]
     AUTOFS_HIDDEN.extend(sorted(set(mp for mp, fs, opts in now if fs == "autofs" and (mp not in real or "indirect" in opts.split(",")))))
+    return True
 
 
 def fire_automounts(budget=30):
@@ -1160,6 +1184,8 @@ def run_trial(pwsh, runner, code, seconds, binds=None, version=None):
                            env=sandbox_env())
     except subprocess.TimeoutExpired:
         return None, "no answer in %d seconds" % seconds, round(time.time() - t, 1)
+    except MountsError as e:            # 1.76.1h: the mount table changed or cannot be read - a refusal, said
+        return None, "no sandbox (%s): a trial runs only in a read-only sandbox" % e, round(time.time() - t, 1)
     except RuntimeError as e:
         return None, str(e), round(time.time() - t, 1)
     out = p.stdout.decode("utf-8", "replace").strip().splitlines()
@@ -1432,7 +1458,10 @@ def main():
             # PowerShell): not tried - never a result the host would not give
             calls = [[str(x) for x in c] for c in (gate[cid].get("calls") or []) if isinstance(c, list)]
             gp = gate[cid].get("paths") or []
-            refresh_autofs()            # 1.76.1g: the automounts as they are now, not as at the probe
+            if not refresh_autofs():    # 1.76.1g: the automounts as they are now, not as at the probe
+                trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0,
+                              "error": "no sandbox (the mount table could not be read): a trial runs only in a read-only sandbox"}
+                continue
             why_blind = blind(code, calls, [gp] if isinstance(gp, dict) else gp)
             if why_blind:
                 trial[cid] = {"ran": False, "ok": False, "valid": None, "read": "", "seconds": 0, "error": why_blind}

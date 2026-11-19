@@ -898,6 +898,9 @@ class EveryMount(unittest.TestCase):
         try:
             sp = os.path.join(d, "a b")
             os.makedirs(sp)
+            huge, mq = os.path.join(d, "huge"), os.path.join(d, "mq")
+            os.makedirs(huge)
+            os.makedirs(mq)
             fil = os.path.join(d, "hosts")
             with open(fil, "w") as f:
                 f.write("x")
@@ -906,10 +909,12 @@ class EveryMount(unittest.TestCase):
                      "5 1 0:6 / /dev/pts rw - devpts devpts rw", "6 1 0:7 / /sys/fs/selinux rw - selinuxfs selinuxfs rw",
                      "7 1 0:8 / /sys rw - sysfs sysfs rw", "8 1 0:9 / /proc rw - proc proc rw", "9 8 0:9 / /proc/sys rw - proc proc rw",
                      "10 1 0:10 / /tmp rw - tmpfs tmpfs rw", "11 1 8:2 / /nonexistent-site-ak rw - ext4 /dev/sdb rw",
-                     "12 1 8:3 / %s rw - ext4 /dev/sdc rw" % sp.replace(" ", "\\040"), "13 1 8:4 / /boot ro - ext4 /dev/sdd rw"]
+                     "12 1 8:3 / %s rw - ext4 /dev/sdc rw" % sp.replace(" ", "\\040"), "13 1 8:4 / /boot ro - ext4 /dev/sdd rw",
+                     # 1.76.1h: hugetlbfs and mqueue a user can write - named; a name not UTF-8 - named, never "cannot reach"
+                     "14 1 0:11 / %s rw - hugetlbfs hugetlbfs rw" % huge, "15 1 0:12 / %s rw - mqueue mqueue rw" % mq]
             mi = os.path.join(d, "mountinfo")
-            with open(mi, "w") as f:
-                f.write("\n".join(lines) + "\n")
+            with open(mi, "wb") as f:
+                f.write(("\n".join(lines) + "\n").encode() + b"16 1 8:5 / /srv/\xff rw - ext4 /dev/sde rw\n")
             script = host.PROBE_PS1.replace("@IPC@", "@()")
             enc = base64.b64encode(script.encode("utf-16-le")).decode()
             r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
@@ -917,7 +922,14 @@ class EveryMount(unittest.TestCase):
                                stderr=subprocess.PIPE, timeout=120)
             got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
             got = [got] if isinstance(got, str) else got
-            self.assertEqual(sorted(got), sorted(["/", fil, "/dev/pts", "/sys", "/proc/sys", sp]))
+            self.assertEqual(sorted(got), sorted(["/", fil, "/dev/pts", "/sys", "/proc/sys", sp, huge, mq, "/srv/\ufffd"]))
+            with open(mi, "ab") as f:
+                f.write(b"17 1 8:6 / /x rw ext4 no-separator\n")                # a line not understood: refused
+            r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                               input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": mi}).encode(), stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=120)
+            got = json.loads(r.stdout.decode().strip().splitlines()[-1])["rwmounts"]
+            self.assertEqual(([got] if isinstance(got, str) else got)[0], "(a mount table line not understood)")
             r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
                                input=json.dumps({"ro": [], "jobpid": 1, "mountinfo": os.path.join(d, "none")}).encode(),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
@@ -962,6 +974,54 @@ class EveryMount(unittest.TestCase):
             self.assertIn("automount the sandbox cannot show", host.blind("", [], [{"cmd": "Get-Content", "path": "/net/srv/x", "literal": True}]))
         finally:
             host.subprocess.Popen, host.mounts = real_popen, real_m
+            del host.AUTOFS_HIDDEN[:]
+
+    @unittest.skipUnless(shutil.which("pwsh"), "no pwsh here")
+    def test_writable_means_a_write_that_works(self):
+        # 1.76.1h (CI on Ubuntu 26.04): never test -w (the Rust coreutils read permission bits: a 777 folder on a
+        # read-only mount was "writable"); a new file of a random name is tried and removed, a file opened for writing
+        import base64
+        import subprocess
+        self.assertNotIn("/usr/bin/test", host.PROBE_PS1)
+        d = tempfile.mkdtemp(dir=os.path.expanduser("~"), prefix=".site-ak-w-")
+        try:
+            wd, rd, fil = os.path.join(d, "w"), os.path.join(d, "r"), os.path.join(d, "f")
+            os.makedirs(wd)
+            os.makedirs(rd)
+            with open(fil, "w") as f:
+                f.write("x")
+            os.chmod(rd, 0o555)
+            enc = base64.b64encode(host.PROBE_PS1.replace("@IPC@", "@()").encode("utf-16-le")).decode()
+            r = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                               input=json.dumps({"ro": [wd, rd, fil, os.path.join(d, "none")], "jobpid": 1}).encode(),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            got = json.loads(r.stdout.decode().strip().splitlines()[-1])["writable"]
+            got = [got] if isinstance(got, str) else got
+            self.assertEqual(sorted(got), sorted([wd, fil] + ([rd] if os.geteuid() == 0 else [])))
+            self.assertEqual(os.listdir(wd), [])                               # the file it made is gone
+            with open(fil) as f:
+                self.assertEqual(f.read(), "x")                                # nothing written
+        finally:
+            os.chmod(os.path.join(d, "r"), 0o755)
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_mount_table_not_read_is_no_trial(self):
+        # 1.76.1h: refresh_autofs and run_trial: a MountsError is a refusal, said - never an old list, never a traceback
+        real_m, real_cmd, real_id = host.mounts, host.sandbox_cmd, host.PWSH_ID
+
+        def boom(*a, **k):
+            raise host.MountsError("the mount table could not be read")
+        host.mounts = boom
+        host.sandbox_cmd = boom
+        host.AUTOFS_HIDDEN[:] = ["/old"]
+        try:
+            self.assertFalse(host.refresh_autofs())
+            host.PWSH_ID = None
+            r, err, _ = host.run_trial("/usr/bin/pwsh", "/usr/bin/systemd-run", "1", 5, version=255)
+            self.assertIsNone(r)
+            self.assertTrue(err.startswith("no sandbox (the mount table could not be read)"), err)
+        finally:
+            host.mounts, host.sandbox_cmd, host.PWSH_ID = real_m, real_cmd, real_id
             del host.AUTOFS_HIDDEN[:]
 
     def test_refresh_before_each_code(self):
