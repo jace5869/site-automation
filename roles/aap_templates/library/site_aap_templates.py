@@ -21,8 +21,8 @@ options:
   credentials: {description: "{kind: credential name} (a list of names for several).", type: dict, default: {}}
   only: {description: "Only the templates whose name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
   overwrite: {description: "Bring a template that differs right (only the fields this job sets).", type: bool, default: false}
-  create_alias: {description: "Make the catalog's template even when its playbook already runs under another name (the site
-    portal's workflows look for the catalog's names).", type: bool, default: false}
+  create_alias: {description: "Make the catalog's template even when its playbook already runs under another name (for a
+    workflow of the site's own that names the catalog's).", type: bool, default: false}
   label_portal: {description: "none, portal-actions (the templates the site portal launches) or all (every template made or matched):
     the portal's label (portal_label) and portal-area:<area>, so the site portal finds them.", type: str, default: none}
   portal_label: {description: "The site portal's own label for the templates it reads (matched as written, case too).", type: str, default: portal}
@@ -238,10 +238,10 @@ class Templates(object):
             if not ours:
                 other = self.same_playbook(tpls, e)
                 if other and not self.p["create_alias"]:
-                    self.note(name, "other name", why="%s runs its playbook - not made twice%s"
-                              % (", ".join(repr(t["name"]) for t in other[:3]),
-                                 ("; the site portal looks for %r by name: aap_templates_create_alias: true makes it too" % name)
-                                 if e.get("portal") else ""))
+                    # never "the portal looks for it": its step templates are the portal setup job's (made_by), with
+                    # other names - a workflow of the site's own may name the catalog's, hence the alias
+                    self.note(name, "other name", why="%s runs its playbook - not made twice; aap_templates_create_alias: true "
+                              "makes it under this name too" % ", ".join(repr(t["name"]) for t in other[:3]))
                     self.hint(e, other)
                     continue
                 if not self.inventory:          # Codex: needed only to make one - said before any write

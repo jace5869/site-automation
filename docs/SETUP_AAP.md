@@ -688,8 +688,9 @@ and checks the ones already there. It never deletes a template.
      for Limit, Variables, Inventory and Job type, the execution environment: a kind you did not map is the
      project's);
    - *already right*;
-   - *same playbook, other name* - a template of yours runs that playbook: it is not made twice. The site
-     portal's workflows look for the catalog's name: `aap_templates_create_alias: true` makes it too;
+   - *same playbook, other name* - a template of yours runs that playbook: it is not made twice. For a workflow
+     of yours that names the catalog's template, `aap_templates_create_alias: true` makes it under that name too
+     (the site portal's own templates are the next item's);
    - *SKIPPED* - a credential kind not named, or the name used in another organization;
    - *left to another job* - the site portal's own templates. *NOT IN AAP* means it is missing: run
      **AAP - set up portal actions** ([SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap)), which makes it

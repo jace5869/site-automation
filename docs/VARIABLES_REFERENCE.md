@@ -247,7 +247,7 @@ File: `roles/aap_templates/defaults/main.yml`
 | `aap_templates_credentials` | `{}` | your credential of each kind the catalog names (machine, machine_windows, aap, stigman_api, servicenow, vmware, horizon, act_model_key, windows_share, ...); a template that needs a kind not here is skipped, said. A list for several. {machine: "Linux machine", aap: "AAP reader", stigman_api: "STIG Manager API"} |
 | `aap_templates_only` | `[]` | only the templates whose name matches one of these (* and ?, any case); [] = every template of the catalog ["STIG*", "Health check", "Troubleshoot"] |
 | `aap_templates_overwrite` | `false` | true = bring a template that differs right (only the fields this job sets) |
-| `aap_templates_create_alias` | `false` | true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other name"): the site portal's workflows look for the catalog's names |
+| `aap_templates_create_alias` | `false` | true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions) |
 | `aap_templates_label_portal` | `none` | the site portal's labels (its own label and portal-area:<area>, so the portal finds the templates and groups them): none (the default), portal-actions (the templates the site portal launches) or all (every template made or matched) |
 | `aap_templates_portal_label` | `"{{ portal_label \| default('portal') }}"` | the site portal's label (as written, case too) |
 | `aap_templates_portal_label_area` | `"{{ portal_label_area \| default('portal-area:') }}"` | the prefix of its group label |

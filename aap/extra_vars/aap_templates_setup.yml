@@ -30,7 +30,7 @@ aap_templates_credentials:
 # aap_templates_only: ["STIG*", "Health check", "Troubleshoot"]
 ## Bring the templates that differ right (only the fields this job sets)
 # aap_templates_overwrite: true
-## Make the catalog's name too when your own template runs that playbook (the portal's workflows look for it)
+## Make the catalog's name too when your own template runs that playbook (for a workflow that names it)
 # aap_templates_create_alias: true
 ## The site portal's labels, so it finds the templates: portal-actions or all
 # aap_templates_label_portal: portal-actions

@@ -21,7 +21,7 @@ aap_templates_credentials: {}
 aap_templates_only: []
 aap_templates_overwrite: false                 # true = bring a template that differs right (only the fields this job sets)
 # true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other
-# name"): the site portal's workflows look for the catalog's names
+# name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions)
 aap_templates_create_alias: false
 # the site portal's labels (its own label and portal-area:<area>, so the portal finds the templates and groups them):
 #   none (the default), portal-actions (the templates the site portal launches) or all (every template made or matched)

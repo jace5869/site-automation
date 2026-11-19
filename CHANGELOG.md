@@ -19,7 +19,7 @@ with Admin on the organization; its Variables: `aap/extra_vars/aap_templates_set
   `portal-area:<area>`, so the portal finds the templates and groups them.
 - A site portal template the portal setup job makes, and that is missing, is said: *NOT IN AAP - run AAP - set up
   portal actions* (it makes it with its workflow). `aap_templates_create_alias: true` makes a catalog template even when
-  your own runs its playbook under another name - the portal's workflows look for the catalog's name. When a portal
+  your own runs its playbook under another name (for a workflow of yours that names the catalog's). When a portal
   action runs that one template, a line to copy is printed too: `portal_aap_names: {action: 'your name'}` (1.78.1+).
 - The job templates job looks up the project, inventory and credentials in its organization only. Every read and check
   (labels too) comes before the first write. Two templates of one name stop it before it writes. A failure lists each

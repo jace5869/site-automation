@@ -79,7 +79,7 @@ if [ "$(writes)" = 0 ] && has "DIFFERS - 'Health check' - aap_templates_overwrit
     && has "left to another job - 'ACT - triage finding' - NOT IN AAP - AAP - set up portal actions makes it, with the workflow that runs it: run that job" \
     && has "left to another job - 'Disk - space request' - NOT IN AAP - AAP - set up portal actions makes it, with the workflow that runs it: run that job; 'Ask for disk space' runs its playbook" \
     && has "# or: portal_aap_names: {disk_space_request: 'Ask for disk space'} (1.78.1+)" \
-    && has "same playbook, other name - 'Service - restart' - 'Restart a service' runs its playbook - not made twice; the site portal looks for 'Service - restart' by name: aap_templates_create_alias: true makes it too" \
+    && has "same playbook, other name - 'Service - restart' - 'Restart a service' runs its playbook - not made twice; aap_templates_create_alias: true makes it under this name too" \
     && has "SKIPPED - 'Windows health check' - the name is used by a template of another organization" \
     && has "SKIPPED - 'VM - restart' - credential kind vmware not mapped (aap_templates_credentials)" \
     && has "would label portal: portal, portal-area:STIG" && grep -qE "would label portal: [0-9]+" "$work/out.txt"; then
@@ -133,7 +133,7 @@ before="$(writes)"
 run -e '{"aap_templates_label_portal": "all", "aap_templates_only": ["Health check", "POA&M status"]}'; rc=$?
 [ $rc = 0 ] && [ "$(writes)" = "$before" ] && ! has "labelled portal" && pass "... again: nothing written" || fail "labels again" "rc $rc"
 
-# ---- aap_templates_create_alias: the catalog's name made too (the portal's workflows look for it), the site's own kept
+# ---- aap_templates_create_alias: the catalog's name made too (a workflow may name it), the site's own kept
 run -e '{"aap_templates_create_alias": true, "aap_templates_only": ["Service - restart"]}'; rc=$?
 [ $rc = 0 ] && [ "$(tpl 'Service - restart' "['playbook']")" = "playbooks/service_restart.yml" ] && [ "$(tpl 'Restart a service' "['id']")" = 104 ] \
     && has "created - 'Service - restart'" && pass "aap_templates_create_alias: the portal's name made beside the site's own" \
