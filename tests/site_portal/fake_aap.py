@@ -50,13 +50,36 @@ STATE = {
              "survey_enabled": False, "approval": False},
         ],
     },
-    "inventories": [{"id": 3, "name": "Site hosts", "hosts": ["web01.example.mil", "web03.example.mil", "fail01.example.mil"]}],
+    "inventories": [{"id": 3, "name": "Site hosts", "hosts": ["web01.example.mil", "web03.example.mil", "fail01.example.mil"],
+                     "groups": {"web_servers": ["web01.example.mil", "web03.example.mil"], "failing": ["fail01.example.mil"]}}],
     "jobs": {},
     "approvals": {},
     "reports": [],                  # 1.75.3: finished report jobs the pick list reads: {id, template, playbook, status, finished (epoch), artifacts}
 }
 PAGE_CAP = int(os.environ.get("FAKE_AAP_PAGE_CAP", "200"))          # the biggest page the server gives
 AUDITOR = os.environ.get("FAKE_AAP_AUDITOR", "1") != "0"          # the account's Auditor role of an organization (0: not given)
+
+
+def add_template(kind, name, labels=(), spec=None, limit=False, execute=True, description="", tid=None, many_labels=0, needs_inventory=False, inventory=3,
+                 ask_inventory=False, slices=1, needs_credential=False, password_credential="", nodes=None):
+    """1.78.0: a template the account may (execute=True) or may not run, with its labels and a survey spec ([{variable, type, ...}]) -> its id.
+    many_labels: that many more labels (AAP lists only 10 of them in a row; the rest are at <kind>/<id>/labels/)."""
+    tid = tid or new_id()
+    t = {"id": tid, "name": name, "ask_variables_on_launch": False, "ask_limit_on_launch": bool(limit), "survey_enabled": spec is not None,
+         "labels": ["extra-%d" % i for i in range(many_labels)] + list(labels), "execute": execute, "description": description,
+         "spec": spec, "survey": [q["variable"] for q in (spec or [])], "needs_inventory": needs_inventory, "inventory": inventory,
+         "ask_inventory": ask_inventory, "slices": slices, "needs_credential": needs_credential, "password_credential": password_credential, "nodes": list(nodes or [])}
+    STATE["templates"][kind].append(t)
+    return tid
+
+
+def row_of(t):
+    labs = [{"id": 500 + i, "name": n} for i, n in enumerate(t.get("labels", []))]
+    return {"id": t["id"], "name": t["name"], "description": t.get("description", ""), "survey_enabled": t["survey_enabled"],
+            "ask_limit_on_launch": t["ask_limit_on_launch"], "ask_variables_on_launch": t["ask_variables_on_launch"],
+            "inventory": t.get("inventory", 3), "playbook": t.get("playbook", "a.yml"), "ask_inventory_on_launch": bool(t.get("ask_inventory")),
+            "job_slice_count": t.get("slices", 1),
+            "summary_fields": {"labels": {"count": len(labs), "results": labs[:10]}}}
 
 
 def add_report(template, playbook, status, finished, findings, jid=None, path=None):
@@ -132,6 +155,7 @@ def view(j):
            "elapsed": round(min(time.time() - start, RUN), 3) if start else 0, "limit": j.get("limit", ""),
            "extra_vars": json.dumps(j.get("extra_vars", {}))}
     if j["type"] == "job":
+        out["job_template"] = j.get("template_id")
         out["artifacts"] = {"site_report": {"url": "https://reports.example.mil/linux-health/2026-11-15_job-%d.html" % j["id"]},
                             "counts": {"critical": 0, "warning": 1}} if st == "successful" else {}
         ev = j.get("extra_vars") or {}
@@ -143,25 +167,55 @@ def view(j):
             out["artifacts"]["act_triage_finding"] = {"next_action": ev["next_action"]}
     if j["type"] == "workflow_job":
         out["workflow_job_template"] = j["template"]
+        out["launch_type"] = j.get("launch_type", "manual")
+        sf = {}
+        if j.get("schedule"):
+            sf["schedule"] = {"name": j["schedule"]}
+        if j.get("created_by"):
+            sf["created_by"] = {"username": j["created_by"]}
+        out["summary_fields"] = sf
     return out
 
 
+TASKS = ["Disk | Checking free space", "Services | Checking the services", "Time | Checking the clock", "Packages | Listing updates", "Logs | Reading the journal",
+         "Net | Checking the links", "Users | Checking the accounts", "Disk | Checking inodes", "Cert | Checking certificates", "Audit | Reading audit rules",
+         "Report | Writing the report", "Report | Saving the report"]
+
+
 def events(j):
+    """The job's events as AAP lists them (counter, event, event_data, host_name, stdout): a play, 12 tasks, each task's result on every host of the
+    limit (comma list; a host named fail* fails its 3rd task, one named down* is unreachable from the 2nd), then the recap. Only what the clock has reached."""
     st = job_status(j)
     if st == "pending":
         return []
     start = j["created"] if not j.get("after") else STATE["jobs"][j["after"]]["decided"]
-    n = int(min(time.time() - start, RUN) / RUN * 12) + 1
-    host = j.get("limit") or "localhost"
-    lines = ["", "PLAY [Recheck] *****************************************************************", ""]
-    for i in range(1, 12):
-        lines.append("TASK [step %d] ******************************************************************" % i)
-        lines.append("\x1b[0;32mok: [%s]\x1b[0m" % host)
+    hosts = [h for h in (j.get("limit") or "localhost").split(",") if h]
+    out = []
+
+    def add(event, host="", task="", res=None, stdout="", changed=False, failed=False):
+        out.append({"id": len(out) + 1, "counter": len(out) + 1, "event": event, "host_name": host, "stdout": stdout, "changed": changed, "failed": failed,
+                    "event_data": {"play": "Recheck", "task": task, "host": host, "res": res or {}}})
+    add("playbook_on_play_start", stdout="PLAY [Recheck] *****************************************************************")
+    dead = set()
+    for i, task in enumerate(TASKS, 1):
+        add("playbook_on_task_start", task=task, stdout="TASK [%s] ******************************************************************" % task)
+        for h in hosts:
+            if h in dead:
+                continue
+            if h.startswith("down") and i >= 2:
+                add("runner_on_unreachable", h, task, {"msg": "Failed to connect to the host via ssh: Connection timed out"}, "fatal: [%s]: UNREACHABLE!" % h, failed=True)
+                dead.add(h)
+            elif h.startswith("fail") and i == 3:
+                add("runner_on_failed", h, task, {"msg": "The clock is 14 minutes off (password=Hunter2-not-real)"}, "fatal: [%s]: FAILED!" % h, failed=True)
+                dead.add(h)
+            else:
+                add("runner_on_ok", h, task, {"changed": i == 8}, "\x1b[0;32mok: [%s]\x1b[0m" % h, changed=i == 8)
     if st in ("successful", "failed"):
-        lines.append("PLAY RECAP *********************************************************************")
-        lines.append("%s : ok=11 changed=0 unreachable=0 failed=%d skipped=0" % (host, 1 if st == "failed" else 0))
-    lines = lines[:max(3, n * 2)] if st == "running" else lines
-    return [{"counter": i + 1, "stdout": line} for i, line in enumerate(lines)]
+        add("playbook_on_stats", stdout="PLAY RECAP *********************************************************************\n%s" % "\n".join(
+            "%s : ok=11 changed=0 unreachable=%d failed=%d skipped=0" % (h, 1 if h.startswith("down") else 0, 1 if h.startswith("fail") else 0) for h in hosts))
+        return out
+    frac = min(time.time() - start, RUN) / RUN
+    return out[:max(3, int(frac * len(out)))]
 
 
 class H(BaseHTTPRequestHandler):
@@ -181,6 +235,13 @@ class H(BaseHTTPRequestHandler):
             self._send(401, {"detail": "Authentication credentials were not provided."})
             return False
         return True
+
+    def _paged_list(self, q, path, rows):
+        size = min(int(q.get("page_size", "25")), PAGE_CAP)
+        page = int(q.get("page", "1"))
+        more = len(rows) > page * size
+        nxt = (BASE + path + "?" + "&".join("%s=%s" % (k, v) for k, v in dict(q, page=str(page + 1)).items())) if more else None
+        return self._send(200, {"count": len(rows), "next": nxt, "results": rows[(page - 1) * size:page * size]})
 
     def do_GET(self):
         u = urlsplit(self.path)
@@ -220,6 +281,11 @@ class H(BaseHTTPRequestHandler):
             if q.get("finished__gt"):
                 rows = [r for r in rows if iso(r["finished"]) > q["finished__gt"].replace("Z", ".000000Z")]
             rows.sort(key=lambda r: -r["finished"])
+            if q.get("job_template") and not rows:                  # 1.78.0: jobs the portal started from a template, newest first
+                mine = [view(j) for j in sorted(STATE["jobs"].values(), key=lambda x: -x["created"]) if j.get("template_id") == int(q["job_template"])]
+                if q.get("status"):
+                    mine = [v for v in mine if v["status"] == q["status"]]
+                return self._send(200, {"count": len(mine), "results": mine[:int(q.get("page_size", "25"))]})
             size = int(q.get("page_size", "25"))
             noart = os.environ.get("FAKE_AAP_LIST_NO_ARTIFACTS") == "1"
             return self._send(200, {"count": len(rows), "results": [report_view(r, not noart) for r in rows[:size]]})
@@ -227,24 +293,94 @@ class H(BaseHTTPRequestHandler):
             j = os.environ.get("FAKE_AAP_JINJA")
             return self._send(200, {"ALLOW_JINJA_IN_EXTRA_VARS": j}) if j else self._send(403, {"detail": "You do not have permission."})
         m = re.match(r"^(job_templates|workflow_job_templates)/$", p)
-        if m:
+        if m and q.get("role_level") == "execute_role":                 # 1.78.0: what the account may Execute, paged
+            allr = [row_of(t) for t in STATE["templates"][m.group(1)] if t.get("execute", True) and t.get("labels") is not None]
+            size = min(int(q.get("page_size", "25")), PAGE_CAP)
+            page = int(q.get("page", "1"))
+            more = len(allr) > page * size
+            nxt = (BASE + m.group(1) + "/?" + "&".join("%s=%s" % (k, v) for k, v in dict(q, page=str(page + 1)).items())) if more else None
+            return self._send(200, {"count": len(allr), "next": nxt, "results": allr[(page - 1) * size:page * size]})
+        ml = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/labels/$", p)
+        if ml:
+            t = next((t for t in STATE["templates"][ml.group(1)] if t["id"] == int(ml.group(2))), None)
+            labs = [{"id": 500 + i, "name": n} for i, n in enumerate((t or {}).get("labels", []))]
+            return self._send(200, {"count": len(labs), "next": None, "results": labs})
+        if m and not q.get("id__in"):
             rows = [{"id": t["id"], "name": t["name"]} for t in STATE["templates"][m.group(1)] if t["name"] == q.get("name")]
             return self._send(200, {"count": len(rows), "results": rows})
+        mi = re.match(r"^(job_templates|workflow_job_templates)/$", p)
+        if mi and q.get("id__in"):                                      # 1.78.0: the cards' last runs, one call per kind
+            rows = []
+            for t in STATE["templates"][mi.group(1)]:
+                if str(t["id"]) not in q["id__in"].split(","):
+                    continue
+                mine = [j for j in STATE["jobs"].values() if (j.get("template_id") if mi.group(1) == "job_templates" else j.get("template")) == t["id"]
+                        and j["type"] in ("job", "workflow_job")]
+                last = sorted(mine, key=lambda j: -j["created"])[:1]
+                lj = {"id": last[0]["id"], "status": job_status(last[0]), "finished": iso(last[0]["created"])} if last else {}
+                rows.append({"id": t["id"], "name": t["name"], "summary_fields": {"last_job": lj} if lj else {}})
+            return self._send(200, {"count": len(rows), "results": rows})
+        if p == "workflow_jobs/" and q.get("workflow_job_template"):
+            mine = [view(j) for j in sorted(STATE["jobs"].values(), key=lambda x: -x["created"]) if j["type"] == "workflow_job" and str(j.get("template")) == q["workflow_job_template"]]
+            return self._send(200, {"count": len(mine), "results": mine[:int(q.get("page_size", "25"))]})
+        mw = re.match(r"^workflow_job_templates/(\d+)/workflow_nodes/$", p)
+        if mw:                                                           # 1.78.0: a workflow's steps (the portal fingerprints them)
+            t = next((t for t in STATE["templates"]["workflow_job_templates"] if t["id"] == int(mw.group(1))), None)
+            return self._paged_list(q, p, list((t or {}).get("nodes", [])))
+        md = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/$", p)
+        if md:                                                           # 1.78.0: one template (the portal asks again before it launches)
+            t = next((t for t in STATE["templates"][md.group(1)] if t["id"] == int(md.group(2)) and t.get("labels") is not None), None)
+            return self._send(200, row_of(t)) if t else self._send(404, {"detail": "Not found."})
         m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/(launch|survey_spec)/$", p)
         if m:
             t = next((t for t in STATE["templates"][m.group(1)] if t["id"] == int(m.group(2))), None)
             if not t:
                 return self._send(404, {"detail": "Not found."})
+            if m.group(3) == "launch" and t.get("no_launch_page"):
+                return self._send(404, {"detail": "Not found."})
             if m.group(3) == "survey_spec":
-                return self._send(200, {"spec": [{"variable": v} for v in t.get("survey", [])]})
-            return self._send(200, {k: t[k] for k in ("ask_variables_on_launch", "ask_limit_on_launch", "survey_enabled")})
+                return self._send(200, {"spec": t["spec"] if t.get("spec") is not None else [{"variable": v} for v in t.get("survey", [])]})
+            out = {k: t[k] for k in ("ask_variables_on_launch", "ask_limit_on_launch", "survey_enabled")}
+            out["inventory_needed_to_start"] = bool(t.get("needs_inventory"))
+            out["credential_needed_to_start"] = bool(t.get("needs_credential"))
+            if t.get("password_credential"):                                   # 1.78.4: a credential that asks for a password at launch
+                out["passwords_needed_to_start"] = ["ssh_password"]
+                out["defaults"] = {"credentials": [{"id": 9, "name": t["password_credential"], "passwords_needed": ["ssh_password"]}]}
+            return self._send(200, out)
+        mi = re.match(r"^inventories/(\d+)/$", p)
+        if mi:                                                           # 1.78.4: one inventory (the portal reads the name of the one a Limit is checked against)
+            inv = next((i for i in STATE["inventories"] if i["id"] == int(mi.group(1)) and not i.get("unreadable")), None)
+            return self._send(200, {"id": inv["id"], "name": inv["name"]}) if inv else self._send(403, {"detail": "You do not have permission to perform this action."})
         if p == "inventories/":
             rows = [{"id": i["id"], "name": i["name"]} for i in STATE["inventories"] if i["name"] == q.get("name")]
             return self._send(200, {"count": len(rows), "results": rows})
         m = re.match(r"^inventories/(\d+)/hosts/$", p)
         if m:
             inv = next((i for i in STATE["inventories"] if i["id"] == int(m.group(1))), {"hosts": []})
-            rows = [{"name": h} for h in inv["hosts"] if h == q.get("name") or (q.get("name__icontains") and q["name__icontains"].lower() in h.lower())]
+            if q.get("name") or q.get("name__icontains"):
+                rows = [{"name": h} for h in inv["hosts"] if h == q.get("name") or (q.get("name__icontains") and q["name__icontains"].lower() in h.lower())]
+                return self._send(200, {"count": len(rows), "results": rows})
+            return self._paged_list(q, "inventories/%s/hosts/" % m.group(1), [{"id": 1000 + n, "name": h} for n, h in enumerate(sorted(inv["hosts"]))])
+        m = re.match(r"^inventories/(\d+)/groups/$", p)
+        if m:
+            inv = next((i for i in STATE["inventories"] if i["id"] == int(m.group(1))), {"groups": {}})
+            base = 2000 if inv is STATE["inventories"][0] else 2000 + int(inv.get("id", 0)) * 100               # a group id is its inventory's, so two inventories can have groups
+            rows = [{"id": base + n, "name": g} for n, g in enumerate(sorted(inv.get("groups", {})))]
+            if q.get("name"):
+                rows = [r for r in rows if r["name"] == q["name"]]
+            return self._paged_list(q, "inventories/%s/groups/" % m.group(1), rows)
+        m = re.match(r"^groups/(\d+)/all_hosts/$", p)
+        if m:
+            gid, hosts = int(m.group(1)), []
+            for k, inv in enumerate(STATE["inventories"]):
+                base = 2000 if k == 0 else 2000 + int(inv.get("id", 0)) * 100
+                names = sorted(inv.get("groups", {}))
+                if 0 <= gid - base < len(names):
+                    hosts = sorted(inv["groups"].get(names[gid - base], []))
+                    break
+            return self._paged_list(q, p, [{"name": h} for h in hosts])
+        if p == "unified_jobs/" and q.get("id__in"):                  # 1.78.0: the Jobs page's list, one call
+            rows = [view(STATE["jobs"][int(i)]) for i in q["id__in"].split(",") if i.isdigit() and int(i) in STATE["jobs"]]
             return self._send(200, {"count": len(rows), "results": rows})
         if p == "unified_jobs/":
             j = STATE["jobs"].get(int(q.get("id", "0")))
@@ -259,9 +395,28 @@ class H(BaseHTTPRequestHandler):
         if m:
             j = STATE["jobs"].get(int(m.group(1)))
             ev = events(j) if j else []
-            size = int(q.get("page_size", "25"))
-            rows = sorted(ev, key=lambda e: -e["counter"])[:size] if q.get("order_by") == "-counter" else ev[:size]
-            return self._send(200, {"count": len(ev), "results": rows})
+            if q.get("counter__gt"):
+                ev = [e for e in ev if e["counter"] > int(q["counter__gt"])]
+            if q.get("event"):
+                ev = [e for e in ev if e["event"] == q["event"]]
+            if q.get("order_by") == "-counter":
+                ev = sorted(ev, key=lambda e: -e["counter"])
+            size = min(int(q.get("page_size", "25")), PAGE_CAP)
+            page = int(q.get("page", "1"))
+            more = len(ev) > page * size
+            nxt = (BASE + p + "?" + "&".join("%s=%s" % (k, v) for k, v in dict(q, page=str(page + 1)).items())) if more else None
+            return self._send(200, {"count": len(ev), "next": nxt, "results": ev[(page - 1) * size:page * size]})
+        m = re.match(r"^jobs/(\d+)/stdout/$", p)
+        if m:
+            j = STATE["jobs"].get(int(m.group(1)))
+            text = "\n".join(e["stdout"] for e in (events(j) if j else []) if e["stdout"])
+            raw = text.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return None
         m = re.match(r"^jobs/(\d+)/job_host_summaries/$", p)
         if m:
             j = STATE["jobs"].get(int(m.group(1)))
@@ -287,9 +442,10 @@ class H(BaseHTTPRequestHandler):
                 if q.get("status") and a["status"] != q["status"]:
                     continue
                 wf = STATE["jobs"][a["workflow"]]
-                rows.append({"id": a["id"], "name": a["name"], "status": a["status"], "created": iso(a["created"]),
-                             "approval_expiration": None,
-                             "summary_fields": {"source_workflow_job": {"id": wf["id"], "name": wf["name"], "status": job_status(wf)}}})
+                sf = {"source_workflow_job": {"id": wf["id"], "name": wf["name"], "status": job_status(wf)}}
+                sf["user_capabilities"] = dict(a["caps"]) if a.get("caps") is not None else {"approve": True}      # 1.78.4: what the portal's account may do with it (AAP always says)
+                rows.append({"id": a["id"], "name": a["name"], "description": a.get("description", ""), "status": a["status"], "created": iso(a["created"]),
+                             "approval_expiration": iso(a["expires"]) if a.get("expires") else None, "summary_fields": sf})
             return self._send(200, {"count": len(rows), "results": rows})
         return self._send(404, {"detail": "Not found."})
 
@@ -322,7 +478,7 @@ class H(BaseHTTPRequestHandler):
             now = time.time()
             if m.group(1) == "job_templates":
                 jid = new_id()
-                STATE["jobs"][jid] = {"id": jid, "type": "job", "name": t["name"], "created": now, "limit": limit, "extra_vars": ev}
+                STATE["jobs"][jid] = {"id": jid, "type": "job", "name": t["name"], "created": now, "limit": limit, "extra_vars": ev, "template_id": t["id"]}
                 return self._send(201, {"job": jid, "id": jid, "ignored_fields": ignored})
             wid = new_id()
             nodes = []
@@ -376,6 +532,19 @@ def seed_reports(now=None):
         "web01.example.mil": [e("disk_full", "web01.example.mil", "/var", "/var is 96% full", "critical")]}, jid=9002)
 
 
+def seed_found():
+    """1.78.0 (FAKE_AAP_SEED_FOUND=1): templates for the portal to find - 'Quick check (found)' (labelled, a survey with a number and a
+    password, a Limit), one the account may run without the label, and one with a survey type the portal does not handle."""
+    spec = [{"variable": "rounds", "question_name": "Rounds", "type": "integer", "required": True, "min": 1, "max": 5, "default": 2},
+            {"variable": "secret", "question_name": "Secret", "type": "password", "required": True, "max": 40},
+            {"variable": "portal_requested_by", "question_name": "Started by", "type": "text", "required": False}]
+    add_template("job_templates", "Quick check (found)", ["portal", "portal-area:Health"], spec, limit=True, description="A quick check, found in AAP.")
+    add_template("job_templates", "Run but not labelled", ["other"])
+    add_template("job_templates", "Odd survey (found)", ["portal"], [{"variable": "f", "type": "file"}])
+
+
+if os.environ.get("FAKE_AAP_SEED_FOUND") == "1":
+    seed_found()
 if os.environ.get("FAKE_AAP_SEED_REPORTS") == "1":
     seed_reports()
 

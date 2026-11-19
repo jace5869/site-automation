@@ -21,6 +21,7 @@ An action (roles/site_portal_stack/files/actions.yml, or the setting portal_acti
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import json
 import re
 import unicodedata
 
@@ -32,8 +33,12 @@ TEXT_MAX = 4000                    # a text var's max when it names none
 TEXT_CEILING = 20000               # no text var may allow more (the request's size limit holds the rest)
 HOST_MAX = 255
 RESERVED = ("portal_requested_by",)
+LIMIT_VAR = "portal_limit"           # 1.78.0: a discovered template's Limit (1-5 hosts): sent as the launch's limit, never as an extra var
+LIMIT_MAX = 50                                  # a hosts variable with no max of its own (the portal sets it from portal_action_max_hosts / portal_limit_max)
+SURVEY_TYPES = ("text", "textarea", "integer", "float", "multiplechoice", "multiselect", "password")
+HIDDEN = "(hidden)"                  # what the log and the job page keep of a password
 SUMMARY_MAX, AREA_MAX = 160, 40
-ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes", "summary", "area")
+ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes", "summary", "area", "multi_host")
 MODES = ("dry_run", "live", "off")
 KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 BUTTON_MAX = 40
@@ -41,6 +46,15 @@ VAR_KEYS = ("kind", "values", "max", "pattern", "label", "required", "default")
 PATTERN_MAX = 300                  # a text var's pattern: this many characters at most
 # what a host name may hold: letters, digits, . - _ (an inventory name); nothing a limit pattern reads as more
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+# names Ansible reads as more than one host: a pattern, or an implicit group (a host of this name would put "all" in a Limit)
+RESERVED_HOSTS = ("all", "ungrouped")
+
+
+def host_usable(name):
+    """A host name that may go into a Limit as it is: plain characters (no pattern: * ? [ ] , : ! & ~ or a space), and not the name of an
+    implicit group - 'all', 'ungrouped' (any case)."""
+    n = str(name or "")
+    return bool(HOST_RE.fullmatch(n)) and n.lower() not in RESERVED_HOSTS
 
 
 def templating(value):
@@ -156,6 +170,15 @@ def check_actions(actions):
         approval = a.get("approval", False)
         if not isinstance(approval, bool):
             problems.append("%s: approval must be true or false" % where)
+        # 1.78.2: multi_host: true - ONE job for a group or several hosts (the Limit and the limit_from variable carry them, comma separated). Only for an
+        # action whose playbook takes such a list (its portal_request_spec says kind: hosts); never one that needs a value of one host
+        multi = a.get("multi_host", False)
+        if not isinstance(multi, bool):
+            problems.append("%s: multi_host must be true or false" % where)
+            multi = False
+        if multi and (not limit_from or any(v in vs for v in ("finding_id", "report_job"))):
+            problems.append("%s: multi_host needs limit_from and no finding_id or report_job (a finding is one job for one host)" % where)
+            multi = False
         who = a.get("who")
         if who in (None, ""):
             who = None
@@ -204,7 +227,7 @@ def check_actions(actions):
         out[name] = {"name": name, "title": title, "description": _text(a.get("description")).strip(), "summary": summary, "area": area,
                      "kinds": kinds, "button": button, "when": when, "fixes": fixes,
                      "aap": {"type": aap.get("type"), "name": _text(aap.get("name")).strip()}, "vars": clean_vars,
-                     "limit_from": limit_from or "", "approval": approval is True, "who": who}
+                     "limit_from": limit_from or "", "approval": approval is True, "who": who, "multi_host": multi is True}
     return out, problems
 
 
@@ -224,17 +247,56 @@ def value_problem(var, value):
     if k == "text":
         if len(value) > var["max"]:
             return "is longer than %d characters" % var["max"]
+        if len(value) < var.get("min", 0):
+            return "is shorter than %d characters" % var["min"]
         if var.get("pattern") is not None and not var["pattern"].fullmatch(value):
             return "is not in the expected form"
         return ""
     if k == "inventory_host":
-        return "" if HOST_RE.match(value) else "is not a host name (letters, digits, dots, - and _)"
+        return "" if host_usable(value) else "is not a host name (letters, digits, dots, - and _; not all or ungrouped)"
+    if k == "password":                 # 1.78.0: never echoed - the message names no part of the value
+        if len(value) > var["max"]:
+            return "is longer than %d characters" % var["max"]
+        if len(value) < var.get("min", 0):
+            return "is shorter than %d characters" % var["min"]
+        return ""
     return "has an unknown kind"
 
 
-def check_values(action, sent, host_known=None):
+def _number(var, value):
+    """An integer or float answer -> (the number or None, why not). bool, nan, inf and 1e999 are refused - a field error, never an exception."""
+    if isinstance(value, bool):
+        return None, "must be a number"
+    why = "must be a whole number" if var["kind"] == "integer" else "must be a number"
+    try:
+        if var["kind"] == "integer":
+            if isinstance(value, int):
+                n = value
+            elif isinstance(value, float):
+                if value != value or value in (float("inf"), float("-inf")) or value != int(value):
+                    return None, why
+                n = int(value)
+            elif isinstance(value, str) and re.match(r"^[+-]?[0-9]{1,30}\Z", value.strip()):
+                n = int(value.strip())
+            else:
+                return None, why
+        else:
+            n = float(value)
+            if n != n or n in (float("inf"), float("-inf")):
+                return None, why
+    except (TypeError, ValueError, OverflowError):
+        return None, why
+    if var.get("min") is not None and n < var["min"]:
+        return None, "must be at least %s" % var["min"]
+    if var.get("max") is not None and n > var["max"]:
+        return None, "must be at most %s" % var["max"]
+    return n, ""
+
+
+def check_values(action, sent, host_known=None, expand=None):
     """The values a person sent for an action -> (values to send to AAP, problems {var or '': why}).
-    sent: {var: value}. host_known(name) -> True / False / None (None = AAP could not be asked: refused, said)."""
+    sent: {var: value}. host_known(name) -> True / False / None (None = AAP could not be asked: refused, said).
+    expand(items) -> (the hosts they stand for, '' or why not): 1.78.0, for a var of kind hosts - names of hosts or groups of the portal's inventory."""
     problems, out = {}, {}
     if not isinstance(sent, dict):
         return {}, {"": "the values must be a mapping of var names to values"}
@@ -243,6 +305,9 @@ def check_values(action, sent, host_known=None):
         problems[""] = "not a var of this action: %s" % ", ".join(str(x)[:64] for x in unknown[:10])
     for vn, var in action["vars"].items():
         v = sent.get(vn)
+        if v == "" and var.get("empty_ok"):             # 1.78.0: an optional survey text, cleared on purpose
+            out[vn] = ""
+            continue
         if v is None or v == "":
             if var.get("default") is not None:
                 v = var["default"]
@@ -251,6 +316,66 @@ def check_values(action, sent, host_known=None):
                 continue
             else:
                 continue
+        kind = var["kind"]
+        if kind in ("integer", "float"):                # 1.78.0: a survey's numbers: sent as numbers
+            n, why = _number(var, v)
+            if why:
+                problems[vn] = why
+            else:
+                out[vn] = n
+            continue
+        if kind == "multichoice":                       # a survey's multiselect: a list of the listed choices
+            if isinstance(v, str):
+                v = [x for x in v.split("\n") if x]
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                problems[vn] = "must be a list of choices"
+            elif not v and var["required"]:
+                problems[vn] = "is required"
+            else:
+                bad = [x for x in v if x not in var["values"]]
+                if bad:
+                    problems[vn] = "has a choice that is not offered"
+                elif any(templating(x) for x in v):
+                    problems[vn] = "holds braces that start a template"
+                else:
+                    out[vn] = [x for x in var["values"] if x in v]
+            continue
+        if kind == "hosts":                             # 1.78.0: hosts and groups of the inventory (a Limit, or a finding's hosts) - never unchecked
+            raw = v if isinstance(v, list) else re.split(r"[,\s]+", v) if isinstance(v, str) else None
+            if raw is None or not all(isinstance(x, str) for x in raw):
+                problems[vn] = "must be host names"
+                continue
+            items = list(dict.fromkeys(x.strip() for x in raw if x.strip()))
+            cap = int(var.get("max") or LIMIT_MAX)
+            bad = next((value_problem({"kind": "inventory_host"}, h) for h in items if value_problem({"kind": "inventory_host"}, h)), "")
+            if not items:
+                problems[vn] = "is required"
+            elif bad:
+                problems[vn] = bad
+            elif expand is None and host_known is None:
+                problems[vn] = "cannot be checked: portal_inventory is not set, and the portal never starts a job on a host it cannot check"
+            else:
+                if expand is not None:
+                    hosts, why = expand(items)
+                else:                                   # only the hosts can be asked (no groups)
+                    hosts, why = list(items), ""
+                    for h in items:
+                        known = host_known(h)
+                        if known is None:
+                            why = "could not be looked up in AAP's inventory just now - try again"
+                            break
+                        if not known:
+                            why = "has a host that is not in the portal's inventory"
+                            break
+                if why:
+                    problems[vn] = why
+                elif not hosts:
+                    problems[vn] = "stands for no host: the groups are empty"
+                elif len(hosts) > cap:
+                    problems[vn] = "takes %d hosts at most (that is %d, groups counted by their hosts)" % (cap, len(hosts))
+                else:
+                    out[vn] = items
+            continue
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             v = _text(v)
         why = value_problem(var, v)
@@ -288,10 +413,13 @@ def site_portal_actions_check(actions):
     return {"actions": a, "problems": p}
 
 
-def site_portal_actions_merge(base, extra=None, off=None):
+def site_portal_actions_merge(base, extra=None, off=None, names=None):
     """1.75.3, for the deploy and the setup job: the built-in actions (or portal_actions) without the names in `off` (portal_actions_off),
     with `extra` (portal_actions_extra) added -> {'actions': the merged mapping (the file's order, then the extras'), 'problems': [...]}.
     Every problem is said with the setting's name: an extra with a built-in name, an off name that is no action, a mapping that is not one.
+    1.78.1: `names` (portal_aap_names) {action: "AAP name"} or {action: {type, name}} points a built-in action at the site's own template or
+    workflow: the type stays the action's unless given. An action that is not one, a name that is not text, a type that is not job or
+    workflow, and two actions that would run the same template (one of them pointed there) are problems, said with the setting's name.
     The merged actions are checked with check_actions (the same rules) by the caller."""
     problems = []
     base = dict(base) if isinstance(base, dict) else {}
@@ -316,7 +444,53 @@ def site_portal_actions_merge(base, extra=None, off=None):
     for k, v in extra.items():
         if k not in merged:
             merged[k] = v
+    problems += _point_actions(merged, names, set(extra))
     return {"actions": merged, "problems": problems}
+
+
+def _point_actions(merged, names, extras):
+    """portal_aap_names applied to the merged actions (in place) -> [problems]."""
+    names = names if names not in (None, "") else {}
+    if not isinstance(names, dict):
+        return ["portal_aap_names must be a mapping of action name -> the name of your template or workflow in AAP (or {type: job|workflow, name: ...})"]
+    problems, pointed = [], {}
+    for action, want in names.items():
+        if action not in merged:
+            problems.append("portal_aap_names: %r is not one of the actions (they are: %s)" % (action, ", ".join(sorted(merged)) or "none"))
+            continue
+        if action in extras:
+            problems.append("portal_aap_names: %r is an action of your own (portal_actions_extra): name its template there" % action)
+            continue
+        typ, name = None, want
+        if isinstance(want, dict):
+            if set(want) - {"type", "name"}:
+                problems.append("portal_aap_names: %r takes type and name only" % action)
+                continue
+            typ, name = want.get("type"), want.get("name")
+        if not isinstance(name, str) or not name.strip():
+            problems.append("portal_aap_names: %r needs the name of a template or workflow in AAP (text)" % action)
+            continue
+        if typ is not None and typ not in ("job", "workflow"):
+            problems.append("portal_aap_names: %r type must be job or workflow, not %r" % (action, typ))
+            continue
+        a = dict(merged[action])
+        a["aap"] = dict(a.get("aap") or {}, name=name.strip(), **({"type": typ} if typ else {}))
+        if a.get("approval") and a["aap"].get("type") != "workflow":
+            problems.append("portal_aap_names: %r needs an approval, and only a workflow has an approval step: point it at a workflow of yours (a job template "
+                            "would start with no approval while the card says there is one)" % action)
+            continue
+        merged[action] = a
+        pointed[action] = (a["aap"].get("type"), a["aap"]["name"])
+    if pointed:
+        by = {}
+        for k, a in merged.items():
+            t = (a.get("aap") or {}) if isinstance(a, dict) else {}
+            by.setdefault((t.get("type"), t.get("name")), []).append(k)
+        for key, users in sorted(by.items(), key=lambda x: str(x[0])):
+            if len(users) > 1 and any(u in pointed for u in users):
+                problems.append("portal_aap_names: %s would all run the %s %r: point each action at a template of its own" % (
+                    " and ".join(sorted(users)), "workflow" if key[0] == "workflow" else "job template", key[1]))
+    return problems
 
 
 def site_portal_spec_merge(spec, templates_extra=None, workflows_extra=None):
@@ -348,7 +522,276 @@ def site_portal_spec_merge(spec, templates_extra=None, workflows_extra=None):
     return {"spec": spec, "problems": problems}
 
 
+def _choices(q):
+    c = q.get("choices")
+    if isinstance(c, str):
+        c = c.split("\n")
+    return [str(x) for x in c if str(x) != ""] if isinstance(c, list) else []
+
+
+def _num(x):
+    """A survey's min or max (a number, or text of one) -> int or float, or None (none given, or not finite). Whole numbers stay exact."""
+    if isinstance(x, bool) or x in (None, ""):
+        return None
+    if isinstance(x, int):
+        return x
+    if isinstance(x, str) and re.match(r"^[+-]?[0-9]{1,30}\Z", x.strip()):
+        return int(x.strip())
+    try:
+        n = float(x)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if n != n or n in (float("inf"), float("-inf")):
+        return None
+    return int(n) if n == int(n) else n
+
+
+def takes_name(q):
+    """Whether a survey question can take a person's certificate name (200 characters at most): text or textarea, a maximum of 200 or more, no minimum over 1."""
+    mx, mn = _num(q.get("max")), _num(q.get("min"))
+    return q.get("type") in ("text", "textarea") and (mx is None or mx >= 200 or q.get("max") in (None, "")) and (mn is None or mn <= 1)
+
+
+def survey_vars(spec):
+    """1.78.0: an AAP survey's spec ({name, description, spec: [questions]}) -> (vars, skipped). vars: the portal's own var rules (the
+    same as an actions.yml var, plus the kinds integer, float, multichoice and password), in the survey's order; skipped: [(variable
+    or question, why)] - a template with any skipped question is not shown (a form with a hole in it would start something the
+    person did not mean), the deploy's check says why."""
+    out, skipped, seen = {}, [], set()
+    qs = (spec or {}).get("spec") if isinstance(spec, dict) else None
+    for q in qs or []:
+        if not isinstance(q, dict):
+            continue
+        name = _text(q.get("variable")).strip()
+        label = _text(q.get("question_name")).strip() or name
+        typ = _text(q.get("type")).strip()
+        if not VAR_RE.match(name):
+            skipped.append((name[:40] or label[:40], "the variable name is not letters, digits and _"))
+            continue
+        if name in RESERVED or name == LIMIT_VAR or name in seen:
+            skipped.append((name, "the variable name %s is taken by the portal" % name if name in RESERVED or name == LIMIT_VAR else "asked twice"))
+            continue
+        if typ not in SURVEY_TYPES:
+            skipped.append((name, "survey type %s is not handled" % (typ[:30] or "(none)")))
+            continue
+        seen.add(name)
+        v = {"label": label[:120], "required": bool(q.get("required")), "default": None, "help": _text(q.get("question_description")).strip()[:200]}
+        dflt = q.get("default")
+        mn, mx = _num(q.get("min")), _num(q.get("max"))
+        if typ in ("text", "textarea", "password"):
+            v.update(kind="password" if typ == "password" else "text", max=1024 if mx is None else max(0, int(mx)),      # 1024 only when AAP gives no maximum
+                     min=int(mn) if mn is not None and mn > 0 else 0, multiline=typ == "textarea")
+            v["max"] = min(v["max"], TEXT_CEILING)
+            v["empty_ok"] = typ != "password" and not v["required"] and v["min"] == 0          # a cleared optional field is an answer: "" (not the default)
+            if typ != "password" and dflt not in (None, ""):
+                v["default"] = _text(dflt)
+            if typ == "password" and dflt not in (None, ""):          # AAP keeps a saved secret: left blank, the question is not sent and AAP uses it
+                v["required"] = False
+        elif typ in ("integer", "float"):
+            v.update(kind=typ, min=mn, max=mx)
+            if dflt not in (None, ""):
+                n, why = _number(v, dflt)
+                v["default"] = n if not why else None
+        else:
+            ch = _choices(q)
+            if not ch:
+                skipped.append((name, "no choices"))
+                seen.discard(name)
+                continue
+            v.update(kind="choice" if typ == "multiplechoice" else "multichoice", values=ch)
+            if typ == "multiplechoice" and _text(dflt) in ch:
+                v["default"] = _text(dflt)
+            elif typ == "multiselect":
+                d = [x for x in (dflt if isinstance(dflt, list) else _text(dflt).split("\n")) if x in ch]
+                v["default"] = d or None
+        out[name] = v
+    return out, skipped
+
+
+EXEC_FIELDS = ("playbook", "project", "scm_branch", "job_type", "extra_vars", "limit", "job_tags", "skip_tags", "forks", "verbosity", "timeout", "become_enabled",
+               "execution_environment", "organization", "ask_variables_on_launch", "ask_credential_on_launch", "ask_scm_branch_on_launch", "ask_job_type_on_launch",
+               "ask_tags_on_launch", "ask_skip_tags_on_launch", "ask_verbosity_on_launch", "ask_diff_mode_on_launch", "ask_execution_environment_on_launch",
+               "ask_forks_on_launch", "ask_timeout_on_launch", "ask_labels_on_launch", "ask_instance_groups_on_launch", "ask_job_slice_count_on_launch", "diff_mode", "job_slice_count")
+
+
+def exec_fields(row):
+    """What decides what a template runs (its playbook, project, stored variables, prompts ...) -> {field: value}, for the form's signature."""
+    return dict((k, row[k]) for k in EXEC_FIELDS if isinstance(row, dict) and k in row)
+
+
+def template_sig(name, limit, spec, inventory=None, ask_inventory=False, fields=None):
+    """1.78.0: a short fingerprint of what a form was built from - the template's name, whether it prompts for a Limit and its survey's
+    questions. The portal checks it again at launch: a template changed since the form was drawn is not started."""
+    import hashlib
+    import json
+    doc = {"name": name, "limit": bool(limit), "inventory": inventory, "ask_inventory": bool(ask_inventory), "fields": fields or {}, "spec": (spec or {}).get("spec") if isinstance(spec, dict) else None}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24]
+
+
+def slug(text, taken=()):
+    """A template's name as an action name (lower case letters, digits and _; 64 at most; one that is taken gets _2, _3 ...)."""
+    base = re.sub(r"[^a-z0-9]+", "_", unicodedata.normalize("NFKD", _text(text)).encode("ascii", "ignore").decode().lower()).strip("_")
+    base = ("t_" + base if not base or not base[0].isalpha() else base)[:60] or "t"
+    name, n = base, 2
+    while name in taken:
+        name = "%s_%d" % (base, n)
+        n += 1
+    return name
+
+
+_REASONS = {400: "AAP did not accept the answers", 401: "the portal's AAP account was refused", 403: "the portal's AAP account may not start it",
+            404: "AAP does not have it any more", 405: "AAP would not take it", 409: "AAP is busy with it or it is not ready to start",
+            429: "AAP has too many calls just now"}
+
+
+def launch_failure_reason(code):
+    """What a person is told when AAP did not start a job: the status, and a short reason of the portal's own words. Never AAP's text (it can
+    repeat what was submitted, a password too)."""
+    try:
+        c = int(code)
+    except (TypeError, ValueError):
+        c = 0
+    return _REASONS.get(c) or ("AAP had a problem on its side" if c >= 500 else "AAP did not start it")
+
+
+def launch_failure_log(action, values, data, limit=300):
+    """What the log keeps of AAP's answer to a refused launch: nothing when the survey asked for a password (the answer can repeat it);
+    otherwise the text with every submitted answer replaced, whole, by (answer)."""
+    vars_ = (action or {}).get("vars") or {}
+    if any(v.get("kind") == "password" for v in vars_.values()):
+        return "(not kept: the form has a password)"
+    text = data if isinstance(data, str) else json.dumps(data, sort_keys=True, default=str)
+    answers = []
+    for v in (values or {}).values():
+        answers += [str(x) for x in (v if isinstance(v, list) else [v])]
+    for a in sorted(set(x for x in answers if x.strip()), key=len, reverse=True):          # the longest first, so a part is not left of a whole
+        for form in (a, json.dumps(a)[1:-1]):                                               # as typed, and as JSON writes it
+            text = text.replace(form, "(answer)")
+    return text[:limit]
+
+
+def mask(action, values):
+    """The values a log or a page may keep: a password var's answer is never kept (HIDDEN), a hosts var's list is joined."""
+    out = {}
+    for k, v in (values or {}).items():
+        kind = ((action or {}).get("vars") or {}).get(k, {}).get("kind")
+        out[k] = HIDDEN if kind == "password" else (", ".join(v) if isinstance(v, list) else v)
+    return out
+
+
+TITLE_MAX = 80
+# 1.78.4: a found template's area, in this order: its portal-area: label; the area its playbook has in the job-template catalog (aap/job_templates.yml); the site's own rules
+# (portal_area_rules: {match, area}, * and ? only, any case, the first that matches); these prefixes of the name; Other.
+BUILTIN_AREA_RULES = (("Linux - *", "Linux"), ("Windows - *", "Windows"), ("VMware - *", "VMware"), ("VM - *", "VMware"), ("ACT - *", "ACT"), ("STIG*", "STIG"),
+                      ("AAP - *", "Admin"), ("fapolicyd*", "fapolicyd"), ("* certificate*", "Certificates"))
+
+
+def _glob(pat, name):
+    rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in str(pat))
+    return re.fullmatch(rx, str(name or ""), re.S | re.I) is not None
+
+
+def site_portal_area_rules(rules):
+    """portal_area_rules [{match: "Linux - *", area: Linux}, ...] -> {'rules': [(match, area)], 'problems': [...]}; a problem names the setting."""
+    problems, out = [], []
+    if rules in (None, ""):
+        return {"rules": [], "problems": []}
+    if not isinstance(rules, list):
+        return {"rules": [], "problems": ["portal_area_rules must be a list of {match: <name pattern>, area: <area>}"]}
+    for i, r in enumerate(rules):
+        m = r.get("match") if isinstance(r, dict) else None
+        a = r.get("area") if isinstance(r, dict) else None
+        if not isinstance(m, str) or not m.strip() or not isinstance(a, str) or not a.strip():
+            problems.append("portal_area_rules[%d] needs a match (a name pattern, * and ? only) and an area (text)" % i)
+        elif len(a.strip()) > AREA_MAX or templating(a):
+            problems.append("portal_area_rules[%d]: the area must be a short name (%d characters at most)" % (i, AREA_MAX))
+        else:
+            out.append((m.strip(), " ".join(a.split())))
+    return {"rules": out, "problems": problems}
+
+
+def area_for(name, playbook="", label_area="", playbook_areas=None, rules=None):
+    """-> (area, where it came from): 'label', 'playbook', 'your rule' or 'name'; ('', '') when none says. label_area: the text of a portal-area: label."""
+    label_area = " ".join(str(label_area or "").split())[:AREA_MAX]
+    if label_area:
+        return label_area, "label"
+    pb = str(playbook or "")
+    pa = playbook_areas or {}
+    hit = pa.get(pb) or pa.get(pb.rsplit("/", 1)[-1] if pb else "") or (pa.get("playbooks/" + pb) if pb and "/" not in pb else "")
+    if hit:
+        return str(hit)[:AREA_MAX], "playbook"
+    for m, a in rules or []:
+        if _glob(m, name):
+            return a[:AREA_MAX], "your rule"
+    for m, a in BUILTIN_AREA_RULES:
+        if _glob(m, name):
+            return a, "name"
+    return "", ""
+LOGO_MAX = 1024 * 1024
+_LOGO_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
+
+
+def site_portal_logo_check(path):
+    """1.78.3, for the deploy: the logo file on the controller (portal_logo_src) -> '' when the portal will show it, else why not, in the words of the setting:
+    its size (1 MB at most) and its first bytes (PNG, JPEG, GIF or WebP; never SVG) - the same two checks the service makes, said before anything is copied."""
+    import os
+    import stat as _stat
+    name = os.path.basename(str(path or ""))
+    try:
+        st = os.stat(path)
+        if not _stat.S_ISREG(st.st_mode):                  # a folder, a pipe: never opened
+            return "portal_logo_src %s is not a file" % name
+        size = st.st_size
+        if size > LOGO_MAX:
+            return "portal_logo_src %s: %.1f MB, over 1 MB - save a smaller copy (about 200 px wide)" % (name, size / 1048576.0)
+        if size < 16:
+            return "portal_logo_src %s: too small to be an image (%d bytes)" % (name, size)
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except (OSError, TypeError, ValueError) as e:
+        return "portal_logo_src %s could not be read: %s" % (name or path, getattr(e, "strerror", None) or e)
+    if not (any(head.startswith(m) for m in _LOGO_MAGIC) or (head[:4] == b"RIFF" and head[8:12] == b"WEBP")):
+        return "portal_logo_src %s: not a PNG, JPEG, GIF or WebP image (an SVG is not accepted)" % name
+    return ""
+
+
+def site_portal_titles(titles):
+    """1.78.1c, for the deploy and the service: portal_titles {"AAP template name": "Portal card title"} -> {'titles': {casefolded AAP name: title},
+    'problems': [...]}. A name or title that is not text, an empty one, or a title over 80 characters is a problem, said with the setting's name;
+    two names that differ only in case are one name (a problem when their titles differ)."""
+    problems, out = [], {}
+    if titles in (None, ""):
+        return {"titles": {}, "problems": []}
+    if not isinstance(titles, dict):
+        return {"titles": {}, "problems": ["portal_titles must be a mapping of AAP template names to card titles"]}
+    for k, v in titles.items():
+        if not isinstance(k, str) or not k.strip():
+            problems.append("portal_titles: the AAP template name %r must be text" % (k,))
+            continue
+        if not isinstance(v, str) or not " ".join(v.split()):
+            problems.append("portal_titles: the title of %r is empty (or not text)" % k)
+            continue
+        t = " ".join(v.split())
+        if len(t) > TITLE_MAX:
+            problems.append("portal_titles: the title of %r is %d characters; %d at most" % (k, len(t), TITLE_MAX))
+            continue
+        key = k.casefold()                          # the exact name: two names that differ in spacing are two templates
+        if key in out and out[key] != t:
+            problems.append("portal_titles: %r is given two different titles (names are matched without regard to case)" % k)
+            continue
+        out[key] = t
+    return {"titles": out, "problems": problems}
+
+
+def site_portal_title_label(label, prefix):
+    """The card title a label gives ('portal-title:<text>') -> the text, or '' (no such label, empty, or over 80 characters)."""
+    if not prefix or not str(label).startswith(prefix):
+        return ""
+    t = " ".join(str(label)[len(prefix):].split())
+    return t if 0 < len(t) <= TITLE_MAX else ""
+
+
 class FilterModule(object):
     def filters(self):
-        return {"site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
+        return {"site_portal_area_rules": site_portal_area_rules, "site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
                 "site_portal_spec_merge": site_portal_spec_merge}

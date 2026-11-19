@@ -18,6 +18,10 @@ Network={{ 'site-portal.network' if portal_own_nginx | bool else portal_network 
 Volume={{ portal_config_dir }}/app:/app:ro,Z
 Volume={{ portal_config_dir }}/settings.json:/etc/site-portal/settings.json:ro,Z
 Volume={{ portal_config_dir }}/actions.json:/etc/site-portal/actions.json:ro,Z
+{% if _portal_logo_on | default(false) | bool %}
+# the site's logo (portal_logo): one image file, read-only
+Volume={{ _portal_logo_dest }}:/etc/site-portal/logo:ro,Z
+{% endif %}
 Volume=site-portal-data.volume:/data:U,Z
 # the report website, read-only
 Volume={{ portal_reports_dir }}:/reports:{{ portal_reports_mount }}

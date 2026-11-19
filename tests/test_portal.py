@@ -159,7 +159,10 @@ class Contract(unittest.TestCase):
                 self.assertEqual(limit_from or "", a.get("limit_from", ""), path)
                 for var, rule in a["vars"].items():
                     for key in ("kind", "values", "max", "pattern"):
-                        self.assertEqual(spec[var].get(key), rule.get(key), "%s: %s %s" % (path, var, key))
+                        want = rule.get(key)
+                        if key == "kind" and a.get("multi_host") and var == a.get("limit_from"):
+                            want = "hosts"                                 # 1.78.2: one job for a group - the playbook checks a comma separated list of hosts
+                        self.assertEqual(spec[var].get(key), want, "%s: %s %s" % (path, var, key))
         self.assertEqual(len(self.specs["stig_recheck"]), 2)                  # the Linux and the Windows recheck (workflow 45)
 
     def test_no_template_and_no_portal_requested_by_in_the_file(self):

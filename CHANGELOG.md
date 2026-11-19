@@ -1,5 +1,183 @@
 # Changelog
 
+## 1.78.4 — 2026-11-19
+
+**To set up:** run **Site portal - deploy** again. Nothing is required; `portal_inventories_max` (10) is new.
+
+**What is on and what is off.** In every look, an available card has a solid accent border and top bar and a filled **Run**; a card that is off has a grey surface, a dashed border, muted text, a lock chip, its reason on
+one line and no Run, and never the accent colour. (In the ops look the Off cards looked like the others: nothing styled them, and Run was a pale blue.) A locked approval row is grey the same way.
+
+**What the Why panel's skipped list showed**
+
+- **A template's own inventory.** A found template's Limit is checked against *that* template's inventory (the account must be able to read it; the picker lists that inventory's hosts and groups), not only `portal_inventory`.
+  Listing, keep and back-off rules are kept for each inventory; at most `portal_inventories_max` (10, 1 to 50) distinct inventories, the rest skipped with a reason.
+- **A workflow's Limit.** Allowed when every job template step takes a Limit at launch, has no Limit or slicing of its own, and resolves to ONE inventory (the workflow's, or one the steps share); approval steps are fine.
+  A nested workflow, a project or inventory sync, a sliced job, a step with its own different inventory stays skipped, and the reason names the step. The inventory is read again at launch.
+- **The exact reason for what a template asks at launch:** *an inventory (... ask_inventory_on_launch ...)*, *a credential (... ask_credential_on_launch ...)* or *a password for credential "<name>"*, so you know what to untick.
+
+**Areas for found templates.** Almost every found template landed in *Other*. Each now gets an area: its `portal-area:` label, else its playbook's `area` in the job catalog (`aap/job_templates.yml`, read when the file is there),
+else your `portal_area_rules` (`[{match: "Linux - *", area: Linux}]`, `*` and `?` only, any case, first match wins), else its name's start (*Linux - *, Windows - *, VMware - *, VM - *, ACT - *, STIG*, AAP - * as Admin, fapolicyd*, *\* certificate\**), else *Other*.
+Details says where it came from. Groups: the built-in areas, then the rest A to Z, then Other.
+
+**Approvals.** The page lists EVERY pending workflow approval in AAP the account can see (not only runs started in the portal): the workflow, what started it (a schedule, a person in AAP), the approval's name and description, the time left,
+the report the steps before it left; one that timed out is hidden. Approve and Deny only for `portal_approvers` and only where the account has Approve (they ask once more, in place); other rows are grey with the reason.
+
+**Toasts, badges, run again, pins, folding, keyboard** (docs/SITE_PORTAL.md, "Quick ways around"): the header counts on Jobs and Approvals (every 10 s while a page is in view, one cached read for each person), a toast when a job you started ends,
+*Run again with the same answers* on a finished job, a star to pin an action on top, groups that fold and remember it, and `g a` / `g j` / `g p` / `?`. All in `portal.js`, kept in the browser, nothing without scripts.
+
+- Tests: `tests/test_site_portal.py` (the inventories, the workflows, the launch reasons, the approvals, the summary, run again), `tests/test_portal_interactive.py` (a real browser on the demo), the fit test, the portal e2e.
+
+## 1.78.3 — 2026-11-19
+
+**To set up:** nothing. Run **Site portal - deploy** again to get the new lines.
+
+- **The logo needs one line.** `portal_logo_src` alone is enough: `portal_logo` defaults to `portal_config_dir/logo` plus the source's extension (the assert that asked for both is gone).
+- **Publish says what to do.**
+  - The stop for a pattern that matches too much names the fix: *set portal_publish_max: N (up to 500) and run again*, or narrow the pattern.
+  - **Site portal - deploy** prints one line when a `portal_publish_*` setting is set: it is applied by the job **AAP - set up portal actions** (Check first, then Run), not by the deploy.
+  - *Why isn't my template here?* adds *Nothing labelled yet: run AAP - set up portal actions* when the portal sees no labelled template and `portal_publish_organization` is set.
+- **`portal_motion`:** `auto` (the default: the running icons and the stripe honour the system's reduced-motion request, as before), `always` (animate even when the system asks for less; use only if the site agrees) or `off`.
+  The deploy puts it on `<html>` as a class (`motion-always`, `motion-off`); no inline style, and print stays still in every mode.
+- **`portal_logo_src` is found as `report_logo_file` is:** a full path as it is, else under the playbooks folder (`files/crest.png` is `playbooks/files/crest.png`); the check and the copy read the same file.
+- **A logo that will not show says so.** Before anything is copied, the deploy checks `portal_logo_src` itself (its size, 1 MB at most, and its first bytes: PNG, JPEG, GIF or WebP) and stops with
+  *portal_logo_src crest.png: 2.4 MB, over 1 MB - save a smaller copy (about 200 px wide)* or *not a PNG, JPEG, GIF or WebP image*. The deploy's summary ends with *The logo: on (<path>)* or
+  the service's own reason, and the Actions page's *Why isn't my template here?* panel has one muted line (*The logo is not shown: ...*) when the service refused it.
+- Tests: `Follow1783`, `Logo1783` and the logo and stop tests (`tests/test_site_portal.py`, `tests/test_portal_publish.py`), the portal e2e (the source alone, the deploy's line).
+
+## 1.78.2 — 2026-11-19
+
+**To set up:** run **Site portal - deploy** again. To use the options: `portal_logo` and `portal_logo_src` (your logo), `portal_pick_max_hosts` and
+`portal_action_max_hosts` (the host caps, 50 each). Nothing else is needed; the new page layout and the help panel appear after the deploy.
+
+**The Actions page by area, with help** (docs/SITE_PORTAL.md, "The Actions page, Run and Details").
+
+- The cards are grouped by area under the tiles and the search, a heading and a count for each: *STIG*, *Disk & services*, *fapolicyd*, *Tickets*, *ACT*, your
+  templates' `portal-area:X` areas, then *Other*. The tiles and the search filter inside the groups; a group with nothing to show hides.
+- **Why isn't my template here?** A closed panel under the strip: *N templates the account may run; M with the label portal; skipped: <template> - <why>;
+  K labelled templates the account may NOT run - give <account> Execute on them*. The last part lists the templates that carry the label (the account's
+  Auditor role lets it see them) against the Execute list. Names and reasons only.
+- **The site's logo.** `portal_logo` (a PNG, JPEG, GIF or WebP file on the portal server, 1 MB at most, checked by its first bytes) replaces the letter badge, 40 px tall at most,
+  the site title as its alt text, served from the portal's own `static/logo`. `portal_logo_src` (a file on the controller, in your own area, never in the repository)
+  is copied there by the deploy, and only when it is set. No logo: the badge as before.
+
+**The Jobs page.**
+
+- **Results are buttons.** A known artifact key shows as a button in the portal's look: `site_report_url` (and the other report page keys) *Open the report →*,
+  a ticket key *Open ticket INC… →*, and a short allow-list. Other keys are not shown; only http and https addresses with a host and no user are linked; no known result, no *Results* heading.
+- The line *Technical output: available after the next update.* is gone (it read like an error) until 1.77.0 gives it a source.
+- **What is running turns.** The running icon (the status chip, the host chips, the *Now* line) and the ring in the jobs list rotate, and the bar has a moving stripe. All of it is off under
+  *reduce motion* and in print.
+
+**The host caps are settings, and one job for a group.**
+
+- `portal_pick_max_hosts` (the findings step, was 5; now 50, 1 to 500), `portal_action_max_hosts` (a built-in action's host field, was 5; now 50, 1 to 500), `portal_pick_max_launches` (now 1 to 200).
+  A value outside its range stops the deploy and names the setting; `portal_limit_max` is checked the same way (1 to 500).
+- An action marked `multi_host: true` (the built-in *STIG recheck*; an action of your own whose playbook takes a comma separated host list) starts **one** job for a picked group or several hosts, with the Limit and
+  `target` = the hosts they stand for. It is no longer one job for each host. `playbooks/stig_recheck.yml` and `win_stig_recheck.yml` check the list (`portal_check` has a `hosts` kind). The finding
+  actions stay one job for each finding, and an action without the mark is unchanged. This needs `portal_inventory`, as the host picker does.
+- The picker says *group · 120 hosts · fits* or *too big: at most N (portal_action_max_hosts)* before you submit; the portal checks again when it starts the job.
+- Tests: `tests/test_site_portal.py` (`Home1782`, `Caps1782`, `Results1782`, `Motion1782`; the `hosts` check of `portal_check`), the portal e2e (the range errors, the logo deploy), `tests/test_portal_fit.py` (the running page in the three looks, light and dark; reduced motion).
+
+## 1.78.1 — 2026-11-19
+
+**To set up:** nothing is required. To use the new settings: add them to `playbooks/group_vars/all.yml` (docs/SITE_PORTAL.md, "Add your jobs
+in bulk" and "Use your own template names"), run **AAP - set up portal actions** with Check, then without; run **Site portal - deploy** again
+for `portal_aap_names`.
+
+**Your jobs on the portal in one go.** **AAP - set up portal actions** can label your own job templates and workflows by name pattern and give
+the portal's account Execute on them.
+
+- `portal_publish_templates`: patterns (`*`, `?`, any case) of AAP names. Each match gets the label `portal_label` and Execute for
+  `portal_setup_portal_user`. `portal_publish_area` `{pattern: area}` adds `portal-area:<area>`; an area label already there stays.
+- Check first says, per template, *would label*, *would grant*, *already done* or *skipped* (with the reason). A pattern that matches nothing is said.
+  A pattern that matches more than `portal_publish_max` (50) stops with the list and changes nothing. A template in both lists is an error.
+- Only `*` and `?` are special in a pattern (a `[` is itself); the case is folded. `portal_publish_max` is 1 to 500 (0 is an error). A template
+  with no organization is skipped whole. A template the same run makes is published by the next run.
+- Never removes anything. `portal_unpublish_templates` removes the label `portal` only, never a role or an area label.
+- The credential needs Admin on the templates' organization, as for the rest of the job.
+
+**Your own template names.** `portal_aap_names` `{action: "name"}` (or `{action: {type, name}}`) points a built-in action at your own template
+or workflow, so nothing is renamed in AAP. An unknown action, a bad type or two actions on one template is an error naming the setting; the
+deploy says *points at "<name>" - AAP: ok*. An action with an approval can point only at a workflow (a job template would skip the approval); the setup job then gives the portal's account Approve on it.
+
+**The portal's reads, kept honest** (from the review of 1.78.0). A failed read keeps the last whole one for at most 10 x `portal_discover_seconds`
+and asks again after 15 s, 30 s, 60 s ... (never more than `portal_discover_seconds`); a template list that cannot be read for that long gives an
+empty catalog and the reason. The host picker says *Host list from HH:MM, AAP not answering* when it shows an old list, and a pick is checked
+against a list at most that old (one value for both).
+
+- Tests: `tests/test_portal_publish.py` (22: the patterns, Check, the max, unpublish, the areas, the name mapping and its clash), 5 more in
+  `tests/test_site_portal.py` (the back-off, the cap, the stale list), and the portal-setup e2e (labels, roles, the max, unpublish) on both cores.
+
+**An organization in one setting, and card titles (1.78.1c)** (docs/SITE_PORTAL.md, "Put a whole organization on the portal" and "Card titles without renaming").
+
+- `portal_publish_organization`: an organization's name. When set, only the job templates and workflows of that organization are matched by
+  `portal_publish_templates` and `portal_unpublish_templates`; with `["*"]`, every one of them. The Check list starts with a line that says so. An
+  organization that is not in AAP is an error naming the setting. `portal_publish_max` still stops a list that is too long (raise it to 500).
+- `portal_titles`: `{"AAP template name": "Portal card title"}`, matched by the exact name (any case), nothing renamed in AAP. A title is 1 to 80
+  characters; an empty or longer one stops the deploy, naming `portal_titles`. A label `portal-title:<text>` does the same; the setting wins.
+- To set up: nothing. Set the options you want, run **AAP - set up portal actions** with Check first, then **Site portal - deploy** for `portal_titles`.
+- Tests: `tests/test_portal_publish.py` (`Organization`, `Titles`), `tests/test_site_portal.py` (`Titles1781c`), the portal setup e2e (an organization's three
+  templates, the stop, an organization that is not there).
+
+## 1.78.0 — 2026-11-19
+
+**To set up:** run **Site portal - deploy** again. Then, for each job you want on the portal, in AAP: add the label `portal` to the
+template and give the portal's account (`svc_site_portal`) **Execute** on it (docs/SITE_PORTAL.md, "Add a job to the portal from AAP").
+Nothing else is required.
+
+**The portal finds its actions in AAP.** Execute plus a label, and the card appears; take either away and it goes (a minute).
+
+- The portal lists the job templates and workflows its account may **Execute**; those that also carry the label `portal`
+  (`portal_label`) show. No `all.yml` edit, no redeploy. Kept `portal_discover_seconds` (60).
+- The form is the template's **survey**: text, textarea, integer, float, multiple choice, multi select and password, with required,
+  minimum, maximum and the defaults. Every answer is checked again on the server. A password is masked, never filled in again, never
+  logged (*(hidden)*). With **Prompt on launch** for **Limit**: 1 to 5 hosts of `portal_inventory`.
+- The card: the area from a label `portal-area:STIG` (else *Other*), the title the template's name, the line its description;
+  approval from the label `portal-approval` or `portal_approval_required`.
+- Only the survey's variables go to AAP. A survey question named `portal_requested_by` is filled from the person's card (not shown).
+- The built-in actions and `portal_actions_extra` work as before; a template a built-in action already runs gets one card, the built-in.
+- The deploy lists what it found, and what it skipped with the reason (a survey type it cannot handle; a template that needs an
+  inventory, credential or password at launch). The account still has no write role.
+- **One host picker everywhere** (the findings steps and a found template's Limit): a searchable list of `portal_inventory`'s hosts and groups
+  (a group with its host count), to tick one or many, with chips, *Select all shown* under the cap, the first 200 matches and the keyboard. The
+  findings steps take up to 5 hosts, groups counted by their hosts; a Limit up to `portal_limit_max` (50), sent as the hosts the portal counted (never a group name). Without scripts
+  it is a plain multi-select and the form posts itself. Every pick is checked again against the inventory.
+- A card's address is `jt_<AAP id>` or `wf_<AAP id>`; a template (or its survey or Limit prompt) changed after the form was opened is not
+  started. A template with a Limit needs `portal_inventory`. A number that is not finite, or a host list that is not text, is a field error.
+  A read of AAP that could not finish keeps the cards it had, and says so. A template with a Limit must be a job template that runs on `portal_inventory` (a workflow with a Limit is left out); the Limit is sent as the concrete hosts the portal counted once (never empty, never over `portal_limit_max`), and a form's signature (the template's playbook, variables, prompts and survey) is required; the groups are read again at launch. Approval marks a workflow only: a job template marked for approval is left out, since it starts at once.
+- **Checked after review** (docs/SITE_PORTAL.md, "When AAP does not answer", "Hosts", "When AAP refuses a start"). Only enabled hosts are
+  listed or counted; a host named `all` or `ungrouped` (any case) is refused in a Limit, as is any name with a pattern character. A refused start
+  shows the status and a reason of the portal's own, never AAP's words; the log keeps them with every answer replaced, and not at all when the
+  survey has a password. A read that fails for a moment (survey, labels, launch settings, steps) or a list that does not add up (no `results`,
+  fewer rows than `count`) keeps the last whole read of the cards and of the inventory's hosts and groups, says so, and asks again in 15 seconds.
+  A survey maximum of 0 stays 0 (1024 only when there is none).
+  Only a read that AAP did not answer (no connection, a time-out, 429, a server error) makes a pass or a listing "not whole". A template that
+  is refused (403, 404) or whose lists never add up is left out with its reason, so it cannot hold the catalog still, and the last whole read
+  is kept for 10 x `portal_discover_seconds` at most (then what could be read is shown, with a line saying so). A listing past the page cap is
+  shown as a part. A Refresh that found another read running does not use the minute.
+  Also: two viewers of one running job count its events once (*Step 30 of 12* is gone); every page or call that asks AAP for a job (`/jobs`,
+  `/jobs/N`, `/api/jobs/N`, the pane and the progress call) is under the 90-a-minute limit; **Refresh** reads AAP once a minute for everyone, a
+  later click says *Refreshed N s ago*, and a forced read never waits behind another.
+- **The Actions page, Run and Details** (docs/SITE_PORTAL.md, "The Actions page, Run and Details"): a strip (*Connected - AAP: N jobs found*, last
+  refreshed, Refresh), four filter tiles (All, Job templates, Workflows, Last run failed) that are links, a search (**/** jumps to it; name,
+  description, label), and cards with the type, the last run, the labels, **Details** and **Run**. Run opens a dialog with the survey's form,
+  the host picker, who is recorded, Cancel and Launch job (the confirm page without scripts). Details is a panel (a page without scripts): the
+  description, labels, what it asks for, the survey's questions (names and types, never a default) and the last five runs. The Approval chip is on
+  workflows only.
+- **The Jobs page and a job followed live** (docs/SITE_PORTAL.md, "Watching a job run"): a list (My jobs | All jobs, search, status chips) and the
+  job beside it. While it runs the page asks every 3 seconds, only while it is open: *Now - Step 4 of about 12 - Checking free space on web01*
+  (the step estimate is the task count of the template's last good run), a bar, one chip per host (done, running, failed, unreachable), the
+  last 8 events in plain lines, a workflow's steps (waiting for approval with who decides). The banner ends as Succeeded or Failed with what
+  failed and where. A failed line shows the host, the task and the plain cause only (could not connect, timed out, failed), never the module's
+  message; nothing shows the extra variables or a password. The portal makes the calls with its own token, 90 a minute for one person, for the
+  jobs that person may see. "Show technical output" waits for the next update (it needs the redaction of 1.77.0).
+- Tests: `tests/test_site_portal.py` (the event lines and cause classes, what a job has done, the Now line, the estimate, a job followed to its
+  end, who may see it, the rate limit, the Jobs page, the cards, the tiles and the search without scripts, Details, the Run dialog's content,
+  Refresh), `tests/test_portal_fit.py` (19 pages), the portal e2e.
+- Settings: `portal_label`, `portal_discover_seconds`, `portal_label_approval`, `portal_label_area`, `portal_approval_required`, `portal_limit_max`.
+- Tests: `tests/test_site_portal.py` (survey to form, label and Execute filter, paging, the cache, a password never shown, a built-in
+  name clash, the card's name replacing a posted `portal_requested_by`), `tests/test_portal_fit.py`, the portal e2e, on ansible-core 2.22 and 2.16.
+
 ## 1.77.1 — 2026-11-19
 
 **To set up: nothing.** The STIG reports made from an Evaluate-STIG run show the answer files on their own.

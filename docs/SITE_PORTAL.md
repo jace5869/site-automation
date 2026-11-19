@@ -5,8 +5,8 @@ One web place for the reports and what people may start from them. People open i
 - **The report website**, at `/portal/reports/`: the same pages the report jobs write.
 - **Actions**: a report's button opens a confirm page with the values filled in. The person presses **Run**, and AAP
   runs the workflow or job template behind it. Only the actions you list exist.
-- **The live view** of what they started, at `/portal/jobs/<id>`: its status, its steps, its output, then its result
-  and links.
+- **The Jobs page**, at `/portal/jobs`: a list of what they started on the left, the job on the right. A job that runs is
+  followed live, in plain words (*Watching a job run*, below).
 - **Approvals**, at `/portal/approvals`: the listed workflows waiting for a decision. Approvers press Approve or Deny.
 
 It lives **behind the reverse proxy you have** - STIG Manager's nginx - at **`/portal/`**:
@@ -251,6 +251,8 @@ actions:
 `area` (up to 40 characters) is the group an action sits in on the Actions page, and `summary` (up to 160) is the one line
 under its title. The groups of this version's actions are *STIG*, *Disk & services*, *fapolicyd*, *Tickets* and *ACT*,
 in that order; any other area follows by name, and an action with none sits in *Other*, last.
+
+`multi_host: true` (optional, with `limit_from`) makes a group or several hosts ONE job; see *One job for a group*.
 
 Each var may also have `label` (the confirm page's name for it), `required` (default true) and `default`.
 
@@ -554,10 +556,13 @@ Workflow 46 takes Linux and Windows hosts. Workflow 48 is for Linux hosts, as `c
 
 ## Approvals
 
-`/portal/approvals` lists the pending approvals of the **listed** workflows, whoever started them (the portal, a
-schedule, a person in AAP). Each shows who started it through the portal, with which values, and since when it waits.
+`/portal/approvals` lists **every** pending workflow approval in AAP that the portal's account can see, whoever started the run (the portal, a schedule, a person in AAP);
+one that has timed out is left out. Each shows the workflow, who or what started it, the approval's name and description, the time left before it times out,
+and a link to the report the steps before it left (a job artifact `site_report_url`), when there is one.
 
-- **Approve** and **Deny** are there only for the people in `portal_approvers`. Others see the list.
+- **Approve** and **Deny** are there only for the people in `portal_approvers`, and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
+  (*Sure? Yes, approve / Back*). Every other row is grey, with one line that says why and to decide it in AAP: *Only the approvers decide*, *You started this run*, or *no Approve role*.
+- **The header badge.** *Approvals* shows how many are waiting for you to decide here; *Jobs* shows how many of your jobs run. Both update every 10 seconds while the page is open.
 - **Not your own run.** An approver who started a run through the portal does not get Approve and Deny for it: one
   muted line says another approver decides. The portal refuses such a decision and logs it.
   `portal_allow_self_approval: true` allows it.
@@ -622,7 +627,9 @@ AAP yourself). It never gives a write role.
 | `portal_finding_days` | 7 | how far back the report jobs are read (14 at most) |
 | `portal_finding_jobs` | 5 | the last this many runs of each report playbook |
 | `portal_finding_playbooks` | the report playbooks of `finding_ref` | which playbooks count as reports |
-| `portal_pick_max_launches` | 10 | jobs one confirm page may start |
+| `portal_motion` | `auto` | `auto`: the running icons and the stripe turn unless the system asks for reduced motion. `always` overrides the system's reduced-motion request (use only if the site agrees; a Windows image may turn animations off by policy). `off`: never. Print is still in every mode |
+| `portal_pick_max_launches` | 10 | jobs one confirm page may start (1 to 200) |
+| `portal_pick_max_hosts` | 50 | the hosts the finding steps take at once, groups counted by their hosts (1 to 500) |
 | `portal_setup_portal_auditor` | false | the setup job gives the account Auditor on `portal_setup_organization` |
 
 ## Adding your own action
@@ -669,6 +676,259 @@ portal_setup_templates_extra:
 Without the setup job, make the template in AAP yourself (Prompt on launch for **Variables** and **Limit**, and give the
 account **Execute**); the deploy then says *Off* with the reason until it is there.
 
+## The Actions page, Run and Details
+
+The Actions page (`/portal/`) is the portal's front door. It shows every job from AAP that the account may run and that carries the
+label, and the portal's own actions.
+
+1. **The strip** says *Connected - AAP: 25 jobs found* (or why AAP could not be asked) and when it was last read. **Refresh** reads AAP again now.
+2. **The four tiles** are filters: All, Job templates, Workflows, and *Last run failed*. They are links, so they work without scripts.
+3. **The search** looks in the name, the description and the labels. Press **/** to jump to it; *13 of 13* says how many cards show.
+4. **The cards are grouped by area**, with a heading and a count for each: *STIG*, *Disk & services*, *fapolicyd*, *Tickets*, *ACT*, then the areas of
+   your templates (their `portal-area:X` label), then *Other*. The tiles and the search filter inside the groups, and a group with nothing to show hides.
+5. **A card** has its type (*Job template* or *Workflow*), *Approval* on a workflow that waits for a person, the last run with its status,
+   the template's labels (not the portal's own), **Details** and **Run**. A template with no description says *No description*.
+
+**Why isn't my template here?** Under the strip, a closed panel says what the last read of AAP found, so nobody has to read the deploy log.
+It names how many templates the account may run, how many of them carry the label, and each template it skipped with the reason.
+A line in amber names the labelled templates the account may **not** run: give the portal's account **Execute** on them.
+The panel shows names and reasons only. It is as of the last read: **Refresh** reads again.
+
+**Run** opens a dialog: the survey's questions (required ones with a star), the host picker where the template has a Limit, a note
+(*Runs in AAP under the portal's account. The portal records you as the person who asked for it.*), **Cancel** and **Launch job**.
+Without scripts, Run is a link to the confirm page. An action that asks for a host and then a finding keeps its own steps.
+
+**Details** is a panel (a page without scripts) with the description, the type, the labels, what it asks for, the survey's questions
+(names and types only - never a default), its last five runs and Run.
+
+## Quick ways around
+
+These need scripts and are kept in this browser only; without scripts every page works as before.
+
+- **Pin an action.** The star on a card puts it in a *Pinned* group on top; the star again puts it back. A pin is per browser.
+- **Fold a group.** A click on an area's heading folds its cards (and again opens them). A search or a filter shows what matches, folded or not.
+- **A toast when your job ends.** On any portal page, a small message says *Succeeded - <action>* (it goes away by itself) or *Failed - <action>* (it stays until you close it), with a link to the job.
+- **Run again with the same answers.** On a finished job, the button opens the confirm page of its action with the answers filled in (never a password); you press Run there.
+- **Keyboard.** `/` searches the actions, `g a`, `g j` and `g p` go to Actions, Jobs and Approvals, `?` lists them. They are left alone while you type in a field.
+
+## Which area a found template is in
+
+Each found template gets an area, the first of these that says: **1.** its `portal-area:<area>` label; **2.** the area its playbook has in the job catalog (`aap/job_templates.yml`, an `area` on each entry; the deploy reads the file when the repository has it);
+**3.** your own rules, `portal_area_rules`; **4.** its name's start: *Linux - *, Windows - *, VMware - * and VM - *  (VMware), ACT - *, STIG*, AAP - * (Admin), fapolicyd*, and anything with *certificate* in it (Certificates)*; **5.** *Other*, last.
+**Details** says which one: *Area: Linux (from its name)*. The groups are the built-in areas first (STIG, Disk & services, fapolicyd, Tickets, ACT), then the rest A to Z, then Other.
+
+```yaml
+portal_area_rules:
+  - {match: "Site - patch *", area: Patching}
+```
+
+## What is on and what is off
+
+An available card has a solid border, a bar in the accent colour and a filled **Run**. A card that is off has a grey surface, a dashed border, muted text, a lock chip, its reason on one line, and no Run (only Details); the accent
+colour is never used for it. The same grey is used for an approval you cannot decide. The text on both passes WCAG AA, light and dark, in every look.
+
+## Watching a job run
+
+The Jobs page (`/portal/jobs`) lists the jobs the portal started: **My jobs**, or **All jobs** for the approvers. The chips (*Running*,
+*Succeeded*, *Failed*, *Other*) and the search (job, job id or who started it) filter the list. The job is on the right.
+
+While a job runs, its page asks the portal every 3 seconds, only while the page is open, and stops when the job ends. It shows:
+
+| What | Where it comes from |
+|---|---|
+| **Now** - *Step 4 of about 12 - Checking free space on web01* | the task AAP is on; our task names are *Area \| what*, so the part after the bar |
+| The bar | the step against the task count of the template's last good run; without one, no bar fills and the step is just counted |
+| **Hosts** - done, running, failed, unreachable | the host results in the events; *unreachable* is a host that did not answer, *failed* a task that ran and failed |
+| **What just happened** | the last 8 events as plain lines, for example *web03 - could not connect*; a failure shows the host, the task and the plain cause only |
+| **Steps** (a workflow) | pending, running, done, failed, or *waiting for approval* with who may decide |
+
+At the end the banner says **Succeeded** or **Failed**, with what failed and on which host in one line. The portal asks AAP with its own
+token (the browser never talks to AAP), at most 90 times a minute for one person, and only for jobs the person may see. It never shows
+the extra variables, a password or a survey answer in this view: a password is *(hidden)* in the answers. Without scripts the page shows the
+latest snapshot, and **Refresh** reloads it.
+
+**Results.** A job that ends with an address the portal knows shows it as a button, for example **Open the report →** (the report's page, in a new tab)
+or **Open ticket INC0012345 →**. The known results are `site_report_url` (and the other report page keys), the ticket keys, and a short list
+(`site_scorecard_url`, `stigman_url`). No other artifact key is shown, and a job with no known result has no *Results* heading.
+An address must be http or https with a host and no user name; anything else is not linked.
+
+**What is running turns.** The running icon (the status chip, the host chips, the *Now* line) and the ring in the jobs list turn, and the bar has a
+moving stripe. All of it stops under the browser's *reduce motion* setting and in print; `portal_motion` changes that (see the settings table).
+
+## Add a job to the portal from AAP
+
+The portal finds its actions in AAP itself. You give its account **Execute** on a template and add a label, and the card appears.
+Nothing in `all.yml` is edited and nothing is redeployed.
+
+A card appears only when **both** are true: the portal's account has **Execute** on the template, and the template carries the label
+`portal` (`portal_label`). Take either away and the card goes at the next refresh (`portal_discover_seconds`, 60).
+
+1. In AAP, open **Automation Execution > Templates** and open the job template or workflow.
+2. Open **Details > Edit**. In **Labels**, type `portal` and press Enter. Save.
+3. Optional, the card's group: add the label `portal-area:STIG` (anything after the colon is the group's name). Without it the card is under *Other*.
+4. Optional, the approval mark, for a **workflow** with an approval step: add the label `portal-approval`, or list its name in `portal_approval_required`. A job template starts at once, so one marked for approval is left out.
+5. Open the template's **Access** tab. Add the portal's account (`svc_site_portal`) with the role **Execute**.
+6. Optional, the form: open the **Survey** tab, add questions and switch the survey on. To pick hosts, tick **Prompt on launch** for **Limit**.
+7. Open the portal. The card is there, with the template's name as its title and its description as its line.
+
+**The form is the survey.** Each question becomes a field, and the portal checks every answer again before AAP starts the job.
+
+| Survey type | The field | Checked |
+|---|---|---|
+| Text, Textarea | one line, or a box | required, minimum and maximum length |
+| Integer, Float | a number | required, minimum and maximum |
+| Multiple choice | one of a list | one of the choices |
+| Multi select | ticks | every one a choice |
+| Password | masked | required, length; never shown back, never in the log |
+
+- **Limit.** With **Prompt on launch** for **Limit**, the form asks for hosts or groups (the picker below), up to `portal_limit_max` (50) hosts, and sends them as the job's limit: a group goes as its hosts, the ones the portal counted. They are checked against **that template's own inventory**, which the portal's account must be able to read (Platform Auditor is enough); the picker lists that inventory's hosts and groups. At most `portal_inventories_max` (10) distinct inventories are used; a template past that is skipped, said. A workflow's Limit works when every job template step takes a Limit at launch and all steps resolve to **one** inventory (the workflow's own, or one the steps share); an approval step is fine. A nested workflow, a project or inventory sync, a sliced job, a step with a Limit of its own or with a different inventory keeps the workflow off the list, and the reason names the step.
+- **What is sent.** Only the survey's own variables. The portal adds nothing else.
+- **Who started it.** Optional tip: add a survey question `portal_requested_by` (text, hidden) to see who started it in AAP's job. The portal fills it from the person's card, the field is not shown, and anything posted for it is replaced. The question must be text with a maximum of at least 200, or the template is left out.
+- **A password** is masked on the form and never filled in again. The portal's log and the job page show *(hidden)*.
+
+**The host picker.** Every host field is the same: a searchable list of the inventory's hosts **and groups**.
+
+1. Open the list. A group shows its host count: *linux_prod (42 hosts)*.
+2. Type to filter (any case, any part of the name). The list shows the first 200 matches, then *N more - type to narrow*.
+3. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown** adds the shown ones that fit under the limit.
+4. Keyboard: arrows move, Enter or Space ticks, Backspace in the empty box removes the last chip.
+
+The finding steps take up to `portal_pick_max_hosts` (50) hosts, with a group counted by its hosts (each finding is its own job). Without scripts the field is a plain multi-select
+with the same names, and the form posts itself. The server checks every pick against `portal_inventory`: a typed name that is not a host or group is refused.
+
+**One job for a group.** An action marked `multi_host: true` starts **one** job for a picked group or for several hosts. The built-in *STIG recheck* has the mark. The job's Limit, and its `target` variable, are the hosts they stand for, comma separated, up to `portal_action_max_hosts` (50). The picker says *group · 120 hosts · fits*, or *too big: at most N (portal_action_max_hosts)*, before you submit, and the portal checks again when it starts the job. The finding actions stay one job for each finding.
+
+An action of your own opts in only when its playbook takes such a list: it uses the variable as a host pattern, and its `portal_request_spec` says `{target: {kind: hosts}}` (the check each host is in the job's inventory and is the Limit). A playbook written for one host (`delegate_to: "{{ target }}"`, a file name) must not be marked.
+
+**One job, one id.** A card's address names the template's AAP id (`jt_12`, `wf_7`), so a rename or a new label never moves it onto another
+template. If the template (its playbook, variables, survey, Limit prompt or label) changed after the form was opened, Run says *this job changed in AAP - open it again*.
+
+**What is not shown.** A template with a survey type the portal cannot handle, or one that needs an inventory, a credential or a
+password at launch, is left out. So is a template with a Limit whose inventory is not `portal_inventory`, a workflow with a Limit (use a job template), and one whose launch settings cannot be read. The deploy lists each one with the reason. A built-in action with the same template name wins:
+there is one card, and the deploy says so.
+
+**When AAP does not answer.** A read of AAP that fails for a moment (a time-out, a server error, too many calls), or a list that does not add up
+(a page without its rows, fewer rows than AAP counted), is never taken as "the template is gone". The portal keeps the cards and the host list it
+had from the last whole read, says so on the page, and asks again in a few seconds. A refusal (403, 404) is an answer: the template is left out. The last whole read is kept for 10 times `portal_discover_seconds` at most.
+
+**Limits.** A person's page and progress calls to the portal share one limit of 90 a minute (`/jobs`, `/jobs/N`, `/api/jobs/N` and the
+progress call each ask AAP). **Refresh** reads AAP once a minute for everyone: a click inside that minute shows *Refreshed N s ago* and the cards
+the last read made. Two tabs on one running job count its events once.
+
+**Hosts.** Only enabled hosts of `portal_inventory` can be picked. A host named `all` or `ungrouped` (any case) is never sent in a Limit, because
+Ansible reads those names as groups. A Limit is always the list of hosts the portal counted, so a name cannot mean more than one host.
+
+**When AAP refuses a start.** The person sees the status and a short reason of the portal's own (*AAP did not accept the answers*, *the portal's
+AAP account may not start it*). AAP's own words can repeat what was typed, so they are not shown. The log keeps them with every answer replaced
+by *(answer)*, and not at all when the form has a password.
+
+**Safety.** The account keeps **Execute** and **Organization Auditor** only, never a write role. Approval, the rate limit,
+*Running already* and the job pages work as for every other action.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_label` | `portal` | the label that marks a template (`''` = no discovery) |
+| `portal_discover_seconds` | 60 | how long what was found is kept (10 to 3600) |
+| `portal_label_area` | `portal-area:` | the start of an area label |
+| `portal_area_rules` | `[]` | `[{match: "Linux - *", area: Linux}]`: the area of a found template with no area label and no area for its playbook (`*` and `?` only, any case, the first match wins) |
+| `portal_label_approval` | `portal-approval` | the approval label |
+| `portal_approval_required` | `[]` | template names marked *Approval* without the label |
+| `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
+| `portal_inventories_max` | 10 | the distinct inventories the found templates' Limits are checked against (1 to 50); a template beyond it is skipped, said |
+| `portal_action_max_hosts` | 50 | the hosts a built-in action's Limit may stand for (1 to 500) |
+
+## Add your jobs in bulk
+
+Your jobs are already in AAP. Instead of adding the label `portal` to each one by hand, name them with patterns and let the job
+**AAP - set up portal actions** label them and give the portal's account **Execute** on them.
+
+1. In `playbooks/group_vars/all.yml`, list the names. A pattern is a whole name with `*` (any text) and `?` (one character); capitals do not matter.
+
+   ```yaml
+   portal_publish_templates:
+     - "Site - health *"
+     - "Weekly cleanup"
+   portal_publish_area:                  # optional: the area (the portal-area: label) of the matches
+     "Site - health *": "Health"
+   ```
+
+2. Run **AAP - set up portal actions** with **Check** (*Job type: Check*) first. It only reads, and says one line for each template:
+   *would label*, *would grant*, *already done* or *skipped* with the reason. A pattern that matches nothing is said too.
+3. Read the lines. If a pattern matches more than `portal_publish_max` (50) templates, the job stops with the list and changes nothing, and says the fix: *set portal_publish_max: N (up to 500) and run again*, or narrow the pattern.
+4. Run it again without Check. Each match gets the label `portal` (and `portal-area:<area>` when you gave one) and Execute for `portal_setup_portal_user`.
+5. Open the portal: the cards appear within `portal_discover_seconds` (a minute), or press **Refresh**.
+
+It never removes anything. A template that is already in another area keeps its area, and the job says so. A template with no organization is skipped whole, said. Only `*` and `?` are special in a pattern (a `[` is just a `[`). A template this same run makes (from `workflows.yml` or `portal_setup_templates_extra`) is published by the next run. The credential of the job needs
+**Admin** on the organization of the templates, as for the rest of this job.
+
+To take a job off the portal, list it the same way and run the job again (Check first):
+
+```yaml
+portal_unpublish_templates:
+  - "Site - health windows"
+```
+
+That removes the label `portal` from the match and nothing else: the roles stay, the area label stays, and nothing is deleted.
+
+## Put a whole organization on the portal
+
+When one organization holds exactly the jobs you want on the portal, name the organization once and match everything in it.
+
+1. In `playbooks/group_vars/all.yml`, set the organization and `["*"]`:
+
+   ```yaml
+   portal_publish_organization: "platforms-org"
+   portal_publish_templates: ["*"]
+   ```
+
+2. Run **AAP - set up portal actions** with **Check** (*Job type: Check*). It only reads.
+3. Read the list. It starts with *publish 'organization platforms-org': applies - only the job templates and workflows of this organization are matched (N of them)*, then says *would label* and *would grant* for each one. If more than `portal_publish_max` (50) match, it stops with the list; raise the limit (500 at most) when that is what you want.
+4. Run it again without Check, then open the portal and press **Refresh**.
+
+Only the templates and workflows of that organization are matched, for putting on the portal and for taking off. An organization that is not in AAP is an error that names the setting. Leave `portal_publish_organization` as `""` to match any organization again.
+
+## Card titles without renaming
+
+A card shows the template's name. To show another title, say it in `portal_titles` and nothing is renamed in AAP.
+
+```yaml
+portal_titles:
+  "Our STIG recheck": "STIG - recheck a host"
+```
+
+The name must be the AAP name (capitals do not matter). A title is 1 to 80 characters; an empty or longer one stops the deploy, naming `portal_titles`. A label `portal-title:<text>` on the template does the same; when both are there, `portal_titles` wins. Run **Site portal - deploy**, or wait for the next refresh when you used the label.
+
+**Where it is applied.** `portal_publish_*` is applied by the job **AAP - set up portal actions** (Check first, then Run), not by **Site portal - deploy**; the deploy says so in one line when any of them is set. Until that job has run, the cards do not appear, and the panel *Why isn't my template here?* says *Nothing labelled yet* when `portal_publish_organization` is set.
+
+## Use your own template names
+
+The built-in actions (*Recheck this system*, *Import the checklists* and the rest) run templates and workflows named as in
+`workflows.yml`. If your site already has its own, point the action at them and nothing is renamed in AAP.
+
+1. In `playbooks/group_vars/all.yml`, give each action your name. The type (job or workflow) stays the action's own.
+
+   ```yaml
+   portal_aap_names:
+     stig_recheck: "Our STIG recheck"
+     ckl_import: {type: workflow, name: "Our checklist import"}     # the type only when it differs
+   ```
+
+2. Run **Site portal - deploy**. The summary says, for each one, *stig_recheck points at "Our STIG recheck" - AAP: ok*, or why AAP has no such template.
+3. Run **AAP - set up portal actions** to give the portal's account Execute on your templates (it grants by the name you gave).
+
+An action that needs an approval (it is a workflow with an approval step) can be pointed only at a workflow of yours: a job template would start at once while the card says there is an approval, so that is an error. When you point it at your own workflow, the setup job gives the portal's account **Approve** on it as well as Execute, so the approval step must be one you want the portal's approvers to decide. An action name that is not an action is an error naming `portal_aap_names`. So is a name two actions would share. The setup job still makes the
+templates of `workflows.yml` under their own names; leave them, or hide the actions you do not use with `portal_actions_off`.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_publish_templates` | `[]` | name patterns of the jobs and workflows to put on the portal |
+| `portal_publish_area` | `{}` | `{pattern: area}`: also the label `portal-area:<area>` |
+| `portal_publish_organization` | `""` | an organization's name: only its templates and workflows are matched (`["*"]` = all of them) |
+| `portal_publish_max` | 50 | the most one pattern may match (1 to 500); more stops the job, nothing changed |
+| `portal_unpublish_templates` | `[]` | name patterns to take off: the label only |
+| `portal_titles` | `{}` | `{"AAP name": "Card title"}` (80 characters at most); the label `portal-title:<text>` does the same |
+| `portal_aap_names` | `{}` | `{action: "your name"}` or `{action: {type, name}}` for a built-in action |
+
 ## The look
 
 The portal's pages look like the report website: the same colours, cards, tables, status chips and bar. They follow
@@ -676,8 +936,9 @@ The portal's pages look like the report website: the same colours, cards, tables
 
 - **The bar** has the portal's pages (*Actions*, *Reports*, *Approvals*), the person's name from the card, and the
   **Auto / Light / Dark** switch. The choice is kept in the browser and is the same on the report pages.
-- **Actions** are cards by area. A card has the action's title and one line, an *Approval* badge where an approver
-  decides, and, when the action is off, a muted card that says why. *You started* is a table with each job's live status.
+- **The header** has the site's logo when you set one (see *Your logo* below), else a letter badge.
+- **Actions** are cards by area, a heading for each. A card has the action's title and one line, an *Approval* badge where an approver
+  decides, and, when the action is off, a muted card that says why.
 - **The confirm page** has the values in one card and *What happens* in another. **Run** is the one main button.
 - **A job** has its status, where, who and AAP at the top; then the result (*Fixed*, *Still there* or *Not checked*), the
   steps, the hosts and the output.
@@ -688,6 +949,23 @@ portal's own files. Nothing is loaded from outside, and the fonts are the system
 `roles/site_portal_stack/files/portal.css.in` and the reports' palettes by `scripts/gen_portal_css.py`.
 
 Run **Site portal - deploy** again after you change `report_web_theme`.
+
+### Your logo
+
+The header can show your site's logo instead of the letter badge. The image is yours: keep it in your own `.site-local` or `group_vars` area, never in the repository.
+
+1. Name the image on the controller. This one line is enough; a full path is used as it is, and `files/crest.png` means `playbooks/files/crest.png`, the same as `report_logo_file`:
+
+   ```yaml
+   portal_logo_src: "{{ playbook_dir }}/../.site-local/logo.png"
+   ```
+
+2. Run **Site portal - deploy**. The file is copied to `portal_config_dir/logo.png` (the source's own extension) and the service restarts when the image changes. It is copied only when `portal_logo_src` is set.
+
+To keep the image somewhere else on the portal server, also set `portal_logo` to that path; with no `portal_logo_src`, the file must already be there.
+
+The image is a PNG, JPEG, GIF or WebP file of 1 MB at most, checked by its first bytes (no SVG): the deploy checks the source first and stops with the reason (*2.4 MB, over 1 MB - save a smaller copy, about 200 px wide*), and its summary says *The logo: on* or why not. It is shown at most 40 px tall, with the site title as its alt text,
+and served from the portal's own `static/logo` path, so the content security policy is unchanged. A file that is missing or not an image leaves the badge, and the deploy says so.
 
 ## The banner and the times
 
@@ -849,7 +1127,8 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_approvers` | `[]` | who may approve or deny here; `[]` = nobody (AAP's own page still works) |
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
 | `portal_actions_extra`, `portal_actions_off` | `{}`, `[]` | your own actions, and built-in ones to hide (*Adding your own action*) |
-| `portal_finding_days`, `portal_finding_jobs`, `portal_pick_max_launches` | 7, 5, 10 | *Pick a host, then a finding* |
+| `portal_finding_days`, `portal_finding_jobs`, `portal_pick_max_launches`, `portal_pick_max_hosts` | 7, 5, 10, 50 | *Pick a host, then a finding* |
+| `portal_label`, `portal_discover_seconds`, `portal_limit_max` | `portal`, 60, 50 | *Add a job to the portal from AAP* |
 | `portal_path` | `/portal/` | the path on nginx |
 | `portal_public_url` | `https://<the server>/portal/` | the address people open (said at the end) |
 | `portal_allow_self_approval` | false | true = an approver may decide a run they started themselves |

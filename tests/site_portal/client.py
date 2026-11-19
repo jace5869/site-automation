@@ -74,8 +74,13 @@ elif step == "token":
     out = {"token": token(args[0])}
 elif step == "launch":
     vals = json.loads(args[1])
-    tok = token("/portal/actions/%s?%s" % (args[0], urllib.parse.urlencode(vals)))
-    out = post("/portal/api/actions/" + args[0], {"vars": vals}, tok, args[2] if len(args) > 2 else "https://" + host)
+    code, _, page = call("/portal/actions/%s?%s" % (args[0], urllib.parse.urlencode(vals, doseq=True)))
+    m = re.search(r'<meta name="portal-token" content="([^"]+)"', page)
+    sg = re.search(r'name="portal-sig" value="([^"]*)"', page)             # a found template's form carries the signature of what it was drawn from
+    body = {"vars": vals}
+    if sg:
+        body["sig"] = sg.group(1)
+    out = post("/portal/api/actions/" + args[0], body, m.group(1) if m else "", args[2] if len(args) > 2 else "https://" + host)
 elif step == "launch_raw":
     out = post("/portal/api/actions/" + args[0], {"vars": json.loads(args[1])}, args[2], args[3])
 elif step == "decide":

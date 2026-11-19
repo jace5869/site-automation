@@ -170,13 +170,93 @@
 
 - name: Actions | portal_actions_off and portal_actions_extra (1.75.3)
   ansible.builtin.set_fact:
-    _portal_merge: "{{ _portal_actions_base | site_portal_actions_merge(portal_actions_extra, portal_actions_off) }}"
+    _portal_merge: "{{ _portal_actions_base | site_portal_actions_merge(portal_actions_extra, portal_actions_off, portal_aap_names) }}"
 
 - name: Actions | the merge is right
   ansible.builtin.assert:
     that: _portal_merge.problems | length == 0
     fail_msg: "The actions are not right - nothing was changed: {{ _portal_merge.problems | join(' | ') }}"
     quiet: true
+
+- name: Actions | portal_titles is right (1.78.1c)
+  ansible.builtin.assert:
+    that: (portal_titles | site_portal_titles).problems | length == 0
+    fail_msg: "portal_titles is not right - nothing was changed: {{ (portal_titles | site_portal_titles).problems | join(' | ') }}"
+    quiet: true
+
+# YAML reads an unquoted off as false: portal_motion: off means off
+- name: Settings | portal_motion is auto, always or off
+  ansible.builtin.set_fact:
+    _portal_motion: "{{ 'off' if portal_motion is sameas false else (portal_motion | string | lower) }}"
+
+- name: Settings | portal_motion is auto, always or off (checked)
+  ansible.builtin.assert:
+    that: _portal_motion in ['auto', 'always', 'off']
+    fail_msg: "portal_motion is {{ portal_motion }}; it must be auto, always or off - nothing was changed"
+    quiet: true
+
+# 1.78.2: the caps are settings; one outside its range stops the deploy, naming the setting
+- name: Settings | {{ item.name }} is in its range
+  ansible.builtin.assert:
+    that: (lookup('ansible.builtin.vars', item.name) | string) is match('^[0-9]+$') and 1 <= (lookup('ansible.builtin.vars', item.name) | int) <= item.max
+    fail_msg: "{{ item.name }} is {{ lookup('ansible.builtin.vars', item.name) }}; it must be a whole number from 1 to {{ item.max }} - nothing was changed"
+    quiet: true
+  loop:
+    - {name: portal_pick_max_hosts, max: 500}
+    - {name: portal_action_max_hosts, max: 500}
+    - {name: portal_pick_max_launches, max: 200}
+    - {name: portal_limit_max, max: 500}
+    - {name: portal_inventories_max, max: 50}
+  loop_control:
+    label: "{{ item.name }}"
+
+# the source is found as report_logo_file is: a full path as it is, else under the playbooks folder (files/x.png is playbooks/files/x.png)
+- name: Logo | where the source file is
+  ansible.builtin.set_fact:
+    _portal_logo_src_path: >-
+      {%- set f = portal_logo_src | default('') | string | trim -%}
+      {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
+
+- name: Logo | the source file is checked before anything is copied (size, first bytes)
+  ansible.builtin.assert:
+    that: (_portal_logo_src_path | site_portal_logo_check) == ''
+    fail_msg: "{{ _portal_logo_src_path | site_portal_logo_check }}"
+    quiet: true
+  when: _portal_logo_src_path | length > 0
+
+# 1.78.3: portal_logo_src alone is enough (portal_logo then defaults to portal_config_dir/logo.<its extension>); one line says what applies publish settings
+- name: Site portal | portal_publish_* is applied by the setup job, not by this deploy
+  ansible.builtin.debug:
+    msg: >-
+      portal_publish_* is applied by the job AAP - set up portal actions (Check first, then Run), not by this deploy:
+      this deploy only reads what AAP then shows.
+  when: >-
+    (portal_publish_templates | default([]) | length > 0 or portal_publish_organization | default('') | length > 0
+     or portal_unpublish_templates | default([]) | length > 0 or portal_publish_area | default({}) | length > 0
+     or (portal_publish_max | default(50) | int) != 50)
+
+- name: Actions | portal_area_rules is right (1.78.4)
+  ansible.builtin.assert:
+    that: (portal_area_rules | site_portal_area_rules).problems | length == 0
+    fail_msg: "portal_area_rules is not right - nothing was changed: {{ (portal_area_rules | site_portal_area_rules).problems | join(' | ') }}"
+    quiet: true
+
+# the area of each playbook in the job-template catalog (aap/job_templates.yml, an 'area' on each entry), when the repository has it
+- name: Areas | the job-template catalog
+  ansible.builtin.stat:
+    path: "{{ role_path }}/../../aap/job_templates.yml"
+  register: _portal_catalog_stat
+  delegate_to: localhost
+  become: false
+
+- name: Areas | the area of each playbook
+  ansible.builtin.set_fact:
+    _portal_playbook_areas: >-
+      {{ dict((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates | default([])
+              | selectattr('area', 'defined') | selectattr('playbook', 'defined') | map(attribute='playbook') | list
+              | zip((lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates | default([])
+                    | selectattr('area', 'defined') | selectattr('playbook', 'defined') | map(attribute='area') | list)) }}
+  when: _portal_catalog_stat.stat.exists | default(false)
 
 - name: Actions | the actions the portal serves
   ansible.builtin.set_fact:
@@ -245,6 +325,36 @@
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
+
+# ---------------------------------------------------------------- the site's logo (portal_logo, 1.78.2)
+- name: Logo | where the image goes on this server
+  ansible.builtin.set_fact:
+    _portal_logo_dest: >-
+      {{ portal_logo if portal_logo | default('') | length > 0 else
+         ((portal_config_dir ~ '/logo' ~ (portal_logo_src | splitext)[1]) if portal_logo_src | default('') | length > 0 else '') }}
+
+- name: Logo | the image, from the controller (portal_logo_src) to the portal server (portal_logo)
+  ansible.builtin.copy:
+    src: "{{ _portal_logo_src_path }}"
+    dest: "{{ _portal_logo_dest }}"
+    mode: "0644"
+  register: _portal_logo_file
+  when: _portal_logo_src_path | length > 0
+
+- name: Logo | is the image on this server
+  ansible.builtin.stat:
+    path: "{{ _portal_logo_dest }}"
+  register: _portal_logo_stat
+  when: _portal_logo_dest | length > 0
+
+- name: Logo | portal_logo is set and the file is not there - the badge is shown
+  ansible.builtin.debug:
+    msg: "portal_logo {{ _portal_logo_dest }} is not on this server: the pages show the badge. Put the image there, or set portal_logo_src (a file on the controller) and deploy again."
+  when: _portal_logo_dest | length > 0 and not (_portal_logo_stat.stat.exists | default(false)) and not (_portal_logo_file is changed)
+
+- name: Logo | on
+  ansible.builtin.set_fact:
+    _portal_logo_on: "{{ _portal_logo_dest | length > 0 and ((_portal_logo_stat.stat.exists | default(false)) or (_portal_logo_file is changed)) }}"
 
 # ---------------------------------------------------------------- the CAs the service trusts (AAP's certificate)
 - name: Trust | what this server trusts
@@ -354,7 +464,23 @@
       PORTAL_FINDING_DAYS: "{{ portal_finding_days }}"
       PORTAL_FINDING_JOBS: "{{ portal_finding_jobs }}"
       PORTAL_PICK_MAX_LAUNCHES: "{{ portal_pick_max_launches }}"
+      PORTAL_PICK_MAX_HOSTS: "{{ portal_pick_max_hosts }}"
+      PORTAL_ACTION_MAX_HOSTS: "{{ portal_action_max_hosts }}"
       PORTAL_FINDING_PLAYBOOKS: "{{ portal_finding_playbooks }}"
+      PORTAL_LABEL: "{{ portal_label }}"
+      PORTAL_DISCOVER_SECONDS: "{{ portal_discover_seconds }}"
+      PORTAL_LABEL_APPROVAL: "{{ portal_label_approval }}"
+      PORTAL_LABEL_AREA: "{{ portal_label_area }}"
+      PORTAL_AREA_RULES: "{{ portal_area_rules | default([]) | to_json }}"
+      PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"
+      PORTAL_MOTION: "{{ _portal_motion }}"
+      PORTAL_PUBLISH_ORGANIZATION: "{{ portal_publish_organization | default('') }}"
+      PORTAL_LABEL_TITLE: "{{ portal_label_title }}"
+      PORTAL_TITLES: "{{ (portal_titles | site_portal_titles).titles | to_json }}"
+      PORTAL_LOGO: "{{ '/etc/site-portal/logo' if _portal_logo_on | default(false) | bool else '' }}"
+      PORTAL_APPROVAL_REQUIRED: "{{ portal_approval_required }}"
+      PORTAL_LIMIT_MAX: "{{ portal_limit_max }}"
+      PORTAL_INVENTORIES_MAX: "{{ portal_inventories_max }}"
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
@@ -551,7 +677,7 @@
   when: >-
     _portal_pre.results[0].stdout in ['active', 'activating', 'reloading']
     and ('site-portal-app.container' in _changed or _portal_app_files is changed or _portal_settings_file is changed
-         or _portal_actions_file is changed or _portal_secret_set is changed or _portal_trust is changed
+         or _portal_actions_file is changed or _portal_logo_file is changed or _portal_secret_set is changed or _portal_trust is changed
          or _portal_trust_gone is changed)
 
 - name: Units | restart its nginx (its server or certificates changed)
@@ -661,6 +787,27 @@
   when: not ansible_check_mode and _portal_aap.pick | default({}) | length > 0 and _portal_aap.pick.on | default(false)
     and (_portal_aap.pick.auditor | default([]) | length > 0 or _portal_aap.pick.system_auditor | default(false))
 
+- name: Verify | the actions found in AAP (label {{ portal_label }})
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Found in AAP (Execute + the label ' ~ _d.label ~ '): ' ~ (_d.shown | length) ~ ' of ' ~ _d.seen ~ ' templates the account may run.']
+         + (['Shown: ' ~ (_d.shown | map(attribute='title') | join('; ')) ~ '.'] if _d.shown | length > 0 else
+            ['None shown yet: add the label ' ~ _d.label ~ ' to a template the account may Execute (docs/SITE_PORTAL.md, "Add a job to the portal from AAP").'])
+         + (['Skipped (with the reason): ' ~ (_d.skipped | map('join', ' - ') | join('; ')) ~ '.'] if _d.skipped | length > 0 else [])
+         + ([(_d.unlabelled | string) ~ ' more may be run by the account but have no label ' ~ _d.label ~ ' (left out on purpose).'] if _d.unlabelled | default(0) > 0 else [])
+         + (['Not added twice (the built-in action wins): ' ~ (_d.clashes | map('join', ' = the built-in ') | join('; ')) ~ '.'] if _d.clashes | length > 0 else [])
+         + (['AAP could not be asked: ' ~ _d.error] if _d.error else []) }}
+  vars:
+    _d: "{{ _portal_aap.discover }}"
+  when: not ansible_check_mode and _portal_aap.discover | default({}) | length > 0 and _portal_aap.discover.on | default(false)
+
+- name: Verify | the actions that point at your names (portal_aap_names)
+  ansible.builtin.debug:
+    msg: >-
+      {% for k in portal_aap_names.keys() | list | sort -%}
+      {{ k }} points at "{{ _portal_check.actions[k].aap.name }}" ({{ _portal_check.actions[k].aap.type }}) - AAP: {{ _portal_aap.actions[k] | default('not asked') }}{{ '; ' if not loop.last else '.' }}{%- endfor %}
+  when: not ansible_check_mode and portal_aap_names | length > 0
+
 - name: Verify | the nginx lines to add
   ansible.builtin.slurp:
     src: "{{ portal_config_dir }}/nginx-portal.conf"
@@ -677,9 +824,11 @@
           else ('on the podman network ' ~ portal_network)) ~ '. AAP: ' ~ ('answered (the account ' ~ _portal_aap.account | default('') ~ ')'
           if _portal_aap.aap | default('') == 'ok' else 'NOT REACHED - ' ~ _portal_aap.aap | default('')) ~ '. Every launch is in journalctl'
           ~ (' --user' if portal_scope == 'user' else '') ~ ' -u site-portal-app and in the data volume (portal-log.jsonl).']
+         + (['The logo: ' ~ ('on (' ~ _portal_logo_dest ~ ')' if _logo == 'on' else (_logo | default('not shown', true)))] if _portal_logo_dest | length > 0 else [])
          + (['Actions and their state in AAP: ' ~ (_acts | dict2items | map(attribute='key') | zip(_acts | dict2items
               | map(attribute='value')) | map('join', ' - ') | join('; ')) ~ '.'] if _acts else ['No action is listed.']) }}
     _acts: "{{ _portal_aap.actions | default({}) }}"
+    _logo: "{{ (_portal_ready.stdout | default('{}') | from_json).logo | default('') }}"
     _tail: >-
       {{ ['The portal: ' ~ portal_public_url] if portal_own_nginx | bool else
          ['Once, by hand: read the lines of ' ~ portal_config_dir ~ '/nginx-portal.conf (below) into the server block of your'

@@ -29,6 +29,13 @@ for n, wf, a in (("STIG - recheck one host", 1, 0), ("Disk - clean up (approved)
                  ("STIG - create the asset in STIG Manager", 1, 1)):
     tpl(n, wf, a)                      # "fapolicyd - allow this" is left out: its card shows Off
 aap = fake_aap.serve(0, stop=True)
+fake_aap.seed_found()                        # 1.78.0: a template found in AAP (labelled, a survey, a Limit), for its form
+fake_aap.add_template("workflow_job_templates", "Rotate the service account password across every host of the long-named enclave group", ["portal", "portal-area:Accounts", "portal-approval"],
+                      [{"variable": "env", "question_name": "Which environment should this run in, and for how long should it keep going", "type": "multiplechoice", "required": True,
+                        "choices": "development\ntest\nproduction", "default": "test"},
+                       {"variable": "tags", "question_name": "Tags", "type": "multiselect", "required": False, "choices": "alpha\nbeta\ngamma\ndelta"},
+                       {"variable": "notes", "question_name": "Notes", "type": "textarea", "required": False, "question_description": "Free text, kept in the ticket.", "max": 600}],
+                      description="Changes the account's password on every host of the group and records the ticket.")
 fake_aap.seed_reports()                      # 1.75.3: report jobs 9001 and 9002, for the pick pages
 with open(os.path.join(wt, "roles/site_portal_stack/files/actions.yml")) as fh:
     doc = yaml.safe_load(fh)
@@ -44,6 +51,8 @@ sys.stdout = open(os.devnull, "w")
 portal = sp.Portal(cfg)
 portal.aap.connect()
 portal.aap.resolve(portal.actions)
+portal.refresh(force=True)
+NAME = dict((a['title'], k) for k, a in portal.actions.items())          # a found template's address is jt_<id>
 srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cfg, portal, os.path.join(wt, "roles/site_portal_stack/files/static")))
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 base = "http://127.0.0.1:%d" % srv.server_address[1]
@@ -63,6 +72,7 @@ _r = call("/api/actions/stig_recheck", body={"vars": {"target": "web01.example.m
 ids["clean"] = call("/api/actions/disk_cleanup", body={"vars": {"target": "web01.example.mil", "report_job": "907", "finding_id": "disk_full:/var"}})["job_id"]
 ids["restart"] = call("/api/actions/service_restart", body={"vars": {"target": "web03.example.mil", "report_job": "907", "finding_id": "service_down:chronyd"}})["job_id"]
 ST = fake_aap.STATE
+ids["live"] = call("/api/actions/stig_recheck", body={"vars": {"target": "web03.example.mil"}})["job_id"]      # 1.78.2: one that is really running, for the spinning icons
 for wf in (ids["recheck"], ids["clean"]):                    # done: the approval given, the run's seconds over
     for n in ST["jobs"][wf].get("nodes") or []:
         if n in ST["approvals"]:
@@ -86,6 +96,11 @@ class Front(BaseHTTPRequestHandler):
                  ("pick-many", "/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full:web01.example.mil:/var"
                                "&pick0=9001~disk_full:web01.example.mil:/home&pick1=9001~disk_full:web03.example.mil:/srv"),
                  ("pick-none", "/portal/actions/disk_cleanup?hosts=fail01.example.mil"),
+                 ("found-form", "/portal/actions/" + NAME["Quick check (found)"]),
+                 ("found-bad", "/portal/actions/" + NAME["Quick check (found)"] + "?portal_limit=web01.example.mil&rounds=9&secret=nope"),
+                 ("found-wide", "/portal/actions/" + NAME["Rotate the service account password across every host of the long-named enclave group"]),
+                 ("jobs", "/portal/jobs"), ("job-running", "/portal/jobs/%d" % ids["live"]), ("jobs-all", "/portal/jobs?scope=all&__who=appr"),
+                 ("details", "/portal/actions/disk_cleanup/details"), ("home-failed", "/portal/?show=failed"),
                  ("pick-two-hosts", "/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil")]
         frames = [(n, u, th, w) for w in widths for th in ("light", "dark") for n, u in pages]
         html_ = ["<!doctype html><meta charset=utf-8><body>"]
@@ -105,8 +120,11 @@ class Front(BaseHTTPRequestHandler):
     Array.prototype.forEach.call(d.querySelectorAll(".tw, pre, .card, .tile, .act, .note, .panel, .field, .btns, .appbar-in"), function (e) {
       if (e.scrollWidth > e.clientWidth + 1) bad.push((e.className || e.tagName) + " overflows: " + e.scrollWidth + " > " + e.clientWidth);
     });
-    var cs = d.defaultView.getComputedStyle(d.documentElement);
-    return {page: f.dataset.n, theme: f.dataset.th, width: w, bad: bad, bg: cs.getPropertyValue("color-scheme"),
+    var cs = d.defaultView.getComputedStyle(d.documentElement), gs = d.defaultView.getComputedStyle.bind(d.defaultView);
+    var ic = d.querySelector(".ic-run"), ring = d.querySelector(".jrows .d.run"), pb = d.querySelector("progress.pb");
+    var motion = {icons: d.querySelectorAll(".ic-run").length, icon: ic ? gs(ic).animationName : "", ring: ring ? gs(ring).animationName : "",
+                  stripe: pb ? gs(pb, "::-webkit-progress-value").animationName : "", pbvalue: pb ? pb.hasAttribute("value") : null, now: !!d.querySelector(".now .nl .ic-run")};
+    return {page: f.dataset.n, motion: motion, theme: f.dataset.th, width: w, bad: bad, bg: cs.getPropertyValue("color-scheme"),
             look: d.documentElement.getAttribute("data-look"), h1: (d.querySelector("h1") || {}).textContent || ""};
   }
   var t = setInterval(function () {      // every frame drawn (its page loaded): a moment more for the live pages' first answer

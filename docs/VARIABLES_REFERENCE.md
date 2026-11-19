@@ -182,6 +182,11 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_setup_portal_auditor` | `false` | 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on portal_setup_organization, which it needs to read the report jobs' findings ("pick a host, then a finding"). Organization Auditor reads everything in the organization and writes nothing; the credential's user needs Admin on the organiz… (all of it: the role file) |
 | `portal_setup_workflows` | `{}` | {} = roles/site_portal_stack/files/workflows.yml; the same shape here replaces it |
 | `portal_setup_aap_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
+| `portal_publish_templates` | `[]` | 1.78.1: put your own job templates and workflows on the portal in one go, by name. Patterns (* and ?, any case) of AAP names: each match gets the label portal_label and Execute for portal_setup_portal_user. Run with Check first: it says would label / would grant / already done / skipped. Nothing is ever removed by thi… (all of it: the role file) |
+| `portal_publish_area` | `{}` | {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"}) |
+| `portal_publish_organization` | (empty) | an organization's name: only its templates and workflows are matched (with ["*"]: all of them); "" = any |
+| `portal_publish_max` | `50` | the most one pattern may match |
+| `portal_unpublish_templates` | `[]` | Take templates off the portal again (the label only; the roles stay and nothing is deleted): the same shape. |
 
 ## aap_template_audit
 
@@ -1950,7 +1955,10 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_stigman_upstream` | `http://stigman-api:54000` | STIG Manager's address in your location / (roles/stigman_stack's); STIG Manager under /stigman/: as in your location /stigman/, with its / at the end (http://stigman-api:54000/) |
 | `portal_stigman_open_versions` | `["1.6.16", "1.6.17", "1.6.18"]` | the STIG Manager versions the script was tested on - on another it does nothing (a plain link). Add one only after a test |
 | `portal_public_url` | `"https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx \| bool and po…` | the portal's address, as people open it (said at the end) |
+| `portal_motion` | `auto` | 1.78.3: the running icons and the progress stripe turn. auto: unless the system asks for reduced motion (as now); always: even then (their image may turn animations off by policy - use it only if the site agrees); off: never. Print is still in every mode. auto \| always \| off |
 | `portal_title` | `Site portal` | the pages' title |
+| `portal_logo` | `"{{ (portal_config_dir ~ '/logo' ~ (portal_logo_src \| splitext)[1]) if portal_logo_src \|…` | 1.78.2: the site's logo in the header, instead of the letter badge (40 px tall at most; alt text = portal_title). portal_logo is a PNG, JPEG, GIF or WebP file (1 MB at most) ON THE PORTAL SERVER, e.g. "{{ portal_config_dir }}/logo.png"; portal_logo_src is a file on the controller (in your own .site-local or group_vars… (all of it: the role file) |
+| `portal_logo_src` | (empty) | the image on the controller, copied to portal_logo by the deploy ("" = nothing copied) |
 | `portal_reports_dir` | `/srv/reports` | the report website: the folder on this host the report jobs write the pages to (report_web_dest's folder, e.g. the folder STIG Manager's nginx serves /reports/ from). Read-only for the portal; served at /portal/reports/ |
 | `portal_reports_mount` | `ro,z` | how that folder is mounted: ro,z = read-only, SELinux label shared with other containers (a folder another container mounts with :Z, a private label, is relabeled by that container's next start - see docs/SITE_PORTAL.md, SELinux) |
 | `portal_requesters` | `[]` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- who may run the actions (an action's own who overrides); [] = any person with a verified card |
@@ -1960,9 +1968,22 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_actions` | `{}` | ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it ----------------------- |
 | `portal_actions_extra` | `{}` | 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked by the same rules; a name a built-in has is an error), and built-in actions to hide (a list of their names). docs/SITE_PORTAL.md, "Adding your own action". |
 | `portal_actions_off` | `[]` | built-in actions to hide: a list of their names (one that is no action is an error) |
+| `portal_aap_names` | `{}` | 1.78.1: point a built-in action at your own template or workflow name in AAP, so nothing is renamed there: {action: "Your name"} or {action: {type: job\|workflow, name: "Your name"}} (the type stays the built-in's unless given). An action that is no action is an error; two actions that would run one template are an err… (all of it: the role file) |
+| `portal_titles` | `{}` | 1.78.1c: card titles without renaming anything in AAP: {"AAP template name": "Portal card title"} (matched by the exact name, any case; a title is 1 to 80 characters). A label "portal-title:<text>" on the template does the same; this setting wins. A title that is empty or too long is an error. |
+| `portal_label_title` | `"portal-title:"` | the label that gives a card its title (the rest of the label is the title) |
 | `portal_finding_days` | `7` | 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened with no values, asks for the host(s) and lists what the report jobs found there (their site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each report playbook that finished within portal_… (all of it: the role file) |
 | `portal_finding_jobs` | `5` | the last this many runs of each report playbook are read (10 at most) |
-| `portal_pick_max_launches` | `10` | one confirm page starts this many jobs at most (one per ticked finding); over it the page says so |
+| `portal_pick_max_launches` | `10` | one confirm page starts this many jobs at most (one per ticked finding); over it the page says so (1 to 200) |
+| `portal_pick_max_hosts` | `50` | 1.78.2: the hosts "pick a host, then a finding" takes at once (groups counted by their hosts; 1 to 500) |
+| `portal_action_max_hosts` | `50` | 1.78.2: the hosts one built-in action's Limit may stand for - one job for a group or several hosts (1 to 500) |
+| `portal_label` | `portal` | 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account has Execute on AND that carries the AAP label below is added to the portal - no edit here, no redeploy; take Execute or the label away and it goes at the next refresh. The form is the template's survey; the card's area is a… (all of it: the role file) |
+| `portal_discover_seconds` | `60` | how long what was found is kept (10 to 3600) |
+| `portal_label_approval` | `portal-approval` | a template with this label too is marked "approval" on its card |
+| `portal_area_rules` | `[]` | 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area: label and no area for its playbook (* and ? only, any case, first match wins) |
+| `portal_label_area` | `"portal-area:"` | a label that starts with this puts the card in an area (the rest of the label is its name) |
+| `portal_approval_required` | `[]` | template names that are marked "approval" without the label |
+| `portal_inventories_max` | `10` | 1.78.4: found templates' Limits are checked against their own inventory; at most this many distinct inventories (1 to 50), the rest are skipped with a reason |
+| `portal_limit_max` | `50` | a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500) |
 | `portal_finding_playbooks` | (worked out by the role; see its file) | the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from) |
 | `portal_inventory` | (empty) | the AAP inventory whose hosts an action's inventory_host values must be (by name; required when an action has one) |
 | `portal_aap_url` | (worked out by the role; see its file) | ---- AAP: the "Red Hat Ansible Automation Platform" credential (its URL and a token of the portal's own account) ------ |

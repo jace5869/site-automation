@@ -167,6 +167,87 @@ setup -e '{"portal_setup_templates_extra": [{"name": "ACT - triage finding", "pl
 if [ $? != 0 ] && grep -q "portal_setup_templates_extra: 'ACT - triage finding' is already one of the templates here" "$work/out.txt"; then pass "a name a built-in template has: an error naming the setting, nothing changed"; else fail "a clash" "$(tail -5 "$work/out.txt")"; fi
 setup -e '{"portal_actions_extra": {"stig_recheck": {"title": "x", "aap": {"type": "job", "name": "n"}}}}'
 if [ $? != 0 ] && grep -q "portal_actions_extra: 'stig_recheck' is already an action here" "$work/out.txt"; then pass "an action named like a built-in: an error naming the setting, nothing changed"; else fail "an action clash" "$(tail -5 "$work/out.txt")"; fi
+# ---- 1.78.1: your own jobs on the portal by name pattern (the label + Execute), and off again (the label only)
+"$py" - "$work/state.json" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+for kind, names in (("job_templates", ["Site - health linux", "Site - health windows", "Other tool"]), ("workflow_job_templates", ["Site - cleanup flow"])):
+    for nm in names:
+        s["next"] += 1
+        s[kind].append({"id": s["next"], "name": nm, "organization": 1, "credentials": [], "label_ids": []})
+json.dump(s, open(sys.argv[1], "w"))
+EOPY
+pubvars='{"portal_publish_templates": ["site - HEALTH *", "Site - cleanup flow", "No such *"], "portal_publish_area": {"site - health *": "Health"}}'
+labels_of() { st '"|".join(sorted(l["name"] for l in s.get("labels", []) if l["id"] in [j for t in s["job_templates"] + s["workflow_job_templates"] if t["name"] == "'"$1"'" for j in t.get("label_ids", [])]))'; }
+execs() { st 'sorted(r["obj"] for u in s["users"] for rid in u["roles"] for r in s["roles"] if r["id"] == rid and r["name"] == "Execute" and r["obj"] in [t["id"] for t in s["job_templates"] + s["workflow_job_templates"] if t["name"].startswith("Site - ")])'; }
+n="$(writes)"
+setup --check -e "$pubvars"
+if [ "$(writes)" = "$n" ] && grep -q "label 'Site - health linux: portal': would label" "$work/out.txt" \
+    && grep -q "label 'Site - health linux: portal-area:Health': would label" "$work/out.txt" \
+    && grep -q "publish grant 'Site - health linux: Execute': would grant" "$work/out.txt" \
+    && grep -q "label 'Site - cleanup flow: portal': would label" "$work/out.txt" \
+    && grep -q "publish 'No such \*': skipped - matches no job template or workflow" "$work/out.txt" \
+    && ! grep -q "Other tool" "$work/out.txt" && [ "$(labels_of 'Site - health linux')" = "" ]; then
+    pass "publish, Check first: would label / would grant, a pattern that matches nothing is said, an unmatched template untouched, nothing written"
+else fail "publish check" "$(writes) writes; $(grep -E "label|publish|fatal" "$work/out.txt" | head -12)"; fi
+setup -e "$pubvars"
+if [ "$(labels_of 'Site - health linux')" = "portal|portal-area:Health" ] && [ "$(labels_of 'Site - health windows')" = "portal|portal-area:Health" ] \
+    && [ "$(labels_of 'Site - cleanup flow')" = "portal" ] && [ "$(labels_of 'Other tool')" = "" ] && [ "$(execs | tr -d '[] ' | tr ',' '\n' | wc -l)" = 3 ]; then
+    pass "publish: the label (and the area label) and Execute on the three matches; the one that does not match has nothing"
+else fail "publish" "$(labels_of 'Site - health linux') / $(execs) / $(grep -E "label|grant|fatal" "$work/out.txt" | head -8)"; fi
+n="$(writes)"
+setup -e "$pubvars"
+if [ "$(writes)" = "$n" ] && grep -q "label 'Site - health linux: portal': already done" "$work/out.txt" && grep -q "publish grant 'Site - health linux: Execute': already done" "$work/out.txt"; then
+    pass "publish again: already done, nothing written"
+else fail "publish again" "$(($(writes) - n)) writes; $(grep -E "label|grant" "$work/out.txt" | head -6)"; fi
+n="$(writes)"
+setup -e '{"portal_publish_templates": ["site - *"], "portal_publish_max": 2}'
+if [ $? != 0 ] && [ "$(writes)" = "$n" ] && grep -q "more than portal_publish_max (2)" "$work/out.txt" && grep -q "Site - health linux" "$work/out.txt"; then
+    pass "a pattern that matches more than portal_publish_max: stops with the list, nothing changed"
+else fail "publish max" "$(grep -E "portal_publish|fatal" "$work/out.txt" | head -5)"; fi
+setup -e '{"portal_publish_templates": ["Site - health *"], "portal_unpublish_templates": ["site - health windows"]}'
+if [ $? != 0 ] && grep -q "both match" "$work/out.txt"; then pass "a template in both lists: an error, nothing changed"; else fail "both lists" "$(grep -E "both|fatal" "$work/out.txt" | head -3)"; fi
+n="$(writes)"; before="$(execs)"
+setup --check -e '{"portal_unpublish_templates": ["site - health windows", "Nothing like this"]}'
+if [ "$(writes)" = "$n" ] && grep -q "label 'Site - health windows: portal': would remove the label" "$work/out.txt" && grep -q "unpublish 'Nothing like this': skipped - matches no" "$work/out.txt"; then
+    pass "unpublish, Check first: says it would remove the label, writes nothing"
+else fail "unpublish check" "$(grep -E "label|unpublish" "$work/out.txt" | head -5)"; fi
+setup -e '{"portal_unpublish_templates": ["site - health windows"]}'
+if [ "$(labels_of 'Site - health windows')" = "portal-area:Health" ] && [ "$(labels_of 'Site - health linux')" = "portal|portal-area:Health" ] && [ "$(execs)" = "$before" ]; then
+    pass "unpublish: the label is gone from that one only; its area label and the roles stay"
+else fail "unpublish" "$(labels_of 'Site - health windows') / $(execs) vs $before"; fi
+setup -e '{"portal_unpublish_templates": ["site - health windows"]}'
+if grep -q "label 'Site - health windows: portal': already done" "$work/out.txt"; then pass "unpublish again: already done"; else fail "unpublish again" "$(grep -E "label" "$work/out.txt" | head -3)"; fi
+# ---- 1.78.1c: a whole organization on the portal with one setting
+"$py" - "$work/state.json" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+s["organizations"].append({"id": 7, "name": "platforms-org"})
+for kind, names in (("job_templates", ["Platform - patch", "Platform - audit"]), ("workflow_job_templates", ["Platform - rollout"])):
+    for nm in names:
+        s["next"] += 1
+        s[kind].append({"id": s["next"], "name": nm, "organization": 7, "credentials": [], "label_ids": []})
+json.dump(s, open(sys.argv[1], "w"))
+EOPY
+orgvars='{"portal_publish_organization": "platforms-org", "portal_publish_templates": ["*"]}'
+n="$(writes)"
+setup --check -e "$orgvars"
+if [ "$(writes)" = "$n" ] && grep -q "publish 'organization platforms-org': applies - only the job templates and workflows of this organization are matched (3 of them)" "$work/out.txt" \
+    && grep -q "label 'Platform - patch: portal': would label" "$work/out.txt" && grep -q "label 'Platform - rollout: portal': would label" "$work/out.txt" \
+    && grep -q "publish grant 'Platform - audit: Execute': would grant" "$work/out.txt" && ! grep -q "Other tool" "$work/out.txt"; then
+    pass "a whole organization, Check first: the list says it is limited to the organization, only its three templates, nothing written"
+else fail "organization check" "$(writes) writes; $(grep -E "label|publish|fatal" "$work/out.txt" | head -12)"; fi
+setup -e "$orgvars"
+if [ "$(labels_of 'Platform - patch')" = "portal" ] && [ "$(labels_of 'Platform - rollout')" = "portal" ] && [ "$(labels_of 'Other tool')" = "" ]; then
+    pass "a whole organization: the label on every template and workflow of it, none elsewhere"
+else fail "organization" "$(labels_of 'Platform - patch') / $(labels_of 'Other tool') / $(grep -E "label|fatal" "$work/out.txt" | head -6)"; fi
+n="$(writes)"
+setup -e '{"portal_publish_organization": "platforms-org", "portal_publish_templates": ["*"], "portal_publish_max": 2}'
+if [ $? != 0 ] && [ "$(writes)" = "$n" ] && grep -q "more than portal_publish_max (2)" "$work/out.txt"; then pass "the organization's list over portal_publish_max: stops, nothing changed"
+else fail "organization max" "$(grep -E "portal_publish|fatal" "$work/out.txt" | head -4)"; fi
+setup -e '{"portal_publish_organization": "no-such-org", "portal_publish_templates": ["*"]}'
+if [ $? != 0 ] && [ "$(writes)" = "$n" ] && grep -q "no-such-org" "$work/out.txt"; then pass "an organization that is not there: an error naming it, nothing changed"
+else fail "organization missing" "$(grep -E "no-such|fatal" "$work/out.txt" | head -4)"; fi
 if ! grep -q '"method": "DELETE", "path": "\(job_templates\|workflow_job_templates\)' "$work/writes.jsonl"; then
     pass "never a template or a workflow deleted"
 else fail "a delete" "$(grep DELETE "$work/writes.jsonl" | head -3)"; fi

@@ -62,7 +62,7 @@ jq_() { "$py" -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 podman network create "$net" >/dev/null
 mkdir -p "$work/aap" "$work/pki" "$work/nginx" "$work/reports/linux-health"
 podman run -d --name portal-test-aap --network "$net" -v "$here/fake_aap.py:/t/fake_aap.py:ro,Z" -v "$work/aap:/log:Z" \
-    -e FAKE_AAP_LOG=/log/aap.jsonl -e FAKE_AAP_SEED_REPORTS=1 -e FAKE_AAP_RUN_SECONDS=4 -e FAKE_AAP_JINJA=always -e FAKE_AAP_TOKEN=test-token-1670 \
+    -e FAKE_AAP_LOG=/log/aap.jsonl -e FAKE_AAP_SEED_REPORTS=1 -e FAKE_AAP_SEED_FOUND=1 -e FAKE_AAP_RUN_SECONDS=4 -e FAKE_AAP_JINJA=always -e FAKE_AAP_TOKEN=test-token-1670 \
     "$image" python3 /t/fake_aap.py 8000 >/dev/null || { echo "ABORT - could not start the stand-in AAP"; exit 1; }
 printf '<!doctype html><meta charset=utf-8><title>Reports</title><h1>The report website</h1>\n' > "$work/reports/index.html"
 printf '<!doctype html><meta charset=utf-8><title>Linux health</title><p>linux health\n' > "$work/reports/linux-health/index.html"
@@ -133,10 +133,32 @@ if deploy -e '{"portal_actions_off": ["no_such_action"]}'; then fail "portal_act
 elif grep -q "portal_actions_off: 'no_such_action' is not one of the actions" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "portal_actions_off with a name that is no action: refused, said"
 else fail "portal_actions_off refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"no_such_action": "x"}}'; then fail "portal_aap_names with no such action refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_aap_names: 'no_such_action' is not one of the actions" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_aap_names with a name that is no action: refused before anything is written, said"
+else fail "portal_aap_names refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"ckl_import": {"type": "job", "name": "Our job"}}}'; then fail "an approval action on a job template refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "needs an approval, and only a workflow has an approval step" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_aap_names: an action with an approval on a job template: refused, said"
+else fail "portal_aap_names approval refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"stig_recheck": {"type": "job", "name": "Same"}, "act_triage": {"type": "job", "name": "Same"}}}'; then fail "two actions on one template refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "would all run the job template 'Same'" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+    pass "portal_aap_names: two actions on one template: refused, said"
+else fail "portal_aap_names clash refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 if deploy -e '{"portal_actions": {"bad": {"title": "", "aap": {"type": "job", "name": "x"}}}}'; then fail "a wrong action refused" "$(tail -20 "$work/out.txt")"
 elif grep -q "The actions are not right - nothing was changed: action bad: title is required" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "a wrong action: refused before anything is written, said"
 else fail "a wrong action refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_motion": "sometimes"}'; then fail "portal_motion sometimes refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_motion is sometimes; it must be auto, always or off - nothing was changed" "$work/out.txt" && [ ! -e "$work/etc" ]; then pass "portal_motion: a wrong value is refused before anything is written, said"
+else fail "portal_motion refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+for kv in 'portal_pick_max_hosts": 0|1 to 500' 'portal_action_max_hosts": 501|1 to 500' 'portal_pick_max_launches": 201|1 to 200' 'portal_limit_max": 0|1 to 500'; do
+    nm="${kv%%\"*}"; val="${kv#*: }"; val="${val%%|*}"
+    if deploy -e "{\"$nm\": $val}"; then fail "$nm $val refused" "$(tail -20 "$work/out.txt")"
+    elif grep -q "$nm is $val; it must be a whole number from ${kv##*|} - nothing was changed" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+        pass "$nm $val: refused before anything is written, said with its range"
+    else fail "$nm range refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+done
 if deploy --check -e "{\"portal_config_dir\": \"$work/etc-check\"}" && [ ! -e "$work/etc-check" ] \
     && ! ls "$units"/site-portal* >/dev/null 2>&1 && ! podman container exists site-portal-app && ! podman volume exists site-portal-data \
     && ! podman secret inspect site-portal-aap-token >/dev/null 2>&1; then
@@ -196,6 +218,47 @@ started() { podman inspect portal-test-nginx --format '{{.State.StartedAt}}'; }
 before="$(started)"
 if deploy && grep -q "changed=0 " "$work/out.txt"; then pass "a second deploy changes nothing"
 else fail "a second deploy changes nothing" "$(grep -E 'changed:|PLAY RECAP' -A1 "$work/out.txt")"; fi
+if deploy -e '{"portal_aap_names": {"stig_recheck": "Our STIG recheck", "ckl_import": {"type": "workflow", "name": "Our checklist import"}}}' \
+    && grep -q 'stig_recheck points at .*Our STIG recheck.* (job) - AAP: ' "$work/out.txt" && grep -q 'ckl_import points at .*Our checklist import.* (workflow)' "$work/out.txt" \
+    && grep -q "Job template 'Our STIG recheck' is not there in AAP" "$work/out.txt"; then
+    pass "portal_aap_names: the deploy says what each action points at, and that AAP has no such template"
+else fail "portal_aap_names points at" "$(grep -E "points at|fatal" "$work/out.txt" | head -5)"; fi
+deploy > /dev/null 2>&1                                  # back to the built-in names for what follows
+# 1.78.2: the site's logo - copied from the controller only when portal_logo_src is set, mounted read-only, served from the portal's own static path
+"$py" - "$work/logo-src.png" <<'EOPY'
+import struct, sys, zlib
+def ch(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + ch(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)) + ch(b"IDAT", zlib.compress(b"\x00\x1e\x5a\xa0\xff")) + ch(b"IEND", b""))
+EOPY
+if deploy -e "{\"portal_logo_src\": \"$work/logo-src.png\", \"portal_publish_organization\": \"platforms-org\"}" && cmp -s "$work/logo-src.png" "$work/etc/logo.png" \
+    && grep -q "portal_publish_\* is applied by the job AAP - set up portal actions (Check first, then Run), not by this deploy" "$work/out.txt" \
+    && grep -q "The logo: on ($work/etc/logo.png)" "$work/out.txt" \
+    && grep -q '"PORTAL_LOGO": "/etc/site-portal/logo"' "$work/etc/settings.json" && grep -q "Volume=$work/etc/logo.png:/etc/site-portal/logo:ro,Z" "$units/site-portal-app.container"; then
+    pass "portal_logo_src alone: copied to portal_config_dir/logo.png, handed to the service, mounted read-only; the deploy says where portal_publish_* is applied"
+else fail "the logo deploy" "$(grep -E "Logo|logo|fatal" "$work/out.txt" | head -8)"; fi
+for _ in $(seq 1 30); do
+    podman exec site-portal-app python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/healthz")' 2>/dev/null && break
+    sleep 1
+done
+r="$(podman exec site-portal-app python3 -c 'import urllib.request; r = urllib.request.urlopen("http://127.0.0.1:8080/static/logo"); print(r.status, r.headers["Content-Type"], r.headers["X-Content-Type-Options"], r.read()[:4])' 2>&1)"
+if [ "$r" = "200 image/png nosniff b'\\x89PNG'" ]; then pass "the logo is served from the portal's own static path (image/png, nosniff)"; else fail "the logo is served" "$r"; fi
+if deploy -e "{\"portal_logo_src\": \"$work/logo-src.png\", \"portal_publish_organization\": \"platforms-org\"}" && grep -q "changed=0 " "$work/out.txt"; then pass "the logo: a second deploy changes nothing"
+else fail "the logo: a second deploy" "$(grep -E 'changed:|PLAY RECAP' -A1 "$work/out.txt")"; fi
+"$py" - "$work/logo-src.png" "$work/logo-big.png" "$work/logo-svg.png" <<'EOPY'
+import sys
+png = open(sys.argv[1], "rb").read()
+open(sys.argv[2], "wb").write(png + b"0" * int(2.4 * 1048576))
+open(sys.argv[3], "wb").write(b"<svg xmlns='http://www.w3.org/2000/svg'><script>x</script></svg>")
+EOPY
+if deploy -e "{\"portal_logo_src\": \"$work/logo-big.png\"}"; then fail "a logo over 1 MB refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_logo_src logo-big.png: 2.4 MB, over 1 MB - save a smaller copy (about 200 px wide)" "$work/out.txt" && cmp -s "$work/logo-src.png" "$work/etc/logo.png"; then
+    pass "a logo over 1 MB: refused before anything is copied, said how to fix it (the logo in place is untouched)"
+else fail "a big logo refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e "{\"portal_logo_src\": \"$work/logo-svg.png\"}"; then fail "a logo that is not an image refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_logo_src logo-svg.png: not a PNG, JPEG, GIF or WebP image" "$work/out.txt"; then pass "a logo that is not an image: refused, said"
+else fail "a non-image logo refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+deploy > /dev/null 2>&1                                  # no logo again: the badge
 if deploy -e '{"portal_title": "Site portal (test)"}' && grep -q "changed: \[localhost\]" <(grep -A1 "restart the service" "$work/out.txt") \
     && [ "$(started)" = "$before" ]; then
     pass "a setting changed: the service restarted, the proxy's nginx not touched"
@@ -228,6 +291,13 @@ r="$(c "$k/jdoe" get /portal/actions/disk_cleanup)"
 case "$r" in *'"code": 200'*'name=\"hosts\"'*) pass "an action with a report job and a finding, opened without them: asks for the host";; *) fail "pick: the host step" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
 [ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "['web01.example.mil', 'web03.example.mil']" ] && pass "the typeahead: the inventory's hosts that contain what was typed" || fail "pick: typeahead" "$r"
+r="$(c "$k/jdoe" get '/portal/api/inventory?q=WEB')"
+[ "$(echo "$r" | jq_ '[(i["name"], i["kind"], i["count"]) for i in d["json"]["items"]]')" = "[('web01.example.mil', 'host', 1), ('web03.example.mil', 'host', 1), ('web_servers', 'group', 2)]" ] \
+    && pass "the picker's list: hosts and groups (a group with its host count), filtered by any case" || fail "the picker's list" "$r"
+r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web_servers')"
+case "$r" in *'"code": 200'*"web01.example.mil"*"web03.example.mil"*) pass "a group picked: its hosts, one section each";; *) fail "pick: a group" "$r";; esac
+r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=nothere.example.mil')"
+case "$r" in *"not a host or a group"*) pass "a name that is no host or group of the inventory: refused";; *) fail "pick: an unknown name" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web01.example.mil')"
 case "$r" in *'"code": 200'*"Pick the finding"*) pass "the host picked: the findings of the report jobs (the portal's account reads them)";; *) fail "pick: the findings step" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web01.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar')"
@@ -260,7 +330,7 @@ case "$r" in *'"code": 400'*"braces that start a template"*) pass "template brac
 r="$(c "$k/jdoe" launch act_triage '{"target": "web01.example.mil", "report_job": "907", "finding_id": "eventlog:\uff5b\uff5bx"}')"
 case "$r" in *'"code": 400'*"braces"*) pass "full-width look-alike braces: refused";; *) fail "full-width braces refused" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "nothere.example.mil"}')"
-case "$r" in *'"code": 400'*"not a host of the portal"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
+case "$r" in *'"code": 400'*"not a host"*"portal"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "web01.example.mil", "ansible_become_user": "root"}')"
 case "$r" in *'"code": 400'*"not a var of this action"*) pass "a var the action does not list: refused";; *) fail "an unlisted var refused" "$r";; esac
 tok="$(c "$k/jdoe" token /portal/actions/stig_recheck | jq_ 'd["token"]')"
@@ -312,6 +382,57 @@ r2="$(c "$k/jdoe" wait "$wf2")"
 if [ "$(echo "$r" | jq_ 'd["code"]')" = 200 ] && [ "$(echo "$r2" | jq_ 'd.get("status")')" = "failed" ]; then pass "deny by an approver: the workflow stops"
 else fail "deny by an approver" "$r $r2"; fi
 
+# ---- 1.78.0: the Actions page, Details, the Jobs page and a job followed live
+r="$(c "$k/jdoe" get "/portal/")"
+case "$r" in *'"code": 200'*'class=\"card strip\"'*'data-show=\"workflow\"'*'id=\"agrid\"'*) pass "the Actions page: the strip, the filter tiles, the cards";; *) fail "the Actions page" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/actions/stig_recheck/details?embed=1")"
+case "$r" in *'"code": 200'*'class=\"dbody\"'*'Last 5 runs'*) pass "Details: what the action is, its last runs";; *) fail "Details" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/actions/stig_recheck?embed=1")"
+case "$r" in *"as the person who asked for it"*"Launch job"*) pass "the Run dialog's content: the form, Launch job, who is recorded";; *) fail "the Run dialog's content" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/jobs/$job")"
+case "$r" in *'"code": 200'*'class=\"card jl\"'*'id=\"jd\"'*'Requested by'*) pass "the Jobs page: the list and the job, in one";; *) fail "the Jobs page" "$r";; esac
+r="$(c "$k/jdoe" get "/portal/api/jobs/$job/progress")"
+if [ "$(echo "$r" | jq_ '(d["json"]["done"], d["json"]["pct"])')" = "(True, 100)" ] && ! echo "$r" | grep -q "extra_vars\|event_data"; then
+    pass "a job's progress in plain words (JSON): done, 100%, no raw event, no answer"
+else fail "a job's progress" "$r"; fi
+r="$(c "$k/stranger" get "/portal/api/jobs/$job/progress")"
+[ "$(echo "$r" | jq_ 'd["code"]')" != 200 ] && pass "the progress call: no card, no answer" || fail "the progress call without a card" "$r"
+
+# ---- 1.78.0: the actions AAP offers (Execute + the label) -------------------------------------------------------------------
+if grep -q "Found in AAP (Execute + the label portal): 1 of 3" "$work/out.txt" && grep -q "Odd survey (found) - f: survey type file is not handled" "$work/out.txt" \
+    && grep -q "1 more may be run by the account but have no label portal" "$work/out.txt"; then
+    pass "the deploy lists what it found (1 of 3), what it skipped and why, and the unlabelled count"
+else fail "the deploy's list of what it found" "$(grep -A3 'Verify | the actions found' "$work/out.txt")"; fi
+qc="$(c "$k/jdoe" get /portal/api/me | jq_ '[a for a in d["json"]["actions"] if a.startswith("jt_")][0]')"
+r="$(c "$k/jdoe" get /portal/)"
+cards="$(echo "$r" | grep -o '<h3>[^<]*</h3>')"        # the cards' titles (1.78.2: the help panel names the skipped ones, so look at the cards only)
+if echo "$cards" | grep -q "Quick check (found)" && ! echo "$cards" | grep -q "Run but not labelled" && ! echo "$cards" | grep -q "Odd survey"; then
+    pass "found in AAP: the labelled template has a card; the unlabelled and the odd one do not"
+else fail "found in AAP: the cards" "$r"; fi
+r="$(c "$k/jdoe" get /portal/actions/$qc)"
+if echo "$r" | grep -q 'type=\\"password\\"' && echo "$r" | grep -q 'type=\\"number\\"' && echo "$r" | grep -q "Started by"; then
+    pass "found in AAP: the form is the survey (a number, a masked password, the card's name)"
+else fail "found in AAP: the form" "$r"; fi
+r="$(c "$k/jdoe" launch "$qc" '{"portal_limit": ["web_servers"], "rounds": "3", "secret": "Zx-not-a-real-secret-9", "portal_requested_by": "SMITH.JOHN.A.1234567891"}')"
+fj="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
+r2="$(c "$k/jdoe" launch "$qc" '{"portal_limit": "web01.example.mil", "rounds": "9", "secret": "Zx-not-a-real-secret-9"}')"
+cp "$work/aap/aap.jsonl" "$work/aap-found.jsonl"
+if [ -n "$fj" ] && [ "$(echo "$r2" | jq_ 'd["code"]')" = 400 ] && "$py" - "$work/aap-found.jsonl" <<'EOF'
+import json, sys
+sent = [json.loads(x)["body"] for x in open(sys.argv[1]) if '"POST"' in x and "/launch/" in x]
+b = [x for x in sent if x.get("extra_vars", {}).get("secret")][-1]
+assert b["limit"] == "web01.example.mil,web03.example.mil", b          # the group sent as its hosts
+assert b["extra_vars"] == {"rounds": 3, "secret": "Zx-not-a-real-secret-9", "portal_requested_by": "DOE.JANE.Q.1234567890"}, b
+assert len([x for x in sent if x.get("extra_vars", {}).get("secret")]) == 1          # the bad one (rounds 9) never reached AAP
+EOF
+then pass "found in AAP: a launch sends the survey's variables and the hosts as the limit, the card's name for portal_requested_by; a number out of range is refused"
+else fail "found in AAP: the launch" "$r $r2"; fi
+podman exec site-portal-app cat /data/portal-log.jsonl > "$work/log-found.jsonl" 2>&1
+if ! grep -q "Zx-not-a-real-secret" "$work/log-found.jsonl" && ! podman logs site-portal-app 2>&1 | grep -q "Zx-not-a-real-secret" \
+    && ! c "$k/jdoe" get "/portal/api/jobs/${fj:-0}" | grep -q "Zx-not-a-real-secret" && grep -q '(hidden)' "$work/log-found.jsonl"; then
+    pass "found in AAP: the password is in no log line, no journal line and no job view (hidden)"
+else fail "found in AAP: the password leaked or is not hidden" "$(tail -3 "$work/log-found.jsonl")"; fi
+
 # ---- the log ---------------------------------------------------------------------------------------------------------------
 podman exec site-portal-app cat /data/portal-log.jsonl > "$work/log.jsonl" 2>&1
 if "$py" - "$work/log.jsonl" "$job" "$aid" "$aid2" <<'EOF'
@@ -349,7 +470,7 @@ if [ -n "$(command -v google-chrome chromium chromium-browser 2>/dev/null | head
     c "$k/jdoe" wait "$fix" >/dev/null
     if (cd "$repo" && "$py" "$here/portal_shots.py" "https://localhost:$shot_port/portal/" "$shots" \
             "jobs=jobs/$job2" "jobs-workflow=jobs/$wf" "jobs-result=jobs/$fix" "jobs-triage=jobs/$job" "approvals=approvals" \
-            "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=" \
+            "confirm=actions/act_triage?target=web01.example.mil&report_job=907&finding_id=eventlog%3Adisk-errors" "home=" "jobs-index=jobs" "details=actions/disk_cleanup/details" \
             "pick-host=actions/disk_cleanup" "pick-finding=actions/disk_cleanup?hosts=web01.example.mil" \
             "pick-many=actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fhome&pick1=9001~disk_full%3Aweb03.example.mil%3A%2Fsrv") > "$work/shots.txt" 2>&1; then
         pass "screenshots: jobs, approvals, the confirm page, home - 1280 and 800, light and dark, no script error, no side scroll ($shots)"

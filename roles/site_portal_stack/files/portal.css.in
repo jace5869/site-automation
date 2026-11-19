@@ -117,6 +117,27 @@ dl.def dd{overflow-wrap:anywhere;font-weight:550}
 .field label{display:block;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label);margin-bottom:5px}
 .field input,.field select,.field textarea{width:100%;font:inherit;font-size:14px;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:9px;padding:8px 11px}
 .field textarea{font-family:var(--mono);font-size:13px;resize:vertical}
+.field .multi{display:grid;gap:6px}
+.field .opt{display:flex;gap:9px;align-items:center;font-size:14px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--ink);margin:0}
+.field .opt input{width:auto;flex:none}
+.field .hint{margin:0 0 6px;font-size:13px;color:var(--muted)}
+/* the host picker (1.78.0): chips, a search box and a list of the inventory's hosts and groups */
+.picker select[multiple]{min-height:9em}
+.pk-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;min-height:28px;align-items:center}
+.pk-chip{gap:6px;max-width:100%;overflow-wrap:anywhere}
+.pk-x{border:0;background:none;color:inherit;font:inherit;line-height:1;cursor:pointer;padding:0 2px;border-radius:5px}
+.pk-x:hover,.pk-x:focus-visible{background:var(--edge)}
+.field .pk-q{margin:0 0 6px}
+.pk-list{list-style:none;margin:0 0 6px;padding:4px;max-height:15em;overflow-y:auto;background:var(--card);border:1px solid var(--edge);border-radius:9px}
+.pk-row{display:flex;gap:9px;align-items:center;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:14px}
+.pk-row.on{background:var(--edge)}
+.pk-row.off{opacity:.55;cursor:not-allowed}
+.pk-box{flex:none;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.5px solid var(--muted);border-radius:4px;font-size:12px;line-height:1}
+.pk-row.sel .pk-box{background:var(--ink);color:var(--card);border-color:var(--ink)}
+.pk-name{font-family:var(--mono);font-size:13px;overflow-wrap:anywhere;min-width:0;flex:1 1 auto}
+.pk-kind{flex:none;font-size:12px;color:var(--muted);white-space:nowrap}
+.pk-empty,.pk-foot{padding:6px 8px;margin:0}
+.pk-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .field.bad input,.field.bad select,.field.bad textarea{border-color:var(--critical)}
 .why{color:var(--critical);font-size:12.5px;margin:4px 0 0}
 .why:empty{display:none}
@@ -196,3 +217,176 @@ textarea.hosts{min-height:84px}
 .field textarea[name=hosts]{font-family:var(--mono);font-size:13px;min-height:44px}
 @media (max-width:1000px){.suggest{right:0}}
 @media print{.appbar .seg,.btns,.nav{display:none}pre.out{max-height:none}}
+/* 1.78.0: the Actions page (status strip, filter tiles, search, cards), the Run dialog and Details panel, the Jobs page (list and pane) */
+.strip{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between;padding:10px 16px;margin:0 0 14px}
+.strip .l{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13.5px}
+.strip .r{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:13px}
+/* 1.78.2: the cards by area, the help under the strip, the site's logo */
+.grp{margin-top:clamp(18px,2vw,28px)}
+.grp:first-child{margin-top:4px}
+.grp[hidden]{display:none}
+.grp>h2{cursor:default}.js-on .grp>h2{cursor:pointer}
+.grp>h2 .chev{font-size:12px;color:var(--muted);width:14px;display:inline-block}
+.grp.folded:not(.peek)>ul{display:none}
+.grp.pinned>h2{color:var(--ink)}
+.tcard .top .pin{margin-left:auto;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:6px}
+.tcard .top .pin:hover{color:var(--ink);background:var(--card-strong)}
+.tcard .top .pin.on{color:var(--warning)}
+.tcard.off .top .pin{display:none}
+/* 1.78.4: the live badges and toasts, the keyboard list, a locked approval */
+.nav .bdg,.appbar .nav a .bdg{display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font:700 11px/1 var(--mono);padding:0 5px;margin-left:6px}
+.nav a[href$="approvals"] .bdg{background:var(--warning);color:#fff}
+.toasts{position:fixed;right:20px;bottom:20px;z-index:50;display:grid;gap:10px;width:min(340px,calc(100vw - 40px))}
+.toast{background:var(--card-solid);border:1px solid var(--edge);border-left:4px solid var(--ok);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.22);padding:12px 36px 12px 14px;position:relative}
+.toast.bad{border-left-color:var(--critical)}
+.toast b{display:block;font-size:14px}.toast p{margin:3px 0 6px;font-size:13px;color:var(--muted)}.toast a{font-weight:650;font-size:13px}
+.toast .tx{position:absolute;right:6px;top:4px;border:0;background:none;font-size:20px;line-height:1;color:var(--muted);cursor:pointer;padding:2px 6px}
+.keys{position:fixed;left:50%;top:90px;transform:translateX(-50%);width:min(420px,calc(100vw - 32px));background:var(--card-solid);border:1px solid var(--edge);border-radius:14px;box-shadow:0 16px 40px rgba(0,0,0,.25);padding:16px 20px;z-index:60}
+.keys h3{margin:0 0 8px}.keys dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:13.5px}.keys dd{margin:0}
+.keys kbd{font:600 12px var(--mono);border:1px solid var(--edge);border-bottom-width:2px;border-radius:6px;padding:1px 7px}
+tr.locked td{color:var(--muted);background:var(--card-strong)}
+tr.locked td b,tr.locked td a{color:var(--ink)}
+tr.locked .lockline{display:inline-flex;gap:6px;align-items:flex-start;white-space:normal;color:var(--ink)}
+@media print{.toasts,.keys,.bdg{display:none}}
+.grp>h2{margin:0;padding:6px 0 12px;font-family:var(--display);font-size:clamp(17px,1.3vw,20px);font-weight:650;letter-spacing:-.015em;display:flex;align-items:baseline;gap:10px}
+.grp>h2 .count{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--muted)}
+details.hlp{margin:0 0 14px;padding:0}
+details.hlp>summary{cursor:pointer;padding:10px 16px;font-size:13.5px;font-weight:600;color:var(--ink)}
+details.hlp .whyb{padding:0 16px 12px;font-size:13.5px}
+details.hlp ul.hl{margin:0;padding-left:18px}
+details.hlp ul.hl ul{margin:4px 0 4px;padding-left:18px}
+details.hlp li{margin:3px 0}
+details.hlp li.warn{color:var(--warning);font-weight:600}
+details.hlp code{font-family:var(--mono);font-size:12.5px}
+.home img.logo{display:block;max-height:40px;max-width:160px;width:auto;height:auto}
+.ftiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 14px}
+.ft{display:block;text-decoration:none;text-align:left;padding:12px 16px;border-radius:12px;border:1px solid var(--edge);background:var(--card);cursor:pointer;font:inherit;color:var(--ink)}
+.ft:hover{border-color:var(--accent)}
+.ft .k{display:block;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label)}
+.ft .v{display:block;font-family:var(--display);font-size:26px;font-weight:650;line-height:1.2;margin-top:4px}
+.ft[aria-current=true]{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.ft.bad .v{color:var(--critical)}
+.find{display:flex;gap:10px;align-items:center;margin:0 0 16px}
+.find input{flex:1;min-width:0;font:inherit;font-size:14px;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:9px;padding:9px 12px}
+.find kbd{font-family:var(--mono);font-size:12px;border:1px solid var(--edge);border-radius:6px;padding:1px 6px;color:var(--muted)}
+.find .cnt{color:var(--muted);font-size:13px;white-space:nowrap}
+.acts.cols3>li{display:flex}
+.acts.cols3>li>.tcard{flex:1}
+.tcard{display:flex;flex-direction:column;gap:8px;padding:16px;min-width:0}
+.tcard .top{display:flex;gap:12px;justify-content:flex-start;align-items:center}
+.tcard h3{margin:0;font-family:var(--display);font-size:16.5px;line-height:1.3;overflow-wrap:anywhere;text-align:left}
+.tcard p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.45}
+.tcard p.none{font-style:italic}
+.tcard .meta{display:flex;gap:6px 10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--muted)}
+.tcard .lab{display:flex;gap:6px;flex-wrap:wrap}
+.tcard .lab .tg{font:inherit;font-size:12px;border:1px solid var(--edge);border-radius:999px;padding:1px 9px;color:var(--muted);background:var(--card-strong)}
+.ty{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;border:1px solid var(--edge);border-radius:6px;padding:1px 7px;color:var(--label)}
+.tcard .acts2{display:flex;gap:8px;margin-top:auto;padding-top:4px}
+.ico{display:inline-flex;width:34px;height:34px;border-radius:10px;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent-ink);flex:none}
+.ico svg{width:18px;height:18px}
+.tcard[hidden],.acts.cols3>li[hidden]{display:none}
+/* 1.78.4: what can be started and what cannot look different in every look. Available: a solid accent border and top bar, a filled Run. Off: a neutral grey surface, a dashed
+   border, muted ink, a lock chip and its reason on one line, no Run; the accent colour is never used for it. */
+.tcard:not(.off){border-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent),var(--shadow)}
+.tcard:not(.off) .btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.tcard:not(.off) .btn.pri:hover{filter:brightness(.9)}
+.tcard.off{background:var(--card-strong);border:1px dashed var(--muted);box-shadow:none}
+.tcard.off h3,.tcard.off p,.tcard.off .meta,.tcard.off .ty{color:var(--muted)}
+.tcard.off .ico{background:var(--line);color:var(--muted)}
+.tcard.off .btn{background:transparent;color:var(--ink);border-color:var(--muted)}
+.tcard.off .badge.off{display:inline-flex;align-items:center;gap:4px;border-style:solid;border-color:var(--muted);background:transparent;color:var(--ink)}
+.tcard.off .badge.off svg{width:12px;height:12px}
+.tcard.off p.offline{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;color:var(--ink)}
+dialog.dlg{width:min(640px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);padding:22px 24px}
+dialog.dlg::backdrop{background:rgba(10,12,16,.55)}
+dialog.dlg h2{margin:0 0 4px;font-family:var(--display);font-size:20px}
+dialog.dlg .sub{color:var(--muted);font-size:13.5px;margin:0 0 16px}
+.note.info{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--info-bd);background:var(--info-bg);border-radius:10px;font-size:13.5px;margin:14px 0 0}
+.dlg .btns{justify-content:flex-end}
+dialog.drawer{margin:0 0 0 auto;width:min(460px,100vw);height:100vh;max-height:none;border-radius:16px 0 0 16px}
+.drawer .hd2{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.drawer h3{margin:14px 0 4px;font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+.drawer p{margin:0 0 4px;font-size:14px}
+.plain{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:14px}
+.plain.runs li{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.drawer table.q{width:100%;border-collapse:collapse;font-size:13.5px}
+.drawer table.q th,.drawer table.q td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+.two-pane{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:16px;align-items:start}
+.jl{padding:14px;display:flex;flex-direction:column;gap:12px}
+.seg2{display:inline-flex;border:1px solid var(--edge);border-radius:9px;overflow:hidden;align-self:flex-start}
+.seg2 a{padding:6px 14px;color:var(--ink);text-decoration:none;font-size:13.5px;font-weight:600}
+.seg2 a.on{background:var(--btn);color:var(--btn-ink)}
+.jl .find{margin:0}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chips button{padding:3px 10px;border-radius:999px;font-size:12.5px}
+.chips button[aria-pressed=true]{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.jrows{list-style:none;margin:0;padding:0;display:grid}
+.jrows li{border-top:1px solid var(--line);border-radius:8px}
+.jrows li:first-child{border-top:0}
+.jrows li[hidden]{display:none}
+.jrows li.on{background:var(--accent-soft)}
+.jrows a{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 8px;color:inherit;text-decoration:none}
+.jrows .d{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+.jrows .d.ok{background:var(--ok)}.jrows .d.bad{background:var(--critical)}.jrows .d.run{background:var(--info)}.jrows .d.wait{background:var(--warning)}
+.jrows .t{font-weight:650;font-size:14px;overflow-wrap:anywhere}
+.jrows small{display:block;color:var(--muted);font-size:12.5px;font-weight:400}
+.jrows .r{color:var(--muted);font-size:12.5px;text-align:right;white-space:nowrap}
+.jd{padding:20px 22px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.jd .hd{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+.jd h2{margin:0;font-family:var(--display);font-size:22px;line-height:1.25}
+.jd h3{margin:0 0 6px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+.jd .muted-line{margin:4px 0 0}
+.banner2{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid var(--ok-bd);background:var(--ok-bg);border-radius:10px;font-size:14px}
+.banner2.bad{border-color:var(--critical-bd);background:var(--critical-bg)}
+.banner2.run{border-color:var(--info-bd);background:var(--info-bg)}
+.banner2 svg{margin-top:3px;flex:none;width:16px;height:16px}
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--edge);border-radius:10px}
+.facts>div{padding:10px 14px;border-left:1px solid var(--line);border-top:1px solid var(--line);min-width:0}
+.facts>div:nth-child(-n+4){border-top:0}
+.facts>div:nth-child(4n+1){border-left:0}
+.facts>div.wide{grid-column:1/-1;border-left:0}
+.facts .k{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label)}
+.facts .v{margin-top:3px;font-size:14px;overflow-wrap:anywhere}
+.facts .mono{font-family:var(--mono);font-size:13px}
+.btn.sm{padding:1px 8px;font-size:12.5px}
+.jd dl{display:grid;grid-template-columns:minmax(120px,200px) minmax(0,1fr);gap:6px 16px;margin:0}
+.jd dt{color:var(--muted);font-size:13.5px}.jd dd{margin:0;font-family:var(--mono);font-size:13px;overflow-wrap:anywhere}
+.pane-btns{margin:0}
+.foot{color:var(--muted);font-size:13px}
+.now{display:grid;gap:8px}.now .nl{font-size:16px;font-family:var(--display)}.now .nl .ic{display:inline-block;width:15px;height:15px;vertical-align:-2px;margin-right:6px;color:var(--info)}
+progress.pb{width:100%;height:10px;appearance:none;-webkit-appearance:none;border:0;border-radius:999px;background:var(--line);overflow:hidden}
+progress.pb::-webkit-progress-bar{background:var(--line);border-radius:999px}
+progress.pb::-webkit-progress-value{background:var(--info);border-radius:999px}
+progress.pb::-moz-progress-bar{background:var(--info);border-radius:999px}
+.hosts{display:flex;gap:8px;flex-wrap:wrap}
+.hc{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--edge);border-radius:999px;padding:3px 12px 3px 8px;font-size:13px}
+.hc b{font-family:var(--mono);font-weight:600}
+.hc.ok{border-color:var(--ok-bd);background:var(--ok-bg)}.hc.bad{border-color:var(--critical-bd);background:var(--critical-bg)}
+.hc.run{border-color:var(--info-bd);background:var(--info-bg)}.hc.wait{border-color:var(--warning-bd);background:var(--warning-bg)}
+.hc .ic{width:14px;height:14px}
+.evs{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.evs .ev{display:flex;gap:10px;align-items:flex-start;font-size:14px;padding:3px 0}
+.evs .ev svg{width:16px;height:16px;margin-top:3px;flex:none}
+.evs .ev.ok svg{color:var(--ok)}.evs .ev.bad svg{color:var(--critical)}.evs .ev.wait svg{color:var(--warning)}
+.evs .ev b{font-family:var(--mono);font-weight:600}
+@media (max-width:1000px){.two-pane{grid-template-columns:minmax(0,1fr)}.facts{grid-template-columns:repeat(2,minmax(0,1fr))}.ftiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media print{.jl,.appbar,.pane-btns{display:none}}
+/* 1.78.2: what is running turns - the running icon (status chip, host chips, Now line), the jobs list's ring, the progress bar's stripe. Off under reduced motion and in print. */
+.jrows .d.run{background:none;border:2px solid var(--info);border-top-color:transparent;box-sizing:border-box}
+progress.pb::-webkit-progress-value{background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.22) 0 8px,rgba(255,255,255,0) 8px 16px);background-size:22.63px 22.63px}
+progress.pb::-moz-progress-bar{background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.22) 0 8px,rgba(255,255,255,0) 8px 16px);background-size:22.63px 22.63px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes stripe{to{background-position:22.63px 0}}
+@media (prefers-reduced-motion:no-preference){
+  .ic-run,.jrows .d.run{animation:spin 1s linear infinite}
+  progress.pb::-webkit-progress-value{animation:stripe 1s linear infinite}
+  progress.pb::-moz-progress-bar{animation:stripe 1s linear infinite}
+}
+/* portal_motion (1.78.3): always - animate even when the system asks for less motion; off - never. The class is on <html> (no inline style); print stays still in every mode. */
+html.motion-always .ic-run,html.motion-always .jrows .d.run{animation:spin 1s linear infinite}
+html.motion-always progress.pb::-webkit-progress-value{animation:stripe 1s linear infinite}
+html.motion-always progress.pb::-moz-progress-bar{animation:stripe 1s linear infinite}
+html.motion-off .ic-run,html.motion-off .jrows .d.run,html.motion-off .chip.s-run .ic{animation:none}
+html.motion-off progress.pb::-webkit-progress-value{animation:none}
+html.motion-off progress.pb::-moz-progress-bar{animation:none}
+@media print{html .ic-run,html .jrows .d.run{animation:none !important}html progress.pb::-webkit-progress-value{animation:none !important}html progress.pb::-moz-progress-bar{animation:none !important}}
