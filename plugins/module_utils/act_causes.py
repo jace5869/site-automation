@@ -79,10 +79,11 @@ def _text(v, cap):
 
 
 def _cmd(v):
+    """-> (the command, or '' when there is none or it is too long: a cut command is never offered to copy)."""
     if v is None or isinstance(v, (dict, list)):
-        return ""
+        return "", False
     s = str(v).strip("\n").rstrip()
-    return s if len(s) <= MAX_CMD else s[:MAX_CMD]
+    return (s, False) if len(s) <= MAX_CMD else ("", True)
 
 
 def _key(v):
@@ -96,11 +97,13 @@ def _conf(v):
         return None, "no confidence" if v in (None, "") else "confidence is not a number"
     if isinstance(v, str) and v.strip().lower() in WORD_CONFIDENCE:
         return WORD_CONFIDENCE[v.strip().lower()], ""
-    m = re.search(r"\d+(?:\.\d+)?", str(v))            # "85", "85%", "about 70%"
+    m = re.search(r"[-+]?\d+(?:\.\d+)?", str(v))      # "85", "85%", "about 70%" - the sign kept (Codex: -90 is no 90)
     if not m:
         return None, "confidence is not a number"
     n = float(m.group(0))
-    return int(round(max(0.0, min(100.0, n)))), ""
+    if n < 0 or n > 100:
+        return None, "confidence %s is not 0-100" % m.group(0)
+    return int(round(n)), ""
 
 
 def _strs(v):
@@ -129,6 +132,8 @@ def _object(text):
     if m:
         cands.append(m.group(1))
     cands += re.findall(r"```(?:json)?\s*(.*?)```", t, re.S)
+    if t.strip()[:1] in ("{", "["):
+        cands.append(t.strip())                         # the whole answer (a bare list of the older shape too)
     i, j = t.find("{"), t.rfind("}")
     if 0 <= i < j:
         cands.append(t[i:j + 1])
@@ -157,7 +162,10 @@ def _steps(v, where, errors):
             s = {"do": s}
         if not isinstance(s, dict):
             continue
-        st = {"do": _text(s.get("do"), MAX_STEP), "cmd": _cmd(s.get("cmd")), "why": _text(s.get("why"), MAX_STEP)}
+        cmd, long_ = _cmd(s.get("cmd"))
+        if long_:
+            errors.append("%s: a command over %d characters left out" % (where, MAX_CMD))
+        st = {"do": _text(s.get("do"), MAX_STEP), "cmd": cmd, "why": _text(s.get("why"), MAX_STEP)}
         if st["do"] or st["cmd"]:
             out.append(st)
     if len(out) > MAX_STEPS:
@@ -230,7 +238,10 @@ def parse(text, ids=None):
         if cz is None:
             continue
         if cz["key"] in seen_keys:
-            k2 = "%s-%d" % (cz["key"][:MAX_KEY - 4], n)
+            k2, i = "%s-%d" % (cz["key"][:MAX_KEY - 4], n), n
+            while k2 in seen_keys or any(_key(x.get("key")) == k2 for x in raw[n:MAX_CAUSES] if isinstance(x, dict)):
+                i += 100                                # Codex: never a key already taken (or one a later cause has)
+                k2 = "%s-%d" % (cz["key"][:MAX_KEY - 6], i)
             errors.append("cause %s: the key is there twice, this one is %s" % (cz["key"], k2))
             cz["key"] = k2
         seen_keys.add(cz["key"])
@@ -243,8 +254,8 @@ def parse(text, ids=None):
             elif p not in kept:
                 kept.append(p)
                 owner[p] = cz["key"]
-        if not kept and cz["patterns"]:
-            errors.append("cause %s explains no item left: dropped" % cz["key"])
+        if not kept:                                    # Codex: a cause of no pattern is never a card
+            errors.append("cause %s explains no item%s: dropped" % (cz["key"], " left" if cz["patterns"] else ""))
             continue
         cz["patterns"] = kept
         causes.append(cz)
@@ -263,6 +274,35 @@ def parse(text, ids=None):
             "errors": errors}
 
 
+def from_records(records, ids=None):
+    """The older answers already read, one record per pattern ({id: {cause, fix, evidence, confidence[, noise]}}) -> the
+    shape of parse, one cause per pattern - every record, with no cap of one answer (Codex: a report of 40+ patterns
+    across batches)."""
+    errors = []
+    recs = records if isinstance(records, dict) else {}
+    asked = [str(i) for i in ids] if ids is not None else None
+    keep = sorted((str(k) for k in recs if asked is None or str(k) in asked), key=natural)
+    items = [dict(recs[k], id=k) for k in keep if isinstance(recs[k], dict) and not recs[k].get("noise")]
+    causes, seen = [], set()
+    for n, c in enumerate(_from_items(items, errors), 1):
+        cz = _cause(c, n, errors)
+        if cz is None:
+            continue
+        k, i = cz["key"], 1
+        while cz["key"] in seen:
+            i += 1
+            cz["key"] = "%s-%d" % (k[:MAX_KEY - 4], i)
+        seen.add(cz["key"])
+        causes.append(cz)
+    noise = [k for k in keep if isinstance(recs[k], dict) and recs[k].get("noise")]
+    noise_why = {}
+    for k in noise:
+        why = re.sub(r"^Noise:?\s*", "", str(recs[k].get("cause") or ""))
+        if why:
+            noise_why[k] = _text(why, MAX_LINE)
+    return {"parsed": True, "overall": "", "causes": causes, "noise": noise, "noise_why": noise_why, "errors": errors}
+
+
 def merge(answers):
     """The parsed answers of several batches -> one, the same whatever their order: causes of one key joined (the union of
     their patterns and hosts, the highest confidence, the steps, title and evidence of the surest one); a pattern two causes
@@ -273,9 +313,10 @@ def merge(answers):
         for c in a.get("causes") or []:
             by_key.setdefault(c["key"], []).append(c)
 
-    def rank(c):                      # the surest first; ties by title, then by steps - never by arrival
+    def rank(c):                      # the surest first; ties by title, steps, evidence, hosts - never by arrival (Codex)
         return (-(c.get("confidence") if c.get("confidence") is not None else -1), c.get("title") or "",
-                json.dumps(c.get("steps") or [], sort_keys=True))
+                json.dumps(c.get("steps") or [], sort_keys=True), json.dumps(c.get("evidence") or []),
+                json.dumps(sorted(c.get("hosts") or [])), json.dumps(sorted(c.get("patterns") or [])))
     joined = []
     for key in sorted(by_key):
         cs = sorted(by_key[key], key=rank)

@@ -64,7 +64,8 @@ class Parse(unittest.TestCase):
         r = ac.parse({"causes": [{"key": "Bad Key!!", "title": "t" * 300, "patterns": ["P1", "P99"], "confidence": 140,
                                   "evidence": ["e" * 500] + ["x"] * 7, "steps": [{"do": "s%d" % i} for i in range(9)]}]}, IDS)
         c = r["causes"][0]
-        self.assertEqual((c["key"], len(c["title"]), c["patterns"], c["confidence"]), ("bad-key", ac.MAX_TITLE, ["P1"], 100))
+        self.assertEqual((c["key"], len(c["title"]), c["patterns"], c["confidence"]), ("bad-key", ac.MAX_TITLE, ["P1"], None))
+        self.assertIn("cause bad-key: confidence 140 is not 0-100", r["errors"])
         self.assertEqual((len(c["evidence"]), len(c["evidence"][0]), len(c["steps"])), (5, ac.MAX_LINE, 6))
         self.assertTrue(any("P99 is not an item asked about" in x for x in r["errors"]))
         self.assertTrue(all(isinstance(x, str) and len(x) < 200 for x in r["errors"]))   # short strings, to count and show
@@ -89,6 +90,31 @@ class Parse(unittest.TestCase):
                                   "steps": [{"do": "Write the file.", "cmd": "cat > /etc/x <<'EOF'\na = 1\nEOF"}]}]}, IDS)
         self.assertEqual(r["causes"][0]["steps"][0]["cmd"], "cat > /etc/x <<'EOF'\na = 1\nEOF")
 
+    def test_the_review_cases(self):
+        # Codex round 1: a signed confidence, a command too long to copy whole, a cause of no pattern, a repaired key
+        # that is taken, a bare list of the older shape
+        r = ac.parse({"causes": [{"key": "a", "title": "A", "patterns": ["P1"], "confidence": "-90",
+                                  "steps": [{"do": "Run it.", "cmd": "x" * (ac.MAX_CMD + 1)}, {"do": "Then this."}]},
+                                 {"key": "b", "title": "No pattern", "confidence": 99, "steps": [{"do": "Never first."}]}]}, IDS)
+        self.assertEqual([c["key"] for c in r["causes"]], ["a"])
+        c = r["causes"][0]
+        self.assertEqual((c["confidence"], c["steps"][0]), (None, {"do": "Run it.", "cmd": "", "why": ""}))
+        e = " | ".join(r["errors"])
+        for want in ("confidence -90 is not 0-100", "a command over %d characters left out" % ac.MAX_CMD, "cause b explains no item: dropped"):
+            self.assertIn(want, e)
+        r = ac.parse({"causes": [{"key": "disk-3", "title": "A", "patterns": ["P1"]}, {"key": "disk", "title": "B", "patterns": ["P2"]},
+                                 {"key": "disk", "title": "C", "patterns": ["P3"]}]}, IDS)
+        keys = [c["key"] for c in r["causes"]]
+        self.assertEqual(len(set(keys)), 3, keys)
+        r = ac.parse('[{"id": "P1", "cause": "Disk full"}, {"id": "P2", "cause": "DNS"}]', IDS)
+        self.assertEqual([c["patterns"] for c in r["causes"]], [["P1"], ["P2"]])
+
+    def test_records_no_cap(self):
+        recs = dict(("P%d" % i, {"cause": "c%d" % i, "fix": "f", "confidence": 60}) for i in range(1, 61))
+        recs["P61"] = {"cause": "Noise: boot chatter", "noise": True}
+        r = ac.from_records(recs, ["P%d" % i for i in range(1, 62)])
+        self.assertEqual((len(r["causes"]), r["noise"], r["noise_why"]), (60, ["P61"], {"P61": "boot chatter"}))
+
     def test_band_and_prompt(self):
         self.assertEqual([ac.band(x) for x in (None, 0, 49, 50, 79, 80, 100)], ["", "low", "low", "medium", "medium", "high", "high"])
         lines = ac.prompt_lines("pattern")
@@ -110,6 +136,11 @@ class Merge(unittest.TestCase):
     def test_the_same_in_any_order(self):
         outs = [json.dumps(ac.merge(list(p)), sort_keys=True) for p in itertools.permutations(self.batches())]
         self.assertEqual(len(set(outs)), 1)
+
+    def test_ties_by_evidence(self):
+        a = ac.parse({"causes": [{"key": "k", "title": "T", "patterns": ["P1"], "confidence": 80, "evidence": ["host a line"]}]}, IDS)
+        b = ac.parse({"causes": [{"key": "k", "title": "T", "patterns": ["P2"], "confidence": 80, "evidence": ["host b line"]}]}, IDS)
+        self.assertEqual(json.dumps(ac.merge([a, b]), sort_keys=True), json.dumps(ac.merge([b, a]), sort_keys=True))
 
     def test_joined(self):
         m = ac.merge(self.batches())

@@ -377,8 +377,14 @@ analyses after it), ACT answers in one shape, read by `plugins/module_utils/act_
 - **overall**: what to do first.
 
 What does not fit is mended and said: a cut line, a pattern named twice (the first cause keeps it), a
-pattern not asked about. An answer in the older shape (one analysis per item) becomes one cause per item.
-Answers asked in batches are joined the same way whatever order they come back in. The report shows the
+pattern not asked about. Some things are left out and said instead:
+- a confidence outside 0 to 100;
+- a command too long to keep whole (a cut command is never offered to copy);
+- a cause that names no pattern.
+
+An answer in the older shape (one analysis per item) becomes one cause per item, also beside batches of the
+new shape. Answers asked in batches are joined the same way whatever order they come back in. Each pattern's
+own record in the job's output follows the joined cause. The report shows the
 causes as cards (`site_filters.report_cause_cards`): the order is the data's - the worst level, then the
 confidence - never ACT's.
 

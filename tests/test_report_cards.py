@@ -60,6 +60,27 @@ class Cards(unittest.TestCase):
         r = self.cards("old")
         self.assertEqual([k["key"] for k in r["cards"] if not k["unexplained"]], ["p1", "p2"])
 
+    def test_noise_only_and_mixed_batches(self):
+        import vmware_alarm_filters as va
+        # Codex: an answer that says every pattern is harmless - no card, the harmless list still on the page
+        r = sf.report_cause_cards(sf.act_causes.parse({"causes": [], "noise": ["P7"], "noise_why": {"P7": "boot"}}, tac.IDS), items(), {})
+        import test_report_fit as T
+        h = T.EmailTiles()._env().get_template("report_atlas.html.j2").render(
+            _report={"title": "t", "status": "ok", "summary": [], "sections": r["web"]}, _email_footer="f", _page_logo_cid="",
+            _page_runs=[], report_email_header_text="x")
+        self.assertIn("Harmless (1):</b> P7 - boot", h)
+        # Codex: a batch of the older shape beside one of causes - both explained; by_id as the merged cause says
+        probs = [{"id": "P%d" % i} for i in range(1, 9)]
+        old = va.act_analysis_parse('{"items": [{"id": "P1", "cause": "Disk full", "fix": "Free /var", "confidence": 90}]}', probs[:1])
+        new1 = va.act_analysis_parse({"causes": [{"key": "dns", "title": "DNS slow", "patterns": ["P2"], "confidence": 50,
+                                                  "steps": [{"do": "Check resolv.conf"}]}]}, probs)
+        new2 = va.act_analysis_parse({"causes": [{"key": "dns", "title": "DNS down", "patterns": ["P3"], "confidence": 90,
+                                                  "steps": [{"do": "Restart named"}]}]}, probs)
+        m = va.act_batches_merge([{"ids": ["P1"], "ran": True, "parsed": old}, {"ids": ["P2"], "ran": True, "parsed": new1},
+                                  {"ids": ["P3"], "ran": True, "parsed": new2}])
+        self.assertEqual(sorted(p for c in m["causes"] for p in c["patterns"]), ["P1", "P2", "P3"])
+        self.assertEqual((m["by_id"]["P2"]["cause"], m["by_id"]["P3"]["cause"]), ("DNS down", "DNS down"))
+
     def test_on_every_look(self):
         import test_report_fit as T
         env = T.EmailTiles()._env()

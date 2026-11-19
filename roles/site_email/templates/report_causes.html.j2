@@ -39,13 +39,13 @@
 {%- if k.evidence %}
 <div class="cz-ev"><h4>Evidence</h4><ul>
 {%- for e in k.evidence %}<li>{% if e.t %}<span class="t">{{ e.t | e }}</span>{% endif %}{% if e.h %}<span class="h">{{ e.h | e }}</span>{% endif %}<span class="m">{{ e.m | e }}</span></li>{% endfor %}
-</ul>{% if k.more %}<p class="more">+{{ '{:,}'.format(k.more) }} more line{{ '' if k.more == 1 else 's' }} in the workbook</p>{% endif %}</div>
+</ul>{% if k.more %}<p class="more">+{{ '{:,}'.format(k.more) }} more line{{ '' if k.more == 1 else 's' }} like these</p>{% endif %}</div>
 {%- endif %}
 </div>
 </article>
 {%- endfor %}
 </div>
+{%- endif %}
 {%- if s.noise | default([]) %}
 <p class="cz-noise"><b>Harmless ({{ s.noise | length }}):</b> {% for x in s.noise %}{{ x.id | e }}{% if x.why %} - {{ x.why | e }}{% endif %}{{ '; ' if not loop.last else '' }}{% endfor %}</p>
-{%- endif %}
 {%- endif %}

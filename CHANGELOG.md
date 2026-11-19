@@ -8,15 +8,16 @@
 
 - ACT now groups the patterns that share a cause into one cause - a title, the patterns, the evidence, the steps to fix
   it in order (each with its exact command) and a confidence. The website shows one card per cause: its patterns and
-  hosts once, the confidence, numbered steps with a **Copy** button for each command, at most 5 evidence lines (the rest
-  in the workbook). No more "Shares a cause with P1, P2 ..." on every row.
+  hosts once, the confidence, numbered steps with a **Copy** button for each command, at most 5 evidence lines (and how
+  many more like them). No more "Shares a cause with P1, P2 ..." on every row.
 - **What to do first**: ACT's own words, then the top cause's first step with its command. The cards are in the
   data's order (the worst level, then the confidence), never ACT's.
 - The **Patterns** table keeps every row; its new Cause column links to the card. A pattern ACT gave no cause for has
-  a card of its own; the harmless ones are listed under the cards.
+  a card of its own; the harmless ones are listed under the cards (also when every pattern is harmless).
 - The email: the tiles, What to do first and one row per cause with its first step. The workbook: every step of every
   cause.
-- An answer in the older shape (one analysis per pattern) still reads: a card per pattern.
+- An answer in the older shape (one analysis per pattern) still reads: a card per pattern, also beside batches of the
+  new shape and with no limit on the number of patterns.
 - `plugins/module_utils/act_causes.py`: the answer shape the other "why" reports will use too (docs/ADDING_ACT.md,
   "Causes").
 

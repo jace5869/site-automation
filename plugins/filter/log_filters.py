@@ -611,8 +611,7 @@ def log_report(data, parsed=None, opts=None):
     # becomes one cause per pattern
     cc = None
     if with_act:
-        causes = pa if "causes" in pa else _ac.parse({"items": [dict(v, id=k) for k, v in sorted(by.items()) if not v.get("noise")]},
-                                                      [p["id"] for p in ps])
+        causes = pa if "causes" in pa else _ac.from_records(by, [p["id"] for p in ps])     # every record, no cap (Codex)
         items = [{"id": p["id"], "level": p["severity"] or "info", "title": p["problem"], "hosts": [_short(h) for h in p.get("hosts") or []],
                   "count": p.get("count") or 0,
                   "examples": [{"time": _hhmm(_tm.local(_t(e.get("time")), tz)) if e.get("time") else "", "sort": e.get("time") or "",
