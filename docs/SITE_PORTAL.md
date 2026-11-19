@@ -556,10 +556,13 @@ Workflow 46 takes Linux and Windows hosts. Workflow 48 is for Linux hosts, as `c
 
 ## Approvals
 
-`/portal/approvals` lists the pending approvals of the **listed** workflows, whoever started them (the portal, a
-schedule, a person in AAP). Each shows who started it through the portal, with which values, and since when it waits.
+`/portal/approvals` lists **every** pending workflow approval in AAP that the portal's account can see, whoever started the run (the portal, a schedule, a person in AAP);
+one that has timed out is left out. Each shows the workflow, who or what started it, the approval's name and description, the time left before it times out,
+and a link to the report the steps before it left (a job artifact `site_report_url`), when there is one.
 
-- **Approve** and **Deny** are there only for the people in `portal_approvers`. Others see the list.
+- **Approve** and **Deny** are there only for the people in `portal_approvers`, and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
+  (*Sure? Yes, approve / Back*). Every other row is grey, with one line that says why and to decide it in AAP: *Only the approvers decide*, *You started this run*, or *no Approve role*.
+- **The header badge.** *Approvals* shows how many are waiting for you to decide here; *Jobs* shows how many of your jobs run. Both update every 10 seconds while the page is open.
 - **Not your own run.** An approver who started a run through the portal does not get Approve and Deny for it: one
   muted line says another approver decides. The portal refuses such a decision and logs it.
   `portal_allow_self_approval: true` allows it.
@@ -698,6 +701,32 @@ Without scripts, Run is a link to the confirm page. An action that asks for a ho
 **Details** is a panel (a page without scripts) with the description, the type, the labels, what it asks for, the survey's questions
 (names and types only - never a default), its last five runs and Run.
 
+## Quick ways around
+
+These need scripts and are kept in this browser only; without scripts every page works as before.
+
+- **Pin an action.** The star on a card puts it in a *Pinned* group on top; the star again puts it back. A pin is per browser.
+- **Fold a group.** A click on an area's heading folds its cards (and again opens them). A search or a filter shows what matches, folded or not.
+- **A toast when your job ends.** On any portal page, a small message says *Succeeded - <action>* (it goes away by itself) or *Failed - <action>* (it stays until you close it), with a link to the job.
+- **Run again with the same answers.** On a finished job, the button opens the confirm page of its action with the answers filled in (never a password); you press Run there.
+- **Keyboard.** `/` searches the actions, `g a`, `g j` and `g p` go to Actions, Jobs and Approvals, `?` lists them. They are left alone while you type in a field.
+
+## Which area a found template is in
+
+Each found template gets an area, the first of these that says: **1.** its `portal-area:<area>` label; **2.** the area its playbook has in the job catalog (`aap/job_templates.yml`, an `area` on each entry; the deploy reads the file when the repository has it);
+**3.** your own rules, `portal_area_rules`; **4.** its name's start: *Linux - *, Windows - *, VMware - * and VM - *  (VMware), ACT - *, STIG*, AAP - * (Admin), fapolicyd*, and anything with *certificate* in it (Certificates)*; **5.** *Other*, last.
+**Details** says which one: *Area: Linux (from its name)*. The groups are the built-in areas first (STIG, Disk & services, fapolicyd, Tickets, ACT), then the rest A to Z, then Other.
+
+```yaml
+portal_area_rules:
+  - {match: "Site - patch *", area: Patching}
+```
+
+## What is on and what is off
+
+An available card has a solid border, a bar in the accent colour and a filled **Run**. A card that is off has a grey surface, a dashed border, muted text, a lock chip, its reason on one line, and no Run (only Details); the accent
+colour is never used for it. The same grey is used for an approval you cannot decide. The text on both passes WCAG AA, light and dark, in every look.
+
 ## Watching a job run
 
 The Jobs page (`/portal/jobs`) lists the jobs the portal started: **My jobs**, or **All jobs** for the approvers. The chips (*Running*,
@@ -752,7 +781,7 @@ A card appears only when **both** are true: the portal's account has **Execute**
 | Multi select | ticks | every one a choice |
 | Password | masked | required, length; never shown back, never in the log |
 
-- **Limit.** With **Prompt on launch** for **Limit**, the form asks for hosts or groups of `portal_inventory` (the picker below), up to `portal_limit_max` (50) hosts, and sends them as the job's limit: a group goes as its hosts, the ones the portal counted. Without `portal_inventory` the template is left out: the portal never starts a job on a host it cannot check.
+- **Limit.** With **Prompt on launch** for **Limit**, the form asks for hosts or groups (the picker below), up to `portal_limit_max` (50) hosts, and sends them as the job's limit: a group goes as its hosts, the ones the portal counted. They are checked against **that template's own inventory**, which the portal's account must be able to read (Platform Auditor is enough); the picker lists that inventory's hosts and groups. At most `portal_inventories_max` (10) distinct inventories are used; a template past that is skipped, said. A workflow's Limit works when every job template step takes a Limit at launch and all steps resolve to **one** inventory (the workflow's own, or one the steps share); an approval step is fine. A nested workflow, a project or inventory sync, a sliced job, a step with a Limit of its own or with a different inventory keeps the workflow off the list, and the reason names the step.
 - **What is sent.** Only the survey's own variables. The portal adds nothing else.
 - **Who started it.** Optional tip: add a survey question `portal_requested_by` (text, hidden) to see who started it in AAP's job. The portal fills it from the person's card, the field is not shown, and anything posted for it is replaced. The question must be text with a maximum of at least 200, or the template is left out.
 - **A password** is masked on the form and never filled in again. The portal's log and the job page show *(hidden)*.
@@ -801,9 +830,11 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label` | `portal` | the label that marks a template (`''` = no discovery) |
 | `portal_discover_seconds` | 60 | how long what was found is kept (10 to 3600) |
 | `portal_label_area` | `portal-area:` | the start of an area label |
+| `portal_area_rules` | `[]` | `[{match: "Linux - *", area: Linux}]`: the area of a found template with no area label and no area for its playbook (`*` and `?` only, any case, the first match wins) |
 | `portal_label_approval` | `portal-approval` | the approval label |
 | `portal_approval_required` | `[]` | template names marked *Approval* without the label |
 | `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
+| `portal_inventories_max` | 10 | the distinct inventories the found templates' Limits are checked against (1 to 50); a template beyond it is skipped, said |
 | `portal_action_max_hosts` | 50 | the hosts a built-in action's Limit may stand for (1 to 500) |
 
 ## Add your jobs in bulk

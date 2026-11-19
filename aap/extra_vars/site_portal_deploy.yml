@@ -158,11 +158,19 @@ portal_public_url: https://stigman.example.mil/portal/
 ## a template with this label too is marked "approval" on its card
 # portal_label_approval: portal-approval
 
+## 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area:
+## label and no area for its playbook (* and ? only, any case, first match wins)
+# portal_area_rules: []
+
 ## a label that starts with this puts the card in an area (the rest of the label is its name)
 # portal_label_area: "portal-area:"
 
 ## template names that are marked "approval" without the label
 # portal_approval_required: []
+
+## 1.78.4: found templates' Limits are checked against their own inventory; at most this many
+## distinct inventories (1 to 50), the rest are skipped with a reason
+# portal_inventories_max: 10
 
 ## a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to
 ## 500)

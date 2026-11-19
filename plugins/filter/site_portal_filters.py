@@ -680,6 +680,53 @@ def mask(action, values):
 
 
 TITLE_MAX = 80
+# 1.78.4: a found template's area, in this order: its portal-area: label; the area its playbook has in the job-template catalog (aap/job_templates.yml); the site's own rules
+# (portal_area_rules: {match, area}, * and ? only, any case, the first that matches); these prefixes of the name; Other.
+BUILTIN_AREA_RULES = (("Linux - *", "Linux"), ("Windows - *", "Windows"), ("VMware - *", "VMware"), ("VM - *", "VMware"), ("ACT - *", "ACT"), ("STIG*", "STIG"),
+                      ("AAP - *", "Admin"), ("fapolicyd*", "fapolicyd"), ("* certificate*", "Certificates"))
+
+
+def _glob(pat, name):
+    rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in str(pat))
+    return re.fullmatch(rx, str(name or ""), re.S | re.I) is not None
+
+
+def site_portal_area_rules(rules):
+    """portal_area_rules [{match: "Linux - *", area: Linux}, ...] -> {'rules': [(match, area)], 'problems': [...]}; a problem names the setting."""
+    problems, out = [], []
+    if rules in (None, ""):
+        return {"rules": [], "problems": []}
+    if not isinstance(rules, list):
+        return {"rules": [], "problems": ["portal_area_rules must be a list of {match: <name pattern>, area: <area>}"]}
+    for i, r in enumerate(rules):
+        m = r.get("match") if isinstance(r, dict) else None
+        a = r.get("area") if isinstance(r, dict) else None
+        if not isinstance(m, str) or not m.strip() or not isinstance(a, str) or not a.strip():
+            problems.append("portal_area_rules[%d] needs a match (a name pattern, * and ? only) and an area (text)" % i)
+        elif len(a.strip()) > AREA_MAX or templating(a):
+            problems.append("portal_area_rules[%d]: the area must be a short name (%d characters at most)" % (i, AREA_MAX))
+        else:
+            out.append((m.strip(), " ".join(a.split())))
+    return {"rules": out, "problems": problems}
+
+
+def area_for(name, playbook="", label_area="", playbook_areas=None, rules=None):
+    """-> (area, where it came from): 'label', 'playbook', 'your rule' or 'name'; ('', '') when none says. label_area: the text of a portal-area: label."""
+    label_area = " ".join(str(label_area or "").split())[:AREA_MAX]
+    if label_area:
+        return label_area, "label"
+    pb = str(playbook or "")
+    pa = playbook_areas or {}
+    hit = pa.get(pb) or pa.get(pb.rsplit("/", 1)[-1] if pb else "") or (pa.get("playbooks/" + pb) if pb and "/" not in pb else "")
+    if hit:
+        return str(hit)[:AREA_MAX], "playbook"
+    for m, a in rules or []:
+        if _glob(m, name):
+            return a[:AREA_MAX], "your rule"
+    for m, a in BUILTIN_AREA_RULES:
+        if _glob(m, name):
+            return a, "name"
+    return "", ""
 LOGO_MAX = 1024 * 1024
 _LOGO_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
 
@@ -746,5 +793,5 @@ def site_portal_title_label(label, prefix):
 
 class FilterModule(object):
     def filters(self):
-        return {"site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
+        return {"site_portal_area_rules": site_portal_area_rules, "site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
                 "site_portal_spec_merge": site_portal_spec_merge}

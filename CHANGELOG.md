@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.78.4 — 2026-11-19
+
+**To set up:** run **Site portal - deploy** again. Nothing is required; `portal_inventories_max` (10) is new.
+
+**What is on and what is off.** In every look, an available card has a solid accent border and top bar and a filled **Run**; a card that is off has a grey surface, a dashed border, muted text, a lock chip, its reason on
+one line and no Run, and never the accent colour. (In the ops look the Off cards looked like the others: nothing styled them, and Run was a pale blue.) A locked approval row is grey the same way.
+
+**What the Why panel's skipped list showed**
+
+- **A template's own inventory.** A found template's Limit is checked against *that* template's inventory (the account must be able to read it; the picker lists that inventory's hosts and groups), not only `portal_inventory`.
+  Listing, keep and back-off rules are kept for each inventory; at most `portal_inventories_max` (10, 1 to 50) distinct inventories, the rest skipped with a reason.
+- **A workflow's Limit.** Allowed when every job template step takes a Limit at launch, has no Limit or slicing of its own, and resolves to ONE inventory (the workflow's, or one the steps share); approval steps are fine.
+  A nested workflow, a project or inventory sync, a sliced job, a step with its own different inventory stays skipped, and the reason names the step. The inventory is read again at launch.
+- **The exact reason for what a template asks at launch:** *an inventory (... ask_inventory_on_launch ...)*, *a credential (... ask_credential_on_launch ...)* or *a password for credential "<name>"*, so you know what to untick.
+
+**Areas for found templates.** Almost every found template landed in *Other*. Each now gets an area: its `portal-area:` label, else its playbook's `area` in the job catalog (`aap/job_templates.yml`, read when the file is there),
+else your `portal_area_rules` (`[{match: "Linux - *", area: Linux}]`, `*` and `?` only, any case, first match wins), else its name's start (*Linux - *, Windows - *, VMware - *, VM - *, ACT - *, STIG*, AAP - * as Admin, fapolicyd*, *\* certificate\**), else *Other*.
+Details says where it came from. Groups: the built-in areas, then the rest A to Z, then Other.
+
+**Approvals.** The page lists EVERY pending workflow approval in AAP the account can see (not only runs started in the portal): the workflow, what started it (a schedule, a person in AAP), the approval's name and description, the time left,
+the report the steps before it left; one that timed out is hidden. Approve and Deny only for `portal_approvers` and only where the account has Approve (they ask once more, in place); other rows are grey with the reason.
+
+**Toasts, badges, run again, pins, folding, keyboard** (docs/SITE_PORTAL.md, "Quick ways around"): the header counts on Jobs and Approvals (every 10 s while a page is in view, one cached read for each person), a toast when a job you started ends,
+*Run again with the same answers* on a finished job, a star to pin an action on top, groups that fold and remember it, and `g a` / `g j` / `g p` / `?`. All in `portal.js`, kept in the browser, nothing without scripts.
+
+- Tests: `tests/test_site_portal.py` (the inventories, the workflows, the launch reasons, the approvals, the summary, run again), `tests/test_portal_interactive.py` (a real browser on the demo), the fit test, the portal e2e.
+
 ## 1.78.3 — 2026-11-19
 
 **To set up:** nothing. Run **Site portal - deploy** again to get the new lines.
