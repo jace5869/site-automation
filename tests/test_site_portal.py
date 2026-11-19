@@ -3085,7 +3085,7 @@ class Home1782(unittest.TestCase):
             self.assertEqual((typ, why, path), (kind, "", os.path.join(d, name)), name)
             self.assertGreater(v, 0)
         for name, data, word in (("e.svg", b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>", "not a PNG"), ("f.png", b"not an image at all!", "not a PNG"),
-                                 ("g.png", png + b"0" * (sp.LOGO_MAX + 1), "1 MB"), ("h.png", b"\x89PNG", "16 bytes")):
+                                 ("g.png", png + b"0" * (sp.LOGO_MAX + 1), "save a smaller copy"), ("h.png", b"\x89PNG", "16 bytes")):
             with open(os.path.join(d, name), "wb") as fh:
                 fh.write(data)
             path, typ, v, why = sp.load_logo(os.path.join(d, name))
@@ -3142,16 +3142,22 @@ class Home1782(unittest.TestCase):
     def test_d_the_deploy_copies_it_only_when_the_site_sets_a_source(self):
         with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
             y = fh.read()
-        self.assertIn("when: portal_logo_src | default('') | length > 0", y)
-        self.assertIn("portal_logo_src is set but portal_logo is not", y)
+        self.assertIn("when: _portal_logo_src_path | length > 0", y)
+        self.assertNotIn("portal_logo_src is set but portal_logo is not", y)                                  # 1.78.3: the source alone is enough
         self.assertIn("""PORTAL_LOGO: "{{ '/etc/site-portal/logo' if _portal_logo_on""", y)
         self.assertIn("_portal_logo_file is changed", y)                                                                 # a new image restarts the service
         with open(os.path.join(ROOT, "roles", "site_portal_stack", "templates", "site-portal-app.container.j2")) as fh:
-            self.assertIn("Volume={{ portal_logo }}:/etc/site-portal/logo:ro,Z", fh.read())
+            self.assertIn("Volume={{ _portal_logo_dest }}:/etc/site-portal/logo:ro,Z", fh.read())
         with open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")) as fh:
             d = fh.read()
-        self.assertIn('portal_logo: ""', d)
+        self.assertIn("portal_logo: \"{{ (portal_config_dir ~ '/logo' ~ (portal_logo_src | splitext)[1]) if portal_logo_src | length > 0 else '' }}\"", d)
         self.assertIn('portal_logo_src: ""', d)
+        import jinja2
+        expr = re.search(r'^portal_logo: "(.*?)"   #', d, re.M).group(1)
+        env = jinja2.Environment()
+        env.filters["splitext"] = lambda p: os.path.splitext(p)
+        for src, want in (("/x/.site-local/crest.PNG", "/etc/site-portal/logo.PNG"), ("/x/y.webp", "/etc/site-portal/logo.webp"), ("", "")):
+            self.assertEqual(env.from_string(expr).render(portal_config_dir="/etc/site-portal", portal_logo_src=src), want)
         out = subprocess.run(["git", "-C", ROOT, "ls-files"], stdout=subprocess.PIPE, universal_newlines=True).stdout.split("\n")
         self.assertFalse([f for f in out if re.search(r"(^|/)logo[^/]*\.(png|jpe?g|gif|webp|svg)$", f)], "no logo file in the repo")
 
@@ -3351,8 +3357,9 @@ class Motion1782(unittest.TestCase):
         self.assertIn(".ic-run,.jrows .d.run{animation:spin 1s linear infinite}", no_pref)            # only under no-preference: reduced motion stands still
         self.assertIn("progress.pb::-webkit-progress-value{animation:stripe 1s linear infinite}", no_pref)
         self.assertIn("progress.pb::-moz-progress-bar{animation:stripe 1s linear infinite}", no_pref)
-        self.assertNotRegex(c.replace(no_pref, ""), r"animation:\s*(spin|stripe)")                       # nowhere else (the old pulse is a different rule)
-        self.assertIn("@media print{.ic-run,.jrows .d.run,progress.pb::-webkit-progress-value,progress.pb::-moz-progress-bar{animation:none}}", c)
+        rest = re.sub(r"html\.motion-always [^{]*\{animation:(?:spin|stripe) 1s linear infinite\}", "", c.replace(no_pref, ""))
+        self.assertNotRegex(rest, r"animation:\s*(spin|stripe)")                                         # nowhere else but portal_motion: always (the old pulse is a different rule)
+        self.assertIn("@media print{html .ic-run,html .jrows .d.run{animation:none !important}", c)
 
     def test_2_only_the_running_icon_has_the_class_and_nothing_inline(self):
         self.assertIn('class="ic ic-run"', sp.icon("run"))
@@ -3366,6 +3373,169 @@ class Motion1782(unittest.TestCase):
     def test_3_the_now_line_has_the_icon(self):
         with open(os.path.join(FILES, "site_portal.py")) as fh:
             self.assertIn('<div class="nl">%s<b>Now</b>', fh.read())
+
+
+class Follow1783(unittest.TestCase):
+    """1.78.3: portal_logo_src alone is enough; the publish settings say where they are applied."""
+
+    def test_1_the_deploy_says_where_publish_is_applied(self):
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        self.assertIn("portal_publish_* is applied by the job AAP - set up portal actions (Check first, then Run), not by this deploy", y)
+        self.assertIn("portal_publish_organization | default('') | length > 0", y)
+        self.assertIn("portal_publish_area | default({}) | length > 0", y)
+        self.assertIn("(portal_publish_max | default(50) | int) != 50", y)
+        self.assertIn('PORTAL_PUBLISH_ORGANIZATION: "{{ portal_publish_organization | default(\'\') }}"', y)
+
+    def test_2_the_panel_says_nothing_is_labelled_yet(self):
+        cfg = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                         "PORTAL_AAP_TOKEN": "x", "PORTAL_PUBLISH_ORGANIZATION": "platforms-org"})
+        class P(object):
+            found = {"seen": 5, "labelled": 0, "skipped": [("A", "no label portal")], "no_execute": [], "no_execute_why": "", "account": "svc_x", "error": ""}
+        why = sp.why_panel(cfg, P())
+        self.assertIn("Nothing labelled yet: run <b>AAP - set up portal actions</b>", why)
+        self.assertIn("portal_publish_*", why)
+        P.found = dict(P.found, labelled=3)
+        self.assertNotIn("Nothing labelled yet", sp.why_panel(cfg, P()))                                    # something is labelled: no line
+        P.found = dict(P.found, labelled=0, no_execute=["Needs Execute"])
+        self.assertNotIn("Nothing labelled yet", sp.why_panel(cfg, P()))                                    # labelled but not executable: the Execute line says it, not this one
+        P.found = dict(P.found, no_execute=[], no_execute_why="could not be listed")
+        self.assertNotIn("Nothing labelled yet", sp.why_panel(cfg, P()))                                    # the label lookup was incomplete: nothing is asserted
+        P.found = dict(P.found, no_execute_why="", labelled=3)
+        cfg2 = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "x"})
+        P.found = dict(P.found, labelled=0)
+        self.assertNotIn("Nothing labelled yet", sp.why_panel(cfg2, P()))                                   # no publish organization: no line
+
+
+class Motion1783(unittest.TestCase):
+    """1.78.3: portal_motion - auto (the system's reduced-motion request), always, off; a class on <html>, no inline style, print still."""
+
+    def cfg(self, **env):
+        d = tempfile.mkdtemp()
+        return sp.Config(dict({"PORTAL_DATA": os.path.join(d, "data"), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                               "PORTAL_AAP_TOKEN": "x"}, **env))
+
+    def test_1_the_setting_and_the_class(self):
+        self.assertEqual(self.cfg().motion, "auto")
+        for v, want in (("always", "always"), ("OFF", "off"), (" Auto ", "auto"), ("sometimes", "auto"), ("", "auto")):
+            self.assertEqual(self.cfg(PORTAL_MOTION=v).motion, want, v)
+        for mode, html_ in (("auto", '<html lang="en" data-look="atlas">'), ("always", '<html lang="en" data-look="atlas" class="motion-always">'),
+                            ("off", '<html lang="en" data-look="atlas" class="motion-off">')):
+            self.assertIn(html_, sp.shell(self.cfg(PORTAL_MOTION=mode), "T", "<p>x</p>"), mode)
+        self.assertNotIn("style=", sp.shell(self.cfg(PORTAL_MOTION="always"), "T", "<p>x</p>"))
+
+    def test_2_the_deploy_checks_and_hands_it_over(self):
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        self.assertIn("portal_motion is {{ portal_motion }}; it must be auto, always or off - nothing was changed", y)
+        self.assertIn('PORTAL_MOTION: "{{ _portal_motion }}"', y)
+        self.assertIn("_portal_motion: \"{{ 'off' if portal_motion is sameas false else (portal_motion | string | lower) }}\"", y)       # YAML reads an unquoted off as false
+        import yaml
+        self.assertIs(yaml.safe_load("portal_motion: off")["portal_motion"], False)
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")) as fh:
+            self.assertIn("portal_motion: auto", fh.read())
+
+    def test_3_the_stylesheet(self):
+        with open(os.path.join(FILES, "static", "portal.css")) as fh:
+            c = fh.read()
+        self.assertIn("html.motion-always .ic-run,html.motion-always .jrows .d.run{animation:spin 1s linear infinite}", c)
+        self.assertIn("html.motion-off .ic-run", c)
+        self.assertIn("@media print{html .ic-run,html .jrows .d.run{animation:none !important}html progress.pb::-webkit-progress-value{animation:none !important}", c)      # one pseudo-element to a rule: a browser drops a list with one it does not know
+
+    @unittest.skipUnless(shutil.which("chromium-browser") or shutil.which("google-chrome") or shutil.which("chromium"), "no browser")
+    def test_4_in_a_browser(self):
+        b = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+        css = os.path.join(FILES, "static", "portal.css")
+        d = tempfile.mkdtemp()
+
+        def name(mode, flag):
+            page = ('<!doctype html><html class="%s"><head><link rel="stylesheet" href="file://%s"></head><body><svg class="ic ic-run" viewBox="0 0 16 16"></svg><pre id="r"></pre>'
+                    '<script>window.onload=function(){document.getElementById("r").textContent=getComputedStyle(document.querySelector(".ic-run")).animationName}</script></body></html>'
+                    % (("motion-" + mode) if mode else "", css))
+            with open(os.path.join(d, "p.html"), "w") as fh:
+                fh.write(page)
+            out = subprocess.run([b, "--headless=new", "--no-sandbox", "--disable-gpu", "--virtual-time-budget=3000", "--dump-dom"] + flag + ["file://" + os.path.join(d, "p.html")],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=60).stdout
+            return re.search(r'<pre id="r">(.*?)</pre>', out, re.S).group(1)
+        try:
+            reduced = ["--force-prefers-reduced-motion"]
+            self.assertEqual(name("", []), "spin")                              # auto, no request: it turns
+            self.assertEqual(name("", reduced), "none")                          # auto, the system asks for less: still
+            self.assertEqual(name("always", reduced), "spin")                    # always: it turns anyway
+            self.assertEqual(name("off", []), "none")                            # off: never
+            self.assertEqual(name("off", reduced), "none")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class Logo1783(unittest.TestCase):
+    """1.78.3: a logo that will not show says so - before it is copied, in the deploy's summary, and on the Actions page."""
+
+    def test_1_the_source_is_checked_by_the_deploy(self):
+        d = tempfile.mkdtemp()
+        try:
+            png = os.path.join(d, "crest.png")
+            with open(png, "wb") as fh:
+                fh.write(tiny_png())
+            self.assertEqual(rules.site_portal_logo_check(png), "")
+            for name, data in (("a.jpg", b"\xff\xd8\xff\xe0" + b"x" * 20), ("b.gif", b"GIF89a" + b"x" * 20), ("c.webp", b"RIFF\x00\x00\x00\x00WEBPVP8 ")):
+                with open(os.path.join(d, name), "wb") as fh:
+                    fh.write(data)
+                self.assertEqual(rules.site_portal_logo_check(os.path.join(d, name)), "", name)
+            with open(os.path.join(d, "big.png"), "wb") as fh:
+                fh.write(tiny_png() + b"0" * int(2.4 * 1048576))
+            self.assertEqual(rules.site_portal_logo_check(os.path.join(d, "big.png")),
+                             "portal_logo_src big.png: 2.4 MB, over 1 MB - save a smaller copy (about 200 px wide)")
+            with open(os.path.join(d, "s.svg"), "wb") as fh:
+                fh.write(b"<svg xmlns='http://www.w3.org/2000/svg'><script>x</script></svg>")
+            self.assertIn("not a PNG, JPEG, GIF or WebP image", rules.site_portal_logo_check(os.path.join(d, "s.svg")))
+            self.assertIn("could not be read", rules.site_portal_logo_check(os.path.join(d, "missing.png")))
+            self.assertIn("could not be read", rules.site_portal_logo_check("files/crest.png"))                    # the filter reads the path it is given: the deploy resolves it first
+            os.mkfifo(os.path.join(d, "pipe.png"))
+            self.assertIn("is not a file", rules.site_portal_logo_check(os.path.join(d, "pipe.png")))              # never opened: it would block
+            self.assertIn("is not a file", rules.site_portal_logo_check(d))
+            with open(os.path.join(d, "t.png"), "wb") as fh:
+                fh.write(b"\x89PNG")
+            self.assertIn("too small", rules.site_portal_logo_check(os.path.join(d, "t.png")))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        self.assertIn('fail_msg: "{{ _portal_logo_src_path | site_portal_logo_check }}"', y)
+        self.assertLess(y.index("Logo | the source file is checked"), y.index("Files | directories"))      # before anything is written
+
+    def test_2_the_summary_and_the_health_answer_say_the_logo_state(self):
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        self.assertIn("The logo: ", y)
+        self.assertIn("_portal_logo_dest", y)
+        self.assertIn('src: "{{ _portal_logo_src_path }}"', y)                                                     # the check and the copy read the same file
+        self.assertIn("that: (_portal_logo_src_path | site_portal_logo_check) == ''", y)
+        import jinja2
+        expr = re.search(r"_portal_logo_src_path: >-\n(.*?)\n\n", y, re.S).group(1)
+        env = jinja2.Environment()
+        for src, want in (("files/x.png", "/opt/play/playbooks/files/x.png"), ("playbooks/files/x.png", "/opt/play/playbooks/files/x.png"),
+                          ("/full/path/x.png", "/full/path/x.png"), ("", "")):
+            self.assertEqual(env.from_string(expr).render(portal_logo_src=src, playbook_dir="/opt/play/playbooks").strip(), want, src)                                                                      # an explicit empty portal_logo still gets a destination
+        self.assertIn("(portal_logo_src | splitext)[1]", y)
+        self.assertIn("(_portal_ready.stdout | default('{}') | from_json).logo", y)
+        with open(os.path.join(FILES, "site_portal.py")) as fh:
+            self.assertIn('"logo": ("on" if cfg.logo else cfg.logo_why)', fh.read())
+
+    def test_3_the_panel_has_one_muted_line_when_the_logo_is_refused(self):
+        d = tempfile.mkdtemp()
+        big = os.path.join(d, "crest.png")
+        with open(big, "wb") as fh:
+            fh.write(tiny_png() + b"0" * (sp.LOGO_MAX + 10))
+        cfg = sp.Config({"PORTAL_DATA": os.path.join(d, "data"), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                         "PORTAL_AAP_TOKEN": "x", "PORTAL_LOGO": big})
+        class P(object):
+            found = {"seen": 2, "labelled": 2, "skipped": [], "no_execute": [], "no_execute_why": "", "account": "svc_x", "error": ""}
+        why = sp.why_panel(cfg, P())
+        self.assertIn('<li class="muted-line">The logo is not shown: portal_logo crest.png is 1.0 MB, over 1 MB - save a smaller copy (about 200 px wide).</li>', why)
+        cfg = sp.Config({"PORTAL_DATA": os.path.join(d, "data"), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "x"})
+        self.assertNotIn("The logo is not shown", sp.why_panel(cfg, P()))                                   # no logo set: no line
+        shutil.rmtree(d, ignore_errors=True)
 
 
 class Results1782(unittest.TestCase):

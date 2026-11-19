@@ -680,6 +680,32 @@ def mask(action, values):
 
 
 TITLE_MAX = 80
+LOGO_MAX = 1024 * 1024
+_LOGO_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
+
+
+def site_portal_logo_check(path):
+    """1.78.3, for the deploy: the logo file on the controller (portal_logo_src) -> '' when the portal will show it, else why not, in the words of the setting:
+    its size (1 MB at most) and its first bytes (PNG, JPEG, GIF or WebP; never SVG) - the same two checks the service makes, said before anything is copied."""
+    import os
+    import stat as _stat
+    name = os.path.basename(str(path or ""))
+    try:
+        st = os.stat(path)
+        if not _stat.S_ISREG(st.st_mode):                  # a folder, a pipe: never opened
+            return "portal_logo_src %s is not a file" % name
+        size = st.st_size
+        if size > LOGO_MAX:
+            return "portal_logo_src %s: %.1f MB, over 1 MB - save a smaller copy (about 200 px wide)" % (name, size / 1048576.0)
+        if size < 16:
+            return "portal_logo_src %s: too small to be an image (%d bytes)" % (name, size)
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except (OSError, TypeError, ValueError) as e:
+        return "portal_logo_src %s could not be read: %s" % (name or path, getattr(e, "strerror", None) or e)
+    if not (any(head.startswith(m) for m in _LOGO_MAGIC) or (head[:4] == b"RIFF" and head[8:12] == b"WEBP")):
+        return "portal_logo_src %s: not a PNG, JPEG, GIF or WebP image (an SVG is not accepted)" % name
+    return ""
 
 
 def site_portal_titles(titles):
@@ -720,5 +746,5 @@ def site_portal_title_label(label, prefix):
 
 class FilterModule(object):
     def filters(self):
-        return {"site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
+        return {"site_portal_logo_check": site_portal_logo_check, "site_portal_titles": site_portal_titles, "site_portal_actions_check": site_portal_actions_check, "site_portal_actions_merge": site_portal_actions_merge,
                 "site_portal_spec_merge": site_portal_spec_merge}

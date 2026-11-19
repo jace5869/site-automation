@@ -149,6 +149,9 @@ if deploy -e '{"portal_actions": {"bad": {"title": "", "aap": {"type": "job", "n
 elif grep -q "The actions are not right - nothing was changed: action bad: title is required" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "a wrong action: refused before anything is written, said"
 else fail "a wrong action refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e '{"portal_motion": "sometimes"}'; then fail "portal_motion sometimes refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_motion is sometimes; it must be auto, always or off - nothing was changed" "$work/out.txt" && [ ! -e "$work/etc" ]; then pass "portal_motion: a wrong value is refused before anything is written, said"
+else fail "portal_motion refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 for kv in 'portal_pick_max_hosts": 0|1 to 500' 'portal_action_max_hosts": 501|1 to 500' 'portal_pick_max_launches": 201|1 to 200' 'portal_limit_max": 0|1 to 500'; do
     nm="${kv%%\"*}"; val="${kv#*: }"; val="${val%%|*}"
     if deploy -e "{\"$nm\": $val}"; then fail "$nm $val refused" "$(tail -20 "$work/out.txt")"
@@ -156,9 +159,6 @@ for kv in 'portal_pick_max_hosts": 0|1 to 500' 'portal_action_max_hosts": 501|1 
         pass "$nm $val: refused before anything is written, said with its range"
     else fail "$nm range refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 done
-if deploy -e "{\"portal_logo_src\": \"$work/logo-src.png\"}"; then fail "portal_logo_src without portal_logo refused" "$(tail -20 "$work/out.txt")"
-elif grep -q "portal_logo_src is set but portal_logo is not" "$work/out.txt" && [ ! -e "$work/etc" ]; then pass "portal_logo_src without portal_logo: refused, said"
-else fail "portal_logo_src refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 if deploy --check -e "{\"portal_config_dir\": \"$work/etc-check\"}" && [ ! -e "$work/etc-check" ] \
     && ! ls "$units"/site-portal* >/dev/null 2>&1 && ! podman container exists site-portal-app && ! podman volume exists site-portal-data \
     && ! podman secret inspect site-portal-aap-token >/dev/null 2>&1; then
@@ -231,9 +231,11 @@ def ch(t, d):
     return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
 open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + ch(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)) + ch(b"IDAT", zlib.compress(b"\x00\x1e\x5a\xa0\xff")) + ch(b"IEND", b""))
 EOPY
-if deploy -e "{\"portal_logo\": \"$work/etc/logo.png\", \"portal_logo_src\": \"$work/logo-src.png\"}" && cmp -s "$work/logo-src.png" "$work/etc/logo.png" \
+if deploy -e "{\"portal_logo_src\": \"$work/logo-src.png\", \"portal_publish_organization\": \"platforms-org\"}" && cmp -s "$work/logo-src.png" "$work/etc/logo.png" \
+    && grep -q "portal_publish_\* is applied by the job AAP - set up portal actions (Check first, then Run), not by this deploy" "$work/out.txt" \
+    && grep -q "The logo: on ($work/etc/logo.png)" "$work/out.txt" \
     && grep -q '"PORTAL_LOGO": "/etc/site-portal/logo"' "$work/etc/settings.json" && grep -q "Volume=$work/etc/logo.png:/etc/site-portal/logo:ro,Z" "$units/site-portal-app.container"; then
-    pass "portal_logo_src: copied to portal_logo, handed to the service, mounted read-only"
+    pass "portal_logo_src alone: copied to portal_config_dir/logo.png, handed to the service, mounted read-only; the deploy says where portal_publish_* is applied"
 else fail "the logo deploy" "$(grep -E "Logo|logo|fatal" "$work/out.txt" | head -8)"; fi
 for _ in $(seq 1 30); do
     podman exec site-portal-app python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/healthz")' 2>/dev/null && break
@@ -241,8 +243,21 @@ for _ in $(seq 1 30); do
 done
 r="$(podman exec site-portal-app python3 -c 'import urllib.request; r = urllib.request.urlopen("http://127.0.0.1:8080/static/logo"); print(r.status, r.headers["Content-Type"], r.headers["X-Content-Type-Options"], r.read()[:4])' 2>&1)"
 if [ "$r" = "200 image/png nosniff b'\\x89PNG'" ]; then pass "the logo is served from the portal's own static path (image/png, nosniff)"; else fail "the logo is served" "$r"; fi
-if deploy -e "{\"portal_logo\": \"$work/etc/logo.png\", \"portal_logo_src\": \"$work/logo-src.png\"}" && grep -q "changed=0 " "$work/out.txt"; then pass "the logo: a second deploy changes nothing"
+if deploy -e "{\"portal_logo_src\": \"$work/logo-src.png\", \"portal_publish_organization\": \"platforms-org\"}" && grep -q "changed=0 " "$work/out.txt"; then pass "the logo: a second deploy changes nothing"
 else fail "the logo: a second deploy" "$(grep -E 'changed:|PLAY RECAP' -A1 "$work/out.txt")"; fi
+"$py" - "$work/logo-src.png" "$work/logo-big.png" "$work/logo-svg.png" <<'EOPY'
+import sys
+png = open(sys.argv[1], "rb").read()
+open(sys.argv[2], "wb").write(png + b"0" * int(2.4 * 1048576))
+open(sys.argv[3], "wb").write(b"<svg xmlns='http://www.w3.org/2000/svg'><script>x</script></svg>")
+EOPY
+if deploy -e "{\"portal_logo_src\": \"$work/logo-big.png\"}"; then fail "a logo over 1 MB refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_logo_src logo-big.png: 2.4 MB, over 1 MB - save a smaller copy (about 200 px wide)" "$work/out.txt" && cmp -s "$work/logo-src.png" "$work/etc/logo.png"; then
+    pass "a logo over 1 MB: refused before anything is copied, said how to fix it (the logo in place is untouched)"
+else fail "a big logo refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+if deploy -e "{\"portal_logo_src\": \"$work/logo-svg.png\"}"; then fail "a logo that is not an image refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_logo_src logo-svg.png: not a PNG, JPEG, GIF or WebP image" "$work/out.txt"; then pass "a logo that is not an image: refused, said"
+else fail "a non-image logo refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 deploy > /dev/null 2>&1                                  # no logo again: the badge
 if deploy -e '{"portal_title": "Site portal (test)"}' && grep -q "changed: \[localhost\]" <(grep -A1 "restart the service" "$work/out.txt") \
     && [ "$(started)" = "$before" ]; then

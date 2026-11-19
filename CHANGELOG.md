@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.78.3 — 2026-11-19
+
+**To set up:** nothing. Run **Site portal - deploy** again to get the new lines.
+
+- **The logo needs one line.** `portal_logo_src` alone is enough: `portal_logo` defaults to `portal_config_dir/logo` plus the source's extension (the assert that asked for both is gone).
+- **Publish says what to do.**
+  - The stop for a pattern that matches too much names the fix: *set portal_publish_max: N (up to 500) and run again*, or narrow the pattern.
+  - **Site portal - deploy** prints one line when a `portal_publish_*` setting is set: it is applied by the job **AAP - set up portal actions** (Check first, then Run), not by the deploy.
+  - *Why isn't my template here?* adds *Nothing labelled yet: run AAP - set up portal actions* when the portal sees no labelled template and `portal_publish_organization` is set.
+- **`portal_motion`:** `auto` (the default: the running icons and the stripe honour the system's reduced-motion request, as before), `always` (animate even when the system asks for less; use only if the site agrees) or `off`.
+  The deploy puts it on `<html>` as a class (`motion-always`, `motion-off`); no inline style, and print stays still in every mode.
+- **`portal_logo_src` is found as `report_logo_file` is:** a full path as it is, else under the playbooks folder (`files/crest.png` is `playbooks/files/crest.png`); the check and the copy read the same file.
+- **A logo that will not show says so.** Before anything is copied, the deploy checks `portal_logo_src` itself (its size, 1 MB at most, and its first bytes: PNG, JPEG, GIF or WebP) and stops with
+  *portal_logo_src crest.png: 2.4 MB, over 1 MB - save a smaller copy (about 200 px wide)* or *not a PNG, JPEG, GIF or WebP image*. The deploy's summary ends with *The logo: on (<path>)* or
+  the service's own reason, and the Actions page's *Why isn't my template here?* panel has one muted line (*The logo is not shown: ...*) when the service refused it.
+- Tests: `Follow1783`, `Logo1783` and the logo and stop tests (`tests/test_site_portal.py`, `tests/test_portal_publish.py`), the portal e2e (the source alone, the deploy's line).
+
 ## 1.78.2 — 2026-11-19
 
 **To set up:** run **Site portal - deploy** again. To use the options: `portal_logo` and `portal_logo_src` (your logo), `portal_pick_max_hosts` and

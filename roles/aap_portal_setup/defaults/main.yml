@@ -44,6 +44,7 @@ portal_setup_aap_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a
 # the label portal_label and Execute for portal_setup_portal_user. Run with Check first: it says would label / would grant / already done /
 # skipped. Nothing is ever removed by this; a pattern that matches nothing is said; one that matches more than portal_publish_max stops with
 # the list and changes nothing. The credential needs Admin on the templates' organization, as for the rest of this job.
+# Set these in the Variables of AAP - set up portal actions, not of Site portal - deploy (the deploy does not apply them).
 portal_publish_templates: []                      # e.g. ["Site - health *", "Weekly cleanup"]
 portal_publish_area: {}                           # {pattern: area}: also the label portal-area:<area> (e.g. {"Site - health *": "Health"})
 portal_publish_organization: ""                   # an organization's name: only its templates and workflows are matched (with ["*"]: all of them); "" = any

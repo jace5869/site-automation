@@ -419,6 +419,15 @@ class Organization(unittest.TestCase):
         self.assertEqual(a.labels_of("Site - health linux"), [])
         self.assertEqual(a.labels_of("Other tool"), ["portal"])               # another organization: left alone
 
+    def test_the_stop_names_the_fix(self):
+        s = setup(self.api(), publish=["*"], publish_organization="platforms-org", publish_max=2)
+        msg = " ".join(s.problems)
+        self.assertIn("set portal_publish_max: 3 (up to 500) and run again, or narrow the pattern", msg)
+        big = FakeApi(["T%03d" % i for i in range(520)])
+        s = setup(big, publish=["*"], publish_max=50)
+        self.assertIn("narrow the pattern: portal_publish_max is 500 at most", " ".join(s.problems))
+        self.assertNotIn("run again", " ".join(s.problems))
+
     def test_a_blank_organization_does_not_widen_the_scope(self):
         for blank in (" ", "   ", "\t"):
             a = self.api()

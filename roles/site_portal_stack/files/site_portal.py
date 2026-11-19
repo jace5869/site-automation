@@ -135,6 +135,10 @@ class Config(object):
         self.discover_seconds = max(10, min(3600, int(g("PORTAL_DISCOVER_SECONDS", "60"))))
         self.label_approval = g("PORTAL_LABEL_APPROVAL", "portal-approval").strip()
         self.label_area = g("PORTAL_LABEL_AREA", "portal-area:").strip()
+        self.motion = str(g("PORTAL_MOTION", "auto")).strip().lower()                  # 1.78.3: auto (the system's reduced-motion request) | always | off
+        if self.motion not in ("auto", "always", "off"):
+            self.motion = "auto"
+        self.publish_org = str(g("PORTAL_PUBLISH_ORGANIZATION", "")).strip()           # 1.78.3: said in the help panel when nothing is labelled yet
         self.label_title = g("PORTAL_LABEL_TITLE", "portal-title:").strip()
         tj = g("PORTAL_TITLES", "{}")                           # 1.78.1c: {casefolded AAP name: card title}; an entry the deploy would refuse is dropped here
         try:
@@ -1856,12 +1860,12 @@ def shell(cfg, title, body, user="", token="", page="", data=None):
            '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div></div>'
            % (cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
               else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title), nav, esc(user), seg))
-    return ('<!doctype html><html lang="en" data-look="%s"><head><meta charset="utf-8">'
+    return ('<!doctype html><html lang="en" data-look="%s"%s><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
             '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
             '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script></head>'
             '<body data-page="%s">%s%s<main>%s</main>%s</body></html>'
-            % (cfg.look, meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, cfg.path, esc(page), banner, bar, body, banner))
+            % (cfg.look, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "", meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, cfg.path, esc(page), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -1886,8 +1890,10 @@ def load_logo(path):
         return "", "", 0, ""
     try:
         st = os.stat(path)
-        if not stat.S_ISREG(st.st_mode) or st.st_size > LOGO_MAX or st.st_size < 16:
-            return "", "", 0, "portal_logo %s is not a file of 16 bytes to 1 MB" % os.path.basename(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size < 16:
+            return "", "", 0, "portal_logo %s is not a file of 16 bytes or more" % os.path.basename(path)
+        if st.st_size > LOGO_MAX:
+            return "", "", 0, "portal_logo %s is %.1f MB, over 1 MB - save a smaller copy (about 200 px wide)" % (os.path.basename(path), st.st_size / 1048576.0)
         with open(path, "rb") as fh:
             head = fh.read(16)
     except OSError as e:
@@ -1939,6 +1945,10 @@ def why_panel(cfg, portal):
                   (("<p class=\"muted-line\">and %d more</p>" % (len(skipped) - 30)) if len(skipped) > 30 else ""))
     else:
         li.append('<li>Skipped: none</li>')
+    if cfg.logo_why:
+        li.append('<li class="muted-line">The logo is not shown: %s.</li>' % esc(cfg.logo_why.rstrip(".")))
+    if not f.get("labelled") and cfg.publish_org and not f.get("no_execute") and not f.get("no_execute_why"):
+        li.append('<li class="warn">Nothing labelled yet: run <b>AAP - set up portal actions</b> (it applies <code>portal_publish_*</code>; Check first, then Run).</li>')
     if f.get("no_execute_why"):
         li.append('<li>The labelled templates the account may not run could not be listed: %s</li>' % esc(f["no_execute_why"]))
     elif f.get("no_execute"):
@@ -2571,7 +2581,8 @@ def make_handler(cfg, portal, static_dir):
             u = urllib.parse.urlsplit(self.path)
             path = u.path
             if path == "/healthz":
-                return self._send(200, {"ok": True, "actions": len(portal.actions), "aap": portal.aap.ready or "ok"})
+                return self._send(200, {"ok": True, "actions": len(portal.actions), "aap": portal.aap.ready or "ok",
+                                        "logo": ("on" if cfg.logo else cfg.logo_why) if (cfg.logo or cfg.logo_why) else ""})
             if path == "/static/banner.css":            # the reports' banner colours (report_banner_color): no inline style
                 return self._send(200, ".banner{background:%s;color:%s}\n" % (cfg.banner["bg"], cfg.banner["fg"]),
                                   "text/css; charset=utf-8", [("Cache-Control", "no-cache")])

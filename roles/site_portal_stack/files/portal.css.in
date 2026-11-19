@@ -347,4 +347,11 @@ progress.pb::-moz-progress-bar{background-image:repeating-linear-gradient(45deg,
   progress.pb::-webkit-progress-value{animation:stripe 1s linear infinite}
   progress.pb::-moz-progress-bar{animation:stripe 1s linear infinite}
 }
-@media print{.ic-run,.jrows .d.run,progress.pb::-webkit-progress-value,progress.pb::-moz-progress-bar{animation:none}}
+/* portal_motion (1.78.3): always - animate even when the system asks for less motion; off - never. The class is on <html> (no inline style); print stays still in every mode. */
+html.motion-always .ic-run,html.motion-always .jrows .d.run{animation:spin 1s linear infinite}
+html.motion-always progress.pb::-webkit-progress-value{animation:stripe 1s linear infinite}
+html.motion-always progress.pb::-moz-progress-bar{animation:stripe 1s linear infinite}
+html.motion-off .ic-run,html.motion-off .jrows .d.run,html.motion-off .chip.s-run .ic{animation:none}
+html.motion-off progress.pb::-webkit-progress-value{animation:none}
+html.motion-off progress.pb::-moz-progress-bar{animation:none}
+@media print{html .ic-run,html .jrows .d.run{animation:none !important}html progress.pb::-webkit-progress-value{animation:none !important}html progress.pb::-moz-progress-bar{animation:none !important}}

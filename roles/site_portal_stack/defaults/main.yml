@@ -34,11 +34,14 @@ portal_stigman_upstream: http://stigman-api:54000  # STIG Manager's address in y
 portal_stigman_open_versions: ["1.6.16", "1.6.17", "1.6.18"]
 # the portal's address, as people open it (said at the end)
 portal_public_url: "https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx | bool and portal_port | int != 443 else '' }}{{ portal_path }}"
+# 1.78.3: the running icons and the progress stripe turn. auto: unless the system asks for reduced motion (as now); always: even then (their image may turn animations off
+# by policy - use it only if the site agrees); off: never. Print is still in every mode.
+portal_motion: auto                              # auto | always | off
 portal_title: Site portal                           # the pages' title
 # 1.78.2: the site's logo in the header, instead of the letter badge (40 px tall at most; alt text = portal_title). portal_logo is a PNG, JPEG,
 # GIF or WebP file (1 MB at most) ON THE PORTAL SERVER, e.g. "{{ portal_config_dir }}/logo.png"; portal_logo_src is a file on the controller
 # (in your own .site-local or group_vars area, never in the repo) that the deploy copies there. "" = the badge.
-portal_logo: ""                                  # the image on the portal server ("" = the badge)
+portal_logo: "{{ (portal_config_dir ~ '/logo' ~ (portal_logo_src | splitext)[1]) if portal_logo_src | length > 0 else '' }}"   # the image on the portal server; with portal_logo_src set: portal_config_dir/logo + its extension; "" = the badge
 portal_logo_src: ""                              # the image on the controller, copied to portal_logo by the deploy ("" = nothing copied)
 # The banner and the times are the reports' own settings (usually in all.yml), so the portal and the report pages match:
 # report_banner (auto: on in the classified enclave), report_banner_text, report_banner_color, site_enclave and
