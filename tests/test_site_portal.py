@@ -1714,10 +1714,15 @@ class Found(unittest.TestCase):
             return real(method, path, body)
         self.portal.aap.call = broken
         try:
+            got = self.portal.aap.discover(self.portal.builtin)
+            before = dict(self.portal.actions)
             self.portal.refresh(force=True)
         finally:
             self.portal.aap.call = real
-        self.assertIn("labels could not be read completely", dict(self.portal.found["skipped"]).get("Many labels", ""))
+        self.assertIn("labels could not be read completely", dict(got["skipped"]).get("Many labels", ""))
+        self.assertTrue(got["incomplete"])                                                      # not whole: the last whole read stays (the cards do not go)
+        self.assertEqual(sorted(self.portal.actions), sorted(before))
+        self.assertIn("last full read", self.portal.found["error"])
         self.portal.refresh(force=True)
 
     def test_50_a_group_is_resolved_by_its_name_now(self):
@@ -1997,6 +2002,97 @@ class Found(unittest.TestCase):
         self.assertEqual(self._post_form("/refresh", {"portal-token": "1.bad"})[0], 403)
         self.assertEqual(self._post_form("/refresh", {})[0], 403)
 
+    def test_75_refresh_once_a_minute_for_everyone(self):
+        tok = self.portal.token(self.cn)
+        self.portal.forced_at = 0.0
+        try:
+            self.assertEqual(self._post_form("/refresh", {"portal-token": tok})[2].get("Location"), "/portal/")
+            at = self.portal.found_at
+            code, _b, h = self._post_form("/refresh", {"portal-token": tok})                       # again at once: no second read of AAP
+            self.assertEqual(code, 303)
+            self.assertRegex(h.get("Location"), r"^/portal/\?wait=[0-9]{1,2}$")
+            self.assertEqual(self.portal.found_at, at)
+            self.assertEqual(self.portal.refresh_now() > 0, True)
+            code, page, _h = self.get("/?wait=7")
+            self.assertIn("Refreshed 7 s ago, wait a minute between refreshes.", page)
+            self.assertNotIn("Refreshed 7 s ago", self.get("/?wait=x")[1])
+            self.portal.forced_at = time.time() - 61                                                    # a minute later it reads again
+            self.assertEqual(self.portal.refresh_now(), 0)
+        finally:
+            self.portal.forced_at = 0.0
+
+    def test_75_a_forced_read_does_not_queue_behind_another(self):
+        calls = []
+        real = self.portal.aap.discover
+        gate = threading.Event()
+
+        def slow(builtin):
+            calls.append(1)
+            gate.wait(5)
+            return real(builtin)
+        self.portal.aap.discover = slow
+        try:
+            t = threading.Thread(target=lambda: self.portal.refresh(force=True))
+            t.start()
+            time.sleep(0.3)
+            t0 = time.time()
+            self.portal.refresh(force=True)                                                             # another read is running: this one serves the cache at once
+            self.assertLess(time.time() - t0, 1.0)
+            self.assertEqual(len(calls), 1)
+            gate.set()
+            t.join(10)
+        finally:
+            self.portal.aap.discover = real
+            gate.set()
+
+    def test_76_the_same_events_are_counted_once(self):
+        ev = [{"counter": 1, "event": "playbook_on_task_start", "event_data": {"task": "Checking the disk"}},
+              {"counter": 2, "event": "playbook_on_task_start", "event_data": {"task": "Checking the time"}}]
+        pr = sp.Progress()
+        pr.feed(ev)
+        pr.feed(ev)                                                                                      # a second reader gets the same two
+        self.assertEqual((pr.tasks, pr.counter), (2, 2))
+        pr.feed(ev + [{"counter": 3, "event": "playbook_on_task_start", "event_data": {"task": "Checking the logs"}}])
+        self.assertEqual((pr.tasks, pr.counter), (3, 3))
+
+    def test_76_two_viewers_of_a_running_job_count_its_tasks_once(self):
+        jid = self.run_job(["web01.example.mil", "web03.example.mil"], wait=False)
+        out = []
+
+        def view():
+            for _ in range(6):
+                out.append(self.portal.progress(jid, self.cn)[1].get("step"))
+                time.sleep(0.05)
+        ts = [threading.Thread(target=view) for _ in range(4)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(30)
+        time.sleep(fake_aap.RUN)
+        self.portal.progress(jid, self.cn)
+        ev, why = self.portal.aap.events_after(jid, 0)
+        whole = sp.Progress()
+        whole.feed(ev)
+        self.assertEqual(self.portal.prog[jid].tasks, whole.tasks)                                       # not 4 viewers' worth
+        self.assertEqual(self.portal.prog[jid].counter, whole.counter)
+
+    def test_77_every_route_that_asks_aap_for_a_job_is_limited(self):
+        jid = self.run_job(["web01.example.mil"])
+        keep = self.portal.POLLS_PER_MINUTE
+        try:
+            for path, want_body in (("/api/jobs/%d" % jid, None), ("/jobs/%d" % jid, None), ("/jobs/%d?pane=1" % jid, ""), ("/jobs", None),
+                                    ("/jobs?list=1", None), ("/api/jobs/%d/progress" % jid, None)):
+                self.portal.polls.clear()
+                self.portal.POLLS_PER_MINUTE = 1
+                self.assertEqual(self.get(path)[0], 200, path)
+                code, body, _h = self.get(path)
+                self.assertEqual(code, 429, path)
+                if want_body is not None:
+                    self.assertEqual(body, want_body, path)
+        finally:
+            self.portal.POLLS_PER_MINUTE = keep
+            self.portal.polls.clear()
+
     def _post_form(self, path, fields, origin="https://portal.example.mil"):
         data = urllib.parse.urlencode(fields, doseq=True).encode()
         hd = dict(cert(JDOE), **{"Content-Type": "application/x-www-form-urlencoded", "Host": "portal.example.mil", "Origin": origin})
@@ -2006,6 +2102,306 @@ class Found(unittest.TestCase):
                 return f.status, f.read().decode(), dict(f.headers)
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode(), dict(e.headers)
+
+
+class StubApi(object):
+    """A scripted AAP for the unit tests of what happens when it answers badly: route(path) -> (code, data). Every path asked is kept."""
+    base = "/api/controller/v2/"
+    user = "portal"
+
+    def __init__(self, route):
+        self.route, self.paths = route, []
+
+    def call(self, method, path, body=None):
+        self.paths.append((method, path))
+        return self.route(method, path, body)
+
+    def probe(self):
+        return ""
+
+
+def page(rows, nxt=None, count=None):
+    return 200, {"count": len(rows) if count is None else count, "next": StubApi.base + nxt if nxt else None, "results": rows}
+
+
+class Codex1(unittest.TestCase):
+    """The review of 926b7696: names that mean more than a host, AAP's words after a failed launch, a pass that was not whole, a list that does not
+    add up, a failed read of the inventory, a survey maximum of 0."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        with open(os.path.join(cls.tmp, "actions.json"), "w") as fh:
+            json.dump({"actions": ACTIONS}, fh)
+        cls.cfg = sp.Config({"PORTAL_DATA": os.path.join(cls.tmp, "data"), "PORTAL_REPORTS": cls.tmp, "PORTAL_ACTIONS": os.path.join(cls.tmp, "actions.json"),
+                             "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "fake-token", "PORTAL_INVENTORY": "Site hosts",
+                             "PORTAL_REQUESTERS": "[]", "PORTAL_LAUNCHES_PER_HOUR": "50"})
+        sp.sys.stdout = open(os.devnull, "w")
+
+    @classmethod
+    def tearDownClass(cls):
+        sp.sys.stdout = sys.__stdout__
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def aap(self, route):
+        a = sp.Aap(self.cfg, api=StubApi(route))
+        a.inv_id = 3
+        return a
+
+    # P1: all, ungrouped and patterns
+    def test_1_names_that_mean_more_than_a_host(self):
+        for n in ("all", "ALL", "All", "ungrouped", "Ungrouped"):
+            self.assertFalse(rules.host_usable(n), n)
+        for n in ("web*", "web?", "web[1]", "a,b", "a:b", "a!b", "a&b", "a~b", "a b", "a\tb", "", " ", "-a", ".a", "a/b", "web\n"):
+            self.assertFalse(rules.host_usable(n), repr(n))
+        for n in ("web01.example.mil", "web_01", "a", "all-hosts", "allx", "ungrouped2", "192.0.2.5"):
+            self.assertTrue(rules.host_usable(n), n)
+
+    def test_1_a_host_named_all_never_reaches_a_limit(self):
+        def route(m, path, body):
+            if path.startswith("inventories/3/groups/"):
+                return page([{"id": 7, "name": "web_servers"}])
+            if path.startswith("groups/7/all_hosts/"):
+                return page([{"name": "web01", "enabled": True}, {"name": "all", "enabled": True}])
+            if path.startswith("inventories/3/hosts/?name=all"):
+                return page([{"name": "all", "enabled": True}])
+            return 404, {"detail": "no"}
+        a = self.aap(route)
+        hosts, why = a.expand_now(["web_servers"])
+        self.assertIsNone(hosts)
+        self.assertIn("cannot be used in a Limit", why)
+        hosts, why = a.expand_now(["all"])                                  # asked for by name, even when AAP lists it
+        self.assertIsNone(hosts)
+        self.assertIn("cannot be used in a Limit", why)
+
+    def test_1_only_enabled_hosts(self):
+        def route(m, path, body):
+            if path.startswith("inventories/3/groups/"):
+                return page([{"id": 7, "name": "web_servers"}])
+            if path.startswith("groups/7/all_hosts/"):
+                return page([{"name": "web01", "enabled": True}, {"name": "web02", "enabled": False}])
+            if path.startswith("inventories/3/hosts/?name=web02"):
+                return page([{"name": "web02", "enabled": False}])
+            return 404, {"detail": "no"}
+        a = self.aap(route)
+        self.assertEqual(a.expand_now(["web_servers"]), (["web01"], ""))            # a disabled member is not counted
+        hosts, why = a.expand_now(["web02"])
+        self.assertIsNone(hosts)
+        self.assertIn("not a host or a group", why)
+        self.assertTrue(all("enabled=true" in p for m, p in a.api.paths if "all_hosts" in p or "/hosts/?name" in p), a.api.paths)
+
+    def test_1_the_listing_asks_for_enabled_hosts_and_drops_a_disabled_one(self):
+        def route(m, path, body):
+            if path.startswith("inventories/3/hosts/"):
+                return page([{"name": "web01", "enabled": True}, {"name": "all", "enabled": False}, {"name": "web02", "enabled": False}])
+            if path.startswith("inventories/3/groups/"):
+                return page([])
+            return 404, {"detail": "no"}
+        a = self.aap(route)
+        inv = a.inventory_listing(force=True)
+        self.assertEqual(inv["hosts"], ["web01"])
+        self.assertTrue(any("enabled=true" in p for m, p in a.api.paths if "/hosts/" in p))
+
+    # P1: AAP's words after a failed launch
+    def test_2_the_reason_is_the_portals_own(self):
+        for code, word in ((400, "did not accept"), (403, "may not start"), (404, "any more"), (409, "busy"), (500, "problem on its side"), (502, "problem on its side"), (418, "did not start")):
+            self.assertIn(word, rules.launch_failure_reason(code), code)
+        self.assertIn("did not start", rules.launch_failure_reason("x"))
+
+    def test_2_the_log_keeps_nothing_when_the_form_has_a_password(self):
+        a = {"vars": {"pw": {"kind": "password"}, "why": {"kind": "text"}}}
+        got = rules.launch_failure_log(a, {"pw": "Hunter2-secret", "why": "routine"}, {"extra_vars": ["bad Hunter2-secret"]})
+        self.assertNotIn("Hunter2", got)
+        self.assertNotIn("routine", got)
+
+    def test_2_the_log_masks_every_answer(self):
+        a = {"vars": {"why": {"kind": "text"}, "hosts": {"kind": "hosts"}, "n": {"kind": "integer"}}}
+        data = {"extra_vars": ["why 'secret \"quoted\" value' is wrong", "web01 and web02 are listed", "n 4242 too big"]}
+        got = rules.launch_failure_log(a, {"why": 'secret "quoted" value', "hosts": ["web01", "web02"], "n": 4242}, data)
+        for leak in ("secret", "quoted", "web01", "web02", "4242"):
+            self.assertNotIn(leak, got, got)
+        self.assertIn("(answer)", got)
+        self.assertLessEqual(len(rules.launch_failure_log(a, {}, {"x": "y" * 900})), 300)
+
+    def _start(self, vars_, values, code, data):
+        calls = []
+        aap = sp.Aap(self.cfg, api=StubApi(lambda m, p, b: calls.append((m, p, b)) or (code, data)))
+        portal = sp.Portal(self.cfg, aap=aap)
+        portal.same_template = lambda a: ""
+        act = {"name": "jt_9", "discovered": True, "tid": 9, "aap": {"type": "job", "name": "Some job"}, "limit_from": "", "vars": vars_,
+               "started_by": False, "title": "Some job"}
+        out = portal._start("DOE.JANE.Q.1234567890", "192.0.2.5", "jt_9", act, values)
+        return out, portal.log.read("launch_failed"), calls
+
+    def test_2_a_failed_launch_shows_and_logs_no_answer(self):
+        body = {"extra_vars": ["Hunter2-secret is not valid", "why: routine is not valid"]}
+        (status, out), logged, calls = self._start({"pw": {"kind": "password", "max": 40}, "why": {"kind": "text", "max": 40}},
+                                                    {"pw": "Hunter2-secret", "why": "routine"}, 400, body)
+        self.assertEqual(status, 502)
+        self.assertIn("HTTP 400", out["error"])
+        self.assertNotIn("Hunter2", json.dumps(out))
+        self.assertNotIn("routine", json.dumps(out))
+        self.assertNotIn("is not valid", json.dumps(out))
+        self.assertEqual(len(logged), 1)
+        self.assertNotIn("Hunter2", json.dumps(logged))
+        self.assertNotIn("routine", logged[0]["why"])
+        body2 = {"extra_vars": ["why: routine is not valid"]}
+        (status, out), logged, calls = self._start({"why": {"kind": "text", "max": 40}}, {"why": "routine"}, 400, body2)   # no password in the form
+        self.assertNotIn("routine", json.dumps(out))
+        self.assertNotIn("is not valid", json.dumps(out))
+        self.assertIn("is not valid", logged[-1]["why"])                                                                      # the log keeps the rest
+        self.assertNotIn("routine", logged[-1]["why"])                                                                        # but not the answer in AAP's words
+
+    # P2: a pass that was not whole
+    def whole(self, *names):
+        return {"actions": dict((n, {"name": n, "title": n, "discovered": True, "who": None, "aap": {"type": "job", "name": n}, "vars": {}, "tid": i + 1,
+                                     "limit_from": "", "kinds": [], "fixes": True, "area": "", "summary": "", "button": "", "when": {}, "labels": [], "sig": "x"})
+                                for i, n in enumerate(names)),
+                "skipped": [], "clashes": [], "error": "", "seen": len(names), "incomplete": False}
+
+    def portal_with(self, results):
+        aap = sp.Aap(self.cfg, api=StubApi(lambda m, p, b: (404, {})))
+        it = iter(results)
+        aap.discover = lambda builtin: next(it)
+        return sp.Portal(self.cfg, aap=aap)
+
+    def test_3_an_incomplete_pass_keeps_the_last_whole_one(self):
+        partial = dict(self.whole("jt_1"), incomplete=True, skipped=[("jt_2", "its survey could not be read: x")])
+        p = self.portal_with([self.whole("jt_1", "jt_2"), partial, self.whole("jt_1")])
+        p.refresh(force=True)
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1", "jt_2"])
+        p.refresh(force=True)
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1", "jt_2"])      # the card did not disappear
+        self.assertIn("last full read", p.found["error"])
+        p.refresh(force=True)                                                                                    # a whole pass without it: now it is gone
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1"])
+        self.assertEqual(p.found["error"], "")
+
+    def test_3_the_first_pass_may_be_partial(self):
+        p = self.portal_with([dict(self.whole("jt_1"), incomplete=True)])
+        p.refresh(force=True)
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1"])          # something to show, asked again soon
+
+    def test_3_discover_says_when_aap_did_not_answer(self):
+        tpl = {"id": 11, "name": "Some job", "survey_enabled": True, "ask_limit_on_launch": False, "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal"}]}}}
+        for code, incomplete in ((503, True), (429, True), (-1, True), (500, True), (403, False), (404, False)):
+            def route(m, path, body, code=code):
+                if path.startswith("job_templates/?role_level"):
+                    return page([tpl])
+                if path.startswith("workflow_job_templates/?role_level"):
+                    return page([])
+                return code, {"detail": "no"}
+            out = self.aap(route).discover({})
+            self.assertEqual(out["incomplete"], incomplete, code)
+            self.assertEqual(out["actions"], {})
+            self.assertEqual(len(out["skipped"]), 1)
+
+    # P2: a list that does not add up
+    def test_4_a_list_must_add_up(self):
+        cases = [("no results", lambda: (200, {"count": 1, "next": None})),
+                 ("results not a list", lambda: (200, {"count": 1, "next": None, "results": {"a": 1}})),
+                 ("not an object", lambda: (200, ["x"])),
+                 ("no count", lambda: (200, {"next": None, "results": [{"id": 1}]})),
+                 ("count a string", lambda: (200, {"count": "1", "next": None, "results": [{"id": 1}]})),
+                 ("short, no next", lambda: page([{"id": 1}], count=3)),
+                 ("long", lambda: page([{"id": 1}, {"id": 2}], count=1))]
+        for what, answer in cases:
+            a = self.aap(lambda m, p, b, answer=answer: answer())
+            rows, why = a._paged("job_templates/?page_size=200")
+            self.assertTrue(why, what)
+        a = self.aap(lambda m, p, b: page([{"id": 1}, {"id": 2}]))
+        self.assertEqual(a._paged("x/"), ([{"id": 1}, {"id": 2}], ""))
+        self.assertEqual(self.aap(lambda m, p, b: page([]))._paged("x/"), ([], ""))
+
+    def test_4_every_page_counts(self):
+        def route(m, path, body):
+            if "page=2" in path:
+                return 200, {"count": 3, "next": None}                          # the second page has no results
+            return page([{"id": 1}, {"id": 2}], nxt="x/?page=2", count=3)
+        rows, why = self.aap(route)._paged("x/?page_size=2")
+        self.assertIn("shape", why)
+
+        def route2(m, path, body):
+            if "page=2" in path:
+                return page([{"id": 3}], count=3)
+            return page([{"id": 1}, {"id": 2}], nxt="x/?page=2", count=3)
+        self.assertEqual(self.aap(route2)._paged("x/?page_size=2"), ([{"id": 1}, {"id": 2}, {"id": 3}], ""))
+
+        def route3(m, path, body):                                              # a last page that ends the list early
+            if "page=2" in path:
+                return page([], count=3)
+            return page([{"id": 1}, {"id": 2}], nxt="x/?page=2", count=3)
+        self.assertIn("add up", self.aap(route3)._paged("x/?page_size=2")[1])
+
+    def test_4_a_list_that_does_not_add_up_keeps_the_cache(self):
+        def route(m, path, body):
+            if path.startswith("job_templates/?role_level"):
+                return page([{"id": 1, "name": "a"}], count=2)                  # one row short, no next
+            return page([])
+        out = self.aap(route).discover({})
+        self.assertIn("add up", out["error"])
+        self.assertEqual(out["actions"], {})
+        p = self.portal_with([self.whole("jt_1"), dict(self.whole(), error=out["error"])])
+        p.refresh(force=True)
+        p.refresh(force=True)
+        self.assertEqual(sorted(k for k, a in p.actions.items() if a.get("discovered")), ["jt_1"])
+
+    # P2: a failed read of the inventory keeps the last good listing
+    def test_5_a_failed_read_keeps_the_last_good_listing(self):
+        state = {"mode": "good"}
+
+        def route(m, path, body):
+            if path.startswith("inventories/3/hosts/"):
+                if state["mode"] == "hosts":
+                    return page([{"name": "web01", "enabled": True}], count=2)               # a short list
+                return page([{"name": "web01", "enabled": True}, {"name": "web02", "enabled": True}])
+            if path.startswith("inventories/3/groups/"):
+                if state["mode"] == "groups":
+                    return 503, {"detail": "busy"}
+                return page([{"id": 7, "name": "web_servers"}])
+            if path.startswith("groups/7/all_hosts/"):
+                if state["mode"] == "members":
+                    return 503, {"detail": "busy"}
+                return page([{"name": "web01", "enabled": True}, {"name": "web02", "enabled": True}])
+            return 404, {"detail": "no"}
+        a = self.aap(route)
+        good = a.inventory_listing(force=True)
+        self.assertEqual((good["hosts"], good["groups"], good["truncated"]), (["web01", "web02"], {"web_servers": ["web01", "web02"]}, False))
+        for mode in ("hosts", "groups", "members"):
+            state["mode"] = mode
+            got = a.inventory_listing(force=True)
+            self.assertIs(got, good, mode)                                       # the same listing, not a part of it
+            self.assertEqual(got["hosts"], ["web01", "web02"], mode)
+            self.assertEqual(got["groups"], {"web_servers": ["web01", "web02"]}, mode)
+            self.assertFalse(got["truncated"], mode)
+            good.pop("retry", None)
+        state["mode"] = "good"
+        n = len(a.api.paths)
+        good["retry"] = time.time() + 60                                         # a failed read: not asked again at once
+        self.assertIs(a.inventory_listing(), good)
+        self.assertEqual(len(a.api.paths), n)
+
+    def test_5_the_first_read_may_be_a_part(self):
+        def route(m, path, body):
+            if path.startswith("inventories/3/hosts/"):
+                return page([{"name": "web01", "enabled": True}])
+            if path.startswith("inventories/3/groups/"):
+                return page([{"id": 7, "name": "web_servers"}])
+            return 503, {"detail": "busy"}
+        got = self.aap(route).inventory_listing(force=True)
+        self.assertTrue(got["truncated"])
+        self.assertIn("web_servers", got["bad"])                                 # a group read in part is no group
+
+    # P2: a survey maximum of 0
+    def test_6_a_maximum_of_zero_stays_zero(self):
+        v, _s = rules.survey_vars({"spec": [{"variable": "a", "question_name": "A", "type": "text", "max": 0},
+                                           {"variable": "b", "question_name": "B", "type": "text"},
+                                           {"variable": "c", "question_name": "C", "type": "textarea", "max": ""},
+                                           {"variable": "d", "question_name": "D", "type": "password", "max": 0},
+                                           {"variable": "e", "question_name": "E", "type": "text", "max": 20}]})
+        self.assertEqual([v[k]["max"] for k in "abcde"], [0, 1024, 1024, 0, 20])
+        got = rules.check_values({"vars": {"a": v["a"]}}, {"a": "x"})
+        self.assertIn("longer than 0", json.dumps(got))
 
 
 class Look(unittest.TestCase):

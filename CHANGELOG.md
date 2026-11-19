@@ -26,6 +26,15 @@ Nothing else is required.
 - A card's address is `jt_<AAP id>` or `wf_<AAP id>`; a template (or its survey or Limit prompt) changed after the form was opened is not
   started. A template with a Limit needs `portal_inventory`. A number that is not finite, or a host list that is not text, is a field error.
   A read of AAP that could not finish keeps the cards it had, and says so. A template with a Limit must be a job template that runs on `portal_inventory` (a workflow with a Limit is left out); the Limit is sent as the concrete hosts the portal counted once (never empty, never over `portal_limit_max`), and a form's signature (the template's playbook, variables, prompts and survey) is required; the groups are read again at launch. Approval marks a workflow only: a job template marked for approval is left out, since it starts at once.
+- **Checked after review** (docs/SITE_PORTAL.md, "When AAP does not answer", "Hosts", "When AAP refuses a start"). Only enabled hosts are
+  listed or counted; a host named `all` or `ungrouped` (any case) is refused in a Limit, as is any name with a pattern character. A refused start
+  shows the status and a reason of the portal's own, never AAP's words; the log keeps them with every answer replaced, and not at all when the
+  survey has a password. A read that fails for a moment (survey, labels, launch settings, steps) or a list that does not add up (no `results`,
+  fewer rows than `count`) keeps the last whole read of the cards and of the inventory's hosts and groups, says so, and asks again in 15 seconds.
+  A survey maximum of 0 stays 0 (1024 only when there is none).
+  Also: two viewers of one running job count its events once (*Step 30 of 12* is gone); every page or call that asks AAP for a job (`/jobs`,
+  `/jobs/N`, `/api/jobs/N`, the pane and the progress call) is under the 90-a-minute limit; **Refresh** reads AAP once a minute for everyone, a
+  later click says *Refreshed N s ago*, and a forced read never waits behind another.
 - **The Actions page, Run and Details** (docs/SITE_PORTAL.md, "The Actions page, Run and Details"): a strip (*Connected - AAP: N jobs found*, last
   refreshed, Refresh), four filter tiles (All, Job templates, Workflows, Last run failed) that are links, a search (**/** jumps to it; name,
   description, label), and cards with the type, the last run, the labels, **Details** and **Run**. Run opens a dialog with the survey's form,

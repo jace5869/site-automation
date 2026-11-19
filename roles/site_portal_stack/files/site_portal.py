@@ -314,19 +314,27 @@ class Aap(object):
 
     def _paged(self, path, pages_max=None):
         """All rows of a list (follows next) -> (rows, '' or why not). Never a partial list reported as whole."""
-        rows, nxt, pages = [], path, 0
+        rows, nxt, pages, total = [], path, 0, 0
         while nxt:
             if pages >= (pages_max or self.PAGES_MAX):
                 return rows, "could not read every template from AAP (more than %d pages)" % (pages_max or self.PAGES_MAX)
             code, data = self.call("GET", nxt)
             if code != 200:
                 return rows, "AAP could not be asked: %s" % site_aap.error_text(data)
-            rows += data.get("results") or []
+            if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+                return rows, "AAP's list had a shape the portal does not know (no results)"
+            if pages == 0:
+                total = data.get("count")
+                if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+                    return rows, "AAP's list did not say how many rows it has"
+            rows += data["results"]
             raw_next = data.get("next") or ""
             nxt = self._relative(raw_next)
             if raw_next and not nxt:
                 return rows, "could not read every template from AAP (the next page's address was not understood)"
             pages += 1
+        if len(rows) != total:                              # a short list with no next page is not the whole list
+            return rows, "AAP's list does not add up (read %d of %d)" % (len(rows), total)
         return rows, ""
 
     def labels_of(self, kind, row):
@@ -340,12 +348,18 @@ class Aap(object):
             names_ = [str(x.get("name") or "") for x in more]
         return names_
 
+    @staticmethod
+    def _unsure(code):
+        """True when AAP did not really answer (no connection, a timeout, too many calls, a server error): the answer may be different next time.
+        A 403 or 404 is an answer: the template is not for the portal."""
+        return code is None or code < 0 or code in (408, 429) or code >= 500
+
     def discover(self, builtin):
         """-> {'actions': {name: action}, 'skipped': [(template, why)], 'clashes': [(template, built-in action)], 'error': ''}.
         The job templates and workflows the account has Execute on (role_level=execute_role) that carry the label; the form of each is
         its survey's. A template a built-in action already runs is not added twice: the built-in wins."""
         cfg = self.cfg
-        out = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0}
+        out = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "incomplete": False}
         taken = set(builtin)
         have = dict(((a["aap"]["type"], a["aap"]["name"]), n) for n, a in builtin.items())
         found = []
@@ -362,6 +376,7 @@ class Aap(object):
             labels = self.labels_of(kind, r)
             if labels is None:
                 out["skipped"].append((tname, "its labels could not be read completely"))
+                out["incomplete"] = True                    # AAP did not answer: the card is not gone, this pass is just not whole
                 continue
             if cfg.label not in labels:
                 out["skipped"].append((tname, "no label %s" % cfg.label))
@@ -375,6 +390,7 @@ class Aap(object):
                 code, spec = self.call("GET", "%s/%d/survey_spec/" % (kind, tid))
                 if code != 200:
                     out["skipped"].append((tname, "its survey could not be read: %s" % site_aap.error_text(spec)))
+                    out["incomplete"] = out["incomplete"] or self._unsure(code)
                     continue
                 qs = [q for q in (spec.get("spec") or []) if isinstance(q, dict)]
                 asked = next((q for q in qs if q.get("variable") == "portal_requested_by"), None)       # asked in the survey: the portal fills it from the card
@@ -390,6 +406,7 @@ class Aap(object):
             code, info = self.call("GET", "%s/%d/launch/" % (kind, tid))
             if code != 200:
                 out["skipped"].append((tname, "its launch settings could not be read: %s" % site_aap.error_text(info)))
+                out["incomplete"] = out["incomplete"] or self._unsure(code)
                 continue
             if code == 200 and (info.get("inventory_needed_to_start") or info.get("credential_needed_to_start")
                                 or info.get("passwords_needed_to_start")):
@@ -418,6 +435,7 @@ class Aap(object):
                 shape = self.workflow_shape(tid)
                 if shape is None:
                     out["skipped"].append((tname, "its steps could not be read"))
+                    out["incomplete"] = True
                     continue
                 sigf["steps"] = shape
             area = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
@@ -534,7 +552,7 @@ class Aap(object):
         t = time.time()
         with self.lock:
             hit = self.listing
-            if hit and not force and t - hit["at"] < self.cfg.discover_seconds:
+            if hit and not force and (t - hit["at"] < self.cfg.discover_seconds or t < hit.get("retry", 0)):
                 return hit
         if not self.listing_lock.acquire(blocking=False):
             return self.listing                                 # someone is reading it: this one uses what there is
@@ -542,18 +560,22 @@ class Aap(object):
             iid = self._inventory_id()
             if iid is None:
                 return self.listing
-            rows, why = self._paged("inventories/%d/hosts/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
-            if why and not rows:
+            rows, why = self._paged("inventories/%d/hosts/?enabled=true&order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
+            if why and self._keep_listing():
                 return self.listing
-            hosts = sorted(set(str(r.get("name")) for r in rows if r.get("name")), key=str.lower)
+            hosts = sorted(set(str(r.get("name")) for r in rows if r.get("name") and r.get("enabled", True) is not False), key=str.lower)
             grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
+            if gwhy and self._keep_listing():
+                return self.listing
             groups, trunc, bad = {}, bool(why or gwhy), set()
             for g in grows[:self.GROUPS_MAX]:
-                mem, w = self._paged("groups/%d/all_hosts/?page_size=200" % int(g["id"]), self.HOST_PAGES_MAX)
+                mem, w = self._paged("groups/%d/all_hosts/?enabled=true&page_size=200" % int(g["id"]), self.HOST_PAGES_MAX)
                 if w:                                           # a group read in part is no group: never counted short, never launched
+                    if self._keep_listing():
+                        return self.listing
                     bad.add(str(g.get("name")))
                     continue
-                groups[str(g.get("name"))] = sorted(set(str(m.get("name")) for m in mem if m.get("name")), key=str.lower)
+                groups[str(g.get("name"))] = sorted(set(str(m.get("name")) for m in mem if m.get("name") and m.get("enabled", True) is not False), key=str.lower)
             bad.update(str(g.get("name")) for g in grows[self.GROUPS_MAX:])
             trunc = trunc or bool(bad)
             got = {"hosts": hosts, "groups": groups, "bad": bad, "truncated": trunc, "at": time.time(),
@@ -563,6 +585,16 @@ class Aap(object):
             return got
         finally:
             self.listing_lock.release()
+
+    def _keep_listing(self):
+        """A read of the inventory failed: when a whole listing is kept it stays (asked again in a little while); True then. With none, the
+        part that was read serves, said to be a part (truncated)."""
+        with self.lock:
+            hit = self.listing
+            if hit and not hit.get("truncated"):
+                hit["retry"] = time.time() + min(15, self.cfg.discover_seconds)
+                return True
+        return False
 
     def expand(self, items):
         """Names of hosts and groups -> (the hosts they stand for, unique, in order; '' or why not). Every name must be a host or a group of
@@ -582,7 +614,7 @@ class Aap(object):
             if members is None:
                 return None, "is not a host or a group of the portal's inventory"
             for h in members:
-                if not rules.HOST_RE.match(h) or h in inv["groups"]:
+                if not rules.host_usable(h) or h in inv["groups"]:
                     return None, "has a host whose name cannot be used in a Limit (or is also a group's name)"
                 if h not in seen:
                     seen.add(h)
@@ -603,19 +635,19 @@ class Aap(object):
         for name in items:
             gid = gids.get(name)
             if gid is not None:
-                mem, w = self._paged("groups/%d/all_hosts/?page_size=200" % gid, self.HOST_PAGES_MAX)
+                mem, w = self._paged("groups/%d/all_hosts/?enabled=true&page_size=200" % gid, self.HOST_PAGES_MAX)
                 if w:
                     return None, "is a group whose hosts could not be read just now - try again"
-                members = sorted(set(str(m.get("name")) for m in mem if m.get("name")), key=str.lower)
+                members = sorted(set(str(m.get("name")) for m in mem if m.get("name") and m.get("enabled", True) is not False), key=str.lower)
             else:
-                code, data = self.call("GET", "inventories/%d/hosts/?name=%s&page_size=2" % (iid, urllib.parse.quote(name)))
+                code, data = self.call("GET", "inventories/%d/hosts/?name=%s&enabled=true&page_size=2" % (iid, urllib.parse.quote(name)))
                 if code != 200:
                     return None, "could not be looked up in the inventory just now - try again"
-                if not any(r.get("name") == name for r in (data.get("results") or [])):
+                if not any(r.get("name") == name and r.get("enabled", True) is not False for r in (data.get("results") or [])):
                     return None, "is not a host or a group of the portal's inventory"
                 members = [name]
             for h in members:
-                if not rules.HOST_RE.match(h) or h in gids:
+                if not rules.host_usable(h) or h in gids:
                     return None, "has a host whose name cannot be used in a Limit (or is also a group's name)"
                 if h not in seen:
                     seen.add(h)
@@ -883,14 +915,19 @@ class Progress(object):
 
     def __init__(self):
         self.counter, self.tasks, self.what, self.host = 0, 0, "", ""
+        self.lock = threading.Lock()                    # one reader of a job's events at a time: two tabs never count the same events twice
         self.hosts = collections.OrderedDict()          # host -> running | failed | unreachable | done
         self.lines = collections.deque(maxlen=LINES_MAX)
         self.stats = False
         self.first_bad = None                           # the first host to fail or not answer: {host, what, cause}
 
     def feed(self, events):
+        base = self.counter
         for e in events:
-            self.counter = max(self.counter, int(e.get("counter") or 0))
+            n = int(e.get("counter") or 0)
+            if n and n <= base:                         # already counted (a second reader, or a page AAP gave twice)
+                continue
+            self.counter = max(self.counter, n)
             ev, d = str(e.get("event") or ""), e.get("event_data") or {}
             if ev == "playbook_on_task_start":
                 self.tasks += 1
@@ -970,6 +1007,7 @@ class Portal(object):
         self.builtin = dict(self.actions)
         self.found = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0}
         self.found_at = 0.0
+        self.found_whole = False                        # a whole read of AAP has been kept (an incomplete one never replaces it)
         self.found_ready = False                        # the first read of AAP has ended (found or not): until then a request waits for it
         self.found_lock = threading.Lock()
         if problems:
@@ -1022,8 +1060,8 @@ class Portal(object):
         t = time.time()
         if self.found_ready and not force and t - self.found_at < self.cfg.discover_seconds:
             return
-        if not self.found_lock.acquire(blocking=force or not self.found_ready):
-            return                                      # someone is asking AAP: this one uses what there is
+        if not self.found_lock.acquire(blocking=not self.found_ready):
+            return                                      # someone is asking AAP: this one uses what there is (a forced read too)
         try:
             if self.found_ready and not force and time.time() - self.found_at < self.cfg.discover_seconds:
                 return
@@ -1032,8 +1070,17 @@ class Portal(object):
                 self.found = dict(self.found, error=got["error"])
                 self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
                 return
+            if got.get("incomplete"):                   # a template could not be read just now: the last whole read stays, asked again soon
+                if self.found_whole:
+                    self.found = dict(self.found, error="AAP did not answer for every template just now; the list is as of the last full read")
+                    self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
+                    return
+                got = dict(got, error="")
+                self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
+            else:
+                self.found_whole = True
+                self.found_at = time.time()
             self.found = got
-            self.found_at = time.time()
             old = set(k for k, a in self.actions.items() if a.get("discovered"))
             merged = dict((k, a) for k, a in self.actions.items() if k not in old)
             for k, a in got["actions"].items():
@@ -1042,6 +1089,20 @@ class Portal(object):
         finally:
             self.found_ready = True
             self.found_lock.release()
+
+    FORCE_EVERY = 60                                    # one read of AAP forced by a Refresh per this many seconds, for everyone
+
+    def refresh_now(self):
+        """The Refresh button: read AAP again now, but only once in FORCE_EVERY seconds for all people together -> 0 when it read, else how many
+        seconds ago it did (a later click gets the cards that read made)."""
+        with self.lock:
+            ago = time.time() - getattr(self, "forced_at", 0.0)
+            if ago < self.FORCE_EVERY:
+                return max(1, int(ago))
+            self.forced_at = time.time()
+        self.refresh(force=True)
+        self.last_at = 0
+        return 0
 
     # -- who may do what
     def may_use(self, cn):
@@ -1226,8 +1287,8 @@ class Portal(object):
         code, data = self.aap.call("POST", "%s/%d/launch/" % (kind, tid), body)
         if code not in (200, 201):
             self.log.add({"event": "launch_failed", "user": cn, "ip": ip, "action": name, "values": shown_values,
-                          "http": code, "why": site_aap.error_text(data)})
-            return 502, {"error": "AAP did not start it (HTTP %s): %s" % (code, site_aap.error_text(data))}
+                          "http": code, "why": rules.launch_failure_log(a, values, data)})
+            return 502, {"error": "AAP did not start it (HTTP %s): %s." % (code, rules.launch_failure_reason(code))}
         jid = int(data.get("workflow_job") or data.get("job") or data.get("id"))
         ignored = data.get("ignored_fields") or {}
         rec = self.log.add({"event": "launch", "user": cn, "ip": ip, "action": name, "aap": a["aap"], "values": shown_values,
@@ -1320,8 +1381,9 @@ class Portal(object):
                     self.prog.popitem(last=False)
             else:
                 self.prog.move_to_end(jid)
-        ev, why = self.aap.events_after(jid, pr.counter)
-        pr.feed(ev)
+        with pr.lock:                                   # asked and counted together: the second viewer asks after what the first counted
+            ev, why = self.aap.events_after(jid, pr.counter)
+            pr.feed(ev)
         est = self.aap.task_estimate(jid)
         v = pr.view(est, done)
         out.update(hosts=v["hosts"], lines=v["lines"], pct=pct(v["step"], est, done), step=v["step"], est=est, hosts_done=v["hosts_done"], hosts_n=v["hosts_n"])
@@ -1671,16 +1733,18 @@ def home_page(cfg, portal, cn, query=None):
     q = query or {}
     show = (q.get("show") or [""])[-1]
     text = " ".join((q.get("q") or [""])[-1].split()).lower()[:80]
+    wait = int((q.get("wait") or [""])[-1]) if re.match(r"^\d{1,3}$", (q.get("wait") or [""])[-1]) else 0      # a Refresh within the cooldown: how long ago it read
     cards = portal.catalog(cn)
     jt = [c for c in cards if not c["wf"]]
     wf = [c for c in cards if c["wf"]]
     bad = [c for c in cards if c["last"].get("status") in ("failed", "error")]
     err = portal.found.get("error") if cfg.label else ""
     ok = not portal.aap.ready and not err
-    strip = ('<div class="card strip"><div class="l">%s<span>%s</span></div><div class="r"><span>Last refreshed %s</span>'
+    strip = ('<div class="card strip"><div class="l">%s<span>%s</span></div><div class="r"><span>%s %s</span>'
              '<form method="post" action="%srefresh"><input type="hidden" name="portal-token" value="%s"><button type="submit" id="refresh">%s Refresh</button></form></div></div>'
              % (('<span class="chip s-ok">%s Connected</span>' % icon("ok")) if ok else ('<span class="chip s-critical">%s Not connected</span>' % icon("bad")),
                 ("AAP: <b>%d job%s found</b>" % (len(cards), "" if len(cards) == 1 else "s")) if ok else esc(err or portal.aap.ready or "AAP could not be asked"),
+                ("Refreshed %d s ago, wait a minute between refreshes. Last refreshed" % int(wait)) if wait else "Last refreshed",
                 clock(cfg, getattr(portal, "last_at", None) or portal.found_at or None), cfg.path, esc(portal.token(cn)), icon("refresh")))
     def tile(key, word, n, extra=""):
         return '<a class="ft%s" href="%s%s" data-show="%s" aria-current="%s"><span class="k">%s</span><span class="v">%d</span></a>' % (
@@ -2313,6 +2377,8 @@ def make_handler(cfg, portal, static_dir):
                     return self._send(302, b"", "text/plain", [("Location", step[1])])
                 return self._send(200, step[1] if step else action_page(cfg, portal, cn, m.group(1), q), "text/html; charset=utf-8")
             if path == "/jobs":
+                if not portal.poll_ok(cn):              # a page that asks AAP for the newest job: the same per-person limit as the progress calls
+                    return self._send(429, message_page(cfg, "Too many requests", "Wait a few seconds, then reload.", cn, "bad"), "text/html; charset=utf-8")
                 q = urllib.parse.parse_qs(u.query)
                 scope = (q.get("scope") or ["mine"])[-1]
                 if (q.get("list") or [""])[-1]:
@@ -2330,6 +2396,12 @@ def make_handler(cfg, portal, static_dir):
                         return self._send(429, {"error": "Too many updates: wait a few seconds."})
                     code, view = portal.progress(int(m.group(2)), cn, via)
                     return self._send(code, view)
+                if not portal.poll_ok(cn):              # /api/jobs/N and /jobs/N ask AAP as the progress calls do: one limit for them all
+                    if m.group(1):
+                        return self._send(429, {"error": "Too many requests: wait a few seconds."})
+                    if (q.get("pane") or [""])[-1]:     # the page's script reads the empty 429 and waits
+                        return self._send(429, b"", "text/plain")
+                    return self._send(429, message_page(cfg, "Too many requests", "Wait a few seconds, then reload.", cn, "bad"), "text/html; charset=utf-8")
                 if m.group(1):
                     code, view = portal.job(int(m.group(2)), via, cn)
                     return self._send(code, view)
@@ -2337,8 +2409,6 @@ def make_handler(cfg, portal, static_dir):
                     return self._send(404, message_page(cfg, "Not here", "There is no job %d here." % int(m.group(2)), cn),
                                       "text/html; charset=utf-8")
                 if (q.get("pane") or [""])[-1]:                # the right pane only: the page's script swaps it in while the job runs
-                    if not portal.poll_ok(cn):
-                        return self._send(429, b"", "text/plain")
                     return self._send(200, job_pane_html(cfg, portal, cn, int(m.group(2)), via), "text/html; charset=utf-8")
                 return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via, (q.get("scope") or ["mine"])[-1]), "text/html; charset=utf-8")
             if path == "/approvals":
@@ -2430,10 +2500,10 @@ def make_handler(cfg, portal, static_dir):
             if not ok or not portal.token_ok(cn, (form.get("portal-token") or [""])[-1]):
                 portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": "/refresh", "why": "not from a portal page (CSRF check)"})
                 return self._send(403, message_page(cfg, "Not accepted", "Send it from the portal's page: reload the page and try again.", cn, "bad"), "text/html; charset=utf-8")
+            wait = 0
             if portal.poll_ok(cn):                       # the same per-person limit as the progress calls
-                portal.refresh(force=True)
-                portal.last_at = 0
-            return self._send(303, b"", "text/plain", [("Location", cfg.path)])
+                wait = portal.refresh_now()
+            return self._send(303, b"", "text/plain", [("Location", cfg.path + (("?wait=%d" % wait) if wait else ""))])
 
         def do_POST(self):
             path = urllib.parse.urlsplit(self.path).path
