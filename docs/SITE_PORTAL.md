@@ -803,7 +803,7 @@ Your jobs are already in AAP. Instead of adding the label `portal` to each one b
 4. Run it again without Check. Each match gets the label `portal` (and `portal-area:<area>` when you gave one) and Execute for `portal_setup_portal_user`.
 5. Open the portal: the cards appear within `portal_discover_seconds` (a minute), or press **Refresh**.
 
-It never removes anything. A template that is already in another area keeps its area, and the job says so. The credential of the job needs
+It never removes anything. A template that is already in another area keeps its area, and the job says so. A template with no organization is skipped whole, said. Only `*` and `?` are special in a pattern (a `[` is just a `[`). A template this same run makes (from `workflows.yml` or `portal_setup_templates_extra`) is published by the next run. The credential of the job needs
 **Admin** on the organization of the templates, as for the rest of this job.
 
 To take a job off the portal, list it the same way and run the job again (Check first):
@@ -831,14 +831,14 @@ The built-in actions (*Recheck this system*, *Import the checklists* and the res
 2. Run **Site portal - deploy**. The summary says, for each one, *stig_recheck points at "Our STIG recheck" - AAP: ok*, or why AAP has no such template.
 3. Run **AAP - set up portal actions** to give the portal's account Execute on your templates (it grants by the name you gave).
 
-An action name that is not an action is an error naming `portal_aap_names`. So is a name two actions would share. The setup job still makes the
+An action that needs an approval (it is a workflow with an approval step) can be pointed only at a workflow of yours: a job template would start at once while the card says there is an approval, so that is an error. When you point it at your own workflow, the setup job gives the portal's account **Approve** on it as well as Execute, so the approval step must be one you want the portal's approvers to decide. An action name that is not an action is an error naming `portal_aap_names`. So is a name two actions would share. The setup job still makes the
 templates of `workflows.yml` under their own names; leave them, or hide the actions you do not use with `portal_actions_off`.
 
 | Setting | Default | What it does |
 |---|---|---|
 | `portal_publish_templates` | `[]` | name patterns of the jobs and workflows to put on the portal |
 | `portal_publish_area` | `{}` | `{pattern: area}`: also the label `portal-area:<area>` |
-| `portal_publish_max` | 50 | the most one pattern may match; more stops the job, nothing changed |
+| `portal_publish_max` | 50 | the most one pattern may match (1 to 500); more stops the job, nothing changed |
 | `portal_unpublish_templates` | `[]` | name patterns to take off: the label only |
 | `portal_aap_names` | `{}` | `{action: "your name"}` or `{action: {type, name}}` for a built-in action |
 

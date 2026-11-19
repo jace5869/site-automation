@@ -108,8 +108,43 @@ class Patterns(unittest.TestCase):
         self.assertFalse(m("site", "Site - health linux"))                 # a whole name, not a part
         self.assertFalse(m("*health", "Site - health linux"))
         self.assertTrue(m("*health*", "Site - health linux"))
+
+    def test_only_star_and_question_mark_are_special(self):
+        m = S.Setup._matches
+        # a [ ] is the characters themselves, not a class
+        self.assertTrue(m("Patch [prod]", "Patch [prod]"))
+        self.assertFalse(m("Patch [prod]", "Patch p"))
+        self.assertFalse(m("Patch [prod]", "Patch d"))
+        self.assertFalse(m("[!x]*", "Site - x"))
+        self.assertFalse(m("[!x]*", "anything"))
+        self.assertTrue(m("[!x]*", "[!x] and more"))
         self.assertFalse(m("[a-c]*", "Site - x"))
-        self.assertTrue(m("[s]ite*", "Site - x"))
+        self.assertTrue(m("[s]ite*", "[S]ITE - x"))
+        # every other character is itself too
+        for name in ("a.b", "a(b)", "a+b", "a|b", "a^b$", "a\\b", "a{2}"):
+            self.assertTrue(m(name, name), name)
+        self.assertFalse(m("a.b", "axb"))
+        self.assertFalse(m("a+", "aa"))
+        self.assertTrue(m("a?c", "abc"))
+        self.assertFalse(m("a?c", "ac"))
+        self.assertTrue(m("*", "any name\nwith a line end"))
+
+    def test_the_case_is_folded_not_lowered(self):
+        m = S.Setup._matches
+        self.assertTrue(m("STRASSE *", "Stra\u00dfe - health"))
+        self.assertTrue(m("stra\u00dfe *", "STRASSE - health"))
+
+    def test_brackets_in_the_lists_of_a_run(self):
+        api = FakeApi(["Patch [prod]", "Patch p", "Patch d"])
+        setup(api, publish=["Patch [prod]"])
+        self.assertEqual(api.labels_of("Patch [prod]"), ["portal"])
+        self.assertEqual(api.labels_of("Patch p"), [])
+        self.assertEqual(api.labels_of("Patch d"), [])
+        setup(api, publish=["Patch *"])
+        s = setup(api, unpublish=["Patch [prod]"])                          # the same for unpublish
+        self.assertEqual(api.labels_of("Patch [prod]"), [])
+        self.assertEqual(api.labels_of("Patch p"), ["portal"])
+        self.assertEqual(s.problems, [])
 
     def test_publish_matches_both_kinds_and_only_what_matches(self):
         api = FakeApi(NAMES, {"Weekly report": "workflow_job_templates"})
@@ -173,6 +208,15 @@ class Max(unittest.TestCase):
         self.assertEqual(api.writes, [])
         self.assertIn("portal_unpublish_templates", s.problems[0])
 
+    def test_the_max_is_one_to_five_hundred(self):
+        for bad in (0, -1, 501, None, "50", True):
+            api = FakeApi(NAMES)
+            s = setup(api, publish=["Other tool"], publish_max=bad)
+            self.assertEqual(api.writes, [], bad)
+            self.assertIn("portal_publish_max must be a number from 1 to 500", s.problems[0], bad)
+        for ok in (1, 500):
+            self.assertEqual(setup(FakeApi(NAMES), publish=["Other tool"], publish_max=ok).problems, [])
+
     def test_a_bad_setting_is_said(self):
         for kw, word in (({"publish": [1]}, "portal_publish_templates must be"), ({"publish": [" "]}, "portal_publish_templates must be"),
                          ({"unpublish": [None]}, "portal_unpublish_templates must be"), ({"publish": ["a"], "publish_area": {"a": ""}}, "portal_publish_area")):
@@ -186,6 +230,21 @@ class Max(unittest.TestCase):
         s = setup(api, publish=["site - health *"], unpublish=["SITE - HEALTH LINUX"])
         self.assertEqual(api.writes, [])
         self.assertIn("both match: Site - health linux", s.problems[0])
+
+
+class NoOrganization(unittest.TestCase):
+    def test_a_template_without_one_is_skipped_whole(self):
+        api = FakeApi(NAMES)
+        for r in api.rows["job_templates"]:
+            if r["name"] == "Other tool":
+                r["organization"] = None
+        s = setup(api, publish=["Other tool", "site - cleanup"], publish_area={"*": "Ops"})
+        self.assertEqual(api.labels_of("Other tool"), [])                    # no label, no area label, no role
+        self.assertIn("label|Other tool: portal|skipped", say(s))
+        self.assertFalse([r for r in s.results if r["name"].startswith("Other tool") and r["action"] != "skipped"])
+        self.assertIn("no organization", [r for r in s.results if r["name"].startswith("Other tool")][0]["why"])
+        self.assertEqual(api.labels_of("site - cleanup"), ["portal", "portal-area:Ops"])   # the others are done
+        self.assertEqual(len(api.user_roles), 1)
 
 
 class Unpublish(unittest.TestCase):
@@ -276,6 +335,21 @@ class Names(unittest.TestCase):
     def test_an_action_of_your_own_is_named_in_its_own_setting(self):
         m = self.merge({"mine": "x"}, extra={"mine": {"title": "M", "aap": {"type": "job", "name": "n"}}})
         self.assertIn("is an action of your own (portal_actions_extra)", m["problems"][0])
+
+    def test_an_approval_action_needs_a_workflow(self):
+        base = dict(self.BASE, ckl_import=dict(self.BASE["ckl_import"], approval=True), disk_cleanup=dict(self.BASE["disk_cleanup"], approval=True))
+        for names in ({"ckl_import": {"type": "job", "name": "Our job"}},                        # a job template starts at once
+                      {"disk_cleanup": {"type": "job", "name": "Our job"}}):
+            m = rules.site_portal_actions_merge(base, None, None, names)
+            self.assertEqual(len(m["problems"]), 1, names)
+            self.assertIn("needs an approval, and only a workflow has an approval step", m["problems"][0])
+            self.assertIn("portal_aap_names", m["problems"][0])
+            self.assertEqual(m["actions"], base)                                                   # not pointed
+        m = rules.site_portal_actions_merge(base, None, None, {"ckl_import": "Our workflow", "disk_cleanup": {"type": "workflow", "name": "Our disk workflow"}})
+        self.assertEqual(m["problems"], [])                                                       # a workflow is fine (its approval step is the site's own)
+        self.assertEqual(m["actions"]["ckl_import"]["aap"], {"type": "workflow", "name": "Our workflow"})
+        m = rules.site_portal_actions_merge(base, None, None, {"stig_recheck": {"type": "workflow", "name": "x"}})
+        self.assertEqual(m["problems"], [])                                                       # an action with no approval may point at either
 
     def test_a_hidden_action_cannot_be_pointed(self):
         m = self.merge({"stig_recheck": "x"}, off=["stig_recheck"])

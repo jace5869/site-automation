@@ -13,12 +13,14 @@ the portal's account Execute on them.
   `portal_setup_portal_user`. `portal_publish_area` `{pattern: area}` adds `portal-area:<area>`; an area label already there stays.
 - Check first says, per template, *would label*, *would grant*, *already done* or *skipped* (with the reason). A pattern that matches nothing is said.
   A pattern that matches more than `portal_publish_max` (50) stops with the list and changes nothing. A template in both lists is an error.
+- Only `*` and `?` are special in a pattern (a `[` is itself); the case is folded. `portal_publish_max` is 1 to 500 (0 is an error). A template
+  with no organization is skipped whole. A template the same run makes is published by the next run.
 - Never removes anything. `portal_unpublish_templates` removes the label `portal` only, never a role or an area label.
 - The credential needs Admin on the templates' organization, as for the rest of the job.
 
 **Your own template names.** `portal_aap_names` `{action: "name"}` (or `{action: {type, name}}`) points a built-in action at your own template
 or workflow, so nothing is renamed in AAP. An unknown action, a bad type or two actions on one template is an error naming the setting; the
-deploy says *points at "<name>" - AAP: ok*.
+deploy says *points at "<name>" - AAP: ok*. An action with an approval can point only at a workflow (a job template would skip the approval); the setup job then gives the portal's account Approve on it.
 
 **The portal's reads, kept honest** (from the review of 1.78.0). A failed read keeps the last whole one for at most 10 x `portal_discover_seconds`
 and asks again after 15 s, 30 s, 60 s ... (never more than `portal_discover_seconds`); a template list that cannot be read for that long gives an
