@@ -58,6 +58,12 @@ if os.geteuid() != 0 and VER < 257 and os.environ.get("AK_SANDBOX") != "none":
     say("needs systemd 257" in why, "as a user other than root on systemd %s the module refuses the sandbox: %s" % (VER, why or "it did not"))
     print("the writes, signals and replays are tried by the root run (sudo) on this systemd")
     sys.exit(1 if fails else 0)
+if os.geteuid() != 0 and why and os.environ.get("AK_USER_MAY_REFUSE") == "1":
+    # 1.76.1e: a CI runner whose user manager gets no namespace (systemd then skips the sandbox's mounts): the probe
+    # refuses the sandbox - fail-closed, the trial is "not tried". The root run (the job's own way) must hold.
+    say(True, "as a user other than root the module refuses the sandbox here: %s" % why)
+    print("the writes, signals and replays are tried by the root run (sudo) on this systemd")
+    sys.exit(0)
 if os.environ.get("AK_SANDBOX") == "none":
     say(bool(why), "no sandbox here, and the module says so: %s" % (why or "it found one"))
     sys.exit(1 if fails else 0)
