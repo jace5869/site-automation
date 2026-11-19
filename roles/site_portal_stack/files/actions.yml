@@ -28,6 +28,7 @@ actions:
     vars:
       target: {kind: inventory_host, label: Host}
     limit_from: target
+    multi_host: true                      # 1.78.2: a group or several hosts = ONE job (its playbook's portal_request_spec says kind: hosts)
     approval: false
 
   ckl_import:

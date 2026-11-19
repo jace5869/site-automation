@@ -190,7 +190,7 @@ function hostPickers() {
     const sel = box.querySelector("select");
     if (!sel || box.dataset.on) continue;
     box.dataset.on = "1";
-    const field = box.dataset.picker, cap = parseInt(box.dataset.max, 10) || 5, src = box.dataset.src;
+    const field = box.dataset.picker, cap = parseInt(box.dataset.max, 10) || 50, src = box.dataset.src, setting = box.dataset.setting || "portal_action_max_hosts";
     const picked = new Map();                      // name -> hosts it stands for
     for (const o of sel.selectedOptions) { const m = /\((\d+) hosts?\)$/.exec(o.textContent); picked.set(o.value, m ? parseInt(m[1], 10) : 1); }
     sel.disabled = true;
@@ -231,9 +231,9 @@ function hostPickers() {
       rows.forEach((r, i) => {
         const li = el("li", "pk-row" + (i === on ? " on" : "") + (picked.has(r.name) ? " sel" : "") + (fits(r) ? "" : " off"));
         li.setAttribute("role", "option"); li.setAttribute("aria-selected", picked.has(r.name) ? "true" : "false");
-        if (!fits(r)) { li.setAttribute("aria-disabled", "true"); li.title = "Too many hosts: at most " + cap; }
+        if (!fits(r)) { li.setAttribute("aria-disabled", "true"); li.title = "Too big: at most " + cap + " hosts (" + setting + ")"; }
         const mark = el("span", "pk-box"); mark.setAttribute("aria-hidden", "true"); mark.textContent = picked.has(r.name) ? "✓" : "";
-        li.append(mark, el("span", "pk-name", r.name), el("span", "pk-kind", r.kind === "group" ? "group · " + r.count + " host" + (r.count === 1 ? "" : "s") : "host"));
+        li.append(mark, el("span", "pk-name", r.name), el("span", "pk-kind", r.kind === "group" ? "group · " + r.count + " host" + (r.count === 1 ? "" : "s") + " · " + (fits(r) ? "fits" : "too big: at most " + cap + " (" + setting + ")") : "host"));
         li.addEventListener("mousedown", (ev) => { ev.preventDefault(); on = i; toggle(r); });
         list.append(li);
       });
@@ -328,7 +328,7 @@ async function fetchFrag(url) {
 function homeActions() {
   const grid = $("agrid"), q = $("aq"), tiles = $("ftiles");
   if (!grid || !q || !tiles) return;
-  const cards = Array.from(grid.children), params = new URLSearchParams(location.search);
+  const cards = Array.from(grid.querySelectorAll("li[data-wf]")), groups = Array.from(grid.querySelectorAll(".grp")), params = new URLSearchParams(location.search);
   let show = params.get("show") || "";
   q.value = params.get("q") || q.value;
   const apply = () => {
@@ -339,6 +339,12 @@ function homeActions() {
       const ok = (!show || (show === "job" && d.wf === "0") || (show === "workflow" && d.wf === "1") || (show === "failed" && d.failed === "1")) && (!t || (d.q || "").indexOf(t) >= 0);
       li.hidden = !ok;
       if (ok) n++;
+    }
+    for (const g of groups) {                                                 // a group with nothing to show hides; its count follows
+      const k = g.querySelectorAll("li[data-wf]:not([hidden])").length;
+      g.hidden = k === 0;
+      const c = g.querySelector("h2 .count");
+      if (c) c.textContent = String(k);
     }
     $("acount").textContent = n + " of " + cards.length;
     for (const a of tiles.children) a.setAttribute("aria-current", a.dataset.show === show ? "true" : "false");

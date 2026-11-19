@@ -40,7 +40,7 @@ APPR = "CN=APPROVER.ALEX.B.3456789012,OU=USA,OU=PKI,O=U.S. Government,C=US"
 PPOE = "CN=POE.PAT.C.4567890123,OU=USAF,OU=PKI,O=U.S. Government,C=US"
 ACTIONS = {
     "stig_recheck": {"title": "Recheck this system", "aap": {"type": "job", "name": "Linux - recheck one host"},
-                     "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target", "approval": False,
+                     "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target", "approval": False, "multi_host": True,
                      "area": "STIG", "summary": "Checks one host again."},
     "ckl_import": {"title": "Import the checklists", "area": "STIG", "summary": "Imports the checklists into STIG Manager.", "aap": {"type": "workflow", "name": "Checklists imported into STIG Manager"},
                    "vars": {"stigman_ckl_import_mode": {"kind": "choice", "values": ["import", "import and scorecard", "scorecard"],
@@ -625,7 +625,7 @@ class Live(unittest.TestCase):
         self.assertIn("not on the list", r["error"])
         code, r = self.post("/api/actions/stig_recheck", {"vars": {"target": "nothere.example.mil"}})
         self.assertEqual(code, 400)
-        self.assertIn("not a host of the portal's inventory", r["error"])
+        self.assertIn("not a host or a group of the portal's inventory", r["error"])            # 1.78.2: the host field of a one-job action takes hosts and groups
         code, r = self.post("/api/actions/act_triage", {"vars": {"target": "web01.example.mil", "report_job": "907",
                                                                  "finding_id": "eventlog:{% raw %}"}})
         self.assertEqual(code, 400)
@@ -1399,9 +1399,14 @@ class Found(unittest.TestCase):
         big["groups"]["many"] = ["h%02d.example.mil" % n for n in range(10)]
         try:
             self.portal.aap.inventory_listing(force=True)
+            self.cfg.pick_max_hosts = 5                                                                                    # portal_pick_max_hosts (1.78.2: 50 by default)
             step = sp.picker_route(self.cfg, self.portal, self.cn, "disk_cleanup", {"hosts": ["many"]})
             self.assertIn("Too many hosts.", step[1])                                                                      # 10 hosts at 5 at most
             self.assertIn("that is 10", step[1])
+            self.assertIn("portal_pick_max_hosts", step[1])
+            self.cfg.pick_max_hosts = 50
+            step = sp.picker_route(self.cfg, self.portal, self.cn, "disk_cleanup", {"hosts": ["many"]})
+            self.assertNotIn("Too many hosts.", step[1])                                                                   # the default takes it
             step = sp.picker_route(self.cfg, self.portal, self.cn, "disk_cleanup", {"hosts": ["nothere.example.mil"]})
             self.assertIn("not a host or a group", step[1])
         finally:
@@ -1863,9 +1868,13 @@ class Found(unittest.TestCase):
         code, h, _ = self.get("/jobs/%d" % jid)
         self.assertEqual(code, 200)
         for needle in ('class="card jl"', 'id="jd"', 'data-done="1"', "My jobs", "Search job, job id or who started it", "Hosts", "What just happened",
-                       "Job ID", "Requested by", "DOE.JANE.Q.1234567890", "Answers - what the run was started with", "(hidden)", "Technical output: available after the next update.",
+                       "Job ID", "Requested by", "DOE.JANE.Q.1234567890", "Answers - what the run was started with", "(hidden)",
                        'class="chip s-ok"', "2 of 2 hosts done"):
             self.assertIn(needle, h, needle)
+        self.assertNotIn("Technical output", h)                                                     # it read like an error: left out until it has a source
+        self.assertIn('<h3>Results</h3>', h)
+        self.assertRegex(h, r'<a class="btn pri" href="https://reports.example.mil/linux-health/[^"]+" target="_blank" rel="noopener">Open the report')
+        self.assertNotIn(">site_report<", h)                                                        # never the raw key
         self.assertNotIn("Hunter2", h)                                                              # a password: never
         self.assertNotIn("refreshes every 3 s", h)                                                  # it is over: nothing to refresh
         self.assertIn("<b>fail01.example.mil</b> failed</span>", h)                                 # its chip: a task ran and failed
@@ -2753,7 +2762,11 @@ class Own(unittest.TestCase):
     def test_config_of_the_pick(self):
         c = sp.Config({"PORTAL_FINDING_DAYS": "30", "PORTAL_FINDING_JOBS": "0", "PORTAL_PICK_MAX_LAUNCHES": "999",
                        "PORTAL_FINDING_PLAYBOOKS": '["health_check.yml", "fapolicyd*.yml", "../x", "a b"]'})
-        self.assertEqual((c.finding_days, c.finding_jobs, c.pick_max, c.finding_playbooks), (14, 1, 50, ["health_check.yml", "fapolicyd*.yml"]))
+        self.assertEqual((c.finding_days, c.finding_jobs, c.pick_max, c.finding_playbooks), (14, 1, 200, ["health_check.yml", "fapolicyd*.yml"]))      # 1.78.2: 1 to 200
+        c = sp.Config({"PORTAL_PICK_MAX_LAUNCHES": "0", "PORTAL_PICK_MAX_HOSTS": "0", "PORTAL_ACTION_MAX_HOSTS": "9999"})
+        self.assertEqual((c.pick_max, c.pick_max_hosts, c.action_max_hosts), (1, 1, 500))
+        c = sp.Config({})
+        self.assertEqual((c.pick_max, c.pick_max_hosts, c.action_max_hosts, c.limit_max), (10, 50, 50, 50))
         c = sp.Config({})
         self.assertEqual((c.finding_days, c.finding_jobs, c.pick_max, c.finding_playbooks), (7, 5, 10, []))
 
@@ -2891,6 +2904,518 @@ class Titles1781c(unittest.TestCase):
     def test_4_a_setting_the_deploy_refuses_is_dropped_by_the_service(self):
         out = self.found({"a": "x" * 81}, [self.tpl(1, "a")])
         self.assertEqual(self.titles(out), {"a": "a"})
+
+
+def tiny_png():
+    """A generated 1x1 PNG (no image file in the repo)."""
+    import struct
+    import zlib
+
+    def ch(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return b"\x89PNG\r\n\x1a\n" + ch(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)) + ch(b"IDAT", zlib.compress(b"\x00\x1e\x5a\xa0\xff")) + ch(b"IEND", b"")
+
+
+class Home1782(unittest.TestCase):
+    """1.78.2: the Actions page by area, the help panel 'Why isn't my template here?', the site's logo."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        with open(os.path.join(cls.tmp, "actions.json"), "w") as fh:
+            json.dump({"actions": {}}, fh)
+        cls.env = {"PORTAL_DATA": os.path.join(cls.tmp, "data"), "PORTAL_REPORTS": cls.tmp, "PORTAL_ACTIONS": os.path.join(cls.tmp, "actions.json"),
+                   "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "fake-token", "PORTAL_INVENTORY": "Site hosts", "PORTAL_REQUESTERS": "[]",
+                   "PORTAL_TITLE": "Example site portal"}
+        cls.logo = os.path.join(cls.tmp, "logo.png")
+        with open(cls.logo, "wb") as fh:
+            fh.write(tiny_png())
+        sp.sys.stdout = open(os.devnull, "w")
+
+    @classmethod
+    def tearDownClass(cls):
+        sp.sys.stdout = sys.__stdout__
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @staticmethod
+    def card(name, title, area, wf=False, status="successful", labels=()):
+        return {"name": name, "title": title, "area": area, "line": "", "wf": wf, "labels": list(labels), "approval": False, "off": "", "dialog": True,
+                "last": {"status": status, "finished": "2026-11-19T06:01:00Z"} if status else {}}
+
+    def portal(self, cards, found=None, **env):
+        cfg = sp.Config(dict(self.env, **env))
+        p = sp.Portal(cfg)
+        p.aap.ready = ""
+        p.catalog = lambda cn: cards
+        p.found = dict({"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "labelled": 0, "no_execute": [], "no_execute_why": "", "account": "svc_x"},
+                       **(found or {}))
+        return cfg, p
+
+    CARDS = None
+
+    def cards(self):
+        c = self.card
+        return [c("e", "ACT - triage", "ACT"), c("z", "Zeta tool", "Zeta"), c("o", "Plain one", ""), c("s2", "STIG - import", "STIG", wf=True, status="failed"),
+                c("s1", "STIG - recheck", "STIG"), c("d", "Disk cleanup", "Disk & services"), c("a", "Alpha tool", "alpha")]
+
+    def heads(self, h):
+        return [(html.unescape(a), b, c) for a, b, c in re.findall(r'<section class="grp" data-area="([^"]*)"( hidden)?><h2>[^<]*<span class="count">(\d+)</span>', h)]
+
+    # 1: by area
+    def test_1_the_cards_are_grouped_by_area_in_the_old_order(self):
+        cfg, p = self.portal(self.cards())
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
+        self.assertEqual([x[0] for x in self.heads(h)], ["STIG", "Disk & services", "ACT", "alpha", "Zeta", "Other"])     # the built-in areas, others by name, Other last
+        self.assertEqual([x[2] for x in self.heads(h)], ["2", "1", "1", "1", "1", "1"])
+        self.assertLess(h.index('id="ftiles"'), h.index('id="agrid"'))                                                      # under the tiles and the search
+        self.assertLess(h.index('class="find"'), h.index('id="agrid"'))
+        self.assertEqual(len(re.findall(r"<li data-wf", h)), 7)
+        grp = h[h.index('data-area="STIG"'):h.index('data-area="Disk')]
+        self.assertLess(grp.index("STIG - import"), grp.index("STIG - recheck"))                                            # by title inside a group
+
+    def test_2_the_tiles_and_the_search_filter_inside_the_groups_and_empty_groups_hide(self):
+        cfg, p = self.portal(self.cards())
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {"show": ["workflow"]})
+        self.assertEqual([(a, bool(hid), n) for a, hid, n in self.heads(h)],
+                         [("STIG", False, "1"), ("Disk & services", True, "0"), ("ACT", True, "0"), ("alpha", True, "0"), ("Zeta", True, "0"), ("Other", True, "0")])
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {"q": ["zeta"]})
+        self.assertEqual([a for a, hid, n in self.heads(h) if not hid], ["Zeta"])
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {"show": ["failed"]})
+        self.assertEqual([a for a, hid, n in self.heads(h) if not hid], ["STIG"])
+
+    def test_3_the_script_hides_empty_groups_and_counts(self):
+        with open(os.path.join(FILES, "static", "portal.js")) as fh:
+            js = fh.read()
+        self.assertIn('querySelectorAll(".grp")', js)
+        self.assertIn("g.hidden = k === 0", js)
+        self.assertNotIn("innerHTML", js)
+
+    # 3: the help
+    def test_4_the_help_says_what_was_found(self):
+        cfg, p = self.portal(self.cards(), found={"seen": 14, "labelled": 11, "account": "svc_x",
+                                                 "skipped": [("Rebuild", "needs a credential at launch"), ("Other", "no label portal"), ("Too many hosts", "its Limit")],
+                                                 "no_execute": ["Patch RHEL 8", "Audit export"]})
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
+        why = h[h.index('<details class="hlp'):h.index("</details>")]
+        self.assertNotIn(" open", why.split(">")[0])                                                                     # closed
+        for want in ("Why isn&#x27;t my template here?", "<b>14</b> templates the account may run", "<b>11</b> with the label <code>portal</code> (1 without it)",
+                     "<b>Rebuild</b> - needs a credential at launch", "<b>Too many hosts</b> - its Limit",
+                     "<b>2</b> labelled templates the account may NOT run - give <b>svc_x</b> Execute on them: Patch RHEL 8, Audit export"):
+            self.assertIn(want, why.replace("isn't", "isn&#x27;t") if "isn&#x27;" in want else why, want)
+        self.assertNotIn("<b>Other</b>", why)                                                                            # a template without the label is a count, not a line
+        self.assertLess(h.index('<details class="hlp'), h.index('id="ftiles"'))                                          # under the strip, above the tiles
+        self.assertGreater(h.index('<details class="hlp'), h.index('class="card strip"'))
+
+    def test_5_the_help_with_nothing_to_report(self):
+        cfg, p = self.portal(self.cards(), found={"seen": 3, "labelled": 3})
+        why = sp.why_panel(cfg, p)
+        self.assertIn("Skipped: none", why)
+        self.assertIn("Labelled templates the account may not run: none", why)
+        self.assertNotIn("NOT run", why)
+
+    def test_6_the_help_when_aap_could_not_be_read_or_the_list_failed(self):
+        cfg, p = self.portal(self.cards(), found={"error": "AAP did not answer"})
+        self.assertIn("AAP could not be read: AAP did not answer", sp.why_panel(cfg, p))
+        cfg, p = self.portal(self.cards(), found={"seen": 2, "labelled": 2, "no_execute_why": "templates could not be read (HTTP 403)"})
+        why = sp.why_panel(cfg, p)
+        self.assertIn("could not be listed: templates could not be read (HTTP 403)", why)
+        self.assertNotIn("NOT run", why)
+
+    def test_7_no_label_no_help(self):
+        cfg, p = self.portal(self.cards(), PORTAL_LABEL="")
+        self.assertNotIn("hlp", sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {}))
+
+    def test_8_names_in_the_help_are_escaped_and_long_lists_cut(self):
+        cfg, p = self.portal(self.cards(), found={"seen": 1, "labelled": 1, "no_execute": ["<b>x</b>"] + ["t%d" % i for i in range(40)],
+                                                 "skipped": [("<i>bad</i>", "a <script>")]})
+        why = sp.why_panel(cfg, p)
+        self.assertNotIn("<b>x</b>", why)
+        self.assertNotIn("<script>", why)
+        self.assertNotIn("<i>bad</i>", why)
+        self.assertIn("and 11 more", why)                                                                                # 41 names, 30 shown
+
+    def test_9_discovery_reads_what_the_help_needs(self):
+        cfg = sp.Config(self.env)
+
+        def tpl(i, name, labelled=True):
+            return {"id": i, "name": name, "survey_enabled": False, "ask_limit_on_launch": False,
+                    "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal" if labelled else "other"}]}}}
+        mine = [tpl(1, "Runs"), tpl(2, "Not labelled", False)]
+        seen = []
+
+        def route(m, path, body):
+            seen.append(path)
+            if path.startswith("job_templates/?role_level"):
+                return page(mine)
+            if path.startswith("workflow_job_templates/?role_level"):
+                return page([])
+            if path.startswith("job_templates/?labels__name=portal"):
+                return page([{"id": 1, "name": "Runs"}, {"id": 9, "name": "Patch RHEL 8"}, {"id": 8, "name": "audit export"}])
+            if path.startswith("workflow_job_templates/?labels__name=portal"):
+                return page([{"id": 30, "name": "A workflow"}])
+            if path.endswith("/launch/"):
+                return 200, {}
+            return 404, {"detail": "no"}
+        a = sp.Aap(cfg, api=StubApi(route))
+        a.inv_id = 3
+        out = a.discover({})
+        self.assertEqual(out["seen"], 2)
+        self.assertEqual(out["labelled"], 1)
+        self.assertEqual(out["no_execute"], ["A workflow", "audit export", "Patch RHEL 8"])                              # labelled, seen by the account, not Execute
+        self.assertEqual(out["account"], "portal")
+        self.assertFalse(out["incomplete"])
+        self.assertTrue(any(x.startswith("job_templates/?labels__name=portal") for x in seen))
+        # a refusal of that list is said, and it never makes the read partial or an error
+        a = sp.Aap(cfg, api=StubApi(lambda m, p, b: (403, {"detail": "no"}) if "labels__name" in p else route(m, p, b)))
+        a.inv_id = 3
+        out = a.discover({})
+        self.assertTrue(out["no_execute_why"])
+        self.assertEqual((out["error"], out["incomplete"], len(out["actions"])), ("", False, 1))
+
+    # 2: the logo
+    def test_a_the_logo_file_is_checked_by_its_bytes(self):
+        d = self.tmp
+        png = tiny_png()
+        cases = (("a.png", png, "image/png"), ("b.dat", b"\xff\xd8\xff\xe0" + b"x" * 20, "image/jpeg"), ("c.gif", b"GIF89a" + b"x" * 20, "image/gif"),
+                 ("d.webp", b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"))
+        for name, data, kind in cases:
+            with open(os.path.join(d, name), "wb") as fh:
+                fh.write(data)
+            path, typ, v, why = sp.load_logo(os.path.join(d, name))
+            self.assertEqual((typ, why, path), (kind, "", os.path.join(d, name)), name)
+            self.assertGreater(v, 0)
+        for name, data, word in (("e.svg", b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>", "not a PNG"), ("f.png", b"not an image at all!", "not a PNG"),
+                                 ("g.png", png + b"0" * (sp.LOGO_MAX + 1), "1 MB"), ("h.png", b"\x89PNG", "16 bytes")):
+            with open(os.path.join(d, name), "wb") as fh:
+                fh.write(data)
+            path, typ, v, why = sp.load_logo(os.path.join(d, name))
+            self.assertEqual((path, typ, v), ("", "", 0), name)
+            self.assertIn(word, why, name)
+        self.assertIn("could not be read", sp.load_logo(os.path.join(d, "missing.png"))[3])
+        self.assertIn("not a file", sp.load_logo(d)[3])
+        self.assertEqual(sp.load_logo(""), ("", "", 0, ""))                                                              # no logo: the badge, silently
+
+    def test_b_the_header_shows_the_logo_or_the_badge(self):
+        cfg, p = self.portal([])
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
+        self.assertIn('<span class="mark" aria-hidden="true">E</span>', h)
+        self.assertNotIn("<img", h)
+        cfg, p = self.portal([], PORTAL_LOGO=self.logo)
+        h = sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {})
+        self.assertRegex(h, r'<img class="logo" src="/portal/static/logo\?v=\d+" alt="Example site portal">')
+        self.assertNotIn('class="mark"', h)
+        self.assertIn("Example site portal</a>", h)
+        with open(os.path.join(FILES, "static", "portal.css")) as fh:
+            css = fh.read()
+        self.assertIn(".home img.logo{display:block;max-height:40px", css)
+        cfg, p = self.portal([], PORTAL_LOGO=self.logo, PORTAL_TITLE='A "quoted" <title>')
+        self.assertIn('alt="A &quot;quoted&quot; &lt;title&gt;"', sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {}))
+        cfg, p = self.portal([], PORTAL_LOGO=os.path.join(self.tmp, "nothing-here.png"))
+        self.assertNotIn("<img", sp.home_page(cfg, p, "DOE.JANE.Q.1234567890", {}))                                      # a bad path: the badge
+
+    def test_c_the_logo_is_served_from_the_portals_own_static_path(self):
+        import urllib.request
+        cfg, p = self.portal([], PORTAL_LOGO=self.logo)
+        srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cfg, p, os.path.join(FILES, "static")))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            r = urllib.request.urlopen("http://127.0.0.1:%d/static/logo" % srv.server_address[1])
+            body = r.read()
+            self.assertEqual((r.status, r.headers["Content-Type"], r.headers["X-Content-Type-Options"]), (200, "image/png", "nosniff"))
+            self.assertEqual(body, tiny_png())
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        cfg, p = self.portal([])
+        srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cfg, p, os.path.join(FILES, "static")))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            try:
+                r = urllib.request.urlopen("http://127.0.0.1:%d/static/logo" % srv.server_address[1])
+                self.assertNotEqual(r.headers.get("Content-Type"), "image/png")
+            except Exception:
+                pass                                                                                                     # no logo set: nothing served (the sign-in answers)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_d_the_deploy_copies_it_only_when_the_site_sets_a_source(self):
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        self.assertIn("when: portal_logo_src | default('') | length > 0", y)
+        self.assertIn("portal_logo_src is set but portal_logo is not", y)
+        self.assertIn("""PORTAL_LOGO: "{{ '/etc/site-portal/logo' if _portal_logo_on""", y)
+        self.assertIn("_portal_logo_file is changed", y)                                                                 # a new image restarts the service
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "templates", "site-portal-app.container.j2")) as fh:
+            self.assertIn("Volume={{ portal_logo }}:/etc/site-portal/logo:ro,Z", fh.read())
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")) as fh:
+            d = fh.read()
+        self.assertIn('portal_logo: ""', d)
+        self.assertIn('portal_logo_src: ""', d)
+        out = subprocess.run(["git", "-C", ROOT, "ls-files"], stdout=subprocess.PIPE, universal_newlines=True).stdout.split("\n")
+        self.assertFalse([f for f in out if re.search(r"(^|/)logo[^/]*\.(png|jpe?g|gif|webp|svg)$", f)], "no logo file in the repo")
+
+
+class Caps1782(unittest.TestCase):
+    """1.78.2: the host caps are settings (portal_pick_max_hosts, portal_action_max_hosts, portal_pick_max_launches), and a built-in action whose template
+    takes a Limit and whose values are not one host's starts ONE job for a group; the findings actions stay one job for each finding."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        fake_aap.RUN = 0.5
+        fake_aap.LOG = os.path.join(cls.tmp, "aap.jsonl")
+        cls.aap = fake_aap.serve(0, stop=True)
+        with open(os.path.join(cls.tmp, "actions.json"), "w") as fh:
+            json.dump({"actions": ACTIONS}, fh)
+        cls.env = {"PORTAL_DATA": os.path.join(cls.tmp, "data"), "PORTAL_REPORTS": cls.tmp, "PORTAL_ACTIONS": os.path.join(cls.tmp, "actions.json"),
+                   "PORTAL_AAP_URL": "http://127.0.0.1:%d" % cls.aap.server_address[1], "PORTAL_AAP_TOKEN": "fake-token", "PORTAL_INVENTORY": "Site hosts",
+                   "PORTAL_REQUESTERS": "[]", "PORTAL_LAUNCHES_PER_HOUR": "50", "PORTAL_ACTION_MAX_HOSTS": "150"}
+        sp.sys.stdout = open(os.devnull, "w")
+        cls.inv = fake_aap.STATE["inventories"][0]
+        cls.keep = (list(cls.inv["hosts"]), dict(cls.inv["groups"]))
+        cls.inv["hosts"] += ["c%03d.example.mil" % n for n in range(160)]
+        cls.inv["groups"]["linux_prod"] = ["c%03d.example.mil" % n for n in range(120)]
+        cls.inv["groups"]["too_big"] = ["c%03d.example.mil" % n for n in range(160)]
+        cls.cfg = sp.Config(cls.env)
+        cls.portal = sp.Portal(cls.cfg)
+        cls.portal.aap.connect()
+        cls.portal.aap.resolve(cls.portal.actions)
+        cls.cn = "DOE.JANE.Q.1234567890"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.aap.shutdown()
+        cls.inv["hosts"][:], cls.inv["groups"] = cls.keep[0], cls.keep[1]
+        sp.sys.stdout = sys.__stdout__
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def launches(self):
+        with open(fake_aap.LOG) as fh:
+            return [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x]
+
+    def test_1_the_caps_are_settings_with_ranges(self):
+        c = sp.Config({})
+        self.assertEqual((c.pick_max_hosts, c.action_max_hosts, c.pick_max, c.limit_max), (50, 50, 10, 50))
+        c = sp.Config({"PORTAL_PICK_MAX_HOSTS": "500", "PORTAL_ACTION_MAX_HOSTS": "1", "PORTAL_PICK_MAX_LAUNCHES": "200"})
+        self.assertEqual((c.pick_max_hosts, c.action_max_hosts, c.pick_max), (500, 1, 200))
+        c = sp.Config({"PORTAL_PICK_MAX_HOSTS": "501", "PORTAL_ACTION_MAX_HOSTS": "0", "PORTAL_PICK_MAX_LAUNCHES": "201"})
+        self.assertEqual((c.pick_max_hosts, c.action_max_hosts, c.pick_max), (500, 1, 200))                 # the service never runs outside the range
+        for text in ("MAX_HOSTS = 5\n", "LIMIT_MAX = 5\n"):
+            for f in ("site_portal.py", os.path.join("..", "..", "..", "plugins", "filter", "site_portal_filters.py")):
+                with open(os.path.join(FILES, f)) as fh:
+                    self.assertNotIn("\n" + text, "\n" + fh.read())                                          # no hard-coded 5 left
+
+    def test_2_the_deploy_checks_the_ranges_and_names_the_setting(self):
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            y = fh.read()
+        for name, hi in (("portal_pick_max_hosts", 500), ("portal_action_max_hosts", 500), ("portal_pick_max_launches", 200), ("portal_limit_max", 500)):
+            self.assertIn("{name: %s, max: %d}" % (name, hi), y, name)
+            self.assertIn("PORTAL_%s: \"{{ %s }}\"" % (name[len("portal_"):].upper(), name), y)
+        self.assertIn("it must be a whole number from 1 to {{ item.max }} - nothing was changed", y)
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")) as fh:
+            d = fh.read()
+        self.assertIn("portal_pick_max_hosts: 50", d)
+        self.assertIn("portal_action_max_hosts: 50", d)
+
+    def test_3_a_group_of_120_is_one_launch_with_120_hosts(self):
+        a = self.portal.actions["stig_recheck"]
+        self.assertEqual((a["vars"]["target"]["kind"], a["vars"]["target"]["max"]), ("hosts", 150))
+        n = len(self.launches())
+        code, out = self.portal.launch(self.cn, "192.0.2.5", "stig_recheck", {"target": ["linux_prod"]})
+        self.assertEqual(code, 201, out)
+        sent = self.launches()[n:]
+        self.assertEqual(len(sent), 1)                                                                       # one job, not one for each host
+        self.assertEqual(sent[0]["body"]["limit"].split(","), ["c%03d.example.mil" % i for i in range(120)])
+        self.assertEqual(sent[0]["body"]["extra_vars"]["target"], sent[0]["body"]["limit"])                  # the variable the job reads holds the same hosts
+
+    def test_4_several_hosts_are_one_launch_too(self):
+        n = len(self.launches())
+        code, out = self.portal.launch(self.cn, "192.0.2.5", "stig_recheck", {"target": ["c001.example.mil", "c002.example.mil", "c003.example.mil"]})
+        self.assertEqual(code, 201, out)
+        sent = self.launches()[n:]
+        self.assertEqual((len(sent), sent[0]["body"]["limit"]), (1, "c001.example.mil,c002.example.mil,c003.example.mil"))
+
+    def test_5_one_host_as_before(self):
+        n = len(self.launches())
+        code, out = self.portal.launch(self.cn, "192.0.2.5", "stig_recheck", {"target": "c009.example.mil"})
+        self.assertEqual(code, 201, out)
+        sent = self.launches()[n:]
+        self.assertEqual((sent[0]["body"]["limit"], sent[0]["body"]["extra_vars"]["target"]), ("c009.example.mil", "c009.example.mil"))
+
+    def test_6_a_group_over_the_cap_is_refused_and_nothing_starts(self):
+        n = len(self.launches())
+        code, out = self.portal.launch(self.cn, "192.0.2.5", "stig_recheck", {"target": ["too_big"]})
+        self.assertEqual(code, 400, out)
+        self.assertIn("takes 150 hosts at most (that is 160", json.dumps(out))
+        self.assertEqual(len(self.launches()), n)
+        cfg = sp.Config(dict(self.env, PORTAL_ACTION_MAX_HOSTS="100"))                                      # the cap is the setting's, not a constant
+        p = sp.Portal(cfg)
+        p.aap.connect()
+        p.aap.resolve(p.actions)
+        code, out = p.launch(self.cn, "192.0.2.5", "stig_recheck", {"target": ["linux_prod"]})
+        self.assertEqual(code, 400, out)
+        self.assertIn("takes 100 hosts at most (that is 120", json.dumps(out))
+        self.assertEqual(len(self.launches()), n)
+
+    def test_6b_only_an_action_marked_multi_host_changes(self):
+        acts = dict((k, dict(v)) for k, v in ACTIONS.items())
+        acts["stig_recheck"].pop("multi_host")
+        acts["my_restart"] = {"title": "Restart on one host", "aap": {"type": "job", "name": "Restart app"}, "vars": {"target": {"kind": "inventory_host"}}, "limit_from": "target"}
+        got = rules.check_actions(acts)[0]
+        cfg = sp.Config(self.env)
+        sp.multi_host(got, cfg)
+        self.assertEqual((got["stig_recheck"]["vars"]["target"]["kind"], got["my_restart"]["vars"]["target"]["kind"]), ("inventory_host", "inventory_host"))   # no mark, no change
+        acts["my_restart"]["multi_host"] = True
+        got = rules.check_actions(acts)[0]
+        sp.multi_host(got, cfg)
+        self.assertEqual(got["my_restart"]["vars"]["target"]["kind"], "hosts")                               # a site opts an action in when its playbook takes a list
+        bad = dict(acts, act_triage=dict(acts["act_triage"], multi_host=True))
+        self.assertTrue(any("multi_host needs limit_from and no finding_id" in x for x in rules.check_actions(bad)[1]))
+        self.assertTrue(any("multi_host must be true or false" in x for x in rules.check_actions(dict(acts, ckl_import=dict(acts["ckl_import"], multi_host="yes")))[1]))
+
+    def test_6c_the_playbook_check_takes_a_list_of_hosts(self):
+        sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))
+        import portal_filters as pf
+        hosts = ["c001.example.mil", "c002.example.mil", "c003.example.mil"]
+        spec = {"target": {"kind": "hosts"}}
+        ok = "c001.example.mil,c002.example.mil"
+        self.assertEqual(pf.portal_check({"target": ok}, spec, hosts, ok, "target", "DOE.JANE.Q.1234567890"), [])
+        self.assertEqual(pf.portal_check({"target": "c001.example.mil"}, spec, hosts, "c001.example.mil", "target"), [])               # one host as before
+        out = pf.portal_check({"target": "c001.example.mil,nope.example.mil"}, spec, hosts, "c001.example.mil,nope.example.mil", "target")
+        self.assertIn("nope.example.mil is not a host of this job's inventory", out[0])
+        out = pf.portal_check({"target": ok}, spec, hosts, "c003.example.mil", "target")
+        self.assertIn("is not this job's Limit", out[0])                                                                               # the list is the Limit
+        self.assertEqual(pf.portal_check({"target": ","}, spec, hosts, "", "target")[0].split(":")[0], "target")
+        old = pf.portal_check({"target": ok}, {"target": {"kind": "inventory_host"}}, hosts, ok, "target")
+        self.assertTrue(old)                                                                                                            # the one-host kind still refuses a list
+        for pb in ("stig_recheck.yml", "win_stig_recheck.yml"):
+            with open(os.path.join(ROOT, "playbooks", pb)) as fh:
+                self.assertIn("portal_request_spec: {target: {kind: hosts}}", fh.read())
+        with open(os.path.join(FILES, "actions.yml")) as fh:
+            self.assertIn("multi_host: true", fh.read())
+
+    def test_6d_the_details_and_the_logo_header(self):
+        a = self.portal.actions["stig_recheck"]
+        h = sp.details_html(self.cfg, self.portal, "DOE.JANE.Q.1234567890", "stig_recheck")
+        self.assertIn("Hosts (1 to 150 hosts or groups, one job)", h)
+        import urllib.request
+        cfg = sp.Config(dict(self.env, PORTAL_LOGO=os.path.join(self.tmp, "logo.png")))
+        with open(cfg.env["PORTAL_LOGO"], "wb") as fh:
+            fh.write(tiny_png())
+        cfg = sp.Config(dict(self.env, PORTAL_LOGO=os.path.join(self.tmp, "logo.png")))
+        srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cfg, self.portal, os.path.join(FILES, "static")))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            r = urllib.request.urlopen("http://127.0.0.1:%d/static/logo" % srv.server_address[1])
+            self.assertEqual(r.headers.get_all("Cache-Control"), ["max-age=3600"])                          # one header, so the browser keeps it
+            self.assertEqual(r.headers.get_all("X-Content-Type-Options"), ["nosniff"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_7_the_findings_actions_stay_one_job_for_each_finding(self):
+        for name, a in self.portal.actions.items():
+            if "finding_id" in a["vars"] and a.get("limit_from"):
+                self.assertEqual(a["vars"][a["limit_from"]]["kind"], "inventory_host", name)
+
+    def test_8_without_portal_inventory_nothing_changes(self):
+        cfg = sp.Config(dict(self.env, PORTAL_INVENTORY=""))
+        p = sp.Portal(cfg)
+        self.assertEqual(p.actions["stig_recheck"]["vars"]["target"]["kind"], "inventory_host")
+
+    def test_9_the_picker_says_fits_or_too_big(self):
+        with open(os.path.join(FILES, "static", "portal.js")) as fh:
+            js = fh.read()
+        self.assertIn('(fits(r) ? "fits" : "too big: at most " + cap + " (" + setting + ")")', js)
+        h = sp.picker_html(self.portal, "target", [], 150)
+        self.assertIn('data-max="150" data-setting="portal_action_max_hosts"', h)
+        self.assertIn("(a group counts by its hosts; portal_action_max_hosts)", h)
+        h = sp.picker_html(self.portal, "hosts", [], 50, setting="portal_pick_max_hosts")
+        self.assertIn('data-setting="portal_pick_max_hosts"', h)
+        self.assertIn("linux_prod (120 hosts)", sp.picker_html(self.portal, "target", [], 150))               # the no-script list names the size too
+
+
+class Motion1782(unittest.TestCase):
+    """1.78.2: what is running turns - in portal.css only (no inline style), off under reduced motion and in print."""
+
+    def css(self):
+        with open(os.path.join(FILES, "static", "portal.css")) as fh:
+            return fh.read()
+
+    def test_1_the_running_icon_turns_in_the_stylesheet_only(self):
+        c = self.css()
+        self.assertIn("@keyframes spin{to{transform:rotate(360deg)}}", c)
+        no_pref = c[c.index("@media (prefers-reduced-motion:no-preference){\n  .ic-run"):]
+        no_pref = no_pref[:no_pref.index("\n}")]
+        self.assertIn(".ic-run,.jrows .d.run{animation:spin 1s linear infinite}", no_pref)            # only under no-preference: reduced motion stands still
+        self.assertIn("progress.pb::-webkit-progress-value{animation:stripe 1s linear infinite}", no_pref)
+        self.assertIn("progress.pb::-moz-progress-bar{animation:stripe 1s linear infinite}", no_pref)
+        self.assertNotRegex(c.replace(no_pref, ""), r"animation:\s*(spin|stripe)")                       # nowhere else (the old pulse is a different rule)
+        self.assertIn("@media print{.ic-run,.jrows .d.run,progress.pb::-webkit-progress-value,progress.pb::-moz-progress-bar{animation:none}}", c)
+
+    def test_2_only_the_running_icon_has_the_class_and_nothing_inline(self):
+        self.assertIn('class="ic ic-run"', sp.icon("run"))
+        for k in sp.ICONS:
+            if k != "run":
+                self.assertNotIn("ic-run", sp.icon(k), k)
+        self.assertNotIn("style=", sp.icon("run"))
+        with open(os.path.join(FILES, "static", "portal.js")) as fh:
+            self.assertNotIn("animation", fh.read())                                                   # the script never styles it
+
+    def test_3_the_now_line_has_the_icon(self):
+        with open(os.path.join(FILES, "site_portal.py")) as fh:
+            self.assertIn('<div class="nl">%s<b>Now</b>', fh.read())
+
+
+class Results1782(unittest.TestCase):
+    """1.78.2: the Results of a job - known artifact keys are buttons in the portal's look, others are not shown, no result no heading."""
+
+    def test_1_known_keys_become_buttons(self):
+        b = sp.result_buttons([{"site_report_url": "https://reports.example.mil/a/2026-11-19_job-9.html", "ticket_url": "https://sn.example.mil/nav_to.do?uri=incident.do",
+                                "ticket_number": "INC0012345", "site_scorecard_url": "https://reports.example.mil/score.html"}])
+        self.assertEqual([(x["label"], x["primary"]) for x in b], [("Open the report", True), ("Open ticket INC0012345", False), ("Open the scorecard", False)])
+        self.assertEqual(b[0]["url"], "https://reports.example.mil/a/2026-11-19_job-9.html")
+        self.assertEqual(sp.result_buttons([{"SITE_REPORT_URL": "http://reports.example.mil/a.html"}])[0]["label"], "Open the report")      # http: a report site may be http
+        self.assertEqual(sp.result_buttons([{"site_report": {"url": "https://reports.example.mil/x.html"}}])[0]["label"], "Open the report")
+        self.assertEqual(sp.result_buttons([{"incident_url": "https://sn.example.mil/x"}])[0]["label"], "Open the ticket")                  # no number beside it
+        self.assertEqual(sp.result_buttons([{"incident_url": "https://sn.example.mil/x", "incident_number": "INC1 <b>"}])[0]["label"], "Open the ticket")
+
+    def test_2_other_keys_are_not_shown(self):
+        self.assertEqual(sp.result_buttons([{"some_other_url": "https://x.example.mil/a", "portal_result": {"fixed": "true"}, "site_findings": [{"a": 1}]}]), [])
+        self.assertEqual(sp.result_buttons([]), [])
+        self.assertEqual(sp.result_buttons([None, "x", 5]), [])
+
+    def test_3_only_plain_web_addresses_are_linked(self):
+        for bad in ("javascript:alert(1)", "data:text/html,x", "ftp://x.example.mil/a", "//x.example.mil/a", "https://u@x.example.mil/a", "https://u:p@x.example.mil/a",
+                    "https:///a", "https://x.example.mil/ a", "https://x.example.mil/<b>", 'https://x.example.mil/"', "https://x.example.mil:99999/a", "", None, 5,
+                    "https://x.example.mil/" + "a" * 2100):
+            self.assertEqual(sp.result_buttons([{"site_report_url": bad}]), [], repr(bad))
+
+    def test_4_one_button_per_address_the_report_first_at_most_six(self):
+        u = "https://reports.example.mil/a.html"
+        b = sp.result_buttons([{"ticket_url": "https://sn.example.mil/t", "site_report_url": u}, {"report_url": u}])
+        self.assertEqual([x["label"] for x in b], ["Open the report", "Open the ticket"])
+        many = [{"ticket_url": "https://sn.example.mil/t%d" % i} for i in range(10)]
+        self.assertEqual(len(sp.result_buttons(many)), 6)
+
+    def test_5_the_page_shows_buttons_no_raw_key_and_no_empty_heading(self):
+        cfg = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                         "PORTAL_AAP_TOKEN": "x"})
+        shown = sp.job_results_html([{"label": "Open the report", "url": "https://reports.example.mil/a.html?x=1&y=2", "primary": True},
+                                     {"label": "Open ticket INC1", "url": "https://sn.example.mil/t", "primary": False}])
+        self.assertIn("<h3>Results</h3>", shown)
+        self.assertIn('<a class="btn pri" href="https://reports.example.mil/a.html?x=1&amp;y=2" target="_blank" rel="noopener">Open the report', shown)
+        self.assertIn('<a class="btn" href="https://sn.example.mil/t" target="_blank" rel="noopener">Open ticket INC1', shown)
+        self.assertNotIn("site_report_url", shown)
+        self.assertEqual(sp.job_results_html([]), "")                                                                # no known result: no heading at all
+        self.assertEqual(sp.job_results_html(None), "")
+
+    def test_6_the_technical_output_line_is_gone(self):
+        with open(os.path.join(FILES, "site_portal.py")) as fh:
+            src = fh.read()
+        self.assertNotIn('<p class="muted-line">Technical output', src)                                                      # it read like an error
+        self.assertIn('    tech = ""', src)
 
 
 if __name__ == "__main__":

@@ -60,6 +60,16 @@ portal_public_url: https://stigman.example.mil/portal/
 ## the pages' title
 # portal_title: Site portal
 
+## 1.78.2: the site's logo in the header, instead of the letter badge (40 px tall at most; alt text
+## = portal_title). portal_logo is a PNG, JPEG, GIF or WebP file (1 MB at most) ON THE PORTAL
+## SERVER, e.g. "{{ portal_config_dir }}/logo.png"; portal_logo_src is a file on the controller (in
+## your own .site-local or group_vars area, never in the repo) that the deploy copies there. "" =
+## the badge. the image on the portal server ("" = the badge)
+# portal_logo: ""
+
+## the image on the controller, copied to portal_logo by the deploy ("" = nothing copied)
+# portal_logo_src: ""
+
 ## how that folder is mounted: ro,z = read-only, SELinux label shared with other containers (a
 ## folder another container mounts with :Z, a private label, is relabeled by that container's next
 ## start - see docs/SITE_PORTAL.md, SELinux)
@@ -117,7 +127,16 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_finding_jobs: 5
 
 ## one confirm page starts this many jobs at most (one per ticked finding); over it the page says so
+## (1 to 200)
 # portal_pick_max_launches: 10
+
+## 1.78.2: the hosts "pick a host, then a finding" takes at once (groups counted by their hosts; 1
+## to 500)
+# portal_pick_max_hosts: 50
+
+## 1.78.2: the hosts one built-in action's Limit may stand for - one job for a group or several
+## hosts (1 to 500)
+# portal_action_max_hosts: 50
 
 ## 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account
 ## has Execute on AND that carries the AAP label below is added to the portal - no edit here, no

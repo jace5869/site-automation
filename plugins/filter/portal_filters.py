@@ -75,6 +75,13 @@ def portal_check(values, spec, hosts=None, limit=None, limit_from="", requested_
             problem = _host_problem(name, text, hosts, limit, limit_from == name)
             if problem:
                 out.append(problem)
+        elif kind == "hosts":                        # 1.78.2: hosts, comma separated (one job for a group): each is a host of this job's inventory, and they are the Limit
+            names = [x for x in text.split(",") if x]
+            bad = [x for x in names if x not in hosts]
+            if not names or bad:
+                out.append("%s: %s %s not a host of this job's inventory" % (name, ", ".join(bad[:5]) or text, "is" if len(bad) <= 1 else "are"))
+            elif limit_from == name and limit not in (None, "", text):
+                out.append("%s: %s is not this job's Limit (%s)" % (name, text[:200], str(limit)[:200]))
         elif kind == "choice":
             allowed = [str(v) for v in rule.get("values") or []]
             if text not in allowed:
