@@ -101,6 +101,8 @@ def _conf(v):
     if not m:
         return None, "confidence is not a number"
     n = float(m.group(0))
+    if 0 < n <= 1 and (isinstance(v, float) or "." in m.group(0)):
+        n *= 100                                        # a fraction (0.85 = 85%), as act_analysis_parse reads it; 1 = 1%
     if n < 0 or n > 100:
         return None, "confidence %s is not 0-100" % m.group(0)
     return int(round(n)), ""
@@ -117,8 +119,8 @@ def _strs(v):
 
 
 def natural(s):
-    """A sort key that puts P2 before P10."""
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(s))]
+    """A sort key that puts P2 before P10 - and P1 before P01 (the text itself breaks a tie: never the input's order)."""
+    return ([int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(s))], str(s))
 
 
 def _object(text):
@@ -180,7 +182,9 @@ def _cause(c, n, errors):
         errors.append("cause %d is not an object" % n)
         return None
     title = _text(c.get("title"), MAX_TITLE)
-    key = _key(c.get("key")) or _key(title) or "cause-%d" % n
+    # no key and no title: a key of its patterns, never of its place in the answer - "cause-1" of two batches would
+    # be joined by merge as one cause
+    key = _key(c.get("key")) or _key(title) or _key("cause-" + "-".join(_strs(c.get("patterns")))) or "cause-%d" % n
     where = "cause %s" % key
     conf, why = _conf(c.get("confidence"))
     if why:

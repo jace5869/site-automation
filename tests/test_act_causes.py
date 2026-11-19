@@ -109,6 +109,13 @@ class Parse(unittest.TestCase):
         r = ac.parse('[{"id": "P1", "cause": "Disk full"}, {"id": "P2", "cause": "DNS"}]', IDS)
         self.assertEqual([c["patterns"] for c in r["causes"]], [["P1"], ["P2"]])
 
+    def test_a_fraction_confidence(self):
+        # a legacy 0.85 is 85%, as act_analysis_parse reads it; 1 (a whole number) stays 1%
+        r = ac.parse('{"items": [{"id": "P1", "cause": "A", "confidence": 0.85}, {"id": "P2", "cause": "B", "confidence": "0.6"},'
+                     ' {"id": "P3", "cause": "C", "confidence": 1}, {"id": "P4", "cause": "D", "confidence": 1.0}]}', IDS)
+        self.assertEqual([c["confidence"] for c in r["causes"]], [85, 60, 1, 100])
+        self.assertEqual(ac.parse({"causes": [{"key": "k", "title": "t", "patterns": ["P1"], "confidence": 0.9}]}, IDS)["causes"][0]["confidence"], 90)
+
     def test_records_no_cap(self):
         recs = dict(("P%d" % i, {"cause": "c%d" % i, "fix": "f", "confidence": 60}) for i in range(1, 61))
         recs["P61"] = {"cause": "Noise: boot chatter", "noise": True}
@@ -136,6 +143,19 @@ class Merge(unittest.TestCase):
     def test_the_same_in_any_order(self):
         outs = [json.dumps(ac.merge(list(p)), sort_keys=True) for p in itertools.permutations(self.batches())]
         self.assertEqual(len(set(outs)), 1)
+
+    def test_no_key_no_title_never_joined(self):
+        a = ac.parse({"causes": [{"patterns": ["P1"], "steps": [{"do": "Fix one."}]}]}, IDS)
+        b = ac.parse({"causes": [{"patterns": ["P2"], "steps": [{"do": "Fix two."}]}]}, IDS)
+        m = ac.merge([a, b])
+        self.assertEqual(sorted(c["patterns"] for c in m["causes"]), [["P1"], ["P2"]])     # two causes, each its steps
+
+    def test_natural_ties(self):
+        a = ac.parse({"causes": [], "noise": ["P01"]}, ["P1", "P01"])
+        b = ac.parse({"causes": [], "noise": ["P1"]}, ["P1", "P01"])
+        self.assertEqual(ac.merge([a, b])["noise"], ac.merge([b, a])["noise"])
+        self.assertEqual(sorted(["P01", "P1", "P10", "P2"], key=ac.natural), ["P01", "P1", "P2", "P10"])
+        self.assertEqual(sorted(["P1", "P", "app10", "app2"], key=ac.natural), ["app2", "app10", "P", "P1"])
 
     def test_ties_by_evidence(self):
         a = ac.parse({"causes": [{"key": "k", "title": "T", "patterns": ["P1"], "confidence": 80, "evidence": ["host a line"]}]}, IDS)
