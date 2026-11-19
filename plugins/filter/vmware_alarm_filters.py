@@ -24,6 +24,16 @@ PLURAL = {"vcenter": "vCenter", "datacenter": "datacenters", "cluster": "cluster
 TYPE_LABEL = {"vcenter": "vCenter", "datacenter": "Datacenter", "cluster": "Cluster", "host": "Host",
               "datastore": "Datastore", "vm": "VM", "network": "Network", "folder": "Folder"}
 MARK_BEGIN, MARK_END = "BEGIN_ACT_ANALYSIS", "END_ACT_ANALYSIS"
+# ACT's answer as causes (plugins/module_utils/act_causes.py), loaded as the filters load each other
+import importlib.util as _ilu  # noqa: E402
+import os as _os  # noqa: E402
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_acs_path = _os.path.join(_os.path.dirname(_here), "module_utils", "act_causes.py")
+if not _os.path.isfile(_acs_path):                              # the VMware ask service's app folder: module_utils/ beside this file
+    _acs_path = _os.path.join(_here, "module_utils", "act_causes.py")
+_acs = _ilu.spec_from_file_location("act_causes", _acs_path)
+act_causes = _ilu.module_from_spec(_acs)
+_acs.loader.exec_module(act_causes)
 
 
 def _t(iso):
@@ -625,7 +635,7 @@ def act_analysis_parse(text, problems=None, depth=0):
                 continue
             if isinstance(v, list):
                 v = {"items": v}
-            if isinstance(v, dict) and isinstance(v.get("items"), list):
+            if isinstance(v, dict) and (isinstance(v.get("items"), list) or isinstance(v.get("causes"), list)):
                 obj = v
                 break
         if obj is not None:
@@ -639,7 +649,7 @@ def act_analysis_parse(text, problems=None, depth=0):
             except ValueError:
                 continue
             for inner in _strings(outer):
-                if MARK_BEGIN in inner or '"items"' in inner:
+                if MARK_BEGIN in inner or '"items"' in inner or '"causes"' in inner:
                     r = act_analysis_parse(inner, problems, depth + 1)
                     if r["parsed"]:
                         return r
@@ -647,6 +657,8 @@ def act_analysis_parse(text, problems=None, depth=0):
         return {"parsed": False, "overall": "", "by_id": {},
                 "error": "ACT's answer has no readable JSON block" if t.strip() else "ACT gave no answer"}
     known = {p["id"] for p in problems or []}
+    if isinstance(obj.get("causes"), list):
+        return _from_causes(obj, problems)
     by_id = {}
     for it in obj["items"]:
         if not isinstance(it, dict):
@@ -669,6 +681,33 @@ def act_analysis_parse(text, problems=None, depth=0):
             except (TypeError, ValueError):
                 by_id[pid]["estimate_days"] = None
     return {"parsed": True, "overall": " ".join(str(obj.get("overall") or "").split()), "by_id": by_id, "error": ""}
+
+
+def _from_causes(obj, problems=None):
+    """An answer of causes (act_causes) -> act_analysis_parse's result: its causes, noise and errors as they are, and by_id
+    for each pattern from the cause that explains it (the reports that read by_id stay as they were)."""
+    ids = [p["id"] for p in problems or []] or None
+    cz = act_causes.parse(obj, ids)
+    by_id = _records(cz)
+    return {"parsed": cz["parsed"], "overall": cz["overall"], "by_id": by_id, "error": "; ".join(cz["errors"][:3]) if not cz["parsed"] else "",
+            "causes": cz["causes"], "noise": cz["noise"], "noise_why": cz["noise_why"], "cause_errors": cz["errors"]}
+
+
+def _records(cz):
+    """Causes (act_causes' shape) -> by_id: each pattern's record from the cause that explains it, noise as noise."""
+    by_id = {}
+    for c in cz["causes"]:
+        # a one-line command in the text; a longer one never cut (Codex): whole in steps, the text says so
+        fix = " ".join("%d. %s%s" % (i + 1, s["do"], ((" (" + s["cmd"] + ")") if "\n" not in s["cmd"] else
+                                                      " (a command of %d lines: in steps)" % len(s["cmd"].splitlines()))
+                                     if s["cmd"] else "") for i, s in enumerate(c["steps"]))
+        for p in c["patterns"]:
+            by_id[p] = {"cause": c["title"], "evidence": " | ".join(c["evidence"]), "fix": fix, "confidence": c["confidence"],
+                        "cause_key": c["key"], "steps": [dict(s) for s in c["steps"]]}
+    for p in cz["noise"]:
+        by_id[p] = {"cause": "Noise" + ((": " + cz["noise_why"][p]) if cz["noise_why"].get(p) else ""), "evidence": "",
+                    "fix": "", "confidence": None, "noise": True}
+    return by_id
 
 
 def _ids_text(ids):
@@ -700,8 +739,17 @@ def act_batches_merge(batches):
             errors.append("%s: ACT's answer could not be read (%s)." % (_ids_text(b.get("ids")), pa.get("error") or "no JSON"))
         else:
             errors.append("%s not analyzed: %s" % (_ids_text(b.get("ids")), b.get("reason") or "ACT gave no answer."))
-    return {"parsed": parsed, "overall": " ".join(overall + errors), "overall_lines": overall + errors, "by_id": by_id,
-            "error": " ".join(errors)}
+    out = {"parsed": parsed, "overall": " ".join(overall + errors), "overall_lines": overall + errors, "by_id": by_id,
+           "error": " ".join(errors)}
+    good = [(b.get("parsed") or {}) for b in bs if b.get("ran") and (b.get("parsed") or {}).get("parsed")]
+    if any("causes" in p for p in good):    # the answers of causes, joined across batches (act_causes.merge: any order)
+        # Codex: a batch of the older shape is turned into causes too, so its patterns are not "not explained"
+        m = act_causes.merge([{"parsed": p.get("parsed"), "overall": p.get("overall"), "causes": p.get("causes"),
+                               "noise": p.get("noise"), "noise_why": p.get("noise_why"), "errors": p.get("cause_errors")}
+                              if "causes" in p else act_causes.from_records(p.get("by_id") or {}) for p in good])
+        out.update(causes=m["causes"], noise=m["noise"], noise_why=m["noise_why"], cause_errors=m["errors"])
+        out["by_id"].update(_records(m))   # Codex: each pattern's record from the merged cause - as its card says
+    return out
 
 
 def act_batches_reason(batches):

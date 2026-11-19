@@ -508,6 +508,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 }
 {%- set hover_look = 'ops' %}
 {%- include 'report_hover.css.j2' %}
+{%- include 'report_causes.css.j2' %}
 {%- include 'report_matrix.css.j2' %}
 {%- if r.sections | default([]) | selectattr('links', 'defined') | list or r.sections | default([]) | selectattr('actions', 'defined') | list or r.sections | default([]) | selectattr('cell_links', 'defined') | list or r.sections | default([]) | selectattr('buttons', 'defined') | list %}
 {% include 'report_portal.css.j2' %}
@@ -963,7 +964,7 @@ footer{margin-top:32px}
 {%- set cols = s.columns | default([]) %}
 {%- set rws = s.rows | default([]) %}
 {%- set nk = namespace(ok=true, num=true, mx=0, cs=false, w=0) %}
-{%- for k in ['cards', 'board', 'squares', 'matrix', 'timeline', 'heat', 'outage', 'details', 'groups', 'tiles', 'glance', 'cell_links', 'buttons', 'links', 'sparks', 'actions', 'passed'] %}
+{%- for k in ['cards', 'board', 'squares', 'matrix', 'timeline', 'heat', 'outage', 'details', 'groups', 'tiles', 'glance', 'cell_links', 'buttons', 'links', 'sparks', 'actions', 'passed', 'causes', 'cause_first'] %}
 {%- if s[k] is defined and s[k] %}{% set nk.ok = false %}{% endif %}
 {%- endfor %}
 {%- if cols | length > 4 or rws | length > 25 %}{% set nk.ok = false %}{% endif %}
@@ -1130,6 +1131,10 @@ footer{margin-top:32px}
 {%- if s.cards | length > 3 %}<label class="alll" for="all{{ si }}"><span class="o">Every step ({{ s.cards | length }}) &darr;</span><span class="c">The first 3 only &uarr;</span></label>{% endif %}
 {%- endif %}
 {#- 1.57.0: a runway board (the capacity report's website version) -#}
+{#- the cause cards (report_cause_cards) -#}
+{%- if s.causes is defined or s.cause_first is defined or s.cause_overall is defined %}
+{%- include 'report_causes.html.j2' %}
+{%- endif %}
 {%- if s.board | default({}) %}
 {%- include 'report_board.html.j2' %}
 {%- endif %}
@@ -1268,7 +1273,9 @@ footer{margin-top:32px}
 {%- set cl = s.cell_links2 if s.cell_links2 is defined and s.cell_links2.column == loop.index0 else (s.cell_links if s.cell_links is defined else none) %}{#- 1.69.2: cell_links2 - a second column of links (Hosts: the Collection) #}
 {%- set clu = (cl.urls[ri] if cl and loop.index0 == cl.column and cl.urls | length > ri else '') | default('', true) %}
 {%- set clu = clu | safe_link if (cl.https_only | default(false)) else clu | safe_ref %}
-{%- if clu %}
+{%- if clu and clu.startswith('#') %}{#- an anchor on the page (a cause card): opens here, no new tab, no outside-link mark #}
+<td class="k-{{ kd | e }} k-cl" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><a class="hl cv al" href="{{ clu | e }}" title="{{ (cl.titles[ri] if cl.titles is defined and cl.titles | length > ri else cl.title | default('')) | e }}">{{ text | e }}</a></td>
+{%- elif clu %}
 {%- set cpy = (cl.copies[ri] if cl.copies is defined and cl.copies | length > ri else '') | default('', true) %}
 <td class="k-{{ kd | e }} k-cl" data-l="{{ lbl | e }}" data-v="{{ text | e }}">{% if cpy %}<span class="clw">{% endif %}<a class="hl cv" href="{{ clu | e }}" target="_blank" rel="noopener" title="{{ (cl.titles[ri] if cl.titles is defined and cl.titles | length > ri else cl.title | default('')) | e }}">{% if kd == 'wrap' %}{% set ws = text.split(' ') %}{% for w in ws[:-1] %}<span class="w">{{ nbw(w) }}</span> <wbr>{% endfor %}{% if ws[-1] | length <= 16 %}<span class="w">{{ nbw(ws[-1]) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>{% else %}{{ dw(ws[-1], false) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}{% else %}{{ breakable(text) }}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}</a>{% if cpy %}<button class="ccopy" type="button" hidden title="Copy {{ cpy | e }}" aria-label="Copy {{ cpy | e }}" data-copy="{{ cpy | e }}">{{ copyicons() }}</button></span>{% endif %}</td>
 {%- elif kd == 'buttons' %}

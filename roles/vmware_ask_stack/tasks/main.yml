@@ -197,6 +197,7 @@
     - {src: "{{ role_path }}/../../plugins/filter/vmware_alarm_filters.py", dest: vmware_alarm_filters.py}
     - {src: "{{ role_path }}/../../vendor/act/act", dest: act}
     - {src: "{{ role_path }}/../vmware_vm/module_utils/site_vcenters.py", dest: module_utils/site_vcenters.py}
+    - {src: "{{ role_path }}/../../plugins/module_utils/act_causes.py", dest: module_utils/act_causes.py}
     - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_vms.py", dest: library/site_vmware_vms.py}
     - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_health.py", dest: library/site_vmware_health.py}
     - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_datastores.py", dest: library/site_vmware_datastores.py}

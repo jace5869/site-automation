@@ -142,7 +142,7 @@ grep -q "Connection reset by .* port" "$work/act/fake-act-stdin.txt" && [ "$(gre
     || { echo "FAIL -   ...grouping"; head -30 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
 run "ACT asked 2 patterns at a time (log_analysis_act_batch): one report, each question with its own evidence" ok \
     -e "$actvars" -e log_analysis_act_batch=2 -- "pattern(s), 2 at a time" "P1, P2: Give the JVM more memory first." "90% high" \
-       "ACT gave no answer for this one"
+       "Not explained: "
 grep -q "^P1 " "$work/act/fake-act-stdin.txt" && { echo "FAIL -   ...the last question had P1's evidence"; fails=$((fails + 1)); } \
     || echo "ok   -   ...the last question had only its own patterns' evidence"
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | sort -V | tail -1)"
@@ -152,6 +152,38 @@ if [ -n "$eml" ] && grep -q "Likely causes and fixes" "$eml" && grep -q "First s
 else
     echo "FAIL -   ...email / website"; ls -R "$work/site" | head; fails=$((fails + 1))
 fi
+
+# ACT's answer of causes (plugins/module_utils/act_causes.py): the patterns that share a cause in ONE card, its steps with
+# their commands; the website's page the cards and the Patterns table's cause a link to its card; the email its table
+"$py" - "$work/act/act.json" <<'EOPY'
+import json, sys
+ans = {"overall": "Raise the JVM's heap first.",
+       "causes": [{"key": "jvm-memory", "title": "The JVM runs out of memory and the kernel kills it", "patterns": ["P1", "P2"],
+                   "confidence": 88, "evidence": ["Out of memory: Killed process"],
+                   "steps": [{"do": "See the heap it was given.", "cmd": "grep -r Xmx /etc/app/", "why": ""},
+                             {"do": "Raise the heap.", "cmd": "", "why": "The kills stop."}]}],
+       "noise": ["P3"], "noise_why": {"P3": "A health check."}}
+json.dump({"summary": "BEGIN_ACT_ANALYSIS\n" + json.dumps(ans) + "\nEND_ACT_ANALYSIS"}, open(sys.argv[1], "w"))
+EOPY
+run "ACT's answer of causes: one card per cause, its steps; the page's Patterns table links each to its card" ok \
+    -e "$mail" -e "$actvars" -e log_analysis_act_batch=0 \
+    -- "What to do first" "Raise the JVM's heap first." "Cause 1 · The JVM runs out of memory and the kernel kills it (P1, P2" \
+       "1. See the heap it was given: grep -r Xmx /etc/app/" "88% high"
+page="$(ls -t "$work/site"/*/latest.html 2>/dev/null | head -1)"
+if [ -n "$page" ] && grep -q 'id="cause-1"' "$page" && grep -q 'href="#cause-1"' "$page" && grep -q '<pre>grep -r Xmx /etc/app/</pre>' "$page" \
+   && grep -q "Harmless (1):" "$page"; then
+    echo "ok   -   ...the page: the cause card, its command to copy, the links to it, the noise said"
+else
+    echo "FAIL -   ...the page's cards"; echo "      page: ${page:-none}"; ls -R "$work/site" 2>/dev/null | head -8
+    [ -n "$page" ] && { grep -c 'class="cz' "$page"; grep -o 'Likely causes[^<]*' "$page" | head -3; }; fails=$((fails + 1))
+fi
+"$py" - "$work/act/act.json" <<'EOPY'
+import json, sys
+items = [{"id": "P1", "cause": "The JVM ran out of memory.", "evidence": "Out of memory: Killed process", "fix": "Raise the heap.", "confidence": 90},
+         {"id": "P2", "cause": "A scanner.", "evidence": "Connection reset", "fix": "Ignore it.", "confidence": "60%"}]
+json.dump({"summary": "BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "Give the JVM more memory first.", "items": items}) + "\nEND_ACT_ANALYSIS"},
+          open(sys.argv[1], "w"))
+EOPY
 
 : > "$work/journalctl.args"; : > "$work/podman.args"
 since="$(date -u -d '-2 hours' '+%Y-%m-%d %H:%M')"; until="$(date -u -d '-1 hour' '+%Y-%m-%d %H:%M')"

@@ -71,6 +71,8 @@ jobs:
           python tests/test_banner.py
           python tests/test_xlsx_sparklines.py
           python tests/test_log_analysis.py
+          python tests/test_act_causes.py
+          python tests/test_report_cards.py
           python tests/test_servicenow_mid.py
           python tests/test_servicenow_node.py
           python tests/test_cert_inventory.py
