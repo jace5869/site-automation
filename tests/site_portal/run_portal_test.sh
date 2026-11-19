@@ -62,7 +62,7 @@ jq_() { "$py" -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 podman network create "$net" >/dev/null
 mkdir -p "$work/aap" "$work/pki" "$work/nginx" "$work/reports/linux-health"
 podman run -d --name portal-test-aap --network "$net" -v "$here/fake_aap.py:/t/fake_aap.py:ro,Z" -v "$work/aap:/log:Z" \
-    -e FAKE_AAP_LOG=/log/aap.jsonl -e FAKE_AAP_SEED_REPORTS=1 -e FAKE_AAP_RUN_SECONDS=4 -e FAKE_AAP_JINJA=always -e FAKE_AAP_TOKEN=test-token-1670 \
+    -e FAKE_AAP_LOG=/log/aap.jsonl -e FAKE_AAP_SEED_REPORTS=1 -e FAKE_AAP_SEED_FOUND=1 -e FAKE_AAP_RUN_SECONDS=4 -e FAKE_AAP_JINJA=always -e FAKE_AAP_TOKEN=test-token-1670 \
     "$image" python3 /t/fake_aap.py 8000 >/dev/null || { echo "ABORT - could not start the stand-in AAP"; exit 1; }
 printf '<!doctype html><meta charset=utf-8><title>Reports</title><h1>The report website</h1>\n' > "$work/reports/index.html"
 printf '<!doctype html><meta charset=utf-8><title>Linux health</title><p>linux health\n' > "$work/reports/linux-health/index.html"
@@ -228,6 +228,13 @@ r="$(c "$k/jdoe" get /portal/actions/disk_cleanup)"
 case "$r" in *'"code": 200'*'name=\"hosts\"'*) pass "an action with a report job and a finding, opened without them: asks for the host";; *) fail "pick: the host step" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/api/hosts?q=web')"
 [ "$(echo "$r" | jq_ 'd["json"]["hosts"]')" = "['web01.example.mil', 'web03.example.mil']" ] && pass "the typeahead: the inventory's hosts that contain what was typed" || fail "pick: typeahead" "$r"
+r="$(c "$k/jdoe" get '/portal/api/inventory?q=WEB')"
+[ "$(echo "$r" | jq_ '[(i["name"], i["kind"], i["count"]) for i in d["json"]["items"]]')" = "[('web01.example.mil', 'host', 1), ('web03.example.mil', 'host', 1), ('web_servers', 'group', 2)]" ] \
+    && pass "the picker's list: hosts and groups (a group with its host count), filtered by any case" || fail "the picker's list" "$r"
+r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web_servers')"
+case "$r" in *'"code": 200'*"web01.example.mil"*"web03.example.mil"*) pass "a group picked: its hosts, one section each";; *) fail "pick: a group" "$r";; esac
+r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=nothere.example.mil')"
+case "$r" in *"not a host or a group"*) pass "a name that is no host or group of the inventory: refused";; *) fail "pick: an unknown name" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web01.example.mil')"
 case "$r" in *'"code": 200'*"Pick the finding"*) pass "the host picked: the findings of the report jobs (the portal's account reads them)";; *) fail "pick: the findings step" "$r";; esac
 r="$(c "$k/jdoe" get '/portal/actions/disk_cleanup?hosts=web01.example.mil&pick0=9001~disk_full%3Aweb01.example.mil%3A%2Fvar')"
@@ -311,6 +318,40 @@ r="$(c "$k/appr" decide "$aid2" deny)"
 r2="$(c "$k/jdoe" wait "$wf2")"
 if [ "$(echo "$r" | jq_ 'd["code"]')" = 200 ] && [ "$(echo "$r2" | jq_ 'd.get("status")')" = "failed" ]; then pass "deny by an approver: the workflow stops"
 else fail "deny by an approver" "$r $r2"; fi
+
+# ---- 1.78.0: the actions AAP offers (Execute + the label) -------------------------------------------------------------------
+if grep -q "Found in AAP (Execute + the label portal): 1 of 3" "$work/out.txt" && grep -q "Odd survey (found) - f: survey type file is not handled" "$work/out.txt" \
+    && grep -q "1 more may be run by the account but have no label portal" "$work/out.txt"; then
+    pass "the deploy lists what it found (1 of 3), what it skipped and why, and the unlabelled count"
+else fail "the deploy's list of what it found" "$(grep -A3 'Verify | the actions found' "$work/out.txt")"; fi
+qc="$(c "$k/jdoe" get /portal/api/me | jq_ '[a for a in d["json"]["actions"] if a.startswith("jt_")][0]')"
+r="$(c "$k/jdoe" get /portal/)"
+if echo "$r" | grep -q "Quick check (found)" && ! echo "$r" | grep -q "Run but not labelled" && ! echo "$r" | grep -q "Odd survey"; then
+    pass "found in AAP: the labelled template has a card; the unlabelled and the odd one do not"
+else fail "found in AAP: the cards" "$r"; fi
+r="$(c "$k/jdoe" get /portal/actions/$qc)"
+if echo "$r" | grep -q 'type=\\"password\\"' && echo "$r" | grep -q 'type=\\"number\\"' && echo "$r" | grep -q "Started by"; then
+    pass "found in AAP: the form is the survey (a number, a masked password, the card's name)"
+else fail "found in AAP: the form" "$r"; fi
+r="$(c "$k/jdoe" launch "$qc" '{"portal_limit": ["web_servers"], "rounds": "3", "secret": "Zx-not-a-real-secret-9", "portal_requested_by": "SMITH.JOHN.A.1234567891"}')"
+fj="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
+r2="$(c "$k/jdoe" launch "$qc" '{"portal_limit": "web01.example.mil", "rounds": "9", "secret": "Zx-not-a-real-secret-9"}')"
+cp "$work/aap/aap.jsonl" "$work/aap-found.jsonl"
+if [ -n "$fj" ] && [ "$(echo "$r2" | jq_ 'd["code"]')" = 400 ] && "$py" - "$work/aap-found.jsonl" <<'EOF'
+import json, sys
+sent = [json.loads(x)["body"] for x in open(sys.argv[1]) if '"POST"' in x and "/launch/" in x]
+b = [x for x in sent if x.get("extra_vars", {}).get("secret")][-1]
+assert b["limit"] == "web01.example.mil,web03.example.mil", b          # the group sent as its hosts
+assert b["extra_vars"] == {"rounds": 3, "secret": "Zx-not-a-real-secret-9", "portal_requested_by": "DOE.JANE.Q.1234567890"}, b
+assert len([x for x in sent if x.get("extra_vars", {}).get("secret")]) == 1          # the bad one (rounds 9) never reached AAP
+EOF
+then pass "found in AAP: a launch sends the survey's variables and the hosts as the limit, the card's name for portal_requested_by; a number out of range is refused"
+else fail "found in AAP: the launch" "$r $r2"; fi
+podman exec site-portal-app cat /data/portal-log.jsonl > "$work/log-found.jsonl" 2>&1
+if ! grep -q "Zx-not-a-real-secret" "$work/log-found.jsonl" && ! podman logs site-portal-app 2>&1 | grep -q "Zx-not-a-real-secret" \
+    && ! c "$k/jdoe" get "/portal/api/jobs/${fj:-0}" | grep -q "Zx-not-a-real-secret" && grep -q '(hidden)' "$work/log-found.jsonl"; then
+    pass "found in AAP: the password is in no log line, no journal line and no job view (hidden)"
+else fail "found in AAP: the password leaked or is not hidden" "$(tail -3 "$work/log-found.jsonl")"; fi
 
 # ---- the log ---------------------------------------------------------------------------------------------------------------
 podman exec site-portal-app cat /data/portal-log.jsonl > "$work/log.jsonl" 2>&1

@@ -48,7 +48,7 @@ class Fit(unittest.TestCase):
     def test_every_page_fits_in_every_look(self):
         for i, look in enumerate(("ops", "atlas", "brief")):
             rows = self.run_look(look, PORT + i)
-            self.assertEqual(len(rows), 11 * 2 * 2, look)                         # eleven pages, light and dark, two widths
+            self.assertEqual(len(rows), 14 * 2 * 2, look)                         # fourteen pages, light and dark, two widths
             for r in rows:
                 self.assertEqual(r["look"], look, r)
                 self.assertTrue(r["h1"], r)                                       # the page drew (its script ran, its heading is there)

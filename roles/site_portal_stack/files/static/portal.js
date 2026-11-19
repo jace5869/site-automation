@@ -87,26 +87,35 @@ function facts(dl, pairs) {
 }
 
 // ---- the confirm page: Run sends the values; the service checks every one again
+const qa = (node, sel) => Array.from(Element.prototype.querySelectorAll.call(node, sel));
 function actionPage() {
   const f = $("run");
   if (!f) return;
-  f.addEventListener("submit", async (ev) => {
+  EventTarget.prototype.addEventListener.call(f, "submit", async (ev) => {          // a survey variable can be named like a form property: the form is read with the prototypes
     ev.preventDefault();
     const go = $("go");
     if (go.disabled) return;
-    const vars = {};
-    for (const x of f.querySelectorAll("input, select, textarea")) vars[x.name] = x.value;
-    for (const w of f.querySelectorAll(".field")) { w.classList.remove("bad"); w.querySelector(".why").textContent = ""; }
+    const vars = Object.create(null);          // a survey variable can be called constructor or toString: it is data, never an inherited property
+    for (const x of qa(f, "input[type=number]")) if (x.validity && x.validity.badInput) { $("state").textContent = "A number is not finished."; $("state").className = "state bad"; x.focus(); return; }
+    for (const x of qa(f, "input, select, textarea")) {
+      if (!x.name || x.name === "portal-token" || x.name === "portal-sig" || x.disabled) continue;
+      if (x.type === "checkbox") { if (!vars[x.name]) vars[x.name] = []; if (x.checked) vars[x.name].push(x.value); }
+      else if (x.dataset.pick) { if (!vars[x.name]) vars[x.name] = []; vars[x.name].push(x.value); }
+      else vars[x.name] = x.value;
+    }
+    for (const b of qa(f, ".picker[data-on]")) { const n = b.dataset.picker; if (!vars[n]) vars[n] = []; }
+    for (const w of qa(f, ".field")) { w.classList.remove("bad"); w.querySelector(".why").textContent = ""; }
     go.disabled = true;
     $("state").textContent = "Starting…";
     try {
-      const r = await post("api/actions/" + encodeURIComponent(f.dataset.action), {vars});
+      const sg = qa(f, 'input[name="portal-sig"]')[0];
+      const r = await post("api/actions/" + encodeURIComponent(Element.prototype.getAttribute.call(f, "data-action")), {vars, sig: sg ? sg.value : undefined});
       $("state").textContent = "Started: job " + r.job_id + (r.warning ? ". " + r.warning : "") + ". Opening it…";
       location.assign(r.url);
     } catch (e) {
       const p = (e.body && e.body.problems) || {};
       for (const [k, why] of Object.entries(p)) {
-        const x = f.querySelector('[name="' + CSS.escape(k) + '"]');
+        const x = qa(f, '[name="' + CSS.escape(k) + '"]')[0];
         if (x) { const w = x.closest(".field"); w.classList.add("bad"); w.querySelector(".why").textContent = (w.querySelector("label").textContent + " " + why); }
       }
       $("state").textContent = e.message;
@@ -224,51 +233,93 @@ function jobPage() {
 }
 
 // ---- pick a host, then a finding (1.75.3): the typeahead of the host field (without this script the field is a plain one)
-function suggestPage() {
-  const ta = $("f-hosts"), list = $("suggest");
-  if (!ta || !list) return;
-  let seq = 0, timer = 0, on = -1;
-  const token = () => { const m = /[^\s,;]*$/.exec(ta.value.slice(0, ta.selectionStart || 0)); return m ? m[0] : ""; };
-  const close = () => { list.hidden = true; list.replaceChildren(); on = -1; };
-  function choose(name) {
-    const pos = ta.selectionStart || 0, tok = token();
-    const head = ta.value.slice(0, pos - tok.length), tail = ta.value.slice(pos);
-    ta.value = head + name + (tail.match(/^[\s,;]/) ? "" : ", ") + tail.replace(/^[\s,;]+/, "");
-    close();
-    ta.focus();
-  }
-  async function ask() {
-    const t = token();
-    if (t.length < 2) { close(); return; }
-    const my = ++seq;
-    let r;
-    try { r = await call("api/hosts?q=" + encodeURIComponent(t)); } catch (e) { close(); return; }
-    if (my !== seq || !(r.hosts || []).length) { if (my === seq) close(); return; }
-    list.replaceChildren();
-    on = 0;
-    r.hosts.forEach((h, i) => {
-      const li = el("li");
-      li.setAttribute("role", "option");
-      const at = h.toLowerCase().indexOf(t.toLowerCase());
-      if (at >= 0) li.append(h.slice(0, at), el("b", "", h.slice(at, at + t.length)), h.slice(at + t.length)); else li.textContent = h;
-      if (i === 0) li.className = "on";
-      li.addEventListener("mousedown", (ev) => { ev.preventDefault(); choose(h); });
-      list.append(li);
+// ---- the host picker (1.78.0): a searchable list of the inventory's hosts and groups, to tick one or many. The server renders a plain
+// multi-select (it works without scripts); this puts the search box, the chips and the list in its place. Every pick is checked again by the service.
+function hostPickers() {
+  for (const box of document.querySelectorAll(".picker[data-picker]")) {
+    const sel = box.querySelector("select");
+    if (!sel || box.dataset.on) continue;
+    box.dataset.on = "1";
+    const field = box.dataset.picker, cap = parseInt(box.dataset.max, 10) || 5, src = box.dataset.src;
+    const picked = new Map();                      // name -> hosts it stands for
+    for (const o of sel.selectedOptions) { const m = /\((\d+) hosts?\)$/.exec(o.textContent); picked.set(o.value, m ? parseInt(m[1], 10) : 1); }
+    sel.disabled = true;
+    sel.hidden = true;
+    for (const x of box.querySelectorAll(".help")) x.hidden = true;
+    const chips = el("div", "pk-chips"), q = el("input", "pk-q"), list = el("ul", "pk-list"), foot = el("p", "pk-foot muted-line");
+    const all = el("button", "btn pk-all", "Select all shown"), note = el("span", "muted-line pk-note"), hid = el("div", "pk-hidden");
+    q.type = "search"; q.placeholder = "Search hosts and groups"; q.autocomplete = "off"; q.spellcheck = false;
+    q.setAttribute("role", "combobox"); q.setAttribute("aria-expanded", "true"); q.setAttribute("aria-controls", "pk-" + field);
+    q.setAttribute("aria-label", "Search the inventory's hosts and groups");
+    list.id = "pk-" + field; list.setAttribute("role", "listbox"); list.setAttribute("aria-multiselectable", "true");
+    all.type = "button";
+    const bar = el("div", "pk-bar"); bar.append(all, note);
+    box.append(chips, q, list, foot, bar, hid);
+    let rows = [], on = 0, seq = 0, timer = 0, matches = 0;
+    const total = () => { let n = 0; for (const c of picked.values()) n += c; return n; };
+    function sync() {
+      chips.replaceChildren();
+      hid.replaceChildren();
+      for (const [name, c] of picked) {
+        const chip = el("span", "chip s-info pk-chip");
+        chip.append(el("span", "", c > 1 ? name + " (" + c + ")" : name));
+        const x = el("button", "pk-x", "×");
+        x.type = "button"; x.setAttribute("aria-label", "Remove " + name);
+        x.addEventListener("click", () => { picked.delete(name); sync(); draw(); q.focus(); });
+        chip.append(x);
+        chips.append(chip);
+        const h = document.createElement("input");
+        h.type = "hidden"; h.name = field; h.value = name; h.dataset.pick = "1";
+        hid.append(h);
+      }
+      if (!picked.size) chips.append(el("span", "muted-line", "Nothing picked yet."));
+      note.textContent = "About " + total() + " of " + cap + " hosts";
+    }
+    function fits(r) { return picked.has(r.name) || r.count <= cap; }          // the server counts the distinct hosts of the groups and says when it is too many
+    function draw() {
+      list.replaceChildren();
+      rows.forEach((r, i) => {
+        const li = el("li", "pk-row" + (i === on ? " on" : "") + (picked.has(r.name) ? " sel" : "") + (fits(r) ? "" : " off"));
+        li.setAttribute("role", "option"); li.setAttribute("aria-selected", picked.has(r.name) ? "true" : "false");
+        if (!fits(r)) { li.setAttribute("aria-disabled", "true"); li.title = "Too many hosts: at most " + cap; }
+        const mark = el("span", "pk-box"); mark.setAttribute("aria-hidden", "true"); mark.textContent = picked.has(r.name) ? "✓" : "";
+        li.append(mark, el("span", "pk-name", r.name), el("span", "pk-kind", r.kind === "group" ? "group · " + r.count + " host" + (r.count === 1 ? "" : "s") : "host"));
+        li.addEventListener("mousedown", (ev) => { ev.preventDefault(); on = i; toggle(r); });
+        list.append(li);
+      });
+      if (!rows.length) list.append(el("li", "pk-empty", "Nothing matches."));
+      foot.textContent = matches > rows.length ? (matches - rows.length) + " more - type to narrow." : "";
+      all.disabled = !rows.some((r) => !picked.has(r.name) && fits(r) && total() + r.count <= cap);
+    }
+    function toggle(r) {
+      if (picked.has(r.name)) picked.delete(r.name); else if (fits(r)) picked.set(r.name, r.count);
+      sync(); draw();
+    }
+    async function ask() {
+      const my = ++seq;
+      let r;
+      try { r = await call("api/inventory?q=" + encodeURIComponent(q.value.trim())); } catch (e) { foot.textContent = "The inventory could not be read just now."; return; }
+      if (my !== seq) return;
+      rows = r.items || []; matches = r.matches || rows.length; on = 0;
+      draw();
+    }
+    all.addEventListener("click", () => {
+      for (const r of rows) if (!picked.has(r.name) && fits(r) && total() + r.count <= cap) picked.set(r.name, r.count);
+      sync(); draw();
     });
-    list.hidden = false;
+    q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(ask, 150); });
+    q.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        if (rows.length) on = (on + (ev.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+        draw();
+        const cur = list.children[on]; if (cur && cur.scrollIntoView) cur.scrollIntoView({block: "nearest"});
+      } else if ((ev.key === "Enter" || (ev.key === " " && !q.value)) && rows[on]) { ev.preventDefault(); toggle(rows[on]); }
+      else if (ev.key === "Backspace" && !q.value && picked.size) { picked.delete(Array.from(picked.keys()).pop()); sync(); draw(); }
+    });
+    sync();
+    ask();
   }
-  ta.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(ask, 180); });
-  ta.addEventListener("blur", () => setTimeout(close, 120));
-  ta.addEventListener("keydown", (ev) => {
-    const items = Array.from(list.children);
-    if (list.hidden || !items.length) return;
-    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-      ev.preventDefault();
-      on = (on + (ev.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-      items.forEach((x, i) => x.classList.toggle("on", i === on));
-    } else if (ev.key === "Enter" && on >= 0) { ev.preventDefault(); choose(items[on].textContent); }
-    else if (ev.key === "Escape") close();
-  });
 }
 
 // the finding list: "Skip this host" unticks the host's findings, and ticking one unticks Skip
@@ -423,7 +474,7 @@ function approvalsPage() {
 document.addEventListener("DOMContentLoaded", () => {
   const p = document.body.dataset.page;
   if (p === "home") homePage();
-  if (p === "action") { actionPage(); suggestPage(); pickList(); manyPage(); }
+  if (p === "action") { actionPage(); hostPickers(); pickList(); manyPage(); }
   if (p === "job") jobPage();
   if (p === "approvals") approvalsPage();
 });

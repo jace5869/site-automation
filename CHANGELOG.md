@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.78.0 — 2026-11-19
+
+**To set up:** run **Site portal - deploy** again. Then, for each job you want on the portal, in AAP: add the label `portal` to the
+template and give the portal's account (`svc_site_portal`) **Execute** on it (docs/SITE_PORTAL.md, "Add a job to the portal from AAP").
+Nothing else is required.
+
+**The portal finds its actions in AAP.** Execute plus a label, and the card appears; take either away and it goes (a minute).
+
+- The portal lists the job templates and workflows its account may **Execute**; those that also carry the label `portal`
+  (`portal_label`) show. No `all.yml` edit, no redeploy. Kept `portal_discover_seconds` (60).
+- The form is the template's **survey**: text, textarea, integer, float, multiple choice, multi select and password, with required,
+  minimum, maximum and the defaults. Every answer is checked again on the server. A password is masked, never filled in again, never
+  logged (*(hidden)*). With **Prompt on launch** for **Limit**: 1 to 5 hosts of `portal_inventory`.
+- The card: the area from a label `portal-area:STIG` (else *Other*), the title the template's name, the line its description;
+  approval from the label `portal-approval` or `portal_approval_required`.
+- Only the survey's variables go to AAP. A survey question named `portal_requested_by` is filled from the person's card (not shown).
+- The built-in actions and `portal_actions_extra` work as before; a template a built-in action already runs gets one card, the built-in.
+- The deploy lists what it found, and what it skipped with the reason (a survey type it cannot handle; a template that needs an
+  inventory, credential or password at launch). The account still has no write role.
+- **One host picker everywhere** (the findings steps and a found template's Limit): a searchable list of `portal_inventory`'s hosts and groups
+  (a group with its host count), to tick one or many, with chips, *Select all shown* under the cap, the first 200 matches and the keyboard. The
+  findings steps take up to 5 hosts, groups counted by their hosts; a Limit up to `portal_limit_max` (50), sent as the hosts the portal counted (never a group name). Without scripts
+  it is a plain multi-select and the form posts itself. Every pick is checked again against the inventory.
+- A card's address is `jt_<AAP id>` or `wf_<AAP id>`; a template (or its survey or Limit prompt) changed after the form was opened is not
+  started. A template with a Limit needs `portal_inventory`. A number that is not finite, or a host list that is not text, is a field error.
+  A read of AAP that could not finish keeps the cards it had, and says so. A template with a Limit must be a job template that runs on `portal_inventory` (a workflow with a Limit is left out); the Limit is sent as the concrete hosts the portal counted once (never empty, never over `portal_limit_max`), and a form's signature (the template's playbook, variables, prompts and survey) is required; the groups are read again at launch. Approval marks a workflow only: a job template marked for approval is left out, since it starts at once.
+- Settings: `portal_label`, `portal_discover_seconds`, `portal_label_approval`, `portal_label_area`, `portal_approval_required`, `portal_limit_max`.
+- Tests: `tests/test_site_portal.py` (survey to form, label and Execute filter, paging, the cache, a password never shown, a built-in
+  name clash, the card's name replacing a posted `portal_requested_by`), `tests/test_portal_fit.py`, the portal e2e, on ansible-core 2.22 and 2.16.
 ## 1.77.0 — 2026-11-19
 
 **To set up:** a job template **STIG answer keys - try my answer file** (`playbooks/stig_answer_keys_try.yml`):

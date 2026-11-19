@@ -1963,6 +1963,12 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_finding_days` | `7` | 1.75.3: "pick a host, then a finding" - an action that takes report_job and finding_id, opened with no values, asks for the host(s) and lists what the report jobs found there (their site_findings artifact), so nobody types a job id. The last portal_finding_jobs runs of each report playbook that finished within portal_… (all of it: the role file) |
 | `portal_finding_jobs` | `5` | the last this many runs of each report playbook are read (10 at most) |
 | `portal_pick_max_launches` | `10` | one confirm page starts this many jobs at most (one per ticked finding); over it the page says so |
+| `portal_label` | `portal` | 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account has Execute on AND that carries the AAP label below is added to the portal - no edit here, no redeploy; take Execute or the label away and it goes at the next refresh. The form is the template's survey; the card's area is a… (all of it: the role file) |
+| `portal_discover_seconds` | `60` | how long what was found is kept (10 to 3600) |
+| `portal_label_approval` | `portal-approval` | a template with this label too is marked "approval" on its card |
+| `portal_label_area` | `"portal-area:"` | a label that starts with this puts the card in an area (the rest of the label is its name) |
+| `portal_approval_required` | `[]` | template names that are marked "approval" without the label |
+| `portal_limit_max` | `50` | a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500) |
 | `portal_finding_playbooks` | (worked out by the role; see its file) | the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from) |
 | `portal_inventory` | (empty) | the AAP inventory whose hosts an action's inventory_host values must be (by name; required when an action has one) |
 | `portal_aap_url` | (worked out by the role; see its file) | ---- AAP: the "Red Hat Ansible Automation Platform" credential (its URL and a token of the portal's own account) ------ |

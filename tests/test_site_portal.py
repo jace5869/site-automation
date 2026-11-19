@@ -376,8 +376,8 @@ class Live(unittest.TestCase):
         code, raw, _ = self.req("/actions/disk_cleanup")
         t = raw.decode()
         self.assertEqual(code, 200)
-        self.assertIn('<textarea id="f-hosts" name="hosts"', t)
-        self.assertIn('data-suggest="/portal/api/hosts"', t)
+        self.assertIn('<select multiple size="8" id="f-hosts" name="hosts"', t)
+        self.assertIn('data-picker="hosts"', t)
         self.assertIn('<li class="on"><span class="n">1</span>Host</li>', t)
         self.assertNotIn("report_job", t)                                           # no job id asked
         self.assertNotIn('id="run"', t)
@@ -469,10 +469,10 @@ class Live(unittest.TestCase):
         self.assertIn('href="/portal/reports/">Open the reports', t)
         self.assertIn("Pick another host", t)
         t = self.req("/actions/disk_cleanup?hosts=nothere.example.mil")[1].decode()
-        self.assertIn("is not a host of the portal&#x27;s inventory", t)
+        self.assertIn("is not a host or a group of the portal&#x27;s inventory", t)
         self.assertIn('name="hosts"', t)                                            # back at step 1, the text kept
         t = self.req("/actions/disk_cleanup?hosts=" + ",".join("h%d.example.mil" % i for i in range(6)))[1].decode()
-        self.assertIn("Too many hosts.", t)
+        self.assertIn("is not a host or a group", t)                                # each pick is checked first (six names the inventory does not have)
         t = self.req("/actions/disk_cleanup?hosts={{7}}")[1].decode()
         self.assertIn("braces that start a template", t)
         fake_aap.AUDITOR = False                                                    # the account cannot read the jobs: said, not hidden
@@ -982,6 +982,735 @@ class Live(unittest.TestCase):
         for v, want in (("", "/"), ("/", "/"), ("/stigman", "/stigman/"), ("stigman/", "/stigman/"), ("//evil.example.mil", "/"),
                         ("/a/../b", "/"), ("/x y", "/")):
             self.assertEqual(sp.Config({"PORTAL_STIGMAN_PATH": v}).stigman_path, want, v)
+
+
+class Found(unittest.TestCase):
+    """1.78.0: the actions AAP itself offers - a template the account may Execute that carries the label."""
+    SECRET = "Hunter2-not-a-real-password"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        fake_aap.RUN = 1.5
+        fake_aap.LOG = os.path.join(cls.tmp, "aap.jsonl")
+        cls.keep = {k: list(v) for k, v in fake_aap.STATE["templates"].items()}
+        cls.aap = fake_aap.serve(0, stop=True)
+        spec = [
+            {"variable": "ticket", "question_name": "Ticket number", "type": "text", "required": True, "min": 3, "max": 12},
+            {"variable": "why", "question_name": "Why", "type": "textarea", "required": False, "default": "routine"},
+            {"variable": "count", "question_name": "How many", "type": "integer", "required": True, "min": 1, "max": 5, "default": 2},
+            {"variable": "ratio", "question_name": "Ratio", "type": "float", "required": False, "min": 0, "max": 1},
+            {"variable": "env", "question_name": "Environment", "type": "multiplechoice", "required": True, "choices": "dev\ntest\nprod", "default": "dev"},
+            {"variable": "tags", "question_name": "Tags", "type": "multiselect", "required": False, "choices": "a\nb\nc", "default": "a\nb"},
+            {"variable": "pw", "question_name": "Secret", "type": "password", "required": True, "max": 40},
+        ]
+        who_spec = [{"variable": "portal_requested_by", "question_name": "Started by", "type": "text", "required": False}]
+        fake_aap.add_template("job_templates", "Knows who started it", ["portal"], who_spec)
+        cls.t_full = fake_aap.add_template("job_templates", "Health check - Linux", ["portal", "portal-area:STIG"], spec, limit=True,
+                                           description="Checks   one host\nand more")
+        fake_aap.add_template("job_templates", "Executable but not labelled", ["other"])
+        fake_aap.add_template("job_templates", "Labelled but not executable", ["portal"], execute=False)
+        fake_aap.add_template("workflow_job_templates", "Weekly cleanup", ["portal"])
+        fake_aap.add_template("workflow_job_templates", "Approved by label", ["portal", "portal-approval"])
+        fake_aap.add_template("job_templates", "Job marked for approval", ["portal", "portal-approval"])
+        fake_aap.add_template("job_templates", "Odd survey", ["portal"], [{"variable": "x", "type": "file"}])
+        fake_aap.add_template("job_templates", "Same as a built-in", ["portal"], tid=7777, many_labels=0)
+        fake_aap.STATE["templates"]["job_templates"][-1]["name"] = "Linux - recheck one host"
+        fake_aap.add_template("job_templates", "Needs an inventory", ["portal"], needs_inventory=True)
+        fake_aap.add_template("job_templates", "Late label", [], many_labels=12)
+        fake_aap.STATE["templates"]["job_templates"][-1]["labels"].append("portal")
+        with open(os.path.join(cls.tmp, "actions.json"), "w") as fh:
+            json.dump({"actions": ACTIONS}, fh)
+        cls.cfg = sp.Config({"PORTAL_DATA": os.path.join(cls.tmp, "data"), "PORTAL_REPORTS": cls.tmp,
+                             "PORTAL_ACTIONS": os.path.join(cls.tmp, "actions.json"),
+                             "PORTAL_AAP_URL": "http://127.0.0.1:%d" % cls.aap.server_address[1], "PORTAL_AAP_TOKEN": "fake-token",
+                             "PORTAL_INVENTORY": "Site hosts", "PORTAL_REQUESTERS": "[]", "PORTAL_LAUNCHES_PER_HOUR": "50",
+                             "PORTAL_APPROVAL_REQUIRED": '["Weekly cleanup"]'})
+        sp.sys.stdout = open(os.devnull, "w")
+        cls.portal = sp.Portal(cls.cfg)
+        cls.portal.aap.connect()
+        cls.portal.refresh(force=True)
+        cls.cn = "DOE.JANE.Q.1234567890"
+        cls.raw_launch = cls.portal.launch
+
+        def launch(cn, ip, name, sent, sig=None, _o=cls.raw_launch):         # a found template's launch needs its form's signature: the tests send the card's own
+            a = cls.portal.actions.get(name)
+            if sig is None and a and a.get("discovered") and not getattr(cls, "no_sig", False):
+                sig = a["sig"]
+            return _o(cn, ip, name, sent, sig)
+        cls.portal.launch = launch
+        cls.srv = sp.PortalServer(("127.0.0.1", 0), sp.make_handler(cls.cfg, cls.portal, os.path.join(FILES, "static")))
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.host = "127.0.0.1:%d" % cls.srv.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.aap.shutdown()
+        fake_aap.STATE["templates"] = cls.keep
+        sp.sys.stdout = sys.__stdout__
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def nm(self, title):
+        """The action's name (jt_<AAP id> or wf_<AAP id>) of the template with this title."""
+        return next((k for k, a in self.portal.actions.items() if a["title"] == title), "gone")
+
+    def gets(self):
+        with open(fake_aap.LOG) as fh:
+            return [json.loads(x) for x in fh if "execute_role" in x]
+
+    def test_01_label_and_execute(self):
+        found = self.portal.found
+        self.assertEqual(sorted(a["title"] for a in found["actions"].values()),
+                         ["Approved by label", "Health check - Linux", "Knows who started it", "Late label", "Weekly cleanup"])       # not the unlabelled, not the one it may not run
+        why = dict(found["skipped"])
+        self.assertEqual(why["Executable but not labelled"], "no label portal")
+        self.assertNotIn("Labelled but not executable", why)                              # AAP never listed it
+        self.assertIn("survey type file is not handled", why["Odd survey"])
+        self.assertIn("inventory", why["Needs an inventory"])
+        self.assertIn("Late label", [a["title"] for a in self.portal.actions.values()])  # the label past the 10 a row carries
+
+    def test_02_card(self):
+        a = next(a for a in self.portal.actions.values() if a["title"] == "Health check - Linux")
+        self.assertEqual((a["area"], a["summary"], a["approval"]), ("STIG", "Checks one host and more", False))
+        self.assertRegex(a["name"], r"^jt_[0-9]+$")
+        w = next(a for a in self.portal.actions.values() if a["title"] == "Weekly cleanup")
+        self.assertEqual((w["area"], w["approval"], w["aap"]["type"]), ("", True, "workflow"))     # area Other; approval from portal_approval_required
+        lab = next(a for a in self.portal.actions.values() if a["title"] == "Approved by label")
+        self.assertTrue(lab["approval"])                                                             # approval from the label, on a workflow
+        self.assertEqual(self.nm("Job marked for approval"), "gone")                                 # a job template starts at once: nothing could hold it
+        self.assertIn("starts at once", dict(self.portal.found["skipped"])["Job marked for approval"])
+
+    def test_03_survey_to_form(self):
+        a = self.portal.actions[self.nm("Health check - Linux")]
+        self.assertEqual(list(a["vars"]), ["portal_limit", "ticket", "why", "count", "ratio", "env", "tags", "pw"])
+        v = a["vars"]
+        self.assertEqual((v["ticket"]["kind"], v["ticket"]["min"], v["ticket"]["max"], v["why"]["multiline"]), ("text", 3, 12, True))
+        self.assertEqual((v["count"]["kind"], v["count"]["default"], v["env"]["kind"], v["tags"]["kind"], v["tags"]["default"]),
+                         ("integer", 2, "choice", "multichoice", ["a", "b"]))
+        self.assertEqual((v["pw"]["kind"], v["pw"]["required"], v["pw"]["default"]), ("password", True, None))
+        html_ = sp.action_page(self.cfg, self.portal, self.cn, self.nm("Health check - Linux"), {})
+        for needle in ('type="password"', 'type="number"', 'type="checkbox" name="tags"', "<textarea", "Ticket number *", 'data-picker="portal_limit"'):
+            self.assertIn(needle, html_)
+        self.assertNotIn("is required", html_)                                           # an empty form says nothing yet
+
+    def test_04_rules_on_the_server(self):
+        a = self.portal.actions[self.nm("Health check - Linux")]
+        ok = {"portal_limit": "web01.example.mil, web03.example.mil", "ticket": "INC001", "count": "3", "env": "test", "tags": ["c", "a"], "pw": "x"}
+        val, p = rules.check_values(a, ok, self.portal.aap.host_known)
+        self.assertEqual(p, {})
+        self.assertEqual((val["count"], val["tags"], val["portal_limit"], val["why"]), (3, ["a", "c"], ["web01.example.mil", "web03.example.mil"], "routine"))
+        for bad, need in ((dict(ok, count="9"), "count"), (dict(ok, count="2.5"), "count"), (dict(ok, ticket="ab"), "ticket"),
+                          (dict(ok, ticket="x" * 13), "ticket"), (dict(ok, env="staging"), "env"), (dict(ok, tags=["z"]), "tags"),
+                          (dict(ok, ratio="1.5"), "ratio"), (dict(ok, ratio="nan"), "ratio"), (dict(ok, pw=""), "pw"), (dict(ok, pw="y" * 41), "pw"),
+                          (dict(ok, portal_limit="web01.example.mil,x,y,z,w,v"), "portal_limit"), (dict(ok, portal_limit="nohost.example.mil"), "portal_limit"),
+                          (dict(ok, ticket="{{ 7*7 }}"), "ticket"), (dict(ok, nothing_asked="1"), "")):
+            self.assertIn(need, rules.check_values(a, bad, self.portal.aap.host_known)[1], bad)
+
+    def test_05_launch_sends_only_the_survey(self):
+        code, out = self.portal.launch(self.cn, "192.0.2.5", self.nm("Health check - Linux"),
+                                       {"portal_limit": ["web01.example.mil", "web03.example.mil"], "ticket": "INC002", "count": 4, "env": "prod", "pw": self.SECRET})
+        self.assertEqual(code, 201, out)
+        with open(fake_aap.LOG) as fh:
+            sent = [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x][-1]["body"]
+        self.assertEqual(sent["limit"], "web01.example.mil,web03.example.mil")
+        self.assertEqual(sorted(sent["extra_vars"]), ["count", "env", "pw", "tags", "ticket", "why"])     # no portal_requested_by, no portal_limit
+        self.assertEqual((sent["extra_vars"]["count"], sent["extra_vars"]["pw"]), (4, self.SECRET))
+
+    def test_05b_started_by_the_card(self):
+        a = self.portal.actions[self.nm("Knows who started it")]
+        self.assertTrue(a["started_by"])
+        self.assertNotIn("portal_requested_by", a["vars"])                               # not shown, not editable
+        self.assertIn("Started by", sp.action_page(self.cfg, self.portal, self.cn, self.nm("Knows who started it"), {}))
+        self.assertFalse(self.portal.actions[self.nm("Health check - Linux")]["started_by"])
+        code, out = self.portal.launch(self.cn, "192.0.2.5", self.nm("Knows who started it"), {"portal_requested_by": "SMITH.JOHN.A.1234567891"})
+        self.assertEqual(code, 201, out)
+        with open(fake_aap.LOG) as fh:
+            sent = [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x][-1]["body"]
+        self.assertEqual(sent["extra_vars"], {"portal_requested_by": self.cn})           # the posted value ignored, the login put in
+
+    def test_06_password_never_shown(self):
+        self.portal.launch(self.cn, "192.0.2.5", self.nm("Health check - Linux"), {"portal_limit": "web01.example.mil", "ticket": "INC003", "env": "dev", "pw": self.SECRET})
+        self.portal.launch(self.cn, "192.0.2.5", self.nm("Health check - Linux"), {"portal_limit": "web01.example.mil", "ticket": "INC004", "env": "nope", "pw": self.SECRET})
+        with open(self.portal.log.path) as fh:
+            self.assertNotIn(self.SECRET, fh.read())
+        rec = self.portal.log.read("launch")[-1]
+        self.assertEqual(rec["values"]["pw"], rules.HIDDEN)
+        jid = int(rec["job_id"])
+        code, view = self.portal.job(jid, None, self.cn)
+        self.assertNotIn(self.SECRET, json.dumps(view))
+        page = sp.action_page(self.cfg, self.portal, self.cn, self.nm("Health check - Linux"), {"pw": [self.SECRET], "ticket": ["INC9"], "env": ["nope"]})
+        self.assertNotIn(self.SECRET, page)
+        self.assertIn("INC9", page)                                                       # the others are filled in; the password never
+        self.assertNotIn(self.SECRET, json.dumps(self.portal.approvals(self.cn)))
+
+    def test_07_built_in_wins(self):
+        self.assertEqual([c for c in self.portal.found["clashes"]], [("Linux - recheck one host", "stig_recheck")])
+        self.assertEqual(sum(1 for a in self.portal.actions.values() if a["aap"]["name"] == "Linux - recheck one host"), 1)
+        self.assertFalse(self.portal.actions["stig_recheck"].get("discovered"))
+
+    def test_08_cache_and_paging(self):
+        self.portal.refresh(force=True)
+        n = len(self.gets())
+        self.portal.refresh()
+        self.portal.refresh()
+        self.assertEqual(len(self.gets()), n)                                            # kept: no new asking
+        self.portal.found_at -= self.cfg.discover_seconds + 1
+        self.portal.refresh()
+        self.assertGreater(len(self.gets()), n)                                          # kept for portal_discover_seconds only
+        fake_aap.PAGE_CAP = 2
+        try:
+            before = len(self.gets())
+            self.portal.refresh(force=True)
+            self.assertGreaterEqual(len(self.gets()) - before, 4)   # 3 pages of 2 job templates, 1 of workflows                        # every page of both lists, followed
+            self.assertEqual(len(self.portal.found["actions"]), 5)
+            self.assertEqual(self.portal.found["seen"], 10)
+        finally:
+            fake_aap.PAGE_CAP = 200
+
+    def test_09_execute_or_label_removed(self):
+        tpl = next(t for t in fake_aap.STATE["templates"]["workflow_job_templates"] if t["name"] == "Weekly cleanup")
+        wk = self.nm("Weekly cleanup")
+        tpl["execute"] = False
+        self.portal.refresh(force=True)
+        self.assertNotIn(wk, self.portal.actions)
+        code, out = self.portal.launch(self.cn, "192.0.2.5", wk, {})
+        self.assertEqual(code, 404)
+        tpl["execute"], tpl["labels"] = True, []
+        self.portal.refresh(force=True)
+        self.assertNotIn(wk, self.portal.actions)
+        tpl["labels"] = ["portal"]
+        self.portal.refresh(force=True)
+        self.assertIn(wk, self.portal.actions)
+
+    def test_10_aap_down_keeps_what_was_found(self):
+        keep = self.portal.aap.api.base
+        self.portal.aap.api.base = "api/nowhere/v2/"
+        try:
+            self.portal.refresh(force=True)
+        finally:
+            self.portal.aap.api.base = keep
+        self.assertIn(self.nm("Health check - Linux"), self.portal.actions)
+        self.assertTrue(self.portal.found["error"])
+
+    def test_11_deploy_check(self):
+        self.portal.refresh(force=True)
+        res = sp.discover_check(self.portal)
+        self.assertEqual(sorted(x["title"] for x in res["shown"]), ["Approved by label", "Health check - Linux", "Knows who started it", "Late label", "Weekly cleanup"])
+        self.assertTrue(any("Odd survey" == n and "not handled" in w for n, w in res["skipped"]))
+        self.assertEqual(res["clashes"], [["Linux - recheck one host", "stig_recheck"]])
+        self.assertGreaterEqual(res["unlabelled"], 1)
+        self.assertNotIn(self.SECRET, json.dumps(res))
+
+    def test_12_off_without_a_label(self):
+        cfg = sp.Config(dict(self.cfg.env, PORTAL_LABEL=""))
+        self.assertEqual(cfg.label, "")                                                   # an empty label is off, not the default
+        self.assertEqual(sp.Config(dict(self.cfg.env)).label if "PORTAL_LABEL" not in self.cfg.env else "portal", "portal")
+        p = sp.Portal(cfg, aap=self.portal.aap, log=sp.Log(""))
+        p.refresh(force=True)
+        self.assertEqual(p.found["actions"], {})
+
+    # ---- Codex's review of 1780-wip
+    def test_13_no_inventory_no_limit(self):
+        cfg = sp.Config(dict(self.cfg.env, PORTAL_INVENTORY="x"))
+        cfg.inventory = ""
+        p = sp.Portal(cfg, aap=sp.Aap(cfg), log=sp.Log(""))
+        p.aap.connect()
+        p.refresh(force=True)
+        self.assertNotIn("Health check - Linux", [a["title"] for a in p.actions.values()])          # it asks for a Limit
+        self.assertIn("Weekly cleanup", [a["title"] for a in p.actions.values()])                  # it does not
+        why = dict(p.found["skipped"])
+        self.assertIn("needs portal_inventory for its Limit", why["Health check - Linux"])
+        a = self.portal.actions[self.nm("Health check - Linux")]
+        v, pr = rules.check_values(a, {"portal_limit": "web01.example.mil", "ticket": "INC1", "env": "dev", "pw": "x"}, None)
+        self.assertIn("portal_inventory is not set", pr["portal_limit"])                           # and the rule refuses too
+
+    def test_14_the_id_never_moves(self):
+        a1 = fake_aap.add_template("job_templates", "A B", ["portal"])
+        a2 = fake_aap.add_template("job_templates", "A-B", ["portal"])
+        self.portal.refresh(force=True)
+        n1, n2 = self.nm("A B"), self.nm("A-B")
+        self.assertEqual((n1, n2), ("jt_%d" % a1, "jt_%d" % a2))
+        tpl = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == a1)
+        tpl["labels"] = []
+        self.portal.refresh(force=True)
+        self.assertNotIn(n1, self.portal.actions)
+        self.assertEqual(self.nm("A-B"), n2)                                                      # the other did not take the first one's id
+
+    def test_15_changed_since_the_form(self):
+        tid = fake_aap.add_template("job_templates", "Will change", ["portal"], [{"variable": "n", "type": "integer", "required": False}])
+        self.portal.refresh(force=True)
+        name = self.nm("Will change")
+        tpl = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == tid)
+        tpl["spec"] = [{"variable": "n", "type": "text", "required": False}]                      # the survey changed after the form was drawn
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, {"n": "3"})
+        self.assertEqual(code, 409, out)
+        self.assertIn("changed", out["error"])
+        tpl["name"] = "Another job entirely"                                                      # the id now names another template
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, {})
+        self.assertEqual(code, 409, out)
+        self.assertEqual(self.nm("Another job entirely"), name)                                   # the card follows AAP: the same id, now the new title
+
+    def test_16_numbers_never_raise(self):
+        a = self.portal.actions[self.nm("Health check - Linux")]
+        ok = {"portal_limit": "web01.example.mil", "ticket": "INC1", "env": "dev", "pw": "x"}
+        for bad in ("1e309", "nan", "inf", "-inf", "1" * 400, 1e309, float("nan"), [1], {"a": 1}, True, "0x10"):
+            for var in ("count", "ratio"):
+                v, pr = rules.check_values(a, dict(ok, **{var: bad}), self.portal.aap.host_known)
+                if var == "count" or not isinstance(bad, str) or bad in ("nan", "inf", "-inf", "1e309"):
+                    self.assertIn(var, pr, (var, bad))
+
+    def test_17_hosts_must_be_text(self):
+        a = self.portal.actions[self.nm("Health check - Linux")]
+        ok = {"ticket": "INC1", "env": "dev", "pw": "x"}
+        for bad in ([123], [None], [["a"]], 5, {"a": 1}, [True]):
+            v, pr = rules.check_values(a, dict(ok, portal_limit=bad), self.portal.aap.host_known)
+            self.assertEqual(pr.get("portal_limit"), "must be host names", bad)
+
+    def test_18_an_incomplete_read_keeps_the_cache(self):
+        before = dict(self.portal.found["actions"])
+        keep = self.portal.aap.PAGES_MAX
+        self.portal.aap.PAGES_MAX = 1
+        fake_aap.PAGE_CAP = 2
+        try:
+            self.portal.refresh(force=True)
+        finally:
+            self.portal.aap.PAGES_MAX = keep
+            fake_aap.PAGE_CAP = 200
+        self.assertIn("could not read every template", self.portal.found["error"])
+        self.assertEqual(sorted(self.portal.actions), sorted(set(self.portal.actions) | set(before)))
+        self.assertIn(self.nm("Health check - Linux"), self.portal.actions)                        # what was found is kept
+        self.portal.refresh(force=True)
+        self.assertEqual(self.portal.found["error"], "")
+
+    # ---- the shared picker: hosts and groups of the inventory
+    def test_19_groups(self):
+        hosts, why = self.portal.aap.expand(["web_servers"])
+        self.assertEqual((hosts, why), (["web01.example.mil", "web03.example.mil"], ""))
+        hosts, why = self.portal.aap.expand(["web01.example.mil", "web_servers", "failing"])
+        self.assertEqual(hosts, ["web01.example.mil", "web03.example.mil", "fail01.example.mil"])      # unique, in order
+        self.assertIn("not a host or a group", self.portal.aap.expand(["nothere.example.mil"])[1])
+        self.assertIn("not a host or a group", self.portal.aap.expand(["web_servers", "web01.example.mil;id"])[1])
+        a = self.portal.actions[self.nm("Health check - Linux")]
+        ok = {"ticket": "INC1", "env": "dev", "pw": "x"}
+        val, pr = rules.check_values(a, dict(ok, portal_limit=["web_servers"]), self.portal.aap.host_known, self.portal.aap.expand)
+        self.assertEqual((pr, val["portal_limit"]), ({}, ["web_servers"]))                              # a group goes as its name
+        val, pr = rules.check_values(a, dict(ok, portal_limit="nothere.example.mil"), self.portal.aap.host_known, self.portal.aap.expand)
+        self.assertIn("not a host or a group", pr["portal_limit"])
+        small = dict(a, vars=dict(a["vars"], portal_limit=dict(a["vars"]["portal_limit"], max=2)))
+        val, pr = rules.check_values(small, dict(ok, portal_limit=["web_servers", "failing"]), None, self.portal.aap.expand)
+        self.assertIn("takes 2 hosts at most (that is 3", pr["portal_limit"])                           # groups are counted by their hosts
+        code, out = self.portal.launch(self.cn, "192.0.2.5", self.nm("Health check - Linux"), dict(ok, portal_limit=["web_servers", "failing"]))
+        self.assertEqual(code, 201, out)
+        with open(fake_aap.LOG) as fh:
+            sent = [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x][-1]["body"]
+        self.assertEqual(sent["limit"], "web01.example.mil,web03.example.mil,fail01.example.mil")      # the hosts the checks counted, never a group name
+
+    def test_20_the_list(self):
+        r = self.portal.aap.inventory_items("")
+        self.assertEqual([(i["name"], i["kind"], i["count"]) for i in r["items"]],
+                         [("fail01.example.mil", "host", 1), ("failing", "group", 1), ("web01.example.mil", "host", 1), ("web03.example.mil", "host", 1),
+                          ("web_servers", "group", 2)])
+        self.assertEqual([i["name"] for i in self.portal.aap.inventory_items("WEB_")["items"]], ["web_servers"])      # substring, any case
+        r = self.portal.aap.inventory_items("", 2)
+        self.assertEqual((len(r["items"]), r["matches"]), (2, 5))                                                        # the cap, and how many there are
+        self.assertEqual(self.portal.aap.inventory_items("zzz")["items"], [])
+
+    def test_21_findings_flow_expands_groups(self):
+        a = dict(self.portal.actions["disk_cleanup"]) if "disk_cleanup" in self.portal.actions else None
+        self.assertIsNotNone(a)
+        step = sp.picker_route(self.cfg, self.portal, self.cn, "disk_cleanup", {"hosts": ["web_servers"]})
+        self.assertEqual(step[0], "page")
+        self.assertIn("web01.example.mil", step[1])                                                                       # the group's hosts, one section each
+        self.assertIn("web03.example.mil", step[1])
+        step = sp.picker_route(self.cfg, self.portal, self.cn, "disk_cleanup", {"hosts": ["web_servers", "failing", "web01.example.mil"]})
+        self.assertEqual(step[0], "page")
+        self.assertNotIn("Too many", step[1])                                                                             # 3 hosts: fine
+        big = fake_aap.STATE["inventories"][0]
+        big["hosts"] += ["h%02d.example.mil" % n for n in range(10)]
+        big["groups"]["many"] = ["h%02d.example.mil" % n for n in range(10)]
+        try:
+            self.portal.aap.inventory_listing(force=True)
+            step = sp.picker_route(self.cfg, self.portal, self.cn, "disk_cleanup", {"hosts": ["many"]})
+            self.assertIn("Too many hosts.", step[1])                                                                      # 10 hosts at 5 at most
+            self.assertIn("that is 10", step[1])
+            step = sp.picker_route(self.cfg, self.portal, self.cn, "disk_cleanup", {"hosts": ["nothere.example.mil"]})
+            self.assertIn("not a host or a group", step[1])
+        finally:
+            big["hosts"] = big["hosts"][:3]
+            del big["groups"]["many"]
+            self.portal.aap.inventory_listing(force=True)
+
+    def _form(self, name, fields, token=None, origin="https://portal.example.mil"):
+        data = urllib.parse.urlencode(fields, doseq=True).encode()
+        h = dict(cert(JDOE), **{"Content-Type": "application/x-www-form-urlencoded", "Host": "portal.example.mil"})
+        if origin:
+            h["Origin"] = origin
+        r = urllib.request.Request("http://%s/actions/%s" % (self.host, name), data=data, method="POST", headers=h)
+        try:
+            with NO_REDIRECT.open(r, timeout=20) as f:
+                return f.status, f.read().decode(), dict(f.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode(), dict(e.headers)
+
+    def test_22_the_form_posts_without_scripts(self):
+        name = self.nm("Health check - Linux")
+        tok = self.portal.token(self.cn)
+        ok = {"portal-token": tok, "portal_limit": ["web_servers"], "ticket": "INC77", "count": "2", "env": "dev", "pw": self.SECRET}
+        code, body, h = self._form(name, ok)
+        self.assertEqual(code, 303, body[:300])
+        self.assertRegex(h["Location"], r"^/portal/jobs/\d+$")
+        code, body, _ = self._form(name, dict(ok, portal_limit=["nothere.example.mil"]))                      # an unknown host: refused, nothing started
+        self.assertEqual(code, 400)
+        self.assertIn("not a host or a group", body)
+        self.assertNotIn(self.SECRET, body)                                                                    # and the password is never sent back
+        self.assertEqual(self._form(name, dict(ok, **{"portal-token": "1.bad"}))[0], 403)                                  # the page's token
+        self.assertEqual(self._form(name, ok, origin="https://elsewhere.example.net")[0], 403)                # and the origin
+        self.assertEqual(self._form("jt_999999", ok)[0], 404)
+        with open(self.portal.log.path) as fh:
+            self.assertNotIn(self.SECRET, fh.read())
+
+    def test_23_the_page_has_the_picker_and_its_script_file_only(self):
+        html_ = sp.action_page(self.cfg, self.portal, self.cn, self.nm("Health check - Linux"), {"portal_limit": ["web_servers"]})
+        self.assertIn('<option value="web_servers" selected>web_servers (2 hosts)</option>', html_)            # the plain multi-select: it works without scripts
+        self.assertIn('data-src="/portal/api/inventory"', html_)
+        self.assertNotIn("<script>", html_)
+        self.assertNotIn(" style=", html_)
+
+    # ---- Codex's review of 9056ab88
+    def test_24_the_form_carries_its_signature(self):
+        name = self.nm("Health check - Linux")
+        a = self.portal.actions[name]
+        ok = {"portal_limit": ["web01.example.mil"], "ticket": "INC5", "env": "dev", "pw": "x"}
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, ok, "0" * 24)
+        self.assertEqual(code, 409, out)                                                   # drawn from another version of the template
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, ok, a["sig"])
+        self.assertEqual(code, 201, out)
+        self.assertIn('name="portal-sig" value="%s"' % a["sig"], sp.action_page(self.cfg, self.portal, self.cn, name, {}))
+
+    def test_25_an_incomplete_group_is_never_counted_short(self):
+        inv = fake_aap.STATE["inventories"][0]
+        self.portal.aap.inventory_listing(force=True)
+        self.portal.aap.listing["bad"] = {"web_servers"}
+        self.portal.aap.listing["groups"].pop("web_servers")
+        hosts, why = self.portal.aap.expand(["web_servers"])
+        self.assertIn("could not be read completely", why)
+        self.assertNotIn("web_servers", [i["name"] for i in self.portal.aap.inventory_items("")["items"] if i["kind"] == "group"])
+        self.portal.aap.inventory_listing(force=True)
+
+    def test_26_the_label_is_checked_at_launch(self):
+        tid = fake_aap.add_template("job_templates", "Label goes", ["portal"])
+        self.portal.refresh(force=True)
+        name = self.nm("Label goes")
+        tpl = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == tid)
+        tpl["labels"] = []
+        self.portal.found_at = time.time()                                                  # the cards are still cached
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, {})
+        self.assertEqual(code, 409, out)
+        self.assertIn("label", self.portal.log.read("refused")[-1]["why"])
+
+    def test_27_survey_values_are_sent_as_checked(self):
+        spec = [{"variable": "code", "type": "text", "required": True}, {"variable": "report_job", "type": "text", "required": False}]
+        tid = fake_aap.add_template("job_templates", "Keeps zeros", ["portal"], spec)
+        self.portal.refresh(force=True)
+        code, out = self.portal.launch(self.cn, "192.0.2.5", self.nm("Keeps zeros"), {"code": "007", "report_job": "0007"})
+        self.assertEqual(code, 201, out)
+        with open(fake_aap.LOG) as fh:
+            sent = [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x][-1]["body"]
+        self.assertEqual(sent["extra_vars"], {"code": "007", "report_job": "0007"})
+
+    def test_28_requested_by_question_must_take_a_name(self):
+        for q in ({"type": "integer"}, {"type": "text", "max": 10}, {"type": "text", "min": 50}):
+            fake_aap.add_template("job_templates", "Who %s" % json.dumps(q), ["portal"], [dict({"variable": "portal_requested_by"}, **q)])
+        fake_aap.add_template("job_templates", "Who fine", ["portal"], [{"variable": "portal_requested_by", "type": "text", "max": 300}])
+        self.portal.refresh(force=True)
+        self.assertEqual(self.nm("Who fine") != "gone", True)
+        why = [w for n, w in self.portal.found["skipped"] if n.startswith("Who {")]
+        self.assertEqual(len(why), 3)
+        self.assertTrue(all("portal_requested_by" in w for w in why))
+
+    def test_29_float_bounds_as_text(self):
+        v, sk = rules.survey_vars({"spec": [{"variable": "r", "type": "float", "min": "2.0", "max": "3.5"}]})
+        self.assertEqual((v["r"]["min"], v["r"]["max"]), (2, 3.5))
+        self.assertEqual(rules._num("nan"), None)
+        self.assertEqual(rules._num("1e999"), None)
+
+    def test_30_no_script_form_edges(self):
+        name = self.nm("Health check - Linux")
+        tok = self.portal.token(self.cn)
+        base = {"portal-token": tok, "portal_limit": ["web01.example.mil"], "ticket": "INC8", "count": "2", "env": "dev", "pw": "x"}
+        code, body, h = self._form(name, dict(base, **{"tags": []}))                                           # nothing ticked: tags is [] (not the default)
+        self.assertEqual(code, 303, body[:200])
+        with open(fake_aap.LOG) as fh:
+            sent = [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x][-1]["body"]
+        self.assertEqual(sent["extra_vars"]["tags"], [])
+        many = dict(base, portal_limit=["x%d.example.mil" % i for i in range(150)])
+        code, body, _ = self._form(name, many)
+        self.assertEqual(code, 400)                                                                            # a field error, not a dropped connection
+        self.assertIn("not a host or a group", body)
+
+    # ---- Codex's second review
+    def test_31_empty_groups_and_odd_members(self):
+        inv = fake_aap.STATE["inventories"][0]
+        inv["groups"]["empty_one"] = []
+        inv["groups"]["odd_one"] = ["web01.example.mil", "web*"]
+        try:
+            self.portal.aap.inventory_listing(force=True)
+            name = self.nm("Health check - Linux")
+            ok = {"ticket": "INC1", "env": "dev", "pw": "x"}
+            code, out = self.portal.launch(self.cn, "192.0.2.5", name, dict(ok, portal_limit=["empty_one"]))
+            self.assertEqual(code, 400, out)
+            self.assertIn("stands for no host", out["error"])
+            code, out = self.portal.launch(self.cn, "192.0.2.5", name, dict(ok, portal_limit=["odd_one"]))
+            self.assertEqual(code, 400, out)
+            self.assertIn("cannot be used in a Limit", out["error"])
+        finally:
+            del inv["groups"]["empty_one"], inv["groups"]["odd_one"]
+            self.portal.aap.inventory_listing(force=True)
+
+    def test_32_the_final_expansion_is_checked_against_the_cap(self):
+        name = self.nm("Health check - Linux")
+        a = self.portal.actions[name]
+        inv = fake_aap.STATE["inventories"][0]
+        self.portal.aap.inventory_listing(force=True)
+        inv["groups"]["web_servers"] = ["web01.example.mil", "web03.example.mil", "fail01.example.mil"]     # the group grew after the list was read
+        try:
+            small = dict(a, vars=dict(a["vars"], portal_limit=dict(a["vars"]["portal_limit"], max=2)))
+            hosts, why = self.portal.limit_hosts(small, {"portal_limit": ["web_servers"]})
+            self.assertIn("takes 2 hosts at most (that is 3)", why)
+            hosts, why = self.portal.limit_hosts(a, {"portal_limit": ["web_servers"]})
+            self.assertEqual((len(hosts), why), (3, ""))
+        finally:
+            inv["groups"]["web_servers"] = ["web01.example.mil", "web03.example.mil"]
+            self.portal.aap.inventory_listing(force=True)
+
+    def test_33_the_template_must_run_on_the_portal_inventory(self):
+        fake_aap.add_template("job_templates", "Other inventory", ["portal"], None, limit=True, inventory=99)
+        fake_aap.add_template("job_templates", "Asks inventory", ["portal"], None, limit=True)
+        fake_aap.STATE["templates"]["job_templates"][-1]["ask_inventory"] = True
+        self.portal.refresh(force=True)
+        why = dict(self.portal.found["skipped"])
+        self.assertIn("its inventory is not portal_inventory", why["Other inventory"])
+        self.assertIn("its inventory is not portal_inventory", why["Asks inventory"])
+        self.assertEqual(self.nm("Other inventory"), "gone")
+
+    def test_34_an_old_listing_checks_nothing(self):
+        self.portal.aap.inventory_listing(force=True)
+        self.portal.aap.listing["at"] -= 10 * self.cfg.discover_seconds + 400
+        keep = self.portal.aap.api.base
+        self.portal.aap.api.base = "api/nowhere/v2/"                                             # AAP cannot be read now: the old list stays for the picker
+        try:
+            self.assertTrue(self.portal.aap.inventory_items("")["items"])
+            hosts, why = self.portal.aap.expand(["web_servers"])
+        finally:
+            self.portal.aap.api.base = keep
+        self.assertIn("could not be checked", why)                                                # but it checks nothing
+        self.portal.aap.inventory_listing(force=True)
+
+    def test_35_the_signature_is_required(self):
+        name = self.nm("Health check - Linux")
+        ok = {"portal_limit": ["web01.example.mil"], "ticket": "INC9", "env": "dev", "pw": "x"}
+        code, out = self.raw_launch(self.cn, "192.0.2.5", name, ok)
+        self.assertEqual(code, 409, out)                                                          # none is as bad as a wrong one
+        self.assertIn("changed in AAP", out["error"])
+        code, out = self.raw_launch(self.cn, "192.0.2.5", name, ok, self.portal.actions[name]["sig"])
+        self.assertEqual(code, 201, out)
+
+    def test_36_a_form_posted_after_a_restart(self):
+        name = self.nm("Health check - Linux")
+        sig = self.portal.actions[name]["sig"]
+        self.portal.actions = dict((k, a) for k, a in self.portal.actions.items() if not a.get("discovered"))     # as after a restart: nothing found yet
+        self.portal.found_at = 0.0
+        tok = self.portal.token(self.cn)
+        code, body, h = self._form(name, {"portal-token": tok, "portal-sig": sig, "portal_limit": ["web01.example.mil"], "ticket": "INC12", "count": "2",
+                                          "env": "dev", "pw": "x"})
+        self.assertEqual(code, 303, body[:200])
+
+    def test_37_unreadable_launch_settings_skip_the_card(self):
+        tid = fake_aap.add_template("job_templates", "No launch page", ["portal"])
+        tpl = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == tid)
+        tpl["no_launch_page"] = True
+        self.portal.refresh(force=True)
+        self.assertIn("launch settings could not be read", dict(self.portal.found["skipped"]).get("No launch page", ""))
+
+    def test_38_a_next_link_that_cannot_be_followed_is_an_error(self):
+        real = self.portal.aap.call
+
+        def odd(method, path, body=None):
+            code, data = real(method, path, body)
+            if code == 200 and "next" in data and "role_level" in path:
+                data = dict(data, next="https://elsewhere.example.net/other/?page=2")
+            return code, data
+        self.portal.aap.call = odd
+        fake_aap.PAGE_CAP = 2
+        try:
+            self.portal.refresh(force=True)
+        finally:
+            self.portal.aap.call = real
+            fake_aap.PAGE_CAP = 200
+        self.assertIn("could not read every template", self.portal.found["error"])
+        self.portal.refresh(force=True)
+
+    def test_39_portal_limit_is_only_reserved_for_found_templates(self):
+        acts, problems = rules.check_actions({"x": {"title": "X", "aap": {"type": "job", "name": "X"}, "vars": {"portal_limit": {"kind": "text"}}}})
+        self.assertEqual(problems, [])
+        self.assertIn("portal_limit", acts["x"]["vars"])
+        v, sk = rules.survey_vars({"spec": [{"variable": "portal_limit", "type": "text"}]})
+        self.assertTrue(sk)
+
+    def test_40_the_requester_question_minimum(self):
+        self.assertTrue(rules.takes_name({"type": "text", "min": 1, "max": 300}))
+        self.assertFalse(rules.takes_name({"type": "text", "min": 2}))
+
+    # ---- Codex's third review
+    def test_41_a_workflow_with_a_limit_is_left_out(self):
+        fake_aap.add_template("workflow_job_templates", "Workflow with Limit", ["portal"], None, limit=True)
+        self.portal.refresh(force=True)
+        self.assertEqual(self.nm("Workflow with Limit"), "gone")
+        self.assertIn("workflow's Limit", dict(self.portal.found["skipped"])["Workflow with Limit"])
+
+    def test_42_a_cleared_optional_text_is_an_answer(self):
+        a = self.portal.actions[self.nm("Health check - Linux")]
+        ok = {"portal_limit": "web01.example.mil", "ticket": "INC3", "env": "dev", "pw": "x"}
+        self.assertEqual(rules.check_values(a, ok, None, self.portal.aap.expand)[0]["why"], "routine")                 # left out: the default
+        self.assertEqual(rules.check_values(a, dict(ok, why=""), None, self.portal.aap.expand)[0]["why"], "")           # cleared: empty
+        v, p = rules.check_values(a, dict(ok, ticket=""), None, self.portal.aap.expand)
+        self.assertIn("ticket", p)                                                                                       # a required one is still required
+
+    def test_43_whole_bounds_stay_exact(self):
+        v, sk = rules.survey_vars({"spec": [{"variable": "n", "type": "integer", "min": "9007199254740993", "max": 9007199254740999}]})
+        self.assertEqual(v["n"]["min"], 9007199254740993)
+        self.assertIn("n", rules.check_values({"vars": v}, {"n": "9007199254740992"})[1])
+        self.assertEqual(rules.check_values({"vars": v}, {"n": "9007199254740993"})[1], {})
+
+    def test_44_the_first_discovery_is_waited_for(self):
+        p = sp.Portal(self.cfg, aap=sp.Aap(self.cfg), log=sp.Log(""))
+        p.aap.connect()
+        p.found_at = time.time()                                                                                         # as when another request has begun to ask
+        self.assertFalse(p.found_ready)
+        p.refresh()
+        self.assertTrue(p.found_ready)
+        self.assertIn("Health check - Linux", [a["title"] for a in p.actions.values()])
+
+    def test_45_the_inventory_prompt_is_in_the_signature(self):
+        self.assertNotEqual(rules.template_sig("A", True, None, 3, False), rules.template_sig("A", True, None, 3, True))
+
+    # ---- Codex's fourth review
+    def test_46_the_groups_are_read_again_at_launch(self):
+        inv = fake_aap.STATE["inventories"][0]
+        name = self.nm("Health check - Linux")
+        self.portal.aap.inventory_listing(force=True)
+        inv["groups"]["web_servers"] = ["web01.example.mil"]                                      # web03 left the group after the picker's list was read
+        try:
+            code, out = self.portal.launch(self.cn, "192.0.2.5", name, {"portal_limit": ["web_servers"], "ticket": "INC4", "env": "dev", "pw": "x"})
+            self.assertEqual(code, 201, out)
+            with open(fake_aap.LOG) as fh:
+                sent = [json.loads(x) for x in fh if '"POST"' in x and "/launch/" in x][-1]["body"]
+            self.assertEqual(sent["limit"], "web01.example.mil")                                  # the members as they are now
+        finally:
+            inv["groups"]["web_servers"] = ["web01.example.mil", "web03.example.mil"]
+            self.portal.aap.inventory_listing(force=True)
+
+    def test_47_a_changed_playbook_is_not_the_form_the_person_saw(self):
+        tid = fake_aap.add_template("job_templates", "Playbook moves", ["portal"])
+        self.portal.refresh(force=True)
+        name = self.nm("Playbook moves")
+        tpl = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == tid)
+        tpl["playbook"] = "something_else.yml"
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, {})
+        self.assertEqual(code, 409, out)
+
+    # ---- Codex's fifth review
+    def test_48_label_and_approval_marks_at_launch(self):
+        tid = fake_aap.add_template("workflow_job_templates", "Mark moves", ["portal", "portal-approval"])
+        jid = fake_aap.add_template("job_templates", "Job gets marked", ["portal"])
+        self.portal.refresh(force=True)
+        wf, jt = self.nm("Mark moves"), self.nm("Job gets marked")
+        w = next(t for t in fake_aap.STATE["templates"]["workflow_job_templates"] if t["id"] == tid)
+        j = next(t for t in fake_aap.STATE["templates"]["job_templates"] if t["id"] == jid)
+        j["labels"] = ["portal", "portal-approval"]                                                 # the mark is put on a job template after the form opened
+        self.assertEqual(self.portal.launch(self.cn, "192.0.2.5", jt, {})[0], 409)                  # refused at once, and the cards follow AAP
+        self.assertEqual(self.nm("Job gets marked"), "gone")
+        self.portal.refresh(force=True)
+        w["labels"] = ["portal"]                                                                    # the approval mark is taken off a workflow after the form opened
+        self.portal.found_at = time.time()
+        self.assertEqual(self.portal.launch(self.cn, "192.0.2.5", wf, {})[0], 409)
+
+    def test_49_half_a_label_list_is_not_the_list(self):
+        fake_aap.add_template("job_templates", "Many labels", ["portal"], many_labels=12)
+        real = self.portal.aap.call
+
+        def broken(method, path, body=None):
+            if path.endswith("/labels/?page_size=200"):
+                return 500, {"detail": "boom"}
+            return real(method, path, body)
+        self.portal.aap.call = broken
+        try:
+            self.portal.refresh(force=True)
+        finally:
+            self.portal.aap.call = real
+        self.assertIn("labels could not be read completely", dict(self.portal.found["skipped"]).get("Many labels", ""))
+        self.portal.refresh(force=True)
+
+    def test_50_a_group_is_resolved_by_its_name_now(self):
+        inv = fake_aap.STATE["inventories"][0]
+        self.portal.aap.inventory_listing(force=True)
+        inv["groups"]["renamed_to"] = inv["groups"].pop("failing")                                  # the group's old name is gone
+        try:
+            hosts, why = self.portal.aap.expand_now(["failing"])
+            self.assertIn("not a host or a group", why)
+        finally:
+            inv["groups"]["failing"] = inv["groups"].pop("renamed_to")
+            self.portal.aap.inventory_listing(force=True)
+
+    def test_51_a_signature_on_a_local_action_is_refused(self):
+        code, out = self.raw_launch(self.cn, "192.0.2.5", "no_prompts", {}, "a" * 24)
+        self.assertEqual(code, 409, out)
+
+    def test_52_a_saved_password_need_not_be_typed_again(self):
+        v, sk = rules.survey_vars({"spec": [{"variable": "pw", "type": "password", "required": True, "default": "$encrypted$"}]})
+        self.assertFalse(v["pw"]["required"])
+        self.assertEqual(rules.check_values({"vars": v}, {"pw": ""})[0], {})                       # not sent: AAP uses the one it saved
+        self.assertIsNone(v["pw"]["default"])
+
+    # ---- Codex's sixth review
+    def test_53_changed_workflow_steps_are_not_the_form_the_person_saw(self):
+        tid = fake_aap.add_template("workflow_job_templates", "Steps move", ["portal", "portal-approval"])
+        w = next(t for t in fake_aap.STATE["templates"]["workflow_job_templates"] if t["id"] == tid)
+        w["nodes"] = [{"id": 1, "unified_job_template": 40, "success_nodes": [2], "failure_nodes": [], "always_nodes": []},
+                      {"id": 2, "unified_job_template": 44, "success_nodes": [], "failure_nodes": [], "always_nodes": []}]
+        self.portal.refresh(force=True)
+        name = self.nm("Steps move")
+        self.assertIn(name, self.portal.actions)
+        w["nodes"] = w["nodes"][1:]                                                                  # a step was taken out
+        code, out = self.portal.launch(self.cn, "192.0.2.5", name, {})
+        self.assertEqual(code, 409, out)
+
+    def test_54_a_form_from_before_the_approval_mark_moved(self):
+        tid = fake_aap.add_template("workflow_job_templates", "Mark by refresh", ["portal", "portal-approval"])
+        self.portal.refresh(force=True)
+        name = self.nm("Mark by refresh")
+        old_sig = self.portal.actions[name]["sig"]
+        w = next(t for t in fake_aap.STATE["templates"]["workflow_job_templates"] if t["id"] == tid)
+        w["labels"] = ["portal"]
+        self.portal.refresh(force=True)                                                              # the cards follow AAP before the form is sent
+        code, out = self.raw_launch(self.cn, "192.0.2.5", name, {}, old_sig)
+        self.assertEqual(code, 409, out)
+
+    def test_55_a_host_that_became_a_group_name(self):
+        inv = fake_aap.STATE["inventories"][0]
+        self.portal.aap.inventory_listing(force=True)
+        inv["groups"]["web01.example.mil"] = ["web03.example.mil"]                                    # a group made after the list was read
+        try:
+            hosts, why = self.portal.aap.expand_now(["web_servers"])
+            self.assertIn("also a group's name", why)
+        finally:
+            del inv["groups"]["web01.example.mil"]
+            self.portal.aap.inventory_listing(force=True)
+
+    def test_56_a_page_of_an_action_taken_off(self):
+        html_ = sp.action_page(self.cfg, self.portal, self.cn, "jt_999999", {})
+        self.assertIn("There is no action jt_999999 here.", html_)
 
 
 class Look(unittest.TestCase):
