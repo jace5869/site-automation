@@ -455,22 +455,29 @@ IPC_KEYS = ["kernel.shmmax", "kernel.shmall", "kernel.shmmni", "kernel.shm_rmid_
             "kernel.msgmax", "kernel.msgmnb", "kernel.msgmni", "kernel.msg_next_id", "kernel.sem", "kernel.sem_next_id",
             "fs.mqueue.msg_max", "fs.mqueue.msgsize_max", "fs.mqueue.queues_max", "fs.mqueue.msg_default",
             "fs.mqueue.msgsize_default"]
-# PrivateIPC keeps SysV IPC and message queues off the host: inside, these show the sandbox's own - hidden
+# the IPC files: a code that reads them is not tried (BLIND); /dev/mqueue hidden in the sandbox
 IPC_PATHS = ["/proc/sysvipc", "/dev/mqueue"] + ["/proc/sys/" + k.replace(".", "/") for k in IPC_KEYS]
 TMP_ROOTS = ["/tmp", "/var/tmp", "/dev/shm"]
 # 1.76.1: two profiles, by systemd's version (systemd-run --version). Both: the whole file system read-only, its own
 # /tmp, /var/tmp and /dev/shm, no socket of any family, no new privileges, root's capabilities cut to reading.
+# 1.76.1c: systemd skips some settings with no error when the kernel will not give it a namespace ("assuming containerized
+# execution" - a user unit where user namespaces are restricted, a container): a unit with only ProtectSystem= then runs
+# with the host writable. A TemporaryFileSystem= is a mount systemd insists on: no mount namespace, no run (226). The
+# rest that may be skipped is held another way too: IPC and the clock and host name by the system call filter (which is
+# never skipped), the devices and the PID namespace looked at by the probe.
 SANDBOX_COMMON = ["ProtectSystem=strict", "ReadOnlyPaths=/", "ProtectHome=read-only", "PrivateTmp=yes", "PrivateDevices=yes",
-                  "TemporaryFileSystem=/dev/shm", "InaccessiblePaths=-/dev/mqueue",
+                  "TemporaryFileSystem=/dev/shm", "TemporaryFileSystem=/run/user:ro", "InaccessiblePaths=-/dev/mqueue",
                   "NoNewPrivileges=yes", "RestrictNamespaces=yes",
                   "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectControlGroups=yes",
                   "SystemCallFilter=~@privileged @debug",
                   # no address family at all: an allow-list of AF_UNIX, then AF_UNIX taken out (systemd-run does not take "none")
                   "RestrictAddressFamilies=AF_UNIX", "RestrictAddressFamilies=~AF_UNIX", "IPAddressDeny=any",
                   "CapabilityBoundingSet=CAP_DAC_READ_SEARCH"]
-# systemd 248 and later (RHEL 9, 10): its own IPC (the IPC files in /proc then hidden - they would be its own), the
-# kernel's logs, clock and host name protected, no set-UID files, other UIDs' processes hidden
-SANDBOX_FULL = ["PrivateIPC=yes"] + ["InaccessiblePaths=-%s" % x for x in IPC_PATHS if x != "/dev/mqueue"] + [
+# systemd 248 and later (RHEL 9, 10): the kernel's logs, clock and host name protected, no set-UID files, other UIDs'
+# processes hidden. 1.76.1c: no PrivateIPC - systemd may skip it, and as root ProtectProc's own /proc showed the IPC
+# files it was to hide (tried on the real 255): the IPC calls are refused instead, with every profile, and the IPC files
+# are the host's, read as they are (a code that reads them is still not tried, BLIND; sysctl of them still replayed)
+SANDBOX_FULL = [
                 # LockPersonality: systemd 239's systemd-run does not take it (a unit file would) - tried on the real 239
                 "LockPersonality=yes", "RestrictSUIDSGID=yes", "ProtectKernelLogs=yes", "ProtectClock=yes", "ProtectHostname=yes",
                 # other UIDs' processes hidden; not ProcSubset=pid - it hides /proc/sys and /proc/cmdline, which checks read
@@ -483,8 +490,13 @@ SANDBOX_FULL = ["PrivateIPC=yes"] + ["InaccessiblePaths=-%s" % x for x in IPC_PA
 # IPC files in /proc are the host's: read as they are. A refused call fails (EPERM), it does not stop pwsh.
 IPC_CALLS = ["shmget", "shmat", "shmdt", "shmctl", "msgget", "msgsnd", "msgrcv", "msgctl", "semget", "semop",
              "semtimedop", "semctl", "mq_open", "mq_unlink", "mq_timedsend", "mq_timedreceive", "mq_notify", "mq_getsetattr"]
-# LockPersonality: systemd 239's systemd-run does not take it (a unit file would) - personality(2) is refused instead
-SANDBOX_239 = ["SystemCallFilter=~" + " ".join(IPC_CALLS), "SystemCallFilter=~@clock personality", "SystemCallErrorNumber=EPERM"]
+# LockPersonality: systemd 239's systemd-run does not take it (a unit file would) - personality(2) is refused instead.
+# 1.76.1c: the IPC calls, the clock and the host name refused with every profile - PrivateIPC, ProtectClock and
+# ProtectHostname are among what systemd may skip ("IPC namespace setup failed, ignoring")
+SANDBOX_CALLS = ["SystemCallFilter=~" + " ".join(IPC_CALLS), "SystemCallFilter=~@clock sethostname setdomainname",
+                 "SystemCallErrorNumber=EPERM"]
+SANDBOX_COMMON += SANDBOX_CALLS
+SANDBOX_239 = ["SystemCallFilter=~personality"]
 FULL_FROM = 248
 # systemd 257 and later: a PID namespace of its own too (RHEL 10); before, the UID of its own is what keeps host
 # processes out of reach (no CAP_KILL, CAP_SYS_PTRACE: a signal to another UID is refused by the kernel)
@@ -504,8 +516,6 @@ def sandbox_props(version):
 
 
 CAP_DAC_READ_SEARCH = 1 << 2
-# the trial's own UID (as root): high, past the container ranges (systemd: up to 1879048191), never a passwd entry
-UID_FIRST, UID_LAST = 2000000000, 2100000000
 # what is replayed: every call of these programs (a daemon's socket, the kernel's audit socket, NSS - sssd, LDAP)...
 REPLAY_ALWAYS = ["/usr/sbin/auditctl", "/usr/bin/systemctl", "/usr/bin/getent", "/usr/bin/id"]
 # ...and every call of these when one of a code's calls needs it: an IPC setting (the namespace), a user or group name
@@ -552,8 +562,13 @@ if ($other) {
     foreach ($fd in @('0', '1', '2')) { $t = @(& /usr/bin/readlink "/proc/$other/fd/$fd" 2>$null); if ($LASTEXITCODE -eq 0 -and $t) { $p1 += "/proc/$other/fd/$fd"; break } }
     $null = @(& /usr/bin/kill -0 $other 2>&1); $sig = ($LASTEXITCODE -eq 0)
 }
+# 1.76.1c: the host's devices (PrivateDevices skipped): any block device, or the kernel's memory and log
+$dev = @(@(& /usr/bin/find /dev -xdev -type b 2>$null) + @(foreach ($d in @('/dev/mem', '/dev/kmem', '/dev/port', '/dev/kmsg')) { if (Test-Path -LiteralPath $d) { $d } }) | Select-Object -First 4)
+# 1.76.1c: the job's own process (as a user other than root, the same UID): seen in it - no PID namespace of its own
+$job = ''
+try { $job = ((Get-Content -LiteralPath '/proc/@JOBPID@/stat' -ErrorAction Stop) -replace '^.*\) ', '' -split ' ')[19] } catch { }
 @{ writable = $w; private = $priv; sockets = $sock; ipc = $ipc; uid = [string](& /usr/bin/id -u); capeff = $cap; seen = $seen;
-   ipcrm = $ipcrm; p1 = $p1; signal = $sig } | ConvertTo-Json -Compress -Depth 3
+   ipcrm = $ipcrm; p1 = $p1; signal = $sig; dev = $dev; job = $job } | ConvertTo-Json -Compress -Depth 3
 """
 # what a trial would read from the sandbox, not the host (the mount table, IPC, a file's user or group through PowerShell
 # - NSS - and the temporary folders, which are its own): such a code is not tried, never given a result the host would
@@ -602,55 +617,18 @@ def _uid_procs(uid):
     return out
 
 
-def uid_free(uid):
-    """No passwd or group entry (NSS), no process of this host with it."""
-    import grp
-    import pwd
-    try:
-        pwd.getpwuid(uid)
-        return False
-    except KeyError:
-        pass
-    try:
-        grp.getgrgid(uid)
-        return False
-    except KeyError:
-        pass
-    return not _uid_procs(uid)
-
-
-_TRIAL_UID = []
-
-
-def trial_uid():
-    """The trial's own UID, picked once per run: random in UID_FIRST..UID_LAST, free (uid_free)."""
-    import random
-    if not _TRIAL_UID:
-        rnd = random.SystemRandom()
-        for _ in range(50):
-            u = rnd.randint(UID_FIRST, UID_LAST)
-            if uid_free(u):
-                _TRIAL_UID.append(u)
-                break
-        else:
-            raise RuntimeError("no free UID found in %d..%d" % (UID_FIRST, UID_LAST))
-    return _TRIAL_UID[0]
-
-
 def sandbox_cmd(runner, seconds, binds=None, version=0):
-    """The systemd-run command line of one sandboxed run (as root: a system unit as the trial's own UID; as another
+    """The systemd-run command line of one sandboxed run (as root: a system unit as a dynamic user; as another
     user: that user's own systemd). binds: {program path: its replay shim} - each bound read-only over the program.
     version: systemd's (257 and later: a PID namespace of its own too)."""
     root = os.geteuid() == 0
     cmd = [runner] + ([] if root else ["--user"]) + ["--pipe", "--wait", "--collect", "--quiet"]
     props = sandbox_props(version) + ["RuntimeMaxSec=%d" % seconds]
-    if root and profile_of(FORCED_VERSION if FORCED_VERSION is not None else version) == "239":
-        # systemd 239 refuses a numeric User= with no passwd entry (exit 217 - tried on the real 239): a dynamic user
-        # instead, its UID unique to the unit while it runs (and the private /tmp it implies we have anyway)
+    if root:
+        # 1.76.1c: a dynamic user on every systemd - its UID unique to the unit while it runs. A numeric User= with no
+        # passwd entry is refused before systemd 257 (exit 217 - tried on the real 239 and 255): 1.76.0's root trial on
+        # RHEL 9 never ran
         props += ["DynamicUser=yes", "AmbientCapabilities=CAP_DAC_READ_SEARCH"]
-    elif root:
-        u = trial_uid()
-        props += ["User=%d" % u, "Group=%d" % u, "AmbientCapabilities=CAP_DAC_READ_SEARCH"]
     for prog, shim in sorted((binds or {}).items()):
         props.append("BindReadOnlyPaths=%s:%s" % (shim, prog))
     for x in props:
@@ -674,6 +652,19 @@ def _ps_list(xs):
     return ", ".join("'" + x.replace("'", "''") + "'" for x in xs)
 
 
+# systemd's dynamic users
+DYNAMIC_FIRST, DYNAMIC_LAST = 61184, 65519
+
+
+def _starttime(pid):
+    """A process's start time (/proc/<pid>/stat field 22) - with its PID, which process it is."""
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(") ", 1)[1].split()[19]
+    except (OSError, IOError, IndexError):
+        return ""
+
+
 def sandbox_probe(runner, pwsh=None, version=None):
     """Whether the sandbox works here and holds - looked at from inside, nothing written -> '' or why not."""
     if not runner:
@@ -688,13 +679,16 @@ def sandbox_probe(runner, pwsh=None, version=None):
     host = dict((p, "%d:%d" % (os.stat(p).st_dev, os.stat(p).st_ino)) for p in PROBE_PRIVATE if os.path.exists(p))
     ro = PROBE_RO + [os.path.expanduser("~")]
     prof = profile_of(FORCED_VERSION if FORCED_VERSION is not None else version)
-    # the IPC files in /proc: its own (hidden) with the full profile; the host's (read as they are) with systemd 239
-    ipc_files = [x for x in IPC_PATHS if x.startswith("/proc/sys/")] if prof == "full" else []
-    script = PROBE_PS1.replace("@RO@", _ps_list(ro)).replace("@IPC@", _ps_list(ipc_files) or "@()")
+    # the IPC files in /proc: the host's (1.76.1c: no IPC namespace of its own with any profile), read as they are
+    script = PROBE_PS1.replace("@RO@", _ps_list(ro)).replace("@IPC@", "@()").replace("@JOBPID@", str(os.getpid()))
     enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    # 1.76.1c: as a user other than root, the code runs as that user: only a PID namespace of its own (systemd 257) keeps
+    # that user's other processes - the job's own - out of its reach (a signal to one's own UID is allowed)
+    v = FORCED_VERSION if FORCED_VERSION is not None else int(version or 0)
+    if os.geteuid() != 0 and v < 257:
+        return ("as a user other than root the trial needs systemd 257 or later (here %s): before, its code could signal "
+                "this user's other processes - run the job as root (become: true)" % (v or "not known"))
     try:
-        if os.geteuid() == 0 and profile_of(FORCED_VERSION if FORCED_VERSION is not None else version) == "full" and not uid_free(trial_uid()):
-            return "its UID %d is in use here" % trial_uid()
         r = subprocess.run(sandbox_cmd(runner, 60, version=version) + [pwsh, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, env=sandbox_env())
     except (OSError, subprocess.TimeoutExpired, RuntimeError) as e:
@@ -722,8 +716,8 @@ def sandbox_probe(runner, pwsh=None, version=None):
     uid = str(j.get("uid")).strip()
     if uid in ("", "0"):
         return "it runs as root"
-    if os.geteuid() == 0 and prof == "full" and uid != str(trial_uid()):
-        return "it runs as UID %s, not its own %d" % (uid, trial_uid())
+    if os.geteuid() == 0 and not (uid.isdigit() and DYNAMIC_FIRST <= int(uid) <= DYNAMIC_LAST):
+        return "it runs as UID %s, not a dynamic user of its own" % uid
     try:
         cap = int(str(j.get("capeff") or ""), 16)
     except ValueError:
@@ -736,14 +730,17 @@ def sandbox_probe(runner, pwsh=None, version=None):
         return "another UID's process can be read in it (%s)" % ", ".join(p1)
     if j.get("signal"):
         return "it can signal another UID's process (kill -0)"
-    if prof == "239":
-        said = j.get("ipcrm") or []
-        said = [said] if isinstance(said, str) else said
-        if len(said) != 2 or not all("permission denied" in str(x).lower() for x in said):
-            return "SysV IPC is not closed in it (systemd %s: ipcrm said %s)" % (version, "; ".join(str(x) for x in said)[:160] or "nothing")
-    if os.geteuid() == 0 and prof == "full" and _uid_procs(trial_uid()):
-        return "its UID %d owns a process here" % trial_uid()
-    if os.geteuid() == 0 and prof == "239" and uid.isdigit() and _uid_procs(int(uid)):
+    said = j.get("ipcrm") or []
+    said = [said] if isinstance(said, str) else said
+    if len(said) != 2 or not all("permission denied" in str(x).lower() for x in said):
+        return "SysV IPC is not closed in it (systemd %s: ipcrm said %s)" % (version, "; ".join(str(x) for x in said)[:160] or "nothing")
+    dev = j.get("dev") or []
+    dev = [dev] if isinstance(dev, str) else dev
+    if dev:
+        return "the host's devices are in it (%s)" % ", ".join(dev)
+    if os.geteuid() != 0 and str(j.get("job") or "") and str(j.get("job")) == _starttime(os.getpid()):
+        return "the job's own process can be seen in it (no PID namespace of its own)"
+    if os.geteuid() == 0 and uid.isdigit() and _uid_procs(int(uid)):
         return "its dynamic UID %s owns a process here after it ended" % uid
     return ""
 
@@ -805,9 +802,18 @@ def _needs(argv):
     return False
 
 
-# 1.76.1 (Codex): the places the sandbox shows as its own, not the host's - /proc but its global files, which are the host's
-PRIVATE_ROOTS = ["/tmp", "/var/tmp", "/dev/shm", "/dev/mqueue", "/proc"]
+# 1.76.1 (Codex): the places the sandbox shows as its own, not the host's - /proc but its global files, which are the host's.
+# 1.76.1d (Codex): every place a setting of the sandbox hides or replaces - /run/user (TemporaryFileSystem), the
+# dynamic user's /var/lib/private, /var/cache/private and /var/log/private (DynamicUser: inaccessible, its UID gets past
+# no mode of theirs; a service's /var/lib/NAME links into them), the kernel's modules (ProtectKernelModules), /dev
+# (PrivateDevices: only its pseudo-devices, the same as the host's)
+PRIVATE_ROOTS = ["/tmp", "/var/tmp", "/dev", "/proc", "/run/user", "/var/lib/private", "/var/cache/private",
+                 "/var/log/private", "/usr/lib/modules", "/lib/modules"]
 PROC_HOST = ["/proc/sys", "/proc/cmdline"]
+DEV_HOST = ["/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty", "/dev/stdin",
+            "/dev/stdout", "/dev/stderr"]
+# under a private place, what is the host's in the sandbox too
+HOST_INSIDE = PROC_HOST + DEV_HOST
 
 
 def _norm(path):
@@ -833,7 +839,7 @@ def touch_of(path, recursive=False):
     for q in (n, os.path.realpath(n)):
         for t in PRIVATE_ROOTS:
             if q == t or q.startswith(t + "/"):
-                if t == "/proc" and any(q == x or q.startswith(x + "/") for x in PROC_HOST):
+                if any(q == x or q.startswith(x + "/") for x in HOST_INSIDE):
                     continue
                 return t
             if rec and (q == "/" or t.startswith(q.rstrip("/") + "/")):
@@ -879,11 +885,16 @@ def replays_for(calls):
     return out
 
 
-PLACE = {"/tmp": "a temporary folder (/tmp, /var/tmp, /dev/shm: the sandbox has its own)",
-         "/var/tmp": "a temporary folder (/tmp, /var/tmp, /dev/shm: the sandbox has its own)",
-         "/dev/shm": "a temporary folder (/tmp, /var/tmp, /dev/shm: the sandbox has its own)",
-         "/dev/mqueue": "the message queues (the sandbox's own IPC)",
-         "/proc": "/proc of the processes (the sandbox sees its own, or none of other users)"}
+PLACE = {"/tmp": "a temporary folder (/tmp, /var/tmp: the sandbox has its own)",
+         "/var/tmp": "a temporary folder (/tmp, /var/tmp: the sandbox has its own)",
+         "/dev": "/dev (the sandbox has its own: no host device, its own /dev/shm and message queues)",
+         "/proc": "/proc of the processes (the sandbox sees its own, or none of other users)",
+         "/run/user": "/run/user (hidden in the sandbox)",
+         "/var/lib/private": "a dynamic user's private folder (hidden in the sandbox)",
+         "/var/cache/private": "a dynamic user's private folder (hidden in the sandbox)",
+         "/var/log/private": "a dynamic user's private folder (hidden in the sandbox)",
+         "/usr/lib/modules": "the kernel's modules (hidden in the sandbox)",
+         "/lib/modules": "the kernel's modules (hidden in the sandbox)"}
 
 
 def blind(code, calls=None, paths=None):

@@ -48,9 +48,16 @@ if os.environ.get("AK_PROFILE") == "239":
 PROFILE = h.profile_of(h.FORCED_VERSION if h.FORCED_VERSION is not None else h.systemd_version(runner))
 print("profile: %s (systemd %s)" % (PROFILE, h.systemd_version(runner)))
 if not pwsh:
-    print("SKIP - pwsh is not here")
+    print("SKIP - pwsh is not here (%s)" % ("; ".join(h.PWSH_WHY) or "not on the PATH"))
     sys.exit(0)
 why = h.sandbox_probe(runner)
+VER = h.FORCED_VERSION if h.FORCED_VERSION is not None else h.systemd_version(runner)
+if os.geteuid() != 0 and VER < 257 and os.environ.get("AK_SANDBOX") != "none":
+    # 1.76.1c: as a user other than root, below systemd 257 (no PID namespace of its own) the code could signal this
+    # user's other processes - the module refuses the sandbox; the root run (the job's own way) is the one that tries it
+    say("needs systemd 257" in why, "as a user other than root on systemd %s the module refuses the sandbox: %s" % (VER, why or "it did not"))
+    print("the writes, signals and replays are tried by the root run (sudo) on this systemd")
+    sys.exit(1 if fails else 0)
 if os.environ.get("AK_SANDBOX") == "none":
     say(bool(why), "no sandbox here, and the module says so: %s" % (why or "it found one"))
     sys.exit(1 if fails else 0)
@@ -213,15 +220,43 @@ r, err, _ = h.run_trial(pwsh, runner, "$o = @(& /usr/bin/find '%s' -type f -perm
 say(todo == [fcall] and isinstance(r, dict) and r.get("values") == [True],
     "find over the host's /tmp is replayed: it finds the world-writable file (%s)" % ((r or {}).get("read") or err)[:100])
 shutil.rmtree(wtmp, ignore_errors=True)
+# 1.76.1d (Codex): what the sandbox's own settings hide - /run/user, the dynamic user's private folders, the kernel's
+# modules, the host's devices: a code that reads one there is not tried; stat of one is replayed (the host's answer),
+# never "missing" because the sandbox hides it
+def _a_dev():
+    for e in sorted(os.listdir("/dev")):
+        q = os.path.join("/dev", e)
+        try:
+            if stat.S_ISBLK(os.stat(q).st_mode):
+                return q
+        except OSError:
+            continue
+    return ""
+
+
+ru = sorted(os.listdir("/run/user")) if os.path.isdir("/run/user") else []
+hidden = [("/run/user", "/run/user/" + ru[0] if ru else ""), ("/var/lib/private", "/var/lib/private"),
+          ("/var/cache/private", "/var/cache/private"), ("/var/log/private", "/var/log/private"),
+          ("/usr/lib/modules", "/usr/lib/modules/" + os.uname().release), ("/dev", _a_dev())]
+for root_, hp in hidden:
+    if not hp or not os.path.exists(hp):
+        print("SKIP - %s: nothing of it on this host" % root_)
+        continue
+    r, err, _ = h.run_trial(pwsh, runner, "return (Test-Path -LiteralPath '%s')" % hp, 30)
+    inside = (r or {}).get("values") if isinstance(r, dict) else err
+    say("hidden in the sandbox" in h.blind("", [], [{"cmd": "Test-Path", "path": hp, "literal": True}]) or
+        "the sandbox has its own" in h.blind("", [], [{"cmd": "Test-Path", "path": hp, "literal": True}]),
+        "%s: Test-Path of %s is not tried (inside it says %s; on the host it is there)" % (root_, hp, inside))
+    sc = ["/usr/bin/stat", "-c", "%a %F", hp]
+    todo = h.replays_for([sc])
+    ans = dict((tuple(c), h.capture(c)) for c in todo)
+    want = h.capture(sc)[0].decode().strip()
+    r, err, _ = h.run_trial(pwsh, runner, "return [string](& /usr/bin/stat -c '%%a %%F' '%s')" % hp, 30, h.write_shims(sh_dir, ans))
+    say(todo == [sc] and isinstance(r, dict) and r.get("values") == [want],
+        "%s: stat of %s is replayed - inside it is the host's (%s)" % (root_, hp, ((r or {}).get("values") or [err])[0] if isinstance(r, dict) else err))
 # a process of this host cannot be signalled from inside: a sleeper of the test's own user (here: a PID namespace of
 # its own, systemd 257+), as root also one of nobody and one of another random UID (the trial's UID is its own)
-sleepers = []
-if PROFILE == "full" or root:
-    sleepers.append(("the test's own user", subprocess.Popen(["/bin/sleep", "600"])))
-else:
-    # systemd 239 as a user: the trial runs as this same user, with no PID namespace of its own (systemd 257+) - the real
-    # job runs it as root with a UID of its own, which the root run below proves
-    print("SKIP - the test's own user's process: in user mode the systemd 239 profile runs as that user (the root run proves the UID of its own)")
+sleepers = [("the test's own user", subprocess.Popen(["/bin/sleep", "600"]))]
 if root:
     import pwd
     nobody = pwd.getpwnam("nobody")
@@ -250,15 +285,12 @@ binds = h.write_shims(sh_dir, answers)
 want_pw = answers[("/usr/bin/getent", "passwd", "root")][0].decode().strip()
 r, err, _ = h.run_trial(pwsh, runner, "$v = [string](& /usr/sbin/sysctl -n kernel.shmmax); Write-Verbose $v; return ($v -eq '%s')" % host_shm, 30, binds)
 say(isinstance(r, dict) and r.get("values") == [True], "kernel.shmmax inside is the host's %s (replayed)" % host_shm)
-if PROFILE == "full":
-    r, err, _ = h.run_trial(pwsh, runner, "try { $null = Get-Content /proc/sys/kernel/shmmax -ErrorAction Stop; return $true } catch { return $false }", 30)
-    say(isinstance(r, dict) and r.get("values") == [False], "/proc/sys/kernel/shmmax cannot be read inside (it would be the sandbox's own)")
-else:
-    # systemd 239: no IPC namespace of its own - the file is the host's, read as it is; no IPC object can be made
-    r, err, _ = h.run_trial(pwsh, runner, "return [string](Get-Content /proc/sys/kernel/shmmax)", 30)
-    say(isinstance(r, dict) and r.get("values") == [host_shm], "systemd 239: /proc/sys/kernel/shmmax inside is the host's (%s)" % host_shm)
-    r, err, _ = h.run_trial(pwsh, runner, "$o = @(& /usr/bin/ipcmk -M 4096 2>&1); Write-Verbose ($o -join ' '); return ($LASTEXITCODE -ne 0)", 30)
-    say(isinstance(r, dict) and r.get("values") == [True], "systemd 239: no SysV IPC object can be made inside (ipcmk: %s)" % ((r or {}).get("read") or err)[:80])
+# 1.76.1c: no IPC namespace of its own with any profile - the file is the host's, read as it is
+r, err, _ = h.run_trial(pwsh, runner, "return [string](Get-Content /proc/sys/kernel/shmmax)", 30)
+say(isinstance(r, dict) and r.get("values") == [host_shm], "/proc/sys/kernel/shmmax inside is the host's (%s)" % host_shm)
+# 1.76.1c: no SysV IPC object can be made inside, with every profile (the calls refused - PrivateIPC may be skipped)
+r, err, _ = h.run_trial(pwsh, runner, "$o = @(& /usr/bin/ipcmk -M 4096 2>&1); Write-Verbose ($o -join ' '); return ($LASTEXITCODE -ne 0)", 30)
+say(isinstance(r, dict) and r.get("values") == [True], "no SysV IPC object can be made inside (ipcmk: %s)" % ((r or {}).get("read") or err)[:80])
 r, err, _ = h.run_trial(pwsh, runner, "$v = [string](& /usr/bin/getent passwd root); return ($v -eq '%s')" % want_pw.replace("'", "''"), 30, binds)
 say(isinstance(r, dict) and r.get("values") == [True], "getent passwd root inside gives the answer read outside (replayed): %s" % want_pw.split(":")[0])
 say("mount table" in h.blind("Get-Content /proc/self/mountinfo") and "user or group" in h.blind("(Get-Item /etc/x).User"),
@@ -288,18 +320,17 @@ if root:
     # as root (CI's throwaway runner: sudo): it runs as a UID of its own that keeps only the right to read; the kernel's
     # settings stay as they are - the write fails inside, even of the key's own value; /etc stays as it is
     r, err, _ = h.run_trial(pwsh, runner, "return [string](& /usr/bin/id -u)", 30)
-    if PROFILE == "full":
-        say(isinstance(r, dict) and r.get("values") == [str(h.trial_uid())],
-            "as root: the code runs as its own UID %d (in no passwd entry, owning no other process), not root: %s" % (h.trial_uid(), (r or {}).get("values") or err))
-    else:
-        u = ((r or {}).get("values") or [""])[0]
-        say(isinstance(r, dict) and u.isdigit() and u != "0" and not h._uid_procs(int(u)),
-            "as root (systemd 239): the code runs as a dynamic user of its own (UID %s), not root, owning no process after" % u)
+    # 1.76.1c: a dynamic user on every systemd (a numeric User= with no passwd entry: exit 217 before systemd 257)
+    u = ((r or {}).get("values") or [""])[0]
+    say(isinstance(r, dict) and u.isdigit() and h.DYNAMIC_FIRST <= int(u) <= h.DYNAMIC_LAST and not h._uid_procs(int(u)),
+        "as root (systemd %s): the code runs as a dynamic user of its own (UID %s), not root, owning no process after" % (VER, u or err))
     say(not os.path.exists(etc_probe), "as root: nothing written in /etc")
     for name, args in (("sysctl -w (its own value)", "-w vm.swappiness=%s" % swap), ("sysctl -p FILE", "-p %s" % conf),
                        ("sysctl --system", "--system")):
+        # refused: a non-zero exit, or (procps-ng 4.0.4 - Ubuntu 24.04 - exits 0 on a refused write, "ignoring") the
+        # refusal said; the value itself is checked after
         r, err, _ = h.run_trial(pwsh, runner, "$o = @(& /usr/sbin/sysctl %s 2>&1); Write-Verbose ($o -join ' '); "
-                                              "return ($LASTEXITCODE -ne 0)" % args, 30)
+                                              "return ($LASTEXITCODE -ne 0 -or (($o -join ' ') -match 'Read-only file system|Permission denied|Operation not permitted'))" % args, 30)
         say(isinstance(r, dict) and r.get("values") == [True], "as root: %s fails inside the sandbox (%s)" % (
             name, ((r or {}).get("read") or err)[:120]))
     say(open("/proc/sys/vm/swappiness").read().strip() == swap, "as root: vm.swappiness still %s" % swap)

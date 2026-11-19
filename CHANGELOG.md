@@ -2,22 +2,32 @@
 
 ## 1.76.1 — 2026-11-19
 
-**To set up: nothing.** On RHEL 8 the trial now runs (it needs `systemd-run`, there by default).
+**To set up: nothing.** On RHEL 8 the trial now runs (it needs `systemd-run`, there by default). Run the job as root
+(`become: true`, the default): as another user the trial needs systemd 257 or later (RHEL 10).
 
 **STIG answer keys: the trial on RHEL 8 (systemd 239); only literal paths read inside** (docs/STIG_ANSWER_KEYS.md,
 "The trial").
 
+- Fixed: 1.76.0's trial as root on systemd 240-256 (RHEL 9) always ended *not tried: no sandbox (exit 217)*. systemd
+  before 257 does not start a unit with a numeric user that has no passwd entry. 1.76.1 runs every root trial as a
+  dynamic user of its own (`DynamicUser`). Proved as root on a real systemd 255 (Ubuntu 24.04) and 239 (RHEL 8).
 - RHEL 8's systemd 239 lacks six of the sandbox's settings. The job picks a profile by `systemd-run --version` and
-  holds the same properties another way:
-  - SysV IPC and message queue calls refused (the IPC files in `/proc` are then the host's, read as they are);
-  - the clock and `personality(2)` refused;
-  - a dynamic user of its own (239 does not start a numeric user with no passwd entry).
-  The probe proves it before the first trial: no IPC object touched, another user's process unreadable and not
-  signalled. Proved on a real systemd 239 (a RHEL 8 container as PID 1, the CI job `answer-keys-rhel8-sandbox`).
+  holds the same properties another way (`personality(2)` refused; no `ProtectProc`: another user's process can be
+  listed, but not read, and gets no signal). The CI job `answer-keys-rhel8-sandbox` runs it on a real 239.
+- Never a sandbox systemd quietly left out: when the kernel gives no namespace, systemd skips some settings with no
+  error. The sandbox has mounts systemd insists on (`TemporaryFileSystem=/run/user:ro`): no namespace, no trial.
+- SysV IPC, message queues, the clock and the host name: their system calls refused with every profile (systemd may
+  skip `PrivateIPC`; as root its own `/proc` showed the IPC files). The IPC files are the host's, read as they are.
+- What the sandbox hides is never read as the host's: `/run/user`, a dynamic user's `/var/lib/private`,
+  `/var/cache/private`, `/var/log/private` (and links into them), the kernel's modules, `/dev` - a code that reads one
+  is not tried; `find` and `stat` of one are replayed from outside.
+- The probe also checks: no host device in it; no SysV IPC object touched; as a user other than root, the job's own
+  process unseen. As a user other than root below systemd 257 the sandbox is refused: the code could signal that
+  user's other processes.
 - The trial reads only literal paths, decided per command from the code's syntax tree: a cmdlet's path that is not a
   plain literal (a variable, an expression, the current folder) is not tried. A literal path is normalized (`.`,
   `..`, `//`) and followed through the host's symbolic links: one in the sandbox's own places (`/tmp`, `/var/tmp`,
-  `/dev/shm`, `/dev/mqueue`, `/proc` but `/proc/sys` and `/proc/cmdline`) is not tried. A process's `/proc` is not
+  `/dev`, `/proc` but `/proc/sys` and `/proc/cmdline`, and those below) is not tried. A process's `/proc` is not
   tried; `find` and `stat` there are replayed from outside.
 - A path piped into a cmdlet is checked as its own; other piped input is not tried. The host's links are looked at
   again right after each trial: a path that changed drops the result.
