@@ -669,6 +669,66 @@ portal_setup_templates_extra:
 Without the setup job, make the template in AAP yourself (Prompt on launch for **Variables** and **Limit**, and give the
 account **Execute**); the deploy then says *Off* with the reason until it is there.
 
+## Add a job to the portal from AAP
+
+The portal finds its actions in AAP itself. You give its account **Execute** on a template and add a label, and the card appears.
+Nothing in `all.yml` is edited and nothing is redeployed.
+
+A card appears only when **both** are true: the portal's account has **Execute** on the template, and the template carries the label
+`portal` (`portal_label`). Take either away and the card goes at the next refresh (`portal_discover_seconds`, 60).
+
+1. In AAP, open **Automation Execution > Templates** and open the job template or workflow.
+2. Open **Details > Edit**. In **Labels**, type `portal` and press Enter. Save.
+3. Optional, the card's group: add the label `portal-area:STIG` (anything after the colon is the group's name). Without it the card is under *Other*.
+4. Optional, the approval mark, for a **workflow** with an approval step: add the label `portal-approval`, or list its name in `portal_approval_required`. A job template starts at once, so one marked for approval is left out.
+5. Open the template's **Access** tab. Add the portal's account (`svc_site_portal`) with the role **Execute**.
+6. Optional, the form: open the **Survey** tab, add questions and switch the survey on. To pick hosts, tick **Prompt on launch** for **Limit**.
+7. Open the portal. The card is there, with the template's name as its title and its description as its line.
+
+**The form is the survey.** Each question becomes a field, and the portal checks every answer again before AAP starts the job.
+
+| Survey type | The field | Checked |
+|---|---|---|
+| Text, Textarea | one line, or a box | required, minimum and maximum length |
+| Integer, Float | a number | required, minimum and maximum |
+| Multiple choice | one of a list | one of the choices |
+| Multi select | ticks | every one a choice |
+| Password | masked | required, length; never shown back, never in the log |
+
+- **Limit.** With **Prompt on launch** for **Limit**, the form asks for hosts or groups of `portal_inventory` (the picker below), up to `portal_limit_max` (50) hosts, and sends them as the job's limit: a group goes as its hosts, the ones the portal counted. Without `portal_inventory` the template is left out: the portal never starts a job on a host it cannot check.
+- **What is sent.** Only the survey's own variables. The portal adds nothing else.
+- **Who started it.** Optional tip: add a survey question `portal_requested_by` (text, hidden) to see who started it in AAP's job. The portal fills it from the person's card, the field is not shown, and anything posted for it is replaced. The question must be text with a maximum of at least 200, or the template is left out.
+- **A password** is masked on the form and never filled in again. The portal's log and the job page show *(hidden)*.
+
+**The host picker.** Every host field is the same: a searchable list of the inventory's hosts **and groups**.
+
+1. Open the list. A group shows its host count: *linux_prod (42 hosts)*.
+2. Type to filter (any case, any part of the name). The list shows the first 200 matches, then *N more - type to narrow*.
+3. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown** adds the shown ones that fit under the limit.
+4. Keyboard: arrows move, Enter or Space ticks, Backspace in the empty box removes the last chip.
+
+The finding steps take up to 5 hosts, with a group counted by its hosts (each finding is its own job). Without scripts the field is a plain multi-select
+with the same names, and the form posts itself. The server checks every pick against `portal_inventory`: a typed name that is not a host or group is refused.
+
+**One job, one id.** A card's address names the template's AAP id (`jt_12`, `wf_7`), so a rename or a new label never moves it onto another
+template. If the template (its playbook, variables, survey, Limit prompt or label) changed after the form was opened, Run says *this job changed in AAP - open it again*.
+
+**What is not shown.** A template with a survey type the portal cannot handle, or one that needs an inventory, a credential or a
+password at launch, is left out. So is a template with a Limit whose inventory is not `portal_inventory`, a workflow with a Limit (use a job template), and one whose launch settings cannot be read. The deploy lists each one with the reason. A built-in action with the same template name wins:
+there is one card, and the deploy says so.
+
+**Safety.** The account keeps **Execute** and **Organization Auditor** only, never a write role. Approval, the rate limit,
+*Running already* and the job pages work as for every other action.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `portal_label` | `portal` | the label that marks a template (`''` = no discovery) |
+| `portal_discover_seconds` | 60 | how long what was found is kept (10 to 3600) |
+| `portal_label_area` | `portal-area:` | the start of an area label |
+| `portal_label_approval` | `portal-approval` | the approval label |
+| `portal_approval_required` | `[]` | template names marked *Approval* without the label |
+| `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
+
 ## The look
 
 The portal's pages look like the report website: the same colours, cards, tables, status chips and bar. They follow
@@ -850,6 +910,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
 | `portal_actions_extra`, `portal_actions_off` | `{}`, `[]` | your own actions, and built-in ones to hide (*Adding your own action*) |
 | `portal_finding_days`, `portal_finding_jobs`, `portal_pick_max_launches` | 7, 5, 10 | *Pick a host, then a finding* |
+| `portal_label`, `portal_discover_seconds`, `portal_limit_max` | `portal`, 60, 50 | *Add a job to the portal from AAP* |
 | `portal_path` | `/portal/` | the path on nginx |
 | `portal_public_url` | `https://<the server>/portal/` | the address people open (said at the end) |
 | `portal_allow_self_approval` | false | true = an approver may decide a run they started themselves |

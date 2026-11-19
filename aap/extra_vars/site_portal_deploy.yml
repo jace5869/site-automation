@@ -103,6 +103,30 @@ portal_public_url: https://stigman.example.mil/portal/
 ## one confirm page starts this many jobs at most (one per ticked finding); over it the page says so
 # portal_pick_max_launches: 10
 
+## 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account
+## has Execute on AND that carries the AAP label below is added to the portal - no edit here, no
+## redeploy; take Execute or the label away and it goes at the next refresh. The form is the
+## template's survey; the card's area is a label "portal-area:STIG" (else Other), its title the
+## template's name, its line the description. the AAP label that marks a template for the portal (''
+## = no discovery)
+# portal_label: portal
+
+## how long what was found is kept (10 to 3600)
+# portal_discover_seconds: 60
+
+## a template with this label too is marked "approval" on its card
+# portal_label_approval: portal-approval
+
+## a label that starts with this puts the card in an area (the rest of the label is its name)
+# portal_label_area: "portal-area:"
+
+## template names that are marked "approval" without the label
+# portal_approval_required: []
+
+## a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to
+## 500)
+# portal_limit_max: 50
+
 ## the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones
 ## finding_ref takes a finding from)
 # portal_finding_playbooks: >-

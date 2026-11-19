@@ -131,6 +131,27 @@ dl.def dd{overflow-wrap:anywhere;font-weight:550}
 .field label{display:block;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--label);margin-bottom:5px}
 .field input,.field select,.field textarea{width:100%;font:inherit;font-size:14px;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:9px;padding:8px 11px}
 .field textarea{font-family:var(--mono);font-size:13px;resize:vertical}
+.field .multi{display:grid;gap:6px}
+.field .opt{display:flex;gap:9px;align-items:center;font-size:14px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--ink);margin:0}
+.field .opt input{width:auto;flex:none}
+.field .hint{margin:0 0 6px;font-size:13px;color:var(--muted)}
+/* the host picker (1.78.0): chips, a search box and a list of the inventory's hosts and groups */
+.picker select[multiple]{min-height:9em}
+.pk-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;min-height:28px;align-items:center}
+.pk-chip{gap:6px;max-width:100%;overflow-wrap:anywhere}
+.pk-x{border:0;background:none;color:inherit;font:inherit;line-height:1;cursor:pointer;padding:0 2px;border-radius:5px}
+.pk-x:hover,.pk-x:focus-visible{background:var(--edge)}
+.field .pk-q{margin:0 0 6px}
+.pk-list{list-style:none;margin:0 0 6px;padding:4px;max-height:15em;overflow-y:auto;background:var(--card);border:1px solid var(--edge);border-radius:9px}
+.pk-row{display:flex;gap:9px;align-items:center;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:14px}
+.pk-row.on{background:var(--edge)}
+.pk-row.off{opacity:.55;cursor:not-allowed}
+.pk-box{flex:none;display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.5px solid var(--muted);border-radius:4px;font-size:12px;line-height:1}
+.pk-row.sel .pk-box{background:var(--ink);color:var(--card);border-color:var(--ink)}
+.pk-name{font-family:var(--mono);font-size:13px;overflow-wrap:anywhere;min-width:0;flex:1 1 auto}
+.pk-kind{flex:none;font-size:12px;color:var(--muted);white-space:nowrap}
+.pk-empty,.pk-foot{padding:6px 8px;margin:0}
+.pk-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .field.bad input,.field.bad select,.field.bad textarea{border-color:var(--critical)}
 .why{color:var(--critical);font-size:12.5px;margin:4px 0 0}
 .why:empty{display:none}

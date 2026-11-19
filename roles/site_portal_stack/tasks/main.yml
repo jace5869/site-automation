@@ -355,6 +355,12 @@
       PORTAL_FINDING_JOBS: "{{ portal_finding_jobs }}"
       PORTAL_PICK_MAX_LAUNCHES: "{{ portal_pick_max_launches }}"
       PORTAL_FINDING_PLAYBOOKS: "{{ portal_finding_playbooks }}"
+      PORTAL_LABEL: "{{ portal_label }}"
+      PORTAL_DISCOVER_SECONDS: "{{ portal_discover_seconds }}"
+      PORTAL_LABEL_APPROVAL: "{{ portal_label_approval }}"
+      PORTAL_LABEL_AREA: "{{ portal_label_area }}"
+      PORTAL_APPROVAL_REQUIRED: "{{ portal_approval_required }}"
+      PORTAL_LIMIT_MAX: "{{ portal_limit_max }}"
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
@@ -660,6 +666,20 @@
       if _portal_aap.pick.unread | length > 0 else '' }}.
   when: not ansible_check_mode and _portal_aap.pick | default({}) | length > 0 and _portal_aap.pick.on | default(false)
     and (_portal_aap.pick.auditor | default([]) | length > 0 or _portal_aap.pick.system_auditor | default(false))
+
+- name: Verify | the actions found in AAP (label {{ portal_label }})
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Found in AAP (Execute + the label ' ~ _d.label ~ '): ' ~ (_d.shown | length) ~ ' of ' ~ _d.seen ~ ' templates the account may run.']
+         + (['Shown: ' ~ (_d.shown | map(attribute='title') | join('; ')) ~ '.'] if _d.shown | length > 0 else
+            ['None shown yet: add the label ' ~ _d.label ~ ' to a template the account may Execute (docs/SITE_PORTAL.md, "Add a job to the portal from AAP").'])
+         + (['Skipped (with the reason): ' ~ (_d.skipped | map('join', ' - ') | join('; ')) ~ '.'] if _d.skipped | length > 0 else [])
+         + ([(_d.unlabelled | string) ~ ' more may be run by the account but have no label ' ~ _d.label ~ ' (left out on purpose).'] if _d.unlabelled | default(0) > 0 else [])
+         + (['Not added twice (the built-in action wins): ' ~ (_d.clashes | map('join', ' = the built-in ') | join('; ')) ~ '.'] if _d.clashes | length > 0 else [])
+         + (['AAP could not be asked: ' ~ _d.error] if _d.error else []) }}
+  vars:
+    _d: "{{ _portal_aap.discover }}"
+  when: not ansible_check_mode and _portal_aap.discover | default({}) | length > 0 and _portal_aap.discover.on | default(false)
 
 - name: Verify | the nginx lines to add
   ansible.builtin.slurp:

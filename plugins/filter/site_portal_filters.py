@@ -32,6 +32,10 @@ TEXT_MAX = 4000                    # a text var's max when it names none
 TEXT_CEILING = 20000               # no text var may allow more (the request's size limit holds the rest)
 HOST_MAX = 255
 RESERVED = ("portal_requested_by",)
+LIMIT_VAR = "portal_limit"           # 1.78.0: a discovered template's Limit (1-5 hosts): sent as the launch's limit, never as an extra var
+LIMIT_MAX = 5
+SURVEY_TYPES = ("text", "textarea", "integer", "float", "multiplechoice", "multiselect", "password")
+HIDDEN = "(hidden)"                  # what the log and the job page keep of a password
 SUMMARY_MAX, AREA_MAX = 160, 40
 ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes", "summary", "area")
 MODES = ("dry_run", "live", "off")
@@ -224,17 +228,56 @@ def value_problem(var, value):
     if k == "text":
         if len(value) > var["max"]:
             return "is longer than %d characters" % var["max"]
+        if len(value) < var.get("min", 0):
+            return "is shorter than %d characters" % var["min"]
         if var.get("pattern") is not None and not var["pattern"].fullmatch(value):
             return "is not in the expected form"
         return ""
     if k == "inventory_host":
         return "" if HOST_RE.match(value) else "is not a host name (letters, digits, dots, - and _)"
+    if k == "password":                 # 1.78.0: never echoed - the message names no part of the value
+        if len(value) > var["max"]:
+            return "is longer than %d characters" % var["max"]
+        if len(value) < var.get("min", 0):
+            return "is shorter than %d characters" % var["min"]
+        return ""
     return "has an unknown kind"
 
 
-def check_values(action, sent, host_known=None):
+def _number(var, value):
+    """An integer or float answer -> (the number or None, why not). bool, nan, inf and 1e999 are refused - a field error, never an exception."""
+    if isinstance(value, bool):
+        return None, "must be a number"
+    why = "must be a whole number" if var["kind"] == "integer" else "must be a number"
+    try:
+        if var["kind"] == "integer":
+            if isinstance(value, int):
+                n = value
+            elif isinstance(value, float):
+                if value != value or value in (float("inf"), float("-inf")) or value != int(value):
+                    return None, why
+                n = int(value)
+            elif isinstance(value, str) and re.match(r"^[+-]?[0-9]{1,30}\Z", value.strip()):
+                n = int(value.strip())
+            else:
+                return None, why
+        else:
+            n = float(value)
+            if n != n or n in (float("inf"), float("-inf")):
+                return None, why
+    except (TypeError, ValueError, OverflowError):
+        return None, why
+    if var.get("min") is not None and n < var["min"]:
+        return None, "must be at least %s" % var["min"]
+    if var.get("max") is not None and n > var["max"]:
+        return None, "must be at most %s" % var["max"]
+    return n, ""
+
+
+def check_values(action, sent, host_known=None, expand=None):
     """The values a person sent for an action -> (values to send to AAP, problems {var or '': why}).
-    sent: {var: value}. host_known(name) -> True / False / None (None = AAP could not be asked: refused, said)."""
+    sent: {var: value}. host_known(name) -> True / False / None (None = AAP could not be asked: refused, said).
+    expand(items) -> (the hosts they stand for, '' or why not): 1.78.0, for a var of kind hosts - names of hosts or groups of the portal's inventory."""
     problems, out = {}, {}
     if not isinstance(sent, dict):
         return {}, {"": "the values must be a mapping of var names to values"}
@@ -243,6 +286,9 @@ def check_values(action, sent, host_known=None):
         problems[""] = "not a var of this action: %s" % ", ".join(str(x)[:64] for x in unknown[:10])
     for vn, var in action["vars"].items():
         v = sent.get(vn)
+        if v == "" and var.get("empty_ok"):             # 1.78.0: an optional survey text, cleared on purpose
+            out[vn] = ""
+            continue
         if v is None or v == "":
             if var.get("default") is not None:
                 v = var["default"]
@@ -251,6 +297,66 @@ def check_values(action, sent, host_known=None):
                 continue
             else:
                 continue
+        kind = var["kind"]
+        if kind in ("integer", "float"):                # 1.78.0: a survey's numbers: sent as numbers
+            n, why = _number(var, v)
+            if why:
+                problems[vn] = why
+            else:
+                out[vn] = n
+            continue
+        if kind == "multichoice":                       # a survey's multiselect: a list of the listed choices
+            if isinstance(v, str):
+                v = [x for x in v.split("\n") if x]
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                problems[vn] = "must be a list of choices"
+            elif not v and var["required"]:
+                problems[vn] = "is required"
+            else:
+                bad = [x for x in v if x not in var["values"]]
+                if bad:
+                    problems[vn] = "has a choice that is not offered"
+                elif any(templating(x) for x in v):
+                    problems[vn] = "holds braces that start a template"
+                else:
+                    out[vn] = [x for x in var["values"] if x in v]
+            continue
+        if kind == "hosts":                             # 1.78.0: hosts and groups of the inventory (a Limit, or a finding's hosts) - never unchecked
+            raw = v if isinstance(v, list) else re.split(r"[,\s]+", v) if isinstance(v, str) else None
+            if raw is None or not all(isinstance(x, str) for x in raw):
+                problems[vn] = "must be host names"
+                continue
+            items = list(dict.fromkeys(x.strip() for x in raw if x.strip()))
+            cap = int(var.get("max") or LIMIT_MAX)
+            bad = next((value_problem({"kind": "inventory_host"}, h) for h in items if value_problem({"kind": "inventory_host"}, h)), "")
+            if not items:
+                problems[vn] = "is required"
+            elif bad:
+                problems[vn] = bad
+            elif expand is None and host_known is None:
+                problems[vn] = "cannot be checked: portal_inventory is not set, and the portal never starts a job on a host it cannot check"
+            else:
+                if expand is not None:
+                    hosts, why = expand(items)
+                else:                                   # only the hosts can be asked (no groups)
+                    hosts, why = list(items), ""
+                    for h in items:
+                        known = host_known(h)
+                        if known is None:
+                            why = "could not be looked up in AAP's inventory just now - try again"
+                            break
+                        if not known:
+                            why = "has a host that is not in the portal's inventory"
+                            break
+                if why:
+                    problems[vn] = why
+                elif not hosts:
+                    problems[vn] = "stands for no host: the groups are empty"
+                elif len(hosts) > cap:
+                    problems[vn] = "takes %d hosts at most (that is %d, groups counted by their hosts)" % (cap, len(hosts))
+                else:
+                    out[vn] = items
+            continue
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             v = _text(v)
         why = value_problem(var, v)
@@ -346,6 +452,132 @@ def site_portal_spec_merge(spec, templates_extra=None, workflows_extra=None):
                 lst.append(x)
     spec["templates"], spec["workflows"] = tpl, wfl
     return {"spec": spec, "problems": problems}
+
+
+def _choices(q):
+    c = q.get("choices")
+    if isinstance(c, str):
+        c = c.split("\n")
+    return [str(x) for x in c if str(x) != ""] if isinstance(c, list) else []
+
+
+def _num(x):
+    """A survey's min or max (a number, or text of one) -> int or float, or None (none given, or not finite). Whole numbers stay exact."""
+    if isinstance(x, bool) or x in (None, ""):
+        return None
+    if isinstance(x, int):
+        return x
+    if isinstance(x, str) and re.match(r"^[+-]?[0-9]{1,30}\Z", x.strip()):
+        return int(x.strip())
+    try:
+        n = float(x)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if n != n or n in (float("inf"), float("-inf")):
+        return None
+    return int(n) if n == int(n) else n
+
+
+def takes_name(q):
+    """Whether a survey question can take a person's certificate name (200 characters at most): text or textarea, a maximum of 200 or more, no minimum over 1."""
+    mx, mn = _num(q.get("max")), _num(q.get("min"))
+    return q.get("type") in ("text", "textarea") and (mx is None or mx >= 200 or q.get("max") in (None, "")) and (mn is None or mn <= 1)
+
+
+def survey_vars(spec):
+    """1.78.0: an AAP survey's spec ({name, description, spec: [questions]}) -> (vars, skipped). vars: the portal's own var rules (the
+    same as an actions.yml var, plus the kinds integer, float, multichoice and password), in the survey's order; skipped: [(variable
+    or question, why)] - a template with any skipped question is not shown (a form with a hole in it would start something the
+    person did not mean), the deploy's check says why."""
+    out, skipped, seen = {}, [], set()
+    qs = (spec or {}).get("spec") if isinstance(spec, dict) else None
+    for q in qs or []:
+        if not isinstance(q, dict):
+            continue
+        name = _text(q.get("variable")).strip()
+        label = _text(q.get("question_name")).strip() or name
+        typ = _text(q.get("type")).strip()
+        if not VAR_RE.match(name):
+            skipped.append((name[:40] or label[:40], "the variable name is not letters, digits and _"))
+            continue
+        if name in RESERVED or name == LIMIT_VAR or name in seen:
+            skipped.append((name, "the variable name %s is taken by the portal" % name if name in RESERVED or name == LIMIT_VAR else "asked twice"))
+            continue
+        if typ not in SURVEY_TYPES:
+            skipped.append((name, "survey type %s is not handled" % (typ[:30] or "(none)")))
+            continue
+        seen.add(name)
+        v = {"label": label[:120], "required": bool(q.get("required")), "default": None, "help": _text(q.get("question_description")).strip()[:200]}
+        dflt = q.get("default")
+        mn, mx = _num(q.get("min")), _num(q.get("max"))
+        if typ in ("text", "textarea", "password"):
+            v.update(kind="password" if typ == "password" else "text", max=int(mx) if mx is not None and mx >= 1 else 1024,
+                     min=int(mn) if mn is not None and mn > 0 else 0, multiline=typ == "textarea")
+            v["max"] = min(v["max"], TEXT_CEILING)
+            v["empty_ok"] = typ != "password" and not v["required"] and v["min"] == 0          # a cleared optional field is an answer: "" (not the default)
+            if typ != "password" and dflt not in (None, ""):
+                v["default"] = _text(dflt)
+            if typ == "password" and dflt not in (None, ""):          # AAP keeps a saved secret: left blank, the question is not sent and AAP uses it
+                v["required"] = False
+        elif typ in ("integer", "float"):
+            v.update(kind=typ, min=mn, max=mx)
+            if dflt not in (None, ""):
+                n, why = _number(v, dflt)
+                v["default"] = n if not why else None
+        else:
+            ch = _choices(q)
+            if not ch:
+                skipped.append((name, "no choices"))
+                seen.discard(name)
+                continue
+            v.update(kind="choice" if typ == "multiplechoice" else "multichoice", values=ch)
+            if typ == "multiplechoice" and _text(dflt) in ch:
+                v["default"] = _text(dflt)
+            elif typ == "multiselect":
+                d = [x for x in (dflt if isinstance(dflt, list) else _text(dflt).split("\n")) if x in ch]
+                v["default"] = d or None
+        out[name] = v
+    return out, skipped
+
+
+EXEC_FIELDS = ("playbook", "project", "scm_branch", "job_type", "extra_vars", "limit", "job_tags", "skip_tags", "forks", "verbosity", "timeout", "become_enabled",
+               "execution_environment", "organization", "ask_variables_on_launch", "ask_credential_on_launch", "ask_scm_branch_on_launch", "ask_job_type_on_launch",
+               "ask_tags_on_launch", "ask_skip_tags_on_launch", "ask_verbosity_on_launch", "ask_diff_mode_on_launch", "ask_execution_environment_on_launch",
+               "ask_forks_on_launch", "ask_timeout_on_launch", "ask_labels_on_launch", "ask_instance_groups_on_launch", "ask_job_slice_count_on_launch", "diff_mode", "job_slice_count")
+
+
+def exec_fields(row):
+    """What decides what a template runs (its playbook, project, stored variables, prompts ...) -> {field: value}, for the form's signature."""
+    return dict((k, row[k]) for k in EXEC_FIELDS if isinstance(row, dict) and k in row)
+
+
+def template_sig(name, limit, spec, inventory=None, ask_inventory=False, fields=None):
+    """1.78.0: a short fingerprint of what a form was built from - the template's name, whether it prompts for a Limit and its survey's
+    questions. The portal checks it again at launch: a template changed since the form was drawn is not started."""
+    import hashlib
+    import json
+    doc = {"name": name, "limit": bool(limit), "inventory": inventory, "ask_inventory": bool(ask_inventory), "fields": fields or {}, "spec": (spec or {}).get("spec") if isinstance(spec, dict) else None}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24]
+
+
+def slug(text, taken=()):
+    """A template's name as an action name (lower case letters, digits and _; 64 at most; one that is taken gets _2, _3 ...)."""
+    base = re.sub(r"[^a-z0-9]+", "_", unicodedata.normalize("NFKD", _text(text)).encode("ascii", "ignore").decode().lower()).strip("_")
+    base = ("t_" + base if not base or not base[0].isalpha() else base)[:60] or "t"
+    name, n = base, 2
+    while name in taken:
+        name = "%s_%d" % (base, n)
+        n += 1
+    return name
+
+
+def mask(action, values):
+    """The values a log or a page may keep: a password var's answer is never kept (HIDDEN), a hosts var's list is joined."""
+    out = {}
+    for k, v in (values or {}).items():
+        kind = ((action or {}).get("vars") or {}).get(k, {}).get("kind")
+        out[k] = HIDDEN if kind == "password" else (", ".join(v) if isinstance(v, list) else v)
+    return out
 
 
 class FilterModule(object):

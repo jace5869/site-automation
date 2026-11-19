@@ -109,6 +109,7 @@ class Config(object):
         self.aap_timeout = int(g("PORTAL_AAP_TIMEOUT", "30"))
         self.inventory = g("PORTAL_INVENTORY")
         self.requesters = names(g("PORTAL_REQUESTERS", "[]"))
+        self.limit_max = max(1, min(500, int(g("PORTAL_LIMIT_MAX", "50"))))          # 1.78.0: hosts a discovered template's Limit may stand for (groups counted by their hosts)
         self.approvers = names(g("PORTAL_APPROVERS", "[]"))
         self.per_hour = max(1, int(g("PORTAL_LAUNCHES_PER_HOUR", "20")))
         self.events = max(20, min(2000, int(g("PORTAL_JOB_EVENTS", "300"))))
@@ -124,6 +125,12 @@ class Config(object):
         except ValueError:
             fp = [x.strip() for x in str(fp).split(",")]
         self.finding_playbooks = [str(x).strip() for x in (fp if isinstance(fp, list) else []) if re.match(r"^[A-Za-z0-9_.*?-]{1,80}$", str(x).strip())]
+        # 1.78.0: actions found in AAP: a template the portal's account may Execute and that carries the label (portal_label; empty = off)
+        self.label = ("portal" if e.get("PORTAL_LABEL") is None else str(e.get("PORTAL_LABEL"))).strip()          # an empty label is "no discovery", not the default
+        self.discover_seconds = max(10, min(3600, int(g("PORTAL_DISCOVER_SECONDS", "60"))))
+        self.label_approval = g("PORTAL_LABEL_APPROVAL", "portal-approval").strip()
+        self.label_area = g("PORTAL_LABEL_AREA", "portal-area:").strip()
+        self.approval_required = names(g("PORTAL_APPROVAL_REQUIRED", "[]"))
         # 1.75.2: the pages' look follows the report website's (report_web_theme: ops, atlas or brief); anything else: atlas, the default
         self.look = g("PORTAL_THEME", "atlas").strip().lower()
         self.look = self.look if self.look in LOOKS else "atlas"
@@ -244,6 +251,8 @@ class Aap(object):
         self.ids = {}                   # action name -> (id, why off)
         self.inv_id = None
         self.hosts = {}                 # host name -> (known, when asked)
+        self.listing = None             # 1.78.0: the inventory's hosts and groups (inventory_listing)
+        self.listing_lock = threading.Lock()
 
     def connect(self):
         with self.lock:
@@ -298,6 +307,129 @@ class Aap(object):
             return "the action sets a limit (limit_from), and its Limit is not Prompt on launch"
         return ""
 
+    # -- 1.78.0: the actions AAP itself offers - what the portal's account may Execute and the label marks
+    PAGES_MAX = 400                                  # a safety stop: at this many pages the read is said to be incomplete, never taken as whole
+
+    def _paged(self, path, pages_max=None):
+        """All rows of a list (follows next) -> (rows, '' or why not). Never a partial list reported as whole."""
+        rows, nxt, pages = [], path, 0
+        while nxt:
+            if pages >= (pages_max or self.PAGES_MAX):
+                return rows, "could not read every template from AAP (more than %d pages)" % (pages_max or self.PAGES_MAX)
+            code, data = self.call("GET", nxt)
+            if code != 200:
+                return rows, "AAP could not be asked: %s" % site_aap.error_text(data)
+            rows += data.get("results") or []
+            raw_next = data.get("next") or ""
+            nxt = self._relative(raw_next)
+            if raw_next and not nxt:
+                return rows, "could not read every template from AAP (the next page's address was not understood)"
+            pages += 1
+        return rows, ""
+
+    def labels_of(self, kind, row):
+        """The template's label names, or None when AAP could not give the whole list (a half list is never taken for the whole)."""
+        sf = (row.get("summary_fields") or {}).get("labels") or {}
+        names_ = [str(x.get("name") or "") for x in sf.get("results") or []]
+        if int(sf.get("count") or 0) > len(names_):         # AAP lists 10 labels in a row: the rest are asked for
+            more, why = self._paged("%s/%d/labels/?page_size=200" % (kind, int(row["id"])))
+            if why:
+                return None
+            names_ = [str(x.get("name") or "") for x in more]
+        return names_
+
+    def discover(self, builtin):
+        """-> {'actions': {name: action}, 'skipped': [(template, why)], 'clashes': [(template, built-in action)], 'error': ''}.
+        The job templates and workflows the account has Execute on (role_level=execute_role) that carry the label; the form of each is
+        its survey's. A template a built-in action already runs is not added twice: the built-in wins."""
+        cfg = self.cfg
+        out = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0}
+        taken = set(builtin)
+        have = dict(((a["aap"]["type"], a["aap"]["name"]), n) for n, a in builtin.items())
+        found = []
+        for typ, kind in (("job", "job_templates"), ("workflow", "workflow_job_templates")):
+            rows, why = self._paged("%s/?role_level=execute_role&order_by=name&page_size=200" % kind)
+            if why:
+                out["error"] = why
+                return out
+            for r in rows:
+                found.append((typ, kind, r))
+        out["seen"] = len(found)
+        for typ, kind, r in sorted(found, key=lambda x: (str(x[2].get("name") or "").lower(), x[0], int(x[2].get("id") or 0))):
+            tname = str(r.get("name") or "")
+            labels = self.labels_of(kind, r)
+            if labels is None:
+                out["skipped"].append((tname, "its labels could not be read completely"))
+                continue
+            if cfg.label not in labels:
+                out["skipped"].append((tname, "no label %s" % cfg.label))
+                continue
+            if (typ, tname) in have:
+                out["clashes"].append((tname, have[(typ, tname)]))
+                continue
+            tid = int(r["id"])
+            vars_, skipped, named, spec_doc = {}, [], False, None
+            if r.get("survey_enabled"):
+                code, spec = self.call("GET", "%s/%d/survey_spec/" % (kind, tid))
+                if code != 200:
+                    out["skipped"].append((tname, "its survey could not be read: %s" % site_aap.error_text(spec)))
+                    continue
+                qs = [q for q in (spec.get("spec") or []) if isinstance(q, dict)]
+                asked = next((q for q in qs if q.get("variable") == "portal_requested_by"), None)       # asked in the survey: the portal fills it from the card
+                named = asked is not None
+                if asked is not None and not rules.takes_name(asked):
+                    out["skipped"].append((tname, "its portal_requested_by question must be text (or textarea), with a maximum of at least 200 and no minimum over 1"))
+                    continue
+                spec_doc = spec
+                vars_, skipped = rules.survey_vars(dict(spec, spec=[q for q in qs if q.get("variable") != "portal_requested_by"]))
+            if skipped:
+                out["skipped"].append((tname, "; ".join("%s: %s" % x for x in skipped[:3])))
+                continue
+            code, info = self.call("GET", "%s/%d/launch/" % (kind, tid))
+            if code != 200:
+                out["skipped"].append((tname, "its launch settings could not be read: %s" % site_aap.error_text(info)))
+                continue
+            if code == 200 and (info.get("inventory_needed_to_start") or info.get("credential_needed_to_start")
+                                or info.get("passwords_needed_to_start")):
+                out["skipped"].append((tname, "it needs an inventory, a credential or a password at launch that the portal cannot give"))
+                continue
+            if typ == "job" and (cfg.label_approval in labels or tname in cfg.approval_required):
+                out["skipped"].append((tname, "marked for approval, but a job template starts at once: use a workflow with an approval step"))
+                continue
+            limit = bool(r.get("ask_limit_on_launch"))
+            if limit and not cfg.inventory:
+                out["skipped"].append((tname, "needs portal_inventory for its Limit (the portal never starts a job on a host it cannot check)"))
+                continue
+            if limit and typ == "workflow":
+                out["skipped"].append((tname, "a workflow's Limit reaches its steps in ways the portal cannot check: use a job template for a Limit"))
+                continue
+            if limit and (r.get("ask_inventory_on_launch") or r.get("inventory") != self._inventory_id()):
+                out["skipped"].append((tname, "its inventory is not portal_inventory (a Limit is checked against portal_inventory only)"))
+                continue
+            if limit:
+                vars_ = dict([(rules.LIMIT_VAR, {"kind": "hosts", "label": "Hosts", "required": True, "default": None,
+                                                "max": cfg.limit_max,
+                                                "help": "Hosts or groups of the portal's inventory: up to %d hosts (a group counts by its hosts)" % cfg.limit_max})] + list(vars_.items()))
+            marked = cfg.label_approval in labels or tname in cfg.approval_required
+            sigf = dict(rules.exec_fields(r), approval_marked=bool(marked))
+            if typ == "workflow":
+                shape = self.workflow_shape(tid)
+                if shape is None:
+                    out["skipped"].append((tname, "its steps could not be read"))
+                    continue
+                sigf["steps"] = shape
+            area = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
+                         and l[len(cfg.label_area):].strip()), "")[:rules.AREA_MAX]
+            name = "%s_%d" % ("wf" if typ == "workflow" else "jt", tid)         # the id never moves to another template
+            desc = " ".join(str(r.get("description") or "").split())
+            out["actions"][name] = {
+                "name": name, "title": tname[:120], "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area,
+                "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
+                "limit_from": rules.LIMIT_VAR if limit else "", "who": None, "discovered": True, "tid": tid, "started_by": named,
+                "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
+                "approval": cfg.label_approval in labels or tname in cfg.approval_required}
+        return out
+
     def host_known(self, name):
         """True / False, or None when AAP could not be asked. Kept 5 minutes."""
         t = time.time()
@@ -327,6 +459,127 @@ class Aap(object):
                 return None
             self.inv_id = int(rows[0]["id"])
         return self.inv_id
+
+    # ---- 1.78.0: the inventory's hosts and groups, read once and kept with the discovery cache (the picker's list, and what every pick is checked against)
+    GROUPS_MAX = 400
+    HOST_PAGES_MAX = 100
+
+    def inventory_listing(self, force=False):
+        """{'hosts': [names], 'groups': {name: [member hosts]}, 'truncated': bool} of portal_inventory, kept portal_discover_seconds - or None
+        when it was never read. A failed read keeps the last good one."""
+        if not self.cfg.inventory:
+            return None
+        t = time.time()
+        with self.lock:
+            hit = self.listing
+            if hit and not force and t - hit["at"] < self.cfg.discover_seconds:
+                return hit
+        if not self.listing_lock.acquire(blocking=False):
+            return self.listing                                 # someone is reading it: this one uses what there is
+        try:
+            iid = self._inventory_id()
+            if iid is None:
+                return self.listing
+            rows, why = self._paged("inventories/%d/hosts/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
+            if why and not rows:
+                return self.listing
+            hosts = sorted(set(str(r.get("name")) for r in rows if r.get("name")), key=str.lower)
+            grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
+            groups, trunc, bad = {}, bool(why or gwhy), set()
+            for g in grows[:self.GROUPS_MAX]:
+                mem, w = self._paged("groups/%d/all_hosts/?page_size=200" % int(g["id"]), self.HOST_PAGES_MAX)
+                if w:                                           # a group read in part is no group: never counted short, never launched
+                    bad.add(str(g.get("name")))
+                    continue
+                groups[str(g.get("name"))] = sorted(set(str(m.get("name")) for m in mem if m.get("name")), key=str.lower)
+            bad.update(str(g.get("name")) for g in grows[self.GROUPS_MAX:])
+            trunc = trunc or bool(bad)
+            got = {"hosts": hosts, "groups": groups, "bad": bad, "truncated": trunc, "at": time.time(),
+                   "gids": dict((str(g.get("name")), int(g["id"])) for g in grows)}
+            with self.lock:
+                self.listing = got
+            return got
+        finally:
+            self.listing_lock.release()
+
+    def expand(self, items):
+        """Names of hosts and groups -> (the hosts they stand for, unique, in order; '' or why not). Every name must be a host or a group of
+        portal_inventory: a free-typed name is refused."""
+        inv = self.inventory_listing()
+        if inv is None:
+            return None, "could not be looked up in AAP's inventory just now - try again"
+        if time.time() - inv["at"] > max(300, 3 * self.cfg.discover_seconds):         # an old read serves the list, never a check
+            return None, "could not be checked against the inventory just now - try again"
+        hostset, out, seen = set(inv["hosts"]), [], set()
+        for name in items:
+            if name in inv.get("bad", ()):
+                return None, "is a group whose hosts could not be read completely just now - pick its hosts, or try again"
+            members = inv["groups"].get(name)
+            if members is None and name in hostset:
+                members = [name]
+            if members is None:
+                return None, "is not a host or a group of the portal's inventory"
+            for h in members:
+                if not rules.HOST_RE.match(h) or h in inv["groups"]:
+                    return None, "has a host whose name cannot be used in a Limit (or is also a group's name)"
+                if h not in seen:
+                    seen.add(h)
+                    out.append(h)
+        return out, ""
+
+    def expand_now(self, items):
+        """Like expand, but asks AAP now - the groups (names and members) and each host - and trusts no kept list: the launch's final expansion.
+        Every name that will be sent is checked against the current group names too."""
+        iid = self._inventory_id()
+        if iid is None:
+            return None, "could not be looked up in the inventory just now - try again"
+        grows, gwhy = self._paged("inventories/%d/groups/?order_by=name&page_size=200" % iid, self.HOST_PAGES_MAX)
+        if gwhy:
+            return None, "could not be looked up in the inventory just now - try again"
+        gids = dict((str(g.get("name")), int(g["id"])) for g in grows)
+        out, seen = [], set()
+        for name in items:
+            gid = gids.get(name)
+            if gid is not None:
+                mem, w = self._paged("groups/%d/all_hosts/?page_size=200" % gid, self.HOST_PAGES_MAX)
+                if w:
+                    return None, "is a group whose hosts could not be read just now - try again"
+                members = sorted(set(str(m.get("name")) for m in mem if m.get("name")), key=str.lower)
+            else:
+                code, data = self.call("GET", "inventories/%d/hosts/?name=%s&page_size=2" % (iid, urllib.parse.quote(name)))
+                if code != 200:
+                    return None, "could not be looked up in the inventory just now - try again"
+                if not any(r.get("name") == name for r in (data.get("results") or [])):
+                    return None, "is not a host or a group of the portal's inventory"
+                members = [name]
+            for h in members:
+                if not rules.HOST_RE.match(h) or h in gids:
+                    return None, "has a host whose name cannot be used in a Limit (or is also a group's name)"
+                if h not in seen:
+                    seen.add(h)
+                    out.append(h)
+        return out, ""
+
+    def workflow_shape(self, tid):
+        """A fingerprint of a workflow's steps and how they connect (which job each runs, what follows each), or None when it could not be read."""
+        rows, why = self._paged("workflow_job_templates/%d/workflow_nodes/?order_by=id&page_size=200" % tid)
+        if why:
+            return None
+        import hashlib
+        doc = [[r.get("id"), r.get("unified_job_template"), sorted(r.get("success_nodes") or []), sorted(r.get("failure_nodes") or []),
+                sorted(r.get("always_nodes") or []), r.get("limit"), r.get("extra_data"), r.get("all_parents_must_converge")] for r in rows]
+        return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24]
+
+    def inventory_items(self, text="", limit=200):
+        """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}."""
+        inv = self.inventory_listing()
+        if inv is None:
+            return {"items": [], "matches": 0, "total": 0, "error": "The inventory could not be read just now."}
+        t = str(text or "").strip().lower()[:64]
+        rows = [(h, "host", 1) for h in inv["hosts"]] + [(g, "group", len(m)) for g, m in inv["groups"].items()]
+        rows = sorted((r for r in rows if t in r[0].lower()), key=lambda r: (r[0].lower(), r[1]))
+        return {"items": [{"name": n, "kind": k, "count": c} for n, k, c in rows[:limit]], "matches": len(rows), "total": len(inv["hosts"]) + len(inv["groups"]),
+                "truncated": bool(inv["truncated"])}
 
     def host_search(self, text, limit=8):
         """Host names of portal_inventory that contain text (the typeahead): [] when AAP cannot be asked or the text is too short."""
@@ -549,6 +802,11 @@ class Portal(object):
         with open(cfg.actions_file) as fh:
             doc = json.load(fh)
         self.actions, problems = rules.check_actions((doc or {}).get("actions") if isinstance(doc, dict) else doc)
+        self.builtin = dict(self.actions)
+        self.found = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0}
+        self.found_at = 0.0
+        self.found_ready = False                        # the first read of AAP has ended (found or not): until then a request waits for it
+        self.found_lock = threading.Lock()
         if problems:
             raise SystemExit("site-portal: the actions file is not right (%s):\n  %s" % (cfg.actions_file, "\n  ".join(problems)))
         self.aap = aap or Aap(cfg)
@@ -590,6 +848,34 @@ class Portal(object):
         good = hmac.new(self.key, ("%s|%d" % (cn, t)).encode("utf-8"), hashlib.sha256).hexdigest()
         return hmac.compare_digest(good, mac)
 
+    # -- 1.78.0: the actions found in AAP (kept portal_discover_seconds), added to the built-in ones - which win on a name
+    def refresh(self, force=False):
+        if not self.cfg.label or not self.cfg.aap_url:
+            return
+        t = time.time()
+        if self.found_ready and not force and t - self.found_at < self.cfg.discover_seconds:
+            return
+        if not self.found_lock.acquire(blocking=force or not self.found_ready):
+            return                                      # someone is asking AAP: this one uses what there is
+        try:
+            if self.found_ready and not force and time.time() - self.found_at < self.cfg.discover_seconds:
+                return
+            got = self.aap.discover(self.builtin)
+            if got["error"]:                            # AAP did not answer: keep what was found, say so, ask again in a little while
+                self.found = dict(self.found, error=got["error"])
+                self.found_at = time.time() - self.cfg.discover_seconds + min(15, self.cfg.discover_seconds)
+                return
+            self.found = got
+            self.found_at = time.time()
+            old = set(k for k, a in self.actions.items() if a.get("discovered"))
+            merged = dict((k, a) for k, a in self.actions.items() if k not in old)
+            for k, a in got["actions"].items():
+                merged.setdefault(k, a)
+            self.actions = merged
+        finally:
+            self.found_ready = True
+            self.found_lock.release()
+
     # -- who may do what
     def may_use(self, cn):
         return not self.cfg.requesters or cn in self.cfg.requesters or cn in self.cfg.approvers \
@@ -599,8 +885,11 @@ class Portal(object):
         """The actions this person may run."""
         return [a for a in self.actions.values() if rules.may_run(a, cn, self.cfg.requesters)]
 
-    def state(self, name):
+    def state(self, name, a=None):
         """(AAP id or None, why off) - asked once, again while it is off."""
+        a = a or self.actions.get(name) or {}
+        if a.get("discovered"):         # found in AAP just now: its id is known, and nothing else is sent than the survey's
+            return a["tid"], ""
         hit = self.aap.ids.get(name)
         if hit is None or hit[0] is None or hit[1]:
             self.aap.resolve({name: self.actions[name]})
@@ -644,12 +933,13 @@ class Portal(object):
                 mine.remove(t)
 
     # -- an action
-    def check(self, name, sent):
-        a = self.actions[name]
-        return rules.check_values(a, sent, self.aap.host_known if self.cfg.inventory else None)
+    def check(self, name, sent, a=None):
+        a = a or self.actions[name]
+        return rules.check_values(a, sent, self.aap.host_known if self.cfg.inventory else None, self.aap.expand if self.cfg.inventory else None)
 
-    def launch(self, cn, ip, name, sent):
-        """-> (HTTP code, answer)."""
+    def launch(self, cn, ip, name, sent, sig=None):
+        """-> (HTTP code, answer). sig: the fingerprint of the template the form was drawn from (a found template): a different one is not started."""
+        self.refresh()
         a = self.actions.get(name)
         if not a:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": str(name)[:64], "why": "not a listed action"})
@@ -657,12 +947,17 @@ class Portal(object):
         if not rules.may_run(a, cn, self.cfg.requesters):
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "not on the action's list of people"})
             return 403, {"error": "You are not on the list of people who may run %s." % a["title"]}
-        values, problems = self.check(name, sent)
+        if (a.get("discovered") and sig != a.get("sig")) or (not a.get("discovered") and sig):          # a form of a found template, and the id now names a local action: not that form
+            self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "template changed since the form was drawn"})
+            return 409, {"error": "Not started: this job changed in AAP since the page was opened - open it again from the Actions page."}
+        if a.get("started_by") and isinstance(sent, dict):      # the survey asks portal_requested_by: never typed - the card's name replaces it
+            sent = dict((k, v) for k, v in sent.items() if k != "portal_requested_by")
+        values, problems = self.check(name, sent, a)
         if problems:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "values", "problems": problems})
             return 400, {"error": "Not started: " + "; ".join(("%s %s" % (a["vars"][k]["label"], v)) if k in a["vars"] else v
                                                                for k, v in sorted(problems.items())), "problems": problems}
-        if str(values.get("report_job", "")).isdigit():         # 907, 0907 and 00907 are one job
+        if not a.get("discovered") and str(values.get("report_job", "")).isdigit():         # 907, 0907 and 00907 are one job
             values = dict(values, report_job=str(int(values["report_job"])))
         key = self.once_key(name, values)
         if key is None:
@@ -690,23 +985,85 @@ class Portal(object):
             self.give_back(cn, t)
         return code, out
 
+    def limit_hosts(self, a, values):
+        """The concrete hosts of a found template's Limit - one expansion, counted, never empty, never over the cap -> (hosts or None, '' or why)."""
+        items = values.get(a["limit_from"])
+        hosts, why = self.aap.expand_now(items if isinstance(items, list) else [])
+        if why or hosts is None:
+            return None, why or "could not be looked up in the inventory just now - try again"
+        cap = int(a["vars"][a["limit_from"]].get("max") or rules.LIMIT_MAX)
+        if not hosts:
+            return None, "stands for no host: the groups are empty"
+        if len(hosts) > cap:
+            return None, "takes %d hosts at most (that is %d)" % (cap, len(hosts))
+        return hosts, ""
+
+    def same_template(self, a):
+        """'' when the AAP template is still the one this action was built from (its name, its Limit prompt and its survey), else why not."""
+        kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
+        code, row = self.aap.call("GET", "%s/%d/" % (kind, a["tid"]))
+        if code != 200:
+            return "AAP could not be asked about it: %s" % site_aap.error_text(row)
+        spec = None
+        if row.get("survey_enabled"):
+            code, spec = self.aap.call("GET", "%s/%d/survey_spec/" % (kind, a["tid"]))
+            if code != 200:
+                return "its survey could not be read: %s" % site_aap.error_text(spec)
+        labels = self.aap.labels_of(kind, row)
+        if labels is None:
+            return "its labels could not be read completely"
+        if self.cfg.label and self.cfg.label not in labels:
+            return "its label %s was taken off" % self.cfg.label
+        marked = self.cfg.label_approval in labels or str(row.get("name") or "") in self.cfg.approval_required
+        sigf = dict(rules.exec_fields(row), approval_marked=bool(marked))
+        if a["aap"]["type"] == "workflow":
+            shape = self.aap.workflow_shape(a["tid"])
+            if shape is None:
+                return "its steps could not be read"
+            sigf["steps"] = shape
+        if rules.template_sig(str(row.get("name") or ""), bool(row.get("ask_limit_on_launch")), spec, row.get("inventory"),
+                              bool(row.get("ask_inventory_on_launch")), sigf) != a.get("sig"):
+            return "changed"
+        if marked and a["aap"]["type"] == "job":
+            return "its approval mark changed"
+        return ""
+
     def _start(self, cn, ip, name, a, values):
-        tid, off = self.state(name)
+        if a.get("discovered"):
+            why = self.same_template(a)
+            if why:
+                self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "template changed: " + why})
+                self.refresh(force=True)                # the cards follow what AAP has now
+                return 409, {"error": "Not started: this job changed in AAP (%s) - open it again from the Actions page." % why
+                             if why != "changed" else "Not started: this job changed in AAP - open it again from the Actions page."}
+        tid, off = self.state(name, a)
         if tid is None or off:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "off: " + (off or "")})
             return 503, {"error": "This action is off: %s." % (off or "not found in AAP")}
-        body = {"extra_vars": dict(values, portal_requested_by=cn)}
+        if a.get("discovered"):         # nothing outside the survey goes to AAP as an extra var: not the person's name, not the limit
+            body = {"extra_vars": dict((k, v) for k, v in values.items() if k != rules.LIMIT_VAR)}
+            if a.get("started_by"):
+                body["extra_vars"]["portal_requested_by"] = cn
+        else:
+            body = {"extra_vars": dict(values, portal_requested_by=cn)}
         if a["limit_from"]:
-            body["limit"] = values[a["limit_from"]]
+            lim = values[a["limit_from"]]
+            if a.get("discovered"):                                # the hosts counted once, here - never a group name, never a second expansion
+                lim, why = self.limit_hosts(a, values)
+                if why:
+                    self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "limit: " + why})
+                    return 409, {"error": "Not started: the Limit %s." % why}
+            body["limit"] = ",".join(lim) if isinstance(lim, list) else lim
+        shown_values = rules.mask(a, values)
         kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
         code, data = self.aap.call("POST", "%s/%d/launch/" % (kind, tid), body)
         if code not in (200, 201):
-            self.log.add({"event": "launch_failed", "user": cn, "ip": ip, "action": name, "values": values,
+            self.log.add({"event": "launch_failed", "user": cn, "ip": ip, "action": name, "values": shown_values,
                           "http": code, "why": site_aap.error_text(data)})
             return 502, {"error": "AAP did not start it (HTTP %s): %s" % (code, site_aap.error_text(data))}
         jid = int(data.get("workflow_job") or data.get("job") or data.get("id"))
         ignored = data.get("ignored_fields") or {}
-        rec = self.log.add({"event": "launch", "user": cn, "ip": ip, "action": name, "aap": a["aap"], "values": values,
+        rec = self.log.add({"event": "launch", "user": cn, "ip": ip, "action": name, "aap": a["aap"], "values": shown_values,
                             "limit": body.get("limit", ""), "job_id": jid, "kind": a["aap"]["type"],
                             "ignored_fields": sorted(ignored) if ignored else []})
         out = {"job_id": jid, "url": "%sjobs/%d" % (self.cfg.path, jid), "at": rec["at"]}
@@ -1042,11 +1399,15 @@ def home_page(cfg, portal, cn):
 
 
 def action_page(cfg, portal, cn, name, query):
-    a = portal.actions[name]
-    sent = {k: v[-1] for k, v in query.items()}
+    a = portal.actions.get(name)
+    if a is None:                                   # taken off just now (a refresh of the cards)
+        return message_page(cfg, "Not here", "There is no action %s here." % name, cn)
+    sent = {k: (v if a["vars"].get(k, {}).get("kind") == "multichoice" else v[-1]) for k, v in query.items()
+            if a["vars"].get(k, {}).get("kind") != "password"}          # a password is never taken from the address
     allowed = rules.may_run(a, cn, cfg.requesters)
-    values, problems = portal.check(name, sent) if allowed else ({}, {})
-    _, off = portal.state(name) if allowed else (None, "")
+    fresh = bool(a.get("discovered")) and not sent               # a form opened empty: no "is required" before the person typed
+    values, problems = portal.check(name, sent, a) if allowed and not fresh else ({}, {})
+    _, off = portal.state(name, a) if allowed else (None, "")
     fields = []
     for vn, var in a["vars"].items():
         v = sent.get(vn, "")
@@ -1054,7 +1415,26 @@ def action_page(cfg, portal, cn, name, query):
             v = var["default"]
         p = problems.get(vn, "")
         pid = "p-" + vn
-        if var["kind"] == "choice":
+        hint = ('<p class="hint" id="h-%s">%s</p>' % (esc(vn), esc(var["help"]))) if var.get("help") else ""
+        req = " required" if var.get("required") else ""
+        dby = ' aria-describedby="%s"' % pid if p else ""
+        if var["kind"] == "password":           # masked, never filled in, never shown back
+            ctl = '<input id="f-%s" name="%s" type="password" value="" maxlength="%d" autocomplete="new-password" spellcheck="false"%s>' % (
+                esc(vn), esc(vn), var["max"], dby)
+        elif var["kind"] in ("integer", "float"):
+            ctl = '<input id="f-%s" name="%s" type="number" inputmode="%s" step="%s" value="%s"%s%s%s>' % (
+                esc(vn), esc(vn), "numeric" if var["kind"] == "integer" else "decimal", "1" if var["kind"] == "integer" else "any", esc(v),
+                (' min="%s"' % var["min"]) if var.get("min") is not None else "", (' max="%s"' % var["max"]) if var.get("max") is not None else "", dby)
+        elif var["kind"] == "multichoice":
+            have = v if isinstance(v, list) else []
+            ctl = '<div class="multi" role="group" aria-labelledby="l-%s">%s</div>' % (esc(vn), "".join(
+                '<label class="opt"><input type="checkbox" name="%s" value="%s"%s> %s</label>' % (esc(vn), esc(c), " checked" if c in have else "", esc(c))
+                for c in var["values"]))
+        elif var["kind"] == "hosts":
+            ctl = picker_html(portal, vn, v if isinstance(v, list) else parse_hosts(v), int(var.get("max") or rules.LIMIT_MAX), "l-" + vn, pid if p else "")
+        elif var["kind"] == "text" and var.get("multiline"):
+            ctl = '<textarea id="f-%s" name="%s" rows="6" maxlength="%d"%s>%s</textarea>' % (esc(vn), esc(vn), var["max"], dby, esc(v))
+        elif var["kind"] == "choice":
             opts = "".join('<option value="%s"%s>%s</option>' % (esc(c), " selected" if c == v else "", esc(c)) for c in var["values"])
             ctl = '<select id="f-%s" name="%s"%s>%s%s</select>' % (esc(vn), esc(vn), ' aria-describedby="%s"' % pid if p else "",
                                                                    "" if v in var["values"] else '<option value="">Pick one</option>', opts)
@@ -1064,8 +1444,8 @@ def action_page(cfg, portal, cn, name, query):
         else:                           # a host, or a short text (an id, a number)
             ctl = '<input id="f-%s" name="%s" value="%s" maxlength="%d" autocomplete="off" spellcheck="false"%s>' % (
                 esc(vn), esc(vn), esc(v), var.get("max", rules.HOST_MAX), ' aria-describedby="%s"' % pid if p else "")
-        fields.append('<div class="field%s"><label for="f-%s">%s</label>%s<p class="why" id="%s">%s</p></div>' % (
-            " bad" if p else "", esc(vn), esc(var["label"]), ctl, pid, esc(("%s %s" % (var["label"], p)) if p else "")))
+        fields.append('<div class="field%s"><label id="l-%s" for="f-%s">%s</label>%s%s<p class="why" id="%s">%s</p></div>' % (
+            " bad" if p else "", esc(vn), esc(vn), esc(var["label"]) + (" *" if req else ""), hint, ctl, pid, esc(("%s %s" % (var["label"], p)) if p else "")))
     general = problems.get("", "")
     busy = portal.running(name, values) if allowed else None
     status = []
@@ -1080,26 +1460,45 @@ def action_page(cfg, portal, cn, name, query):
                       'is doing this for this finding now. Follow it there; Run is off until it ends.</p>'
                       % (cfg.path, int(busy["job_id"]), int(busy["job_id"]), esc(busy.get("status", "")), esc(busy.get("user", ""))))
     target = values.get(a["limit_from"]) if a["limit_from"] else ""
+    target = ", ".join(target) if isinstance(target, list) else target
     kind = "Workflow" if a["aap"]["type"] == "workflow" else "Job template"
     facts = [("Runs in AAP", "%s %s" % (kind, a["aap"]["name"]), ""),
              ("On", target or ("the hosts the %s chooses" % kind.lower()), " mono" if target else ""),
              ("Approval", "Yes - an approver decides before it goes on" if a["approval"] else "No", ""),
-             ("Started as", cn, " mono")]
+             ("Started by" if a.get("started_by") else "Started as", cn, " mono")]
     dl = "".join('<dt>%s</dt><dd class="%s">%s</dd>' % (esc(k), c.strip(), esc(v)) for k, v, c in facts)
     can = allowed and not off and not busy
     line = a.get("summary") or a.get("description") or ""
     body = ('<div class="hero"><p class="crumb"><a href="%s">Actions</a><span>/</span><span class="eyebrow">Confirm</span></p><h1>%s</h1>%s</div>%s'
-            '<div class="two"><div class="card panel"><h2>Values</h2><form id="run" data-action="%s" novalidate>%s'
+            '<div class="two"><div class="card panel"><h2>Values</h2><form id="run" data-action="%s" method="post" action="%sactions/%s"><input type="hidden" name="portal-token" value="%s"><input type="hidden" name="portal-sig" value="%s">%s'
             '<div class="btns"><button type="submit" class="pri" id="go"%s>Run</button><a class="btn" href="%s">Cancel</a>'
             '<span class="state" id="state" aria-live="polite"></span></div></form></div>'
             '<div class="card panel"><h2>What happens</h2><dl class="def">%s</dl></div></div>'
-            % (cfg.path, esc(a["title"]), ('<p class="lede">%s</p>' % esc(line)) if line else "", "".join(status), esc(name),
-               "".join(fields) or '<p class="sub">This action takes no values.</p>', "" if can else " disabled", cfg.path, dl))
+            % (cfg.path, esc(a["title"]), ('<p class="lede">%s</p>' % esc(line)) if line else "", "".join(status), esc(name), cfg.path, esc(name),
+               esc(portal.token(cn)), esc(a.get("sig", "")), "".join(fields) or '<p class="sub">This action takes no values.</p>', "" if can else " disabled", cfg.path, dl))
     return shell(cfg, a["title"], body, cn, token=portal.token(cn), page="action")
 
 
 # ---- 1.75.3: pick a host, then a finding (no job ids to type) ---------------------------------------------------------------
 MAX_HOSTS = 5
+PICK_SHOWN = 200                                    # the list shows this many matches; "N more - type to narrow" for the rest
+
+
+def picker_html(portal, field, selected, cap, label_id="", described=""):
+    """1.78.0: the one host picker - a searchable list of portal_inventory's hosts and groups, to tick one or many. Without scripts it is
+    this plain multi-select (the same names, the same server checks); portal.js turns it into the search box, the chips and the list."""
+    inv = portal.aap.inventory_items("", PICK_SHOWN) if portal.cfg.inventory else {"items": [], "matches": 0, "error": "portal_inventory is not set."}
+    chosen = set(selected)
+    opts = "".join('<option value="%s"%s>%s</option>' % (esc(i["name"]), " selected" if i["name"] in chosen else "",
+                                                           esc(i["name"] if i["kind"] == "host" else "%s (%d host%s)" % (i["name"], i["count"], "" if i["count"] == 1 else "s")))
+                   for i in inv["items"])
+    extra = "".join('<option value="%s" selected>%s</option>' % (esc(n), esc(n)) for n in selected if n not in set(i["name"] for i in inv["items"]))
+    more = ('<p class="help">The first %d of %d are listed. With scripts on, the search box finds the rest.</p>' % (PICK_SHOWN, inv["matches"])) if inv["matches"] > PICK_SHOWN else ""
+    err = ('<p class="help bad">%s</p>' % esc(inv["error"])) if inv.get("error") else ""
+    return ('<div class="picker" data-picker="%s" data-max="%d" data-src="%sapi/inventory"><select multiple size="8" id="f-%s" name="%s"%s>%s%s</select>%s%s'
+            '<p class="help">Hosts and groups of the AAP inventory <b>%s</b>; hold Ctrl to pick several. At most %d hosts (a group counts by its hosts).</p></div>'
+            % (esc(field), cap, portal.cfg.path, esc(field), esc(field), (' aria-describedby="%s"' % described) if described else "", opts, extra, err, more,
+               esc(portal.cfg.inventory or "of the portal"), cap))
 PICK = re.compile(r"^(\d{1,12})~([A-Za-z0-9_.:/@-]{1,200})$")
 
 
@@ -1139,13 +1538,11 @@ def pick_step1(cfg, portal, cn, name, a, hv, texts="", problems=None):
     notes = "".join('<p class="note bad" role="alert"><b>%s</b> %s</p>' % (esc(h), esc(w)) for h, w in (problems or {}).items())
     body = (pick_hero(cfg, a, 1, "Pick the host - or up to %d. The portal then shows what the reports found on it." % MAX_HOSTS) + notes +
             '<div class="two one"><div class="card panel"><h2>Which host?</h2><form method="get" action="%sactions/%s">'
-            '<div class="field hostbox"><label for="f-hosts">Host</label><div class="row"><textarea id="f-hosts" name="hosts" rows="2" autocomplete="off" spellcheck="false" '
-            'placeholder="Start typing a host name" data-suggest="%sapi/hosts">%s</textarea><button type="submit" class="pri">Find findings</button></div>'
-            '<ul class="suggest" id="suggest" role="listbox" hidden></ul>'
-            '<p class="help">One host, or up to %d (one per line or separated by commas) - hosts of the AAP inventory <b>%s</b>. Nothing is started yet.</p></div></form></div>'
+            '<div class="field hostbox"><label for="f-hosts">Host</label>%s<div class="btns"><button type="submit" class="pri">Find findings</button></div>'
+            '<p class="help">Nothing is started yet.</p></div></form></div>'
             '<div class="card panel"><h2>What happens next</h2><dl class="def"><dt>1. Host</dt><dd>you pick it here</dd>'
             '<dt>2. Finding</dt><dd>the portal lists what the reports found on it, newest first</dd><dt>3. Confirm</dt><dd>the usual page: the values, then <b>Run</b></dd></dl></div></div>'
-            % (cfg.path, esc(name), cfg.path, esc(texts), MAX_HOSTS, esc(cfg.inventory or "of the portal")))
+            % (cfg.path, esc(name), picker_html(portal, "hosts", parse_hosts(texts), MAX_HOSTS)))
     return shell(cfg, a["title"], body, cn, page="action")
 
 
@@ -1233,25 +1630,30 @@ def picker_route(cfg, portal, cn, name, query):
     q = {k: v[-1].strip() for k, v in query.items()}
     if q.get("report_job") or q.get("finding_id"):
         return None
-    texts = q.get("hosts") or q.get(hv) or ""
-    hosts = parse_hosts(texts)
-    if not hosts:
+    texts = ",".join(query.get("hosts") or query.get(hv) or [])
+    given = parse_hosts(texts)
+    if not given:
         return "page", pick_step1(cfg, portal, cn, name, a, hv)
-    problems = {}
-    if len(hosts) > MAX_HOSTS:
-        problems["Too many hosts."] = "Pick up to %d at a time (you gave %d)." % (MAX_HOSTS, len(hosts))
-    else:
-        var = a["vars"][hv]
-        for h in hosts:
-            why = rules.value_problem(var, h)
-            if not why and portal.cfg.inventory:
-                known = portal.aap.host_known(h)
-                why = "could not be looked up in AAP's inventory just now - try again" if known is None else (
-                    "" if known else "is not a host of the portal's inventory")
-            if why:
-                problems[h] = why
+    problems, hosts = {}, list(given)
+    var = a["vars"][hv]
+    for h in given:
+        why = rules.value_problem(var, h)
+        if why:
+            problems[h] = why
+    if not problems and portal.cfg.inventory:                 # 1.78.0: a group stands for its hosts; every name is a host or a group of the inventory
+        hosts, why = portal.aap.expand(given)
+        if why:
+            hosts = list(given)
+            for h in given:
+                one, w = portal.aap.expand([h])
+                if w:
+                    problems[h] = w
+            if not problems:
+                problems["The picks"] = why
+    if not problems and len(hosts) > MAX_HOSTS:
+        problems["Too many hosts."] = "Pick up to %d at a time (that is %d, groups counted by their hosts)." % (MAX_HOSTS, len(hosts))
     if problems:
-        return "page", pick_step1(cfg, portal, cn, name, a, hv, "\n".join(hosts), problems)
+        return "page", pick_step1(cfg, portal, cn, name, a, hv, "\n".join(given), problems)
     picks = {}
     for i in range(len(hosts)):
         vals = [x.strip() for x in query.get("pick%d" % i, [])]
@@ -1399,6 +1801,7 @@ def make_handler(cfg, portal, static_dir):
             cn = self._who(api)
             if not cn:
                 return None
+            portal.refresh()                                # 1.78.0: the actions AAP offers (cached portal_discover_seconds)
             if path == "/":
                 return self._send(200, home_page(cfg, portal, cn), "text/html; charset=utf-8")
             if path == "/reports" or path.startswith("/reports/"):
@@ -1429,6 +1832,9 @@ def make_handler(cfg, portal, static_dir):
             if path == "/api/approvals":
                 code, data = portal.approvals(cn)
                 return self._send(code, data)
+            if path == "/api/inventory":                  # 1.78.0: the picker's list - hosts and groups of portal_inventory that contain what was typed
+                qs = urllib.parse.parse_qs(u.query).get("q", [""])[-1]
+                return self._send(200, portal.aap.inventory_items(qs, PICK_SHOWN))
             if path == "/api/hosts":                      # 1.75.3: the typeahead of the host field - hosts of portal_inventory that contain what was typed
                 qs = urllib.parse.parse_qs(u.query).get("q", [""])[-1]
                 return self._send(200, {"hosts": portal.aap.host_search(qs)})
@@ -1458,8 +1864,49 @@ def make_handler(cfg, portal, static_dir):
                 data = fh.read()
             return self._send(200, data, ctype, csp=REPORT_CSP)
 
+        def _form_post(self, name):
+            """1.78.0: the confirm page without scripts - the form posts itself (same checks: the token, the origin, every value again)."""
+            cn = self._who(api=False)
+            if not cn:
+                return None
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if not self._same_origin() or ctype != "application/x-www-form-urlencoded" or not 0 <= n <= BODY_MAX:
+                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": "/actions/" + name, "why": "not from a portal page (CSRF check)"})
+                return self._send(403, message_page(cfg, "Not accepted", "Send it from the portal's page: reload the page and try again.", cn, "bad"),
+                                  "text/html; charset=utf-8")
+            try:
+                form = urllib.parse.parse_qs(self.rfile.read(n).decode("utf-8", "replace"), keep_blank_values=True, max_num_fields=2000)
+            except ValueError:
+                return self._send(400, message_page(cfg, "Not started", "The form has too many entries.", cn, "bad"), "text/html; charset=utf-8")
+            if not portal.token_ok(cn, (form.get("portal-token") or [""])[-1]):
+                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": "/actions/" + name, "why": "not from a portal page (CSRF check)"})
+                return self._send(403, message_page(cfg, "Not accepted", "The page is too old: reload it and try again.", cn, "bad"), "text/html; charset=utf-8")
+            portal.refresh()
+            a = portal.actions.get(name)
+            if not a:
+                return self._send(404, message_page(cfg, "Not here", "There is no action %s here." % name, cn), "text/html; charset=utf-8")
+            sent = {}
+            for k, vals in form.items():
+                if k in a["vars"]:
+                    sent[k] = vals if a["vars"][k]["kind"] in ("multichoice", "hosts") else vals[-1]
+            for k, var in a["vars"].items():                  # a checkbox group with nothing ticked is not sent: that is an empty answer, as with scripts
+                if var["kind"] in ("multichoice", "hosts") and k not in sent:
+                    sent[k] = []
+            code, out = portal.launch(cn, self._ip(), name, sent, (form.get("portal-sig") or [None])[-1])
+            if code == 201:
+                return self._send(303, b"", "text/plain", [("Location", out["url"])])
+            return self._send(code if code in (400, 403, 404, 409, 429, 503) else 502,
+                              message_page(cfg, "Not started", out.get("error", "Not started."), cn, "bad"), "text/html; charset=utf-8")
+
         def do_POST(self):
             path = urllib.parse.urlsplit(self.path).path
+            m_form = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)
+            if m_form:
+                return self._form_post(m_form.group(1))
             m_act = re.match(r"^/api/actions/([A-Za-z0-9_]{1,64})$", path)
             m_dec = re.match(r"^/api/approvals/(\d{1,12})/(approve|deny)$", path)
             if not m_act and not m_dec:
@@ -1486,7 +1933,8 @@ def make_handler(cfg, portal, static_dir):
                 return self._send(400, {"error": "Not a JSON object."})
             if m_act:
                 sent = body.get("vars", {})
-                code, out = portal.launch(cn, self._ip(), m_act.group(1), sent if isinstance(sent, dict) else None)
+                sig = body.get("sig")
+                code, out = portal.launch(cn, self._ip(), m_act.group(1), sent if isinstance(sent, dict) else None, sig if isinstance(sig, str) else None)
                 return self._send(code, out)
             code, out = portal.decide(cn, self._ip(), int(m_dec.group(1)), m_dec.group(2))
             return self._send(code, out)
@@ -1528,7 +1976,24 @@ def aap_check(cfg):
         out["jinja_http"] = code
         out["jinja"] = str(data.get("ALLOW_JINJA_IN_EXTRA_VARS") or "") if code == 200 else ""
         out["pick"] = pick_check(portal)
+        out["discover"] = discover_check(portal)
     return out
+
+
+def discover_check(portal):
+    """1.78.0: what the account found in AAP (Execute + the label) -> {on, label, shown: [{name, title, area, approval, vars, hosts}], skipped:
+    [[template, why]], clashes: [[template, built-in]], seen, error}. Nothing but names: no survey default, no answer."""
+    res = {"on": bool(portal.cfg.label), "label": portal.cfg.label, "shown": [], "skipped": [], "unlabelled": 0, "clashes": [], "seen": 0, "error": ""}
+    if not res["on"]:
+        return res
+    portal.refresh(force=True)
+    f = portal.found
+    res.update(skipped=[list(x) for x in f["skipped"] if not x[1].startswith("no label")],
+               unlabelled=len([x for x in f["skipped"] if x[1].startswith("no label")]), clashes=[list(x) for x in f["clashes"]], seen=f["seen"], error=f["error"])
+    res["shown"] = [{"name": k, "title": a["title"], "area": a["area"] or AREA_OTHER, "approval": a["approval"],
+                     "vars": len([v for v in a["vars"] if v != rules.LIMIT_VAR]), "hosts": bool(a["limit_from"]),
+                     "type": a["aap"]["type"]} for k, a in sorted(f["actions"].items())]
+    return res
 
 
 def pick_check(portal):

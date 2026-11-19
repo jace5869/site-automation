@@ -65,6 +65,15 @@ portal_actions_off: []                            # built-in actions to hide: a 
 portal_finding_days: 7                            # how many days back the report jobs are read (14 at most)
 portal_finding_jobs: 5                            # the last this many runs of each report playbook are read (10 at most)
 portal_pick_max_launches: 10                      # one confirm page starts this many jobs at most (one per ticked finding); over it the page says so
+# 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account has Execute on AND that carries the AAP
+# label below is added to the portal - no edit here, no redeploy; take Execute or the label away and it goes at the next refresh. The form is the
+# template's survey; the card's area is a label "portal-area:STIG" (else Other), its title the template's name, its line the description.
+portal_label: portal                              # the AAP label that marks a template for the portal ('' = no discovery)
+portal_discover_seconds: 60                       # how long what was found is kept (10 to 3600)
+portal_label_approval: portal-approval            # a template with this label too is marked "approval" on its card
+portal_label_area: "portal-area:"                 # a label that starts with this puts the card in an area (the rest of the label is its name)
+portal_approval_required: []                      # template names that are marked "approval" without the label
+portal_limit_max: 50                              # a found template's Limit stands for this many hosts at most (groups counted by their hosts; 1 to 500)
 # the report playbooks whose jobs are read (finding_ref_report_playbooks + _extra: the ones finding_ref takes a finding from)
 portal_finding_playbooks: >-
   {{ (finding_ref_report_playbooks | default(['health_check.yml', 'win_health_check.yml', 'troubleshoot.yml', 'win_troubleshoot.yml', 'disk_report.yml',
