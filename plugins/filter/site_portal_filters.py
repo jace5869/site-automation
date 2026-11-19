@@ -34,11 +34,11 @@ TEXT_CEILING = 20000               # no text var may allow more (the request's s
 HOST_MAX = 255
 RESERVED = ("portal_requested_by",)
 LIMIT_VAR = "portal_limit"           # 1.78.0: a discovered template's Limit (1-5 hosts): sent as the launch's limit, never as an extra var
-LIMIT_MAX = 5
+LIMIT_MAX = 50                                  # a hosts variable with no max of its own (the portal sets it from portal_action_max_hosts / portal_limit_max)
 SURVEY_TYPES = ("text", "textarea", "integer", "float", "multiplechoice", "multiselect", "password")
 HIDDEN = "(hidden)"                  # what the log and the job page keep of a password
 SUMMARY_MAX, AREA_MAX = 160, 40
-ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes", "summary", "area")
+ACTION_KEYS = ("title", "aap", "vars", "limit_from", "approval", "who", "description", "kinds", "button", "when", "fixes", "modes", "summary", "area", "multi_host")
 MODES = ("dry_run", "live", "off")
 KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 BUTTON_MAX = 40
@@ -170,6 +170,15 @@ def check_actions(actions):
         approval = a.get("approval", False)
         if not isinstance(approval, bool):
             problems.append("%s: approval must be true or false" % where)
+        # 1.78.2: multi_host: true - ONE job for a group or several hosts (the Limit and the limit_from variable carry them, comma separated). Only for an
+        # action whose playbook takes such a list (its portal_request_spec says kind: hosts); never one that needs a value of one host
+        multi = a.get("multi_host", False)
+        if not isinstance(multi, bool):
+            problems.append("%s: multi_host must be true or false" % where)
+            multi = False
+        if multi and (not limit_from or any(v in vs for v in ("finding_id", "report_job"))):
+            problems.append("%s: multi_host needs limit_from and no finding_id or report_job (a finding is one job for one host)" % where)
+            multi = False
         who = a.get("who")
         if who in (None, ""):
             who = None
@@ -218,7 +227,7 @@ def check_actions(actions):
         out[name] = {"name": name, "title": title, "description": _text(a.get("description")).strip(), "summary": summary, "area": area,
                      "kinds": kinds, "button": button, "when": when, "fixes": fixes,
                      "aap": {"type": aap.get("type"), "name": _text(aap.get("name")).strip()}, "vars": clean_vars,
-                     "limit_from": limit_from or "", "approval": approval is True, "who": who}
+                     "limit_from": limit_from or "", "approval": approval is True, "who": who, "multi_host": multi is True}
     return out, problems
 
 

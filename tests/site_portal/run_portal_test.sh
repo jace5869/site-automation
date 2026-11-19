@@ -149,6 +149,16 @@ if deploy -e '{"portal_actions": {"bad": {"title": "", "aap": {"type": "job", "n
 elif grep -q "The actions are not right - nothing was changed: action bad: title is required" "$work/out.txt" && [ ! -e "$work/etc" ]; then
     pass "a wrong action: refused before anything is written, said"
 else fail "a wrong action refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+for kv in 'portal_pick_max_hosts": 0|1 to 500' 'portal_action_max_hosts": 501|1 to 500' 'portal_pick_max_launches": 201|1 to 200' 'portal_limit_max": 0|1 to 500'; do
+    nm="${kv%%\"*}"; val="${kv#*: }"; val="${val%%|*}"
+    if deploy -e "{\"$nm\": $val}"; then fail "$nm $val refused" "$(tail -20 "$work/out.txt")"
+    elif grep -q "$nm is $val; it must be a whole number from ${kv##*|} - nothing was changed" "$work/out.txt" && [ ! -e "$work/etc" ]; then
+        pass "$nm $val: refused before anything is written, said with its range"
+    else fail "$nm range refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
+done
+if deploy -e "{\"portal_logo_src\": \"$work/logo-src.png\"}"; then fail "portal_logo_src without portal_logo refused" "$(tail -20 "$work/out.txt")"
+elif grep -q "portal_logo_src is set but portal_logo is not" "$work/out.txt" && [ ! -e "$work/etc" ]; then pass "portal_logo_src without portal_logo: refused, said"
+else fail "portal_logo_src refused, said" "$(grep -B2 -A6 'fatal' "$work/out.txt")"; fi
 if deploy --check -e "{\"portal_config_dir\": \"$work/etc-check\"}" && [ ! -e "$work/etc-check" ] \
     && ! ls "$units"/site-portal* >/dev/null 2>&1 && ! podman container exists site-portal-app && ! podman volume exists site-portal-data \
     && ! podman secret inspect site-portal-aap-token >/dev/null 2>&1; then
@@ -214,6 +224,26 @@ if deploy -e '{"portal_aap_names": {"stig_recheck": "Our STIG recheck", "ckl_imp
     pass "portal_aap_names: the deploy says what each action points at, and that AAP has no such template"
 else fail "portal_aap_names points at" "$(grep -E "points at|fatal" "$work/out.txt" | head -5)"; fi
 deploy > /dev/null 2>&1                                  # back to the built-in names for what follows
+# 1.78.2: the site's logo - copied from the controller only when portal_logo_src is set, mounted read-only, served from the portal's own static path
+"$py" - "$work/logo-src.png" <<'EOPY'
+import struct, sys, zlib
+def ch(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + ch(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)) + ch(b"IDAT", zlib.compress(b"\x00\x1e\x5a\xa0\xff")) + ch(b"IEND", b""))
+EOPY
+if deploy -e "{\"portal_logo\": \"$work/etc/logo.png\", \"portal_logo_src\": \"$work/logo-src.png\"}" && cmp -s "$work/logo-src.png" "$work/etc/logo.png" \
+    && grep -q '"PORTAL_LOGO": "/etc/site-portal/logo"' "$work/etc/settings.json" && grep -q "Volume=$work/etc/logo.png:/etc/site-portal/logo:ro,Z" "$units/site-portal-app.container"; then
+    pass "portal_logo_src: copied to portal_logo, handed to the service, mounted read-only"
+else fail "the logo deploy" "$(grep -E "Logo|logo|fatal" "$work/out.txt" | head -8)"; fi
+for _ in $(seq 1 30); do
+    podman exec site-portal-app python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/healthz")' 2>/dev/null && break
+    sleep 1
+done
+r="$(podman exec site-portal-app python3 -c 'import urllib.request; r = urllib.request.urlopen("http://127.0.0.1:8080/static/logo"); print(r.status, r.headers["Content-Type"], r.headers["X-Content-Type-Options"], r.read()[:4])' 2>&1)"
+if [ "$r" = "200 image/png nosniff b'\\x89PNG'" ]; then pass "the logo is served from the portal's own static path (image/png, nosniff)"; else fail "the logo is served" "$r"; fi
+if deploy -e "{\"portal_logo\": \"$work/etc/logo.png\", \"portal_logo_src\": \"$work/logo-src.png\"}" && grep -q "changed=0 " "$work/out.txt"; then pass "the logo: a second deploy changes nothing"
+else fail "the logo: a second deploy" "$(grep -E 'changed:|PLAY RECAP' -A1 "$work/out.txt")"; fi
+deploy > /dev/null 2>&1                                  # no logo again: the badge
 if deploy -e '{"portal_title": "Site portal (test)"}' && grep -q "changed: \[localhost\]" <(grep -A1 "restart the service" "$work/out.txt") \
     && [ "$(started)" = "$before" ]; then
     pass "a setting changed: the service restarted, the proxy's nginx not touched"
@@ -285,7 +315,7 @@ case "$r" in *'"code": 400'*"braces that start a template"*) pass "template brac
 r="$(c "$k/jdoe" launch act_triage '{"target": "web01.example.mil", "report_job": "907", "finding_id": "eventlog:\uff5b\uff5bx"}')"
 case "$r" in *'"code": 400'*"braces"*) pass "full-width look-alike braces: refused";; *) fail "full-width braces refused" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "nothere.example.mil"}')"
-case "$r" in *'"code": 400'*"not a host of the portal"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
+case "$r" in *'"code": 400'*"not a host"*"portal"*) pass "a host not in the inventory: refused";; *) fail "a host not in the inventory" "$r";; esac
 r="$(c "$k/jdoe" launch stig_recheck '{"target": "web01.example.mil", "ansible_become_user": "root"}')"
 case "$r" in *'"code": 400'*"not a var of this action"*) pass "a var the action does not list: refused";; *) fail "an unlisted var refused" "$r";; esac
 tok="$(c "$k/jdoe" token /portal/actions/stig_recheck | jq_ 'd["token"]')"
@@ -360,7 +390,8 @@ if grep -q "Found in AAP (Execute + the label portal): 1 of 3" "$work/out.txt" &
 else fail "the deploy's list of what it found" "$(grep -A3 'Verify | the actions found' "$work/out.txt")"; fi
 qc="$(c "$k/jdoe" get /portal/api/me | jq_ '[a for a in d["json"]["actions"] if a.startswith("jt_")][0]')"
 r="$(c "$k/jdoe" get /portal/)"
-if echo "$r" | grep -q "Quick check (found)" && ! echo "$r" | grep -q "Run but not labelled" && ! echo "$r" | grep -q "Odd survey"; then
+cards="$(echo "$r" | grep -o '<h3>[^<]*</h3>')"        # the cards' titles (1.78.2: the help panel names the skipped ones, so look at the cards only)
+if echo "$cards" | grep -q "Quick check (found)" && ! echo "$cards" | grep -q "Run but not labelled" && ! echo "$cards" | grep -q "Odd survey"; then
     pass "found in AAP: the labelled template has a card; the unlabelled and the odd one do not"
 else fail "found in AAP: the cards" "$r"; fi
 r="$(c "$k/jdoe" get /portal/actions/$qc)"

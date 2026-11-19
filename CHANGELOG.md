@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.78.2 — 2026-11-19
+
+**To set up:** run **Site portal - deploy** again. To use the options: `portal_logo` and `portal_logo_src` (your logo), `portal_pick_max_hosts` and
+`portal_action_max_hosts` (the host caps, 50 each). Nothing else is needed; the new page layout and the help panel appear after the deploy.
+
+**The Actions page by area, with help** (docs/SITE_PORTAL.md, "The Actions page, Run and Details").
+
+- The cards are grouped by area under the tiles and the search, a heading and a count for each: *STIG*, *Disk & services*, *fapolicyd*, *Tickets*, *ACT*, your
+  templates' `portal-area:X` areas, then *Other*. The tiles and the search filter inside the groups; a group with nothing to show hides.
+- **Why isn't my template here?** A closed panel under the strip: *N templates the account may run; M with the label portal; skipped: <template> - <why>;
+  K labelled templates the account may NOT run - give <account> Execute on them*. The last part lists the templates that carry the label (the account's
+  Auditor role lets it see them) against the Execute list. Names and reasons only.
+- **The site's logo.** `portal_logo` (a PNG, JPEG, GIF or WebP file on the portal server, 1 MB at most, checked by its first bytes) replaces the letter badge, 40 px tall at most,
+  the site title as its alt text, served from the portal's own `static/logo`. `portal_logo_src` (a file on the controller, in your own area, never in the repository)
+  is copied there by the deploy, and only when it is set. No logo: the badge as before.
+
+**The Jobs page.**
+
+- **Results are buttons.** A known artifact key shows as a button in the portal's look: `site_report_url` (and the other report page keys) *Open the report →*,
+  a ticket key *Open ticket INC… →*, and a short allow-list. Other keys are not shown; only http and https addresses with a host and no user are linked; no known result, no *Results* heading.
+- The line *Technical output: available after the next update.* is gone (it read like an error) until 1.77.0 gives it a source.
+- **What is running turns.** The running icon (the status chip, the host chips, the *Now* line) and the ring in the jobs list rotate, and the bar has a moving stripe. All of it is off under
+  *reduce motion* and in print.
+
+**The host caps are settings, and one job for a group.**
+
+- `portal_pick_max_hosts` (the findings step, was 5; now 50, 1 to 500), `portal_action_max_hosts` (a built-in action's host field, was 5; now 50, 1 to 500), `portal_pick_max_launches` (now 1 to 200).
+  A value outside its range stops the deploy and names the setting; `portal_limit_max` is checked the same way (1 to 500).
+- An action marked `multi_host: true` (the built-in *STIG recheck*; an action of your own whose playbook takes a comma separated host list) starts **one** job for a picked group or several hosts, with the Limit and
+  `target` = the hosts they stand for. It is no longer one job for each host. `playbooks/stig_recheck.yml` and `win_stig_recheck.yml` check the list (`portal_check` has a `hosts` kind). The finding
+  actions stay one job for each finding, and an action without the mark is unchanged. This needs `portal_inventory`, as the host picker does.
+- The picker says *group · 120 hosts · fits* or *too big: at most N (portal_action_max_hosts)* before you submit; the portal checks again when it starts the job.
+- Tests: `tests/test_site_portal.py` (`Home1782`, `Caps1782`, `Results1782`, `Motion1782`; the `hosts` check of `portal_check`), the portal e2e (the range errors, the logo deploy), `tests/test_portal_fit.py` (the running page in the three looks, light and dark; reduced motion).
+
 ## 1.78.1 — 2026-11-19
 
 **To set up:** nothing is required. To use the new settings: add them to `playbooks/group_vars/all.yml` (docs/SITE_PORTAL.md, "Add your jobs

@@ -252,6 +252,8 @@ actions:
 under its title. The groups of this version's actions are *STIG*, *Disk & services*, *fapolicyd*, *Tickets* and *ACT*,
 in that order; any other area follows by name, and an action with none sits in *Other*, last.
 
+`multi_host: true` (optional, with `limit_from`) makes a group or several hosts ONE job; see *One job for a group*.
+
 Each var may also have `label` (the confirm page's name for it), `required` (default true) and `default`.
 
 The deploy checks the file with the same rules as the portal, and stops on a wrong entry before it changes anything:
@@ -622,7 +624,8 @@ AAP yourself). It never gives a write role.
 | `portal_finding_days` | 7 | how far back the report jobs are read (14 at most) |
 | `portal_finding_jobs` | 5 | the last this many runs of each report playbook |
 | `portal_finding_playbooks` | the report playbooks of `finding_ref` | which playbooks count as reports |
-| `portal_pick_max_launches` | 10 | jobs one confirm page may start |
+| `portal_pick_max_launches` | 10 | jobs one confirm page may start (1 to 200) |
+| `portal_pick_max_hosts` | 50 | the hosts the finding steps take at once, groups counted by their hosts (1 to 500) |
 | `portal_setup_portal_auditor` | false | the setup job gives the account Auditor on `portal_setup_organization` |
 
 ## Adding your own action
@@ -677,8 +680,15 @@ label, and the portal's own actions.
 1. **The strip** says *Connected - AAP: 25 jobs found* (or why AAP could not be asked) and when it was last read. **Refresh** reads AAP again now.
 2. **The four tiles** are filters: All, Job templates, Workflows, and *Last run failed*. They are links, so they work without scripts.
 3. **The search** looks in the name, the description and the labels. Press **/** to jump to it; *13 of 13* says how many cards show.
-4. **A card** has its type (*Job template* or *Workflow*), *Approval* on a workflow that waits for a person, the last run with its status,
+4. **The cards are grouped by area**, with a heading and a count for each: *STIG*, *Disk & services*, *fapolicyd*, *Tickets*, *ACT*, then the areas of
+   your templates (their `portal-area:X` label), then *Other*. The tiles and the search filter inside the groups, and a group with nothing to show hides.
+5. **A card** has its type (*Job template* or *Workflow*), *Approval* on a workflow that waits for a person, the last run with its status,
    the template's labels (not the portal's own), **Details** and **Run**. A template with no description says *No description*.
+
+**Why isn't my template here?** Under the strip, a closed panel says what the last read of AAP found, so nobody has to read the deploy log.
+It names how many templates the account may run, how many of them carry the label, and each template it skipped with the reason.
+A line in amber names the labelled templates the account may **not** run: give the portal's account **Execute** on them.
+The panel shows names and reasons only. It is as of the last read: **Refresh** reads again.
 
 **Run** opens a dialog: the survey's questions (required ones with a star), the host picker where the template has a Limit, a note
 (*Runs in AAP under the portal's account. The portal records you as the person who asked for it.*), **Cancel** and **Launch job**.
@@ -705,7 +715,15 @@ While a job runs, its page asks the portal every 3 seconds, only while the page 
 At the end the banner says **Succeeded** or **Failed**, with what failed and on which host in one line. The portal asks AAP with its own
 token (the browser never talks to AAP), at most 90 times a minute for one person, and only for jobs the person may see. It never shows
 the extra variables, a password or a survey answer in this view: a password is *(hidden)* in the answers. Without scripts the page shows the
-latest snapshot, and **Refresh** reloads it. The module's own error text and the raw output are not shown yet (*available after the next update*).
+latest snapshot, and **Refresh** reloads it.
+
+**Results.** A job that ends with an address the portal knows shows it as a button, for example **Open the report →** (the report's page, in a new tab)
+or **Open ticket INC0012345 →**. The known results are `site_report_url` (and the other report page keys), the ticket keys, and a short list
+(`site_scorecard_url`, `stigman_url`). No other artifact key is shown, and a job with no known result has no *Results* heading.
+An address must be http or https with a host and no user name; anything else is not linked.
+
+**What is running turns.** The running icon (the status chip, the host chips, the *Now* line) and the ring in the jobs list turn, and the bar has a
+moving stripe. All of it stops under the browser's *reduce motion* setting and in print.
 
 ## Add a job to the portal from AAP
 
@@ -745,8 +763,12 @@ A card appears only when **both** are true: the portal's account has **Execute**
 3. Tick one or many. The picks are chips above the list; the **x** on a chip removes it. **Select all shown** adds the shown ones that fit under the limit.
 4. Keyboard: arrows move, Enter or Space ticks, Backspace in the empty box removes the last chip.
 
-The finding steps take up to 5 hosts, with a group counted by its hosts (each finding is its own job). Without scripts the field is a plain multi-select
+The finding steps take up to `portal_pick_max_hosts` (50) hosts, with a group counted by its hosts (each finding is its own job). Without scripts the field is a plain multi-select
 with the same names, and the form posts itself. The server checks every pick against `portal_inventory`: a typed name that is not a host or group is refused.
+
+**One job for a group.** An action marked `multi_host: true` starts **one** job for a picked group or for several hosts. The built-in *STIG recheck* has the mark. The job's Limit, and its `target` variable, are the hosts they stand for, comma separated, up to `portal_action_max_hosts` (50). The picker says *group · 120 hosts · fits*, or *too big: at most N (portal_action_max_hosts)*, before you submit, and the portal checks again when it starts the job. The finding actions stay one job for each finding.
+
+An action of your own opts in only when its playbook takes such a list: it uses the variable as a host pattern, and its `portal_request_spec` says `{target: {kind: hosts}}` (the check each host is in the job's inventory and is the Limit). A playbook written for one host (`delegate_to: "{{ target }}"`, a file name) must not be marked.
 
 **One job, one id.** A card's address names the template's AAP id (`jt_12`, `wf_7`), so a rename or a new label never moves it onto another
 template. If the template (its playbook, variables, survey, Limit prompt or label) changed after the form was opened, Run says *this job changed in AAP - open it again*.
@@ -781,6 +803,7 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label_approval` | `portal-approval` | the approval label |
 | `portal_approval_required` | `[]` | template names marked *Approval* without the label |
 | `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
+| `portal_action_max_hosts` | 50 | the hosts a built-in action's Limit may stand for (1 to 500) |
 
 ## Add your jobs in bulk
 
@@ -879,8 +902,9 @@ The portal's pages look like the report website: the same colours, cards, tables
 
 - **The bar** has the portal's pages (*Actions*, *Reports*, *Approvals*), the person's name from the card, and the
   **Auto / Light / Dark** switch. The choice is kept in the browser and is the same on the report pages.
-- **Actions** are cards by area. A card has the action's title and one line, an *Approval* badge where an approver
-  decides, and, when the action is off, a muted card that says why. *You started* is a table with each job's live status.
+- **The header** has the site's logo when you set one (see *Your logo* below), else a letter badge.
+- **Actions** are cards by area, a heading for each. A card has the action's title and one line, an *Approval* badge where an approver
+  decides, and, when the action is off, a muted card that says why.
 - **The confirm page** has the values in one card and *What happens* in another. **Run** is the one main button.
 - **A job** has its status, where, who and AAP at the top; then the result (*Fixed*, *Still there* or *Not checked*), the
   steps, the hosts and the output.
@@ -891,6 +915,22 @@ portal's own files. Nothing is loaded from outside, and the fonts are the system
 `roles/site_portal_stack/files/portal.css.in` and the reports' palettes by `scripts/gen_portal_css.py`.
 
 Run **Site portal - deploy** again after you change `report_web_theme`.
+
+### Your logo
+
+The header can show your site's logo instead of the letter badge. The image is yours: keep it in your own `.site-local` or `group_vars` area, never in the repository.
+
+1. Put the image on the portal server, or let the deploy copy it from the controller:
+
+   ```yaml
+   portal_logo: /etc/site-portal/logo.png                          # on the portal server
+   portal_logo_src: "{{ playbook_dir }}/../.site-local/logo.png"   # on the controller; copied to portal_logo
+   ```
+
+2. Run **Site portal - deploy**. The file is copied only when `portal_logo_src` is set, and the service restarts when the image changes.
+
+The image is a PNG, JPEG, GIF or WebP file of 1 MB at most, checked by its first bytes (no SVG). It is shown at most 40 px tall, with the site title as its alt text,
+and served from the portal's own `static/logo` path, so the content security policy is unchanged. A file that is missing or not an image leaves the badge, and the deploy says so.
 
 ## The banner and the times
 
@@ -1052,7 +1092,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | `portal_approvers` | `[]` | who may approve or deny here; `[]` = nobody (AAP's own page still works) |
 | `portal_actions` | `{}` | the actions; `{}` = the role's `files/actions.yml` |
 | `portal_actions_extra`, `portal_actions_off` | `{}`, `[]` | your own actions, and built-in ones to hide (*Adding your own action*) |
-| `portal_finding_days`, `portal_finding_jobs`, `portal_pick_max_launches` | 7, 5, 10 | *Pick a host, then a finding* |
+| `portal_finding_days`, `portal_finding_jobs`, `portal_pick_max_launches`, `portal_pick_max_hosts` | 7, 5, 10, 50 | *Pick a host, then a finding* |
 | `portal_label`, `portal_discover_seconds`, `portal_limit_max` | `portal`, 60, 50 | *Add a job to the portal from AAP* |
 | `portal_path` | `/portal/` | the path on nginx |
 | `portal_public_url` | `https://<the server>/portal/` | the address people open (said at the end) |

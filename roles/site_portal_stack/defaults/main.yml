@@ -35,6 +35,11 @@ portal_stigman_open_versions: ["1.6.16", "1.6.17", "1.6.18"]
 # the portal's address, as people open it (said at the end)
 portal_public_url: "https://{{ portal_server_name }}{{ (':' ~ portal_port) if portal_own_nginx | bool and portal_port | int != 443 else '' }}{{ portal_path }}"
 portal_title: Site portal                           # the pages' title
+# 1.78.2: the site's logo in the header, instead of the letter badge (40 px tall at most; alt text = portal_title). portal_logo is a PNG, JPEG,
+# GIF or WebP file (1 MB at most) ON THE PORTAL SERVER, e.g. "{{ portal_config_dir }}/logo.png"; portal_logo_src is a file on the controller
+# (in your own .site-local or group_vars area, never in the repo) that the deploy copies there. "" = the badge.
+portal_logo: ""                                  # the image on the portal server ("" = the badge)
+portal_logo_src: ""                              # the image on the controller, copied to portal_logo by the deploy ("" = nothing copied)
 # The banner and the times are the reports' own settings (usually in all.yml), so the portal and the report pages match:
 # report_banner (auto: on in the classified enclave), report_banner_text, report_banner_color, site_enclave and
 # site_enclave_classified_domains (the portal's server is the host held to them); report_time_zone ("" = UTC).
@@ -72,7 +77,9 @@ portal_label_title: "portal-title:"               # the label that gives a card 
 # that found something ends failed). The portal's AAP account needs Organization Auditor to read them (portal_setup_portal_auditor).
 portal_finding_days: 7                            # how many days back the report jobs are read (14 at most)
 portal_finding_jobs: 5                            # the last this many runs of each report playbook are read (10 at most)
-portal_pick_max_launches: 10                      # one confirm page starts this many jobs at most (one per ticked finding); over it the page says so
+portal_pick_max_launches: 10                      # one confirm page starts this many jobs at most (one per ticked finding); over it the page says so (1 to 200)
+portal_pick_max_hosts: 50                         # 1.78.2: the hosts "pick a host, then a finding" takes at once (groups counted by their hosts; 1 to 500)
+portal_action_max_hosts: 50                       # 1.78.2: the hosts one built-in action's Limit may stand for - one job for a group or several hosts (1 to 500)
 # 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account has Execute on AND that carries the AAP
 # label below is added to the portal - no edit here, no redeploy; take Execute or the label away and it goes at the next refresh. The form is the
 # template's survey; the card's area is a label "portal-area:STIG" (else Other), its title the template's name, its line the description.

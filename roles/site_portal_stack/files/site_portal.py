@@ -30,6 +30,7 @@ import mimetypes
 import os
 import re
 import secrets
+import stat
 import sys
 import threading
 import time
@@ -115,10 +116,13 @@ class Config(object):
         self.per_hour = max(1, int(g("PORTAL_LAUNCHES_PER_HOUR", "20")))
         self.events = max(20, min(2000, int(g("PORTAL_JOB_EVENTS", "300"))))
         self.title = g("PORTAL_TITLE", "Site portal")
+        self.logo, self.logo_type, self.logo_v, self.logo_why = load_logo(g("PORTAL_LOGO", ""))        # 1.78.2: the site's own image in the header ("" = the badge)
         # 1.75.3: "pick a host, then a finding": the report jobs read (the last N of each playbook, finished within D days; the deploy's
         # portal_finding_jobs, portal_finding_days, portal_finding_playbooks)
         self.finding_days = max(1, min(14, int(g("PORTAL_FINDING_DAYS", "7"))))
-        self.pick_max = max(1, min(50, int(g("PORTAL_PICK_MAX_LAUNCHES", "10"))))          # launches from one confirm page, at most
+        self.pick_max = max(1, min(200, int(g("PORTAL_PICK_MAX_LAUNCHES", "10"))))         # launches from one confirm page, at most (1.78.2: 1 to 200)
+        self.pick_max_hosts = max(1, min(500, int(g("PORTAL_PICK_MAX_HOSTS", "50"))))      # 1.78.2: the hosts of the findings step ("pick a host, then a finding")
+        self.action_max_hosts = max(1, min(500, int(g("PORTAL_ACTION_MAX_HOSTS", "50"))))  # 1.78.2: the hosts one built-in action's Limit may stand for
         self.finding_jobs = max(1, min(10, int(g("PORTAL_FINDING_JOBS", "5"))))
         fp = g("PORTAL_FINDING_PLAYBOOKS", "[]")
         try:
@@ -384,7 +388,7 @@ class Aap(object):
         The job templates and workflows the account has Execute on (role_level=execute_role) that carry the label; the form of each is
         its survey's. A template a built-in action already runs is not added twice: the built-in wins."""
         cfg = self.cfg
-        out = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "incomplete": False}
+        out = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "incomplete": False, "labelled": 0, "no_execute": [], "no_execute_why": "", "account": ""}
         taken = set(builtin)
         have = dict(((a["aap"]["type"], a["aap"]["name"]), n) for n, a in builtin.items())
         found = []
@@ -396,6 +400,7 @@ class Aap(object):
             for r in rows:
                 found.append((typ, kind, r))
         out["seen"] = len(found)
+        self._cannot_run(found, out)
         for typ, kind, r in sorted(found, key=lambda x: (str(x[2].get("name") or "").lower(), x[0], int(x[2].get("id") or 0))):
             tname = str(r.get("name") or "")
             labels, tr = self.labels_t(kind, r)
@@ -406,6 +411,7 @@ class Aap(object):
             if cfg.label not in labels:
                 out["skipped"].append((tname, "no label %s" % cfg.label))
                 continue
+            out["labelled"] += 1
             if (typ, tname) in have:
                 out["clashes"].append((tname, have[(typ, tname)]))
                 continue
@@ -479,6 +485,20 @@ class Aap(object):
                 "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
                 "approval": cfg.label_approval in labels or tname in cfg.approval_required}
         return out
+
+    def _cannot_run(self, found, out):
+        """1.78.2, for the help on the Actions page: the templates that carry the label that the account can see (its Auditor role) but may not run -
+        the label's own list against the Execute list. Names only; a failure here only leaves the line out (no_execute_why), it never makes a read partial."""
+        cfg = self.cfg
+        out["account"] = str(self.user or getattr(self.api, "user", "") or "")[:80]
+        have = set((kind, int(r.get("id") or 0)) for _t, kind, r in found)
+        for kind in ("job_templates", "workflow_job_templates"):
+            rows, why = self._paged("%s/?labels__name=%s&order_by=name&page_size=200" % (kind, urllib.parse.quote(cfg.label, safe="")))
+            if why:
+                out["no_execute_why"] = why
+                continue
+            out["no_execute"] += [str(r.get("name") or "") for r in rows if (kind, int(r.get("id") or 0)) not in have]
+        out["no_execute"].sort(key=str.lower)
 
     def host_known(self, name):
         """True / False, or None when AAP could not be asked. Kept 5 minutes."""
@@ -1044,6 +1064,76 @@ def links_in(obj, out=None, depth=0, parent=""):
     return out
 
 
+RESULT_REPORT = ("site_report", "site_report_url", "report_url", "report_web_url", "report_web_dest_url")          # a report page: the primary button
+RESULT_TICKET = ("ticket_url", "incident_url", "servicenow_ticket_url")                               # a ticket: "Open ticket INC..." (its number from a key beside it)
+RESULT_NUMBER = ("ticket_number", "incident_number", "ticket")
+RESULT_ALLOW = {"site_scorecard_url": "Open the scorecard", "stigman_url": "Open STIG Manager"}       # the small allow-list: any other key is not shown
+_BAD_URL = re.compile(r"[\s\x00-\x1f\x7f<>\"'`\\]")
+
+
+def safe_url(u):
+    """http or https, a host, no user or password, no spaces or markup characters, 2000 characters at most -> the address, else ''."""
+    u = u.strip() if isinstance(u, str) else ""
+    if not u or len(u) > 2000 or _BAD_URL.search(u):
+        return ""
+    try:
+        parts = urllib.parse.urlsplit(u)
+        port = parts.port
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        return ""
+    if port is not None and not 0 < port < 65536:
+        return ""
+    return u
+
+
+def result_buttons(arts):
+    """1.78.2, the Results of a job: the artifact keys the portal knows become buttons - [{label, url, primary}] - the report page (primary), a ticket
+    (Open ticket INC...), and the few keys of RESULT_ALLOW. Any other key is not shown. Addresses pass safe_url. Never a raw key as text."""
+    out, seen = [], set()
+    for art in arts:
+        if not isinstance(art, dict):
+            continue
+        low = dict((str(k).lower(), v) for k, v in art.items())
+        for key, v in low.items():
+            if isinstance(v, dict):                       # {"site_report": {"url": ...}}: the address under the key
+                v = next((v[n] for n in ("url", "link", "href") if isinstance(v.get(n), str)), "")
+            url = safe_url(v)
+            if not url or url in seen:
+                continue
+            if key in RESULT_REPORT:
+                out.append({"label": "Open the report", "url": url, "primary": True})
+            elif key in RESULT_TICKET:
+                num = next((str(low[n]).strip() for n in RESULT_NUMBER if isinstance(low.get(n), (str, int)) and re.match(r"^[A-Za-z0-9_-]{1,40}$", str(low[n]).strip())), "")
+                out.append({"label": ("Open ticket " + num) if num else "Open the ticket", "url": url, "primary": False})
+            elif key in RESULT_ALLOW:
+                out.append({"label": RESULT_ALLOW[key], "url": url, "primary": False})
+            else:
+                continue
+            seen.add(url)
+    out.sort(key=lambda b: not b["primary"])
+    return out[:6]
+
+
+PER_HOST_VARS = ("finding_id", "report_job")        # a value of one host: such an action is one job for each finding
+
+
+def multi_host(actions, cfg):
+    """1.78.2: an action marked multi_host: true (the built-in STIG recheck; an extra action whose playbook takes a comma separated list) whose AAP template
+    takes a Limit (limit_from) and whose values are not one host's (no finding, no report job) takes hosts and groups: ONE job with the Limit = the concrete hosts they stand for, up to portal_action_max_hosts. The finding actions stay one job for each finding.
+    Only with portal_inventory set (the portal never starts a job on a host it cannot check). Changes the actions in place."""
+    if not cfg.inventory:
+        return actions
+    for a in actions.values():
+        lf = a.get("limit_from")
+        var = (a.get("vars") or {}).get(lf) if lf else None
+        if a.get("multi_host") and var and var.get("kind") == "inventory_host" and not any(v in a["vars"] for v in PER_HOST_VARS):
+            var.update(kind="hosts", label="Hosts", required=True, max=cfg.action_max_hosts,
+                       help="Hosts or groups of the portal's inventory: up to %d hosts (a group counts by its hosts)" % cfg.action_max_hosts)
+    return actions
+
+
 class Portal(object):
     """What the pages ask for."""
 
@@ -1054,8 +1144,9 @@ class Portal(object):
         with open(cfg.actions_file) as fh:
             doc = json.load(fh)
         self.actions, problems = rules.check_actions((doc or {}).get("actions") if isinstance(doc, dict) else doc)
+        multi_host(self.actions, cfg)
         self.builtin = dict(self.actions)
-        self.found = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0}
+        self.found = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "labelled": 0, "no_execute": [], "no_execute_why": "", "account": ""}
         self.found_at = 0.0
         self.whole_at = 0.0
         self.found_fails = 0                            # failed reads in a row (the back-off)
@@ -1286,7 +1377,7 @@ class Portal(object):
         hosts, why = self.aap.expand_now(items if isinstance(items, list) else [])
         if why or hosts is None:
             return None, why or "could not be looked up in the inventory just now - try again"
-        cap = int(a["vars"][a["limit_from"]].get("max") or rules.LIMIT_MAX)
+        cap = int(a["vars"][a["limit_from"]].get("max") or self.cfg.action_max_hosts)
         if not hosts:
             return None, "stands for no host: the groups are empty"
         if len(hosts) > cap:
@@ -1343,11 +1434,13 @@ class Portal(object):
             body = {"extra_vars": dict(values, portal_requested_by=cn)}
         if a["limit_from"]:
             lim = values[a["limit_from"]]
-            if a.get("discovered"):                                # the hosts counted once, here - never a group name, never a second expansion
+            if a["vars"][a["limit_from"]]["kind"] == "hosts":      # the hosts counted once, here - never a group name, never a second expansion
                 lim, why = self.limit_hosts(a, values)
                 if why:
                     self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "limit: " + why})
                     return 409, {"error": "Not started: the Limit %s." % why}
+                if not a.get("discovered"):                        # a built-in's own variable (target) carries the same hosts
+                    body["extra_vars"][a["limit_from"]] = ",".join(lim)
             body["limit"] = ",".join(lim) if isinstance(lim, list) else lim
         shown_values = rules.mask(a, values)
         kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
@@ -1567,12 +1660,14 @@ class Portal(object):
                         links += links_in(jd.get("artifacts") or {})
                         arts.append(jd.get("artifacts") or {})
             view["links"] = [{"label": k, "url": v} for k, v in links]
+            view["buttons"] = result_buttons(arts)
             self.outcome(view, arts, rec or parent or {})
         elif kind == "job":
             code, jd = self.aap.call("GET", "jobs/%d/" % jid)
             art = jd.get("artifacts") or {} if code == 200 else {}
             view["artifacts"] = art
             view["links"] = [{"label": k, "url": v} for k, v in links_in(art)]
+            view["buttons"] = result_buttons([art])
             self.outcome(view, [art], rec or parent or {})
             code, ev = self.aap.call("GET", "jobs/%d/job_events/?order_by=-counter&page_size=%d" % (jid, self.cfg.events))
             lines = [clean(e.get("stdout")) for e in reversed(ev.get("results") or []) if e.get("stdout")] if code == 200 else []
@@ -1584,7 +1679,7 @@ class Portal(object):
                               "unreachable": h.get("dark", 0), "skipped": h.get("skipped", 0)}
                              for h in (hs.get("results") or [])] if code == 200 else []
         else:                           # an approval step and the like: its status only
-            view["artifacts"], view["links"] = {}, []
+            view["artifacts"], view["links"], view["buttons"] = {}, [], []
         return 200, view
 
     def outcome(self, view, arts, rec):
@@ -1740,7 +1835,7 @@ ICONS = {      # a status mark: drawn, never a colour alone (portal.js draws the
 
 
 def icon(kind):
-    return '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % ICONS[kind]
+    return '<svg class="ic%s" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % (" ic-run" if kind == "run" else "", ICONS[kind])      # 1.78.2: the running one turns (portal.css)
 
 
 def shell(cfg, title, body, user="", token="", page="", data=None):
@@ -1756,10 +1851,11 @@ def shell(cfg, title, body, user="", token="", page="", data=None):
         meta += '<meta name="portal-data" content="%s">' % esc(json.dumps(data))
     seg = "".join('<input type="radio" name="theme" id="theme-%s" value="%s"%s><label for="theme-%s">%s</label>'
                   % (v, v, " checked" if v == "auto" else "", v, v.capitalize()) for v in ("auto", "light", "dark"))
-    bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s"><span class="mark" aria-hidden="true">%s</span>%s</a>'
+    bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s">%s%s</a>'
            '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who">%s</span>'
            '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div></div>'
-           % (cfg.path, esc((cfg.title[:1] or "S").upper()), esc(cfg.title), nav, esc(user), seg))
+           % (cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
+              else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title), nav, esc(user), seg))
     return ('<!doctype html><html lang="en" data-look="%s"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
             '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
@@ -1778,6 +1874,32 @@ def message_page(cfg, title, text, user="", kind="info"):
     return shell(cfg, title, body, user, page="message")
 
 
+LOGO_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
+LOGO_MAX = 1024 * 1024
+
+
+def load_logo(path):
+    """1.78.2: portal_logo - a PNG, JPEG, GIF or WebP file on this server, at most 1 MB, its type told by its first bytes (never its name; no SVG: it can carry
+    script) -> (path, content type, version, '') or ('', '', 0, why). No path: the badge, silently."""
+    path = str(path or "").strip()
+    if not path:
+        return "", "", 0, ""
+    try:
+        st = os.stat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > LOGO_MAX or st.st_size < 16:
+            return "", "", 0, "portal_logo %s is not a file of 16 bytes to 1 MB" % os.path.basename(path)
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError as e:
+        return "", "", 0, "portal_logo could not be read: %s" % e.strerror
+    kind = next((t for m, t in LOGO_TYPES if head.startswith(m)), "")
+    if not kind and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        kind = "image/webp"
+    if not kind:
+        return "", "", 0, "portal_logo is not a PNG, JPEG, GIF or WebP image"
+    return path, kind, int(st.st_mtime), ""
+
+
 AREA_OTHER = "Other"
 AREA_FIRST = ("STIG", "Disk & services", "fapolicyd", "Tickets", "ACT")      # the areas of the role's actions.yml, in this order; others by name; Other last
 
@@ -1792,6 +1914,40 @@ def last_run_html(cfg, last):
     if not last:
         return '<div class="meta">Never run</div>'
     return '<div class="meta">Last run %s <span>%s</span></div>' % (status_chip(last.get("status", "")), esc(shown(cfg, last.get("finished")) or ""))
+
+
+def _names(items, n=30):
+    """A short list of names for the help: the first n, then 'and K more'."""
+    items = [str(x) for x in items]
+    return ", ".join(esc(x) for x in items[:n]) + ((" and %d more" % (len(items) - n)) if len(items) > n else "")
+
+
+def why_panel(cfg, portal):
+    """1.78.2: 'Why isn't my template here?' - what the last read of AAP found, so nobody has to read the deploy log: how many templates the account may
+    run, how many carry the label, the ones skipped and why, and the labelled ones the account may NOT run (give it Execute). Names and reasons only."""
+    f = portal.found
+    if f.get("error") and not f.get("seen"):
+        return ('<details class="hlp card" id="why"><summary>Why isn\'t my template here?</summary><div class="whyb"><p>AAP could not be read: %s</p></div></details>' % esc(f["error"]))
+    skipped = [x for x in f.get("skipped", []) if not str(x[1]).startswith("no label")]
+    nolabel = len(f.get("skipped", [])) - len(skipped)
+    acct = f.get("account") or "the portal's account"
+    li = ['<li><b>%d</b> template%s the account may run</li>' % (f.get("seen", 0), "" if f.get("seen", 0) == 1 else "s"),
+          '<li><b>%d</b> with the label <code>%s</code>%s</li>' % (f.get("labelled", 0), esc(cfg.label),
+                                                              (" (%d without it)" % nolabel) if nolabel else "")]
+    if skipped:
+        li.append('<li class="skip">Skipped:<ul>%s</ul></li>' % "".join('<li><b>%s</b> - %s</li>' % (esc(n), esc(w)) for n, w in skipped[:30]) +
+                  (("<p class=\"muted-line\">and %d more</p>" % (len(skipped) - 30)) if len(skipped) > 30 else ""))
+    else:
+        li.append('<li>Skipped: none</li>')
+    if f.get("no_execute_why"):
+        li.append('<li>The labelled templates the account may not run could not be listed: %s</li>' % esc(f["no_execute_why"]))
+    elif f.get("no_execute"):
+        li.append('<li class="warn"><b>%d</b> labelled template%s the account may NOT run - give <b>%s</b> Execute on %s: %s</li>'
+                  % (len(f["no_execute"]), "" if len(f["no_execute"]) == 1 else "s", esc(acct), "it" if len(f["no_execute"]) == 1 else "them", _names(f["no_execute"])))
+    else:
+        li.append('<li>Labelled templates the account may not run: none</li>')
+    return ('<details class="hlp card" id="why"><summary>Why isn\'t my template here?</summary><div class="whyb"><ul class="hl">%s</ul>'
+            '<p class="muted-line">As of the last read of AAP.</p></div></details>' % "".join(li))
 
 
 def home_page(cfg, portal, cn, query=None):
@@ -1840,11 +1996,17 @@ def home_page(cfg, portal, cn, query=None):
                    ('<div class="lab">%s</div>' % "".join('<span class="tg">%s</span>' % esc(l) for l in c["labels"])) if c["labels"] else "",
                    cfg.path, esc(c["name"]),
                    ('<a class="btn pri" href="%sactions/%s"%s data-run>Run %s</a>' % (cfg.path, esc(c["name"]), picks, icon("arrow"))) if not off else ""))
-    grid = '<ul class="acts cols3" id="agrid">%s</ul>' % "".join(card(c) for c in cards)
+    groups = {}
+    for c in sorted(cards, key=lambda x: x["title"].lower()):
+        groups.setdefault(c.get("area") or AREA_OTHER, []).append(c)
+    order = sorted(groups, key=lambda g: (g == AREA_OTHER, AREA_FIRST.index(g) if g in AREA_FIRST else len(AREA_FIRST), g.lower()))
+    grid = '<div id="agrid">%s</div>' % "".join(
+        '<section class="grp" data-area="%s"%s><h2>%s <span class="count">%d</span></h2><ul class="acts cols3">%s</ul></section>'
+        % (esc(g), "" if any(c in vis for c in groups[g]) else " hidden", esc(g), len([c for c in groups[g] if c in vis]), "".join(card(c) for c in groups[g])) for g in order)
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>What you can start</h1>'
             '<p class="lede">Every job from AAP that the portal\'s account may run and that carries the portal label, and the portal\'s own actions. Run asks you to confirm.</p></div>'
-            '%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
-            % (strip, tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. portal_requesters and each action\'s who say who may run what.</p>'))
+            '%s%s%s%s%s%s<dialog class="dlg" id="dlg" aria-labelledby="dlg-t"></dialog><dialog class="dlg drawer" id="drawer" aria-label="Details"></dialog>'
+            % (strip, why_panel(cfg, portal) if cfg.label else "", tiles, find, grid if cards else "", '' if cards else '<p class="empty">No action is open to you here. portal_requesters and each action\'s who say who may run what.</p>'))
     return shell(cfg, "Actions", body, cn, token=portal.token(cn), page="home")
 
 
@@ -1861,9 +2023,11 @@ def details_html(cfg, portal, cn, name):
             "inventory_host": "Host", "hosts": "Hosts"}
     qs = "".join("<tr><td>%s%s</td><td>%s</td></tr>" % (esc(v["label"]), " *" if v.get("required") else "",
                                                        esc("Text (several lines)" if v.get("multiline") else word.get(v["kind"], v["kind"]))) for vn, v in a["vars"].items() if vn != rules.LIMIT_VAR)
-    hosts = [v for vn, v in a["vars"].items() if vn == rules.LIMIT_VAR or v["kind"] == "inventory_host"]
+    hosts = [v for vn, v in a["vars"].items() if vn == rules.LIMIT_VAR or v["kind"] in ("inventory_host", "hosts")]
     asks = "".join("<li>%s</li>" % esc(t) for t in (
-        ("Hosts (1 to %d hosts or groups)" % int(a["vars"][rules.LIMIT_VAR].get("max") or rules.LIMIT_MAX)) if rules.LIMIT_VAR in a["vars"] else ("A host of the portal's inventory" if hosts else ""),
+        ("Hosts (1 to %d hosts or groups)" % int(a["vars"][rules.LIMIT_VAR].get("max") or cfg.action_max_hosts)) if rules.LIMIT_VAR in a["vars"] else
+        ("Hosts (1 to %d hosts or groups, one job)" % int(next(v for v in a["vars"].values() if v["kind"] == "hosts").get("max") or cfg.action_max_hosts))
+        if any(v["kind"] == "hosts" for v in a["vars"].values()) else ("A host of the portal's inventory" if hosts else ""),
         "An approver decides before it goes on" if a["approval"] and a["aap"]["type"] == "workflow" else "") if t) or "<li>Nothing: it takes no values.</li>"
     rs = "".join('<li>%s %s%s</li>' % (status_chip(r["status"]), esc(shown(cfg, r["started"]) or ""), (" \u00b7 " + esc(dur_text(r["elapsed"]))) if r.get("elapsed") else "") for r in runs) or '<li class="muted-line">No run yet.</li>'
     line = a.get("summary") or a.get("description") or ""
@@ -1918,7 +2082,8 @@ def action_page(cfg, portal, cn, name, query, embed=False):
                 '<label class="opt"><input type="checkbox" name="%s" value="%s"%s> %s</label>' % (esc(vn), esc(c), " checked" if c in have else "", esc(c))
                 for c in var["values"]))
         elif var["kind"] == "hosts":
-            ctl = picker_html(portal, vn, v if isinstance(v, list) else parse_hosts(v), int(var.get("max") or rules.LIMIT_MAX), "l-" + vn, pid if p else "")
+            ctl = picker_html(portal, vn, v if isinstance(v, list) else parse_hosts(v), int(var.get("max") or portal.cfg.action_max_hosts), "l-" + vn, pid if p else "",
+                              "portal_limit_max" if a.get("discovered") else "portal_action_max_hosts")
         elif var["kind"] == "text" and var.get("multiline"):
             ctl = '<textarea id="f-%s" name="%s" rows="6" maxlength="%d"%s>%s</textarea>' % (esc(vn), esc(vn), var["max"], dby, esc(v))
         elif var["kind"] == "choice":
@@ -1975,11 +2140,10 @@ def action_page(cfg, portal, cn, name, query, embed=False):
 
 
 # ---- 1.75.3: pick a host, then a finding (no job ids to type) ---------------------------------------------------------------
-MAX_HOSTS = 5
 PICK_SHOWN = 200                                    # the list shows this many matches; "N more - type to narrow" for the rest
 
 
-def picker_html(portal, field, selected, cap, label_id="", described=""):
+def picker_html(portal, field, selected, cap, label_id="", described="", setting="portal_action_max_hosts"):
     """1.78.0: the one host picker - a searchable list of portal_inventory's hosts and groups, to tick one or many. Without scripts it is
     this plain multi-select (the same names, the same server checks); portal.js turns it into the search box, the chips and the list."""
     inv = portal.aap.inventory_items("", PICK_SHOWN) if portal.cfg.inventory else {"items": [], "matches": 0, "error": "portal_inventory is not set."}
@@ -1990,10 +2154,10 @@ def picker_html(portal, field, selected, cap, label_id="", described=""):
     extra = "".join('<option value="%s" selected>%s</option>' % (esc(n), esc(n)) for n in selected if n not in set(i["name"] for i in inv["items"]))
     more = ('<p class="help">The first %d of %d are listed. With scripts on, the search box finds the rest.</p>' % (PICK_SHOWN, inv["matches"])) if inv["matches"] > PICK_SHOWN else ""
     err = ('<p class="help bad">%s</p>' % esc(inv["error"])) if inv.get("error") else ""
-    return ('<div class="picker" data-picker="%s" data-max="%d" data-src="%sapi/inventory"><select multiple size="8" id="f-%s" name="%s"%s>%s%s</select>%s%s'
-            '<p class="help">Hosts and groups of the AAP inventory <b>%s</b>; hold Ctrl to pick several. At most %d hosts (a group counts by its hosts).</p></div>'
-            % (esc(field), cap, portal.cfg.path, esc(field), esc(field), (' aria-describedby="%s"' % described) if described else "", opts, extra, err, more,
-               esc(portal.cfg.inventory or "of the portal"), cap))
+    return ('<div class="picker" data-picker="%s" data-max="%d" data-setting="%s" data-src="%sapi/inventory"><select multiple size="8" id="f-%s" name="%s"%s>%s%s</select>%s%s'
+            '<p class="help">Hosts and groups of the AAP inventory <b>%s</b>; hold Ctrl to pick several. At most %d hosts (a group counts by its hosts; %s).</p></div>'
+            % (esc(field), cap, esc(setting), portal.cfg.path, esc(field), esc(field), (' aria-describedby="%s"' % described) if described else "", opts, extra, err, more,
+               esc(portal.cfg.inventory or "of the portal"), cap, esc(setting)))
 PICK = re.compile(r"^(\d{1,12})~([A-Za-z0-9_.:/@-]{1,200})$")
 
 
@@ -2031,13 +2195,13 @@ def sev_chip(sev):
 
 def pick_step1(cfg, portal, cn, name, a, hv, texts="", problems=None):
     notes = "".join('<p class="note bad" role="alert"><b>%s</b> %s</p>' % (esc(h), esc(w)) for h, w in (problems or {}).items())
-    body = (pick_hero(cfg, a, 1, "Pick the host - or up to %d. The portal then shows what the reports found on it." % MAX_HOSTS) + notes +
+    body = (pick_hero(cfg, a, 1, "Pick the host - or up to %d. The portal then shows what the reports found on it." % cfg.pick_max_hosts) + notes +
             '<div class="two one"><div class="card panel"><h2>Which host?</h2><form method="get" action="%sactions/%s">'
             '<div class="field hostbox"><label for="f-hosts">Host</label>%s<div class="btns"><button type="submit" class="pri">Find findings</button></div>'
             '<p class="help">Nothing is started yet.</p></div></form></div>'
             '<div class="card panel"><h2>What happens next</h2><dl class="def"><dt>1. Host</dt><dd>you pick it here</dd>'
             '<dt>2. Finding</dt><dd>the portal lists what the reports found on it, newest first</dd><dt>3. Confirm</dt><dd>the usual page: the values, then <b>Run</b></dd></dl></div></div>'
-            % (cfg.path, esc(name), picker_html(portal, "hosts", parse_hosts(texts), MAX_HOSTS)))
+            % (cfg.path, esc(name), picker_html(portal, "hosts", parse_hosts(texts), cfg.pick_max_hosts, setting="portal_pick_max_hosts")))
     return shell(cfg, a["title"], body, cn, page="action")
 
 
@@ -2145,8 +2309,8 @@ def picker_route(cfg, portal, cn, name, query):
                     problems[h] = w
             if not problems:
                 problems["The picks"] = why
-    if not problems and len(hosts) > MAX_HOSTS:
-        problems["Too many hosts."] = "Pick up to %d at a time (that is %d, groups counted by their hosts)." % (MAX_HOSTS, len(hosts))
+    if not problems and len(hosts) > cfg.pick_max_hosts:
+        problems["Too many hosts."] = "Pick up to %d at a time (that is %d, groups counted by their hosts; portal_pick_max_hosts)." % (cfg.pick_max_hosts, len(hosts))
     if problems:
         return "page", pick_step1(cfg, portal, cn, name, a, hv, "\n".join(given), problems)
     picks = {}
@@ -2228,6 +2392,14 @@ def note_pct(pc, est):
     return "%s (estimated from this job's last good run)." % word
 
 
+def job_results_html(buttons):
+    """The Results of a job: a button for each known result (result_buttons), or nothing - no heading - when there is none."""
+    if not buttons:
+        return ""
+    return '<div><h3>Results</h3><p class="btns res-btns">%s</p></div>' % "".join(
+        '<a class="btn%s" href="%s" target="_blank" rel="noopener">%s%s</a>' % (" pri" if x["primary"] else "", esc(x["url"]), esc(x["label"]), icon("arrow")) for x in buttons)
+
+
 def job_pane_html(cfg, portal, cn, jid, via=None):
     """The right pane of the Jobs page for one job - rendered here, so the page shows the latest snapshot without scripts, and the script swaps this
     same HTML in every 3 s while the job runs (data-done tells it to stop)."""
@@ -2259,7 +2431,7 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
     if not done and pg.get("now"):
         pc = pg.get("pct")
         bar = '<progress class="pb" max="100"%s aria-label="Progress, an estimate"></progress>' % ((' value="%d"' % pc) if pc is not None else "")
-        nowbox = '<div class="now"><div class="nl"><b>Now</b> \u00b7 %s</div>%s%s</div>' % (esc(pg["now"]), bar, ('<p class="muted-line">%s</p>' % esc(note_pct(pc, pg.get("est")))) if pc is not None and pg.get("est") else "")
+        nowbox = '<div class="now"><div class="nl">%s<b>Now</b> \u00b7 %s</div>%s%s</div>' % (icon("run"), esc(pg["now"]), bar, ('<p class="muted-line">%s</p>' % esc(note_pct(pc, pg.get("est")))) if pc is not None and pg.get("est") else "")
     hosts = ""
     if pg.get("hosts"):
         chips = "".join('<span class="hc %s">%s<b>%s</b> %s</span>' % ({"done": "ok", "failed": "bad", "unreachable": "wait", "running": "run"}[h["state"]],
@@ -2292,8 +2464,8 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
         parts = "".join("<p>%s</p>" % esc(t) for t in (("Before: " + r["before"]) if r.get("before") else "", ("After: " + r["after"]) if r.get("after") else "", r.get("summary", "")) if t)
         result = '<div><h3>Result</h3><div class="res one"><span class="chip %s">%s%s</span>%s</div></div>' % (kind[1], icon(kind[0]), esc(kind[2]), parts)
     nxt = ('<p class="next"><a class="btn pri" href="%s">%s</a></p>' % (esc(j["next"]["url"]), esc(j["next"]["label"]))) if j.get("next") else ""
-    links = ('<div><h3>Results</h3><ul class="plain">%s</ul></div>' % "".join('<li><a href="%s" rel="noopener">%s</a></li>' % (esc(x["url"]), esc(x["label"])) for x in j["links"])) if j.get("links") else ""
-    tech = '<p class="muted-line">Technical output: available after the next update.</p>'
+    links = job_results_html(j.get("buttons"))                      # 1.78.2: known results as buttons; no known result, no heading
+    tech = ""                                   # "Technical output: available after the next update." is left out until 1.77.0 gives it a source
     aap = ('<a class="btn" href="%s" rel="noopener">Open in AAP</a>' % esc(j["aap_link"])) if j.get("aap_link") else ""
     foot = ('<div class="btns pane-btns"><a class="btn" href="%sjobs/%d%s">%s Refresh</a><button type="button" class="btn" data-copylink>Copy link</button><button type="button" class="btn" data-print>Print</button>%s'
             '<span class="foot" id="upd" data-at="%d">Updated %s%s</span></div>'
@@ -2340,7 +2512,7 @@ def make_handler(cfg, portal, static_dir):
         def log_message(self, fmt, *args):  # the actions are logged as JSON; the requests are nginx's to log
             pass
 
-        def _send(self, code, body=b"", ctype="application/json", headers=None, csp=PAGE_CSP):
+        def _send(self, code, body=b"", ctype="application/json", headers=None, csp=PAGE_CSP, cache="no-store"):
             if isinstance(body, (dict, list)):
                 body = json.dumps(body).encode("utf-8")
             elif isinstance(body, str):
@@ -2348,7 +2520,7 @@ def make_handler(cfg, portal, static_dir):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.send_header("Content-Security-Policy", csp)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "same-origin")
@@ -2410,6 +2582,12 @@ def make_handler(cfg, portal, static_dir):
                 if not t:
                     return self._send(302, b"", "text/plain", [("Location", cfg.stigman_path)])
                 return self._send(200, stigman_go_page(cfg, t), "text/html; charset=utf-8")
+            if path == "/static/logo" and cfg.logo:       # the site's logo (portal_logo): the file's type was checked when the service started
+                try:
+                    with open(cfg.logo, "rb") as fh:
+                        return self._send(200, fh.read(LOGO_MAX + 1)[:LOGO_MAX], cfg.logo_type, None, cache="max-age=3600")
+                except OSError:
+                    return self._send(404, b"", "text/plain")
             if path in ("/static/portal.js", "/static/portal.css", "/static/portal-theme.js", "/static/stigman-go.js", "/static/stigman-open.js"):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
@@ -2625,6 +2803,8 @@ def serve(cfg):
     portal = Portal(cfg)
     if cfg.tz_note:
         portal.log.add({"event": "note", "why": cfg.tz_note})
+    if cfg.logo_why:
+        portal.log.add({"event": "note", "why": cfg.logo_why})
     why = portal.aap.connect()
     if why:
         portal.log.add({"event": "start", "aap": why})

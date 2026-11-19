@@ -184,6 +184,26 @@
     fail_msg: "portal_titles is not right - nothing was changed: {{ (portal_titles | site_portal_titles).problems | join(' | ') }}"
     quiet: true
 
+# 1.78.2: the caps are settings; one outside its range stops the deploy, naming the setting
+- name: Settings | {{ item.name }} is in its range
+  ansible.builtin.assert:
+    that: (lookup('ansible.builtin.vars', item.name) | string) is match('^[0-9]+$') and 1 <= (lookup('ansible.builtin.vars', item.name) | int) <= item.max
+    fail_msg: "{{ item.name }} is {{ lookup('ansible.builtin.vars', item.name) }}; it must be a whole number from 1 to {{ item.max }} - nothing was changed"
+    quiet: true
+  loop:
+    - {name: portal_pick_max_hosts, max: 500}
+    - {name: portal_action_max_hosts, max: 500}
+    - {name: portal_pick_max_launches, max: 200}
+    - {name: portal_limit_max, max: 500}
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Logo | portal_logo_src needs portal_logo
+  ansible.builtin.assert:
+    that: portal_logo_src | default('') | length == 0 or portal_logo | default('') | length > 0
+    fail_msg: "portal_logo_src is set but portal_logo is not: portal_logo is the path on the portal server the image is copied to (e.g. {{ portal_config_dir }}/logo.png)"
+    quiet: true
+
 - name: Actions | the actions the portal serves
   ansible.builtin.set_fact:
     _portal_actions_raw: "{{ _portal_merge.actions }}"
@@ -251,6 +271,30 @@
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
+
+# ---------------------------------------------------------------- the site's logo (portal_logo, 1.78.2)
+- name: Logo | the image, from the controller (portal_logo_src) to the portal server (portal_logo)
+  ansible.builtin.copy:
+    src: "{{ portal_logo_src }}"
+    dest: "{{ portal_logo }}"
+    mode: "0644"
+  register: _portal_logo_file
+  when: portal_logo_src | default('') | length > 0
+
+- name: Logo | is the image on this server
+  ansible.builtin.stat:
+    path: "{{ portal_logo }}"
+  register: _portal_logo_stat
+  when: portal_logo | default('') | length > 0
+
+- name: Logo | portal_logo is set and the file is not there - the badge is shown
+  ansible.builtin.debug:
+    msg: "portal_logo {{ portal_logo }} is not on this server: the pages show the badge. Put the image there, or set portal_logo_src (a file on the controller) and deploy again."
+  when: portal_logo | default('') | length > 0 and not (_portal_logo_stat.stat.exists | default(false)) and not (_portal_logo_file is changed)
+
+- name: Logo | on
+  ansible.builtin.set_fact:
+    _portal_logo_on: "{{ portal_logo | default('') | length > 0 and ((_portal_logo_stat.stat.exists | default(false)) or (_portal_logo_file is changed)) }}"
 
 # ---------------------------------------------------------------- the CAs the service trusts (AAP's certificate)
 - name: Trust | what this server trusts
@@ -360,6 +404,8 @@
       PORTAL_FINDING_DAYS: "{{ portal_finding_days }}"
       PORTAL_FINDING_JOBS: "{{ portal_finding_jobs }}"
       PORTAL_PICK_MAX_LAUNCHES: "{{ portal_pick_max_launches }}"
+      PORTAL_PICK_MAX_HOSTS: "{{ portal_pick_max_hosts }}"
+      PORTAL_ACTION_MAX_HOSTS: "{{ portal_action_max_hosts }}"
       PORTAL_FINDING_PLAYBOOKS: "{{ portal_finding_playbooks }}"
       PORTAL_LABEL: "{{ portal_label }}"
       PORTAL_DISCOVER_SECONDS: "{{ portal_discover_seconds }}"
@@ -367,6 +413,7 @@
       PORTAL_LABEL_AREA: "{{ portal_label_area }}"
       PORTAL_LABEL_TITLE: "{{ portal_label_title }}"
       PORTAL_TITLES: "{{ (portal_titles | site_portal_titles).titles | to_json }}"
+      PORTAL_LOGO: "{{ '/etc/site-portal/logo' if _portal_logo_on | default(false) | bool else '' }}"
       PORTAL_APPROVAL_REQUIRED: "{{ portal_approval_required }}"
       PORTAL_LIMIT_MAX: "{{ portal_limit_max }}"
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
@@ -565,7 +612,7 @@
   when: >-
     _portal_pre.results[0].stdout in ['active', 'activating', 'reloading']
     and ('site-portal-app.container' in _changed or _portal_app_files is changed or _portal_settings_file is changed
-         or _portal_actions_file is changed or _portal_secret_set is changed or _portal_trust is changed
+         or _portal_actions_file is changed or _portal_logo_file is changed or _portal_secret_set is changed or _portal_trust is changed
          or _portal_trust_gone is changed)
 
 - name: Units | restart its nginx (its server or certificates changed)

@@ -29,13 +29,13 @@ def browser():
 
 @unittest.skipUnless(browser(), "no google-chrome or chromium")
 class Fit(unittest.TestCase):
-    def run_look(self, look, port):
+    def run_look(self, look, port, *flags):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         srv = subprocess.Popen([sys.executable, DEMO, look, str(port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, env=env)
         try:
             line = srv.stdout.readline()
             self.assertTrue(line.startswith("READY"), line + srv.stderr.read() if srv.poll() is not None else line)
-            out = subprocess.run([browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--dump-dom", "--virtual-time-budget=90000",
+            out = subprocess.run([browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--dump-dom", "--virtual-time-budget=90000"] + list(flags) + [
                                   "http://127.0.0.1:%d/__fit?w=1280,800" % port], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  universal_newlines=True, timeout=400).stdout
             m = re.search(r"FIT(\[.*\])END", out, re.S)
@@ -55,6 +55,23 @@ class Fit(unittest.TestCase):
                 self.assertEqual(r["bad"], [], "%s %s %s %dpx" % (look, r["page"], r["theme"], r["width"]))
             self.assertEqual(sorted(set(r["bg"].split()[0] for r in rows if r["theme"] == "dark")), ["dark"], look)
             self.assertEqual(sorted(set(r["bg"].split()[0] for r in rows if r["theme"] == "light")), ["light"], look)
+            # 1.78.2: what is running turns - the icon (chip, host chips, Now line), the jobs list's ring, the progress bar's stripe
+            for r in rows:
+                if r["page"] == "job-running":
+                    m = r["motion"]
+                    self.assertGreater(m["icons"], 0, (look, r["theme"]))
+                    self.assertEqual((m["icon"], m["ring"], m["now"]), ("spin", "spin", True), (look, r["theme"], r["width"]))
+                    self.assertTrue(m["pbvalue"] is not None, (look, r["theme"]))                       # the bar is there (its stripe is a pseudo-element: the CSS test reads its rules)
+                else:
+                    self.assertTrue(r["motion"]["icon"] in ("", "spin"), r["page"])
+
+    def test_nothing_moves_under_reduced_motion(self):
+        rows = self.run_look("ops", PORT + 5, "--force-prefers-reduced-motion")
+        running = [r for r in rows if r["page"] == "job-running"]
+        self.assertTrue(running)
+        for r in running:
+            self.assertGreater(r["motion"]["icons"], 0)
+            self.assertEqual((r["motion"]["icon"], r["motion"]["ring"]), ("none", "none"), r["theme"])
 
 
 if __name__ == "__main__":
