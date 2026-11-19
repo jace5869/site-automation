@@ -1802,7 +1802,7 @@ class EmailFits(unittest.TestCase):
         self.assertGreater(len(doc["summary"]), 5)
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
         env.filters["report_cell_html"] = site_filters.report_cell_html
-        env.filters.update(safe_link=site_filters.safe_link, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
+        env.filters.update(safe_link=site_filters.safe_link, report_tidy=site_filters.report_tidy, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
         probe = '<script>addEventListener("load",function(){document.title="R "+document.documentElement.scrollWidth+" "+innerWidth})</script></body>'
         with tempfile.TemporaryDirectory() as d:
             for tpl in ("report.html.j2", "report_command.html.j2", "report_portal.html.j2"):
@@ -1826,7 +1826,7 @@ class EmailFits(unittest.TestCase):
         doc["sections"].append({"title": "Act on", "lines": ["SLA at risk: 1", "  - INC0041200 P2, 80% used"]})
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
         env.filters["report_cell_html"] = site_filters.report_cell_html
-        env.filters.update(safe_link=site_filters.safe_link, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
+        env.filters.update(safe_link=site_filters.safe_link, report_tidy=site_filters.report_tidy, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
         probe = ('<script>addEventListener("load",function(){var t=[].slice.call(document.querySelectorAll("td[width=\'25%\'] > table"))'
                  '.map(function(x){return Math.round(x.getBoundingClientRect().width)});var v=[].slice.call(document.querySelectorAll("div"))'
                  '.filter(function(d){return /^\\d\\.\\d\\d of \\d$/.test(d.textContent)})[0];var lh=parseFloat(getComputedStyle(v).fontSize)*1.6;'
@@ -3387,7 +3387,7 @@ class Vip(unittest.TestCase):
         x = site(sites=True)
         m3 = F.servicenow_insights_model(vip_r(x["r"], tiers=("Tier 1", "Tier 2", "VIP")), None, x["mask"], HIER_OPTS)
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(HERE, "..", "roles", "site_email", "templates")), autoescape=False)
-        env.filters.update(report_cell_html=site_filters.report_cell_html, safe_link=site_filters.safe_link, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
+        env.filters.update(report_cell_html=site_filters.report_cell_html, safe_link=site_filters.safe_link, report_tidy=site_filters.report_tidy, safe_ref=site_filters.safe_ref, safe_site_url=site_filters.safe_site_url, safe_data=site_filters.safe_data)
         probe = '<script>addEventListener("load",function(){document.title="R "+document.documentElement.scrollWidth+" "+innerWidth})</script></body>'
         with tempfile.TemporaryDirectory() as d:
             for m in (self.model("sites"), m3):

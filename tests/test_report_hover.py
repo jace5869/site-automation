@@ -753,11 +753,18 @@ class RealChromeOutageFilters(RealChromeOutage):
         self.c.js("(() => {const f = %s; f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
         self.c.js("document.getElementById('ot-row-%s').classList.remove('ot-flash')" % n)
         self.pin_list_line(n)
-        self.c.js(line)
-        note = self.c.js("(() => {const t = document.querySelector('#site-tip .tt-note'); return t && t.textContent})()")
+        note = ""
+        for _ in range(40):                                                    # the pinned list and the note are drawn by handlers: a slow runner gets up to 4 s (the click is repeated until the note is there)
+            self.c.js("(() => {const a = [...document.querySelectorAll('#site-tip .tt-ln')].find(l => l.querySelector('a.tt-t').getAttribute('href') === '#ot-row-%s'); if (a && !document.querySelector('#site-tip .tt-note')) a.click()})()" % n)
+            note = self.c.js("(() => {const t = document.querySelector('#site-tip .tt-note'); return t && t.textContent})()") or ""
+            if note:
+                break
+            time.sleep(0.1)
         self.assertIn("table's filter box", note or "")
         self.assertFalse(self.c.js(flashed))
         self.assertEqual(self.c.js("document.querySelectorAll('#site-tip .tt-note').length"), 1)
+        # a row a filter hides is never "cap-only": the click must not open (lift the 25-row cap of) its table
+        self.assertFalse(self.c.js("!!document.getElementById('ot-row-%s').closest('table')._open" % n))
         self.c.js("(() => {const f = %s; f.value = ''; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
         self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
 

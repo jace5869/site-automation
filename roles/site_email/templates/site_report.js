@@ -121,7 +121,9 @@
   function one(el){return (el?el.textContent:'').replace(/\s+/g,' ').trim()}
   /* a cell's value for a file: its whole value (data-v) where the page shows less, its lines kept */
   function val(el){var v=el?el.getAttribute('data-v'):'';return (v!==null&&v!==''?v:(el?el.textContent:'')).replace(/[ \t\r\f\v]+/g,' ').replace(/ ?\n ?/g,'\n').trim()}
-  function head(th){var b=th.querySelector('button'),f=b&&b.firstChild;return f&&f.nodeType===3?f.textContent.trim():one(th)}
+  function head(th){var b=th.querySelector('button'),f=b&&b.firstChild,u=b&&b.querySelector('.hsub');
+    /* a two-line header ("CPU" over "used") is one name again: 'CPU: used', as the document wrote it */
+    return f&&f.nodeType===3?f.textContent.trim()+(u?': '+u.textContent.trim():''):one(th)}
   function tr(r,t){return '<tr>'+r.map(function(x){return '<'+t+' style="border:1px solid #999;padding:3px 6px;text-align:left">'+esc(x)+'</'+t+'>'}).join('')+'</tr>'}
   /* a table as shown: the columns not taken off (Columns), the rows not filtered out or searched away, in their order */
   function view(tb,f){var hs=[].slice.call(tb.tHead.rows[0].cells),on=[];
@@ -210,16 +212,37 @@
   fit('grow');
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
   /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
-  function vis(r){var h=!!(r._f||r._s||r._p||r._d||r._ot);if(r.hidden!==h)r.hidden=h;
+  function vis(r){var o=!!(r._f||r._s||r._p||r._d||r._ot),h=o||!!r._c;if(r.hidden!==h)r.hidden=h;
+    /* only the 25-row cap hides it: Print shows it (a row a filter or the search hid stays out) */
+    if(!!r._c&&!o){if(!r.hasAttribute('data-cap'))r.setAttribute('data-cap','')}else if(r.hasAttribute('data-cap'))r.removeAttribute('data-cap');
     /* 1.68.0: a row that opens (tr.xr after it): shown when its row is and it was opened */
     if(r._x){var xh=h||!r._o;if(r._x.hidden!==xh)r._x.hidden=xh}}
   /* the open button of such a row: its rules, or its hosts, under it; its small table fitted */
   document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.xb');if(!b)return;var r=b.closest('tr');
     if(!r||!r._x)return;r._o=!r._o;b.setAttribute('aria-expanded',String(r._o));vis(r);fit()});
-  var counts=[];
+  /* 1.76.5: a cell said in words keeps its raw key (a check id, a raw JSON message) in its title: the table's data-keys {n: columns, k: [[row, column, key]]} */
+  all('table[data-keys]').forEach(function(tb){try{var d=JSON.parse(tb.getAttribute('data-keys')),b=[].filter.call(tb.tBodies[0].rows,function(x){return !x.classList.contains('xr')}),off=tb.rows[0].cells.length-d.n;
+    d.k.forEach(function(e){var r=b[e[0]],c=r&&r.cells[e[1]+off];if(c&&c.title==='')c.title=e[2]})}catch(x){}});
+  /* 1.76.5: a table of more than 30 rows shows its first 25 with Show all N (a search or a filter looks in every row, whatever the cap says) */
+  /* a table's cap is lifted by its own filter box or column filters, or by the page's search, the page's filter buttons or the time line's controls (each its own flag: one table's box does not open another's) */
+  var CAP=25,gQ=false,gF=false,gO=false,counts=[];
+  function capFree(tb){return gQ||gF||gO||!!tb._cq||!!tb._cf}
+  function capAll(){all('.tw table').forEach(function(tb){if(tb._capApply)tb._capApply()})}
   all('.tw table').forEach(function(tb){
     var body=tb.tBodies[0],rows=[].slice.call(body.rows).filter(function(r){return !r.classList.contains('xr')});
     rows.forEach(function(r){var n=r.nextElementSibling;if(n&&n.classList.contains('xr'))r._x=n});
+    var capOn=rows.length>CAP+5,capBtn=null,capTxt=null,capAll_=null;tb._capApply=function(){capApply()};
+    /* a critical or warning row is never folded; the rows a filter or the search took away do not count towards the 25 */
+    function capApply(){if(!capOn)return;var k=0,fr=capFree(tb),open=!!tb._open||fr,folded=0,left=0;
+      [].forEach.call(body.rows,function(r){if(r.classList.contains('xr'))return;var off=!!(r._f||r._s||r._p||r._d||r._ot),
+          sev=r.classList.contains('r-critical')||r.classList.contains('r-warning');
+        if(!off)k++;r._c=!open&&!off&&!sev&&k>CAP;if(r._c)folded++;else if(!off)left++;r.classList.toggle('capped',!!r._c);vis(r)});
+      if(capBtn){capBtn.hidden=open||!folded;if(capTxt)capTxt.nodeValue='The first '+left+' of '+(left+folded)+' rows are shown (critical and warning rows always are). ';
+        if(capAll_)capAll_.textContent='Show all '+(left+folded)}
+      counts.forEach(function(c){c()})}
+    if(capOn&&tb.parentNode){capBtn=document.createElement('p');capBtn.className='capbar';capTxt=document.createTextNode('The first '+CAP+' of '+rows.length+' rows are shown. ');capBtn.appendChild(capTxt);
+      var cb=document.createElement('button');cb.type='button';cb.className='btn';cb.textContent='Show all '+rows.length;capAll_=cb;
+      cb.addEventListener('click',function(){tb._open=true;capApply()});capBtn.appendChild(cb);tb.parentNode.parentNode.insertBefore(capBtn,tb.parentNode.nextSibling)}
     /* a header's click sorts by its column, the next one the other way; the arrows as characters (textContent: a page
        under Trusted Types sorts too). A first click on a column whose values are already in order as the rows stand
        now (the VM tables come sorted by VM), not all the same (empty cells aside), sorts it the other way, so the click
@@ -236,7 +259,7 @@
       if(!s&&inc&&diff)asc=false;
       tb.querySelectorAll('th').forEach(function(h){var a=h.querySelector('.sort');h.removeAttribute('aria-sort');if(a)a.textContent='\u2195'});
       th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').textContent=asc?'\u25b2':'\u25bc';
-      order(asc).forEach(function(r){body.appendChild(r);if(r._x)body.appendChild(r._x)})})});
+      order(asc).forEach(function(r){body.appendChild(r);if(r._x)body.appendChild(r._x)});capApply()})});
     var tools=tb.parentNode.previousElementSibling;
     if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown'),
         dd=[].slice.call(tools.querySelectorAll('select[data-f]'));
@@ -245,13 +268,23 @@
       tools.hidden=false;if(f)f.hidden=false;
       var count=function(){if(!n)return;var k=0;rows.forEach(function(r){if(!r.hidden)k++});n.textContent=k<rows.length?k+' of '+rows.length:''};
       counts.push(count);
-      if(f)f.addEventListener('input',function(){var q=f.value.trim().toLowerCase();
-        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});count()});
+      if(f)f.addEventListener('input',function(){var q=f.value.trim().toLowerCase();tb._cq=!!q;
+        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});capApply();count()});
       /* one choice at a time per list (1.67.0): a row stays when the chosen value is one of its own (data-f<n>: |a|b|) */
-      dd.forEach(function(s){s.parentNode.hidden=false;s.addEventListener('change',function(){
+      dd.forEach(function(s){s.parentNode.hidden=false;s.addEventListener('change',function(){tb._cf=dd.some(function(x){return !!x.value});
         rows.forEach(function(r){var off=false;dd.forEach(function(x){var v=x.value;
-          if(v&&(r.getAttribute('data-f'+x.getAttribute('data-f'))||'').indexOf('|'+v+'|')<0)off=true});r._d=off;vis(r)});count()})})}
+          if(v&&(r.getAttribute('data-f'+x.getAttribute('data-f'))||'').indexOf('|'+v+'|')<0)off=true});r._d=off;vis(r)});capApply();count()})})}
   });
+  all('.tw table').forEach(function(tb){if(tb._capApply)tb._capApply()});
+  /* a link to a row past the cap (a dashboard's drill link, Open item, a timeline line) shows every row of that table first */
+  function liftFor(h){var t=h&&h.length>1&&document.getElementById(decodeURIComponent(h.slice(1))),tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply()}}
+  document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a)try{liftFor(a.getAttribute('href'))}catch(x){}},true);
+  window.addEventListener('hashchange',function(){try{liftFor(location.hash)}catch(x){}});try{liftFor(location.hash)}catch(x){}
+  /* 1.76.5: a table cell of more than 4 lines shows 4 and "more" (CSS draws the word; the cell's text is as it was) - measured once its section is open */
+  function longCells(root){all('.tw td .cv',root).forEach(function(cv){var td=cv.parentNode;if(td._lc||!td.offsetParent)return;
+    var lh=parseFloat(getComputedStyle(cv).lineHeight)||20;if(cv.offsetHeight>lh*4.6){td._lc=1;td.classList.add('cl')}else td._lc=0})}
+  document.addEventListener('click',function(e){var td=e.target.closest&&e.target.closest('td.cl');if(td&&!e.target.closest('a,button,input,select'))td.classList.toggle('open')});
+  longCells(document);all('details.sec').forEach(function(d){d.addEventListener('toggle',function(){if(d.open)longCells(d)})});
   /* 1.67.0: the page's filter buttons (.facets: the STIG scorecard's Platform and Collection). A row or a collection that
      opens (details.grp) tagged data-pf (its platforms) or data-col (its collections) is shown when it has the one chosen;
      what has no such tag stays. The buttons and their select (a narrow screen) say the same; the counts of the tables'
@@ -260,9 +293,9 @@
   all('.facets').forEach(function(fx){var ch={pf:'',col:'',cat:'',h:''};fx.hidden=false;
     /* 1.68.0: CAT (a row's categories, tokens as the platforms) and Host (a part of a host's name, in data-h) */
     var hosted=function(el){var t=el.getAttribute('data-h');return !ch.h||t===null||t.indexOf(ch.h)>=0};
-    var apply=function(){all('[data-pf],[data-col],[data-cat],[data-h]').forEach(function(el){if(el.closest('.facets'))return;
+    var apply=function(){gF=!!(ch.pf||ch.col||ch.cat||ch.h);capAll();all('[data-pf],[data-col],[data-cat],[data-h]').forEach(function(el){if(el.closest('.facets'))return;
         var off=!(has(el,'data-pf',ch.pf)&&has(el,'data-col',ch.col)&&has(el,'data-cat',ch.cat)&&hosted(el));
-        if(el.tagName==='TR'){el._p=off;vis(el)}else if(el.hidden!==off)el.hidden=off});
+        if(el.tagName==='TR'){el._p=off;vis(el)}else if(el.hidden!==off)el.hidden=off});capAll();
       /* each section with tagged rows: its title's (N) and its count say how many are shown; none left - its table
          gives way to one line; a list of collections with none shown goes away */
       all('details.sec').forEach(function(sec){var tb=sec.querySelector('.tw table');
@@ -522,17 +555,18 @@
           var s=t.nodeValue.toLowerCase(),i=s.indexOf(q);
           while(i>=0&&n<3000){var r=document.createRange();r.setStart(t,i);r.setEnd(t,i+q.length);h.add(r);n++;i=s.indexOf(q,i+q.length)}}});
       CSS.highlights.set('site-find',h)};
-    var run=function(){var q=find.value.trim().toLowerCase(),total=0,ns=0;
+    var run=function(){var q=find.value.trim().toLowerCase(),total=0,ns=0;gQ=!!q;capAll();
       secs.forEach(function(d){var body=d.querySelector('.body'),k=0;if(!body)return;
         var whole=!q||title(d).indexOf(q)>=0;
         all('.tw tbody tr',body).forEach(function(r){if(r.classList.contains('xr')||r.closest('.xr'))return;
           var on=whole||low(r).indexOf(q)>=0;r._s=!on;vis(r);if(on&&!r.hidden)k++});
         all('ul.lines>li,ul.passed>li,.todo',body).forEach(function(el){var on=whole||low(el).indexOf(q)>=0;if(el.hidden===on)el.hidden=!on;if(on)k++});
-        [].forEach.call(body.children,function(el){if(el.tagName==='P'&&low(el).indexOf(q)>=0)k++});
+        [].forEach.call(body.children,function(el){if((el.tagName==='P'||el.classList.contains('snote'))&&low(el).indexOf(q)>=0)k++});
         var away=!!q&&!k&&!whole;if(d.hidden!==away)d.hidden=away;
         if(q&&!d.hidden){d.open=true;total+=k;ns++}
         (links[d.id]||[]).forEach(function(a){var m=a.querySelector('.m');a.classList.toggle('off',d.hidden);
           if(m)m.textContent=q&&!d.hidden?String(k):''})});
+      capAll();                                                  /* the folded rows again, from the rows the search left */
       found.textContent=q?(ns?total+' found in '+ns+' section'+(ns===1?'':'s'):'Nothing found'):'';
       box.classList.toggle('none-found',!!q&&!ns);
       counts.forEach(function(c){c()});mark(q);
@@ -588,6 +622,7 @@
       var f=tr.getAttribute('data-fold'),td=wi>=0?tr.cells[wi]:null;
       if(f&&td){var q=f.split('|'),sx=td._sx;if(!sx){sx=td._sx=document.createElement('span');sx.className='ot-fold';td.appendChild(sx)}      /* its own node: the cell's link stays */
         sx.textContent=OT.rep?'':' \u00d7'+q[0]+', '+q[1]+(q[2]!==q[1]?'-'+q[2]:'');tr._t=undefined;if(OT.rep)td.removeAttribute('title');else td.title=q[3]}});
+    gO=otRows.some(function(tr){return !!tr._ot});capAll();    /* a control that hides rows opens the folded ones: the table says what it shows */
     counts.forEach(function(c){c()});                       /* the tables' "n of m" */
     if(find&&find.value.trim()&&typeof run==='function')run();            /* an active search counts again: its rows, its sections' badges, "n found" */
     if(otCtl){all('input[name=ot-show]',otCtl).forEach(function(i){i.checked=i.value===OT.show});
@@ -638,6 +673,7 @@
         if(e.p){var p=document.createElement('small');p.textContent=e.p;w.appendChild(p)}ln.appendChild(w);
         var go=function(ev){var tr=rowFor(e.n);if(!tr)return;ev.preventDefault();
           if(tr.hidden&&tr._s&&find&&typeof run==='function'){find.value='';run()}                   /* the search hides it: the search is cleared */
+          if(tr._c&&!(tr._f||tr._d||tr._p||tr._ot||tr._s)){var tb0=tr.closest('table');if(tb0){tb0._open=true;if(tb0._capApply)tb0._capApply()}}                  /* a row only the 25-row cap folds: the table opens first (a row a filter hides is never cap-only: the filter's note wins) */
           if(tr.hidden){var nt=tt.querySelector('.tt-note')||document.createElement('div');nt.className='tt-note';nt.setAttribute('role','status');
             nt.textContent='Row '+e.n+' is hidden by '+(tr._f?"the table's filter box":tr._d?"the table's column filters":tr._p?'the filter buttons at the top of the page':tr._ot?"the time line's controls (Show, kinds, repeats)":'a filter')+'.';tt.appendChild(nt);return}
           hide();var d=tr.closest('details');if(d)d.open=true;

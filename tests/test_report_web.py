@@ -1488,7 +1488,7 @@ class WideTables(unittest.TestCase):
     def test_c_the_page_unchecks_them_and_keeps_the_rows(self):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(os.path.dirname(HERE), "roles", "site_email", "templates")), autoescape=False)
-        env.filters.update(report_hidden_columns=sf.report_hidden_columns, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar,
+        env.filters.update(report_hidden_columns=sf.report_hidden_columns, report_tidy=sf.report_tidy, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar,
                            safe_link=sf.safe_link, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         doc = {"title": "T", "subtitle": "", "status": "ok", "sections": [{"title": "Controllers", "columns": self.COLS, "rows": [["x"] * len(self.COLS)]}]}
         h = env.get_template("report_atlas.html.j2").render(_report=doc, _email_footer="x", _page_logo_cid="", _page_runs=[], report_email_header_text="S")

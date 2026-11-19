@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.79.3 — 2026-11-19
+
+**To set up: nothing.** Look only: the report pages and emails read the same data; no setting changes. (The release script numbers this entry.)
+
+**The layout sweep** (123 reports in the atlas, brief and ops looks, and the standard email; sixteen findings).
+
+- **Review fixes for the sweep.** A critical or warning row is never folded by the 25-row cap (the cap counts only the rows a filter left, and again after a sort or a search); each table's filter box and column filters open only that table, the page's search, filter buttons and the time line's controls open them all; a line of the time line opens the folded row it points at; Print shows the cap-folded rows and not the filtered ones (`data-cap`). A section is folded into "Checked, nothing found" only when its whole text is all-clear (not "3 volumes are offline. Every volume is online."); a sentence is said once only when every row has it. The ops card with a hot value over 200 characters no longer fails the report. The HTML email keeps the raw key in brackets ("True sso (true_sso)"). A two-line header is one name in CSV and Copy ("CPU: used"). A `column_titles` list shorter than the columns no longer raises. Tests: `test_layout_sweep` (the critical row 31 of 40, the filters per table, Print, the all-clear fold, the 3-of-4 sentence, the long hot value, the email key).
+- **A row a filter hides.** A click on its line in the time line's list says which filter hides it and never lifts its table's 25-row cap (only a row the cap alone folds opens the table first).
+- **Ops cards.** An opened card takes the whole row, its details in two columns; a long value breaks at `\ / - _ .`, not in the middle of a word; a value the card
+  already shows (its heading, the *next* line, a value twice) is not printed again, and a card with nothing left has no *View details*.
+- **Empty sections.** A section with no rows and nothing to say is left off; the all-clear ones ("None.", "Every volume is online") are one last section, *Checked, nothing found: A, B, C* - and one entry in the rail
+  (*ontap_report*: 25 rail entries, now 5). Sections with a warning or critical status are never touched. One filter, `report_tidy`, for every look and the email.
+- **Results first.** A section's description goes under its table as a muted note (the first two sentences, the rest behind *More*; the ops look keeps its own two lines and Explore); a sentence that three or more
+  rows repeat in a text column (or both rows of a two-row table) is said once in that note. VM right-sizing says its shut-down sentence once and its headers read *CPU used* / *p95 / peak*.
+- **Long tables and cells.** A table of more than 30 rows shows 25 with *Show all N* (a search or a filter looks in every row; print shows all). A cell of more than four lines shows four and *more* (click for all).
+- **Words, not keys.** `timeout_after`, `true_sso`, `accounts_tmout` as labels are said in words (the key stays in the title); a raw JSON message from AAP prints its message only.
+- **The bar and the rail.** The section chips in the bar show whole or not at all (no clipped fragment). The rail's status dots carry a glyph (`!` critical, `▴` warning, `✓` ok) and a screen-reader word.
+- Not done: grouping the repeated rule titles of the big STIG scorecard (the 25-row cap shortens it; 56,000 px becomes a fraction), and the 11-line approval paragraph as three bullets (it is two sentences and *More* now).
+- Tests: `tests/test_layout_sweep.py` (the filter, the pages, the browser: the cap, the search, the cell, the keys, 800 px, the bar); the existing report, hover and fit tests, all looks, light and dark.
+
 ## 1.79.2 — 2026-11-19
 
 **To set up:** nothing. Look only.

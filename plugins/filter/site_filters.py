@@ -1826,6 +1826,169 @@ _CELL_LONG = 21
 _CELL_SOFT = re.compile(r"(?<=[_./\\,-])(?=[^\s_./\\,-])")
 
 
+_TIDY_CONTENT = ("rows", "lines", "text", "cards", "board", "squares", "matrix", "timeline", "heat", "outage", "details", "groups", "tiles", "glance",
+                 "buttons", "links", "sparks", "actions", "passed", "rule_texts", "cell_links")
+_ALL_CLEAR = re.compile(r"^Every [^.]{3,100} (?:is|are) (?:OK|up|online|healthy|fine|clear|reachable|connected|running|answering|in sync|available|on|at|below|within|under|in)\b[^.]*\.?$", re.I)
+_NOTHING = re.compile(r"^(none|nothing|nothing found|nothing is [a-z ]{1,40}|-)\.?$", re.I)
+
+
+_COUNT_WORD = re.compile(r"[1-9]|\b(?:offline|failed|failing|down|over|under|not|no longer|unreachable|expired|critical|warning|degraded|missing)\b", re.I)
+
+
+def _whole_all_clear(text):
+    """A section's one text is all-clear when it ends with 'Every X is online.' and nothing before it names a count or a fault: '3 volumes are offline. Every volume is online.' is not."""
+    sentences = [x for x in re.split(r"(?<=[.!?])\s+", str(text).strip()) if x]
+    if not sentences or not _ALL_CLEAR.match(sentences[-1]):
+        return False
+    return not any(_COUNT_WORD.search(x) for x in sentences)                  # what comes before it may describe the table, but names no count and no fault
+
+
+_KEY = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
+_KEY_COLUMNS = ("baseline", "what", "what was found", "check", "checks", "finding", "found", "reason", "why", "detail", "details", "value", "expected", "actual")
+_RAW_JSON = re.compile(r'\{"[A-Za-z_]+": \[(?:"(?:[^"\\]|\\.)*"(?:, )?)+\]\}')
+
+
+def _human(key):
+    return key.replace("_", " ").capitalize()
+
+
+def _humanize(sec, raw_keys=False):
+    """No raw keys as labels: a snake_case column header, and a snake_case value in a description column (a check id, a setting), are said in words; a raw JSON
+    message from AAP prints its message only. The raw text stays: a header's in its title (column_titles), a cell's in sec['cell_keys'] (the page's script puts it
+    in the cell's title). raw_keys (the email, which has no title to point at): the words, then the key in brackets - 'Single sign-on (true_sso)'."""
+    cols = sec.get("columns")
+    if not isinstance(cols, list):
+        return sec
+    out = dict(sec)
+    titles = list(sec.get("column_titles") or [])
+    titles += list(cols[len(titles):])                                            # a list shorter than the columns: the rest are the columns' own names
+    new_cols, changed = [], False
+    for j, c in enumerate(cols):
+        if isinstance(c, str) and _KEY.match(c):
+            titles[j] = titles[j] if titles[j] != c else c
+            new_cols.append("%s (%s)" % (_human(c), c) if raw_keys else _human(c))
+            changed = True
+        else:
+            new_cols.append(c)
+    if changed:
+        out["columns"], out["column_titles"] = new_cols, titles
+    keys, rows = [], []
+    for ri, row in enumerate(sec.get("rows") or []):
+        row = list(row)
+        for ci, v in enumerate(row):
+            if not isinstance(v, str):
+                continue
+            head = str(cols[ci] if ci < len(cols) else "").strip().lower()
+            if head in _KEY_COLUMNS and _KEY.match(v) and len(v) <= 48:
+                keys.append([ri, ci, v])
+                row[ci] = "%s (%s)" % (_human(v), v) if raw_keys else _human(v)
+            elif "{\"" in v and _RAW_JSON.search(v):
+                def msg(m):
+                    try:
+                        data = json.loads(m.group(0))
+                    except ValueError:
+                        return m.group(0)
+                    return "; ".join(str(x) for val in data.values() for x in val)
+                new = _RAW_JSON.sub(msg, v)
+                if new != v:
+                    keys.append([ri, ci, v])
+                    row[ci] = new
+        rows.append(row)
+    if keys:
+        out["rows"], out["cell_keys"] = rows, {"n": len(cols), "k": keys}
+    return out
+
+
+_PROSE_COLUMNS = ("why", "reason", "reasons", "note", "notes", "explanation", "comment", "comments", "advice", "what to do", "next step")
+_NOT_A_TABLE = ("cards", "matrix", "board", "squares", "timeline", "heat", "outage", "details", "groups", "glance", "tiles", "passed")
+
+
+def _sentences(text):
+    return [x for x in re.split(r"(?<=[.!?])\s+", str(text).strip()) if x]
+
+
+def _tidy_table(sec):
+    """A section with a table: results first, so its description goes under the table as a muted note (the first two sentences; the rest behind More), and a
+    sentence that three or more rows repeat in a text column is said once in that note, not in every row."""
+    rows = sec.get("rows")
+    if not rows or any(sec.get(k) for k in _NOT_A_TABLE):
+        return sec
+    out = dict(sec)
+    kinds = sec.get("kinds") or []
+    shared = []
+    if len(rows) >= 2 and sec.get("columns"):
+        cols = len(sec["columns"])
+        for j in range(cols):
+            if j < len(kinds) and kinds[j] in ("num", "x"):
+                continue
+            if str(sec["columns"][j]).strip().lower() not in _PROSE_COLUMNS:               # only a column of prose: other columns are data, whatever they repeat
+                continue
+            count = {}
+            for row in rows:
+                if j < len(row) and isinstance(row[j], str):
+                    for piece in set(x.strip().rstrip(".") for x in row[j].split("; ")):
+                        if len(piece) >= 30:
+                            count[piece] = count.get(piece, 0) + 1
+            drop = [piece for piece, n in count.items() if n == len(rows) and n >= 2]            # only a sentence EVERY row has: one most rows have would vanish from the others
+            if drop:
+                new = []
+                for row in rows:
+                    row = list(row)
+                    if j < len(row) and isinstance(row[j], str):
+                        keepers = [x.strip() for x in row[j].split("; ") if x.strip().rstrip(".") not in drop]
+                        row[j] = "; ".join(keepers)
+                    new.append(row)
+                rows = new
+                shared += sorted(drop, key=lambda x: -count[x])
+        out["rows"] = rows
+    sents = _sentences(sec["text"]) if sec.get("text") else []
+    if sec.get("text"):
+        out["text"] = ""
+    extra = ["Said once, for the rows it applies to: " + "; ".join(shared) + "."] if shared else []
+    out["note"] = " ".join(sents[:2])
+    more = sents[2:] + extra
+    if not sents:
+        out["note"], more = " ".join(extra), []
+    out["note_more"] = " ".join(more)
+    return out
+
+
+def report_tidy(report, notes=True, raw_keys=False):
+    """1.76.5, look only: a section with no rows and nothing to say is left off, and the sections that only say 'None.' (all clear) become one last section,
+    'Checked, nothing found', with their titles - so the first screen is the findings. Sections with a status of warning or critical, or with anything
+    in them, stay as they are. -> the report with its sections tidied (a copy; the report itself is not changed). notes false (the ops look, which has its own two-line description and Explore): the descriptions stay where they are."""
+    if not isinstance(report, dict) or not isinstance(report.get("sections"), list):
+        return report
+    keep, clear = [], []
+    for sec in report["sections"]:
+        if not isinstance(sec, dict):
+            keep.append(sec)
+            continue
+        if sec.get("rows") or any(sec.get(k) for k in _TIDY_CONTENT if k not in ("rows", "lines", "text")):
+            keep.append(sec)
+            continue
+        said = [str(x).strip() for x in (sec.get("lines") or [])] + ([str(sec["text"]).strip()] if sec.get("text") else [])
+        said = [x for x in said if x]
+        if not said:
+            if sec.get("columns") and sec.get("status") in (None, "", "ok"):       # a table with no row: all clear, said once
+                clear.append(sec)
+            elif not sec.get("columns") and sec.get("status") in (None, "", "ok"):    # a heading with nothing under it
+                continue
+            else:
+                keep.append(sec)
+        elif sec.get("status") in (None, "", "ok") and (all(_NOTHING.match(x) for x in said) or (
+                len(said) == 1 and _whole_all_clear(said[0]))):      # only when the WHOLE text says all is well
+            clear.append(sec)
+        else:
+            keep.append(sec)
+    keep = [(_tidy_table(_humanize(sec, raw_keys)) if notes else _humanize(sec, raw_keys)) if isinstance(sec, dict) else sec for sec in keep]
+    if len(clear) >= 2:
+        keep.append({"title": "Checked, nothing found", "status": "ok", "text": ", ".join(str(c.get("title") or "").strip() for c in clear if c.get("title")) + "."})
+    else:
+        keep += clear
+    return dict(report, sections=keep)
+
+
 def report_cell_html(value, min_len=_CELL_LONG):
     """A table cell's text for an email, escaped, a <wbr> after each _ . / \\ - , inside a token of min_len characters
     or more ('VMware_vSphere_8_Management' -> 'VMware_<wbr>vSphere_<wbr>8_<wbr>Management'); None -> ''. A browser
@@ -2834,7 +2997,7 @@ class FilterModule(object):
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "patch_name_list": patch_name_list, "patch_controller_hit": patch_controller_hit,
-                "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "report_cell_html": report_cell_html, "findings_report": findings_report,
+                "report_tidy": report_tidy, "report_text": report_text, "report_notice": report_notice, "report_cards_html": report_cards_html, "report_cell_html": report_cell_html, "findings_report": findings_report,
                 "report_sparkline": report_sparkline, "report_runway_bar": report_runway_bar,
                 "report_headline": report_headline, "report_runs": report_runs,
                 "report_time_now": report_time_now, "report_time_local": report_time_local, "report_time_column": report_time_column,

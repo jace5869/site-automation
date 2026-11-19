@@ -292,7 +292,7 @@ def _size_row(v, multi):
             _used(st, "mem"), s["confidence"], "; ".join(s["why"] + [n for n in s["notes"] if not n.startswith("Memory taken back")])]
 
 
-SIZE_COLS = ["VM", "Cluster", "vCPUs", "CPU used (95th % / peak)", "CPU ready", "Memory (GB)", "Active memory (95th % / peak)",
+SIZE_COLS = ["VM", "Cluster", "vCPUs", "CPU used: p95 / peak", "CPU ready", "Memory (GB)", "Active mem: p95 / peak",
              "Confidence", "Why"]
 
 
@@ -376,8 +376,8 @@ def vm_rightsize_doc(result, sized, opts=None):
                                "or more) on fewer than %d days of the last %d: not enough to grow (vm_rightsize_grow_days). Suggested "
                                "when it happens on more days."
                                % (o["cpu_high_pct"], o["mem_high_pct"], o["grow_days"], days), rows, "low", mx,
-                               columns=["VM", "Cluster", "vCPUs", "CPU used (95th % / peak)", "Memory (GB)",
-                                        "Active memory (95th % / peak)", "Why"], row_status=["low"] * len(rows)))
+                               columns=["VM", "Cluster", "vCPUs", "CPU used: p95 / peak", "Memory (GB)",
+                                        "Active mem: p95 / peak", "Why"], row_status=["low"] * len(rows)))
     if full:
         rows = [[v.get("name", ""), _where(v, multi), v["size"]["disk"]["path"], "%s%%" % v["size"]["disk"]["used_pct"],
                  "%s GB" % _num(v["size"]["disk"]["free_gb"]), "%s GB" % _num(v["size"]["disk"]["capacity_gb"])] for v in full]

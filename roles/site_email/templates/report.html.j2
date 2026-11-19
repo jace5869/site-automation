@@ -15,6 +15,8 @@
 {%- if _act_old | default([]) and 'ACT old copies' not in (r.sections | default([]) | map(attribute='title', default='') | list) -%}
 {%- set r = dict(r, sections=(r.sections | default([])) + [{'title': 'ACT old copies', 'status': 'info', 'lines': _act_old}]) -%}
 {%- endif -%}
+{#- 1.76.5: a section with nothing in it is left off; the all-clear ones are one line at the end (report_tidy) -#}
+{%- set r = r | report_tidy(false, true) -%}
 {#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
