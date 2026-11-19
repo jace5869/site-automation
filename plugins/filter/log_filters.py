@@ -26,6 +26,14 @@ _spec = importlib.util.spec_from_file_location(
     "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
 _tm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tm)
+# ACT's answer as causes, and the cause cards (plugins/module_utils/act_causes.py; site_filters.report_cause_cards)
+_spec = importlib.util.spec_from_file_location(
+    "act_causes", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "act_causes.py"))
+_ac = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_ac)
+_spec = importlib.util.spec_from_file_location("site_filters_for_logs", os.path.join(os.path.dirname(os.path.abspath(__file__)), "site_filters.py"))
+_sf = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_sf)
 
 # 1.56.0 low: a line its own source marks notice, info or debug - worth knowing, nothing to do now
 LEVELS = ("critical", "error", "warning", "low")
@@ -520,24 +528,26 @@ def log_act_task(problems, opts=None):
     ] + (["", "The team asks: \"%s\". Answer that first in overall: which patterns relate to it, and whether the logs show "
               "its cause (say so plainly if they do not)." % q] if q else []) + [
         "",
-        "Analyze each pattern in the PATTERNS TO ANALYZE list (%s). For each one give:" % ids,
-        "- cause: the most likely cause, in one or two sentences - or that it is harmless noise, if it is;",
-        "- evidence: the lines that support it;",
-        "- fix: what an administrator should do, and what to check first. A person applies it; never claim you changed anything;",
+        "Analyze the patterns in the PATTERNS TO ANALYZE list (%s). Several patterns often share one cause (a storage path "
+        "down shows in the kernel, the hypervisor agent and the applications; a certificate or a time problem breaks several "
+        "services; one service failing to start logs several lines): group them into ONE cause. A pattern on many hosts at "
+        "once points to something they share (network, DNS, time, storage, an account, a change)." % ids,
+        "For each cause give:",
+        "- title: the most likely cause, in one line - or that it is harmless noise, then put its patterns in noise instead;",
+        "- evidence: the lines that support it, quoted from the evidence;",
+        "- steps: what an administrator should do, in order - first what to check to be sure, then the fix; each step with the "
+        "exact command when there is one. A person applies them; never claim you changed anything;",
         "- confidence: how sure you are that the cause is right, a whole number from 0 to 100: 80 or more = the evidence shows it; "
-        "50-79 = likely, other causes possible; under 50 = a guess (then say in the fix what to check to be sure).",
-        "Several patterns may share one cause (e.g. a storage path down shows in the kernel, the hypervisor agent and the "
-        "applications; a certificate or a time problem breaks several services): say so in each of them, and put the shared "
-        "cause first in overall. A pattern on many hosts at once points to something they share (network, DNS, time, storage, "
-        "an account, a change).",
+        "50-79 = likely, other causes possible; under 50 = a guess (then make the first step what to check to be sure).",
+        "In overall: what to do first" + (", and the answer to the team's question" if q else "") + ".",
         "",
-        "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
-        MARK_BEGIN,
-        '{"overall": "two or three sentences: what to do first, and which patterns share a cause",',
-        ' "items": [{"id": "P1", "cause": "...", "evidence": "...", "fix": "...", "confidence": 85}]}',
-        MARK_END,
-        "Include every id. Use plain text inside the JSON strings (no markdown).",
-    ] + (["", str(o["extra"])] if o.get("extra") else []))
+    ] + _ac.prompt_lines("pattern") + (["", str(o["extra"])] if o.get("extra") else []))
+
+
+def _hhmm(text):
+    """'2026-11-19 11:58:40' (or with its zone) -> '11:58': the cause cards' evidence lines (the window is a day or so)."""
+    m = re.search(r"\b(\d\d:\d\d)", str(text or ""))
+    return m.group(1) if m else ""
 
 
 def _conf_status(c):
@@ -597,7 +607,19 @@ def log_report(data, parsed=None, opts=None):
     if with_act:
         subtitle += " ACT%s analyzed the top %d: likely causes, not certain ones - check before you change anything." % (
             " (" + model + ")" if model else "", len(ps))
-    confs = [by[p["id"]]["confidence"] for p in ps if p["id"] in by and by[p["id"]].get("confidence") is not None]
+    # ACT's causes as cards (site_filters.report_cause_cards): an answer of the older shape (one analysis per pattern)
+    # becomes one cause per pattern
+    cc = None
+    if with_act:
+        causes = pa if "causes" in pa else _ac.parse({"items": [dict(v, id=k) for k, v in sorted(by.items()) if not v.get("noise")]},
+                                                      [p["id"] for p in ps])
+        items = [{"id": p["id"], "level": p["severity"] or "info", "title": p["problem"], "hosts": [_short(h) for h in p.get("hosts") or []],
+                  "count": p.get("count") or 0,
+                  "examples": [{"time": _hhmm(_tm.local(_t(e.get("time")), tz)) if e.get("time") else "", "sort": e.get("time") or "",
+                                "host": _short(e.get("host", "")), "message": e.get("message", "")} for e in p.get("examples") or []]}
+                 for p in ps]
+        cc = _sf.report_cause_cards(causes, items, {"noun": "pattern", "overall": pa.get("overall_lines") or pa.get("overall") or ""})
+    confs = [k["confidence"] for k in (cc or {}).get("cards", []) if k["confidence"] is not None and not k["unexplained"]]
     summary = [{"label": "Hosts read", "value": len(read)},
                {"label": "Not read", "value": len(unread), "status": "critical" if unread else "ok"},
                {"label": "Lines", "value": d.get("lines", 0)},
@@ -608,7 +630,7 @@ def log_report(data, parsed=None, opts=None):
     if d.get("low"):
         summary.append({"label": "Low", "value": d["low"], "status": "low", "note": "notice / info / debug"})
     if with_act:
-        summary += [{"label": "High confidence (80+)", "value": sum(1 for c in confs if c >= 80), "status": "ok"},
+        summary += [{"label": "Causes, high confidence (80+)", "value": sum(1 for c in confs if c >= 80), "status": "ok"},
                     {"label": "Medium (50-79)", "value": sum(1 for c in confs if 50 <= c < 80), "status": "warning"},
                     {"label": "Low (under 50)", "value": sum(1 for c in confs if c < 50), "status": "critical"}]
     sections = []
@@ -622,38 +644,28 @@ def log_report(data, parsed=None, opts=None):
     if asked and not ran:
         sections.append({"title": "Why ACT did not run", "status": "critical",
                          "lines": [o.get("reason") or "unknown", "The patterns are listed below without an analysis."]})
-    elif with_act and pa.get("overall"):
-        sections.append({"title": "What to do first", "status": LEVEL_STATUS.get(ps[0]["severity"], ""),
-                         "lines": pa.get("overall_lines") or [pa["overall"]]})     # asked in batches: a line per batch
-    if with_act:
-        rows, rs, cs = [], [], []
-        for p in ps:
-            a = by.get(p["id"]) or {}
-            c = a.get("confidence")
-            rows.append([p["id"], p["severity"].upper(), _where(p), p["problem"],
-                         a.get("cause") or "ACT gave no answer for this one", a.get("evidence", ""), a.get("fix", ""), _conf_text(c)])
-            rs.append(LEVEL_STATUS.get(p["severity"], ""))
-            cs.append(["", LEVEL_STATUS.get(p["severity"], ""), "", "", "", "", "", _conf_status(c)])
-        sections.append({"title": "Likely causes and fixes", "columns": ["#", "Level", "Hosts", "Pattern", "Likely cause", "Evidence",
-                                                                          "Fix", "Confidence"],
-                         "rows": rows, "row_status": rs, "cell_status": cs,
-                         "text": "Confidence: ACT's own estimate that the cause is right - green 80+ (the evidence shows it), "
-                                 "amber 50-79 (likely), red under 50 (a guess: check first)."})
+    web_at = len(sections)                  # the website's cards go here (the email's table and lines the same place)
+    if with_act and cc:
+        sections += cc["email"]
     if asked and ran and not pa.get("parsed"):
         sections.append({"title": "ACT's answer", "text": pa.get("error", ""),
                          "lines": [x for x in str(o.get("raw") or "").splitlines() if x.strip()] or ["(empty)"]})
     if allp:
         shown = _capped(allp, o.get("max_rows"))
+        by_item = (cc or {}).get("by_item") or {}
         rows = [[p["id"], p["severity"].upper(), _where(p), _src(p), p["count"], _tm.local(_t(p.get("first")), tz) or "-",
-                 _tm.local(_t(p.get("last")), tz) or "-", p["problem"]] for p in shown]
+                 _tm.local(_t(p.get("last")), tz) or "-", p["problem"]] + ([by_item.get(p["id"], ["", "-"])[1]] if cc else []) for p in shown]
         text = ("P%d to %s (over log_analysis_max_items, %s) were not given to ACT." % (len(ps) + 1, allp[-1]["id"], o.get("max_items", 30))
                 if asked and len(allp) > len(ps) else "")
         if len(shown) < len(allp):
             text = (text + " " if text else "") + "%d more in the job artifacts (log_analysis_max_rows)." % (len(allp) - len(shown))
         sec = {"title": "Patterns (%d), most severe first" % len(allp),
-               "columns": ["#", "Level", "Hosts", "Log", "Lines", "First seen", "Last seen", "Example"],
+               "columns": ["#", "Level", "Hosts", "Log", "Lines", "First seen", "Last seen", "Example"] + (["Cause"] if cc else []),
                "rows": rows, "row_status": [LEVEL_STATUS.get(p["severity"], "") for p in shown],
-               "cell_status": [["", LEVEL_STATUS.get(p["severity"], ""), "", "", "", "", "", ""] for p in shown]}
+               "cell_status": [["", LEVEL_STATUS.get(p["severity"], ""), "", "", "", "", "", ""] + ([""] if cc else []) for p in shown]}
+        if cc:                                  # the website: the cause a link to its card
+            sec["web_cell_links"] = {"column": 8, "urls": ["#" + by_item[p["id"]][0] if p["id"] in by_item else "" for p in shown],
+                                     "titles": [by_item[p["id"]][2] if p["id"] in by_item else "" for p in shown], "title": "Its cause card"}
         if text:
             sec["text"] = text
         sections.append(sec)
@@ -668,6 +680,11 @@ def log_report(data, parsed=None, opts=None):
         settings.append("%d line(s) left out by log_analysis_ignore." % d["ignored"])
     if d.get("outside"):
         settings.append("%d line(s) outside the window left out." % d["outside"])
+    if with_act:
+        settings.append("Confidence: ACT's own estimate that a cause is right - 80+ high (the evidence shows it), 50-79 medium "
+                        "(likely), under 50 low (a guess: check first).")
+        if (cc or {}).get("cards") and pa.get("cause_errors"):
+            settings.append("ACT's answer, mended: %s." % "; ".join(pa["cause_errors"][:5]))
     settings.append("ACT: " + ("%s%s." % ("ran" if ran else "did not run", " (" + model + ")" if model else "") if asked
                                else "not asked (log_analysis_act: false)." if not o.get("act") else "nothing to analyze."))
     sections.append({"title": "What was read", "lines": settings})
@@ -676,7 +693,26 @@ def log_report(data, parsed=None, opts=None):
             s.pop("text", None)
     footer = ("ACT is an AI assistant: it read the evidence only, ran nothing and changed nothing. Confidence is its own estimate."
               if with_act else "Read-only: nothing was changed on any host.")
-    return {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections, "footer": footer}
+    doc = {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections, "footer": footer}
+    if cc:
+        # the website's version (report_web_theme atlas, brief, ops: _report_web): the cards instead of the email's table,
+        # the Patterns table's cause a link to its card; the workbook: every cause and every step (sheet)
+        web = []
+        for n, s in enumerate(sections):
+            if n == web_at:
+                web += cc["web"]
+            if s in cc["email"]:
+                continue
+            if "web_cell_links" in s:
+                s = dict(s, cell_links=s["web_cell_links"])
+            web.append(dict((k, v) for k, v in s.items() if k != "web_cell_links"))
+        if web_at >= len(sections):
+            web += cc["web"]
+        for s in sections:
+            s.pop("web_cell_links", None)
+        doc["web"] = dict(doc, sections=web)
+        doc["sheet"] = cc["sheet"]
+    return doc
 
 
 def log_names(data, extra=None):

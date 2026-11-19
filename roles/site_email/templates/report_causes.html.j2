@@ -1,0 +1,51 @@
+{#- Cause cards (report_cause_cards in plugins/filter/site_filters.py): included by the website's looks for a section with
+    cause_first (What to do first: the top card's first step) or causes (one card per cause - its items, hosts,
+    confidence, numbered steps with their commands and a Copy button, its evidence lines). The Copy buttons are
+    site_report.js's (.code .copy): no script of its own. -#}
+{%- macro cz_step(st) %}
+<li><span class="cz-sn" aria-hidden="true">{{ st.n }}</span><div class="cz-sb">
+{%- if st.do | default('') %}<p class="cz-sw">{{ st.do | e }}</p>{% endif %}
+{%- if st.cmd | default('') %}<div class="code cz-cmd"><pre>{{ st.cmd | e }}</pre><button class="copy" type="button" hidden aria-label="Copy the command of step {{ st.n }}">Copy</button></div>{% endif %}
+{%- if st.why | default('') %}<p class="cz-sy">{{ st.why | e }}</p>{% endif %}
+</div></li>
+{%- endmacro %}
+{%- if s.cause_overall | default([]) %}
+<div class="cz-ov">{% for x in s.cause_overall %}<p>{{ x | e }}</p>{% endfor %}</div>
+{%- endif %}
+{%- if s.cause_first is defined and s.cause_first %}
+{%- set f = s.cause_first %}
+<div class="cz-first">
+<a class="cz-to" href="#{{ f.card | e }}">Cause {{ f.n }} · {{ f.title | e }} <span>({{ f.patterns_text | e }}{% if f.hosts_text %}, {{ f.hosts_text | e }}{% endif %})</span></a>
+<ol>{{ cz_step(f.step) }}</ol>
+</div>
+{%- endif %}
+{%- if s.causes is defined and s.causes %}
+<p class="cz-count">{{ s.count_text | default('') | e }}</p>
+<div class="causes">
+{%- for k in s.causes %}
+<article class="cz c-{{ k.status | e }}{{ ' small' if k.small else '' }}" id="{{ k.id | e }}">
+<div class="cz-k">Cause {{ k.n }}</div>
+<div class="cz-row"><span class="chip s-{{ k.status | e }}">{{ k.level_word | e }}</span>
+<span class="cz-pats">{{ 'Pattern' if k.patterns | length == 1 else 'Patterns' }}{% for p in k.patterns %} <span class="pp">{{ p | e }}</span>{% endfor %}</span>
+{%- if k.conf_text %}<span class="chip s-{{ k.conf_status | default('info', true) | e }}">{{ k.conf_text | e }}</span>{% endif %}
+{%- if k.hosts %}<span class="cz-hosts">{{ k.hosts[:6] | join(' · ') | e }}{% if k.hosts | length > 6 %} · {{ k.hosts | length - 6 }} more{% endif %}</span>{% endif %}
+{%- if k.lines %}<span class="cz-n">{{ '{:,}'.format(k.lines) }} line{{ '' if k.lines == 1 else 's' }}</span>{% endif %}</div>
+<h3>{{ k.title | e }}</h3>
+<div class="cz-grid">
+<div class="cz-fix"><h4>Fix</h4>
+{%- if k.steps %}<ol>{% for st in k.steps %}{{ cz_step(st) }}{% endfor %}</ol>
+{%- else %}<p class="cz-none">{{ 'Not analyzed: no cause was given for this one.' if k.unexplained else 'No step was given.' }}</p>{% endif %}
+</div>
+{%- if k.evidence %}
+<div class="cz-ev"><h4>Evidence</h4><ul>
+{%- for e in k.evidence %}<li>{% if e.t %}<span class="t">{{ e.t | e }}</span>{% endif %}{% if e.h %}<span class="h">{{ e.h | e }}</span>{% endif %}<span class="m">{{ e.m | e }}</span></li>{% endfor %}
+</ul>{% if k.more %}<p class="more">+{{ '{:,}'.format(k.more) }} more line{{ '' if k.more == 1 else 's' }} in the workbook</p>{% endif %}</div>
+{%- endif %}
+</div>
+</article>
+{%- endfor %}
+</div>
+{%- if s.noise | default([]) %}
+<p class="cz-noise"><b>Harmless ({{ s.noise | length }}):</b> {% for x in s.noise %}{{ x.id | e }}{% if x.why %} - {{ x.why | e }}{% endif %}{{ '; ' if not loop.last else '' }}{% endfor %}</p>
+{%- endif %}
+{%- endif %}

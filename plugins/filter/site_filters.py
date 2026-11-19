@@ -2663,9 +2663,138 @@ def report_xlsx_sheets(report, own=None):
                       for x in ([s.get("title")] if s.get("title") else []) + list(s.get("lines") or [])]}]
 
 
+# ---- cause cards (the log analysis first; the ACT reports that ask "why" after it) ---------------------------------------------------
+# ACT's answer as causes (plugins/module_utils/act_causes.py) shown as cards: one per cause - its title, the items it explains,
+# the hosts, the confidence, the evidence lines and numbered fix steps with their commands - "What to do first" (the top
+# card's first step), and a short table for the email and the workbook. The order is the data's, never ACT's: the worst
+# level among a cause's items, then the confidence, then the number of items.
+_acs_spec = importlib.util.spec_from_file_location(
+    "act_causes", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "act_causes.py"))
+act_causes = importlib.util.module_from_spec(_acs_spec)
+_acs_spec.loader.exec_module(act_causes)
+CAUSE_LEVEL = {"critical": 0, "error": 1, "warning": 2, "low": 3, "info": 4}
+CAUSE_STATUS = {"critical": "critical", "error": "critical", "warning": "warning", "low": "low", "info": "info"}
+CAUSE_WORD = {"critical": "Critical", "error": "Error", "warning": "Warning", "low": "Low", "info": "Info"}
+CAUSE_CONF = {"high": "ok", "medium": "warning", "low": "critical"}
+
+
+def _ids_short(ids):
+    """P1, P2, P3, P4, P5 -> 'P1-P5' when they run on; else 'P2, P5'."""
+    nums = [int(i[1:]) for i in ids if re.match(r"^P\d+$", str(i))]
+    if len(nums) == len(ids) > 2 and nums == list(range(nums[0], nums[0] + len(nums))):
+        return "%s-%s" % (ids[0], ids[-1])
+    return ", ".join(str(i) for i in ids)
+
+
+def _and(words):
+    words = [str(w) for w in words]
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1] if words else ""
+
+
+def _step_line(st):
+    """A step in one line (the email, the workbook's first step): 'Confirm the denial: sealert -l <id>'."""
+    do, cmd = str(st.get("do") or "").strip(), str(st.get("cmd") or "").strip().splitlines()
+    if not cmd:
+        return do
+    return ("%s: %s" % (do.rstrip(".: "), cmd[0])) if do else cmd[0]
+
+
+def report_cause_cards(parsed, items, opts=None):
+    """parsed: act_causes.parse (or act_analysis_parse with causes); items: the report's [{id, level (critical|error|warning|
+    low|info), title, hosts, count, examples: [{time, host, message}]}] - times and hosts as they are shown. opts: noun
+    ('pattern'), max_evidence (5), overall (ACT's own words on what to do first - the answer to a question asked - shown
+    above the first step). -> {cards, first (the top card's first step), web: [What to do first, the cards],
+    email: [the same as lines and a table], sheet (every cause, every step), by_item: {id: [card id, label]}, noise}.
+    An item no cause names and that is not noise gets a card of its own, "not explained"."""
+    o, pa = opts or {}, parsed or {}
+    noun = o.get("noun") or "pattern"
+    nmax = int(o.get("max_evidence") or act_causes.MAX_EVIDENCE)
+    its = dict((str(i.get("id")), i) for i in items or [])
+    order = [str(i.get("id")) for i in items or []]
+    causes = [dict(c) for c in pa.get("causes") or []]
+    named = set(p for c in causes for p in c.get("patterns") or [])
+    noise = [p for p in pa.get("noise") or [] if p in its and p not in named]
+    for pid in order:                               # an item in no cause and not noise: its own card
+        if pid not in named and pid not in noise:
+            it = its[pid]
+            causes.append({"key": "item-" + pid.lower(), "title": it.get("title") or pid, "patterns": [pid], "hosts": [],
+                           "confidence": None, "evidence": [], "steps": [], "unexplained": True})
+    cards = []
+    for c in causes:
+        pats = sorted([p for p in c.get("patterns") or [] if p in its] or list(c.get("patterns") or []), key=act_causes.natural)
+        lv = min([its[p].get("level") or "info" for p in pats if p in its] or ["info"], key=lambda x: CAUSE_LEVEL.get(x, 9))
+        hosts = sorted(set(h for p in pats if p in its for h in its[p].get("hosts") or []), key=act_causes.natural) or list(c.get("hosts") or [])
+        lines = sum(int(its[p].get("count") or 0) for p in pats if p in its)
+        ex = [e for p in pats if p in its for e in its[p].get("examples") or []]
+        ex.sort(key=lambda e: str(e.get("sort") or e.get("time") or ""), reverse=True)
+        ev = [{"t": str(e.get("time") or ""), "h": str(e.get("host") or ""), "m": str(e.get("message") or "")} for e in ex[:nmax]]
+        if not ev:
+            ev = [{"t": "", "h": "", "m": x} for x in (c.get("evidence") or [])[:nmax]]
+        conf = c.get("confidence")
+        band = act_causes.band(conf)
+        cards.append({"key": c.get("key"), "title": c.get("title") or "", "patterns": pats, "hosts": hosts, "lines": lines,
+                      "level": lv, "status": CAUSE_STATUS.get(lv, "info"), "level_word": CAUSE_WORD.get(lv, lv.capitalize()),
+                      "confidence": conf, "band": band, "conf_status": CAUSE_CONF.get(band, ""),
+                      "conf_text": ("%d%% %s" % (conf, band)) if conf is not None else "",
+                      "evidence": ev, "more": max(0, (lines or len(ex)) - len(ev)) if ex else 0,
+                      "steps": [dict(st, n=i + 1) for i, st in enumerate(c.get("steps") or [])],
+                      "unexplained": bool(c.get("unexplained")), "small": len(pats) <= 1})
+    cards.sort(key=lambda k: (CAUSE_LEVEL.get(k["level"], 9), k["unexplained"], -(k["confidence"] if k["confidence"] is not None else -1),
+                              -len(k["patterns"]), act_causes.natural(k["patterns"][0] if k["patterns"] else "")))
+    for n, k in enumerate(cards, 1):
+        k["n"], k["id"] = n, "cause-%d" % n
+        k["patterns_text"] = _ids_short(k["patterns"])
+        k["label"] = "Cause %d" % n                     # a table's cell: short; the title is the link's tooltip
+        if k["unexplained"]:
+            k["title"] = "Not explained: " + k["title"]
+    by_item = dict((p, [k["id"], k["label"], k["title"]]) for k in cards for p in k["patterns"])
+    top = next((k for k in cards if k["steps"]), None)
+    first = None
+    if top:
+        first = {"card": top["id"], "n": top["n"], "title": top["title"], "patterns_text": top["patterns_text"],
+                 "hosts_text": _and(top["hosts"][:4]) + (" and %d more" % (len(top["hosts"]) - 4) if len(top["hosts"]) > 4 else ""),
+                 "step": top["steps"][0], "status": top["status"]}
+    n_items = sum(len(k["patterns"]) for k in cards)
+    explained = [k for k in cards if not k["unexplained"]]
+    count = "%d cause%s · %d %s%s" % (len(explained), "" if len(explained) == 1 else "s", n_items, noun, "" if n_items == 1 else "s")
+    worst = min([k["level"] for k in cards] or ["info"], key=lambda x: CAUSE_LEVEL.get(x, 9))
+    web = []
+    overall = [x for x in (o.get("overall") if isinstance(o.get("overall"), list) else [o.get("overall")]) if x]
+    if first or overall:
+        sec = {"title": "What to do first", "status": first["status"] if first else CAUSE_STATUS.get("info")}
+        if overall:
+            sec["cause_overall"] = overall          # ACT's own words, above the first step (report_causes.html.j2)
+        if first:
+            sec["cause_first"] = first
+        web.append(sec)
+    web.append({"title": "Likely causes and fixes", "status": CAUSE_STATUS.get(worst, "info"), "count_text": count, "causes": cards,
+                "noise": [{"id": p, "why": (pa.get("noise_why") or {}).get(p, "")} for p in noise]})
+    rows, email = [], []
+    for k in cards:
+        st = k["steps"][0] if k["steps"] else {}
+        rows.append(["%d" % k["n"], k["title"], k["patterns_text"], _and(k["hosts"][:6]) + (" ..." if len(k["hosts"]) > 6 else ""),
+                     k["conf_text"] or "-", _step_line(st) or "-"])
+    if first or overall:
+        email.append({"title": "What to do first", "status": first["status"] if first else "info",
+                      "lines": overall + (["Cause %d · %s (%s, %s)" % (first["n"], first["title"], first["patterns_text"], first["hosts_text"]),
+                                           "1. " + _step_line(first["step"])]
+                                          if first else [])})
+    email.append({"title": "Likely causes and fixes", "text": count + ". Each cause's steps: the report website and the workbook.",
+                  "status": CAUSE_STATUS.get(worst, "info"),
+                  "columns": ["#", "Cause", noun.capitalize() + "s", "Hosts", "Confidence", "First step"], "rows": rows,
+                  "kinds": ["num", "wrap", "", "wrap", "", "wrap"], "wrap": True,
+                  "cell_status": [["", "", "", "", k["conf_status"], ""] for k in cards],
+                  "row_status": [k["status"] for k in cards]})
+    sheet = [[k["n"], k["title"], ", ".join(k["patterns"]), ", ".join(k["hosts"]), k["conf_text"], st["n"], st.get("do", ""), st.get("cmd", ""),
+              st.get("why", "")] for k in cards for st in (k["steps"] or [{"n": "", "do": "", "cmd": "", "why": ""}])]
+    return {"cards": cards, "first": first, "web": web, "email": email, "by_item": by_item, "noise": noise,
+            "sheet": {"name": "Causes", "columns": ["#", "Cause", noun.capitalize() + "s", "Hosts", "Confidence", "Step", "Do", "Command", "Why"],
+                      "rows": sheet}}
+
+
 class FilterModule(object):
     def filters(self):
-        return {"safe_link": safe_link, "safe_ref": safe_ref, "safe_site_url": safe_site_url, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
+        return {"report_cause_cards": report_cause_cards, "safe_link": safe_link, "safe_ref": safe_ref, "safe_site_url": safe_site_url, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
                 "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
                 "report_act_old": report_act_old,
                 "from_csv": from_csv, "days_until": days_until, "site_result": site_result,

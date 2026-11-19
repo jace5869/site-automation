@@ -23,21 +23,28 @@ Two jobs read logs and have ACT (GenAI) explain what they show. Both are read-on
    provider or event ID) is **Low**: worth knowing, nothing to do now. It is listed, never makes the
    report amber, and has its own Low tile. A line with no level that matched `log_analysis_match` stays
    a warning.
-3. **Explain.** ACT gets the top `log_analysis_max_items` (30) patterns, with up to three example
-   lines each, and answers for each: the **likely cause**, the **evidence**, the **fix**, and a
-   **confidence** from 0 to 100. It is told to say when a pattern is harmless noise and to name the
-   patterns that share a cause. ACT runs in **evidence mode**: on the AAP side, reading what the job
-   collected, running **no command** on any host. Before anything leaves, ACT replaces the host names
-   (and `log_analysis_names_extra`) with placeholders.
+3. **Explain.** ACT gets the top `log_analysis_max_items` (30) patterns, with up to three example lines
+   each. It groups the patterns that share a cause into **one cause**, and gives each cause a title,
+   the **evidence**, the **steps** to fix it in order (each with its exact command when there is one)
+   and a **confidence** from 0 to 100. Patterns that are harmless noise it names apart. ACT runs in
+   **evidence mode**: on the AAP side, reading what the job collected, running **no command** on any
+   host. Before anything leaves, ACT replaces the host names (and `log_analysis_names_extra`) with
+   placeholders.
 4. **Report.** One report, every run, in the same look as the other reports: printed in the job
    output, kept as the job artifact `log_analysis` (every pattern, ACT's answer merged in), **emailed**
    (`report_email_to`, and the "Also email the report to" box: [EMAIL_REPORTS.md](EMAIL_REPORTS.md)) and
    **published** on the report website (`report_web_dest`: [WEB_REPORTS.md](WEB_REPORTS.md)). It has:
    - the hosts **not read**, in red, with why (unreachable, login refused, a log it may not read);
-   - your question, if you asked one, and ACT's "What to do first";
-   - **Likely causes and fixes**: one row per pattern ACT analyzed, with the confidence coloured
-     (green 80+, amber 50-79, red under 50);
-   - **Patterns**, always - also without ACT: level, hosts, log, lines, first and last seen, an example;
+   - your question, if you asked one, and **What to do first**: ACT's own words, then the first step
+     of the top cause, with its command;
+   - **Likely causes and fixes**: on the report website, one **card** per cause - its patterns, hosts
+     and confidence (high 80+, medium 50-79, low under 50), the steps numbered with a **Copy** button
+     for each command, and up to five evidence lines. The worst level comes first. A pattern ACT gave
+     no cause for has a card of its own (*Not explained*); the harmless ones are listed under the cards.
+     The email has one row per cause with its first step; the workbook (`report_email_xlsx`) has every
+     step of every cause;
+   - **Patterns**, always - also without ACT: level, hosts, log, lines, first and last seen, an example,
+     and its cause (on the website, a link to its card);
    - the hosts read, with the logs each one gave;
    - **What was read**: the window, the profiles per host, how many lines the ignore list left out.
 

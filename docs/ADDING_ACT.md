@@ -365,6 +365,23 @@ analyzed (`P6-P10 not analyzed: ...`). `site_act_batch: 3` for a slow model or a
 everything in one question. Each job has its own setting too: `vm_alarm_act_batch`, `vm_capacity_act_batch`,
 `log_analysis_act_batch`.
 
+### Causes: one answer shape for every "why" report
+
+When a report asks ACT why (the log analysis first; the alarms, health check, fapolicyd and right-sizing
+analyses after it), ACT answers in one shape, read by `plugins/module_utils/act_causes.py`:
+
+- **causes**: each with a short `key`, a one-line `title`, the `patterns` it explains (each pattern in one
+  cause only), the `hosts`, a `confidence` from 0 to 100, at most 5 `evidence` lines, and at most 6
+  `steps` - each `do` (in plain words), `cmd` (the exact command, or none) and `why`;
+- **noise**: the items that are harmless, with an optional reason each;
+- **overall**: what to do first.
+
+What does not fit is mended and said: a cut line, a pattern named twice (the first cause keeps it), a
+pattern not asked about. An answer in the older shape (one analysis per item) becomes one cause per item.
+Answers asked in batches are joined the same way whatever order they come back in. The report shows the
+causes as cards (`site_filters.report_cause_cards`): the order is the data's - the worst level, then the
+confidence - never ACT's.
+
 ### How to verify
 
 1. **The probe result:** in step 4 every model you plan to use shows one endpoint that worked.

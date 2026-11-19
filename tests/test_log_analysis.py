@@ -249,10 +249,17 @@ class ActAndReport(unittest.TestCase):
         titles = [s["title"] for s in doc["sections"]]
         self.assertEqual(titles, ["Not read (1)", "Your question", "What to do first", "Likely causes and fixes",
                                   "Patterns (2), most severe first", "Hosts read (2)", "What was read"])
+        self.assertEqual(doc["sections"][2]["lines"][0], "Fix the kernel first.")         # ACT's own words (the question's answer)
         act = doc["sections"][3]
-        self.assertEqual(act["rows"][0][-1], "85% high")
+        self.assertEqual(act["rows"][0][-2:], ["85% high", "Update the driver."])         # an older answer: a card per pattern
         pats = doc["sections"][4]
-        self.assertEqual(pats["columns"], ["#", "Level", "Hosts", "Log", "Lines", "First seen", "Last seen", "Example"])
+        self.assertEqual(pats["columns"], ["#", "Level", "Hosts", "Log", "Lines", "First seen", "Last seen", "Example", "Cause"])
+        self.assertNotIn("cell_links", pats)                                               # the email: no link
+        web = doc["web"]["sections"]
+        self.assertEqual([s["title"] for s in web][2:5], ["What to do first", "Likely causes and fixes", "Patterns (2), most severe first"])
+        self.assertEqual(web[3]["causes"][0]["steps"][0]["do"], "Update the driver.")
+        self.assertEqual(web[4]["cell_links"]["urls"][0], "#cause-1")                       # the website: a link to its card
+        self.assertEqual(doc["sheet"]["rows"][0][:2], [1, "A driver bug."])
         self.assertEqual(pats["rows"][1][:5], ["P2", "ERROR", "web01.example.mil, web02.example.mil", "journal sshd", 2])
         self.assertIn("P2 to P2 (over log_analysis_max_items, 1) were not given to ACT.", pats["text"])
         self.assertIn("Profile nginx: web01.", doc["sections"][-1]["lines"])

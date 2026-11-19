@@ -84,6 +84,10 @@
     name: site_email
   vars:
     _report: "{{ _la_doc }}"
+    # the website's version: ACT's causes as cards, the Patterns table's cause a link to its card (atlas, brief, ops)
+    _report_web: "{{ _la_doc.web | default({}) }}"
+    # the workbook: the report's tables and every cause with every step (report_email_xlsx)
+    _report_xlsx: "{{ (_la_doc | report_xlsx_sheets([_la_doc.sheet])) if _la_doc.sheet is defined and report_email_xlsx | default(false) | bool else [] }}"
     _report_email_skip: "{{ _la.all | length == 0 and _la.not_read | int == 0 and not log_analysis_email_if_clean | bool }}"
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
