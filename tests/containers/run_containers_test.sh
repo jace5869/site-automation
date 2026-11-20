@@ -87,6 +87,14 @@ prepare fleet
 run tests/containers/check.yml
 ALL="containers:crashed:root/big,containers:crashed:root/crash,containers:down:alice/web,containers:down:root/app,containers:down:root/web2,containers:no-linger:dave,containers:no-linger:eve,containers:oom:root/big,containers:restarting:root/loop,containers:unhealthy:bob/web,containers:unhealthy:root/sick"
 expect "fleet: every problem found, old exits and exit 0 stay quiet" "$ALL"
+has "the discovery's registered result holds no environment variable and no healthcheck output (cut down on the host)" "REGISTERED secrets=none"
+has "  ... nor a container's command line (podman ps json: Command), a label's token or a unit's ExecStart arguments" "REGISTERED secrets=none"
+hasnt "  ... (a password of a command line)" "cmd-secret"
+hasnt "  ... (a password in a unit's ExecStart)" "exec-secret"
+hasnt "  ... (a token in a label)" "label-secret"
+hasnt "  ... and none reaches the job output" "hunter2"
+hasnt "  ... (a token of a healthcheck)" "hc-secret"
+hasnt "  ... (a secret)" "s3cr3t"
 has "discovery: root, alice, bob and eve read; three containers called web" "DISCOVERED alice/tool,alice/web,bob/web,eve/svc,root/app,root/big,root/crash,root/job,root/loop,root/oldcrash,root/sick,root/systemd-db,root/web,root/web2"
 has "should_run: restart policy, enabled units, Quadlet [Install], wanted by a target" "SHOULDRUN alice/web,bob/web,eve/svc,root/app,root/systemd-db,root/web,root/web2"
 has "users: dave (no /run/user) is skipped, frank (subuid, no storage) is not a candidate" "USERS alice,bob,eve"
@@ -95,11 +103,13 @@ hasnt "storage only (an admin who once ran podman, nothing to start at boot): no
 has "  ... but it is listed as not checked" "not checked: gina"
 has "a stopped Quadlet whose container is gone is down (user unit, owner named)" "SUMMARY containers:down:alice/web | critical | container web (owner alice) should be running (its Quadlet file"
 has "  ... and says the unit failed" "it does not exist; its systemd user unit web.service is failed (failed), result exit-code"
-has "hint for a user's container runs as that user" "HINT containers:down:alice/web | runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user status web.service --no-pager -l; journalctl _UID=1001 --since -2h -n 80 --no-pager"
+has "hint for a user's container runs as that user (and only reads: state, the unit's properties, a count of the journal's errors)" "HINT containers:down:alice/web | runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 podman ps -a --filter 'name=^web\$' --format '{{.Names}} {{.Status}}'; runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user show web.service -p ActiveState -p SubState -p Result -p NRestarts; journalctl _UID=1001 --since -2h -n 80 --no-pager | grep -ci error"
 has "podman 3 shape (State.Healthcheck) unhealthy" "SUMMARY containers:unhealthy:bob/web | critical | container web (owner bob) is running but its healthcheck reports unhealthy"
 has "podman 4 shape (State.Health) unhealthy" "SUMMARY containers:unhealthy:root/sick | critical"
-has "bob's hint names bob" "HINT containers:unhealthy:bob/web | runuser -u bob -- env XDG_RUNTIME_DIR=/run/user/1002 podman inspect web"
-has "root's hint has no runuser" "HINT containers:unhealthy:root/sick | podman inspect sick; podman logs --tail 50 sick"
+has "bob's hint names bob" "HINT containers:unhealthy:bob/web | runuser -u bob -- env XDG_RUNTIME_DIR=/run/user/1002 podman container inspect web --format '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}}'"
+has "root's hint has no runuser: a state query and a COUNT of error lines, never the log or the whole inspect" "HINT containers:unhealthy:root/sick | podman container inspect sick --format '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}}'; podman ps -a --filter 'name=^sick\$' --format '{{.Names}} {{.Status}}'; podman logs --tail 50 sick 2>&1 | grep -ci error"
+has "ACT's evidence (the hints run as ACT runs them) holds no environment variable, no healthcheck output and no raw log line" "EVIDENCE secrets=none rawlog=none"
+hasnt "  ... the old hints (podman inspect NAME, podman logs --tail 50 NAME unpiped) are not among them" "HINT containers:unhealthy:root/sick | podman inspect"
 has "recent crash, with its age" "container crash (owner root) stopped with an error: it exited with code 2, 1.0 hours ago"
 has "generate systemd unit (container-NAME.service, enabled) found and down" "SUMMARY containers:down:root/app | critical | container app (owner root) should be running (its systemd unit container-app.service is enabled"
 has "generate systemd --new unit whose container is gone" "SUMMARY containers:down:root/web2 | critical | container web2 (owner root) should be running (its systemd unit myweb.service is wanted by multi-user.target"
@@ -113,8 +123,8 @@ readonly_calls "the check only reads (podman ps / inspect, systemctl show)"
 if grep -q '^dave \|^frank ' "$H/calls.log"; then bad "podman ran for a user without /run/user/UID (it would create it)"; else ok "no podman call for dave or frank"; fi
 grep -q "^alice $H/run/user/1001\|^alice /run/user/1001 podman ps -a --format json" "$H/calls.log" && ok "alice's podman runs with her XDG_RUNTIME_DIR" \
     || bad "alice's podman did not get XDG_RUNTIME_DIR=/run/user/1001"
-[ "$(grep -c 'podman container inspect' "$H/calls.log")" -eq 4 ] && ok "one podman container inspect per owner (4 owners)" \
-    || bad "expected 4 inspect calls, got $(grep -c 'podman container inspect' "$H/calls.log")"
+n_inspect="$(grep 'podman container inspect' "$H/calls.log" | grep -vc -- '--format')"      # discovery's; the evidence hints (a scoped --format) are the test's own
+[ "$n_inspect" -eq 4 ] && ok "one podman container inspect per owner (4 owners)" || bad "expected 4 inspect calls, got $n_inspect"
 
 run tests/containers/check.yml --check
 expect "dry run (Check mode): the same findings" "$ALL"
@@ -167,7 +177,7 @@ expect "units: a down .kube, podman-kube@, compose and pod unit are down; finish
 has "  ... a Quadlet .kube is a pod, named as one" "SUMMARY containers:down:root/shop | critical | pod (podman kube play) shop (owner root) should be running (its Quadlet file $H/etc/containers/systemd/shop.kube starts it at boot ([Install] WantedBy=multi-user.target)) but it is not running; its systemd unit shop.service is failed (failed), result exit-code"
 has "  ... a compose project" "SUMMARY containers:down:root/stack2 | critical | compose project stack2 (owner root) should be running (its systemd unit stack2.service is enabled"
 has "  ... a podman pod" "SUMMARY containers:down:root/mypod | critical | podman pod mypod (owner root)"
-has "  ... a user's .kube, as that user" "HINT containers:down:alice/notes | runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user status notes.service"
+has "  ... a user's .kube, as that user" "runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user show notes.service -p ActiveState"
 has "  ... a running .kube's containers carry its unit, and its [Install] makes them should-run" "DISCOVERED alice/notes,root/api-pod-api,root/manual,root/mypod,root/podman-kube@-etc-containers-blog.yaml,root/shop,root/stack,root/stack2"
 has "  ... should run" "SHOULDRUN alice/notes,root/api-pod-api,root/mypod,root/podman-kube@-etc-containers-blog.yaml,root/shop,root/stack,root/stack2"
 has "  ... a oneshot compose that finished counts as up" "root         stack                      finished"
@@ -202,11 +212,46 @@ has "  ... a stopped database container the containers check does not report kee
 run playbooks/health_check.yml -e '{"health_checks": ["mariadb"], "check_mariadb_containers": ["app", "web2"]}'
 has "the database check alone still reports a down database container" "[app] MariaDB/MySQL is not running (container app"
 
+# a container that went away between the listing and the inspect: podman prints the survivors and exits non-zero; the raw output is never printed
+prepare fleet
+: > "$H/inspect_partial"
+run tests/containers/check.yml
+rm -f "${H:?}/inspect_partial"
+has "a partial inspect failure: the discovery's registered result still holds no environment, command line or token" "REGISTERED secrets=none"
+has "  ... and the survivors are still read" "DISCOVERED alice/tool,alice/web,bob/web,eve/svc,root/app"
+# an owner of check_containers_required that is no user name (or not a user at all) is never put in a command
+prepare fleet
+run tests/containers/check.yml -e '{"check_containers_required": ["evil;reboot/web", "a b/web", "root/nothing"]}'
+has "a required container of an owner that is no user name: the hint lists as root, nothing of the owner in it" "HINT containers:down:evil;reboot/web | podman ps -a --format '{{.Names}} {{.Status}}'"
+hasnt "  ... no runuser of it" "runuser -u evil"
+hasnt "  ... nor of the one with a space" "runuser -u a b"
+has "  ... and the name filter is one quoted argument" "'name=^sick\$'"
+prepare fleet
+# names a container's label and a user's Quadlet file choose: a label that adds an option to systemctl show, a ServiceName that is shell syntax
+prepare inject
+run tests/containers/check.yml
+has "a unit label that adds an option (-p Environment) to systemctl show: the unit's environment is not in the registered result" "REGISTERED secrets=none"
+grep -E ' systemctl show ' "$H/calls.log" | grep -q ' -- ' && ok "  ... the unit names go to systemctl show after --" || bad "  ... systemctl show has no --"
+if grep -qE ' systemctl show .* -p Environment| -p Environment' "$H/calls.log"; then bad "  ... a label added an option to systemctl show"; else ok "  ... no label added an option to systemctl show"; fi
+if grep -q 'touch-pwn' "$H/calls.log"; then bad "  ... a Quadlet's ServiceName reached a command"; else ok "  ... a Quadlet's ServiceName that is no unit name reaches no command"; fi
+prepare fleet
 # ---------------------------------------------------------------- Service watch
 ALICE="runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001"
 BOB="runuser -u bob -- env XDG_RUNTIME_DIR=/run/user/1002"
-prepare watch
+prepare watch_inject
 run playbooks/service_watch.yml
+# the container's name may be an ARGUMENT (data) of podman; a unit named by ServiceName, or anything of them as a command, may not
+if grep 'touch-pwn' "$H/calls.log" | grep -vF 'ev$(touch-pwn2)' | grep -q .; then bad "a user's Quadlet name reached a command"; else ok "a user's Quadlet with shell syntax as ServiceName / ContainerName: nothing of it is run (the container name only as an argument)"; fi
+if grep -F 'ev$(touch-pwn2)' "$H/calls.log" | grep -vE '^alice /run/user/1001 podman (container exists|container inspect|logs|inspect)' | grep -q .; then bad "  ... the container name reached a command other than a read of podman"; else ok "  ... the container name is in reads of podman only"; fi
+hasnt "  ... and no fix is proposed with it" "start bad;touch-pwn" 
+hasnt "  ... (not quoted either)" "systemctl --user start bad"
+has "  ... its heading in the evidence is the name as written, not evaluated" 'ev$(touch-pwn2)' "$H/fake-act-evidence.txt"
+prepare watch
+run playbooks/service_watch.yml -vv
+for w in hunter2 s3cr3t hc-secret cmd-secret exec-secret label-secret; do
+    hasnt "service watch (job output at -vv: every task's result): no secret '$w' of a container's environment, command line, label or unit" "$w"
+done
+has "  ... its state reads are the cut-down ones (state and the healthcheck status only)" '\"Health\": {\"Status\"'
 [ "$rc" -ne 0 ] && ok "approval: the job fails on purpose (NEEDS APPROVAL)" || bad "approval: the job passed" 30
 has "watched set from discovery, keyed by owner (three containers called nginx)" "cache (root): plain podman (no systemd unit runs it)"
 has "  ... root's nginx is watched and up" "nginx (root) running"
@@ -214,11 +259,20 @@ has "NEEDS APPROVAL lists each owner's own fix, in order" "Fix to approve (the s
 has "  ... names the owners" "container nginx (user alice) is not running: its systemd user unit nginx.service is failed"
 has "ACT is told the owner and the only right start command" "- nginx (user alice): run by the systemd user unit nginx.service (Quadlet file $H/home/alice/.config/containers/systemd/nginx.container; now failed (failed), result exit-code). Start: \`$ALICE systemctl --user start nginx.service\`" "$H/fake-act-task.txt"
 has "  ... and to read the rootless evidence, not to run runuser reads" "are refused in this job, so do not try them" "$H/fake-act-task.txt"
-has "evidence for alice's container (read as alice)" "### \$ $ALICE systemctl --user status nginx.service --no-pager -l" "$H/fake-act-evidence.txt"
-has "evidence for bob's container: its logs" "fake log line of nginx (owner bob)" "$H/fake-act-evidence.txt"
+has "  ... and what to run for a root container: state and counts, with the format templates as they are" "podman ps -a --format '{{.Names}} {{.Status}}'" "$H/fake-act-task.txt"
+has "  ... a count of error lines, not the log" "podman logs --tail 80 NAME 2>&1 | grep -ci error" "$H/fake-act-task.txt"
+hasnt "  ... never podman inspect NAME, systemctl status or an unpiped journalctl" "podman inspect NAME" "$H/fake-act-task.txt"
+hasnt "  ... (systemctl status)" "systemctl status UNIT" "$H/fake-act-task.txt"
+has "evidence for alice's container (read as alice): the unit's properties, not its status lines" "### \$ $ALICE systemctl --user show nginx.service -p ActiveState" "$H/fake-act-evidence.txt"
+has "evidence for bob's container: a COUNT of its error lines" "podman logs --tail 60 nginx | grep -ci error" "$H/fake-act-evidence.txt"
+has "  ... and its state from --format" "podman container inspect --format {{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}} {{.State.FinishedAt}} nginx" "$H/fake-act-evidence.txt"
+hasnt "  ... no raw log line reaches ACT" "fake log line of nginx" "$H/fake-act-evidence.txt"
+hasnt "  ... nor an environment variable" "hunter2" "$H/fake-act-evidence.txt"
+hasnt "  ... nor a token" "s3cr3t" "$H/fake-act-evidence.txt"
+hasnt "  ... nor a healthcheck's output" "hc-secret" "$H/fake-act-evidence.txt"
 hasnt "no evidence collected for root's containers (ACT reads those itself)" "container cache (root)" "$H/fake-act-evidence.txt"
-if ls /tmp/ansible.*service-watch-evidence.txt >/dev/null 2>&1 && grep -q "fake log line of nginx (owner bob)" /tmp/ansible.*service-watch-evidence.txt 2>/dev/null; then
-    bad "the evidence file was left behind"; else ok "the evidence file is removed after ACT"; fi
+evpath="$(grep -o '`cat [^`]*service-watch-evidence.txt`' "$H/fake-act-task.txt" | head -1 | sed 's/^`cat //; s/`$//')"       # this run's file (another run may have its own)
+if [ -n "$evpath" ] && [ ! -e "$evpath" ]; then ok "the evidence file is removed after ACT"; else bad "the evidence file was left behind or not found: [$evpath]"; fi
 has "incident record keyed by owner" '"units": {"root/cache": ""' "$H/incidents.jsonl"
 
 printf '{"propose": ["sudo -u alice podman start nginx", "podman start nginx", "systemctl daemon-reload"]}' > "$H/act.json"

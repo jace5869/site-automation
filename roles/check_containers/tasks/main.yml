@@ -77,12 +77,17 @@
       {%- for c in site_containers if not c.ignored -%}
       {%-   set who = c.name ~ ' (owner ' ~ c.owner ~ ')' -%}
       {%-   set sc = c.run_as ~ ('systemctl --user' if c.owner != 'root' else 'systemctl') -%}
-      {%-   set journal = ('journalctl _UID=' ~ c.uid ~ ' --since -2h -n 80 --no-pager') if c.owner != 'root'
-                          else ('journalctl -u ' ~ c.unit ~ ' -n 50 --no-pager') if c.unit else '' -%}
-      {%-   set look = ([c.run_as ~ 'podman logs --tail 50 ' ~ c.name] if c.id else [])
-                       + ([sc ~ ' status ' ~ c.unit ~ ' --no-pager -l'] if c.unit else [])
+      {%-   set nq = c.name | quote -%}
+      {#- ACT runs a hint as its evidence: it reads state and COUNTS log lines, never prints them (a log line, the environment and a command line
+          can hold a password or a token) -#}
+      {%-   set ps_look = c.run_as ~ 'podman ps -a --filter ' ~ (('name=^' ~ (c.name | regex_escape) ~ '$') | quote) ~ " --format '{{.Names}} {{.Status}}'" -%}
+      {%-   set inspect_look = c.run_as ~ 'podman container inspect ' ~ nq ~ " --format '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}}'" -%}
+      {%-   set journal = ('journalctl _UID=' ~ (c.uid | int) ~ ' --since -2h -n 80 --no-pager | grep -ci error') if c.owner != 'root'
+                          else ('journalctl -u ' ~ (c.unit | quote) ~ ' -n 50 --no-pager | grep -ci error') if c.unit else '' -%}
+      {%-   set look = [ps_look]
+                       + ([c.run_as ~ 'podman logs --tail 50 ' ~ nq ~ ' 2>&1 | grep -ci error'] if c.id else [])
+                       + ([sc ~ ' show ' ~ (c.unit | quote) ~ ' -p ActiveState -p SubState -p Result -p NRestarts'] if c.unit else [])
                        + ([journal] if journal else []) -%}
-      {%-   set look = look if look else [c.run_as ~ 'podman ps -a'] -%}
       {%-   set age = now - (c.exited_at | int) -%}
       {%-   set ago = '' if (c.exited_at | int) <= 0 or now <= 0
                       else 'less than a minute ago' if age < 60
@@ -111,7 +116,7 @@
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:unhealthy:' ~ c.key, 'severity': 'critical',
                                 'summary': (c.what | default('container')) ~ ' ' ~ who ~ ' is running but its healthcheck reports unhealthy'
                                            ~ (('; ' ~ unit_says) if unit_says else ''),
-                                'hint': ([c.run_as ~ 'podman inspect ' ~ c.name] + look) | join('; ')}) -%}
+                                'hint': ([inspect_look] + look) | join('; ')}) -%}
       {%-   elif not c.running and c.state in ['exited', 'stopped'] and (c.exit_code | int) != 0
                  and (c.exited_at | int) > 0 and age <= window -%}
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:crashed:' ~ c.key, 'severity': 'warning',
@@ -135,12 +140,14 @@
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:oom:' ~ c.key, 'severity': 'warning',
                                 'summary': (c.what | default('container')) ~ ' ' ~ who ~ ' was killed by the out-of-memory killer'
                                            ~ ((' ' ~ ago) if ago and not c.running else '') ~ ': it needs more memory, or its memory limit is too low',
-                                'hint': ([c.run_as ~ 'podman inspect ' ~ c.name] + look) | join('; ')}) -%}
+                                'hint': ([inspect_look] + look) | join('; ')}) -%}
       {%-   endif -%}
       {%- endfor -%}
       {#- required containers: missing, or none of them running -#}
       {%- for r in check_containers_required | map('string') -%}
       {%-   set ro = r.split('/', 1)[0] if '/' in r else '' -%}
+      {#- an owner that is no user name is not put in a command: the hint then runs as root, listing only -#}
+      {%-   set ro_cmd = ro if (ro | regex_search('^[A-Za-z_][A-Za-z0-9_.-]*$')) else '' -%}
       {%-   set rn = r.split('/', 1)[1] if '/' in r else r -%}
       {%-   set m = [] -%}
       {%-   for c in site_containers if (not ro or c.owner == ro)
@@ -152,14 +159,15 @@
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:down:' ~ r, 'severity': 'critical',
                                 'summary': 'required container ' ~ rn ~ ' (' ~ (('owner ' ~ ro) if ro else 'any owner')
                                            ~ ') does not exist on this host (check_containers_required)',
-                                'hint': ((ro | podman_run_as(ro_uid)) if ro else '') ~ 'podman ps -a'}) -%}
+                                'hint': ((ro_cmd | podman_run_as(ro_uid)) if ro_cmd else '') ~ "podman ps -a --format '{{.Names}} {{.Status}}'"}) -%}
       {%-   elif m | selectattr('running') | list | length == 0 -%}
       {%-     for c in m if c.key not in down_keys -%}
       {%-       set _ = f.append({'check': 'containers', 'id': 'containers:down:' ~ c.key, 'severity': 'critical',
                                   'summary': 'required container ' ~ c.name ~ ' (owner ' ~ c.owner ~ ') is not running: it is ' ~ c.state
                                              ~ ((' (exit code ' ~ c.exit_code ~ ')') if c.state in ['exited', 'stopped'] else '')
                                              ~ ' (check_containers_required)',
-                                  'hint': (c.run_as ~ 'podman ps -a') ~ (('; ' ~ c.run_as ~ 'podman logs --tail 50 ' ~ c.name) if c.id else '')}) -%}
+                                  'hint': (c.run_as ~ 'podman ps -a --filter ' ~ (('name=^' ~ (c.name | regex_escape) ~ '$') | quote) ~ " --format '{{.Names}} {{.Status}}'")
+                                           ~ (('; ' ~ c.run_as ~ 'podman logs --tail 50 ' ~ (c.name | quote) ~ ' 2>&1 | grep -ci error') if c.id else '')}) -%}
       {%-     endfor -%}
       {%-   endif -%}
       {%- endfor -%}
@@ -171,7 +179,7 @@
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:no-linger:' ~ u.name, 'severity': 'warning',
                                 'summary': 'user ' ~ u.name ~ ' (uid ' ~ u.uid ~ ') has containers that should run (' ~ (want | join(', '))
                                            ~ ') but linger is off: they stop when ' ~ u.name ~ ' logs out and do not start at boot. Fix: loginctl enable-linger ' ~ u.name,
-                                'hint': 'loginctl show-user ' ~ u.name ~ ' -p Linger; ls /var/lib/systemd/linger/'}) -%}
+                                'hint': 'loginctl show-user ' ~ (u.name | quote) ~ ' -p Linger; ls /var/lib/systemd/linger/'}) -%}
       {%-   endif -%}
       {%- endfor -%}
       {#- a user that could not be checked is a finding only when something of theirs should start at boot
@@ -186,7 +194,7 @@
                                            ~ ', but they could not be checked: ' ~ u.reason
                                            ~ ('. Their containers are not running now. Fix, if they should run: loginctl enable-linger ' ~ u.user
                                               if not u.linger else ''),
-                                'hint': 'ls -ld /run/user/' ~ u.uid ~ '; ls /var/lib/systemd/linger/; loginctl show-user ' ~ u.user}) -%}
+                                'hint': 'ls -ld /run/user/' ~ u.uid ~ '; ls /var/lib/systemd/linger/; loginctl show-user ' ~ (u.user | quote)}) -%}
       {%-   endif -%}
       {%- endfor -%}
       {%- for u in site_podman.skipped if u.userns | default(false) -%}
@@ -198,7 +206,7 @@
       {%- for u in site_podman.skipped if u.uid | int < 0 -%}
       {%-   set _ = f.append({'check': 'containers', 'id': 'containers:query:' ~ u.user, 'severity': 'warning',
                               'summary': 'podman_discover_users names ' ~ u.user ~ ', but there is no such user on this host',
-                              'hint': 'getent passwd ' ~ u.user}) -%}
+                              'hint': 'getent passwd ' ~ (u.user | quote)}) -%}
       {%- endfor -%}
       {#- what could not be read: one finding per owner -#}
       {%- for owner in site_podman.errors | map(attribute='owner') | unique -%}

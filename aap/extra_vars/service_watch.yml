@@ -95,26 +95,31 @@
 #   A container that a systemd unit runs must never be started with `podman start` or `podman run`:
 #   the unit owns it, and while the unit is stopped the container usually does not exist at all
 #   (Quadlet removes it), so "no such container" is normal then, not the problem.
-#   For each finding, find the root cause with read-only commands. For a container of root:
-#   `systemctl status UNIT --no-pager` and `journalctl -u UNIT --since -2h --no-pager` (for a
-#   container a unit runs: why the unit stopped or failed),
-#   `podman ps -a` (every container and its state),
-#   `podman inspect NAME` (State: Status, ExitCode, FinishedAt, OOMKilled, Health),
-#   `podman logs --tail 80 NAME` (its last output before it stopped),
-#   `journalctl -t podman --since -2h --no-pager` (podman events, e.g. who stopped it and when),
-#   and the logs of the containers it depends on if those look unhealthy.
+#   For each finding, find the root cause with read-only commands that print STATE and COUNTS, never log lines, the environment or
+#   a container's whole inspect (a log line can hold a password or a token, and everything you print goes to the model provider).
+#   For a container of root:
+#   `systemctl show UNIT -p ActiveState -p SubState -p Result -p NRestarts -p ExecMainStatus` (for a container a unit runs: whether
+#   the unit stopped or failed, how often it restarted, with what exit status),
+#   `journalctl -u UNIT --since -2h --no-pager | grep -ci error` (how many error lines the unit logged),
+#   `podman ps -a --format '{% raw %}{{.Names}} {{.Status}}{% endraw %}'` (every container and its state),
+#   `podman container inspect NAME --format '{% raw %}{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}} {{.State.FinishedAt}}{% endraw %}'`
+#   (its state: how it stopped, and when),
+#   `podman logs --tail 80 NAME 2>&1 | grep -ci error` (how many error lines its last output holds),
+#   `journalctl -t podman --since -2h --no-pager | grep -c NAME` (how many podman events mention it),
+#   and the same counts for the containers it depends on if those look unhealthy.
 #   {% if _watch_evidence_file | default('') %}For a container of a USER: commands run as another user (runuser -u ..., sudo -u ...)
-#   are refused in this job, so do not try them. Their evidence was collected for you (podman
-#   inspect State, podman logs, systemctl --user status and the user's journal): read it with
-#   `cat {{ _watch_evidence_file }}`. `journalctl _UID=<uid> --since -2h --no-pager` also works.
+#   are refused in this job, so do not try them. Their evidence was collected for you (the state from
+#   `podman container inspect --format`, counts of error lines in the container's log and in the user's journal, and
+#   `systemctl --user show` of the unit): read it with `cat {{ _watch_evidence_file }}`. `journalctl _UID=<uid> --since -2h --no-pager | grep -ci error` also works.
 #   {% endif %}Say whether it crashed, was stopped on purpose, or failed for another reason (configuration,
-#   a dependency, a port, disk space). Quote the lines that show it.
+#   a dependency, a port, disk space), from the exit code, the OOM flag, the restart count and the counts. A person reads the logs
+#   to find the exact line; say which log to read.
 #   Starting it again the right way (above) is the fix when it stopped or crashed and nothing else
 #   is wrong. If a container it depends on is down, fix that one first. If the cause is something
 #   a start cannot fix, say so and give the exact fix for a person to approve.
 #   {% if _watch_mode | default(watch_mode) == 'self-heal' %}You may start or restart the watched containers yourself, with exactly the commands
 #   above, and change nothing else: propose any other change, do not make it. Verify a container of
-#   root with `podman inspect NAME` and expect_contains `"Running": true`; the playbook re-checks
+#   root with `podman container inspect NAME --format '{% raw %}{{.State.Running}}{% endraw %}'` and expect_contains `true`; the playbook re-checks
 #   every container itself afterwards.{% endif %}
 
 # ---- podman_discover -----------------------------------------------------------------------------

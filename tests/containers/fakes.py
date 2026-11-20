@@ -19,6 +19,7 @@ changes state.json, so a re-check sees the result. $FAKE_PODMAN_FAIL=OWNER makes
 podman fail; $FAKE_USERNS_OFF=1 makes every user's podman fail as with user.max_user_namespaces = 0;
 $FAKE_NOW is "now" (seconds since 1970)."""
 import json
+import re
 import os
 import sys
 
@@ -50,22 +51,25 @@ def cid(owner, name):
 
 def ps_json(owner, c):
     exited_at = now() - int(c["exited_ago"]) if c.get("exited_ago") is not None else -62135596800
-    labels = {"PODMAN_SYSTEMD_UNIT": c["unit"]} if c.get("unit") else None
+    labels = dict({"PODMAN_SYSTEMD_UNIT": c["unit"]} if c.get("unit") else {}, **{"vendor.token": "label-secret-" + c["name"]})
     status = "Up 1 hour" + ((" (%s)" % c["health"]) if c.get("health") else "") if c.get("state") == "running" \
         else "Exited (%s) 1 hour ago" % c.get("exit", 0)
     return {"Id": cid(owner, c["name"]), "Names": [c["name"]], "Image": c.get("image", "registry.example.com/%s:1" % c["name"]),
             "State": c.get("state", "running"), "ExitCode": int(c.get("exit", 0)), "Exited": c.get("state") == "exited",
-            "ExitedAt": exited_at, "Labels": labels, "Status": status, "IsInfra": False, "Restarts": int(c.get("restarts", 0))}
+            "ExitedAt": exited_at, "Labels": labels, "Status": status, "IsInfra": False, "Restarts": int(c.get("restarts", 0)),
+            "Command": ["/entrypoint.sh", "--password", "cmd-secret-" + c["name"]]}
 
 
 def inspect_json(owner, c):
     state = {"Status": c.get("state", "running"), "Running": c.get("state") == "running", "OOMKilled": bool(c.get("oom")),
              "ExitCode": int(c.get("exit", 0)), "FinishedAt": "2026-09-30T10:00:00.000000000Z"}
     if c.get("health"):
-        state["Healthcheck" if int(c.get("podman", 4)) < 4 else "Health"] = {"Status": c["health"], "FailingStreak": 3}
+        state["Healthcheck" if int(c.get("podman", 4)) < 4 else "Health"] = {"Status": c["health"], "FailingStreak": 3,
+                                                                              "Log": [{"Output": "token=hc-secret-" + c["name"]}]}
     return {"Id": cid(owner, c["name"]), "Name": c["name"], "State": state, "RestartCount": int(c.get("restarts", 0)),
             "ImageName": c.get("image", ""), "HostConfig": {"RestartPolicy": {"Name": c.get("policy", ""), "MaximumRetryCount": 0}},
-            "Config": {"Labels": {"PODMAN_SYSTEMD_UNIT": c["unit"]} if c.get("unit") else {}}}
+            "Config": {"Labels": {"PODMAN_SYSTEMD_UNIT": c["unit"]} if c.get("unit") else {},
+                       "Env": ["DB_PASSWORD=hunter2-" + c["name"], "JWT_SECRET=s3cr3t-" + c["name"]]}}
 
 
 def find(o, ref):
@@ -128,12 +132,27 @@ def podman(argv):
             if not c:
                 sys.stderr.write('Error: no such object: "%s"\n' % (refs[0] if refs else ""))
                 return 125
+            if "{{.State.Status}}|" in fmt:                     # the Service watch's state read: status|exit code|oom|finished
+                stt = inspect_json(owner, c)["State"]
+                print("%s|%s|%s|%s" % (stt["Status"], stt["ExitCode"], "true" if stt["OOMKilled"] else "false", stt["FinishedAt"]))
+                return 0
+            for field, other in (("State.Health.Status", "Healthcheck"), ("State.Healthcheck.Status", "Health")):
+                if "{{.%s}}" % field in fmt:                    # podman 3 has no .State.Health, podman 4 no .State.Healthcheck: the template fails
+                    stt = inspect_json(owner, c)["State"]
+                    if other in stt:
+                        sys.stderr.write("Error: template: can't evaluate field %s\n" % field.split(".")[1])
+                        return 125
+                    print((stt.get(field.split(".")[1]) or {}).get("Status", ""))
+                    return 0
             if "PODMAN_SYSTEMD_UNIT" in fmt:
                 print(c.get("unit") or "<no value>")
             elif "json .State" in fmt:
                 print(json.dumps(inspect_json(owner, c)["State"]))
             return 0
         print(json.dumps([inspect_json(owner, c) for c in found if c], indent=4))
+        if os.path.exists(os.path.join(WORK, "inspect_partial")) and not any(r.startswith("ds_") for r in refs):    # a container went away meanwhile
+            sys.stderr.write("Error: no such container\n")
+            return 125
         if not all(found):
             sys.stderr.write("Error: no such container\n")
             return 125
@@ -182,6 +201,8 @@ def systemctl(argv):
             if rest[i] == "-p":
                 props += rest[i + 1].split(",")
                 i += 2
+            elif rest[i] == "--":
+                i += 1
             else:
                 units.append(rest[i])
                 i += 1
@@ -190,6 +211,14 @@ def systemctl(argv):
             info = dict(o.get("units", {}).get(u) or {"LoadState": "not-found", "ActiveState": "inactive", "SubState": "dead"})
             info.setdefault("Result", "success")
             info.setdefault("NRestarts", "0")
+            if "ExecStart" in info and "FragmentPath" not in info:
+                # 1.79.18: a real unit has a file; discovery reads its ExecStart there for the true argument boundaries
+                m = re.search(r"argv\[\]=([^;]*)", info["ExecStart"])
+                d = os.path.join(WORK, "unitfiles", owner)
+                os.makedirs(d, exist_ok=True)
+                with open(os.path.join(d, u), "w") as fh:
+                    fh.write("[Service]\nExecStart=%s\n" % (m.group(1).strip() if m else ""))
+                info["FragmentPath"] = os.path.join(d, u)
             lines = ["Id=" + u] if (not props or "Id" in props) else []
             for p in props or info:
                 if p != "Id" and p in info and p != "creates":
