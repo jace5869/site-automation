@@ -693,7 +693,9 @@ run "  ... and the role once per page (0)" ok "{$SITES, \"report_web_dest\": \"$
 "$py" - "$work/one" "$work/each" <<'EOPY' && echo "ok   -   ... the same pages and JSON, file for file (less the times)" || { echo "FAIL - the pages differ"; fails=$((fails + 1)); }
 import json, os, re, sys
 def files(d):
-    return sorted(os.path.relpath(os.path.join(r, f), d) for r, _, fs in os.walk(d) for f in fs if not f.startswith("index.") and "_job-" not in f)
+    # 1.79.8: a run's hosted files (<page>-files/, e.g. the workbook) are binary and named by the run's minute: left out here
+    return sorted(os.path.relpath(os.path.join(r, f), d) for r, _, fs in os.walk(d) for f in fs
+                  if not f.startswith("index.") and "_job-" not in f and not os.path.basename(r).endswith("-files"))
 def norm(path):
     t = open(path, encoding="utf-8").read()
     if path.endswith(".json"):

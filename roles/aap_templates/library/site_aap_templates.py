@@ -17,6 +17,7 @@ options:
   organization: {description: The organization (its name)., type: str, required: true}
   project: {description: The site-automation project (its name)., type: str, required: true}
   inventory: {description: "The inventory a template is made with (its name).", type: str, default: ''}
+  inventory_organization: {description: "1.79.11c: the inventory's organization when it is not the templates' ('' = the same).", type: str, default: ''}
   ee: {description: "{all: name, windows: name, network: name} - an execution environment per kind ('' = the project's).", type: dict, default: {}}
   credentials: {description: "{kind: credential name} (a list of names for several).", type: dict, default: {}}
   only: {description: "Only the templates whose name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
@@ -129,7 +130,20 @@ class Templates(object):
         self.project = int(pr["id"]) if pr else None
         self.inventory = None
         if p["inventory"]:
-            inv = self.one("inventories", p["inventory"], "inventory (aap_templates_inventory)")
+            io = (p.get("inventory_organization") or "").strip()
+            if io and io != p["organization"]:
+                # 1.79.11c: an inventory of another organization (AAP lets a template use it when the credential's user
+                # has Use on it): looked up by its exact name in that organization only
+                orgs = [o for o in self.all("organizations/?name=%s" % _q(io)) if o.get("name") == io]
+                rows = [r for r in self.all("inventories/?name=%s" % _q(p["inventory"])) if r.get("name") == p["inventory"]
+                        and len(orgs) == 1 and r.get("organization") == orgs[0].get("id")]
+                if len(orgs) != 1 or len(rows) != 1:
+                    self.problems.append("inventory (aap_templates_inventory) %r: %s" % (p["inventory"], (
+                        "organization %r (aap_templates_inventory_organization) %s" % (io, "not found" if not orgs else "%d match" % len(orgs)))
+                        if len(orgs) != 1 else ("not found in organization %r" % io) if not rows else "%d match - rename one in AAP" % len(rows)))
+                inv = rows[0] if len(orgs) == 1 and len(rows) == 1 else None
+            else:
+                inv = self.one("inventories", p["inventory"], "inventory (aap_templates_inventory)")
             self.inventory = int(inv["id"]) if inv else None
         self.ees = {}
         for kind, name in sorted((p["ee"] or {}).items()):
@@ -449,7 +463,7 @@ class Templates(object):
 def main():
     module = AnsibleModule(
         argument_spec=dict(catalog=dict(type="list", elements="dict", required=True), organization=dict(type="str", required=True),
-                           project=dict(type="str", required=True), inventory=dict(type="str", default=""),
+                           project=dict(type="str", required=True), inventory=dict(type="str", default=""), inventory_organization=dict(type="str", default=""),
                            ee=dict(type="dict", default={}), credentials=dict(type="dict", default={}),
                            only=dict(type="list", elements="str", default=[]), overwrite=dict(type="bool", default=False),
                            create_alias=dict(type="bool", default=False),

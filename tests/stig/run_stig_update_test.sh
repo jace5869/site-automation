@@ -338,6 +338,21 @@ newvars='{"check_stig_update_workflow": true, "check_stig_update_create_assets":
 play stig_recheck.yml "create off (the default): a host with no asset is not rechecked, nothing planned" 2 \
     -e '{"check_stig_update_workflow": true, "check_stig_stigman_asset": "newbox", "check_stig_stigman_collection": "RHEL Servers"}' -- \
     "NOT RECHECKED - nothing to recheck: no asset named newbox with RHEL_9_STIG in the collection RHEL Servers" "!NEW ASSET" "!NEEDS APPROVAL"
+# 1.79.7: the host's asset only in an archive copy (check_stig_stigman_collections_exclude, default Archive*, SCA* ...):
+# that collection is not searched, so the host has no asset - planned as new in its own; with the list empty it is
+# "in another collection": not created
+"$py" - "$work/sm.json" <<'PYARC'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["collections"].append({"collectionId": "2", "name": "Archived STIGs"})
+d["assets"]["2"] = [{"assetId": "99", "name": "newbox", "fqdn": "", "stigs": [{"benchmarkId": "RHEL_9_STIG", "revisionStr": "V2R7"}]}]
+json.dump(d, open(sys.argv[1], "w"))
+PYARC
+play stig_recheck.yml "only in an Archived collection (excluded by default): planned as a new asset in its own collection" 2 -e "$newvars" -- \
+    "NEW ASSET newbox in RHEL Servers with RHEL_9_STIG V2R7" "!is in Archived STIGs"
+play stig_recheck.yml "  ... with check_stig_stigman_collections_exclude: [] - the archive copy counts: not created" 2 -e "$newvars" \
+    -e '{"check_stig_stigman_collections_exclude": []}' -- "newbox is in Archived STIGs: not created" "!NEW ASSET newbox"
+cp "$work/sm-first.json" "$work/sm.json"
 play stig_recheck.yml "the check: no asset - every rule checked, the asset and its reviews planned, NEEDS APPROVAL" 2 -e "$newvars" -- \
     "no asset in STIG Manager - newbox to create in RHEL Servers once approved, with RHEL_9_STIG V2R7: every rule checked (a full scan)" \
     "NEEDS APPROVAL - 8 review(s) of 1 asset(s) to write to STIG Manager, and 1 new asset(s) to create" \

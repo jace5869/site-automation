@@ -24,6 +24,7 @@
     organization: "{{ aap_templates_organization }}"
     project: "{{ aap_templates_project }}"
     inventory: "{{ aap_templates_inventory }}"
+    inventory_organization: "{{ aap_templates_inventory_organization }}"
     ee: "{{ aap_templates_ee }}"
     credentials: "{{ aap_templates_credentials }}"
     only: "{{ aap_templates_only }}"

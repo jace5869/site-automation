@@ -2683,6 +2683,26 @@ job_templates:
         playbook.
       supports: Run constraint=Reads only (no hosts); writes AAP job templates (fixes with overwrite), labels, descriptions
         (aap_templates_describe); no deletes
+  - name: AAP - describe templates
+    playbook: playbooks/aap_templates_setup.yml
+    credentials: [aap]
+    optional_credentials: []
+    ask_limit: false
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/aap_templates_setup.yml
+    area: Linux
+    ask_job_type: true
+    extra_vars: {aap_templates_describe: 'true', aap_templates_describe_only: 'true'}
+    description:
+      does: Writes the five-line description (Does, Targets, Produces, Supports, Contact) on every AAP template and workflow
+        it knows.
+      targets: AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit.
+      produces: Descriptions filled or kept current; the output lists each one, and the templates it does not know or AAP
+        does not have.
+      supports: Run constraint=Reads only (no hosts); writes AAP descriptions only (never a hand-written one unless overwrite);
+        no deletes
   - name: AAP - move templates to another inventory
     playbook: playbooks/aap_inventory_move.yml
     credentials: [aap]

@@ -105,6 +105,18 @@ it is for, so a job nobody remembers can be understood before anyone turns it of
   characters a line; the workflows), `test_site_portal.py` (`Described17911`). Docs: `SETUP_AAP.md` ("Describe the
   templates"), `VARIABLES_REFERENCE`, `aap/extra_vars`.
 
+
+**AAP - set up job templates: an inventory of another organization.** `aap_templates_inventory_organization` names the
+inventory's organization when it is not the templates' (`""` = the same, as before); the credential's user needs Use on it.
+Test: `tests/portal_setup/run_aap_templates_test.sh`.
+
+**AAP - describe templates (a job of its own).** The descriptions without anything else: `playbooks/aap_templates_setup.yml`
+with `aap_templates_describe: true` and `aap_templates_describe_only: true`, as its own template in the catalog (made by
+*AAP - set up job templates*, or by hand). Check first, then for real.
+
+Tests (batch): the insights e2e leaves a run's hosted files (1.79.8: `<page>-files/`) out of its page-for-page
+comparison; the STIG Manager update e2e covers an asset only in an Archived collection - planned as new in the host's
+own collection, and not created when `check_stig_stigman_collections_exclude: []`.
 ## 1.79.10 — 2026-11-20
 
 **To set up: nothing.** Optional: `answer_keys_values.grub_superusers_not_allowed` (more names the boot loader's

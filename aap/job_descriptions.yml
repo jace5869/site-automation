@@ -737,6 +737,11 @@ templates:
     targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."
     produces: "Missing templates made; the job output lists what was made, what differs and which templates run the same playbook."
     supports: "Run constraint=Reads only (no hosts); writes AAP job templates (fixes with overwrite), labels, descriptions (aap_templates_describe); no deletes"
+  "AAP - describe templates":
+    does: "Writes the five-line description (Does, Targets, Produces, Supports, Contact) on every AAP template and workflow it knows."
+    targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."
+    produces: "Descriptions filled or kept current; the output lists each one, and the templates it does not know or AAP does not have."
+    supports: "Run constraint=Reads only (no hosts); writes AAP descriptions only (never a hand-written one unless overwrite); no deletes"
   "AAP - move templates to another inventory":
     does: "Moves every job template, workflow, workflow node and schedule from one named inventory to another (aap_inventory_replace)."
     targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."

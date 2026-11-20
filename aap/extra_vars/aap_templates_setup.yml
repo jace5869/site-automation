@@ -39,6 +39,10 @@ aap_templates_credentials:
 ## the organization the templates are made in
 # aap_templates_organization: Default
 
+## the inventory's organization when it is another one ("" = aap_templates_organization); the
+## credential's user needs Use on it
+# aap_templates_inventory_organization: ""
+
 ## the site portal's label (as written, case too)
 # aap_templates_portal_label: "{{ portal_label | default('portal') }}"
 

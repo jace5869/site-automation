@@ -167,6 +167,17 @@ setst "s['job_templates']=[j for j in s['job_templates'] if j['id'] != 190]"
 run -e '{"aap_templates_inventory": "", "aap_templates_only": ["Troubleshoot"]}'; rc=$?
 [ $rc = 0 ] && has "already right - 'Troubleshoot'" && pass "no inventory set: the templates there still checked" \
     || fail "no inventory" "rc $rc; $(grep -E "fatal|msg" "$work/out.txt" | head -3)"
+# ---- 1.79.11c: the inventory of another organization (aap_templates_inventory_organization)
+setst "s['inventories'].append({'id': 33, 'name': 'Lab hosts', 'organization': 9})"
+run --check -e '{"aap_templates_inventory": "Lab hosts", "aap_templates_only": ["Troubleshoot"]}'; rc=$?
+[ $rc != 0 ] && has "inventory (aap_templates_inventory) 'Lab hosts': not found in organization 'Default'" \
+    && pass "an inventory of another organization, its organization not named: not found, stopped" || fail "other org inv, unnamed" "rc $rc"
+run --check -e '{"aap_templates_inventory": "Lab hosts", "aap_templates_inventory_organization": "Lab", "aap_templates_only": ["Troubleshoot"]}'; rc=$?
+[ $rc = 0 ] && ! has "inventory (aap_templates_inventory)" && pass "aap_templates_inventory_organization: the other organization's inventory found (Check)" \
+    || fail "other org inv" "rc $rc; $(grep -E "fatal|msg" "$work/out.txt" | head -3)"
+run --check -e '{"aap_templates_inventory": "Lab hosts", "aap_templates_inventory_organization": "Nope", "aap_templates_only": ["Troubleshoot"]}'; rc=$?
+[ $rc != 0 ] && has "organization 'Nope' (aap_templates_inventory_organization) not found" && pass "  ... an organization that is not there: said, stopped" \
+    || fail "other org missing" "rc $rc"
 setst "s['projects'].append({'id': 20, 'name': 'Lab project', 'organization': 9})"
 before="$(writes)"
 run -e '{"aap_templates_project": "Lab project"}'; rc=$?
