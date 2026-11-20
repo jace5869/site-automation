@@ -1011,7 +1011,7 @@ def stig_answer_in_files(folder, key):
             continue
         try:
             root = ET.parse(p).getroot()
-        except (ET.ParseError, OSError):
+        except (ET.ParseError, OSError, LookupError, ValueError):      # 1.79.4 (Codex): an encoding it cannot read too
             continue
         for vuln in root.iter():
             if vuln.tag.split("}")[-1] != "Vuln":
@@ -1033,16 +1033,157 @@ def stig_answer_copy_all(rows, label):
     return "\n".join(["<!-- site-automation answer keys: every ready block of %s - paste inside your answer file's <STIGComments> -->" % label] + parts) if parts else ""
 
 
+# ---- 1.79.4: one whole Evaluate-STIG answer file per STIG (benchmark and release) -------------------------------------
+def stig_answer_file_stigs(folder):
+    """The site's answer files (the folder site_answer_files read them to, on the AAP side) -> [{file, name, vulns: [V-]}]:
+    each file's STIGComments Name and the rules it has a Vuln for - which STIG's short name the site uses."""
+    import xml.etree.ElementTree as ET
+    out = []
+    if not folder or not os.path.isdir(folder):
+        return out
+    for n in sorted(os.listdir(folder)):
+        p = os.path.join(folder, n)
+        if not os.path.isfile(p) or os.path.getsize(p) > 20 * 1048576:
+            continue
+        try:
+            root = ET.parse(p).getroot()
+        except (ET.ParseError, OSError, LookupError, ValueError):      # 1.79.4 (Codex): an encoding it cannot read too
+            continue
+        if root.tag.split("}")[-1] != "STIGComments" or not (root.get("Name") or "").strip():
+            continue
+        # 1.79.4 (Codex P1): a Name that is not a plain short name (or that the redaction would change) is never a
+        # candidate and never shown - only counted; only V-<digits> rule ids count
+        name = root.get("Name").strip()
+        out.append({"file": n, "name": name if _plain_name(name) else "", "rejected": not _plain_name(name),
+                    "vulns": [v.get("ID") for v in root if v.tag.split("}")[-1] == "Vuln" and re.match(r"^V-\d{1,9}$", v.get("ID") or "")]})
+    return out
+
+
+def _plain_name(name):
+    """An Evaluate-STIG short name as it may be published: letters, digits, . _ - only, at most 100, nothing redact changes."""
+    return bool(re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", name or "")) and redact(name) == name
+
+
+def _comment(s):
+    """Text inside an XML comment: never "--", never ending in "-"."""
+    s = re.sub(r"[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]", "?", str(s))   # XML 1.0 characters only
+    s = re.sub(r"-{2,}", "-", s)
+    return s + " " if s.endswith("-") else s
+
+
+def _file_part(s):
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(s or "")).strip("._-")
+
+
+def _indent_block(block):
+    """A block's lines under its <Vuln>, four spaces in - but never the code's own lines (between <ValidationCode> and
+    </ValidationCode>, that closing line too): they stay as the block has them, so the parsed code is the block's (a
+    here-string's "@ must start its line)."""
+    out, code = [], False
+    for x in str(block).split("\n"):
+        t = x.strip().lower()
+        if code and t.startswith("</validationcode"):
+            code = False
+            out.append(x)                # 1.79.4 (Codex P1): its leading spaces are the code's text - kept as they are
+        elif code:
+            out.append(x)
+        else:
+            out.append("    " + x if x.strip() else x)
+            code = t.startswith("<validationcode") and "</validationcode" not in t
+    return out
+
+
+def _short_name(g, ids, site):
+    """The STIG's Evaluate-STIG short name (STIGComments Name) -> (name, from, known): the site's own answer file for this
+    STIG (the most of its rules; two files with other Names and as many rules: neither), else check_stig_evaluate_select
+    of the host's RHEL version (major - the name the run gave Evaluate-STIG's -SelectSTIG), else the benchmark id - not
+    known, said. A site Name that is not a plain short name is never used or shown."""
+    ids, best, bad = set(ids), {}, 0
+    for f in site or []:
+        n = len(ids & set(f.get("vulns") or []))
+        if n and (f.get("rejected") or not _plain_name(f.get("name"))):
+            bad += 1
+            continue
+        if n:
+            b = best.setdefault(f["name"], {"n": 0, "files": []})
+            b["n"] = max(b["n"], n)
+            b["files"].append(f["file"])
+    tops = sorted(best.items(), key=lambda kv: -kv[1]["n"])
+    if tops and (len(tops) == 1 or tops[0][1]["n"] > tops[1][1]["n"]):
+        name, b = tops[0]
+        also = ("; other files have %s" % ", ".join("%s (%s)" % (k, ", ".join(redact(x) for x in v["files"])) for k, v in tops[1:])) if len(tops) > 1 else ""
+        return name, "your answer file %s%s" % (", ".join(redact(x) for x in b["files"]), also), True
+    # the host's own RHEL version picks it, as it did for the scan (site_stig_scan); 1.79.4 (Codex): no version known,
+    # no name from the setting - the benchmark is no proof of what the scan was given
+    major = str(g.get("major") or "").strip()
+    sel = g.get("select") or {}
+    if major and isinstance(sel, dict):
+        s = sel.get(major, sel.get(int(major), "") if major.isdigit() else "")
+        if str(s or "").strip():
+            return str(s).strip(), "check_stig_evaluate_select (the name this run gave Evaluate-STIG)", True
+    why = "your answer files name it two ways (%s)" % ", ".join("%s: %s" % (k, ", ".join(redact(x) for x in v["files"])) for k, v in tops) \
+        if tops else "no answer file of yours for it was read, and check_stig_evaluate_select has no name for its host's RHEL version"
+    if bad:
+        why += "; %d of your answer files for it %s a Name that is not a plain short name (not shown)" % (bad, "has" if bad == 1 else "have")
+    return str(g.get("bench") or "STIG"), "not known - the benchmark id; %s" % why, False
+
+
+def stig_answer_xml_files(groups, key, site=None, answered=None):
+    """Each STIG with a ready block -> one whole Evaluate-STIG answer file: [{label, bench, rev, filename, name, name_from,
+    known, blocks, xml}]. The XML declaration, a comment (what made it, where its Name came from - "CHECK THE NAME" when
+    not known), <STIGComments Name>, each ready block in its <Vuln ID> (its ACT and trial-off marks kept)."""
+    out, used, answered = [], set(), answered or {}
+    for g in groups or []:
+        ready = [r for r in g.get("rows") or [] if r.get("block")]
+        if not ready:
+            continue
+        ids = [r["v"] for r in g.get("rows") or []] + list(answered.get(g.get("label")) or [])
+        name, src, known = _short_name(g, ids, site)
+        base = "answer-keys-%s" % "-".join(x for x in (_file_part(g.get("bench")) or "STIG", _file_part(g.get("rev"))) if x)
+        fn, i = base + ".xml", 2
+        while fn.lower() in used:
+            fn, i = "%s-%d.xml" % (base, i), i + 1
+        used.add(fn.lower())
+        head = ["<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+                "<!-- %s -->" % _comment("site-automation STIG answer keys: %s (%s %s), %d block%s for answer key %s. Read every "
+                                         "block and try the file on a test host before you use it." % (
+                                             g.get("label") or "", g.get("bench") or "", g.get("rev") or "", len(ready),
+                                             "" if len(ready) == 1 else "s", key)),
+                "<!-- %s -->" % _comment("STIGComments Name: from %s." % src if known else
+                                         "CHECK THE NAME: %s is %s. Set Name to the short name your Evaluate-STIG lists for "
+                                         "this STIG (the name -SelectSTIG takes)." % (name, src))]
+        body = ['<STIGComments Name="%s">' % _attr(name)]
+        for r in ready:
+            body += ['  <Vuln ID="%s">' % _attr(r["v"])] + _indent_block(r["block"]) + ["  </Vuln>"]
+        body.append("</STIGComments>")
+        text = "\n".join(head + body) + "\n"
+        try:                             # 1.79.4 (Codex): only a file that parses is offered
+            import xml.etree.ElementTree as ET
+            ET.fromstring(text.encode("utf-8"))
+            bad = ""
+        except ET.ParseError as e:
+            bad = "it does not parse (line %s, column %s) - a block holds a character XML does not allow" % tuple(getattr(e, "position", ("?", "?")))
+        out.append({"label": g.get("label") or "", "bench": g.get("bench") or "", "rev": g.get("rev") or "", "filename": fn,
+                    "name": name, "name_from": src, "known": known, "blocks": len(ready), "xml": "" if bad else text, "error": bad})
+    return out
+
+
 # 1.76.4 (Codex): what is said for each STIG under its own label (its Evaluate-STIG, its trial - on or off), never in
 # the shared text
 PER_STIG = ("Evaluate-STIG", "Evaluate-STIG's", "Evaluate-STIG on the host", "Evaluate-STIG compares", "Evaluate-STIG's code",
             "The read-only check and the trial ran with", "The read-only check ran with", "The trial is off", "The trial ran each code")
 
 
-def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, left_out=None, auto=None, answered=None, trial_on=None, evidence="web"):
-    """1.76.0: the report of many hosts, grouped by STIG. groups: [{label, bench, rev, hosts, rep, rows, ev, names_from}]
-    (rows: stig_answer_rows of the group) -> {report (the email), web, xlsx, lines}."""
+def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, left_out=None, auto=None, answered=None, trial_on=None, evidence="web",
+                             site_files=None):
+    """1.76.0: the report of many hosts, grouped by STIG. groups: [{label, bench, rev, hosts, rep, rows, ev, names_from,
+    select}] (rows: stig_answer_rows of the group) -> {report (the email), web, xlsx, lines, files}. 1.79.4: files - one
+    whole answer file per STIG (stig_answer_xml_files; site_files: stig_answer_file_stigs of the site's answer files)."""
     failed, none, left_out, answered = failed or [], none or [], left_out or {}, answered or {}
+    made = stig_answer_xml_files(groups, key, site_files, answered)
+    files = [f for f in made if not f.get("error")]
+    file_of = dict((f["label"], f) for f in files)
+    bad_of = dict((f["label"], f) for f in made if f.get("error"))
     web_secs, mail_secs, xlsx, lines, how, how_base = [], [], [], [], [], []
     n_ready = n_nod = n_off = 0
     offs = []
@@ -1060,16 +1201,21 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
         rw = dict(rw, title="%s - answer keys to copy (%d)" % (g["label"], len(ready)))
         nd = dict(nd, title="%s - not drafted (%d)" % (g["label"], len(nod)))
         web_secs += [rw]
-        allx = stig_answer_copy_all(ready, g["label"])
-        if allx:
-            web_secs.append({"title": "%s - copy all blocks (%d)" % (g["label"], len(ready)), "status": "info",
-                             "text": "Every ready block of %s, each in its own <Vuln ID>: paste them inside one answer file's "
-                                     "<STIGComments>. Try them on a test host first." % g["label"],
-                             "columns": ["", "What", "Blocks"], "kinds": ["x", "wrap", "num"],
-                             "rows": [["", "Every ready block of %s" % g["label"], len(ready)]],
-                             "details": [[{"texts": [{"label": "%s - %d blocks" % (g["label"], len(ready)), "text": allx,
-                                                      "button": "Copy all blocks for %s" % g["label"], "cmd": allx,
-                                                      "title": "Copies every ready block of this STIG", "note": ""}]}]],
+        f = file_of.get(g["label"])
+        if f:
+            # 1.79.4: the whole answer file of this STIG (was: every block to paste into one) - the email attaches it
+            web_secs.append({"title": "%s - the answer file (%d block%s)" % (g["label"], f["blocks"], "" if f["blocks"] == 1 else "s"),
+                             "status": "info" if f["known"] else "warning",
+                             "text": "The whole Evaluate-STIG answer file for %s: copy it and save it as %s (the email has it "
+                                     "attached). STIGComments Name %s - %s. Read every block and try the file on a test "
+                                     "host first." % (g["label"], f["filename"], f["name"],
+                                                      ("from " + f["name_from"]) if f["known"] else
+                                                      "CHECK IT: " + f["name_from"] + "; set it to the short name your Evaluate-STIG lists"),
+                             "columns": ["", "File", "STIGComments Name", "Blocks"], "kinds": ["x", "wrap", "wrap", "num"],
+                             "rows": [["", f["filename"], f["name"] if f["known"] else "%s (check it)" % f["name"], f["blocks"]]],
+                             "details": [[{"texts": [{"label": f["filename"], "text": f["xml"],
+                                                      "button": "Copy the answer file for %s" % g["label"], "cmd": f["xml"],
+                                                      "title": "Copies the whole answer file of this STIG", "note": ""}]}]],
                              "wrap": True, "keep_case": True})
         if nod:
             web_secs.append(nd)
@@ -1087,13 +1233,28 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
                                "not tried" if r.get("untried") else
                                "True" if (r.get("trial") or {}).get("valid") is True else "False" if (r.get("trial") or {}).get("valid") is False else "-",
                                r["block"]] for r in ready]})
+        if g["label"] in bad_of:
+            web_secs.append({"title": "%s - no answer file" % g["label"], "status": "warning",
+                             "text": "The answer file %s was not made: %s. Copy the blocks one by one." % (
+                                 bad_of[g["label"]]["filename"], bad_of[g["label"]]["error"])})
         lines += ["%s: %d ready to copy, %d not drafted (hosts: %s)" % (g["label"], len(ready), len(nod), ", ".join(hosts))] + \
+            (["  NO answer file %s: %s" % (bad_of[g["label"]]["filename"], bad_of[g["label"]]["error"])] if g["label"] in bad_of else []) + \
+            (["  answer file %s: STIGComments Name %s (%s)" % (f["filename"], f["name"], f["name_from"] if f["known"] else
+                                                                "CHECK THE NAME - " + f["name_from"])] if f else []) + \
             ["  %s %s%s: %s" % (r["v"], "ACT draft" if r.get("by") == "ACT" else "ready", " (not tried)" if r.get("untried") else "",
                                  r.get("title") or "") for r in ready] + \
             ["  %s NOT DRAFTED: %s" % (r["v"], r.get("why") or "") for r in nod]
         if not how_base:
             how_base.extend(hw.get("lines") or [])
-    extra, failed_mail = [], None
+    extra, failed_mail, files_mail = [], None, []
+    if files:
+        # 1.79.4: the email's attachments, one answer file per STIG
+        files_mail = [{"title": "Answer files attached (%d)" % len(files), "status": "info" if all(f["known"] for f in files) else "warning",
+                       "text": "One Evaluate-STIG answer file per STIG, attached (.xml). Read every block and try a file on a "
+                               "test host before you use it.",
+                       "columns": ["File", "STIG", "STIGComments Name", "Blocks"], "kinds": ["wrap", "wrap", "wrap", "num"], "wrap": True,
+                       "rows": [[f["filename"], f["label"], f["name"] if f["known"] else "%s - CHECK IT: %s" % (f["name"], f["name_from"]),
+                                 f["blocks"]] for f in files]}]
     if failed:
         # 1.77.0h: why a host did not work - its words (a connection's, a module's) on the web only
         hw_sec = {"title": "Hosts that did not work (%d)" % len(failed), "status": "warning", "columns": ["Host", "Why"],
@@ -1140,8 +1301,8 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
                           for g in groups or [] for r in g.get("rows") or [] if not r.get("block")] +
                          [["-", v, "", "in none of the hosts' STIGs"] for v in none]})
     extra_mail = [failed_mail if (failed_mail and x is extra[0]) else x for x in extra]
-    return {"report": dict(base, sections=mail_secs + extra_mail + [howsec]), "web": dict(base, sections=web_secs + extra + [howsec]),
-            "xlsx": xlsx, "lines": [title] + lines}
+    return {"report": dict(base, sections=mail_secs + files_mail + extra_mail + [howsec]), "web": dict(base, sections=web_secs + extra + [howsec]),
+            "xlsx": xlsx, "lines": [title] + lines, "files": [dict((k, v) for k, v in f.items() if k != "error") for f in files]}
 
 
 class FilterModule(object):
@@ -1156,6 +1317,7 @@ class FilterModule(object):
                 "stig_answer_act_uses": stig_answer_act_uses, "stig_answer_auto": stig_answer_auto,
                 "stig_answer_merge": stig_answer_merge, "stig_answer_report_multi": stig_answer_report_multi,
                 "stig_answer_copy_all": stig_answer_copy_all, "stig_label": stig_label,
+                "stig_answer_file_stigs": stig_answer_file_stigs, "stig_answer_xml_files": stig_answer_xml_files,
                 # 1.77.0d: the one redaction (site_redact), for an error text a task cuts: redact first, then cut
                 "site_redact": redact,
                 "stig_answer_att_items": stig_answer_att_items, "stig_answer_drop_att": stig_answer_drop_att,

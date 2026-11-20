@@ -675,7 +675,7 @@
 
 ## --SelectSTIG for each RHEL version, e.g. {"8": RHEL8, "9": RHEL9}: only the RHEL STIG is scanned
 ## (faster); its short name as your Evaluate-STIG lists it. {} = every STIG that applies to the host
-## (the RHEL one is read)
+## (the RHEL one is read); 1.79.4: also the answer keys job's STIGComments Name
 # check_stig_evaluate_select: {}
 
 ## more arguments for Evaluate-STIG, e.g. ["--ScanType", "Classified", "--AnswerKey", "SITE"]

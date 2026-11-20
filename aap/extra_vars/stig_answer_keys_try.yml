@@ -32,7 +32,7 @@ check_stig_evaluate_answers: '\\fileserver.yourdomain.mil\stig\AnswerFiles'
 
 ## --SelectSTIG for each RHEL version, e.g. {"8": RHEL8, "9": RHEL9}: only the RHEL STIG is scanned
 ## (faster); its short name as your Evaluate-STIG lists it. {} = every STIG that applies to the host
-## (the RHEL one is read)
+## (the RHEL one is read); 1.79.4: also the answer keys job's STIGComments Name
 # check_stig_evaluate_select: {}
 
 ## Evaluate-STIG's option for their folder (the job checks the script has it; .ps1: -AFPath)

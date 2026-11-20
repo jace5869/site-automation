@@ -150,31 +150,52 @@ for h in es8 es9a es9b es10; do
 done
 page="$(lastpage)"; t="$(pagetext "$page")"
 for want in "RHEL 9 V2R10 - answer keys to copy (2)" "RHEL 8 V2R9 - answer keys to copy (1)" "RHEL 10 V1R3 - answer keys to copy (1)" \
-            "Copy all blocks for RHEL 9 V2R10" "Not Reviewed on 1 host, Open on 1 host - the key applies where Evaluate-STIG says Open" \
+            "Copy the answer file for RHEL 9 V2R10" "RHEL 9 V2R10 - the answer file (2 blocks)" "Not Reviewed on 1 host, Open on 1 host - the key applies where Evaluate-STIG says Open" \
             "Found on (2) h9a, h9b" "Hosts that did not work (1)" "In none of the hosts' STIGs (1)"; do
     case "$t" in *"$want"*) true ;; *) echo "FAIL - the website: missing '$want'"; fails=$((fails + 1)) ;; esac
 done
 if "$py" - "$page" <<'PY'
 import html, re, sys
 t = open(sys.argv[1]).read()
-c = dict((m.split(" - paste inside")[0].split("every ready block of ")[1], m) for m in (html.unescape(x) for x in re.findall(r'data-copy="([^"]*)"', t))
-         if "every ready block of" in m)
+import xml.etree.ElementTree as ET
+# 1.79.4: each STIG's whole answer file to copy - it parses, its Name, every block in its own <Vuln ID>
+c = dict((re.search(r"site-automation STIG answer keys: (RHEL [0-9]+ V[0-9]+R[0-9]+)", m).group(1), m)
+         for m in (html.unescape(x) for x in re.findall(r'data-copy="([^"]*)"', t)) if m.startswith("<?xml"))
+names = dict((k, ET.fromstring(v.encode()).get("Name")) for k, v in c.items())
 v7, v10 = c.get("RHEL 9 V2R7", ""), c.get("RHEL 9 V2R10", "")
 ok = '<Vuln ID="V-257777">' in v7 and "'/etc/hosts'" in v7 and "/etc/hostname" not in v7 and "'/etc/hostname'" in v10 and "/etc/hosts'" not in v10
-print(sorted(c)); sys.exit(0 if ok and len(c) == 4 else 1)
+print(sorted(c), names)
+sys.exit(0 if ok and len(c) == 4 and names == {"RHEL 8 V2R9": "RHEL8", "RHEL 9 V2R7": "RHEL9", "RHEL 9 V2R10": "RHEL9", "RHEL 10 V1R3": "RHEL10"} else 1)
 PY
-then echo "ok   - the website: Copy all blocks for each STIG, every block in its own <Vuln ID>; RHEL 9 V2R7 and V2R10 each their own text (/etc/hosts, /etc/hostname)"
-else echo "FAIL - Copy all / a block per revision"; fails=$((fails + 1)); fi
+then echo "ok   - the website: each STIG's whole answer file (it parses; its Name from check_stig_evaluate_select); RHEL 9 V2R7 and V2R10 each their own (/etc/hosts, /etc/hostname)"
+else echo "FAIL - the answer file / a file per revision"; fails=$((fails + 1)); fi
+if "$py" - "$work/out.txt" <<'PY'
+import sys
+t = open(sys.argv[1]).read()
+sys.exit(0 if all(n in t for n in ("answer-keys-RHEL_8_STIG-V2R9.xml", "answer-keys-RHEL_9_STIG-V2R7.xml", "answer-keys-RHEL_9_STIG-V2R10.xml",
+                                   "answer-keys-RHEL_10_STIG-V1R3.xml")) else 1)
+PY
+then echo "ok   - the job's output names the four answer files"; else echo "FAIL - the job's output: the answer files"; fails=$((fails + 1)); fi
 m="$(ls "$work/mail"/* 2>/dev/null | head -1)"
 if [ -n "$m" ] && "$py" - "$m" <<'PY'
 import email, io, re, sys, zipfile
 msg = email.message_from_binary_file(open(sys.argv[1], "rb"))
+import xml.etree.ElementTree as ET
 x = [p for p in msg.walk() if (p.get_filename() or "").endswith(".xlsx")]
 names = re.findall(r'<sheet [^>]*name="([^"]+)"', zipfile.ZipFile(io.BytesIO(x[0].get_payload(decode=True))).read("xl/workbook.xml").decode()) if x else []
 print("sheets:", names)
-sys.exit(0 if all(n in names for n in ("RHEL 8 V2R9", "RHEL 9 V2R10", "RHEL 9 V2R7", "RHEL 10 V1R3", "Not drafted")) else 1)
+# 1.79.4: an answer file per STIG attached (.xml, no zip), each parses, with its Name
+xs = dict((p.get_filename(), ET.fromstring(p.get_payload(decode=True)).get("Name")) for p in msg.walk() if (p.get_filename() or "").endswith(".xml"))
+print("xml:", xs)
+zips = [p.get_filename() for p in msg.walk() if (p.get_filename() or "").lower().endswith(".zip")]
+body = "".join(p.get_payload(decode=True).decode("utf-8", "replace") for p in msg.walk() if p.get_content_type() == "text/html")
+sys.exit(0 if all(n in names for n in ("RHEL 8 V2R9", "RHEL 9 V2R10", "RHEL 9 V2R7", "RHEL 10 V1R3", "Not drafted")) and not zips and
+         xs == {"answer-keys-RHEL_8_STIG-V2R9.xml": "RHEL8", "answer-keys-RHEL_9_STIG-V2R7.xml": "RHEL9",
+                "answer-keys-RHEL_9_STIG-V2R10.xml": "RHEL9", "answer-keys-RHEL_10_STIG-V1R3.xml": "RHEL10"} and
+         "Answer files attached (4)" in body else 1)
 PY
-then echo "ok   - the workbook: a sheet per STIG"; else echo "FAIL - the workbook's sheets"; fails=$((fails + 1)); fi
+then echo "ok   - the email: a sheet per STIG in the workbook; an answer file per STIG attached (.xml, it parses, its Name; no zip), listed"
+else echo "FAIL - the email: the workbook's sheets / the answer files attached"; fails=$((fails + 1)); fi
 grep -qvE "^(GET |POST /token)" "$work/sm.log" && { echo "FAIL - a request that is not a GET reached STIG Manager"; fails=$((fails + 1)); } || echo "ok   - only GET requests reached STIG Manager"
 
 # 1.76.0b: a trial host that fails - its STIG's blocks not tried, the other STIG and the report go on, the job green
@@ -204,6 +225,19 @@ printf '<?xml version="1.0"?>\n<STIGComments Name="RHEL9"><Vuln ID="V-257777"><A
 run "the rules already in your answer file: left out, listed" ok -e target=h9a -e answer_keys_pick=both -e '{"answer_keys_cat": [1, 2]}' -e check_stig_evaluate_answers="$work/answers" -- \
     "RHEL 9 V2R10: 2 ready to copy" "!V-257777 ready"
 t="$(pagetext "$(lastpage)")"; case "$t" in *"Already in your answer file (1)"*"V-257777"*) echo "ok   - ... listed: already in your answer file" ;; *) echo "FAIL - already answered"; fails=$((fails + 1)) ;; esac
+# 1.79.4: the answer file's Name from the site's own answer file for that STIG (not check_stig_evaluate_select's RHEL9)
+sed -i 's/<STIGComments Name="RHEL9">/<STIGComments Name="RHEL9-site">/' "$work/answers/RHEL9_SITEA.xml"
+run "the answer file's Name from your own answer file for that STIG" ok -e target=h9a -e answer_keys_pick=both -e '{"answer_keys_cat": [1, 2]}' -e check_stig_evaluate_answers="$work/answers" -- \
+    "answer file answer-keys-RHEL_9_STIG-V2R10.xml: STIGComments Name RHEL9-site (your answer file RHEL9_SITEA.xml)"
+m="$(ls "$work/mail"/* 2>/dev/null | head -1)"
+if [ -n "$m" ] && "$py" - "$m" <<'PY'
+import email, sys
+import xml.etree.ElementTree as ET
+msg = email.message_from_binary_file(open(sys.argv[1], "rb"))
+x = [ET.fromstring(p.get_payload(decode=True)) for p in msg.walk() if p.get_filename() == "answer-keys-RHEL_9_STIG-V2R10.xml"]
+sys.exit(0 if x and x[0].get("Name") == "RHEL9-site" and [v.get("ID") for v in x[0]] == ["V-257804", "V-258999"] else 1)
+PY
+then echo "ok   - ... the attached file: Name RHEL9-site, the two new blocks (not the one already answered)"; else echo "FAIL - the Name from the site's file"; fails=$((fails + 1)); fi
 
 # 4. 1.77.0, the cross-check: h9b's review of SV-258999 is a person's (no result engine), newer than its last scan import
 # (SV-257777's, by Evaluate-STIG); the code is tried on h9a (the trial host). Both hosts are this box: the same evidence.

@@ -1,8 +1,8 @@
 ---
 # STIG ANSWER KEYS (1.76.0), on the AAP side, once (playbooks/stig_answer_keys.yml: run_once, delegated to localhost): the
 # blocks of each STIG (the read-only check and trial of its first host - answer_keys_check.yml), the report grouped by
-# STIG - a Copy all per STIG, a workbook sheet per STIG, the hosts that did not work, the rules in none of the hosts'
-# STIGs - emailed and published as every report.
+# STIG - its whole answer file per STIG (1.79.4: Copy on the website, attached to the email), a workbook sheet per
+# STIG, the hosts that did not work, the rules in none of the hosts' STIGs - emailed and published as every report.
 - name: Answer keys | the blocks of each STIG (the cross-check made them already)
   when: _ak_groups is not defined
   ansible.builtin.set_fact:
@@ -21,11 +21,18 @@
 - name: Answer keys | the report
   ansible.builtin.set_fact:
     _ak_doc: >-
-      {{ _ak_groups | stig_answer_report_multi(_ak_key, answer_keys_act | bool, _ak_m.failed, _ak_m.none, _ak_m.left_out,
+      {#- 1.79.4: each STIG's answer file takes its Name from the site's answer files, else check_stig_evaluate_select -#}
+      {%- set gs = [] -%}
+      {%- for g in _ak_groups -%}
+      {%-   set _ = gs.append(g | combine({'select': hostvars[g.rep].check_stig_evaluate_select | default({}),
+                                          'major': hostvars[g.rep]._ak_h.major | default('')})) -%}
+      {%- endfor -%}
+      {{ gs | stig_answer_report_multi(_ak_key, answer_keys_act | bool, _ak_m.failed, _ak_m.none, _ak_m.left_out,
                                                ('answer_keys_pick ' ~ answer_keys_pick ~ ', answer_keys_cat ' ~ (answer_keys_cat | join(',') if answer_keys_cat is not string else answer_keys_cat)
                                                 ~ ', at most ' ~ answer_keys_max_rules ~ ' per STIG; never a review Not a Finding, Not Applicable, with RA / POA&M words or attachments')
                                                if _ak_rules.auto | default(false) else '', _ak_m.answered | default({}),
-                                               answer_keys_trial | bool, answer_keys_evidence | default('web')) }}
+                                               answer_keys_trial | bool, answer_keys_evidence | default('web'),
+                                               _ak_site_stigs | default([])) }}
 
 - name: Answer keys | the cross-check in the report (1.77.0, answer_keys_cross_check) - its tile, sections, column, sheet
   ansible.builtin.set_fact:
@@ -47,19 +54,61 @@
     loop_var: r
     label: "{{ r.label }} {{ r.v }}"
 
-- name: Answer keys | email the report, publish it (report_email_to, report_web_dest)
-  ansible.builtin.include_role:
-    name: site_email
-    apply:
-      delegate_to: localhost
-      run_once: true
-      become: false
-  vars:
-    ansible_connection: local
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
-    _report: "{{ _ak_doc.report }}"
-    _report_web: "{{ _ak_doc.web }}"
-    _report_xlsx: "{{ _ak_doc.xlsx }}"
+# 1.79.4: one whole Evaluate-STIG answer file per STIG, attached to the email (.xml - never a zip) - written to a folder of
+# the job's own on the AAP side, removed after; nothing to the share, STIG Manager or a host
+- name: Answer keys | the answer files - a folder of the job's own
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: site-answer-keys-xml-
+  register: _ak_xml_dir
+  check_mode: false
+  when: _ak_doc.files | default([]) | length > 0
+
+- name: Answer keys | the answer files written and attached to the email (report_email_to), the report published (report_web_dest)
+  # 1.79.4 (Codex): the files written inside the block - a write that fails part way still has the folder removed
+  block:
+    - name: Answer keys | the answer files, one per STIG
+      ansible.builtin.copy:
+        content: "{{ f.xml }}"
+        dest: "{{ _ak_xml_dir.path }}/{{ f.filename }}"
+        mode: "0600"
+      loop: "{{ _ak_doc.files | default([]) }}"
+      loop_control:
+        loop_var: f
+        label: "{{ f.filename }}"
+      check_mode: false
+      when: _ak_xml_dir.path is defined
+
+    - name: Answer keys | the answer files made (attached to the email)
+      ansible.builtin.debug:
+        msg: "{{ _ak_doc.files | default([]) | map(attribute='filename') | list if _ak_doc.files | default([]) else 'No answer file: no STIG has a ready block.' }}"
+
+    - name: Answer keys | email the report, publish it (report_email_to, report_web_dest)
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: "{{ _ak_doc.report }}"
+        _report_web: "{{ _ak_doc.web }}"
+        _report_xlsx: "{{ _ak_doc.xlsx }}"
+        _report_attachments: >-
+          {%- set out = [] -%}
+          {%- for f in _ak_doc.files | default([]) if _ak_xml_dir.path is defined -%}
+          {%-   set _ = out.append({'path': _ak_xml_dir.path ~ '/' ~ f.filename, 'filename': f.filename}) -%}
+          {%- endfor -%}
+          {{ out }}
+  always:
+    - name: Answer keys | the answer files' folder removed
+      ansible.builtin.file:
+        path: "{{ _ak_xml_dir.path }}"
+        state: absent
+      check_mode: false
+      when: _ak_xml_dir.path is defined
 
 - name: Answer keys | at least one host worked
   ansible.builtin.assert:

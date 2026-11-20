@@ -616,14 +616,14 @@ class ManyHosts(unittest.TestCase):
         doc = a.stig_answer_report_multi(groups, "SITEA", False, m["failed"], ["V-999"], {"RHEL 9 V2R10": 3}, "answer_keys_pick both", {"RHEL 9 V2R10": ["V-1"]})
         self.assertEqual(doc["web"]["title"], "STIG answer keys: 2 ready to copy, 1 not drafted - 2 STIGs, 4 hosts")
         titles = [s["title"] for s in doc["web"]["sections"]]
-        for t in ("RHEL 8 V2R9 - answer keys to copy (1)", "RHEL 9 V2R10 - answer keys to copy (1)", "RHEL 9 V2R10 - copy all blocks (1)",
+        for t in ("RHEL 8 V2R9 - answer keys to copy (1)", "RHEL 9 V2R10 - answer keys to copy (1)", "RHEL 9 V2R10 - the answer file (1 block)",
                   "Hosts that did not work (1)", "In none of the hosts' STIGs (1)", "Already in your answer file (1)",
                   "Left out: more than answer_keys_max_rules", "How this was made"):
             self.assertIn(t, titles)
-        allx = [s for s in doc["web"]["sections"] if s["title"] == "RHEL 9 V2R10 - copy all blocks (1)"][0]["details"][0][0]["texts"][0]
-        self.assertEqual(allx["button"], "Copy all blocks for RHEL 9 V2R10")
-        self.assertIn('<Vuln ID="V-257777">\n  <AnswerKey Name="SITEA">', allx["cmd"])
-        self.assertTrue(allx["cmd"].rstrip().endswith("</Vuln>"))
+        allx = [s for s in doc["web"]["sections"] if s["title"] == "RHEL 9 V2R10 - the answer file (1 block)"][0]["details"][0][0]["texts"][0]
+        self.assertEqual(allx["button"], "Copy the answer file for RHEL 9 V2R10")
+        self.assertIn('  <Vuln ID="V-257777">\n    <AnswerKey Name="SITEA">', allx["cmd"])
+        self.assertTrue(allx["cmd"].rstrip().endswith("</STIGComments>"))       # 1.79.4: the whole file
         sec9 = [s for s in doc["web"]["sections"] if s["title"] == "RHEL 9 V2R10 - answer keys to copy (1)"][0]
         self.assertIn("Hosts", sec9["columns"])
         self.assertEqual(len(sec9["columns"]), len(sec9["kinds"]))
@@ -1205,6 +1205,177 @@ class EvaluateWider(unittest.TestCase):
             self.assertEqual(host.expected_check(d), {"found": True, "where": "Src/Evaluate-STIG/Modules/Master_Functions/Master_Functions.psm1:2", "note": ""})
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+
+class AnswerFileXml(unittest.TestCase):
+    """1.79.4: one whole Evaluate-STIG answer file per STIG (benchmark and release) - its Name, its name, it parses."""
+
+    @staticmethod
+    def row(v, code="return $true", act=False, untried=False, key="SITEA"):
+        blk = a.stig_answer_block(key, "Not_Reviewed", code, ("NotAFinding", "ok"), ("Open", "not ok"), act=act, untried=untried)
+        return {"v": v, "sv": "S" + v, "title": "t", "block": blk, "by": "ACT" if act else "pattern", "untried": untried}
+
+    def group(self, bench, rev, rows, select=None, major=None):
+        m = __import__("re").match(r"^RHEL_(\d+)_STIG$", bench)
+        return {"label": a.stig_label(bench, rev), "bench": bench, "rev": rev, "hosts": ["h1"], "rep": "h1", "rows": rows,
+                "select": select or {}, "major": (m.group(1) if m else "") if major is None else major}   # the host's, as the job gives it
+
+    def parse(self, f):
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(f["xml"].encode("utf-8"))
+        self.assertTrue(f["xml"].startswith('<?xml version="1.0" encoding="utf-8"?>\n'))
+        self.assertEqual(root.tag, "STIGComments")
+        return root
+
+    def test_two_groups_two_files(self):
+        gs = [self.group("RHEL_8_STIG", "V2R9", [self.row("V-230221")], {"8": "RHEL8"}),
+              self.group("RHEL_9_STIG", "V2R10", [self.row("V-257777"), self.row("V-258999", act=True)], {9: "RHEL9"})]
+        fs = a.stig_answer_xml_files(gs, "SITEA")
+        self.assertEqual([f["filename"] for f in fs], ["answer-keys-RHEL_8_STIG-V2R9.xml", "answer-keys-RHEL_9_STIG-V2R10.xml"])
+        r8, r9 = self.parse(fs[0]), self.parse(fs[1])
+        self.assertEqual((r8.get("Name"), r9.get("Name")), ("RHEL8", "RHEL9"))   # the key as a string or a number
+        self.assertEqual([v.get("ID") for v in r9], ["V-257777", "V-258999"])
+        self.assertEqual([k.get("Name") for v in r9 for k in v], ["SITEA", "SITEA"])
+        self.assertIn("drafted by ACT - read it before you use it", fs[1]["xml"])  # the ACT mark kept
+        self.assertIn("from check_stig_evaluate_select", fs[1]["xml"])
+        self.assertEqual(fs[1]["blocks"], 2)
+
+    def test_one_bench_two_revs_two_files(self):
+        gs = [self.group("RHEL_9_STIG", "V2R7", [self.row("V-257777", "Test-Path '/etc/hosts'")], {"9": "RHEL9"}),
+              self.group("RHEL_9_STIG", "V2R10", [self.row("V-257777", "Test-Path '/etc/hostname'")], {"9": "RHEL9"}),
+              self.group("RHEL_9_STIG", "V2R11", [self.row("V-257777", act=True)], {"9": "RHEL9"})]
+        gs[2]["rows"][0]["block"] = ""                                             # no ready block: no file
+        fs = a.stig_answer_xml_files(gs, "SITEA")
+        self.assertEqual([f["filename"] for f in fs], ["answer-keys-RHEL_9_STIG-V2R7.xml", "answer-keys-RHEL_9_STIG-V2R10.xml"])
+        self.assertIn("/etc/hosts'", fs[0]["xml"])
+        self.assertNotIn("/etc/hostname", fs[0]["xml"])
+        self.assertIn("/etc/hostname", fs[1]["xml"])
+
+    def test_the_name_from_a_site_file(self):
+        d = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(d, "RHEL9_SITEA.xml"), "w") as f:
+                f.write('<?xml version="1.0"?>\n<STIGComments Name="RHEL9-site"><Vuln ID="V-257777"><AnswerKey Name="SITEA"/></Vuln>'
+                        '<Vuln ID="V-258000"/></STIGComments>\n')
+            with open(os.path.join(d, "RHEL8.xml"), "w") as f:
+                f.write('<STIGComments Name="RHEL8-site"><Vuln ID="V-230221"/></STIGComments>')
+            with open(os.path.join(d, "broken.xml"), "w") as f:
+                f.write("<STIGComments Name=")
+            with open(os.path.join(d, "other.xml"), "w") as f:
+                f.write('<Checklist Name="x"><Vuln ID="V-257777"/></Checklist>')
+            site = a.stig_answer_file_stigs(d)
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual([(x["file"], x["name"]) for x in site], [("RHEL8.xml", "RHEL8-site"), ("RHEL9_SITEA.xml", "RHEL9-site")])
+        # the site's own file wins over check_stig_evaluate_select; a rule already answered (left out) still counts
+        g = self.group("RHEL_9_STIG", "V2R10", [self.row("V-258999")], {"9": "RHEL9"})
+        f = a.stig_answer_xml_files([g], "SITEA", site, {"RHEL 9 V2R10": ["V-257777"]})[0]
+        self.assertEqual((self.parse(f).get("Name"), f["known"]), ("RHEL9-site", True))
+        self.assertIn("STIGComments Name: from your answer file RHEL9_SITEA.xml.", f["xml"])
+        # two files of the site with other Names and as many of its rules: neither - then the setting
+        two = site + [{"file": "RHEL9_B.xml", "name": "RHEL9-b", "vulns": ["V-257777"]}]
+        f2 = a.stig_answer_xml_files([g], "SITEA", two, {"RHEL 9 V2R10": ["V-257777"]})[0]
+        self.assertEqual(f2["name"], "RHEL9")
+        # the host's own RHEL version picks check_stig_evaluate_select's name, as for the scan
+        f4 = a.stig_answer_xml_files([dict(g, select={"8": "RHEL8", "9": "RHEL9"}, major="8")], "SITEA", [], {})[0]
+        self.assertEqual(f4["name"], "RHEL8")
+        f3 = a.stig_answer_xml_files([dict(g, select={})], "SITEA", two, {"RHEL 9 V2R10": ["V-257777"]})[0]
+        self.assertFalse(f3["known"])
+        self.assertIn("your answer files name it two ways", f3["name_from"])
+
+    def test_the_name_fallback_said(self):
+        g = self.group("RHEL_10_STIG", "V1R3", [self.row("V-281111")])
+        f = a.stig_answer_xml_files([g], "SITEA")[0]
+        self.assertEqual((self.parse(f).get("Name"), f["known"]), ("RHEL_10_STIG", False))
+        self.assertIn("<!-- CHECK THE NAME: RHEL_10_STIG is not known - the benchmark id;", f["xml"])
+        doc = a.stig_answer_report_multi([g], "SITEA", False)
+        sec = [s for s in doc["web"]["sections"] if s["title"] == "RHEL 10 V1R3 - the answer file (1 block)"][0]
+        self.assertEqual(sec["status"], "warning")
+        self.assertIn("CHECK IT", sec["text"])
+        mail = [s for s in doc["report"]["sections"] if s["title"] == "Answer files attached (1)"][0]
+        self.assertEqual(mail["status"], "warning")
+        self.assertIn("RHEL_10_STIG - CHECK IT", mail["rows"][0][2])
+        self.assertTrue(any("CHECK THE NAME" in x for x in doc["lines"]))
+
+    def test_codex_round(self):
+        """1.79.4 (Codex): a Name that is not a plain short name never used nor shown; rule ids V-<digits> only; an
+        encoding Python cannot read skipped; no host version - no name from the setting; a comment of XML characters
+        only; a file that would not parse never offered, said."""
+        d = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(d, "a.xml"), "w") as f:
+                f.write('<STIGComments Name="password=hunter2xyz"><Vuln ID="V-257777"/><Vuln ID="x y"/></STIGComments>')
+            with open(os.path.join(d, "b.xml"), "wb") as f:
+                f.write(b'<?xml version="1.0" encoding="x-no-such"?><STIGComments Name="B"><Vuln ID="V-1"/></STIGComments>')
+            with open(os.path.join(d, "c.xml"), "w") as f:
+                f.write('<STIGComments Name="RHEL9"><Vuln ID="V-258999"/><Vuln ID="V-1 or 1"/></STIGComments>')
+            site = a.stig_answer_file_stigs(d)
+        finally:
+            shutil.rmtree(d)
+        self.assertEqual([(x["file"], x["name"], x["rejected"], x["vulns"]) for x in site],
+                         [("a.xml", "", True, ["V-257777"]), ("c.xml", "RHEL9", False, ["V-258999"])])
+        g = self.group("RHEL_9_STIG", "V2R10", [self.row("V-257777")], {})
+        f = a.stig_answer_xml_files([g], "SITEA", site)[0]
+        self.assertFalse(f["known"])
+        self.assertIn("1 of your answer files for it has a Name that is not a plain short name (not shown)", f["name_from"])
+        self.assertNotIn("hunter2", f["xml"] + f["name_from"])
+        # no host version known: the setting is not used, the benchmark id said
+        f2 = a.stig_answer_xml_files([dict(g, select={"9": "RHEL9"}, major="")], "SITEA")[0]
+        self.assertEqual((f2["name"], f2["known"]), ("RHEL_9_STIG", False))
+        # a file name with a form feed in the comment: still parses
+        site2 = [{"file": "RHEL9\x0cx.xml", "name": "RHEL9", "rejected": False, "vulns": ["V-257777"]}]
+        f3 = a.stig_answer_xml_files([g], "SITEA", site2)[0]
+        self.assertEqual(f3["error"], "")
+        self.parse(f3)
+        # a code with a character XML does not allow: no file, said
+        bad = self.row("V-257777", "return $true \x01")
+        doc = a.stig_answer_report_multi([self.group("RHEL_9_STIG", "V2R10", [bad], {"9": "RHEL9"})], "SITEA", False)
+        self.assertEqual(doc["files"], [])
+        self.assertIn("RHEL 9 V2R10 - no answer file", [x["title"] for x in doc["web"]["sections"]])
+        self.assertTrue(any(x.startswith("  NO answer file answer-keys-RHEL_9_STIG-V2R10.xml: it does not parse") for x in doc["lines"]))
+
+    def test_xml_escaping(self):
+        code = 'if ($a -lt 2 -and "x" -ne \'<&>\') { return $true }\n$h = @"\nline\n"@\nreturn $false'
+        r = self.row("V-257777", code, untried=True, key='K"<&')
+        g = self.group("RHEL_9_STIG", "V2R10", [r], {"9": 'RH"EL<9&'})
+        f = a.stig_answer_xml_files([g], 'K"<&')[0]
+        root = self.parse(f)
+        self.assertEqual(root.get("Name"), 'RH"EL<9&')
+        ak = root[0][0]
+        self.assertEqual(ak.get("Name"), 'K"<&')
+        import xml.etree.ElementTree as ET
+        # 1.79.4 (Codex P1): the code as the block has it, to the character - its closing line's spaces too
+        self.assertEqual(ak.find("ValidationCode").text, ET.fromstring(r["block"]).find("ValidationCode").text)
+        self.assertEqual(ak.find("ValidationCode").text.strip(), code)
+        self.assertIn('\n"@\n', f["xml"])                                       # "@ still starts its line
+        self.assertIn("not tried: the trial is off", f["xml"])                     # the trial-off mark kept
+        # a file name of safe characters only; a comment never holds "--"
+        g2 = self.group("A STIG/../x--y", "V1 R2", [self.row("V-1")])
+        f2 = a.stig_answer_xml_files([g2], "SITEA")[0]
+        self.assertEqual(f2["filename"], "answer-keys-A_STIG_.._x--y-V1_R2.xml")
+        self.parse(f2)
+        for c in __import__("re").findall(r"<!--(.*?)-->", f2["xml"], __import__("re").S):
+            self.assertNotIn("--", c)
+
+    def test_the_email_attachments(self):
+        """the report task's _report_attachments: one .xml per STIG from the job's own folder - never a zip."""
+        import jinja2
+        import yaml
+        with open(os.path.join(REPO, "roles", "check_stig", "tasks", "answer_keys_report.yml")) as fh:
+            tasks = yaml.safe_load(fh)
+        blk = [t for t in tasks if "block" in t and any(k.endswith("include_role") for x in t["block"] for k in x)][0]
+        expr = [x for x in blk["block"] if any(k.endswith("include_role") for k in x)][0]["vars"]["_report_attachments"]
+        self.assertTrue(any(k.endswith("copy") for k in blk["block"][0]))         # 1.79.4 (Codex): the writes inside the block
+        files = [{"filename": "answer-keys-RHEL_8_STIG-V2R9.xml"}, {"filename": "answer-keys-RHEL_9_STIG-V2R10.xml"}]
+        out = jinja2.Environment().from_string(expr).render(_ak_doc={"files": files}, _ak_xml_dir={"path": "/tmp/x"}).strip()
+        self.assertEqual(eval(out), [{"path": "/tmp/x/answer-keys-RHEL_8_STIG-V2R9.xml", "filename": "answer-keys-RHEL_8_STIG-V2R9.xml"},
+                                     {"path": "/tmp/x/answer-keys-RHEL_9_STIG-V2R10.xml", "filename": "answer-keys-RHEL_9_STIG-V2R10.xml"}])
+        self.assertEqual(jinja2.Environment().from_string(expr).render(_ak_doc={"files": files}, _ak_xml_dir={}).strip(), "[]")
+        self.assertIn("always", blk)                                                # the folder removed after, whatever happens
+        doc = a.stig_answer_report_multi([self.group("RHEL_9_STIG", "V2R10", [self.row("V-257777")], {"9": "RHEL9"})], "SITEA", False)
+        self.assertEqual([f["filename"] for f in doc["files"]], ["answer-keys-RHEL_9_STIG-V2R10.xml"])
+        self.assertIn("  answer file answer-keys-RHEL_9_STIG-V2R10.xml: STIGComments Name RHEL9 (check_stig_evaluate_select "
+                      "(the name this run gave Evaluate-STIG))", doc["lines"])
 
 
 if __name__ == "__main__":

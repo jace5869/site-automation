@@ -49,11 +49,13 @@ rule. You paste each block into your own answer file, under that rule's `<Vuln I
 
    From a survey, a text field works too: `V-257777, V-257928`, `1, 2` and `root, sys, bin, appuser`. The values can
    be one text field as well: `min_release: 9.4`, one `name: value` per line.
-4. Open the report on the report website. Each STIG has its own section. Open a rule and press **Copy block**, or
-   press **Copy all blocks for RHEL 9 V2R10** to take every ready block of that STIG at once, each in its own
-   `<Vuln ID>`.
-5. Paste them into a test answer file first, under `<STIGComments>`. Run Evaluate-STIG with it on a test host and
-   check the rules' status. Then copy them into your own answer file.
+4. Take each STIG's answer file. The email has one attached for each STIG and release, for example
+   `answer-keys-RHEL_9_STIG-V2R10.xml`. On the report website, each STIG has a section *the answer file*: press
+   **Copy the answer file for RHEL 9 V2R10** and save the text under that file name. To take one rule only, open it
+   and press **Copy block**.
+5. Check the file's `STIGComments Name` (see *The answer file of each STIG* below). Put the file in a test answer
+   files folder, run Evaluate-STIG with it on a test host and check the rules' status. Then copy the blocks into your
+   own answer file, or use the file as it is.
 
 Success looks like: *STIG answer keys: 12 ready to copy, 3 not drafted - 2 STIGs, 8 hosts*. Each rule shows the hosts
 it was found on, what Evaluate-STIG said there, its trial and the status it would set.
@@ -382,14 +384,40 @@ The check still matters most: when you paste a block, your Evaluate-STIG runs it
   - for each STIG, **answer keys to copy**: a rule shows its cross-check word, how many hosts it was found on and what Evaluate-STIG said
     there; it opens to its block (**Copy block** copies the block only), the hosts by name, its trial, its read-only
     check and DISA's check text;
-  - for each STIG, **copy all blocks**: every ready block of it in one text, each in its own `<Vuln ID>`
-    (**Copy all blocks for RHEL 9 V2R10**);
+  - for each STIG, **the answer file** (1.79.4): the whole Evaluate-STIG answer file of that STIG and release, to copy
+    (**Copy the answer file for RHEL 9 V2R10**), with its file name and its `STIGComments Name`;
   - for each STIG, **not drafted**, with why;
   - the hosts that did not work, the rules in none of the hosts' STIGs, the rules already in your answer file, the
     rules left out (more than `answer_keys_max_rules`);
   - **How this was made**: how the rules were picked, each STIG's hosts and the host its trial ran on.
 - **Email**: the tables, and the cross-check by STIG with the rules that need a look. The blocks are on the website and
-  in the workbook, because an email may change their text.
+  in the workbook, because an email may change their text. 1.79.4: each STIG's answer file is attached as an `.xml`
+  file (never a zip), listed in *Answer files attached*.
+- **Job output**: each STIG's line names its answer file and where its `STIGComments Name` came from.
+
+### The answer file of each STIG (1.79.4)
+
+The job makes one whole Evaluate-STIG answer file for each STIG and release that has a ready block. RHEL 8 V2R9,
+RHEL 9 V2R10 and RHEL 9 V2R7 are three files.
+
+- **File name:** `answer-keys-<benchmark>-<release>.xml`, for example `answer-keys-RHEL_9_STIG-V2R10.xml`. Only
+  letters, digits, `.`, `_` and `-`.
+- **Inside:** the XML declaration, a comment saying what made it, `<STIGComments Name="...">`, and each ready block in
+  its own `<Vuln ID="V-...">`. The marks stay: *drafted by ACT* and *not tried*. The statuses are `NotAFinding`,
+  `Open` or `Not_Applicable` only.
+- **`STIGComments Name`** is the STIG's short name in Evaluate-STIG. It is taken, in this order, from:
+  1. your own answer file for that STIG, when the job read your answer files (`check_stig_evaluate_answers`). The file
+     with the most of this STIG's rules counts. Two files with other names and as many rules: neither is used. A Name
+     that is not a plain short name (letters, digits, `.`, `_`, `-`) is never used or shown;
+  2. `check_stig_evaluate_select` for the host's RHEL version: the name the job gave Evaluate-STIG's `-SelectSTIG`.
+     When the host's version is not known, this step is skipped;
+  3. otherwise the benchmark id, for example `RHEL_10_STIG`. The file then says `CHECK THE NAME` in a comment, the
+     website's section and the email's row say *check it*. Set it to the short name your Evaluate-STIG lists.
+- **A file that would not parse** (a block holding a character XML does not allow) is not made. The website says
+  *no answer file* for that STIG; copy its blocks one by one.
+- **Where it goes:** attached to the email, and on the report website to copy. The report website serves only its
+  pages, so there is no download link. The job writes the files in a folder of its own on the AAP side and removes it
+  after the email. Nothing is written to STIG Manager, the share or a host.
 - **Workbook**: a Cross-check sheet (a row per rule and host), a sheet per STIG with each rule's block in full, its hosts and what Evaluate-STIG said; a sheet of the
   rules not drafted.
 - **Job output**: each block too.

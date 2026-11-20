@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.79.4 — 2026-11-20
+
+**To set up: nothing.** No new setting. Your answer files (`check_stig_evaluate_answers`) are read for their
+`STIGComments Name` whenever they are set, read-only, as before.
+
+**STIG answer keys: an answer file per STIG.** One whole Evaluate-STIG answer file for each STIG and release.
+
+- **One file per STIG and release** that has a ready block: RHEL 8 V2R9, RHEL 9 V2R10 and RHEL 9 V2R7 are three
+  files, `answer-keys-<benchmark>-<release>.xml` (letters, digits, `.`, `_`, `-` only). Each holds the XML declaration,
+  a comment on what made it, `<STIGComments Name>` and each ready block in its `<Vuln ID>`. The ACT and trial-off marks
+  stay. Statuses: NotAFinding, Open, Not_Applicable only.
+- **`STIGComments Name`**: from your own answer file for that STIG (the one with the most of its rules), else
+  `check_stig_evaluate_select` (the name the job gave `-SelectSTIG`), else the benchmark id with a `CHECK THE NAME`
+  comment. A name not known is said on the website, in the email and in the job's output, never guessed.
+- **Where:** attached to the email (`.xml`, never a zip; listed in *Answer files attached*); on the report website,
+  each STIG's *copy all blocks* is now *the answer file* (**Copy the answer file for RHEL 9 V2R10**). No download
+  link: the report website serves only its pages. The job's output names each file. The files are written in a folder
+  of the job's own on the AAP side, removed after; nothing goes to STIG Manager, the share or a host.
+- **Review fixes:** the code in each file is the block's to the character (the spaces before `</ValidationCode>` too).
+  A Name in your answer files that is not a plain short name (letters, digits, `.`, `_`, `-`), or that the redaction
+  would change, is never used or shown, only counted. No host RHEL version known: no name from
+  `check_stig_evaluate_select`. Your files' rules and Names stay out of the job's events (`no_log`). A file that would
+  not parse is not offered (*no answer file*, said). An answer file in an encoding Python cannot read is skipped. The
+  attachments' folder is removed even when a write fails.
+- Tests: `AnswerFileXml` in `tests/test_stig_answer_keys.py` (two STIGs, one STIG in two releases, the Name from your
+  file, the fallback said, XML escaping and here-strings, the email's attachments, the review fixes);
+  `run_stig_answer_keys_hosts_test.sh` (four files attached and parsed, their Names, the website's Copy, the job's
+  output, the Name from your file).
+  Docs: `docs/STIG_ANSWER_KEYS.md` *The answer file of each STIG*.
+
 ## 1.79.3 — 2026-11-19
 
 **To set up: nothing.** Look only: the report pages and emails read the same data; no setting changes. (The release script numbers this entry.)

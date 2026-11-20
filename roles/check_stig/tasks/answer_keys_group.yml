@@ -8,6 +8,9 @@
 - name: Answer keys | skip the rules already in your answer files? (answer_keys_skip_answered; unset - when check_stig_evaluate_answers is)
   ansible.builtin.set_fact:
     _ak_skip: "{{ (answer_keys_skip_answered | bool) if answer_keys_skip_answered is not none else (check_stig_evaluate_answers | default('') | length > 0) }}"
+    # 1.79.4: the site's answer files are read whenever there are some (check_stig_evaluate_answers) - each STIG's answer
+    # file takes its STIGComments Name from them (stig_answer_file_stigs); the rules in them are left out only with _ak_skip
+    _ak_read_af: "{{ check_stig_evaluate_answers | default('') | length > 0 or (answer_keys_skip_answered | bool if answer_keys_skip_answered is not none else false) }}"
 
 - name: Answer keys | every host's own, grouped by STIG (benchmark and release)
   ansible.builtin.set_fact:
@@ -40,13 +43,13 @@
     label: "{{ g.label }}"
   when: check_stig_stigman_api | length > 0 and g.bench | length > 0
 
-- name: Answer keys | the site's answer files (answer_keys_skip_answered) - a folder of the job's own
+- name: Answer keys | the site's answer files (answer_keys_skip_answered, and 1.79.4 their Names) - a folder of the job's own
   ansible.builtin.tempfile:
     state: directory
     prefix: site-answer-keys-af-
   register: _ak_af_stage
   check_mode: false
-  when: _ak_skip | bool
+  when: _ak_read_af | bool
 
 - name: Answer keys | the site's answer files, read once from where they are (read-only)
   site_answer_files:
@@ -61,18 +64,22 @@
   register: _ak_af
   check_mode: false               # reads the share; writes only its own folder
   failed_when: false
-  when: _ak_skip | bool
+  when: _ak_read_af | bool
 
 - name: Answer keys | the rules already in your answer files (an AnswerKey of this Name)
   ansible.builtin.set_fact:
     _ak_in_files: "{{ (_ak_af_stage.path ~ '/files') | stig_answer_in_files(_ak_key) if _ak_skip | bool and not _ak_af.error | default('') else {} }}"
+    # 1.79.4: each file's STIGComments Name and its rules - the Name of each STIG's answer file (stig_answer_xml_files)
+    _ak_site_stigs: "{{ (_ak_af_stage.path ~ '/files') | stig_answer_file_stigs if _ak_read_af | bool and not _ak_af.error | default('') else [] }}"
+  # 1.79.4 (Codex P1): what the site's files hold (their rules, their Names) stays out of the job's events
+  no_log: true
 
 - name: Answer keys | the site's answer files' folder removed
   ansible.builtin.file:
     path: "{{ _ak_af_stage.path }}"
     state: absent
   check_mode: false
-  when: _ak_skip | bool and _ak_af_stage.path is defined
+  when: _ak_read_af | bool and _ak_af_stage.path is defined
 
 - name: Answer keys | the groups, with the check texts and without the rules already answered
   ansible.builtin.set_fact:
