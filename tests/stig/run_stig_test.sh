@@ -220,6 +220,9 @@ lab2='{"assetId": "21", "name": "localhost", "fqdn": "", "stigs": [{"benchmarkId
 sm_data "{\"1\": [$web01], \"2\": [$lab2]}"
 run "the same name in two collections: several, not compared" fail -e "$sm_on" -- \
     "2 assets match: localhost in RHEL Servers, localhost in Lab - set check_stig_stigman_collection"
+# 1.79.7: check_stig_stigman_collections_exclude leaves a copy's collection out of the search (Lab* here)
+run "a collection in check_stig_stigman_collections_exclude: left out, the other one compared" ok -e "$sm_on" \
+    -e '{"check_stig_stigman_collections_exclude": ["lab*"]}' -- "STIG Manager: RHEL Servers / localhost"
 run "the collection set: found there" ok -e "$sm_on" -e '{"check_stig_stigman_collection": "Lab"}' -- "STIG Manager: Lab / localhost"
 run "a collection that is not there" fail -e "$sm_on" -e '{"check_stig_stigman_collection": "Nope"}' -- "the collection Nope is not there, or the client has no grant in it"
 sm_data "{\"1\": [$web01], \"2\": [$lab]}"

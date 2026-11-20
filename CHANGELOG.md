@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.79.7 — 2026-11-20
+
+**To set up: nothing.** Optional: `check_stig_stigman_collections_exclude` (the default leaves out Archive*, Base*,
+Watcher*, Eval-STIG*, SCA*).
+
+**STIG answer keys: DISA's `dnf list installed PKG` is read.** The cross-check's read-only evidence refused it (`dnf` is
+not on the read-only list: it may refresh the repositories), so a rule like "AIDE is installed" gave ACT only the other
+commands and ACT said it could not tell. It is now read as `rpm -q PKG` (the local package database, never a
+repository); `yum list installed` and `dnf list --installed` too. The answer keys' package pattern takes the same
+spellings. Anything else from `dnf` is still refused. Tests: `tests/test_stig_answer_cross.py` (Reads),
+`tests/test_stig_answer_keys.py`.
+
+**STIG Manager: archive and copy collections left out of the asset search.** A host whose name is in two
+collections was "2 assets match" and not compared, often because of an archive or baseline copy. New
+`check_stig_stigman_collections_exclude` (default `["Archive*", "Base*", "Watcher*", "Eval-STIG*", "SCA*", "* SCA*", "*_SCA*"]`:
+an SCA collection whose name only contains SCA as a word is left out too; `*` and `?`,
+any case): a search leaves those collections out. A host's own `check_stig_stigman_collection` is still used even when
+listed. `[]` searches them all, as before. It applies to the STIG drift report, the recheck and the answer keys.
+Test: `tests/stig/run_stig_test.sh`.
+
+**NetApp capacity: thousands separators.** A number of 1,000 or more in the capacity report's tables (growth GB per
+30 days, sizes, months) is whole with separators: `28,189` instead of `28188.6`. Sorting reads both.
+
 ## 1.79.5 — 2026-11-20
 
 **To set up: nothing.** Optional: an entry of `aap_inventory_replace` may name `to_organization` (and `from_organization`).
