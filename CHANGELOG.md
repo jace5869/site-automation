@@ -125,6 +125,25 @@ bigger only as approved. It never reboots, and never changes `-e`, `-f` or a STI
 - **A short usage blip.** Only CPU or memory usage alarms, each cleared within `vm_watch_review_min_seconds`: the title says *a short usage blip, Low*. Still sent by default; `vm_watch_review_skip_blips: true` sends nothing and the job says so.
 - Tests: `tests/test_outage_timeline.py` (the raise before the window, the subject and the related events, the title, tile and band, a raise that does not clear, no raise read, a blip and the skip, the trigger always, other problems), and the vcsim e2e (a usage alarm raised and cleared, a raise before the window and its clear in it, no lookback, the skip).
 
+## 1.79.16 — 2026-11-20
+
+**To set up: nothing.** One new setting, `aap_templates_describe_list_missing` (false).
+
+**AAP - describe templates**, after the first real Check run:
+
+- *not in AAP* lines are counted in *in short* only; `aap_templates_describe_list_missing: true` lists each one again.
+  An organization or project not found is still said.
+- ACT's own playbooks (`vendor/act/ansible/playbooks/`: podman_app_health, act_triage, act_apply_approved,
+  fapolicyd_denials) have descriptions (`aap/job_descriptions.yml` vendored, `aap/job_templates.yml` vendored): a
+  template that runs one is described, never made, never *not in AAP*.
+- Two templates for one catalog template (the same playbook, nothing to tell them apart): both described, and one line
+  in *in short*: `2 templates run playbooks/stigman_update.yml: 'A', 'B' - keep one` (when their Variables differ:
+  *their Variables differ: keep both only if they are different jobs*). An organization or project not found is
+  counted apart.
+- Docs: SETUP_AAP (the descriptions), VARIABLES_REFERENCE, aap/extra_vars.
+- Tests: `tests/test_job_catalog.py` (the vendored entries), `run_aap_describe_test.sh` (not in AAP counted, listed
+  with the setting; a podman health template on ACT's playbook described; two templates of one playbook said).
+
 ## 1.79.11 — 2026-11-20
 
 **To set up: nothing.** Optional: in **AAP - set up job templates**, `aap_templates_describe: true` (with

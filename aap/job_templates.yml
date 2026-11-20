@@ -16,6 +16,8 @@
 #                         aap_templates_describe writes on the template ("** Does: ...")
 # workflows: [{name, playbooks (its steps' playbooks), description}] - the workflows aap_templates_describe describes,
 #   found by name, else by the playbooks of their steps
+# vendored: [{name, playbook, description}] - ACT's own playbooks (vendor/act/ansible/playbooks): a template of the site's
+#   that runs one is described by its playbook; never made, never "not in AAP" (1.79.11d)
 ---
 job_templates:
   - name: Health check
@@ -3430,3 +3432,46 @@ workflows:
       produces: Check output (READY lines), the approval, install results, a work note on each request.
       supports: Run constraint=Writes vCenter/ESXi certs and trusted roots after an approval (vCenter may restart); writes
         ServiceNow notes.
+vendored:
+  - name: ACT - apply approved (vendored)
+    playbook: vendor/act/ansible/playbooks/act_apply_approved.yml
+    description:
+      does: 'ACT''s own step after an approval: ACT checks each host again and, if still broken, may run only the commands
+        a person approved.'
+      targets: Hosts of target (default all) within the Limit that the act_triage artifact has commands for, over SSH with
+        sudo; ACT model key
+      produces: What ACT found and ran per host in the job output and a Markdown report; a Teams card with a webhook; file
+        edits left for a person
+      supports: Run constraint=Changes target hosts (only the approved commands, only if still needed); writes ACT's script,
+        the report, Teams
+  - name: ACT - fapolicyd denials (vendored)
+    playbook: vendor/act/ansible/playbooks/fapolicyd_denials.yml
+    description:
+      does: ACT's own fapolicyd denial analysis - the site's job is playbooks/fapolicyd_denials.yml (its report by email and
+        on the website).
+      targets: Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential); ACT model key
+      produces: ACT's analysis per host in the job output and a Markdown report on the controller; a Teams card with a webhook,
+        if problems
+      supports: Run constraint=No fix (ACT runs nothing there); writes ACT's script on hosts with denials, the report, the
+        Teams card
+  - name: ACT - podman health (vendored)
+    playbook: vendor/act/ansible/playbooks/podman_app_health.yml
+    description:
+      does: 'ACT''s own podman check: finds the containers podman runs (or podman_apps), checks them, and has ACT diagnose
+        the broken ones.'
+      targets: Linux hosts of target (default all) within the Limit, over SSH with sudo, as podman_user when set (Machine
+        credential); ACT model key
+      produces: ACT's diagnosis in the job output and a Markdown report on the controller; a Teams card with a webhook, by
+        default only for problems
+      supports: Run constraint=No fix by default (restarts only with podman_allow_restart); writes ACT's script on hosts it
+        diagnoses, the report
+  - name: ACT - triage (vendored)
+    playbook: vendor/act/ansible/playbooks/act_triage.yml
+    description:
+      does: 'ACT''s own triage: cheap health checks on every host, ACT called only where one trips, to diagnose it; fixes
+        only as allowed.'
+      targets: Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential); ACT model key
+      produces: Findings in the job output, a Markdown report on the controller, the act_triage artifact; Teams card with
+        a webhook, if problems
+      supports: Run constraint=No fix unless act_triage_allow lists one; writes ACT's script on hosts it diagnoses, the report,
+        the Teams card

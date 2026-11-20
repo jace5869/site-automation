@@ -2,10 +2,11 @@
 # AAP - set up job templates, aap_templates_describe (1.79.11; library/site_aap_describe.py) against the stand-in AAP
 # (tests/portal_setup/fake_aap_crud.py). Checks: Check writes nothing and lists every change (old -> new), green; a run
 # writes the catalog's five lines - an empty description, one of ours ("** Does:", the "Made by" line), a template the
-# site renamed (found by its playbook), each template of a playbook with two catalog entries (by its Variables); a
+# site renamed (found by its playbook), each template of a playbook with two catalog entries (by its Variables), a
+# template on ACT's own podman playbook (1.79.11d), two templates of one catalog template (both, and said in short); a
 # hand-written one kept, then written with aap_templates_describe_overwrite; one AAP - set up portal actions wrote left
 # to it; a template whose playbook the catalog does not know and a workflow it does not know: "no description known",
-# untouched, green; a catalog template not in AAP: listed, green; the service watch workflow found by its steps under
+# untouched, green; a catalog template not in AAP: counted (listed with aap_templates_describe_list_missing), green; the service watch workflow found by its steps under
 # the site's own name; the Contact line only from the settings; aap_templates_describe_only makes no template; a second
 # run already right; a write AAP refuses: FAILED, the job red, the others still written; never a DELETE.
 #   bash tests/portal_setup/run_aap_describe_test.sh        (ANSIBLE_PLAYBOOK=... for another ansible-core)
@@ -48,7 +49,11 @@ tpls = [jt(100, "Health check", "playbooks/health_check.yml"),
         jt(106, "Patching", "playbooks/patch_hosts.yml", "Made by AAP - set up job templates (aap/job_templates.yml)"),
         jt(107, "ACT - triage finding", "playbooks/act_triage_finding.yml",
            "Workflow 44's Linux step (fapolicyd findings), read only [set up by AAP - set up portal actions, fingerprint 0123456789ab]"),
-        jt(108, "Health check (old project)", "playbooks/health_check.yml", "", project=6)]
+        jt(108, "Health check (old project)", "playbooks/health_check.yml", "", project=6),
+        # 1.79.11d: ACT's own playbook under the site's name; a second template for one catalog template
+        jt(109, "Linux - podman health check", "vendor/act/ansible/playbooks/podman_app_health.yml"),
+        jt(110, "Patching again", "playbooks/patch_hosts.yml"),
+        jt(111, "Linux - podman health, stigman", "vendor/act/ansible/playbooks/podman_app_health.yml", extra="---\npodman_user: stig\n")]
 nid, nodes = 300, []
 for i, pbk in enumerate(sw["playbooks"]):
     t = next((t for t in tpls if t["playbook"] == pbk and t["project"] == 2), None)
@@ -82,7 +87,9 @@ def text(d, contact=True):
 json.dump({"hc": text(by["Health check"]["description"]), "ts": text(by["Troubleshoot"]["description"]),
            "sn": text(sn_plain["description"]), "snv": text(sn_var["description"]), "sw": text(sw["description"]),
            "sw_name": sw["name"], "sn_var_name": sn_var["name"], "patch": text(by["Patch hosts"]["description"]),
-           "hc_nocontact": text(by["Health check"]["description"], False)}, open(sys.argv[3], "w"))
+           "hc_nocontact": text(by["Health check"]["description"], False),
+           "podman": text(next(v for v in cat["vendored"] if v["playbook"].endswith("/podman_app_health.yml"))["description"])},
+          open(sys.argv[3], "w"))
 PYEND
 FAKE_AAP_STATE="$work/state.json" FAKE_AAP_LOG="$work/writes.jsonl" FAKE_AAP_TOKEN=setup-token "$py" "$here/fake_aap_crud.py" "$port" &
 pid=$!
@@ -114,10 +121,15 @@ if [ "$rc" -eq 0 ] && [ "$(writes)" -eq 0 ] && grep -q "WOULD DESCRIBE - job 'He
    && grep -q "no description known - workflow 'Watch, no approval'" "$work/out.txt" \
    && grep -q "no description known - workflow 'Daily health' - its steps run templates of another project" "$work/out.txt" \
    && grep -q "WOULD DESCRIBE - workflow 'Our container watch' (catalog: '$(want sw_name)') - would write it; matched by the playbooks of its steps" "$work/out.txt" \
-   && grep -q "not in AAP - job 'Windows health check'" "$work/out.txt" \
+   && ! grep -q "not in AAP - job " "$work/out.txt" && ! grep -q "not in AAP - workflow " "$work/out.txt" \
+   && grep -Eq "job not in AAP: [0-9]+" "$work/out.txt" && grep -q "aap_templates_describe_list_missing: true lists each" "$work/out.txt" \
+   && grep -q "WOULD DESCRIBE - job 'Linux - podman health check' (catalog: 'ACT - podman health (vendored)')" "$work/out.txt" \
+   && grep -q "2 templates run playbooks/patch_hosts.yml: 'Patching', 'Patching again' - keep one" "$work/out.txt" \
+   && grep -q "2 templates run vendor/act/ansible/playbooks/podman_app_health.yml: 'Linux - podman health check', 'Linux - podman health, stigman' - their Variables differ" "$work/out.txt" \
+   && ! grep -q "not in AAP.*vendored" "$work/out.txt" \
    && grep -q "was: (empty)" "$work/out.txt" && grep -q "now: \*\* Does: " "$work/out.txt" \
    && ! grep -q "Health check (old project)" "$work/out.txt"; then
-    pass "Check: nothing written; described, kept, left, no description known, not in AAP - each listed (old -> new); green"
+    pass "Check: nothing written; described, kept, left, no description known listed (old -> new); not in AAP counted only; ACT's podman playbook described; two of one playbook said; green"
 else fail "Check" "$(cat "$work/out.txt")"; fi
 
 # 2. the run: written; the renamed one by its playbook; each of the two of one playbook; the Contact line from the settings
@@ -128,7 +140,8 @@ if [ "$rc" -eq 0 ] && [ "$(desc job_templates 100)" = "$(want hc)" ] && [ "$(des
    && [ "$(desc job_templates 102)" = "Written by our team: runs Mondays" ] && [ "$(desc job_templates 105)" = "Ours, not the repository's" ] \
    && [ "$(desc workflow_job_templates 201)" = "by hand" ] && [ "$(desc job_templates 108)" = "" ] \
    && [ "$(desc workflow_job_templates 202)" = "" ] && [ "$(desc workflow_job_templates 203)" = "" ] \
-   && desc job_templates 107 | grep -q "fingerprint 0123456789ab"; then
+   && desc job_templates 107 | grep -q "fingerprint 0123456789ab" \
+   && [ "$(desc job_templates 109)" = "$(want podman)" ] && [ "$(desc job_templates 110)" = "$(want patch)" ]; then
     pass "a run: the five lines written (renamed: by playbook; two of one playbook: by Variables; the workflow by its steps); the rest untouched"
 else fail "the run" "$(cat "$work/out.txt")"; fi
 if "$py" - "$work/writes.jsonl" <<'PYEND'
@@ -138,6 +151,26 @@ sys.exit(0 if w and all(x["method"] == "PATCH" and list(x["body"]) == ["descript
 PYEND
 then pass "only PATCHes of the description - never another field, never a POST or a DELETE"
 else fail "the writes" "$(cat "$work/writes.jsonl")"; fi
+
+# 2b. 1.79.11d: aap_templates_describe_list_missing - each catalog template not in AAP listed again
+run --check -e "$OWN" -e aap_templates_describe_list_missing=true
+if [ "$rc" -eq 0 ] && grep -q "not in AAP - job 'Windows health check'" "$work/out.txt" \
+   && ! grep -q "aap_templates_describe_list_missing: true lists each" "$work/out.txt" && ! grep -q "not in AAP.*vendored" "$work/out.txt"; then
+    pass "aap_templates_describe_list_missing: each not in AAP listed (never ACT's own playbooks)"
+else fail "list missing" "$(cat "$work/out.txt")"; fi
+
+# 2c. (Codex) aap_templates_only on a template not in AAP alone: said so, not "nothing matches"; a project not found is
+# its own count, not a catalog template missing
+run --check -e "$OWN" -e '{"aap_templates_only": ["Windows health check"]}'
+if [ "$rc" -eq 0 ] && grep -q "only templates or workflows not in AAP - counted in short" "$work/out.txt" \
+   && ! grep -q "nothing matches aap_templates_only" "$work/out.txt" && grep -q "job not in AAP: 1" "$work/out.txt"; then
+    pass "aap_templates_only on one not in AAP: counted, said - not 'nothing matches'"
+else fail "only, not in AAP" "$(cat "$work/out.txt")"; fi
+run --check -e "$OWN" -e aap_templates_project=no-such-project
+if [ "$rc" -eq 0 ] && grep -q "not in AAP - job 'no-such-project'" "$work/out.txt" && grep -q "job organization/project not found: 1" "$work/out.txt" \
+   && ! grep -q "job not in AAP" "$work/out.txt" && ! grep -q "lists each" "$work/out.txt"; then
+    pass "a project not found: said, counted apart from catalog templates not in AAP"
+else fail "project not found" "$(cat "$work/out.txt")"; fi
 
 # 3. again: already right, nothing written
 n="$(writes)"

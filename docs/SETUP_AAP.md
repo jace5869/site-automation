@@ -739,7 +739,11 @@ it is for. The same job writes them: **AAP - set up job templates** with `aap_te
      its own mark after them (`portal_setup_describe`, on by default) - run it to bring them up to date;
    - *no description known* - a template whose playbook is not in the catalog, or a workflow the catalog does not
      know: left as it is;
-   - *not in AAP* - a catalog template or workflow your AAP does not have.
+   - *not in AAP* - a catalog template or workflow your AAP does not have: counted in *in short* only.
+     `aap_templates_describe_list_missing: true` lists each one (1.79.11d).
+   *In short* also says when two of your templates run the same catalog template, e.g. `2 templates run
+   playbooks/stigman_update.yml: 'STIG Manager - update', 'STIG Manager update' - keep one`. Both are described.
+   When their Variables differ, it says so instead of *keep one*: they may be two different jobs.
    None of these fails the job. Only a description AAP refuses to save turns it red, and the others are still written.
 3. Launch it again with Job type **Run**. Run it again after each update of site-automation: the descriptions stay
    current, and a hand-written one is still kept.
@@ -752,6 +756,9 @@ How it finds them:
 - **A workflow by its name**, else by the playbooks of its steps (the workflow gate aside). Your own service watch
   workflow is found by its steps, under any name. Two catalog workflows with the same steps (*Patch with checks*,
   *Patch with a dry run first*) are found by name only.
+- **ACT's own playbooks** (`vendor/act/ansible/playbooks/`: podman health, triage, apply approved, fapolicyd denials)
+  are described by their playbook too, when a template of yours runs one (1.79.11d). They are never made, and never
+  *not in AAP*.
 - The descriptions are in `aap/job_descriptions.yml`. The Owner and Developer come only from your settings, never from
   the repository.
 

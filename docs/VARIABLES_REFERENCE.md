@@ -263,6 +263,7 @@ File: `roles/aap_templates/defaults/main.yml`
 | `aap_templates_describe` | `false` | 1.79.11: true = write the catalog's descriptions on the templates and workflows found (docs/SETUP_AAP.md, "Describe"). |
 | `aap_templates_describe_only` | `false` | true = only the descriptions: no template made, checked or labelled |
 | `aap_templates_describe_overwrite` | `false` | true = write over a hand-written description too |
+| `aap_templates_describe_list_missing` | `false` | true = list each catalog template / workflow not in AAP (false: counted only) |
 | `aap_templates_description_owner` | (empty) | the Contact line's Owner= ("" with no contact either: no Contact line) |
 | `aap_templates_description_contact` | (empty) | the Contact line's Developer= |
 

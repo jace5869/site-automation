@@ -34,6 +34,7 @@ options:
   ours: {description: "Descriptions this repository wrote before (replaced like one of ours).", type: list, elements: str, default: []}
   overwrite: {description: "Write over a hand-written description too (aap_templates_describe_overwrite).", type: bool, default: false}
   only: {description: "Only the templates whose AAP or catalog name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
+  vendored: {description: "1.79.11d - ACT's own playbooks (aap/job_templates.yml vendored, each {name, playbook, description}): a template that runs one is described by its playbook; never not in AAP.", type: list, elements: dict, default: []}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
 author: site automation
@@ -44,6 +45,7 @@ results: {description: "Each template or workflow: {kind (job|workflow), name (i
   (describe|right|kept|left|not in AAP|no description known|failed), was, now (first lines), why}.", type: list}
 problems: {description: "The writes AAP refused (the job fails on these only).", type: list}
 notes: {description: "What could not be read (AAP not reached, a list not read): a warning - nothing was written then.", type: list}
+twice: {description: "1.79.11d - catalog templates the site has more than one template of (the same playbook): one line each.", type: list}
 '''
 
 import collections
@@ -110,6 +112,7 @@ class Describe(object):
     def __init__(self, api, p, check):
         self.api, self.p, self.check = api, p, check
         self.results, self.problems, self.notes, self.wrote = [], [], [], False
+        self.twice = []                                   # 1.79.11d: "2 templates run <playbook>: 'A', 'B' - keep one"
 
     def all(self, path):
         out, nxt = [], path + ("&" if "?" in path else "?") + "page_size=200"
@@ -185,9 +188,10 @@ class Describe(object):
         mine = [t for t in tpls if t.get("project") == proj]
         owner, contact = p["owner"], p["contact"]
         by_pb = {}
-        for e in p["catalog"]:
+        for e in list(p["catalog"]) + list(p["vendored"]):         # 1.79.11d: ACT's own playbooks too
             by_pb.setdefault(str(e.get("playbook") or ""), []).append(e)
         found = set()
+        runs = {}                                                  # 1.79.11d: catalog entry -> the AAP templates matched to it
         for t in sorted(mine, key=lambda x: str(x.get("name") or "").casefold()):
             pb = str(t.get("playbook") or "")
             es = by_pb.get(pb) or []
@@ -205,7 +209,16 @@ class Describe(object):
             e = e or es[0]
             found.add(e["name"])
             if self.wanted(t.get("name"), e["name"]):
+                runs.setdefault(e["name"], (pb, []))[1].append((str(t.get("name") or ""), _vars_of(t.get("extra_vars"))))
                 self.put("job", t, e["name"], text_of(e.get("description"), owner, contact))
+        # 1.79.11d: two of the site's templates for one catalog template (the same playbook, nothing to tell them apart)
+        # "keep one" only when their Variables are the same too: different ones (podman_apps ...) may be different jobs (Codex)
+        for name, (pb, ts) in sorted(runs.items()):
+            if len(ts) > 1:
+                same = all(v == ts[0][1] for _, v in ts)
+                self.twice.append("%d templates run %s: %s - %s" % (
+                    len(ts), pb, ", ".join("'%s'" % n for n in sorted((n for n, _ in ts), key=str.casefold)),
+                    "keep one" if same else "their Variables differ: keep both only if they are different jobs"))
         for e in p["catalog"]:
             if e["name"] not in found and self.wanted(e["name"]):
                 self.note("job", e["name"], e["name"], "not in AAP", why="no template in project %r runs %s" % (p["project"], e.get("playbook")))
@@ -267,19 +280,20 @@ def main():
                            owner=dict(type="str", default=""), contact=dict(type="str", default=""),
                            ours=dict(type="list", elements="str", default=[]), overwrite=dict(type="bool", default=False),
                            only=dict(type="list", elements="str", default=[]),
+                           vendored=dict(type="list", elements="dict", default=[]),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params
     api = Api(connection(), p["ca_path"], p["timeout"], ca_setting="aap_templates_ca_path", no_credential=NO_CREDENTIAL)
     why = api.probe()
     if why:                                             # never red for what it could not read: said, nothing written
-        module.exit_json(changed=False, results=[], problems=[], notes=[why])
+        module.exit_json(changed=False, results=[], problems=[], notes=[why], twice=[])
     s = Describe(api, p, module.check_mode)
     try:
         s.run()
     except RuntimeError as ex:                          # AAP not read: said (a warning); only a refused write is red
         s.notes.append(str(ex))
-    module.exit_json(changed=s.wrote, results=s.results, problems=s.problems, notes=s.notes)
+    module.exit_json(changed=s.wrote, results=s.results, problems=s.problems, notes=s.notes, twice=s.twice)
 
 
 if __name__ == "__main__":

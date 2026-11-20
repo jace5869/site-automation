@@ -139,6 +139,26 @@ class Catalog(unittest.TestCase):
                 self.assertLessEqual(len(line), 160, "%s: %s" % (w["name"], line))
             self.assertTrue(w["description"]["supports"].startswith("Run constraint="), w["name"])
 
+    def test_vendored(self):
+        """1.79.11d: ACT's own playbooks - every one in vendor/act/ansible/playbooks has an entry, its file there, the four
+        lines as the templates'; never in job_templates (never made)."""
+        import glob
+        import yaml
+        with open(os.path.join(ROOT, "aap", "job_templates.yml")) as f:
+            doc = yaml.safe_load(f)
+        ven = doc.get("vendored") or []
+        have = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(ROOT, "vendor", "act", "ansible", "playbooks", "*.yml")))
+        self.assertEqual(sorted(v["playbook"] for v in ven), have)
+        made = set(e["playbook"] for e in doc["job_templates"])
+        for v in ven:
+            self.assertNotIn(v["playbook"], made)
+            self.assertNotIn(v["name"], set(e["name"] for e in doc["job_templates"]))
+            for line in self.lines(v["description"]):
+                self.assertLessEqual(len(line), 160, "%s: %s" % (v["name"], line))
+                self.assertFalse(re.search(r"\b(purchase|buy|cost)\b", line, re.I), line)
+            self.assertTrue(v["description"]["supports"].startswith("Run constraint="), v["name"])
+            self.assertTrue(self.WRITES.search(v["description"]["supports"]), v["name"])
+
     def test_the_text_written(self):
         """The module's five lines: the labels, the cap, the Contact line only from the settings."""
         import importlib.util

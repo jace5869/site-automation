@@ -65,6 +65,9 @@ aap_templates_credentials:
 ## true = write over a hand-written description too
 # aap_templates_describe_overwrite: false
 
+## true = list each catalog template / workflow not in AAP (false: counted only)
+# aap_templates_describe_list_missing: false
+
 ## the Contact line's Owner= ("" with no contact either: no Contact line)
 # aap_templates_description_owner: ""
 
