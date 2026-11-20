@@ -47,11 +47,13 @@
     body:
       work_notes: >-
         {{ _ncl_all | net_config_load_note({'mode': net_config_load_mode, 'job': awx_job_id | default('-')})
-           ~ (('\nBefore the change: kept as ' ~ _ncl_keep_ref ~ ' (' ~ (_ncl_keep_where | default([]) | join(' ; ')) ~ ')') if _ncl_kept | default({}) else '') }}
+           ~ ((_ncl_nl ~ 'Before the change: kept as ' ~ _ncl_keep_ref ~ ' (' ~ (_ncl_keep_where | default([]) | join(' ; ')) ~ ')') if _ncl_kept | default({}) else '') }}
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
     status_code: [200]
+  vars:
+    _ncl_nl: "\n"                     # a real line break (1.79.17)
   register: _ncl_noted
   failed_when: false
   when: >-

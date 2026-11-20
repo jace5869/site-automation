@@ -141,6 +141,33 @@ templates"). Check lists everything first; a run never deletes.
   already right, the map's name kept; a map naming one twice; a refused rename);
   `run_aap_templates_test.sh` and `run_aap_describe_test.sh` unchanged and green.
 
+## 1.79.17 — 2026-11-20
+
+**To set up: nothing.**
+
+**Line breaks that were two characters.** A `'\n'` inside `{{ }}` of a folded (`>-`), literal, plain or single-quoted
+YAML value reaches Jinja as a backslash and an n, not a line break (measured on ansible-core 2.16 and 2.22). 25 places
+in roles/ and playbooks/ had it; each now uses a task var holding a real line break, or a regex:
+
+- **Messages flattened to one line** (a host not reached, a check that failed, a fapolicyd change put back, a page not
+  copied): `replace('\n', ' ')` found nothing to replace, so a multi-line message stayed multi-line in a report cell.
+  Now `regex_replace` - ServiceNow health and its node, MID and database hosts, log analysis, the findings reach check,
+  fapolicyd fix and rules, the report website copy.
+- **Disk space request:** the request text was one line with `\n` in it (job output and the
+  `disk_space_request` artifact); now one line each.
+- **Report email, plain-text body** (the reports without a structured body): the notice, "ACT is off", "ACT old
+  copies" and the `--` footer each start on their own line.
+- **STIG answer keys cross-check:** when ACT did not answer, the reason was lost ("unsure" alone); it is the why again.
+- **Network config:** the ServiceNow work note's "Before the change" line and the git commit's "AAP job" line.
+- **Site portal STIG fix:** the check and fix text in the job output, one line per text line; the commands joined with
+  " ; ".
+- **fapolicyd fix and rules:** "Ansible could not run a module on the host" was flattened only when the host was
+  reached; an unreachable host's message is now flattened and cut to 240 characters too.
+- **New test** tests/test_template_newlines.py, in CI on both ansible-core versions: every `'\n'` in a string inside
+  `{{ }}` in roles/ and playbooks/ must be a regex argument, told by the call and the argument's place (or on its
+  allowlist, empty today); a value it cannot read fails it. It also renders seven of the fixed texts from their files
+  with ansible-playbook.
+
 ## 1.79.15 — 2026-11-20
 
 **To set up: nothing.** Two new settings with working defaults: `fapolicyd_rules_guard_seconds`,

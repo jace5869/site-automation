@@ -200,6 +200,10 @@ jobs:
         run: python tests/test_template_vars.py
       - name: aap/job_templates.yml (the catalog AAP - set up job templates makes) is generated and the same as docs/JOB_TEMPLATES.md
         run: python tests/test_job_catalog.py
+      - name: No two-character '\n' inside {{ }} in roles/ and playbooks/ (1.79.17), on both ansible-core versions
+        run: |
+          python tests/test_template_newlines.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_template_newlines.py
       - name: AAP hosts are protected everywhere; vendored ACT is what its VERSION and checksums say
         run: |
           python tests/test_protection.py

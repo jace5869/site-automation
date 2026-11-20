@@ -15,7 +15,7 @@
   ansible.builtin.set_fact:
     servicenow_mid_result: >-
       {{ {'host': inventory_hostname, 'hostname': '', 'reachable': false, 'mids': [],
-          'error': ((_mid_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300)} }}
+          'error': ((_mid_reach.msg | default('', true) | string | trim | regex_replace('\s*[\r\n]+\s*', ' ')) or 'unreachable') | truncate(300)} }}
   when: _mid_reach.unreachable | default(false)
 
 - name: ServiceNow MID host | leave it out
@@ -51,6 +51,6 @@
           'reachable': not (_mid_out.unreachable | default(false)),
           'error': '' if ok and not (r.facts | default({})).error | default('') else
                    ((r.facts | default({})).error | default('') or ((_mid_out.msg | default('') ~ ' ' ~ _mid_out.stderr | default('')) | trim
-                    | replace('\n', ' ')) or 'the script gave no answer') | truncate(300),
+                    | regex_replace('\s*[\r\n]+\s*', ' ')) or 'the script gave no answer') | truncate(300),
           'mids': (r.facts | default({})).mids | default([])} }}
   when: servicenow_mid_result is not defined

@@ -98,7 +98,9 @@
           {%-   set _ = lines.append('Growth: not known (the capacity history has less than a day, or none for this ' ~ ('drive' if f.os | default('linux') == 'windows' else 'mount') ~ ').') -%}
           {%- endif -%}
           {%- set _ = lines.append('Nothing in the tmp folders can be cleaned to make room. Reported by the health check, AAP job ' ~ finding_job.id ~ '.') -%}
-          {{ lines | join('\n') }}
+          {{ lines | join(_sr_nl) }}
+      vars:
+        _sr_nl: "\n"                    # a real line break (1.79.17)
 
     - name: Space request | the request, ready to copy (nothing was sent)
       ansible.builtin.debug:

@@ -212,9 +212,9 @@
         _ff_state_now: >-
           {{ ((_ff_rawback.stdout_lines | default([])) | select('match', '^STATE ') | list + ['STATE unknown'])[-1].split()[-1] }}
         _ff_lost_why: >-
-          {{ ('unreachable: ' ~ (_ff_ansible.msg | default(''))) if _ff_ansible is unreachable else
-             ((_ff_ansible.module_stderr | default('', true)) or (_ff_ansible.msg | default('', true)) or (_ff_ansible.stderr | default('')))
-             | string | trim | replace('\n', ' ') | truncate(240) }}
+          {{ (('unreachable: ' ~ (_ff_ansible.msg | default(''))) if _ff_ansible is unreachable else
+              ((_ff_ansible.module_stderr | default('', true)) or (_ff_ansible.msg | default('', true)) or (_ff_ansible.stderr | default(''))))
+             | string | trim | regex_replace('\s*[\r\n]+\s*', ' ') | truncate(240) }}
   rescue:
     # raw (1.79.15): it runs even when what failed was fapolicyd blocking Ansible's module files
     - name: Fapolicyd fix | put back what was changed, fapolicyd as it was
@@ -239,7 +239,7 @@
           error: >-
             {{ (ansible_failed_task.name | default('') | regex_replace('^.*[|] ', '')) ~ ': '
                ~ ((ansible_failed_result.stderr | default('', true)) or (ansible_failed_result.stdout | default('', true))
-                  or (ansible_failed_result.msg | default(''))) | trim | replace('\n', ' ')
+                  or (ansible_failed_result.msg | default(''))) | trim | regex_replace('\s*[\r\n]+\s*', ' ')
                ~ (' - putting it back failed: the backups stay in ' ~ _ff_tmp.path ~ ' on the host - look at the files by hand'
                   if _ff_keep | bool else (' - what was changed is put back' if _ff_putback is not skipped else '')) }}
           backup: "{{ _ff_tmp.path if _ff_keep | bool else '' }}"

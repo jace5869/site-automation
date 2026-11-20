@@ -19,4 +19,6 @@
   ansible.builtin.set_fact:
     _akx_answers: >-
       {{ _akx_answers | combine({_akx_ask.id: (_ea_raw | default('') | string | site_redact) if _ea_ran | default(false) | bool
-                                 else 'unsure\nACT did not answer: ' ~ (_ea_reason | default('') | string | site_redact | truncate(200))}) }}
+                                 else 'unsure' ~ _akx_nl ~ 'ACT did not answer: ' ~ (_ea_reason | default('') | string | site_redact | truncate(200))}) }}
+  vars:
+    _akx_nl: "\n"                     # a real line break: the second line is ACT's why (1.79.17)

@@ -138,7 +138,7 @@
       ansible.builtin.set_fact:
         _copy_failed: >-
           {{ _copy_failed | default([]) + [{'job': _copy_item.job, 'template': _copy_item.template, 'page': _copy_item.url or _copy_item.page,
-                                            'why': ansible_failed_result.msg | default('failed') | string | replace('\n', ' ') | truncate(300)}] }}
+                                            'why': ansible_failed_result.msg | default('failed') | string | regex_replace('\s*[\r\n]+\s*', ' ') | truncate(300)}] }}
 
     - name: Copy | job {{ _copy_item.job }} - WARNING, its page was not copied
       ansible.builtin.debug:

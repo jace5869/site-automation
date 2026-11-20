@@ -125,7 +125,7 @@
         servicenow_node_result: >-
           {{ {'host': inventory_hostname, 'hostname': '', 'reachable': false, 'units': [], 'missing': [], 'disk': [], 'memory': {},
               'label': servicenow_node_label | default('', true) | string | trim,
-              'error': ((_snh_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300)} }}
+              'error': ((_snh_reach.msg | default('', true) | string | trim | regex_replace('\s*[\r\n]+\s*', ' ')) or 'unreachable') | truncate(300)} }}
       when: _snh_reach.unreachable | default(false) or 'reached' not in _snh_reach.stdout | default('')
 
     - name: Leave it out

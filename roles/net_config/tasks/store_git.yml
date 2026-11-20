@@ -79,13 +79,14 @@
               {{ ['git', '-C', _ncg_dir, '-c', 'user.name=' ~ net_config_git_author_name, '-c', 'user.email=' ~ net_config_git_author_email,
                   'commit', '--quiet', '-m', _ncg_msg] }}
           vars:
+            _ncg_nl: "\n"               # a real line break (1.79.17)
             _ncg_msg: >-
               {%- set ch = _ncg_res.devices | selectattr('status', 'equalto', 'changed') | map(attribute='host') | list -%}
               {%- set nw = _ncg_res.devices | selectattr('status', 'equalto', 'new') | map(attribute='host') | list -%}
               {%- set what = ('Before ' ~ _ncg_keep_ref.split('-before-')[-1]) if _ncg_keep_ref | default('') else 'Backup' -%}
               {{ what }} {{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}: {{ (['%d changed (%s)' | format(ch | length, ch | join(', ')) if ch else '']
               + ['%d new (%s)' | format(nw | length, nw | join(', ')) if nw else '']) | select | join(', ') | truncate(200) }}{{
-              '\n\nAAP job ' ~ awx_job_id if awx_job_id is defined else '' }}
+              _ncg_nl ~ _ncg_nl ~ 'AAP job ' ~ awx_job_id if awx_job_id is defined else '' }}
           changed_when: true
           register: _ncg_commit_out
 
