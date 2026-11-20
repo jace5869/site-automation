@@ -1,5 +1,5 @@
 ---
 # Test double of the auditd check (1.84.0): one finding, to see the NetApp Console profile give it its wording. Not a shipped role.
-- name: fake auditd check
+- name: Fake auditd check
   ansible.builtin.set_fact:
     site_findings: "{{ site_findings | default([]) + [{'check': 'auditd', 'id': 'auditd:lost', 'severity': 'warning', 'summary': 'auditd lost 1203 events', 'hint': 'auditctl -s'}] }}"

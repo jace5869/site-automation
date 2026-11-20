@@ -1,5 +1,5 @@
 ---
 # Test double of the fapolicyd check (1.84.0): one finding, to see the NetApp Console profile give it its wording. Not a shipped role.
-- name: fake fapolicyd check
+- name: Fake fapolicyd check
   ansible.builtin.set_fact:
     site_findings: "{{ site_findings | default([]) + [{'check': 'fapolicyd', 'id': 'fapolicyd:down', 'severity': 'critical', 'summary': 'fapolicyd is not running', 'hint': 'systemctl status fapolicyd'}] }}"

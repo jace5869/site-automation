@@ -15,7 +15,7 @@
     - name: Run the check, as health_check.yml does - through run_check.yml
       ansible.builtin.include_role: {name: site_findings, tasks_from: run_check.yml}
       vars: {_site_check: containers}
-    - name: fapolicyd and auditd, if the set did not run them (health_check.yml does this after its loop)
+    - name: Fapolicyd and auditd, if the set did not run them (health_check.yml does this after its loop)
       ansible.builtin.include_role: {name: check_containers, tasks_from: console_checks.yml}
       when: site_console is defined
     - name: The Console's findings, once every check has run

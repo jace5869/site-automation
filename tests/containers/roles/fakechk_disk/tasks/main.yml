@@ -1,5 +1,5 @@
 ---
 # Test double of the disk check (1.84.0): one finding, to see the NetApp Console profile give it its wording. Not a shipped role.
-- name: fake disk check
+- name: Fake disk check
   ansible.builtin.set_fact:
     site_findings: "{{ site_findings | default([]) + [{'check': 'disk', 'id': 'disk:/opt/application/netapp', 'severity': 'warning', 'summary': '/opt/application/netapp is 88% full', 'hint': 'df -h'}] }}"
