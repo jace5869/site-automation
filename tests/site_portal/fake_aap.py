@@ -118,7 +118,10 @@ def iso(t):
 
 
 def job_status(j):
-    """A job's status, by the clock: running for RUN seconds after it may start, then done."""
+    """A job's status, by the clock: running for RUN seconds after it may start, then done. 1.79.5: force - a final status a test set
+    (portal_demo.py /__end): the job is over at once, its nodes as they were."""
+    if j.get("force"):
+        return j["force"]
     if j["type"] == "workflow_approval":
         return j["status"]
     if j["type"] == "workflow_job":

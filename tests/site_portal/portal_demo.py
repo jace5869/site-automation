@@ -48,6 +48,8 @@ cfg = sp.Config({"PORTAL_DATA": os.path.join(tmp, "data"), "PORTAL_REPORTS": rep
                  "PORTAL_BANNER": {"on": False}})
 real = sys.stdout
 sys.stdout = open(os.devnull, "w")
+if os.environ.get("PORTAL_DEMO_LAST_TTL"):    # 1.79.5: the cards' last run read again sooner (tests/test_portal_interactive.py)
+    sp.Portal.LAST_TTL = int(os.environ["PORTAL_DEMO_LAST_TTL"])
 portal = sp.Portal(cfg)
 portal.aap.connect()
 portal.aap.resolve(portal.actions)
@@ -145,6 +147,20 @@ class Front(BaseHTTPRequestHandler):
         if path == "/__fit.js":
             self.send_response(200); self.send_header("Content-Type", "text/javascript"); self.send_header("Content-Length", str(len(self.FIT_JS))); self.end_headers()
             return self.wfile.write(self.FIT_JS)
+        if path in ("/__launch", "/__end"):     # 1.79.5, test only: start a recheck (it runs RUN seconds) / end jobs now with a final status
+            qq = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv)
+            if path == "/__launch":
+                out = {"id": call("/api/actions/stig_recheck", body={"vars": {"target": "web03.example.mil"}})["job_id"]}
+            else:
+                which = [int(x) for x in qq.get("job", "").split(",") if x.isdigit()] if qq.get("job") != "all" else \
+                    [k for k, j in ST["jobs"].items() if j["type"] in ("job", "workflow_job") and fake_aap.job_status(j) not in ("successful", "failed", "error", "canceled")]
+                for k in which:
+                    ST["jobs"][k]["force"] = qq.get("status", "successful")
+                portal.summaries.clear()             # the badges' 10 s memory: the next look sees it
+                out = {"ended": which}
+            body = json.dumps(out).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers()
+            return self.wfile.write(body)
         path = path[len("/portal"):] or "/" if path.startswith("/portal") else path
         theme, rest = "", []
         for kv in q.split("&"):

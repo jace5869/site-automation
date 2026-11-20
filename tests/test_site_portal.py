@@ -865,7 +865,7 @@ class Live(unittest.TestCase):
             self.portal.summaries.clear()
             r = json.loads(self.req("/api/summary")[1])
             self.assertIn(jid, [j["id"] for j in r["recent"]])
-            self.assertEqual(set(r["recent"][0]), {"id", "title", "group"})
+            self.assertEqual(set(r["recent"][0]), {"id", "title", "group", "status"})                # 1.79.6: status (canceled ends a toast)
             self.assertEqual(r["approvals"], 0)                                                          # not an approver: nothing to decide
             self.assertEqual(self.req("/api/summary", dn=None)[0], 403)
         finally:
@@ -2293,7 +2293,7 @@ class Found(unittest.TestCase):
 
     def test_67_the_script_stops_asking_when_done(self):
         js = open(os.path.join(FILES, "static", "portal.js")).read()
-        self.assertIn('pane.dataset.done !== "0"', js)
+        self.assertIn('pane.dataset.done === "0"', js)                                             # 1.79.6: asks only while the open job runs
         self.assertIn("document.hidden", js)                                                        # not while the page is hidden
         self.assertNotIn("innerHTML", js)
         self.assertNotIn("<script>", self.get("/jobs")[1])
@@ -2480,6 +2480,89 @@ class StubApi(object):
 
 def page(rows, nxt=None, count=None):
     return 200, {"count": len(rows) if count is None else count, "next": StubApi.base + nxt if nxt else None, "results": rows}
+
+
+class Spin1796(unittest.TestCase):
+    """1.79.6: nothing turns once a job is over - a finished pane draws no running host or step; a card's Last run says its status (data-st) so
+    the page asks again while it is not over; a look-up of one action keeps every other action's AAP id (the cards' Last run)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        with open(os.path.join(cls.tmp, "actions.json"), "w") as fh:
+            json.dump({"actions": ACTIONS}, fh)
+        cls.cfg = sp.Config({"PORTAL_DATA": os.path.join(cls.tmp, "data"), "PORTAL_REPORTS": cls.tmp, "PORTAL_ACTIONS": os.path.join(cls.tmp, "actions.json"),
+                             "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "fake-token", "PORTAL_INVENTORY": "Site hosts"})
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_1_a_finished_pane_has_no_running_mark(self):
+        class P(object):
+            actions = {}
+
+            def __init__(self, st, done):
+                self.st, self.done = st, done
+
+            def progress(self, jid, cn, via=None):
+                return 200, {"done": self.done, "status": self.st, "now": "" if self.done else "Gathering facts", "hosts_line": "",
+                             "hosts": [{"host": "web01.example.mil", "state": "running"}, {"host": "web03.example.mil", "state": "done"}],
+                             "steps": [{"name": "Recheck", "type": "job", "status": "running", "word": "Running", "note": "", "job": None}], "lines": []}
+
+            def job(self, jid, via=None, cn=None):
+                return 200, {"status": self.st, "type": "workflow_job", "name": "Recheck"}
+        for st in ("canceled", "failed", "error", "successful"):
+            h = sp.job_pane_html(self.cfg, P(st, True), "DOE.JANE", 42)
+            self.assertIn('data-done="1"', h, st)
+            self.assertNotIn("ic-run", h, st)                          # no host, step, banner or Now box turns
+            self.assertIn("<b>web01.example.mil</b> not finished", h, st)
+            self.assertIn("Not finished</span>", h, st)
+        h = sp.job_pane_html(self.cfg, P("running", False), "DOE.JANE", 42)          # while it runs: the marks turn
+        self.assertIn('data-done="0"', h)
+        self.assertIn("ic-run", h)
+        self.assertIn("<b>web01.example.mil</b> running", h)
+
+    def test_2_a_cards_last_run_says_its_status(self):
+        self.assertIn('class="meta lastrun" data-st="running"', sp.last_run_html(self.cfg, {"status": "running", "finished": ""}))
+        self.assertIn('data-st="successful"', sp.last_run_html(self.cfg, {"status": "successful", "finished": "2026-11-20T05:00:00Z"}))
+        self.assertNotIn("ic-run", sp.last_run_html(self.cfg, {"status": "successful", "finished": ""}))
+        self.assertIn('data-st="">Never run', sp.last_run_html(self.cfg, {}))
+        with open(os.path.join(FILES, "static", "portal.js")) as fh:
+            js = fh.read()
+        self.assertIn('const LIVE = ["running", "pending", "waiting", "new"];', js)
+        self.assertIn('querySelectorAll(".meta.lastrun")', js)
+
+    def test_4_codex_round(self):
+        """1.79.6 (Codex): the Details runs drawn still; a pane AAP could not give is marked (the page keeps what it had); a list row says its
+        raw status (an unread one is kept by the page); the summary says each job's status (a canceled one ends its toast)."""
+        self.assertNotIn("ic-run", sp.status_chip("running", live=False))
+        self.assertIn("ic-run", sp.status_chip("running"))
+        with open(os.path.join(FILES, "site_portal.py")) as fh:
+            src = fh.read()
+        self.assertIn('status_chip(r["status"], live=False)', src)
+        self.assertIn('data-done="1" data-error="1"', src)
+        self.assertIn('"status": j["status"]} for j in jobs', src)
+
+        class P(object):
+            GROUPS = sp.Portal.GROUPS
+        items = [{"id": 5, "title": "Recheck", "status": "unknown", "group": "other", "started": "", "elapsed": None, "by": "DOE.JANE"}]
+        h = sp.job_list_html(self.cfg, P(), "DOE.JANE", items, None, "mine")
+        self.assertIn('data-st="other" data-status="unknown"', h)
+
+    def test_3_one_look_up_keeps_the_others(self):
+        def route(m, path, b):
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+            if "?name=" in path:
+                return page([{"id": 7 if "recheck" in q["name"][0] else 8, "name": q["name"][0]}])
+            return 200, {"ask_variables_on_launch": True, "ask_limit_on_launch": True}
+        a = sp.Aap(self.cfg, api=StubApi(route))
+        acts = dict((k, dict(v, vars=v.get("vars") or {}, limit_from=v.get("limit_from", ""))) for k, v in ACTIONS.items())
+        a.resolve(acts)
+        self.assertEqual(sorted(a.ids), sorted(acts))
+        a.resolve({"stig_recheck": acts["stig_recheck"]})                         # one again (state(): it was off)
+        self.assertEqual(sorted(a.ids), sorted(acts))                              # every other one kept
+        self.assertEqual(a.ids["stig_recheck"][0], 7)
 
 
 class Codex1(unittest.TestCase):

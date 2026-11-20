@@ -112,6 +112,7 @@ function initRun(f) {                  // the confirm page's form, or the Run di
     try {
       const sg = qa(f, 'input[name="portal-sig"]')[0];
       const r = await post("api/actions/" + encodeURIComponent(Element.prototype.getAttribute.call(f, "data-action")), {vars, sig: sg ? sg.value : undefined});
+      rememberRunning(r.job_id);
       $("state").textContent = "Started: job " + r.job_id + (r.warning ? ". " + r.warning : "") + ". Opening it…";
       location.assign(r.url);
     } catch (e) {
@@ -129,26 +130,24 @@ function initRun(f) {                  // the confirm page's form, or the Run di
 
 // ---- the Jobs page (1.78.0): a list on the left (My jobs | All jobs, search, status chips), the job on the right. The server renders both
 // (the page reads the same without scripts); while the job runs this swaps the server's pane in every 3 s - and stops when it says it is done.
-const swapIn = (old, html, sel) => {         // the server's own HTML, parsed as a document (never assigned as markup): the new element replaces the old
-  const fresh = new DOMParser().parseFromString(html, "text/html").querySelector(sel);
-  if (fresh && old && old.parentNode) { old.replaceWith(document.importNode(fresh, true)); return document.querySelector(sel); }
-  return null;
-};
-function jobList() {                         // the chips and the search filter the rows already on the page
+function jobList() {                         // the chips and the search filter the rows on the page -> apply (again, after the rows change)
   const box = $("jl");
-  if (!box) return;
-  const q = $("jq"), rows = $("jrows");
+  if (!box) return () => {};
+  const q = $("jq");
   let st = "";
   const apply = () => {
     const t = (q.value || "").trim().toLowerCase();
-    for (const li of rows.children) li.hidden = !((!st || li.dataset.st === st) && (!t || (li.dataset.q || "").indexOf(t) >= 0));
+    for (const li of $("jrows").children) li.hidden = !((!st || li.dataset.st === st) && (!t || (li.dataset.q || "").indexOf(t) >= 0));
     for (const b of $("jchips").children) b.setAttribute("aria-pressed", b.dataset.st === st ? "true" : "false");
   };
   q.addEventListener("input", apply);
   $("jchips").addEventListener("click", (ev) => { const b = ev.target.closest && ev.target.closest("button"); if (b) { st = b.dataset.st; apply(); } });
+  return apply;
 }
+// 1.79.6: a job is over for the page when AAP says so - its running mark (.d.run, .ic-run) never stays after that
+const LIVE = ["running", "pending", "waiting", "new"];
 function jobsPage() {
-  jobList();
+  const apply = jobList();
   document.addEventListener("click", (ev) => {
     const b = ev.target.closest && ev.target.closest("button");
     if (!b) return;
@@ -156,31 +155,78 @@ function jobsPage() {
     if (b.hasAttribute("data-copylink") && navigator.clipboard) navigator.clipboard.writeText(location.href).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy link"; }, 1500); }, () => {});
     if (b.hasAttribute("data-print")) window.print();
   });
-  let pane = $("jd"), wait = 3000;
-  if (!pane || pane.dataset.done !== "0") return;
-  const id = pane.dataset.job, via = pane.dataset.via ? "&via=" + encodeURIComponent(pane.dataset.via) : "";
-  async function tick() {
-    if (document.hidden) { setTimeout(tick, wait); return; }                // only while the page is open to be seen
-    let r;
-    try {
-      r = await fetch(BASE + "jobs/" + encodeURIComponent(id) + "?pane=1" + via, {credentials: "same-origin", headers: {"Accept": "text/html"}});
-    } catch (e) { wait = Math.min(wait * 2, 30000); setTimeout(tick, wait); return; }
-    if (r.status === 429) { wait = 10000; setTimeout(tick, wait); return; }
-    if (!r.ok) return;
-    wait = 3000;
-    const next = swapIn(pane, await r.text(), "#jd");
-    if (!next) return;
-    pane = next;
-    if (pane.dataset.done !== "0") {                                         // finished: no more asking; the list shows its end too
-      try {
-        const l = await fetch(BASE + "jobs?list=1&scope=" + encodeURIComponent($("jl").dataset.scope), {credentials: "same-origin"});
-        if (l.ok) { const n = swapIn($("jl"), await l.text(), "#jl"); if (n) jobList(); }
-      } catch (e) { /* the list is as it was */ }
-      return;
+  // 1.79.6: one request a turn - while the open job runs, its pane and the list come in the same answer (?pane=1&list=); when only rows of the
+  // list run, the list alone, every 6 s. So each row and the pane end in their final state while the page is open, within the same per-person
+  // budget as before. Nothing is asked while the page is hidden; coming back asks at once, but never sooner than the wait in force.
+  let pane = $("jd"), wait = 3000, timer = 0, busy = false, last = 0;
+  if (!pane) return;
+  const paneLive = () => !!(pane && pane.dataset.done === "0" && pane.dataset.job);
+  const listLive = () => !!document.querySelector("#jrows li[data-st=running]");
+  function putList(fresh) {                    // the rows and the chips' counts; the search box stays (its focus, what is typed), the filter applies again
+    const rows = $("jrows"), chips = $("jchips");
+    const nr = fresh && fresh.querySelector("#jrows"), nc = fresh && fresh.querySelector("#jchips");
+    if (!rows || !nr) return;
+    const old = new Map(Array.from(rows.children).map((li) => [li.querySelector("a") ? li.querySelector("a").getAttribute("href").split("?")[0] : "", li]));
+    const id = pane && pane.dataset.job;
+    const out = [];
+    for (const li of Array.from(nr.children)) {
+      const href = li.querySelector("a") ? li.querySelector("a").getAttribute("href").split("?")[0] : "";
+      const was = old.get(href);
+      // AAP did not give this job's status just now: the row stays as it was (asked again next turn), never "over" by a failed read
+      if (li.dataset.status === "unknown" && was && was.dataset.st === "running") { out.push(was); continue; }
+      const n = document.importNode(li, true);
+      const on = !!(id && href.endsWith("/jobs/" + id));
+      n.classList.toggle("on", on);
+      if (on) n.setAttribute("aria-current", "true"); else n.removeAttribute("aria-current");
+      out.push(n);
     }
-    setTimeout(tick, wait);
+    rows.replaceChildren(...out);
+    if (chips && nc) {                          // the counts; the pressed chip is set again by apply
+      const pressed = Array.from(chips.children).find((b) => b.getAttribute("aria-pressed") === "true");
+      chips.replaceChildren(...Array.from(nc.children).map((b) => document.importNode(b, true)));
+      for (const b of chips.children) b.setAttribute("aria-pressed", pressed && b.dataset.st === pressed.dataset.st ? "true" : "false");
+    }
+    apply();
   }
-  setTimeout(tick, wait);
+  function gone() {                            // no longer this person's to see (403/404): said in place, nothing of the old view left
+    const p = el("section", "card jd");
+    p.id = "jd"; p.dataset.done = "1";
+    p.append(el("p", "empty", "This job is not available here any more."));
+    pane.replaceWith(p);
+    pane = p;
+  }
+  async function tick() {
+    clearTimeout(timer);
+    if (busy || document.hidden || !(paneLive() || listLive())) return;
+    const early = wait - (Date.now() - last);
+    if (early > 50) { timer = setTimeout(tick, early); return; }               // a resume never asks sooner than the wait in force
+    busy = true;
+    last = Date.now();
+    const scope = ($("jl") && $("jl").dataset.scope) || "mine";
+    try {
+      const both = paneLive();
+      const url = both ? "jobs/" + encodeURIComponent(pane.dataset.job) + "?pane=1&list=" + encodeURIComponent(scope) + (pane.dataset.via ? "&via=" + encodeURIComponent(pane.dataset.via) : "")
+                       : "jobs?list=1&scope=" + encodeURIComponent(scope);
+      const r = await fetch(BASE + url, {credentials: "same-origin", headers: {"Accept": "text/html"}});
+      if (r.status === 429) wait = 10000;
+      else if (both && (r.status === 403 || r.status === 404)) { gone(); wait = 6000; }
+      else if (!r.ok) throw new Error("HTTP " + r.status);
+      else {
+        const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+        const np = both && doc.querySelector("#jd");
+        let stale = false;
+        if (np && np.dataset.error) stale = true;                                // AAP could not say just now: the pane stays as it was
+        else if (np) { pane.replaceWith(document.importNode(np, true)); pane = $("jd"); }
+        putList(doc.querySelector("#jl"));
+        wait = stale ? Math.min(Math.max(wait * 2, 6000), 30000) : (paneLive() ? 3000 : 6000);
+      }
+    } catch (e) { wait = Math.min(wait * 2, 30000); }                       // a failed answer: ask again later, never stop for good
+    busy = false;
+    if (paneLive() || listLive()) timer = setTimeout(tick, wait);
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+  last = Date.now();
+  timer = setTimeout(tick, wait);
 }
 
 // ---- the host picker (1.78.0): a searchable list of the inventory's hosts and groups, to tick one or many. The server renders a plain
@@ -299,6 +345,7 @@ function manyPage() {
       vars[t.dataset.hv] = tr.dataset.host;
       try {
         const r = await post("api/actions/" + encodeURIComponent(t.dataset.action), {vars});
+        rememberRunning(r.job_id);
         const a = el("a", "", "job " + r.job_id);
         a.href = r.url;
         cell.replaceChildren(mark("ok", "s-ok", "Started"), document.createTextNode(" "), a);
@@ -419,7 +466,7 @@ function homeActions() {
   place();
   apply();
   const dlg = $("dlg"), drawer = $("drawer");
-  if (!dlg || !dlg.showModal) return;                                     // an old browser: the links go to the pages
+  if (!dlg || !dlg.showModal) return apply;                               // an old browser: the links go to the pages
   const open = async (box, url, after) => {
     try {
       const n = await fetchFrag(url);
@@ -449,10 +496,62 @@ function homeActions() {
       if (!ok) location.assign(d.getAttribute("href"));
     }
   });
+  return apply;
 }
 
 function homePage() {
-  homeActions();
+  homeLive(homeActions() || (() => {}));
+}
+
+// ---- 1.79.5: a card's "Last run" while that run is not over: the page asks for itself again every 15 s (the service keeps AAP's answer a minute)
+// and puts each card's new Last run in place - the running mark goes when the run ends. Nothing is asked while the page is hidden or nothing runs.
+function homeLive(apply) {
+  const grid = $("agrid");
+  if (!grid || !window.DOMParser) return;
+  let timer = 0, wait = 15000, busy = false;
+  const live = () => Array.from(grid.querySelectorAll(".meta.lastrun")).some((m) => LIVE.indexOf(m.dataset.st) >= 0);
+  async function tick() {
+    clearTimeout(timer);
+    if (busy || !live() || document.hidden) return;
+    busy = true;
+    try {
+      const r = await fetch(BASE, {credentials: "same-origin", headers: {"Accept": "text/html"}});
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+      for (const li of grid.querySelectorAll("li[data-name]")) {
+        const old = li.querySelector(".meta.lastrun");
+        if (!old) continue;
+        const card = doc.querySelector('li[data-name="' + CSS.escape(li.dataset.name) + '"]');
+        const fresh = card && card.querySelector(".meta.lastrun");
+        if (fresh) old.replaceWith(document.importNode(fresh, true));
+        else if (LIVE.indexOf(old.dataset.st) >= 0) {
+          // 1.79.6 (Codex): the action is gone from the page or off now - its old run is not shown as running any more; a reload shows it as it is
+          const m = el("div", "meta lastrun", "Last run: reload the page to see it");
+          m.dataset.st = "";
+          old.replaceWith(m);
+        }
+        if (card) li.dataset.failed = card.dataset.failed || "0";               // the "Last run failed" tile and filter follow
+      }
+      const nt = doc.querySelector('#ftiles a[data-show="failed"] .v'), ot = document.querySelector('#ftiles a[data-show="failed"] .v');
+      if (nt && ot) ot.textContent = nt.textContent;
+      apply();
+      wait = 15000;
+    } catch (e) { wait = Math.min(wait * 2, 120000); }
+    busy = false;
+    if (live()) timer = setTimeout(tick, wait);
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+  timer = setTimeout(tick, wait);
+}
+
+// 1.79.5: a job started from this browser is known as running at once - its toast comes even when it ends before the next look (liveBadges)
+function rememberRunning(id) {
+  if (id === undefined || id === null) return;
+  try {
+    const seen = JSON.parse(localStorage.getItem("site-portal-jobs") || "{}");
+    seen[id] = "running";
+    localStorage.setItem("site-portal-jobs", JSON.stringify(seen));
+  } catch (e) { /* no memory in this browser: the toast needs a look while it runs */ }
 }
 
 // ---- approvals: every workflow approval waiting in AAP that the portal's account can see; Approve / Deny (with one more question, in place) for the approvers
@@ -598,9 +697,13 @@ function liveBadges() {
       let seen = {};
       try { seen = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) { seen = {}; }
       const now = {};
+      // 1.79.5: a job this browser started and the summary does not list yet stays known as running (at most 50 kept)
+      for (const k of Object.keys(seen).filter((k) => seen[k] === "running").slice(-50)) now[k] = "running";
       for (const j of r.recent || []) {
-        now[j.id] = (j.group === "other" && seen[j.id]) ? seen[j.id] : j.group;      // a status the portal could not read keeps what was known
-        if (seen[j.id] === "running" && j.group !== "running" && j.group !== "other") {
+        // a status the portal could not read keeps what was known; 1.79.6 (Codex): canceled is over (its group is other, as an unread one)
+        const over = j.group === "succeeded" || j.group === "failed" || j.status === "canceled";
+        now[j.id] = over ? (j.status === "canceled" ? "canceled" : j.group) : (j.group === "other" && seen[j.id]) ? seen[j.id] : j.group;
+        if (seen[j.id] === "running" && over) {
           const ok = j.group === "succeeded";
           toast((ok ? "Succeeded - " : j.group === "failed" ? "Failed - " : "Ended - ") + j.title, "Job " + j.id + " is over.", !ok, j.id);
         }

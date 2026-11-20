@@ -327,7 +327,9 @@ class Aap(object):
             tid = int(rows[0]["id"])
             out[name] = (tid, self._takes(kind, tid, a))
         with self.lock:
-            self.ids = out
+            # 1.79.6: merged - a look-up of one action (state(): one that was off) kept every other action's id; it replaced them all,
+            # and every other card showed "Never run" until the next full look-up
+            self.ids = dict(self.ids, **out)
         return out
 
     def _takes(self, kind, tid, a):
@@ -1748,7 +1750,7 @@ class Portal(object):
                 return hit[1]
         jobs = self.job_list(cn, "mine", 50)
         out = {"running": len([j for j in jobs if j["group"] == "running"]),
-               "recent": [{"id": j["id"], "title": j["title"], "group": j["group"]} for j in jobs
+               "recent": [{"id": j["id"], "title": j["title"], "group": j["group"], "status": j["status"]} for j in jobs
                           if j["group"] == "running" or j["id"] in set(x["id"] for x in jobs[:10])], "approvals": 0}
         if cn in self.cfg.approvers:
             code, data = self.approvals(cn)
@@ -2053,8 +2055,9 @@ ICONS = {      # a status mark: drawn, never a colour alone (portal.js draws the
 }
 
 
-def icon(kind):
-    return '<svg class="ic%s" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % (" ic-run" if kind == "run" else "", ICONS[kind])      # 1.78.2: the running one turns (portal.css)
+def icon(kind, turn=True):
+    # 1.78.2: the running one turns (portal.css); 1.79.6: turn=False - a view that is not kept up to date (Details) draws it still
+    return '<svg class="ic%s" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % (" ic-run" if kind == "run" and turn else "", ICONS[kind])
 
 
 def shell(cfg, title, body, user="", token="", page="", data=None):
@@ -2160,8 +2163,10 @@ def clock(cfg, t=None):
 
 def last_run_html(cfg, last):
     if not last:
-        return '<div class="meta">Never run</div>'
-    return '<div class="meta">Last run %s <span>%s</span></div>' % (status_chip(last.get("status", "")), esc(shown(cfg, last.get("finished")) or ""))
+        return '<div class="meta lastrun" data-st="">Never run</div>'
+    # 1.79.5: data-st - the page asks for the card again while it is not over (portal.js homeLive), so the running mark stops when the run ends
+    return '<div class="meta lastrun" data-st="%s">Last run %s <span>%s</span></div>' % (esc(last.get("status", "")), status_chip(last.get("status", "")),
+                                                                                       esc(shown(cfg, last.get("finished")) or ""))
 
 
 def _names(items, n=30):
@@ -2282,7 +2287,8 @@ def details_html(cfg, portal, cn, name):
         ("Hosts (1 to %d hosts or groups, one job)" % int(next(v for v in a["vars"].values() if v["kind"] == "hosts").get("max") or cfg.action_max_hosts))
         if any(v["kind"] == "hosts" for v in a["vars"].values()) else ("A host of the portal's inventory" if hosts else ""),
         "An approver decides before it goes on" if a["approval"] and a["aap"]["type"] == "workflow" else "") if t) or "<li>Nothing: it takes no values.</li>"
-    rs = "".join('<li>%s %s%s</li>' % (status_chip(r["status"]), esc(shown(cfg, r["started"]) or ""), (" \u00b7 " + esc(dur_text(r["elapsed"]))) if r.get("elapsed") else "") for r in runs) or '<li class="muted-line">No run yet.</li>'
+    # 1.79.6 (Codex): the Details panel is a snapshot - nothing asks for it again - so a running run is drawn still, never turning
+    rs = "".join('<li>%s %s%s</li>' % (status_chip(r["status"], live=False), esc(shown(cfg, r["started"]) or ""), (" \u00b7 " + esc(dur_text(r["elapsed"]))) if r.get("elapsed") else "") for r in runs) or '<li class="muted-line">No run yet.</li>'
     line = a.get("summary") or a.get("description") or ""
     labels = "".join('<span class="tg">%s</span>' % esc(l) for l in a.get("labels") or [])
     run = ('<a class="btn pri" href="%sactions/%s" data-run%s>Run %s</a>' % (cfg.path, esc(name), "" if not picker_vars(a) else ' data-pick="1"', icon("arrow")))
@@ -2626,9 +2632,9 @@ STATUS_CHIP = {"successful": ("ok", "s-ok", "Succeeded"), "failed": ("bad", "s-c
                "pending": ("wait", "s-info", "Starting"), "waiting": ("wait", "s-info", "Starting"), "canceled": ("skip", "s-info", "Canceled")}
 
 
-def status_chip(st, approval=False):
+def status_chip(st, approval=False, live=True):
     kind, cls, word = ("wait", "s-warning", "Waiting for approval") if approval else STATUS_CHIP.get(st, ("skip", "s-info", str(st or "Unknown").capitalize()))
-    return '<span class="chip %s">%s%s</span>' % (cls, icon(kind), esc(word))
+    return '<span class="chip %s">%s%s</span>' % (cls, icon(kind, live), esc(word))
 
 
 def job_list_html(cfg, portal, cn, items, sel, scope):
@@ -2639,9 +2645,9 @@ def job_list_html(cfg, portal, cn, items, sel, scope):
         ('<a class="%s" href="%sjobs?scope=all">All jobs</a>' % ("on" if scope == "all" else "", cfg.path)) if approver else "")
     chips = '<button type="button" data-st="" aria-pressed="true">All %d</button>' % len(items) + "".join(
         '<button type="button" data-st="%s" aria-pressed="false">%s %d</button>' % (g, w, counts[g]) for g, w in portal.GROUPS)
-    rows = "".join('<li data-st="%s" data-q="%s"%s><a href="%sjobs/%d?scope=%s"><span class="d %s" aria-hidden="true"></span><span class="t">%s<small>Job %d%s</small></span>'
+    rows = "".join('<li data-st="%s" data-status="%s" data-q="%s"%s><a href="%sjobs/%d?scope=%s"><span class="d %s" aria-hidden="true"></span><span class="t">%s<small>Job %d%s</small></span>'
                    '<span class="r">%s<small>%s</small></span></a></li>'
-                   % (x["group"], esc(("%s %d %s" % (x["title"], x["id"], x["by"])).lower()), ' class="on" aria-current="true"' if x["id"] == sel else "", cfg.path, x["id"],
+                   % (x["group"], esc(x["status"]), esc(("%s %d %s" % (x["title"], x["id"], x["by"])).lower()), ' class="on" aria-current="true"' if x["id"] == sel else "", cfg.path, x["id"],
                       "all" if scope == "all" else "mine", GROUP_DOT[x["group"]], esc(x["title"]), x["id"],
                       (" \u00b7 " + esc(x["by"])) if scope == "all" else "", esc(shown(cfg, x["started"])), esc(dur_text(x["elapsed"]) if x["group"] != "running" else "running"))
                    for x in items)
@@ -2693,7 +2699,8 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
     same HTML in every 3 s while the job runs (data-done tells it to stop)."""
     code, view = portal.progress(jid, cn, via)
     if code != 200:
-        return '<section class="card jd" id="jd" data-done="1"><p class="empty">%s</p></section>' % esc(view.get("error", "Not available."))
+        # 1.79.6 (Codex): data-error - AAP could not give the job just now: the page keeps what it showed and asks again (portal.js)
+        return '<section class="card jd" id="jd" data-done="1" data-error="1"><p class="empty">%s</p></section>' % esc(view.get("error", "Not available."))
     j = portal.job(jid, via, cn)[1]
     pg, done = view, bool(view.get("done"))
     st = j.get("status", "")
@@ -2722,14 +2729,19 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
         nowbox = '<div class="now"><div class="nl">%s<b>Now</b> \u00b7 %s</div>%s%s</div>' % (icon("run"), esc(pg["now"]), bar, ('<p class="muted-line">%s</p>' % esc(note_pct(pc, pg.get("est")))) if pc is not None and pg.get("est") else "")
     hosts = ""
     if pg.get("hosts"):
-        chips = "".join('<span class="hc %s">%s<b>%s</b> %s</span>' % ({"done": "ok", "failed": "bad", "unreachable": "wait", "running": "run"}[h["state"]],
-                                                                        icon({"done": "ok", "failed": "bad", "unreachable": "wait", "running": "run"}[h["state"]]), esc(h["host"]), esc(h["state"]))
-                        for h in pg["hosts"])
+        # 1.79.5: a job that is over has no running host - one AAP gave no last word for (canceled, an error) is "not finished", never a turning mark
+        hst = [(h, "not finished" if done and h["state"] == "running" else h["state"]) for h in pg["hosts"]]
+        hk = {"done": "ok", "failed": "bad", "unreachable": "wait", "running": "run", "not finished": "skip"}
+        chips = "".join('<span class="hc %s">%s<b>%s</b> %s</span>' % ("wait" if w == "not finished" else hk[w], icon(hk[w]), esc(h["host"]), esc(w))
+                        for h, w in hst)
         hosts = '<div><h3>Hosts</h3><div class="hosts">%s</div><p class="muted-line">%s</p></div>' % (chips, esc(pg.get("hosts_line", "")))
     steps = ""
     if pg.get("steps"):
         rows = "".join('<tr><td>%s</td><td>%s</td><td>%s%s</td><td class="mono">%s</td></tr>' % (
-            esc(s_["name"]), esc(s_["type"]), status_chip(s_["status"], s_["word"] == "Waiting for approval") if s_["word"] != "Pending" else '<span class="chip s-info">Pending</span>',
+            esc(s_["name"]), esc(s_["type"]),
+            # 1.79.5: a step still running or waiting in a workflow that is over is not finished - no turning mark
+            ('<span class="chip s-info">%sNot finished</span>' % icon("skip")) if done and s_["status"] in ("running", "pending", "waiting", "new") else
+            status_chip(s_["status"], s_["word"] == "Waiting for approval") if s_["word"] != "Pending" else '<span class="chip s-info">Pending</span>',
             ('<div class="muted-line">%s</div>' % esc(s_["note"])) if s_["note"] else "",
             ('<a href="%sjobs/%d?via=%d">%d</a>' % (cfg.path, int(s_["job"]), jid, int(s_["job"]))) if s_.get("job") else "-") for s_ in pg["steps"])
         steps = '<div><h3>Steps</h3><div class="tw"><table><thead><tr><th>Step</th><th>Type</th><th>Status</th><th>AAP job</th></tr></thead><tbody>%s</tbody></table></div></div>' % rows
@@ -2945,7 +2957,12 @@ def make_handler(cfg, portal, static_dir):
                     return self._send(404, message_page(cfg, "Not here", "There is no job %d here." % int(m.group(2)), cn),
                                       "text/html; charset=utf-8")
                 if (q.get("pane") or [""])[-1]:                # the right pane only: the page's script swaps it in while the job runs
-                    return self._send(200, job_pane_html(cfg, portal, cn, int(m.group(2)), via), "text/html; charset=utf-8")
+                    body = job_pane_html(cfg, portal, cn, int(m.group(2)), via)
+                    lst = (q.get("list") or [""])[-1]
+                    if lst:                                     # 1.79.6: and the list, in the same answer - one request a turn, one poll
+                        sc = "all" if lst == "all" and cn in cfg.approvers else "mine"
+                        body += job_list_html(cfg, portal, cn, portal.job_list(cn, sc), None, sc)
+                    return self._send(200, body, "text/html; charset=utf-8")
                 return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via, (q.get("scope") or ["mine"])[-1]), "text/html; charset=utf-8")
             if path == "/approvals":
                 return self._send(200, approvals_page(cfg, portal, cn), "text/html; charset=utf-8")

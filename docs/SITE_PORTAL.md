@@ -688,6 +688,8 @@ label, and the portal's own actions.
    your templates (their `portal-area:X` label), then *Other*. The tiles and the search filter inside the groups, and a group with nothing to show hides.
 5. **A card** has its type (*Job template* or *Workflow*), *Approval* on a workflow that waits for a person, the last run with its status,
    the template's labels (not the portal's own), **Details** and **Run**. A template with no description says *No description*.
+   While a card's last run is still going, the page asks for it again every 15 seconds and shows its end (1.79.6). The portal reads the last
+   runs from AAP at most once a minute, so the end shows within about a minute. The *Details* panel is a snapshot of when you opened it.
 
 **Why isn't my template here?** Under the strip, a closed panel says what the last read of AAP found, so nobody has to read the deploy log.
 It names how many templates the account may run, how many of them carry the label, and each template it skipped with the reason.
@@ -732,7 +734,11 @@ colour is never used for it. The same grey is used for an approval you cannot de
 The Jobs page (`/portal/jobs`) lists the jobs the portal started: **My jobs**, or **All jobs** for the approvers. The chips (*Running*,
 *Succeeded*, *Failed*, *Other*) and the search (job, job id or who started it) filter the list. The job is on the right.
 
-While a job runs, its page asks the portal every 3 seconds, only while the page is open, and stops when the job ends. It shows:
+While a job runs, its page asks the portal every 3 seconds, only while the page is open, and stops when the job ends. The list on the left
+is asked again too, while any job in it runs, so each job's turning mark stops when that job ends, whichever ends first (1.79.6). While the
+open job runs, its pane and the list come in one answer, so the page asks no more often than before. Your search and status filter stay. A
+hidden tab asks nothing; when you come back, the page asks at once. A failed answer, or AAP not giving the job just now, is asked again later.
+It shows:
 
 | What | Where it comes from |
 |---|---|
@@ -742,7 +748,8 @@ While a job runs, its page asks the portal every 3 seconds, only while the page 
 | **What just happened** | the last 8 events as plain lines, for example *web03 - could not connect*; a failure shows the host, the task and the plain cause only |
 | **Steps** (a workflow) | pending, running, done, failed, or *waiting for approval* with who may decide |
 
-At the end the banner says **Succeeded** or **Failed**, with what failed and on which host in one line. The portal asks AAP with its own
+At the end the banner says **Succeeded** or **Failed**, with what failed and on which host in one line. Nothing turns on a job that is over:
+a host or a step that AAP still lists as running when the job was canceled or failed says *not finished*. The portal asks AAP with its own
 token (the browser never talks to AAP), at most 90 times a minute for one person, and only for jobs the person may see. It never shows
 the extra variables, a password or a survey answer in this view: a password is *(hidden)* in the answers. Without scripts the page shows the
 latest snapshot, and **Refresh** reloads it.

@@ -389,4 +389,6 @@ html.motion-always progress.pb::-moz-progress-bar{animation:stripe 1s linear inf
 html.motion-off .ic-run,html.motion-off .jrows .d.run,html.motion-off .chip.s-run .ic{animation:none}
 html.motion-off progress.pb::-webkit-progress-value{animation:none}
 html.motion-off progress.pb::-moz-progress-bar{animation:none}
+/* 1.79.5: a job that is over never turns - its pane says data-done="1"; a row or a card's last run that is not running has no .d.run / .ic-run (portal.js and the service) */
+html .jd[data-done="1"] .ic-run,html.motion-always .jd[data-done="1"] .ic-run{animation:none}
 @media print{html .ic-run,html .jrows .d.run{animation:none !important}html progress.pb::-webkit-progress-value{animation:none !important}html progress.pb::-moz-progress-bar{animation:none !important}}

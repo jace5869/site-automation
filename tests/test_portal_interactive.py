@@ -25,7 +25,7 @@ class Interactive(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.srv = subprocess.Popen([sys.executable, DEMO, "ops", str(PORT)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-                                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+                                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PORTAL_DEMO_LAST_TTL="2"))       # 1.79.5: the cards' last run read again soon
         line = cls.srv.stdout.readline()
         assert line.startswith("READY"), line + (cls.srv.stderr.read() if cls.srv.poll() is not None else "")
         cls.ids = json.loads(line[len("READY "):])
@@ -147,6 +147,98 @@ class Interactive(unittest.TestCase):
         self.assertIn("data-again", job)                                                                         # Run again is a plain link
         self.assertRegex(job, r'<a class="btn pri" href="/portal/actions/disk_cleanup\?[^"]*" data-again')
         self.assertIn('id="approvals"', get("approvals?__who=appr"))
+
+
+    # ---- 1.79.6: nothing turns after a job is over - the Jobs page (its list and its pane) and the Actions page's cards, while the page is open
+    SPIN = "document.querySelectorAll('.ic-run, .jrows .d.run').length"
+
+    def hook(self, path):
+        return json.loads(urllib.request.urlopen("http://127.0.0.1:%d/%s" % (PORT, path), timeout=20).read())
+
+    def row(self, jid):
+        return "document.querySelector('#jrows li a[href^=\"/portal/jobs/%d?\"]').closest('li')" % jid
+
+    def test_8_a_job_that_ends_while_the_page_is_open_stops_turning(self):
+        self.reset()
+        self.hook("__end?job=all&status=successful")                                                             # a clean start: nothing runs
+        x, y = self.hook("__launch")["id"], self.hook("__launch")["id"]
+        time.sleep(1)                                                                                            # past pending
+        self.open("jobs/%d" % x)                                                                                 # x open, y in the list - both run
+        self.assertEqual(self.c.js("document.getElementById('jd').dataset.done"), "0")
+        self.assertTrue(self.c.js(self.row(y) + ".querySelector('.d.run') !== null"))
+        self.c.js("const q = document.getElementById('jq'); q.focus(); q.value = 'recheck'; q.dispatchEvent(new Event('input'))")
+        # y ends first (the list follows while a row runs), then x fails (its pane and its row)
+        self.hook("__end?job=%d&status=successful" % y)
+        self.wait(self.row(y) + ".dataset.st === 'succeeded' && !" + self.row(y) + ".querySelector('.d.run')", "y's row stops turning", 20)
+        self.assertEqual(self.c.js("document.getElementById('jq').value"), "recheck")                         # the search kept
+        self.assertEqual(self.c.js("document.activeElement && document.activeElement.id"), "jq")                # and its focus: the box is never replaced
+        self.assertTrue(self.c.js(self.row(x) + ".classList.contains('on')"))                                  # the open job still marked
+        self.hook("__end?job=%d&status=failed" % x)
+        self.wait("document.getElementById('jd').dataset.done === '1'", "x's pane says it is over", 20)
+        self.wait(self.row(x) + ".dataset.st === 'failed'", "x's row", 20)
+        self.assertEqual(self.c.js(self.SPIN), 0, "nothing turns once every job is over")
+        # canceled and error: the same; a step AAP still lists as running is "Not finished", never a turning mark
+        c, e = self.hook("__launch")["id"], self.hook("__launch")["id"]
+        time.sleep(1)
+        self.open("jobs/%d" % c)
+        self.hook("__end?job=%d&status=canceled" % c)
+        self.hook("__end?job=%d&status=error" % e)
+        self.wait("document.getElementById('jd').dataset.done === '1'", "the canceled one's pane", 20)
+        self.wait(self.row(e) + ".dataset.st === 'failed'", "the error one's row", 20)
+        self.assertEqual(self.c.js(self.SPIN), 0)
+        self.assertIn("Canceled", self.c.js("document.getElementById('jd').textContent"))
+
+    def test_9_hidden_finished_between_looks_and_the_cards(self):
+        self.reset()
+        self.hook("__end?job=all&status=successful")
+        a = self.hook("__launch")["id"]
+        time.sleep(1)
+        self.open("jobs/%d" % a)
+        # the page hidden: nothing is asked; shown again: asked at once
+        self.c.js("Object.defineProperty(document, 'hidden', {configurable: true, get: () => true}); document.dispatchEvent(new Event('visibilitychange'))")
+        self.hook("__end?job=%d&status=successful" % a)
+        time.sleep(7)
+        self.assertEqual(self.c.js("document.getElementById('jd').dataset.done"), "0", "hidden: not asked")
+        self.c.js("Object.defineProperty(document, 'hidden', {configurable: true, get: () => false}); document.dispatchEvent(new Event('visibilitychange'))")
+        self.wait("document.getElementById('jd').dataset.done === '1'", "shown again: asked at once", 5)
+        self.wait(self.SPIN + " === 0", "and nothing turns", 10)
+        # a job this browser started that ends before the badges ever saw it running: its toast still comes
+        b = self.hook("__launch")["id"]
+        self.open("approvals")
+        self.c.js("rememberRunning(%d)" % b)
+        self.hook("__end?job=%d&status=successful" % b)
+        self.wait("[...document.querySelectorAll('.toast')].some(t => t.textContent.indexOf('Job %d is over') >= 0)" % b, "the toast", 30)
+        b2 = self.hook("__launch")["id"]                                                                         # canceled: an "Ended" toast too
+        self.c.js("rememberRunning(%d)" % b2)
+        self.hook("__end?job=%d&status=canceled" % b2)
+        self.wait("[...document.querySelectorAll('.toast')].some(t => t.textContent.indexOf('Ended') >= 0 && t.textContent.indexOf('Job %d is over') >= 0)" % b2,
+                  "the canceled one's toast", 30)
+        # the Actions page: the card's Last run turns while its run is not over, and stops when it ends (the page asks again)
+        k = self.hook("__launch")["id"]
+        time.sleep(3)                                                                                            # past the cards' memory (PORTAL_DEMO_LAST_TTL 2 s)
+        self.open("")
+        card = "document.querySelector('li[data-name=\"stig_recheck\"] .meta.lastrun')"
+        self.assertIn(self.c.js(card + ".dataset.st"), ("running", "pending", "waiting"))
+        self.assertTrue(self.c.js(card + ".querySelector('.ic-run') !== null"))
+        failed0 = int(self.c.js("document.querySelector('#ftiles a[data-show=\"failed\"] .v').textContent"))
+        self.hook("__end?job=%d&status=failed" % k)
+        self.wait(card + ".dataset.st === 'failed' && !" + card + ".querySelector('.ic-run')", "the card stops turning", 40)
+        self.assertEqual(self.c.js(self.SPIN), 0)
+        # the "Last run failed" tile and filter follow (1.79.6, Codex)
+        self.assertEqual(self.c.js("document.querySelector('li[data-name=\"stig_recheck\"]').dataset.failed"), "1")
+        self.assertEqual(int(self.c.js("document.querySelector('#ftiles a[data-show=\"failed\"] .v').textContent")), failed0 + 1)
+        # the Details panel is a snapshot: a run that runs is drawn still (never .ic-run)
+        k2 = self.hook("__launch")["id"]
+        time.sleep(1)
+        self.open("actions/stig_recheck/details")
+        self.assertIn("Running", self.c.js("document.body.textContent"))
+        self.assertEqual(self.c.js(self.SPIN), 0)
+        self.hook("__end?job=%d&status=successful" % k2)
+        # the stylesheet: a pane that is over never turns, even with the motion always on
+        self.open("jobs/%d" % a)
+        self.c.js("document.documentElement.classList.add('motion-always'); const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');"
+                  "s.setAttribute('class', 'ic ic-run'); document.getElementById('jd').append(s)")
+        self.assertEqual(self.c.js("getComputedStyle(document.querySelector('#jd .ic-run')).animationName"), "none")
 
 
 if __name__ == "__main__":

@@ -45,6 +45,32 @@ Test: `tests/stig/run_stig_test.sh`.
 **NetApp capacity: thousands separators.** A number of 1,000 or more in the capacity report's tables (growth GB per
 30 days, sizes, months) is whole with separators: `28,189` instead of `28188.6`. Sorting reads both.
 
+## 1.79.6 — 2026-11-20
+
+**To set up: nothing.** Look only: the site portal's pages; no setting changes.
+
+**Site portal: the running mark stops when the job ends.** A job that ended while the page was open kept turning until a
+reload.
+
+- **Jobs page.** The list is asked again while any job in it runs, not only when the open job ends. While the open job
+  runs, its pane and the list come in one answer every 3 seconds, so the page asks no more often than before; with only
+  list rows running, every 6 seconds. Each row moves to its final state: succeeded, failed, canceled or error. The
+  search box is never replaced (what you type and its focus stay), the status filter stays, the open job stays marked.
+  A failed answer, or AAP not giving a job just now, is asked again later and never counts as the end; it used to stop
+  the page asking for good. A hidden tab asks nothing and asks at once when shown again. A job you may no longer see
+  says so in place.
+- **A job that is over** never turns. A host or a step AAP still lists as running when the job was canceled or failed
+  says *not finished*. The stylesheet stops a turning mark inside a finished job's pane, *portal_motion: always* too.
+- **Actions page.** A card whose last run is still going is asked for again every 15 seconds and shows its end; the
+  *Last run failed* tile and filter follow. A card gone from the page meanwhile says *reload the page*. The Details
+  panel is a snapshot, so a running run there is drawn still. A look-up of one action (one that was off) no longer
+  drops every other action's AAP id; until now that made the other cards say *Never run* (since 1.67.0).
+- **Toasts.** A job started from this browser gets its toast even when it ends before the next look; a canceled job gets
+  *Ended*.
+- Tests: `test_portal_interactive.py` in Chrome (a job ends while the page is open: the list, the pane, canceled,
+  error, a hidden tab, the toast, the card; no `.ic-run` or `.d.run` left); `test_site_portal.py` `Spin1796`. Docs:
+  `docs/SITE_PORTAL.md`.
+
 ## 1.79.5 — 2026-11-20
 
 **To set up: nothing.** Optional: an entry of `aap_inventory_replace` may name `to_organization` (and `from_organization`).
