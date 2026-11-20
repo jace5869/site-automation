@@ -731,7 +731,9 @@ class Windows(unittest.TestCase):
         self.assertEqual((out["deleted"], out["left"]), (["t/p.html"], []))
         self.assertEqual(sorted(os.listdir(os.path.join(dest, "t"))), ["latest.html"])
         cfg = {"SITE_CHECK_CONFIG": json.dumps({"dest": dest, "index": ["index.json"]})}
-        self.assertEqual(clm(READ_PS, cfg)["read"], {"ok": True, "error": "", "index": '{"reports": []}\n', "gone": []})
+        r = clm(READ_PS, cfg)["read"]
+        sha = hashlib.sha256(b'{"reports": []}\n').hexdigest().upper()
+        self.assertEqual(r, {"ok": True, "error": "", "index": '{"reports": []}\n', "gone": [], "sha": sha, "pending": []})   # 1.79.14: sha
         self.assertIsNone(clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": dest, "index": ["none.json"]})})["read"]["index"])
         gone = clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": dest + "-gone", "index": []})})["read"]
         self.assertFalse(gone["ok"])
@@ -806,8 +808,10 @@ BOOT = ("import importlib.util, json, os, sys\n"
 
 
 def run_module(args, patch="", env=None):
-    """site_report_web's answer (a dict) to args."""
+    """site_report_web's answer (a dict) to args. Its temporary files (a Windows server's script) in a folder of its own
+    (1.79.14: never left in the machine's /tmp by a test that does not delete them)."""
     argf = os.path.join(tempfile.mkdtemp(), "args.json")
+    env = dict({"TMPDIR": os.path.dirname(argf)}, **(env or {}))
     with open(argf, "w") as f:
         json.dump({"ANSIBLE_MODULE_ARGS": dict({"retries": 0}, **args)}, f)
     out = subprocess.run([sys.executable, "-c", BOOT, argf, os.path.join(REPO, "roles", "site_email", "library", "site_report_web.py"),
@@ -1520,13 +1524,14 @@ class Site(object):
     Language Mode, the index and its gone pages read first by site_report_web_read.ps1, as the role does). root: the
     folder as the server has it."""
 
-    def __init__(self, kind):
+    def __init__(self, kind, conditional=False):
         self.kind, self.tmp = kind, tempfile.mkdtemp()
         self.root, self.env, self.proc = os.path.join(self.tmp, "site"), {}, None
         if kind == "web":
             os.makedirs(self.root)
             port = _free_port()
-            self.proc = subprocess.Popen([sys.executable, FAKE_WEB, str(port), self.root])
+            self.proc = subprocess.Popen([sys.executable, FAKE_WEB, str(port), self.root],
+                                         env=dict(os.environ, FAKE_WEB_CONDITIONAL="1" if conditional else ""))
             end = time.time() + 10
             while True:
                 try:
@@ -1551,7 +1556,8 @@ class Site(object):
         args = dict(args, dest=self.dest)
         if self.kind == "win":
             read = clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": self.root, "index": ["index.json"]})})["read"]
-            args.update(windows_host="web01.example.mil", index_text=read["index"] or "", index_gone=read["gone"])
+            args.update(windows_host="web01.example.mil", index_text=read["index"] or "", index_gone=read["gone"],
+                        index_sha=read.get("sha") or "", index_pending=read.get("pending") or [])
         out = run_module(args, env=self.env)
         if self.kind == "win" and out.get("script"):
             w = clm(out["script"])["write"]
@@ -1846,6 +1852,214 @@ class Files1798(unittest.TestCase):
     def test_j_a_windows_server(self):
         self.transport("win")
 
+
+
+# 1.79.14: reading the index (index.json) is slow here, so two jobs' read and write overlap - the race the lock prevents
+SLOW_INDEX = ("_orig_read = m.Target.read\n"
+              "def _slow_read(self, rel, _o=_orig_read):\n"
+              "    t = _o(self, rel)\n"
+              "    if rel == 'index.json':\n"
+              "        import time as _t; _t.sleep(float(os.environ.get('SLOW_INDEX', '0')))\n"
+              "    return t\n"
+              "m.Target.read = _slow_read\n"
+              "_orig_sread = getattr(m.SmbTarget, 'read')\n"
+              "def _slow_sread(self, rel, _o=_orig_sread):\n"
+              "    t = _o(self, rel)\n"
+              "    if rel == 'index.json':\n"
+              "        import time as _t; _t.sleep(float(os.environ.get('SLOW_INDEX', '0')))\n"
+              "    return t\n"
+              "m.SmbTarget.read = _slow_sread\n")
+
+
+def _start_module(args, env=None, patch=""):
+    """site_report_web started (not waited for): (process, its args file)."""
+    argf = os.path.join(tempfile.mkdtemp(), "args.json")
+    env = dict({"TMPDIR": os.path.dirname(argf)}, **(env or {}))
+    with open(argf, "w") as f:
+        json.dump({"ANSIBLE_MODULE_ARGS": dict({"retries": 0}, **args)}, f)
+    return subprocess.Popen([sys.executable, "-c", BOOT, argf, os.path.join(REPO, "roles", "site_email", "library", "site_report_web.py"),
+                             os.path.join(REPO, "plugins", "module_utils"), patch], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=dict(os.environ, **(env or {})))
+
+
+class Lock17914(unittest.TestCase):
+    """1.79.14: two jobs that publish at the same time never lose each other's line or hosted files: the index's lock
+    (<index.json>.lock: a folder O_EXCL, a share's create-new, an upload made then read back; stale ones taken over);
+    a server that honours If-Match refuses a write over an index changed meanwhile (412, tried again); a Windows server's
+    script writes the index only when it is as read, else leaves this run's line and files beside it for the next run."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def file(self, name, data):
+        p = os.path.join(self.tmp, name)
+        with open(p, "wb") as f:
+            f.write(data)
+        return {"path": p, "filename": name}
+
+    def test_a_the_lock_itself(self):
+        site = os.path.join(self.tmp, "site")
+        os.mkdir(site)
+        t = rw.Target(site, "", 5)
+        clock = [1000.0]
+        self.assertEqual(rw.take_lock(t, "index.json", "job-a", 5, clock=lambda: clock[0], sleep=lambda s: None), "index.json.lock")
+        clock2 = [1000.0]
+
+        def tick(s):
+            clock2[0] += s
+        self.assertIsNone(rw.take_lock(t, "index.json", "job-b", 3, clock=lambda: clock2[0], sleep=tick))   # held: waited, not taken
+        rw.release_lock(t, "index.json.lock", "job-b")                                     # never another job's
+        self.assertTrue(os.path.exists(os.path.join(site, "index.json.lock")))
+        rw.release_lock(t, "index.json.lock", "job-a")
+        self.assertFalse(os.path.exists(os.path.join(site, "index.json.lock")))
+        with open(os.path.join(site, "index.json.lock"), "w") as f:                       # a job that died 11 minutes ago
+            json.dump({"token": "dead", "when": time.time() - 660}, f)
+        self.assertEqual(rw.take_lock(t, "index.json", "job-c", 1), "index.json.lock")
+        with open(os.path.join(site, "index.json.lock")) as f:
+            self.assertIn("job-c", f.read())
+        self.assertTrue(rw.lock_held(t, "index.json.lock", "job-c"))
+        self.assertFalse(rw.lock_held(t, "index.json.lock", "job-a"))
+        # (Codex) a lock with no time of its own (half written, or the Windows script's from before): its file's age
+        with open(os.path.join(site, "index.json.lock"), "w") as f:
+            f.write("")
+        old = time.time() - 700
+        os.utime(os.path.join(site, "index.json.lock"), (old, old))
+        self.assertEqual(rw.take_lock(t, "index.json", "job-d", 1), "index.json.lock")
+        # a folder of its own for the index: made for the lock (its first publish)
+        self.assertEqual(rw.take_lock(t, "catalog/index.json", "job-e", 1), "catalog/index.json.lock")
+
+    def test_a2_merge_lines(self):
+        a = {"key": "k", "when": "2026-11-20 06:00 UTC", "status": "ok", "runs": [{"page": "p1", "when": "2026-11-20 06:00 UTC"}],
+             "trend": [{"when": "2026-11-20 06:00 UTC", "job": 1}]}
+        b = {"key": "k", "when": "2026-11-20 07:00 UTC", "status": "critical", "runs": [{"page": "p2", "when": "2026-11-20 07:00 UTC"},
+                                                                                         {"page": "p1", "when": "2026-11-20 06:00 UTC"}],
+             "trend": [{"when": "2026-11-20 07:00 UTC", "job": 2}, {"when": "2026-11-20 06:00 UTC", "job": 1}]}
+        m = rw.merge_lines(a, b, 5)
+        self.assertEqual((m["status"], [x["page"] for x in m["runs"]], len(m["trend"])), ("critical", ["p2", "p1"], 2))
+        self.assertEqual(rw.merge_lines(b, a, 5)["status"], "critical")                  # the newer head, whatever the order
+        self.assertEqual(len(rw.merge_lines(a, b, 1)["runs"]), 1)
+
+    def race(self, kind, lock_wait=120, conditional=False):
+        """Two templates published 0.3 s apart, each slow between reading the index and writing it -> the index."""
+        site = Site(kind, conditional)
+        self.addCleanup(site.close)
+        a = dict(_files_args(1, 1, [self.file("a.xml", XML)], lock_wait=lock_wait), dest=site.dest)
+        b = dict(_files_args(2, 1, [self.file("b.xml", XML)], key="ad/latest.html", template="AD - health report", lock_wait=lock_wait),
+                 dest=site.dest)
+        env = dict(site.env, SLOW_INDEX="2")
+        pa = _start_module(dict(a, retries=2, retry_delay=1), env, SLOW_INDEX)
+        time.sleep(0.3)
+        pb = _start_module(dict(b, retries=2, retry_delay=1), env, SLOW_INDEX)
+        outs = [json.loads(p.communicate(timeout=180)[0] or "{}") for p in (pa, pb)]
+        return site.index(), outs, site
+
+    def check_both(self, kind, **kw):
+        doc, outs, site = self.race(kind, **kw)
+        self.assertTrue(all(o.get("published") for o in outs), outs)
+        self.assertEqual(sorted(r["key"] for r in doc["reports"]), ["ad/latest.html", "vm/latest.html"], doc)
+        self.assertEqual(sorted(e["key"] for e in doc["files"]), ["ad/latest.html", "vm/latest.html"])
+        self.assertFalse(os.path.exists(site.path("index.json.lock")))                 # let go
+        return doc, outs
+
+    def test_b_a_folder_both_kept(self):
+        self.check_both("folder")
+
+    def test_b2_two_runs_of_one_template_both_listed(self):
+        """(Codex) two runs of the same template at once: its line made again from the index read under the lock - both
+        runs on it, both runs' files in the ledger."""
+        site = Site("folder")
+        self.addCleanup(site.close)
+        env = dict(site.env, SLOW_INDEX="2")
+        pa = _start_module(dict(_files_args(1, 1, [self.file("a.xml", XML)]), dest=site.dest), env, SLOW_INDEX)
+        time.sleep(0.3)
+        pb = _start_module(dict(_files_args(2, 1, [self.file("b.xml", XML)]), dest=site.dest), env, SLOW_INDEX)
+        for pr in (pa, pb):
+            pr.communicate(timeout=180)
+        doc = site.index()
+        self.assertEqual(sorted(x["job"] for x in doc["reports"][0]["runs"]), [1, 2])
+        self.assertEqual(len(doc["files"]), 2)
+
+    def test_b3_a_lock_no_longer_ours_writes_nothing(self):
+        """(Codex) the fence: the lock taken over (or another job's made over it) between taking it and writing - the index
+        is not written, the publish fails (tried again with retries)."""
+        site = os.path.join(self.tmp, "site")
+        os.mkdir(site)
+        patch = ("_orig_take = m.take_lock\n"
+                 "def _take(target, rel, token, wait, **kw):\n"
+                 "    lk = _orig_take(target, rel, token, wait, **kw)\n"
+                 "    open(os.path.join(target.dest, lk), 'w').write('{\"token\": \"someone-else\", \"when\": 9e12}')\n"
+                 "    return lk\n"
+                 "m.take_lock = _take\n")
+        out = run_module(dict(_files_args(1, 1, []), dest=site), patch=patch)
+        self.assertTrue(out.get("failed"), out)
+        self.assertIn("is no longer this job's", out["msg"])
+        self.assertFalse(os.path.exists(os.path.join(site, "index.json")))
+
+    def test_c_without_the_lock_one_is_lost(self):
+        """The test's own proof: with lock_wait 0 (no lock) the same race loses the first job's line and files."""
+        doc, outs, _ = self.race("folder", lock_wait=0)
+        self.assertEqual([r["key"] for r in doc["reports"]], ["ad/latest.html"])
+        self.assertEqual([e["key"] for e in doc["files"]], ["ad/latest.html"])
+
+    def test_d_an_upload_webdav_both_kept(self):
+        """nginx's dav ignores If-None-Match: the lock is made, then read back after a moment."""
+        self.check_both("web")
+
+    def test_e_a_conditional_server_refuses_the_lost_write(self):
+        """No lock (lock_wait 0), a server that honours If-Match (Apache, IIS): the second write is refused (412) and
+        tried again from the start - both kept."""
+        doc, outs = self.check_both("web", lock_wait=0, conditional=True)
+        self.assertTrue(any("412" in r for o in outs for r in o.get("retried") or []) or any("412" in str(o) for o in outs), outs)
+
+    def test_f_a_share_both_kept(self):
+        self.check_both("smb")
+
+    @unittest.skipUnless(PWSH, "no pwsh")
+    def test_g_a_windows_server_pending_then_put_in(self):
+        """Two runs read the index, then their scripts run one after the other: the second finds it changed - its line and
+        files go to index.pending-*.json, the index stays the first's; the next run puts them in and deletes the file."""
+        site = Site("win")
+        self.addCleanup(site.close)
+        read = clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": site.root, "index": ["index.json"]})})["read"]
+        common = dict(windows_host="web01.example.mil", index_text=read["index"] or "", index_sha=read["sha"], dest=site.dest)
+        oa = run_module(dict(_files_args(1, 1, [self.file("a.xml", XML)]), **common))
+        ob = run_module(dict(_files_args(2, 1, [self.file("b.xml", XML)], key="ad/latest.html", template="AD - health report"), **common))
+        wa, wb = clm(oa["script"])["write"], clm(ob["script"])["write"]
+        self.assertTrue(wa["ok"] and wb["ok"], (wa, wb))
+        self.assertEqual((wa.get("pending"), len(wb.get("pending") or [])), ([], 1))
+        self.assertEqual([r["key"] for r in site.index()["reports"]], ["vm/latest.html"])     # the first's index stands
+        self.assertFalse(os.path.exists(site.path("index.json.lock")))
+        out = site.run(_files_args(3, 2, [], key="hc/latest.html", template="Health check"))    # the next run puts it in
+        doc = site.index()
+        self.assertEqual(sorted(r["key"] for r in doc["reports"]), ["ad/latest.html", "hc/latest.html", "vm/latest.html"])
+        self.assertEqual(sorted(e["key"] for e in doc["files"]), ["ad/latest.html", "vm/latest.html"])
+        self.assertEqual([f for f in os.listdir(site.root) if ".pending-" in f], [])
+        self.assertIn(wb["pending"][0], out["ps"]["deleted"])
+
+    @unittest.skipUnless(PWSH, "no pwsh")
+    def test_h_a_pending_file_kept_until_its_merge_is_written(self):
+        """(Codex) a run that puts a pending file in, but whose own index write is deferred too (the index changed again):
+        the pending file stays - deleted only once an index that has it is written."""
+        site = Site("win")
+        self.addCleanup(site.close)
+        read = clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": site.root, "index": ["index.json"]})})["read"]
+        common = dict(windows_host="web01.example.mil", index_text=read["index"] or "", index_sha=read["sha"], dest=site.dest)
+        oa = run_module(dict(_files_args(1, 1, []), **common))
+        ob = run_module(dict(_files_args(2, 1, [], key="ad/latest.html", template="AD - health report"), **common))
+        clm(oa["script"]), clm(ob["script"])                                             # b went to a pending file
+        read = clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": site.root, "index": ["index.json"]})})["read"]
+        self.assertEqual(len(read["pending"]), 1)
+        common = dict(windows_host="web01.example.mil", index_text=read["index"] or "", index_sha=read["sha"],
+                      index_pending=read["pending"], dest=site.dest)
+        oc = run_module(dict(_files_args(3, 2, [], key="hc/latest.html", template="Health check"), **common))
+        od = run_module(dict(_files_args(4, 2, [], key="db/latest.html", template="Database health"), **common))
+        clm(od["script"])                                                                # d writes the index (with b's line)
+        wc = clm(oc["script"])["write"]                                                  # c finds it changed: deferred
+        self.assertEqual(len(wc["pending"]), 1)
+        left = sorted(f for f in os.listdir(site.root) if ".pending-" in f)
+        self.assertEqual(len(left), 1)                                                   # b's taken by d's write; c's now there
+        self.assertIn("ad/latest.html", [r["key"] for r in site.index()["reports"]])
 
 
 if __name__ == "__main__":

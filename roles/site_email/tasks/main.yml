@@ -364,6 +364,10 @@
         files_total_max_mb: "{{ report_web_files_total_max_mb | default(500) | int }}"
         files_keep_days: "{{ report_web_files_keep_days | default(30) | int }}"
         index_gone: "{{ _web_win_read.gone | default([]) if _web_win | bool and not _email_dry else [] }}"
+        # 1.79.14: the index's lock; on a Windows server its SHA-256 as read and the runs left beside it (index.pending-*)
+        lock_wait: "{{ report_web_index_lock_wait | default(120) | int }}"
+        index_sha: "{{ _web_win_read.sha | default('') if _web_win | bool and not _email_dry else '' }}"
+        index_pending: "{{ _web_win_read.pending | default([]) if _web_win | bool and not _email_dry else [] }}"
       vars:
         # the web copy: its own look's logo size and strip (report_web_theme), the logo put inside the page
         _web_logo_cid: "{{ _email_logo_file | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"

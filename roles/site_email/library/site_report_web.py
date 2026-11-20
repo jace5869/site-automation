@@ -94,6 +94,17 @@ options:
   retries: {description: "Tries again after a failure that passes (report_web_retries); 0 = none.", type: int, default: 3}
   retry_delay: {description: Seconds between two tries (report_web_retry_delay)., type: int, default: 30}
   required: {description: "false = a publish that still fails after the retries returns published false and error, not a failure (report_web_required).", type: bool, default: true}
+  downloads: {description: "1.79.8 - the files the report hands over, [{path, filename}], hosted in <page>-files/ (report_web_files).", type: list, elements: dict, default: []}
+  kept_files: {description: "1.79.8 - the copy job's: a kept report's files, [{filename, b64}] - content only, never a path.", type: list, elements: dict, default: []}
+  downloads_refused: {description: "1.79.8 - files a kept report could not keep, [{name, why}] (named on the page).", type: list, elements: dict, default: []}
+  files_max_mb: {description: "1.79.8 - each file, and one run's files together (report_web_files_max_mb).", type: int, default: 20}
+  files_types: {description: "1.79.8 - the types hosted (report_web_files_types).", type: list, elements: str, default: [.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]}
+  files_total_max_mb: {description: "1.79.8 - every report's files together (report_web_files_total_max_mb).", type: int, default: 500}
+  files_keep_days: {description: "1.79.8 - a run's files removed after this many days; 0 = never (report_web_files_keep_days).", type: int, default: 30}
+  index_gone: {description: "1.79.8 - with windows_host: the ledger's pages the read script found missing there.", type: list, elements: str, default: []}
+  lock_wait: {description: "1.79.14 - seconds to wait for the index's lock (<index.json>.lock; report_web_index_lock_wait); 0 = no lock.", type: int, default: 120}
+  index_sha: {description: "1.79.14 - with windows_host: the index.json's SHA-256 as read there (the script writes it only when it is still that).", type: str, default: ''}
+  index_pending: {description: "1.79.14 - with windows_host: the index.pending-*.json the read script found, [{name, text}] (put in, then deleted).", type: list, elements: dict, default: []}
 author: site automation
 '''
 
@@ -209,6 +220,7 @@ class Target(object):
         self.dest = dest.rstrip('/')
         self.http = bool(re.match(r'(?i)https?://', dest))
         self.timeout = timeout
+        self.etags, self.guarded = {}, {}               # 1.79.14: the index's ETag as read, and the write it guards
         self.auth = ''
         if self.http:
             ctx = ssl.create_default_context(cafile=ca_path or None)
@@ -223,27 +235,85 @@ class Target(object):
             raise Fail('the folder %s is not there - is the share mounted, and the path exposed to the job '
                        '(docs/WEB_REPORTS.md)?' % dest)
 
-    def _call(self, method, rel, body=None, ctype=None):
+    def _call(self, method, rel, body=None, ctype=None, headers=None):
         req = Request(self.dest + '/' + quote(rel), data=body)
         req.get_method = lambda: method
         if self.auth:
             req.add_header('Authorization', self.auth)
         if ctype:
             req.add_header('Content-Type', ctype)
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
         return self.opener.open(req, timeout=self.timeout)
+
+    def mtime(self, rel):
+        """A file's modification time (a folder) - None over HTTP or when it is not there."""
+        if self.http:
+            return None
+        try:
+            return os.path.getmtime(os.path.join(self.dest, *rel.split('/')))
+        except OSError:
+            return None
+
+    # 1.79.14: the index's write is conditional where the server can (If-Match the ETag it was read with, If-None-Match *
+    # when it was not there - Apache, IIS; nginx's dav module ignores both): a 412 says another job wrote it meanwhile
+    def guard(self, rel):
+        """The next write of rel only if it is as this job last read it (HTTP)."""
+        if self.http and rel in self.etags:
+            self.guarded[rel] = self.etags[rel]
+
+    def create_new(self, rel, text):
+        """Make rel only if it is not there (the index's lock): True when made. A folder: O_EXCL; HTTP: not there, then a PUT
+        with If-None-Match * (a server that ignores it: the lock reads its token back - take_lock)."""
+        body = text.encode('utf-8')
+        if not self.http:
+            path = os.path.join(self.dest, *rel.split('/'))
+            self._inside(path)
+            try:
+                if not os.path.isdir(os.path.dirname(path)):
+                    os.makedirs(os.path.dirname(path))  # an index in a folder of its own, its first publish
+                    self._inside(path)
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            except FileExistsError:
+                return False
+            except OSError as e:
+                raise Fail('making %s: %s' % (path, e.strerror or e))
+            with os.fdopen(fd, 'wb') as f:
+                f.write(body)
+            return True
+        if self.read(rel) is not None:
+            return False
+        for n in (1, 2):
+            try:
+                self._call('PUT', rel, body, 'application/json; charset=utf-8', {'If-None-Match': '*'}).read()
+                return True
+            except HTTPError as e:
+                if e.code == 412:
+                    return False
+                if e.code == 409 and '/' in rel and n == 1:    # its folder not there yet (WebDAV): made, then again
+                    self._folders(rel)
+                    continue
+                raise Fail('making %s/%s: %s' % (self.dest, rel, _http(e)))
+            except URLError as e:
+                raise Fail('making %s/%s: %s' % (self.dest, rel, e.reason))
+        return False
 
     def read(self, rel):
         """The file's text, or None when it is not there."""
         if not self.http:
             path = os.path.join(self.dest, *rel.split('/'))
-            if not os.path.exists(path):
+            try:
+                with open(path, 'rb') as f:
+                    return f.read().decode('utf-8')
+            except FileNotFoundError:                    # not there - or gone just now (a lock let go)
                 return None
-            with open(path, 'rb') as f:
-                return f.read().decode('utf-8')
         try:
-            return self._call('GET', rel).read().decode('utf-8')
+            r = self._call('GET', rel)
+            self.etags[rel] = (True, r.headers.get('ETag') if r.headers is not None else None)   # there, and its ETag (if any)
+            return r.read().decode('utf-8')
         except HTTPError as e:
             if e.code == 404:
+                self.etags[rel] = (False, None)
                 return None
             raise Fail('reading %s/%s: %s' % (self.dest, rel, _http(e)))
         except URLError as e:
@@ -298,9 +368,16 @@ class Target(object):
             except OSError as e:
                 raise Fail('writing %s: %s' % (path, e.strerror or e))
             return
+        cond = {}
+        if rel in self.guarded:                          # 1.79.14: the index, only as it was read
+            there, tag = self.guarded.pop(rel)
+            # there with an ETag: If-Match it; not there: If-None-Match *; there without an ETag: no condition (the lock)
+            cond = {'If-Match': tag} if there and tag else {} if there else {'If-None-Match': '*'}
         try:
-            self._call('PUT', rel, body, ctype).read()
+            self._call('PUT', rel, body, ctype, cond).read()
         except HTTPError as e:
+            if e.code == 412:
+                raise Fail('uploading %s/%s: HTTP 412 - another job wrote it since it was read here (tried again)' % (self.dest, rel))
             if e.code != 409 or '/' not in rel:          # 409: the folder is not there (WebDAV) - make it, again
                 raise Fail('uploading %s/%s: %s' % (self.dest, rel, _http(e)))
             self._folders(rel)
@@ -462,6 +539,27 @@ class SmbTarget(object):
         except Exception as e:                          # noqa: BLE001
             raise Fail(self._why('reading ' + self._path(rel), e))
 
+    def mtime(self, rel):
+        try:
+            return float(self.smb.stat(self._path(rel), **self.kw).st_mtime)
+        except Exception:                               # noqa: BLE001
+            return None
+
+    def create_new(self, rel, text):
+        """Make rel only if it is not there (the index's lock): SMB's own create-new, atomic on the server."""
+        folder = self._path(rel).rsplit('\\', 1)[0]
+        try:
+            if folder != self.root:
+                self.smb.makedirs(folder, exist_ok=True, **self.kw)
+            with self.smb.open_file(self._path(rel), mode='xb', **self.kw) as f:
+                f.write(text.encode('utf-8'))
+            return True
+        except Exception as e:                          # noqa: BLE001
+            low = str(e).lower()
+            if isinstance(e, FileExistsError) or 'object_name_collision' in low or 'exists' in low or '0xc0000035' in low:
+                return False
+            raise Fail(self._why('making ' + self._path(rel), e))
+
     def exists(self, rel):
         try:
             return bool(self.smb.path.exists(self._path(rel), **self.kw))
@@ -541,7 +639,7 @@ PASSING = ('message stream modified', 'cannot contact any kdc', 'unable to reach
            'network_session_expired', '0xc000035c', 'session expired', 'connection_disconnected', '0xc000020c',
            'io_timeout', '0xc00000b5', 'remote end closed', 'eof occurred', 'stale file handle', 'input/output error',
            'host is down', 'transport endpoint is not connected', 'no route to host', 'network is unreachable',
-           'temporarily unavailable', 'try again', 'http 502', 'http 503', 'http 504')
+           'temporarily unavailable', 'try again', 'http 502', 'http 503', 'http 504', 'http 412', 'the index lock')
 
 
 def passing(why):
@@ -584,6 +682,9 @@ class Staged(object):
         if rf.ours(rel):
             self.dirs.append(rel)
 
+    def create_new(self, rel, text):
+        return True                                      # the script takes the lock there (Lock-Index)
+
     def strike(self, rel, folder, names, why):
         self.edits.append((rel, rf.ps_strike(folder, names, why)))
 
@@ -605,7 +706,7 @@ PS_WRITER = r"""# site-automation - the report website (roles/site_email, report
 # run, then deleted. Windows PowerShell 5.1 and PowerShell 7; also works in Constrained Language Mode.
 $ErrorActionPreference = 'Stop'
 $dest = %(dest)s
-$out = @{ ok = $false; error = ''; written = @(); deleted = @(); left = @(); busy = @() }
+$out = @{ ok = $false; error = ''; written = @(); deleted = @(); left = @(); busy = @(); pending = @() }
 function Save-File([string[]] $Parts, [string] $Text, [bool] $Soft = $false) {
     $path = $dest
     foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
@@ -667,6 +768,55 @@ function Edit-Page([string[]] $Parts, [string] $Rel, [string[]] $Find, [string[]
     }
     catch { $out.left += @($Rel + ': ' + [string]$_.Exception.Message) }
 }
+function Save-Index([string[]] $JParts, [string[]] $HParts, [string[]] $PParts, [string] $Json, [string] $Html, [string] $Pending,
+                    [string] $Sha, [int] $Wait, [string[]] $Consumed) {
+    # 1.79.14: the index under its lock (<index.json>.lock, as the other transports' jobs take it): written only when it is
+    # as the job read it (its SHA-256 then) and the lock was had; else this run's line and files go beside it
+    # (index.pending-*.json) and the next publish puts them in. The pending files this run put in are deleted only after
+    # its index is written.
+    $jp = $dest
+    foreach ($p in $JParts) { $jp = Join-Path -Path $jp -ChildPath $p }
+    $lock = $jp + '.lock'
+    $held = $false
+    $n = 0
+    while ($Wait -gt 0 -and $n -lt $Wait) {
+        $n++
+        try {
+            $null = New-Item -ItemType File -Path $lock -ErrorAction Stop
+            $when = [int64](((Get-Date).ToUniversalTime()) - [datetime]'1970-01-01').TotalSeconds   # UTC seconds (5.1 and 7)
+            Set-Content -LiteralPath $lock -Value ('{"token": "windows-' + $env:COMPUTERNAME + '", "when": ' + $when + '}') -Encoding Ascii
+            $held = $true
+            break
+        }
+        catch {
+            if (Test-Path -LiteralPath $lock -PathType Leaf) {
+                if (((Get-Date) - (Get-Item -LiteralPath $lock).LastWriteTime).TotalSeconds -gt %(stale)d) {
+                    Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Start-Sleep -Seconds 1
+        }
+    }
+    try {
+        $now = ''
+        if (Test-Path -LiteralPath $jp -PathType Leaf) { $now = [string](Get-FileHash -LiteralPath $jp -Algorithm SHA256).Hash }
+        if (($held -or $Wait -le 0) -and $now -eq $Sha) {
+            Save-File $JParts $Json
+            Save-File $HParts $Html $true
+            foreach ($c in $Consumed) {
+                if ($c) { Remove-Old @($c.Split('/')) $c }
+            }
+        }
+        else {
+            Save-File $PParts $Pending
+            $out.pending += @($PParts -join '/')
+            if (-not $held) { $out.left += @('index lock: held by another job for ' + $Wait + ' s - this run is in ' + ($PParts -join '/')) }
+        }
+    }
+    finally {
+        if ($held) { Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue }
+    }
+}
 function Remove-Old([string[]] $Parts, [string] $Rel) {
     $path = $dest
     foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
@@ -706,7 +856,7 @@ def inside(rel):
     return len(parts) >= 2 and rf.ours('/'.join(parts[:-1])) and rf.safe_file_name(parts[-1]) == parts[-1]
 
 
-def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=()):
+def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=(), index=None):
     """The PowerShell script that writes files [(rel, text)] into dest, then deletes remove [rel]; a text used twice is
     in it once. One of soft (latest, the index) open there all that time is left for the next run, not a failure.
     1.79.8: a file given as bytes is written from base64; then the pages of edits [(rel, [(regex, put)])] are changed
@@ -718,6 +868,10 @@ def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=()):
     for rel in dirs:
         if not rf.ours(rel):
             raise Fail('the folder %s is not a folder of files this module made - nothing was written' % rel)
+    ix = index or {}
+    if ix.get('json'):                                   # 1.79.14: the index's two files through Save-Index (its lock)
+        idx = dict(f for f in files if f[0] in (ix['json'], ix.get('html')))
+        files = [f for f in files if f[0] not in (ix['json'], ix.get('html'))]
     for rel, text in files:
         if isinstance(text, bytes):                      # a hosted file: hex, in pieces of 256 KB
             body.append('    Save-Bytes @(%s) @(%s)' % (', '.join(_ps_quote(p) for p in rel.split('/')),
@@ -729,6 +883,19 @@ def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=()):
             body.append('    %s = %s' % (seen[text], _ps_text(text)))
         body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), seen[text],
                                                 ' $true' if rel in soft else ''))
+    if ix.get('json') and ix['json'] in idx:
+        parts = (lambda r: ', '.join(_ps_quote(x) for x in r.split('/')))
+        if not safe_name(ix['pending'], WRITTEN):
+            raise Fail('the file name %s is not a name inside report_web_dest - nothing was written' % ix['pending'])
+        body.append('    $ti = %s' % _ps_text(idx[ix['json']]))
+        body.append('    $th = %s' % _ps_text(idx.get(ix.get('html'), '') or ''))
+        body.append('    $tp = %s' % _ps_text(ix['pending_text']))
+        for nm in ix.get('consumed') or []:
+            if not safe_name(nm, ('.json',)):
+                raise Fail('the file name %s is not a name inside report_web_dest - nothing was written' % nm)
+        body.append('    $tc = @(%s)' % (', '.join(_ps_quote(nm) for nm in ix.get('consumed') or []) or ''))
+        body.append('    Save-Index @(%s) @(%s) @(%s) $ti $th $tp %s %d $tc' % (parts(ix['json']), parts(ix.get('html') or ix['json']),
+                                                                     parts(ix['pending']), _ps_quote(ix.get('sha') or ''), int(ix.get('wait') or 0)))
     for rel, subs in edits:
         body.append('    Edit-Page @(%s) %s @(%s) @(%s)' % (', '.join(_ps_quote(p) for p in rel.split('/')), _ps_quote(rel),
                                                          ', '.join(_ps_quote(a) for a, _ in subs) or "''",
@@ -737,7 +904,7 @@ def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=()):
         body.append('    Remove-Old @(%s) %s' % (', '.join(_ps_quote(p) for p in rel.split('/')), _ps_quote(rel)))
     for rel in dirs:
         body.append('    Remove-Dir @(%s) %s' % (', '.join(_ps_quote(p) for p in rel.split('/')), _ps_quote(rel)))
-    return PS_WRITER % {'dest': _ps_quote(dest), 'body': '\n'.join(body)}
+    return PS_WRITER % {'dest': _ps_quote(dest), 'body': '\n'.join(body), 'stale': LOCK_STALE}
 
 
 def _login_hint(code):
@@ -1624,6 +1791,107 @@ def index_banner(json_text, html_text):
     return _mark({'on': True, 'text': htmllib.unescape(m.group(2)), 'bg': m.group(1)}) if m else {}
 
 
+LOCK_STALE = 600              # seconds: a lock older than this is a job that died - taken over
+LOCK_SETTLE = 2              # seconds: an HTTP lock is read back after this (a server that ignores If-None-Match)
+
+
+def _lock_age(target, lk, have, clock):
+    """How old a lock is: its own time ("when"), else the file's (a lock a job left half written, or the Windows script's
+    from before) - None when neither can be told (then it is never taken over)."""
+    when = _doc(have).get('when') if have else None
+    if isinstance(when, (int, float)):
+        return clock() - when
+    mt = target.mtime(lk) if hasattr(target, 'mtime') else None
+    return (clock() - mt) if mt is not None else None
+
+
+def take_lock(target, rel, token, wait, stale=LOCK_STALE, settle=LOCK_SETTLE, sleep=time.sleep, clock=time.time):
+    """1.79.14: the index's lock, <index.json>.lock, so two jobs do not read and write the index (its lines, the hosted
+    files' ledger) at the same time -> the lock's name, or None when it was not had within wait seconds (the job then
+    writes nothing: the publish is tried again - Fail). A lock older than stale is taken away. Over HTTP it is made,
+    then read back after settle seconds; a server that ignores If-None-Match (nginx) cannot make it exclusive, so the
+    holder checks again just before it writes (lock_held - the fence) and writes nothing when its token is gone."""
+    lk = rel + '.lock'
+    end = clock() + max(0, wait)
+    pause = 0.5 + (int(hashlib.sha1(token.encode()).hexdigest()[:4], 16) % 1000) / 1000.0
+    while True:
+        body = json.dumps({'token': token, 'when': clock()}) + '\n'
+        try:
+            made = target.create_new(lk, body)
+        except Fail:
+            made = False
+        if made:
+            if not getattr(target, 'http', False):
+                return lk
+            sleep(settle)
+            if lock_held(target, lk, token):
+                return lk
+        else:
+            try:
+                have = target.read(lk)
+            except Fail:
+                have = None
+            age = _lock_age(target, lk, have, clock) if have is not None else None
+            if have is not None and age is not None and age > stale:
+                try:
+                    if target.read(lk) == have:              # still that dead job's: taken away (a race here is caught by the
+                        target.remove(lk)                    # fence: the job whose lock went writes nothing)
+                except Fail:
+                    pass
+        if clock() >= end:                                   # every way round counts against the wait
+            return None
+        sleep(pause)
+
+
+def merge_lines(a, b, n):
+    """1.79.14: two lines of one report (an index's and a pending run's) as one: their runs and their trend points together,
+    each once (by page; by when and job), newest first, n runs kept; the head (status, when, title ...) the newer one's."""
+    head = dict(b if newer(a, b) else a)
+    pages = {}
+    for x in _runs(a) + _runs(b):
+        pages.setdefault(x.get('page'), x)
+    head['runs'] = newest_first(list(pages.values()), None)[:max(1, n)]
+    pts = {}
+    for x in list((a or {}).get('trend') or []) + list((b or {}).get('trend') or []):
+        if isinstance(x, dict):
+            pts.setdefault((str(x.get('when')), str(x.get('job'))), x)
+    if pts:
+        head['trend'] = newest_first(list(pts.values()), None)[:TREND_N]
+    return head
+
+
+def lock_held(target, lk, token):
+    """The fence: this job's token still in the lock (not taken over as stale, not overwritten over HTTP)."""
+    if not lk:
+        return False
+    try:
+        have = target.read(lk)
+    except Fail:
+        return False
+    return bool(have) and token in have
+
+
+def renew_lock(target, lk, token, clock=time.time):
+    """The lock's time made now, just before the index is written - a long publish is never taken over as stale between
+    its fence and its write (written in place, by this job only)."""
+    try:
+        if lock_held(target, lk, token):
+            target.write(lk, json.dumps({'token': token, 'when': clock()}) + '\n', 'application/json; charset=utf-8')
+    except Fail:
+        pass
+
+
+def release_lock(target, lk, token):
+    """The index's lock let go - only this job's (its token)."""
+    if not lk:
+        return
+    try:
+        if lock_held(target, lk, token):
+            target.remove(lk)
+    except Fail:
+        pass
+
+
 def _doc(text):
     """index.json's text as a dict ({} when it is not there or cannot be read)."""
     try:
@@ -1774,6 +2042,9 @@ def main():
             retries=dict(type='int', default=3),
             retry_delay=dict(type='int', default=30),
             required=dict(type='bool', default=True),
+            lock_wait=dict(type='int', default=120),
+            index_sha=dict(type='str', default=''),
+            index_pending=dict(type='list', elements='dict', default=[]),
             downloads=dict(type='list', elements='dict', default=[]),
             downloads_refused=dict(type='list', elements='dict', default=[]),
             kept_files=dict(type='list', elements='dict', default=[]),
@@ -1829,6 +2100,7 @@ def main():
         module.warn('The report website: %s' % tz_note)
     dry_at = urls['url'] or _place(where, page or str(((p['pages'] or [{}])[0] or {}).get('page') or ''), bs)
     box = {}
+    token = '%s-%d-%s' % (re.sub(r'[^A-Za-z0-9.-]', '', os.uname()[1])[:40], os.getpid(), base64.b32encode(os.urandom(5)).decode().lower())
 
     def publish():
         if win:
@@ -1969,17 +2241,9 @@ def main():
                 lost = [r for r in reports if r.get('latest') and not target.exists(r['latest'])]
                 gone += lost
                 reports = [r for r in reports if r not in lost]
-            now = target.read(_json_name(index)) if not win else known
-            if now and now != known and _reports(now):
-                # another job wrote the index since it was read above (before the pages, the script and the HEADs): its
-                # lines as they are now, only this template's line this run's, the lines left out above still out (1.24.0)
-                out = set(str(r.get('key')) for r in gone)
-                reports = [r for r in _reports(now) if r.get('key') != entry.get('key') and str(r.get('key')) not in out
-                           and not any(fnmatch.fnmatchcase(str(r.get('key') or ''), d) for d in p['drop'])]
-            reports.append(line)
             # 1.79.8: the hosted files the ledger lets go - deleted before the index is written, so one that could not be
             # deleted (open, no right) stays in the ledger and is tried again by the next publish (the Windows script
-            # deletes them after, there)
+            # deletes them after, there). 1.79.14: before the index's lock - the time under it stays short
             left = []
             # this run's mark as the latest page's only when that page was written (else it still shows the run before,
             # whose files then stay)
@@ -2009,12 +2273,49 @@ def main():
                     target.remove(folder + '/' + n)
                 except Fail as x:
                     not_deleted.append([folder + '/' + n, str(x)])
+            # 1.79.14: the index's lock, then the index read again - from here to its two files written, no other job's
+            # write comes in between (not had within lock_wait: nothing written - the publish is tried again)
+            if p['lock_wait'] > 0 and not win:
+                box['lock'] = take_lock(target, _json_name(index), token, p['lock_wait'])
+                if box['lock'] is None:
+                    raise Fail('the index lock %s.lock was held by another job for %d s - the index not written; tried again '
+                               '(report_web_index_lock_wait)' % (_json_name(index), p['lock_wait']))
+            now = target.read(_json_name(index)) if not win else known
+            if isinstance(target, Target):
+                target.guard(_json_name(index))          # the write below only onto the index as read now (where the server can)
+            if now and now != known and _reports(now):
+                # another job wrote the index since it was read above (before the pages, the script and the HEADs): its
+                # lines as they are now, the lines left out above still out (1.24.0); this template's own line made again
+                # from it (1.79.14: a run of the same template meanwhile keeps its place in the runs and the trend)
+                out = set(str(r.get('key')) for r in gone)
+                cur = _reports(now)
+                old_now = next((r for r in cur if r.get('key') == entry.get('key')), None)
+                line, dropped = history(old_now, entry, p['history'])
+                reports = [r for r in cur if r.get('key') != entry.get('key') and str(r.get('key')) not in out
+                           and not any(fnmatch.fnmatchcase(str(r.get('key') or ''), d) for d in p['drop'])]
+            # 1.79.14, a Windows server: what an earlier run left beside the index when another job had written it meanwhile
+            # (index.pending-*.json) - its line merged in run by run, its files back in the ledger; the files deleted there
+            # only once this index is written (Save-Index)
+            pend = [(str(x.get('name') or ''), _doc(x.get('text'))) for x in p['index_pending']
+                    if isinstance(x, dict) and safe_name(str(x.get('name') or ''), ('.json',))] if win else []
+            for _nm, d in pend:
+                pl = d.get('line')
+                if not isinstance(pl, dict) or not pl.get('key'):
+                    continue
+                if pl.get('key') == entry.get('key'):
+                    line = merge_lines(line, pl, p['history'])
+                    continue
+                cur_line = next((r for r in reports if r.get('key') == pl['key']), None)
+                reports = [r for r in reports if r.get('key') != pl['key']] + [merge_lines(cur_line, pl, p['history']) if cur_line else pl]
+            reports.append(line)
             kept_led = step['kept'] + left
             if now and now != known:
                 # the ledger as another job left it meanwhile: its entries but the ones removed here and this page's
                 gone_dirs = set(e['dir'] for e, _ in step['removals']) - set(e['dir'] for e in left)
                 kept_led = [e for e in rf.ledger(_doc(now)) if e.get('dir') not in gone_dirs and e.get('dir') != folder]
                 kept_led += [e for e in left if e['dir'] not in set(x['dir'] for x in kept_led)]
+            for _nm, d in pend:                          # 1.79.14: a pending run's files back in the ledger
+                kept_led += [e for e in rf.ledger(d) if e['dir'] not in set(x['dir'] for x in kept_led) and e['dir'] != folder]
             led = files_ledger(kept_led, step['mine'], entry.get('key'), shown) if page else None
             reports.sort(key=lambda r: (RANK.get(r.get('status'), 2), str(r.get('name') or r.get('key') or '').lower()))
             generated = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
@@ -2038,10 +2339,27 @@ def main():
                 out_doc['files'] = led
             files_line = rf.used_line(led, max(1, p['files_total_max_mb']), max(0, p['files_keep_days'])) if led else ''
             index_text = json.dumps(out_doc, indent=2, sort_keys=True, default=str) + '\n'
+            index_page = banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz,
+                                                  base, files_line), top)
+            if box.get('lock'):
+                # the fence: still this job's lock (not taken over as stale, not overwritten over HTTP) - else nothing written
+                if not lock_held(target, box['lock'], token):
+                    box.pop('lock', None)
+                    raise Fail('the index lock %s.lock is no longer this job\'s (taken over, or another job\'s made over it) - the '
+                               'index not written; tried again' % _json_name(index))
+                renew_lock(target, box['lock'], token)
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz, base,
-                                                files_line), top),
-                'text/html; charset=utf-8', True)
+            put(index, index_page, 'text/html; charset=utf-8', True)
+            release_lock(target, box.pop('lock', None), token)   # after both: never an older index page over a newer one
+            if win:
+                # what the script writes instead when the index changed there since it was read (Save-Index); the pending
+                # files put in above, deleted there only after this index is written
+                box['pending'] = {'name': '%s.pending-%s-%s-%s.json' % (
+                    index[:-5], re.sub(r'[^A-Za-z0-9]', '', str(entry.get('job') or 'local'))[:20],
+                    datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S'), token.rsplit('-', 1)[-1]),
+                    'text': json.dumps({'line': line, 'files': [e for e in (led or []) if e.get('dir') == folder]},
+                                       indent=2, sort_keys=True, default=str) + '\n',
+                    'consumed': [nm for nm, _d in pend]}
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])
             for r in reports:
@@ -2115,6 +2433,8 @@ def main():
                 n, tries, why, str(e)[:300], p['retry_delay']))
         finally:
             target = box.pop('target', None)
+            if box.get('lock') and target is not None:  # a publish that stopped holding the index's lock lets it go
+                release_lock(target, box.pop('lock'), token)
             if isinstance(target, SmbTarget):
                 target.close()
             elif smb:                                    # a login that failed half-way: its connection dropped too
@@ -2128,15 +2448,20 @@ def main():
     gone, deleted, not_deleted, busy, js_name = done['gone'], done['deleted'], done['not_deleted'], done['busy'], done['js_name']
     step, folder = done['step'], done['folder']
     # 1.79.8: this run's files (their addresses with report_web_url), the ones not hosted and why, what the cleanup removed
-    fout = dict(files=[dict(name=f['name'], size=f['size'], url=_join(base, folder + '/' + f['name'])) for f in step['hosted']],
+    fout = dict(index_sha=hashlib.sha256(index_text.encode('ascii', 'xmlcharrefreplace')).hexdigest().upper() if index_text else '',
+                files=[dict(name=f['name'], size=f['size'], url=_join(base, folder + '/' + f['name'])) for f in step['hosted']],
                 files_refused=step['refused'], files_removed=done['gone_lines'], files_line=step['line'])
     for r in step['refused']:
         module.warn('The report website: the file %s is not on it - %s' % (r['name'], r['why']))
     if win:
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
+            pend = box.get('pending') or {}
             f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, js_name],
-                                   target.dirs, target.edits).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
+                                   target.dirs, target.edits,
+                                   {'json': _json_name(index), 'html': index, 'sha': str(p['index_sha'] or '').upper(),
+                                    'pending': pend.get('name') or '', 'pending_text': pend.get('text') or '', 'consumed': pend.get('consumed') or [],
+                                    'wait': p['lock_wait']} if index and pend else None).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
         module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
                          unlisted=[r.get('key') for r in gone],
                          newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, published=True, retried=retried,

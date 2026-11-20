@@ -55,6 +55,32 @@
   `run_fapolicyd_rules_test.sh` ra05 (the rule kept; a change after which no module runs: put back, the guard
   disarmed, nothing left behind).
 
+## 1.79.14 — 2026-11-20
+
+**To set up: nothing.** Optional: `report_web_index_lock_wait` (`120` seconds; `0` = no lock).
+
+**The report website: two jobs publishing at once never lose each other's line or hosted files.** Each job read
+`index.json`, added its line and its files' entries, and wrote it back; two at the same moment could drop one, and its
+files were then never cleaned up (1.79.8's open point).
+
+- **The index's lock**, `index.json.lock` beside it, held from the index's last read to both index files written: a
+  folder makes it with `O_EXCL`, a share with SMB's create-new, an upload makes it and reads it back after 2 seconds
+  (nginx's `dav` ignores `If-None-Match`: best effort there). A lock older than 10 minutes is taken over. Just before
+  the write the job checks the lock is still its own; if not, or if it was never had in time, it writes no index and
+  the publish is tried again. Its own template's line is made again from the index read under the lock.
+- **A server that honours `If-Match`** (Apache, IIS) refuses a write over an index changed since it was read (412): the
+  job tries again from the start.
+- **A Windows server** (`report_web_host`): the script takes the lock there (Constrained Language Mode) and writes the
+  index only when it had the lock and the index is as the job read it (its SHA-256, from one copy of the file); else
+  this run's line and files go to `index.pending-*.json`, which the next publish merges in run by run and deletes
+  once that index is written. The copy job reads the index again after a page went there.
+- Known limits, Windows server only: a hosted file the script could not delete is not tried again; the latest page's
+  run keeps its files one publish longer (`docs/WEB_REPORTS.md`, "Two jobs at once").
+- Tests: `test_report_web.py` `Lock17914` (the lock, a stale one by its file's age; two jobs racing on a folder, an
+  upload, a share - both kept, and without the lock one lost; two runs of one template; a lock no longer the job's
+  writes nothing; a server with `If-Match`; a Windows server's pending file merged by the next run and kept until then).
+  `tests/email/fake_web.py`: ETags and `FAKE_WEB_CONDITIONAL`. The module's options documented (1.79.8's too).
+
 ## 1.79.13 — 2026-11-20
 
 **To set up: nothing.** Optional: the job template **Linux - auditd tuning** (`playbooks/auditd_tuning.yml`, Machine

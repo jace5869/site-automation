@@ -546,6 +546,35 @@ nginx sends an upload into a `-files/` folder to this block, which does not take
 
 IIS serves `.xml` and `.docx` with their own types. The links still save them.
 
+### Two jobs at once (1.79.14)
+
+Every report job reads `index.json`, adds its own line and its hosted files' list, and writes it back. Two jobs doing
+that at the same moment could lose one job's line or its files' entries, and then those files would never be cleaned
+up. Since 1.79.14 a job takes the index's lock first:
+
+- **The lock** is a small file beside the index, `index.json.lock`, with the job's name and the time. A job waits for
+  it up to `report_web_index_lock_wait` seconds (`120`; `0` = no lock), re-reads the index under it, and writes
+  `index.json` and `index.html`. A lock older than 10 minutes belongs to a job that died, and is taken over. You may
+  see the file in the folder for a moment; leave it.
+- **Just before it writes**, the job checks the lock is still its own. If it is not (taken over, or another job's
+  made over it), it writes nothing and the publish is tried again (`report_web_retries`).
+- **A lock not had in time**: the job writes no index; the publish is tried again, and the files it hosted are taken
+  away again.
+- **A share and a folder**: the lock file is made only if it is not there (the server does it in one step).
+- **An upload (WebDAV)**: nginx's `dav` module makes the file whether or not it is there, so the job makes it, waits
+  2 seconds, reads it back, and checks it again just before it writes. That closes almost every overlap, but on nginx
+  it is not a hard guarantee. A server that honours `If-Match` (Apache, IIS) also refuses a write over an index that
+  changed since it was read (HTTP 412), and the job tries again: there it is one.
+
+**Known limits (a Windows server, `report_web_host`)**: the script takes the same lock there and writes the index only
+when it is as the job read it. If another job wrote it in between, this run's line and files go to a file beside it
+(`index.pending-<job>-<time>.json`), and the next publish puts them in and deletes the file. Two things stay as they
+were in 1.79.8 on that transport only:
+
+- A hosted file the script could not delete (open, no right) is not kept in the list for another try: delete it by
+  hand when the job output lists it.
+- The run a latest page shows keeps its files one publish longer, even when its latest page was written.
+
 ### Times in your time zone
 
 Out of the box every time on the website is UTC: `2026-11-13 04:37 UTC`. To show your own time zone, set

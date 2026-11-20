@@ -4,6 +4,7 @@ MKCOL (WebDAV) into a folder, like nginx with dav_methods PUT DELETE MKCOL. A PU
 answers 409 (make it with MKCOL first).
 Login: FAKE_WEB_TOKEN (Authorization: Bearer ...) or FAKE_WEB_BASIC (user:password); neither = no login.
 FAKE_WEB_503=N: the first N PUTs answer 503 (a server busy a moment - the report website's retries).
+GET answers an ETag; FAKE_WEB_CONDITIONAL=1: a PUT honours If-Match / If-None-Match (412), as Apache and IIS (nginx does not).
 Each request appended to FOLDER/../web.log as "METHOD path status".
 Usage: fake_web.py PORT FOLDER"""
 import base64
@@ -18,16 +19,24 @@ LOG = os.path.join(os.path.dirname(ROOT), "web.log")
 TOKEN = os.environ.get("FAKE_WEB_TOKEN", "")
 BASIC = os.environ.get("FAKE_WEB_BASIC", "")
 BUSY = [int(os.environ.get("FAKE_WEB_503", "0") or 0)]
+COND = os.environ.get("FAKE_WEB_CONDITIONAL", "") == "1"      # 1.79.14: honour If-Match / If-None-Match (nginx does not)
+
+
+def _etag(body):
+    import hashlib
+    return '"%s"' % hashlib.md5(body).hexdigest()
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def _answer(self, code, body=b""):
+    def _answer(self, code, body=b"", etag=None):
         with open(LOG, "a") as f:
             f.write("%s %s %d\n" % (self.command, self.path, code))
         self.send_response(code)
+        if etag:
+            self.send_header("ETag", etag)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -50,7 +59,8 @@ class Handler(BaseHTTPRequestHandler):
         if path is None or not os.path.isfile(path):
             return self._answer(404)
         with open(path, "rb") as f:
-            self._answer(200, f.read())
+            body = f.read()
+        self._answer(200, body, _etag(body))
 
     def do_HEAD(self):                                   # is a page there (1.79.8: a hosted files' folder whose page is gone)
         path = self._path()
@@ -68,6 +78,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._answer(403)
         if not os.path.isdir(os.path.dirname(path)):
             return self._answer(409)
+        if COND:                                         # FAKE_WEB_CONDITIONAL: If-Match / If-None-Match honoured (Apache, IIS)
+            now = open(path, "rb").read() if os.path.isfile(path) else None
+            im, inm = self.headers.get("If-Match"), self.headers.get("If-None-Match")
+            if (im and (now is None or _etag(now) != im)) or (inm == "*" and now is not None):
+                return self._answer(412)
         with open(path, "wb") as f:
             f.write(body)
         self._answer(201)

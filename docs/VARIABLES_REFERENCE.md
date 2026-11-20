@@ -1970,6 +1970,7 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_files_types` | `[.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]` | the types hosted; any other: not hosted |
 | `report_web_files_total_max_mb` | `500` | every report's files together: past it, the oldest runs' go first (never a latest page's) |
 | `report_web_files_keep_days` | `30` | a run's files are removed after this many days - its page stays, and says so; 0 = never |
+| `report_web_index_lock_wait` | `120` | 1.79.14: seconds a job waits for the index's lock (two jobs never write it at once); 0 = none |
 | `report_web_smb_auth` | `negotiate` | A share (report_web_dest \\server\share\folder): how the job logs in, and the connection. negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |
 | `report_web_smb_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it; one that requires it is always |
 | `report_web_smb_port` | `445` | the share's port |

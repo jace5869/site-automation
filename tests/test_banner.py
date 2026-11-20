@@ -150,7 +150,7 @@ class Where(unittest.TestCase):
             src = f.read()
         self.assertRegex(src, r"from ansible\.module_utils\.site_banner import [^\n]*\binject as banner_inject\b")
         self.assertIn("html = banner_inject(web_page(", src)
-        self.assertIn("put(index, banner_inject(index_html(", src)
+        self.assertIn("index_page = banner_inject(index_html(", src)                 # 1.79.14: made, then put under the lock
 
 
 class TheEnclavesChapter(unittest.TestCase):

@@ -288,6 +288,9 @@
 ## a run's files are removed after this many days - its page stays, and says so; 0 = never
 # report_web_files_keep_days: 30
 
+## 1.79.14: seconds a job waits for the index's lock (two jobs never write it at once); 0 = none
+# report_web_index_lock_wait: 120
+
 ## A share (report_web_dest \\server\share\folder): how the job logs in, and the connection.
 ## negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm,
 ## or kerberos (a ticket already in the job)

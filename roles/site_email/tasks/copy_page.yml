@@ -38,6 +38,9 @@
         # 1.79.8: the files the report job kept with its report (those too big to keep: named on the page)
         kept_files: "{{ _copy_doc.downloads | default([]) if report_web_files | default(true) | bool else [] }}"   # content only
         index_gone: "{{ _copy_gone | default([]) if _web_win | bool else [] }}"
+        lock_wait: "{{ report_web_index_lock_wait | default(120) | int }}"
+        index_sha: "{{ _copy_sha | default('') if _web_win | bool else '' }}"
+        index_pending: "{{ _copy_pending | default([]) if _web_win | bool else [] }}"
         downloads_refused: "{{ _copy_doc.downloads_refused | default([]) }}"
         files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
         files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) }}"
@@ -94,14 +97,41 @@
         msg: "{{ _web_win_write.busy | default([]) + _web_win_write.left | default([]) }}"
       when: _web_win | bool and (_web_win_write.busy | default([]) + _web_win_write.left | default([])) | length > 0
 
+    # 1.79.14: the index changed there meanwhile and this page went to index.pending-*: the next page reads it again
+    - name: Copy | job {{ _copy_item.job }} - the index read again there (another job wrote it meanwhile)
+      when: _web_win | bool and _web_win_write.pending | default([]) | length > 0
+      block:
+        - name: Copy | job {{ _copy_item.job }} - the index there, again
+          ansible.builtin.include_tasks: web_windows.yml
+          vars:
+            ansible_connection: "{{ _copy_conn }}"
+            _web_ps_host: "{{ _copy_host }}"
+            _web_ps_pwsh: "{{ _copy_conn == 'local' }}"
+            _web_ps: site_report_web_read.ps1
+            _web_ps_what: the index in {{ report_web_dest | trim }}, again
+            _web_ps_config:
+              dest: "{{ report_web_dest | trim }}"
+              index: "{{ (report_web_index[:-5] ~ '.json').split('/') if report_web_index else [] }}"
+
+        - name: Copy | job {{ _copy_item.job }} - its answer
+          ansible.builtin.set_fact:
+            _copy_reread: "{{ ((_web_ps_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('###SITE-JSON### {}'))[16:] | from_json).read | default({}) }}"
+
     - name: Copy | job {{ _copy_item.job }} - done
       ansible.builtin.set_fact:
-        _copy_index: "{{ _copy_out.index_text | default('') }}"
+        # the index as this page wrote it - or, when it went to a pending file, as read there again just now
+        _copy_index: "{{ _copy_reread.index | default('', true) if _copy_reread is defined and _copy_reread else _copy_out.index_text | default('') }}"
+        _copy_sha: "{{ _copy_reread.sha | default('') if _copy_reread is defined and _copy_reread else _copy_out.index_sha | default('') }}"
+        _copy_pending: "{{ _copy_reread.pending | default([]) if _copy_reread is defined and _copy_reread else [] }}"
         _copy_gone: "{{ _copy_gone | default([]) | difference([(_copy_item.packed | report_page_unpack).files.page]) if _web_win | bool else [] }}"
         _copy_written: >-
           {{ _copy_written | default([]) + ['job ' ~ _copy_item.job ~ " '" ~ _copy_item.template ~ "': "
              ~ (_copy_out.url or _copy_out.place)
              ~ ('' if _copy_out.newest | default(true) else ' (an older run than the one there: its latest page and index line left as they are)')] }}
+    - name: Copy | job {{ _copy_item.job }} - its read again used
+      ansible.builtin.set_fact:
+        _copy_reread: {}
+
   rescue:
     - name: Copy | job {{ _copy_item.job }} - not copied, tried again by the next run
       ansible.builtin.set_fact:
