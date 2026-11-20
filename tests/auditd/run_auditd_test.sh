@@ -28,7 +28,7 @@ cat > "$work/bin/auditctl" <<'EOF'
 case "$1" in
   --is-fake) echo "FAKE auditctl" ;;
   -s) [ -n "${FAKE_AUDITCTL_FAIL:-}" ] && { echo "Error sending status request (Operation not permitted)"; exit 1; }
-      printf 'enabled 2\nfailure 1\npid 812\nrate_limit 0\nbacklog_limit 8192\nlost 0\nbacklog 0\n' ;;
+      printf 'enabled 2\nfailure 1\npid 812\nrate_limit 0\nbacklog_limit %s\nlost 0\nbacklog 0\n' "${FAKE_BACKLOG:-8192}" ;;
   -l) cat "$FAKE_DIR/rules" 2>/dev/null ;;
 esac
 EOF
@@ -106,6 +106,12 @@ ANOISY='{"auid": 1001, "events": 3000, "hours": 20, "key": "delete", "exe": "/us
 # ---- quiet host ----------------------------------------------------------------------------------
 prepare "{\"files\": 2, \"sources\": [$A, $D]}"
 scenario "quiet host: no findings, the estimate is shown" '{}' "" "Audit volume up to" "(limit 200)"
+# 1.79.13: a backlog too small for a burst (containers restarting) - points to Linux - auditd tuning; 0 = off
+export FAKE_BACKLOG=64
+scenario "backlog_limit 64: a warning (its hint names the job Linux - auditd tuning)" '{}' "auditd:backlog" \
+    "the audit backlog_limit is 64, below 8192: a burst (containers restarting)"
+scenario "check_auditd_backlog_min 0: no backlog warning" '{"check_auditd_backlog_min": 0}' ""
+unset FAKE_BACKLOG
 
 # ---- a vulnerability scanner's account makes most of the records ---------------------------------
 prepare "{\"files\": 2, \"sources\": [$S, $SU, $A, $D]}"

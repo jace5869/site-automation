@@ -231,7 +231,15 @@
       {%-     set _ = f.append({'check': 'auditd', 'id': 'auditd:lost', 'severity': 'warning',
                                 'summary': v.k_lost ~ ' audit event(s) were LOST since boot (backlog ' ~ v.k_backlog | default('?')
                                            ~ ' of limit ' ~ v.k_backlog_limit | default('?') ~ ')',
-                                'hint': 'auditctl -s'}) -%}
+                                'hint': 'auditctl -s; the job "Linux - auditd tuning" (docs/RUNBOOKS.md, "auditd tuning")'}) -%}
+      {%-   endif -%}
+      {#-   1.79.13: a backlog too small for a burst (containers restarting): the kernel stalls or loses records -#}
+      {%-   if check_auditd_backlog_min | int > 0 and v.k_backlog_limit is defined
+              and (v.k_backlog_limit | int) < check_auditd_backlog_min | int -%}
+      {%-     set _ = f.append({'check': 'auditd', 'id': 'auditd:backlog', 'severity': 'warning',
+                                'summary': 'the audit backlog_limit is ' ~ v.k_backlog_limit ~ ', below ' ~ check_auditd_backlog_min
+                                           ~ ': a burst (containers restarting) can stall the host or lose audit records',
+                                'hint': 'auditctl -s; the job "Linux - auditd tuning" (docs/RUNBOOKS.md, "auditd tuning")'}) -%}
       {%-   endif -%}
       {#-   rules that stop recording an account. Approved: any account of the rule is on the list. Not
               an account: auid unset (only processes nobody logged in to - daemons). -#}

@@ -62,6 +62,8 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Network performance report | `playbooks/net_perf_report.yml` | Report | [NETWORK_PERF.md](NETWORK_PERF.md#set-it-up), workflow 34: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#34-network-performance-hourly) |
 | Log analysis | `playbooks/log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | Report | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-denials-playbooksfapolicyd_denialsyml) |
+| Linux - auditd tuning | `playbooks/auditd_tuning.yml` | Report; with approved changes, a change (the audit configuration; never a reboot) | [RUNBOOKS.md](RUNBOOKS.md#auditd-tuning-playbooksauditd_tuningyml) |
+| Linux - auditd tuning - check | `playbooks/auditd_tuning.yml` (`auditd_tuning_workflow: true`; the workflow's first step) | Workflow step | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#52-auditd-tuning-with-an-approval) |
 | fapolicyd | `playbooks/fapolicyd.yml` | Report; with approved changes, a change; workflow 36 (as *fapolicyd - check* and *fapolicyd - approved*) | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-playbooksfapolicydyml), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-with-an-approval-daily) |
 
 ## Windows servers
@@ -245,6 +247,7 @@ snapshot cleanup finds its own candidates, and a pick-list template's first run 
 | Service watch - check | `service_watch_fix` | Service watch - apply approved fix | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-6-the-workflow), Part 6 |
 | Certificate install - check, Windows certificate install - check | `cert_install_plan` | Certificate install - approved, Windows certificate install - approved | 29 |
 | Linux - disk space report | `disk_cleanup_plan`, `disk_cleanup_plan_workflow` (only for the cleanup in the same workflow) | Linux - tmp cleanup | 42 |
+| Linux - auditd tuning - check | `auditd_tuning_workflow_plan` | Linux - auditd tuning | [52. Auditd tuning, with an approval](WORKFLOWS_AND_SCHEDULES.md#52-auditd-tuning-with-an-approval) |
 | VM - snapshot report | `vm_snapshot_cleanup_candidates` (only for the cleanup in the same workflow) | VM - snapshot cleanup | 19 |
 | VM - delete picked snapshots (its plan run) | `vm_snapshot_pick_plan` | the same template, after the approval | 26 |
 | VM - restart picked VMs (its plan run) | `vm_reboot_pick_plan` | the same template, after the approval | 27 |

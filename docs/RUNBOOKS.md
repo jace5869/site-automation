@@ -183,7 +183,8 @@ What the denials were and what to do about them, with ACT's analysis, in a repor
 | `auditd is failed` | nothing is being audited | `systemctl status auditd`; often a full audit log partition |
 | `auditing is DISABLED in the kernel` | `auditctl -s` says enabled 0 | `audit=1` on the kernel command line |
 | `only 1 audit rule(s) are loaded` | the STIG rules are missing or failed to load | `augenrules --check`, `augenrules --load`; a syntax error in `/etc/audit/rules.d/` |
-| `N audit event(s) were LOST` | the kernel backlog overflowed | raise `-b` (backlog) in the rules |
+| `N audit event(s) were LOST` | the kernel backlog overflowed | the job **Linux - auditd tuning** (below, 1.79.13) |
+| `the audit backlog_limit is 320, below 8192` | a burst (containers restarting) can stall the host or lose records (`check_auditd_backlog_min`, 0 = off) | the job **Linux - auditd tuning** (below) |
 | `the audit log filesystem is 92% full` | auditd may stop, or halt the host, when it fills | rotate/offload; check `space_left_action` |
 | `audit records are not forwarded` | au-remote is not active (`check_auditd_remote_required`) | configure audisp-remote |
 | `audit volume is 850 MB a day (... events in 24 h, at most N in one hour) - mostly account svc_x (60%), rule key delete (55%), program /usr/bin/python3 (40%)` | more audit records than `check_auditd_volume_warn_mb_day` (200), excluded accounts not counted | what the named account/program does that the named STIG rule records: a job deleting temp files in a loop, an app in a rootless container (its processes keep the user's login ID) |
@@ -687,6 +688,52 @@ would block and clean up the rules; on the first quiet day it offers `permissive
 
 **All settings**, with their defaults: [fapolicyd](VARIABLES_REFERENCE.md#fapolicyd), and the advanced ones of its two
 parts, [fapolicyd_fix](VARIABLES_REFERENCE.md#fapolicyd_fix) and [fapolicyd_rules](VARIABLES_REFERENCE.md#fapolicyd_rules).
+
+## auditd tuning (`playbooks/auditd_tuning.yml`)
+
+**Linux - auditd tuning** (1.79.13). A container host can freeze while podman restarts its containers. The STIG's
+`delete` and `perm_mod` rules fill the kernel's audit backlog, and the kernel prints the records to the console:
+`kauditd_printk_skb: N callbacks suppressed`. This job reads the audit settings that decide how big a burst can be,
+says what is too small, and - only as approved - makes it bigger. **It never reboots**, and never changes `-e`, `-f`
+or any STIG rule.
+
+What it reads on each host (read only, also in Check):
+
+- the kernel now: `auditctl -s` (enabled, backlog_limit, backlog, lost, backlog_wait_time);
+- the boot: the running kernel's `audit_backlog_limit=` (`/proc/cmdline`) and each kernel's (`grubby --info=ALL`);
+- `/etc/audit/auditd.conf`: `q_depth`, `overflow_action`, `flush`, `freq`;
+- `/etc/audit/rules.d/`: `-b` and `--backlog_wait_time` in `10-base-config.rules`, and `-e 2` (immutable);
+- podman, and the containers' storage.
+
+The report says what is too small, what is set but waits for the next reboot (*set; takes effect at the next reboot -
+immutable*), the records lost since boot, and the **changes to approve**, one line each:
+
+| Change | What it does | When it takes effect |
+|---|---|---|
+| `backlog` | `-b 8192` and `--backlog_wait_time 60000` in `10-base-config.rules` (its `-D` and `-f` lines kept) | now (`augenrules --load`); with immutable rules (`-e 2`) at the next reboot |
+| `queue` | `q_depth = 8192` and `overflow_action = SYSLOG` in `auditd.conf`, then `service auditd restart` | now |
+| `kernel` | `grubby --update-kernel=<kernel> --args=audit_backlog_limit=8192`, only on the kernels without it or lower (the boot entries backed up first) | at the next reboot |
+| `containers` | **off by default** (`auditd_container_exclude: true`; **ISSO approval needed**): `-a never,exit -F dir=/var/lib/containers/storage/overlay` (and the rootless storage of `auditd_container_users`) in `05-containers.rules` | now, or at the next reboot (immutable) |
+
+A value already bigger is kept, never lowered (`-b 32768` stays). In `05-containers.rules` only the missing exclusion
+lines are added; other rules there stay. Each file is backed up first (`<file>.site-bak-<time>`; the boot entries in
+`/var/lib/site-automation/auditd-tuning/<time>`), and a backup that fails stops the change. A rules load that fails
+fails the job, with what `augenrules` said. `systemctl` refuses to restart auditd, so the job uses
+`service auditd restart`, and only for `auditd.conf`. A restart that fails puts `auditd.conf` back and restarts again;
+the job then fails and says so. The sizes are settings: `auditd_backlog_limit`, `auditd_backlog_wait_time`,
+`auditd_q_depth`.
+
+1. Launch **Linux - auditd tuning** (Machine credential with sudo), a Limit of container hosts. It reads only.
+2. Read the report (or the job output): each host's lines under *Changes to approve*.
+3. Approve them, either way:
+   - **the workflow** ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#52-auditd-tuning-with-an-approval));
+   - **by hand**: launch it again with `auditd_tuning_approved` - each line as the report gives it, or its first word
+     (`backlog`, `queue`, `kernel`, `containers`), or `<host>: <line>` for one host. Run it in Check first.
+4. With immutable rules, the rules and the kernel argument apply at the **next reboot you plan anyway**. Until then the
+   next run says *set; takes effect at the next reboot - immutable*.
+
+The health check's auditd part warns when records were lost or the backlog is below `check_auditd_backlog_min` (8192),
+and points here.
 
 ## Certificate report (`playbooks/cert_report.yml`)
 

@@ -14,6 +14,38 @@
 - **Downloads.** *Download proposal (.md)* in each opened row (built in the page, no inline script); one *Automation backlog.docx* attached to the report email (every cluster in a table, a proposal for each of the top clusters; the report website serves the page, not files); the workbook's *Automation backlog* sheet with every cluster and phase. `roles/incident_docs/tasks/write_doc.yml` writes a Word file for another role.
 - Tests: `tests/test_insights_backlog.py` (the formulas on made-up XINC tickets, rate x months = tickets, ACT's JSON and bad JSON, the cache, ACT off, the Word file, the .md, the page at 1280 and 800 px, light and dark, under `script-src 'self'`), the insights e2e (the words, bad JSON, ACT off, the Word file in the mail).
 
+## 1.79.13 — 2026-11-20
+
+**To set up: nothing.** Optional: the job template **Linux - auditd tuning** (`playbooks/auditd_tuning.yml`, Machine
+credential with sudo; `aap/extra_vars/auditd_tuning.yml`), and the workflow *Auditd tuning, with an approval*.
+
+**Linux - auditd tuning for containers.** A container host froze while podman restarted its containers: the STIG's
+`delete` and `perm_mod` rules filled the kernel's audit backlog, and the kernel printed the records to the console
+(`kauditd_printk_skb: N callbacks suppressed`). The new job reads what decides how big a burst can be, and makes it
+bigger only as approved. It never reboots, and never changes `-e`, `-f` or a STIG rule.
+
+- **The read** (read only, Check too): `auditctl -s`, the running kernel's and each kernel's `audit_backlog_limit`
+  (`grubby`), `auditd.conf` (`q_depth`, `overflow_action`, `flush`, `freq`), immutable rules (`-e 2`), podman. The
+  report says what is too small, what is *set; takes effect at the next reboot - immutable*, and the records lost.
+- **The changes to approve**, one line each: `backlog` (`-b 8192`, `--backlog_wait_time 60000` in
+  `10-base-config.rules`, its `-D` and `-f` kept), `queue` (`q_depth 8192`, `overflow_action SYSLOG`, then
+  `service auditd restart`), `kernel` (`grubby --args=audit_backlog_limit=8192` on each kernel without it or lower). A
+  bigger value is kept, never lowered. Each file backed up first (the boot entries too); a restart that fails puts
+  `auditd.conf` back and restarts again. `augenrules --load` only when not immutable, else the change applies at the
+  next reboot; a load that fails fails the job.
+- **Optional, off by default (ISSO approval needed):** `auditd_container_exclude: true` proposes
+  `-a never,exit -F dir=/var/lib/containers/storage/overlay` (and listed rootless users' storage) in
+  `05-containers.rules`, on its own approval line.
+- **Approval**: the fapolicyd pattern - *Linux - auditd tuning - check* (`auditd_tuning_workflow: true`), the workflow
+  gate (`auditd_tuning_workflow_plan`), an approval, *Linux - auditd tuning*; or `auditd_tuning_approved` by hand.
+- **The health check** warns when audit records were lost or the backlog is below `check_auditd_backlog_min` (8192),
+  and points to this job.
+- **The catalog**: both templates and the workflow have their five-line descriptions (1.79.11).
+- Tests: `tests/auditd/run_auditd_tuning_test.sh` (two UBI containers, stand-in auditctl / augenrules / grubby /
+  service: immutable and not, Check and the workflow's check write nothing, the backups, a failed restart put back, the
+  containers line, never a reboot), `test_auditd_tune.py`, `run_auditd_test.sh` (the backlog finding). Docs:
+  `RUNBOOKS.md` ("auditd tuning"), `WORKFLOWS_AND_SCHEDULES.md`, `JOB_TEMPLATES.md`, `aap/extra_vars`.
+
 ## 1.79.12 — 2026-11-20
 
 **To set up:** nothing. Three settings of the outage review, all with working defaults: `vm_watch_review_lookback_hours` (6), `vm_watch_review_min_seconds` (300) and `vm_watch_review_skip_blips` (false).

@@ -1,0 +1,78 @@
+---
+# One host: the audit read (read only, in Check too), what is too small or waiting for a reboot, the changes to approve -
+# then the approved ones (apply.yml), never in the workflow's check and never in Check.
+
+- name: Auditd tuning | the kernel's backlog, auditd's queue, the rules files, the boot command line, containers (read only)
+  ansible.builtin.shell: |
+    set -u
+    dir={{ auditd_tuning_dir | quote }}; rd="$dir/rules.d"; conf="$dir/auditd.conf"
+    if st=$(auditctl -s 2>&1); then
+      printf '%s\n' "$st" | awk '$1 == "enabled" || $1 == "backlog_limit" || $1 == "backlog" || $1 == "lost" || $1 == "backlog_wait_time" {print "k_" $1, $2}'
+    else
+      echo "error auditctl -s: $(printf '%s' "$st" | head -1)"
+    fi
+    # auditd.conf: names in any case, the last assignment wins (as auditd reads it)
+    cf() { awk -F= -v k="$1" '{x = tolower($1); gsub(/[[:space:]]/, "", x)} x == k {v = $2; gsub(/[[:space:]]/, "", v)} END {print v}' "$conf" 2>/dev/null; }
+    for k in q_depth overflow_action flush freq; do echo "$k $(cf "$k")"; done
+    echo "rules_b $(awk '$1 == "-b" {v = $2} END {print v}' "$rd/10-base-config.rules" 2>/dev/null)"
+    echo "rules_bwt $(awk '$1 == "--backlog_wait_time" {v = $2} END {print v}' "$rd/10-base-config.rules" 2>/dev/null)"
+    echo "rules_e $(cat "$rd"/*.rules 2>/dev/null | awk '$1 == "-e" {v = $2} END {print v}')"
+    for f in "$rd"/*.rules; do [ -e "$f" ] && echo "rules_file ${f##*/}"; done
+    echo "cmdline_backlog $(tr ' ' '\n' < {{ auditd_tuning_cmdline | quote }} 2>/dev/null | awk -F= '$1 == "audit_backlog_limit" {print $2}')"
+    if command -v grubby >/dev/null 2>&1; then
+      if gi=$(grubby --info=ALL 2>&1); then
+        ks=$(printf '%s\n' "$gi" | awk '/^kernel=/ {k = substr($0, 8); gsub(/"/, "", k)}
+          /^args=/ {a = substr($0, 6); gsub(/"/, "", a); v = "none"; n = split(a, x, " ")
+                    for (i = 1; i <= n; i++) if (x[i] ~ /^audit_backlog_limit=/) {split(x[i], y, "="); v = y[2]}
+                    print "kernel " k " " v}')
+        if [ -n "$ks" ]; then printf '%s\n' "$ks"; else echo "grubby_error no boot entry listed"; fi
+      else
+        echo "grubby_error $(printf '%s' "$gi" | head -1)"
+      fi
+    else
+      echo "grubby no"
+    fi
+    if command -v podman >/dev/null 2>&1 || [ -d /var/lib/containers/storage/overlay ]; then echo "podman yes"; else echo "podman no"; fi
+    [ -d /var/lib/containers/storage/overlay ] && echo "storage_root yes"
+    for h in /home/*; do [ -d "$h/.local/share/containers/storage/overlay" ] && echo "rootless ${h##*/}"; done
+    # the directories an active rule already leaves out (-a never,exit ... -F dir=...), each one
+    cat "$rd"/*.rules 2>/dev/null | awk '$1 == "-a" && ($2 == "never,exit" || $2 == "exit,never") {
+        for (i = 3; i < NF; i++) if ($i == "-F" && $(i + 1) ~ /^dir=/) print "excluded " substr($(i + 1), 5)}'
+    exit 0
+  register: _atu_read
+  changed_when: false
+  check_mode: false
+
+- name: Auditd tuning | what is too small, waiting for a reboot, or lost; the changes to approve
+  ansible.builtin.set_fact:
+    _atu: >-
+      {{ _atu_read.stdout | auditd_tune_state({'backlog': auditd_backlog_limit | int, 'wait': auditd_backlog_wait_time | int,
+                                               'q_depth': auditd_q_depth | int, 'containers': auditd_container_exclude | bool,
+                                               'users': auditd_container_users}) }}
+
+- name: Auditd tuning | the changes approved for this host (the workflow's plan, or auditd_tuning_approved)
+  ansible.builtin.set_fact:
+    _atu_ids: >-
+      {{ [] if auditd_tuning_workflow | bool else
+         ((auditd_tuning_workflow_plan[inventory_hostname] | default([])) if auditd_tuning_workflow_plan is defined else auditd_tuning_approved)
+         | auditd_tune_pick(_atu.changes, inventory_hostname) }}
+
+- name: Auditd tuning | what this host says
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_atu.findings | map(attribute='text') | list) + _atu.waiting + (_atu.changes | map(attribute='text') | map('regex_replace', '^', 'to approve: ') | list)
+         + (['approved: ' ~ (_atu_ids | join(', '))] if _atu_ids else []) or ['all right'] }}
+
+- name: Auditd tuning | Check - what it would change (nothing is written)
+  ansible.builtin.set_fact:
+    _atu_apply: "{{ {'state': 'would change', 'did': _atu.changes | selectattr('id', 'in', _atu_ids) | map(attribute='text') | map('regex_replace', '^', 'would make: ') | list} }}"
+  when: ansible_check_mode and _atu_ids | length > 0
+
+- name: Auditd tuning | the approved changes
+  ansible.builtin.include_tasks: apply.yml
+  when: not ansible_check_mode and _atu_ids | length > 0 and _atu.read
+
+- name: Auditd tuning | what was done on this host (or, in Check, what would be)
+  ansible.builtin.debug:
+    msg: "{{ [_atu_apply.state ~ ':'] + _atu_apply.did }}"
+  when: _atu_apply is defined

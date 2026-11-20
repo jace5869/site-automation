@@ -1,0 +1,98 @@
+---
+# LINUX - AUDITD TUNING FOR CONTAINERS (1.79.13). A container host can freeze while podman restarts its containers: the
+# STIG's delete and perm_mod rules fill the kernel's audit backlog, and the kernel prints the records to the console
+# ("kauditd_printk_skb: N callbacks suppressed"). On each host, read only (Check too): the kernel's backlog now
+# (auditctl -s: enabled, backlog_limit, backlog, lost, backlog_wait_time), the boot command line's audit_backlog_limit
+# (and each kernel's, grubby), auditd.conf's q_depth / overflow_action / flush / freq, immutable rules (-e 2), podman,
+# the rules files. ONE report: what is too small, what is set but waits for the next reboot, records lost - and the
+# changes to approve, one line each:
+#   backlog     -b and --backlog_wait_time in /etc/audit/rules.d/10-base-config.rules (its -D and -f kept)
+#   queue       q_depth and overflow_action SYSLOG in /etc/audit/auditd.conf, then `service auditd restart`
+#   kernel      grubby --update-kernel=ALL --args=audit_backlog_limit=N (only where missing or lower; the next boot)
+#   containers  (auditd_container_exclude, OFF by default - ISSO approval needed) -a never,exit for the containers'
+#               storage, in 05-containers.rules
+# Only approved lines are made, each file backed up first; a failed auditd restart puts auditd.conf back and restarts
+# again. augenrules --load only when not immutable - else "applies at the next reboot". NEVER a reboot; never -e, -f or
+# a STIG rule. docs/RUNBOOKS.md, "auditd tuning".
+#   target                    the hosts (default: all) - or a Limit of hosts
+#   auditd_tuning_approved    the approved lines (or their first word), by hand; [] = read only (the default)
+#   auditd_tuning_workflow    the workflow's check: hand the changes on and fail on purpose (NEEDS APPROVAL)
+# THE WORKFLOW (docs/WORKFLOWS_AND_SCHEDULES.md, 52, "Auditd tuning, with an approval"), two templates of this playbook:
+#   [Linux - auditd tuning - check] --Run on fail--> [gate] --> [Approval] --> [Linux - auditd tuning - approved]
+# The check hands each host's changes on (set_stats auditd_tuning_workflow_plan; the gate's workflow_gate_var).
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Linux - auditd tuning - read, and the approved changes
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  become: true
+  pre_tasks:
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  roles:
+    - auditd_tune
+
+- name: Linux - auditd tuning - the report
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: Auditd tuning | email the report, publish it (report_email_to, report_web_dest)
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | auditd_tune_report(ansible_play_hosts_all, ansible_check_mode, auditd_tuning_workflow | default(false) | bool) }}
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Linux - auditd tuning - after the report
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  tasks:
+    - name: Auditd tuning | no email
+      ansible.builtin.debug:
+        msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+      run_once: true
+      when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+    - name: Auditd tuning | not read, or a change failed or was put back, on this host
+      ansible.builtin.fail:
+        msg: >-
+          {{ ('not read: ' ~ (_atu.seen.error | default('?'))) if not _atu.read | default(true) else
+             (_atu_apply.state ~ ': ' ~ (_atu_apply.did | join('; '))) }}
+      when: >-
+        _atu is defined and (not _atu.read | default(true) or _atu_apply.state | default('') in ['failed', 'rolled back'])
+
+    # the workflow's check: each host's changes to the approval step and the approved job, then NEEDS APPROVAL
+    - name: Auditd tuning | the workflow - each host's changes for the approval
+      ansible.builtin.set_fact:
+        _atu_workflow: "{{ ansible_play_hosts_all | map('extract', hostvars) | list | auditd_tune_workflow(ansible_play_hosts_all) }}"
+      run_once: true
+      when: auditd_tuning_workflow | default(false) | bool
+
+    - name: Auditd tuning | the workflow - hand the plan to the approval step and the approved job (set_stats)
+      ansible.builtin.set_stats:
+        data:
+          auditd_tuning_workflow_plan: "{{ _atu_workflow.plan }}"
+        per_host: false
+        aggregate: false
+      run_once: true
+      when: auditd_tuning_workflow | default(false) | bool and _atu_workflow.count | int > 0
+
+    - name: Auditd tuning | NEEDS APPROVAL
+      ansible.builtin.fail:
+        msg: >-
+          NEEDS APPROVAL - {{ _atu_workflow.count }} change(s) on {{ _atu_workflow.plan | length }} host(s), in the report
+          ("Changes to approve"): {{ _atu_workflow.plan | dict2items | map(attribute='key') | join(', ') }}. Approve them in AAP to
+          make them (Linux - auditd tuning - approved). Never a reboot.
+      run_once: true
+      when: auditd_tuning_workflow | default(false) | bool and _atu_workflow.count | int > 0

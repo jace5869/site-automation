@@ -191,6 +191,7 @@ aap_gates_workflows: ["Linux - fapolicyd*", "STIG Manager*"]   # names, ids or p
 | 39. vCenter and ESXi certificate install | `vmware_cert_install_plan` |
 | 40. Checklists imported into STIG Manager | `stigman_update_plan` |
 | 11. Service watch (its approval) | `service_watch_fix` |
+| 52. Auditd tuning | `auditd_tuning_workflow_plan` |
 | 46 to 51 (the site portal's fixes) | each its own, in `roles/site_portal_stack/files/workflows.yml` |
 
 - *AAP - set up portal actions* builds 40 (and the portal's workflows) with the gate already in place.
@@ -1338,6 +1339,34 @@ No workflow needed: a schedule on the `NetApp ONTAP health report` template, e.g
 No workflow needed: a schedule on the `Active Directory health report` template, every day at 06:30
 in your time zone, with `ad_report_hours: 24` (the default) so each change is in exactly one report
 ([ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md)). With `ad_report_fail: true` the job turns **red** when it finds a problem: put a notification on the template (its **Notifications** tab: on failure) to hear about it. The *ServiceNow tickets* job does not take this report's results - it only works after the checks that hand it findings ([JOB_TEMPLATES.md](JOB_TEMPLATES.md), "What one job hands to the next").
+
+### 52. Auditd tuning, with an approval
+
+```workflow
+[Linux - auditd tuning - check]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: auditd_tuning_workflow_plan
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Linux - auditd tuning]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | Linux - auditd tuning - check (`auditd_tuning_workflow: true`) | (start) |
+| 2 | Workflow gate - has a plan: this step's Variables `workflow_gate_var: auditd_tuning_workflow_plan` | **Run on fail**, from 1 |
+| 3 | *Approval*: `Make the audit changes the check listed? (No reboot.)`, **Timeout** 8 hours | **Run on success**, from 2 |
+| 4 | Linux - auditd tuning (the same playbook, `auditd_tuning_workflow` not set) | **Run on success**, from 3 |
+
+Both templates are `playbooks/auditd_tuning.yml` with the *Machine* credential (sudo); tick **Prompt on launch** for
+**Limit**, and limit it to your container hosts. The check hands each host's changes on (`auditd_tuning_workflow_plan`)
+and fails on purpose, `NEEDS APPROVAL`; nothing to change, it stays green. Approve, and step 4 makes each host's lines.
+The `containers` line (`auditd_container_exclude`) needs your ISSO's approval before you approve it here. Nothing is
+rebooted ([RUNBOOKS.md](RUNBOOKS.md#auditd-tuning-playbooksauditd_tuningyml)).
 
 ### 28. VM outage watch (every 5 to 15 minutes)
 

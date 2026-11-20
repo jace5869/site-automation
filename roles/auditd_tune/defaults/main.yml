@@ -1,0 +1,21 @@
+---
+# LINUX - AUDITD TUNING FOR CONTAINERS (1.79.13; playbooks/auditd_tuning.yml; docs/RUNBOOKS.md, "auditd tuning").
+# A container host can freeze while podman restarts its containers: the STIG's delete and perm_mod rules fill the
+# kernel's audit backlog, and the kernel prints its records to the console ("kauditd_printk_skb: N callbacks
+# suppressed"). This job reads the backlog and the queue, and - only as approved - makes them big enough. It never
+# reboots, and never changes -e, -f or a STIG rule. With immutable rules (-e 2) a rules change waits for the next reboot.
+
+auditd_backlog_limit: 8192               # the kernel's audit backlog (-b in 10-base-config.rules, audit_backlog_limit= at boot)
+auditd_backlog_wait_time: 60000          # --backlog_wait_time in 10-base-config.rules
+auditd_q_depth: 8192                     # auditd.conf q_depth (its queue to the plugins; overflow_action SYSLOG with it)
+# The approved changes, each as the report's "Changes to approve" gives it, or its first word: backlog, queue, kernel,
+# containers ("<host>: <change>" for one host). Empty (the default): read only. The workflow's approved job takes the
+# check's plan instead (auditd_tuning_workflow_plan).
+auditd_tuning_approved: []
+auditd_tuning_workflow: false            # the workflow's check: hand each host's changes on, fail on purpose (NEEDS APPROVAL)
+# OFF by default - an audit control: ISSO approval needed. true = also propose "-a never,exit" for the containers'
+# storage (/var/lib/containers/storage/overlay; and the rootless storage of the users listed) in 05-containers.rules.
+auditd_container_exclude: false
+auditd_container_users: []               # rootless podman users whose ~/.local/share/containers/storage/overlay is left out too
+auditd_tuning_dir: /etc/audit            # (tests) the audit configuration folder
+auditd_tuning_cmdline: /proc/cmdline     # (tests) the running kernel's command line

@@ -197,6 +197,16 @@ templates:
     targets: "Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine; ACT model key)"
     produces: "One report of every host by email and on the report website when set; a Teams card when the webhook credential is attached"
     supports: "Run constraint=Read-only on target hosts (ACT put in /opt/act, runs nothing; old act relinked); writes report email/website, Teams card"
+  "Linux - auditd tuning":
+    does: "Reads each host's audit backlog, auditd queue and kernel boot backlog; with approved lines, makes them big enough for containers."
+    targets: "Linux container hosts of target (default all) within the Limit, over SSH with sudo (Machine credential)"
+    produces: "What is too small or waits for a reboot, records lost, changes to approve; job output, report email and website when set"
+    supports: "Run constraint=Read-only on target hosts unless approved; then writes the audit config (backed up), restarts auditd; no reboot"
+  "Linux - auditd tuning - check":
+    does: "The approval workflow's first step: reads the same audit settings and hands each host's changes to the approval."
+    targets: "Linux container hosts of target (default all) within the Limit, over SSH with sudo (Machine credential)"
+    produces: "The changes to approve (artifact auditd_tuning_workflow_plan), NEEDS APPROVAL; the report email and website when set"
+    supports: "Run constraint=Read-only on target hosts (auditd_tuning_workflow: true); writes report email/website; Check = dry run"
   "fapolicyd":
     does: "Finds what keeps fapolicyd down and what it blocks, and lists each fix to approve; makes only the fixes given in fapolicyd_approved."
     targets: "Linux hosts of the target or the Limit (Machine credential with sudo)"
@@ -768,6 +778,13 @@ templates:
     produces: "About twenty survey questions on each of the two templates; the job output lists what was added or left as it is."
     supports: "Run constraint=Reads only (no hosts); writes AAP surveys of the two templates (removes with incident_docs_survey_state: absent); Check = dry run"
 workflows:
+  - name: "Auditd tuning, with an approval"
+    source: "docs/WORKFLOWS_AND_SCHEDULES.md 52. Auditd tuning, with an approval"
+    playbooks: [playbooks/auditd_tuning.yml, playbooks/workflow_gate.yml, playbooks/auditd_tuning.yml]
+    does: "Reads the audit backlog, queue and kernel argument of container hosts; makes the listed changes once a person approves."
+    targets: "Linux container hosts (the Limit), over SSH with sudo (Machine credential)."
+    produces: "The changes to approve, the approval, what was changed and what waits for the next reboot (report email/website)."
+    supports: "Run constraint=Changes the audit config (backed up; auditd restarted) after an approval; never reboots; writes email/website."
   - name: "Checklists imported into STIG Manager"
     source: "workflows.yml (40); docs/WORKFLOWS_AND_SCHEDULES.md 40; docs/CKL_IMPORT.md"
     playbooks: [playbooks/stigman_ckl_import.yml, playbooks/workflow_gate.yml, playbooks/stigman_update.yml]

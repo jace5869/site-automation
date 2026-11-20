@@ -283,6 +283,20 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # tenable_scan_policy: Basic Network Scan
 # tenable_scan_repository: Main
 """),
+    "auditd_tuning.yml": ("Linux - auditd tuning",
+                          "Machine (with sudo)", "", """\
+## The hosts: target (a group of this inventory) or the Limit - your container hosts
+# target: container_hosts
+## The workflow's first template ("Linux - auditd tuning - check") only: hand each host's changes to the approval and
+## fail on purpose (NEEDS APPROVAL). Not on "Linux - auditd tuning".
+# auditd_tuning_workflow: true
+## By hand, without the workflow: the approved changes, each as the report's "Changes to approve" gives it, or its first
+## word (backlog, queue, kernel, containers); "<host>: <line>" for one host. Run in Check first. Never a reboot.
+# auditd_tuning_approved: [backlog, queue, kernel]
+## ISSO approval needed first: also propose leaving the containers' storage out of the audit (05-containers.rules)
+# auditd_container_exclude: true
+# auditd_container_users: [svc_app]
+"""),
     "fapolicyd.yml": ("fapolicyd",
                       "Machine (with sudo); ACT model key with fapolicyd_act", "", """\
 ## The hosts: target (a group of this inventory) or the Limit

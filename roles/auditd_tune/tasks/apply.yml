@@ -1,0 +1,205 @@
+---
+# The approved changes on one host (_atu_ids: backlog, queue, kernel, containers). Each file backed up first (<file>.site-bak-
+# <time>). auditd restarted (service auditd restart - systemctl refuses it) only for auditd.conf; a restart that fails puts
+# the file back and restarts again. augenrules --load only when the rules are not immutable (-e 2); else they apply at the
+# next reboot. Never a reboot; never -e, -f or a STIG rule.
+- name: Auditd tuning | the backups' time
+  ansible.builtin.set_fact:
+    _atu_stamp: "{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+    _atu_did: []
+    _atu_state: changed
+    _atu_rd: "{{ auditd_tuning_dir }}/rules.d"
+    # each approved change's values, as the read worked them out (a value already big enough kept, never lowered)
+    _atu_by: "{{ dict(_atu.changes | map(attribute='id') | zip(_atu.changes)) }}"
+
+- name: Auditd tuning | the changes
+  block:
+    # ---- backlog: -b and --backlog_wait_time in 10-base-config.rules (its -D and -f lines kept)
+    - name: Auditd tuning | backlog - the rules file there?
+      ansible.builtin.stat:
+        path: "{{ _atu_rd }}/10-base-config.rules"
+      register: _atu_base
+      when: "'backlog' in _atu_ids"
+
+    - name: Auditd tuning | backlog - backed up (a backup that fails stops here)
+      ansible.builtin.copy:
+        src: "{{ _atu_rd }}/10-base-config.rules"
+        dest: "{{ _atu_rd }}/10-base-config.rules.site-bak-{{ _atu_stamp }}"
+        remote_src: true
+        mode: preserve
+      when: "'backlog' in _atu_ids and _atu_base.stat.exists"
+
+    - name: Auditd tuning | backlog - -b
+      ansible.builtin.lineinfile:
+        path: "{{ _atu_rd }}/10-base-config.rules"
+        regexp: '^\s*-b\s'
+        line: "-b {{ _atu_by.backlog.b | int }}"
+        insertafter: '^\s*-D\s*$'
+        create: true
+        mode: "0640"
+      when: "'backlog' in _atu_ids"
+
+    - name: Auditd tuning | backlog - --backlog_wait_time
+      ansible.builtin.lineinfile:
+        path: "{{ _atu_rd }}/10-base-config.rules"
+        regexp: '^\s*--backlog_wait_time\s'
+        line: "--backlog_wait_time {{ _atu_by.backlog.w | int }}"
+        insertafter: '^\s*-b\s'
+        mode: "0640"
+      when: "'backlog' in _atu_ids"
+
+    # ---- queue: q_depth and overflow_action in auditd.conf, then auditd restarted (put back when it fails)
+    - name: Auditd tuning | queue - backed up
+      ansible.builtin.copy:
+        src: "{{ auditd_tuning_dir }}/auditd.conf"
+        dest: "{{ auditd_tuning_dir }}/auditd.conf.site-bak-{{ _atu_stamp }}"
+        remote_src: true
+        mode: preserve
+      when: "'queue' in _atu_ids"
+
+    - name: Auditd tuning | queue - q_depth
+      ansible.builtin.lineinfile:
+        path: "{{ auditd_tuning_dir }}/auditd.conf"
+        regexp: '(?i)^\s*q_depth\s*='
+        line: "q_depth = {{ _atu_by.queue.q | int }}"
+      register: _atu_q1
+      when: "'queue' in _atu_ids"
+
+    - name: Auditd tuning | queue - overflow_action SYSLOG
+      ansible.builtin.lineinfile:
+        path: "{{ auditd_tuning_dir }}/auditd.conf"
+        regexp: '(?i)^\s*overflow_action\s*='
+        line: "overflow_action = SYSLOG"
+      register: _atu_q2
+      when: "'queue' in _atu_ids"
+
+    - name: Auditd tuning | queue - auditd restarted (service auditd restart; systemctl refuses it)
+      ansible.builtin.command: service auditd restart
+      register: _atu_restart
+      changed_when: true
+      failed_when: false
+      when: "'queue' in _atu_ids and (_atu_q1 is changed or _atu_q2 is changed)"
+
+    - name: Auditd tuning | queue - is auditd running again?
+      ansible.builtin.command: systemctl is-active auditd
+      register: _atu_active
+      changed_when: false
+      failed_when: false
+      when: _atu_restart is not skipped and _atu_restart.rc is defined
+
+    - name: Auditd tuning | queue - the restart failed - auditd.conf put back, restarted again
+      when: _atu_restart.rc is defined and (_atu_restart.rc != 0 or _atu_active.stdout | default('') | trim != 'active')
+      block:
+        - name: Auditd tuning | queue - auditd.conf put back
+          ansible.builtin.copy:
+            src: "{{ auditd_tuning_dir }}/auditd.conf.site-bak-{{ _atu_stamp }}"
+            dest: "{{ auditd_tuning_dir }}/auditd.conf"
+            remote_src: true
+            mode: preserve
+
+        - name: Auditd tuning | queue - auditd restarted with it
+          ansible.builtin.command: service auditd restart
+          register: _atu_restart2
+          changed_when: true
+          failed_when: false
+
+        - name: Auditd tuning | queue - rolled back
+          ansible.builtin.set_fact:
+            _atu_state: rolled back
+            _atu_did: >-
+              {{ _atu_did + ['queue: auditd did not restart with the new auditd.conf (' ~ ((_atu_restart.stderr | default('')
+                 or _atu_restart.stdout | default('')) | trim | truncate(160)) ~ ') - put back, restarted '
+                 ~ ('again' if _atu_restart2.rc == 0 else 'AND FAILED AGAIN: look at it now (journalctl -u auditd)')] }}
+
+    # ---- kernel: audit_backlog_limit= on every kernel (the next boot)
+    - name: Auditd tuning | kernel - the boot entries backed up first (/var/lib/site-automation/auditd-tuning/<time>)
+      ansible.builtin.shell: |
+        set -eu
+        d=/var/lib/site-automation/auditd-tuning/{{ _atu_stamp }}
+        mkdir -p "$d"
+        for f in /boot/loader/entries /boot/grub2/grubenv /etc/default/grub; do
+          [ -e "$f" ] && cp -a --parents "$f" "$d"
+        done
+        echo "$d"
+      register: _atu_bootbak
+      changed_when: true
+      when: "'kernel' in _atu_ids"
+
+    - name: Auditd tuning | kernel - audit_backlog_limit={{ auditd_backlog_limit }} on each kernel without it or lower (grubby; at the next reboot)
+      ansible.builtin.command:
+        argv: [grubby, "--update-kernel={{ k }}", "--args=audit_backlog_limit={{ auditd_backlog_limit | int }}"]
+      loop: "{{ _atu_by.kernel.kernels | default([]) }}"
+      loop_control:
+        loop_var: k
+      changed_when: true
+      when: "'kernel' in _atu_ids"
+
+    # ---- containers (optional, ISSO): the containers' storage never audited
+    - name: Auditd tuning | containers - the rules file there?
+      ansible.builtin.stat:
+        path: "{{ _atu_rd }}/05-containers.rules"
+      register: _atu_cfile
+      when: "'containers' in _atu_ids"
+
+    - name: Auditd tuning | containers - backed up (a backup that fails stops here)
+      ansible.builtin.copy:
+        src: "{{ _atu_rd }}/05-containers.rules"
+        dest: "{{ _atu_rd }}/05-containers.rules.site-bak-{{ _atu_stamp }}"
+        remote_src: true
+        mode: preserve
+      when: "'containers' in _atu_ids and _atu_cfile.stat.exists"
+
+    # only the exclusions not there yet are added; every other line of the file is kept (site or STIG rules)
+    - name: Auditd tuning | containers - each storage path left out (05-containers.rules; ISSO approved)
+      ansible.builtin.lineinfile:
+        path: "{{ _atu_rd }}/05-containers.rules"
+        line: "-a never,exit -F dir={{ d }}"
+        create: true
+        mode: "0640"
+      loop: "{{ _atu_by.containers.dirs | default([]) }}"
+      loop_control:
+        loop_var: d
+      when: "'containers' in _atu_ids"
+
+    # ---- the rules loaded now - or at the next reboot (immutable)
+    - name: Auditd tuning | the rules loaded (augenrules --load) - not with immutable rules (-e 2)
+      ansible.builtin.command: augenrules --load
+      register: _atu_load
+      changed_when: true
+      failed_when: false
+      when: "('backlog' in _atu_ids or 'containers' in _atu_ids) and not _atu.locked"
+
+    - name: Auditd tuning | the rules did not load - a failed change (the rules files stay as written; the backups are there)
+      ansible.builtin.set_fact:
+        _atu_state: failed
+        _atu_did: >-
+          {{ _atu_did + ['augenrules --load FAILED (rc ' ~ _atu_load.rc ~ '): ' ~ ((_atu_load.stderr | default('') ~ ' '
+             ~ _atu_load.stdout | default('')) | trim | truncate(300)) ~ ' - look at it now: augenrules --check; the backups *.site-bak-'
+             ~ _atu_stamp] }}
+      when: _atu_load.rc is defined and _atu_load.rc != 0
+
+    - name: Auditd tuning | what was done
+      ansible.builtin.set_fact:
+        _atu_did: >-
+          {{ _atu_did
+             + (['backlog: -b ' ~ _atu_by.backlog.b ~ ' and --backlog_wait_time ' ~ _atu_by.backlog.w ~ ' in 10-base-config.rules'
+                 ~ (' - applies at the next reboot (immutable, -e 2)' if _atu.locked else
+                    (' - loaded' if _atu_load.rc | default(1) == 0 else ' - not loaded (above)'))]
+                if 'backlog' in _atu_ids else [])
+             + (['queue: q_depth ' ~ _atu_by.queue.q ~ ', overflow_action SYSLOG; auditd restarted']
+                if 'queue' in _atu_ids and _atu_state != 'rolled back' and _atu_restart.rc | default(0) == 0 else [])
+             + (['kernel: audit_backlog_limit=' ~ auditd_backlog_limit ~ ' on ' ~ (_atu_by.kernel.kernels | join(', ')) ~ ' - at the next reboot'
+                 ~ ' (never rebooted here; the boot entries backed up in ' ~ _atu_bootbak.stdout | default('?') ~ ')']
+                if 'kernel' in _atu_ids else [])
+             + (['containers: ' ~ (_atu_by.containers.dirs | join(', ')) ~ ' left out in 05-containers.rules'
+                 ~ (' - applies at the next reboot (immutable)' if _atu.locked else '')] if 'containers' in _atu_ids else []) }}
+
+  rescue:
+    - name: Auditd tuning | a change failed
+      ansible.builtin.set_fact:
+        _atu_state: failed
+        _atu_did: "{{ _atu_did + ['FAILED: ' ~ (ansible_failed_result.msg | default('') | string | truncate(200)) ~ ' (the backups: *.site-bak-' ~ _atu_stamp ~ ')'] }}"
+
+- name: Auditd tuning | the result on this host
+  ansible.builtin.set_fact:
+    _atu_apply: "{{ {'state': _atu_state, 'did': _atu_did} }}"

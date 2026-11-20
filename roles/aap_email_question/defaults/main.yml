@@ -16,6 +16,7 @@ aap_email_question_playbooks:
   - act_triage_finding.yml
   - ad_health_report.yml
   - ad_lockout.yml
+  - auditd_tuning.yml
   - cert_report.yml
   - disk_report.yml
   - tmp_cleanup.yml
