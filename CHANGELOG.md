@@ -22,6 +22,38 @@ without its plan. The portal no longer skips a workflow for it (*Linux - fapolic
 Tests: `tests/test_site_portal.py` (`test_07b_a_stale_list_is_read_in_the_background`, `test_09b_reports_fast`,
 `test_82b_the_workflow_gate_step_needs_no_limit`).
 
+## 1.79.8 — 2026-11-20
+
+**To set up: nothing.** Optional: the `report_web_files_*` settings; `incident_docs_web: true` puts the outage AAR's
+documents on the website. With your own nginx serving the report folder, add the `-files/` block of
+`docs/WEB_REPORTS.md` ("A report's files"); the site portal needs nothing.
+
+**The report website hosts a report's files.** A report's email attachments and its workbook are now on the website too,
+beside the run's page, so they reach people without an email. The first one is the STIG answer keys' answer files.
+
+- **On the page**: a *Files* line under the header lists each file with its size, as a plain link that saves it (no
+  script needed). The STIG answer keys' *the answer file* sections get **Download answer-keys-<STIG>-<release>.xml**
+  beside their Copy button. A file that is not hosted is named, with why.
+- **Where**: `<page>-files/` beside the run's page, with safe names (letters, digits, `.`, `_`, `-`). The latest page
+  links the newest run's folder. The index never lists files.
+- **Limits**: `report_web_files_max_mb` (20, each file and one run's together) and `report_web_files_types` (`.xml
+  .docx .xlsx .csv .md .txt .pdf`). `report_web_files: false` hosts none. `_report_files` is a report's own list.
+- **Never filling up**: a run's files go with its page; after `report_web_files_keep_days` (30) its page stays and
+  says *removed after 30 days*; past `report_web_files_total_max_mb` (500) the oldest runs' files go first, never a
+  latest page's; a folder whose page is gone is removed. `index.json` keeps the list (`"files"`), so this works only
+  with an index. The index's foot and each job's output show the space used and the limits. Check lists, removes
+  nothing.
+- **Every transport**: a folder, an SMB share, an upload (WebDAV), a Windows server (Constrained Language Mode: the
+  bytes as hex, in pieces) and the copy job (the files kept with the report, within `report_web_copy_max_kb`).
+- **Saved, not shown**: the site portal's `/portal/reports/` sends a `-files/` file as an attachment (`nosniff`).
+  `docs/WEB_REPORTS.md` has the nginx block for your own server, and the upload example now uses `location ^~ /upload/`.
+- **The outage AAR**: still emailed only, unless `incident_docs_web: true`.
+- Tests: `test_report_web.py` `Files1798` (names, types, sizes, the page, the plan, the copy job's packing; on a
+  folder, the fake WebDAV, the fake SMB and the Windows script under Constrained Language Mode: hosting, a run's files
+  with its page, the age, the total, an orphan, check mode), `test_site_portal.py` (attachment), the STIG answer keys
+  hosts e2e (the page's links). Docs: `WEB_REPORTS.md`, `STIG_ANSWER_KEYS.md`, `EMAIL_REPORTS.md`,
+  `INCIDENT_DOCS.md`, `SITE_PORTAL.md`.
+
 ## 1.79.7 — 2026-11-20
 
 **To set up: nothing.** Optional: `check_stig_stigman_collections_exclude` (the default leaves out Archive*, Base*,

@@ -153,6 +153,12 @@ report_web_tabs:
   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*", "Site portal*", "Workflow gate*"]}
 report_web_names: {}                     # your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..."
 report_web_json: true                    # the report's data as .json beside each page and index.json beside the index
+# 1.79.8: a report's files (its attachments, its workbook) also on the website, as Download links (docs/WEB_REPORTS.md).
+report_web_files: true                   # false = none on the website (the email still attaches them)
+report_web_files_max_mb: 20              # each file, and one run's files together; a bigger one: not hosted, the page says why
+report_web_files_types: [.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]   # the types hosted; any other: not hosted
+report_web_files_total_max_mb: 500       # every report's files together: past it, the oldest runs' go first (never a latest page's)
+report_web_files_keep_days: 30           # a run's files are removed after this many days - its page stays, and says so; 0 = never
 # A share (report_web_dest \\server\share\folder): how the job logs in, and the connection.
 report_web_smb_auth: negotiate           # negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job)
 report_web_smb_encrypt: false            # true = encrypt (SMB 3) even when the share does not require it; one that requires it is always

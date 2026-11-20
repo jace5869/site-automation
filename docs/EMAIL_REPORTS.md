@@ -276,8 +276,9 @@ tables to its email as an Excel workbook (`.xlsx`): a sheet per table, named by 
 column names (bold, frozen, with filters), numbers as numbers. The file is named after the template and the day:
 `vm-datastore-report_2026-10-27.xlsx`. A report with no table gets one sheet of its lines. Some reports attach their
 own workbook whatever the setting says - *VM - inventory report*: every VM on one sheet (`vm_inventory_xlsx`). The
-workbook is made with Python's standard library: nothing to add to the execution environment. The website gets no
-workbook; a dry run (Check) makes none.
+workbook is made with Python's standard library: nothing to add to the execution environment. A dry run (Check)
+makes none. Since 1.79.8 the report website hosts the workbook too, with the email's other attachments, as Download
+links on the run's page (`report_web_files`; [WEB_REPORTS.md](WEB_REPORTS.md), "A report's files").
 
 **Trend lines (1.62.0).** A table with a history gets a *Trend* column: Excel's own sparkline, one small line per row,
 the last point marked. The numbers stay in cells, and the filter takes each row's hidden points too, so a sort moves

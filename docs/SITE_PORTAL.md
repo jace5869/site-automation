@@ -2,7 +2,8 @@
 
 One web place for the reports and what people may start from them. People open it with their card (CAC):
 
-- **The report website**, at `/portal/reports/`: the same pages the report jobs write.
+- **The report website**, at `/portal/reports/`: the same pages the report jobs write. A report's files there (1.79.8:
+  an answer file, a workbook) are saved when opened, never shown in the browser.
 - **Actions**: a report's button opens a confirm page with the values filled in. The person presses **Run**, and AAP
   runs the workflow or job template behind it. Only the actions you list exist.
 - **The Jobs page**, at `/portal/jobs`: a list of what they started on the left, the job on the right. A job that runs is

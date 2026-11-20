@@ -14,7 +14,8 @@
 #      the template's AAP credential) - someone reviews it, adds to it and launches the SOP job, which then empties it
 #      again (incident_sop_draft_clear) when it was launched from that draft.
 #   4. Emailed to the addresses typed in the survey (report_email_also) and incident_docs_email_to - never to the
-#      reports' usual recipients, never on the report website. A dry run (Check) makes the documents and sends nothing.
+#      reports' usual recipients, never on the report website (unless incident_docs_web, 1.79.8). A dry run (Check)
+#      makes the documents and sends nothing.
 - name: Incident docs | what was typed
   ansible.builtin.set_fact:
     _inc: >-
@@ -229,7 +230,9 @@
           {%- for f in _inc_files -%}{%- set _ = out.append({'path': _inc_dir.path ~ '/' ~ f.name, 'filename': f.name}) -%}{%- endfor -%}
           {{ out }}
         _report_to_only: "{{ _inc_to }}"     # these only: never the reports' report_email_to or report_email_cc
-        _report_web_skip: true         # never on the report website, whatever report_web_dest says
+        # never on the report website, whatever report_web_dest says - unless incident_docs_web (1.79.8: the documents as
+        # Download links on the run's page)
+        _report_web_skip: "{{ not incident_docs_web | default(false) | bool }}"
         report_email_xlsx: false
         report_history: false          # no strip of past runs: the email lists only this run's documents
 

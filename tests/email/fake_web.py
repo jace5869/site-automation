@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Fake report website for tests/email/run_web_test.sh: GET, PUT, DELETE and MKCOL (WebDAV) into a folder, like
-nginx with dav_methods PUT DELETE MKCOL. A PUT into a folder that is not there answers 409 (make it with MKCOL first).
+"""Fake report website for tests/email/run_web_test.sh: GET, HEAD, PUT, DELETE (a folder too, with a trailing /) and
+MKCOL (WebDAV) into a folder, like nginx with dav_methods PUT DELETE MKCOL. A PUT into a folder that is not there
+answers 409 (make it with MKCOL first).
 Login: FAKE_WEB_TOKEN (Authorization: Bearer ...) or FAKE_WEB_BASIC (user:password); neither = no login.
 FAKE_WEB_503=N: the first N PUTs answer 503 (a server busy a moment - the report website's retries).
 Each request appended to FOLDER/../web.log as "METHOD path status".
 Usage: fake_web.py PORT FOLDER"""
 import base64
 import os
+import shutil
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import unquote
@@ -50,6 +52,10 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, "rb") as f:
             self._answer(200, f.read())
 
+    def do_HEAD(self):                                   # is a page there (1.79.8: a hosted files' folder whose page is gone)
+        path = self._path()
+        self._answer(200 if path is not None and os.path.isfile(path) else 404)
+
     def do_PUT(self):
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self._allowed():
@@ -72,6 +78,9 @@ class Handler(BaseHTTPRequestHandler):
         path = self._path()
         if path is None or path == ROOT:
             return self._answer(403)
+        if os.path.isdir(path) and self.path.split("?")[0].endswith("/"):   # a folder, as nginx's dav: with what is in it
+            shutil.rmtree(path)
+            return self._answer(204)
         if not os.path.isfile(path):
             return self._answer(404)
         os.remove(path)

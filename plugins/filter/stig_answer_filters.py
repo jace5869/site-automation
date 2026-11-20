@@ -1206,15 +1206,16 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
             # 1.79.4: the whole answer file of this STIG (was: every block to paste into one) - the email attaches it
             web_secs.append({"title": "%s - the answer file (%d block%s)" % (g["label"], f["blocks"], "" if f["blocks"] == 1 else "s"),
                              "status": "info" if f["known"] else "warning",
-                             "text": "The whole Evaluate-STIG answer file for %s: copy it and save it as %s (the email has it "
-                                     "attached). STIGComments Name %s - %s. Read every block and try the file on a test "
-                                     "host first." % (g["label"], f["filename"], f["name"],
+                             "text": "The whole Evaluate-STIG answer file for %s: download it, or copy it and save it as %s "
+                                     "(the email has it attached too). STIGComments Name %s - %s. Read every block and try the "
+                                     "file on a test host first." % (g["label"], f["filename"], f["name"],
                                                       ("from " + f["name_from"]) if f["known"] else
                                                       "CHECK IT: " + f["name_from"] + "; set it to the short name your Evaluate-STIG lists"),
                              "columns": ["", "File", "STIGComments Name", "Blocks"], "kinds": ["x", "wrap", "wrap", "num"],
                              "rows": [["", f["filename"], f["name"] if f["known"] else "%s (check it)" % f["name"], f["blocks"]]],
                              "details": [[{"texts": [{"label": f["filename"], "text": f["xml"],
                                                       "button": "Copy the answer file for %s" % g["label"], "cmd": f["xml"],
+                                                      "file": f["filename"],          # 1.79.8: Download beside Copy (the website hosts it)
                                                       "title": "Copies the whole answer file of this STIG", "note": ""}]}]],
                              "wrap": True, "keep_case": True})
         if nod:

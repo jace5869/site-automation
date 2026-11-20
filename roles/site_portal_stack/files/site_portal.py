@@ -59,7 +59,9 @@ REPORT_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-i
 TYPES = {".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".json": "application/json", ".csv": "text/csv; charset=utf-8",
          ".txt": "text/plain; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".pdf": "application/pdf",
-         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".ico": "image/x-icon"}
+         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".ico": "image/x-icon",
+         ".xml": "application/xml", ".md": "text/markdown; charset=utf-8",
+         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
 
 
 def flag(v):
@@ -3020,7 +3022,12 @@ def make_handler(cfg, portal, static_dir):
                 return self._send(304, b"", ctype, meta, csp=REPORT_CSP, cache="no-cache")
             with open(full, "rb") as fh:
                 data = fh.read()
-            return self._send(200, data, ctype, meta, csp=REPORT_CSP, cache="no-cache")
+            # 1.79.8: a run's hosted file (its page's <page>-files/ folder: an answer file, a Word document) is saved, never
+            # shown in the browser - its address opened by itself too
+            parent = os.path.basename(os.path.dirname(full))
+            extra = ([("Content-Disposition", 'attachment; filename="%s"' % re.sub(r"[^A-Za-z0-9._-]", "-", os.path.basename(full)))]
+                     if parent.endswith("-files") else [])
+            return self._send(200, data, ctype, meta + extra, csp=REPORT_CSP, cache="no-cache")
 
         def _form_post(self, name):
             """1.78.0: the confirm page without scripts - the form posts itself (same checks: the token, the origin, every value again)."""

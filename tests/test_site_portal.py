@@ -757,6 +757,20 @@ class Live(unittest.TestCase):
         finally:
             self.portal.refresh, self.portal.refresh_soon = keep
 
+    def test_09c_a_runs_files_are_saved_not_shown(self):
+        """1.79.8: a file in a run's <page>-files/ folder (the report website's hosted files) comes as an attachment."""
+        root = os.path.join(self.tmp, "reports", "linux-health")
+        os.makedirs(os.path.join(root, "2026-11-20_0605_job-7-files"), exist_ok=True)
+        for rel in ("2026-11-20_0605_job-7-files/answer-keys-RHEL_9_STIG-V2R10.xml", "plain.xml"):
+            with open(os.path.join(root, rel), "w") as fh:
+                fh.write('<?xml version="1.0"?><STIGComments Name="RHEL9"/>')
+        code, raw, h = self.req("/reports/linux-health/2026-11-20_0605_job-7-files/answer-keys-RHEL_9_STIG-V2R10.xml")
+        self.assertEqual((code, h["Content-Type"], h["X-Content-Type-Options"]), (200, "application/xml", "nosniff"))
+        self.assertEqual(h["Content-Disposition"], 'attachment; filename="answer-keys-RHEL_9_STIG-V2R10.xml"')
+        self.assertTrue(raw.startswith(b"<?xml"))
+        code, _, h = self.req("/reports/linux-health/plain.xml")                     # anywhere else: as before
+        self.assertEqual((code, h.get("Content-Disposition")), (200, None))
+
     def test_10_too_many(self):
         self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
         codes = [self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[0] for _ in range(7)]

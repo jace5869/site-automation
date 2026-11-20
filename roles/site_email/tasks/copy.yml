@@ -136,6 +136,7 @@
     - name: Copy | the index there, for the first page
       ansible.builtin.set_fact:
         _copy_index: "{{ _web_win_read.index | default('', true) }}"
+        _copy_gone: "{{ _web_win_read.gone | default([]) }}"          # 1.79.8: the hosted files' pages not there (orphans)
 
 - name: Copy | each report job's page
   ansible.builtin.include_tasks: copy_page.yml

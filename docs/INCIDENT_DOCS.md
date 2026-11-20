@@ -21,6 +21,11 @@ The documents are **emailed only**: never on the report website, and only to the
 `report_email_cc`). When `report_email_also_domains` is set, an address outside it gets nothing (the job says so).
 The job runs on the AAP side: no inventory of servers, no Limit, no machine credential.
 
+**On the report website too (1.79.8, opt-in):** `incident_docs_web: true` (the template's Variables, or `all.yml`)
+also publishes the run on the report website (`report_web_dest`), with each document as a Download link on its page
+([WEB_REPORTS.md](WEB_REPORTS.md), "A report's files"). Every reader of the website can then open them, so leave it
+`false` (the default) where an AAR must reach only the people it is sent to.
+
 ## What the documents look like
 
 **The AAR** (`AAR.docx`, or `AAR-<outage>.docx` when the outage is named): your logo at the top left, the marking

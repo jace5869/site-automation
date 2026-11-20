@@ -1079,6 +1079,7 @@ File: `roles/incident_docs/defaults/main.yml`
 | `incident_docs_sop_file` | `SOP` | the SOP attachment's first part |
 | `incident_impact_levels` | `[MINOR, MODERATE, MAJOR, CRITICAL]` | The impact levels the survey offers (the setup job writes them into the survey). |
 | `incident_docs_email_to` | `[]` | Who gets the documents: the addresses typed in the survey (report_email_also - held to report_email_also_domains when that is set), plus these. The reports' usual recipients (report_email_to) are NOT used here: an AAR goes only where it is sent. Nor is report_email_cc. |
+| `incident_docs_web` | `false` | 1.79.8: true = the documents also on the report website (report_web_dest), each a Download link on the run's page (report_web_files) - for every reader of the website. false (the default): never there, only emailed. |
 | `incident_sop_draft_clear` | `true` | The SOP job empties the draft the AAR job put in its form (incident_sop_draft) once it made the SOP from it - only when launched with that draft's outage. Needs the AAP credential on the SOP template (incident_docs_draft_credential). |
 | `incident_name` | (empty) | What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless answered. The AAR's boxes and the SOP's steps take a line or several. the outage's name or number (in the file name and the email) |
 | `incident_start` | (empty) | the AAR: its start date and time (required) |
@@ -1933,6 +1934,11 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_tabs` | `- {tab: Certificates, match: ["*certificate*", "*trust store*", "PKI *"]} - {tab: VMware,…` | The index page's tabs: a report is on the first tab one of whose names its AAP template's name matches (any case, * = anything); else on the tab of its name up to " - " (Backup - nightly: Backup); else on Other. A tab with no report is not shown. Set it in all.yml, for every template alike: the index is one page. |
 | `report_web_names` | `{}` | your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..." |
 | `report_web_json` | `true` | the report's data as .json beside each page and index.json beside the index |
+| `report_web_files` | `true` | 1.79.8: a report's files (its attachments, its workbook) also on the website, as Download links (docs/WEB_REPORTS.md). false = none on the website (the email still attaches them) |
+| `report_web_files_max_mb` | `20` | each file, and one run's files together; a bigger one: not hosted, the page says why |
+| `report_web_files_types` | `[.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]` | the types hosted; any other: not hosted |
+| `report_web_files_total_max_mb` | `500` | every report's files together: past it, the oldest runs' go first (never a latest page's) |
+| `report_web_files_keep_days` | `30` | a run's files are removed after this many days - its page stays, and says so; 0 = never |
 | `report_web_smb_auth` | `negotiate` | A share (report_web_dest \\server\share\folder): how the job logs in, and the connection. negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |
 | `report_web_smb_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it; one that requires it is always |
 | `report_web_smb_port` | `445` | the share's port |

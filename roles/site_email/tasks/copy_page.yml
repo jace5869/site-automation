@@ -35,6 +35,14 @@
         retry_delay: "{{ report_web_retry_delay | default(30) | int }}"
         windows_host: "{{ report_web_host | trim if _web_win | bool else '' }}"
         index_text: "{{ _copy_index | default('') if _web_win | bool else '' }}"
+        # 1.79.8: the files the report job kept with its report (those too big to keep: named on the page)
+        kept_files: "{{ _copy_doc.downloads | default([]) if report_web_files | default(true) | bool else [] }}"   # content only
+        index_gone: "{{ _copy_gone | default([]) if _web_win | bool else [] }}"
+        downloads_refused: "{{ _copy_doc.downloads_refused | default([]) }}"
+        files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
+        files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) }}"
+        files_total_max_mb: "{{ report_web_files_total_max_mb | default(500) | int }}"
+        files_keep_days: "{{ report_web_files_keep_days | default(30) | int }}"
       vars:
         _copy_doc: "{{ _copy_item.packed | report_page_unpack }}"
         _web_logo_cid: "{{ _email_logo_file | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"
@@ -89,6 +97,7 @@
     - name: Copy | job {{ _copy_item.job }} - done
       ansible.builtin.set_fact:
         _copy_index: "{{ _copy_out.index_text | default('') }}"
+        _copy_gone: "{{ _copy_gone | default([]) | difference([(_copy_item.packed | report_page_unpack).files.page]) if _web_win | bool else [] }}"
         _copy_written: >-
           {{ _copy_written | default([]) + ['job ' ~ _copy_item.job ~ " '" ~ _copy_item.template ~ "': "
              ~ (_copy_out.url or _copy_out.place)

@@ -23,14 +23,16 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 sys.path.insert(0, os.path.join(REPO, "roles", "site_email", "library"))
-for _name in ("site_aap", "site_report_page", "site_banner", "site_time"):   # as Ansible gives them to the modules (ansible.cfg: module_utils)
+for _name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files"):   # as Ansible gives them to the modules (ansible.cfg: module_utils)
     _spec = importlib.util.spec_from_file_location("ansible.module_utils." + _name, os.path.join(REPO, "plugins", "module_utils", _name + ".py"))
     _mod = importlib.util.module_from_spec(_spec)
     sys.modules["ansible.module_utils." + _name] = _mod
@@ -729,7 +731,7 @@ class Windows(unittest.TestCase):
         self.assertEqual((out["deleted"], out["left"]), (["t/p.html"], []))
         self.assertEqual(sorted(os.listdir(os.path.join(dest, "t"))), ["latest.html"])
         cfg = {"SITE_CHECK_CONFIG": json.dumps({"dest": dest, "index": ["index.json"]})}
-        self.assertEqual(clm(READ_PS, cfg)["read"], {"ok": True, "error": "", "index": '{"reports": []}\n'})
+        self.assertEqual(clm(READ_PS, cfg)["read"], {"ok": True, "error": "", "index": '{"reports": []}\n', "gone": []})
         self.assertIsNone(clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": dest, "index": ["none.json"]})})["read"]["index"])
         gone = clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": dest + "-gone", "index": []})})["read"]
         self.assertFalse(gone["ok"])
@@ -790,7 +792,7 @@ class Retries(unittest.TestCase):
 # (Python, with m the module) runs before main() - a target that changes the folder half-way, say
 BOOT = ("import importlib.util, json, os, sys\n"
         "args, module, utils, patch = sys.argv[1:5]\n"
-        "for n in ('site_aap', 'site_report_page', 'site_banner', 'site_time'):\n"
+        "for n in ('site_aap', 'site_report_page', 'site_banner', 'site_time', 'site_report_files'):\n"
         "    sp = importlib.util.spec_from_file_location('ansible.module_utils.' + n, os.path.join(utils, n + '.py'))\n"
         "    u = importlib.util.module_from_spec(sp)\n"
         "    sys.modules['ansible.module_utils.' + n] = u\n"
@@ -1494,6 +1496,356 @@ class WideTables(unittest.TestCase):
         h = env.get_template("report_atlas.html.j2").render(_report=doc, _email_footer="x", _page_logo_cid="", _page_runs=[], report_email_header_text="S")
         self.assertIn('<input type="checkbox" class="c5">System ID', h)                                                                  # unchecked: no " checked"
         self.assertIn('<input type="checkbox" class="c1" checked>Cluster', h)
+
+
+rfs = sys.modules["ansible.module_utils.site_report_files"]
+FAKE_WEB = os.path.join(HERE, "email", "fake_web.py")
+FAKE_SMB = os.path.join(HERE, "email", "fake_smb")
+XML = b'<?xml version="1.0" encoding="utf-8"?>\n<STIGComments Name="RHEL9"/>\n'
+DOCX = bytes(range(256)) * 40                                             # a binary file: every byte, 10 KB
+
+
+def _free_port():
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+class Site(object):
+    """One report website for the 1.79.8 tests, on one transport: a folder, an upload (tests/email/fake_web.py, WebDAV), a
+    share (tests/email/fake_smb on the module's PYTHONPATH) or a Windows server (the script run by pwsh in Constrained
+    Language Mode, the index and its gone pages read first by site_report_web_read.ps1, as the role does). root: the
+    folder as the server has it."""
+
+    def __init__(self, kind):
+        self.kind, self.tmp = kind, tempfile.mkdtemp()
+        self.root, self.env, self.proc = os.path.join(self.tmp, "site"), {}, None
+        if kind == "web":
+            os.makedirs(self.root)
+            port = _free_port()
+            self.proc = subprocess.Popen([sys.executable, FAKE_WEB, str(port), self.root])
+            end = time.time() + 10
+            while True:
+                try:
+                    urllib.request.urlopen("http://127.0.0.1:%d/none" % port, timeout=1)
+                except urllib.error.HTTPError:
+                    break
+                except Exception:                      # noqa: BLE001 - not up yet
+                    assert time.time() < end
+                    time.sleep(0.1)
+            self.dest = "http://127.0.0.1:%d" % port
+        elif kind == "smb":
+            self.root = os.path.join(self.tmp, "smb", "its", "reports")
+            os.makedirs(self.root)
+            self.env = {"PYTHONPATH": FAKE_SMB, "FAKE_SMB_ROOT": os.path.join(self.tmp, "smb"),
+                        "REPORT_WEB_USERNAME": "svc_reports@EXAMPLE.MIL", "REPORT_WEB_PASSWORD": "x"}
+            self.dest = "\\\\fakesrv\\its\\reports"
+        else:
+            os.makedirs(self.root)
+            self.dest = self.root
+
+    def run(self, args):
+        args = dict(args, dest=self.dest)
+        if self.kind == "win":
+            read = clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": self.root, "index": ["index.json"]})})["read"]
+            args.update(windows_host="web01.example.mil", index_text=read["index"] or "", index_gone=read["gone"])
+        out = run_module(args, env=self.env)
+        if self.kind == "win" and out.get("script"):
+            w = clm(out["script"])["write"]
+            os.remove(out["script"])
+            assert w["ok"], w
+            out["ps"] = w
+        return out
+
+    def path(self, rel):
+        return os.path.join(self.root, *rel.split("/"))
+
+    def text(self, rel):
+        with open(self.path(rel), encoding="utf-8") as f:
+            return f.read()
+
+    def index(self):
+        return json.loads(self.text("index.json"))
+
+    def close(self):
+        if self.proc:
+            self.proc.terminate()
+            self.proc.wait(timeout=10)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+def _day(day):
+    """Day n of the tests' runs: ten days ago plus n (the files' age is counted from today)."""
+    return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=10 - day)).strftime("%Y-%m-%d")
+
+
+def _page(job, day, folder="vm"):
+    return "%s/%s_0600_job-%d.html" % (folder, _day(day), job)
+
+
+def _files_args(job, day, downloads, key="vm/latest.html", template="VMware - VM health report", **kw):
+    page = _page(job, day, key.split("/")[0])
+    entry = {"key": key, "name": template, "title": "t", "status": "ok", "when": "%s 06:00 UTC" % _day(day), "job": job}
+    html = ('<html><head></head><body><header>h</header>' + rfs.MARK + '<p>report</p><div class="code"><pre>x</pre>'
+            '<a class="dl" href="site-report-file:answer-keys-RHEL_9_STIG-V2R10.xml" download>Download answer-keys-RHEL_9_STIG-V2R10.xml</a>'
+            '</div></body></html>')
+    return dict({"files": {"page": page, "latest": key, "index": "index.html"}, "entry": entry, "html": html, "theme": "atlas",
+                 "data": {"report": {"title": "t"}}, "downloads": downloads, "history": 5}, **kw)
+
+
+class Files1798(unittest.TestCase):
+    """1.79.8: a report's files on the report website (report_web_files; plugins/module_utils/site_report_files.py) - the
+    names made safe, the types and sizes refused, the Files line and the Download links, the copy job's packing; on every
+    transport (a folder, an upload, a share, a Windows server): the files beside the page, a run's files with its page, the
+    age, the total (never a latest page's), an orphan's folder, check mode writing nothing."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def file(self, name, data):
+        p = os.path.join(self.tmp, name)
+        with open(p, "wb") as f:
+            f.write(data)
+        return {"path": p, "filename": name}
+
+    # ---- the pieces
+    def test_a_names_types_and_sizes(self):
+        self.assertEqual(rfs.safe_file_name("../../etc/pass wd.xml"), "pass-wd.xml")
+        self.assertEqual(rfs.safe_file_name("C:\\x\\Ärger (1).docx"), "rger-1.docx")
+        self.assertEqual(rfs.safe_file_name("..."), "")
+        self.assertEqual(len(rfs.safe_file_name("a" * 300 + ".xml")), 100)
+        self.assertTrue(rfs.safe_file_name("a" * 300 + ".xml").endswith("a.xml"))
+        big = self.file("big.xml", b"x" * (rfs.MB + 1))
+        ok, refused = rfs.prepare([self.file("a.xml", XML), self.file("run.exe", b"MZ"), big, self.file("a.XML", XML),
+                                   {"filename": "k.txt", "b64": base64.b64encode(b"kept").decode()},
+                                   {"filename": "bad.txt", "b64": "!!"}, {"path": "/nonexistent/x.xml"}], 1, rfs.TYPES)
+        self.assertEqual([f["name"] for f in ok], ["a.xml", "a-2.XML", "k.txt"])     # one name twice (any case): -2
+        self.assertEqual(rfs.read_bytes(ok[2]), b"kept")
+        why = dict((r["name"], r["why"]) for r in refused)
+        self.assertIn("(.exe) is not one the website hosts (report_web_files_types)", why["run.exe"])
+        self.assertIn("over report_web_files_max_mb (1 MB)", why["big.xml"])
+        self.assertIn("could not be read back", why["bad.txt"])
+        self.assertIn("did not make it", why["x.xml"])
+        ok, refused = rfs.prepare([self.file("p.xml", b"x" * 700000), self.file("q.xml", b"x" * 700000)], 1)
+        self.assertEqual(([f["name"] for f in ok], refused[0]["name"]), (["p.xml"], "q.xml"))
+        self.assertIn("together are over", refused[0]["why"])
+        self.assertEqual((rfs.human(812), rfs.human(14000), rfs.human(3 * rfs.MB + rfs.MB // 5)), ("812 bytes", "14 KB", "3.2 MB"))
+
+    def test_b_the_page_its_files_line_and_download_links(self):
+        ok, _ = rfs.prepare([self.file("answer-keys-RHEL_9_STIG-V2R10.xml", XML)], 20)
+        html = _files_args(1, 1, [])["html"]
+        h = rfs.put_files(html, ok, [{"name": "run.exe", "why": "its type"}], "vm/latest.html", "vm/2026-10-01_0600_job-1-files")
+        self.assertNotIn(rfs.MARK, h)
+        self.assertIn('<a class="sf-a" href="2026-10-01_0600_job-1-files/answer-keys-RHEL_9_STIG-V2R10.xml" '
+                      'download="answer-keys-RHEL_9_STIG-V2R10.xml">', h)
+        self.assertIn('<a class="dl" href="2026-10-01_0600_job-1-files/answer-keys-RHEL_9_STIG-V2R10.xml" download="answer-keys-RHEL_9_STIG-V2R10.xml">'
+                      'Download answer-keys-RHEL_9_STIG-V2R10.xml</a>', h)
+        self.assertIn("run.exe is not on the website: its type", h)
+        self.assertNotIn("site-report-file:", h)
+        self.assertNotIn("<script", h)
+        self.assertEqual(h.index("<header>") < h.index("sfiles") < h.index("<p>report"), True)   # under the header
+        # in a folder of its own, the latest page elsewhere: the link goes there
+        h2 = rfs.put_files(html, ok, [], "latest/vm.html", "vm/2026-10-01_0600_job-1-files")
+        self.assertIn('href="../vm/2026-10-01_0600_job-1-files/answer-keys-RHEL_9_STIG-V2R10.xml"', h2)
+        # an email look on the website (no spot for it): at the top of the body; no files: no line, the link gone
+        h3 = rfs.put_files("<html><body><table></table></body></html>", ok, [], "a/p.html", "a/p-files", False)
+        self.assertTrue(h3.startswith('<html><body><!--site-report-files:start--><div class="sfiles" style='))
+        h4 = rfs.put_files(html, [], [], "vm/p.html", "vm/p-files")
+        self.assertNotIn("sfiles", h4)
+        self.assertNotIn("Download", h4)
+        self.assertNotIn(rfs.MARK, h4)
+        # removed later: each link says why, the page otherwise as it was
+        s = rfs.strike(h, "vm/2026-10-01_0600_job-1-files", ["answer-keys-RHEL_9_STIG-V2R10.xml"],
+                       "removed after 30 days (report_web_files_keep_days)")
+        self.assertEqual(s.count("answer-keys-RHEL_9_STIG-V2R10.xml: removed after 30 days"), 2)
+        self.assertNotIn('href="2026-10-01_0600_job-1-files/', s)
+        self.assertIn("run.exe is not on the website", s)
+        # (Codex) another run's file of the same name - a latest page that shows a newer run - is never struck
+        self.assertEqual(rfs.strike(h, "vm/2026-09-30_0600_job-0-files", ["answer-keys-RHEL_9_STIG-V2R10.xml"], "x"), h)
+
+    def test_c_the_plan(self):
+        now = datetime.datetime(2026, 11, 20, 6, 0, tzinfo=datetime.timezone.utc)
+
+        def e(page, day, size, key="k"):
+            return {"dir": page[:-5] + "-files", "page": page, "key": key, "when": "2026-%s 06:00 UTC" % day, "files": [{"name": "a.xml", "size": size}]}
+        old, mid, new, gone = e("a/1.html", "10-01", 10), e("a/2.html", "11-10", 400 * rfs.MB), e("a/3.html", "11-19", 50 * rfs.MB), e("b/1.html", "11-19", 5)
+        rem, kept, total, room = rfs.plan([old, mid, new, gone], {"a/3.html"}, 100 * rfs.MB, now, 30, 500, lambda p: p == "b/1.html")
+        self.assertEqual([(r[0]["page"], r[1]) for r in rem], [("a/1.html", "age"), ("b/1.html", "orphan"), ("a/2.html", "cap")])
+        self.assertEqual(([k["page"] for k in kept], total, room), (["a/3.html"], 150 * rfs.MB, True))
+        rem, kept, total, room = rfs.plan([new], {"a/3.html"}, 460 * rfs.MB, now, 0, 500, lambda p: False)
+        self.assertEqual((rem, room), ([], False))                  # the latest page's files never go for the total: no room
+        line = rfs.used_line([mid, new], 500, 30)
+        self.assertEqual(line, "Hosted files: 450.0 MB in 2 runs, of 500 MB (report_web_files_total_max_mb); each run's kept "
+                               "30 days (report_web_files_keep_days).")
+        self.assertEqual(rfs.ledger({"files": [{"dir": "../x", "files": []}, {"dir": "a/1-files", "page": "a/1.html", "files": [{"name": "../e"}]},
+                                               {"dir": "etc-files", "page": "a/2.html", "files": []}, {"dir": "b-files", "files": []},
+                                               {"dir": "../b-files", "page": "../b.html", "files": []}]}),
+                         [{"dir": "a/1-files", "page": "a/1.html", "files": []}])     # only a page's own folder, safe names
+        # (Codex) two names made the same at 100 characters: the second still 100, its -2 and type kept
+        ok, _ = rfs.prepare([self.file("a" * 120 + ".xml", XML), self.file("a" * 130 + ".xml", XML)], 1)
+        self.assertEqual([len(f["name"]) for f in ok], [100, 100])
+        self.assertTrue(ok[1]["name"].endswith("a-2.xml"))
+
+    def test_d_the_windows_script_in_constrained_language_mode(self):
+        if not PWSH:
+            self.skipTest("no pwsh")
+        dest = os.path.join(self.tmp, "D reports")
+        os.makedirs(os.path.join(dest, "a", "p-files"))
+        with open(os.path.join(dest, "a", "p-files", "old.xml"), "w") as f:
+            f.write("x")
+        with open(os.path.join(dest, "a", "q.html"), "w") as f:
+            f.write("<p>" + rfs.block_html([{"name": "z.xml", "size": 3}], [], "a/q.html", "a/q-files") + "</p>")
+        sub = rfs.ps_strike("a/q-files", ["z.xml"], "removed after 30 days ($x)")
+        script = os.path.join(self.tmp, "w.ps1")
+        with open(script, "wb") as f:
+            f.write(rw.windows_script(dest, [("a/n-files/b.docx", DOCX), ("a/n.html", "<p>n</p>")], ["a/p-files/old.xml"], (),
+                                      ["a/p-files"], [("a/q.html", sub)]).encode("utf-8-sig"))
+        out = clm(script)["write"]
+        self.assertTrue(out["ok"], out)
+        with open(os.path.join(dest, "a", "n-files", "b.docx"), "rb") as f:
+            self.assertEqual(f.read(), DOCX)                                     # every byte, exactly
+        self.assertFalse(os.path.exists(os.path.join(dest, "a", "p-files")))     # its file deleted, then the folder
+        with open(os.path.join(dest, "a", "q.html")) as f:
+            q = f.read()
+        self.assertIn("z.xml: removed after 30 days ($x)", q)
+        self.assertNotIn('href="q-files/z.xml"', q)
+        with self.assertRaises(rw.Fail):                                         # never a folder that is not ours
+            rw.windows_script(dest, [], (), (), ["a/p"])
+        with self.assertRaises(rw.Fail):
+            rw.windows_script(dest, [("a/p-files/../../x.docx", b"x")])
+
+    def test_e_kept_for_the_copy_job(self):
+        files = [self.file("answer-keys-RHEL_9_STIG-V2R10.xml", XML), self.file("big.docx", os.urandom(300000))]
+        out = run_module(dict(_files_args(1, 1, files), dest=self.tmp, keep=True, max_kb=64))
+        doc = pg.unpack(out["packed"])
+        self.assertEqual([d["filename"] for d in doc["downloads"]], ["answer-keys-RHEL_9_STIG-V2R10.xml"])
+        self.assertEqual(base64.b64decode(doc["downloads"][0]["b64"]), XML)
+        self.assertIn("too big to keep for the job Report website - copy (report_web_copy_max_kb)",
+                      [r["why"] for r in doc["downloads_refused"] if r["name"] == "big.docx"][0])
+        site = os.path.join(self.tmp, "site")
+        os.mkdir(site)
+        other = self.file("other.xml", XML)          # (Codex) a kept report brings content, never a path on the copy job's machine
+        out = run_module(dict(_files_args(1, 1, [], kept_files=doc["downloads"] + [other], downloads_refused=doc["downloads_refused"]),
+                              dest=site))        # the copy job
+        self.assertIn("never a path - not hosted", [r["why"] for r in out["files_refused"] if r["name"] == "other.xml"][0])
+        self.assertEqual([f["name"] for f in out["files"]], ["answer-keys-RHEL_9_STIG-V2R10.xml"])
+        with open(os.path.join(site, *(_page(1, 1)[:-5] + "-files/answer-keys-RHEL_9_STIG-V2R10.xml").split("/")), "rb") as f:
+            self.assertEqual(f.read(), XML)
+        with open(os.path.join(site, *_page(1, 1).split("/"))) as f:
+            self.assertIn("big.docx is not on the website: too big to keep", f.read())
+
+    def test_f_no_index_no_files(self):
+        out = run_module(dict(_files_args(1, 1, [self.file("a.xml", XML)], files={"page": _page(1, 1), "latest": "", "index": ""}), dest=self.tmp))
+        self.assertEqual(out["files"], [])
+        self.assertIn("only with an index (report_web_index)", out["files_refused"][0]["why"])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, *(_page(1, 1)[:-5] + "-files").split("/"))))
+
+    # ---- every transport
+    def transport(self, kind):
+        site = Site(kind)
+        self.addCleanup(site.close)
+        xml, docx = self.file("answer-keys-RHEL_9_STIG-V2R10.xml", XML), self.file("aar.docx", DOCX)
+        exe = self.file("run.exe", b"MZ")
+        f1 = _page(1, 1)[:-5] + "-files"
+
+        def gone(rel):                     # not there - or, over WebDAV, left empty (a folder DELETE would take all in it)
+            p = site.path(rel)
+            return not os.path.exists(p) or (kind == "web" and os.path.isdir(p) and not os.listdir(p))
+        # a dry run first: nothing written, what it would host said
+        if kind != "win":                                           # (the role runs no Windows step in a dry run)
+            out = run_module(dict(_files_args(1, 1, [xml]), dest=site.dest, _ansible_check_mode=True), env=site.env)
+            self.assertIn("its files: answer-keys-RHEL_9_STIG-V2R10.xml", out["msg"])
+            self.assertEqual(os.listdir(site.root), [])
+        # run 1: the files beside the page, the page's links, the latest page's to the same folder, the JSON, the ledger
+        out = site.run(_files_args(1, 1, [xml, docx, exe], history=2))
+        self.assertEqual([f["name"] for f in out["files"]], ["answer-keys-RHEL_9_STIG-V2R10.xml", "aar.docx"], out)
+        self.assertEqual(out["files_refused"][0]["name"], "run.exe")
+        with open(site.path(f1 + "/aar.docx"), "rb") as f:
+            self.assertEqual(f.read(), DOCX)
+        for rel, href in ((_page(1, 1), f1[3:] + "/"), ("vm/latest.html", f1[3:] + "/")):
+            h = site.text(rel)
+            self.assertIn('class="dl" href="%sanswer-keys-RHEL_9_STIG-V2R10.xml" download=' % href, h)
+            self.assertIn('class="sf-a" href="%saar.docx" download="aar.docx"' % href, h)
+            self.assertIn("run.exe is not on the website", h)
+        if kind != "win":
+            self.assertEqual(json.loads(site.text(_page(1, 1)[:-5] + ".json"))["files"][1]["path"], f1 + "/aar.docx")
+        led = site.index()["files"]
+        self.assertEqual([(e["dir"], e["latest"], [x["name"] for x in e["files"]]) for e in led],
+                         [(f1, "vm/latest.html", ["answer-keys-RHEL_9_STIG-V2R10.xml", "aar.docx"])])
+        self.assertIn("Hosted files: 11 KB in 1 run, of 500 MB", site.text("index.html"))
+        self.assertNotIn("aar.docx", site.text("index.html"))                     # the index never lists files
+        # run 2, history 2: run 1's files stay, the latest page now links run 2's
+        out = site.run(_files_args(2, 2, [xml], history=2))
+        self.assertTrue(os.path.exists(site.path(f1 + "/aar.docx")))
+        self.assertIn('href="%s-files/answer-keys' % _page(2, 2)[3:-5], site.text("vm/latest.html"))
+        self.assertEqual([e["latest"] for e in site.index()["files"]], ["", "vm/latest.html"])
+        # run 3, history 2: run 1 falls off - its page and its files go, the folder too
+        out = site.run(_files_args(3, 3, [xml], history=2))
+        self.assertTrue(gone(f1))
+        self.assertFalse(os.path.exists(site.path(_page(1, 1))))
+        self.assertTrue(any(x.startswith(f1 + " (2 files, 11 KB): removed with its page") for x in out["files_removed"]), out["files_removed"])
+        # the age: run 2's files 40 days old (as the ledger has them) - removed at the next publish of any report, its page
+        # stays and says so, as does the latest page when they were its (here: run 3's are the latest's)
+        doc = site.index()
+        for e in doc["files"]:
+            if e["page"] == _page(2, 2):
+                e["when"] = "%s 06:00 UTC" % _day(-40)
+        with open(site.path("index.json"), "w") as f:
+            json.dump(doc, f)
+        out = site.run(_files_args(9, 4, [], key="ad/latest.html", template="AD - health report"))
+        self.assertTrue(gone(_page(2, 2)[:-5] + "-files"))
+        self.assertIn("answer-keys-RHEL_9_STIG-V2R10.xml: removed after 30 days (report_web_files_keep_days)", site.text(_page(2, 2)))
+        self.assertIn('href="%s-files/answer-keys' % _page(3, 3)[3:-5], site.text("vm/latest.html"))
+        self.assertTrue(any("removed after 30 days" in x for x in out["files_removed"]))
+        # an orphan: run 3's page deleted by hand - its folder goes at the next publish, and the latest page that still
+        # showed it says so; a folder not ours stays
+        os.remove(site.path(_page(3, 3)))
+        os.makedirs(site.path("vm/mine-files"))
+        out = site.run(_files_args(10, 5, [], key="ad/latest.html", template="AD - health report"))
+        self.assertTrue(gone(_page(3, 3)[:-5] + "-files"))
+        self.assertTrue(os.path.exists(site.path("vm/mine-files")))
+        self.assertTrue(any("its page is gone" in x for x in out["files_removed"]), out["files_removed"])
+        self.assertIn("answer-keys-RHEL_9_STIG-V2R10.xml: removed: its page is gone", site.text("vm/latest.html"))
+        self.assertNotIn("files", site.index())                                   # nothing hosted any more
+        # the total: 1 MB for every report together - the oldest run's go first (its page says so), never a latest page's
+        part = self.file("part.xml", b"x" * 400000)
+        for job, day in ((11, 6), (12, 7), (13, 8)):
+            out = site.run(_files_args(job, day, [part], files_total_max_mb=1, history=3))
+        self.assertTrue(gone(_page(11, 6)[:-5] + "-files"))
+        self.assertIn("part.xml: removed to keep all hosted files under 1 MB (report_web_files_total_max_mb)", site.text(_page(11, 6)))
+        self.assertTrue(os.path.exists(site.path(_page(12, 7)[:-5] + "-files/part.xml")))
+        # a run whose files cannot fit even then is not hosted, said - and nothing else goes for it (Codex)
+        big = self.file("big.xml", b"x" * 700000)
+        out = site.run(_files_args(14, 9, [big], key="ad/latest.html", template="AD - health report", files_total_max_mb=1))
+        self.assertEqual(out["files"], [])
+        self.assertIn("at report_web_files_total_max_mb (1 MB) with only latest pages' files left", out["files_refused"][0]["why"])
+        self.assertTrue(os.path.exists(site.path(_page(12, 7)[:-5] + "-files/part.xml")))
+        self.assertEqual(out["files_removed"], [])
+        # check mode: lists what it would remove, removes nothing
+        if kind != "win":
+            os.remove(site.path(_page(12, 7)))
+            out = run_module(dict(_files_args(15, 10, [], key="ad/latest.html", template="AD - health report"), dest=site.dest,
+                                  _ansible_check_mode=True), env=site.env)
+            self.assertIn("it would remove: %s-files" % _page(12, 7)[:-5], out["msg"])
+            self.assertTrue(os.path.exists(site.path(_page(12, 7)[:-5] + "-files/part.xml")))
+
+    def test_g_a_folder(self):
+        self.transport("folder")
+
+    def test_h_an_upload_webdav(self):
+        self.transport("web")
+
+    def test_i_a_share_smb(self):
+        self.transport("smb")
+
+    @unittest.skipUnless(PWSH, "no pwsh")
+    def test_j_a_windows_server(self):
+        self.transport("win")
+
 
 
 if __name__ == "__main__":

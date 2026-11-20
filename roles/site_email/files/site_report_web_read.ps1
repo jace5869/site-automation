@@ -1,6 +1,6 @@
 # site-automation - the report website on a Windows server (roles/site_email, report_web_host): is the report
 # folder (report_web_dest) there, and the index of every report (index.json) in it, read back so the job can put
-# this template's line in it. Read-only. The pages themselves are written by the script the site_report_web
+# this template's line in it (1.79.8: and which pages of its hosted files' list are gone). Read-only. The pages themselves are written by the script the site_report_web
 # module makes for each run.
 # ---- common to every site-automation Windows script (keep identical in all of them) -----------
 # Settings arrive as JSON in $env:SITE_CHECK_CONFIG (the role's defaults and your inventory).
@@ -18,7 +18,7 @@ function Get-Setting([string] $Name, $Default) {
 
 $dest = [string](Get-Setting 'dest' '')
 $parts = @(Get-Setting 'index' @())                 # index.json's path inside the folder, a part per folder
-$out = @{ ok = $false; error = ''; index = $null }
+$out = @{ ok = $false; error = ''; index = $null; gone = @() }
 try {
     if (-not $dest -or -not (Test-Path -LiteralPath $dest -PathType Container)) {
         $out.error = 'the folder ' + $dest + ' is not there on ' + $env:COMPUTERNAME + ' (report_web_dest)'
@@ -30,6 +30,18 @@ try {
             foreach ($p in $parts) { $path = Join-Path -Path $path -ChildPath ([string]$p) }
             if (Test-Path -LiteralPath $path -PathType Leaf) {
                 $out.index = [string](Get-Content -LiteralPath $path -Raw -Encoding UTF8)
+                # 1.79.8: the pages of the hosted files' list (index.json "files") that are not here any more - their
+                # folders are removed by the run (orphans); read-only here
+                try {
+                    $doc = ConvertFrom-Json -InputObject $out.index
+                    foreach ($e in @($doc.files)) {
+                        if ($null -eq $e -or -not $e.page) { continue }
+                        $pp = $dest
+                        foreach ($x in ([string]$e.page).Split('/')) { $pp = Join-Path -Path $pp -ChildPath $x }
+                        if (-not (Test-Path -LiteralPath $pp -PathType Leaf)) { $out.gone += @([string]$e.page) }
+                    }
+                }
+                catch { $out.gone = @() }
             }
         }
     }

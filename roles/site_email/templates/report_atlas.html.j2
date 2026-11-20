@@ -575,6 +575,9 @@ table.xt>tbody>tr:nth-child(even)>td{background:transparent}table.xt>tbody>tr:no
 .rtx{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:8px 16px;margin:10px 0 4px}
 .clw,.clw>a{white-space:nowrap}table.mini a.hl .ic,td.k-cl a.hl .ic{display:inline-block;width:12px;height:12px;margin-left:3px;vertical-align:-1px}.rtb{min-width:0}.rth{margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
 .rtx .code{margin-top:0}.rtx pre{max-height:13.5em;overflow:auto}.rtx .copy{white-space:nowrap}
+.rta{display:flex;flex-direction:column;align-items:stretch;gap:6px;flex:none}.dl{display:inline-block;font-size:12px;font-weight:650;white-space:nowrap;color:var(--accent);background:var(--card);border:1px solid var(--edge);border-radius:8px;padding:3px 9px;text-decoration:none;text-align:center}.dl:hover{border-color:var(--accent)}.dl.off{color:var(--muted);white-space:normal;border-style:dashed;font-weight:500}
+/* 1.79.8: the run's files (site_report_web puts them at site-report-files) */
+.sfiles{margin-top:14px;padding:12px 16px}.sf-h{margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}.sf-l{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px 20px}.sf-l li{min-width:0;overflow-wrap:anywhere}.sf-a{font-weight:650}.sf-z{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}.sf-l .dl.off{border:0;padding:0;font-size:13px}@media print{.rta .dl{display:none}}
 .rtn{margin:4px 0 0;font-size:12px;color:var(--muted)}:root:not(.js) .rtx .code pre{-webkit-user-select:text;user-select:text}
 @media print{.rtx pre{max-height:none;overflow:visible}.rtn{display:none}}
 .catc{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:600}
@@ -654,6 +657,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endif %}
 </div>
 </header>
+<!--site-report-files-->
 {%- if r.summary | default([]) %}
 <div class="tiles t{{ r.summary | length if r.summary | length <= 10 else 'x' }}">
 {%- for t in r.summary %}
@@ -715,7 +719,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endif %}
 {%- if t.more | default('') %}<p class="xt0">{{ t.more | e }}</p>{% endif %}
 {#- 1.73.0: Copy copies the text's command lines only; a text with no command has no button - one muted line says so #}
-{%- if t.texts | default([]) %}<div class="rtx">{% for b in t.texts %}<div class="rtb"><h3 class="rth">{{ b.label | e }}</h3><div class="code{{ '' if b.cmd | default('') else ' nc' }}"><pre>{{ b.text | e }}</pre>{% if b.cmd | default('') %}<button class="copy" type="button" hidden title="{{ b.title | e }}" data-copy="{{ b.cmd | e }}">{{ b.button | e }}</button>{% endif %}</div>{% if not b.cmd | default('') %}<p class="rtn">{{ b.note | default('No command in this text') | e }}</p>{% endif %}</div>{% endfor %}</div>{% endif %}
+{%- if t.texts | default([]) %}<div class="rtx">{% for b in t.texts %}<div class="rtb"><h3 class="rth">{{ b.label | e }}</h3><div class="code{{ '' if b.cmd | default('') else ' nc' }}"><pre>{{ b.text | e }}</pre>{% if b.cmd | default('') %}{% if b.file | default('') %}<span class="rta"><button class="copy" type="button" hidden title="{{ b.title | e }}" data-copy="{{ b.cmd | e }}">{{ b.button | e }}</button><a class="dl" href="site-report-file:{{ b.file | urlencode }}" download>Download {{ b.file | e }}</a></span>{% else %}<button class="copy" type="button" hidden title="{{ b.title | e }}" data-copy="{{ b.cmd | e }}">{{ b.button | e }}</button>{% endif %}{% endif %}</div>{% if not b.cmd | default('') %}<p class="rtn">{{ b.note | default('No command in this text') | e }}</p>{% endif %}</div>{% endfor %}</div>{% endif %}
 {%- endmacro %}
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}

@@ -473,6 +473,79 @@ opened from a share or from a web server.
 - Per template: `report_web_history: 30` on one template's Variables keeps 30 runs of that report only - with the
   copy job too (the report job's setting is kept with its report).
 
+### A report's files (1.79.8)
+
+A report that hands over files puts them on the website too, beside the run's page. Examples are the STIG answer
+keys' answer files (`.xml`) and a report's workbook (`.xlsx`). Each file then has a plain Download link on the page,
+so no email is needed to get them.
+
+- **Which files**: the email's attachments (`_report_attachments`) and the workbook, when the report makes one. A
+  playbook can give its own list instead: `_report_files: [{path, filename}]`.
+- **Where**: a folder beside the run's page, named after it: `stig-answer-keys/2026-11-20_0605_job-4901-files/`. File
+  names are made safe: letters, digits, `.`, `_` and `-` only.
+- **On the page**: a **Files** line under the header, with each file's name and size. The STIG answer keys' "the answer
+  file" sections also get **Download answer-keys-<STIG>-<release>.xml** beside their Copy button. These are plain
+  links (`<a href download>`), so they work without the page's script and under any Content-Security-Policy. A file
+  that is not hosted is named there, with why.
+- **The latest page** links to the newest run's folder. That folder stays while it is the latest.
+- **Never on the index**: the index page does not list files. Its foot shows one line with the space they take and
+  the limits, and each report job prints the same line.
+- **Only with an index** (`report_web_index`, set by default): `index.json` keeps the list of hosted files
+  (`"files"`) that the cleanup works from. Without an index, no files are hosted (the job says so).
+
+| Setting | Default | |
+|---|---|---|
+| `report_web_files` | `true` | `false` = no files on the website; the email still attaches them |
+| `report_web_files_max_mb` | `20` | each file, and one run's files together; a bigger one is not hosted, and the page says why |
+| `report_web_files_types` | `[.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]` | any other type is not hosted |
+| `report_web_files_total_max_mb` | `500` | all reports' files together (below) |
+| `report_web_files_keep_days` | `30` | a run's files are removed after this many days; `0` = only with their page |
+
+**The cleanup**, at every publish of any report, so the website never fills up:
+
+1. **With its page**: a run that falls off its report's list (`report_web_history`) loses its page and its files.
+2. **Age**: files older than `report_web_files_keep_days` are removed, even when the report keeps more runs. The page
+   stays, and its Files line and Download links say "removed after 30 days".
+3. **The total**: when the files would pass `report_web_files_total_max_mb`, the oldest runs' files are removed first.
+   Their pages say so. A latest page's files are never removed this way. A run whose files cannot fit even then is
+   published without them, and its page and the job say why: raise the setting.
+4. **Orphans**: a run's folder whose page is gone (deleted by hand) is removed. Only folders in that list are ever
+   removed; any other folder in the report folder is left alone.
+
+Each job's output lists what was removed and why. A dry run (Check) lists what it would host and remove, and writes
+nothing.
+
+**On each transport**: a folder, a share over SMB, an upload (`PUT`, with `DELETE` and `MKCOL`), a Windows server,
+and the copy job all host and clean up the same way.
+
+- **A Windows server** (`report_web_host`): the script writes each file from hex, in pieces, which Constrained Language
+  Mode allows. That takes about 1.3 seconds per MB on the server.
+- **The copy job** (`report_web_copy`): the files travel with the kept report, within `report_web_copy_max_kb` (the
+  report's tables first). A file that does not fit is named on the page as not hosted: raise
+  `report_web_copy_max_kb`, or let the template write its own pages.
+
+**Saved, not shown.** A Download link saves its file in Edge, Chrome and Firefox, whatever the server sends. A file's
+address opened by itself follows the server: an `.xml` may be shown in the browser.
+
+- The site portal's `/portal/reports/` sends every file in a `-files/` folder as an attachment. Nothing to set up.
+- **To set up, on your own nginx only** (the upload example below has it): add this block to the `server` that
+  serves the report folder.
+
+```nginx
+    location ~ "-files/[^/]+$" {         # a run's files (1.79.8): saved, never shown in the browser
+        types { }
+        default_type application/octet-stream;
+        add_header Content-Disposition attachment always;
+        add_header X-Content-Type-Options nosniff always;
+        # an add_header here replaces the server's own: repeat your Content-Security-Policy line here if you have one
+    }
+```
+
+If the same `server` takes the jobs' uploads, write that location as `location ^~ /upload/` (as below). Otherwise
+nginx sends an upload into a `-files/` folder to this block, which does not take `PUT`, and the job fails with HTTP 405.
+
+IIS serves `.xml` and `.docx` with their own types. The links still save them.
+
 ### Times in your time zone
 
 Out of the box every time on the website is UTC: `2026-11-13 04:37 UTC`. To show your own time zone, set
@@ -676,7 +749,13 @@ server {
         index index.html;
         try_files $uri $uri/ =404;
     }
-    location /upload/ {                  # writing: the jobs
+    location ~ "-files/[^/]+$" {         # a run's files (1.79.8): saved, never shown in the browser
+        types { }
+        default_type application/octet-stream;
+        add_header Content-Disposition attachment always;
+        add_header X-Content-Type-Options nosniff always;
+    }
+    location ^~ /upload/ {               # writing: the jobs (^~: before the -files/ block above, 1.79.8)
         alias /srv/reports/;
         dav_methods PUT DELETE MKCOL;    # DELETE: older runs' pages (report_web_history)
         create_full_put_path on;

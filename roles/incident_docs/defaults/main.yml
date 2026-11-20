@@ -37,6 +37,9 @@ incident_impact_levels: [MINOR, MODERATE, MAJOR, CRITICAL]
 # when that is set), plus these. The reports' usual recipients (report_email_to) are NOT used here: an AAR goes only
 # where it is sent. Nor is report_email_cc.
 incident_docs_email_to: []
+# 1.79.8: true = the documents also on the report website (report_web_dest), each a Download link on the run's page
+# (report_web_files) - for every reader of the website. false (the default): never there, only emailed.
+incident_docs_web: false
 # The SOP job empties the draft the AAR job put in its form (incident_sop_draft) once it made the SOP from it - only
 # when launched with that draft's outage. Needs the AAP credential on the SOP template (incident_docs_draft_credential).
 incident_sop_draft_clear: true

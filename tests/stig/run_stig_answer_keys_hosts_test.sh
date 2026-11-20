@@ -176,6 +176,24 @@ sys.exit(0 if all(n in t for n in ("answer-keys-RHEL_8_STIG-V2R9.xml", "answer-k
                                    "answer-keys-RHEL_10_STIG-V1R3.xml")) else 1)
 PY
 then echo "ok   - the job's output names the four answer files"; else echo "FAIL - the job's output: the answer files"; fails=$((fails + 1)); fi
+# 1.79.8: the website hosts the four answer files (and the workbook) beside the page: each parses, its Download link
+if "$py" - "$(lastpage)" <<'PY'
+import os, re, sys
+import xml.etree.ElementTree as ET
+page = sys.argv[1]                                  # the run's page or its latest.html: both link the run's folder
+t = open(page).read()
+want = ("answer-keys-RHEL_8_STIG-V2R9.xml", "answer-keys-RHEL_9_STIG-V2R7.xml", "answer-keys-RHEL_9_STIG-V2R10.xml", "answer-keys-RHEL_10_STIG-V1R3.xml")
+links = re.findall(r'<a class="dl" href="([^"]+)" download="([^"]+)">Download ', t)
+folders = set(os.path.dirname(h) for h, _ in links)
+folder = os.path.join(os.path.dirname(page), folders.pop()) if len(folders) == 1 else ""
+there = sorted(os.listdir(folder)) if folder and os.path.isdir(folder) else []
+print("hosted:", folder, there)
+names = dict((n, ET.parse(os.path.join(folder, n)).getroot().get("Name")) for n in want if n in there)
+sys.exit(0 if len(names) == 4 and folder.endswith("-files") and any(x.endswith(".xlsx") for x in there)
+         and sorted(n for _, n in links) == sorted(want) and t.count('class="card sfiles"') == 1 and "site-report-file:" not in t else 1)
+PY
+then echo "ok   - the website: the four answer files and the workbook hosted beside the page (each parses), a Download link each, the Files line"
+else echo "FAIL - the website: the hosted answer files / their Download links"; fails=$((fails + 1)); fi
 m="$(ls "$work/mail"/* 2>/dev/null | head -1)"
 if [ -n "$m" ] && "$py" - "$m" <<'PY'
 import email, io, re, sys, zipfile

@@ -28,6 +28,8 @@
 #       # as it is (EFI, BIOS; else an upper-case one - FAIL - is shown as Fail)
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body. _report_attachments: files the email attaches, [{path, filename}].
+# The report website hosts them too, with the workbook, beside the run's page (1.79.8, report_web_files) - or
+# _report_files: [{path, filename}], its own list for the website.
 # The look: report_email_theme (standard | command | portal | glass), report_logo_file. The strip of past runs (all but standard)
 # reads this template's earlier jobs from AAP (site_report_history); each run keeps its report's status and
 # first plain-number summary value as the job artifact site_report_run, the height of its bar.
@@ -279,214 +281,246 @@
     _web_win_where: "{{ report_web_host | trim }} ({{ report_web_host_connection }}, port {{ report_web_host_port }})"
   when: _web_win | bool and not _email_dry
 
-- name: Email | publish the report on the report website ({{ report_web_dest | default('') }})
-  site_report_web:
-    dest: "{{ report_web_dest | trim }}"
-    url: "{{ report_web_url | default('') | trim }}"
-    files: "{{ _web_files }}"
-    # report_web_copy: no page made here - the copy job makes it from what is kept
-    # _report_html: a page the report made itself (the ticket insights) - its logo in place of <!--site-report-logo-->
-    html: >-
-      {{ '' if _web_copy | bool else
-         (_report_html | replace('<!--site-report-logo-->', '<img class="logoimg" src="cid:site-report-logo" alt="">' if _web_logo_cid | bool else ''))
-         if _report_html | default('') | length > 0 else
-         lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
-    keep: "{{ _web_copy | bool }}"
-    max_kb: "{{ report_web_copy_max_kb | int }}"
-    footer: "{{ _email_footer | default('') }}"
-    images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _web_logo_cid | bool else [] }}"
-    logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
-    header_text: "{{ report_email_header_text | default('Site automation report') }}"
-    theme: "{{ _web_theme }}"
-    time_zone: "{{ report_time_zone | default('', true) | string | trim }}"
-    json: "{{ report_web_json | bool }}"
-    history: "{{ report_web_history | int }}"
-    delete_old: "{{ report_web_delete_old | bool }}"
-    tabs: "{{ report_web_tabs }}"
-    prune: "{{ report_web_index_prune | bool }}"
-    # a report's own lines to leave out of the index (the ticket insights: its team pages, listed there before 0.88.0)
-    drop: "{{ _web_index_drop | default([]) }}"
-    sub_pages: "{{ _web_sub_pages | default([]) }}"
-    data:
-      report: "{{ _web_report }}"
-      job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
-      template: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default(''))), true) }}"
-      template_id: "{{ awx_job_template_id | default(tower_job_template_id | default('')) }}"
-      when: "{{ _web_when }}"
-      runs: "{{ _web_runs | default([]) }}"
-      banner: "{{ _banner if _banner.on else {} }}"     # site_report_web puts it on the page and the index, as does the copy job
-    entry:
-      key: "{{ _web_files.latest or _web_files.page.split('/')[0] }}"
-      name: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('Report'))), true) }}"
-      title: "{{ _web_report.title | default('') }}"
-      status: "{{ _web_report.status | default('info') }}"
-      when: "{{ _web_when }}"
-      job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
-    ca_path: "{{ report_web_ca_path | default('') }}"
-    smb_auth: "{{ report_web_smb_auth | default('negotiate') }}"
-    smb_encrypt: "{{ report_web_smb_encrypt | default(false) | bool }}"
-    smb_port: "{{ report_web_smb_port | default(445) | int }}"
-    retries: "{{ report_web_retries | default(3) | int }}"
-    retry_delay: "{{ report_web_retry_delay | default(30) | int }}"
-    required: "{{ report_web_required | default(false) | bool }}"
-    windows_host: "{{ report_web_host | default('') | trim if _web_win | bool or _web_copy | bool else '' }}"
-    index_text: "{{ _web_win_read.index | default('', true) if _web_win | bool and not _email_dry else '' }}"
-  vars:
-    # the web copy: its own look's logo size and strip (report_web_theme), the logo put inside the page
-    _web_logo_cid: "{{ _email_logo_file | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"
-    _report: "{{ _web_report }}"
-    # the atlas and brief looks read this one: a role's caller's own _report would win over the line above (1.11.0)
-    _page_report: "{{ _web_report }}"
-    _page_logo_cid: "{{ 'site-report-logo' if _web_logo_cid | bool else '' }}"
-    _page_logo_size: "{{ _web_logo_size | default([0, 0]) }}"
-    _page_runs: "{{ _web_runs | default([]) }}"
-  register: _web_out
-  when: _web_on | bool
-
-# report_web_required false: still not published after the retries - said here and at the top of the email; the job goes on
-- name: Email | the report website - not published
-  ansible.builtin.set_fact:
-    _web_failed: "{{ _web_out.error | default('', true) or 'failed' }}"
-    _email_notice: "The report website copy failed: {{ (_web_out.error | default('', true) or 'failed') | truncate(400) }}; the email is the full report."
-  when: _web_on | bool and not _web_out.published | default(true)
-
-- name: Email | the report website - not published (WARNING; report_web_required true fails the job instead)
-  ansible.builtin.debug:
-    msg: "WARNING - {{ _email_notice }}{{ (' Tried ' ~ (_web_out.retried | length + 1) ~ ' times.') if _web_out.retried | default([]) else '' }}"
-  when: _web_failed | length > 0
-
-- name: Email | report_web_host - this run's pages written there
-  when: _web_win | bool and not _email_dry
+# 1.79.8: the workbook made once - attached to the email and hosted on the website (report_web_files) - and removed at
+# the end, whatever happens on the way
+- name: Email | publish and send the report - the workbook removed after
   block:
-    - name: Email | report_web_host - this run's pages
-      ansible.builtin.include_tasks: web_windows.yml
-      vars:
-        ansible_connection: "{{ report_web_host_connection }}"
-        _web_ps: "{{ _web_out.script }}"
-        _web_ps_what: this run's pages, in {{ report_web_dest | trim }}
-        _web_ps_config: {}
-        _web_ps_changed: true
-
-    - name: Email | report_web_host's answer, on the pages
+    - name: Email | the workbook's name
       ansible.builtin.set_fact:
-        _web_win_write: "{{ ((_web_ps_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('###SITE-JSON### {}'))[16:] | from_json).write | default({}) }}"
-  always:
-    - name: Email | report_web_host - the script made for it, deleted here
-      ansible.builtin.file:
-        path: "{{ _web_out.script }}"
-        state: absent
-
-- name: Email | report_web_host wrote the pages
-  ansible.builtin.assert:
-    that: _web_win_write.ok | default(false)
-    fail_msg: >-
-      The report website: {{ _web_win_write.error | default('', true) or (_web_ps_out | site_web_win_error(_web_win_where)) }}
-      {{- (' (written before it stopped: ' ~ _web_win_write.written | join(', ') ~ ')') if _web_win_write.written | default([]) else '' }}
-    quiet: true
-  vars:
-    _web_win_where: "{{ report_web_host | trim }} ({{ report_web_host_connection }}, port {{ report_web_host_port }})"
-  when: _web_win | bool and not _email_dry
-
-- name: Email | report_web_host - not written (open there all that time - the next run writes it), or older runs' pages not deleted (Modify on the folder)
-  ansible.builtin.debug:
-    msg: "{{ _web_win_write.busy | default([]) + _web_win_write.left | default([]) }}"
-  when: _web_win | bool and not _email_dry and (_web_win_write.busy | default([]) + _web_win_write.left | default([])) | length > 0
-
-- name: Email | the report, kept for the job Report website - copy (job artifact site_report_page, report_web_copy)
-  ansible.builtin.set_stats:
-    data:
-      site_report_page: ["{{ _web_out.packed }}"]
-  when: _web_copy | bool and not _email_dry and _web_out.packed | default('') | length > 0
-
-- name: Email | the report's address
-  ansible.builtin.debug:
-    msg: >-
-      {%- if _email_dry or (_web_copy | bool and not _web_out.packed | default('')) -%}
-      {{ _web_out.msg }}
-      {%- elif _web_out.url -%}
-      Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}{{ _web_old }}{{ _web_unlisted }}
-      {%- elif _web_win | bool -%}
-      Published: {{ _web_out.place }}{{ _web_old }}{{ _web_unlisted }}
-      {%- else -%}
-      {{ _web_out.msg }}{{ _web_unlisted }}
-      {%- endif -%}
-  vars:
-    _web_unlisted: >-
-      {{ (' (taken off the index: ' ~ (_web_out.unlisted | join(', ')) ~ ')')
-         if _web_out.unlisted | default([]) | length > 0 else '' }}
-    _web_old: >-
-      {{ (' (older runs deleted: ' ~ (_web_out.deleted | select('match', '.*[.]html$') | join(', ')) ~ ')')
-         if _web_out.deleted | default([]) | select('match', '.*[.]html$') | list | length > 0 else '' }}
-  when: _web_on | bool and _web_failed | length == 0
-
-- name: Email | the report's address, for the next step (job artifact site_report_url)
-  ansible.builtin.set_stats:
-    data:
-      site_report_url: "{{ _web_out.url }}"
-  when: >-
-    _web_on | bool and _web_out.url | default('') | length > 0 and not _email_dry and _web_failed | length == 0
-    and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
-
-- name: Email | the email links its web copy
-  ansible.builtin.set_fact:
-    _email_web_url: >-
-      {{ _report_web_url if _report_web_url | default('') | length > 0 and not _email_dry else
-         _web_out.url if _web_on | bool and not _email_dry and _web_failed | length == 0
-         and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
-         else '' }}
-  when: _email_to | length > 0
-
-- name: Email | the web address checked once (http or https, a host, no user), else no link
-  ansible.builtin.set_fact:
-    _email_web_url: "{{ _email_web_url | default('') | safe_site_url }}"
-  when: _email_to | length > 0
-
-- name: Email | the report, sent
-  when: _email_to | length > 0
-  block:
-    - name: Email | the report's tables as a workbook, attached (report_email_xlsx, or the report's own _report_xlsx)
-      site_xlsx:
-        sheets: "{{ _report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets }}"
-        banner: "{{ _banner if _banner.on else {} }}"
-      register: _email_xlsx
-      when: _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not _email_dry
-
-    - name: Email | send the report to {{ _email_to | join(', ') }}
-      site_mail:
-        host: "{{ report_email_smtp_host | trim }}"
-        port: "{{ report_email_smtp_port | int }}"
-        security: "{{ report_email_security }}"
-        sender: "{{ report_email_from | trim }}"
-        to: "{{ _email_to }}"
-        cc: "{{ _email_cc }}"
-        subject: "{{ _email_subject }}"
-        # 1.76.2: "Full report: <url>" first (after a banner's line) and last
-        body: >-
-          {{ (_email_web_top ~ (_report | report_notice(_email_notice) | report_act_off(_act_off | bool) | report_act_old(_act_old)
-              | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
-              if _report is defined else
-              ((_email_notice ~ '\n\n') if _email_notice else '') ~ _report_body ~ (('\n\nACT is off (site_act_enabled false).') if _act_off | bool else '')
-              ~ (('\n\nACT old copies:\n' ~ (_act_old | join('\n'))) if _act_old | length > 0 else '')
-              ~ '\n\n--\n' ~ _email_footer ~ _email_web_line)) | report_banner_text(_banner) }}
-        html: "{{ lookup('ansible.builtin.template', _email_template) | report_banner_html(_banner) if _email_html | bool else omit }}"
-        images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
-        # the workbook, and the files the job hands over (_report_attachments: [{path, filename}] - the outage AAR's Word documents)
-        attachments: "{{ ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else []) + _report_attachments | default([]) }}"
-        ca_path: "{{ report_email_ca_path | default(omit, true) }}"
-      when: _email_to | length > 0
-      vars:
         # vm-inventory-report_2026-10-27.xlsx
         _email_xlsx_name: >-
           {{ (_report_xlsx_name | default(_report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true)))
              | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}_{{ now(utc=true, fmt='%Y-%m-%d') }}.xlsx
-        _email_web_line: "{{ ('\nFull report: ' ~ _email_web_url) if _email_web_url | default('') else '' }}"
-        _email_web_top: "{{ ('Full report: ' ~ _email_web_url ~ '\n\n') if _email_web_url | default('') else '' }}"
-      register: _email_sent
+      when: _email_any | bool
 
-    - name: Email | result
+    - name: Email | the report's tables as a workbook - attached, and on the website (report_email_xlsx, or the report's own _report_xlsx)
+      site_xlsx:
+        sheets: "{{ _report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets }}"
+        banner: "{{ _banner if _banner.on else {} }}"
+      register: _email_xlsx
+      when: >-
+        _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not _email_dry
+        and (_email_to | length > 0 or (_web_on | bool and report_web_files | default(true) | bool))
+
+    - name: Email | publish the report on the report website ({{ report_web_dest | default('') }})
+      site_report_web:
+        dest: "{{ report_web_dest | trim }}"
+        url: "{{ report_web_url | default('') | trim }}"
+        files: "{{ _web_files }}"
+        # report_web_copy: no page made here - the copy job makes it from what is kept
+        # _report_html: a page the report made itself (the ticket insights) - its logo in place of <!--site-report-logo-->
+        html: >-
+          {{ '' if _web_copy | bool else
+             (_report_html | replace('<!--site-report-logo-->', '<img class="logoimg" src="cid:site-report-logo" alt="">' if _web_logo_cid | bool else ''))
+             if _report_html | default('') | length > 0 else
+             lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
+        keep: "{{ _web_copy | bool }}"
+        max_kb: "{{ report_web_copy_max_kb | int }}"
+        footer: "{{ _email_footer | default('') }}"
+        images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _web_logo_cid | bool else [] }}"
+        logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
+        header_text: "{{ report_email_header_text | default('Site automation report') }}"
+        theme: "{{ _web_theme }}"
+        time_zone: "{{ report_time_zone | default('', true) | string | trim }}"
+        json: "{{ report_web_json | bool }}"
+        history: "{{ report_web_history | int }}"
+        delete_old: "{{ report_web_delete_old | bool }}"
+        tabs: "{{ report_web_tabs }}"
+        prune: "{{ report_web_index_prune | bool }}"
+        # a report's own lines to leave out of the index (the ticket insights: its team pages, listed there before 0.88.0)
+        drop: "{{ _web_index_drop | default([]) }}"
+        sub_pages: "{{ _web_sub_pages | default([]) }}"
+        data:
+          report: "{{ _web_report }}"
+          job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
+          template: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default(''))), true) }}"
+          template_id: "{{ awx_job_template_id | default(tower_job_template_id | default('')) }}"
+          when: "{{ _web_when }}"
+          runs: "{{ _web_runs | default([]) }}"
+          banner: "{{ _banner if _banner.on else {} }}"     # site_report_web puts it on the page and the index, as does the copy job
+        entry:
+          key: "{{ _web_files.latest or _web_files.page.split('/')[0] }}"
+          name: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('Report'))), true) }}"
+          title: "{{ _web_report.title | default('') }}"
+          status: "{{ _web_report.status | default('info') }}"
+          when: "{{ _web_when }}"
+          job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
+        ca_path: "{{ report_web_ca_path | default('') }}"
+        smb_auth: "{{ report_web_smb_auth | default('negotiate') }}"
+        smb_encrypt: "{{ report_web_smb_encrypt | default(false) | bool }}"
+        smb_port: "{{ report_web_smb_port | default(445) | int }}"
+        retries: "{{ report_web_retries | default(3) | int }}"
+        retry_delay: "{{ report_web_retry_delay | default(30) | int }}"
+        required: "{{ report_web_required | default(false) | bool }}"
+        windows_host: "{{ report_web_host | default('') | trim if _web_win | bool or _web_copy | bool else '' }}"
+        index_text: "{{ _web_win_read.index | default('', true) if _web_win | bool and not _email_dry else '' }}"
+        # 1.79.8: the files the report hands over (_report_files; else its attachments and the workbook), hosted beside the page
+        downloads: >-
+          {{ (_report_files if _report_files is defined else
+              _report_attachments | default([]) + ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else []))
+             if report_web_files | default(true) | bool else [] }}
+        files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
+        files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) }}"
+        files_total_max_mb: "{{ report_web_files_total_max_mb | default(500) | int }}"
+        files_keep_days: "{{ report_web_files_keep_days | default(30) | int }}"
+        index_gone: "{{ _web_win_read.gone | default([]) if _web_win | bool and not _email_dry else [] }}"
+      vars:
+        # the web copy: its own look's logo size and strip (report_web_theme), the logo put inside the page
+        _web_logo_cid: "{{ _email_logo_file | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"
+        _report: "{{ _web_report }}"
+        # the atlas and brief looks read this one: a role's caller's own _report would win over the line above (1.11.0)
+        _page_report: "{{ _web_report }}"
+        _page_logo_cid: "{{ 'site-report-logo' if _web_logo_cid | bool else '' }}"
+        _page_logo_size: "{{ _web_logo_size | default([0, 0]) }}"
+        _page_runs: "{{ _web_runs | default([]) }}"
+      register: _web_out
+      when: _web_on | bool
+
+    # report_web_required false: still not published after the retries - said here and at the top of the email; the job goes on
+    - name: Email | the report website - not published
+      ansible.builtin.set_fact:
+        _web_failed: "{{ _web_out.error | default('', true) or 'failed' }}"
+        _email_notice: "The report website copy failed: {{ (_web_out.error | default('', true) or 'failed') | truncate(400) }}; the email is the full report."
+      when: _web_on | bool and not _web_out.published | default(true)
+
+    - name: Email | the report website - not published (WARNING; report_web_required true fails the job instead)
       ansible.builtin.debug:
-        msg: "{{ _email_sent.msg }}"
+        msg: "WARNING - {{ _email_notice }}{{ (' Tried ' ~ (_web_out.retried | length + 1) ~ ' times.') if _web_out.retried | default([]) else '' }}"
+      when: _web_failed | length > 0
+
+    - name: Email | report_web_host - this run's pages written there
+      when: _web_win | bool and not _email_dry
+      block:
+        - name: Email | report_web_host - this run's pages
+          ansible.builtin.include_tasks: web_windows.yml
+          vars:
+            ansible_connection: "{{ report_web_host_connection }}"
+            _web_ps: "{{ _web_out.script }}"
+            _web_ps_what: this run's pages, in {{ report_web_dest | trim }}
+            _web_ps_config: {}
+            _web_ps_changed: true
+
+        - name: Email | report_web_host's answer, on the pages
+          ansible.builtin.set_fact:
+            _web_win_write: "{{ ((_web_ps_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('###SITE-JSON### {}'))[16:] | from_json).write | default({}) }}"
+      always:
+        - name: Email | report_web_host - the script made for it, deleted here
+          ansible.builtin.file:
+            path: "{{ _web_out.script }}"
+            state: absent
+
+    - name: Email | report_web_host wrote the pages
+      ansible.builtin.assert:
+        that: _web_win_write.ok | default(false)
+        fail_msg: >-
+          The report website: {{ _web_win_write.error | default('', true) or (_web_ps_out | site_web_win_error(_web_win_where)) }}
+          {{- (' (written before it stopped: ' ~ _web_win_write.written | join(', ') ~ ')') if _web_win_write.written | default([]) else '' }}
+        quiet: true
+      vars:
+        _web_win_where: "{{ report_web_host | trim }} ({{ report_web_host_connection }}, port {{ report_web_host_port }})"
+      when: _web_win | bool and not _email_dry
+
+    - name: Email | report_web_host - not written (open there all that time - the next run writes it), or older runs' pages not deleted (Modify on the folder)
+      ansible.builtin.debug:
+        msg: "{{ _web_win_write.busy | default([]) + _web_win_write.left | default([]) }}"
+      when: _web_win | bool and not _email_dry and (_web_win_write.busy | default([]) + _web_win_write.left | default([])) | length > 0
+
+    - name: Email | the report, kept for the job Report website - copy (job artifact site_report_page, report_web_copy)
+      ansible.builtin.set_stats:
+        data:
+          site_report_page: ["{{ _web_out.packed }}"]
+      when: _web_copy | bool and not _email_dry and _web_out.packed | default('') | length > 0
+
+    - name: Email | the report's address
+      ansible.builtin.debug:
+        msg: >-
+          {%- if _email_dry or (_web_copy | bool and not _web_out.packed | default('')) -%}
+          {{ _web_out.msg }}
+          {%- elif _web_out.url -%}
+          Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}{{ _web_old }}{{ _web_unlisted }}
+          {%- elif _web_win | bool -%}
+          Published: {{ _web_out.place }}{{ _web_old }}{{ _web_unlisted }}
+          {%- else -%}
+          {{ _web_out.msg }}{{ _web_unlisted }}
+          {%- endif -%}
+      vars:
+        _web_unlisted: >-
+          {{ (' (taken off the index: ' ~ (_web_out.unlisted | join(', ')) ~ ')')
+             if _web_out.unlisted | default([]) | length > 0 else '' }}
+        _web_old: >-
+          {{ (' (older runs deleted: ' ~ (_web_out.deleted | select('match', '.*[.]html$') | join(', ')) ~ ')')
+             if _web_out.deleted | default([]) | select('match', '.*[.]html$') | list | length > 0 else '' }}
+      when: _web_on | bool and _web_failed | length == 0
+
+    - name: Email | the report's files on the website (report_web_files) - hosted, not hosted, removed, the space they take
+      ansible.builtin.debug:
+        msg: >-
+          {{ (['Files on the page: ' ~ (_web_out.files | map(attribute='name') | join(', '))] if _web_out.files | default([]) else [])
+             + (_web_out.files_refused | default([]) | map(attribute='name') | zip(_web_out.files_refused | default([]) | map(attribute='why'))
+                | map('join', ': not on the website - ') | list)
+             + (_web_out.files_removed | default([]) | map('regex_replace', '^', 'Removed: ') | list)
+             + ([_web_out.files_line] if _web_out.files_line | default('') else []) }}
+      when: >-
+        _web_on | bool and (_web_out.files | default([]) | length > 0 or _web_out.files_refused | default([]) | length > 0
+        or _web_out.files_removed | default([]) | length > 0 or _web_out.files_line | default('') | length > 0)
+
+    - name: Email | the report's address, for the next step (job artifact site_report_url)
+      ansible.builtin.set_stats:
+        data:
+          site_report_url: "{{ _web_out.url }}"
+      when: >-
+        _web_on | bool and _web_out.url | default('') | length > 0 and not _email_dry and _web_failed | length == 0
+        and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
+
+    - name: Email | the email links its web copy
+      ansible.builtin.set_fact:
+        _email_web_url: >-
+          {{ _report_web_url if _report_web_url | default('') | length > 0 and not _email_dry else
+             _web_out.url if _web_on | bool and not _email_dry and _web_failed | length == 0
+             and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
+             else '' }}
       when: _email_to | length > 0
+
+    - name: Email | the web address checked once (http or https, a host, no user), else no link
+      ansible.builtin.set_fact:
+        _email_web_url: "{{ _email_web_url | default('') | safe_site_url }}"
+      when: _email_to | length > 0
+
+    - name: Email | the report, sent
+      when: _email_to | length > 0
+      block:
+        - name: Email | send the report to {{ _email_to | join(', ') }}
+          site_mail:
+            host: "{{ report_email_smtp_host | trim }}"
+            port: "{{ report_email_smtp_port | int }}"
+            security: "{{ report_email_security }}"
+            sender: "{{ report_email_from | trim }}"
+            to: "{{ _email_to }}"
+            cc: "{{ _email_cc }}"
+            subject: "{{ _email_subject }}"
+            # 1.76.2: "Full report: <url>" first (after a banner's line) and last
+            body: >-
+              {{ (_email_web_top ~ (_report | report_notice(_email_notice) | report_act_off(_act_off | bool) | report_act_old(_act_old)
+                  | report_text(_email_footer ~ _email_web_line, _email_runs | default([]))
+                  if _report is defined else
+                  ((_email_notice ~ '\n\n') if _email_notice else '') ~ _report_body ~ (('\n\nACT is off (site_act_enabled false).') if _act_off | bool else '')
+                  ~ (('\n\nACT old copies:\n' ~ (_act_old | join('\n'))) if _act_old | length > 0 else '')
+                  ~ '\n\n--\n' ~ _email_footer ~ _email_web_line)) | report_banner_text(_banner) }}
+            html: "{{ lookup('ansible.builtin.template', _email_template) | report_banner_html(_banner) if _email_html | bool else omit }}"
+            images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
+            # the workbook, and the files the job hands over (_report_attachments: [{path, filename}] - the outage AAR's Word documents)
+            attachments: "{{ ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else []) + _report_attachments | default([]) }}"
+            ca_path: "{{ report_email_ca_path | default(omit, true) }}"
+          when: _email_to | length > 0
+          vars:
+            _email_web_line: "{{ ('\nFull report: ' ~ _email_web_url) if _email_web_url | default('') else '' }}"
+            _email_web_top: "{{ ('Full report: ' ~ _email_web_url ~ '\n\n') if _email_web_url | default('') else '' }}"
+          register: _email_sent
+
+        - name: Email | result
+          ansible.builtin.debug:
+            msg: "{{ _email_sent.msg }}"
+          when: _email_to | length > 0
   always:
     - name: Email | the workbook made for it, deleted here
       ansible.builtin.file:

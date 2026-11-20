@@ -134,6 +134,7 @@ import time
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_banner import COLOURS, OTHER, colour_of, ink, inject as banner_inject
 from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
+from ansible.module_utils import site_report_files as rf
 from ansible.module_utils.site_time import local as local_time, zone as zone_of
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 from ansible.module_utils.six.moves.urllib.parse import quote
@@ -263,10 +264,11 @@ class Target(object):
             return True
 
     def write(self, rel, text, ctype):
-        body = text.encode('utf-8')
+        body = text if isinstance(text, bytes) else text.encode('utf-8')       # a hosted file's bytes (1.79.8), else text
         if not self.http:
             path = os.path.join(self.dest, *rel.split('/'))
             folder = os.path.dirname(path)
+            self._inside(path)
             try:
                 if os.path.getsize(path) == len(body):
                     with open(path, 'rb') as f:
@@ -277,6 +279,7 @@ class Target(object):
             try:
                 if not os.path.isdir(folder):
                     os.makedirs(folder)
+                    self._inside(path)
                 fd, tmp = tempfile.mkstemp(prefix='.', suffix='.tmp', dir=folder)
                 with os.fdopen(fd, 'wb') as f:
                     f.write(body)
@@ -312,6 +315,7 @@ class Target(object):
         """Delete a file (gone already is fine)."""
         if not self.http:
             path = os.path.join(self.dest, *rel.split('/'))
+            self._inside(path)
             try:
                 again(lambda: os.remove(path), lambda e: isinstance(e, OSError) and e.errno in IN_USE)
             except OSError as e:
@@ -325,6 +329,30 @@ class Target(object):
                 raise Fail(_http(e))
         except URLError as e:
             raise Fail(str(e.reason))
+
+    def rmdir(self, rel):
+        """A run's folder of files, once its files are deleted (1.79.8) - only one of ours (rf.ours), only when empty; left
+        as it is when it cannot be (not empty, no right): never a failure. Never over HTTP: a WebDAV DELETE of a folder
+        takes everything in it, and the empty folder takes no space."""
+        if not rf.ours(rel) or self.http:
+            return
+        try:
+            path = os.path.join(self.dest, *rel.split('/'))
+            self._inside(path)
+            os.rmdir(path)
+        except Exception:                               # noqa: BLE001
+            pass
+
+    def _inside(self, path):
+        """1.79.8: a file's folder really inside the report folder - no folder on the way a link out of it (a run's folder
+        of files made a symbolic link elsewhere): checked before anything is written or deleted there."""
+        root = os.path.realpath(self.dest)
+        d = os.path.dirname(path)
+        while not os.path.exists(d) and d != os.path.dirname(d):
+            d = os.path.dirname(d)                       # the deepest folder there already (the rest is made inside it)
+        real = os.path.realpath(d)
+        if real != root and not real.startswith(root + os.sep):
+            raise Fail('%s is not inside the report folder %s (a folder on the way links elsewhere) - not written' % (path, self.dest))
 
     def _folders(self, rel):
         parts = rel.split('/')[:-1]
@@ -443,7 +471,7 @@ class SmbTarget(object):
     def write(self, rel, text, ctype):
         path = self._path(rel)
         folder = path.rsplit('\\', 1)[0]
-        body = text.encode('utf-8')
+        body = text if isinstance(text, bytes) else text.encode('utf-8')
         try:
             if self.smb.stat(path, **self.kw).st_size == len(body):
                 with self.smb.open_file(path, mode='rb', **self.kw) as f:
@@ -456,7 +484,7 @@ class SmbTarget(object):
             if folder != self.root:
                 self.smb.makedirs(folder, exist_ok=True, **self.kw)
             with self.smb.open_file(tmp, mode='wb', **self.kw) as f:
-                f.write(text.encode('utf-8'))
+                f.write(body)
             # the old page is replaced whole (never half a page); one open just then, in a browser, a moment later
             again(lambda: self.smb.replace(tmp, path, **self.kw), _smb_in_use)
         except Exception as e:                          # noqa: BLE001
@@ -475,6 +503,14 @@ class SmbTarget(object):
                 raise Fail(self._why('deleting ' + path, e))
         except Exception as e:                          # noqa: BLE001
             raise Fail(self._why('deleting ' + path, e))
+
+    def rmdir(self, rel):
+        if not rf.ours(rel):
+            return
+        try:
+            self.smb.rmdir(self._path(rel), **self.kw)  # only when empty
+        except Exception:                               # noqa: BLE001
+            pass
 
     def close(self):
         try:
@@ -519,8 +555,9 @@ def passing(why):
 class Staged(object):
     """A folder on a Windows server (windows_host): the files kept here, for the script that writes them there."""
 
-    def __init__(self, index_json, index_text):
+    def __init__(self, index_json, index_text, gone=()):
         self.index_json, self.index_text, self.files, self.removed = index_json, index_text, [], []
+        self.dirs, self.edits, self.gone = [], [], set(gone or [])      # 1.79.8: folders, pages to strike, pages not there
 
     def read(self, rel):
         if rel != self.index_json or not self.index_text:
@@ -529,17 +566,26 @@ class Staged(object):
         return self.index_text if isinstance(self.index_text, str) else json.dumps(self.index_text)
 
     def exists(self, rel):
-        return True                                      # the server's folder is not read here: every line stays
+        # the server's folder is not read here: every line stays; but the pages of the ledger's folders the read script
+        # found missing there (1.79.8, site_report_web_read.ps1)
+        return rel not in self.gone
 
     def write(self, rel, text, ctype):
         # ASCII only: the script writes it in any PowerShell, in Constrained Language Mode too - every other
         # character as an HTML character reference (the JSON is ASCII already: \uXXXX)
-        if rel.endswith('.html'):
+        if isinstance(text, str) and rel.endswith('.html'):
             text = text.encode('ascii', 'xmlcharrefreplace').decode('ascii')
-        self.files = [f for f in self.files if f[0] != rel] + [(rel, text)]
+        self.files = [f for f in self.files if f[0] != rel] + [(rel, text)]      # a hosted file: its bytes (base64 there)
 
     def remove(self, rel):
         self.removed.append(rel)
+
+    def rmdir(self, rel):
+        if rf.ours(rel):
+            self.dirs.append(rel)
+
+    def strike(self, rel, folder, names, why):
+        self.edits.append((rel, rf.ps_strike(folder, names, why)))
 
 
 def _ps_quote(text):
@@ -582,6 +628,45 @@ function Save-File([string[]] $Parts, [string] $Text, [bool] $Soft = $false) {
         }
     }
 }
+function Save-Bytes([string[]] $Parts, [string[]] $Hex) {
+    # a hosted file (1.79.8): its bytes as hex in this script, a piece at a time (Constrained Language Mode has no
+    # [Convert]; operators and casts only); to a temporary name, then over the old one
+    $path = $dest
+    foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
+    $dir = Split-Path -Path $path -Parent
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { $null = New-Item -ItemType Directory -Path $dir -Force }
+    $tmp = Join-Path -Path $dir -ChildPath ('.' + (Split-Path -Path $path -Leaf) + '.tmp')
+    $null = New-Item -ItemType File -Path $tmp -Force
+    foreach ($h in $Hex) {
+        if (-not $h) { continue }
+        $b = [byte[]] -split ($h -replace '..', '0x$& ')
+        if ($PSVersionTable.PSVersion.Major -ge 6) { Add-Content -LiteralPath $tmp -Value $b -AsByteStream }
+        else { Add-Content -LiteralPath $tmp -Value $b -Encoding Byte }
+    }
+    Move-Item -LiteralPath $tmp -Destination $path -Force
+    $out.written += @($Parts -join '/')
+}
+function Remove-Dir([string[]] $Parts, [string] $Rel) {
+    # a run's folder of files, once its files are deleted - only when empty; never a failure
+    $path = $dest
+    foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
+    if (-not (Test-Path -LiteralPath $path -PathType Container)) { return }
+    try { if (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) { Remove-Item -LiteralPath $path -Force } }
+    catch { $out.left += @($Rel + ': ' + [string]$_.Exception.Message) }
+}
+function Edit-Page([string[]] $Parts, [string] $Rel, [string[]] $Find, [string[]] $Put) {
+    # a page whose files were removed: each link says why instead (1.79.8); a page not there is left
+    $path = $dest
+    foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    try {
+        $t = [string](Get-Content -LiteralPath $path -Raw -Encoding Ascii)
+        for ($i = 0; $i -lt $Find.Count; $i++) { $t = $t -creplace $Find[$i], $Put[$i] }
+        Set-Content -LiteralPath $path -Value $t -Encoding Ascii -NoNewline
+        $out.written += @($Rel)
+    }
+    catch { $out.left += @($Rel + ': ' + [string]$_.Exception.Message) }
+}
 function Remove-Old([string[]] $Parts, [string] $Rel) {
     $path = $dest
     foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
@@ -609,21 +694,49 @@ catch { $out.error = [string]$_.Exception.Message }
 """
 
 
-def windows_script(dest, files, remove=(), soft=()):
+HEX_PIECE = 256 * 1024                                   # a hosted file's bytes per piece in the Windows script
+
+
+def inside(rel):
+    """A name the module writes or deletes: a page, its JSON or the script (safe_name), or a hosted file - a safe name in
+    a run's folder of files (1.79.8)."""
+    if safe_name(rel, WRITTEN):
+        return True
+    parts = rel.split('/') if isinstance(rel, str) else []
+    return len(parts) >= 2 and rf.ours('/'.join(parts[:-1])) and rf.safe_file_name(parts[-1]) == parts[-1]
+
+
+def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=()):
     """The PowerShell script that writes files [(rel, text)] into dest, then deletes remove [rel]; a text used twice is
-    in it once. One of soft (latest, the index) open there all that time is left for the next run, not a failure."""
+    in it once. One of soft (latest, the index) open there all that time is left for the next run, not a failure.
+    1.79.8: a file given as bytes is written from base64; then the pages of edits [(rel, [(regex, put)])] are changed
+    (their removed files' links), and the run folders of dirs removed when empty."""
     body, seen = [], {}
-    for rel in [f[0] for f in files] + list(remove):     # only names inside dest go into the script (main checked them)
-        if not safe_name(rel, WRITTEN):
+    for rel in [f[0] for f in files] + list(remove) + [e[0] for e in edits]:   # only names inside dest (main checked them)
+        if not inside(rel):
             raise Fail('the file name %s is not a name inside report_web_dest - nothing was written' % rel)
+    for rel in dirs:
+        if not rf.ours(rel):
+            raise Fail('the folder %s is not a folder of files this module made - nothing was written' % rel)
     for rel, text in files:
+        if isinstance(text, bytes):                      # a hosted file: hex, in pieces of 256 KB
+            body.append('    Save-Bytes @(%s) @(%s)' % (', '.join(_ps_quote(p) for p in rel.split('/')),
+                                                       ', '.join("'%s'" % text[i:i + HEX_PIECE].hex()
+                                                                 for i in range(0, len(text), HEX_PIECE)) or "''"))
+            continue
         if text not in seen:
             seen[text] = '$t%d' % len(seen)
             body.append('    %s = %s' % (seen[text], _ps_text(text)))
         body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), seen[text],
                                                 ' $true' if rel in soft else ''))
+    for rel, subs in edits:
+        body.append('    Edit-Page @(%s) %s @(%s) @(%s)' % (', '.join(_ps_quote(p) for p in rel.split('/')), _ps_quote(rel),
+                                                         ', '.join(_ps_quote(a) for a, _ in subs) or "''",
+                                                         ', '.join(_ps_quote(b) for _, b in subs) or "''"))
     for rel in remove:
         body.append('    Remove-Old @(%s) %s' % (', '.join(_ps_quote(p) for p in rel.split('/')), _ps_quote(rel)))
+    for rel in dirs:
+        body.append('    Remove-Dir @(%s) %s' % (', '.join(_ps_quote(p) for p in rel.split('/')), _ps_quote(rel)))
     return PS_WRITER % {'dest': _ps_quote(dest), 'body': '\n'.join(body)}
 
 
@@ -856,16 +969,17 @@ INDEX_PAGE = """<!DOCTYPE html>
 <div class="head" style="display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 12px 8px 36px;%(th)s"><span style="width:120px;">Status</span><span style="flex:1 1 260px;">Report</span><span>Last run - open a line for its runs</span></div>
 %(rows)s
 </div>
-</div></div>
+%(note)s</div></div>
 </body>
 </html>
 """
 
 
-def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base=''):
-    """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs."""
+def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base='', files_line=''):
+    """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs; at the foot
+    the space the hosted files take and the limits (1.79.8, files_line - never the files themselves)."""
     if theme in WEB_LOOKS:                               # 1.72.0: the board, in the look's colours
-        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme)
+        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -930,7 +1044,8 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
         'style': INDEX_STYLE % ''.join(rules),
         'tabs': (''.join(t[0] for t in tabs) + '\n<div class="bar">' + ''.join(t[1] for t in tabs) + '</div>\n') if reports else '',
         'th': 'font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#45534e;',
-        'rows': '\n'.join(rows) or '<div style="padding:12px;color:#5b6b66;">No reports yet.</div>'}
+        'rows': '\n'.join(rows) or '<div style="padding:12px;color:#5b6b66;">No reports yet.</div>',
+        'note': ('<div class="files-used" style="color:#5b6b66;font-size:12px;margin:10px 8px 0;">%s</div>\n' % e(files_line)) if files_line else ''}
 
 
 # ---- the index page's parts in every look made for a browser
@@ -1255,7 +1370,7 @@ def _place_areas(areas, size):
     return wide
 
 
-def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas'):
+def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas', files_line=''):
     """1.72.0: the index page in the look made for a browser (atlas, brief, ops): At a glance (Runs ok, Not checked,
     Critical up since last run, Didn't run on time), the findings of the newest runs, Look at these first, a tab per
     area (radio buttons, no script), a card per area with each report's line (its state, what it said, the change since
@@ -1408,7 +1523,8 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
             '<div class="upd">Updated <b>' + e(local_time(generated, tz)) + '</b>' +
             ('<br>newest run: ' + e(str(newest.get('name') or newest.get('key') or '')) if newest else '') + '</div>' + ATLAS_SWITCH + '</div></div>\n'
             '<main>\n<section class="hero" aria-label="At a glance">' + tiles + '</section>\n' + totals + '\n' + lookfirst + '\n' + body +
-            '<div class="foot"><span>The sparkline: each report&#39;s critical and warning findings over its last 12 runs, newest right. A gap: not counted.</span>'
+            '<div class="foot"><span>The sparkline: each report&#39;s critical and warning findings over its last 12 runs, newest right. A gap: not counted.</span>' +
+            ('<span class="files-used">' + e(files_line) + '</span>' if files_line else '') +
             '<span>Light, dark and the area tabs work without the page&#39;s script.</span></div>\n</main>\n' + ATLAS_SCRIPT + '\n</body>\n</html>\n')
 
 
@@ -1508,8 +1624,91 @@ def index_banner(json_text, html_text):
     return _mark({'on': True, 'text': htmllib.unescape(m.group(2)), 'bg': m.group(1)}) if m else {}
 
 
-def keep(module, p, page, latest, index, urls, where, win):
-    """With keep: the report packed for the copy job, nothing written."""
+def _doc(text):
+    """index.json's text as a dict ({} when it is not there or cannot be read)."""
+    try:
+        d = json.loads(text) if text else {}
+    except ValueError:
+        d = {}
+    return d if isinstance(d, dict) else {}
+
+
+def files_step(target, doc, page, latest, entry, old, is_newest, reports, hosted, refused, p, now):
+    """1.79.8: the files of this run and the ledger's cleanup, before anything is written -> dict: hosted and refused (this
+    run's files - refused too when the website's total would pass even with the oldest removed), removals [(entry, why)],
+    ledger (index.json's files as it will be written: the others, minus the removals, plus this run's), stale (this
+    page's older files a run of the same page - the copy job again - no longer has)."""
+    total_mb, keep_days = max(1, p['files_total_max_mb']), max(0, p['files_keep_days'])
+    led = rf.ledger(doc)
+    folder = rf.folder_of(page)
+    line, dropped = history(old, entry, p['history'])
+    lines = [r for r in reports if r.get('key') != entry.get('key')] + [line]
+    latest_runs = set()
+    for r in lines:
+        rs = _runs(r)
+        if rs and r.get('latest'):
+            latest_runs.add(rs[0].get('page'))          # the run its latest page shows: its files never go for the total
+    gone_pages = set(x.get('page') for x in dropped) if p['delete_old'] and latest else set()
+    # the run the latest page shows until this run's latest page is written: publish_rest keeps its files when that page
+    # could not be written (open somewhere: it still links them). The Windows script reports that only afterwards, so
+    # there they stay this publish whatever the rules say, and the next publish decides
+    shown = _runs(old)[0].get('page') if old and old.get('latest') and _runs(old) else None
+    same = [e for e in led if e.get('page') == page]
+    hold = set([shown]) if shown and isinstance(target, Staged) else set()
+    rest = [e for e in led if e.get('page') != page]
+    removals = [(e, 'run') for e in rest if e.get('page') in gone_pages]
+    rest = [e for e in rest if e.get('page') not in gone_pages]
+    new_bytes = sum(f['size'] for f in hosted)
+    gone = (lambda pg: not pg or not target.exists(pg))
+    rem, kept, total, room = rf.plan(rest, latest_runs, new_bytes, now, keep_days, total_mb, gone, hold)
+    if hosted and not room:
+        refused = refused + [{'name': f['name'], 'why': 'the website\'s files are at report_web_files_total_max_mb (%d MB) with only '
+                              'latest pages\' files left - raise it' % total_mb} for f in hosted]
+        hosted = []
+        # nothing new hosted: only what the website holds already counts (never the others' files for files not hosted)
+        rem, kept, total, room = rf.plan(rest, latest_runs, 0, now, keep_days, total_mb, gone, hold)
+    removals += rem
+    names = set(f['name'].lower() for f in hosted)       # any case: one file on a Windows folder or share
+    stale = sorted(set(f.get('name') for e in same for f in e.get('files') or [] if str(f.get('name')).lower() not in names))
+    mine = {'dir': folder, 'page': page, 'latest': '', 'key': entry.get('key'), 'when': entry.get('when'),
+            'files': [{'name': f['name'], 'size': f['size']} for f in hosted]} if hosted else None
+    return dict(hosted=hosted, refused=refused, removals=removals, kept=kept, mine=mine, stale=stale, shown=shown,
+                line=rf.used_line(kept + ([mine] if mine else []), total_mb, keep_days))
+
+
+def files_ledger(kept, mine, key, latest):
+    """index.json's ledger as written: the entries kept and this run's; latest - the latest page this run wrote ('' when
+    it wrote none, or could not): this run's mark, and the same report's other runs' taken off."""
+    out = [dict(e, latest='') if latest and e.get('key') == key else e for e in kept]
+    return out + ([dict(mine, latest=latest)] if mine else [])
+
+
+def strike(target, rel, folder, names, words, not_deleted):
+    """1.79.8: a page whose files (of the run folder folder) were removed - each of their links says why instead (the
+    Windows script does it there)."""
+    if isinstance(target, Staged):
+        if names:
+            target.strike(rel, folder, names, words)
+        return
+    try:
+        text = target.read(rel)
+        if text and names:
+            new = rf.strike(text, folder, names, words)
+            if new != text:
+                target.write(rel, new, 'text/html; charset=utf-8')
+    except Fail as e:
+        not_deleted.append([rel, str(e)])
+
+
+def removal_lines(removals, keep_days, total_mb):
+    """What the cleanup removes, in words: ['a/b-files (3 files, 1.2 MB): removed after 30 days ...', ...]."""
+    return ['%s (%d file%s, %s): %s' % (e['dir'], len(e.get('files') or []), '' if len(e.get('files') or []) == 1 else 's',
+                                         rf.human(rf.size_of(e)), rf.why_words(why, keep_days, total_mb)) for e, why in removals]
+
+
+def keep(module, p, page, latest, index, urls, where, win, hosted=(), refused=()):
+    """With keep: the report packed for the copy job, nothing written. 1.79.8: its files packed with it as far as
+    report_web_copy_max_kb allows (the report's tables first); the others the page names as not on the website."""
     place = urls['url'] or _place(where, page, win)
     if module.check_mode:
         module.exit_json(changed=False, packed='', cut=[], msg='Dry run (Check): the report would be kept for the job Report website - copy, '
@@ -1517,7 +1716,17 @@ def keep(module, p, page, latest, index, urls, where, win):
     doc = {'files': {'page': page, 'latest': latest, 'index': index}, 'url': urls['url'], 'data': p['data'],
            'entry': dict(p['entry'], page=page, latest=latest), 'footer': p['footer'],
            'history': p['history'], 'delete_old': p['delete_old']}       # the report template's own, for the copy job
-    text, cut = pack(doc, max(16, p['max_kb']) * 1024)
+    limit = max(16, p['max_kb']) * 1024
+    text, cut = pack(dict(doc, downloads_refused=list(refused)), limit)
+    downloads, refused = [], list(refused)
+    for f in hosted:
+        more = downloads + [{'filename': f['name'], 'b64': base64.b64encode(rf.read_bytes(f)).decode('ascii')}]
+        t2, c2 = pack(dict(doc, downloads=more, downloads_refused=refused), limit) if text and not cut else ('', [1])
+        if t2 and not c2:
+            downloads = more
+            continue
+        refused.append({'name': f['name'], 'why': 'too big to keep for the job Report website - copy (report_web_copy_max_kb)'})
+    text, cut = pack(dict(doc, downloads=downloads, downloads_refused=refused), limit)
     if not text:
         module.exit_json(changed=False, packed='', cut=[list(c) for c in cut], msg=(
             'No web page for this run: its report is bigger than report_web_copy_max_kb (%d KB) even with its tables cut to %d '
@@ -1565,6 +1774,14 @@ def main():
             retries=dict(type='int', default=3),
             retry_delay=dict(type='int', default=30),
             required=dict(type='bool', default=True),
+            downloads=dict(type='list', elements='dict', default=[]),
+            downloads_refused=dict(type='list', elements='dict', default=[]),
+            kept_files=dict(type='list', elements='dict', default=[]),
+            files_max_mb=dict(type='int', default=20),
+            files_types=dict(type='list', elements='str', default=list(rf.TYPES)),
+            files_total_max_mb=dict(type='int', default=500),
+            files_keep_days=dict(type='int', default=30),
+            index_gone=dict(type='list', elements='str', default=[]),
         ),
         supports_check_mode=True,
     )
@@ -1593,26 +1810,31 @@ def main():
             module.fail_json(msg='The report website: %s' % why, **urls)
         module.warn('The report website: not published (%s) - the job goes on (report_web_required: false)' % why)
         module.exit_json(changed=False, published=False, error=why, retried=[], written=[], **urls)
+    # 1.79.8: the files the report hands over - only with a page of its own and an index (whose ledger cleans them up)
+    hosted, refused = rf.prepare(p['downloads'], p['files_max_mb'], p['files_types']) if page else ([], [])
+    if page and p['kept_files']:                         # the copy job: a kept report's files - their content only, never a path
+        more, why = rf.prepare(p['kept_files'], p['files_max_mb'], p['files_types'], packed_only=True)
+        hosted, refused = hosted + more, refused + why
+    refused += [dict(name=str(r.get('name') or '?'), why=str(r.get('why') or '')) for r in p['downloads_refused'] if isinstance(r, dict)]
+    if hosted and not index:
+        refused += [{'name': f['name'], 'why': 'the website hosts files only with an index (report_web_index), which keeps '
+                     'their list for the cleanup'} for f in hosted]
+        hosted = []
     if p['keep']:
-        keep(module, p, page, latest, index, urls, where, bs)
+        keep(module, p, page, latest, index, urls, where, bs, hosted, refused)
     # the index page's times in report_time_zone (1.49.0) - only as they are shown: when, the JSON and the order of the
     # runs stay UTC. A name not known here: UTC, said once
     tz, tz_note = zone_of(p['time_zone'])
     if tz_note and index:
         module.warn('The report website: %s' % tz_note)
-    if module.check_mode and not smb:
-        module.exit_json(changed=False, written=[], msg='Dry run (Check): the report would be published at %s'
-                         % (urls['url'] or _place(where, page or str((p['pages'][0] or {}).get('page') or ''), bs)), **urls)
+    dry_at = urls['url'] or _place(where, page or str(((p['pages'] or [{}])[0] or {}).get('page') or ''), bs)
     box = {}
 
     def publish():
         if win:
-            target = Staged(_json_name(index) if index else '', p['index_text'])
+            target = Staged(_json_name(index) if index else '', p['index_text'], p['index_gone'])
         elif smb:
             target = SmbTarget(dest, p['smb_auth'], p['smb_encrypt'], p['smb_port'], p['timeout'])
-            if module.check_mode:                        # logged in and the folder is there: that is all a dry run does
-                module.exit_json(changed=False, written=[], msg='Dry run (Check): logged in to %s, the folder %s is there; the report '
-                                 'would be published at %s' % (target.server, target.root, urls['url'] or _place(where, page, True)), **urls)
         else:
             target = Target(dest, p['ca_path'], p['timeout'])
         box['target'] = target
@@ -1642,9 +1864,22 @@ def main():
         old = next((r for r in reports if r.get('key') == entry.get('key')), None)
         is_newest = newer(old, entry)
         busy = []                                        # latest and the index, open somewhere all that time: next run
+        # 1.79.8: this run's files, and what the ledger's cleanup removes - decided before anything is written
+        folder = rf.folder_of(page) if page else ''
+        step = (files_step(target, _doc(known), page, latest, entry, old, is_newest, reports, hosted, refused, p,
+                           datetime.datetime.now(datetime.timezone.utc))
+                if index and page else dict(hosted=[], refused=refused, removals=[], kept=[], mine=None, stale=[], line=''))
+        gone_lines = removal_lines(step['removals'], max(0, p['files_keep_days']), max(1, p['files_total_max_mb']))
+        if module.check_mode:                            # a dry run: what it would host and remove; nothing written
+            module.exit_json(changed=False, written=[], files=[dict(name=f['name'], size=f['size']) for f in step['hosted']],
+                             files_refused=step['refused'], files_removed=gone_lines, files_line=step['line'],
+                             msg='Dry run (Check): %sthe report would be published at %s%s%s' % (
+                                 ('logged in to %s, the folder %s is there; ' % (target.server, target.root)) if smb else '', dry_at,
+                                 ('; its files: ' + ', '.join(f['name'] for f in step['hosted'])) if step['hosted'] else '',
+                                 ('; it would remove: ' + '; '.join(gone_lines)) if gone_lines else ''), **urls)
 
         def put(rel, text, ctype, soft=False):
-            if not safe_name(rel, WRITTEN):              # checked above; never written outside the folder
+            if not inside(rel):                          # checked above; never written outside the folder
                 raise Fail('%s is not a file name inside report_web_dest - not written' % rel)
             try:
                 target.write(rel, text, ctype)
@@ -1653,12 +1888,38 @@ def main():
                 if not soft:
                     raise
                 busy.append([rel, str(e)])
+        hosted_written = []
+        try:
+            for f in step['hosted']:                     # the files first: a page's links work from the moment it is there
+                put(folder + '/' + f['name'], rf.read_bytes(f), f['ctype'])
+                hosted_written.append(folder + '/' + f['name'])
+            return publish_rest(target, step, folder, written, busy, put, known, reports, old, entry, is_newest, html, js,
+                                js_name, js_tag, banner, gone_lines)
+        except Fail:
+            # a publish that stops part way: the files it put there taken away again (never left outside the ledger)
+            if not isinstance(target, Staged):
+                for rel in hosted_written:
+                    try:
+                        target.remove(rel)
+                    except Fail:
+                        pass
+                if hosted_written:
+                    target.rmdir(folder)
+            raise
+
+    def publish_rest(target, step, folder, written, busy, put, known, reports, old, entry, is_newest, html, js, js_name, js_tag,
+                     banner, gone_lines):
+        """publish()'s pages, index and cleanup, after this run's files (a Fail here: publish takes them away again)."""
+        web_look = p['theme'] in WEB_LOOKS
         for rel in (page, latest if is_newest else ''):
             if not rel:
                 continue
-            put(rel, html.replace(js_tag, script_tag(rel, js, js_name), 1) if js else html, 'text/html; charset=utf-8', rel == latest)
+            h = rf.put_files(html, step['hosted'], step['refused'], rel, folder, web_look)   # the latest page links the run's
+            put(rel, h.replace(js_tag, script_tag(rel, js, js_name), 1) if js else h, 'text/html; charset=utf-8', rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
+                if step['hosted']:
+                    doc['files'] = [dict(name=f['name'], size=f['size'], path=folder + '/' + f['name']) for f in step['hosted']]
                 put(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n',
                     'application/json; charset=utf-8', rel == latest)
         scripts = {}
@@ -1666,7 +1927,7 @@ def main():
             rel = str(sp.get('page') or '')
             if not rel:
                 continue
-            h = banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner)
+            h = rf.put_files(banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner), [], [], rel, '')
             sjs, sname = page_script(h), page_script_name(h)
             if sjs and not (js and sname == js_name):
                 scripts[sname] = sjs
@@ -1716,6 +1977,45 @@ def main():
                 reports = [r for r in _reports(now) if r.get('key') != entry.get('key') and str(r.get('key')) not in out
                            and not any(fnmatch.fnmatchcase(str(r.get('key') or ''), d) for d in p['drop'])]
             reports.append(line)
+            # 1.79.8: the hosted files the ledger lets go - deleted before the index is written, so one that could not be
+            # deleted (open, no right) stays in the ledger and is tried again by the next publish (the Windows script
+            # deletes them after, there)
+            left = []
+            # this run's mark as the latest page's only when that page was written (else it still shows the run before,
+            # whose files then stay)
+            shown = latest if latest and is_newest and (isinstance(target, Staged) or latest in written) else ''
+            if latest and is_newest and not shown:
+                left += [e for e, _ in step['removals'] if e.get('page') == step['shown']]
+            done = {}                                    # each run folder's files removed (or, Windows, to be)
+            for e, why in step['removals']:
+                if any(e is x for x in left):
+                    continue
+                rest_files, done[e['dir']] = [], []
+                for f in e.get('files') or []:
+                    rel = e['dir'] + '/' + f['name']
+                    if not inside(rel):
+                        continue
+                    try:
+                        target.remove(rel)
+                        done[e['dir']].append(f['name'])
+                    except Fail as x:
+                        not_deleted.append([rel, str(x)])
+                        rest_files.append(f)
+                target.rmdir(e['dir'])
+                if rest_files and not isinstance(target, Staged):
+                    left.append(dict(e, files=rest_files, latest=''))
+            for n in step['stale']:                      # this page's files an earlier write of it had
+                try:
+                    target.remove(folder + '/' + n)
+                except Fail as x:
+                    not_deleted.append([folder + '/' + n, str(x)])
+            kept_led = step['kept'] + left
+            if now and now != known:
+                # the ledger as another job left it meanwhile: its entries but the ones removed here and this page's
+                gone_dirs = set(e['dir'] for e, _ in step['removals']) - set(e['dir'] for e in left)
+                kept_led = [e for e in rf.ledger(_doc(now)) if e.get('dir') not in gone_dirs and e.get('dir') != folder]
+                kept_led += [e for e in left if e['dir'] not in set(x['dir'] for x in kept_led)]
+            led = files_ledger(kept_led, step['mine'], entry.get('key'), shown) if page else None
             reports.sort(key=lambda r: (RANK.get(r.get('status'), 2), str(r.get('name') or r.get('key') or '').lower()))
             generated = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
             logo = None
@@ -1733,11 +2033,14 @@ def main():
                         page_before = ''
                 floor = index_banner(last, page_before)
             top = top_banner(banner, reports, floor)
-            index_text = json.dumps({'generated': generated, 'reports': reports, 'banner': top}, indent=2, sort_keys=True,
-                                    default=str) + '\n'
+            out_doc = {'generated': generated, 'reports': reports, 'banner': top}
+            if led:                                      # 1.79.8: the hosted files' ledger (never shown on the index)
+                out_doc['files'] = led
+            files_line = rf.used_line(led, max(1, p['files_total_max_mb']), max(0, p['files_keep_days'])) if led else ''
+            index_text = json.dumps(out_doc, indent=2, sort_keys=True, default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz, base),
-                                     top),
+            put(index, banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz, base,
+                                                files_line), top),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])
@@ -1766,6 +2069,15 @@ def main():
                         deleted.append(rel)
                     except Fail as e:
                         not_deleted.append([rel, str(e)])
+            # 1.79.8: a page that stays says why in place of its removed files' links - the run's own page (age, the
+            # total) and the latest page that still showed that run (an orphan's too); only that run's marks
+            for e, why in step['removals']:
+                names = done.get(e['dir']) or []         # only what was removed: a file still there keeps its link
+                words = rf.why_words(why, max(0, p['files_keep_days']), max(1, p['files_total_max_mb']))
+                pages = ([e.get('page')] if why in ('age', 'cap') else []) + ([e['latest']] if e.get('latest') else [])
+                for pg in pages:
+                    if names and pg and safe_name(pg) and not (pg == latest and shown):   # a latest page just written shows this run
+                        strike(target, pg, e['dir'], names, words, not_deleted)
             for rel, why in not_deleted:
                 module.warn('The report website: an older run\'s %s could not be deleted (%s) - give the account Modify on '
                             'the folder, or report_web_delete_old: false' % (rel, why))
@@ -1773,7 +2085,8 @@ def main():
             module.warn('The report website: %s was not written - it stayed open somewhere (a browser, an editor) for the '
                         '10 seconds the job tried; the next run writes it (%s)' % (rel, why))
         return dict(target=target, written=written, index_text=index_text, is_newest=is_newest, gone=gone,
-                    deleted=deleted, not_deleted=not_deleted, busy=busy, js_name=js_name)
+                    deleted=deleted, not_deleted=not_deleted, busy=busy, js_name=js_name, step=step, gone_lines=gone_lines,
+                    folder=folder)
 
     # a failure that passes (Kerberos "Message stream modified", a KDC or the server not reached, a session gone) is
     # tried again from the start: a new login, a new SMB session, a fresh Kerberos ticket (report_web_retries)
@@ -1787,6 +2100,9 @@ def main():
             break
         except Fail as e:
             why = passing(e)
+            if module.check_mode:                        # a dry run that could not look (the folder, the login): said, never a failure
+                module.exit_json(changed=False, written=[], msg='Dry run (Check): the report would be published at %s (not looked at: %s)'
+                                 % (dry_at, e), **urls)
             if n == tries or not why or win:
                 if p['required']:
                     module.fail_json(msg='The report website: %s%s' % (e, (' (tried %d times: %s)' % (n, '; '.join(retried + [why or str(e)])))
@@ -1810,20 +2126,28 @@ def main():
         time.sleep(max(0, p['retry_delay']))
     target, written, index_text, is_newest = done['target'], done['written'], done['index_text'], done['is_newest']
     gone, deleted, not_deleted, busy, js_name = done['gone'], done['deleted'], done['not_deleted'], done['busy'], done['js_name']
+    step, folder = done['step'], done['folder']
+    # 1.79.8: this run's files (their addresses with report_web_url), the ones not hosted and why, what the cleanup removed
+    fout = dict(files=[dict(name=f['name'], size=f['size'], url=_join(base, folder + '/' + f['name'])) for f in step['hosted']],
+                files_refused=step['refused'], files_removed=done['gone_lines'], files_line=step['line'])
+    for r in step['refused']:
+        module.warn('The report website: the file %s is not on it - %s' % (r['name'], r['why']))
     if win:
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
-            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, js_name]).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
+            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, js_name],
+                                   target.dirs, target.edits).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
         module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
                          unlisted=[r.get('key') for r in gone],
                          newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, published=True, retried=retried,
-                         msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
+                         msg='Made, for %s: %s' % (win, ', '.join(written)), **dict(fout, **urls))
     module.exit_json(changed=True, written=written, place=_place(where, page, bs), index_text=index_text, newest=is_newest,
                      unlisted=[r.get('key') for r in gone],
                      deleted=deleted, not_deleted=not_deleted, not_written=busy, published=True, retried=retried,
                      msg='Published%s: %s%s' % (' (after %d tries)' % (len(retried) + 1) if retried else '',
                          urls['url'] or _place(where, page, bs),
-                         ' (older runs deleted: %s)' % ', '.join(d for d in deleted if d.endswith('.html')) if deleted else ''), **urls)
+                         ' (older runs deleted: %s)' % ', '.join(d for d in deleted if d.endswith('.html')) if deleted else ''),
+                     **dict(fout, **urls))
 
 
 if __name__ == '__main__':

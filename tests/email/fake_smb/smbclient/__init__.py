@@ -60,3 +60,7 @@ def replace(src, dst, **kw):
 
 def remove(p, **kw):
     os.remove(local(p))
+
+
+def rmdir(p, **kw):
+    os.rmdir(local(p))                                  # only an empty one, as SMB
