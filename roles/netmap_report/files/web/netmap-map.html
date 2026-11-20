@@ -1,0 +1,31 @@
+<div class="nm" id="nm" data-view="world">
+<div class="nm-bar">
+<span class="nm-zoom nm-views" role="group" aria-label="View"><button type="button" class="nm-b nm-v" data-v="world" aria-pressed="true">World</button><button type="button" class="nm-b nm-v" data-v="sites" aria-pressed="false">Sites</button></span>
+<span class="nm-zoom ng-proj nm-w" role="group" aria-label="Projection"><button type="button" class="nm-b ng-p" data-p="globe" aria-pressed="true">Globe</button><button type="button" class="nm-b ng-p" data-p="flat" aria-pressed="false">Flat</button></span>
+<label class="nm-find"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><input type="search" class="nm-q" list="nm-names" placeholder="Find a node or IP" aria-label="Find a node and center the map on it"></label>
+<datalist id="nm-names"></datalist>
+<button type="button" class="nm-b nm-down nm-s" aria-pressed="false">Only down</button>
+<button type="button" class="nm-b nm-chg nm-s" aria-pressed="false">Changes</button>
+<label class="nm-l">Site <select class="nm-site"><option value="">All</option></select></label>
+<label class="nm-l nm-s">Vendor <select class="nm-vendor"><option value="">All</option></select></label>
+<span class="nm-sp"></span>
+<button type="button" class="nm-b nm-exp nm-s">Expand all</button>
+<span class="nm-zoom" role="group" aria-label="Zoom"><button type="button" class="nm-b nm-zi" aria-label="Zoom in">+</button><button type="button" class="nm-b nm-zo" aria-label="Zoom out">−</button><button type="button" class="nm-b nm-fit">Fit</button></span>
+</div>
+<div class="ng-stage nm-w">
+<canvas class="ng-cv" tabindex="0" role="img" aria-label="World map of the sites and their WAN links. Arrow keys turn it, + and − zoom, the Site list flies to a site. The same data is in the WAN links and Sites tables."></canvas>
+<div class="nm-tip ng-tip" hidden></div>
+<div class="ng-tray" hidden></div>
+<div class="nm-leg ng-leg"><span class="ng-lt">Utilization</span><span><i class="ng-lb b0"></i>under 25%</span><span><i class="ng-lb b1"></i>25-50%</span><span><i class="ng-lb b2"></i>50-75%</span><span><i class="ng-lb b3"></i>75% and over</span><span><i class="ng-lb warn"></i>Warning</span><span><i class="ng-lb down"></i>Down</span><span class="ng-lt">Width = bandwidth · dashes = traffic, both ways</span></div>
+</div>
+<div class="nm-stage nm-s">
+<svg class="nm-svg" role="img" aria-label="Network map: sites, nodes and links. Use the search, the filters and the tables for the same data in words."><g class="nm-world"><g class="nm-links"></g><g class="nm-sites"></g><g class="nm-nodes"></g></g></svg>
+<div class="nm-tip" hidden></div>
+<aside class="nm-panel" hidden aria-live="polite"><button type="button" class="nm-x" aria-label="Close">×</button><div class="nm-pb"></div></aside>
+<div class="nm-leg"><span><i class="lg st-up"></i>✓ Up</span><span><i class="lg st-warning"></i>! Warning</span><span><i class="lg st-down"></i>× Down</span><span><i class="lg st-unknown"></i>? Unknown</span><span><i class="lg lg-new"></i>New since the last run</span><span><i class="lg lg-gone"></i>Missing</span></div>
+<div class="nm-perf" aria-hidden="true"></div>
+</div>
+<p class="nm-hint nm-w">Drag to turn the globe, wheel or +/− to zoom, hover a link for its traffic, click a site to fly in and open it. Read from SolarWinds only: nothing is changed there.</p>
+<p class="nm-hint ng-perf nm-w" aria-hidden="true"></p>
+<p class="nm-hint nm-s">Drag to move, wheel or +/− to zoom, click a site to open it, a node for its details and neighbours. World goes back to the map of the world. Read from SolarWinds only: nothing is changed there.</p>
+</div>

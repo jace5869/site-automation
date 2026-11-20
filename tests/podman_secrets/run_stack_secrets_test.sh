@@ -92,6 +92,23 @@ FAKE_PODMAN_FAIL="Error: creating secret: disk quota exceeded" run site_portal_s
 check "portal, podman refuses: the job stops with podman's reason, never the token or its hash" \
     '[ $rc != 0 ] && grep -q "podman secret create site-portal-aap-token failed (rc 125): Error: creating secret: disk quota exceeded" "$work/out.txt" && ! grep -qE "tok-four-0004|$(sha tok-four-0004)" "$work/out.txt"'
 
+# ---- 1.85.0: the portal's second secret, SolarWinds' login (the live Network map): {user, password} as JSON
+W() { printf '{"_portal_podman": {"stdout": "%s"}, "portal_aap_token": "tok-three-0003", "_portal_netmap": %s, "portal_solarwinds_username": "svc_swis_ro", "portal_solarwinds_password": "%s"}' "$1" "$2" "$3"; }
+login() { printf '{"user": "svc_swis_ro", "password": "%s"}' "$1"; }
+clean
+run site_portal_stack 4.9.4-rhel "$(W 4.9.4-rhel true 'sw-pw&0001')"
+check "portal, the Network map on: SolarWinds' login made (site-portal-swis, its hash on the label), never in the output" \
+    '[ $rc = 0 ] && made site-portal-swis "$(login "sw-pw&0001")" && ! grep -q "sw-pw" "$work/out.txt"'
+run site_portal_stack 4.9.4-rhel "$(W 4.9.4-rhel true 'sw-pw&0001')"
+check "portal, the same login: nothing removed or made" '[ $rc = 0 ] && ! grep -qE "secret (rm|create) .*site-portal-swis|site-portal-swis -$" "$work/calls" && ! grep -q "create.*site-portal-swis" "$work/calls"'
+run site_portal_stack 4.4.1 "$(W 4.4.1 true 'sw-pw-0002')"
+check "portal, podman 4.4, a new SolarWinds password: removed, then made" \
+    '[ $rc = 0 ] && grep -q "secret rm site-portal-swis" "$work/calls" && made site-portal-swis "$(login sw-pw-0002)"'
+run site_portal_stack 4.9.4-rhel "$(W 4.9.4-rhel false '')"
+check "portal, the Network map off: SolarWinds' login removed" '[ $rc = 0 ] && grep -q "secret rm site-portal-swis" "$work/calls" && [ ! -f "$work/secrets/site-portal-swis" ]'
+run site_portal_stack 4.9.4-rhel "$(W 4.9.4-rhel false '')"
+check "portal, off and no secret: nothing done" '[ $rc = 0 ] && ! grep -qE "secret (rm|create).*site-portal-swis" "$work/calls"'
+
 # ---- STIG Manager: two secrets; a value that differs is replaced only with stigman_replace_secrets
 S() { printf '{"_stigman_podman": {"stdout": "%s"}, "stigman_mysql_root_password": "%s", "stigman_db_password": "%s", "stigman_replace_secrets": %s}' "$1" "$2" "$3" "$4"; }
 clean

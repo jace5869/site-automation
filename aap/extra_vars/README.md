@@ -81,6 +81,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Network config load | `playbooks/net_config_load.yml` | [net_config_load.yml](net_config_load.yml) |
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | [net_cert_renew.yml](net_cert_renew.yml) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | [net_cert_report.yml](net_cert_report.yml) |
+| Network map | `playbooks/netmap_report.yml` | [netmap_report.yml](netmap_report.yml) |
 | Network performance report | `playbooks/net_perf_report.yml` | [net_perf_report.yml](net_perf_report.yml) |
 | Outage AAR - Word document | `playbooks/incident_aar.yml` | [incident_aar.yml](incident_aar.yml) |
 | Patch hosts | `playbooks/patch_hosts.yml` | [patch_hosts.yml](patch_hosts.yml) |

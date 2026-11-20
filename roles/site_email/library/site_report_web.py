@@ -97,6 +97,7 @@ options:
   downloads: {description: "1.79.8 - the files the report hands over, [{path, filename}], hosted in <page>-files/ (report_web_files).", type: list, elements: dict, default: []}
   kept_files: {description: "1.79.8 - the copy job's: a kept report's files, [{filename, b64}] - content only, never a path.", type: list, elements: dict, default: []}
   downloads_refused: {description: "1.79.8 - files a kept report could not keep, [{name, why}] (named on the page).", type: list, elements: dict, default: []}
+  page_extra: {description: "1.85.0 - with keep, the report's own piece of its page ({kind, data, motion} - the network map's data, no markup) kept with the report for the copy job, which makes the piece from its own repository (report_page_piece); left out, and said, when it does not fit max_kb.", type: dict, default: {}}
   files_max_mb: {description: "1.79.8 - each file, and one run's files together (report_web_files_max_mb).", type: int, default: 20}
   files_types: {description: "1.79.8 - the types hosted (report_web_files_types).", type: list, elements: str, default: [.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]}
   files_total_max_mb: {description: "1.79.8 - every report's files together (report_web_files_total_max_mb).", type: int, default: 500}
@@ -1985,6 +1986,12 @@ def keep(module, p, page, latest, index, urls, where, win, hosted=(), refused=()
            'entry': dict(p['entry'], page=page, latest=latest), 'footer': p['footer'],
            'history': p['history'], 'delete_old': p['delete_old']}       # the report template's own, for the copy job
     limit = max(16, p['max_kb']) * 1024
+    extra_note = ''
+    if p['page_extra']:                          # 1.85.0: the report's own piece of its page (the network map), for the copy job
+        doc['page_extra'] = p['page_extra']
+        if not pack(dict(doc, downloads_refused=list(refused)), limit)[0]:
+            doc.pop('page_extra')                # too big even with the tables cut: the page without it, said
+            extra_note = '; its map left out (bigger than report_web_copy_max_kb)'
     text, cut = pack(dict(doc, downloads_refused=list(refused)), limit)
     downloads, refused = [], list(refused)
     for f in hosted:
@@ -2000,8 +2007,8 @@ def keep(module, p, page, latest, index, urls, where, win, hosted=(), refused=()
             'No web page for this run: its report is bigger than report_web_copy_max_kb (%d KB) even with its tables cut to %d '
             'rows - raise report_web_copy_max_kb, or let this template write its pages itself (report_web_copy: false)'
             % (p['max_kb'], KEEP_AT_LEAST)), **urls)
-    note = 'kept for the job Report website - copy, which writes it there (%d KB%s)' % (
-        (len(text) + 1023) // 1024, '; cut to fit: ' + ', '.join('%s %d of %d' % c for c in cut) if cut else '')
+    note = 'kept for the job Report website - copy, which writes it there (%d KB%s%s)' % (
+        (len(text) + 1023) // 1024, '; cut to fit: ' + ', '.join('%s %d of %d' % c for c in cut) if cut else '', extra_note)
     module.exit_json(changed=False, packed=text, cut=[list(c) for c in cut], place=place, note=note,
                      msg='%s%s: %s' % (note[0].upper(), note[1:], place), **urls)
 
@@ -2048,6 +2055,7 @@ def main():
             downloads=dict(type='list', elements='dict', default=[]),
             downloads_refused=dict(type='list', elements='dict', default=[]),
             kept_files=dict(type='list', elements='dict', default=[]),
+            page_extra=dict(type='dict', default={}),
             files_max_mb=dict(type='int', default=20),
             files_types=dict(type='list', elements='str', default=list(rf.TYPES)),
             files_total_max_mb=dict(type='int', default=500),

@@ -934,6 +934,12 @@ ONTAP credential, one template. Follow [NETAPP.md](NETAPP.md).
 It reads UCS Manager's XML API, not your hosts: a read-only UCS Manager account, a Cisco UCS Manager
 credential, one template. Follow [UCS.md](UCS.md).
 
+### Network map
+
+It reads SolarWinds Orion's SWIS API, not your hosts: a read-only Orion account, a "SolarWinds (read-only)"
+credential, one template. Follow [NETWORK_MAP.md](NETWORK_MAP.md). The same credential on the site portal's
+deploy turns on its live Network map page.
+
 ### Active Directory - account lockout
 
 For the service desk: is an account locked out, and which computer is locking it out (the DCs'

@@ -1,0 +1,34 @@
+# Credential type: "SolarWinds (read-only)"
+# A read-only SolarWinds Orion account for the network map (playbooks/netmap_report.yml) - and, given to the site portal's
+# deploy (playbooks/site_portal_deploy.yml, portal_netmap), for the portal's live Network map page. An Orion web console
+# account (Settings > Manage Accounts) with no admin and no node management rights is enough: the map only sends SWQL
+# queries to SWIS (docs/NETWORK_MAP.md, "The read-only account"). A Windows account: DOMAIN\user.
+inputs:
+  fields:
+    - id: url
+      type: string
+      label: SolarWinds address
+      help_text: "e.g. orion.yoursite.mil - https:// and the SWIS port 17774 are added (an Orion older than 2023.1: https://orion.yoursite.mil:17778)"
+    - id: username
+      type: string
+      label: SolarWinds user name
+    - id: password
+      type: string
+      label: SolarWinds password
+      secret: true
+    - id: verify
+      type: boolean
+      label: Check SolarWinds' certificate
+      default: true
+    - id: ca_path
+      type: string
+      label: CA file (PEM) to check it with
+      help_text: "a path where the job runs, e.g. a file in the project (playbooks/files/ca/orion-ca.pem as /runner/project/playbooks/files/ca/orion-ca.pem); empty = the execution environment's own trust"
+  required: [username, password]
+injectors:
+  env:
+    SOLARWINDS_URL: "{{ url }}"
+    SOLARWINDS_USERNAME: "{{ username }}"
+    SOLARWINDS_PASSWORD: "{{ password }}"
+    SOLARWINDS_VERIFY: "{{ verify }}"
+    SOLARWINDS_CA_PATH: "{{ ca_path }}"

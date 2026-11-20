@@ -33,6 +33,10 @@ Environment=SSL_CERT_FILE=/etc/site-portal/trust.pem
 {% endif %}
 # the AAP token comes from a podman secret: not in this file, not in `podman inspect`
 Secret=site-portal-aap-token,type=env,target=PORTAL_AAP_TOKEN
+{% if _portal_has_swis | default(false) | bool %}
+# 1.85.0: SolarWinds' read-only login for the live Network map, a podman secret too
+Secret=site-portal-swis,type=env,target=PORTAL_SWIS_LOGIN
+{% endif %}
 Exec=/bin/sh /app/start.sh
 
 [Service]

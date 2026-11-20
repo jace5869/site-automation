@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.85.0 — 2026-11-20
+
+**To set up: a "SolarWinds (read-only)" credential type and credential, and the job template *Network map*
+(docs/NETWORK_MAP.md, "Set it up").** All new settings have working defaults:
+- the report: `netmap_*`, and `report_motion` (auto);
+- the portal: `portal_netmap` (auto: on with the credential), `netmap_live_seconds` (60), `portal_solarwinds_ca_file`.
+
+For the live page, add the same credential to *Site portal - deploy* and run it once.
+
+**Network map** (`playbooks/netmap_report.yml`, roles/netmap_report): SolarWinds Orion as a map. It only reads.
+
+- **The reader** (`plugins/module_utils/site_swis.py`, one for the job and the portal):
+  - SWIS REST on port 17774, the Query endpoint only, one SWQL `SELECT` at a time;
+  - every column named: Orion.Nodes' SNMP communities and Orion.Engines' license key are never asked for;
+  - `Orion.Nodes` with the custom properties named in the settings and the Worldwide Map's point;
+  - NPM's topology from `Orion.TopologyConnections`, else `Orion.TopologyData`;
+  - `Orion.NPM.Interfaces` for the interfaces on links: speed, % in and out, status;
+  - the version from `Orion.InstalledModule` and `Orion.Engines`;
+  - paged (`WITH ROWS`), interfaces in chunks: 15 queries for 1,500 nodes.
+  - A custom property Orion does not have is said and the rest still read. A name that is not one is refused before it is sent.
+- **Sites:**
+  - `netmap_site_by`: Location up to the first comma (`netmap_site_split`), or a custom property.
+  - Placed by SolarWinds' Worldwide Map, else two custom properties (`netmap_lat_property` / `netmap_lon_property`), else `netmap_sites` in all.yml.
+  - A site with none: an *Unplaced* tray on the globe, listed in the report.
+- **The website page:**
+  - the map: a globe or a flat map. *Globe / Flat* in the map's bar; the viewer's choice kept in the browser, the site's in `netmap_view`; the switch unrolls the globe.
+  - WAN arcs: width = bandwidth, colour = how busy, dashes both ways at their traffic's speed; a down link red and still.
+  - Click a site to fly in to its drawing: core, firewalls and distribution, access around them. *Only down*, *Changes*, *Site*, *Vendor*, search.
+  - Then the tables: Down or warning, WAN links, What changed since the last run, Sites, Unplaced, Not all read.
+- **The email** is plain (the counts and the tables). The workbook has Nodes, Links, WAN links, Sites and Changes.
+- **What changed:** each run keeps a compact copy (job artifact `netmap_snapshot`, about 140 KB for 1,500 nodes; `netmap_snapshot_links: false` keeps the links' ids only, about 90 KB - keep *Network map* out of workflows, whose steps get the artifacts as extra variables). The next reads it from AAP with the report history's credential and lists new and missing nodes and links and status changes. Without it: *not compared*, said.
+- **Live on the site portal:**
+  - a *Network map* page behind the card login;
+  - the server reads SolarWinds every `netmap_live_seconds` while someone has it open: one shared read, never one per viewer. `/portal/api/netmap` has an ETag.
+  - A node that goes down pulses red, a link that drops stops and turns red, *updated N s ago*, a toast on each change. A failed read keeps the last map and says why.
+  - The login is a podman secret on the server (`site-portal-swis`), as the AAP token.
+- **The report website, for every report that wants it:** `_report_page_extra` (site_email) puts a report's own piece into its page in the site's look, with its script as a file of its own (here `site-netmap.js`, which carries `site-report.js` too). The copy job (`report_web_copy`) writes it as well.
+- **Safe by construction** (the review's findings):
+  - HTTPS only, never a login in the address (refused before the module runs, without repeating it);
+  - nothing SolarWinds says in an error is repeated (only the HTTP status and our words);
+  - answers capped at 64 MB;
+  - a run that cannot read SolarWinds keeps nothing and does not write the website (its latest page keeps the last good map; the email says why), and the live map keeps its last good one, marked stale - also when only the links could not be read whole;
+  - a malformed answer is said in our own words;
+  - a topology not read whole (or nodes cut by `netmap_max_nodes`) calls nothing missing;
+  - links known by their interfaces' ids, so a renamed interface is the same link;
+  - the copy job keeps the map's data only and builds its markup and script from its own repository (no symbolic links out of `files/web`), every `<` escaped in the data.
+- No inline script or style, no HTML from strings (Trusted Types pass), offline (Natural Earth 1:110m land, public domain, bundled; `tools/netmap_land.py`). `report_motion` and `portal_motion` are respected.
+- Tests:
+  - `tests/test_netmap.py`: the reader against a fake SWIS of 1,500 nodes, the model, the changes, the report, the page piece, the portal's live reader and pages, the files.
+  - `tests/netmap/run_netmap_test.sh`, on both ansible-core versions: the job end to end, the email, the website, the copy job, HTTPS with and without its CA, a wrong password, other Orions.
+
 ## 1.84.0 — 2026-11-20
 
 **To set up: nothing.** The profile is on by default and only acts on a host that runs the NetApp Console agent's containers (`ds_*`). The Health check template's description says so (run **AAP - describe templates** to update it).

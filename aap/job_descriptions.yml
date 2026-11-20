@@ -8,8 +8,8 @@
 ---
 templates:
   "Health check":
-    does: "Runs read-only Linux checks (disk, services, time, SELinux, accounts, containers ...) and fails hosts with findings, so a workflow can ticket them; on a host that runs the NetApp Console agent (ds_* containers) it adds the Console's own checks."
-    targets: "Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential); the Console's HTTPS address is asked from the host itself; ACT model key only with use_act"
+    does: "Runs read-only Linux checks (disk, services, time, SELinux, containers ...), fails hosts with findings; adds NetApp Console checks on ds_* hosts"
+    targets: "Linux hosts of target (default all) in the Limit, over SSH with sudo (Machine credential); ACT model key only with use_act"
     produces: "Findings per host in the job output, the report email and website page when set, artifacts site_health/site_findings for next steps"
     supports: "Run constraint=Read-only on target hosts (disk-history, syslog, old act relinked; use_act self-heal may fix); writes report email/website"
   "Troubleshoot":
@@ -667,6 +667,11 @@ templates:
     targets: "Cisco UCS Manager domains (ucs_domains) via the XML API over HTTPS (Cisco UCS Manager credential); the AAP side, no Limit."
     produces: "The inventory emailed with an Excel workbook (report_email_to) and on the report website (report_web_dest) when set."
     supports: "Run constraint=Reads only (no hosts); UCS Manager is only read; writes the report email and the report website when set"
+  "Network map":
+    does: "Maps the sites, WAN links, nodes and links SolarWinds knows, and what is down or changed since the last run, as a globe and site views."
+    targets: "SolarWinds Orion via its SWIS REST API (SolarWinds (read-only) credential); the AAP side, no Limit; AAP for the last run's copy."
+    produces: "A plain summary email with a workbook (report_email_to), the map on the report website (report_web_dest), artifacts netmap."
+    supports: "Run constraint=Reads only (no hosts); SolarWinds is only read (SWQL queries); writes the report email and the report website when set"
   "Tenable.sc - scan":
     does: "Launches Tenable.sc (ACAS) scans of an inventory group, one scan per zone, so each host is scanned from its own datacenter's scanner."
     targets: "Tenable.sc via its API (Tenable.sc API credential), AAP side; hosts come from tenable_scan_target, not the Limit; hosts are only scanned."

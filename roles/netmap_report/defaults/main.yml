@@ -1,0 +1,55 @@
+---
+# Network map (playbooks/netmap_report.yml). Read-only: SWQL queries to SolarWinds Orion's SWIS REST API (port 17774)
+# with the account of a "SolarWinds (read-only)" credential - an Orion web console account with no admin and no node
+# management rights is enough (docs/NETWORK_MAP.md). The same settings drive the site portal's live Network map page
+# (roles/site_portal_stack: portal_netmap and netmap_live_seconds).
+
+# SolarWinds' address, e.g. orion.yoursite.mil (https:// and the SWIS port 17774 are added; an Orion older than 2023.1:
+# https://orion.yoursite.mil:17778). The credential's SolarWinds URL, when set, wins.
+netmap_solarwinds_url: ""
+# Check SolarWinds' HTTPS certificate. Orion's own is self-signed: put the CA that signed yours in netmap_ca_path (a file in
+# the project, e.g. "{{ playbook_dir }}/files/ca/orion-ca.pem"), or set false. The credential's own settings win.
+netmap_validate_certs: true
+netmap_ca_path: ""                       # the CA file (PEM) SolarWinds' certificate is checked with; "" = the execution environment's own trust
+netmap_timeout: 60                       # seconds for one request (no answer: asked once more)
+
+# ---- Sites: which nodes make a site, and where it is on the map ----------------------------------------------------------
+# A node's site: its Location (the default), or the name of a node custom property (e.g. Site). With Location, the site is
+# the text before the first netmap_site_split ("Site A, building 1, IDF 2" -> Site A); "" = the whole value. A node with
+# none: on the site "No site".
+netmap_site_by: Location
+netmap_site_split: ","                           # the site = the Location text before this ("" = the whole value)
+# Where a site is, in this order: 1. SolarWinds' Worldwide Map (Orion.WorldMap.Point: its nodes' points, their middle);
+# 2. two node custom properties with the latitude and longitude (their names here, e.g. Latitude / Longitude);
+# 3. netmap_sites below (the site's name as the map shows it, any case). A site with none of them waits in the map's
+# Unplaced tray (the Sites view and the tables have it as any other) and the report lists it.
+netmap_lat_property: ""
+netmap_lon_property: ""                         # the node custom property holding the site's longitude ("" = not used)
+netmap_sites: {}                         # e.g. {"Site A": {lat: 39.4, lon: -93.2}, "Site B": {lat: 34.9, lon: -112.8}} - usually in all.yml
+netmap_properties: []                    # more node custom properties shown in a node's panel and the workbook, e.g. [Region, Building]
+
+# ---- The map --------------------------------------------------------------------------------------------------------------
+netmap_view: globe                       # the world view's first look: globe or flat (each viewer's own choice, once made, is kept in their browser)
+netmap_link_warn_percent: 90             # a link this busy (in or out, %) is Warning; 0 = never by load (an interface SolarWinds marks Warning still is)
+# report_motion: the network map's motion on the report website - auto (unless the viewer's system asks for less motion),
+# always (even then) or off (still: no turning globe, no moving traffic, no pulse; the switch and the fly-in are jumps).
+# The portal's page follows portal_motion.
+report_motion: auto
+
+# ---- Reading -------------------------------------------------------------------------------------------------------------
+netmap_page_size: 1000                   # rows a request (the nodes and links are read page by page)
+netmap_max_nodes: 5000                   # nodes read at most (more: the first ones, said in the report)
+# What changed since the last run: this template's last successful run kept a copy (job artifact netmap_snapshot), read
+# back from AAP with the report's "Red Hat Ansible Automation Platform" credential (as report_history). Without it: "not
+# compared", the rest as usual.
+netmap_compare: true
+# The kept copy names each link's interfaces, for "Missing link" (about 140 KB for 1,500 nodes). false = the ids only
+# (about 90 KB; a missing link then shows its interfaces' ids) - for a workflow: there each job's artifacts become the
+# next step's extra variables, so do not put Network map in a workflow, or set this false.
+netmap_snapshot_links: true
+
+# ---- The report ----------------------------------------------------------------------------------------------------------
+netmap_max_rows: 500                     # rows in a table of the email and the page at most (the workbook always has all)
+netmap_xlsx: true                        # attach the nodes, links, WAN links, sites and changes as an Excel workbook (.xlsx) to the email
+netmap_fail: false                       # true = mark the job FAILED when SolarWinds could not be read (the report still goes out), for workflows
+netmap_raw: false                        # true = also print what SolarWinds gave for the first nodes and links (to see what a field holds on your Orion)

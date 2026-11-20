@@ -368,6 +368,11 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ucs_domains: [ucs01.yoursite.mil]
 # ucs_validate_certs: false                    # UCS Manager's own self-signed certificate (or ucs_ca_path: its CA file)
 """),
+    "netmap_report.yml": ("Network map", "SolarWinds (read-only), Red Hat Ansible Automation Platform (optional: for what changed)", "", """\
+## SolarWinds' address, when the credential has none (orion.yoursite.mil); sites' coordinates and the rest: all.yml
+# netmap_solarwinds_url: orion.yoursite.mil
+# netmap_validate_certs: false                 # Orion's own self-signed certificate (or netmap_ca_path: its CA file)
+"""),
     "patch_hosts.yml": ("Patch hosts", "Machine (and VMware vCenter with patch_snapshot)", "", """\
 ## Batches: how many hosts at a time (here or in a survey - in all.yml it does nothing); 1 = one by one
 # patch_serial: 10

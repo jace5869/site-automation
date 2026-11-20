@@ -246,6 +246,32 @@ portal_public_url: https://stigman.example.mil/portal/
 ## seconds between those tries
 # portal_ready_delay: 4
 
+## ---- 1.85.0: the live Network map (docs/NETWORK_MAP.md, "Live on the portal")
+## ----------------------------------------------- The portal's server reads SolarWinds (SWQL
+## queries only, the report job's own reader) every netmap_live_seconds while someone has the page
+## open - one read every viewer shares - and the page animates what changed. auto: on when the
+## deploy job has a "SolarWinds (read-only)" credential; true: on (the deploy stops without one);
+## false: off (no page, no menu entry). The map's own settings are the report's (usually in
+## all.yml): netmap_site_by, netmap_site_split, netmap_sites, netmap_lat_property,
+## netmap_lon_property, netmap_properties, netmap_view, netmap_link_warn_percent, netmap_max_nodes.
+# portal_netmap: auto
+
+## how often (30 at least); after 5 minutes with nobody on the page it is not read until someone
+## opens it
+# netmap_live_seconds: 60
+
+## SolarWinds' address and certificate check: the credential's, else netmap_solarwinds_url /
+## netmap_validate_certs
+# portal_solarwinds_url: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_URL') or netmap_solarwinds_url | default('') }}"
+
+## check SolarWinds' certificate (the credential's verify, else netmap_validate_certs)
+# portal_solarwinds_validate_certs: >-
+#   {{ (lookup('ansible.builtin.env', 'SOLARWINDS_VERIFY') or (netmap_validate_certs | default(true) | string)) | lower not in ['0', 'false', 'no', 'off'] }}
+
+## the CA that signed SolarWinds' certificate, a file ON THE PORTAL SERVER (PEM), added to what the
+## service trusts; "" = the server's own CAs (portal_trust_host_cas) only
+# portal_solarwinds_ca_file: ""
+
 ## ---- Secrets: NEVER set these in a vars file or inventory
 ## --------------------------------------------------------------- From the AAP credential, as
 ## environment variables on the controller: the token of the portal's account (a podman secret on
@@ -253,6 +279,13 @@ portal_public_url: https://stigman.example.mil/portal/
 # portal_aap_token: >-
 #   {{ lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') or lookup('ansible.builtin.env', 'AAP_TOKEN')
 #      or lookup('ansible.builtin.env', 'TOWER_OAUTH_TOKEN') }}
+
+## 1.85.0: the "SolarWinds (read-only)" credential's login - one podman secret on the server (site-
+## portal-swis), never in a file, a unit or the logs
+# portal_solarwinds_username: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"
+
+## the credential's password (secret)
+# portal_solarwinds_password: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"
 
 # ---- finding_ref ---------------------------------------------------------------------------------
 ## The report jobs a finding is taken from, by their playbook's file name (* and ?): a finding of
@@ -265,6 +298,62 @@ portal_public_url: https://stigman.example.mil/portal/
 
 ## more, e.g. [my_report.yml] (a report of your own that keeps site_findings)
 # finding_ref_report_playbooks_extra: []
+
+# ---- netmap_report -------------------------------------------------------------------------------
+## SolarWinds' address, e.g. orion.yoursite.mil (https:// and the SWIS port 17774 are added; an
+## Orion older than 2023.1: https://orion.yoursite.mil:17778). The credential's SolarWinds URL, when
+## set, wins.
+# netmap_solarwinds_url: ""
+
+## Check SolarWinds' HTTPS certificate. Orion's own is self-signed: put the CA that signed yours in
+## netmap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/orion-ca.pem"), or set
+## false. The credential's own settings win.
+# netmap_validate_certs: true
+
+## seconds for one request (no answer: asked once more)
+# netmap_timeout: 60
+
+## ---- Sites: which nodes make a site, and where it is on the map
+## ---------------------------------------------------------- A node's site: its Location (the
+## default), or the name of a node custom property (e.g. Site). With Location, the site is the text
+## before the first netmap_site_split ("Site A, building 1, IDF 2" -> Site A); "" = the whole value.
+## A node with none: on the site "No site".
+# netmap_site_by: Location
+
+## the site = the Location text before this ("" = the whole value)
+# netmap_site_split: ","
+
+## Where a site is, in this order: 1. SolarWinds' Worldwide Map (Orion.WorldMap.Point: its nodes'
+## points, their middle); 2. two node custom properties with the latitude and longitude (their names
+## here, e.g. Latitude / Longitude); 3. netmap_sites below (the site's name as the map shows it, any
+## case). A site with none of them waits in the map's Unplaced tray (the Sites view and the tables
+## have it as any other) and the report lists it.
+# netmap_lat_property: ""
+
+## the node custom property holding the site's longitude ("" = not used)
+# netmap_lon_property: ""
+
+## e.g. {"Site A": {lat: 39.4, lon: -93.2}, "Site B": {lat: 34.9, lon: -112.8}} - usually in all.yml
+# netmap_sites: {}
+
+## more node custom properties shown in a node's panel and the workbook, e.g. [Region, Building]
+# netmap_properties: []
+
+## ---- The map ------------------------------------------------------------------------------------
+## -------------------------- the world view's first look: globe or flat (each viewer's own choice,
+## once made, is kept in their browser)
+# netmap_view: globe
+
+## a link this busy (in or out, %) is Warning; 0 = never by load (an interface SolarWinds marks
+## Warning still is)
+# netmap_link_warn_percent: 90
+
+## ---- Reading ------------------------------------------------------------------------------------
+## ------------------------- rows a request (the nodes and links are read page by page)
+# netmap_page_size: 1000
+
+## nodes read at most (more: the first ones, said in the report)
+# netmap_max_nodes: 5000
 
 # ---- aap_portal_setup ----------------------------------------------------------------------------
 ## 1.75.3: true = also give the portal's account (portal_setup_portal_user) Auditor on

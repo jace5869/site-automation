@@ -15,8 +15,11 @@ only (no port on the server). No SUCCESS, or no CN: refused. As roles/vmware_ask
                                workflow or job template launched with them, portal_requested_by and the limit
   /portal/jobs/<id>            what was started: its status and output, live (the server asks AAP), then the result
   /portal/approvals            the pending approvals of the listed workflows: approve or deny, for the approvers
+  /portal/netmap               1.85.0: the live network map - SolarWinds read by this server every netmap_live_seconds into
+                               one cache that every viewer shares (/portal/api/netmap, its JSON, with an ETag)
 
-AAP is asked with the portal's own account (its token: a podman secret, PORTAL_AAP_TOKEN). The browser never gets it,
+AAP is asked with the portal's own account (its token: a podman secret, PORTAL_AAP_TOKEN); SolarWinds with the read-only
+account of the deploy's "SolarWinds (read-only)" credential (a podman secret too, PORTAL_SWIS_LOGIN). The browser never gets them,
 and only the listed actions can be launched. Every launch, refusal and decision is a JSON line in
 PORTAL_DATA/portal-log.jsonl and in the journal. Standard library only."""
 import collections
@@ -43,6 +46,10 @@ import site_portal_filters as rules  # noqa: E402  the actions' loader and rules
 import site_aap  # noqa: E402  AAP's API (the same client as the jobs' modules)
 import site_time  # noqa: E402  the reports' times in report_time_zone (the same as the report pages)
 from site_time import local as in_zone  # noqa: E402
+try:
+    import site_swis  # noqa: E402  1.85.0: SolarWinds' SWIS, read only (the network map; the same reader as the report job's)
+except ImportError:                     # an older deploy's files: no live map
+    site_swis = None
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 AAP_TIME = re.compile(r"^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d)")
@@ -179,6 +186,30 @@ class Config(object):
         # the reports' time zone (report_time_zone): times shown as the report pages show them, "2026-11-13 05:37 CET"
         self.tz, self.tz_note = site_time.zone(g("PORTAL_TIME_ZONE"))
         self.self_approval = flag(g("PORTAL_SELF_APPROVAL", "0"))
+        # 1.85.0: the live network map - SolarWinds' address and its read-only login (the secret PORTAL_SWIS_LOGIN: JSON
+        # {user, password}), read every netmap_live_seconds (30 at least) while someone has the page open
+        self.netmap = flag(g("PORTAL_NETMAP", "0"))
+        self.netmap_seconds = max(30, min(3600, int(g("PORTAL_NETMAP_SECONDS", "60"))))
+        self.swis_url = g("PORTAL_SWIS_URL").strip()
+        self.swis_verify = flag(g("PORTAL_SWIS_VERIFY", "1"))
+        self.swis_timeout = max(5, min(300, int(g("PORTAL_SWIS_TIMEOUT", "60"))))
+        try:
+            login = json.loads(g("PORTAL_SWIS_LOGIN", "{}"))
+        except ValueError:
+            login = {}
+        login = login if isinstance(login, dict) else {}
+        self.swis_user, self.swis_password = str(login.get("user") or ""), str(login.get("password") or "")
+        try:
+            nm = g("PORTAL_NETMAP_OPTS", "{}")
+            nm = json.loads(nm) if isinstance(nm, str) else nm
+        except ValueError:
+            nm = {}
+        self.netmap_opts = nm if isinstance(nm, dict) else {}
+        self.netmap_why = ("" if self.netmap and self.swis_url and self.swis_user and self.swis_password and site_swis else
+                           "portal_netmap is off" if not self.netmap else
+                           "the site_swis.py reader is not in the service's files - deploy again" if not site_swis else
+                           "no SolarWinds address (a \"SolarWinds (read-only)\" credential on the deploy, or netmap_solarwinds_url)" if not self.swis_url else
+                           "no SolarWinds login (a \"SolarWinds (read-only)\" credential on the deploy)")
         self.aap_ui = g("PORTAL_AAP_UI", self.aap_url)                          # AAP's own pages, for the links
         # 1.68.1: where STIG Manager's page is on this site (the go page goes on to it): a path of this host only
         raw_sp = g("PORTAL_STIGMAN_PATH", "/").strip()
@@ -2064,13 +2095,14 @@ def icon(kind, turn=True):
     return '<svg class="ic%s" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % (" ic-run" if kind == "run" and turn else "", ICONS[kind])
 
 
-def shell(cfg, title, body, user="", token="", page="", data=None):
+def shell(cfg, title, body, user="", token="", page="", data=None, head=""):
     """A page in the report website's look: the banner, the bar (the portal's pages, who, the colours switch), the body; its
     scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style)."""
     banner = ('<div class="banner">%s</div>' % esc(cfg.banner["text"])) if cfg.banner["on"] else ""
     nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page in keys else "", esc(text))
                   for keys, href, text in ((("home", "action"), "", "Actions"), (("jobs", "job"), "jobs", "Jobs"), (("reports",), "reports/", "Reports"),
-                                           (("approvals",), "approvals", "Approvals")))
+                                           (("approvals",), "approvals", "Approvals"))
+                  + (((("netmap",), "netmap", "Network map"),) if cfg.netmap and not cfg.netmap_why else ()))
     meta = '<meta name="portal-token" content="%s">' % esc(token) if token else ""
     meta += '<meta name="portal-base" content="%s">' % esc(cfg.path)
     if data is not None:
@@ -2085,9 +2117,9 @@ def shell(cfg, title, body, user="", token="", page="", data=None):
     return ('<!doctype html><html lang="en" data-look="%s"%s><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
             '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
-            '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script></head>'
+            '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script>%s</head>'
             '<body data-page="%s">%s%s<main>%s</main>%s</body></html>'
-            % (cfg.look, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "", meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, cfg.path, esc(page), banner, bar, body, banner))
+            % (cfg.look, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "", meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, cfg.path, head, esc(page), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -2831,7 +2863,135 @@ def approvals_page(cfg, portal, cn):
     return shell(cfg, "Approvals", body, cn, token=portal.token(cn), page="approvals")
 
 
+# ---- 1.85.0: the live network map ----------------------------------------------------------------------------------------
+NETMAP_IDLE = 300               # seconds without a viewer after which SolarWinds is no longer read (read again at the next view)
+NETMAP_STATIC = ("world-land.js", "netmap.js", "netglobe.js", "netmap-live.js", "netmap.css")
+
+
+class NetLive(object):
+    """SolarWinds, read by this server alone (plugins/module_utils/site_swis.py: SWQL queries only) every
+    netmap_live_seconds while someone has the Network map open - one cache every viewer shares, never a read per viewer.
+    A read that fails keeps the last map (said: stale, with the reason, the password never in it) and waits longer
+    before the next (15, 30, 60 ... s, never more than netmap_live_seconds x 4)."""
+
+    def __init__(self, cfg, log):
+        self.cfg, self.log = cfg, log
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.map_json, self.etag, self.read_at, self.next_at = "", "", 0.0, 0.0
+        self.stale, self.fails, self.seen, self.thread, self.reads = "", 0, 0.0, None, 0
+        self.client = None
+
+    def viewed(self):
+        """A viewer asked: the reader runs (started now, or woken after a quiet spell)."""
+        now = time.time()
+        with self.lock:
+            idle = now - self.seen > NETMAP_IDLE
+            self.seen = now
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._run, name="netmap", daemon=True)
+                self.thread.start()
+            elif idle:
+                self.wake.set()
+
+    def read_once(self):
+        c = self.cfg
+        if self.client is None or self.client.url != site_swis.base_url(c.swis_url):     # https only, no login in it (else: said, stale)
+            self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, timeout=c.swis_timeout)
+        o = c.netmap_opts
+        raw = site_swis.collect(self.client, {"site_by": o.get("site_by") or "Location", "lat_property": o.get("lat_property") or "",
+                                              "lon_property": o.get("lon_property") or "", "properties": o.get("properties") or [],
+                                              "page": o.get("page") or 1000, "max_nodes": o.get("max_nodes") or 5000})
+        if not raw.get("reachable"):
+            raise site_swis.SwisError(raw.get("error") or "SolarWinds did not answer")
+        if raw.get("topology") and not raw.get("topology_ok"):        # the links could not be read whole: the last whole map stays
+            raise site_swis.SwisError("the links were not refreshed (%s could not be read whole)" % raw["topology"])
+        m = site_swis.model(raw, {"site_by": o.get("site_by") or "Location", "site_split": o.get("site_split", ","), "sites": o.get("sites") or {},
+                                  "lat_property": o.get("lat_property") or "", "lon_property": o.get("lon_property") or "",
+                                  "properties": o.get("properties") or [], "warn_util": o.get("warn_util", 90), "no_site": o.get("no_site") or "No site"})
+        ver = (raw.get("version") or {}).get("platform")
+        return site_swis.page_data(m, run=shown(c, raw.get("read_at") or now_iso()), view=o.get("view") or "globe",
+                                   source="SolarWinds%s (SWIS, read-only, live)" % ((" " + ver) if ver else "")), raw
+
+    def _run(self):
+        while True:
+            if time.time() - self.seen > NETMAP_IDLE:              # nobody looking: wait for the next viewer
+                self.wake.wait(NETMAP_IDLE)
+                self.wake.clear()
+                continue
+            started = time.time()
+            try:
+                data, raw = self.read_once()
+                body = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+                with self.lock:
+                    self.map_json, self.etag = body, '"%s"' % hashlib.sha1(body.encode("utf-8")).hexdigest()[:20]
+                    self.read_at, was = started, self.stale
+                    self.stale, self.fails, self.reads = "", 0, self.reads + 1
+                if was or self.reads == 1:
+                    self.log.add({"event": "netmap", "read": "ok", "nodes": len(data["nodes"]), "seconds": raw.get("seconds"),
+                                  "queries": raw.get("queries"), "not_read": [x.get("what") for x in raw.get("not_read") or []][:10]})
+                wait = self.cfg.netmap_seconds
+            except Exception as e:  # pylint: disable=broad-except
+                why = clean(str(e), 300) or e.__class__.__name__
+                with self.lock:
+                    first, self.stale, self.fails = not self.stale, why, self.fails + 1
+                if first:                                            # said once, not at every try
+                    self.log.add({"event": "netmap", "read": "failed", "why": why})
+                wait = backoff(self.fails, self.cfg.netmap_seconds * 4)
+            with self.lock:
+                self.next_at = time.time() + wait
+            self.wake.wait(wait)
+            self.wake.clear()
+
+    def answer(self, etag_in=""):
+        """(code, body, etag) for /api/netmap: 304 when the viewer's map is the newest; the age of the read and when the
+        next is due, said every time."""
+        now = time.time()
+        with self.lock:
+            m, etag, read_at, stale, nxt = self.map_json, self.etag, self.read_at, self.stale, self.next_at
+        head = {"ok": bool(m), "age": int(now - read_at) if read_at else None, "next": max(0, int(nxt - now)) if nxt else self.cfg.netmap_seconds,
+                "poll": self.cfg.netmap_seconds, "stale": stale}
+        if not m:
+            head["why"] = ("SolarWinds could not be read: " + stale) if stale else ""
+            return 200, json.dumps(head), ""
+        if stale:                       # the same map, now stale: another tag, so a viewer who has the map hears that too
+            etag = '%s-%s"' % (etag[:-1], hashlib.sha1(stale.encode("utf-8")).hexdigest()[:8])
+        if etag and etag_in == etag:
+            return 304, "", etag
+        return 200, json.dumps(head)[:-1] + ',"map":' + m + "}", etag
+
+
+def netmap_page(cfg, cn, static_dir, statics):
+    """The live Network map: the map (the report's own markup and script), the "updated N s ago" line, the toasts."""
+    try:
+        with open(os.path.join(static_dir, "netmap-map.html"), encoding="utf-8") as fh:
+            markup = fh.read()
+    except OSError:
+        markup = '<div class="nm" id="nm"></div>'
+    v = lambda n: statics.get(n, "")
+    poll = max(5, min(30, cfg.netmap_seconds // 4))
+    body = ('<div class="hero"><h1>Network map</h1>'
+            '<p class="lede">Live from SolarWinds (read only): this server reads it every %d s while the page is open - one read '
+            'that everyone here shares. The daily report keeps the history.</p></div>'
+            '<p class="nm-live" id="nm-live" data-src="%sapi/netmap" data-poll="%d"><i class="nm-dotlive" aria-hidden="true"></i>'
+            '<span class="nm-tick" aria-live="off">reading SolarWinds…</span></p>'
+            '<p class="note" id="nm-why" hidden></p>%s<div class="nm-toasts" id="nm-toasts" aria-live="polite"></div>'
+            % (cfg.netmap_seconds, cfg.path, poll, markup))
+    body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, v(n)) for n in ("world-land.js", "netmap.js", "netglobe.js", "netmap-live.js"))
+    return shell(cfg, "Network map", body, cn, page="netmap",
+                 head='<link rel="stylesheet" href="%sstatic/netmap.css?v=%s">' % (cfg.path, v("netmap.css")))
+
+
 def make_handler(cfg, portal, static_dir):
+    live = NetLive(cfg, portal.log) if not cfg.netmap_why else None
+    statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
+    for n in NETMAP_STATIC:
+        try:
+            with open(os.path.join(static_dir, n), "rb") as fh:
+                statics[n] = hashlib.sha1(fh.read()).hexdigest()[:10]
+        except OSError:
+            pass
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "site-portal"
         sys_version = ""
@@ -2899,7 +3059,8 @@ def make_handler(cfg, portal, static_dir):
             path = u.path
             if path == "/healthz":
                 return self._send(200, {"ok": True, "actions": len(portal.actions), "aap": portal.aap.ready or "ok",
-                                        "logo": ("on" if cfg.logo else cfg.logo_why) if (cfg.logo or cfg.logo_why) else ""})
+                                        "logo": ("on" if cfg.logo else cfg.logo_why) if (cfg.logo or cfg.logo_why) else "",
+                                        "netmap": "on" if live else ("off" if not cfg.netmap else cfg.netmap_why)})
             if path == "/static/banner.css":            # the reports' banner colours (report_banner_color): no inline style
                 return self._send(200, ".banner{background:%s;color:%s}\n" % (cfg.banner["bg"], cfg.banner["fg"]),
                                   "text/css; charset=utf-8", [("Cache-Control", "no-cache")])
@@ -2920,6 +3081,9 @@ def make_handler(cfg, portal, static_dir):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
                     return self._send(200, fh.read(), TYPES[os.path.splitext(name)[1]], [("Cache-Control", "no-cache")])
+            if path.startswith("/static/") and path[8:] in statics:          # 1.85.0: the network map's files
+                with open(os.path.join(static_dir, path[8:]), "rb") as fh:
+                    return self._send(200, fh.read(), TYPES[os.path.splitext(path)[1]], [("Cache-Control", "no-cache")])
             api = path.startswith("/api/")
             cn = self._who(api)
             if not cn:
@@ -2927,6 +3091,19 @@ def make_handler(cfg, portal, static_dir):
             # 1.79.9: the report website's files need nothing of AAP - served before the actions are looked at
             if path == "/reports" or path.startswith("/reports/"):
                 return self._report(path[len("/reports"):] or "/")
+            # 1.85.0: the live network map - nothing of AAP: served before the actions are looked at
+            if path == "/netmap":
+                if not live:
+                    return self._send(404, message_page(cfg, "Network map off", "The network map is off here: %s (docs/NETWORK_MAP.md)." % cfg.netmap_why, cn),
+                                      "text/html; charset=utf-8")
+                live.viewed()
+                return self._send(200, netmap_page(cfg, cn, static_dir, statics), "text/html; charset=utf-8")
+            if path == "/api/netmap":
+                if not live:
+                    return self._send(404, {"error": "The network map is off here: %s." % cfg.netmap_why})
+                live.viewed()
+                code, body, etag = live.answer((self.headers.get("If-None-Match") or "").strip())
+                return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             portal.refresh_soon()                           # 1.78.0: the actions AAP offers (portal_discover_seconds; 1.79.9: read in the background)
             if path == "/":
                 return self._send(200, home_page(cfg, portal, cn, urllib.parse.parse_qs(u.query, max_num_fields=20)), "text/html; charset=utf-8")

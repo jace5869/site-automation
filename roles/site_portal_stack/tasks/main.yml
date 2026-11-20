@@ -195,6 +195,26 @@
     fail_msg: "portal_motion is {{ portal_motion }}; it must be auto, always or off - nothing was changed"
     quiet: true
 
+# 1.85.0: the live Network map - on with a SolarWinds credential (auto), or as portal_netmap says
+- name: Settings | the live Network map (portal_netmap)
+  ansible.builtin.set_fact:
+    _portal_netmap: >-
+      {{ (portal_netmap | string | lower in ['true', 'yes', 'on', '1'])
+         or (portal_netmap | string | lower == 'auto' and portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0) }}
+
+- name: Settings | the live Network map has SolarWinds' address and login
+  ansible.builtin.assert:
+    that:
+      - portal_solarwinds_url | trim | length > 0
+      - portal_solarwinds_username | length > 0 and portal_solarwinds_password | length > 0
+      - netmap_live_seconds | int >= 30
+    fail_msg: >-
+      portal_netmap is on: attach a "SolarWinds (read-only)" credential (aap/credential_types/solarwinds.yml) with SolarWinds'
+      address to this job template (or set netmap_solarwinds_url), and netmap_live_seconds 30 or more - nothing was changed.
+      docs/NETWORK_MAP.md
+    quiet: true
+  when: _portal_netmap | bool
+
 # 1.78.2: the caps are settings; one outside its range stops the deploy, naming the setting
 - name: Settings | {{ item.name }} is in its range
   ansible.builtin.assert:
@@ -322,6 +342,14 @@
     - {src: "{{ role_path }}/../../plugins/filter/site_portal_filters.py", dest: site_portal_filters.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_aap.py", dest: site_aap.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_time.py", dest: site_time.py}
+    # 1.85.0: the live Network map - SolarWinds' reader (the report job's) and the map's page files (the report's)
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_swis.py", dest: site_swis.py}
+    - {src: "{{ role_path }}/../netmap_report/files/web/netmap-map.html", dest: static/netmap-map.html}
+    - {src: "{{ role_path }}/../netmap_report/files/web/netmap.css", dest: static/netmap.css}
+    - {src: "{{ role_path }}/../netmap_report/files/web/netmap.js", dest: static/netmap.js}
+    - {src: "{{ role_path }}/../netmap_report/files/web/netglobe.js", dest: static/netglobe.js}
+    - {src: "{{ role_path }}/../netmap_report/files/web/world-land.js", dest: static/world-land.js}
+    - {src: "{{ role_path }}/../netmap_report/files/web/netmap-live.js", dest: static/netmap-live.js}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -373,6 +401,20 @@
   when: >-
     portal_trust_host_cas | bool and _portal_host_bundle.stat.exists | default(false)
     and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
+
+- name: Trust | SolarWinds' CA (portal_solarwinds_ca_file), for the live Network map
+  ansible.builtin.copy:
+    src: "{{ portal_solarwinds_ca_file }}"
+    dest: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
+    remote_src: true
+    mode: "0644"
+  when: _portal_netmap | bool and portal_solarwinds_ca_file | length > 0 and not (ansible_check_mode and _portal_dirs.results[-1] is changed)
+
+- name: Trust | no SolarWinds CA any more
+  ansible.builtin.file:
+    path: "{{ portal_config_dir }}/trust.d/20-solarwinds.pem"
+    state: absent
+  when: not (_portal_netmap | bool and portal_solarwinds_ca_file | length > 0)
 
 - name: Trust | which CAs
   ansible.builtin.find:
@@ -440,6 +482,51 @@
     msg: "podman secret create site-portal-aap-token failed (rc {{ _portal_secret_set.rc }}): {{ _portal_secret_set.stderr | default('', true) | trim or 'no reason given' }}"
   when: _portal_secret_set.rc | default(0) != 0
 
+# ---------------------------------------------------------------- 1.85.0: SolarWinds' login, a podman secret too
+# {user, password} as JSON in one secret (site-portal-swis -> PORTAL_SWIS_LOGIN), its SHA-256 on a label as the token's
+- name: Secret | SolarWinds' login - current state
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, site-portal-swis, --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]
+  register: _portal_swis_state
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads the label
+
+- name: Secret | SolarWinds' login - the value
+  ansible.builtin.set_fact:
+    _portal_swis_login: "{{ {'user': portal_solarwinds_username, 'password': portal_solarwinds_password} | to_json }}"
+  no_log: true
+  when: _portal_netmap | default(false) | bool
+
+- name: Secret | SolarWinds' login - the old value removed first (podman before 4.7), or the map turned off
+  ansible.builtin.command:
+    argv: [podman, secret, rm, site-portal-swis]
+  when: >-
+    _portal_swis_state.rc == 0 and (not _portal_netmap | default(false) | bool or
+    ((_portal_swis_state.stdout | trim) != (_portal_swis_login | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
+  changed_when: true
+  register: _portal_swis_gone
+  no_log: true
+
+- name: Secret | SolarWinds' login - create or replace
+  ansible.builtin.command:
+    argv: >-
+      {{ ['podman', 'secret', 'create']
+         + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') and _portal_swis_state.rc == 0 else [])
+         + ['--label', 'site.sha256=' ~ (_portal_swis_login | hash('sha256')), 'site-portal-swis', '-'] }}
+    stdin: "{{ _portal_swis_login }}"
+    stdin_add_newline: false
+  when: _portal_netmap | default(false) | bool and (_portal_swis_state.rc != 0 or (_portal_swis_state.stdout | trim) != (_portal_swis_login | hash('sha256')))
+  changed_when: true
+  failed_when: false                      # said by the next task, with podman's reason
+  no_log: true
+  register: _portal_swis_set
+
+- name: Secret | SolarWinds' login - podman made it
+  ansible.builtin.fail:
+    msg: "podman secret create site-portal-swis failed (rc {{ _portal_swis_set.rc }}): {{ _portal_swis_set.stderr | default('', true) | trim or 'no reason given' }}"
+  when: _portal_swis_set.rc | default(0) != 0
+
 # ---------------------------------------------------------------- configuration
 # The reports' banner, worked out as roles/site_email does (plugins/module_utils/site_banner.py), the portal's server as
 # the host held to site_enclave_classified_domains
@@ -498,6 +585,23 @@
       PORTAL_LAUNCHES_PER_HOUR: "{{ portal_launches_per_hour | string }}"
       PORTAL_JOB_EVENTS: "{{ portal_job_events | string }}"
       PORTAL_STIGMAN_PATH: "{{ portal_stigman_path }}"
+      # 1.85.0: the live Network map (its login: the secret site-portal-swis)
+      PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
+      PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"
+      PORTAL_SWIS_URL: "{{ portal_solarwinds_url | trim if _portal_netmap | bool else '' }}"
+      PORTAL_SWIS_VERIFY: "{{ '1' if portal_solarwinds_validate_certs | bool else '0' }}"
+      PORTAL_SWIS_TIMEOUT: "{{ netmap_timeout | default(60) | string }}"
+      PORTAL_NETMAP_OPTS:
+        site_by: "{{ netmap_site_by | default('Location') }}"
+        site_split: "{{ netmap_site_split | default(',') }}"
+        sites: "{{ netmap_sites | default({}, true) }}"
+        lat_property: "{{ netmap_lat_property | default('') }}"
+        lon_property: "{{ netmap_lon_property | default('') }}"
+        properties: "{{ netmap_properties | default([], true) }}"
+        view: "{{ netmap_view | default('globe') }}"
+        warn_util: "{{ netmap_link_warn_percent | default(90) | int }}"
+        max_nodes: "{{ netmap_max_nodes | default(5000) | int }}"
+        page: "{{ netmap_page_size | default(1000) | int }}"
   register: _portal_settings_file
 
 - name: Config | the actions (the file, or portal_actions - as written, the service checks them again)
@@ -641,6 +745,7 @@
   loop: "{{ ['site-portal-data.volume', 'site-portal-app.container'] + (['site-portal-nginx.container'] if portal_own_nginx | bool else []) }}"
   vars:
     _portal_has_trust: "{{ _portal_trust_parts.matched | int > 0 }}"
+    _portal_has_swis: "{{ _portal_netmap | bool }}"
   register: _portal_units
 
 - name: Units | an own nginx no longer wanted
@@ -678,6 +783,7 @@
     _portal_pre.results[0].stdout in ['active', 'activating', 'reloading']
     and ('site-portal-app.container' in _changed or _portal_app_files is changed or _portal_settings_file is changed
          or _portal_actions_file is changed or _portal_logo_file is changed or _portal_secret_set is changed or _portal_trust is changed
+         or _portal_swis_set is changed or _portal_swis_gone is changed
          or _portal_trust_gone is changed)
 
 - name: Units | restart its nginx (its server or certificates changed)

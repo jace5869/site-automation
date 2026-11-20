@@ -132,9 +132,30 @@ portal_firewall: true                               # open portal_port in firewa
 portal_ready_retries: 30
 portal_ready_delay: 4                               # seconds between those tries
 
+# ---- 1.85.0: the live Network map (docs/NETWORK_MAP.md, "Live on the portal") -----------------------------------------------
+# The portal's server reads SolarWinds (SWQL queries only, the report job's own reader) every netmap_live_seconds while
+# someone has the page open - one read every viewer shares - and the page animates what changed. auto: on when the deploy
+# job has a "SolarWinds (read-only)" credential; true: on (the deploy stops without one); false: off (no page, no menu
+# entry). The map's own settings are the report's (usually in all.yml): netmap_site_by, netmap_site_split, netmap_sites,
+# netmap_lat_property, netmap_lon_property, netmap_properties, netmap_view, netmap_link_warn_percent, netmap_max_nodes.
+portal_netmap: auto
+netmap_live_seconds: 60                             # how often (30 at least); after 5 minutes with nobody on the page it is not read until someone opens it
+# SolarWinds' address and certificate check: the credential's, else netmap_solarwinds_url / netmap_validate_certs
+portal_solarwinds_url: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_URL') or netmap_solarwinds_url | default('') }}"
+# check SolarWinds' certificate (the credential's verify, else netmap_validate_certs)
+portal_solarwinds_validate_certs: >-
+  {{ (lookup('ansible.builtin.env', 'SOLARWINDS_VERIFY') or (netmap_validate_certs | default(true) | string)) | lower not in ['0', 'false', 'no', 'off'] }}
+# the CA that signed SolarWinds' certificate, a file ON THE PORTAL SERVER (PEM), added to what the service trusts; "" = the
+# server's own CAs (portal_trust_host_cas) only
+portal_solarwinds_ca_file: ""
+
 # ---- Secrets: NEVER set these in a vars file or inventory ---------------------------------------------------------------
 # From the AAP credential, as environment variables on the controller: the token of the portal's account (a podman
 # secret on the server, never in a file, a unit or the logs).
 portal_aap_token: >-
   {{ lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') or lookup('ansible.builtin.env', 'AAP_TOKEN')
      or lookup('ansible.builtin.env', 'TOWER_OAUTH_TOKEN') }}
+# 1.85.0: the "SolarWinds (read-only)" credential's login - one podman secret on the server (site-portal-swis), never in a
+# file, a unit or the logs
+portal_solarwinds_username: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"
+portal_solarwinds_password: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"   # the credential's password (secret)

@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: netmap_report
+  description: "Network map from SolarWinds Orion (SWIS REST, read-only): sites on a globe, nodes, links, WAN traffic, what changed since the last run."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

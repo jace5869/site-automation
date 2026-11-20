@@ -36,6 +36,7 @@ DOMAINS = (
     "openxmlformats.org", "xmlsoap.org",                            # the Excel workbook's and SOAP's namespaces (site_xlsx, esxcli via vCenter)
     "designsystem.digital.gov", "carbondesignsystem.com", "design-system.service.gov", "nngroup.com",
     "developer.mozilla.org",                                        # the design guidance the report website follows (docs/WEB_REPORTS.md)
+    "naturalearthdata.com", "solarwinds.github.io",                 # 1.85.0: the network map's land (Natural Earth, public domain); SolarWinds' OrionSDK schema
 )
 # Dotted words of code, not host names (System.Net, $vm.guest.net ...; vCenter's event types esx.problem.net.redundancy.lost).
 CODE = ("system.io", "system.net", "guest.net", "g.net", "esx.problem.net", "esx.clear.net")

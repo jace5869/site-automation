@@ -886,6 +886,11 @@ then writes those pages - the same pages, at the same address. So:
   top and the bottom (**Open the full report**) - the page is there once the copy job has run, so a
   link opened before that answers *not found*.
 
+**A report's own piece of its page** (1.85.0, the network map): the copy job writes it too. The report job keeps
+the map's data with its report (the map's script and style are read again from the copy job's own repository) and
+the copied page has the map and `site-netmap.js` beside the index. A map that does not fit `report_web_copy_max_kb`
+is left out, and the report job says so.
+
 ### Setting it up
 
 1. **The settings**, in `playbooks/group_vars/all.yml` (the report jobs and the copy job both read them):

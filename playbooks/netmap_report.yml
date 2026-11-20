@@ -1,0 +1,17 @@
+---
+# NETWORK MAP. Read-only (SWQL queries to SolarWinds Orion's SWIS REST API, port 17774; nothing is changed there): the
+# sites on a globe and a flat map with the WAN links between them (bandwidth, traffic in and out), every node and link
+# of each site, what is down, and what changed since the last run. Emailed (report_email_to) as a plain summary with a
+# workbook (netmap_xlsx), and on the report website with the map (report_web_dest). The same map, live, is the site
+# portal's Network map page (docs/SITE_PORTAL.md, portal_netmap).
+# Runs on the AAP side: attach a "SolarWinds (read-only)" credential (and, for "what changed", the report history's
+# "Red Hat Ansible Automation Platform" credential); no Limit. docs/NETWORK_MAP.md
+#   ansible-playbook playbooks/netmap_report.yml -e '{"netmap_solarwinds_url": "orion.example.mil"}'
+- name: Network map
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Network map
+      ansible.builtin.include_role:
+        name: netmap_report

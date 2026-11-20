@@ -22,6 +22,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `smtp_relay.yml` | SMTP relay | any job that emails a report (`report_email_to`; the VMware jobs, `docs/VMWARE.md`) - only when the mail relay needs a login |
 | `report_web.yml` | Report website | any report job with `report_web_host` (the pages written on a Windows server over WinRM: its user name and password; without it, the template's Machine credential) or `report_web_dest: https://...` (an upload with HTTP PUT that needs a login: a token or a user name and password) (`docs/WEB_REPORTS.md`) |
 | `netapp_ontap.yml` | NetApp ONTAP | `ontap_health_report.yml` - a read-only account on the clusters (`docs/NETAPP.md`) |
+| `solarwinds.yml` | SolarWinds (read-only) | `netmap_report.yml` (the network map) and `site_portal_deploy.yml` (the portal's live Network map) - a read-only Orion web console account (`docs/NETWORK_MAP.md`) |
 | `cisco_ucs_manager.yml` | Cisco UCS Manager | `ucs_inventory_report.yml` - a read-only UCS Manager account on the domains (`docs/UCS.md`) |
 | `cert_inventory_sql.yml` | SQL Server (certificate inventory) | the certificate reports with `cert_inventory_sql: true` - a login that adds and updates the inventory table (`docs/CERT_INVENTORY.md`) - optional |
 | `report_database.yml` | Report database | `servicenow_insights.yml` with `servicenow_insights_db: true` - the report database's writer account, report_writer (`docs/REPORT_DATABASE.md`) - optional |

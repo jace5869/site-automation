@@ -1,0 +1,134 @@
+---
+# NETWORK MAP (playbooks/netmap_report.yml). Read-only: SWQL queries to SolarWinds Orion's SWIS REST API (the collector:
+# roles/netmap_report/library/site_swis_collect.py over plugins/module_utils/site_swis.py, which names what it reads).
+# Sites (a node's Location or a custom property) on a globe and a flat map, placed by SolarWinds' Worldwide Map, two
+# custom properties or netmap_sites; the WAN links between them (bandwidth, in / out %); every node and link in the Sites
+# view; what changed since the last run (the kept copy: this template's last run's job artifact netmap_snapshot, read
+# from AAP). The report (plugins/filter/netmap_filters.py) is printed, emailed (report_email_to: the counts and tables,
+# plain) with a workbook (netmap_xlsx), and on the report website with the map (report_web_dest). Red when a node or a
+# WAN link is down or SolarWinds could not be read; amber for a warning or an unplaced site.
+- name: Network map | the kept copy of the last run (this template's job artifact netmap_snapshot, from AAP)
+  ansible.builtin.include_role:
+    name: site_email
+    tasks_from: history_artifacts.yml
+  vars:
+    _hist_artifacts: [netmap_snapshot]
+    _hist_runs: 5
+  when: netmap_compare | bool
+
+- name: Network map | the newest run that kept one
+  ansible.builtin.set_fact:
+    _nm_prev: >-
+      {{ (_site_hist_runs | default([]) | selectattr('status', 'equalto', 'successful')
+          | selectattr('artifacts', 'defined') | selectattr('artifacts.netmap_snapshot', 'defined') | list | last | default({})) }}
+    _nm_now: "{{ now(utc=true, fmt='%Y-%m-%d %H:%M UTC') }}"
+
+# A login in the address is refused before the module sees it: a module's arguments are in its result (invocation)
+- name: Network map | netmap_solarwinds_url has no login in it
+  ansible.builtin.assert:
+    that: "'@' not in (netmap_solarwinds_url | string)"
+    fail_msg: >-
+      netmap_solarwinds_url has a user name or password in it - refused, and not repeated here. Give only the server
+      (orion.yoursite.mil); the login is the "SolarWinds (read-only)" credential's.
+    quiet: true
+
+- name: Network map | read SolarWinds (SWQL queries only)
+  site_swis_collect:
+    url: "{{ netmap_solarwinds_url }}"
+    validate_certs: "{{ netmap_validate_certs | bool }}"
+    ca_path: "{{ netmap_ca_path }}"
+    timeout: "{{ netmap_timeout | int }}"
+    site_by: "{{ netmap_site_by }}"
+    site_split: "{{ netmap_site_split }}"
+    sites: "{{ netmap_sites | default({}, true) }}"
+    lat_property: "{{ netmap_lat_property }}"
+    lon_property: "{{ netmap_lon_property }}"
+    properties: "{{ netmap_properties | default([], true) }}"
+    warn_util: "{{ netmap_link_warn_percent | int }}"
+    page: "{{ netmap_page_size | int }}"
+    max_nodes: "{{ netmap_max_nodes | int }}"
+    snapshot: "{{ _nm_prev.artifacts.netmap_snapshot | default({}) }}"
+    snapshot_links: "{{ netmap_snapshot_links | bool }}"
+    last: "{{ (_nm_prev.artifacts.netmap_snapshot.at | default('') | regex_replace('^(\\d{4}-\\d\\d-\\d\\d)T(\\d\\d:\\d\\d).*$', '\\1 \\2 UTC')) | report_time_local(report_time_zone | default('', true)) }}"
+    run: "{{ _nm_now | report_time_local(report_time_zone | default('', true)) }}"
+    view: "{{ netmap_view if netmap_view in ['globe', 'flat'] else 'globe' }}"
+  register: _nm
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+
+- name: Network map | the report
+  ansible.builtin.set_fact:
+    _nm_opts:
+      max_rows: "{{ netmap_max_rows | int }}"
+      last: "{{ (_nm_prev.artifacts.netmap_snapshot.at | default('') | regex_replace('^(\\d{4}-\\d\\d-\\d\\d)T(\\d\\d:\\d\\d).*$', '\\1 \\2 UTC')) | report_time_local(report_time_zone | default('', true)) }}"
+      why_not_compared: >-
+        {{ 'netmap_compare is false' if not netmap_compare | bool else
+           (_site_hist_why | default('', true) or 'no earlier run of this template kept a copy (this is the first)') }}
+- name: Network map | the report, the website's version and the workbook
+  ansible.builtin.set_fact:
+    _nm_doc: "{{ _nm | netmap_doc(_nm_opts) }}"
+    _nm_doc_web: "{{ _nm | netmap_doc(_nm_opts | combine({'web': true})) }}"
+    _nm_xlsx: "{{ _nm | netmap_xlsx if netmap_xlsx | bool and _nm.reachable else [] }}"
+    _nm_extra: "{{ _nm | netmap_page_extra(report_motion | default('auto') | string | lower) }}"
+
+- name: Network map | what was read (one line a site) and what could not be
+  ansible.builtin.debug:
+    msg: "{{ _nm | netmap_lines }}"
+
+- name: Network map | the map is drawn on the website in the atlas, brief and ops looks only
+  ansible.builtin.debug:
+    msg: >-
+      report_web_theme is {{ report_web_theme }}: the website page has the tables but not the map - the map needs
+      report_web_theme atlas (the default), brief or ops. The email never has it.
+  when: report_web_dest | default('') | length > 0 and report_web_theme | default('atlas') | string | lower not in ['atlas', 'brief', 'ops']
+
+- name: Network map | the first nodes and links as SolarWinds gave them (netmap_raw)
+  ansible.builtin.debug:
+    msg: "{{ {'nodes': _nm.map.nodes[:5], 'links': _nm.map.links[:5]} }}"
+  when: netmap_raw | bool
+
+- name: Network map | the copy kept for the next run (job artifact netmap_snapshot) and the counts (netmap)
+  ansible.builtin.set_stats:
+    data:
+      netmap_snapshot: "{{ _nm.snapshot }}"
+      netmap: "{{ _nm | netmap_summary_counts }}"
+  when: _nm.reachable
+
+- name: Network map | the report as job artifacts (netmap_report)
+  ansible.builtin.set_stats:
+    data:
+      netmap_report:
+        subject: "{{ _nm_doc.title }}"
+        lines: "{{ (_nm_doc | report_text).splitlines() }}"
+
+- name: Network map | {{ _nm_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_nm_doc | report_text).splitlines() }}"
+
+- name: Network map | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _nm_doc | combine({'footer': 'Read-only: SWQL queries to SolarWinds (SWIS REST); nothing is changed there.'}) }}"
+    _report_web: "{{ _nm_doc_web | combine({'footer': 'Read-only: SWQL queries to SolarWinds (SWIS REST); nothing is changed there.'}) }}"
+    _report_xlsx: "{{ _nm_xlsx }}"
+    _report_page_extra: "{{ _nm_extra }}"
+    # SolarWinds not read: the email says so, the website keeps the last good map (latest.html is not replaced)
+    _report_web_skip: "{{ not _nm.reachable }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Network map | not on the website this time (SolarWinds not read - the last good map stays there)
+  ansible.builtin.debug:
+    msg: "SolarWinds was not read: the report website keeps the last good map; this run's report is the email (and the job)."
+  when: not _nm.reachable and report_web_dest | default('') | length > 0
+
+- name: Network map | no email
+  ansible.builtin.debug:
+    msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+  when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+- name: Network map | SolarWinds was read
+  ansible.builtin.assert:
+    that: _nm.reachable
+    fail_msg: "SolarWinds not read: {{ _nm.error }}. netmap_fail: false (the default) keeps the job green."
+    quiet: true
+  when: netmap_fail | bool

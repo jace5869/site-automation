@@ -725,6 +725,22 @@ portal_area_rules:
   - {match: "Site - patch *", area: Patching}
 ```
 
+## The live Network map (1.85.0)
+
+With a "SolarWinds (read-only)" credential on the deploy job (`portal_netmap: auto`), the portal has a **Network map**
+page in its menu: the network map of [NETWORK_MAP.md](NETWORK_MAP.md), live. The portal's server reads SolarWinds every
+`netmap_live_seconds` (60; 30 at least) while someone has the page open - one read every viewer shares, never one per
+viewer - and the page asks the server for it (`/portal/api/netmap`, with an ETag: an unchanged map costs nothing).
+A node that goes down pulses red, a link that drops stops and turns red, a toast says what changed, and *updated N s
+ago* says how fresh it is. A read that fails keeps the last map and says why.
+
+- The login is one podman secret on the server (`site-portal-swis`), as the AAP token: never in a file, the unit or
+  the logs. The service's log says each read that fails (once) and when it reads again.
+- SolarWinds' certificate: the server's CAs (`portal_trust_host_cas`), plus `portal_solarwinds_ca_file` (a file on
+  the server).
+- The map's settings are the report's (`netmap_site_by`, `netmap_sites` ... in all.yml); `portal_motion` applies.
+- No credential (or `portal_netmap: false`): no page and no menu entry; `/portal/netmap` says why.
+
 ## What is on and what is off
 
 An available card has a solid border, a bar in the accent colour and a filled **Run**. A card that is off has a grey surface, a dashed border, muted text, a lock chip, its reason on one line, and no Run (only Details); the accent

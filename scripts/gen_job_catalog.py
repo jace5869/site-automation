@@ -66,7 +66,7 @@ def launch_contract(e, row):
 KINDS = [("Machine (Windows)", "machine_windows"), ("Red Hat Ansible Automation Platform", "aap"), ("STIG Manager API", "stigman_api"),
          ("STIG Manager database", "stigman_db"), ("ServiceNow API", "servicenow"), ("VMware vCenter", "vmware"),
          ("Horizon API", "horizon"), ("NetApp ONTAP", "ontap"), ("ACT model key", "act_model_key"), ("Windows file share", "windows_share"),
-         ("Tenable.sc API", "tenable"), ("Cisco UCS Manager", "ucs"), ("Palo Alto PAN-OS API", "panos"),
+         ("Tenable.sc API", "tenable"), ("Cisco UCS Manager", "ucs"), ("SolarWinds (read-only)", "solarwinds"), ("Palo Alto PAN-OS API", "panos"),
          ("Network config git repository", "net_git"), ("MariaDB monitor", "mariadb"), ("TLS certificate", "tls_certificate"),
          ("SQL Server (certificate inventory)", "sqlserver"), ("Keystore password", "keystore"), ("Report database", "report_db"),
          ("Teams webhook", "teams"), ("Machine", "machine")]
@@ -175,7 +175,7 @@ def area_of(name, playbook):
         return "Windows"
     if n.startswith("aap - ") and "report" not in n:
         return "Linux"                                   # the AAP setup jobs, together
-    if "report" in n or "inventory" in n or "analysis" in n:
+    if "report" in n or "inventory" in n or "analysis" in n or n == "network map":
         return "Reports"
     return "Linux"
 

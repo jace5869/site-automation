@@ -45,6 +45,9 @@
 # _report_web_skip: true = never on the website, whatever report_web_dest says (the outage AAR's documents).
 # _report_web: the website's version of _report (more columns, which the atlas and brief looks' Columns menu can hide - an email
 # cannot): the page in those looks and its JSON; the email, and the website in the other looks, use _report (1.11.0).
+# _report_page_extra: 1.85.0 - the report's own piece in the website page, in report_web_theme's look: {kind, data, motion}
+# (the network map). The kind's markup, style and script are this repository's files (plugins/filter/report_page_filters.py,
+# report_page_piece) - put where a section says its marker, the script as a file of its own; kept for the copy job as it is.
 # _report_html: the website's page as the report made it (the ticket insights' own page) instead of report_web_theme's look; the
 # logo goes where it has <!--site-report-logo-->. The email and the index still use _report.
 # report_web_copy: true = the page is not written here - the report is kept as the job artifact site_report_page for the
@@ -313,8 +316,10 @@
           {{ '' if _web_copy | bool else
              (_report_html | replace('<!--site-report-logo-->', '<img class="logoimg" src="cid:site-report-logo" alt="">' if _web_logo_cid | bool else ''))
              if _report_html | default('') | length > 0 else
-             lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
+             lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2')
+             | report_page_extend(_report_page_extra | default({}, true) | report_page_piece(role_path ~ '/../..')) }}
         keep: "{{ _web_copy | bool }}"
+        page_extra: "{{ _report_page_extra | default({}, true) if _web_copy | bool else {} }}"
         max_kb: "{{ report_web_copy_max_kb | int }}"
         footer: "{{ _email_footer | default('') }}"
         images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _web_logo_cid | bool else [] }}"

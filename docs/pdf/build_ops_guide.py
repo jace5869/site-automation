@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "1.84.0"
+SA_VERSION = "1.85.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -49,6 +49,7 @@ DOCS = [  # (file, chapter title)
     ("docs/SITE_PORTAL.md", "The site portal: the reports, the actions, the live job view and the approvals at /portal/"),
     ("docs/LOG_ANALYSIS.md", "Log analysis: the patterns in a group of servers' logs, explained by ACT"),
     ("docs/NETAPP.md", "NetApp ONTAP health report"),
+    ("docs/NETWORK_MAP.md", "Network map: SolarWinds' sites, WAN links and nodes on a globe, and live on the portal"),
     ("docs/NETWORK_CERTS.md", "Network device certificates: report and renewal"),
     ("docs/TRUST_STORES.md", "Trust stores: who still trusts a compromised or dropped CA"),
     ("docs/STIG_DRIFT.md", "STIG drift: has a server moved away from its checklist?"),
