@@ -164,7 +164,7 @@ grep -qF 'taken off the index: ' "$work/out.txt" && echo "ok   -   ... the job s
 
 # ---- with ACT (a scripted model) ---------------------------------------------------------------------------------
 : > "$work/model.log"
-env FAKE_MODEL_LOG="$work/model.log" "$py" "$here/fake_insights_model.py" "$mport" &
+env FAKE_MODEL_LOG="$work/model.log" FAKE_MODEL_BAD_BACKLOG_FILE="$work/bad-backlog" "$py" "$here/fake_insights_model.py" "$mport" &
 mpid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$mport") 2>/dev/null && break; sleep 0.1; done
 mkdir -p "$work/site2"
@@ -177,6 +177,13 @@ check "ACT's page: its issues and fixes (one suggested), a draft, its summary, t
     'grouped by ACT' 'Suggested by ACT' 'Fix: Account locked out / password reset' 'Written by ACT from the tables' \
     'Requests opened as incidents.' 'Software install opened as an incident' 'The close notes show different fixes' \
     'Self-service candidate' "Scope all: the model&#x27;s first point."
+# 1.81.0: the Automation backlog - ACT wrote the words of the top clusters, the numbers are the code's, a cluster beyond the top N says so
+check "  ... Automation backlog: the section, ACT's words (strategy, summary, problem, three phases), the numbers from code" "$p2" \
+    'id="backlog"' 'Fake strategy for ' 'Fake summary: ' 'Fake problem: ' 'Fake KB article for ' 'Fake catalog item that runs a script' \
+    'Text by ACT' 'Deflection = tickets this phase settles' 'Download proposal (.md)' 'class="tile bktile"' '!not drafted ('
+grep -q 'text of an automation proposal' "$work/model.log" && echo "ok   -   ... ACT was asked one question per cluster" || { echo "FAIL - no backlog question"; fails=$((fails + 1)); }
+leak=$(grep -E '^CLUSTER B' "$work/model.log" | grep -oE 'XINC[0-9]+|INC[0-9]{5,}' | head -2)
+[ -z "$leak" ] && echo "ok   -   ... no ticket number in the backlog questions" || { echo "FAIL - a ticket number sent: $leak"; fails=$((fails + 1)); }
 grep -qE '\b(HOST|PERSON|PHONE|IP|EMAIL)-[0-9]+\b' "$p2" && { echo "FAIL - a placeholder left in the page: $(grep -oE '\b(HOST|PERSON)-[0-9]+\b' "$p2" | head -3)"; fails=$((fails + 1)); } \
     || echo "ok   -   ... the replaced names put back (no placeholder in the page)"
 leak=$(grep -oE 'Dana Whitfield|Whitfield|\(703\) 555-[0-9]{4}|198\.51\.100\.[0-9]+|wks-10[0-9][0-9]|prn01-fl[0-9]|Lee Anders' "$work/model.log" | sort -u | head -5)
@@ -213,6 +220,24 @@ grep -q 'sys_journal_field' "$work/log.jsonl" && { echo "FAIL - the work notes r
 
 run "ACT on, no model key: said, the report by category" ok "{$NOW, \"servicenow_insights_act\": true, \"report_web_dest\": \"\"}" \
     'ACT: did not run (This job has no API key for provider genai' 'Account / Password'
+
+mkdir -p "$work/site9"
+INS_ENV="GENAI_KEY=test-key" run "  ... servicenow_insights_act false: the Automation backlog from the formulas, the words 'not drafted (ACT off)'" ok \
+    "{$NOW, $NOACT, \"report_web_dest\": \"$work/site9\"}" 'Ticket insights for All assignment groups:'
+check "  ... the numbers and the phase cards are there without ACT" "$work/site9/servicenow-ticket-insights/latest.html" 'id="backlog"' 'not drafted (ACT off)' \
+    'Deflection = tickets this phase settles' '!Fake strategy'
+# ACT answers the backlog question with something that is no draft: dropped, said, the clusters read "not drafted", the report whole
+: > "$work/bad-backlog"
+mkdir -p "$work/site11"
+INS_ENV="GENAI_KEY=test-key" run "  ... ACT's backlog answer is not usable (bad JSON): not drafted, said, green" ok \
+    "{$NOW, $ACT, \"report_web_dest\": \"$work/site11\", \"servicenow_insights_act_batch\": 15}" 'backlog text for ' 'the answer could not be read'
+check "  ... the clusters read 'not drafted (ACT gave no usable answer)', the rest of the page whole" "$work/site11/servicenow-ticket-insights/latest.html" \
+    'not drafted (ACT gave no usable answer)' 'Account locked out / password reset' '!Fake strategy'
+rm -f "$work/bad-backlog"
+mkdir -p "$work/site10"
+INS_ENV="GENAI_KEY=test-key" run "  ... servicenow_insights_backlog_issues 0: ACT is asked no backlog question" ok \
+    "{$NOW, $ACT, \"report_web_dest\": \"$work/site10\", \"servicenow_insights_act_batch\": 15, \"servicenow_insights_backlog_issues\": 0}" 'questions answered'
+check "  ... the clusters read 'outside the top 0'" "$work/site10/servicenow-ticket-insights/latest.html" 'not drafted (outside the top 0)' '!Fake strategy'
 
 # ---- sites, directorates and teams (0.97.0): the same records, the groups named as three made-up sites ----------------
 "$py" "$here/insights_seed.py" "$work/seed3.json" 0.5 --sites >/dev/null
@@ -345,6 +370,35 @@ if ls "$work"/mail/*.eml >/dev/null 2>&1 && grep -q "Ticket insights for All ass
 else
     echo "FAIL - no mail with the report and the workbook"; fails=$((fails + 1))
 fi
+
+# 1.81.0: the Automation backlog's Word file - one, attached to the email (never on the website); a workbook sheet of every cluster
+rm -f "$work"/mail/*.eml
+INS_ENV="GENAI_KEY=test-key" run "the report emailed with ACT: the workbook and Automation backlog.docx attached, the folder removed" ok \
+    "{$NOW, $ACT, \"servicenow_insights_act_batch\": 15, \"report_web_dest\": \"\", \"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $smtp, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\"}" \
+    'emailed'
+"$py" - "$work/mail" <<'PYM' && echo "ok   -   ... the mail has Automation backlog.docx (it opens, it has the clusters and ACT's words) and the workbook's Automation backlog sheet" || { echo "FAIL - the Word file or the sheet is not in the mail"; fails=$((fails + 1)); }
+import email, glob, io, re, sys, zipfile
+msgs = [email.message_from_binary_file(open(f, "rb")) for f in glob.glob(sys.argv[1] + "/*.eml")]
+assert msgs, "no mail"
+names, parts = [], {}
+for m in msgs:
+    for p in m.walk():
+        n = p.get_filename()
+        if n:
+            names.append(n)
+            parts[n] = p.get_payload(decode=True)
+assert "Automation backlog.docx" in names, names
+z = zipfile.ZipFile(io.BytesIO(parts["Automation backlog.docx"]))
+assert z.testzip() is None
+text = re.sub(r"<[^>]+>", " ", z.read("word/document.xml").decode("utf-8"))
+assert "Automation backlog" in text and "Fake strategy for " in text and "Phase 2: ServiceNow + PowerShell" in text, text[:300]
+x = [n for n in names if n.endswith(".xlsx")]
+assert x, names
+zx = zipfile.ZipFile(io.BytesIO(parts[x[0]]))
+assert "Automation backlog" in zx.read("xl/workbook.xml").decode("utf-8")
+PYM
+ls /tmp/*.backlog >/dev/null 2>&1 && { echo "FAIL - the Word file's temporary folder was left"; fails=$((fails + 1)); } || echo "ok   -   ... the Word file's temporary folder was removed"
+rm -f "$work"/mail/*.eml
 
 # ---- 1.43.0: VIP tickets - two tiers (made-up columns, callers from the seed), the section on every page, by unit, the
 # email's table, the workbook's sheet; a column the account cannot read and sys_user refused: said, the job goes on

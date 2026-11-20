@@ -29,8 +29,8 @@ description:
     one warning naming the tables (warn_tables).
   - A database that cannot be reached is a warning and ok false - unless required is true, then the task fails.
 options:
-  mode: {description: "read, write, check; tickets_load, tickets_save (1.17.0, the ticket store); act_load, act_save (the ACT cache).", type: str,
-         choices: [read, write, check, tickets_load, tickets_save, act_load, act_save], required: true}
+  mode: {description: "read, write, check; tickets_load, tickets_save (1.17.0, the ticket store); act_load, act_save (the ACT cache); text_load, text_save (1.81.0, the Automation backlog's drafts).", type: str,
+         choices: [read, write, check, tickets_load, tickets_save, act_load, act_save, text_load, text_save], required: true}
   host: {description: The database server., type: str, required: true}
   port: {description: "Its port (the report database's: 3309).", type: int, default: 3309}
   database: {description: The schema (database) name., type: str, required: true}
@@ -66,6 +66,7 @@ replaced: {description: "write: a run of the same window was there and was repla
 written: {description: "write: {runs, nodes, figures}.", type: dict}
 store: {description: "tickets_load, tickets_save (1.17.0): {held (rows of this instance now), saved, pruned}.", type: dict}
 act: {description: "act_load (1.17.0): {issues, classes}; act_save: {issues (written), classes (held now)}.", type: dict}
+texts: {description: "text_load (1.81.0): {key hash: the draft as JSON text}; text_save: {saved}.", type: dict}
 rows: {description: "read: [[month, window_end, node, variant, metric, value, partial]].", type: list}
 months: {description: "write: the calendar months written (the month so far marked).", type: list}
 tickets: {description: "write: each month's tickets and rows, in words (the backfill's progress).", type: str}
@@ -582,10 +583,59 @@ def act_save(conn, p, chunk=500):
     return {"act": {"issues": len(rows.get("issues") or []), "classes": held}}
 
 
+TEXT_DDL = ("CREATE TABLE IF NOT EXISTS insights_act_text (source VARCHAR(190) NOT NULL, cache_key VARCHAR(190) NOT NULL, key_hash CHAR(64) NOT NULL, "
+            "body TEXT NOT NULL, written_at DATETIME NOT NULL, PRIMARY KEY (source, cache_key, key_hash)) " + TABLE_OPTS)
+TEXT_KEEP_DAYS = 120
+
+
+def text_table(conn, create):
+    """The Automation backlog's drafts table (1.81.0): made when it is not there and create is true - not part of the store's three
+    tables, so a database without it (and without the CREATE grant) keeps the rest working; the drafts are asked again each run."""
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'insights_act_text'")
+    if int(cur.fetchone()[0]):
+        conn.commit()
+        return True
+    if not create:
+        conn.commit()
+        return False
+    cur.execute(TEXT_DDL)
+    conn.commit()
+    return True
+
+
+def text_load(conn, p):
+    """The drafts held for this instance and cache key -> {texts: {key hash: JSON text}} (clear: none)."""
+    if p["clear"] or not text_table(conn, p["create"]):
+        return {"texts": {}}
+    cur = conn.cursor()
+    cur.execute("SELECT key_hash, body FROM insights_act_text WHERE source = %s AND cache_key = %s AND written_at >= UTC_TIMESTAMP() - INTERVAL %s DAY",
+                (p["source"], p["cache_key"], TEXT_KEEP_DAYS))
+    out = dict((str(a), str(b)) for a, b in cur.fetchall())
+    conn.commit()
+    return {"texts": out}
+
+
+def text_save(conn, p):
+    """This run's drafts (rows: {texts: [{hash, text}]}) upserted; another cache key's rows of this instance (another model),
+    and those not written for TEXT_KEEP_DAYS days (the clusters that changed), deleted - one transaction."""
+    if not text_table(conn, p["create"]):
+        return {"texts": {}}
+    rows = (p["rows"] or {}).get("texts") or []
+    cur = conn.cursor()
+    cur.execute("DELETE FROM insights_act_text WHERE source = %s AND (cache_key <> %s OR written_at < UTC_TIMESTAMP() - INTERVAL %s DAY)",
+                (p["source"], p["cache_key"], TEXT_KEEP_DAYS))
+    cur.executemany("INSERT INTO insights_act_text (source, cache_key, key_hash, body, written_at) VALUES (%s, %s, %s, %s, UTC_TIMESTAMP()) "
+                    "ON DUPLICATE KEY UPDATE body = VALUES(body), written_at = VALUES(written_at)",
+                    [(p["source"], p["cache_key"], str(x["hash"])[:64], str(x["text"])) for x in rows])
+    conn.commit()
+    return {"texts": {"saved": len(rows)}}
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            mode=dict(type="str", required=True, choices=["read", "write", "check", "tickets_load", "tickets_save", "act_load", "act_save"]), host=dict(type="str", required=True),
+            mode=dict(type="str", required=True, choices=["read", "write", "check", "tickets_load", "tickets_save", "act_load", "act_save", "text_load", "text_save"]), host=dict(type="str", required=True),
             port=dict(type="int", default=3309), database=dict(type="str", required=True), user=dict(type="str", required=True),
             password=dict(type="str", required=True, no_log=True), tls=dict(type="bool", default=False), ca_file=dict(type="str", default=""),
             connect_timeout=dict(type="int", default=10), create=dict(type="bool", default=True), rows=dict(type="dict"),
@@ -601,7 +651,7 @@ def main():
     res = {"changed": False, "ok": False, "error": "", "tls": "", "auth": "", "created": False, "schema_version": 0,
            "replaced": False, "written": {"runs": 0, "nodes": 0, "figures": 0}, "months": [], "kept": [], "tickets": "", "rows": [], "months_kept": 0, "where": where,
            "run_id": 0, "held": [], "version": "", "account": {}, "objects": {}, "store": {"held": 0, "saved": 0, "pruned": 0},
-           "act": {"issues": [], "classes": {}}, "store_missing": []}
+           "act": {"issues": [], "classes": {}}, "texts": {}, "store_missing": []}
 
     def give_up(msg):
         res["error"] = msg
@@ -614,7 +664,7 @@ def main():
 
     if not HAS_PYMYSQL:
         give_up("PyMySQL is not in this execution environment (pip install PyMySQL; the all-in-one EE has it)")
-    if p["mode"] in ("write", "tickets_save", "act_save") and module.check_mode:
+    if p["mode"] in ("write", "tickets_save", "act_save", "text_save") and module.check_mode:
         res.update(ok=True, error="check mode: nothing written")
         module.exit_json(**res)
     conn = None
@@ -625,7 +675,7 @@ def main():
             res.update(check(conn))
             res["ok"] = True
             module.exit_json(**res)
-        res["schema_version"], res["created"], store = schema(conn, p["create"] and not module.check_mode, p["mode"] in ("read", "tickets_load", "act_load"))
+        res["schema_version"], res["created"], store = schema(conn, p["create"] and not module.check_mode, p["mode"] in ("read", "tickets_load", "act_load", "text_load"))
         res["store_missing"] = store["missing"]
         if store["missing"] and res["schema_version"] and p["mode"] in ("tickets_load", "tickets_save", "act_load", "act_save"):
             res["error"] = store_tables_say(store, p["create"] and not module.check_mode)
@@ -643,10 +693,14 @@ def main():
             res.update(act_save(conn, p))
         elif p["mode"] == "act_load":
             res.update(act_load(conn, p) if res["schema_version"] else {"act": {"issues": [], "classes": {}}})
+        elif p["mode"] == "text_save":
+            res.update(text_save(conn, p))
+        elif p["mode"] == "text_load":
+            res.update(text_load(conn, p) if res["schema_version"] else {"texts": {}})
         elif res["schema_version"]:
             res.update(read(conn, p))
         res["ok"] = True
-        res["changed"] = p["mode"] in ("write", "tickets_save", "act_save") or res["created"]
+        res["changed"] = p["mode"] in ("write", "tickets_save", "act_save", "text_save") or res["created"]
     except ssl.SSLError as e:
         give_up("TLS: %s - the server's certificate must be signed by the CA and name %s" % (short_error(e), p["host"]))
     except Exception as e:      # unreachable, refused, a login or grant missing: one line, the job goes on

@@ -407,6 +407,17 @@ was, and the job says so:
 ACT cache: not cleared - ACT answered 2 of 5 grouping questions, so the cache is kept as it was. Launch with servicenow_insights_act_cache_clear: true again.
 ```
 
+### The Automation backlog's drafts (1.81.0)
+
+| Table | What it holds |
+|---|---|
+| `insights_act_text` | One draft of the *Automation backlog* per cluster: the SHA-256 of the cluster's tickets (their ids, whether and when they were done, their handoffs and the grade of their close note) and the draft as JSON - ACT's masked words (strategy, summary, problem, three phases), no ticket number, host or person |
+
+A cluster that did not change is not asked again; a draft not written for 120 days (it is not read either), or made for another model or
+prompt, is deleted. The table is made the first time it is needed (the writer needs CREATE, or `servicenow_insights_db_create`
+true). It is not one of the three tables of *The ACT cache*: without it the figures and the ACT cache go on as before and
+ACT is asked for the drafts every run. To make it by hand: `CREATE TABLE insights_act_text (source VARCHAR(190) NOT NULL, cache_key VARCHAR(190) NOT NULL, key_hash CHAR(64) NOT NULL, body TEXT NOT NULL, written_at DATETIME NOT NULL, PRIMARY KEY (source, cache_key, key_hash));`
+
 ### Turning it off, and removing it
 
 | To | Do |
@@ -415,7 +426,7 @@ ACT cache: not cleared - ACT answered 2 of 5 grouping questions, so the cache is
 | Ask ACT everything again and replace the cache | Launch with `servicenow_insights_act_cache_clear: true` |
 | Stop keeping tickets | `servicenow_insights_incremental: false` |
 | Stop keeping ACT's grouping | `servicenow_insights_act_cache: false` |
-| Remove what is kept | As root: `DELETE FROM insights_ticket; DELETE FROM insights_act_class; DELETE FROM insights_act_issue;` |
+| Remove what is kept | As root: `DELETE FROM insights_ticket; DELETE FROM insights_act_class; DELETE FROM insights_act_issue; DROP TABLE IF EXISTS insights_act_text;` |
 
 ### What it does not see
 

@@ -425,7 +425,71 @@ kbd{font:600 11px var(--mono);border:1px solid var(--line);border-bottom-width:2
 a.glink{color:inherit;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
 a.glink:hover{color:var(--accent);text-decoration-color:currentColor}
 svg a.glink text{fill:var(--fg-2)}svg a.glink:hover text{fill:var(--accent);text-decoration:underline}
-@media print{.bar{position:static}.toc,.tools,.teamnav{display:none}.layout{grid-template-columns:1fr}section.card{box-shadow:none;break-inside:avoid-page}}"""
+@media print{.bar{position:static}.toc,.tools,.teamnav{display:none}.layout{grid-template-columns:1fr}section.card{box-shadow:none;break-inside:avoid-page}}/* 1.81.0: the Automation backlog */
+#backlog .bkc{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 10px}
+#backlog .bkc .search input{width:220px;margin:0}
+#backlog .bkn{font-size:12px;margin-left:auto}
+#backlog .bkpg{display:flex;gap:6px}
+#backlog .bkpg .btn{padding:4px 10px;font-size:12px}
+#backlog .bkpg .btn:disabled{opacity:.45;cursor:default}
+.pseg{display:inline-flex;flex-wrap:nowrap;white-space:nowrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.pseg .pb{flex:none;min-width:26px;border:0;border-right:1px solid var(--line);background:transparent;color:var(--fg-2);font:inherit;font-size:11px;font-weight:700;padding:3px 5px;cursor:pointer;white-space:nowrap}
+.pseg .pb:last-child{border-right:0}
+.pseg .pb.on{background:var(--accent);color:var(--on-accent)}
+.pseg.pf .pb{font-size:12px;padding:5px 10px}
+#backlog .bkw{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+table.bk{width:100%;border-collapse:collapse;table-layout:auto;font-size:13px}
+table.bk th{display:table-cell;text-align:left;vertical-align:bottom;white-space:nowrap}
+table.bk th.n{text-align:right}
+table.bk th[data-bks]{cursor:pointer}
+table.bk th[aria-sort=ascending] .thl::after{content:" ▲"}
+table.bk th[aria-sort=descending] .thl::after{content:" ▼"}
+table.bk td{padding:8px 12px;border-bottom:1px solid var(--line-2);vertical-align:top}
+table.bk td.ps,table.bk th.ps{white-space:nowrap;width:1%}
+table.bk td.n{display:table-cell;padding:8px 12px;white-space:nowrap}
+table.bk tbody.bkg:hover .bkm td{background:var(--surface-2)}
+table.bk tbody.bkg.open .bkm td{background:var(--accent-soft);border-bottom-color:transparent}
+.bq{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid var(--line);font-size:10px;color:var(--muted);margin-left:4px;cursor:help;letter-spacing:0;text-transform:none;font-weight:700;vertical-align:1px}
+.bkt{all:unset;cursor:pointer;display:flex;gap:6px;align-items:baseline;font-weight:600;color:var(--fg)}
+.bkt:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bkt .caret{display:inline-block;transition:transform .15s;color:var(--muted)}
+tbody.open .bkt .caret{transform:rotate(90deg)}
+td.ti .m{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 0 14px}
+td.n .sub{display:block;font-size:11px;color:var(--muted)}
+td.ps span{display:inline-block;min-width:22px;color:var(--muted)}
+td.ps span.pbst{color:var(--fg);font-weight:700}
+b.sc{font-size:15px}
+.aibadge{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.aibadge.ai1{border-color:var(--info);color:var(--info)}
+.aibadge.ai2{background:var(--info-bg);border-color:var(--info);color:var(--info)}
+tr.bkx td{padding:4px 14px 16px;background:var(--surface)}
+.bkd{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:18px}
+.bkl h4{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:12px 0 3px}
+.bkl p{margin:0;font-size:13px;line-height:1.45;max-width:62ch}
+.aib{border:1px solid var(--line);border-left:4px solid var(--info);border-radius:10px;padding:9px 12px;background:var(--info-bg)}
+.aih{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 4px}
+.bkl .from{font-size:11px;color:var(--muted);margin-top:10px}
+.phases{display:grid;gap:8px}
+.phc{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface-2)}
+.phc.isbest{border-color:var(--accent)}
+.phh{display:flex;gap:8px;align-items:center;font-size:13px}
+.phs{margin-left:auto;font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.phs .lab{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.phk{display:flex;flex-wrap:wrap;gap:2px 14px;margin:4px 0;font-size:12px}
+.phk dt{color:var(--muted)}
+.phk dd{margin:0 0 0 -10px;font-weight:700;font-variant-numeric:tabular-nums}
+.phl{font-size:12px;line-height:1.4;color:var(--fg-2)}
+.phl b{color:var(--muted);font-weight:600;margin-right:4px}
+.dlrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+.dlrow .btn{text-decoration:none;font-size:12px}
+.sm{font-size:12px}
+.bkt3{margin-top:12px}
+.bktile{text-decoration:none;color:inherit;border-color:var(--line)}
+.bktile:hover{border-color:var(--accent)}
+.bktile .tsm{font-size:16px;line-height:1.3;display:block}
+#backlog .fair{margin-top:10px}
+@media (max-width:900px){.bkd{grid-template-columns:1fr} table.bk th{white-space:normal} table.bk td,table.bk td.n,table.bk th{padding-left:8px;padding-right:8px}}
+"""
 
 # 0.92.0: the website's brief look (report_web_theme: brief - opts look): the same page in the brief palette and type
 # (roles/site_email/templates/report_brief.html.j2), its figures as one ruled strip, and a verdict at the top - Keeping
@@ -823,6 +887,38 @@ if(ppb&&ppd){var PE=eng(JSON.parse(ppd.textContent)),PC=PE.C,PS={};PE.CV.groups.
  copier("ppcopy");window.addEventListener("popstate",fromhash);fromhash();
 }
 window.addEventListener("beforeprint",function(){D.querySelectorAll("main details").forEach(function(d){d.open=true})});
+/* 1.81.0: the Automation backlog - search, a priority filter (P1 to P3), sorting, 50 a page, a row that opens, the row's priority (the suggestion from the score;
+   what a reader sets is kept in this browser only, under the cluster's id) and the proposal as .md (its text is in the page's JSON: nothing is built from the page) */
+(function(){var sec=D.getElementById("backlog");if(!sec)return;var tb=sec.querySelector("table.bk"),groups=[].slice.call(tb.tBodies),data={};
+ try{data=JSON.parse(D.getElementById("bk-data").textContent)}catch(x){data={}}
+ var q=sec.querySelector(".bks"),cnt=sec.querySelector(".bkn"),prev=sec.querySelector(".bkprev"),next=sec.querySelector(".bknext"),PAGE=50,page=0,pf=0,store={};
+ try{store=JSON.parse(localStorage.getItem("bk-prio")||"{}")||{}}catch(x){store={}}
+ function setP(g,p){g.setAttribute("data-p",p);g.rows[0].cells[0].setAttribute("data-v",p);
+  g.querySelectorAll(".bkm .pb").forEach(function(b){var on=b.getAttribute("data-p")===String(p);b.classList.toggle("on",on);b.setAttribute("aria-pressed",on?"true":"false")})}
+ groups.forEach(function(g){var p=store[g.id];if(p===1||p===2||p===3)setP(g,p)});
+ function shown(){var s=(q.value||"").trim().toLowerCase();return groups.filter(function(g){return(!s||g.getAttribute("data-s").indexOf(s)>=0)&&(!pf||g.getAttribute("data-p")===String(pf))})}
+ function draw(){var list=shown(),pages=Math.max(1,Math.ceil(list.length/PAGE));if(page>=pages)page=pages-1;
+  groups.forEach(function(g){g.hidden=true});list.slice(page*PAGE,page*PAGE+PAGE).forEach(function(g){g.hidden=false});
+  var a=list.length?page*PAGE+1:0,b=Math.min(list.length,page*PAGE+PAGE);
+  cnt.textContent=list.length?"Showing "+a+"\u2013"+b+" of "+list.length:"No cluster matches";prev.disabled=page===0;next.disabled=page>=pages-1;
+  var pg=sec.querySelector(".bkpg");if(pg)pg.hidden=pages<2}
+ q.addEventListener("input",function(){page=0;draw()});prev.addEventListener("click",function(){page--;draw()});next.addEventListener("click",function(){page++;draw()});
+ sec.querySelectorAll(".pf .pb").forEach(function(b){b.addEventListener("click",function(){pf=+b.getAttribute("data-f");page=0;
+  sec.querySelectorAll(".pf .pb").forEach(function(x){var on=x===b;x.classList.toggle("on",on);x.setAttribute("aria-pressed",on?"true":"false")});draw()})});
+ tb.addEventListener("click",function(ev){var t=ev.target.closest(".bkt"),pb=ev.target.closest(".bkm .pb"),md=ev.target.closest(".js-md");
+  if(t){var g=t.closest("tbody"),x=g.querySelector(".bkx"),open=x.hidden;x.hidden=!open;g.classList.toggle("open",open);t.setAttribute("aria-expanded",open?"true":"false")}
+  else if(pb){var gg=pb.closest("tbody"),p=+pb.getAttribute("data-p");setP(gg,p);store[gg.id]=p;try{localStorage.setItem("bk-prio",JSON.stringify(store))}catch(x2){}draw()}
+  else if(md){var d=data[md.getAttribute("data-id")];if(!d)return;var name=md.closest("tbody").querySelector(".bkt .t").textContent;
+   var u=URL.createObjectURL(new Blob([d.md],{type:"text/markdown"})),a=D.createElement("a");a.href=u;a.download=name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")+".md";
+   D.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(u)},1000)}});
+ function sortBy(th){var i=[].indexOf.call(th.parentNode.children,th),kind=th.getAttribute("data-bks"),dir=th.getAttribute("aria-sort")==="descending"?"ascending":"descending";
+  if(th.getAttribute("aria-sort")==="none"&&(kind==="s"||kind==="p"))dir="ascending";
+  th.parentNode.querySelectorAll("th").forEach(function(x){x.setAttribute("aria-sort","none")});th.setAttribute("aria-sort",dir);
+  var key=function(g){var c=g.rows[0].cells[i];return kind==="s"?c.querySelector(".t").textContent.trim().toLowerCase():+c.getAttribute("data-v")};
+  groups.sort(function(a,b){var x=key(a),y=key(b),r=x<y?-1:x>y?1:0;return dir==="ascending"?r:-r});groups.forEach(function(g){tb.appendChild(g)});page=0;draw()}
+ tb.querySelectorAll("th[data-bks]").forEach(function(th){th.addEventListener("click",function(ev){if(!ev.target.closest(".bq"))sortBy(th)});
+  th.addEventListener("keydown",function(ev){if(ev.key==="Enter"&&!ev.target.closest(".bq"))sortBy(th)})});
+ draw()})();
 }
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
 })();"""
@@ -1570,6 +1666,123 @@ def servicenow_insights_breach_page(bm, opts=None):
     return "".join(out)
 
 
+def backlog_tiles(bm):
+    """At a glance (1.81.0): the Automation backlog's three tiles - the clusters with the P1 count, the hours saved a year, the top candidate."""
+    B = _sibling("servicenow_insights_backlog")
+    rows = (bm or {}).get("rows") or []
+    if not rows:
+        return ""
+    t = bm["top"]
+    return ('<div class="tiles bkt3">'
+            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Automation backlog</span><span class="v">%s</span><span class="d">clusters, %s at P1</span></a>'
+            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Hours saved / year</span><span class="v">%s</span><span class="d">if every cluster reached its best phase</span></a>'
+            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Top candidate</span><span class="v"><span class="tsm">%s</span></span>'
+            '<span class="d">score %d · %.1f a month · phase %d</span></a></div>' % (
+                n(len(rows)), n(bm["p1"]), n(round(bm["saved"])), e(t[0]), t[1], t[2], t[3]))
+
+
+def _bq(text, plain=None):
+    """A ? with the formula in its hover (the page's own tooltip: <br> and <b> only) and in the title."""
+    return '<span class="bq" tabindex="0" data-t="%s" title="%s">?</span>' % (e(text), e(plain or re.sub(r"<br>", " · ", text)))
+
+
+def backlog_section(bm, o=None, url="", pre=None):
+    """The Automation backlog (1.81.0), after Top incident issues: every cluster with its priority, rate, hours saved, VIP and score;
+    a row opens to ACT's words and the three phases. Search, a P filter, sorting and paging are the page's script (site-insights.js)."""
+    B = _sibling("servicenow_insights_backlog")
+    rows = (bm or {}).get("rows") or []
+    if not rows:
+        return ""
+    vip_on = bool(bm.get("vip_on"))
+    months = bm["months"]
+    topr = rows[0]
+    head = [
+        ("Priority", "ps", "p", "Suggested from the score: P1 from %d, P2 from %d, else P3. The buttons in a row change it for this browser only." % (B.CUT_P1, B.CUT_P2)),
+        ("Issue", "ti", "s", "The cluster (Top incident issues' grouping) and its category."),
+        ("Tickets / month", "n", "n", "Tickets ÷ %.1f months (the window), and the cluster's share of all %s incidents in it.<br>The same tickets as the Issue's count: rate × months = tickets." % (
+            months, n(bm["total"]))),
+        ("Hours saved / yr", "n", "n", "Labor = %s h per ticket + %s h per handoff (reassignment).<br>Hours saved / year = labor ÷ %.1f months × 12 × deflection of the best phase." % (
+            B.H_TICKET, B.H_HANDOFF, months)),
+        ("VIP", "n", "n", "Tickets raised for a VIP (the VIP section's tiers), in the window." if vip_on else
+         "No VIP tiers are set up (servicenow_insights_vip_fields): the figure is 0 and counts for nothing in the score."),
+        ("Score", "n", "n", "Composite = %s × volume + %s × best phase score + %s × VIP.<br>Volume = rate ÷ the top cluster's rate × 100; VIP = VIP share × 5 × 100, at most 100." % (
+            B.W_VOLUME, B.W_PHASE, B.W_VIP)),
+    ]
+    th = "".join('<th class="%s" data-bks="%s" tabindex="0" aria-sort="none"><span class="thl">%s</span>%s</th>' % (c, k, e(t), _bq(tip)) for t, c, k, tip in head)
+    out = ['<div class="bkc"><label class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">'
+           '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="bks" placeholder="Search clusters" aria-label="Search clusters"></label>'
+           '<span class="pseg pf js" role="group" aria-label="Show priority">'
+           '<button type="button" class="pb on" data-f="0" aria-pressed="true">All</button><button type="button" class="pb" data-f="1">P1</button>'
+           '<button type="button" class="pb" data-f="2">P2</button><button type="button" class="pb" data-f="3">P3</button></span>'
+           '<span class="bkn mut" role="status"></span><span class="bkpg js"><button type="button" class="btn bkprev">‹ Previous</button>'
+           '<button type="button" class="btn bknext">Next ›</button></span></div>'
+           '<div class="bkw"><table class="bk" id="bktable"><thead><tr>%s</tr></thead>' % th]
+    data = {}
+    files = []                          # what this report really carries: the Word file only when it was made, the sheet only with the workbook
+    if (o or {}).get("backlog_docx"):
+        files.append("the top %d clusters are also in Automation backlog.docx (attached to the report email)" % (bm.get("top_n") or 0))
+    if (o or {}).get("backlog_xlsx"):
+        files.append("every cluster is on the workbook's Automation backlog sheet")
+    files_note = ('<span class="mut sm">%s.</span>' % e((files[0][0].upper() + files[0][1:]) + ("; " + files[1] if len(files) > 1 else ""))) if files else ""
+    for r in rows:
+        t = r.get("text")
+        miss = r.get("why_not") or B.OFF_TEXT
+        ai = (t or {}).get("ai_label") or ""
+        cx = (t or {}).get("phases") or [None, None, None]
+        ex = ", ".join(tk(x, url, pre) for x in r["examples"]) or "—"
+        sug = r["prio"]
+        pbtn = "".join('<button type="button" class="pb%s" data-p="%d" aria-pressed="%s" title="%s">P%d</button>' % (
+            " on" if k == sug else "", k, "true" if k == sug else "false",
+            ("Suggested from the score %d" % r["score"]) if k == sug else "Set P%d for this browser" % k, k) for k in (1, 2, 3))
+        phases = []
+        for i, p in enumerate(r["ph"]):
+            d = cx[i] or {}
+            phases.append(
+                '<div class="phc%s"><div class="phh"><b>Phase %d · %s</b>%s<span class="phs"><span class="lab">score</span> %d%s</span></div>'
+                '<dl class="phk"><dt>Complexity</dt><dd>%d/5</dd><dt>Impact</dt><dd>%d/5</dd><dt>Effort</dt><dd>%d day%s</dd><dt>Deflection</dt><dd>%d%%</dd></dl>'
+                '<div class="phl"><b>Approach</b> %s</div><div class="phl"><b>Needs</b> %s</div><div class="phl"><b>AI</b> %s</div></div>' % (
+                    " isbest" if r["best"] == i + 1 else "", i + 1, e(p["name"]), ' <span class="chip kb">best</span>' if r["best"] == i + 1 else "",
+                    p["score"], _bq(B.tip_phase(p, r)), p["complexity"], p["impact"], p["effort"], "" if p["effort"] == 1 else "s", p["defl"],
+                    e(d.get("approach") or miss), e(", ".join(d.get("needs") or []) or miss), e(d.get("ai_note") or miss)))
+        ai_badge = ('<span class="aibadge %s">%s</span>' % ("ai2" if ai == B.AI_LABELS[1] else "ai1" if ai == B.AI_LABELS[0] else "", e(ai))) if ai else ""
+        left = ('<div class="aib"><div class="aih"><span class="src ai">ACT</span> <b>AI strategy</b> %s</div><p>%s</p></div>'
+                '<h4>Executive summary</h4><p class="lim">%s</p><h4>Problem</h4><p class="lim">%s</p>'
+                '<div class="from">%s · examples: %s</div>' % (
+                    ai_badge, e((t or {}).get("strategy") or miss), e((t or {}).get("summary") or miss), e((t or {}).get("problem") or miss),
+                    "Text by ACT%s · figures filled in by code" % (" (kept from an earlier run)" if (t or {}).get("cached") else "") if t else
+                    "Figures filled in by code", ex))
+        out.append(
+            '<tbody class="bkg" id="%s" data-s="%s" data-p="%d" data-sug="%d"><tr class="bkm">'
+            '<td class="ps" data-v="%d"><span class="pseg" role="group" aria-label="Priority of %s">%s</span></td>'
+            '<td class="ti"><button type="button" class="bkt" aria-expanded="false"><span class="caret">›</span><span class="t">%s</span></button>'
+            '<span class="m">%s%s</span></td>'
+            '<td class="n" data-v="%.3f" title="%s">%.1f<span class="sub">%.1f%% of incidents</span></td>'
+            '<td class="n" data-v="%.1f" title="%s">%s</td><td class="n" data-v="%d">%s</td>'
+            '<td class="n" data-v="%d" title="%s"><b class="sc">%d</b></td></tr>'
+            '<tr class="bkx" hidden><td colspan="6"><div class="bkd"><div class="bkl">%s</div><div class="bkr"><div class="phases">%s</div></div></div>'
+            '<div class="dlrow"><button type="button" class="btn js-md js" data-id="%s">Download proposal (.md)</button>'
+            '%s'
+            '</div></td></tr></tbody>' % (
+                r["id"], e(" ".join([r["label"], r["name"], r["cat"], ai, " ".join(r["examples"])]).lower()), sug, sug, sug, e(r["label"]), pbtn, e(r["label"]),
+                ('<span class="chip">%s</span>' % e(r["cat"])) if r["cat"] else "", ai_badge,
+                r["rate"], e(B.tip_rate(r, bm)), r["rate"], r["share"], r["saved"], e(B.tip_saved(r, bm)), n(round(r["saved"])), r["vip"] if vip_on else 0,
+                n(r["vip"]) if vip_on else "—", r["score"], e(B.tip_score(r, bm)), r["score"], left, "".join(phases), r["id"], files_note))
+        data[r["id"]] = {"md": B.proposal_md(r, bm)}
+    out.append("</table></div>")
+    if bm.get("left_out"):
+        out.append('<p class="mut sm bklo">%s cluster%s with fewer than %d tickets in the window (%s ticket%s in all) %s left out: <code>servicenow_insights_backlog_min_tickets</code> sets the limit.</p>' % (
+            n(bm["left_out"]), "" if bm["left_out"] == 1 else "s", bm["min_n"], n(bm["left_out_tickets"]), "" if bm["left_out_tickets"] == 1 else "s", "is" if bm["left_out"] == 1 else "are"))
+    if not bm.get("act_on"):
+        out.append('<div class="fair">ACT wrote no words: the numbers and the phases come from the formulas; the words read "%s". To have it write them, set '
+                   '<code>servicenow_insights_act: true</code> on a launch.</div>' % e(B.OFF_TEXT))
+    else:
+        out.append('<div class="fair">ACT wrote the words for the top %d clusters (<code>servicenow_insights_backlog_issues</code>); the figures are worked out by code '
+                   'from the tickets - hover a ? or a cell for its formula. The deflection of each phase is an estimate from the close notes.</div>' % (bm.get("top_n") or 0))
+    out.append('<script type="application/json" id="bk-data">%s</script>' % json.dumps(data, sort_keys=True, separators=(",", ":")).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+    note = "%s clusters from Top incident issues · %s incidents · %s" % (n(len(rows)), n(bm["total"]), e(bm.get("window_label") or ""))
+    return section("backlog", "Automation backlog", note.rstrip(" ·"), "".join(out))
+
+
 def search_attr(*parts):
     return ' data-search="%s"' % e(" ".join(str(p or "") for p in parts).lower())
 
@@ -1700,6 +1913,7 @@ def servicenow_insights_page(model, key="all", opts=None):
             ("categories", "Categories", len((s.get("categories") or {}).get("rows") or []) or "")] + (
                [("satisfaction", "Satisfaction", (s.get("survey") or {}).get("n") or "")] if (m.get("process") or {}).get("survey_read") or (s.get("survey") or {}).get("n") else []) + [
             ("issues", "Top issues", min(len(s["issues"]), int(o.get("top_issues") or 10))),
+            ] + ([("backlog", "Automation backlog", len(s["autobl"]["rows"]))] if (s.get("autobl") or {}).get("rows") else []) + [
             ("problems", "Problem candidates", len(s["problems"]) or ""), ("handoffs", "Passed between groups", s["handoffs"]["count"] or ""),
             ("requests", "Most requested", min(len(s["requests"]), int(o.get("top_requests") or 10))), ("changes", "Changes", len(s["changes"]["rows"]) or ""),
             ("allstars", "All-stars", ""), ("notes", "Close notes", ""), ("kb", "KB drafts", len(s.get("kb") or []) or ""), ("method", "How this was made", "")]
@@ -1805,7 +2019,7 @@ def servicenow_insights_page(model, key="all", opts=None):
         sfx = "-" + ("non-" if variant == "out" else "") + _slug((m.get("split") or {}).get("label"))
         body.append('<p class="cvaway"><b>Custom view:</b> on the <a href="%s">All page</a>.</p>' % e(links["all"].replace(sfx + ".html", ".html")))
     body.append(section("glance", "At a glance", "%s, compared with the %s before (%s)" % (e(win.get("label")), e(span), e(win.get("prev_label") or "")) if win.get("compare") else e(win.get("label")),
-                        tiles(tl) + summ))
+                        tiles(tl) + backlog_tiles(s.get("autobl")) + summ))
     if trend_html:
         body.append(trend_html)
 
@@ -2278,6 +2492,8 @@ def servicenow_insights_page(model, key="all", opts=None):
         n(c["incidents"]), "by ACT" if by_act else "by their category", s["issue_total"],
         (" · top %d = %d%% of all" % (len(iss), iss[-1]["cum"])) if iss else "")
     body.append(section("issues", "Top incident issues", e(note), "".join(rows)))
+    if s.get("autobl") and s["autobl"].get("rows"):
+        body.append(backlog_section(dict(s["autobl"], window_label=win.get("label") or ""), o, url, pre))
 
     # ---- problem candidates
     prow = []

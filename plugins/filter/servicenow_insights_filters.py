@@ -1858,6 +1858,22 @@ def prefix_map(items, opts=None):
     return out
 
 
+_SIB_BACKLOG = {}
+
+
+def _backlog_mod():
+    """servicenow_insights_backlog.py beside this file (filter plugins are not a package)."""
+    if "m" not in _SIB_BACKLOG:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location("servicenow_insights_backlog_for_model", os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "servicenow_insights_backlog.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SIB_BACKLOG["m"] = mod
+    return _SIB_BACKLOG["m"]
+
+
 def servicenow_insights_model(r, state=None, mask=None, opts=None):
     """Everything the report shows, for the site (scopes.all) and each team (scopes[team]) - see docs/SERVICENOW_INSIGHTS.md."""
     o = opts or {}
@@ -2716,6 +2732,9 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
               "quality": q_now, "quality_prev": q_prev, "notes_graded": q_n,
               "backlog": [bl_now, bl_start], "age": age, "weeks": wk, "heat": heat,
               "prio": prio_rows, "majors": major_rows, "issues": issue_rows, "issue_total": len(cur), "misfiled": misfiled[:5],
+              # 1.81.0: the Automation backlog - every cluster, ranked; the site's page only (a team's would repeat it per team)
+              "autobl": _backlog_mod().backlog_model(inc_now, dict((x["sys_id"], x["_issue"]) for x in inc_now if x.get("_issue")), since, until, state, o, vip,
+                                                      repeat_ci.total_seconds() / 86400.0) if allscope else None,
               "requests": req_rows, "changes": changes, "notes_by_group": q_groups, "bare": bare_rows,
               "handoffs": handoffs, "problems": pc[:15], "resolved_n": len(rep_now), "ctasks": ctasks,
               "vip": vip_scope(inc_now, ritm_now, flow, since, until, vip, o)}
@@ -4360,6 +4379,8 @@ def servicenow_insights_xlsx(model, r=None, state=None, mask=None, opts=None):
     sheets.append({"name": "Changes failed", "columns": ["Change", "Closed", "What", "Group", "Outcome", "Followed by"],
                    "rows": [[x["number"], x["closed"], x["what"], x["group"], x["outcome"], ", ".join(f[0] + (" (caused by)" if f[1] == "link" else " (same CI)") for f in x["followed"])]
                             for x in s["changes"]["rows"]]})
+    if (s.get("autobl") or {}).get("rows"):                    # 1.81.0: every cluster and each of its three phases
+        sheets.append(_backlog_mod().backlog_sheet(s["autobl"]))
     if s.get("ctasks") is not None:
         # every change task opened, closed or open in the window (1.2.0)
         def ontime(x):

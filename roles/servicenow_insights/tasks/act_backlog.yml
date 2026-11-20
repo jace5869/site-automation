@@ -1,0 +1,25 @@
+---
+# One question of the Automation backlog (main.yml's loop): one cluster's masked close notes and short descriptions and the
+# figures worked out by code; the answer (strategy, summary, problem, three phases' words) merged into _sni_state.backlog.
+# A draft that is not JSON, or lacks a field, is dropped: the cluster reads "not drafted" and the job says so.
+- name: Insights | ACT writes the Automation backlog text of {{ _sni_bk_batch.issues | map(attribute='name') | join(', ') }}
+  when: _sni_act_stop | length == 0
+  block:
+    - name: Insights | ask ACT - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_analysis.yml
+      vars:
+        _ea_items: "{{ _sni_bk_batch['items'] }}"
+        _ea_evidence: "{{ _sni_bk_batch | servicenow_insights_backlog_evidence(_sni_mask, _sni_opts) }}"
+        _ea_task: "{{ _sni_opts | servicenow_insights_backlog_task }}"
+        _ea_check_url: false
+        _ea_names: []
+        _ea_model_timeout: "{{ servicenow_insights_act_model_timeout }}"
+
+    - name: Insights | ACT's text for the cluster
+      ansible.builtin.set_fact:
+        _sni_state: >-
+          {{ _sni_state | servicenow_insights_backlog_merge(_ea_raw | default(''), _sni_bk_batch, _sni_opts, _ea_ran | default(false) | bool,
+                                                           _ea_reason | default(''), _ea_model | default(''), _sni_mask) }}
+        _sni_act_stop: "{{ _ea_why_not | default('') | trim if not _ea_ran | default(false) | bool else '' }}"

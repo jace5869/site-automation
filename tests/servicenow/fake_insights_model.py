@@ -56,6 +56,18 @@ def answer(text):
                         "kb": None if sug or int(count) < 50 else {"title": "Fix: %s" % name, "symptoms": "The user sees %s." % name.lower(),
                                                                   "cause": "The usual cause.", "steps": ["Step one.", "Step two."]}})
         return {"items": out}
+    if "text of an automation proposal" in text:                       # 1.81.0: the Automation backlog's words, one cluster a question
+        if os.path.exists(os.environ.get("FAKE_MODEL_BAD_BACKLOG_FILE", "-")):
+            return {"oops": "not what was asked"}
+        out = []
+        for cid, name in re.findall(r"^CLUSTER (B\d+): (.+?) \(category", text, re.M):
+            out.append({"id": cid, "strategy": "Fake strategy for %s." % name, "ai_label": "Development-Assist",
+                        "summary": "Fake summary: %s repeats and a script settles most of it. Two sentences." % name,
+                        "problem": "Fake problem: people wait for the desk. Two sentences.",
+                        "phases": [{"approach": "Fake KB article for %s" % name, "needs": ["KB owner", "Portal form"], "ai_note": "ACT drafts the KB"},
+                                   {"approach": "Fake catalog item that runs a script", "needs": ["Service account", "MID Server"], "ai_note": "ACT drafts the script"},
+                                   {"approach": "Fake zero-touch on the event", "needs": ["Phase 2 stable"], "ai_note": "None"}]})
+        return {"items": out}
     if "Write what each scope" in text:
         return {"items": [{"id": s, "lines": ["Scope %s: the model's first point." % s, "Scope %s: the model's second point." % s]}
                           for s in re.findall(r"^SCOPE (\w+):", text, re.M)]}

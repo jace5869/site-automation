@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.81.0 — 2026-11-20
+
+**To set up: nothing.** One new setting, `servicenow_insights_backlog_issues` (15), `servicenow_insights_backlog_docx` (true) and `servicenow_insights_backlog_min_tickets` (5); all have working defaults. With ACT on, the report database makes one more table, `insights_act_text`, the first time it needs it (the writer needs CREATE, as for the other tables; without it ACT is asked for the drafts every run).
+
+**Automation backlog** - a section of the ServiceNow ticket insights report (no new report), right after *Top incident issues* on the site's page, with a rail link and three tiles in *At a glance*.
+
+- **The table.** Every issue ranked by what automating it would save: *Priority* (P1/P2/P3, suggested from the score with cut-offs 40 and 20; the buttons in a row change it, kept per browser), *Issue* (category and AI badges), *Tickets / month* (with the share), *Hours saved / yr*, *VIP*, *Score*. Search, sorting, a P filter, *Showing 1-50 of N* and paging.
+- **An opened row.** ACT's AI strategy, a two-line executive summary and problem statement on the left; three phase cards on the right (complexity, impact, effort, deflection, score, approach, needs, AI note), the best phase outlined; below 900 px the cards stack.
+- **Numbers by code only,** from the report's own clusters; each has its formula in the hover (rate x months = tickets). ACT writes only the words - one question per cluster for the top `servicenow_insights_backlog_issues`, as JSON, each field cut (summary 300 characters ...). A draft that is not usable reads *not drafted*; with ACT off, *not drafted (ACT off)* and the numbers and cards stay.
+- **Which clusters.** The issues of *Top incident issues*; those with fewer than `servicenow_insights_backlog_min_tickets` tickets are left out (one line says how many); *Not categorised* for no category or Other. A phase's deflection counts each ticket once; phase 3 is an estimate, at most 80%, and the hover shows the count (*41 of 74 tickets*).
+- **Kept in the report database** (`insights_act_text`, the hash of the cluster's tickets): only new or changed clusters cost a question.
+- **Downloads.** *Download proposal (.md)* in each opened row (built in the page, no inline script); one *Automation backlog.docx* attached to the report email (every cluster in a table, a proposal for each of the top clusters; the report website serves the page, not files); the workbook's *Automation backlog* sheet with every cluster and phase. `roles/incident_docs/tasks/write_doc.yml` writes a Word file for another role.
+- Tests: `tests/test_insights_backlog.py` (the formulas on made-up XINC tickets, rate x months = tickets, ACT's JSON and bad JSON, the cache, ACT off, the Word file, the .md, the page at 1280 and 800 px, light and dark, under `script-src 'self'`), the insights e2e (the words, bad JSON, ACT off, the Word file in the mail).
+
 ## 1.79.9 — 2026-11-20
 
 **To set up:** run **Site portal - deploy** again. Nothing else.

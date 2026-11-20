@@ -1,0 +1,11 @@
+---
+# One Word document from a description (library/site_docx.py), for the other roles that write one (include_role with
+# tasks_from: write_doc.yml - a role's library is found only once the role is loaded): _wd_path (the file), _wd_doc (the
+# description, see site_docx). Registers _wd_result (path, size, logo, notes). Check mode: a file in the caller's own
+# temporary folder only.
+- name: Word document | write {{ _wd_path | basename }}
+  site_docx:
+    path: "{{ _wd_path }}"
+    doc: "{{ _wd_doc }}"
+  register: _wd_result
+  check_mode: false

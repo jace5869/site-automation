@@ -1797,6 +1797,9 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_act_fix_issues` | `15` | the top issues ACT writes a fix for ... |
 | `servicenow_insights_act_fix_batch` | `3` | ... this many per question |
 | `servicenow_insights_act_notes` | `40` | close notes per issue it reads |
+| `servicenow_insights_backlog_issues` | `15` | The Automation backlog (1.81.0, a section after Top incident issues on the site's page): every incident issue ranked by what automating it would save - the numbers worked out by code, never by ACT. With ACT on, ACT writes only the words (a strategy, a summary, a problem statement and three phases' approach, needs and… (all of it: the role file) |
+| `servicenow_insights_backlog_docx` | `true` | The email carries one Word file, "Automation backlog.docx": every cluster in a table, then a proposal for each of the top ..._issues. false = no file (the page's Download proposal (.md) and the workbook's Automation backlog sheet stay). |
+| `servicenow_insights_backlog_min_tickets` | `5` | Clusters with fewer tickets than this in the window are left out of the Automation backlog (one line under the table says how many). |
 | `servicenow_insights_act_work_notes` | `true` | ... and the work notes of those issues' incidents (0.96.0): what was tried while they were open, read from sys_journal_field (GET only; the account needs read on it - refused, the page says so and the fixes come from the close notes), masked like everything else before ACT reads them. The newest ..._max per issue, eac… (all of it: the role file) |
 | `servicenow_insights_act_work_notes_max` | `20` | the newest work notes per issue ACT reads |
 | `servicenow_insights_act_work_note_chars` | `1500` | each cut to this many characters |

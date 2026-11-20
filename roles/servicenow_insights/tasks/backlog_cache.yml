@@ -1,0 +1,69 @@
+---
+# THE BACKLOG DRAFTS' CACHE (1.81.0, servicenow_insights_act_cache): each cluster's draft kept in the report database under the
+# hash of the cluster's tickets (servicenow_insights_backlog_hash) - ACT's masked words only, never a ticket's text - so a cluster
+# whose tickets did not change is not asked again. _sni_bk_step: load or save. The table insights_act_text is made when it is
+# missing and the account may (servicenow_insights_db_create); without it every run asks ACT again, said once.
+- name: Insights | the Automation backlog's cache - the drafts held
+  when: _sni_bk_step == 'load'
+  block:
+    - name: Insights | the report database's login
+      ansible.builtin.include_tasks: db_login.yml
+      when: _sni_db is not defined
+
+    - name: Insights | the drafts ACT wrote before (insights_act_text)
+      site_insights_db:
+        mode: text_load
+        host: "{{ _sni_db.host }}"
+        port: "{{ _sni_db.port | int }}"
+        database: "{{ _sni_db.database }}"
+        user: "{{ _sni_db.user }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ _sni_db.tls | bool }}"
+        ca_file: "{{ _sni_db.ca_file }}"
+        connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+        create: "{{ servicenow_insights_db_create | bool and not ansible_check_mode }}"
+        source: "{{ _sni_act_source | default({'url': _sni_url} | servicenow_insights_db_source(_sni_opts)) }}"
+        cache_key: "{{ _sni_bk_key }}"
+        clear: "{{ servicenow_insights_act_cache_clear | bool }}"
+        required: false
+        warn: false
+        warn_tables: false
+      register: _sni_bk_held
+      check_mode: false         # only reads
+      when: _sni_db.host | length > 0
+
+    - name: Insights | the drafts the cache places, the clusters left to ask
+      ansible.builtin.set_fact:
+        _sni_bk_placed: "{{ _sni_state | servicenow_insights_backlog_apply_cache(_sni_bk_batches, _sni_bk_held.texts | default({})) }}"
+      when: _sni_bk_held.ok | default(false) | bool
+
+    - name: Insights | the state and the questions left
+      ansible.builtin.set_fact:
+        _sni_state: "{{ _sni_bk_placed.state }}"
+        _sni_bk_batches: "{{ _sni_bk_placed.batches }}"
+      when: _sni_bk_held.ok | default(false) | bool
+
+- name: Insights | the Automation backlog's cache - this run's drafts kept
+  when: _sni_bk_step == 'save'
+  block:
+    - name: Insights | each draft into the report database
+      site_insights_db:
+        mode: text_save
+        host: "{{ _sni_db.host }}"
+        port: "{{ _sni_db.port | int }}"
+        database: "{{ _sni_db.database }}"
+        user: "{{ _sni_db.user }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ _sni_db.tls | bool }}"
+        ca_file: "{{ _sni_db.ca_file }}"
+        connect_timeout: "{{ servicenow_insights_db_timeout | int }}"
+        create: "{{ servicenow_insights_db_create | bool }}"
+        source: "{{ _sni_act_source | default({'url': _sni_url} | servicenow_insights_db_source(_sni_opts)) }}"
+        cache_key: "{{ _sni_bk_key }}"
+        clear: false
+        rows: "{{ {'texts': _sni_state | servicenow_insights_backlog_cache_rows} }}"
+        required: false
+      when:
+        - _sni_db.host | length > 0
+        - _sni_state | servicenow_insights_backlog_cache_rows | length > 0
+        - not ansible_check_mode

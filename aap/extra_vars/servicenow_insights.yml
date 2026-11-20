@@ -473,6 +473,24 @@ servicenow_insights_months: 6
 ## close notes per issue it reads
 # servicenow_insights_act_notes: 40
 
+## The Automation backlog (1.81.0, a section after Top incident issues on the site's page): every
+## incident issue ranked by what automating it would save - the numbers worked out by code, never by
+## ACT. With ACT on, ACT writes only the words (a strategy, a summary, a problem statement and three
+## phases' approach, needs and AI note), one question for each of the top clusters by score; the
+## drafts are kept in the report database (servicenow_insights_act_cache) and a cluster whose
+## tickets did not change is not asked again. With ACT off the cards read "not drafted (ACT off)". 0
+## = ACT writes none.
+# servicenow_insights_backlog_issues: 15
+
+## The email carries one Word file, "Automation backlog.docx": every cluster in a table, then a
+## proposal for each of the top ..._issues. false = no file (the page's Download proposal (.md) and
+## the workbook's Automation backlog sheet stay).
+# servicenow_insights_backlog_docx: true
+
+## Clusters with fewer tickets than this in the window are left out of the Automation backlog (one
+## line under the table says how many).
+# servicenow_insights_backlog_min_tickets: 5
+
 ## ... and the work notes of those issues' incidents (0.96.0): what was tried while they were open,
 ## read from sys_journal_field (GET only; the account needs read on it - refused, the page says so
 ## and the fixes come from the close notes), masked like everything else before ACT reads them. The
@@ -575,6 +593,26 @@ servicenow_insights_months: 6
 ## The job fails when ServiceNow could not be read at all, or a group named is not there. false = a
 ## report only.
 # servicenow_insights_fail: true
+
+# ---- incident_docs -------------------------------------------------------------------------------
+## The marking at the top and bottom of every page: auto = the reports' banner (report_banner_text,
+## in its colour) when that banner is on - the classified enclave, or report_banner true
+## (docs/ENCLAVES.md) - else CONTROLLED UNCLASSIFIED INFORMATION (CUI); your own text wins as it is;
+## "" = none.
+# incident_docs_banner: auto
+
+## Its colour (bold text): "" = the marking's usual one - CUI purple (502B85), UNCLASSIFIED green
+## (007A33), CONFIDENTIAL blue (0033A0), SECRET red (C8102E), TOP SECRET orange (FF8C00) - or, with
+## auto, the reports' banner's; or your own, hex RRGGBB in quotes.
+# incident_docs_banner_color: ""
+
+## The logo at the top of the first page: report_logo_file, the reports' logo, unless this names
+## another file (files/aar_logo.png = playbooks/files/aar_logo.png, in YOUR repository). "" =
+## report_logo_file.
+# incident_docs_logo_file: ""
+
+## pixels (its width follows)
+# incident_docs_logo_height: 64
 
 # ---- servicenow ----------------------------------------------------------------------------------
 ## check the instance's HTTPS certificate (see servicenow_ca_path)

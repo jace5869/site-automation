@@ -32,6 +32,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named); *Who opens what* - per person, what they opened by category and catalog item (1.70.4) |
 | **Satisfaction** (1.7.0) | the incident surveys, each on its own scale (or `servicenow_insights_survey_scale`, 1.70.4), by survey: the average graded Good, Fair or Low, by month and by group (1.16.0, see *Satisfaction*) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
+| **Automation backlog** (1.81.0) | right after *Top incident issues* on the site's page: every issue ranked by what automating it would save, with a priority (P1 to P3), tickets a month, hours saved a year, VIP tickets and a score; open one for ACT's strategy, summary and problem and three phase cards. At a glance has three tiles for it. See *Automation backlog* below |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
 | **Most requested services** | the catalog items ranked (▲ ▼ against the window before), the median time to fulfil, SLA met, the trend; and **requests opened as incidents** (an install, an account, access - things the catalog offers), when ACT ran |
@@ -535,6 +536,62 @@ servicenow_insights_vip_min: 5             # under this many tickets: counts onl
 The account needs read on sys_user and its tier columns. The itil role reads sys_user. A custom column may need its
 own read ACL.
 
+## Automation backlog (1.81.0)
+
+A section of this report, not a new one: it sits right after *Top incident issues* on the site's page (the team pages do not
+repeat it), with a link in the side bar and three tiles in *At a glance* - the clusters with how many are P1, the hours saved a
+year if every cluster reached its best phase, and the top candidate. It ranks every issue (a cluster) by what automating it
+would save.
+
+**The clusters are the issues of Top incident issues** - ACT's grouped short descriptions, or the category and subcategory with ACT off. Clusters with fewer than `servicenow_insights_backlog_min_tickets` (5) tickets in the window are left out, with one line under the table saying how many. A ticket with no category, or the category Other, reads *Not categorised*.
+
+**Numbers come from code, never from ACT.** Each one has its formula, with the figures put in, in the hover of the **?** and of
+the cell. The window is the report's own (the months are its days ÷ 30.4375).
+
+| Column | How it is worked out |
+|---|---|
+| **Tickets / month** | the cluster's incidents ÷ the months, and its share of all incidents. Rate × months = tickets, always |
+| **Hours saved / yr** | labor = 0.5 h per ticket + 0.25 h per handoff (reassignment); labor ÷ months × 12 × the deflection of the best phase |
+| **VIP** | tickets raised for a VIP (the tiers of *VIP tickets*); 0 when none are set up |
+| **Score** | 0.5 × volume + 0.3 × the best phase's score + 0.2 × VIP. Volume = the rate ÷ the top cluster's rate × 100; VIP = VIP share × 5 × 100, at most 100 |
+| **Priority** | P1 from a score of 40, P2 from 20, else P3. The buttons in a row change it; the choice is kept in that browser only (never in the report) |
+
+**The three phases** each get a card; the one with the best score is outlined.
+
+| | 1 Self-service and KB | 2 ServiceNow + PowerShell | 3 Zero-touch |
+|---|---|---|---|
+| Deflection (tickets it would settle ÷ tickets) | resolved with a close note that says what was done, and never passed between groups | every ticket with such a note | those, and tickets back on the same CI within `servicenow_insights_repeat_ci_days`, each ticket once, at most 80% (an estimate) |
+| Complexity | 1 | 2 | 4 |
+| Effort (days per complexity point) | 1 | 3 | 5 |
+
+Complexity is one more (at most 5) when the median handoffs are 2 or more. Impact is 1 to 5 from the cluster's rate against the
+top cluster's. A phase's score = deflection % × impact ÷ (5 × complexity). The deflection is an estimate from the close notes: it
+says what the notes show, not what a script would settle. The hover shows the count behind it (*41 of 74 tickets*).
+
+**ACT writes only the words.** With `servicenow_insights_act: true`, one question per cluster for the top
+`servicenow_insights_backlog_issues` (15) by score: a strategy, an AI label (Development-Assist, Runtime-Integrated or None), a
+two-sentence summary and problem, and for each phase an approach, what it needs and an AI note. Each field is cut (summary 300
+characters, strategy 240, and so on); an answer that is not JSON, or lacks a field, is dropped and the card reads *not
+drafted (ACT gave no usable answer)*. A cluster beyond the top N reads *not drafted (outside the top N)*; with ACT off, *not
+drafted (ACT off)* - the numbers and the phase cards are there either way.
+
+**What reaches ACT and what is kept.** The question has the cluster's masked close notes and short descriptions and the figures, with
+any ticket number in a note replaced by `[ticket]`. ACT's answer goes through the same masking before it is shown or kept: a person,
+host, address or ticket number it gives anyway becomes `[person]`, `[host]`, `[ticket]` ... A draft with a phase that lacks its needs
+or its AI note, or an answer that is not the JSON asked for, is not used.
+
+**Kept in the report database.** With `servicenow_insights_db` and `servicenow_insights_act_cache` on, each draft is kept
+(ACT's masked words only) under a hash of the cluster's tickets and what the figures read of them (done, handoffs, the grade of the close note): a cluster that did not change is not asked again, so a run
+asks only for new or changed clusters. See *The Automation backlog's drafts* in REPORT_DATABASE.
+
+**Downloads.**
+
+- *Download proposal (.md)* in an opened row: built in the page from the card's text.
+- **Automation backlog.docx**, attached to the report email: every cluster in a table, then a proposal for each of the top
+  clusters. The report website serves the page, not files beside it, so there is one Word file and it goes by email. It carries
+  the marking and logo of the incident documents (`incident_docs_banner`, `incident_docs_logo_file`). `servicenow_insights_backlog_docx: false` leaves it out.
+- The workbook's **Automation backlog** sheet: every cluster with each phase's figures and words.
+
 ## ACT (GenAI), and what never reaches it
 
 **ACT is off by default (1.13.0).** It runs only when asked: `servicenow_insights_act: true` in the template's Variables
@@ -559,6 +616,8 @@ nothing large goes in one question:
    on. Under each top issue's fix the page says what it was read from: *From 40 close notes and 18 work notes of 9
    tickets*.
 3. **The summaries.** One question with each scope's numbers (the site and each team).
+4. **The Automation backlog** (1.81.0). One question for each of the top `servicenow_insights_backlog_issues` clusters: its masked close notes and short
+   descriptions and the figures the code worked out (no ticket number goes). ACT writes the words only (see *Automation backlog*).
 
 **Before anything goes to the model**, the job replaces with placeholders (PERSON-1, PHONE-2, EMAIL-3, HOST-4, IP-5, ID-6):
 the names of every person the records name (assigned to, opened by, caller, resolved by - the full name, "Last, First" and

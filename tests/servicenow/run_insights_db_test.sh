@@ -454,6 +454,32 @@ a3=$(asked)
 [ "$a3" = "$a1" ] && ok "  ... $a3 grouping questions, as the first run" || bad "  ... $a3 asked (the first run: $a1)"
 nc=$(one "SELECT COUNT(*) FROM insights_act_class")
 
+# ---- 14b. the Automation backlog's drafts (1.81.0): ACT's words kept under the hash of each cluster's tickets (insights_act_text);
+# the next run asks only for new or changed clusters; no ticket number in what is kept; cache_clear asks again ----
+bq() { grep -c '^CLUSTER B' "$work/model.log"; }
+"${rtc[@]}" exec "$name" mysql -uroot "-p$root" site_reports -e "DROP TABLE IF EXISTS insights_act_text" >/dev/null 2>&1    # a cold cache: the runs above never asked backlog questions of this key
+mkdir -p "$work/w14d" "$work/w14e" "$work/w14f"
+: > "$work/model.log"
+DB_ENV="$DB GENAI_KEY=test-key" run "the backlog's drafts: the first run asks ACT one question per cluster of the top 15" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w14d\"}" 'questions answered'
+b1=$(bq); nt=$(one "SELECT COUNT(*) FROM insights_act_text")
+[ "$b1" -gt 0 ] && [ "$b1" -le 15 ] && [ "$nt" = "$b1" ] && ok "  ... $b1 backlog questions, $nt drafts kept in insights_act_text" || bad "  ... asked $b1, kept $nt"
+has "  ... the page has ACT's words" "$(page "$work/w14d")" 'Fake strategy for ' 'Text by ACT' '!Text by ACT (kept from an earlier run)'
+leak=$(one "SELECT COUNT(*) FROM insights_act_text WHERE body REGEXP 'INC[0-9]{5}|sys_id|[0-9a-f]{32}'")
+hl=$(one "SELECT COUNT(*) FROM insights_act_text WHERE CHAR_LENGTH(key_hash) = 64")
+[ "$leak" = 0 ] && [ "$hl" = "$nt" ] && ok "  ... the key a SHA-256, no ticket number or id in what is kept" || bad "  ... kept: $leak with a number or id, $hl keys of 64"
+: > "$work/model.log"
+DB_ENV="$DB GENAI_KEY=test-key" run "  ... the next run, the same tickets: no backlog question, the words from the database" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"report_web_dest\": \"$work/w14e\"}" 'questions answered'
+b2=$(bq)
+[ "$b2" = 0 ] && ok "  ... no backlog question asked" || bad "  ... $b2 backlog questions asked again"
+has "  ... the page the same, said where the words come from" "$(page "$work/w14e")" 'Fake strategy for ' 'Text by ACT (kept from an earlier run)'
+: > "$work/model.log"
+DB_ENV="$DB GENAI_KEY=test-key" run "  ... servicenow_insights_act_cache_clear: asked again" ok \
+    "{$NOWA, \"servicenow_insights_db\": true, \"servicenow_insights_act_cache_clear\": true, \"report_web_dest\": \"$work/w14f\"}" 'questions answered'
+b3=$(bq)
+[ "$b3" = "$b1" ] && ok "  ... $b3 backlog questions, as the first run" || bad "  ... $b3 asked (the first run: $b1)"
+
 # ---- 15. ACT failing mid-run (1.17.0b): without clear, the answered batches kept and the rest asked the next run; with
 # clear, the cache kept as it was - deleted and written only when every grouping question was answered - and said ----
 ff="$work/model-fail"

@@ -139,6 +139,8 @@
       act_max_issues: "{{ servicenow_insights_act_max_issues | int }}"
       act_fix_issues: "{{ servicenow_insights_act_fix_issues | int }}"
       act_fix_batch: "{{ servicenow_insights_act_fix_batch | int }}"
+      backlog_issues: "{{ servicenow_insights_backlog_issues | int }}"
+      backlog_min_tickets: "{{ servicenow_insights_backlog_min_tickets | int }}"
       act_notes: "{{ servicenow_insights_act_notes | int }}"
       act_work_notes_max: "{{ servicenow_insights_act_work_notes_max | int }}"
       act_work_note_chars: "{{ servicenow_insights_act_work_note_chars | int }}"
@@ -319,6 +321,35 @@
         loop_var: _sni_batch
         index_var: _sni_batch_index
         label: "{{ _sni_batch.issues | map(attribute='name') | join(', ') }}"
+
+    # 1.81.0: the Automation backlog's words - one question per cluster of the top servicenow_insights_backlog_issues, the drafts the
+    # report database holds (the hash of the cluster's tickets) not asked again
+    - name: Insights | the Automation backlog - the clusters ACT writes the words for
+      ansible.builtin.set_fact:
+        _sni_bk_batches: >-
+          {{ _sni | servicenow_insights_backlog_batches(_sni_state, _sni_mask, _sni_opts)
+             if _sni_act_stop | length == 0 and servicenow_insights_backlog_issues | int > 0 else [] }}
+
+    - name: Insights | the drafts the report database holds for them (the ACT cache)
+      ansible.builtin.include_tasks: backlog_cache.yml
+      vars:
+        _sni_bk_step: load
+        _sni_bk_key: "{{ _sni_act_key ~ '|backlog' }}"
+      when: servicenow_insights_db | bool and servicenow_insights_act_cache | bool and _sni_act_key is defined and _sni_bk_batches | length > 0
+
+    - name: Insights | ACT writes each cluster's strategy, summary, problem and three phases
+      ansible.builtin.include_tasks: act_backlog.yml
+      loop: "{{ _sni_bk_batches }}"
+      loop_control:
+        loop_var: _sni_bk_batch
+        label: "{{ _sni_bk_batch.issues | map(attribute='name') | join(', ') }}"
+
+    - name: Insights | this run's drafts kept for the next runs
+      ansible.builtin.include_tasks: backlog_cache.yml
+      vars:
+        _sni_bk_step: save
+        _sni_bk_key: "{{ _sni_act_key ~ '|backlog' }}"
+      when: servicenow_insights_db | bool and servicenow_insights_act_cache | bool and _sni_act_key is defined and _sni_state.backlog | default({}) | length > 0
 
 - name: Insights | time - ACT's issues and fixes done
   ansible.builtin.set_fact:
@@ -507,31 +538,90 @@
     loop_var: _sni_job
     label: "{{ _sni_job.key }}{{ (' (' ~ _sni_job.v ~ ')') if _sni_job.v else '' }}"
 
-- name: Insights | the site's page on the report website (report_web_dest), the email with the workbook (report_email_to)
-  ansible.builtin.include_role:
-    name: site_email
-  vars:
-    _report: "{{ _sni_doc }}"
-    _report_html: "{{ _sni_model | servicenow_insights_page('all', _sni_page_opts) }}"
-    _report_xlsx: "{{ _sni_model | servicenow_insights_xlsx(_sni, _sni_state, _sni_mask, _sni_opts) if servicenow_insights_xlsx | bool else [] }}"
-    _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('ticket-insights')) }}"
-    report_web_names: "{{ _sni_web.names | combine({'team': 'all', 'site': 'all', 'dir': 'all'}) }}"
-    _web_sub_pages: "{{ _sni_web.files }}"        # the other pages: those an older run wrote and this one did not are deleted
-    _web_index_drop: >-
-      {{ [(_sni_web.all.latest | dirname) ~ '/*/' ~ (_sni_web.all.latest | basename)]
-         if _sni_web.all.latest and '/' in _sni_web.all.latest else [] }}
-    _sni_page_opts: >-
-      {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.all.page),
-                              'variant_links': _sni_web | servicenow_insights_variant_links('all', _sni_web.all.page),
-                              'generated': (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim), 'job': awx_job_id | default(tower_job_id | default('local')),
-                              'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
-                              'header_text': report_email_header_text | default('Site automation report'),
-                              'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
-                              'db': _sni_db_say if servicenow_insights_db | bool else {},
-                              'store_line': (_sni_store_say | default({})).page | default('')}) }}
+# 1.81.0: the Automation backlog's Word file - one, attached to the email (the report website serves the page, not files beside it):
+# every cluster in a table, then a proposal for each of the top servicenow_insights_backlog_issues. Written to a temporary folder
+# (the logo and the marking as the incident documents' - incident_docs_banner, incident_docs_logo_file), deleted after the email.
+- name: Insights | the Automation backlog's Word file (servicenow_insights_backlog_docx)
   when: >-
-    _sni.ok | default(false) | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
-    or _sni_web.on | bool)
+    servicenow_insights_backlog_docx | bool and _sni.ok | default(false) | bool and not ansible_check_mode and
+    (((_sni_model.scopes | default({})).all | default({})).autobl | default({})).rows | default([]) | length > 0 and
+    (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0)
+  block:
+    - name: Insights | a temporary folder on the AAP side
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .backlog
+      register: _sni_bk_dir
+      check_mode: false
+
+    - name: Insights | the marking (incident_docs_banner)
+      ansible.builtin.set_fact:
+        _sni_bk_banner: >-
+          {{ incident_docs_banner | default('auto') | incident_banner_auto(incident_docs_banner_color | default('', true),
+               {'banner': report_banner | default('auto'), 'text': report_banner_text | default('SECRET'), 'color': report_banner_color | default(''),
+                'enclave': site_enclave | default(''), 'domains': site_enclave_classified_domains | default([]),
+                'hosts': (ansible_play_hosts_all + (query('ansible.builtin.inventory_hostnames', ansible_limit)
+                          if ansible_limit | default('', true) | length > 0 else [])) | report_banner_hosts(hostvars)} | report_banner) }}
+
+    - name: Insights | write Automation backlog.docx
+      block:
+        - name: Insights | the document (incident_docs, write_doc.yml)
+          ansible.builtin.include_role:
+            name: incident_docs
+            tasks_from: write_doc.yml
+          vars:
+            _wd_path: "{{ _sni_bk_dir.path }}/Automation backlog.docx"
+            _wd_doc: >-
+              {{ _sni_model | servicenow_insights_backlog_docx(_sni_opts | combine({
+                   'banner': _sni_bk_banner.banner, 'banner_color': _sni_bk_banner.banner_color | string,
+                   'logo': (incident_docs_logo_file | default('', true) or report_logo_file | default('', true)) | servicenow_insights_backlog_logo(playbook_dir),
+                   'logo_height': incident_docs_logo_height | default(64) | int})) }}
+        - name: Insights | the Word file, attached to the email
+          ansible.builtin.set_fact:
+            _sni_bk_attach: "{{ [{'path': _wd_result.path, 'filename': 'Automation backlog.docx'}] if _wd_result.path | default('') | length > 0 else [] }}"
+      rescue:
+        - name: Insights | the Word file not made - the email goes without it
+          ansible.builtin.debug:
+            msg: "Automation backlog.docx was not made ({{ ansible_failed_result.msg | default('no reason given') }}): the email goes without it."
+
+- name: Insights | the page, the email and the Word file - the temporary folder deleted after
+  block:
+    - name: Insights | the site's page on the report website (report_web_dest), the email with the workbook (report_email_to)
+      ansible.builtin.include_role:
+        name: site_email
+      vars:
+        _report: "{{ _sni_doc }}"
+        _report_attachments: "{{ _sni_bk_attach | default([]) }}"
+        _report_html: "{{ _sni_model | servicenow_insights_page('all', _sni_page_opts) }}"
+        _report_xlsx: "{{ _sni_model | servicenow_insights_xlsx(_sni, _sni_state, _sni_mask, _sni_opts) if servicenow_insights_xlsx | bool else [] }}"
+        _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('ticket-insights')) }}"
+        report_web_names: "{{ _sni_web.names | combine({'team': 'all', 'site': 'all', 'dir': 'all'}) }}"
+        _web_sub_pages: "{{ _sni_web.files }}"        # the other pages: those an older run wrote and this one did not are deleted
+        _web_index_drop: >-
+          {{ [(_sni_web.all.latest | dirname) ~ '/*/' ~ (_sni_web.all.latest | basename)]
+             if _sni_web.all.latest and '/' in _sni_web.all.latest else [] }}
+        _sni_page_opts: >-
+          {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.all.page),
+                                  'variant_links': _sni_web | servicenow_insights_variant_links('all', _sni_web.all.page),
+                                  'generated': (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim), 'job': awx_job_id | default(tower_job_id | default('local')),
+                                  'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
+                                  'header_text': report_email_header_text | default('Site automation report'),
+                                  'not_read': _sni_model | servicenow_insights_not_read, 'timing': (_sni_t | servicenow_insights_timing).rows,
+                                  'db': _sni_db_say if servicenow_insights_db | bool else {},
+                                  'store_line': (_sni_store_say | default({})).page | default(''),
+                                  'backlog_docx': _sni_bk_attach | default([]) | length > 0,
+                                  'backlog_xlsx': servicenow_insights_xlsx | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0)}) }}
+      when: >-
+        _sni.ok | default(false) | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+        or _sni_web.on | bool)
+
+  always:
+    - name: Insights | the Word file's folder removed
+      ansible.builtin.file:
+        path: "{{ _sni_bk_dir.path }}"
+        state: absent
+      check_mode: false
+      when: (_sni_bk_dir | default({})).path | default('') | length > 0
 
 - name: Insights | the other pages - each site's, unit's and team's - {{ servicenow_insights_pages_per_call }} per call (site_email, pages.yml)
   ansible.builtin.include_role:
