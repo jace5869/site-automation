@@ -95,6 +95,10 @@ run() {
     fi
     local t
     for t in "${texts[@]}"; do
+        if [ "${t:0:1}" = "!" ]; then        # 1.79.12: !TEXT - the output must not have it
+            if grep -qF -- "${t:1}" "$work/out.txt"; then echo "FAIL - $tname: output has: ${t:1}"; fails=$((fails + 1)); return 1; fi
+            continue
+        fi
         grep -qF -- "$t" "$work/out.txt" || { echo "FAIL - $tname: output lacks: $t"; grep -E '"msg"|ERROR' "$work/out.txt" | head -6 | cut -c1-300; fails=$((fails + 1)); return 1; }
     done
     echo "ok   - $tname"
@@ -2693,6 +2697,33 @@ run "outage review, nothing down now: a report all the same - the short loss is 
 run "outage review with vm_watch_review_low_seconds: 0 - the loss counts as time down, with its end" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_low_seconds=0 \
     -- "Outage review: DC0_C0_H0: all paths down to a storage device; 2 s down" "DC0_C0_H1 down: 2 s" "Host not responding  [Critical]" "Host connected again  [Back to normal]" '"down_s": 2'
+# 1.79.12: a usage alarm that had already cleared. The windows start at a whole minute (vm_watch_review_from), after the events above,
+# so only these are in them. A: raised and cleared inside the window - the review says what triggered it, the VM is the subject,
+# the title says it cleared before the review. B: raised in the minute before the window, cleared in it - the raise is read back
+# (vm_watch_review_lookback_hours) and shown, the window starting at it.
+sleep $((61 - 10#$(date -u +%S)))
+min_a=$(date -u '+%Y-%m-%d %H:%M')
+VMWARE_PORT=$port "$py" "$here/vcsim.py" usage raise
+sleep 2
+VMWARE_PORT=$port "$py" "$here/vcsim.py" usage clear
+run "outage review, a usage alarm raised and cleared: cleared before the review, the VM is the subject, what triggered it said" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
+    -- "Outage review: cleared before the review - DC0_C0_RP0_VM0" "a short usage blip, Low" "Triggered by: " "Virtual machine CPU usage" \
+       "Alarm red: Virtual machine CPU usage" "Alarm back to green: Virtual machine CPU usage"
+run "  ... vm_watch_review_skip_blips: a blip sends no report, said" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0, \"vm_watch_review_skip_blips\": true}" -e report_time_zone=UTC \
+    -- "not sent (vm_watch_review_skip_blips)"
+sleep $((61 - 10#$(date -u +%S)))
+VMWARE_PORT=$port "$py" "$here/vcsim.py" usage raise
+sleep $((61 - 10#$(date -u +%S)))
+min_b=$(date -u '+%Y-%m-%d %H:%M')
+VMWARE_PORT=$port "$py" "$here/vcsim.py" usage clear
+run "outage review: the raise is before the window, the clear in it - read back, shown, the window starts at the raise" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
+    -- "Outage review: cleared before the review - DC0_C0_RP0_VM0" "Alarm red: Virtual machine CPU usage" "Alarm back to green: Virtual machine CPU usage" "Triggered by: "
+run "  ... vm_watch_review_lookback_hours: 0 - no raise read back: only the clear, nothing marked as related, said" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_lookback_hours\": 0, \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
+    -- "Alarm back to green: Virtual machine CPU usage" "!Alarm red: Virtual machine CPU usage" "!cleared before the review"
 run "outage review of a named window with nothing in it (vm_watch_review_from, vm_watch_review_to)" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e '{"vm_watch_review": true, "vm_watch_review_from": "2026-11-12 01:00", "vm_watch_review_to": "2026-11-12 03:00"}' \
     -e report_time_zone=Europe/Berlin -- "Outage review: no outage event in the window" "2026-11-12 01:00 CET to 03:00 CET: 0 event(s)"

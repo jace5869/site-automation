@@ -169,6 +169,146 @@ class Parts(unittest.TestCase):
             self.assertIn(roles, ({"problem", "clear"}, {"down", "up"}), kind)
 
 
+VMX = "web07.example.mil"
+YDAY = "2026-11-11T"
+
+
+def vm_alarm(t, name, to, was, day=DAY):
+    """A usage alarm on a VM (its VM and entity are the VM)."""
+    e = ev(t, "AlarmStatusChangedEvent", vm=VMX, alarm=name, entity=VMX, to=to, **{"from": was})
+    e["time"] = day + t + "Z"
+    return e
+
+
+class ClearedBeforeTheReview(unittest.TestCase):
+    """1.79.12: the review of an outage whose alarms had already cleared - the raise, whenever it was, and what triggered the report."""
+    CPU, MEM = "Virtual machine CPU usage", "Virtual machine memory usage"
+
+    def raised_before(self):
+        # raised at 20:10 the evening before (the window starts 20:45), cleared inside the window
+        return [vm_alarm("20:10:00", self.CPU, "red", "green", YDAY), vm_alarm("20:12:00", self.MEM, "yellow", "green", YDAY),
+                vm_alarm("21:05:00", self.CPU, "green", "red", YDAY), vm_alarm("21:07:00", self.MEM, "green", "yellow", YDAY)]
+
+    def test_a_raise_before_the_window_is_shown_with_its_clear(self):
+        r = made(self.raised_before(), [], min_seconds=300)
+        self.assertEqual(len(whats(r)), 4)
+        self.assertEqual(whats(r)[0], "Alarm red: " + self.CPU)                        # the raise first
+        self.assertIn("2026-11-11 21:10 CET", r["window"])                              # the window starts at the first raise (20:10 UTC)
+        self.assertTrue(r["cleared_before_review"])
+        self.assertEqual(r["alarm_window"], ["2026-11-11T20:10:00Z", "2026-11-11T21:07:00Z"])
+
+    def test_the_subject_is_the_vm_and_the_events_are_related(self):
+        r = made(self.raised_before(), [])
+        web = next(s for s in r["web_sections"] if s.get("title") == "The events")
+        self.assertEqual(web["columns"][-1], "Related")                                 # a subject was worked out
+        self.assertEqual({row[-1] for row in web["rows"]}, {"Related"})
+        chart = next(x for x in r["web_sections"] if x.get("outage"))["outage"]
+        self.assertIn("web07", chart["subject"])
+        self.assertNotIn("could not be worked out", chart["related_note"])
+
+    def test_the_title_the_tile_the_band_and_the_card(self):
+        r = made(self.raised_before(), [])
+        self.assertTrue(r["title"].startswith("Outage review: cleared before the review - web07"), r["title"])
+        tile = r["boxes"][2]
+        self.assertEqual((tile["label"], tile["value"], tile["status"]), ("Outage", "Cleared before the review", "ok"))
+        self.assertIn("web07", tile["note"])
+        self.assertEqual(r["cards"][0]["chip"], "Cleared before the review")
+        bands = next(x for x in r["web_sections"] if x.get("outage"))["outage"]["bands"]
+        self.assertEqual(len(bands), 1)
+        self.assertIn("alarms raised", bands[0]["text"])
+
+    def test_a_raise_before_the_window_without_a_clear_in_it_is_left_out(self):
+        e = [vm_alarm("20:10:00", self.CPU, "red", "green", YDAY)]                      # still raised: the host events are the window's
+        r = made(e + events(), [])
+        self.assertNotIn("Alarm red: " + self.CPU, whats(r))
+        self.assertFalse(r["cleared_before_review"])                                    # the host went down: that story is the window's
+        self.assertIn("2026-11-11 21:45 CET", r["window"])                              # the window as asked
+
+    def test_other_problems_are_the_windows_own_story(self):
+        # a host that flapped, an HA restart, a storage problem next to a cleared usage alarm: not "cleared before the review"
+        r = made(self.raised_before() + [ev("01:30:00", "esx.problem.storage.apd.start", H, msg="all paths down")], [])
+        self.assertFalse(r["cleared_before_review"])
+        r = made(self.raised_before() + [ev("01:30:00", "HostConnectionLostEvent", H, msg="lost"), ev("01:30:01", "HostConnectedEvent", H, msg="back")], [], low_seconds=120)
+        self.assertFalse(r["cleared_before_review"])
+
+    def test_the_watchs_own_findings_come_first(self):
+        # a hung VM now and a cleared CPU blip: the review is not "cleared before the review" and nothing is skipped
+        e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:03:00", self.CPU, "green", "red", YDAY)]
+        r = made(e, [], skip_blips=True, triggers=[{"severity": "critical", "summary": "VM web09 is hung: no heartbeat"}])
+        self.assertFalse(r["cleared_before_review"])
+        self.assertFalse(r["blip"])
+        self.assertFalse(r["skip"])
+        self.assertEqual(r["trigger"][0], "CRITICAL: VM web09 is hung: no heartbeat")
+
+    def test_the_duration_runs_from_the_first_raise_not_the_last_change(self):
+        # yellow for hours, red a minute before the window, cleared in it: not a blip
+        e = [vm_alarm("17:00:00", self.CPU, "yellow", "green", YDAY), vm_alarm("20:44:00", self.CPU, "red", "yellow", YDAY),
+             vm_alarm("20:50:00", self.CPU, "green", "red", YDAY)]
+        r = made(e, [], skip_blips=True)
+        self.assertTrue(r["cleared_before_review"])
+        self.assertFalse(r["blip"])
+        self.assertEqual(r["alarm_window"][0], "2026-11-11T17:00:00Z")
+        self.assertFalse(r["skip"])
+
+    def test_a_clear_without_its_raise_is_never_a_blip(self):
+        e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:01:00", self.CPU, "green", "red", YDAY),
+             alarm("00:10:00", "Host storage path redundancy", "green", "yellow")]            # its raise was not read
+        r = made(e, [], skip_blips=True)
+        self.assertFalse(r["blip"])
+        self.assertFalse(r["skip"])
+
+    def test_only_cpu_and_memory_usage_alarms_are_usage(self):
+        for name, usage in (("Virtual machine CPU usage", True), ("Host memory usage", True), ("VM memory utilization", True),
+                            ("Host memory status", False), ("Virtual machine error", False), ("Datastore usage on disk", False)):
+            e = [vm_alarm("22:00:00", name, "red", "green", YDAY), vm_alarm("22:01:00", name, "green", "red", YDAY)]
+            r = made(e, [], skip_blips=True)
+            self.assertEqual(r["blip"], usage, name)
+            self.assertEqual(r["skip"], usage, name)
+
+    def test_without_the_raise_the_clear_is_all_there_is(self):
+        # what 1.79.11 and the read without a lookback gave: only the clears
+        r = made([vm_alarm("21:05:00", self.CPU, "green", "red", YDAY)], [])
+        self.assertFalse(r["cleared_before_review"])
+        self.assertIn("could not be worked out", next(x for x in r["web_sections"] if x.get("outage"))["outage"]["related_note"])
+
+    def test_everything_cleared_inside_the_window_too(self):
+        e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:40:00", self.CPU, "green", "red", YDAY)]
+        r = made(e, [])
+        self.assertTrue(r["cleared_before_review"])
+        self.assertIn("web07", r["title"])
+        self.assertFalse(r["blip"])                                                     # 40 minutes is not a blip
+
+    def test_only_usage_alarms_that_cleared_fast_is_a_blip(self):
+        e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:03:00", self.CPU, "green", "red", YDAY)]
+        r = made(e, [], min_seconds=300)
+        self.assertTrue(r["blip"])
+        self.assertIn("a short usage blip, Low", r["title"])
+        self.assertIn("blip (Low)", r["boxes"][2]["note"])
+        self.assertFalse(r["skip"])                                                     # sent anyway by default
+        self.assertTrue(made(e, [], min_seconds=300, skip_blips=True)["skip"])          # vm_watch_review_skip_blips
+        self.assertFalse(made(e, [], min_seconds=60, skip_blips=True)["skip"])          # three minutes is longer than 60 s: no blip
+        # a host alarm is no usage alarm
+        h = [alarm("22:00:00", "Host connection and power state", "red", "green"), alarm("22:03:00", "Host connection and power state", "green", "red")]
+        self.assertFalse(made(h, [], skip_blips=True)["skip"])
+
+    def test_what_triggered_it_is_said_always(self):
+        trig = [{"severity": "critical", "summary": "VM web07 is hung: no heartbeat"}, {"severity": "warning", "summary": "datastore ds1 is slow"}]
+        r = made(self.raised_before(), [], triggers=trig)
+        self.assertEqual(r["trigger"][0], "CRITICAL: VM web07 is hung: no heartbeat")
+        self.assertEqual(r["trigger_line"], "Triggered by: CRITICAL: VM web07 is hung: no heartbeat (and 1 more)")
+        self.assertEqual(r["lines"][1][:13], "Triggered by:")
+        d = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, False, True)
+        self.assertTrue(d["subtitle"].startswith("Triggered by: CRITICAL: VM web07 is hung"))
+        # no conditions, alarms that had cleared: said so, with the VM and the times
+        r = made(self.raised_before(), [])
+        self.assertTrue(r["trigger"][0].startswith("Nothing was down when the watch read vCenter"))
+        self.assertTrue(any("web07" in t and "raised" in t and "cleared" in t for t in r["trigger"][1:]), r["trigger"])
+        # nothing found, asked for by hand
+        r = made([], [])
+        self.assertTrue(r["trigger"][0].startswith("Nothing triggered it"))
+        self.assertTrue(ot.outage_timeline_doc(copy.deepcopy(WATCH), r, False, True)["subtitle"].startswith("Triggered by: Nothing triggered it"))
+
+
 class Review(unittest.TestCase):
     def test_the_night_of_the_fixture(self):
         r = made()
@@ -457,13 +597,14 @@ class Outputs(unittest.TestCase):
         out = made()["lines"]
         self.assertEqual(out[0], "Outage time line, 2026-11-11 21:45 CET to 2026-11-12 03:45 CET: 18 event(s); first signal "
                                  "12 Nov 01:41:10; esx03 down: 46 min; ticket after 93 min")
-        self.assertEqual(out[1], "   1  12 Nov 01:41:10  Host events    esx03            Storage path redundancy degraded, "
+        self.assertTrue(out[1].startswith("Triggered by: "), out[1])                    # 1.79.12
+        self.assertEqual(out[2], "   1  12 Nov 01:41:10  Host events    esx03            Storage path redundancy degraded, "
                                  "back after 40 s  [Low]")
-        self.assertEqual(len(out), 19)
+        self.assertEqual(len(out), 20)
         e = [ev("01:%02d:00" % i, "VmFailoverFailed", vm="app%02d" % i) for i in range(59)]
         e += [ev("02:%02d:00" % i, "VmFailoverFailed", vm="db%02d" % i) for i in range(6)]
         out = made(e, [])["lines"]
-        self.assertEqual(len(out), 62)
+        self.assertEqual(len(out), 63)
         self.assertEqual(out[-1], "  ... and 5 more event(s): the report's table and the workbook have every one.")
 
     def test_for_the_after_action_report(self):
@@ -503,7 +644,8 @@ class Doc(unittest.TestCase):
         for web in (False, True):
             d = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, web, True)
             self.assertEqual(d["title"], r["title"])
-            self.assertEqual(d["subtitle"], "Review of 2026-11-11 21:45 CET to 2026-11-12 03:45 CET. Now: VM outage watch: nothing down now")
+            self.assertTrue(d["subtitle"].startswith("Triggered by: "), d["subtitle"])          # 1.79.12: what triggered it, first
+            self.assertTrue(d["subtitle"].endswith("Review of 2026-11-11 21:45 CET to 2026-11-12 03:45 CET. Now: VM outage watch: nothing down now"))
             self.assertEqual(d["summary"], r["boxes"])
             self.assertEqual((d["status"], d["footer"]), ("ok", WATCH["footer"]))   # the watch's own status: what is down now
             want = ["The outage in short"] + (["What happened, in order"] if web else []) + [

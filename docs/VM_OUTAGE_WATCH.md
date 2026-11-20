@@ -240,6 +240,19 @@ The four lanes:
   See *The list, the related events and the filters* below.
 - **Levels** are words and icons, never colour alone: Critical, Warning, Low, Note, Back to normal.
 - **Low:** a problem that cleared within `vm_watch_review_low_seconds` (120) is one Low event, "back after 40 s".
+- **What triggered it** is the first line under the title, always: the watch's own findings ("CRITICAL: VM web07 is hung ..."),
+  else - when nothing was down by the time the watch read vCenter - the alarms or the host that had already cleared, else
+  *the review was asked for*.
+- **An alarm that went back to normal** is shown with its raise, whenever it was raised: the review also reads the alarms'
+  status changes `vm_watch_review_lookback_hours` (6) before the window, and the window then starts at the raise. The raise
+  gives the subject (the VM) and the red stretch, so the events are marked as related to it.
+- **Cleared before the review.** When the only problems are alarms and every one has cleared, the title says *cleared before the
+  review* with the VM and the time from the first raise to the last clear, the tile reads *Cleared before the review*, and the
+  chart has one band for that stretch. A host that was lost, an HA restart or a storage problem is the window's own story
+  and keeps the usual title.
+- **A short usage blip.** If those alarms are only CPU or memory usage and each cleared within `vm_watch_review_min_seconds`
+  (300), the title says so (*a short usage blip, Low*). It is still sent; `vm_watch_review_skip_blips: true` sends nothing
+  and the job says so.
 - **The email** and the other looks have no chart: the boxes, the short list and the events table.
 - **The workbook** (`report_email_xlsx: true`): a *Timeline* sheet with every event.
 - **The job artifact** `vm_outage_review`: the numbers (first signal, ticket, seconds from signal to ticket, seconds
@@ -294,6 +307,9 @@ The AAR stays a document a person writes ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)).
 | `vm_watch_review_to` | "" | its end; empty = `vm_watch_review_hours` after the start, at most now |
 | `vm_watch_timeline` | true | the time line also in the report of a normal run that finds something down |
 | `vm_watch_review_low_seconds` | 120 | a problem cleared within this is one Low event; 0 = never joined |
+| `vm_watch_review_lookback_hours` | 6 | read the alarms' status changes this long before the window, to show the raise of an alarm that clears in it; 0 = not |
+| `vm_watch_review_min_seconds` | 300 | usage alarms that all cleared within this are a short blip (Low) |
+| `vm_watch_review_skip_blips` | false | true = a blip sends no report |
 | `vm_watch_review_tickets` | [] | more tickets to show, by number |
 | `vm_watch_review_event_types` | [] | vCenter event types to read; empty = the built-in list |
 | `vm_watch_review_max_events` | 2000 | the most events per vCenter (the newest are kept) |

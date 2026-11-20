@@ -23,6 +23,7 @@ options:
   end: {description: Its end (seconds since 1970)., type: float, required: true}
   event_types: {description: "The event types read (vCenter's event type names); none = the built-in list.", type: list, elements: str}
   max_events: {description: At most this many events per vCenter (the newest are kept)., type: int, default: 2000}
+  lookback_hours: {description: "Also read the alarms' status changes (AlarmStatusChangedEvent) this many hours before I(begin): the raise of an alarm that goes back to normal in the stretch, whenever it was raised. 0 = not.", type: float, default: 0}
 author: site automation
 '''
 
@@ -146,6 +147,12 @@ def _read(content, p, name):
     begin = datetime.datetime.fromtimestamp(p["begin"], tz=datetime.timezone.utc)
     end = datetime.datetime.fromtimestamp(p["end"], tz=datetime.timezone.utc)
     events, capped = _events(content, root, begin, end, p["event_types"], max(1, int(p["max_events"])))
+    if p["lookback_hours"] > 0:                  # 1.79.12: the alarms raised before the stretch (the time line keeps those that clear in it)
+        back = begin - datetime.timedelta(hours=float(p["lookback_hours"]))
+        before, more = _events(content, root, back, begin, ["AlarmStatusChangedEvent"], max(1, int(p["max_events"])))
+        have = set(e["key"] for e in events)                    # up to the boundary itself: an event on it is in both reads, kept once
+        events = [e for e in before if e["key"] not in have] + events
+        capped = capped or more
     for e in events:
         e["vcenter"] = name
     return {"events": events, "capped": capped}
@@ -156,7 +163,8 @@ def main():
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
                            vcenters=dict(type="list", elements="str", default=[]),
                            begin=dict(type="float", required=True), end=dict(type="float", required=True),
-                           event_types=dict(type="list", elements="str"), max_events=dict(type="int", default=2000)),
+                           event_types=dict(type="list", elements="str"), max_events=dict(type="int", default=2000),
+                           lookback_hours=dict(type="float", default=0)),
         supports_check_mode=True,
     )
     if not HAS_PYVMOMI:

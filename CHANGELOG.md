@@ -14,6 +14,18 @@
 - **Downloads.** *Download proposal (.md)* in each opened row (built in the page, no inline script); one *Automation backlog.docx* attached to the report email (every cluster in a table, a proposal for each of the top clusters; the report website serves the page, not files); the workbook's *Automation backlog* sheet with every cluster and phase. `roles/incident_docs/tasks/write_doc.yml` writes a Word file for another role.
 - Tests: `tests/test_insights_backlog.py` (the formulas on made-up XINC tickets, rate x months = tickets, ACT's JSON and bad JSON, the cache, ACT off, the Word file, the .md, the page at 1280 and 800 px, light and dark, under `script-src 'self'`), the insights e2e (the words, bad JSON, ACT off, the Word file in the mail).
 
+## 1.79.12 — 2026-11-20
+
+**To set up:** nothing. Three settings of the outage review, all with working defaults: `vm_watch_review_lookback_hours` (6), `vm_watch_review_min_seconds` (300) and `vm_watch_review_skip_blips` (false).
+
+**The outage review of an outage that had already cleared.** A review whose time line held only *back to normal* alarms (CPU and memory usage, all green) said "the subject of the outage could not be worked out" and drew no red window: the raise events were before the window.
+
+- **What triggered it,** always: the first line under the title is the watch's own finding, else the alarms or the host that had already cleared, else "the review was asked for". The job's output has it too.
+- **The raise is read back.** Every alarm that goes back to normal in the window is shown with its raise (yellow or red), whenever it was raised: the events read also looks `vm_watch_review_lookback_hours` back for the alarms' status changes, and the window starts at the first raise. The raise gives the subject (the VM) and the red stretch; the events are marked as related to it.
+- **Cleared before the review.** When the only problems are alarms and all have cleared, the title, the tile and a card say so, with the VM and the time from the first raise to the last clear, and the chart has one band for it. A lost host, an HA restart or a storage problem keeps the usual title.
+- **A short usage blip.** Only CPU or memory usage alarms, each cleared within `vm_watch_review_min_seconds`: the title says *a short usage blip, Low*. Still sent by default; `vm_watch_review_skip_blips: true` sends nothing and the job says so.
+- Tests: `tests/test_outage_timeline.py` (the raise before the window, the subject and the related events, the title, tile and band, a raise that does not clear, no raise read, a blip and the skip, the trigger always, other problems), and the vcsim e2e (a usage alarm raised and cleared, a raise before the window and its clear in it, no lookback, the skip).
+
 ## 1.79.11 — 2026-11-20
 
 **To set up: nothing.** Optional: in **AAP - set up job templates**, `aap_templates_describe: true` (with

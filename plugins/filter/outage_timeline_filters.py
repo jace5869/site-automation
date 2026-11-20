@@ -419,6 +419,7 @@ CLASS_NAME = dict(CLASSES)
 _STORAGE = ("datastore", "storage", "scsi", "vmfs", "apd", "pdl", "multipath", "path redundancy", "lun", "disk", "naa.")
 _NETWORK = ("network", "uplink", "port group", "portgroup", "vswitch", "vmnic", "esx.problem.net", "esx.clear.net", "nic ")
 _HA = ("vsphere ha", "ha ", ".ha.", "dashost", "vmrestartedby", "vmrestartedonalternate", "vmfailover", "vmdasbeing", "clusterfailover", "failover")
+USAGE_ALARM = re.compile(r"\b(?:cpu|memory)\s+(?:usage|utili[sz]ation)\b", re.I)         # a usage alarm by its own name (not "Host memory status")
 _USAGE = ("cpu", "memory", "usage", "utilization", "balloon", "swap")
 
 
@@ -460,7 +461,7 @@ def _about(e):
     return set(_key(e, x) for x in [e.get("where"), e.get("vm")] + list(e.get("names") or []) if x)
 
 
-def _relate(evs, downs):
+def _relate(evs, downs, fallback=None):
     """The outage's subject, worked out from the events themselves, and which events are about it -> {names, text, note}; each event gets
     "cls" (its kind) and "related". The subject: the hosts that went down and the VMs with a critical event of their own; related: the
     subject, the ESXi host of a subject VM, their cluster, and the datastores and port groups that events of their host name. A snapshot is
@@ -472,6 +473,8 @@ def _relate(evs, downs):
     vms = set(_key(e, e["vm"]) for e in evs if e["lane"] in ("vcenter", "host") and e["level"] == "critical" and e.get("vm") and e["role"] != "restart")
     vms |= set(_key(e, e["where"]) for e in evs if e["cls"] == "vm" and e["level"] == "critical" and e["lane"] in ("vcenter", "host")
                and str(e.get("kind") or "").startswith("alarm:") and e["where"] and e["where"] not in down_names)
+    if not hosts and not vms and fallback:                  # an outage that had cleared by the review: the VMs of the alarms that cleared
+        vms = set(fallback)
     if not hosts and not vms:
         for e in evs:
             e["related"] = False
@@ -496,6 +499,51 @@ def _relate(evs, downs):
             e["related"] = bool(any(_has(related, e, n[1]) for n in _about(e)))
     names = sorted(set(k[1] for k in hosts | vms))
     return {"names": names, "text": ", ".join(names[:4]) + (" and %d more" % (len(names) - 4) if len(names) > 4 else ""), "note": ""}
+
+
+def _alarm_key(e):
+    return (e.get("vcenter", ""), e["kind"], e["where"])
+
+
+def _pre_raises(allv, begin, end):
+    """The raise (yellow or red) before the window of every alarm that goes back to normal inside it: the alarm was abnormal when the
+    window began (its first raise since the last clear is the one kept, yellow to red or not) and a clear follows in the window. The
+    outage review reads these back vm_watch_review_lookback_hours; without them a clear is all the window shows and nothing says
+    what it was a clear of."""
+    started, clears = {}, set()
+    for e in allv:                                              # oldest first
+        if not str(e.get("kind") or "").startswith("alarm:"):
+            continue
+        k = _alarm_key(e)
+        if e["t"] < begin:
+            if e["role"] == "problem":
+                started.setdefault(k, e)                       # the start of the uninterrupted run: a later yellow or red does not restart it
+            elif e["role"] == "clear":
+                started.pop(k, None)
+        elif e["t"] <= end and e["role"] == "clear":
+            clears.add(k)
+    return [e for k, e in started.items() if k in clears]
+
+
+def _alarm_runs(evs):
+    """Each alarm's raise and what came of it -> ([{vm, where, alarm, level, usage, raised, cleared (None: still raised)}], the clears of
+    alarms whose raise was not seen), oldest raise first."""
+    open_, runs, unmatched = {}, [], []
+    for e in sorted(evs, key=lambda x: x["t"]):
+        if not str(e.get("kind") or "").startswith("alarm:"):
+            continue
+        k = _alarm_key(e)
+        if e["role"] == "problem" and k not in open_:
+            r = {"vm": e.get("vm") or "", "where": e["where"], "alarm": e["kind"][6:], "level": e["level"],
+                 "usage": bool(USAGE_ALARM.search(e["kind"][6:])), "raised": e["t"], "cleared": None, "vcenter": e.get("vcenter", "")}
+            open_[k] = r
+            runs.append(r)
+        elif e["role"] == "clear":
+            if k in open_:
+                open_.pop(k)["cleared"] = e["t"]
+            else:
+                unmatched.append(e)                             # a clear whose raise was not read: how long it was raised is not known
+    return runs, unmatched
 
 
 def _fold(evs):
@@ -535,6 +583,13 @@ def outage_timeline(events, tickets=None, opts=None):
     def zname(t):
         return loc(t).strftime("%Z") or "UTC"
 
+    # 1.79.12: an alarm that went back to normal in the window is shown with its raise, whenever it was raised (the read looks back
+    # vm_watch_review_lookback_hours): the window then starts at the raise
+    all_vc = _vcenter_events(events)
+    begin_asked = begin
+    pre = _pre_raises(all_vc, begin, end)
+    if pre:
+        begin = min(e["t"] for e in pre).replace(second=0, microsecond=0)
     days = loc(begin).date() != loc(end).date()
 
     def hm(t, sec=False):
@@ -543,11 +598,12 @@ def outage_timeline(events, tickets=None, opts=None):
     def full(t):
         return loc(t).strftime("%Y-%m-%d %H:%M ") + zname(t)
 
-    vc = [e for e in _vcenter_events(events) if begin <= e["t"] <= end]
+    vc = [e for e in all_vc if begin <= e["t"] <= end and (e["t"] >= begin_asked or any(e is p for p in pre))]
+    runs, unmatched = _alarm_runs(vc)                       # before a quick clear is folded into its raise
     vc, restarted = _restarts(vc)
     vc, downs = _pairs(vc, low_seconds)
     instance = o.get("instance") or ""
-    tk, before, cause = _ticket_events(tickets, begin, end, instance, o.get("table") or "")
+    tk, before, cause = _ticket_events(tickets, begin_asked, end, instance, o.get("table") or "")
     evs = _same(sorted(vc + tk, key=lambda e: (e["t"], [x[0] for x in LANES].index(e["lane"]))))
     for i, e in enumerate(evs):
         e["num"] = i + 1
@@ -564,7 +620,10 @@ def outage_timeline(events, tickets=None, opts=None):
     resolved = [e for e in evs if e["role"] == "resolved"]
     to_ticket = (opened["t"] - first["t"]).total_seconds() if first and opened and opened["t"] >= first["t"] else None
     still = [d for d in downs if d[2] is None]
-    subject = _relate(evs, downs)
+    cleared_runs = [r for r in runs if r["cleared"] is not None]
+    open_alarms = [r for r in runs if r["cleared"] is None]
+    fallback = set((r["vcenter"], r["vm"] or r["where"]) for r in cleared_runs if r["vm"] or r["where"])
+    subject = _relate(evs, downs, fallback)
     dup = set(w for w, _a, _b, v in downs if len(set(x[3] for x in downs if x[0] == w)) > 1)       # one name on two vCenters: told apart
     shown = lambda d: "%s (%s)" % (d[0], (d[3] or "?").split(".")[0]) if d[0] in dup else d[0]      # noqa: E731
     spans = [(shown(d), d[1], d[2] or end, d[2] is None) for d in downs]
@@ -574,6 +633,35 @@ def outage_timeline(events, tickets=None, opts=None):
     last_bad = max([e["t"] for e in evs if e["lane"] in ("vcenter", "host") and e["level"] in ("critical", "warning")] or [begin])
     goods = [e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] == "ok" and e["t"] >= last_bad]
     back = None if still or not signals else (goods[-1] if goods else None)
+    # 1.79.12: everything had already cleared at the review - the alarms that raised it went back to normal and nothing is down
+    # (alarms only: a host that was lost, an HA restart or a storage problem is the window's own story, not this one)
+    live = [c for c in (o.get("triggers") or []) if isinstance(c, dict) and c.get("summary")]      # what the watch found now: it comes first
+    cleared_only = (bool(cleared_runs) and not open_alarms and not spans and not live
+                    and all(str(e.get("kind") or "").startswith("alarm:") for e in signals))
+    try:
+        blip_s = max(0.0, float(o.get("min_seconds", 300)))
+    except (TypeError, ValueError):
+        blip_s = 300.0
+    blip = bool(cleared_only and not unmatched and all(r["usage"] for r in cleared_runs) and all((r["cleared"] - r["raised"]).total_seconds() <= blip_s for r in cleared_runs))
+    r_from = min(r["raised"] for r in cleared_runs) if cleared_runs else None
+    r_to = max(r["cleared"] for r in cleared_runs) if cleared_runs else None
+    c_names = sorted(set(r["vm"] or r["where"] for r in cleared_runs if r["vm"] or r["where"]))
+    c_text = ", ".join(c_names[:3]) + (" and %d more" % (len(c_names) - 3) if len(c_names) > 3 else "")
+    c_alarms = sorted(set(r["alarm"] for r in cleared_runs))
+    # what triggered the report, always (the watch's own conditions, else the alarms that had cleared, else the launch)
+    trig = []
+    for c in (o.get("triggers") or [])[:8]:
+        if isinstance(c, dict) and c.get("summary"):
+            trig.append("%s: %s" % (str(c.get("severity") or "").upper() or "Found", c["summary"]))
+    if not trig and (cleared_runs or (spans and not still)):
+        for h, a_, b_, _hv in [d for d in downs if d[2] is not None][:3]:
+            trig.append("%s: not responding %s to %s (%s), back before the review" % (h, hm(a_, True), hm(b_, True), _span((b_ - a_).total_seconds())))
+        for r in sorted(cleared_runs, key=lambda x: x["raised"])[:6]:
+            trig.append("%s on %s: raised %s, cleared %s (%s later)" % (r["alarm"], r["vm"] or r["where"] or "?", hm(r["raised"], True), hm(r["cleared"], True),
+                                                                        _span((r["cleared"] - r["raised"]).total_seconds())))
+        trig.insert(0, "Nothing was down when the watch read vCenter: what raised it had already cleared.")
+    if not trig:
+        trig = ["Nothing triggered it: the review was asked for (vm_watch_review) and the watch found nothing down or hung when it read vCenter."]
     numbers = {
         "events": len(evs), "first_signal": first["t"].strftime("%Y-%m-%dT%H:%M:%SZ") if first else "",
         "ticket": opened["ticket"] if opened else "", "signal_to_ticket_s": int(to_ticket) if to_ticket is not None else -1,
@@ -605,6 +693,9 @@ def outage_timeline(events, tickets=None, opts=None):
         lead = ("%s: %s" % (head["where"], _lower_first(head["label"])) if head["where"] else head["label"]) if head else \
             "%d event%s, none a problem" % (len(evs), "" if len(evs) == 1 else "s")
         title = "Outage review: %s%s" % (_cut(lead, 90), ("; " + ", ".join(parts)) if parts else "")
+        if cleared_only:
+            title = "Outage review: cleared before the review - %s: %s, raised %s, cleared %s%s" % (
+                _cut(c_text or "alarms", 40), _cut(", ".join(c_alarms[:2]), 60), hm(r_from), hm(r_to), " (a short usage blip, Low)" if blip else "")
 
     # tiles
     def box(label, value, status, text):
@@ -612,9 +703,12 @@ def outage_timeline(events, tickets=None, opts=None):
 
     boxes = [box("Window", length, "info", window_text),
              box("Events", len(evs), "info", "%d on the vCenter and host lanes" % len([e for e in evs if e["lane"] in ("vcenter", "host")])),
-             box("Host down", _span(down_s) if spans else "0", "critical" if spans else "ok",
+             (box("Outage", "Cleared before the review", "ok",
+                  "%s: %s to %s (%s)%s" % (c_text, hm(r_from, True), hm(r_to, True), _span((r_to - r_from).total_seconds()),
+                                           ". Only usage alarms, each cleared within %s: a blip (Low)" % _span(blip_s) if blip else "")) if cleared_only else
+              box("Host down", _span(down_s) if spans else "0", "critical" if spans else "ok",
                  ("%s%s" % (", ".join(hosts_down[:3]) + (" and %d more" % (len(hosts_down) - 3) if len(hosts_down) > 3 else ""),
-                            "; still down at the end of the window" if still else "")) if spans else "no host lost in the window"),
+                            "; still down at the end of the window" if still else "")) if spans else "no host lost in the window")),
              box("VMs restarted by HA", restarted, "warning" if restarted else "ok", "vSphere HA events" if restarted else "none"),
              box("Signal to ticket", _span(to_ticket) if to_ticket is not None else "-",
                  ("warning" if to_ticket > 900 else "ok") if to_ticket is not None else "info",
@@ -626,6 +720,12 @@ def outage_timeline(events, tickets=None, opts=None):
 
     # cards
     cards = []
+    if cleared_only:
+        cards.append({"status": "ok", "chip": "Cleared before the review", "meta": "%s to %s %s" % (hm(r_from, True), hm(r_to, True), zname(r_to)),
+                      "title": "%s: %s" % (c_text, ", ".join(c_alarms[:2])), "subject": c_text,
+                      "next": ("Only usage alarms, each cleared within %s: a blip. Check the guest for a burst (an audit flood, a runaway job) if it repeats. "
+                               % _span(blip_s) if blip else "Everything the alarms were about had cleared when the review ran. Read the guest's own log for the stretch above. ")
+                              + "The window starts at the first raise (vm_watch_review_lookback_hours)."})
     if first:
         cards.append({"status": first["level"], "chip": "First signal", "meta": "%s %s" % (hm(first["t"], True), zname(first["t"])),
                       "title": first["what"], "subject": first["where"],
@@ -697,6 +797,9 @@ def outage_timeline(events, tickets=None, opts=None):
             continue
         bands.append({"from": _pct(a, z0, z1), "to": _pct(b, z0, z1),
                       "text": "%s down: %s%s" % (h, _span((b - a).total_seconds()), ", still down" if open_ else "")})
+    if cleared_only and not (r_to < z0 or r_from > z1):
+        bands.append({"from": _pct(r_from, z0, z1), "to": _pct(r_to, z0, z1),
+                      "text": "%s: alarms raised %s, cleared %s" % (c_text, hm(r_from), hm(r_to))})
     whole = (end - begin).total_seconds()
     overview = None
     if evs and (z1 - z0).total_seconds() < 0.6 * whole:
@@ -807,6 +910,7 @@ def outage_timeline(events, tickets=None, opts=None):
     out = ["Outage time line, %s: %d event(s)%s%s%s" % (
         window_text, len(evs), ("; first signal %s" % hm(first["t"], True)) if first else "",
         ("; " + down_word) if down_word else "", ("; ticket after %s" % _span(to_ticket)) if to_ticket is not None else "")]
+    out.insert(1, "Triggered by: " + " | ".join(trig))
     out += ["  %2d  %s  %-14s %-16s %s  [%s]" % (e["num"], hm(e["t"], True), LANE[e["lane"]], e["where"], e["what"], WORD[e["level"]])
             for e in evs[:60]]
     if len(evs) > 60:
@@ -815,7 +919,11 @@ def outage_timeline(events, tickets=None, opts=None):
         out.append("ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
     out += notes
     return {"title": title, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
-            "lines": out, "aar": aar, "window": window_text, "events": len(evs)}
+            "lines": out, "aar": aar, "window": window_text, "events": len(evs),
+            "skip": bool(blip and o.get("skip_blips")),
+            "cleared_before_review": cleared_only, "blip": blip,
+            "alarm_window": [r_from.strftime("%Y-%m-%dT%H:%M:%SZ"), r_to.strftime("%Y-%m-%dT%H:%M:%SZ")] if cleared_runs else [],
+            "trigger": trig, "trigger_line": "Triggered by: " + trig[0] + ((" (and %d more)" % (len(trig) - 1)) if len(trig) > 1 else "")}
 
 
 def outage_timeline_doc(doc, timeline, web=False, review=False):
@@ -831,7 +939,9 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
     if review:
         out["title"] = timeline["title"]
         out["summary"] = list(timeline.get("boxes") or [])
-        out["subtitle"] = "Review of %s. Now: %s" % (timeline.get("window", ""), doc.get("title", ""))
+        out["subtitle"] = "%s Review of %s. Now: %s" % (timeline.get("trigger_line", "").rstrip(".") + "." if timeline.get("trigger_line") else "",
+                                                       timeline.get("window", ""), doc.get("title", ""))
+        out["subtitle"] = out["subtitle"].strip()
         out["sections"] = mine + own
     else:
         mine = [s for s in mine if s.get("title") in ("What happened, in order", "The events")]

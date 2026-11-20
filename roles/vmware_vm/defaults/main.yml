@@ -401,6 +401,13 @@ vm_watch_review_from: ""                 # a review of an older outage: its wind
 vm_watch_review_to: ""                   # ... and ends here ("" = vm_watch_review_hours after vm_watch_review_from, at most now)
 vm_watch_timeline: true                  # the time line also in the report a normal run sends when something is down; false = that report as before
 vm_watch_review_low_seconds: 120         # a problem that cleared within this many seconds is one Low event ("back after 40 s"), not two; 0 = never joined
+# 1.79.12: an alarm that goes back to normal in the window is shown with its raise, whenever it was raised: the review reads the
+# alarms' status changes this many hours before the window too (0 = not), and the window then starts at the first raise
+vm_watch_review_lookback_hours: 6
+# A trigger that was only usage alarms (CPU, memory) which cleared within this many seconds is said plainly as a blip: Low
+vm_watch_review_min_seconds: 300
+# true = such a blip sends no report at all (the job's output says so); false = it is sent, titled as a blip
+vm_watch_review_skip_blips: false
 vm_watch_review_tickets: []              # more tickets to show by number (e.g. [INC0012345]: one opened by hand); the health workflows' tickets are found by themselves
 vm_watch_review_event_types: []          # vCenter event types to read; [] = the built-in list (hosts, HA, storage, uplinks, alarms)
 vm_watch_review_max_events: 2000         # at most this many events per vCenter (the newest are kept)

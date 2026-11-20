@@ -105,6 +105,7 @@
         end: "{{ _vm_w_win.end | float }}"
         event_types: "{{ vm_watch_review_event_types | name_list }}"
         max_events: "{{ vm_watch_review_max_events | int }}"
+        lookback_hours: "{{ vm_watch_review_lookback_hours | float }}"
       register: _vm_w_ev
       check_mode: false                  # read-only: a dry run (Check) reads and reports the same
 
@@ -130,6 +131,8 @@
                {'begin': _vm_w_win.begin, 'end': _vm_w_win.end, 'fixed': vm_watch_review_from | string | trim | length > 0,
                 'time_zone': report_time_zone | default('', true) | string,
                 'low_seconds': vm_watch_review_low_seconds | float,
+                'min_seconds': vm_watch_review_min_seconds | float, 'skip_blips': vm_watch_review_skip_blips | bool,
+                'triggers': _vm_w_cond | default([]),
                 'tickets_asked': _vm_w_tk.asked | default(false), 'tickets_error': _vm_w_tk.error | default(''),
                 'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_ev.capped, 'instance': _vm_w_tk.instance | default(''),
                 'table': servicenow_table | default('incident', true) | string,
@@ -140,8 +143,14 @@
       ansible.builtin.debug:
         msg: "The outage time line was not made: {{ ansible_failed_result.msg | default('the read failed') }}"
 
+# 1.79.12: vm_watch_review_skip_blips - a trigger that was only usage alarms that cleared within vm_watch_review_min_seconds sends nothing
+- name: VMware | only a short usage blip (vm_watch_review_skip_blips) - no report is sent
+  ansible.builtin.debug:
+    msg: "{{ _vm_w_tl.title }} - not sent (vm_watch_review_skip_blips)."
+  when: _vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool
+
 - name: VMware | the outage report
-  when: _vm_w_report_it | bool or _vm_w_review | bool
+  when: (_vm_w_report_it | bool or _vm_w_review | bool) and not (_vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool)
   block:
     - name: VMware | the report
       ansible.builtin.set_fact:

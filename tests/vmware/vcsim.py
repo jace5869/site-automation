@@ -258,6 +258,25 @@ def outage():
     turned("red", "green")
 
 
+def usage():
+    """1.79.12: a usage alarm on DC0_C0_RP0_VM0 - `usage raise` (red) or `usage clear` (back to green), posted now. The alarm's own name
+    is what the event carries (the time line reads it), so the CPU usage alarm needs no definition in vcsim."""
+    em = content.eventManager
+    v = vm("DC0_C0_RP0_VM0")
+    dc = content.rootFolder.childEntity[0]
+    alarms = content.alarmManager.GetAlarm(content.rootFolder) or []
+    alarm = alarms[0]
+    old, new = ("green", "red") if sys.argv[2] == "raise" else ("red", "green")
+    ev = vim.event.AlarmStatusChangedEvent(
+        key=0, chainId=0, createdTime=datetime.datetime.now(datetime.timezone.utc), userName="",
+        datacenter=vim.event.DatacenterEventArgument(name=dc.name, datacenter=dc),
+        alarm=vim.event.AlarmEventArgument(alarm=alarm, name="Virtual machine CPU usage"),
+        source=vim.event.ManagedEntityEventArgument(entity=content.rootFolder, name="Datacenters"),
+        entity=vim.event.ManagedEntityEventArgument(entity=v, name=v.name), vm=vim.event.VmEventArgument(name=v.name, vm=v), to=new)
+    setattr(ev, "from", old)
+    em.PostEvent(ev)
+
+
 def ask():
     """VM - ask a question: a restart inside DC0_H0_VM1, a vMotion of DC0_C0_RP0_VM0 from DC0_C0_H0, DC0_C0_RP0_VM1 powered off
     (an event only: it stays on). vcsim keeps its own time and user for a posted event: now, and the logged-in user."""
@@ -305,4 +324,4 @@ def snap():
 
 
 {"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch, "size": size,
- "ask": ask, "folder": folder, "outage": outage}[sys.argv[1]]()
+ "ask": ask, "folder": folder, "outage": outage, "usage": usage}[sys.argv[1]]()
