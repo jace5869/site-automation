@@ -723,8 +723,17 @@ credential or anything else.
      - {from: "rhel-hosts-old", to: "linux-hosts-idm"}
    ```
 
-   Both must be in `aap_inventory_replace_organization` (`Default` unless you set it). If one is not found, the job
-   stops before it changes anything.
+   Both are looked up in `aap_inventory_replace_organization` (`Default` unless you set it), the organization whose
+   templates and workflows move. An inventory of another organization: name it in the entry, with the credential's user
+   having Use on it:
+
+   ```yaml
+   aap_inventory_replace_organization: platforms
+   aap_inventory_replace:
+     - {from: "rhel-hosts-old", to: "linux-hosts-idm", to_organization: "automation"}
+   ```
+
+   (`from_organization` the same way.) If one is not found, the job stops before it changes anything.
 3. Optional: `aap_inventory_replace_only` (some templates and workflows, `*` and `?`; a workflow node goes with its
    workflow's name, a schedule with its template's), `aap_inventory_replace_max` (default 100: more moves stop the job
    before any write).

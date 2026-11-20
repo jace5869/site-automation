@@ -12,7 +12,7 @@ DOCUMENTATION = r'''
 module: site_aap_inventory_move
 short_description: Move AAP job templates, workflows, workflow nodes and schedules from one inventory to another
 options:
-  replace: {description: "[{from: inventory name, to: inventory name}] - exact names, both in the organization.", type: list, elements: dict, required: true}
+  replace: {description: "[{from: inventory name, to: inventory name, from_organization, to_organization}] - exact names; each in the organization unless its own is named.", type: list, elements: dict, required: true}
   organization: {description: The organization (its name)., type: str, required: true}
   only: {description: "Only the templates and workflows whose name matches one of these patterns (* and ?, any case); a node:
     its workflow's name; a schedule: its template's name. [] = all.", type: list, elements: str, default: []}
@@ -85,11 +85,27 @@ class Move(object):
             raise RuntimeError("%s could not be read: %s" % (path, _why(code, d)))
         return d
 
-    def inventory(self, name, which):
-        rows = [r for r in self.all("inventories/?name=%s" % _q(name)) if r.get("name") == name and r.get("organization") == self.org_id]
+    def org_named(self, name):
+        """An organization's id by its exact name (cached), or None with the problem noted."""
+        if name not in self._orgs:
+            orgs = [o for o in self.all("organizations/?name=%s" % _q(name)) if o.get("name") == name]
+            if len(orgs) != 1:
+                self.problems.append("organization %r: %s" % (name, "not found" if not orgs else "%d match" % len(orgs)))
+            self._orgs[name] = int(orgs[0]["id"]) if len(orgs) == 1 else None
+        return self._orgs[name]
+
+    def inventory(self, name, which, org=None):
+        """An inventory by its exact name in an organization: the job's own, or the entry's from_organization /
+        to_organization (an inventory of another organization: AAP lets a template use it when the credential's user has
+        Use on it)."""
+        org = org or self.p["organization"]
+        oid = self.org_named(org)
+        if oid is None:
+            return None
+        rows = [r for r in self.all("inventories/?name=%s" % _q(name)) if r.get("name") == name and r.get("organization") == oid]
         if len(rows) != 1:
             self.problems.append("aap_inventory_replace %s %r: %s" % (
-                which, name, ("not found in organization %r" % self.p["organization"]) if not rows else "%d match - rename one in AAP" % len(rows)))
+                which, name, ("not found in organization %r" % org) if not rows else "%d match - rename one in AAP" % len(rows)))
             return None
         return int(rows[0]["id"])
 
@@ -107,11 +123,10 @@ class Move(object):
     # ---- the plan: every read and every check before any write
     def plan(self):
         p = self.p
-        orgs = [o for o in self.all("organizations/?name=%s" % _q(p["organization"])) if o.get("name") == p["organization"]]
-        if len(orgs) != 1:
-            self.problems.append("organization %r: %s" % (p["organization"], "not found" if not orgs else "%d match" % len(orgs)))
+        self._orgs = {}
+        self.org_id = self.org_named(p["organization"])
+        if self.org_id is None:
             return []
-        self.org_id = int(orgs[0]["id"])
         self._parents = {}
         pairs, froms = [], set()
         for n, r in enumerate(p["replace"] or [], 1):
@@ -120,16 +135,19 @@ class Move(object):
             if not a or not b:
                 self.problems.append("aap_inventory_replace entry %d: both from and to are needed" % n)
                 continue
-            if a == b:
-                self.problems.append("aap_inventory_replace entry %d: from and to are the same (%r)" % (n, a))
+            fo, to = str(r.get("from_organization") or "").strip(), str(r.get("to_organization") or "").strip()
+            fid, tid = self.inventory(a, "from", fo), self.inventory(b, "to", to)
+            if fid is None or tid is None:
                 continue
-            if a in froms:
+            # the same inventory, and a source named twice: by the inventories found (one name in two organizations is two)
+            if fid == tid:
+                self.problems.append("aap_inventory_replace entry %d: from and to are the same inventory (%r)" % (n, a))
+                continue
+            if fid in froms:
                 self.problems.append("aap_inventory_replace: %r named twice as from" % a)
                 continue
-            froms.add(a)
-            fid, tid = self.inventory(a, "from"), self.inventory(b, "to")
-            if fid is not None and tid is not None:
-                pairs.append((a, fid, b, tid))
+            froms.add(fid)
+            pairs.append((a, fid, b, tid))
         if self.problems:
             return []
         moves = []

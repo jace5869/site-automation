@@ -28,7 +28,8 @@ def jt(i, name, org, inv, limit=""):
 s = {"next": 1000, "organizations": [{"id": 1, "name": "Default"}, {"id": 9, "name": "Lab"}],
      "projects": [{"id": 2, "name": "site-automation", "organization": 1}],
      "inventories": [{"id": 3, "name": "rhel-hosts-old", "organization": 1}, {"id": 4, "name": "linux-hosts-idm", "organization": 1},
-                     {"id": 5, "name": "windows", "organization": 1}, {"id": 6, "name": "rhel-hosts-old", "organization": 9}],
+                     {"id": 5, "name": "windows", "organization": 1}, {"id": 6, "name": "rhel-hosts-old", "organization": 9},
+                     {"id": 7, "name": "lab-idm", "organization": 9}],
      "groups": [{"id": 50, "name": "web", "inventory": 4}, {"id": 51, "name": "db", "inventory": 3}],
      "hosts": [{"id": 60, "name": "app01", "inventory": 4}],
      "credentials": [], "execution_environments": [],
@@ -87,6 +88,23 @@ run -e '{"aap_inventory_replace": [{"from": "rhel-hosts-old", "to": "linux-hosts
 run -e '{"aap_inventory_replace_max": 5}'; rc=$?
 [ $rc != 0 ] && [ "$(writes)" = 0 ] && has "6 to move, more than aap_inventory_replace_max (5): nothing moved" \
     && pass "more moves than aap_inventory_replace_max: stopped, nothing written" || fail "max" "rc $rc; $(grep -E "fatal|more than" "$work/out.txt" | head -3)"
+
+# ---- a `to` in another organization: found with to_organization (Check: listed, nothing written), not without it
+run -e '{"aap_inventory_replace": [{"from": "rhel-hosts-old", "to": "lab-idm"}]}'; rc=$?
+[ $rc != 0 ] && [ "$(writes)" = 0 ] && has "aap_inventory_replace to 'lab-idm': not found in organization 'Default'" \
+    && pass "a 'to' of another organization without to_organization: stopped, nothing written" || fail "other org, unnamed" "rc $rc; $(grep -E "fatal|not found" "$work/out.txt" | head -3)"
+run --check -e '{"aap_inventory_replace": [{"from": "rhel-hosts-old", "to": "lab-idm", "to_organization": "Lab"}]}'; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = 0 ] && has "would move: job template 'Health check': rhel-hosts-old -> lab-idm" && ! has "Lab health" \
+    && pass "to_organization: the other organization's inventory found, the job's own templates listed, nothing written (Check)" \
+    || fail "to_organization" "rc $rc; $(writes) writes; $(grep -E "would move|fatal|not found" "$work/out.txt" | head -4)"
+
+run --check -e '{"aap_inventory_replace": [{"from": "rhel-hosts-old", "to": "rhel-hosts-old", "to_organization": "Lab"}]}'; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = 0 ] && has "would move: job template 'Health check': rhel-hosts-old -> rhel-hosts-old" \
+    && pass "one name in two organizations: two inventories, the move listed (Check)" \
+    || fail "same name, two organizations" "rc $rc; $(grep -E "would move|fatal|same" "$work/out.txt" | head -4)"
+run --check -e '{"aap_inventory_replace": [{"from": "rhel-hosts-old", "to": "rhel-hosts-old"}]}'; rc=$?
+[ $rc != 0 ] && [ "$(writes)" = 0 ] && has "from and to are the same inventory" && pass "the same inventory as from and to: stopped" \
+    || fail "same inventory" "rc $rc; $(grep -E "fatal|same" "$work/out.txt" | head -3)"
 
 # ---- aap_inventory_replace_only: one template moved, only its inventory changed
 run -e '{"aap_inventory_replace_only": ["health*"]}'; rc=$?

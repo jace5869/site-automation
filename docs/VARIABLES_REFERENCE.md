@@ -176,12 +176,12 @@ File: `roles/aap_health/defaults/main.yml`
 
 File: `roles/aap_inventory_move/defaults/main.yml`
 
-> ---- AAP - move templates to another inventory (playbooks/aap_inventory_move.yml; docs/SETUP_AAP.md "Move templates to another inventory") Every job template, workflow, workflow node and schedule of the organization whose inventory is `from` gets `to` instead - only that field. Names are exact; both inventories must be in the organization, or nothing is changed. Run it with Check first: it then only reads, and lists every move. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
+> ---- AAP - move templates to another inventory (playbooks/aap_inventory_move.yml; docs/SETUP_AAP.md "Move templates to another inventory") Every job template, workflow, workflow node and schedule of the organization whose inventory is `from` gets `to` instead - only that field. Names are exact; both inventories are looked up in the organization, or in the entry's own from_organization / to_organization (an inventory of another organization: the credential's user needs Use on it), or nothing is changed. Run it with Check first: it then only reads, and lists every move. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `aap_inventory_replace` | `[]` | [{from: inventory name, to: inventory name}, ...], e.g. [{from: "rhel-hosts-old", to: "linux-hosts-idm"}] |
-| `aap_inventory_replace_organization` | `Default` | the organization: the inventories, templates and workflows in it |
+| `aap_inventory_replace` | `[]` | [{from: inventory name, to: inventory name}, ...], e.g. [{from: "rhel-hosts-old", to: "linux-hosts-idm"}]; an inventory of another organization: [{from: "rhel-hosts-old", to: "linux-hosts-idm", to_organization: "Other org"}] |
+| `aap_inventory_replace_organization` | `Default` | the organization: its templates and workflows (and the inventories, unless an entry names its own) |
 | `aap_inventory_replace_only` | `[]` | only the templates and workflows whose name matches one of these (* and ?, any case); a workflow node goes with its workflow's name, a schedule with its template's; [] = all |
 | `aap_inventory_replace_max` | `100` | more moves than this stop the job before any write |
 | `aap_inventory_replace_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.79.5 — 2026-11-20
+
+**To set up: nothing.** Optional: an entry of `aap_inventory_replace` may name `to_organization` (and `from_organization`).
+
+**AAP - move templates to another inventory: an inventory of another organization.** Your templates in one
+organization, the inventory to move them to in another: `{from: "rhel-hosts-old", to: "linux-hosts-idm",
+to_organization: "Other org"}`. The templates and workflows that move are still only `aap_inventory_replace_organization`'s;
+the credential's user needs Use on that inventory. Without it, as before: `not found in organization ...`, nothing changed.
+Test: `run_aap_inventory_move_test.sh` (another organization's inventory, with and without `to_organization`).
+
 ## 1.79.4 — 2026-11-20
 
 **To set up: nothing.** No new setting. Your answer files (`check_stig_evaluate_answers`) are read for their
