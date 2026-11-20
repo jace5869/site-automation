@@ -83,6 +83,10 @@ def names(v):
     return [x.strip() for x in re.split(r"[,\n]", t) if x.strip()]
 
 
+
+# 1.79.9b: playbooks that run on the AAP side only (hosts: localhost) - a workflow step of one needs no Limit
+LOCAL_ONLY_PLAYBOOKS = frozenset(["playbooks/workflow_gate.yml"])
+
 class Config(object):
     """The settings: the file PORTAL_SETTINGS names (JSON - the deploy writes it), then the environment over it (the
     secret: PORTAL_AAP_TOKEN)."""
@@ -552,6 +556,11 @@ class Aap(object):
             code, jt = self.call("GET", "job_templates/%s/" % n.get("unified_job_template"))
             if code != 200 or not isinstance(jt, dict):
                 return None, "step '%s' could not be read" % nm, self._unsure(code)
+            # 1.79.9b: a step that only ever runs on the AAP side (the workflow gate: hosts: localhost) touches no host, so a
+            # Limit has nothing to narrow - it neither needs one nor sets the workflow's inventory (a Limit given to it
+            # would even make it skip, and the workflow would go on without its plan)
+            if str(jt.get("playbook") or "") in LOCAL_ONLY_PLAYBOOKS:
+                continue
             jobs += 1
             if n.get("limit") or jt.get("limit"):
                 return None, "step '%s' has a Limit of its own" % nm, False
@@ -1359,6 +1368,20 @@ class Portal(object):
         finally:
             self.found_ready = True
             self.found_lock.release()
+
+    def refresh_soon(self):
+        """1.79.9: a page's read of AAP, never waited for once there is a list: the first read is waited for (there is nothing
+        to show yet); after it, a list older than portal_discover_seconds is read again in the background and this request
+        gets the list there is. Reading 90 templates and their inventories took long enough to stall the page (and the
+        report pages, which waited for it too)."""
+        if not self.found_ready:
+            return self.refresh()
+        if not self.cfg.label or not self.cfg.aap_url or time.time() - self.found_at < self.cfg.discover_seconds:
+            return False
+        if self.found_lock.locked():
+            return False                                # a read is running already
+        threading.Thread(target=self.refresh, name="portal-discover", daemon=True).start()
+        return False
 
     FORCE_EVERY = 60                                    # one read of AAP forced by a Refresh per this many seconds, for everyone
 
@@ -2863,7 +2886,10 @@ def make_handler(cfg, portal, static_dir):
             cn = self._who(api)
             if not cn:
                 return None
-            portal.refresh()                                # 1.78.0: the actions AAP offers (cached portal_discover_seconds)
+            # 1.79.9: the report website's files need nothing of AAP - served before the actions are looked at
+            if path == "/reports" or path.startswith("/reports/"):
+                return self._report(path[len("/reports"):] or "/")
+            portal.refresh_soon()                           # 1.78.0: the actions AAP offers (portal_discover_seconds; 1.79.9: read in the background)
             if path == "/":
                 return self._send(200, home_page(cfg, portal, cn, urllib.parse.parse_qs(u.query, max_num_fields=20)), "text/html; charset=utf-8")
             m = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})/details$", path)
@@ -2874,8 +2900,6 @@ def make_handler(cfg, portal, static_dir):
                 if urllib.parse.parse_qs(u.query).get("embed"):
                     return self._send(200, frag, "text/html; charset=utf-8")
                 return self._send(200, details_page(cfg, portal, cn, m.group(1)), "text/html; charset=utf-8")
-            if path == "/reports" or path.startswith("/reports/"):
-                return self._report(path[len("/reports"):] or "/")
             m = re.match(r"^/actions/([a-z][a-z0-9_]{0,63})$", path)
             if m:
                 if m.group(1) not in portal.actions:
@@ -2967,9 +2991,19 @@ def make_handler(cfg, portal, static_dir):
             if not os.path.isfile(full):
                 return self._send(404, b"Not found", "text/plain")
             ctype = TYPES.get(os.path.splitext(full)[1].lower()) or mimetypes.guess_type(full)[0] or "application/octet-stream"
+            # 1.79.9: the browser keeps a page and asks again each time (no-cache): an unchanged file is a 304, not sent
+            # again - the big ones (ticket insights) were sent in full on every visit
+            try:
+                st = os.stat(full)
+            except OSError:
+                return self._send(404, b"Not found", "text/plain")
+            tag = '"%x-%x"' % (int(st.st_mtime_ns), st.st_size)
+            meta = [("ETag", tag), ("Last-Modified", self.date_time_string(int(st.st_mtime)))]
+            if tag in [x.strip() for x in (self.headers.get("If-None-Match") or "").split(",")]:
+                return self._send(304, b"", ctype, meta, csp=REPORT_CSP, cache="no-cache")
             with open(full, "rb") as fh:
                 data = fh.read()
-            return self._send(200, data, ctype, csp=REPORT_CSP)
+            return self._send(200, data, ctype, meta, csp=REPORT_CSP, cache="no-cache")
 
         def _form_post(self, name):
             """1.78.0: the confirm page without scripts - the form posts itself (same checks: the token, the origin, every value again)."""

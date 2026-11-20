@@ -737,6 +737,26 @@ class Live(unittest.TestCase):
             self.assertEqual(self.req(p)[0], 404, p)
         self.assertEqual(self.req("/reports/", dn=None)[0], 403)
 
+    def test_09b_reports_fast(self):
+        """1.79.9: a report file never waits for AAP, and an unchanged one is a 304 (the browser's own copy)."""
+        calls = []
+        keep = (self.portal.refresh, self.portal.refresh_soon)
+        self.portal.refresh = lambda *a, **k: calls.append("refresh")
+        self.portal.refresh_soon = lambda *a, **k: calls.append("soon")
+        try:
+            code, raw, h = self.req("/reports/linux-health/")
+            self.assertEqual(code, 200)
+            self.assertEqual(calls, [])                                                    # AAP not looked at
+            self.assertEqual(h.get("Cache-Control"), "no-cache")
+            tag = h.get("ETag")
+            self.assertTrue(tag)
+            code, raw, h2 = self.req("/reports/linux-health/", headers={"If-None-Match": tag})
+            self.assertEqual((code, raw), (304, b""))
+            self.assertEqual(self.req("/reports/linux-health/", headers={"If-None-Match": '"0-0"'})[0], 200)
+            self.assertEqual(self.req("/reports/", dn=None)[0], 403)                     # still signed in only
+        finally:
+            self.portal.refresh, self.portal.refresh_soon = keep
+
     def test_10_too_many(self):
         self.portal.recent.pop("DOE.JANE.Q.1234567890", None)
         codes = [self.post("/api/actions/stig_recheck", {"vars": {"target": "web03.example.mil"}})[0] for _ in range(7)]
@@ -1325,6 +1345,33 @@ class Found(unittest.TestCase):
         self.assertEqual(sum(1 for a in self.portal.actions.values() if a["aap"]["name"] == "Linux - recheck one host"), 1)
         self.assertFalse(self.portal.actions["stig_recheck"].get("discovered"))
 
+    def test_07b_a_stale_list_is_read_in_the_background(self):
+        """1.79.9: once there is a list, a page never waits for AAP: the stale list is read again in the background."""
+        self.portal.refresh(force=True)
+        slow, raw = threading.Event(), self.portal.aap.discover
+
+        def discover(*a, **k):
+            slow.wait(5)
+            return raw(*a, **k)
+        self.portal.aap.discover = discover
+        try:
+            self.portal.found_at -= self.cfg.discover_seconds + 1
+            before = self.portal.found_at
+            t = time.time()
+            self.portal.refresh_soon()
+            self.portal.refresh_soon()                                                   # a read is running: not a second one
+            self.assertLess(time.time() - t, 0.5)                                         # did not wait
+            self.assertEqual(self.portal.found_at, before)
+            slow.set()
+            for _ in range(100):
+                if self.portal.found_at != before and not self.portal.found_lock.locked():
+                    break
+                time.sleep(0.05)
+            self.assertGreater(self.portal.found_at, before)                              # read, in the background
+            self.assertFalse(self.portal.refresh_soon())                                  # fresh: nothing to do
+        finally:
+            self.portal.aap.discover = raw
+
     def test_08_cache_and_paging(self):
         self.portal.refresh(force=True)
         n = len(self.gets())
@@ -1814,6 +1861,28 @@ class Found(unittest.TestCase):
             self.assertIn("portal_limit", a["vars"])
         finally:
             self._clean(["Step one", "Step two", "Shared inventory flow"])
+            self.portal.refresh(force=True)
+
+    def test_82b_the_workflow_gate_step_needs_no_limit(self):
+        """1.79.9b: the fapolicyd daily workflow - check, the gate (playbooks/workflow_gate.yml, localhost only, no Limit at
+        launch), approval, approved: the gate does not stop the workflow from the portal."""
+        j1 = fake_aap.add_template("job_templates", "Check step", [], None, limit=True, inventory=3)
+        gate = fake_aap.add_template("job_templates", "Workflow gate - has a plan", [], None, limit=False, inventory=3)
+        fake_aap.STATE["templates"]["job_templates"][-1]["playbook"] = "playbooks/workflow_gate.yml"
+        nolim = fake_aap.add_template("job_templates", "Hosts step no limit", [], None, limit=False, inventory=3)
+        wf = fake_aap.add_template("workflow_job_templates", "Gated flow", ["portal"], None, limit=True, inventory=3,
+                                   nodes=[self._node(1, j1, "Check step"), self._node(2, gate, "Workflow gate - has a plan"),
+                                          self._node(3, 0, "Approve", "workflow_approval"), self._node(4, j1, "Check step")])
+        bad = fake_aap.add_template("workflow_job_templates", "Gated flow, a host step without Limit", ["portal"], None, limit=True, inventory=3,
+                                    nodes=[self._node(1, gate, "Workflow gate - has a plan"), self._node(2, nolim, "Hosts step no limit")])
+        try:
+            self.portal.refresh(force=True)
+            by = dict((x["aap"]["name"], x) for x in self.portal.actions.values() if x.get("discovered"))
+            self.assertIn("Gated flow", by, self.portal.found.get("skipped"))
+            self.assertEqual(by["Gated flow"]["limit_inv"], 3)
+            self.assertNotIn("Gated flow, a host step without Limit", by)                  # a host step still needs one
+        finally:
+            self._clean(["Check step", "Workflow gate - has a plan", "Hosts step no limit", "Gated flow", "Gated flow, a host step without Limit"])
             self.portal.refresh(force=True)
 
     def test_83_a_workflow_limit_is_refused_naming_the_step(self):

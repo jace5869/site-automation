@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.79.9 — 2026-11-20
+
+**To set up:** run **Site portal - deploy** again. Nothing else.
+
+**The site portal is fast again.** Since 1.78.x every page of the portal - and every file of the report website under
+`/portal/reports/` - first checked whether its list of AAP's actions was older than `portal_discover_seconds` (60), and
+the request that found it so waited while the portal read AAP again (every labelled template and its inventory: slow on
+a large AAP). A report page asks for several files, so it waited more than once.
+- The report website's files never look at AAP.
+- Once there is a list, it is read again **in the background**: no page waits; the list there is is shown until the new
+  one is ready. The first read after the service starts is still waited for (there is nothing to show before it).
+- Report files carry an `ETag` and `Cache-Control: no-cache`: the browser keeps its copy and an unchanged file is a
+  `304`, not sent again (the big ticket insights page loads from the browser's copy).
+
+**A workflow with a gate step shows on the portal.** The portal wants every step of a workflow to take a Limit at launch
+(else the job would run on every host). The **Workflow gate** step (`playbooks/workflow_gate.yml`) runs on the AAP side
+only and touches no host, so it needs none - and must not get one: a Limit would make it skip and the workflow go on
+without its plan. The portal no longer skips a workflow for it (*Linux - fapolicyd - daily*). Any other step still needs
+**Prompt on launch** for Limit.
+Tests: `tests/test_site_portal.py` (`test_07b_a_stale_list_is_read_in_the_background`, `test_09b_reports_fast`,
+`test_82b_the_workflow_gate_step_needs_no_limit`).
+
 ## 1.79.7 — 2026-11-20
 
 **To set up: nothing.** Optional: `check_stig_stigman_collections_exclude` (the default leaves out Archive*, Base*,
