@@ -1674,10 +1674,10 @@ def backlog_tiles(bm):
         return ""
     t = bm["top"]
     return ('<div class="tiles bkt3">'
-            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Automation backlog</span><span class="v">%s</span><span class="d">clusters, %s at P1</span></a>'
-            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Hours saved / year</span><span class="v">%s</span><span class="d">if every cluster reached its best phase</span></a>'
+            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Automation backlog</span><span class="v">%s</span><span class="d">clusters, %s at P1 · whole window</span></a>'
+            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Hours saved / year</span><span class="v">%s</span><span class="d">if every cluster reached its best phase · whole window</span></a>'
             '<a class="tile bktile" href="#backlog"><span class="eyebrow">Top candidate</span><span class="v"><span class="tsm">%s</span></span>'
-            '<span class="d">score %d · %.1f a month · phase %d</span></a></div>' % (
+            '<span class="d">score %d · %.1f a month · phase %d · whole window</span></a></div>' % (
                 n(len(rows)), n(bm["p1"]), n(round(bm["saved"])), e(t[0]), t[1], t[2], t[3]))
 
 
@@ -1776,8 +1776,9 @@ def backlog_section(bm, o=None, url="", pre=None):
         out.append('<div class="fair">ACT wrote no words: the numbers and the phases come from the formulas; the words read "%s". To have it write them, set '
                    '<code>servicenow_insights_act: true</code> on a launch.</div>' % e(B.OFF_TEXT))
     else:
-        out.append('<div class="fair">ACT wrote the words for the top %d clusters (<code>servicenow_insights_backlog_issues</code>); the figures are worked out by code '
-                   'from the tickets - hover a ? or a cell for its formula. The deflection of each phase is an estimate from the close notes.</div>' % (bm.get("top_n") or 0))
+        out.append('<div class="fair">ACT wrote the words for %d of the top %d clusters (<code>servicenow_insights_backlog_issues</code>); the figures are worked out by code '
+                   'from the tickets - hover a ? or a cell for its formula. The deflection of each phase is an estimate from the close notes.</div>' % (
+                       sum(1 for r in rows if r.get("text")), bm.get("top_n") or 0))
     out.append('<script type="application/json" id="bk-data">%s</script>' % json.dumps(data, sort_keys=True, separators=(",", ":")).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
     note = "%s clusters from Top incident issues · %s incidents · %s" % (n(len(rows)), n(bm["total"]), e(bm.get("window_label") or ""))
     return section("backlog", "Automation backlog", note.rstrip(" ·"), "".join(out))

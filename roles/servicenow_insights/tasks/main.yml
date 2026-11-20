@@ -563,26 +563,24 @@
                 'hosts': (ansible_play_hosts_all + (query('ansible.builtin.inventory_hostnames', ansible_limit)
                           if ansible_limit | default('', true) | length > 0 else [])) | report_banner_hosts(hostvars)} | report_banner) }}
 
-    - name: Insights | write Automation backlog.docx
-      block:
-        - name: Insights | the document (incident_docs, write_doc.yml)
-          ansible.builtin.include_role:
-            name: incident_docs
-            tasks_from: write_doc.yml
-          vars:
-            _wd_path: "{{ _sni_bk_dir.path }}/Automation backlog.docx"
-            _wd_doc: >-
-              {{ _sni_model | servicenow_insights_backlog_docx(_sni_opts | combine({
-                   'banner': _sni_bk_banner.banner, 'banner_color': _sni_bk_banner.banner_color | string,
-                   'logo': (incident_docs_logo_file | default('', true) or report_logo_file | default('', true)) | servicenow_insights_backlog_logo(playbook_dir),
-                   'logo_height': incident_docs_logo_height | default(64) | int})) }}
-        - name: Insights | the Word file, attached to the email
-          ansible.builtin.set_fact:
-            _sni_bk_attach: "{{ [{'path': _wd_result.path, 'filename': 'Automation backlog.docx'}] if _wd_result.path | default('') | length > 0 else [] }}"
-      rescue:
-        - name: Insights | the Word file not made - the email goes without it
-          ansible.builtin.debug:
-            msg: "Automation backlog.docx was not made ({{ ansible_failed_result.msg | default('no reason given') }}): the email goes without it."
+    - name: Insights | the document (incident_docs, write_doc.yml)
+      ansible.builtin.include_role:
+        name: incident_docs
+        tasks_from: write_doc.yml
+      vars:
+        _wd_path: "{{ _sni_bk_dir.path }}/Automation backlog.docx"
+        _wd_doc: >-
+          {{ _sni_model | servicenow_insights_backlog_docx(_sni_opts | combine({
+               'banner': _sni_bk_banner.banner, 'banner_color': _sni_bk_banner.banner_color | string,
+               'logo': (incident_docs_logo_file | default('', true) or report_logo_file | default('', true)) | servicenow_insights_backlog_logo(playbook_dir),
+               'logo_height': incident_docs_logo_height | default(64) | int})) }}
+    - name: Insights | the Word file, attached to the email
+      ansible.builtin.set_fact:
+        _sni_bk_attach: "{{ [{'path': _wd_result.path, 'filename': 'Automation backlog.docx'}] if _wd_result.path | default('') | length > 0 else [] }}"
+  rescue:
+    - name: Insights | the Word file not made - the email goes without it
+      ansible.builtin.debug:
+        msg: "Automation backlog.docx was not made ({{ ansible_failed_result.msg | default('no reason given') }}): the email goes without it."
 
 - name: Insights | the page, the email and the Word file - the temporary folder deleted after
   block:

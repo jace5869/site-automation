@@ -604,9 +604,9 @@ def text_table(conn, create):
     return True
 
 
-def text_load(conn, p):
-    """The drafts held for this instance and cache key -> {texts: {key hash: JSON text}} (clear: none)."""
-    if p["clear"] or not text_table(conn, p["create"]):
+def text_load(conn, p, check=False):
+    """The drafts held for this instance and cache key -> {texts: {key hash: JSON text}} (clear: none). check: a dry run makes no table."""
+    if p["clear"] or not text_table(conn, p["create"] and not check):
         return {"texts": {}}
     cur = conn.cursor()
     cur.execute("SELECT key_hash, body FROM insights_act_text WHERE source = %s AND cache_key = %s AND written_at >= UTC_TIMESTAMP() - INTERVAL %s DAY",
@@ -696,7 +696,7 @@ def main():
         elif p["mode"] == "text_save":
             res.update(text_save(conn, p))
         elif p["mode"] == "text_load":
-            res.update(text_load(conn, p) if res["schema_version"] else {"texts": {}})
+            res.update(text_load(conn, p, module.check_mode) if res["schema_version"] else {"texts": {}})
         elif res["schema_version"]:
             res.update(read(conn, p))
         res["ok"] = True

@@ -23,6 +23,7 @@ import http.server
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "incident_docs", "library"))
+sys.path.insert(0, os.path.join(HERE, "..", "roles", "servicenow_insights", "library"))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "servicenow"))
 import servicenow_insights_backlog as B  # noqa: E402
@@ -321,6 +322,98 @@ class Hardening(unittest.TestCase):
         t2[0]["close_notes"] = "fixed"                                                 # a close note that now says nothing: the grade changed
         t2[1]["reassignment_count"] = 5                                                # passed on once more
         self.assertNotEqual(h0, hash_of(t2))
+
+    def test_the_key_follows_the_evidence_text_too(self):
+        # 1.81.1: a close note that still says what was done but says it differently, a description reworded: another key
+        t, i = made()
+        r = {"window": {"since": "2026-01-01 00:00:00", "until": "2026-11-01 00:00:00", "prev_since": "2025-01-01 00:00:00"}, "items": t}
+        st = F.servicenow_insights_state()
+
+        def keys(items):
+            r["items"] = items
+            return [b["issues"][0]["hash"] for b in B.backlog_batches(r, st, {"pairs": [], "counts": {}}, dict(OPTS, backlog_issues=5))]
+        h0 = keys(t)
+        t2 = json.loads(json.dumps(t))
+        t2[0]["close_notes"] = "Restarted the print spooler service on the print server, cleared the queue and told the user."   # still a good note
+        self.assertEqual(F.grade(t2[0]["close_notes"], OPTS), "good")
+        self.assertNotEqual(h0, keys(t2))
+        t3 = json.loads(json.dumps(t))
+        t3[0]["short_description"] = "Printer in room 12 will not print at all"
+        self.assertNotEqual(h0, keys(t3))
+        self.assertEqual(h0, keys(json.loads(json.dumps(t))))                           # nothing changed: the same keys
+        # nor the numbers a mask gave this run
+        self.assertEqual(B.backlog_hash(["a"], evidence="1 | PERSON-3 on HOST-12"), B.backlog_hash(["a"], evidence="1 | PERSON-9 on HOST-2"))
+        self.assertNotEqual(B.backlog_hash(["a"], evidence="1 | PERSON-3 on HOST-12"), B.backlog_hash(["a"], evidence="1 | HOST-3 on PERSON-12"))
+        # the numbering of the question is not part of it
+        self.assertEqual(B.backlog_hash(["a"], evidence="CLUSTER B1: x"), B.backlog_hash(["a"], evidence="CLUSTER B7: x"))
+        self.assertNotEqual(B.backlog_hash(["a"], evidence="CLUSTER B1: x"), B.backlog_hash(["a"], evidence="CLUSTER B1: y"))
+
+    def test_the_best_phase_is_chosen_on_the_unrounded_scores(self):
+        # 125 tickets: 35 settled by phase 1 (28.0), 71 by phase 2 (56.8 / 2 = 28.4): both show 28, the second is better
+        t = []
+        for k in range(125):
+            x, _n = ticket("Spooler", hops=0 if k < 35 else 1 if k < 71 else 0, good=k < 71, day=1 + k % 27)
+            t.append(x)
+        i = dict((x["sys_id"], "Spooler") for x in t)
+        a = rows_of(t, i)["rows"][0]
+        self.assertEqual([p["score"] for p in a["ph"]][:2], [28, 28])
+        self.assertGreater(a["ph"][1]["score_x"], a["ph"][0]["score_x"])
+        self.assertEqual(a["best"], 2)
+        self.assertEqual(a["score"], round(0.5 * 100 + 0.3 * a["ph"][1]["score_x"] + 0.2 * 0))
+
+    def test_the_tiles_say_whole_window_and_the_line_counts_the_drafts(self):
+        m = json.loads(json.dumps(__import__("test_servicenow_insights").site()["model"]))
+        bm = m["scopes"]["all"]["autobl"]
+        self.assertEqual(P.backlog_tiles(bm).count("whole window"), 3)
+        bm["act_on"], bm["top_n"] = True, 5
+        for r in bm["rows"][:3]:
+            r["text"], r["why_not"] = B.read_draft(draft()), ""
+        import html
+        self.assertIn("ACT wrote the words for 3 of the top 5 clusters", html.unescape(P.backlog_section(bm, {})))
+
+    def test_a_dry_run_makes_no_table_when_it_reads_the_drafts(self):
+        import site_insights_db as D
+
+        class Cur(object):
+            def __init__(self, log):
+                self.log = log
+
+            def execute(self, sql, args=None):
+                self.log.append(sql)
+
+            def fetchone(self):
+                return [0]                                   # the table is not there
+
+            def fetchall(self):
+                return []
+
+        class Conn(object):
+            def __init__(self):
+                self.log = []
+
+            def cursor(self):
+                return Cur(self.log)
+
+            def commit(self):
+                pass
+        c = Conn()
+        got = D.text_load(c, {"clear": False, "create": True, "source": "s", "cache_key": "k"}, check=True)
+        self.assertEqual(got, {"texts": {}})
+        self.assertFalse(any("CREATE TABLE" in x for x in c.log), c.log)
+        c = Conn()
+        D.text_load(c, {"clear": False, "create": True, "source": "s", "cache_key": "k"}, check=False)
+        self.assertTrue(any("CREATE TABLE" in x for x in c.log))
+
+    def test_the_word_files_whole_setup_is_in_its_recovery_block(self):
+        import yaml
+        with open(os.path.join(HERE, "..", "roles", "servicenow_insights", "tasks", "main.yml")) as f:
+            tasks = yaml.safe_load(f)
+        t = next(x for x in tasks if "Word file (servicenow_insights_backlog_docx)" in str(x.get("name")))
+        names = [x["name"] for x in t["block"]]
+        self.assertTrue(any("temporary folder" in n for n in names))
+        self.assertTrue(any("marking" in n for n in names))
+        self.assertTrue(any("document" in n for n in names))
+        self.assertEqual(len(t["rescue"]), 1)                                            # one rescue for all of it: the email goes without the file
 
     def test_the_page_names_only_the_exports_it_has(self):
         m = json.loads(json.dumps(__import__("test_servicenow_insights").site()["model"]))

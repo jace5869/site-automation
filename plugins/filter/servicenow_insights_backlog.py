@@ -95,7 +95,8 @@ def _phase(i, n, sets, hand_med, impact):
     cx = min(5, base + (1 if hand_med >= 2 else 0))
     defl = 100.0 * settles / n if n else 0.0
     return {"i": i + 1, "name": name, "complexity": cx, "impact": impact, "effort": cx * per, "per": per, "settles": settles,
-            "defl": int(round(defl)), "score": int(round(defl * impact / (5.0 * cx))) if cx else 0, "capped": i == 2 and len(sets[2]) > settles}
+            "defl": int(round(defl)), "score": int(round(defl * impact / (5.0 * cx))) if cx else 0,
+            "score_x": (defl * impact / (5.0 * cx)) if cx else 0.0, "capped": i == 2 and len(sets[2]) > settles}
 
 
 def _ticket_key(it, F, o):
@@ -161,12 +162,12 @@ def backlog_rows(tickets, issues_of, since, until, opts=None, vip=None, repeat_d
         n, rate = r["n"], r["n"] / months
         impact = max(1, min(5, int(math.ceil(5.0 * rate / top_rate - 1e-9))))
         ph = [_phase(i, n, r["sets"], r["hand_med"], impact) for i in range(3)]
-        best = max(range(3), key=lambda i: (ph[i]["score"], -i)) + 1
+        best = max(range(3), key=lambda i: (round(ph[i]["score_x"], 6), -i)) + 1             # on the unrounded scores: 28.4 beats 28.0
         labor = H_TICKET * n + H_HANDOFF * r["hand"]
         saved = labor / months * 12.0 * ph[best - 1]["defl"] / 100.0
         vol = 100.0 * rate / top_rate
         vipv = min(100.0, 100.0 * r["vip"] / n * 5.0) if n else 0.0
-        score = W_VOLUME * vol + W_PHASE * ph[best - 1]["score"] + W_VIP * vipv
+        score = W_VOLUME * vol + W_PHASE * ph[best - 1]["score_x"] + W_VIP * vipv
         r.update({"id": cluster_id(r["name"]), "rate": rate, "share": 100.0 * n / all_total if all_total else 0.0, "labor": labor,
                   "saved": saved, "vol": vol, "vipv": vipv, "score": int(round(score)), "score_x": score, "ph": ph, "best": best,
                   "prio": suggest_priority(int(round(score)))})
@@ -203,10 +204,13 @@ def tip_phase(p, r):
 
 # ---- ACT's words -------------------------------------------------------------------------------------------------
 
-def backlog_hash(ids, version=PROMPT_VERSION):
-    """A cluster's key in the report database: its tickets' ids (sorted) and the prompt's version, as a SHA-256 - the
-    cluster as it was asked about; a ticket more or less asks again."""
-    return hashlib.sha256((version + "\n" + "\n".join(sorted(str(i) for i in ids))).encode("utf-8")).hexdigest()
+def backlog_hash(ids, version=PROMPT_VERSION, evidence=""):
+    """A cluster's key in the report database: its tickets (sorted: id and what the figures read of each), the prompt's version and the
+    evidence text ACT was sent (its numbering left out), as a SHA-256 - the cluster as it was asked about; a ticket more or less, a
+    close note or a figure that changed asks again."""
+    ev = re.sub(r"^CLUSTER B\d+:", "CLUSTER:", str(evidence or ""), flags=re.M)
+    ev = re.sub(r"\b(PERSON|PHONE|EMAIL|HOST|IP|ID)-\d+\b", r"\1-N", ev)           # a mask's numbers differ from run to run: only the kinds count
+    return hashlib.sha256((version + "\n" + "\n".join(sorted(str(i) for i in ids)) + "\n--\n" + ev).encode("utf-8")).hexdigest()
 
 
 def _rows_from(r, state, mask, opts):
@@ -238,10 +242,11 @@ def backlog_batches(r, state, mask, opts=None):
                 shorts.append(F.apply_mask(t, mask)[:160])
             if len(shorts) >= 6:
                 break
-        x = {"id": "B%d" % (i + 1), "name": c["name"], "label": c["label"], "cluster": c["id"], "hash": backlog_hash(c["ids"]), "cat": c["cat"], "n": c["n"],
+        x = {"id": "B%d" % (i + 1), "name": c["name"], "label": c["label"], "cluster": c["id"], "hash": "", "cat": c["cat"], "n": c["n"],
              "rate": round(c["rate"], 1), "hand": c["hand"], "best": c["best"], "defl": [p["defl"] for p in c["ph"]],
              "notes": [[e["count"], F.apply_mask(e["text"], mask)[:300]] for e in notes[:25]], "bare": bare, "total": total,
              "shorts": shorts}
+        x["hash"] = backlog_hash(c["ids"], evidence=backlog_evidence({"issues": [x]}, mask, o))
         out.append({"items": [{"id": x["id"]}], "issues": [x]})
     return out
 

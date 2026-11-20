@@ -411,7 +411,7 @@ ACT cache: not cleared - ACT answered 2 of 5 grouping questions, so the cache is
 
 | Table | What it holds |
 |---|---|
-| `insights_act_text` | One draft of the *Automation backlog* per cluster: the SHA-256 of the cluster's tickets (their ids, whether and when they were done, their handoffs and the grade of their close note) and the draft as JSON - ACT's masked words (strategy, summary, problem, three phases), no ticket number, host or person |
+| `insights_act_text` | One draft of the *Automation backlog* per cluster: the SHA-256 of the cluster's tickets (their ids, whether and when they were done, their handoffs and the grade of their close note) and of the evidence text ACT was sent, and the draft as JSON - ACT's masked words (strategy, summary, problem, three phases), no ticket number, host or person |
 
 A cluster that did not change is not asked again; a draft not written for 120 days (it is not read either), or made for another model or
 prompt, is deleted. The table is made the first time it is needed (the writer needs CREATE, or `servicenow_insights_db_create`

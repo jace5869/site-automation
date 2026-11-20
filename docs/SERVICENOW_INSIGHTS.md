@@ -539,7 +539,7 @@ own read ACL.
 ## Automation backlog (1.81.0)
 
 A section of this report, not a new one: it sits right after *Top incident issues* on the site's page (the team pages do not
-repeat it), with a link in the side bar and three tiles in *At a glance* - the clusters with how many are P1, the hours saved a
+repeat it), with a link in the side bar and three tiles in *At a glance* (they always show the whole window, not a period chosen there) - the clusters with how many are P1, the hours saved a
 year if every cluster reached its best phase, and the top candidate. It ranks every issue (a cluster) by what automating it
 would save.
 
@@ -566,7 +566,7 @@ the cell. The window is the report's own (the months are its days ÷ 30.4375).
 
 Complexity is one more (at most 5) when the median handoffs are 2 or more. Impact is 1 to 5 from the cluster's rate against the
 top cluster's. A phase's score = deflection % × impact ÷ (5 × complexity). The deflection is an estimate from the close notes: it
-says what the notes show, not what a script would settle. The hover shows the count behind it (*41 of 74 tickets*).
+says what the notes show, not what a script would settle. The hover shows the count behind it (*41 of 74 tickets*). The best phase is the one with the best unrounded score.
 
 **ACT writes only the words.** With `servicenow_insights_act: true`, one question per cluster for the top
 `servicenow_insights_backlog_issues` (15) by score: a strategy, an AI label (Development-Assist, Runtime-Integrated or None), a
@@ -581,7 +581,7 @@ host, address or ticket number it gives anyway becomes `[person]`, `[host]`, `[t
 or its AI note, or an answer that is not the JSON asked for, is not used.
 
 **Kept in the report database.** With `servicenow_insights_db` and `servicenow_insights_act_cache` on, each draft is kept
-(ACT's masked words only) under a hash of the cluster's tickets and what the figures read of them (done, handoffs, the grade of the close note): a cluster that did not change is not asked again, so a run
+(ACT's masked words only) under a hash of the cluster's tickets, what the figures read of them (done, handoffs, the grade of the close note) and the evidence text ACT was sent: a cluster that did not change is not asked again, so a run
 asks only for new or changed clusters. See *The Automation backlog's drafts* in REPORT_DATABASE.
 
 **Downloads.**

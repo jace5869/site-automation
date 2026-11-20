@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.81.2 — 2026-11-20
+
+**To set up: nothing.** Small hardening of the Automation backlog (1.81.0); drafts kept before are asked for once more, because the key changed.
+
+- **The draft's key includes the evidence text** ACT was sent (the cluster's close notes, descriptions and figures, its numbering left out), not only the tickets: a close note that changed, or a figure, asks again even when the same tickets are in the cluster.
+- **The best phase is chosen on the unrounded scores** (28.4 beats 28.0 though both show 28), and so is the composite score.
+- **The Word file's whole setup is inside its recovery block:** a temporary folder or marking that cannot be made no longer stops the report; the email goes without the file.
+- **The tiles say *whole window*** (a period chosen in *At a glance* does not change them), and the line under the table says how many clusters ACT wrote words for (*3 of the top 15*).
+- **Check mode** reads the drafts without making their table.
+- Tests: `tests/test_insights_backlog.py` (the key and the evidence text, the unrounded best phase, the tiles and the count, check mode, the recovery block).
+
 ## 1.81.1 — 2026-11-20
 
 **To set up: nothing.** A fix to the containers check, Service watch and everything else that discovers podman containers (`roles/podman_discover`, `roles/check_containers`, `roles/service_watch`): what a container carries - its environment, its command line, its healthcheck output, its log - no longer leaves the host through discovery, the job events or ACT's evidence.
