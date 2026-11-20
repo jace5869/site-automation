@@ -858,6 +858,13 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
         secs.append({"title": "For a person", "status": "warning",
                      "text": "What the job does not change: decide it with the system's owner and your security approval.",
                      "lines": ["%s: %s" % x for x in by_hand]})
+    kept = [(h["host"], k) for h in read for k in h.get("kept") or []]
+    if kept:                                     # 1.79.15: never proposed - Ansible could no longer run on the host
+        secs.append({"title": "Kept: needed by Ansible", "status": "info",
+                     "text": "These rules let Ansible's module files run from its remote tmp folder; without them no job (this one "
+                             "too) can run on the host. They are never proposed for removal. With pipelining (ansible.cfg: "
+                             "pipelining = True) Ansible runs its modules without those files, and the rule is no longer needed.",
+                     "lines": ["%s: %s" % x for x in kept]})
     if read:
         rows, rs = [], []
         for h in read:
@@ -1060,6 +1067,8 @@ def fapolicyd_all_report(hostvars_list, names, since="today", title="", check=Fa
         secs.append({"title": "For a person", "status": "warning",
                      "text": "What the job does not change: decide it with the system's owner and your security approval.",
                      "lines": person})
+    if "Kept: needed by Ansible" in rs:          # 1.79.15
+        secs.append(rs["Kept: needed by Ansible"])
     if "The hosts" in rs:
         secs.append(rs["The hosts"])
     if "The hosts" in fs:
@@ -1081,6 +1090,44 @@ def _kind(line):
     return ""
 
 
+def _guard_unit(folder):
+    return "fapolicyd-guard-" + re.sub(r"[^A-Za-z0-9]", "", os.path.basename(str(folder or "")))[:24]
+
+
+def fapolicyd_guard_arm(script, folder, seconds):
+    """1.79.15: the shell text that arms the way back on the host before fapolicyd takes an approved change - script
+    (back(), restore(), the restore call) runs after seconds unless the job disarms it (fapolicyd_guard_disarm) once a new
+    connection has run a module: when the change keeps Ansible from even logging in, the host puts itself back. A
+    systemd timer as root (systemd-run), else a background shell; the script's text in its arguments, never a file
+    opened from disk. Prints "GUARD unit <name>" or "GUARD pid <pid>"."""
+    armed = str(folder) + "/armed"
+    body = "[ -e %s ] || exit 0\nrm -f %s\n%s" % (quote(armed), quote(armed), script)
+    unit = _guard_unit(folder)
+    n = max(1, int(seconds))
+    return ("touch %(a)s\n"
+            "if [ \"$(id -u)\" = 0 ] && command -v systemd-run >/dev/null 2>&1 \\\n"
+            "    && systemd-run --quiet --collect --unit %(u)s --on-active=%(n)ds /bin/sh -c %(b)s >/dev/null 2>&1; then\n"
+            "    echo 'GUARD unit %(u)s'\n"
+            "else\n"
+            "    ( trap '' HUP; sleep %(n)d && exec /bin/sh -c %(b)s ) </dev/null >/dev/null 2>&1 &\n"
+            "    echo \"GUARD pid $!\"\n"
+            "fi\n") % {"a": quote(armed), "u": unit, "n": n, "b": quote(body)}
+
+
+def fapolicyd_guard_disarm(result, folder):
+    """1.79.15: the shell text that disarms the guard fapolicyd_guard_arm set (its registered result): the mark gone, the
+    timer stopped or the waiting shell ended. Raw-safe."""
+    lines = (result or {}).get("stdout_lines") or [] if hasattr(result, "get") else []
+    out = ["rm -f %s" % quote(str(folder) + "/armed")]
+    for line in lines:
+        w = str(line).split()
+        if len(w) == 3 and w[:2] == ["GUARD", "unit"] and re.match(r"^fapolicyd-guard-[A-Za-z0-9]*$", w[2]):
+            out.append("systemctl stop %s.timer %s.service >/dev/null 2>&1" % (w[2], w[2]))
+        elif len(w) == 3 and w[:2] == ["GUARD", "pid"] and w[2].isdigit():
+            out.append("pkill -P %s sleep >/dev/null 2>&1; kill %s >/dev/null 2>&1" % (w[2], w[2]))
+    return "\n".join(out + ["exit 0"]) + "\n"
+
+
 class FilterModule(object):
     def filters(self):
         return {"fapolicyd_report": fapolicyd_report, "fapolicyd_denials_report": fapolicyd_denials_report,
@@ -1090,4 +1137,5 @@ class FilterModule(object):
                 "fapolicyd_rules_job_file": fapolicyd_rules_job_file, "fapolicyd_rules_job_rollback": fapolicyd_rules_job_rollback,
                 "fapolicyd_rules_job_backups": fapolicyd_rules_job_backups, "fapolicyd_rules_job_report": fapolicyd_rules_job_report,
                 "fapolicyd_split": fapolicyd_split, "fapolicyd_workflow": fapolicyd_workflow, "fapolicyd_all_report": fapolicyd_all_report,
-                "fapolicyd_act_findings": fapolicyd_act_findings, "fapolicyd_act_evidence": fapolicyd_act_evidence}
+                "fapolicyd_act_findings": fapolicyd_act_findings, "fapolicyd_act_evidence": fapolicyd_act_evidence,
+                "fapolicyd_guard_arm": fapolicyd_guard_arm, "fapolicyd_guard_disarm": fapolicyd_guard_disarm}

@@ -88,6 +88,11 @@
 ## seconds for each command the job reads with
 # fapolicyd_fix_timeout: 120
 
+## 1.79.15: armed on the host before fapolicyd restarts with an approved fix - unless a new
+## connection then runs a module, the host puts everything back and fapolicyd as it was by itself
+## after this many seconds (at least 30)
+# fapolicyd_fix_guard_seconds: 600
+
 # ---- fapolicyd_rules -----------------------------------------------------------------------------
 ## FAPOLICYD - BLOCKS AND RULES (a part of playbooks/fapolicyd.yml, roles/fapolicyd;
 ## docs/RUNBOOKS.md "fapolicyd"): what fapolicyd blocked on each host - or, permissive, would block
@@ -159,6 +164,11 @@
 
 ## podman's storage.conf: where root's and users' storage is
 # fapolicyd_rules_storage_conf: /etc/containers/storage.conf
+
+## 1.79.15: armed on the host before fapolicyd takes an approved change - unless a new connection
+## then runs a module, the host puts every file back and fapolicyd as it was by itself after this
+## many seconds (at least 30)
+# fapolicyd_rules_guard_seconds: 600
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it

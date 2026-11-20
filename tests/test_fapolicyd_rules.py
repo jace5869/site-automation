@@ -151,6 +151,146 @@ def host(**kw):
     return h
 
 
+class AnsibleTmpTest(unittest.TestCase):
+    """1.79.15: a rule that lets Ansible's module files run from its remote tmp is never proposed for removal."""
+    HOMES = {"ansible-sa": "/home/ansible-sa", "root": "/root", "svc": "/home/svc"}
+
+    def dirs(self, users=("ansible-sa", "root"), tmps=("~/.ansible/tmp",)):
+        return fr.ansible_dirs(list(users), list(tmps), self.HOMES.get)
+
+    def test_dirs(self):
+        self.assertEqual(self.dirs(), ["/home/ansible-sa/.ansible/tmp", "/root/.ansible/tmp"])
+        self.assertEqual(self.dirs(tmps=("/srv/ans/tmp/", "~/.ansible/tmp")),
+                         ["/home/ansible-sa/.ansible/tmp", "/root/.ansible/tmp", "/srv/ans/tmp"])
+        self.assertEqual(self.dirs(users=("nobody-here",)), [])                 # no home: ~ is nothing
+        self.assertEqual(fr.ansible_dirs([], ["~/.ansible/tmp"], self.HOMES.get), [])
+        self.assertEqual(fr.ansible_dirs([], ["~svc/jobtmp", "~nobody/x", "rel/tmp"], self.HOMES.get), ["/home/svc/jobtmp"])
+
+    def test_needed(self):
+        d = self.dirs()
+        need = fr.needed_by_ansible
+        self.assertEqual(need("allow perm=any all : ftype=text/plain dir=/home/ansible-sa/.ansible/tmp/", d), "/home/ansible-sa/.ansible/tmp")
+        self.assertEqual(need("allow perm=any all : dir=/home/ansible-sa/.ansible/tmp/ansible-tmp-1/", d), "/home/ansible-sa/.ansible/tmp")
+        self.assertEqual(need("allow perm=any all : dir=/home/ansible-sa/", d), "/home/ansible-sa/.ansible/tmp")   # a parent
+        self.assertEqual(need("allow perm=any all : dir=/root/.ansible/tmp/", d), "/root/.ansible/tmp")
+        self.assertEqual(need("allow perm=any all : ftype=text/plain dir=/var/tmp/.ansible-ansible-sa/", d), "/var/tmp/.ansible-ansible-sa")
+        self.assertEqual(need("allow perm=any all : dir=/root/", d), "/root/.ansible/tmp")                      # root's home
+        # a comma list: each value on its own
+        self.assertEqual(need("allow perm=any all : dir=/home/shared/,/home/svc/.ansible/tmp/", d), "/home/svc/.ansible/tmp")
+        # any .ansible folder, whoever logs in (the login user may be one the host cannot tell)
+        self.assertEqual(need("allow perm=any all : dir=/home/other/.ansible/tmp/", d), "/home/other/.ansible/tmp")
+        self.assertEqual(need("allow perm=any all : dir=/home/svc/jobtmp/", fr.ansible_dirs([], ["~svc/jobtmp"], self.HOMES.get)),
+                         "/home/svc/jobtmp")
+        # generic folders and others: reviewed as before (the user's /var/tmp/ rule went, and that was fine)
+        for rule in ("allow perm=any all : ftype=text/plain dir=/var/tmp/", "allow perm=any all : dir=/home/",
+                     "allow perm=any all : dir=/tmp/", "allow perm=execute all : dir=/home/other/bin/",
+                     "allow perm=any all : dir=/home/shared/,/srv/app/", "allow perm=any all : all"):
+            self.assertEqual(need(rule, d), "", rule)
+
+    def test_review_keeps_it(self):
+        home = "/home/ansible-sa"
+        text = ("allow perm=any all : ftype=text/plain dir=/var/tmp/\n"
+                "allow perm=any all : ftype=text/plain dir=%s/.ansible/tmp/\n" % home)
+        found = sf.review_rules([("25-remote.rules", text)], lambda p: "")
+        removable = [f for f in found if fr.cleanup_of(f) and fr.cleanup_of(f)[0] == "remove"]
+        self.assertEqual(sorted(set(f["line"] for f in removable)), [1, 2])     # both flagged by the review ...
+        kept = [f for f in removable if fr.needed_by_ansible(f["rule"], self.dirs())]
+        self.assertEqual([f["line"] for f in kept], [2])                         # ... the Ansible one never proposed
+
+    def test_report_section(self):
+        h = {"_fr": {"state": "read", "error": "", "active": "active", "changes": [], "blocks": [], "by_hand": [], "review": [],
+                     "kept": ["25-remote.rules line 2: allow perm=any all : dir=/home/x/.ansible/tmp/ - needed by Ansible: kept"]}}
+        rep = ff.fapolicyd_rules_job_report([h], ["ra01.example.mil"])
+        rep = rep.get("report", rep)
+        s = {x["title"]: x for x in rep["sections"]}
+        self.assertIn("Kept: needed by Ansible", s)
+        self.assertIn("pipelining = True", s["Kept: needed by Ansible"]["text"])
+        self.assertTrue(s["Kept: needed by Ansible"]["lines"][0].startswith("ra01.example.mil: 25-remote.rules line 2"))
+
+
+class GuardTest(unittest.TestCase):
+    """1.79.15: the way back armed on the host - it puts everything back by itself unless disarmed - and restore()."""
+    RESTORE = open(os.path.join(HERE, "..", "roles", "fapolicyd_fix", "files", "fapolicyd_restore.sh")).read()
+
+    def setUp(self):
+        import subprocess
+        self.sp = subprocess
+        self.d = tempfile.mkdtemp()
+        self.bin = os.path.join(self.d, "bin")
+        os.mkdir(self.bin)
+        # a fake systemctl: the state in a file; restart -> active, stop -> inactive
+        st = os.path.join(self.d, "state")
+        with open(os.path.join(self.bin, "systemctl"), "w") as f:
+            f.write("#!/bin/sh\nst=%s\ncase $1 in restart) echo active > $st ;; stop) echo inactive > $st ;; "
+                    "is-active) cat $st; [ \"$(cat $st)\" = active ] ;; esac\n" % st)
+        os.chmod(os.path.join(self.bin, "systemctl"), 0o755)
+        with open(st, "w") as f:
+            f.write("active\n")
+        self.st = st
+        self.folder = os.path.join(self.d, "x.fapolicyd-rules")
+        os.mkdir(self.folder)
+        self.target = os.path.join(self.d, "25-remote.rules")
+        with open(self.target, "w") as f:
+            f.write("changed\n")
+        with open(os.path.join(self.folder, "rules.25-remote.rules"), "w") as f:
+            f.write("as it was\n")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def script(self, was):
+        back = "back() {\n    cp %s %s\n}\n" % (os.path.join(self.folder, "rules.25-remote.rules"), self.target)
+        return back + self.RESTORE + "\nrestore %s\n" % was
+
+    def sh(self, text):
+        env = dict(os.environ, PATH=self.bin + ":" + os.environ["PATH"])
+        return self.sp.run(["/bin/sh", "-c", text], env=env, stdout=self.sp.PIPE, stderr=self.sp.STDOUT, universal_newlines=True)
+
+    def test_restore(self):
+        with open(self.st, "w") as f:
+            f.write("active\n")
+        r = self.sh(self.script("inactive"))                                   # the change started it: stopped again
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("STATE inactive", r.stdout)
+        self.assertEqual(open(self.target).read(), "as it was\n")
+        r = self.sh(self.script("active"))
+        self.assertEqual((r.returncode, r.stdout.split()[-1]), (0, "active"))
+
+    def test_restore_says_when_it_is_not_as_it_was(self):
+        with open(os.path.join(self.bin, "systemctl"), "a") as f:
+            f.write("exit 1\n")                                                # restart does nothing, is-active fails
+        with open(self.st, "w") as f:
+            f.write("failed\n")
+        r = self.sh(self.script("active"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+
+    def test_guard_fires(self):
+        import time
+        r = self.sh(ff.fapolicyd_guard_arm(self.script("active"), self.folder, 1))
+        self.assertTrue(r.stdout.startswith("GUARD pid "), r.stdout)               # not root here: a background shell
+        for _ in range(40):
+            if open(self.target).read() == "as it was\n":
+                break
+            time.sleep(0.25)
+        self.assertEqual(open(self.target).read(), "as it was\n")
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "armed")))
+
+    def test_guard_disarmed(self):
+        import time
+        r = self.sh(ff.fapolicyd_guard_arm(self.script("active"), self.folder, 2))
+        d = self.sh(ff.fapolicyd_guard_disarm({"stdout_lines": r.stdout.splitlines()}, self.folder))
+        self.assertEqual(d.returncode, 0)
+        time.sleep(3)
+        self.assertEqual(open(self.target).read(), "changed\n")
+
+    def test_disarm_text(self):
+        t = ff.fapolicyd_guard_disarm({"stdout_lines": ["GUARD unit fapolicyd-guard-ansibleab12", "GUARD pid 12; rm -rf /"]}, "/tmp/a")
+        self.assertIn("systemctl stop fapolicyd-guard-ansibleab12.timer", t)
+        self.assertNotIn("rm -rf", t)
+        self.assertIn("rm -f /tmp/a/armed", t)
+
+
 class PodmanTest(unittest.TestCase):
     """podman's storage before anything of it is blocked (fapolicyd_rules_offer: podman)"""
     DIRS = {"/var/lib/containers/storage/overlay": ["l", "a1", "b2"], "/home/ann/.local/share/containers/storage/overlay": ["l", "c3"],

@@ -36,6 +36,11 @@
     _fr_conf: "{{ fapolicyd_rules_dir }}/fapolicyd.conf"
     # the way back, a shell function sent inline with the reload and in the rescue - never a file run on the host
     _fr_back: "{{ _fr_plan | fapolicyd_rules_job_rollback(_fr, _fr_tmp.path) }}"
+    # 1.79.15: back() and fapolicyd as it was (running: restarted; not: stopped) - raw and the guard send it
+    _fr_restore: |
+      {{ _fr_back }}
+      {{ lookup('ansible.builtin.file', role_path ~ '/../fapolicyd_fix/files/fapolicyd_restore.sh') }}
+      restore {{ _fr.active | quote }}
     _fr_rules_changed: "{{ (_fr_plan.add + _fr_plan.rename) | length > 0 or _fr_plan.remove | length > 0 }}"
   block:
     - name: Fapolicyd rules | a folder for the way back
@@ -164,6 +169,16 @@
       changed_when: true
       when: _fr_plan.action == 'restart' and _fr_rules_changed | bool and not ansible_check_mode
 
+    # 1.79.15: before fapolicyd takes the change, the way back armed on the host: when the change keeps Ansible from
+    # even logging in again, the host puts everything back by itself after fapolicyd_rules_guard_seconds
+    - name: Fapolicyd rules | the way back armed on the host (it puts everything back by itself unless Ansible runs there after)
+      ansible.builtin.shell:
+        cmd: "{{ _fr_restore | fapolicyd_guard_arm(_fr_tmp.path, [fapolicyd_rules_guard_seconds | int, 30] | max) }}"
+        executable: /bin/sh
+      register: _fr_guard
+      changed_when: true
+      when: not ansible_check_mode and _fr_plan.action != 'none'
+
     - name: Fapolicyd rules | load the rules, reload the trust or restart fapolicyd ({{ _fr_plan.action }}), check it, put back if it broke
       ansible.builtin.shell:
         cmd: |
@@ -175,6 +190,55 @@
       changed_when: true
       when: not ansible_check_mode and _fr_plan.action != 'none'
 
+    # 1.79.15: fapolicyd up is not enough - Ansible must still be able to run its modules here (a rule on its remote tmp
+    # gone, and no job, this one too, runs on the host any more). Right after the load, before any other module - after
+    # the reload's own put-back too: a new connection, a module run from its file (no pipelining: what other jobs do);
+    # when it fails, every file put back over raw (no module) and fapolicyd as it was, then checked again the same way.
+    - name: Fapolicyd rules | Ansible after the change - a new connection
+      ansible.builtin.meta: reset_connection
+
+    - name: Fapolicyd rules | Ansible after the change - a module runs here
+      ansible.builtin.command: "true"
+      vars:
+        ansible_pipelining: false
+      register: _fr_ansible
+      changed_when: false
+      ignore_errors: true
+      ignore_unreachable: true
+      when: not ansible_check_mode
+
+    - name: Fapolicyd rules | Ansible can no longer run here - every file put back (raw), fapolicyd as it was
+      ansible.builtin.raw: "{{ _fr_restore }}"
+      args:
+        executable: /bin/sh
+      register: _fr_rawback
+      changed_when: true
+      failed_when: false
+      ignore_unreachable: true
+      when: _fr_ansible is failed or _fr_ansible is unreachable
+
+    - name: Fapolicyd rules | Ansible after putting it back - a new connection
+      ansible.builtin.meta: reset_connection
+      when: _fr_rawback is not skipped
+
+    - name: Fapolicyd rules | Ansible after putting it back - a module runs here again
+      ansible.builtin.command: "true"
+      vars:
+        ansible_pipelining: false
+      register: _fr_ansible2
+      changed_when: false
+      ignore_errors: true
+      ignore_unreachable: true
+      when: _fr_rawback is not skipped
+
+    - name: Fapolicyd rules | Ansible after the change - what it came to
+      ansible.builtin.set_fact:
+        _fr_lost: "{{ _fr_rawback is not skipped }}"
+        # put back only when raw ran and said so, and Ansible runs there only when a module ran with rc 0
+        _fr_keep: >-
+          {{ _fr_rawback is not skipped and not (_fr_rawback is not unreachable and _fr_rawback.rc | default(1) == 0
+             and _fr_ansible2 is not skipped and _fr_ansible2 is not unreachable and _fr_ansible2.rc | default(1) == 0) }}
+
     - name: Fapolicyd rules | compiled.rules is what the rules files say (fagenrules --check)
       ansible.builtin.command:
         argv: [fagenrules, --check]
@@ -184,21 +248,37 @@
       when:
         - not ansible_check_mode and _fr_rules_changed | bool
         - not ((_fr_reload.stdout_lines | default([])) | select('match', '^RESULT rolled-back') | list)
+        - not _fr_lost | bool
 
     - name: Fapolicyd rules | the result
       ansible.builtin.set_fact:
         _fr_apply:
-          state: "{{ 'would change' if ansible_check_mode else ('rolled back' if _fr_word == 'rolled-back' else 'changed') }}"
+          state: >-
+            {{ 'would change' if ansible_check_mode else ('failed' if _fr_keep | bool
+               else ('rolled back' if _fr_word == 'rolled-back' or _fr_lost | bool else 'changed')) }}
           active_after: >-
-            {{ _fr.active if _fr_word == 'none' else ('active' if _fr_word == 'active'
-               else (_fr_res[-1] if _fr_word == 'rolled-back' else _fr_word | regex_replace('^still-', ''))) }}
-          permissive_after: "{{ _fr_plan.permissive_to if _fr_word in ['none', 'active'] or _fr_word.startswith('still-') else '' }}"
+            {{ _fr_state_now if _fr_lost | bool else (_fr.active if _fr_word == 'none' else ('active' if _fr_word == 'active'
+               else (_fr_res[-1] if _fr_word == 'rolled-back' else _fr_word | regex_replace('^still-', '')))) }}
+          permissive_after: >-
+            {{ _fr_plan.permissive_to if (_fr_word in ['none', 'active'] or _fr_word.startswith('still-')) and not _fr_lost | bool else '' }}
           error: >-
-            {{ ('fapolicyd ' ~ _fr_res[2] ~ ' after the change: every file put back, fapolicyd ' ~ _fr_res[-1])
-               if _fr_word == 'rolled-back' else '' }}
+            {{ ([('fapolicyd ' ~ _fr_res[2] ~ ' after the change: every file put back, fapolicyd ' ~ _fr_res[-1])
+                 if _fr_word == 'rolled-back' else '']
+                + [('Ansible could not run a module on the host after the change (' ~ _fr_lost_why ~ '): '
+                    ~ (('every file put back, fapolicyd ' ~ _fr_state_now
+                        ~ ('. Ansible runs there again' if not _fr_keep | bool
+                           else '. STILL no module runs there: look at the rules files by hand (fagenrules --load)'))
+                       if _fr_rawback is not unreachable and _fr_rawback.rc | default(1) == 0
+                       else ('putting it back failed' ~ (' (no new connection)' if _fr_rawback is unreachable else ', fapolicyd ' ~ _fr_state_now))))
+                   if _fr_lost | bool else '']
+                + [('the backups stay in ' ~ _fr_tmp.path ~ (' on the host, which puts them back by itself '
+                    ~ fapolicyd_rules_guard_seconds ~ ' s after the change' if _fr_guard is not skipped else ''))
+                   if _fr_keep | bool else ''])
+               | select | join(' - ') }}
           note: >-
             {{ ('fapolicyd is ' ~ _fr.active ~ ': the change takes effect when it starts') if _fr.active != 'active' and not ansible_check_mode else '' }}
           back: "{{ 'putting it back failed: look at the files by hand' if 'BACK failed' in (_fr_reload.stdout_lines | default([])) else '' }}"
+          backup: "{{ _fr_tmp.path if _fr_keep | bool else '' }}"
           applied: "{{ _fr_plan.apply }}"
           refused: "{{ _fr_plan.refused }}"
           not_here: "{{ _fr_plan.not_here }}"
@@ -207,21 +287,27 @@
       vars:
         _fr_res: "{{ ((_fr_reload.stdout_lines | default([])) | select('match', '^RESULT ') | list + ['RESULT none'])[0].split() }}"
         _fr_word: "{{ _fr_res[1] }}"
+        _fr_state_now: >-
+          {{ ((_fr_rawback.stdout_lines | default([])) | select('match', '^STATE ') | list + ['STATE unknown'])[-1].split()[-1] }}
+        _fr_lost_why: >-
+          {{ ('unreachable: ' ~ (_fr_ansible.msg | default(''))) if _fr_ansible is unreachable else
+             ((_fr_ansible.module_stderr | default('', true)) or (_fr_ansible.msg | default('', true)) or (_fr_ansible.stderr | default('')))
+             | string | trim | replace('\n', ' ') | truncate(240) }}
   rescue:
-    - name: Fapolicyd rules | put back every file, load the rules as they were
-      ansible.builtin.shell:
-        cmd: |
-          {{ _fr_back }}
-          back; rc=$?
-          command -v fagenrules >/dev/null 2>&1 && fagenrules --load >/dev/null 2>&1
-          fapolicyd-cli --update >/dev/null 2>&1
-          {{ 'systemctl restart fapolicyd' if _fr_plan.permissive_to and _fr.active == 'active' else ':' }}
-          exit $rc
+    # raw (1.79.15): it runs even when what failed was fapolicyd blocking Ansible's module files
+    - name: Fapolicyd rules | put back every file, fapolicyd as it was
+      ansible.builtin.raw: "{{ _fr_restore }}"
+      args:
         executable: /bin/sh
       register: _fr_putback
       changed_when: true
       failed_when: false
+      ignore_unreachable: true
       when: not ansible_check_mode and _fr_tmp.path is defined
+
+    - name: Fapolicyd rules | putting it back - what it came to
+      ansible.builtin.set_fact:
+        _fr_keep: "{{ _fr_putback is not skipped and (_fr_putback is unreachable or _fr_putback.rc | default(1) != 0) }}"
 
     - name: Fapolicyd rules | the change failed - said in the report, the host fails after it
       ansible.builtin.set_fact:
@@ -232,18 +318,36 @@
             {{ (ansible_failed_task.name | default('') | regex_replace('^.*[|] ', '')) ~ ': '
                ~ ((ansible_failed_result.stderr | default('', true)) or (ansible_failed_result.stdout | default('', true))
                   or (ansible_failed_result.msg | default(''))) | trim | replace('\n', ' ')
-               ~ (' - every file put back' if _fr_putback.rc | default(1) == 0 else ' - putting it back failed: look at the files by hand') }}
+               ~ (' - putting it back failed: the backups stay in ' ~ _fr_tmp.path ~ ' on the host - look at the files by hand'
+                  if _fr_keep | bool else (' - every file put back' if _fr_putback is not skipped else '')) }}
+          backup: "{{ _fr_tmp.path if _fr_keep | bool else '' }}"
           applied: []
           refused: "{{ _fr_plan.refused }}"
           not_here: "{{ _fr_plan.not_here }}"
           bad: []
   always:
-    - name: Fapolicyd rules | remove the way back
-      ansible.builtin.file:
-        path: "{{ _fr_tmp.path }}"
-        state: absent
+    # raw (1.79.15): both run while modules may still be blocked. Recovery not complete: the guard stays armed and the
+    # backups stay (named in the report)
+    - name: Fapolicyd rules | the way back disarmed
+      ansible.builtin.raw: "{{ _fr_guard | fapolicyd_guard_disarm(_fr_tmp.path) }}"
+      args:
+        executable: /bin/sh
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
       check_mode: false
-      when: _fr_tmp.path is defined
+      when: _fr_guard is defined and _fr_guard is not skipped and not _fr_keep | default(false) | bool
+
+    - name: Fapolicyd rules | remove the way back
+      ansible.builtin.raw: |
+        case {{ _fr_tmp.path | quote }} in */*.fapolicyd-rules) rm -rf -- {{ _fr_tmp.path | quote }} ;; *) exit 1 ;; esac
+      args:
+        executable: /bin/sh
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
+      check_mode: false
+      when: _fr_tmp.path is defined and not _fr_keep | default(false) | bool
 
 - name: Fapolicyd rules | the changes
   ansible.builtin.debug:

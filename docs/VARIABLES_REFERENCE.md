@@ -933,6 +933,7 @@ File: `roles/fapolicyd_fix/defaults/main.yml`
 | `fapolicyd_fix_journal_lines` | `400` | fapolicyd's journal lines read, this boot |
 | `fapolicyd_fix_wait` | `30` | roles/fapolicyd sets it from fapolicyd_wait |
 | `fapolicyd_fix_timeout` | `120` | seconds for each command the job reads with |
+| `fapolicyd_fix_guard_seconds` | `600` | 1.79.15: armed on the host before fapolicyd restarts with an approved fix - unless a new connection then runs a module, the host puts everything back and fapolicyd as it was by itself after this many seconds (at least 30) |
 
 ## fapolicyd_rules
 
@@ -958,6 +959,7 @@ File: `roles/fapolicyd_rules/defaults/main.yml`
 | `fapolicyd_rules_wait` | `30` | roles/fapolicyd sets it from fapolicyd_wait |
 | `fapolicyd_rules_timeout` | `120` | seconds for each command the job reads with |
 | `fapolicyd_rules_storage_conf` | `/etc/containers/storage.conf` | podman's storage.conf: where root's and users' storage is |
+| `fapolicyd_rules_guard_seconds` | `600` | 1.79.15: armed on the host before fapolicyd takes an approved change - unless a new connection then runs a module, the host puts every file back and fapolicyd as it was by itself after this many seconds (at least 30) |
 
 ## finding_ref
 

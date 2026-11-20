@@ -18,6 +18,15 @@
     storage_conf: "{{ fapolicyd_rules_storage_conf }}"
     max_groups: "{{ fapolicyd_rules_max | int }}"
     timeout: "{{ fapolicyd_rules_timeout | int }}"
+    # 1.79.15: Ansible's remote tmp - a rule that lets its module files run there is never proposed for removal
+    ansible_users: >-
+      {{ ([ansible_user | default(ansible_ssh_user | default(''))]
+          + query('ansible.builtin.config', 'remote_user', plugin_type='connection', plugin_name='ssh', on_missing='skip')
+          + ([ansible_become_user | default('root')] if ansible_become | default(false) | bool else []))
+         | select | map('string') | list }}
+    ansible_tmp: >-
+      {{ ([ansible_remote_tmp] if ansible_remote_tmp is defined else [])
+         + query('ansible.builtin.config', 'remote_tmp', plugin_type='shell', plugin_name='sh', on_missing='skip') + ['~/.ansible/tmp'] }}
   register: _fr
   check_mode: false
 
@@ -27,7 +36,8 @@
       {{ ['fapolicyd ' ~ (_fr.active | default(_fr.state)) ~ (' (permissive)' if _fr.permissive | default(false) else '')
           ~ (' - ' ~ _fr.error if _fr.error | default('') else '')]
          + (_fr.changes | default([]) | map(attribute='line') | map('regex_replace', '^', 'CHANGE: ') | list)
-         + (_fr.by_hand | default([]) | map('regex_replace', '^', 'FOR A PERSON: ') | list) }}
+         + (_fr.by_hand | default([]) | map('regex_replace', '^', 'FOR A PERSON: ') | list)
+         + (_fr.kept | default([]) | map('regex_replace', '^', 'KEPT: ') | list) }}
 
 - name: Fapolicyd rules | the lines approved for this host (roles/fapolicyd hands them on)
   ansible.builtin.set_fact:

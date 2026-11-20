@@ -651,6 +651,14 @@ made. It reads (a Check run too), proposes one line per change, and makes only t
      program; a renamed file that holds deny rules: made **only while fapolicyd is permissive** (or
      `fapolicyd_rules_when_enforcing: true`), and never beside `permissive: 1 -> 0`;
    - lets more through: a file that sorts after `41-shared-obj.rules`, renamed `39-...`.
+   - **Never proposed (1.79.15):** a rule that lets Ansible's module files run from its remote tmp folder - the
+     connecting user's `~/.ansible/tmp` (`ansible_user`, or the SSH user), root's `/root/.ansible/tmp` under become,
+     `remote_tmp` / `ansible_remote_tmp` (`~name/...` too), and any folder named `.ansible*` whoever logs in; a rule
+     on a folder above one of them (a user's home, `/root/`; not `/home/`, `/tmp/`, `/var/tmp/`) too, and each value
+     of a comma list on its own. Without it no job, this one too, can run on the host. The report lists it under
+     *Kept: needed by Ansible*. A rule on all of `/var/tmp/` is still reviewed as before.
+   - **Pipelining** (`pipelining = True` in `ansible.cfg`, `[ssh_connection]`) runs Ansible's modules without those
+     files, and the rule is no longer needed. Not turned on by this job.
    fapolicyd's own files and `35-site-containers.rules` are reviewed, never changed.
 4. **Back to enforcing:** `permissive: 1 -> 0`, on a quiet day.
 
@@ -659,8 +667,22 @@ reloaded, and checked in the same go on the host - once it says it took them (*R
 and a program (python) starting twice. **Running before and not after - or a program no longer starts: everything put
 back** (owner, mode, label, fapolicyd.conf, the rules and trust files) and fapolicyd restarted. Down before and still
 down: the fixes stay, its journal in the report, the host fails after the report. When getting fapolicyd running fails
-on a host (put back, still down, refused), the trust and rules changes approved for it wait - they come again once it runs. Then `compiled.rules` is checked
-against the rules files (`fagenrules --check`).
+on a host (put back, still down, refused), the trust and rules changes approved for it wait - they come again once it runs.
+
+**Ansible still runs there (1.79.15).** fapolicyd up is not enough.
+
+1. Before fapolicyd takes the change, a **guard** is armed on the host (a systemd timer). Unless the job disarms it,
+   it puts every file back and fapolicyd as it was by itself after `fapolicyd_rules_guard_seconds` (600; getting
+   fapolicyd running: `fapolicyd_fix_guard_seconds`). It covers a change that keeps Ansible from even logging in.
+2. Right after the change, before any other task - after fapolicyd's own put-back too - a new connection
+   (`meta: reset_connection`) runs a module from its file (`command: true`, pipelining off for it).
+3. When that fails, everything is put back over `raw` (no module needed): the files, the rules built again, and
+   fapolicyd as it was (restarted when it ran; stopped when it did not - the change may have started it). A second
+   new connection checks that a module runs there again.
+4. The report says *rolled back* and why. When putting it back failed, or no module runs there after it: *failed*,
+   the backups stay on the host (the report names the folder), and the guard stays armed.
+
+When Ansible runs there, `compiled.rules` is checked against the rules files (`fagenrules --check`).
 
 **ACT** (`fapolicyd_act: true`, the *ACT model key* credential): ACT explains what fapolicyd blocked, in the report, by
 its own headings - evidence only, it runs nothing. The **fapolicyd denials** job (above) remains for that alone.
@@ -680,7 +702,9 @@ would block and clean up the rules; on the first quiet day it offers `permissive
 | The report shows | Means | Do |
 |---|---|---|
 | *Low - would be (permissive)* | fapolicyd let it through and logged it (Low: nothing blocked now) | approve its change before enforcing |
-| *rolled back* (red) | fapolicyd failed after the change, or a program no longer started: all put back | its journal in the report |
+| *rolled back* (red) | fapolicyd failed after the change, a program no longer started, or Ansible could no longer run a module there: all put back | its journal, or the reason, in the report |
+| *Kept: needed by Ansible* | a rule on Ansible's remote tmp folder: never proposed for removal | nothing - or turn on pipelining, then it is no longer needed |
+| *failed* with *the backups stay in ...* | Ansible could not run a module after the change, and putting it back did not finish | wait for the guard (its seconds after the change), or put the files back from that folder by hand |
 | *still down* (red) | it was down, the fixes are made, it still does not start | its journal; the next cause |
 | *refused* | a line the job never gives, `auto` where fapolicyd cannot, or a change that blocks more while enforcing | correct the line, or approve permissive first |
 | *Approved, made on no host* | made already, outside the Limit, a file that changed since, or not the report's exact line | nothing - or copy the line again |

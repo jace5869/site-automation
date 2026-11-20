@@ -17,3 +17,6 @@ fapolicyd_fix_headroom: 1.5               # the proposed db_max_size: the estima
 fapolicyd_fix_journal_lines: 400          # fapolicyd's journal lines read, this boot
 fapolicyd_fix_wait: 30                    # roles/fapolicyd sets it from fapolicyd_wait
 fapolicyd_fix_timeout: 120                # seconds for each command the job reads with
+# 1.79.15: armed on the host before fapolicyd restarts with an approved fix - unless a new connection then runs a module,
+# the host puts everything back and fapolicyd as it was by itself after this many seconds (at least 30)
+fapolicyd_fix_guard_seconds: 600

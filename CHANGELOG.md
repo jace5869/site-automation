@@ -30,6 +30,31 @@
 - **Downloads.** *Download proposal (.md)* in each opened row (built in the page, no inline script); one *Automation backlog.docx* attached to the report email (every cluster in a table, a proposal for each of the top clusters; the report website serves the page, not files); the workbook's *Automation backlog* sheet with every cluster and phase. `roles/incident_docs/tasks/write_doc.yml` writes a Word file for another role.
 - Tests: `tests/test_insights_backlog.py` (the formulas on made-up XINC tickets, rate x months = tickets, ACT's JSON and bad JSON, the cache, ACT off, the Word file, the .md, the page at 1280 and 800 px, light and dark, under `script-src 'self'`), the insights e2e (the words, bad JSON, ACT off, the Word file in the mail).
 
+## 1.79.15 — 2026-11-20
+
+**To set up: nothing.** Two new settings with working defaults: `fapolicyd_rules_guard_seconds`,
+`fapolicyd_fix_guard_seconds` (600).
+
+**fapolicyd - Ansible keeps running on the host.** An approved clean-up removed the rule on the connecting user's
+`~/.ansible/tmp`; after it no job (this one too) could run a module on that host, and it had to be fixed by hand.
+
+- **Never proposed:** a rule that lets Ansible's module files run from its remote tmp - `~/.ansible/tmp` of
+  `ansible_user` (or the SSH user), `/root/.ansible/tmp` under become, `remote_tmp` / `ansible_remote_tmp` (`~name`
+  too), any `.ansible*` folder, or a folder above one of them (a home, `/root/`; not `/home/`, `/tmp/`, `/var/tmp/`);
+  each value of a comma list on its own. The report lists it under *Kept: needed by Ansible*.
+- **A guard on the host:** armed before fapolicyd takes the change; unless disarmed, it puts everything back by itself
+  after `fapolicyd_rules_guard_seconds` / `fapolicyd_fix_guard_seconds` (600) - for a change that stops even a login.
+- **Checked after every change:** right after the load or restart (and after fapolicyd's own put-back), a new
+  connection runs a module from its file (`command: true`, pipelining off). When it fails, every file is put back
+  over `raw`, the rules built again, fapolicyd as it was (restarted, or stopped when the change started it), and
+  Ansible checked again. *rolled back* and why; *failed* when it did not finish - the backups then stay on the host,
+  named in the report. Getting fapolicyd running (`roles/fapolicyd_fix`) does the same. Every put-back runs over `raw`.
+- Docs: RUNBOOKS (fapolicyd): the rule kept, the check, pipelining (`pipelining = True` makes the rule unnecessary;
+  not turned on here).
+- Tests: `tests/test_fapolicyd_rules.py` AnsibleTmpTest, GuardTest (restore, the guard firing, disarmed);
+  `run_fapolicyd_rules_test.sh` ra05 (the rule kept; a change after which no module runs: put back, the guard
+  disarmed, nothing left behind).
+
 ## 1.79.13 — 2026-11-20
 
 **To set up: nothing.** Optional: the job template **Linux - auditd tuning** (`playbooks/auditd_tuning.yml`, Machine

@@ -34,3 +34,6 @@ fapolicyd_rules_max: 200                  # at most this many block groups per h
 fapolicyd_rules_wait: 30                  # roles/fapolicyd sets it from fapolicyd_wait
 fapolicyd_rules_timeout: 120              # seconds for each command the job reads with
 fapolicyd_rules_storage_conf: /etc/containers/storage.conf   # podman's storage.conf: where root's and users' storage is
+# 1.79.15: armed on the host before fapolicyd takes an approved change - unless a new connection then runs a module, the
+# host puts every file back and fapolicyd as it was by itself after this many seconds (at least 30)
+fapolicyd_rules_guard_seconds: 600

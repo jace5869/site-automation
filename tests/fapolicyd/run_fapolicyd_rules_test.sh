@@ -12,6 +12,8 @@
 # after a rules change (every file put back); a line the job never gives. 0.52.0: what was for a person before - an RPM
 # file that no longer matches its package (reinstall), a trusted file that changed (trust update), a file trusted but
 # not loaded (reload), a large file (its trust entry) - and fapolicyd_rules_offer: [] (for a person, as before).
+# 1.79.15 (ra05): the connecting user's ~/.ansible/tmp rule kept, never proposed; a change after which Ansible cannot
+# run a module (its python refuses while the /var/tmp/ rule is out): every file put back over raw.
 # Runs nothing for real: every tool it touches is fake.      bash tests/fapolicyd/run_fapolicyd_rules_test.sh
 # (FAPOLICYD_TEST_KEEP=1 keeps the work folder)
 set -u
@@ -197,7 +199,7 @@ cat > "$work/vars.json" <<EOJ
 {"report_web_dest": "$work/site", "site_syslog": false, "fapolicyd_wait": 2, "fapolicyd_rules_storage_conf": "$work/storage.conf",
  "act_triage_script_src": "$repo/tests/containers/fake_act.py", "act_triage_dest_dir": "$work/act", "act_triage_poll": 1,
  "act_triage_python_candidates": ["$py"],
- "fapolicyd_rules_user_dirs": ["/home/", "/run/user/", "/var/tmp/", "/dev/shm/"]}
+ "fapolicyd_rules_user_dirs": ["/home/", "/run/user/", "/var/tmp/", "/dev/shm/"], "fapolicyd_rules_guard_seconds": 617}
 EOJ
 
 run() {  # run HOST|all [ansible-playbook args...] -> $work/out.txt, $rc
@@ -208,7 +210,7 @@ run() {  # run HOST|all [ansible-playbook args...] -> $work/out.txt, $rc
         FAKE_FA_HOST="$([ "$h" = all ] || echo "$h")" \
         ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
         ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=3 \
-        "$ap" -i "$work/inv.yml" playbooks/fapolicyd.yml -e "@$work/vars.json" \
+        "$ap" -i "${INV:-$work/inv.yml}" playbooks/fapolicyd.yml -e "@$work/vars.json" \
         $([ "$h" = all ] || echo "-l $h.example.mil") "$@") > "$work/out.txt" 2>&1
     rc=$?
 }
@@ -386,6 +388,45 @@ run ra04 -e '{"fapolicyd_approved": ["remove rule: 50-local.rules: allow perm=ex
 [ "$rc" = 2 ] && same "$work/ra04-before.rules" "$work/ra04/etc/rules.d/50-local.rules" && grep -q 'refused: a line approved is not one this job gives' "$work/out.txt" \
     && ok "a line the job never gives (and one copied with a host name): nothing changed (exit 2)" || bad "refused: rc $rc" 30
 if ls -d /tmp/*.fapolicyd-rules "${TMPDIR:-/tmp}"/*.fapolicyd-rules >/dev/null 2>&1; then bad "a way-back folder was left behind"; else ok "no way-back folder left behind"; fi
+
+# ---- 1.79.15: Ansible's own remote tmp rule - never proposed for removal; a change Ansible cannot run after: put back ----
+# ra05 (its own inventory): 25-remote.rules allows text files in /var/tmp/ and in the connecting user's ~/.ansible/tmp/.
+# Its python refuses to run a module while compiled.rules no longer has the /var/tmp/ rule - as fapolicyd blocks
+# AnsiballZ when Ansible's tmp is there (a become to another user) - raw still runs.
+myhome="$(getent passwd "$me" | cut -d: -f6)"
+d="$work/ra05/etc"; mkdir -p "$d/rules.d" "$d/trust.d"
+cp "$work/ra04/etc/fapolicyd.conf" "$d/fapolicyd.conf"
+for f in 10-languages.rules 41-shared-obj.rules 90-deny-execute.rules 35-site-containers.rules; do cp "$work/ra01/etc/rules.d/$f" "$d/rules.d/$f"; done
+VT="allow perm=any all : ftype=text/plain dir=/var/tmp/"
+AT="allow perm=any all : ftype=text/plain dir=$myhome/.ansible/tmp/"
+printf '%s\n%s\n' "$VT" "$AT" > "$d/rules.d/25-remote.rules"
+"$py" - "$work/hosts.json" <<'EOPY'
+import json, sys
+h = json.load(open(sys.argv[1]))
+h["ra05"] = {"installed": True, "active": "active", "restarts": ["active"], "events": []}
+json.dump(h, open(sys.argv[1], "w"))
+EOPY
+PATH="$work/bin:$PATH" FAKE_FA_WORK="$work" FAKE_FA_HOST=ra05 fagenrules >/dev/null
+printf '#!/bin/sh\nif ! grep -qF "dir=/var/tmp/" "%s/compiled.rules"; then echo "python3: AnsiballZ: Operation not permitted (fapolicyd)" >&2; exit 126; fi\nFAKE_FA_HOST=ra05 exec "%s" "$@"\n' "$d" "$py" > "$work/py-ra05"
+chmod 755 "$work/py-ra05"
+printf 'all:\n  hosts:\n    ra05.example.mil: {ansible_connection: local, ansible_become: false, ansible_python_interpreter: %s, fapolicyd_dir: %s}\n' "$work/py-ra05" "$d" > "$work/inv5.yml"
+INV="$work/inv5.yml" run ra05
+lines_of > "$work/lines5.txt"
+grep -qxF "remove rule: 25-remote.rules: $VT" "$work/lines5.txt" && ! grep -qF "/.ansible/tmp/" "$work/lines5.txt" \
+    && ok "1.79.15: the connecting user's ~/.ansible/tmp rule is not proposed for removal (the /var/tmp/ one still is)" || bad "ansible tmp: $(cat "$work/lines5.txt")" 30
+check "  ... the report: kept, needed by Ansible, pipelining named" \
+      'any("25-remote.rules line 2" in x and "needed by Ansible: kept" in x and "/.ansible/tmp" in x for x in s["Kept: needed by Ansible"]["lines"]) and "pipelining = True" in s["Kept: needed by Ansible"]["text"]'
+cp "$d/rules.d/25-remote.rules" "$work/ra05-before.rules"
+INV="$work/inv5.yml" run ra05 -e "{\"fapolicyd_rules_when_enforcing\": true, \"fapolicyd_approved\": [\"remove rule: 25-remote.rules: $VT\"]}"
+[ "$rc" != 0 ] && same "$work/ra05-before.rules" "$d/rules.d/25-remote.rules" && grep -qF "dir=/var/tmp/" "$d/compiled.rules" \
+    && ok "1.79.15: a change after which Ansible cannot run a module: every file put back over raw, the rules loaded again (rc $rc)" \
+    || bad "ra05 rollback: rc $rc, $(cat "$d/rules.d/25-remote.rules")" 40
+grep -q 'Ansible after the change - a module runs here' "$work/out.txt" && grep -q 'Ansible can no longer run here - every file put back (raw)' "$work/out.txt" \
+    && ok "  ... a new connection ran a module, failed, put back with raw" || bad "the Ansible check did not run" 40
+ls -d "${TMPDIR:-/tmp}"/*.fapolicyd-rules >/dev/null 2>&1 && bad "  ... the way back left behind" || ok "  ... the way back removed"
+ps -eo args= | command grep -qx "sleep 617" && bad "  ... a guard still waits on the host" || ok "  ... the guard disarmed (nothing waits)"
+check "  ... the report: rolled back, Ansible could not run, it runs there again" \
+      'any(row[0] == "ra05.example.mil" and row[1] == "rolled back" and "Ansible could not run a module" in row[5] and "Ansible runs there again" in row[5] for row in s["Trust and rules: what this run did"]["rows"])'
 
 # ---- 1.67.0 part E: "fapolicyd - allow this" (playbooks/fapolicyd_allow.yml): one denial, the one change for it ---------------
 # a stand-in AAP serves the report job's site_findings (the denial of /opt/app/tool by bash on ra04, as the fapolicyd job

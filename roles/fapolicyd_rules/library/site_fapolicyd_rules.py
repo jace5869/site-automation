@@ -40,6 +40,8 @@ options:
   programs: {description: Container programs (base names)., type: list, elements: str, default: []}
   paths: {description: Regular expressions on the program's or the file's path that mark container storage., type: list, elements: str, default: []}
   user_dirs: {description: "Folders users can write: a blocked file there gets no trust entry (a person decides).", type: list, elements: str, default: [/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]}
+  ansible_users: {description: "1.79.15 - the users Ansible runs as here (the connecting user; root under become): a rule on their remote tmp is never proposed for removal.", type: list, elements: str, default: []}
+  ansible_tmp: {description: "1.79.15 - Ansible's remote_tmp (~ is each user's home).", type: list, elements: str, default: ["~/.ansible/tmp"]}
   hash_max_mb: {description: A file larger than this is not hashed (a person adds it - or large in offer)., type: int, default: 512}
   large_mb: {description: "With large in offer: a file up to this many MB is hashed too, and gets its trust entry.", type: int, default: 4096}
   offer:
@@ -104,6 +106,52 @@ def cleanup_of(finding):
     if "repeats line" in what or "matches nothing" in what or what.startswith("RPM-owned") or "not a rule fapolicyd reads" in what:
         return ("remove", SAME)
     return None
+
+
+# 1.79.15: folders a rule may open that are never Ansible's own tmp, whatever is under them - a rule on them is reviewed as
+# any other (its clean-up proposed); one on Ansible's remote tmp itself, under it, or on a folder above it that is not one
+# of these (a user's own home, /root too) is never proposed for removal
+GENERIC = ("/", "/tmp", "/var/tmp", "/home", "/var", "/run", "/dev/shm", "/usr", "/opt", "/srv")
+RULE_PATH = re.compile(r"\b(?:dir|path)=(\S+)")
+
+
+def _expand(t, home, home_of):
+    """~/x -> home/x; ~name/x -> name's home/x; /x as it is; anything else (relative, a variable) -> ''."""
+    if t == "~" or t.startswith("~/"):
+        return (home.rstrip("/") + t[1:]) if home else ""
+    if t.startswith("~"):
+        name, _, rest = t[1:].partition("/")
+        h = home_of(name)
+        return (h.rstrip("/") + ("/" + rest if rest else "")) if h else ""
+    return t if t.startswith("/") else ""
+
+
+def ansible_dirs(users, tmps, home_of):
+    """1.79.15: where Ansible puts its module files on this host (remote_tmp of the connecting user, and of root under
+    become; ~ is each user's home, ~name that user's) -> [absolute folders]."""
+    out = []
+    for u in users or [""]:
+        home = home_of(u) if u else ""
+        for t in tmps or []:
+            out.append(_expand(str(t or "").strip(), home, home_of))
+    return sorted(set(os.path.normpath(x) for x in out if x))
+
+
+def needed_by_ansible(rule, dirs):
+    """1.79.15: the Ansible folder a rule lets Ansible's module files run from, or '' - such a rule is never proposed for
+    removal. Each value of its dir= or path= (a comma list too): any folder named .ansible* (whoever logs in - the login
+    user may be one this host cannot tell), Ansible's remote tmp itself, under it, or a folder above it not generic."""
+    for vals in RULE_PATH.findall(rule or ""):
+        for v in vals.split(","):
+            v = os.path.normpath(v.strip()) if v.strip().startswith("/") else ""
+            if not v:
+                continue
+            for a in dirs or []:
+                if v == a or v.startswith(a + "/") or (a.startswith(v.rstrip("/") + "/") and v not in GENERIC):
+                    return a
+            if any(part.startswith(".ansible") for part in v.split("/")):
+                return v
+    return ""
 
 
 def renamed(name, existing):
@@ -195,6 +243,13 @@ class Reader(object):
             return None
         flags = got.get(path, "")
         return bool(flags) and (flags[0] == "S" or flags[2] == "5")
+
+    @staticmethod
+    def home_of(name):
+        try:
+            return pwd.getpwnam(name).pw_dir
+        except (KeyError, TypeError):
+            return ""
 
     def users(self):
         """The accounts that may have their own podman storage: uid 1000 and up (not nobody)."""
@@ -417,10 +472,26 @@ class Reader(object):
         names = set(n for n, _ in files)
         review = review_rules(files, self.rpm_owned)
         r["review"] = review
+        # the users Ansible runs as here: the ones given, the one that connected (sudo's caller under become), this one
+        here = []
+        try:
+            here.append(pwd.getpwuid(os.getuid()).pw_name)
+        except KeyError:
+            pass
+        users = list(p.get("ansible_users") or []) + [x for x in [os.environ.get("SUDO_USER", "")] + here if x]
+        dirs = ansible_dirs(users, p.get("ansible_tmp") or ["~/.ansible/tmp"], self.home_of)
+        r["ansible_dirs"] = dirs
+        r["kept"] = []
         for f in review:
             c = cleanup_of(f)
             name = f["file"]
             if not c:
+                continue
+            need = needed_by_ansible(f.get("rule"), dirs) if c[0] == "remove" else ""
+            if need:                                   # 1.79.15: never proposed - Ansible's module files run from there
+                k = "%s line %d: %s - needed by Ansible: kept (its module files run from %s)" % (name, f.get("line") or 0, f.get("rule"), need)
+                if k not in r["kept"]:
+                    r["kept"].append(k)
                 continue
             if name in STOCK_RULES or name in p["never_edit"] or name == p["own_rules"]:
                 r["by_hand"].append("%s%s: %s - %s (not edited by this job%s)" % (
@@ -478,6 +549,8 @@ def main():
         storage_conf=dict(type="str", default="/etc/containers/storage.conf"),
         max_groups=dict(type="int", default=200),
         timeout=dict(type="int", default=120),
+        ansible_users=dict(type="list", elements="str", default=[]),
+        ansible_tmp=dict(type="list", elements="str", default=["~/.ansible/tmp"]),
     ), supports_check_mode=True)
     try:
         result = Reader(module).read()
