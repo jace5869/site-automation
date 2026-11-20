@@ -369,9 +369,11 @@ The job then looks for the host's asset only there: an asset whose **name or FQD
 inventory name, then its short name (`web01` for `web01.example.mil`), case-blind, assigned the host's
 STIG (`check_stig_stigman_benchmarks`: `RHEL_9_STIG` for RHEL 9 ...). An asset named differently:
 `check_stig_stigman_asset: WEB01-PROD` for that host. Without a collection, every collection the client
-can read is searched (or only `check_stig_stigman_collections`); a host that matches assets in two of
-them is listed - *2 assets match: web01 in RHEL Servers, web01 in Lab* - and not compared until its
-collection is set.
+can read is searched (or only `check_stig_stigman_collections`), except the collections named in
+`check_stig_stigman_collections_exclude` (default `Archive*`, `Base*`, `Watcher*`, `Eval-STIG*`, `SCA*`, `* SCA*`, `*_SCA*`: archive and
+copy collections; `*` and `?`, any case; `[]` = none left out). A host that still matches assets in two of them is
+listed - *2 assets match: web01 in RHEL Servers, web01 in Lab* - and not compared until its collection is set (a
+collection set for the host is used even when the exclude list names it).
 
 The report's every-host table shows what was matched - *RHEL Servers / web01 (V2R7)*, the
 collection, the asset and the checklist's STIG revision - beside the scan's (*V2R9*).

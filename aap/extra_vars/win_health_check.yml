@@ -347,6 +347,12 @@
 ## with no collection set: search only these collections ([] = every one the client can read)
 # check_stig_stigman_collections: []
 
+## 1.79.7: with no collection set, a search leaves these collections out (* and ?, any case):
+## archive, baseline, watcher and scan-tool copies of the same assets, which made a host "2 assets
+## match". A host's own check_stig_stigman_collection is still used even when listed here. [] =
+## search them all.
+# check_stig_stigman_collections_exclude: ["Archive*", "Base*", "Watcher*", "Eval-STIG*", "SCA*", "* SCA*", "*_SCA*"]
+
 ## this host's asset name in STIG Manager; empty = the inventory name, then its short name (web01
 ## for web01.example.mil); the asset's FQDN field matches too
 # check_stig_stigman_asset: ""

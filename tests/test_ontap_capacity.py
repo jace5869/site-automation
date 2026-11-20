@@ -74,6 +74,18 @@ def pts(*used_pct, size_tb=1.0, sizes=None, step=1.0):
     return out
 
 
+class Numbers(unittest.TestCase):
+    def test_thousands_get_separators(self):
+        """1.79.7: a cell from 1,000 on is whole with separators (the user: 28188.6 -> 28,189); below, one decimal."""
+        self.assertEqual(f.f1(28188.6), "28,189")
+        self.assertEqual(f.f1(1000), "1,000")
+        self.assertEqual(f.f1(999.94), "999.9")
+        self.assertEqual(f.f1(-1500.4), "-1,500")
+        self.assertEqual(f.f1(None), "-")
+        self.assertEqual(f.whole(1234.4), "1,234")
+        self.assertEqual(f.whole(9.25), "9.2")
+
+
 class Point(unittest.TestCase):
     def test_this_runs_point(self):
         p = point()

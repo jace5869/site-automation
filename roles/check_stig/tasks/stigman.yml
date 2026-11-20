@@ -10,6 +10,7 @@
     client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
     scope: "{{ check_stig_stigman_scope }}"
     collections: "{{ check_stig_stigman_collections }}"
+    collections_exclude: "{{ check_stig_stigman_collections_exclude }}"
     validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
     ca_path: "{{ check_stig_stigman_ca_path }}"
     timeout: "{{ check_stig_stigman_timeout | int }}"

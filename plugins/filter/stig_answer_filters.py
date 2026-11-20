@@ -348,7 +348,7 @@ def _one(c, text, low, values):
         return _done(code, [["/usr/sbin/sysctl", CMD_WHAT["/usr/sbin/sysctl"]]],
                      ("%s is %s (sysctl -n)" % (key, want), "%s is not %s, or could not be read (sysctl -n)" % (key, want)), c)
     # a package: there or not - rpm -q's own answer (exit 0: installed; exit 1 with "is not installed": not)
-    m = re.match(r"^(?:dnf list --installed|yum list installed|rpm -q)\s+([\w.+-]+)$", c)
+    m = re.match(r"^(?:(?:dnf|yum) list (?:--)?installed|rpm -q)\s+([\w.+-]+)$", c)
     if m:
         pkg = m.group(1)
         gone = re.search(r'(?:package|"%s")[^.\n]*\bis installed,? this is a finding' % re.escape(pkg), text, re.I)

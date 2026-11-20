@@ -79,13 +79,16 @@ def pct(used, size):
 
 
 def f1(v):
-    """A number for a cell, one decimal: 71.4; '-' when there is none."""
-    return "-" if v is None else "%.1f" % v
+    """A number for a cell, one decimal: 71.4; from 1,000 on whole with thousands separators: 28,189 (1.79.7);
+    '-' when there is none."""
+    if v is None:
+        return "-"
+    return "{:,}".format(int(round(v))) if abs(v) >= 1000 else "%.1f" % v
 
 
 def whole(v):
-    """Days or months for a cell: under 10 with one decimal, else whole; '-' when there is none."""
-    return "-" if v is None else ("%.1f" % v if v < 10 else "%d" % round(v))
+    """Days or months for a cell: under 10 with one decimal, else whole (1,234 with separators); '-' when there is none."""
+    return "-" if v is None else ("%.1f" % v if v < 10 else "{:,}".format(int(round(v))))
 
 
 def size_text(b):

@@ -42,6 +42,7 @@ options:
     default: []
   text_timeout: {description: "1.73.0b: seconds for all the texts' reads together; the first read that fails stops them.", type: int, default: 120}
   collections: {description: "Only these collections are searched ([] = every collection the client can read).", type: list, elements: str, default: []}
+  collections_exclude: {description: "1.79.7: collections a search leaves out (names, * and ?, any case); a host's own collection is still used.", type: list, elements: str, default: []}
   validate_certs: {description: Check the HTTPS certificates., type: bool, default: true}
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 60}
@@ -78,6 +79,7 @@ error:
   returned: always
 '''
 
+import fnmatch
 import json
 import re
 import ssl
@@ -370,7 +372,13 @@ def read(p, client):
     if p["collections"]:
         want = [c.lower() for c in p["collections"]]
         cols = [c for c in cols if (c.get("name") or "").lower() in want]
+    # a host's own collection (check_stig_stigman_collection) is found by its name even when the exclude list names it
     by_name = dict(((c.get("name") or "").lower(), c) for c in cols)
+    # 1.79.7: the collections a search leaves out (check_stig_stigman_collections_exclude: Archive*, Base*, ... - any
+    # case, * and ?): copies of the same assets, so a host is not "2 assets match" for them
+    skip = [x.lower() for x in p["collections_exclude"] or [] if x]
+    if skip:
+        cols = [c for c in cols if not any(fnmatch.fnmatchcase((c.get("name") or "").lower(), x) for x in skip)]
     assets_cache, rules_cache, out = {}, {}, {}
 
     def assets(col, bench):
@@ -559,6 +567,7 @@ def main():
         texts=dict(type="list", elements="dict", default=[]),
         text_timeout=dict(type="int", default=120),
         collections=dict(type="list", elements="str", default=[]),
+        collections_exclude=dict(type="list", elements="str", default=[]),
         validate_certs=dict(type="bool", default=True),
         ca_path=dict(type="str", default=""),
         timeout=dict(type="int", default=60),

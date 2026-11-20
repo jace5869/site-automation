@@ -14,7 +14,8 @@ short_description: The read-only evidence for STIG answer keys' cross-check - DI
 description:
   - For each rule - the command lines of DISA's check text (after its "$" or "#" prompt, sudo dropped) that fit the
     read-only list; when none fits, the code's own calls (the read-only check's exact command lines).
-  - Every command is checked against the fixed grammar of the read-only check (stat -c, sysctl -n, rpm -q, systemctl
+  - Every command is checked against the fixed grammar of the read-only check (stat -c, sysctl -n, rpm -q - and DISA's
+    "dnf list installed PKG" read as rpm -q PKG - , systemctl
     is-enabled / is-active / show -p, getent, id, grep with its listed flags, find without -exec / -delete / -fprint,
     auditctl -l, getenforce, sestatus) and run as a literal argv - never through a shell. A pipeline (|) only of such
     commands; 2>/dev/null is the only redirection taken. Anything else is not run, and said. Only the last command's
@@ -213,6 +214,10 @@ def pipeline_of(line):
                 s = s[1:]
         if not s:
             return None, "an empty command in the pipeline"
+        # 1.79.7: DISA's "dnf list installed PKG" (or yum, or --installed) asks the local package database only for
+        # whether PKG is there - read as rpm -q PKG, which never reaches a repository (dnf itself may refresh them)
+        if len(s) == 4 and s[0] in ("dnf", "yum") and s[1] == "list" and s[2] in ("installed", "--installed") and _m(RX_PKG, s[3]):
+            s = ["rpm", "-q", s[3]]
         prog = PROGRAMS.get(s[0], s[0])
         if prog not in KNOWN:
             return None, "%s is not on the read-only list" % s[0]

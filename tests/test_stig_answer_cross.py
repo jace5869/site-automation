@@ -302,6 +302,11 @@ class Reads(unittest.TestCase):
     def test_disa_commands_as_literal_argv(self):
         self.assertEqual(R.pipeline_of('sudo stat -c "%U" /etc/group-')[0], [["/usr/bin/stat", "-c", "%U", "/etc/group-"]])
         self.assertEqual(R.pipeline_of("sysctl kernel.dmesg_restrict")[0], [["/usr/sbin/sysctl", "-n", "kernel.dmesg_restrict"]])
+        # 1.79.7: DISA's "dnf list installed PKG" is read as rpm -q PKG (dnf may reach a repository; rpm -q never does)
+        for ln in ("sudo dnf list installed aide", "dnf list --installed aide", "yum list installed aide"):
+            self.assertEqual(R.pipeline_of(ln)[0], [["/usr/bin/rpm", "-q", "aide"]], ln)
+        self.assertIsNone(R.pipeline_of("dnf list available aide")[0])
+        self.assertIsNone(R.pipeline_of("dnf install aide")[0])
         self.assertEqual(R.pipeline_of("sudo auditctl -l | sudo grep /etc/passwd")[0], [["/usr/sbin/auditctl", "-l"], ["/usr/bin/grep", "/etc/passwd"]])
         self.assertEqual(R.pipeline_of("grep -ir permitrootlogin /etc/ssh/sshd_config 2>/dev/null")[0],
                          [["/usr/bin/grep", "-i", "-r", "permitrootlogin", "/etc/ssh/sshd_config"]])
