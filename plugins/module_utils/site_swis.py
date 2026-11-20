@@ -577,6 +577,13 @@ def snapshot(m, prev=None, labels=True):
     links = [[link_key(l), "%s ↔ %s" % (l.get("ia", ""), l.get("ib", ""))] for l in m.get("links") or [] if not l.get("gone")]
     if not m.get("topology_ok") and prev:
         links = [[k, v] for k, v in sorted(_old_links(prev).items())]
+    elif m.get("cut") and prev:         # nodes cut by netmap_max_nodes: their links were not seen either - the ones before stay
+        read = set(str(x["id"]) for x in m.get("nodes") or [] if not x.get("gone"))
+        have = set(k for k, _ in links)
+        for k, v in sorted(_old_links(prev).items()):
+            ends = [e.split("/", 1)[0] for e in k.split("|")]
+            if k not in have and any(e not in read for e in ends):
+                links.append([k, v])
     if not labels:                      # netmap_snapshot_links false: the ids only (a smaller artifact; a missing link then
         links = [k for k, _ in links]   # shows its interfaces' ids)
     return {"v": 2, "at": m.get("read_at") or "", "n": n, "l": sorted(links)}

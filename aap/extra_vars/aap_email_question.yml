@@ -76,6 +76,7 @@
 #   - patch_hosts.yml
 #   - pki_bundle_check.yml
 #   - ucs_inventory_report.yml
+#   - netmap_report.yml
 #   - poam_status.yml
 #   - servicenow_health.yml
 #   - servicenow_availability.yml

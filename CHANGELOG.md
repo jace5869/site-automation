@@ -29,7 +29,7 @@ For the live page, add the same credential to *Site portal - deploy* and run it 
   - WAN arcs: width = bandwidth, colour = how busy, dashes both ways at their traffic's speed; a down link red and still.
   - Click a site to fly in to its drawing: core, firewalls and distribution, access around them. *Only down*, *Changes*, *Site*, *Vendor*, search.
   - Then the tables: Down or warning, WAN links, What changed since the last run, Sites, Unplaced, Not all read.
-- **The email** is plain (the counts and the tables). The workbook has Nodes, Links, WAN links, Sites and Changes.
+- **The email** is plain (the counts and the tables). The workbook has Nodes, Links, WAN links, Sites and Changes. *AAP - email question* gives the template its *Also email the report to* box like the other reports.
 - **What changed:** each run keeps a compact copy (job artifact `netmap_snapshot`, about 140 KB for 1,500 nodes; `netmap_snapshot_links: false` keeps the links' ids only, about 90 KB - keep *Network map* out of workflows, whose steps get the artifacts as extra variables). The next reads it from AAP with the report history's credential and lists new and missing nodes and links and status changes. Without it: *not compared*, said.
 - **Live on the site portal:**
   - a *Network map* page behind the card login;
@@ -43,7 +43,7 @@ For the live page, add the same credential to *Site portal - deploy* and run it 
   - answers capped at 64 MB;
   - a run that cannot read SolarWinds keeps nothing and does not write the website (its latest page keeps the last good map; the email says why), and the live map keeps its last good one, marked stale - also when only the links could not be read whole;
   - a malformed answer is said in our own words;
-  - a topology not read whole (or nodes cut by `netmap_max_nodes`) calls nothing missing;
+  - a topology not read whole (or nodes cut by `netmap_max_nodes`) calls nothing missing, and the kept copy keeps the links to the nodes it did not read;
   - links known by their interfaces' ids, so a renamed interface is the same link;
   - the copy job keeps the map's data only and builds its markup and script from its own repository (no symbolic links out of `files/web`), every `<` escaped in the data.
 - No inline script or style, no HTML from strings (Trusted Types pass), offline (Natural Earth 1:110m land, public domain, bundled; `tools/netmap_land.py`). `report_motion` and `portal_motion` are respected.

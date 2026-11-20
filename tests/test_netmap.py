@@ -374,6 +374,20 @@ class Swis(unittest.TestCase):
         inc = next(t for t in tasks if t.get("name", "").startswith("Network map | email it, publish it"))
         self.assertEqual(inc["vars"]["_report_web_skip"], "{{ not _nm.reachable }}")      # a failed read never replaces latest.html
 
+    def test_hardening_the_node_cap_keeps_the_links_it_did_not_see(self):
+        full = sw.model(self.raw, OPTS)
+        prev = json.loads(json.dumps(sw.snapshot(full)))
+        cut = sw.collect(self.fake.client(), dict(OPTS, max_nodes=200, page=100))
+        self.assertTrue(cut["cut"] and cut["topology_ok"])                               # the links all read, the nodes not
+        mc = sw.model(cut, OPTS)
+        self.assertFalse([c for c in sw.compare(mc, json.loads(json.dumps(prev))) if c["kind"] in ("Missing node", "Missing link")])
+        kept = sw.snapshot(mc, prev)
+        self.assertEqual(sorted(k for k, _ in kept["l"]), sorted(k for k, _ in prev["l"]))   # nothing lost of the links before
+        again = sw.compare(sw.model(self.raw, OPTS), json.loads(json.dumps(kept)))           # then a whole read: nothing new
+        self.assertFalse([c for c in again if c["kind"] in ("New link", "Missing link", "New node", "Missing node")])
+        ids_only = sw.snapshot(mc, json.loads(json.dumps(sw.snapshot(full, labels=False))), labels=False)
+        self.assertEqual(len(ids_only["l"]), len(prev["l"]))
+
     def test_snapshot_ids_only(self):
         m = sw.model(self.raw, OPTS)
         small, full = sw.snapshot(m, labels=False), sw.snapshot(m)
