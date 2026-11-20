@@ -1,0 +1,41 @@
+---
+# After ACT applied a fix: do not take the model's word for it - run the checks that had findings again, so the report (and the tickets) show
+# the state AFTER the fix. Included by run.yml when something was applied (site_act_result.applied); a file of its own so a test can run it.
+- name: ACT | forget those checks' findings
+  ansible.builtin.set_fact:
+    _site_act_before: "{{ site_findings }}"
+    _site_act_rechecks: "{{ site_findings | map(attribute='check') | unique | list }}"
+    site_findings: "{{ site_findings | rejectattr('check', 'in', site_findings | map(attribute='check') | unique | list) | list }}"
+
+- name: ACT | re-run them
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: run_check.yml
+  loop: "{{ _site_act_rechecks }}"
+  loop_control:
+    loop_var: _site_check
+
+- name: ACT | what a profile adds to the findings, over all of them
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: after_recheck.yml
+
+# by the stable finding id, not by the words: a summary carries a count that changes between two passes (5 errors, then 6: the same finding).
+# The NetApp Console profile's findings (console:*) are never called cleared by ACT: they come from many separate probes (a port, a volume, a
+# process, a log) and a probe that failed or timed out shows as "no finding" - a person or the next Health check says when one is gone.
+- name: ACT | what the fix cleared
+  ansible.builtin.set_fact:
+    site_act_result: >-
+      {{ site_act_result | combine({
+           'cleared': _site_act_before | rejectattr('id', 'in', site_findings | map(attribute='id') | list) | rejectattr('id', 'match', '^console:')
+                      | map(attribute='summary') | list,
+           'recheck_again': _site_act_before | rejectattr('id', 'in', site_findings | map(attribute='id') | list) | selectattr('id', 'match', '^console:')
+                            | map(attribute='summary') | list}) }}
+
+- name: ACT | re-check result
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Re-checked after ACT applied: ' ~ (site_act_result.applied | join(' ; '))]
+         + (site_act_result.cleared | map('regex_replace', '^', 'cleared: ') | list)
+         + (site_act_result.recheck_again | map('regex_replace', '^', 'not shown again, run the Health check again to see if it is gone: ') | list)
+         + (site_findings | map(attribute='summary') | map('regex_replace', '^', 'still there: ') | list) }}

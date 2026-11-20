@@ -127,6 +127,28 @@
 #     checks: [mariadb]
 #     commands: []
 
+# ---- check_containers ----------------------------------------------------------------------------
+## hours of logs counted
+# check_containers_console_log_hours: 6
+
+## lines of a container's log that make a finding
+# check_containers_console_errors_min: 5
+
+## The clock: seconds off before a warning, before a critical (a login fails while it is off); not
+## synchronized is always critical. seconds off: a warning
+# check_containers_console_clock_warn: 1
+
+## The agent's data folder and podman's storage: percent used. The certificate: days left. percent
+## used: a warning
+# check_containers_console_disk_warn: 85
+
+## days left: a warning
+# check_containers_console_cert_warn: 30
+
+## auditd's backlog_limit below this is a warning (a busy container host floods the audit queue; the
+## job "Linux - auditd tuning" raises it). auditd's backlog_limit below this: a warning
+# check_containers_console_backlog_min: 8192
+
 # ---- check_mariadb -------------------------------------------------------------------------------
 ## Which hosts: members of any of the inventory groups mariadb_hosts, mysql_hosts, database_hosts,
 ## mariadb or mysql, or any host that names a container below (or turns discovery on). Set this

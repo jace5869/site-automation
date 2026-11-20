@@ -62,11 +62,16 @@ def ps_json(owner, c):
 
 def inspect_json(owner, c):
     state = {"Status": c.get("state", "running"), "Running": c.get("state") == "running", "OOMKilled": bool(c.get("oom")),
+             "Pid": 0 if c.get("gone") else int(c.get("pid", 0)),
              "ExitCode": int(c.get("exit", 0)), "FinishedAt": "2026-09-30T10:00:00.000000000Z"}
     if c.get("health"):
         state["Healthcheck" if int(c.get("podman", 4)) < 4 else "Health"] = {"Status": c["health"], "FailingStreak": 3,
                                                                               "Log": [{"Output": "token=hc-secret-" + c["name"]}]}
+    if c.get("up_ago") is not None:                           # 1.84.0: StartedAt, for the uptime of the NetApp Console profile
+        import datetime
+        state["StartedAt"] = datetime.datetime.fromtimestamp(now() - int(c["up_ago"]), tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
     return {"Id": cid(owner, c["name"]), "Name": c["name"], "State": state, "RestartCount": int(c.get("restarts", 0)),
+            "Mounts": [{"Type": "bind", "Source": m, "Destination": "/x"} for m in c.get("mounts", [])],
             "ImageName": c.get("image", ""), "HostConfig": {"RestartPolicy": {"Name": c.get("policy", ""), "MaximumRetryCount": 0}},
             "Config": {"Labels": {"PODMAN_SYSTEMD_UNIT": c["unit"]} if c.get("unit") else {},
                        "Env": ["DB_PASSWORD=hunter2-" + c["name"], "JWT_SECRET=s3cr3t-" + c["name"]]}}
@@ -127,6 +132,18 @@ def podman(argv):
         fmt = rest[rest.index("--format") + 1] if "--format" in rest else ""
         refs = [r for r in rest if r != "--format" and r != fmt]
         found = [find(o, r) for r in refs]
+        if "range .Mounts" in fmt:                              # 1.84.0: the sources of the mounts of all of them, one a line
+            for c in found:
+                for m in (c or {}).get("mounts", []):
+                    print(m)
+            return 0
+        if "State.Pid" in fmt:                                  # 1.84.0: the main process id (0 when it is gone)
+            c = found[0] if found else None
+            print(0 if (c or {}).get("gone") else int((c or {}).get("pid", 4000)))
+            return 0 if c else 125
+        if "NetworkSettings.Networks" in fmt:                   # 1.84.0: the container's address
+            print("127.0.0.1 ")
+            return 0
         if fmt:
             c = found[0] if found else None
             if not c:
@@ -149,6 +166,12 @@ def podman(argv):
             elif "json .State" in fmt:
                 print(json.dumps(inspect_json(owner, c)["State"]))
             return 0
+        fail = os.path.join(WORK, "inspect_fail")                           # a test: the Console's read of its containers fails (a timeout) or is cut short
+        if os.path.exists(fail) and any(r.startswith("ds_") for r in refs):
+            if open(fail).read().strip() == "partial":
+                print(json.dumps([inspect_json(owner, c) for c in found if c][:1], indent=4))
+            sys.stderr.write("Error: timed out\n")
+            return 125
         print(json.dumps([inspect_json(owner, c) for c in found if c], indent=4))
         if os.path.exists(os.path.join(WORK, "inspect_partial")) and not any(r.startswith("ds_") for r in refs):    # a container went away meanwhile
             sys.stderr.write("Error: no such container\n")
@@ -157,11 +180,35 @@ def podman(argv):
             sys.stderr.write("Error: no such container\n")
             return 125
         return 0
+    if cmd == "volume" and rest[:1] == ["inspect"]:                    # 1.84.0: the certificate volume's Mountpoint
+        mp = st.get("console", {}).get("volume_mountpoint")
+        if not mp:
+            sys.stderr.write("Error: no such volume %s\n" % rest[1])
+            return 125
+        print(mp.replace("{WORK}", WORK))
+        return 0
+    if cmd == "exec":                                                  # podman exec NAME printenv VAR
+        c = find(o, rest[0])
+        if not c or rest[1:2] != ["printenv"]:
+            return 125
+        v = st.get("console", {}).get("env", {}).get(rest[2])
+        if v is None:
+            return 1
+        print(v)
+        return 0
+    if cmd == "info":
+        print(st.get("console", {}).get("graphroot", "/var/lib/containers/storage"))
+        return 0
     if cmd == "logs":
         c = find(o, rest[-1])
         if not c:
             sys.stderr.write("Error: no container with name or ID %s found\n" % rest[-1])
             return 125
+        if c["name"] in st.get("console", {}).get("logs", {}):
+            print(st["console"]["logs"][c["name"]])
+            if os.path.exists(os.path.join(WORK, "more_logs")):          # a test: one more error line between two passes
+                print("2026-09-30T10:20:00Z ERROR jwt token validation failed: signature is invalid")
+            return 0
         print("fake log line of %s (owner %s): database connection refused" % (c["name"], owner))
         return 0
     if cmd in ("start", "restart"):
@@ -190,6 +237,17 @@ def systemctl(argv):
     o = owner_state(st, owner)
     args = [a for a in argv if a not in ("--user", "--no-pager", "-l", "--plain", "--no-legend")]
     verb, rest = args[0], args[1:]
+    if verb == "show" and "--value" in argv and "LoadState" in " ".join(argv):          # 1.84.0: is the unit there
+        svc = st.get("console", {}).get("services", {}).get(rest[0].replace(".service", "")) if rest else None
+        print("loaded" if svc is not None else "not-found")
+        return 0
+    if verb in ("is-active", "is-enabled"):                    # 1.84.0: fapolicyd, from the fixture
+        svc = st.get("console", {}).get("services", {}).get(rest[0].replace(".service", ""))
+        if svc is None:
+            print("inactive" if verb == "is-active" else "not-found")
+            return 3 if verb == "is-active" else 1
+        print(svc["active" if verb == "is-active" else "enabled"])
+        return 0 if svc["active" if verb == "is-active" else "enabled"] in ("active", "enabled") else 3
     if verb == "--failed":
         for u, info in sorted(o.get("units", {}).items()):
             if info.get("ActiveState") == "failed":
@@ -301,7 +359,41 @@ def ps(argv):
 
 def journalctl(argv):
     log(os.environ.get("FAKE_OWNER", "root"), ["journalctl"] + argv)
+    if "-u" in argv and argv[argv.index("-u") + 1] == "fapolicyd":
+        for line in load().get("console", {}).get("fapolicyd_denials", []):
+            print(line)
+        return 0
     print("Sep 30 10:00:00 host01 systemd[1]: fake journal line")
+    return 0
+
+
+def console_tool(name, argv):
+    """1.84.0: chronyc, auditctl, getenforce, curl, openssl, df - what the NetApp Console profile reads, from the fixture's "console" part."""
+    log("root", [name] + argv)
+    c = load().get("console", {})
+    if name == "chronyc":
+        print(c.get("chrony", ""), end="")
+    elif name == "auditctl":
+        print(c.get("auditctl", ""), end="")
+    elif name == "getenforce":
+        print(c.get("getenforce", ""))
+    elif name == "curl":
+        print(c.get("curl", "000 0.0"), end="")
+    elif name == "openssl":
+        if argv[:1] == ["x509"] and "-in" in argv:                      # the certificate file of the volume
+            if c.get("cert_file_end"):
+                print("notAfter=" + c["cert_file_end"])
+        elif argv[:1] == ["x509"] and c.get("ssl_end"):
+            print("notAfter=" + c["ssl_end"])
+        elif argv[:1] == ["s_client"]:
+            print("CONNECTED(00000003)")
+    elif name == "df":
+        row = c.get("df", {}).get(argv[-1])
+        if not row:
+            sys.stderr.write("df: %s: No such file or directory\n" % argv[-1])
+            return 1
+        print("Filesystem 1024-blocks Used Available Capacity Mounted on")
+        print("/dev/fake %d %d %d %d%% %s" % (row["blocks"], row["blocks"] - row["avail"], row["avail"], row["pct"], row["mount"]))
     return 0
 
 
@@ -366,6 +458,13 @@ def setup(fixture, work):
             subuid.append("%s:%d:65536" % (name, 100000 + 65536 * len(subuid)))
     with open(os.path.join(work, "subuid"), "w") as fh:
         fh.write("\n".join(subuid) + "\n")
+    for o in st.get("owners", {}).values():                  # 1.84.0: /proc/PID of every container that is not "gone" (the role's _con_proc points here)
+        for c in o.get("containers", []):
+            if c.get("pid") and not c.get("gone"):
+                os.makedirs(os.path.join(work, "proc", str(c["pid"])), exist_ok=True)
+    mp = st.get("console", {}).get("volume_mountpoint")
+    if mp:
+        os.makedirs(mp.replace("{WORK}", work), exist_ok=True)
     for rel, content in st.get("files", {}).items():
         path = os.path.join(work, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -378,7 +477,7 @@ def setup(fixture, work):
     return 0
 
 
-TOOLS = ("podman", "systemctl", "runuser", "ps", "journalctl", "id", "getent", "loginctl")
+TOOLS = ("podman", "systemctl", "runuser", "ps", "journalctl", "id", "getent", "loginctl", "chronyc", "auditctl", "getenforce", "curl", "openssl", "df")
 
 
 def main():
@@ -393,7 +492,7 @@ def main():
         print("FAKE " + tool)
         return 0
     return {"podman": podman, "systemctl": systemctl, "runuser": runuser, "ps": ps, "journalctl": journalctl,
-            "id": id_, "getent": getent, "loginctl": loginctl}[tool](argv)
+            "id": id_, "getent": getent, "loginctl": loginctl}.get(tool, lambda a: console_tool(tool, a))(argv)
 
 
 if __name__ == "__main__":

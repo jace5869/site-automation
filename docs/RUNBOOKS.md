@@ -411,6 +411,49 @@ Hosts without podman are skipped (`skipped: podman is not installed`, no finding
 read-only: it runs `podman ps`, one `podman container inspect` and `systemctl show`, and nothing
 that starts, stops or creates anything.
 
+#### NetApp Console (an app profile of this check, 1.84.0)
+
+On a host that runs the **NetApp Console** agent (Private Mode: podman containers named `ds_*`, with or without the `_1` suffix - `ds_traefik_1`, `ds_mongo`) the check adds the Console's own
+checks, in the same report - no new job. A host without `ds_*` containers is left alone. Everything is read-only.
+
+| What | How it is read | Finding |
+|---|---|---|
+| Each `ds_*` container | `podman container inspect`: state, health, restarts, uptime, the version from the image tag | the usual `containers:` findings, named "NetApp Console: ..." |
+| The host clock | `chronyc tracking`: offset and synchronized | `console:clock` - *chronyc makestep*, then log in again (a login fails while the clock is off) |
+| fapolicyd | active? denials since boot under the agent's folders | `fapolicyd:down` (the check's own) and `console:fapolicyd-denied` |
+| auditd | `auditctl -s`: backlog_limit, lost, immutable | `auditd:lost` and others (the check's own), with the job *Linux - auditd tuning* named |
+| Disk | the agent's data folder, **found from the containers' volume mounts** (nothing is hardcoded), and podman's storage | `console:disk:MOUNT` at `check_containers_console_disk_warn` (85%) |
+| SELinux | `getenforce` | `console:selinux` when it is not enforcing |
+| HTTPS | `curl` and `openssl s_client` against the Console's address, asked from the host itself | `console:https-down`, `console:cert` (days left of the answer's certificate and of `cert.pem` in the volume, the earlier one: 30 warning, 7 critical) |
+| The certificate volume | `podman volume inspect ds_certs` and `ls` of its mountpoint: `cert.pem` and `privkey.pem` there? The end date of `cert.pem` too | `console:certs-empty` (critical: the Console's login answers 502 through the API gateway; traefik logs *Cert files removed* at each restart) with the commands: a self-signed `openssl req` with the host's FQDN and short name, or the site's own certificate, then `podman restart` of traefik and krakend |
+| traefik's variables | `podman exec ds_traefik_1 printenv VM_SNAME VM_FQDN` (read only) | `console:vm-names` (warning): with `VM_SNAME` empty traefik's entrypoint makes no certificate. Set them in the Console's install configuration and recreate the container (NetApp's guide; nothing is changed here) |
+| Logs | `podman logs --since` of `ds_occmauth`, `ds_mongo`, `ds_mysql` and `ds_krakend` (the API gateway): lines with error, recover, corrupt or jwt, counted by kind | `console:errors:NAME` from 5 lines (counts by kind only) |
+
+The report gets three sections: **NetApp Console containers**, **NetApp Console host checks** and **Errors in the last 6 hours**; the
+findings are in *Start here* and *Findings* as always. The clock, fapolicyd and auditd checks run on a Console host **even in the daily
+set** (`check_containers_console_run_checks`): the incidents on such a host were an audit flood and a stopped fapolicyd. A finding of
+the clock, disk, fapolicyd or auditd checks is not repeated by the profile; it gets the Console's wording instead.
+
+**A finding's hint and its fix.** ACT runs a finding's *hint* as its evidence, so every hint of the profile only reads (`chronyc tracking`,
+`podman volume inspect`, `du`, `df`, a count of log lines) and every value in it is quoted. What to do - `chronyc makestep`, the `openssl req`
+line, `podman restart` - is the finding's *fix*: shown with the finding (the card's *What to do*, the table's Finding cell, the job output),
+never run.
+
+**Hints and fixes of the profile.** A finding's hint is what ACT runs as evidence, so the profile's own findings carry almost none: empty, `chronyc tracking` for the clock, or one `podman ps` of the container's name and status. Where to look (`curl`, the certificate folder, the variables of traefik, `du`) is in the fix, for a person. The Console's address (`check_containers_console_url`) must be a plain `https://HOST/` address: one with a user, a password or a query string is refused with a warning (`console:url`) and not probed. A mount has one finding, `console:disk:MOUNT`, with the worse of the two checks' severities.
+
+**The generic checks on a Console host.** Their hints are replaced too, since ACT runs them: a container's is a state query (`podman ps` and `podman container inspect --format` with the state, pid and restarts), fapolicyd's `systemctl is-active` and `is-enabled`, auditd's `auditctl -s`, the clock's `chronyc tracking`. The inspect output is cut down on the host to the fields the profile needs, so the containers' environment never reaches the report or ACT. A port that times out or has no route is *unknown*, not critical.
+
+**After ACT's fix.** ACT runs the checks that had findings again. Once all of them have run, the profile's wording and findings are made over the result. A generic finding counts as cleared when its *id* is gone (a count that changed, 5 errors then 6, is the same finding). A finding of the profile (`console:...`) is never called cleared by ACT: it comes from many separate probes, and one that failed looks like "no finding". The report says *not shown again, run the Health check again to see if it is gone*. If the Console's containers cannot be read again, it says so too (`console:inspect`, a warning) and keeps what only that read could give, marked *not checked again*.
+
+**Logs are counted, not shown.** The error, recover, corrupt and jwt lines of a container are counted by kind in one pass (nothing of a
+line is kept: it can hold a token or a name); the report says *jwt or token validation x8, signing key x8*, never the text of a line.
+Two more checks: a container that shows *Up* whose process is gone (no process id, or no `/proc/PID`) and a service port that refuses a
+TCP connect from the host (`check_containers_console_ports`: `ds_occmauth` 8420, `ds_tenancy` 8088) are critical, with the restart as the fix.
+
+Settings: `check_containers_profiles` (`[netapp_console]`, `[]` = off), `check_containers_console_pattern`, `_url`, `_log_containers`,
+`_cert_volume`, `_ports`, `_log_hours`, `_errors_min`, `_clock_warn`, `_clock_crit`, `_disk_warn`, `_disk_crit`, `_cert_warn`, `_cert_crit`, `_backlog_min`,
+`_run_checks`. All settings: [check_containers](VARIABLES_REFERENCE.md#check_containers).
+
 **Which containers.** Root's (rootful podman) and each user's (rootless podman: only that user
 can see them). A user is looked at when a podman process runs as them, when they have *linger* on
 (a file in `/var/lib/systemd/linger/`), or when they are in `/etc/subuid` and have container

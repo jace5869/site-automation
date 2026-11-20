@@ -1,0 +1,13 @@
+---
+# NETAPP CONSOLE (1.84.0): the report's three sections - the ds_* containers, the host checks, the errors of the logs - from what the
+# containers check's NetApp Console profile read on each host (site_console). Read only; it changes no finding. A host without the
+# Console's containers has no site_console and is not in them. plugins/filter/console_filters.py
+- name: Console | the sections
+  ansible.builtin.set_fact:
+    _console: >-
+      {%- set by = {} -%}
+      {%- for h in ansible_play_hosts if hostvars[h].site_console is defined -%}{%- set _ = by.update({h: hostvars[h].site_console}) -%}{%- endfor -%}
+      {{ {'sections': by | console_sections({'log_hours': check_containers_console_log_hours | default(6), 'errors_min': check_containers_console_errors_min | default(5),
+                                              'clock_warn': check_containers_console_clock_warn | default(1), 'disk_warn': check_containers_console_disk_warn | default(85),
+                                              'cert_warn': check_containers_console_cert_warn | default(30), 'backlog_min': check_containers_console_backlog_min | default(8192)})} }}
+  run_once: true

@@ -31,10 +31,11 @@ job_templates:
     variables_file: aap/extra_vars/health_check.yml
     area: Linux
     description:
-      does: Runs read-only Linux checks (disk, services, time, SELinux, accounts ...) and fails hosts with findings, so a
-        workflow can ticket them.
-      targets: Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential); ACT model key
-        only with use_act
+      does: Runs read-only Linux checks (disk, services, time, SELinux, accounts, containers ...) and fails hosts with findings,
+        so a workflow can ticket them; on a host that runs the NetApp Console agent (ds_* containers) it adds the Console's
+        own checks.
+      targets: Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential); the Console's
+        HTTPS address is asked from the host itself; ACT model key only with use_act
       produces: Findings per host in the job output, the report email and website page when set, artifacts site_health/site_findings
         for next steps
       supports: Run constraint=Read-only on target hosts (disk-history, syslog, old act relinked; use_act self-heal may fix);

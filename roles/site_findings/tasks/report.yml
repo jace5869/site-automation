@@ -9,6 +9,13 @@
 #      approval - this is what an AAP workflow reacts to
 # Steps 3 to 5 come before the failure on purpose: a failed host still publishes and emails its result.
 
+# 1.84.0: a playbook that read a NetApp Console host but did not make its findings (health_check.yml does, after its checks)
+- name: Report | NetApp Console - its findings, if not made yet
+  ansible.builtin.include_role:
+    name: check_containers
+    tasks_from: console_findings.yml
+  when: site_console is defined and not site_console_done | default(false) | bool
+
 - name: Report | result for this host
   ansible.builtin.debug:
     msg: >-
@@ -20,6 +27,7 @@
       {%-   for f in site_findings | sort(attribute='severity') -%}
       {%-     set _ = out.append('[' ~ (f.severity | upper) ~ '] ' ~ f.check ~ ': ' ~ f.summary) -%}
       {%-     if f.note | default('') -%}{%- set _ = out.append('      ' ~ f.note) -%}{%- endif -%}
+      {%-     if f.fix | default('') -%}{%- set _ = out.append('      what to do: ' ~ f.fix) -%}{%- endif -%}
       {#-     a hint of several lines (commands one per line): each on its own line, under look: -#}
       {%-     for line in (f.hint | default('') | string).splitlines() if line | trim -%}
       {%-       set _ = out.append(('      look: ' if loop.first else '            ') ~ line) -%}
@@ -118,6 +126,10 @@
   when: >-
     'patching' in (ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten)
 
+- name: Report | NetApp Console, when a host runs its containers (three sections of the report; 1.84.0)
+  ansible.builtin.include_tasks: console_section.yml
+  when: ansible_play_hosts | map('extract', hostvars) | selectattr('site_console', 'defined') | list | length > 0
+
 - name: Report | the certificate timeline, in a certificate report (a section of the report; 1.64.0)
   ansible.builtin.include_tasks: cert_timeline.yml
   when: site_cert_timeline is defined and cert_timeline | bool
@@ -147,7 +159,8 @@
          | findings_report(site_report_title | default(ansible_play_name),
                            ansible_play_hosts_all | difference(ansible_play_hosts),
                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
-                           _cert_timeline.sections | default([]) + site_report_sections | default([]) + _patch_age.sections | default([])) }}
+                           _cert_timeline.sections | default([]) + site_report_sections | default([]) + _patch_age.sections | default([])
+                           + _console.sections | default([])) }}
     # the website's copy (atlas, brief): patch age's squares too, the certificate timeline, a job's own web sections (1.73.0:
     # the STIG rules' rows that open to their check and fix text), and (1.67.0, report_portal_url)
     # the site portal's "Ask ACT" links; the workbook (report_email_xlsx): every host's patch age, the by-group sheet with
@@ -160,12 +173,13 @@
                             _cert_timeline.web_sections | default(_cert_timeline.sections | default([]))
                             + site_report_web_sections | default(site_report_sections | default([]))
                             + _patch_age.web_sections | default(_patch_age.sections | default([]))
+                            + _console.sections | default([])
                             + ([_sf_more] if _sf_more else []),
                             {'url': report_portal_url | default(''), 'job': awx_job_id | default(tower_job_id | default('')) | string,
                              'actions': _sf_actions | default({}),
                              'os': dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars) | map(attribute='site_os', default='linux')))}))
          if _patch_age.web_sections is defined or _cert_timeline.web_sections is defined or report_portal_url | default('') | length > 0
-            or site_report_web_sections is defined
+            or site_report_web_sections is defined or _console.sections is defined
          else {} }}
     # findings of their own kinds that are no row of the findings table (a STIG rule, a fapolicyd denial): their buttons in
     # one section of their own (plugins/filter/finding_filters.py)

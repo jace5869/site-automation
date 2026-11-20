@@ -1,0 +1,6 @@
+---
+# Test double of the containers check's role name (the test run's site_check_role_prefix is fakechk_): it runs the real role, so run_check.yml
+# - which health_check.yml and ACT's recheck go through - is exercised with the real containers check. Not a shipped role.
+- name: the real containers check
+  ansible.builtin.include_role:
+    name: check_containers

@@ -223,3 +223,10 @@
   ansible.builtin.set_fact:
     site_findings: "{{ site_findings | default([]) + _ctr_findings }}"
   when: site_podman.enabled | bool and site_podman.installed | bool
+
+# APP PROFILES (1.84.0): a host that runs the NetApp Console agent's containers (ds_*) gets the Console's own checks (console.yml)
+- name: Containers | the NetApp Console profile
+  ansible.builtin.include_tasks: console.yml
+  when:
+    - "'netapp_console' in check_containers_profiles"
+    - site_podman.enabled | bool and site_podman.installed | bool

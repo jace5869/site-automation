@@ -1,0 +1,14 @@
+---
+# NETAPP CONSOLE (1.84.0): fapolicyd and auditd on a Console host even in the daily set - the incidents on such a host were an audit flood and
+# a stopped fapolicyd. health_check.yml runs this once, after its own loop of checks (so nothing runs twice, and ACT's recheck of a fix is
+# never skipped), only on a host the containers check found the Console on.
+- name: Console | the checks the set did not run
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: run_check.yml
+  vars:
+    _site_check: "{{ _con_check }}"
+  loop: "{{ check_containers_console_run_checks | difference(site_checks_run | default([])) }}"
+  loop_control:
+    loop_var: _con_check
+  when: site_console is defined

@@ -1,0 +1,5 @@
+---
+# Test double of the time check (1.84.0): one finding, to see the NetApp Console profile give it its wording. Not a shipped role.
+- name: fake time check
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + [{'check': 'time', 'id': 'time:offset', 'severity': 'critical', 'summary': 'the clock is 41 s off and not within the limit', 'hint': 'chronyc sources -v'}] }}"

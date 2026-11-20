@@ -119,6 +119,20 @@
       loop_control:
         loop_var: _site_check
 
+    # 1.84.0: a host that runs the NetApp Console agent: fapolicyd and auditd even in the daily set, then its findings, now that every check
+    # has run (docs/RUNBOOKS.md, NetApp Console)
+    - name: NetApp Console | fapolicyd and auditd, if the set did not run them
+      ansible.builtin.include_role:
+        name: check_containers
+        tasks_from: console_checks.yml
+      when: site_console is defined
+
+    - name: NetApp Console | its findings, and the generic ones in its wording
+      ansible.builtin.include_role:
+        name: check_containers
+        tasks_from: console_findings.yml
+      when: site_console is defined
+
     # One outage, one finding. A container that is down is reported by the containers check
     # (containers:down / :unhealthy / :crashed / :restarting, with how to start it), so a second
     # ticket for the same outage is left out and named in that finding:

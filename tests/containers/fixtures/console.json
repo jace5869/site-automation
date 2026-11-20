@@ -1,0 +1,173 @@
+{
+ "_comment": "NetApp Console Private Mode's agent (podman containers ds_*): ds_occmauth unhealthy with restarts, ds_mongo restarted once; the clock 41 s fast, fapolicyd active with an agent denial, auditd flooded (lost), the data folder 88% full, the certificate 23 days left; the logs of ds_occmauth full of jwt errors.",
+ "users": {},
+ "owners": {
+  "root": {
+   "containers": [
+    {
+     "name": "ds_traefik_1",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "image": "registry.example.com/netapp/traefik:v4.10.0",
+     "up_ago": 3542400,
+     "mounts": [
+      "/opt/application/netapp/data/traefik",
+      "/etc/localtime"
+     ],
+     "pid": 4100
+    },
+    {
+     "name": "ds_mysql",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "image": "registry.example.com/mysql:8.0.36",
+     "up_ago": 3542400,
+     "mounts": [
+      "/opt/application/netapp/data/mysql"
+     ],
+     "pid": 4101
+    },
+    {
+     "name": "ds_mongo",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "restarts": 1,
+     "image": "registry.example.com/mongo:6.0.12",
+     "up_ago": 3542400,
+     "mounts": [
+      "/opt/application/netapp/data/mongo"
+     ],
+     "pid": 4102
+    },
+    {
+     "name": "ds_occmauth_1",
+     "state": "running",
+     "policy": "always",
+     "health": "unhealthy",
+     "restarts": 4,
+     "image": "registry.example.com/netapp/occmauth:v4.10.0",
+     "up_ago": 21600,
+     "mounts": [
+      "/opt/application/netapp/data/occmauth"
+     ],
+     "pid": 4103
+    },
+    {
+     "name": "ds_cloudmanager_core",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "image": "registry.example.com/netapp/cloudmanager-core:v4.10.0",
+     "up_ago": 3542400,
+     "mounts": [
+      "/opt/application/netapp/data/core"
+     ],
+     "pid": 4104,
+     "gone": true
+    },
+    {
+     "name": "ds_static-file-server",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "image": "registry.example.com/netapp/static:v4.10.0",
+     "up_ago": 3542400,
+     "mounts": [],
+     "pid": 4105
+    },
+    {
+     "name": "web",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "image": "registry.example.com/web:1",
+     "up_ago": 100
+    },
+    {
+     "name": "ds_krakend_1",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "image": "registry.example.com/netapp/krakend:v4.10.0",
+     "up_ago": 3542400,
+     "mounts": [],
+     "pid": 4106
+    }
+   ],
+   "units": {}
+  }
+ },
+ "console": {
+  "chrony": "Reference ID    : 0A000001 (ntp1.example.mil)\nStratum         : 3\nSystem time     : 41.234567890 seconds fast of NTP time\nLeap status     : Normal\n",
+  "auditctl": "enabled 1\nfailure 1\npid 801\nrate_limit 0\nbacklog_limit 64\nlost 1203\nbacklog 0\n",
+  "getenforce": "Enforcing",
+  "services": {
+   "fapolicyd": {
+    "active": "active",
+    "enabled": "enabled"
+   }
+  },
+  "fapolicyd_denials": [
+   "rule=9 dec=deny_audit perm=execute auditid=1 pid=2 exe=/usr/bin/bash : path=/opt/application/netapp/data/occmauth/run.sh ftype=text/x-shellscript",
+   "rule=9 dec=deny_audit path=/usr/bin/other"
+  ],
+  "graphroot": "/var/lib/containers/storage",
+  "df": {
+   "/opt/application/netapp/data/traefik": {
+    "mount": "/opt/application/netapp",
+    "pct": 88,
+    "blocks": 104857600,
+    "avail": 12582912
+   },
+   "/opt/application/netapp/data/mysql": {
+    "mount": "/opt/application/netapp",
+    "pct": 88,
+    "blocks": 104857600,
+    "avail": 12582912
+   },
+   "/opt/application/netapp/data/mongo": {
+    "mount": "/opt/application/netapp",
+    "pct": 88,
+    "blocks": 104857600,
+    "avail": 12582912
+   },
+   "/opt/application/netapp/data/occmauth": {
+    "mount": "/opt/application/netapp",
+    "pct": 88,
+    "blocks": 104857600,
+    "avail": 12582912
+   },
+   "/opt/application/netapp/data/core": {
+    "mount": "/opt/application/netapp",
+    "pct": 88,
+    "blocks": 104857600,
+    "avail": 12582912
+   },
+   "/var/lib/containers/storage": {
+    "mount": "/var",
+    "pct": 61,
+    "blocks": 209715200,
+    "avail": 81788928
+   }
+  },
+  "curl": "200 0.31",
+  "ssl_end": "Oct 15 12:00:00 2026 GMT",
+  "logs": {
+   "ds_mongo": "WiredTiger recover: log file missing\nWiredTiger recover: using checkpoint\n",
+   "ds_mysql": "",
+   "ds_occmauth_1": "starting\njwt validation failed: token used before its start time 192.0.2.3\nERROR refreshing signing key for user.name@example.mil\njwt validation failed: token used before its start time 192.0.2.3\nERROR refreshing signing key for user.name@example.mil\njwt validation failed again\nERROR late connection refused\n",
+   "ds_traefik_1": "cert watcher | Cert files removed\nstarted\ncert watcher | Cert files removed\n",
+   "ds_krakend_1": ""
+  },
+  "volume_mountpoint": "{WORK}/var/lib/containers/storage/volumes/ds_certs/_data",
+  "env": {
+   "VM_SNAME": "",
+   "VM_FQDN": "console1.example.mil"
+  },
+  "cert_file_end": "Oct 14 12:00:00 2026 GMT"
+ },
+ "files": {}
+}

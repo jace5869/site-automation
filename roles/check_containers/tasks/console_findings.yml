@@ -1,0 +1,14 @@
+---
+# NETAPP CONSOLE, the findings (1.84.0): once every check of the run has finished - the generic checks' findings are then all there to be
+# given the Console's wording and not repeated. health_check.yml runs this after its loop; report.yml runs it for a playbook that did not; and
+# site_findings/tasks/after_recheck.yml after ALL of ACT's rechecks (whichever of the checks were run again: the adjustment is made once per
+# finding, so it can run over what was re-added). When the Console's containers were read again (site_console_done false) its own findings
+# are made too, and the findings of the pass before that this read could not verify again are kept (_site_act_before, set by ACT).
+- name: Console | the generic findings in the Console's wording, and its own findings
+  ansible.builtin.set_fact:
+    site_findings: >-
+      {%- set adj = site_findings | default([]) | console_adjust(site_console, site_console.opts) -%}
+      {%- set own = (site_console | console_findings(site_findings | default([]), site_console.opts)) if not site_console_done | default(false) | bool else [] -%}
+      {{ adj + own + ((_site_act_before | default([])) | console_carry(site_console, adj + own) if not site_console_done | default(false) | bool else []) }}
+    site_console_done: true
+  when: site_console is defined

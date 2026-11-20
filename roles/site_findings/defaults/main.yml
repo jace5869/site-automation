@@ -8,6 +8,10 @@
 #   summary:  one line a person understands ("/var is 96% full (critical at 95%)")
 #   hint:     a read-only command that shows more. A person can paste it into a shell; ACT (when
 #             you add it later) runs it to collect evidence.
+#             ACT RUNS a hint as its evidence: it must change nothing (no restart, no write, no makestep) and every
+#             value in it must be quoted.
+#   fix:      (optional) what to do about it, for a person: shown with the finding (the card's "What to do", the
+#             table's Finding cell, the job output), NEVER run. Put a remedy here, not in the hint.
 #
 # Check roles only ADD findings. This role starts the list, reports it, and decides pass/fail.
 

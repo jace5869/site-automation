@@ -1,0 +1,150 @@
+---
+# NETAPP CONSOLE (check_containers_profiles: [netapp_console]; plugins/filter/console_filters.py): for a host that runs the Console agent's
+# containers (podman, root's, named like check_containers_console_pattern, and really there: a container podman reports an id for). READ ONLY:
+# podman inspect, chronyc tracking, auditctl -s, getenforce, systemctl, journalctl, df, curl and openssl against the Console's own address,
+# podman exec printenv in traefik, podman volume inspect and ls of the certificate volume, a TCP connect to two service ports, /proc, and
+# a pass over each container's log that COUNTS lines by kind (nothing of a line is kept). Every section goes back as one line of
+# base64, so nothing a log holds can pass for a section. It keeps the host's data in site_console for the report's three sections
+# (site_findings/tasks/console_section.yml); its findings are made once every check of the run has finished (console_findings.yml:
+# health_check.yml after its loop, report.yml for the other playbooks, and after ALL of ACT's rechecks: site_findings/tasks/after_recheck.yml).
+- name: Console | its containers on this host (podman knows an id for each)
+  ansible.builtin.set_fact:
+    _con_names: >-
+      {{ site_containers | default([]) | selectattr('owner', 'equalto', 'root') | rejectattr('ignored') | selectattr('id', 'truthy')
+         | selectattr('name', 'match', check_containers_console_pattern) | map(attribute='name') | list }}
+
+- name: Console | the address, the log containers, the ports
+  ansible.builtin.set_fact:
+    _con_url: "{{ check_containers_console_url if check_containers_console_url | length > 0 else 'https://' ~ inventory_hostname ~ '/' }}"
+    _con_url_refused: "{{ ((check_containers_console_url if check_containers_console_url | length > 0 else 'https://' ~ inventory_hostname ~ '/') | console_url).refused }}"
+    _con_logs: >-
+      {{ _con_names | select('match', '^(' ~ (check_containers_console_log_containers | map('regex_replace', '_[0-9]+$', '') | join('|')) ~ ')(_[0-9]+)?$') | list }}
+    _con_traefik: "{{ _con_names | select('match', '^ds_traefik(_[0-9]+)?$') | first | default('') }}"
+    _con_ports: >-
+      {%- set out = [] -%}
+      {%- for n in _con_names -%}
+      {%-   set base = n | regex_replace('_[0-9]+$', '') -%}
+      {%-   if base in check_containers_console_ports -%}{%- set _ = out.append([n, check_containers_console_ports[base] | int]) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  no_log: true                          # the address may hold a credential: it is screened (console_url) before anything keeps or shows it
+  when: _con_names | length > 0
+
+- name: Console | read the host (read only)
+  ansible.builtin.shell:
+    cmd: |
+      T="timeout 20"
+      emit() { printf '@@@ %s %s\n' "$1" "$(base64 -w0)"; }
+      names=({{ _con_names | map('quote') | join(' ') }})
+      # the inspect output holds the containers' environment (secrets): only what is needed is kept, and only ON THE HOST - the rest never leaves it
+      prog=$(cat <<'PY'
+      import json, os, sys
+      proc = os.environ.get("CON_PROC", "/proc")
+      try:
+          rows = json.load(sys.stdin)
+      except Exception:
+          sys.exit(1)
+      if not isinstance(rows, list) or len(rows) != int(sys.argv[1]):      # a container that is missing, or a read cut short: not a read
+          sys.exit(1)
+      out = []
+      for c in rows:
+          st = c.get("State") or {}
+          h = st.get("Health") or st.get("Healthcheck") or {}
+          pid = int(st.get("Pid") or 0)
+          out.append({"Name": c.get("Name"), "ImageName": c.get("ImageName") or (c.get("Config") or {}).get("Image") or "", "RestartCount": c.get("RestartCount") or 0,
+                      "State": {"Status": st.get("Status"), "Running": bool(st.get("Running")), "Pid": pid, "StartedAt": st.get("StartedAt"),
+                                "Health": {"Status": h.get("Status") if isinstance(h, dict) else ""}},
+                      "Mounts": [{"Source": m.get("Source")} for m in (c.get("Mounts") or []) if isinstance(m, dict)],
+                      "ProcAlive": bool(st.get("Running")) and pid > 0 and os.path.isdir(os.path.join(proc, str(pid)))})
+      json.dump(out, sys.stdout)
+      PY
+      )
+      # a failed or partial read (a timeout, a missing container, cut-off JSON) is "inspect_failed": the report says so and ACT's recheck does not call what
+      # came from it cleared
+      PY=""
+      for cand in {{ _con_python | quote }} python3 /usr/libexec/platform-python python; do
+        [ -n "$cand" ] && command -v "$cand" >/dev/null 2>&1 && { PY=$(command -v "$cand"); break; }
+      done
+      if [ -n "$PY" ] && raw=$($T podman container inspect "${names[@]}" 2>/dev/null) && out=$(printf '%s' "$raw" | CON_PROC={{ (_con_proc | default('/proc')) | quote }} "$PY" -c "$prog" {{ _con_names | length }} 2>/dev/null); then
+        printf '%s' "$out" | emit inspect
+      else
+        printf 1 | emit inspect_failed
+      fi
+      unset raw out
+      $T chronyc tracking 2>/dev/null | emit chrony
+      $T auditctl -s 2>/dev/null | emit auditctl
+      $T getenforce 2>/dev/null | emit getenforce
+      $T systemctl is-active fapolicyd 2>/dev/null | emit fapolicyd_active
+      $T systemctl is-enabled fapolicyd 2>/dev/null | emit fapolicyd_enabled
+      $T systemctl show fapolicyd -p LoadState --value 2>/dev/null | emit fapolicyd_load
+      { $T journalctl -b -u fapolicyd --no-pager -o cat 2>/dev/null | grep -i 'dec=deny'; $T ausearch -m FANOTIFY --start boot -i 2>/dev/null | grep -iE 'resp=(deny|2)'; } | tail -n 200 | emit fapolicyd_denials
+      graph=$($T podman info --format '{% raw %}{{.Store.GraphRoot}}{% endraw %}' 2>/dev/null)
+      printf '%s' "$graph" | emit graphroot
+      {
+        $T podman container inspect "${names[@]}" --format '{% raw %}{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}{% endraw %}' 2>/dev/null | sort -u | while IFS= read -r p; do
+          case "$p" in /etc*|/run*|/proc*|/sys*|/dev*|/usr*|/tmp*|/var/run*|/var/tmp*|/boot*|'') continue;; esac
+          echo "@@ $p"; $T df -P -- "$p" 2>/dev/null
+        done
+        [ -n "$graph" ] && { echo "@@ $graph"; $T df -P -- "$graph" 2>/dev/null; }
+      } | emit df
+      {% if not _con_url_refused | bool %}
+      $T curl -sk -o /dev/null --max-time 15 -w '%{http_code} %{time_total}' {{ _con_url | quote }} 2>/dev/null | emit curl
+      echo | $T openssl s_client -connect {{ ((_con_url | urlsplit('hostname')) ~ ':' ~ (_con_url | urlsplit('port') | default(443, true))) | quote }} -servername {{ _con_url | urlsplit('hostname') | quote }} 2>/dev/null | $T openssl x509 -noout -enddate 2>/dev/null | emit ssl
+      {% endif %}
+      mp=$($T podman volume inspect {{ check_containers_console_cert_volume | quote }} --format '{% raw %}{{.Mountpoint}}{% endraw %}' 2>/dev/null)
+      { echo "$mp"; if [ -n "$mp" ]; then if ls -1 -- "$mp" >/dev/null 2>&1; then ls -1 -- "$mp" | sed 's/^/@file /'; else echo "@ls-error"; fi; fi; } | emit certvol
+      echo {{ check_containers_console_cert_volume | quote }} | emit certvol_name
+      { [ -n "$mp" ] && [ -f "$mp/cert.pem" ] && $T openssl x509 -in "$mp/cert.pem" -noout -enddate 2>/dev/null; } | emit cert_file_end
+      {% if _con_traefik | length > 0 %}
+      {
+        for v in VM_SNAME VM_FQDN; do
+          val=$($T podman exec {{ _con_traefik | quote }} printenv "$v" 2>/dev/null); rc=$?
+          if [ $rc -eq 0 ]; then printf '%s=%s\n' "$v" "$val"; elif [ $rc -eq 1 ]; then printf '%s=@unset\n' "$v"; else printf '%s=@error\n' "$v"; fi
+        done
+      } | emit vmnames
+      $T podman logs --since 24h {{ _con_traefik | quote }} 2>&1 | grep -c 'Cert files removed' | emit certwatch
+      {% endif %}
+      {% if _con_ports | length > 0 %}
+      {
+        {% for n, port in _con_ports %}
+        ip=$($T podman container inspect {{ n | quote }} --format '{% raw %}{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}{% endraw %}' 2>/dev/null | awk '{print $1}')
+        if [ -z "$ip" ]; then echo "{{ n }} {{ port | int }} unknown"
+        else
+          err=$(LC_ALL=C $T bash -c 'exec 3<>/dev/tcp/$0/$1' "$ip" {{ port | int }} 2>&1); rc=$?
+          if [ $rc -eq 0 ]; then echo "{{ n }} {{ port | int }} ok"
+          elif printf '%s' "$err" | grep -qi 'connection refused'; then echo "{{ n }} {{ port | int }} refused"    # only a refusal is a refusal: a timeout or no route is not known
+          else echo "{{ n }} {{ port | int }} unknown"; fi
+        fi
+        {% endfor %}
+      } | emit ports
+      {% endif %}
+      {% for n in _con_logs %}
+      $T podman logs --since {{ check_containers_console_log_hours | int }}h {{ n | quote }} 2>&1 | awk {{ '' | console_awk | quote }} | emit logs:{{ n }}
+      {% endfor %}
+      exit 0
+    executable: /bin/bash
+  vars:
+    _con_python: >-
+      {{ ansible_python_interpreter if ((ansible_python_interpreter | default('') | string | length) > 0 and not (ansible_python_interpreter | string).startswith('auto'))
+         else (ansible_facts.discovered_interpreter_python | default('')) }}
+  register: _con_read
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true                          # podman inspect holds the containers' environment
+  when: _con_names | length > 0
+
+- name: Console | the host's data (only what the sections and findings need; the raw reads are not kept)
+  ansible.builtin.set_fact:
+    site_console: >-
+      {{ (_con_read.stdout | console_split | combine({'now': site_podman.now | int, 'host': inventory_hostname, 'url': _con_url}))
+         | console_collect(_con_opts) }}
+    site_console_done: false
+  vars:
+    _con_opts: >-
+      {{ {'pattern': check_containers_console_pattern, 'clock_warn': check_containers_console_clock_warn, 'clock_crit': check_containers_console_clock_crit,
+          'disk_warn': check_containers_console_disk_warn, 'disk_crit': check_containers_console_disk_crit, 'cert_warn': check_containers_console_cert_warn,
+          'cert_crit': check_containers_console_cert_crit, 'errors_min': check_containers_console_errors_min, 'backlog_min': check_containers_console_backlog_min,
+          'log_hours': check_containers_console_log_hours} }}
+  no_log: true
+  when: _con_names | length > 0

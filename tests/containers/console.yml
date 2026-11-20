@@ -1,0 +1,91 @@
+---
+# Test harness: the containers check with the NetApp Console profile, against the fake tools (fakes.py), the way health_check.yml runs it:
+# the checks of the set, the containers check (which reads the Console), the extra checks (fapolicyd, auditd), the Console's findings
+# once every check has run - and the report's sections. Not a shipped playbook.
+- name: Console profile with fake tools
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Start
+      ansible.builtin.include_role: {name: site_findings, tasks_from: start.yml}
+    - name: The generic checks that run before containers in the daily set (their findings get the profile wording)
+      ansible.builtin.include_role: {name: site_findings, tasks_from: run_check.yml}
+      vars: {_site_check: "{{ item }}"}
+      loop: "{{ console_first | default([]) }}"
+    - name: Run the check, as health_check.yml does - through run_check.yml
+      ansible.builtin.include_role: {name: site_findings, tasks_from: run_check.yml}
+      vars: {_site_check: containers}
+    - name: fapolicyd and auditd, if the set did not run them (health_check.yml does this after its loop)
+      ansible.builtin.include_role: {name: check_containers, tasks_from: console_checks.yml}
+      when: site_console is defined
+    - name: The Console's findings, once every check has run
+      ansible.builtin.include_role: {name: check_containers, tasks_from: console_findings.yml}
+      when: site_console is defined
+    # ACT's own recheck (roles/site_act/tasks/recheck.yml), as it is: the findings of the checks that had findings are forgotten and those checks run
+    # again, then the profile's wording and findings are made over ALL of them, then what cleared is decided by finding id.
+    - name: Before the recheck, a change in what the host says (one more error line in a log; the read of the containers failing or cut short)
+      ansible.builtin.shell: |
+        {% if console_more_logs | default(false) | bool %}: > "$FAKE_DIR/more_logs"; {% endif %}{% if console_fail | default('') | length > 0 %}printf '%s' {{ console_fail | quote }} > "$FAKE_DIR/inspect_fail"; {% endif %}true
+      changed_when: false
+      when: console_recheck | default(false) | bool
+    - name: Only the checks named (as when only those had findings)
+      ansible.builtin.set_fact:
+        site_findings: "{{ site_findings | selectattr('check', 'in', console_only) | list }}"
+      when: console_recheck | default(false) | bool and console_only is defined
+    - name: A finding of the profile that the host no longer shows - a fix worked or a probe failed, ACT cannot tell which
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {{ site_findings + [{'check': 'containers', 'id': 'console:disk:/gone', 'severity': 'warning', 'summary': 'old disk finding of a mount that is gone', 'hint': ''}] }}
+      when: console_recheck | default(false) | bool and console_fake_before | default(false) | bool
+    - name: ACT applied a fix; its recheck
+      ansible.builtin.set_fact:
+        site_act_result: {applied: ["a fix"], cleared: []}
+        _before_ids: "{{ site_findings | map(attribute='id') | sort | list }}"
+      when: console_recheck | default(false) | bool
+    - name: The recheck
+      ansible.builtin.include_role: {name: site_act, tasks_from: recheck.yml}
+      when: console_recheck | default(false) | bool
+    - name: What the recheck found and what it called cleared
+      ansible.builtin.debug:
+        msg: "RECHECK before={{ _before_ids | join(',') }} || after={{ site_findings | map(attribute='id') | sort | join(',') }} || cleared={{ site_act_result.cleared | join(' ## ') }} || again={{ site_act_result.recheck_again | join(' ## ') }}"
+      when: console_recheck | default(false) | bool
+    - name: The checks that ran
+      ansible.builtin.debug:
+        msg: "CHECKS {{ site_checks_run | sort | join(',') }}"
+    - name: Findings
+      ansible.builtin.debug:
+        msg: "FINDINGS {{ site_findings | map(attribute='id') | sort | join(',') }}"
+    - name: Summaries
+      ansible.builtin.debug:
+        msg: "SUMMARY {{ item.id }} | {{ item.severity }} | {{ item.summary }}"
+      loop: "{{ site_findings }}"
+      loop_control: {label: "{{ item.id }}"}
+    - name: Hints
+      ansible.builtin.debug:
+        msg: "HINT {{ item.id }} | {{ item.hint | default('') | replace('\n', ' // ') }}"
+      loop: "{{ site_findings }}"
+      loop_control: {label: "{{ item.id }}"}
+    - name: What to do
+      ansible.builtin.debug:
+        msg: "FIX {{ item.id }} | {{ item.fix }}"
+      loop: "{{ site_findings | selectattr('fix', 'defined') | list }}"
+      loop_control: {label: "{{ item.id }}"}
+    - name: The sections
+      ansible.builtin.debug:
+        msg: "SECTIONS {{ {inventory_hostname: site_console} | console_sections | map(attribute='title') | join(' | ') }}"
+      when: site_console is defined
+    - name: The containers table
+      ansible.builtin.debug:
+        msg: "CROW {{ item | join(' | ') }}"
+      loop: "{{ ({inventory_hostname: site_console} | console_sections)[0].rows }}"
+      when: site_console is defined
+    - name: The host checks table
+      ansible.builtin.debug:
+        msg: "HROW {{ item | join(' | ') }}"
+      loop: "{{ ({inventory_hostname: site_console} | console_sections)[1].rows }}"
+      when: site_console is defined
+    - name: The errors table
+      ansible.builtin.debug:
+        msg: "EROW {{ item | join(' | ') }}"
+      loop: "{{ ({inventory_hostname: site_console} | console_sections)[2].rows }}"
+      when: site_console is defined

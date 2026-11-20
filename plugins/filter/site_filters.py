@@ -2541,7 +2541,7 @@ def findings_cards(by_host, missing=None, max_cards=6):
     cards = []
     for _, h, f in found[:int(max_cards)]:
         sev = "critical" if str(f.get("severity")) == "critical" else "warning"
-        nxt = str(f.get("note") or "") or ("Look further:" if f.get("hint") else "")
+        nxt = str(f.get("note") or "") or ((("What to do: %s. " % str(f["fix"]).rstrip(".")) if f.get("fix") else "") + ("Look further:" if f.get("hint") else ""))
         cards.append({"status": sev, "meta": CHECK_KIND.get(str(f.get("check")), str(f.get("check") or "")),
                       # a finding's own subject (a report made on the AAP side about other hosts: the host it is about), else its host
                       "title": str(f.get("summary") or f.get("check") or ""), "subject": str(f.get("subject") or h), "next": nxt,
@@ -2587,7 +2587,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
             else:
                 crit += sev == "critical"
                 warn += sev != "critical"
-            row = [sev.upper(), f.get("check", ""), f.get("summary", ""), f.get("hint", "")]
+            # a finding's "fix" is what to do, for a person: shown with the finding, never run (the hint is what ACT runs as evidence)
+            row = [sev.upper(), f.get("check", ""), str(f.get("summary", "")) + ((" What to do: %s" % f["fix"]) if f.get("fix") else ""), f.get("hint", "")]
             rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []))
     rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 1, r[0]))
     links = [r.pop() for r in rows] if ask else []          # each row's buttons: [{label, url}]

@@ -532,6 +532,22 @@ File: `roles/check_containers/defaults/main.yml`
 | `check_containers_required` | `[]` | Containers that MUST exist and run on these hosts: a container name, or OWNER/NAME for one owner (root/web, alice/web). A name alone matches that container of any owner. Also matches a Quadlet file name without .container, e.g. [stigman-mysql, stigman-api, alice/web]. |
 | `check_containers_recent_hours` | `24` | A container that stopped with an error (exit code not 0) this many hours ago or less is reported (containers:crashed). Older crashes are history and are not reported. |
 | `check_containers_restart_warn` | `3` | More restarts than this (podman's restart count, or its systemd unit's) = a restart loop. |
+| `check_containers_profiles` | `[netapp_console]` | APP PROFILES (1.84.0): a host that runs a known product's containers gets the product's own checks, on top of the container checks above, in the same report. netapp_console: NetApp Console Private Mode's agent (podman containers ds_*) - each ds_* container (state, health, restarts, uptime, the version from its image t… (all of it: the role file) |
+| `check_containers_console_run_checks` | `[fapolicyd, auditd]` | The checks a Console host runs inside this one even when the set (daily) does not include them: the incidents on a Console host were an audit flood and a stopped fapolicyd. |
+| `check_containers_console_pattern` | `'^ds_'` | Which containers are the Console's (a regular expression on the name, from its start). |
+| `check_containers_console_url` | (empty) | The Console's HTTPS address, '' = https://<the host's inventory name>/ . Asked from the host itself. A plain https://HOST[:PORT]/PATH: an address with a user name or password, a query string or a fragment is refused (a warning, console:url) and not probed: it would be kept in the report and sent to ACT. |
+| `check_containers_console_log_containers` | `[ds_occmauth, ds_mongo, ds_mysql, ds_krakend]` | The containers whose logs are counted for error, recover, corrupt and jwt lines, and for how many hours back; a container with this many lines or more is a finding (with its last three lines, names and tokens replaced). a name with a _1 suffix (ds_krakend_1) matches too |
+| `check_containers_console_ports` | `{ds_occmauth: 8420, ds_tenancy: 8088}` | The service ports probed from the host (a TCP connect to the container's address): a container that shows Up with its port refusing is hung. Keyed by the name without the _1 suffix. container name: port |
+| `check_containers_console_cert_volume` | `ds_certs` | the podman volume with the Console's cert.pem and privkey.pem |
+| `check_containers_console_log_hours` | `6` | hours of logs counted |
+| `check_containers_console_errors_min` | `5` | lines of a container's log that make a finding |
+| `check_containers_console_clock_warn` | `1` | The clock: seconds off before a warning, before a critical (a login fails while it is off); not synchronized is always critical. seconds off: a warning |
+| `check_containers_console_clock_crit` | `10` | seconds off: critical |
+| `check_containers_console_disk_warn` | `85` | The agent's data folder and podman's storage: percent used. The certificate: days left. percent used: a warning |
+| `check_containers_console_disk_crit` | `95` | percent used: critical |
+| `check_containers_console_cert_warn` | `30` | days left: a warning |
+| `check_containers_console_cert_crit` | `7` | days left: critical |
+| `check_containers_console_backlog_min` | `8192` | auditd's backlog_limit below this is a warning (a busy container host floods the audit queue; the job "Linux - auditd tuning" raises it). auditd's backlog_limit below this: a warning |
 
 ## check_disk
 
@@ -2009,7 +2025,7 @@ File: `roles/site_exclude/defaults/main.yml`
 
 File: `roles/site_findings/defaults/main.yml`
 
-> Shared by every check playbook. A "finding" is one thing that is wrong on one host:   check:    the check that found it (disk, services, mariadb, ...)   id:       a stable name for this problem on this host, e.g. disk:/var. ServiceNow uses it to             update the same ticket instead of opening a new one every run.   severity: critical \| warning   summary:  one line a person understands ("/var is 96% full (critical at 95%)")   hint:     a read-only command that shows more. A person can paste it into a shell; ACT (when             you add it later) runs it to collect evidence. Check roles only ADD findings. This role starts the list, reports it, and decides pass/fail.
+> Shared by every check playbook. A "finding" is one thing that is wrong on one host:   check:    the check that found it (disk, services, mariadb, ...)   id:       a stable name for this problem on this host, e.g. disk:/var. ServiceNow uses it to             update the same ticket instead of opening a new one every run.   severity: critical \| warning   summary:  one line a person understands ("/var is 96% full (critical at 95%)")   hint:     a read-only command that shows more. A person can paste it into a shell; ACT (when             you add it later) runs it to collect evidence.             ACT RUNS a hint as its evidence: it must change nothing (no restart, no write, no makestep) and every             value in it must be quoted.   fix:      (optional) what to do about it, for a person: shown with the finding (the card's "What to do", the             table's Finding cell, the job output), NEVER run. Put a remedy here, not in the hint. Check roles only ADD findings. This role starts the list, reports it, and decides pass/fail.
 
 | Setting | Default | What it does |
 |---|---|---|

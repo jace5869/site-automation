@@ -1,0 +1,8 @@
+---
+# After ACT has run the checks that had findings again (roles/site_act/tasks/run.yml): what a profile adds to the findings is done once, here,
+# over ALL of them - whichever checks were re-run. Today: the NetApp Console profile of the containers check (plugins/filter/console_filters.py).
+- name: After the recheck | the NetApp Console's wording and findings
+  ansible.builtin.include_role:
+    name: check_containers
+    tasks_from: console_findings.yml
+  when: site_console is defined

@@ -35,7 +35,7 @@ prepare() {  # prepare FIXTURE: a fresh fake host
     # SAFETY: every tool the roles may run to look or to fix must be the fake, or nothing runs
     # (a real podman / systemctl / runuser here would act on the machine running the test).
     local t
-    for t in podman systemctl runuser ps journalctl id getent loginctl; do
+    for t in podman systemctl runuser ps journalctl id getent loginctl chronyc auditctl getenforce curl openssl df; do
         if [ "$(PATH="$H/bin:$PATH" command -v "$t")" != "$H/bin/$t" ] || [ "$(PATH="$H/bin:$PATH" "$t" --is-fake 2>&1)" != "FAKE $t" ]; then
             echo "ABORT - $t is not the fake; not running anything"; exit 1
         fi
@@ -365,5 +365,166 @@ prepare empty
 run playbooks/service_watch.yml
 [ "$rc" -eq 0 ] && ok "nothing to watch: passes" || bad "nothing to watch: exit $rc" 30
 has "  ... and says so" "Nothing to watch on host01.example.com"
+
+# ---------------------------------------------------------------- the NetApp Console profile (1.84.0)
+# ds_* containers (root's, some with a _1 suffix), a clock 41 s off, auditd flooded, fapolicyd active with an agent denial, the data folder 88% full,
+# the certificate 23 days left, an empty certificate volume, VM_SNAME empty in traefik, jwt errors in ds_occmauth_1, one container up with its
+# process gone, one service port refusing. The generic checks are test doubles (tests/containers/roles/fakechk_*): the profile adds fapolicyd and
+# auditd even in the daily set, gives the generic findings its wording and never repeats them. Every hint it makes must be read only (ACT runs
+# a hint as its evidence): what to do is the fix.
+prepare console
+CROLES="ANSIBLE_ROLES_PATH=$repo/tests/containers/roles:$repo/roles:$repo/vendor/act/ansible/roles"
+# a service that answers (ds_occmauth_1's port) and one that does not (ds_krakend_1's port 1)
+okport=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+python3 -m http.server "$okport" --bind 127.0.0.1 > /dev/null 2>&1 &
+lpid=$!
+trap 'kill $lpid 2>/dev/null; rm -rf "$work"' EXIT
+for _ in $(seq 1 30); do (exec 3<>"/dev/tcp/127.0.0.1/$okport") 2>/dev/null && break; sleep 0.1; done
+run_console() {  # run_console [ansible args]: the profile with the test doubles of the generic checks
+    (cd "$repo" && env "$CROLES" PATH="$H/bin:$PATH" FAKE_DIR="$H" FAKE_NOW="$NOW" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
+        ANSIBLE_DEPRECATION_WARNINGS=False "$ap" -i "$work/inv.yml" tests/containers/console.yml -e "@$work/hooks.json" -e site_check_role_prefix=fakechk_ \
+        -e "_con_proc=$H/proc" -e "{\"check_containers_console_ports\": {\"ds_occmauth\": $okport, \"ds_krakend\": 1}}" "$@") > "$work/out.txt" 2>&1
+    rc=$?
+}
+hooks > "$work/hooks.json"
+run_console
+[ "$rc" -eq 0 ] && ok "the Console profile runs" || bad "the Console profile: exit $rc" 30
+has "the checks that ran: fapolicyd and auditd were added after the set" "CHECKS auditd,containers,fapolicyd"
+has "the host's own clock: a finding of the profile (the time check did not run)" "SUMMARY console:clock | critical | host01.example.com: the clock is 41.2 s fast and synchronized: NetApp Console logins fail while it is off"
+has "  ... its hint only reads (ACT runs a hint as evidence)" "HINT console:clock | chronyc tracking"
+has "  ... what to do is the fix, not the hint" "FIX console:clock | chronyc makestep (as root), then log in to the Console again"
+has "the generic fapolicyd finding, in the Console's wording" "SUMMARY fapolicyd:down | critical | fapolicyd is not running - the NetApp Console's containers depend on its rules"
+has "the generic auditd finding, with the job that tunes it" "SUMMARY auditd:lost | warning | auditd lost 1203 events - a busy container host can flood auditd; see the job Linux - auditd tuning"
+has "auditd: the low backlog_limit is the profile's finding (the lost events are the check's)" "SUMMARY console:auditd | warning | host01.example.com: auditd: backlog_limit is 64 (under 8192)"
+hasnt "  ... and it does not say the events were lost again" "event(s) lost"
+has "the data folder, found from the mounts: 88% full" "SUMMARY console:disk:/opt/application/netapp | warning | host01.example.com: the NetApp Console data folder /opt/application/netapp/data is 88% full (12.0 GB free)"
+has "  ... no hint (what to look at is in the fix, for a person), and du and df on the quoted path there" "FIX console:disk:/opt/application/netapp | see what fills it: du -xh --max-depth=2 /opt/application/netapp/data/core | sort -h | tail; df -h /opt/application/netapp/data/core"
+has "  ... its hint is empty" "HINT console:disk:/opt/application/netapp | "
+has "the certificate (the volume has none: the HTTPS answer says 23 days)" "SUMMARY console:cert | warning | host01.example.com: the Console's HTTPS certificate expires in 23 days"
+has "the errors of ds_occmauth_1: counted by kind, no line of text" "SUMMARY console:errors:ds_occmauth_1 | warning | host01.example.com: ds_occmauth_1 logged 6 error line(s) in the last 6 h (the clock is off: jwt errors usually mean that): jwt or token validation x3, signing key x2, connection refused or timed out x1"
+has "  ... one state query of the container's name and status, never a log line" "HINT console:errors:ds_occmauth_1 | podman ps -a '--filter=name=^ds_occmauth_1\$' --format '{{.Names}} {{.Status}}'"
+has "  ... the count is in the fix, for a person" "FIX console:errors:ds_occmauth_1 | count them: podman logs --since 6h ds_occmauth_1 2>&1 | grep -ciE 'error|recover|corrupt|jwt'"
+hasnt "  ... no log text, token, address or name reaches the output" "user.name@example.mil"
+hasnt "  ... " "start time 192.0.2.3"
+hasnt "ds_mongo's 2 lines are under the limit" "console:errors:ds_mongo"
+has "a container that is unhealthy is the Console's" "SUMMARY containers:unhealthy:root/ds_occmauth_1 | critical | NetApp Console: container ds_occmauth_1 (owner root) is running but its healthcheck reports unhealthy"
+hasnt "another container of the host is left alone" "NetApp Console: container web"
+has "the generic container finding of a Console container: ONE state query (name and status), never the log, an inspect or the environment" "HINT containers:unhealthy:root/ds_occmauth_1 | podman ps -a '--filter=name=^ds_occmauth_1\$' --format '{{.Names}} {{.Status}}'"
+has "  ... what to do is its fix" "FIX containers:unhealthy:root/ds_occmauth_1 | read the log of ds_occmauth_1 for the cause, then podman restart ds_occmauth_1 (then the containers that depend on it)"
+hasnt "  ... no hint of the host reads a log" "podman logs --tail"
+has "a container that shows Up with its process gone: critical" "SUMMARY console:process-gone:ds_cloudmanager_core | critical | host01.example.com: the container ds_cloudmanager_core shows Up but its process is gone (podman has no process id for it)"
+has "  ... what to do: restart it, then the dependents" "FIX console:process-gone:ds_cloudmanager_core | podman restart ds_cloudmanager_core (then the containers that depend on it)"
+hasnt "  ... a container whose process is there is not reported" "console:process-gone:ds_traefik_1"
+has "a service port that refuses (ds_krakend_1, port 1): critical" "SUMMARY console:port:ds_krakend_1 | critical | host01.example.com: the container ds_krakend_1 is Up but its service port 1 refuses connections inside the network"
+hasnt "  ... a port that answers (ds_occmauth_1) is not" "console:port:ds_occmauth_1"
+has "the certificate volume is empty: critical, the 502 through the gateway, traefik's 'Cert files removed' counted" "SUMMARY console:certs-empty | critical | host01.example.com: the certificate volume ds_certs is empty (no cert.pem / privkey.pem): the Console's login fails with 502 through the API gateway - traefik logged 'Cert files removed' 2 time(s) in 24 h"
+has "  ... no hint: no volume inspect (its Options can hold a share's password), the listing is in the fix" "HINT console:certs-empty | "
+hasnt "  ... never a podman volume inspect among the hints" "HINT console:certs-empty | podman volume"
+has "  ... what to do: the self-signed certificate with the host's names, then restart traefik and krakend (their real names, with _1)" "FIX console:certs-empty | look: ls -l $H/var/lib/containers/storage/volumes/ds_certs/_data; create cert.pem and privkey.pem in $H/var/lib/containers/storage/volumes/ds_certs/_data - self-signed: openssl req -x509"
+has "  ... the restart names both containers" "then podman restart ds_traefik_1 ds_krakend_1"
+has "VM_SNAME empty inside traefik: a warning that says what it breaks" "SUMMARY console:vm-names | warning | host01.example.com: VM_SNAME is empty inside ds_traefik_1: its entrypoint (/conf/entrypoint.sh) then makes no certificate"
+has "  ... the hint reads the variables, the fix points to the install configuration (nothing is changed)" "FIX console:vm-names | see them: podman exec ds_traefik_1 printenv VM_SNAME VM_FQDN; set them in the NetApp Console's install configuration and recreate the container"
+has "the three sections" "SECTIONS NetApp Console containers | NetApp Console host checks | Errors in the last 6 hours"
+has "the containers table: ds_occmauth_1 unhealthy, 4 restarts, up 6 h, its version" "CROW host01.example.com | ds_occmauth_1 | running | unhealthy | 4 | 6 h | v4.10.0"
+has "  ... ds_mysql with its own image's version" "CROW host01.example.com | ds_mysql | running | healthy | 0 | 41 d | 8.0.36"
+has "  ... the container whose process is gone" "CROW host01.example.com | ds_cloudmanager_core | running (process gone) |"
+has "  ... a name with _1 and one without (ds_mongo) both match" "CROW host01.example.com | ds_krakend_1 | running | healthy | 0 | 41 d | v4.10.0"
+hasnt "  ... the host's web container is not in it" "CROW host01.example.com | web |"
+has "the host checks: the clock" "HROW host01.example.com | Clock offset (chronyc tracking) | 41.23 s fast, synced: yes | 1 s | CRITICAL"
+has "  ... the data folder" "HROW host01.example.com | Disk: /opt/application/netapp/data (agent data) | 88% used, 12.0 GB free | 85% | WARNING"
+has "  ... podman's storage" "HROW host01.example.com | Disk: /var/lib/containers/storage (podman) | 61% used, 78.0 GB free | 85% | OK"
+has "  ... the Console's HTTPS answer and certificate" "answers (200 in 0.3 s), certificate 23 days left | 30 days | WARNING"
+has "  ... fapolicyd: the agent's denial counted, not the other" "HROW host01.example.com | fapolicyd | active, 1 denial(s) under the agent's folders since boot | 0 denials | WARNING"
+has "  ... the certificate volume and traefik's variables" "HROW host01.example.com | Certificate volume ds_certs | empty: no cert.pem / privkey.pem | cert.pem and privkey.pem | CRITICAL"
+has "  ... " "HROW host01.example.com | Traefik VM_SNAME and VM_FQDN | short name EMPTY, FQDN set | both set | WARNING"
+has "  ... the ports" "HROW host01.example.com | Port 1 of ds_krakend_1 | refuses connections | answers | CRITICAL"
+has "the errors table: counts by kind, no text" "EROW host01.example.com | ds_occmauth_1 | 6 | jwt or token validation x3, signing key x2, connection refused or timed out x1"
+for tool in podman chronyc auditctl; do grep -q " $tool " "$H/calls.log" && ok "  ... $tool was called (read only)" || bad "  ... $tool was not called"; done
+if grep -E ' podman (start|stop|restart|rm|run|create|kill|pull|pod|system|network)| podman volume (create|rm|prune|import)| podman exec [^ ]+ (sh|bash|rm|touch|tee)| systemctl (start|stop|restart|enable|disable)|auditctl -[a-zA-Z]*[eDRb]' "$H/calls.log" | grep -v 'auditctl -s' >/dev/null; then bad "the profile ran a command that changes something"; else ok "  ... only reads: no start, stop, change of the audit rules"; fi
+# certificate files in the volume: no longer empty, and their end date is read too (the earlier of the two counts)
+mkdir -p "$H/var/lib/containers/storage/volumes/ds_certs/_data"
+: > "$H/var/lib/containers/storage/volumes/ds_certs/_data/cert.pem"; : > "$H/var/lib/containers/storage/volumes/ds_certs/_data/privkey.pem"
+run_console
+hasnt "a volume with cert.pem and privkey.pem is not empty" "console:certs-empty"
+has "  ... the certificate file's 22 days (earlier than the HTTPS answer's 23) is the one reported" "SUMMARY console:cert | warning | host01.example.com: the certificate file in ds_certs expires in 22 days"
+has "  ... and the table shows its days left" "HROW host01.example.com | Certificate volume ds_certs | cert.pem and privkey.pem, 22 days left | cert.pem and privkey.pem | WARNING"
+rm -f "$H/var/lib/containers/storage/volumes/ds_certs/_data/cert.pem" "$H/var/lib/containers/storage/volumes/ds_certs/_data/privkey.pem"
+# ACT's recheck (roles/site_act/tasks/recheck.yml, as it is): every check that had findings runs again, the profile's wording and findings are made
+# over ALL of them afterwards, and what cleared is decided by finding id
+recheck_ids() {  # recheck_ids before|after|cleared -> that part of the RECHECK line
+    local line; line="$(grep -o 'RECHECK before=[^"]*' "$work/out.txt" | head -1)"
+    line="${line#RECHECK before=}"
+    case "$1" in
+        before) printf '%s' "${line%% || after=*}" ;;
+        after) line="${line#* || after=}"; printf '%s' "${line%% || cleared=*}" ;;
+        cleared) line="${line#* || cleared=}"; printf '%s' "${line%% || again=*}" ;;
+        again) printf '%s' "${line#* || again=}" ;;
+    esac
+}
+run_console -e '{"console_recheck": true, "console_more_logs": true}'
+rm -f "${H:?}/more_logs" "${H:?}/inspect_fail"
+[ "$rc" -eq 0 ] && ok "ACT's recheck runs" || bad "ACT's recheck: exit $rc" 30
+b="$(recheck_ids before)"; a="$(recheck_ids after)"
+[ -n "$b" ] && [ "$b" = "$a" ] && ok "a recheck of a persistent fault finds the same findings (the profile's own and the generic ones in its wording)" || bad "recheck: before [$b] after [$a]"
+[ -z "$(recheck_ids cleared)" ] && ok "  ... and calls nothing cleared (one more error line: the same finding by its id, not a cleared one and a new one)" || bad "recheck: cleared [$(recheck_ids cleared)]"
+has "  ... the new count is the one shown" "logged 7 error line(s) in the last 6 h"
+hasnt "  ... the old one is not shown as cleared" "logged 6 error line(s)"
+has "  ... the generic finding keeps the profile's wording after the recheck" "SUMMARY fapolicyd:down | critical | fapolicyd is not running - the NetApp Console's containers depend on its rules"
+has "  ... and its hints that only read" "HINT fapolicyd:down | systemctl is-active fapolicyd // systemctl is-enabled fapolicyd"
+run_console -e '{"console_recheck": true, "console_only": ["auditd"]}'
+rm -f "${H:?}/more_logs" "${H:?}/inspect_fail"
+has "only auditd had findings: its re-run finding has the profile's wording (the containers check did not run again)" "SUMMARY auditd:lost | warning | auditd lost 1203 events - a busy container host can flood auditd; see the job Linux - auditd tuning"
+has "  ... and its hint only reads" "HINT auditd:lost | auditctl -s"
+has "  ... nothing cleared" '|| cleared= || again='
+run_console -e '{"console_recheck": true, "console_fail": "fail"}'
+rm -f "${H:?}/more_logs" "${H:?}/inspect_fail"
+has "the Console's containers cannot be inspected in a recheck (a timeout): a warning says so" "SUMMARY console:inspect | warning | host01.example.com: the Console's containers could not be inspected"
+has "  ... the process that was gone is kept, marked, not called cleared" "SUMMARY console:process-gone:ds_cloudmanager_core | critical | host01.example.com: the container ds_cloudmanager_core shows Up but its process is gone (podman has no process id for it) (not checked again: the Console's containers could not be inspected)"
+has "  ... and so is the data folder that is 88% full" "(not checked again: the Console's containers could not be inspected)"
+[ -z "$(recheck_ids cleared)" ] && ok "  ... nothing is cleared that was not verified" || bad "recheck: cleared [$(recheck_ids cleared)]"
+run_console -e '{"console_recheck": true, "console_fail": "partial"}'
+rm -f "${H:?}/more_logs" "${H:?}/inspect_fail"
+has "a read cut short (one container of several) is a failed read too" "SUMMARY console:inspect | warning"
+[ -z "$(recheck_ids cleared)" ] && ok "  ... and clears nothing" || bad "recheck: cleared [$(recheck_ids cleared)]"
+printf fail > "$H/inspect_fail"
+run_console
+rm -f "${H:?}/inspect_fail"
+has "the first read fails: a warning, in the report" "SUMMARY console:inspect | warning | host01.example.com: the Console's containers could not be inspected"
+hasnt "  ... and no process is 'gone' for what was not read" "console:process-gone"
+# ACT never calls a finding of the profile cleared: it comes from many separate probes, and one that failed or timed out looks like "no finding"
+run_console -e '{"console_recheck": true, "console_fake_before": true}'
+rm -f "${H:?}/more_logs" "${H:?}/inspect_fail"
+[ -z "$(recheck_ids cleared)" ] && ok "a console:* finding that is gone after a fix is not listed as cleared" || bad "recheck: cleared [$(recheck_ids cleared)]"
+has "  ... it is listed as not shown again (run the Health check again)" "old disk finding of a mount that is gone"
+hasnt "  ... and not as cleared" "cleared: old disk finding"
+has "  ... the Re-checked line says so" "not shown again, run the Health check again to see if it is gone: old disk finding of a mount that is gone"
+# an address with a user, a password or a token: refused, never shown, kept or sent
+prepare console
+run_console -vv -e '{"check_containers_console_url": "https://user:pw-secret@console1.example.mil/?token=tok-secret"}'
+[ "$rc" -eq 0 ] && ok "an address with a credential: the run goes on" || bad "console URL with a credential: exit $rc" 30
+for w in pw-secret tok-secret "user:pw"; do
+    hasnt "  ... '$w' is nowhere in the job output (-vv)" "$w"
+    hasnt "  ... nor in a command that was run" "$w" "$H/calls.log"
+done
+has "  ... a warning says it was not probed" "SUMMARY console:url | warning | host01.example.com: the Console's address"
+hasnt "  ... no https-down for a probe that was not made" "console:https-down"
+hasnt "  ... curl was not called" " curl " "$H/calls.log"
+prepare console
+run_console -e '{"console_first": ["time", "disk"]}'
+has "the time check ran first: its finding gets the Console's wording and the profile does not repeat it" "SUMMARY time:offset | critical | the clock is 41 s off and not within the limit - NetApp Console logins fail while the clock is off"
+has "  ... its hint is replaced by a state query (ACT runs a hint), its fix is the fix field" "HINT time:offset | chronyc tracking"
+hasnt "  ... no console:clock then" "console:clock"
+hasnt "  ... the disk check's finding is replaced by the profile's (one id per mount, the worse severity)" "SUMMARY disk:"
+run_console -e '{"check_containers_profiles": []}'
+has "check_containers_profiles [] : no profile - nothing is added" 'CHECKS containers"'
+hasnt "  ... no Console finding, no sections" "console:"
+run_console -e '{"check_containers_console_run_checks": []}'
+has "check_containers_console_run_checks [] : fapolicyd and auditd not added" 'CHECKS containers"'
+prepare fleet
+run_console
+hasnt "a host without ds_* containers is left alone: no Console finding" "console:"
+hasnt "  ... and has no Console data" "SECTIONS"
+run_console --check
+[ "$rc" -eq 0 ] && ok "the profile in a dry run (Check mode)" || bad "the profile in Check mode: exit $rc" 30
 
 if [ "$fails" -eq 0 ]; then echo "all $oks containers checks passed"; else echo "$fails of $((oks + fails)) containers check(s) FAILED"; exit 1; fi
