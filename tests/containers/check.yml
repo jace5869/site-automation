@@ -30,3 +30,21 @@
           USERS {{ (site_podman | default({})).users | default([]) | map(attribute='name') | sort | join(',') }}
           SKIPPED {{ (site_podman | default({})).skipped | default([]) | map(attribute='user') | sort | join(',') }}
           INSTALLED {{ (site_podman | default({})).installed | default('') }}
+    - name: ACT's evidence - the hints, run the way ACT runs them (a shell), against the fake tools
+      ansible.builtin.shell: "{{ item.hint }}"
+      args: {executable: /bin/bash}
+      loop: "{{ site_findings | selectattr('hint', 'defined') | list }}"
+      loop_control: {label: "{{ item.id }}"}
+      register: _evidence
+      changed_when: false
+      failed_when: false
+      no_log: true
+    - name: What ACT would be shown
+      ansible.builtin.debug:
+        msg: >-
+          EVIDENCE secrets={{ 'LEAK' if (_evidence.results | map(attribute='stdout') | join('\n') is search('hunter2|s3cr3t|hc-secret|cmd-secret|exec-secret|label-secret|unit-env-secret|DB_PASSWORD|JWT_SECRET|/entrypoint[.]sh')) else 'none' }}
+          rawlog={{ 'LEAK' if (_evidence.results | map(attribute='stdout') | join('\n') is search('fake log line')) else 'none' }}
+          commands={{ _evidence.results | length }}
+    - name: What the discovery registered
+      ansible.builtin.debug:
+        msg: "REGISTERED secrets={{ 'LEAK' if ((_pd_query | default({}) | to_json) is search('hunter2|s3cr3t|hc-secret|cmd-secret|exec-secret|label-secret|unit-env-secret|DB_PASSWORD|JWT_SECRET|/entrypoint[.]sh')) else 'none' }} bytes={{ (_pd_query | default({}) | to_json) | length }} found={{ (_pd_query | default({}) | to_json) | regex_findall('hunter2[a-z0-9-]*|s3cr3t[a-z0-9-]*|hc-secret[a-z0-9-]*|cmd-secret[a-z0-9-]*|exec-secret[a-z0-9-]*|label-secret[a-z0-9-]*|unit-env-secret|DB_PASSWORD|JWT_SECRET|/entrypoint[.]sh') | unique | join(',') }}"

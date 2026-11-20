@@ -1,0 +1,27 @@
+{
+ "_comment": "Names a container's label and a user's Quadlet file choose: a label that adds an option to systemctl show, a Quadlet whose ServiceName is shell syntax; the unit has an Environment with a password.",
+ "users": {},
+ "owners": {
+  "root": {
+   "containers": [
+    {
+     "name": "web",
+     "state": "running",
+     "unit": "web.service -p Environment"
+    }
+   ],
+   "units": {
+    "web.service": {
+     "LoadState": "loaded",
+     "ActiveState": "active",
+     "SubState": "running",
+     "UnitFileState": "enabled",
+     "Environment": "DB_PASSWORD=unit-env-secret"
+    }
+   }
+  }
+ },
+ "files": {
+  "etc/containers/systemd/evil.container": "[Container]\nContainerName=evilname\nImage=registry.example.com/x:1\n[Service]\nServiceName=bad;touch-pwn\n"
+ }
+}

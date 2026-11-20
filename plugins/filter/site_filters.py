@@ -240,7 +240,12 @@ def podman_run_as(owner, uid=None):
     owner = str(owner or "root")
     if owner == "root":
         return ""
-    return "runuser -u %s -- env XDG_RUNTIME_DIR=/run/user/%s " % (owner, uid)
+    import shlex
+    try:
+        uid = int(uid)
+    except (TypeError, ValueError):
+        pass                                    # 'UID': the placeholder of an owner that was not found
+    return "runuser -u %s -- env XDG_RUNTIME_DIR=/run/user/%s " % (shlex.quote(owner), uid if isinstance(uid, int) else shlex.quote(str(uid)))
 
 
 def _int(value, default=0):
@@ -457,7 +462,7 @@ def podman_discovery(results, ignore=None):
         secs = _sections(r.get("stdout", ""))
         if not any(kind == "ps" for kind, _, _ in secs):
             errors.append({"owner": owner, "what": "the discovery script",
-                           "command": run_as + "podman ps -a",
+                           "command": run_as + "podman ps -a --format '{{.Names}} {{.Status}}'",
                            "message": _tail(str(r.get("stderr") or r.get("msg") or "no output").splitlines())})
             continue
         ps, listing, inspect, quadlets, unitfiles, show = [], [], [], [], [], {}
@@ -468,7 +473,7 @@ def podman_discovery(results, ignore=None):
                     userns_off.append(owner)
                     break
                 if parsed is None:
-                    errors.append({"owner": owner, "what": "podman ps", "command": run_as + "podman ps -a",
+                    errors.append({"owner": owner, "what": "podman ps", "command": run_as + "podman ps -a --format '{{.Names}} {{.Status}}'",
                                    "message": _tail(lines) or "exit code " + arg})
                 else:
                     ps = parsed

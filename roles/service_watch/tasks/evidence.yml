@@ -2,7 +2,8 @@
 # Evidence for the down containers of USERS (rootless podman). ACT cannot read them itself: in a
 # job it refuses every command run as another user (runuser -u ... / sudo -u ...). So the playbook
 # reads them here - as root, read-only, as each owner - and gives ACT one file to read (cat FILE):
-# the container's podman state, its last log lines, its unit's status and the user's journal.
+# the container's podman state, how many error lines its log and the user's journal hold, and its unit's properties - state and COUNTS, never
+# the log lines, the environment or the healthcheck output (the file goes to the model: a log line can hold a password or a token).
 # Output: _watch_evidence_file (the file, readable by root only; '' = nothing collected).
 # watch.yml removes the file after ACT has run.
 
@@ -15,11 +16,12 @@
       c={{ _watch_m.container | quote }}
       u={{ _watch_m.unit | quote }}
       run() { printf '### $ %s\n' "$*"; timeout 60 "$@" 2>&1 | tail -c 8000; echo; }
-      echo "===== container {{ _watch_m.label }}: {{ service_watch.states[_watch_m.label] | default('down') }} ====="
-      run $p podman inspect --format '{% raw %}{{json .State}}{% endraw %}' "$c"
-      run $p podman logs --tail 60 "$c"
-      [ -n "$u" ] && run $p systemctl --user status "$u" --no-pager -l
-      run journalctl _UID={{ _watch_m.uid | int }} --since -2h -n 100 --no-pager
+      count() { printf '### $ %s | grep -ci error\n' "$*"; timeout 60 "$@" 2>&1 | grep -ci error; echo; }
+      printf '%s\n' {{ ('===== container ' ~ _watch_m.label ~ ': ' ~ (service_watch.states[_watch_m.label] | default('down')) ~ ' =====') | quote }}
+      run $p podman container inspect --format '{% raw %}{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}} {{.State.FinishedAt}}{% endraw %}' "$c"
+      count $p podman logs --tail 60 "$c"
+      [ -n "$u" ] && run $p systemctl --user show "$u" -p ActiveState -p SubState -p Result -p NRestarts -p ExecMainStatus
+      count journalctl _UID={{ _watch_m.uid | int }} --since -2h -n 100 --no-pager
       exit 0
     executable: /bin/bash
   loop: "{{ service_watch.down_users | map('extract', service_watch.managers) | list }}"

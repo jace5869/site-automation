@@ -166,6 +166,7 @@
         cmd: |
           cd /
           unset DBUS_SESSION_BUS_ADDRESS
+          set -f                      # a name a user chose is never a pattern
           T="timeout {{ podman_discover_timeout | int }}"
           {% if _pd_owner.name == 'root' %}
           as_owner() { $T "$@"; }
@@ -176,6 +177,7 @@
             done
           }
           unitfiles() {
+            set +f                    # the one place that wants a pattern: the *.service of a unit directory
             for d in {{ podman_discover_unit_dirs | map('quote') | join(' ') }}; do
               [ -d "$d" ] || continue
               grep -l -s -E '^Environment=.*PODMAN_SYSTEMD_UNIT|^ExecStart=.*podman' "$d"/*.service
@@ -199,21 +201,200 @@
           }
           {% endif %}
           sec() { printf '\n@@@ %s\n' "$*"; }
+          # What leaves this host is cut down HERE to the fields discovery reads: `podman ps --format json` carries each container's Command (its
+          # arguments: passwords), `podman container inspect` its environment and healthcheck output, systemd's ExecStart the whole command line.
+          # The raw output is never printed. The interpreter is the one Ansible uses on this host (or the first of the usual ones).
+          PY=""
+          for cand in {{ _pd_python | quote }} python3 /usr/libexec/platform-python python; do
+            [ -n "$cand" ] && command -v "$cand" >/dev/null 2>&1 && { PY=$(command -v "$cand"); break; }
+          done
+          if [ -z "$PY" ]; then
+            sec ps 127
+            echo "no python interpreter on this host to cut the container listing down to what is read (it holds command lines and environment variables, which are not sent)"
+            exit 0
+          fi
+          prog=$(cat <<'PY'
+          import json, os, re, shlex, sys
+          mode = sys.argv[1]
+          data = sys.stdin.read()
+
+
+          def keep(d, keys):
+              return dict((k, d[k]) for k in keys if k in d)
+
+
+          CUR = {"argv": None}                          # the unit file's own ExecStart, split as systemd splits it (set per unit in "show")
+
+
+          def file_argv(path):
+              """1.79.18: the first ExecStart= of a unit file, split with shell-like quoting - the real argument boundaries, which systemctl
+              show's space-joined text loses. None when the file cannot be read or split."""
+              try:
+                  with open(path, encoding="utf-8", errors="replace") as fh:
+                      text = re.sub(r"\\\n", " ", fh.read(1048576))
+              except OSError:
+                  return None
+              for line in text.splitlines():
+                  if line.strip().startswith("ExecStart="):
+                      val = line.strip()[len("ExecStart="):].lstrip("-@:+!")
+                      try:
+                          return shlex.split(val)
+                      except ValueError:
+                          return None
+              return None
+
+
+          def podman_args(ex):
+              """-> (podman's path, its arguments, exact): exact when the arguments come from the unit file (their boundaries known)."""
+              fa = CUR["argv"]
+              if fa and os.path.basename(fa[0]) == "podman":
+                  return fa[0], fa[1:], True
+              m = re.search(r"argv\[\]=(\S*podman)\s+([^;]*)", ex)
+              return (m.group(1), m.group(2).split(), False) if m else ("", [], False)
+
+
+          # Only words this table knows leave the host, never the token as it was: a global option can hold a proxy URL with a password.
+          VERBS = ("run", "create", "start", "restart", "stop", "kill", "rm", "rmi", "ps", "exec", "kube", "play", "pod", "compose", "auto-update", "system",
+                   "healthcheck", "image", "images", "volume", "network", "pull", "events", "info", "version", "login", "logout", "untag", "tag", "save", "load",
+                   "export", "import", "generate", "cp", "wait", "unshare", "machine", "secret")
+          SECOND = {"kube": ("play",), "play": ("kube",), "pod": ("start", "create", "restart", "stop", "rm", "ps")}
+          FLAGS = ("-d", "-i", "-t", "-it", "-dit", "-di", "-dt", "--detach", "--rm", "--init", "--replace", "--tty", "--interactive", "--privileged", "--read-only",
+                   "--sdnotify", "--no-healthcheck", "--log-driver-none")
+          VALUED = ("-e", "--env", "-p", "--publish", "-v", "--volume", "--cidfile", "--network", "--net", "-u", "--user", "-w", "--workdir", "-l", "--label",
+                    "--hostname", "-h", "--restart", "-m", "--memory", "--cpus", "--entrypoint", "--pod", "--userns", "--security-opt", "--cap-add", "--cap-drop",
+                    "--device", "--log-driver", "--env-file", "--add-host", "--dns", "--secret", "--mount", "--tmpfs", "--pidfile", "--timeout")
+          NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+          def run_name(args):
+              """The --name of `podman run/create` - only a podman option, only BEFORE the image (the first argument that is no option or value of
+              one). An option this table does not know may or may not take a value: the end of the options is then unknown, and nothing is said."""
+              k = 1
+              while k < len(args):
+                  a = args[k]
+                  if a.startswith("--name="):
+                      return a[len("--name="):] if NAME.match(a[len("--name="):]) else ""
+                  if a == "--name":
+                      return args[k + 1] if k + 1 < len(args) and NAME.match(args[k + 1]) else ""
+                  if not a.startswith("-"):
+                      return ""                                       # the image: the options are over
+                  if "=" in a or a in FLAGS:
+                      k += 1
+                  elif a in VALUED:
+                      k += 2
+                  else:
+                      return ""                                       # unknown: ambiguous
+              return ""
+
+
+          KNOWN = set(os.environ.get("PD_NAMES", "").split())
+
+
+          def trusted(name, unit_id):
+              """1.79.18: a name read from space-joined ExecStart text is kept only when it is a container podman listed, or the unit's own
+              name (web.service, container-web.service): the argument boundaries are lost in that text, so a word of an argument's value
+              could otherwise pass for a name."""
+              base = unit_id.rsplit(".", 1)[0] if unit_id else ""
+              return bool(name) and (name in KNOWN or base in (name, "container-" + name))
+
+
+          def redact(ex, unit_id=""):
+              """An ExecStart cut down to what discovery reads of it (the unit's kind and its container's name): no argument, no unknown word."""
+              c = re.search(r"argv\[\]=(\S*(?:podman-compose|docker-compose)\b\S*)", ex)
+              if c:
+                  return "{ path=%s ; argv[]=%s ; }" % (c.group(1), c.group(1))
+              path, args, exact = podman_args(ex)
+              if not path:
+                  return "{ argv[]=podman ; }" if "podman" in ex else ""
+              while args and args[0].startswith("-") and "=" in args[0]:       # a global option with its value inline
+                  args = args[1:]
+              if args[:1] == ["container"]:
+                  args = args[1:]
+              sub = args[0] if args and args[0] in VERBS else ""
+              kept = [sub] if sub else []
+              if sub in ("run", "create"):
+                  n = run_name(args)
+                  if n and (exact or trusted(n, unit_id)):
+                      kept += ["--name", n]
+              elif sub == "start":
+                  if "--all" in args or "-a" in args:
+                      kept += ["--all"]
+                  else:
+                      rest = [a for a in args[1:] if not a.startswith("-") and NAME.match(a) and (exact or trusted(a, unit_id))]
+                      kept += rest[-1:]
+              elif sub in SECOND and len(args) > 1 and args[1] in SECOND[sub]:
+                  kept += [args[1]]
+              return "{ path=%s ; argv[]=%s %s ; }" % (path, path, " ".join(kept))
+
+
+          if mode == "ps":
+              rows = json.loads(data) if data.strip() else []
+              out = []
+              for p in rows if isinstance(rows, list) else []:
+                  if not isinstance(p, dict):
+                      continue
+                  q = keep(p, ("Id", "ID", "Names", "Image", "State", "ExitCode", "ExitedAt", "Status", "IsInfra", "Restarts"))
+                  lab = p.get("Labels") if isinstance(p.get("Labels"), dict) else {}
+                  q["Labels"] = keep(lab, ("PODMAN_SYSTEMD_UNIT",))
+                  out.append(q)
+              json.dump(out, sys.stdout)
+          elif mode == "inspect":
+              rows = json.loads(data)
+              out = []
+              for c in rows if isinstance(rows, list) else []:
+                  if not isinstance(c, dict):
+                      continue
+                  st = c.get("State") if isinstance(c.get("State"), dict) else {}
+                  s2 = keep(st, ("Status", "ExitCode", "OOMKilled"))
+                  for h in ("Health", "Healthcheck"):                 # podman 4+: Health; podman 3: Healthcheck - the status only, never its log
+                      if isinstance(st.get(h), dict):
+                          s2[h] = {"Status": st[h].get("Status")}
+                  rp = ((c.get("HostConfig") or {}).get("RestartPolicy") or {})
+                  out.append({"Id": c.get("Id"), "ImageName": c.get("ImageName"), "RestartCount": c.get("RestartCount"), "State": s2,
+                              "HostConfig": {"RestartPolicy": {"Name": rp.get("Name")}}})
+              json.dump(out, sys.stdout)
+          elif mode == "show":
+              # systemctl show: only the properties discovery reads (never Environment ...); a line that is no property (an error text) passes
+              allowed = ("Id", "LoadState", "ActiveState", "SubState", "Result", "UnitFileState", "NRestarts", "WantedBy", "RequiredBy", "UpheldBy", "Type",
+                         "InactiveExitTimestampMonotonic", "FragmentPath", "SourcePath")
+              # per unit (blocks split by a blank line): its Id first, then its ExecStart cut down with it; a line that is no allowed
+              # property (a continuation line of a multi-line argument, an error text) is dropped - the return code says a failure
+              for block in re.split(r"\n\s*\n", data):
+                  lines = block.splitlines()
+                  uid = next((l[3:] for l in lines if l.startswith("Id=")), "")
+                  frag = next((l[len("FragmentPath="):] for l in lines if l.startswith("FragmentPath=")), "")
+                  CUR["argv"] = file_argv(frag) if frag else None
+                  for line in lines:
+                      key = line.split("=", 1)[0] if "=" in line else ""
+                      if line.startswith("ExecStart="):
+                          sys.stdout.write("ExecStart=" + redact(line[len("ExecStart="):], uid) + "\n")
+                      elif key in allowed:
+                          sys.stdout.write(line + "\n")
+                  sys.stdout.write("\n")
+          else:
+              sys.exit(2)
+          PY
+          )
           out=$(as_owner podman ps -a --format json 2>/dev/null); rc=$?
+          if [ $rc -eq 0 ]; then out=$(printf '%s' "$out" | "$PY" -c "$prog" ps 2>/dev/null); rc=$?; fi
           sec ps $rc
           if [ $rc -ne 0 ]; then
             as_owner podman ps -a --format json 2>&1 >/dev/null | tail -n 5
             exit 0
           fi
           printf '%s\n' "$out"
+          unset out
           lst=$(as_owner podman ps -a --no-trunc --format '{% raw %}{{.ID}}|{{.Names}}|{{index .Labels "PODMAN_SYSTEMD_UNIT"}}{% endraw %}' 2>/dev/null)
           sec list $?
           printf '%s\n' "$lst"
           ids=$(printf '%s\n' "$lst" | cut -d'|' -f1 | grep -v '^$')
           if [ -n "$ids" ]; then
-            out=$(as_owner podman container inspect $ids 2>/dev/null); rc=$?
+            raw=$(as_owner podman container inspect $ids 2>/dev/null); rc=$?
+            proj=$(printf '%s' "$raw" | "$PY" -c "$prog" inspect 2>/dev/null)      # the survivors of a partial failure too; the raw buffer is never printed
+            unset raw
             sec inspect $rc
-            printf '%s\n' "$out"
+            printf '%s\n' "$proj"
+            unset proj
           fi
           units=""
           while IFS='|' read -r id name label; do
@@ -231,9 +412,11 @@
             sec unitfile "$f"
             units="$units $(basename "$f")"
           done
-          units=$(printf '%s\n' $units | sort -u | tr '\n' ' ')
+          # a unit name is a systemd name (a label of a container, a file name of a user's Quadlet: nothing that says what to run or an option)
+          units=$(printf '%s\n' $units | grep -E '^[A-Za-z0-9_.@:][A-Za-z0-9:_.@-]*$' | sort -u | tr '\n' ' ')
           if [ -n "${units// /}" ]; then
-            out=$(sysctl show -p Id,LoadState,ActiveState,SubState,Result,UnitFileState,NRestarts,ExecStart,WantedBy,RequiredBy,UpheldBy,Type,InactiveExitTimestampMonotonic $units 2>&1); rc=$?
+            out=$(sysctl show -p Id,LoadState,ActiveState,SubState,Result,UnitFileState,NRestarts,ExecStart,WantedBy,RequiredBy,UpheldBy,Type,InactiveExitTimestampMonotonic,FragmentPath -- $units 2>&1); rc=$?
+            out=$(printf '%s\n' "$out" | PD_NAMES="$(printf '%s\n' "$lst" | cut -d'|' -f2 | tr ',' ' ')" "$PY" -c "$prog" show 2>/dev/null) || { rc=1; out="systemctl show: its output could not be cut down"; }
             sec show $rc
             printf '%s\n' "$out"
           fi
@@ -244,10 +427,15 @@
       loop_control:
         loop_var: _pd_owner
         label: "{{ _pd_owner.name }}"
+      vars:
+        _pd_python: >-
+          {{ ansible_python_interpreter if ((ansible_python_interpreter | default('') | string | length) > 0 and not (ansible_python_interpreter | string).startswith('auto'))
+             else (ansible_facts.discovered_interpreter_python | default('')) }}
       register: _pd_query
       changed_when: false
       failed_when: false
       check_mode: false
+      no_log: true          # the listing and what a container prints are not for the job events (the inspect is cut down on the host as well)
 
     # a user whose podman said "user namespaces are not enabled" is taken as userns off (no warning),
     # but for a user named in podman_discover_users

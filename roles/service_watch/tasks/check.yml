@@ -125,19 +125,33 @@
   failed_when: false
   check_mode: false
 
+# The state of each watched container: its status, exit code, OOM flag, finish time and healthcheck status, cut down on the host (--format): the
+# whole inspect holds the container's environment and its healthcheck output, which must not reach the controller, a retry's job event or ACT.
+# Output: one JSON line, [{"State": {...}}], the shape the result below reads. A container that does not exist: the exit code of podman.
 - name: Check | container state
-  ansible.builtin.command:
-    argv: >-
-      {{ ([] if item.item.owner == 'root'
-          else ['runuser', '-u', item.item.owner, '--', 'env', 'XDG_RUNTIME_DIR=/run/user/' ~ (_kv.uid | default(item.item.uid))])
-         + ['podman', 'container', 'inspect', _cname] }}
-    chdir: /
+  ansible.builtin.shell:
+    cmd: |
+      cd /
+      pre=({{ _pre }})
+      n={{ _cname | quote }}
+      line=$("${pre[@]}" podman container inspect "$n" --format '{% raw %}{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.State.FinishedAt}}{% endraw %}' 2>/dev/null) || exit $?
+      h=$("${pre[@]}" podman container inspect "$n" --format '{% raw %}{{.State.Health.Status}}{% endraw %}' 2>/dev/null \
+          || "${pre[@]}" podman container inspect "$n" --format '{% raw %}{{.State.Healthcheck.Status}}{% endraw %}' 2>/dev/null || true)
+      IFS='|' read -r s e o f <<< "$line"
+      s=$(printf '%s' "$s" | tr -cd 'a-zA-Z'); e=$(printf '%s' "$e" | tr -cd '0-9-'); o=$(printf '%s' "$o" | tr -cd 'a-z')
+      f=$(printf '%s' "$f" | tr -cd '0-9A-Za-z:.+-'); h=$(printf '%s' "$h" | tr -cd 'a-zA-Z')
+      [ "$o" = true ] || o=false
+      printf '[{"State": {"Status": "%s", "ExitCode": %s, "OOMKilled": %s, "FinishedAt": "%s", "Health": {"Status": "%s"}}}]\n' "$s" "${e:-0}" "$o" "$f" "$h"
+    executable: /bin/bash
   loop: "{{ _watch_units_found.results }}"
   loop_control:
     label: "{{ item.item.key }}"
   vars:
     _kv: "{{ dict(item.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1) | list) }}"
     _cname: "{{ _kv.container | default(item.item.container) }}"
+    _pre: >-
+      {{ '' if item.item.owner == 'root'
+         else ('runuser -u ' ~ (item.item.owner | quote) ~ ' -- env XDG_RUNTIME_DIR=/run/user/' ~ ((_kv.uid | default(item.item.uid)) | int)) }}
   when: (_kv.error | default('')) | length == 0 and not (item.item.whole_user | default(false))
   register: _watch_inspect
   changed_when: false
@@ -145,9 +159,7 @@
   until: >-
     _watch_inspect.rc == 0
     and ((_watch_inspect.stdout | from_json)[0].State.Status | default('')) == 'running'
-    and (((_watch_inspect.stdout | from_json)[0].State.Health
-          | default((_watch_inspect.stdout | from_json)[0].State.Healthcheck | default({}))).Status
-         | default('')) != 'unhealthy'
+    and ((_watch_inspect.stdout | from_json)[0].State.Health.Status | default('')) != 'unhealthy'
   retries: "{{ _watch_retries | default(0) | int }}"
   delay: "{{ watch_verify_delay | int }}"
   check_mode: false
@@ -252,19 +264,25 @@
       {%-     endif -%}
       {%-   endif -%}
       {%-   if down -%}
+      {#- a fix is run by bash -c as root: a unit or container name that is no name (a Quadlet's ServiceName / ContainerName is the user's) is never in a command -#}
+      {%-     set unit_ok = (m.unit | default('')) | regex_search('^[A-Za-z0-9:_.@-]+[.](service|socket|timer|target|path|mount|slice|scope)$') -%}
+      {%-     set cont_ok = (m.container | default('')) | regex_search('^[A-Za-z0-9][A-Za-z0-9_.-]*$') -%}
       {%-     if m.error and m.no_runtime -%}
-      {%-       set fx = ['loginctl enable-linger ' ~ m.owner] -%}
+      {%-       set fx = ['loginctl enable-linger ' ~ (m.owner | quote)] -%}
       {%-     elif m.error -%}
       {%-       set fx = [] -%}
       {%-       set _ = nofix.append(n) -%}
+      {%-     elif m.unit and not unit_ok -%}
+      {%-       set fx = [] -%}
+      {%-       set _ = nofix.append(n) -%}
       {%-     elif m.unit and m.unit_unloaded -%}
-      {%-       set fx = [sc ~ 'daemon-reload', sc ~ 'start ' ~ m.unit] -%}
+      {%-       set fx = [sc ~ 'daemon-reload', sc ~ 'start ' ~ (m.unit | quote)] -%}
       {%-     elif m.unit and m.result == 'start-limit-hit' -%}
-      {%-       set fx = [sc ~ 'reset-failed ' ~ m.unit, sc ~ 'start ' ~ m.unit] -%}
+      {%-       set fx = [sc ~ 'reset-failed ' ~ (m.unit | quote), sc ~ 'start ' ~ (m.unit | quote)] -%}
       {%-     elif m.unit -%}
-      {%-       set fx = [sc ~ ('restart ' if (unhealthy or m.active in ['active', 'activating', 'reloading']) else 'start ') ~ m.unit] -%}
-      {%-     elif r.rc | default(1) == 0 -%}
-      {%-       set fx = [m.run_as ~ ('podman restart ' if unhealthy else 'podman start ') ~ m.container] -%}
+      {%-       set fx = [sc ~ ('restart ' if (unhealthy or m.active in ['active', 'activating', 'reloading']) else 'start ') ~ (m.unit | quote)] -%}
+      {%-     elif r.rc | default(1) == 0 and cont_ok -%}
+      {%-       set fx = [m.run_as ~ ('podman restart ' if unhealthy else 'podman start ') ~ (m.container | quote)] -%}
       {%-     else -%}
       {%-       set fx = [] -%}
       {%-       set _ = nofix.append(n) -%}

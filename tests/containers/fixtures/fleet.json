@@ -133,7 +133,7 @@
      "Result": "exit-code",
      "UnitFileState": "disabled",
      "WantedBy": "multi-user.target",
-     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman run --cidfile=/run/myweb.service.ctr-id --rm --sdnotify=conmon -d --name web2 registry.example.com/web2:1 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman run -e DB_PASSWORD=exec-secret-web2 --cidfile=/run/myweb.service.ctr-id --rm --sdnotify=conmon -d --name web2 registry.example.com/web2:1 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
      "creates": "web2"
     }
    }
