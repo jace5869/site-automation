@@ -126,10 +126,14 @@ $external = @('/usr/bin/stat', '/usr/bin/find', '/usr/sbin/sysctl', '/usr/bin/sy
 # types a value may be cast to or tested against; none of them is called (static calls: the list below only)
 $types = @('regex', 'version', 'int', 'int32', 'int64', 'long', 'string', 'bool', 'boolean', 'char',
            'system.management.automation.errorrecord')
-$static = @{ regex = @('Match', 'Matches', 'IsMatch'); version = @('Parse') }
+# 1.79.10: [string]::IsNullOrWhiteSpace and IsNullOrEmpty only test their argument (pure, nothing called on it)
+$static = @{ regex = @('Match', 'Matches', 'IsMatch'); version = @('Parse'); string = @('IsNullOrWhiteSpace', 'IsNullOrEmpty') }
 # a string's own reading methods - only on a value that is a string for certain (a literal, a [string] cast, -join)
 $strMethods = @('Trim', 'TrimStart', 'TrimEnd', 'StartsWith', 'EndsWith', 'Contains', 'ToLower', 'ToUpper', 'ToLowerInvariant',
                 'ToUpperInvariant', 'Substring', 'IndexOf', 'LastIndexOf', 'PadLeft', 'PadRight', 'Equals', 'Split', 'Replace')
+# 1.79.10: the string methods whose answer is a string again ($x.Trim().ToLower() is a string when $x is)
+$strOut = @('Trim', 'TrimStart', 'TrimEnd', 'ToLower', 'ToUpper', 'ToLowerInvariant', 'ToUpperInvariant', 'Substring', 'PadLeft',
+            'PadRight', 'Replace')
 $badVars = @('ExecutionContext', 'Host', 'PSCmdlet', 'PSDefaultParameterValues', 'MyInvocation')
 $unaryOk = @('Not', 'Exclaim', 'Minus', 'Plus', 'Join', 'Isplit', 'Csplit', 'Bnot', 'Comma')
 $stepOps = @('PlusPlus', 'MinusMinus', 'PostfixPlusPlus', 'PostfixMinusMinus')
@@ -245,17 +249,31 @@ function Inner($e) {
         return $e
     }
 }
-# a string for certain: a literal, "...", [string]x, x -join y, -join x, x -f y; or an element of x -split y
+# a string for certain: a literal, "...", [string]x, x -join y, -join x, x -f y; or an element of x -split y.
+# 1.79.10: also an element of $Matches ($Matches[1], $Matches['name']) after a -match, in a code that never sets $Matches
+# itself (-match fills it with strings only); a string method that answers a string, called on a string ($s.Trim().ToLower());
+# an element of a string's Split(); -replace on a string
 function IsStr($e) {
     $e = Inner $e
     if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst] -or $e -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) { return $true }
-    if ($e -is [System.Management.Automation.Language.ConvertExpressionAst] -and (TypeKey $e.Type.TypeName.FullName) -eq 'string') { return $true }
+    # [string] only: TypeKey reads [string[]] as string too, and a list of strings is not a string (Codex, 1.79.10)
+    if ($e -is [System.Management.Automation.Language.ConvertExpressionAst] -and -not $e.Type.TypeName.FullName.Contains('[') -and
+        (TypeKey $e.Type.TypeName.FullName) -eq 'string') { return $true }
     if ($e -is [System.Management.Automation.Language.BinaryExpressionAst] -and @('Join', 'Format') -contains [string]$e.Operator) { return $true }
+    # 1.79.10: -replace on a string gives a string (on a list it gives a list: not taken)
+    if ($e -is [System.Management.Automation.Language.BinaryExpressionAst] -and @('Ireplace', 'Creplace') -contains [string]$e.Operator -and (IsStr $e.Left)) { return $true }
     if ($e -is [System.Management.Automation.Language.UnaryExpressionAst] -and [string]$e.TokenKind -eq 'Join') { return $true }
-    if ($e -is [System.Management.Automation.Language.IndexExpressionAst]) {
+    # an index is one constant: [0,1], [0..1] or [$i] can pick several elements, a list (Codex, 1.79.10)
+    if ($e -is [System.Management.Automation.Language.IndexExpressionAst] -and $e.Index -is [System.Management.Automation.Language.ConstantExpressionAst]) {
         $t = Inner $e.Target
         if ($t -is [System.Management.Automation.Language.BinaryExpressionAst] -and @('Split', 'Csplit', 'Isplit') -contains [string]$t.Operator) { return $true }
+        if ($t -is [System.Management.Automation.Language.VariableExpressionAst] -and -not $t.Splatted -and $t.VariablePath.UserPath -eq 'Matches' -and
+            $matchesOk -and $e.Extent.StartOffset -ge $matchFirst) { return $true }
+        if ($t -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and -not $t.Static -and
+            $t.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $t.Member.Value -ceq 'Split' -and (IsStr $t.Expression)) { return $true }
     }
+    if ($e -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and -not $e.Static -and
+        $e.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $strOut -ccontains $e.Member.Value -and (IsStr $e.Expression)) { return $true }
     return $false
 }
 # the cmdlet a script block is given to (ForEach-Object / Where-Object), or ''
@@ -273,6 +291,29 @@ if ($code.Contains([string][char]96)) { No 'it has a backtick (an escape that ca
 $tokens = $null; $errs = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$tokens, [ref]$errs)
 if ($errs.Count) { No ('it does not parse: ' + $errs[0].Message) }
+# 1.79.10: $Matches holds strings only when -match filled it: the code has a -match (or -notmatch) before it reads
+# $Matches[...], and every $Matches in the code is read as $Matches[constant] - nothing else: no scope or drive
+# ($local:Matches, $variable:Matches), no member ($Matches.Add), no whole $Matches, never on the left of an assignment
+# ($Matches[0] = 42), never a foreach variable, ++ or -- (Codex, 1.79.10)
+$matchFirst = [int]::MaxValue; $matchesOk = $true; $lefts = @()
+foreach ($n in $ast.FindAll({ $true }, $true)) {
+    if ($n -is [System.Management.Automation.Language.BinaryExpressionAst] -and @('Imatch', 'Cmatch', 'Inotmatch', 'Cnotmatch') -contains [string]$n.Operator) {
+        if ($n.Extent.EndOffset -lt $matchFirst) { $matchFirst = $n.Extent.EndOffset }
+    }
+    elseif ($n -is [System.Management.Automation.Language.AssignmentStatementAst]) { $lefts += $n.Left }
+    elseif ($n -is [System.Management.Automation.Language.ForEachStatementAst]) { $lefts += $n.Variable }
+    elseif ($n -is [System.Management.Automation.Language.UnaryExpressionAst] -and $stepOps -contains [string]$n.TokenKind) { $lefts += $n.Child }
+}
+foreach ($n in $ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+    $vp = $n.VariablePath
+    if ($vp.UserPath -notmatch '(^|:)Matches$') { continue }
+    $ix = $n.Parent
+    if (-not $vp.IsUnqualified -or $vp.UserPath -ne 'Matches' -or $n.Splatted -or $ix -isnot [System.Management.Automation.Language.IndexExpressionAst] -or
+        -not [object]::ReferenceEquals($ix.Target, $n) -or $ix.Index -isnot [System.Management.Automation.Language.ConstantExpressionAst]) { $matchesOk = $false; break }
+    foreach ($l in $lefts) {
+        if ($n.Extent.StartOffset -ge $l.Extent.StartOffset -and $n.Extent.EndOffset -le $l.Extent.EndOffset) { $matchesOk = $false }
+    }
+}
 foreach ($n in $ast.FindAll({ $true }, $true)) {
     $k = $n.GetType().Name
     if ($nodes -notcontains $k) { No ('it uses ' + $k.Replace('Ast', '') + ' (' + $n.Extent.Text.Split("`n")[0].Trim() + ') - not on the allowed list'); continue }

@@ -180,6 +180,10 @@ VALUES = {   # every site value a pattern can ask for (docs/STIG_ANSWER_KEYS.md,
 }
 
 
+# 1.79.10: a site value no pattern asks for, used when given: more names the GRUB superuser may not have (_grub_superusers)
+OPTIONAL_VALUES = ("grub_superusers_not_allowed",)
+
+
 def stig_answer_values(values):
     """answer_keys_values -> a dict: from the template's Variables (a mapping) or a survey (a text: YAML or JSON, or
     lines of name: value). A list value may be a text of names, comma or space between them."""
@@ -195,7 +199,7 @@ def stig_answer_values(values):
         values = v
     out = {}
     for k, v in (values or {}).items() if isinstance(values, dict) else []:
-        if k == "world_writable_owners" and isinstance(v, str):
+        if k in ("world_writable_owners",) + OPTIONAL_VALUES and isinstance(v, str):
             v = [x for x in re.split(r"[\s,;]+", v.strip("[] ")) if x]
         if k == "min_release" and isinstance(v, str) and re.search(r"[\s,;]", v.strip("[] ")):
             v = [x.strip("'\"") for x in re.split(r"[\s,;]+", v.strip("[] ")) if x]
@@ -221,6 +225,9 @@ def stig_answer_draft(text, values=None):
     low = text.lower()
     if not cmds or re.search(r"\bask the (system administrator|sa|isso|issm)\b|\bhave the (sa|isso)\b", low):
         return None                      # a person's answer decides it (ACT may draft it, or by hand)
+    g = _grub_superusers(cmds, text, values) or _mount_option(cmds, text) or _sshd_setting(cmds, text)
+    if g:
+        return g
     if len(cmds) == 1:
         return _one(cmds[0], text, low, values)
     return _services(cmds, text)
@@ -435,6 +442,201 @@ def _services(cmds, text):
                  ("%s is %s (systemctl)" % (unit, say), "%s is not %s (systemctl)" % (unit, say)), " ; ".join(cmds))
 
 
+# 1.79.10: the boot loader's superuser (RHEL 8 V-244521 UEFI, RHEL 9 V-257789, RHEL 10 V-281167): the
+# GRUB files DISA greps, and the names DISA calls common (its texts list them, "such as"): all of them refused in every rule
+GRUB_FILES = ("/boot/grub2/grub.cfg", "/boot/efi/EFI/redhat/grub.cfg", "/etc/grub2.cfg", "/etc/grub2-efi.cfg")
+GRUB_COMMON = ("root", "admin", "administrator", "superuser", "unlock")
+
+
+def _grub_superusers(cmds, text, values):
+    """DISA's grep of "superusers" in GRUB's configuration: a set superusers line there, every name it gives not a common
+    one (GRUB_COMMON and the site's answer_keys_values.grub_superusers_not_allowed, case ignored). Each file DISA names
+    that is there is read; none there, no line, an empty name, a line not read, a name from a variable ($x), or an
+    unset superusers: false. None for any other check text, and for the RHEL 8 BIOS text: "not identical to any OS
+    account" needs the accounts the directory service knows (getent of a name read on the host: not a literal, which
+    the read-only check needs) - Codex, 1.79.10."""
+    paths = []
+    for c in cmds:
+        m = re.match(r"""^grep\s+(?:-(?:i|w|iw|wi|A\s*1)\s+)*["']?superusers["']?\s+(/\S+)$""", c)
+        if not m:
+            return None
+        p = re.sub(r"^/boot/boot/", "/boot/", m.group(1))          # RHEL 8 V-244521's text: /boot/boot/efi/... for /boot/efi/...
+        if p not in GRUB_FILES:
+            return None
+        if p not in paths:
+            paths.append(p)
+    low = text.lower()
+    if not paths or not re.search(r"common name|standard os administrative account|identical to any os account|easily guessable", low):
+        return None
+    if "identical to any os account" in low:
+        return None
+    site = values.get("grub_superusers_not_allowed") or []
+    site = [str(x).strip() for x in (site if isinstance(site, list) else [site]) if str(x).strip()]
+    no = list(GRUB_COMMON) + [x for x in site if x.lower() not in GRUB_COMMON]
+    rx = "^\\s*set\\s+superusers=(?:\"([^\"]*)\"|'([^']*)'|(\\S*))\\s*$"
+    lines = ["# DISA: %s - the superuser's name set, and not a common name%s?" % (
+                 " ; ".join(cmds), ""),
+             "$no = @(%s)" % ", ".join(_q(x) for x in no),
+             "$sets = @()"]
+    for p in paths:
+        lines.append("if (Test-Path -LiteralPath %s -PathType Leaf) { $sets += @(Get-Content -LiteralPath %s -ErrorAction Stop | "
+                     "Where-Object { $_ -match '^\\s*((set\\s+)?superusers=|unset\\s+superusers\\b)' }) }" % (_q(p), _q(p)))
+    lines += ["$names = @(); $unread = 0",
+              "foreach ($x in $sets) {",
+              "    $m = [regex]::Match([string]$x, %s)" % _q(rx),
+              "    $n = @()",
+              "    if ($m.Success) { $n = @(($m.Groups[1].Value + $m.Groups[2].Value + $m.Groups[3].Value) -split '[\\s,;|&]+' | Where-Object { $_ }) }",
+              "    if ($n.Count -eq 0 -or ([string]$x).Contains('$')) { $unread++ }",
+              "    $names += $n",
+              "}",
+              "$bad = @($names | Where-Object { $no -contains $_ })",
+              "Write-Verbose ('read: ' + $(if ($sets.Count -eq 0) { 'no set superusers line in %s' } else { (@($sets | ForEach-Object { ([string]$_).Trim() }) -join ' | ') + $(if ($bad.Count) { ' - not allowed: ' + ($bad -join ', ') } else { '' }) }))" % " or ".join(paths),
+              "return ($sets.Count -ge 1 -and $unread -eq 0 -and $names.Count -ge 1 -and $bad.Count -eq 0)"]
+    reads = [["Test-Path", CMD_WHAT["Test-Path"]], ["Get-Content", CMD_WHAT["Get-Content"]], ["Where-Object", CMD_WHAT["Where-Object"]],
+             ["[regex]", "compare text in memory"]]
+    other = "a common name (%s)" % ", ".join(no)
+    return _done("\n".join(lines), reads,
+                 ("the boot loader's superuser is set and is not %s" % other,
+                  "the boot loader's superuser is not set, could not be read, or is %s" % other),
+                 " ; ".join(cmds), {"grub_superusers_not_allowed": ", ".join(site)} if site else None)
+
+
+def _mount_option(cmds, text):
+    """1.79.10: DISA's mount | grep MOUNTPOINT - a separate file system there, or mounted with an option (nodev, nosuid,
+    noexec). The code reads the mount table (/proc/self/mounts) and compares the mount point exactly (DISA's grep /var
+    also finds /var/log): no mount there, or one without the option, is false. A file system of its own: its source is
+    not the root file system's (a bind mount of a directory of / is not one - Codex, 1.79.10). An option word anywhere in
+    the text, quoted or not, makes it an option check (one option only)."""
+    if len(cmds) != 1:
+        return None
+    m = re.match(r"""^mount\s*\|\s*grep\s+['"]?(?:\\s)?(/[\w/.-]*?)(?:\\s)?['"]?$""", cmds[0])
+    if not m:
+        return None
+    mp, low = m.group(1).rstrip("/") or "/", text.lower()
+    if "any output" in low:
+        return None
+    said = "\n".join(l for l in low.splitlines() if not re.search(r"\son\s+/\S*\s+type\s", l))
+    opt = sorted(set(re.findall(r"\b(nodev|nosuid|noexec)\b", said)))
+    if len(opt) > 1:
+        return None
+    if not opt and not re.search(r"separate (entry|file system)|no line is returned", low):
+        return None
+    lines = ["# DISA: %s - %s?" % (cmds[0], ("%s mounted with %s" % (mp, opt[0])) if opt else "a separate file system at %s" % mp),
+             "$m = @(Get-Content -LiteralPath '/proc/self/mounts' -ErrorAction Stop | Where-Object { ([string]$_ -split ' ')[1] -ceq %s })" % _q(mp),
+             "Write-Verbose ('read: ' + $(if ($m.Count) { $m -join ' | ' } else { 'nothing mounted at %s' }))" % mp.replace("'", "''")]
+    if opt:
+        lines += ["$bad = @($m | Where-Object { (([string]$_ -split ' ')[3] -split ',') -cnotcontains %s })" % _q(opt[0]),
+                  "return ($m.Count -ge 1 -and $bad.Count -eq 0)"]
+        say = ("%s is a mount of its own, with %s" % (mp, opt[0]), "%s is not mounted on its own, or is mounted without %s" % (mp, opt[0]))
+    else:
+        lines += ["$root = @(Get-Content -LiteralPath '/proc/self/mounts' -ErrorAction Stop | Where-Object { ([string]$_ -split ' ')[1] -ceq '/' } | ForEach-Object { ([string]$_ -split ' ')[0] })",
+                  "$same = @($m | Where-Object { $root -ccontains ([string]$_ -split ' ')[0] })",
+                  "return ($m.Count -ge 1 -and $root.Count -ge 1 -and $same.Count -eq 0)"]
+        say = ("%s is a file system of its own" % mp,
+               "nothing is mounted at %s, or what is there comes from the root file system (it is part of another file system)" % mp)
+    reads = [["Get-Content", CMD_WHAT["Get-Content"]], ["Where-Object", CMD_WHAT["Where-Object"]]]
+    if not opt:
+        reads.append(["ForEach-Object", CMD_WHAT["ForEach-Object"]])
+    return _done("\n".join(lines), reads, say, cmds[0])
+
+
+# 1.79.10: the sshd settings a pattern reads (none of them is set by the crypto policy file sshd may include)
+SSHD_KEYS = ("loglevel", "usepam", "gssapiauthentication", "kerberosauthentication", "ignorerhosts", "ignoreuserknownhosts",
+             "x11forwarding", "strictmodes", "printlastlog", "x11uselocalhost", "pubkeyauthentication", "permitemptypasswords",
+             "permitrootlogin", "hostbasedauthentication", "permituserenvironment", "rekeylimit", "clientalivecountmax",
+             "clientaliveinterval", "compression", "maxauthtries", "allowtcpforwarding", "permittunnel", "maxsessions")
+
+
+def _sshd_setting(cmds, text):
+    """1.79.10: DISA's sshd -dd ... | xargs grep -iH '^ *KEYWORD' (the files sshd reads) - the value sshd uses: its first
+    one, as sshd reads its files (sshd_config, the drop-ins where it includes /etc/ssh/sshd_config.d/*.conf, in name
+    order). Keywords and values may be quoted. A value inside a Match block must be the wanted one too. Drop-in names it
+    cannot order for certain (not NN-name.conf in lower case, two with one number): every value must then be the one
+    wanted. The crypto policy file a drop-in includes must not set it. Another Include, no value, or a value not wanted:
+    false. RHEL 10's "in a drop-in that lexicographically precedes 50-redhat.conf": the value sshd uses comes from such a
+    drop-in (numbered below 50)."""
+    m = re.match(r"""^(?:/usr/sbin/)?sshd -dd 2>&1 \|.*\| xargs (?:sudo )?grep -iH '\^\\s\*([a-z0-9]+)'$""", cmds[0]) if cmds else None
+    if not m or m.group(1) not in SSHD_KEYS:
+        return None
+    key = m.group(1)
+    if cmds[1:] not in ([], ["sshd -T | grep -i %s" % key]):      # RHEL 10: sshd -T of the same keyword too
+        return None
+    ex = re.search(r"(?mi)^\s*(?:/\S+?:+)?\s*(%s)[ \t]+(\S[^\n]*?)\s*$" % re.escape(key), text.split(cmds[0], 1)[-1])
+    name, want = (ex.group(1), ex.group(2)) if ex else (key, "")
+    crx = r'(?i)(?:not set to (?:a value of )?|any value other than |value of )"([^"\n]+)"'
+    if not want:
+        w = re.search(crx, text)
+        want = w.group(1) if w else ""
+    if not want or want.startswith("/") or not re.match(r"^[A-Za-z0-9 ]+$", want):
+        return None
+    # the example output must agree with the criterion: a value the text calls wanted, never one it calls a finding
+    # (Codex, 1.79.10: an example "yes" over "any value other than "no"" read "yes" as wanted)
+    finding = " ".join(s for s in re.split(r"(?<=\.)\s+|\n", text) if "finding" in s.lower())
+    crit = re.findall(crx, finding)
+    bad = re.findall(r'(?i)(?<!not )\bset to "([^"\n]+)"', finding)
+    if any(c.lower() != want.lower() for c in crit) or want.lower() in [b.lower() for b in bad]:
+        return None
+    le = re.search(r'"%s" or less' % re.escape(want), text, re.I) is not None
+    if le and not want.isdigit():
+        return None
+    # "or less": a number from 1 - 0 turns the setting off (ClientAliveInterval 0: no timeout)
+    test = ("$v -match '^[0-9]+$' -and [int]$v -ge 1 -and [int]$v -le %s" % want) if le else "($v -replace '\\s+', ' ') -eq %s" % _q(want)
+    say = ("%s %s or less" % (name, want)) if le else "%s %s" % (name, want)
+    if key == "rekeylimit" and re.search(r"maximum data amount and maximum time", text):   # RHEL 8: both given, any values
+        # neither 0: RekeyLimit 1G 0 turns the time-based renegotiation off (Codex, 1.79.10)
+        test, want, say = "$v -match '^[1-9][0-9]*[KMG]?\\s+[1-9][0-9]*[smhdwSMHDW]?$'", "a data amount and a time", "RekeyLimit with a data amount and a time"
+    before50 = re.search(r"precedes 50-redhat\.conf", text) is not None
+    if "50-redhat" in text and not before50:
+        return None
+    rx = r'^\s*"?(%s|match|include)"?(?:\s+|\s*=\s*)"?(.*?)"?\s*$' % key
+    inc_std = r"^\s*(?i:include)\s+/etc/ssh/sshd_config\.d/\*\.conf\s*$"
+    inc_cp = r"^\s*(?i:include)\s+/etc/crypto-policies/back-ends/opensshserver\.config\s*$"
+    cp = "/etc/crypto-policies/back-ends/opensshserver.config"
+    code = "\n".join([
+        "# DISA: %s - %s, as sshd reads it (its first value)?" % (cmds[0][:60] + " ...", say),
+        "$rx = %s" % _q(rx),
+        "$main = @(Select-String -LiteralPath '/etc/ssh/sshd_config' -Pattern $rx -ErrorAction Stop)",
+        "$drop = @(); $files = @()",
+        "if (Test-Path -Path '/etc/ssh/sshd_config.d/*.conf') {",
+        "    $drop = @(Select-String -Path '/etc/ssh/sshd_config.d/*.conf' -Pattern $rx -ErrorAction Stop)",
+        "    $files = @(Select-String -Path '/etc/ssh/sshd_config.d/*.conf' -Pattern $rx -List -ErrorAction Stop | ForEach-Object { [string]$_.Filename })",
+        "}",
+        "$inc = @($main | Where-Object { $_.Line -match '^\\s*\"?include' })",
+        "$std = @($inc | Where-Object { $_.Line -cmatch %s })" % _q(inc_std),
+        "$cpinc = @($drop | Where-Object { $_.Line -cmatch %s })" % _q(inc_cp),
+        "$dinc = @($drop | Where-Object { $_.Line -match '^\\s*\"?include' -and $_.Line -cnotmatch %s })" % _q(inc_cp),
+        "$cpset = @()",
+        "if ($cpinc.Count -and (Test-Path -LiteralPath %s -PathType Leaf)) { $cpset = @(Select-String -LiteralPath %s -Pattern $rx -ErrorAction Stop) }" % (_q(cp), _q(cp)),
+        "$nums = @($files | Where-Object { $_ -cmatch '^[0-9][0-9]-[a-z0-9_-]+\\.conf$' } | ForEach-Object { ($_ -split '-')[0] } | Sort-Object -Unique)",
+        "$ordered = ($nums.Count -eq $files.Count)",
+        "$seq = @()",
+        "foreach ($l in @($main | Sort-Object LineNumber)) {",
+        "    if ($l.Line -match '^\\s*\"?include') { if ($std.Count -eq 1) { $seq += @($drop | Sort-Object Filename, LineNumber) } }",
+        "    else { $seq += $l }",
+        "}",
+        "$vals = @(); $src = @(); $inMatch = $false; $later = @()",
+        "foreach ($l in $seq) {",
+        "    if ($l.Line -match '^\\s*\"?match') { $inMatch = $true; continue }",
+        "    if ($l.Line -match '^\\s*\"?include') { continue }",
+        "    if ([string]$l.Line -match $rx) {",
+        "        if ($inMatch) { $later += ([string]$Matches[2]).Trim() } else { $vals += ([string]$Matches[2]).Trim(); $src += [string]$l.Filename }",
+        "    }",
+        "}",
+        "Write-Verbose ('read: ' + $(if ($vals.Count) { %s + ' ' + ($vals -join ' | ') } else { '%s not set' }) + $(if ($later.Count) { ' - in a Match block: ' + ($later -join ' | ') } else { '' }) + $(if ($inc.Count -ne $std.Count -or $dinc.Count) { ' - an Include not read' } else { '' }) + $(if ($cpset.Count) { ' - set in the crypto policy file' } else { '' }))" % (_q(name), name),
+        "if ($inc.Count -ne $std.Count -or $std.Count -gt 1 -or $dinc.Count -or $cpset.Count -or $vals.Count -eq 0) { return $false }"]
+        + (["# the value sshd uses must come from a drop-in before 50-redhat.conf (NN below 50)",
+            "if (-not $ordered -or $src[0] -cnotmatch '^[0-4][0-9]-') { return $false }"] if before50 else []) + [
+        "$use = $(if ($ordered) { @($vals[0]) } else { $vals })",
+        "$bad = @(@($use) + @($later) | Where-Object { $v = [string]$_; -not (%s) })" % test,
+        "return ($bad.Count -eq 0)"])
+    return _done(code, [["Select-String", CMD_WHAT["Select-String"]], ["Test-Path", CMD_WHAT["Test-Path"]],
+                        ["Where-Object", CMD_WHAT["Where-Object"]], ["Sort-Object", CMD_WHAT["Sort-Object"]],
+                        ["ForEach-Object", CMD_WHAT["ForEach-Object"]]],
+                 ("sshd's %s is %s (sshd_config and its drop-ins)" % (name, want + (" or less" if le else "")),
+                  "sshd's %s is not %s, is not set, or an Include could not be read" % (name, want + (" or less" if le else ""))),
+                 "sshd -dd | ... | grep -iH '^\\s*%s'" % key)
+
+
 _FIND_STOP = ("-exec", "-execdir", "-ok", "-okdir", "-print", "-print0", "-printf", "-ls", "-fls", "-fprint", "-fprint0", "-fprintf")
 
 
@@ -501,6 +703,8 @@ def stig_answer_act_task(rule, values=None):
         "Say what it read with Write-Verbose. It must only read: no change to the host, no network, no sudo, no Invoke-Expression, no aliases, no backticks,",
         "no command from a variable, no functions, no hashtables, no script block except the one given to ForEach-Object or Where-Object,",
         "no exit or throw, no assignment or ++ but to a plain variable ($x). Allowed commands: %s." % allowed,
+        "A string method (Trim, ToLower, Split ...) only on a value that is a string for certain: a literal, \"$x\", [string]$x,",
+        "$Matches[1] or $Matches['name'] after -match (never assign $Matches), or another string method's answer.",
         "Program arguments: fixed quoted words, each separated by a space, nothing else: rpm -q PACKAGE (or -q --qf '%{VERSION}' PACKAGE);",
         "sysctl -n KEY; stat -c 'FORMAT' PATH; systemctl is-enabled|is-active UNIT or show -p PROPERTY UNIT; auditctl -l; getenforce; sestatus;",
         "grep with -i -r -h -E -q -s -n -l -c -v -w -x each alone, then 'PATTERN' (or -e 'PATTERN'), then /paths; find /path then only -xdev -type",

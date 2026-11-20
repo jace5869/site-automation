@@ -105,6 +105,63 @@ it is for, so a job nobody remembers can be understood before anyone turns it of
   characters a line; the workflows), `test_site_portal.py` (`Described17911`). Docs: `SETUP_AAP.md` ("Describe the
   templates"), `VARIABLES_REFERENCE`, `aap/extra_vars`.
 
+## 1.79.10 — 2026-11-20
+
+**To set up: nothing.** Optional: `answer_keys_values.grub_superusers_not_allowed` (more names the boot loader's
+superuser may not have).
+
+**STIG answer keys: a sweep of RHEL 8 V2R9, 9 V2R10 and 10 V1R3 with the real code.** Every rule's check text went
+through the cross-check's evidence reader and the fixed patterns.
+
+| Benchmark | Rules | Evidence read (before → after) | Fixed pattern | With a command not run |
+|---|---|---|---|---|
+| RHEL 10 V1R3 | 435 | 294 → 405 | 175 → 222 | 164 → 45 |
+| RHEL 9 V2R10 | 445 | 292 → 414 | 181 → 225 | 170 → 43 |
+| RHEL 8 V2R9 | 371 | 261 → 348 | 55 → 71 | 136 → 35 |
+
+**DISA's commands read another way.** A command that is not on the read-only list is read, where it can be, with a
+program that is. The evidence shows the command as it ran.
+- `cat`, `more`, `less` and `tail` read the file. So do plain `awk -F X 'PROGRAM' FILE` and `cut -d X -f N FILE` of
+  `/etc/passwd` or `/etc/group`, with nothing after them. Never of `/etc/shadow`: the whole lines would show.
+- `sshd -T` and the `sshd -dd ... | xargs grep` chain read sshd's files.
+- `mount | grep` and `findmnt` read `/proc/self/mounts`.
+- `systemctl status` becomes `is-enabled` and `is-active`.
+- `ls -l` and `find -exec stat` / `ls` become `find -printf`. `ls` without `-l` gives the names only.
+- `gsettings` reads the dconf files.
+- `dnf list installed` becomes `rpm -qa`.
+- `grubby`, `firewall-cmd`, `update-crypto-policies --show`, `postconf` and `egrep` are read too.
+
+None writes, starts a service or reaches the network. A `grep -o` reads the whole line, so the redactor sees a secret
+beside its name (never with a command after it). A quoted or escaped `*` is never expanded. Still not run: `rpm --verify` (package scripts), `dnf repolist`,
+`logger`, `pwck`, `usbguard`, `nmcli`, `ip`, `ss` and substitutions.
+
+**New fixed patterns.**
+- **sshd settings** (PermitRootLogin, ClientAliveInterval, X11Forwarding and the others DISA reads this way, not Banner):
+  the value sshd uses. It reads `sshd_config` and its included drop-ins in name order and takes the first value. A
+  value in a `Match` block must be the wanted one too. RHEL 10's "in a drop-in before 50-redhat.conf" is checked.
+- **Mount options and separate mounts** (/home, /tmp, /var, /var/log, /var/log/audit, /var/tmp, /boot, /dev/shm): the
+  mount point exactly, with the option. A separate file system must not come from the root file system.
+- **The boot loader's superuser** (RHEL 8 V-244521, RHEL 9 V-257789, RHEL 10 V-281167): DISA's GRUB files.
+  The name must not be root, admin, administrator, superuser or unlock. `grub_superusers_not_allowed` adds names.
+  RHEL 8 V-244522 (no OS account either) stays ACT's: the directory service's accounts count too.
+
+**The read-only check takes ACT's `$Matches` drafts.** A real run refused RHEL 8 V-244521's draft: `.Trim()` and
+`.ToLower()` on `$Matches[1]`, and `[string]::IsNullOrWhiteSpace`. A string for certain now also includes:
+- `$Matches[1]` or `$Matches['name']` after a `-match`, when every `$Matches` in the code is read that way;
+- a string method's string answer (`.Trim().ToLower()`), an element of `.Split()`, and `-replace` on a string.
+
+`[string]::IsNullOrWhiteSpace` and `IsNullOrEmpty` are allowed. A method on a value of unknown type is still refused.
+So is an index that can pick several (`[0,1]`, `[0..1]`, `[$i]`), and `[string[]]`, a list.
+The e2e fake ACT's drafts hit one refusal, its `iex` draft, which stays refused.
+
+Codex's review found the cases above; each one is a test.
+
+Tests: `tests/test_stig_answer_keys.py` (the patterns on files of each shape; the new string shapes and the unsafe ones),
+`tests/test_stig_answer_cross.py` (each command read another way, and those still not run). docs/STIG_ANSWER_KEYS.md.
+
+**STIG Manager read: three unit tests pass again.** Since 1.79.7, `read()` needed `collections_exclude` in its
+parameters. The module always passes it, the tests did not. It is now optional there (`tests/test_stig.py`).
+
 ## 1.79.9 — 2026-11-20
 
 **To set up:** run **Site portal - deploy** again. Nothing else.

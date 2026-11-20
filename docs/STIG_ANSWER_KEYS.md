@@ -146,6 +146,9 @@ return ($LASTEXITCODE -eq 0 -and $o.Count -eq 1 -and $o[0] -eq 'root')
    | The audit rules loaded | `auditctl -l \| grep xattr` | `/usr/sbin/auditctl -l`: every rule line DISA lists is there |
    | The release, the site's minimum | `cat /etc/redhat-release` | `Get-Content`, compared with `min_release` |
    | World-writable directories, the approved owners | `find / -xdev -type d -perm -0002 -uid +999 ...` | `/usr/bin/find ... -printf`, against `world_writable_owners` |
+   | The boot loader's superuser (1.79.10) | `grep -iw "superusers" /boot/grub2/grub.cfg` | `Get-Content` of DISA's GRUB files: set, and not a common name (below) |
+   | An sshd setting (1.79.10) | `sshd -dd ... \| xargs grep -iH '^\s*permitrootlogin'` | `Select-String` of sshd's files: the value sshd uses (below) |
+   | A mount's option, or a separate mount (1.79.10) | `mount \| grep /home` | `Get-Content /proc/self/mounts`: that mount point exactly, with the option |
 
    A pattern covers **every** command of the check text and every value it shows, or there is none: a check of two
    commands gets one only where a pattern is made for both (`systemctl is-enabled` and `is-active` of one unit, both
@@ -153,7 +156,7 @@ return ($LASTEXITCODE -eq 0 -and $o.Count -eq 1 -and $o[0] -eq 'root')
    its normal answer, `auditctl -l` or `sysctl` that fail - all false. The code never says Not a Finding when it cannot
    tell; the rule then stays Open.
 
-   They fit 175 of RHEL 10 V1R3's 435 check texts, 181 of RHEL 9 V2R10's 445 and 55 of RHEL 8 V2R9's 371 (RHEL 8's
+   They fit 222 of RHEL 10 V1R3's 435 check texts, 225 of RHEL 9 V2R10's 445 and 71 of RHEL 8 V2R9's 371 (RHEL 8's
    checks often have several commands). A text that asks a person to decide (*ask the system administrator*) never
    gets a pattern.
 2. **ACT drafts it** when no pattern fits (`answer_keys_act: true`, the default).
@@ -177,6 +180,58 @@ did not give is *Not drafted*, with `answer_keys_values.<name>` and the line to 
 | `world_writable_owners` | the accounts approved to own world-writable directories | RHEL 9 V-257928, RHEL 8 V-230318 | `world_writable_owners: [root, sys, bin, appuser]` |
 
 Quote a release (`'8.10'`): unquoted, YAML reads `8.10` as the number 8.1.
+
+### The boot loader's superuser (1.79.10)
+
+RHEL 8 V-244521 (UEFI), RHEL 9 V-257789 and RHEL 10 V-281167 need no site value. Their code:
+
+- reads the GRUB files DISA's text names, each one that is there;
+- finds every `set superusers=` line that is not commented out;
+- is true only when there is such a line and every name in it is allowed.
+
+A name is not allowed when it is one of DISA's common names: `root`, `admin`, `administrator`, `superuser`, `unlock`.
+Case is ignored. These give false:
+- no file, no line, or an empty name;
+- a name taken from a variable (`"$bootadmin"`);
+- an `unset superusers`, or a `superusers=` line without `set`.
+
+RHEL 8 V-244522 (BIOS) gets no pattern. Its name must not be any OS account, and the directory service's accounts
+count too. The code could only read `/etc/passwd`, so ACT drafts it.
+
+To refuse more names, add your own list. It adds to DISA's names and never removes one:
+
+```yaml
+answer_keys_values:
+  grub_superusers_not_allowed: [grubadmin, bootadmin]
+```
+
+### sshd settings (1.79.10)
+
+The sshd rules (PermitRootLogin, ClientAliveInterval, X11Forwarding ...) need no site value. The code finds the value
+sshd uses, as sshd does:
+- it reads `/etc/ssh/sshd_config`;
+- where that file includes `/etc/ssh/sshd_config.d/*.conf`, it reads the drop-ins there, in name order;
+- the first value counts. A keyword or value in quotes counts too.
+- a value inside a `Match` block must also be the wanted one.
+
+It is false when:
+- the value is missing, or is not the one DISA wants;
+- another `Include` could hide one (the path compared in its own letters);
+- the crypto policy file a drop-in includes sets it.
+
+When the drop-ins' order is not certain, every value must be the one wanted. The order is certain only for names like
+`10-stig.conf`: two digits, lower case, no two with one number. "600 or less" also means at least 1, because 0 turns
+the timeout off. RHEL 8's RekeyLimit needs an amount and a time, neither 0.
+
+Some RHEL 10 texts want the value "in a drop-in that lexicographically precedes 50-redhat.conf". The value sshd uses
+must then come from a drop-in numbered below 50. `Banner` gets no pattern: its file is your choice.
+
+### Mount options (1.79.10)
+
+The mount rules ("/home is mounted with nodev", "/var is a separate file system") read the mount table. The mount
+point must match exactly: DISA's `grep /var` also finds `/var/log`. Nothing mounted there, or a mount without the
+option, is false. A separate file system must come from another source than `/`. A bind mount of a directory of `/`
+is false. The trial cannot show the host's mount table, so these codes are not tried. The block says so.
 
 ## The read-only check
 
@@ -222,10 +277,17 @@ not offered.
   | `/usr/sbin/getenforce`, `/usr/sbin/sestatus` | no arguments |
 
 - **Types:** only `[regex]`, `[version]`, `[int]`, `[string]`, `[bool]`, `[char]` (casts, `-is`, `-as`). Static calls
-  only `[regex]::Match`, `Matches`, `IsMatch` and `[version]::Parse`.
+  only `[regex]::Match`, `Matches`, `IsMatch`, `[version]::Parse`, and `[string]::IsNullOrWhiteSpace` and
+  `IsNullOrEmpty` (1.79.10: they only test).
 - **Methods:** only a string's reading methods (`.Trim()`, `.Split()`, `.Replace()` ...) on a value that is a string for
-  certain: a literal, a `[string]` cast, a `-join`. Never on a value whose type is not known (a file's `.Replace()`,
-  `.Delete()` ...). Never `.PSObject` or a member named by an expression.
+  certain. Never on a value whose type is not known (a file's `.Replace()`, `.Delete()` ...). Never `.PSObject` or a
+  member named by an expression. A string for certain is:
+  - a literal, `"$x"`, a `[string]` cast (not `[string[]]`, a list) or a `-join`;
+  - an element of `-split` or of a string's `.Split()`, by one constant index (`[0]`, never `[0,1]` or `[$i]`);
+  - the answer of a string method that gives a string, called on a string (`$s.Trim().ToLower()`);
+  - `$Matches[1]` or `$Matches['name']` after a `-match` (1.79.10). Every `$Matches` in the code must be read
+    this way: never set, never `$local:Matches`, never `$Matches.Add()`. The `-match` comes first;
+  - `-replace` on a string (1.79.10).
 - **Also refused:** aliases (`iex`, `sc` ...), a command from a variable (`& $c`), dot-sourcing, backticks, a
   redirection to a file (only `2>$null`), `$ExecutionContext`, `$Host`.
 
@@ -499,6 +561,51 @@ The evidence is the last command's output. Its errors show only when it printed 
 - It runs on the trial host, and on each host whose review a person wrote after the scan. Nowhere else.
 - Each output is cut at 4 KB. Secrets are removed on the host (see *Secrets in what a host returns*).
 - **How this was made** lists every command and the hosts it ran on.
+
+**DISA's commands read another way (1.79.10).**
+
+Many of DISA's commands are not on the read-only list. Where it can, the job reads what that command reads, with a
+program that is on the list. The evidence shows the command as it ran, so ACT sees both. None of these runs a shell,
+writes, starts a service or reaches the network.
+
+| DISA writes | It runs |
+|---|---|
+| `cat`, `more`, `less FILE` | `grep -h -s '' FILE` (every line) |
+| `tail FILE`, `\| tail -1` | the file, then `tail -n N` on what it read (one file only) |
+| `awk -F X 'PROGRAM' FILE`, `cut -d X -f N FILE` | the file. DISA's filter is left to ACT. Only these forms, of `/etc/passwd` or `/etc/group`, nothing after them |
+| `sshd -T`, `sshd -dd ... \| xargs grep KEY` | `/etc/ssh/sshd_config` and `/etc/ssh/sshd_config.d/*.conf` |
+| `mount \| grep X` | `/proc/self/mounts`, then the grep |
+| `findmnt X` | `grep` for X in `/proc/self/mounts` |
+| `systemctl status UNIT` | `systemctl is-enabled UNIT`, then `is-active UNIT` |
+| `systemctl get-default` | `find` of the `default.target` links in `/etc` and `/usr/lib` |
+| `ls -l`, `ls -ld PATH` | `find PATH -maxdepth 1` (or 0) `-printf` with ls's columns. Without `-l`, the names only |
+| `find ... -exec stat -c FMT {}`, `-exec ls -l {}`, `-ls` | the same `find` with `-printf` (`stat -L` only after `find -L`) |
+| `gsettings get` or `writable SCHEMA KEY` | `grep -r` for KEY in `/etc/dconf/db/*.d` |
+| `dnf list installed`, `yum list installed GLOB` | `rpm -qa` (the local database) |
+| `grubby --info=ALL`, `grub2-editenv list` | the boot entries' options lines, `/boot/grub2/grubenv` (not `--info=DEFAULT`) |
+| `firewall-cmd --state`, `--info-zone=Z`, `--list-all` | `systemctl is-active firewalld`, the zone files |
+| `update-crypto-policies --show`, `fips-mode-setup --check`, `authselect current` | their state files |
+| `postconf KEY` | `grep` for KEY in `/etc/postfix/main.cf` |
+| `egrep` | `grep -E` |
+
+The evidence also takes a few forms the code may not use:
+- `grep -P`, `-H`, `-R` and `-A`/`-B`/`-C N`. A `grep -o` reads the whole line, so a secret's name stays beside it
+  and is removed;
+- `find -L`;
+- `rpm -qa [GLOB]` and the `%{SUMMARY}` tag;
+- `tail -n N`, `head -n N`, `uniq` and `wc -l` when they only read the pipe.
+
+A pager at the end (`| more`) is dropped. So is an `awk` at the end, which only filters (after `cat` only of
+`/etc/passwd` or `/etc/group`). A quoted path with `*` is one
+file, never expanded as a shell would.
+
+Still not run:
+- `rpm --verify` (it may run a package's scripts) and `dnf repolist` (it may reach a repository);
+- `logger`, `pwck`, `usbguard`, `nmcli`, `ip`, `ss`, `lsblk`, `cryptsetup`, `aide --check`;
+- a `$( )` substitution and `df ... | xargs`;
+- `awk` or `cut` of any other file (`/etc/shadow`), or with a pipe after them: the whole lines would show;
+- `grep -o` with a command after it (a count would change);
+- `mount | grep ' on '`, because the mount table has no " on ".
 
 ### ACT calls
 

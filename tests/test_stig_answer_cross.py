@@ -312,14 +312,126 @@ class Reads(unittest.TestCase):
                          [["/usr/bin/grep", "-i", "-r", "permitrootlogin", "/etc/ssh/sshd_config"]])
 
     def test_anything_else_is_not_run(self):
-        for ln, why in (("cat /etc/redhat-release", "cat is not on the read-only list"), ("grep x /etc/a; rm -rf /", "a shell operator (;)"),
+        for ln, why in (("logger -p cron.info x", "logger is not on the read-only list"), ("grep x /etc/a; rm -rf /", "a shell operator (;)"),
                         ("echo $(id)", "a substitution"), ("sysctl -n kernel.x > /tmp/out", "a shell operator (>)"),
                         ("find /etc -exec ls {} +", "find: -exec is not allowed"), ("find / -delete", "find: -delete is not allowed"),
-                        ("rpm -qa", "rpm: only"), ("systemctl stop sshd", "systemctl: only"), ("auditctl -D", "auditctl: only -l"),
-                        ("grep -f /etc/x /etc/y", "grep: the flags"), ("stat /etc/x", "stat: only -c"), ("awk 1 /etc/passwd", "awk is not")):
+                        ("rpm -e x", "rpm: only"), ("systemctl stop sshd", "systemctl: only"), ("auditctl -D", "auditctl: only -l"),
+                        ("grep -f /etc/x /etc/y", "grep: the flags"), ("stat /etc/x", "stat: only -c"), ("awk 1", "awk is not")):
             st, w = R.pipeline_of(ln)
             self.assertIsNone(st, ln)
             self.assertIn(why, w, ln)
+
+    def test_a_quoted_glob_is_one_file(self):
+        """Codex (1.79.10): cat '/x/*.conf' names one file - read as written, never every file the glob would match."""
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        for n in ("a.conf", "b.conf"):
+            open(os.path.join(d, n), "w").close()
+        got, why = R.pipelines_of("cat '%s/*.conf'" % d)
+        argv = got[0][0]
+        self.assertIsInstance(argv[-1], R.Lit, why)
+        self.assertEqual(R._expand(argv), argv)
+        for ln in ("cat %s/'*.conf'" % d, "cat %s/\\*.conf" % d, 'cat "%s/*".conf' % d):   # partly quoted, escaped
+            with self.subTest(line=ln):
+                argv = R.pipelines_of(ln)[0][0][0]
+                self.assertEqual(R._expand(argv), argv, ln)
+        got, why = R.pipelines_of('cat "%s"/*.conf' % d)                    # the glob itself not quoted: expanded
+        self.assertEqual(R._expand(got[0][0])[-2:], [os.path.join(d, "a.conf"), os.path.join(d, "b.conf")])
+        got, why = R.pipelines_of("cat %s/*.conf" % d)                      # unquoted: as a shell would give it
+        self.assertEqual(R._expand(got[0][0])[-2:], [os.path.join(d, "a.conf"), os.path.join(d, "b.conf")])
+
+    def test_read_another_way(self):
+        """1.79.10: DISA's commands the read-only list does not have, read with the programs it has (or an evidence-only
+        form) - every one a literal argv that only reads; the line as run is what the evidence shows."""
+        rd = ["/usr/bin/grep", "-h", "-s", ""]
+        sshd = ["/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d/*.conf"]
+        cases = {
+            "cat /etc/redhat-release": [[rd + ["/etc/redhat-release"]]],
+            "sudo cat /etc/audit/rules.d/* | grep shutdown": [[rd + ["/etc/audit/rules.d/*"], ["/usr/bin/grep", "shutdown"]]],
+            "sudo more /etc/fstab": [[rd + ["/etc/fstab"]]],
+            "sudo cat /etc/aide.conf | more": [[rd + ["/etc/aide.conf"]]],
+            "sudo tail /etc/fapolicyd/compiled.rules": [[rd + ["/etc/fapolicyd/compiled.rules"], ["/usr/bin/tail", "-n", "10"]]],
+            "awk -F: '$3 == 0 {print $1}' /etc/passwd": [[rd + ["/etc/passwd"]]],
+            "cut -d : -f 3 /etc/group": [[rd + ["/etc/group"]]],
+            "sudo sshd -T | grep -i permitrootlogin": [[rd + sshd, ["/usr/bin/grep", "-i", "permitrootlogin"]]],
+            "sudo /usr/sbin/sshd -dd 2>&1 | awk '/filename/ {print $4}' | tr -d '\\r' | tr '\\n' ' ' | xargs sudo grep -iH '^\\s*banner'":
+                [[["/usr/bin/grep", "-i", "-H", "^\\s*banner"] + sshd]],
+            "mount | grep /home": [[rd + ["/proc/self/mounts"], ["/usr/bin/grep", "/home"]]],
+            "findmnt /dev/shm": [[["/usr/bin/grep", "-s", "-E", "(^|\\s)/dev/shm\\s", "/proc/self/mounts"]]],
+            "sudo dnf list installed | grep tftp-server": [[["/usr/bin/rpm", "-qa"], ["/usr/bin/grep", "tftp-server"]]],
+            "sudo yum list installed abrt*": [[["/usr/bin/rpm", "-qa", "abrt*"]]],
+            "rpm -qa | grep xorg | grep server": [[["/usr/bin/rpm", "-qa"], ["/usr/bin/grep", "xorg"], ["/usr/bin/grep", "server"]]],
+            'sudo rpm -q --queryformat "%{SUMMARY}\\n" gpg-pubkey | grep -i "red hat"':
+                [[["/usr/bin/rpm", "-q", "--queryformat", "%{SUMMARY}\\n", "gpg-pubkey"], ["/usr/bin/grep", "-i", "red hat"]]],
+            "systemctl get-default": [[["/usr/bin/find", "/etc/systemd/system/default.target", "/usr/lib/systemd/system/default.target",
+                                        "-maxdepth", "0", "-printf", "%p %l\\n"]]],
+            # Codex (1.79.10): ls -d lists the path itself even with -R; without -l no owner is looked up
+            "ls -dR /srv/checks": [[["/usr/bin/find", "/srv/checks", "-maxdepth", "0", "-printf", R.LS_NAMES]]],
+            "ls -d /srv/checks": [[["/usr/bin/find", "/srv/checks", "-maxdepth", "0", "-printf", "%p\\n"]]],
+            "find /etc -type f -ls": [[["/usr/bin/find", "/etc", "-type", "f", "-printf", R.LS_PRINTF]]],
+            "find -L /bin ! -user root -exec stat -L -c \"%U %n\" {} \\;": [[["/usr/bin/find", "-L", "/bin", "!", "-user", "root", "-printf", "%u %p\\n"]]],
+            "grep 'x\\(y\\)' /srv/check": [[["/usr/bin/grep", "x\\(y\\)", "/srv/check"]]],
+            "ls -l /etc/crypto-policies/back-ends/": [[["/usr/bin/find", "/etc/crypto-policies/back-ends/", "-maxdepth", "1", "-printf", R.LS_PRINTF]]],
+            "sudo ls -ld /var/log/audit": [[["/usr/bin/find", "/var/log/audit", "-maxdepth", "0", "-printf", R.LS_PRINTF]]],
+            'sudo find /lib /usr/lib -type f -name "*.so*" ! -user root -exec stat -c "%n %U" {} +':
+                [[["/usr/bin/find", "/lib", "/usr/lib", "-type", "f", "-name", "*.so*", "!", "-user", "root", "-printf", "%p %u\\n"]]],
+            'sudo find -L /bin /usr/bin -perm /022 -exec ls -l {} \\;':
+                [[["/usr/bin/find", "-L", "/bin", "/usr/bin", "-perm", "/022", "-printf", R.LS_PRINTF]]],
+            "sudo find / -type d \\( -perm -0002 -a ! -perm -1000 \\) -print 2>/dev/null":
+                [[["/usr/bin/find", "/", "-type", "d", "(", "-perm", "-0002", "-a", "!", "-perm", "-1000", ")", "-print"]]],
+            "gsettings get org.gnome.login-screen banner-message-text": [[["/usr/bin/grep", "-r", "-s", "-e", "banner-message-text", "/etc/dconf/db/*.d"]]],
+            "sudo firewall-cmd --state": [[["/usr/bin/systemctl", "is-active", "firewalld"]]],
+            "sudo firewall-cmd --permanent --info-zone=drop | grep target":
+                [[rd + ["/etc/firewalld/zones/drop.xml", "/usr/lib/firewalld/zones/drop.xml"], ["/usr/bin/grep", "target"]]],
+            "update-crypto-policies --show": [[rd + ["/etc/crypto-policies/config", "/etc/crypto-policies/state/current"]]],
+            "postconf -n smtpd_client_restrictions": [[["/usr/bin/grep", "-s", "-E", "^\\s*smtpd_client_restrictions\\s*=", "/etc/postfix/main.cf"]]],
+            "sudo grubby --info=ALL | grep args | grep -v 'audit=1'":
+                [[["/usr/bin/grep", "-h", "-s", "-e", "^options", "-e", "^kernelopts", "/boot/loader/entries/*.conf", "/boot/grub2/grubenv"],
+                  ["/usr/bin/grep", "-v", "audit=1"]]],
+            "sudo grub2-editenv list | grep pti": [[rd + ["/boot/grub2/grubenv"], ["/usr/bin/grep", "pti"]]],
+            "sudo auditctl -l | egrep '(/etc/shadow)'": [[["/usr/sbin/auditctl", "-l"], ["/usr/bin/grep", "-E", "(/etc/shadow)"]]],
+            # grep -o: the whole line (the redactor sees a value beside its name - Codex, 1.79.10)
+            "grep -oP 'audit_backlog_limit=\\K[0-9]+' /proc/cmdline": [[["/usr/bin/grep", "-P", "audit_backlog_limit=\\K[0-9]+", "/proc/cmdline"]]],
+            "cat /etc/passwd | awk '{print $1}'": [[rd + ["/etc/passwd"]]],
+            'sudo grep -A1 "superusers" /etc/grub2.cfg': [[["/usr/bin/grep", "-A1", "superusers", "/etc/grub2.cfg"]]],
+            "fips-mode-setup --check": [[rd + ["/proc/sys/crypto/fips_enabled"]]],
+            "authselect current": [[rd + ["/etc/authselect/authselect.conf"]]]}
+        for ln, want in cases.items():
+            with self.subTest(line=ln):
+                got, why = R.pipelines_of(ln)
+                self.assertEqual(got, want, why)
+        # still not run: they write, reach a service or the network, run a package's scripts, or a rewrite would mislead
+        for ln, why in (("sudo mount | grep '^/dev\\S* on /\\S' | grep --invert-match 'nodev'", "mount is not"),
+                        ("logger -p cron.info x", "logger is not"), ("rpm --verify openssh-server", "rpm: only"),
+                        ("rpm -Va --noconfig", "rpm: only"), ("dnf repolist", "dnf is not"), ("sudo pwck -r", "pwck is not"),
+                        ("find /etc -exec cat {} \\;", "find: -exec is not allowed"), ("find /x -exec rm {} +", "find: -exec is not allowed"),
+                        ("find /x -exec stat -c '%Y' {} +", "find: -exec is not allowed"), ("systemctl status sshd | grep x", "systemctl: only"),
+                        ("cat /etc/x > /tmp/y", "a shell operator"), ("tail -f /var/log/messages", "tail is not"),
+                        ("cat -v /etc/x", "cat is not"), ("cut -d: -f1", "cut is not"), ("firewall-cmd --reload", "firewall-cmd is not"),
+                        ("update-crypto-policies --set FIPS", "update-crypto-policies is not"), ("postconf -e x=y", "postconf is not"),
+                        ("gsettings set org.gnome.x y z", "gsettings is not"), ("grub2-editenv - set x=1", "grub2-editenv is not"),
+                        ("sshd -t", "sshd is not"), ("ls -Zd /var/log/faillock", "ls is not"),
+                        ("cat /etc/x | tail -n 5 /etc/y", "tail: only -n N"), ("grep x /etc/a | sort -o /etc/a", "sort is not"),
+                        ("grep x /etc/a | uniq - /etc/out", "uniq is not"),
+                        # Codex (1.79.10): cut / awk not in their plain form, of a file of secrets, or with a pipe after;
+                        # stat -L; head of several files; grubby's DEFAULT entry; find -ls not at the end
+                        ("cut --version /srv/private.csv", "cut is not"), ("sudo cut -d: -f1,2 /etc/shadow", "cut is not"),
+                        ("cut -d : -f 3 /etc/group | uniq -d", "cut is not"), ("awk -f /tmp/prog /etc/passwd", "awk is not"),
+                        ("awk -F: '{print $1}' /etc/gshadow", "awk is not"),
+                        ("find /srv -type l -exec stat -L -c '%a' {} +", "find: -exec is not allowed"),
+                        ("head -n 1 /srv/a /srv/b", "head is not"), ("grubby --info=DEFAULT | grep args", "grubby is not"),
+                        ("find /etc -ls -print", "find:"),
+                        # Codex's second pass (1.79.10): fields of a file not on the list, a trailing awk after cat of
+                        # one, head of a glob, grep -o with a count after it, stat without -L under find -L
+                        ("cut -d, -f1 /srv/accounts.csv", "cut is not"), ("cat /srv/accounts.csv | awk '{print $1}'", "awk is not"),
+                        ("head -n 1 /srv/checks/*.conf", "head is not"), ("grep -o '^alice' /srv/a.csv | wc -l", "grep -o with a command after it"),
+                        ("find -L /srv -type f -exec stat -c '%a' {} +", "find: -exec is not allowed")):
+            with self.subTest(line=ln):
+                got, w = R.pipelines_of(ln)
+                self.assertIsNone(got, ln)
+                self.assertIn(why, w, ln)
 
     def test_the_grammar_is_the_gates(self):
         # the same cases site_stig_answer_host's replay_ok takes (and refuses)
@@ -332,9 +444,12 @@ class Reads(unittest.TestCase):
     def test_plan_disa_first_else_the_codes(self):
         self.assertEqual(R.plan({"check_text": "$ sudo rpm -q telnet-server", "calls": [["/usr/bin/rpm", "-q", "x"]]})[:2],
                          ("DISA's", [[["/usr/bin/rpm", "-q", "telnet-server"]]]))
-        src, todo, refused = R.plan({"check_text": "$ sudo cat /etc/x", "calls": [["/usr/bin/stat", "-c", "%a", "/etc/x"], ["/usr/bin/rm", "-rf", "/"]]})
+        src, todo, refused = R.plan({"check_text": "$ sudo usbguard list-rules", "calls": [["/usr/bin/stat", "-c", "%a", "/etc/x"], ["/usr/bin/rm", "-rf", "/"]]})
         self.assertEqual((src, todo), ("the code's", [[["/usr/bin/stat", "-c", "%a", "/etc/x"]]]))
-        self.assertEqual(refused, ["sudo cat /etc/x - cat is not on the read-only list"])
+        self.assertEqual(refused, ["sudo usbguard list-rules - usbguard is not on the read-only list"])
+        # 1.79.10: a line read another way may give two pipelines (systemctl status: is-enabled, then is-active)
+        self.assertEqual(R.plan({"check_text": "$ systemctl status auditd.service"})[:2],
+                         ("DISA's", [[["/usr/bin/systemctl", "is-enabled", "auditd.service"]], [["/usr/bin/systemctl", "is-active", "auditd.service"]]]))
         self.assertEqual(R.plan({"check_text": "Verify it by hand.", "calls": []})[:2], ("", []))
 
     def test_a_stage_writing_much_to_stderr_does_not_stop_the_pipeline(self):

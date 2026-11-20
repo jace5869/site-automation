@@ -68,6 +68,48 @@ T_RELEASE10 = ('Verify RHEL 10 is a vendor-supported version with the following 
                'Red Hat Enterprise Linux release 10.0 (Coughlan)\n\nIf the installed version of RHEL 10 is not supported, this is a finding.')
 
 
+# 1.79.10: the GRUB superuser rules (DISA's texts, shortened): RHEL 8 UEFI (two files, one of them DISA's /boot/boot/efi),
+# RHEL 8 BIOS (no OS account either), RHEL 9 and 10 (grep -A1 in /etc/grub2.cfg); the BIOS password rule is not one of them
+T_GRUB8_UEFI = ('Verify that a unique name is set as the "superusers" account.\n\nSearch the unified GRUB 2 configuration file for '
+                'the superusers definition:\n# grep -iw "superusers" /boot/grub2/grub.cfg\nset superusers="[someuniquestringhere]"\n'
+                'export superusers\n\nIf "superusers" is not defined, or if the defined superuser name is identical to a standard OS '
+                'administrative account name (such as "root", "admin", "administrator", "superuser", or "unlock"), this is a finding.\n\n'
+                'Note for legacy RHEL 8 deployments: check the legacy UEFI path:\n# grep -iw "superusers" /boot/boot/efi/EFI/redhat/grub.cfg')
+T_GRUB8_BIOS = ('Verify that a unique name is set as the "superusers" account:\n\n$ sudo grep -iw "superusers" /boot/grub2/grub.cfg\n'
+                'set superusers="[someuniquestringhere]"\nexport superusers\n\nIf "superusers" is identical to any OS account name or is '
+                'missing a name, this is a finding.')
+T_GRUB9 = ('Verify the RHEL 9 boot loader superuser account has been set with the following command:\n\n$ sudo grep -A1 "superusers" '
+           '/etc/grub2.cfg \n\nset superusers="<accountname>"\nexport superusers\npassword_pbkdf2 <accountname> ${GRUB2_PASSWORD}\n \n'
+           'Verify <accountname> is not a common name such as root, admin, or administrator.\n\nIf superusers contains easily '
+           'guessable usernames, this is a finding.')
+T_GRUB8_PW = ('Check to see if an encrypted grub superusers password is set. On systems that use a BIOS, use the following command:\n\n'
+              '$ sudo grep -iw grub2_password /boot/grub2/user.cfg\n\nGRUB2_PASSWORD=grub.pbkdf2.sha512.[password_hash]\n\n'
+              'If the grub superusers password does not begin with "grub.pbkdf2.sha512", this is a finding.')
+
+
+# 1.79.10: sshd's settings (RHEL 9's text; RHEL 10 adds sshd -T of the same keyword) and the mount options (shortened)
+SSHD_CHAIN = "sudo /usr/sbin/sshd -dd 2>&1 | awk '/filename/ {print $4}' | tr -d '\\r' | tr '\\n' ' ' | xargs sudo grep -iH '^\\s*%s'"
+T_SSHD_ROOT = ('Verify RHEL 9 SSH daemon does not allow direct logons to the root account with the following command:\n\n$ '
+               + SSHD_CHAIN % "permitrootlogin" + '\n\nPermitRootLogin no\n\nIf the "PermitRootLogin" keyword is set to any value '
+               'other than "no", is missing, or is commented out, this is a finding.')
+T_SSHD_ALIVE10 = ('Verify the SSH server is configured to time out idle sessions:\n\n$ ' + SSHD_CHAIN % "clientaliveinterval" +
+                  '\n/etc/ssh/sshd_config.d/10-stig.conf::ClientAliveInterval 600\n\n$ sudo sshd -T | grep -i clientaliveinterval\n'
+                  'clientaliveinterval 600\n\nIf the "ClientAliveInterval" keyword is not set to a value of "600" or less in a drop-in '
+                  'that lexicographically precedes 50-redhat.conf, or if no output is returned, this is a finding.')
+T_SSHD_REKEY8 = ('Verify the SSH server is configured to force frequent session key renegotiation with the following command:\n\n$ '
+                 + SSHD_CHAIN % "rekeylimit" + '\n\nRekeyLimit 1G 1h\n\nIf "RekeyLimit" does not have a maximum data amount and '
+                 'maximum time defined, is missing, or is commented out, this is a finding.')
+T_SSHD_BANNER = ('Check for the location of the banner file being used with the following command:\n\n$ ' + SSHD_CHAIN % "banner" +
+                 '\n/etc/ssh/sshd_config.d/80-bannerPointer.conf:Banner /etc/issue\n\nIf the line is commented out, this is a finding.')
+T_MOUNT_OPT = ('Verify "/home" is mounted with the "nodev" option with the following command:\n\n$ mount | grep /home\n\n'
+               '/dev/mapper/rhel-home on /home type xfs (rw,nodev,nosuid,noexec,seclabel)\n\nIf the /home file system is mounted '
+               'without the "nodev" option, this is a finding.')
+T_MOUNT_OWN = ('Verify RHEL 10 uses a separate file system/partition for "/var" with the following command:\n\n$ mount | grep /var\n'
+               '/dev/mapper/luks-x on /var type xfs (rw,nodev,relatime,seclabel,attr2)\nNote: Options displayed for mount may differ.\n\n'
+               'If a separate entry for "/var" is not in use, this is a finding.')
+T_MOUNT_ANY = ("Verify:\n\n$ sudo mount | grep '^/dev\\S* on /\\S' | grep --invert-match 'nodev'\n\nIf any output is produced, this is a finding.")
+
+
 class Patterns(unittest.TestCase):
     def test_each(self):
         cases = [(T_OWNER, "/usr/bin/stat -c '%U' '/etc/group-'", "-eq 'root'"),
@@ -119,6 +161,54 @@ class Patterns(unittest.TestCase):
         self.assertNotIn("-exec", "\n".join(x for x in d["code"].split("\n") if not x.startswith("#")))
         self.assertIn("$ok = @('svc_app1', 'svc_backup')", d["code"])
 
+    def test_grub_superusers(self):
+        """1.79.10: the superuser's name in GRUB's files - DISA's files, its common names, the site's own list."""
+        d = a.stig_answer_draft(T_GRUB8_UEFI)
+        self.assertEqual(d["kind"], "pattern")
+        for f in ("/boot/grub2/grub.cfg", "/boot/efi/EFI/redhat/grub.cfg"):
+            self.assertIn("Test-Path -LiteralPath '%s' -PathType Leaf" % f, d["code"])
+        self.assertNotIn("/boot/boot/", d["code"].split("\n", 1)[1])                 # DISA's typo only in the comment line
+        self.assertIn("$no = @('root', 'admin', 'administrator', 'superuser', 'unlock')", d["code"])
+        self.assertNotIn("/etc/passwd", d["code"])
+        self.assertIn("return ($sets.Count -ge 1 -and $unread -eq 0 -and $names.Count -ge 1 -and $bad.Count -eq 0)", d["code"])
+        self.assertEqual(d["uses"], {})
+        d = a.stig_answer_draft(T_GRUB8_UEFI, {"grub_superusers_not_allowed": "grubadmin, ROOT bootadmin"})
+        self.assertIn("'unlock', 'grubadmin', 'bootadmin')", d["code"])
+        self.assertEqual(d["uses"], {"grub_superusers_not_allowed": "grubadmin, ROOT, bootadmin"})
+        # Codex (1.79.10): "not identical to any OS account" needs the directory service's accounts too - no pattern
+        self.assertIsNone(a.stig_answer_draft(T_GRUB8_BIOS))
+        d = a.stig_answer_draft(T_GRUB9)
+        self.assertIn("Test-Path -LiteralPath '/etc/grub2.cfg' -PathType Leaf", d["code"])
+        self.assertIsNone(a.stig_answer_draft(T_GRUB8_PW))
+        self.assertIsNone(a.stig_answer_draft(T_GRUB9.replace("/etc/grub2.cfg", "/tmp/grub.cfg")))   # not GRUB's own file
+
+    def test_sshd_settings_and_mounts(self):
+        """1.79.10: sshd's settings as sshd reads them, a mount's options - and the texts no pattern takes."""
+        d = a.stig_answer_draft(T_SSHD_ROOT)
+        self.assertEqual(d["kind"], "pattern")
+        self.assertIn("Select-String -LiteralPath '/etc/ssh/sshd_config'", d["code"])
+        self.assertIn("Select-String -Path '/etc/ssh/sshd_config.d/*.conf'", d["code"])
+        self.assertIn("-eq 'no'", d["code"])
+        d = a.stig_answer_draft(T_SSHD_ALIVE10)                           # RHEL 10: the sshd -T line beside it
+        self.assertIn("[int]$v -ge 1 -and [int]$v -le 600", d["code"])
+        self.assertIn("$v -match '^[1-9][0-9]*[KMG]?\\s+[1-9][0-9]*[smhdwSMHDW]?$'", a.stig_answer_draft(T_SSHD_REKEY8)["code"])   # RHEL 8: any values but 0
+        self.assertIn("$src[0] -cnotmatch '^[0-4][0-9]-'", d["code"])     # RHEL 10: from a drop-in before 50-redhat.conf
+        self.assertNotIn("$src[0]", a.stig_answer_draft(T_SSHD_ROOT)["code"])
+        # Codex (1.79.10): an example value the criterion calls a finding is not taken as the wanted one
+        self.assertIsNone(a.stig_answer_draft(T_SSHD_ROOT.replace("PermitRootLogin no", "PermitRootLogin yes")))
+        self.assertIsNone(a.stig_answer_draft(T_SSHD_BANNER))             # a file the site chooses: no pattern
+        self.assertIsNone(a.stig_answer_draft(T_SSHD_ROOT.replace("permitrootlogin'", "ciphers'")))   # a keyword not on the list
+        d = a.stig_answer_draft(T_MOUNT_OPT)
+        self.assertIn("-ceq '/home'", d["code"])
+        self.assertIn("-cnotcontains 'nodev'", d["code"])
+        self.assertIn("return ($m.Count -ge 1 -and $root.Count -ge 1 -and $same.Count -eq 0)", a.stig_answer_draft(T_MOUNT_OWN)["code"])
+        # Codex (1.79.10): an option named without quotes is still an option check, not "mounted at all"
+        d = a.stig_answer_draft(T_MOUNT_OPT.replace('without the "nodev" option', "without the nodev option"))
+        self.assertIn("-cnotcontains 'nodev'", d["code"])
+        d = a.stig_answer_draft(T_MOUNT_OWN.replace("this is a finding.", "or the nodev option is missing, this is a finding."))
+        self.assertIn("-cnotcontains 'nodev'", d["code"])
+        self.assertIsNone(a.stig_answer_draft(T_MOUNT_ANY))
+
     def test_disa_corpus_in_the_repo(self):
         """tests/stig/disa_texts.py (1.73.0): the RHEL texts there - every pattern code a fixed shape."""
         import importlib
@@ -141,6 +231,8 @@ class Values(unittest.TestCase):
         self.assertEqual(a.stig_answer_values('{"min_release": "9.4", "world_writable_owners": ["root", "sys", "bin", "appuser"]}'), want)
         self.assertEqual(a.stig_answer_values(""), {})
         self.assertEqual(sorted(a.VALUES), ["min_release", "world_writable_owners"])
+        self.assertEqual(a.stig_answer_values("grub_superusers_not_allowed: grubadmin, bootadmin"),       # 1.79.10, optional
+                         {"grub_superusers_not_allowed": ["grubadmin", "bootadmin"]})
 
     def test_the_line_to_add(self):
         d = a.stig_answer_drafts([dict(v="V-1", sv="SV-1", ok=True, expected="Not_Reviewed", check_text=T_WW)], {})
@@ -268,7 +360,9 @@ class ReadOnlyCheck(unittest.TestCase):
     def test_the_patterns_codes_pass(self):
         for text, values in ((T_OWNER, {}), (T_MODE, {}), (T_SYSCTL, {}), (T_PKG_GONE, {}), (T_PKG, {}), (T_MIN, {}),
                              (T_RELEASE, {"min_release": "9.4"}), (T_WW, {"world_writable_owners": ["svc_app1"]}), (T_OPENSSL, {}),
-                             (T_AUDIT, {}), (T_RELEASE10, {"min_release": ["9.4", "10.0"]})):
+                             (T_AUDIT, {}), (T_RELEASE10, {"min_release": ["9.4", "10.0"]}), (T_GRUB8_UEFI, {}),
+                             (T_GRUB8_UEFI, {"grub_superusers_not_allowed": ["grubadmin"]}), (T_GRUB9, {}), (T_SSHD_ROOT, {}),
+                             (T_SSHD_ALIVE10, {}), (T_SSHD_REKEY8, {}), (T_MOUNT_OPT, {}), (T_MOUNT_OWN, {})):
             code = a.stig_answer_draft(text, values)["code"]
             g = self.run_ps(self.gate, code)
             self.assertTrue(g["ok"], (code, g))
@@ -359,6 +453,48 @@ class ReadOnlyCheck(unittest.TestCase):
                 g = self.run_ps(self.gate, code)
                 self.assertTrue(g["ok"], g)
 
+    def test_matches_and_string_tests(self):
+        """1.79.10 (a real run: V-244521's draft refused): $Matches[n] and $Matches['name'] after a -match are strings, so
+        are a string method's answer and an element of a string's Split(); [string]::IsNullOrWhiteSpace / IsNullOrEmpty
+        only test. A value not a string for certain is still refused."""
+        good = [
+            # the draft's own shapes
+            "$l = 'set superusers=\"admin7\"'; if ($l -match 'superusers=\"([^\"]*)\"') { $val = $Matches[1].Trim(); "
+            "if ([string]::IsNullOrWhiteSpace($val)) { return $false }; return ($Matches[1].Trim().ToLower() -ne 'root') }; return $false",
+            "if ('a=B c' -match '^a=(?<v>\\S+)') { return ($Matches['v'].ToLower() -eq 'b') }; return $false",
+            "if ('x: a,b' -notmatch 'q') { }; if ('x: a,b' -match ': (.*)$') { return ($Matches[1].Split(',')[0].Trim() -eq 'a') }; return $false",
+            "Get-Content /etc/x | Where-Object { $_ -match '^u=(\\w+)' } | ForEach-Object { $Matches[1].ToUpper() }",
+            "$x = 5; return ([string]::IsNullOrEmpty(\"$x\".Trim()) -or ([string]$x).Split('.')[0].PadLeft(2, '0') -eq '05')",
+            "if ('a=B' -match '=(.*)$') { return (($Matches[1] -replace 'B', 'c').ToUpper() -eq 'C') }; return $false"]
+        for code in good:
+            with self.subTest(code=code):
+                g = self.run_ps(self.gate, code)
+                self.assertTrue(g["ok"], g)
+        bad = {"$Matches = @(Get-Item /tmp/x); 'a' -match 'a'; $Matches[0].Replace('/tmp/a', '/tmp/b')": "not a string for certain",
+               "foreach ($Matches in @(Get-Item /tmp/x)) { 'a' -match 'a'; $Matches[0].Replace('/tmp/a', '/tmp/b') }": "not a string for certain",
+               "$null = $Matches[1].Replace('/tmp/a', '/tmp/b'); return ('a' -match 'a')": "not a string for certain",
+               "$x = @(Get-Item /tmp/x); 'a' -match 'a'; $x[0].Replace('/tmp/a', '/tmp/b')": "not a string for certain",
+               "'a' -match 'a'; $i = 1; $Matches[$i].Trim()": "not a string for certain",
+               "(Get-Item /tmp/x).Replace('/tmp/a', '/tmp/b').Trim()": "not a string for certain",
+               "$f = Get-Item /tmp/x; $f.Name.Trim()": "not a string for certain",
+               "'a' -match 'a'; $Matches.Remove(0)": "the method Remove()",
+               "[string]::Format('{0}', 1)": "it calls [string]::Format", "[string]::Concat('a', 'b')": "it calls [string]::Concat",
+               "$f = @(Get-Item /tmp/x); ($f -replace 'a', 'b').Replace('/tmp/a', '/tmp/b')": "not a string for certain",
+               # Codex (1.79.10): another scope's $Matches, an index picking several, a list of strings
+               "$null = 'a' -match 'a'; $local:Matches = @(42); return $Matches[0].Equals(42)": "not a string for certain",
+               "$null = 'a' -match 'a'; $Matches[0] = 42; return $Matches[0].Equals(42)": "it assigns to $Matches[0]",
+               "$null = 'a' -match 'a'; $variable:Matches[0].Trim()": "not a string for certain",
+               "return ('a,b'.Split(',')[0,1].Contains('a'))": "not a string for certain",
+               "return (('a,b' -split ',')[0..1].Contains('a'))": "not a string for certain",
+               "$null = 'a' -match 'a'; return ($Matches[0,1].Contains('a'))": "not a string for certain",
+               "return (([string[]]('a','b') -replace 'a','x').Contains('x'))": "not a string for certain",
+               "return (([string[]]('a','b')).Contains('x'))": "not a string for certain"}
+        for code, why in bad.items():
+            with self.subTest(code=code):
+                g = self.run_ps(self.gate, code)
+                self.assertFalse(g["ok"], g)
+                self.assertIn(why, " ".join(g["why"]))
+
     def test_allowed(self):
         """1.75.0c: what the allow-lists keep - the forms the patterns and a careful draft use."""
         for code in ("$x = 0; $x++; $x--; ++$x; $local:y = 1; return ($x -eq 1)", "$null = & /usr/bin/rpm -q bash 2>&1",
@@ -386,6 +522,127 @@ class ReadOnlyCheck(unittest.TestCase):
         self.assertEqual((r["ok"], r["values"], r["kinds"], r["read"]), (True, [True], ["Boolean"], "read: x"))
         r = trial("'a'\nreturn $true")
         self.assertEqual(r["values"], ["a", True])                  # two things on its output: not offered (the module)
+
+    def test_grub_superusers_answers(self):
+        """1.79.10: the GRUB superuser codes on files of each shape (here: GRUB's files and /etc/passwd moved to a folder)."""
+        def run(text, files, passwd="root:x:0:0::/root:/bin/bash\nbob:x:1000:1000::/home/bob:/bin/bash\n", values=None):
+            d = tempfile.mkdtemp(dir=self.d)
+            code = a.stig_answer_draft(text, values or {})["code"]
+            for name, body in list(files.items()) + [("/etc/passwd", passwd)]:
+                code = code.replace(a._q(name), a._q(os.path.join(d, name.strip("/").replace("/", "_"))))
+                if body is not None:
+                    with open(os.path.join(d, name.strip("/").replace("/", "_")), "w") as fh:
+                        fh.write(body)
+            p = subprocess.run(host.trial_command(PWSH, code), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            return json.loads(p.stdout.decode().strip().splitlines()[-1])
+        cfg = '### BEGIN /etc/grub.d/01_users ###\nif [ -f ${prefix}/user.cfg ]; then\n  source ${prefix}/user.cfg\n' \
+              '  if [ -n "${GRUB2_PASSWORD}" ]; then\n    set superusers="%s"\n    export superusers\n  fi\nfi\n'
+        g, e = "/boot/grub2/grub.cfg", "/boot/efi/EFI/redhat/grub.cfg"
+        cases = [("a unique name", T_GRUB8_UEFI, {g: cfg % "bootkeeper7", e: None}, None, True),
+                 ("root (the default)", T_GRUB8_UEFI, {g: cfg % "root", e: None}, None, False),
+                 ("Admin, case ignored", T_GRUB8_UEFI, {g: cfg % "Admin", e: None}, None, False),
+                 ("one of a list is root", T_GRUB8_UEFI, {g: cfg % "bootkeeper7 root", e: None}, None, False),
+                 ("the legacy UEFI file has root", T_GRUB8_UEFI, {g: cfg % "bootkeeper7", e: cfg % "root"}, None, False),
+                 ("only the legacy UEFI file, unique", T_GRUB8_UEFI, {g: None, e: cfg % "bootkeeper7"}, None, True),
+                 ("no file", T_GRUB8_UEFI, {g: None, e: None}, None, False),
+                 ("not set", T_GRUB8_UEFI, {g: "set default=0\n#set superusers=\"x7\"\n", e: None}, None, False),
+                 ("set empty", T_GRUB8_UEFI, {g: cfg % "", e: None}, None, False),
+                 ("the site's own list", T_GRUB8_UEFI, {g: cfg % "grubadmin", e: None}, {"grub_superusers_not_allowed": "grubadmin"}, False),
+                 # Codex (1.79.10): a name from a variable, an unset after the set, a set without "set"
+                 ("a name from a variable", T_GRUB8_UEFI, {g: "set bootadmin=root\nset superusers=\"$bootadmin\"\n", e: None}, None, False),
+                 ("unset after the set", T_GRUB8_UEFI, {g: cfg % "bootkeeper7" + "unset superusers\n", e: None}, None, False),
+                 ("superusers= without set", T_GRUB8_UEFI, {g: cfg % "bootkeeper7" + "superusers=root\n", e: None}, None, False),
+                 ("RHEL 9: unique, unquoted", T_GRUB9, {"/etc/grub2.cfg": "set superusers=bootkeeper7\n"}, None, True),
+                 ("RHEL 9: administrator", T_GRUB9, {"/etc/grub2.cfg": cfg % "administrator"}, None, False)]
+        for name, text, files, values, want in cases:
+            with self.subTest(case=name):
+                r = run(text, files, values=values)
+                self.assertEqual((r["ok"], r["values"]), (True, [want]), r)
+                self.assertTrue(r["read"].startswith("read: "), r)
+
+    def run_on(self, code, files):
+        """A pattern's code with its files moved to a folder here (files: {its path: text, or None for not there})."""
+        d = tempfile.mkdtemp(dir=self.d)
+        for name, body in files.items():
+            local = os.path.join(d, name.strip("/").replace("/", "_").replace("*", "x"))
+            if name.endswith("/*.conf"):                    # a drop-in folder: {name: text}
+                os.mkdir(local)
+                for fn, txt in (body or {}).items():
+                    with open(os.path.join(local, fn), "w") as fh:
+                        fh.write(txt)
+                code = code.replace(a._q(name), a._q(local + "/*.conf"))
+                continue
+            code = code.replace(a._q(name), a._q(local))
+            if body is not None:
+                with open(local, "w") as fh:
+                    fh.write(body)
+        p = subprocess.run(host.trial_command(PWSH, code), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        return json.loads(p.stdout.decode().strip().splitlines()[-1])
+
+    def test_sshd_setting_answers(self):
+        """1.79.10: sshd's first value - sshd_config, its drop-ins in name order where it includes them, up to Match."""
+        m, dd = "/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d/*.conf"
+        inc = "Include /etc/ssh/sshd_config.d/*.conf\n"
+        root = a.stig_answer_draft(T_SSHD_ROOT)["code"]
+        cases = [("a drop-in says no", root, inc, {"10-stig.conf": "PermitRootLogin no\n", "50-redhat.conf": "UsePAM yes\n"}, True),
+                 ("10-stig no before 50-redhat yes", root, inc, {"10-stig.conf": "PermitRootLogin no\n", "50-redhat.conf": "PermitRootLogin yes\n"}, True),
+                 ("10 yes before 50 no", root, inc, {"10-a.conf": "PermitRootLogin yes\n", "50-b.conf": "PermitRootLogin no\n"}, False),
+                 ("main before its Include", root, "PermitRootLogin no\n" + inc, {"10-a.conf": "PermitRootLogin yes\n"}, True),
+                 ("drop-ins not included", root, "UsePAM yes\n", {"10-a.conf": "PermitRootLogin no\n"}, False),
+                 ("only inside a Match block", root, inc + "Match User bob\n  PermitRootLogin no\n", {}, False),
+                 # Codex (1.79.10): a Match block's value, a quoted keyword, an Include in other letters, the crypto
+                 # policy file setting it, two names one in capitals
+                 ("no, then yes in a Match block", root, inc + "PermitRootLogin no\nMatch User root\n  PermitRootLogin yes\n", {}, False),
+                 ("no, and no in a Match block", root, inc + "PermitRootLogin no\nMatch User root\n  PermitRootLogin no\n", {}, True),
+                 ("a quoted keyword first", root, inc + "\"PermitRootLogin\" yes\nPermitRootLogin no\n", {}, False),
+                 ("a quoted value", root, inc + "PermitRootLogin \"no\"\n", {}, True),
+                 ("an Include in capitals", root, "Include /etc/SSH/sshd_config.d/*.conf\nPermitRootLogin yes\n", {"10-stig.conf": "PermitRootLogin no\n"}, False),
+                 ("10-A.conf yes, 10-a.conf no", root, inc, {"10-A.conf": "UsePAM yes\nPermitRootLogin yes\n", "10-a.conf": "PermitRootLogin no\n"}, False),
+                 ("not set", root, inc, {"50-redhat.conf": "UsePAM yes\n"}, False),
+                 ("commented out", root, inc + "#PermitRootLogin no\n", {}, False),
+                 ("written with = and in capitals", root, inc + "permitrootlogin=NO\n", {}, True),
+                 ("names not in order for certain, values differ", root, inc, {"stig.conf": "PermitRootLogin no\n", "redhat.conf": "PermitRootLogin yes\n"}, False),
+                 ("names not in order for certain, values agree", root, inc, {"stig.conf": "PermitRootLogin no\n", "zz.conf": "PermitRootLogin no\n"}, True),
+                 ("another Include", root, inc + "Include /etc/other/*.conf\nPermitRootLogin no\n", {}, False),
+                 ("an Include in a drop-in", root, inc, {"10-a.conf": "Include /etc/x.conf\nPermitRootLogin no\n"}, False),
+                 ("the crypto policy Include", root, inc, {"50-redhat.conf": "Include /etc/crypto-policies/back-ends/opensshserver.config\nPermitRootLogin no\n"}, True)]
+        alive = a.stig_answer_draft(T_SSHD_ALIVE10)["code"]
+        rekey = a.stig_answer_draft(T_SSHD_REKEY8)["code"]
+        cases += [("600 in 10-stig.conf", alive, inc, {"10-stig.conf": "ClientAliveInterval 600\n"}, True),
+                  ("900", alive, inc, {"10-stig.conf": "ClientAliveInterval 900\n"}, False),
+                  ("0 turns it off", alive, inc, {"10-stig.conf": "ClientAliveInterval 0\n"}, False),
+                  # Codex (1.79.10): RHEL 10 wants it in a drop-in before 50-redhat.conf
+                  ("600 only in sshd_config", alive, inc + "ClientAliveInterval 600\n", {}, False),
+                  ("600 in 60-stig.conf", alive, inc, {"60-stig.conf": "ClientAliveInterval 600\n"}, False),
+                  ("600 in stig.conf (no order)", alive, inc, {"stig.conf": "ClientAliveInterval 600\n"}, False),
+                  ("RekeyLimit 512M 30m", rekey, "RekeyLimit 512M 30m\n", {}, True), ("RekeyLimit default", rekey, "RekeyLimit default none\n", {}, False),
+                  ("RekeyLimit 1G 0 (no time)", rekey, "RekeyLimit 1G 0\n", {}, False)]
+        cpf = "/etc/crypto-policies/back-ends/opensshserver.config"
+        for name, code, main, drop, want in cases:
+            with self.subTest(case=name):
+                r = self.run_on(code, {m: main, dd: drop, cpf: "Ciphers aes256-ctr\n"})
+                self.assertEqual((r["ok"], r["values"]), (True, [want]), r)
+                self.assertTrue(r["read"].startswith("read: "), r)
+        with self.subTest(case="the crypto policy file sets it"):
+            r = self.run_on(root, {m: inc, dd: {"50-redhat.conf": "Include /etc/crypto-policies/back-ends/opensshserver.config\nPermitRootLogin no\n"},
+                                   cpf: "PermitRootLogin yes\n"})
+            self.assertEqual((r["ok"], r["values"]), (True, [False]), r)
+
+    def test_mount_answers(self):
+        """1.79.10: the mount table's own entry for the mount point, exactly."""
+        opt, own = a.stig_answer_draft(T_MOUNT_OPT)["code"], a.stig_answer_draft(T_MOUNT_OWN)["code"]
+        home = "/dev/mapper/rhel-home /home xfs rw,%s,relatime 0 0\n"
+        cases = [("nodev", opt, home % "nosuid,nodev", True), ("without nodev", opt, home % "nosuid", False),
+                 ("not mounted", opt, "/dev/sda1 / xfs rw 0 0\n", False),
+                 ("nodevx is not nodev", opt, home % "nodevx", False),
+                 ("/var its own", own, "/dev/sda1 / xfs rw 0 0\n/dev/sda2 /var xfs rw 0 0\n", True),
+                 ("only /var/lib/nfs (DISA's grep /var finds it)", own, "/dev/sda1 / xfs rw 0 0\nsunrpc /var/lib/nfs/rpc_pipefs rpc_pipefs rw 0 0\n", False),
+                 # Codex (1.79.10): a bind mount of a directory of / is not a file system of its own
+                 ("/var a bind mount from /", own, "/dev/vda1 / xfs rw 0 0\n/dev/vda1 /var xfs rw 0 0\n", False)]
+        for name, code, table, want in cases:
+            with self.subTest(case=name):
+                r = self.run_on(code, {"/proc/self/mounts": table})
+                self.assertEqual((r["ok"], r["values"]), (True, [want]), r)
 
     def test_the_sandbox(self):
         """1.76.0: the sandbox's command line - the whole file system read-only, its own /tmp, /var/tmp, /dev/shm, no
