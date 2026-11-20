@@ -60,6 +60,14 @@
     area_label: "{{ portal_label_area | default('portal-area:', true) }}"
     publish_max: "{{ portal_publish_max | int }}"
     publish_organization: "{{ portal_publish_organization | default('') | string }}"
+    # 1.79.11: the catalog's five lines on its templates and workflows (aap/job_templates.yml, by name); the Contact line
+    # from aap_templates_description_owner / _contact
+    describe: >-
+      {%- set c = lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml -%}
+      {{ {'job': c.job_templates | selectattr('description', 'defined') | items2dict(key_name='name', value_name='description'),
+          'workflow': c.workflows | default([]) | items2dict(key_name='name', value_name='description'),
+          'owner': aap_templates_description_owner | default('') | string,
+          'contact': aap_templates_description_contact | default('') | string} if portal_setup_describe | default(true) | bool else {} }}
     ca_path: "{{ portal_setup_aap_ca_path }}"
   register: _ps
 

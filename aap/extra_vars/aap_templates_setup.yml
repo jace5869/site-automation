@@ -51,6 +51,22 @@ aap_templates_credentials:
 ## a CA file for AAP's own HTTPS certificate
 # aap_templates_ca_path: "{{ report_history_aap_ca_path | default('') }}"
 
+## 1.79.11: true = write the catalog's descriptions on the templates and workflows found
+## (docs/SETUP_AAP.md, "Describe").
+# aap_templates_describe: false
+
+## true = only the descriptions: no template made, checked or labelled
+# aap_templates_describe_only: false
+
+## true = write over a hand-written description too
+# aap_templates_describe_overwrite: false
+
+## the Contact line's Owner= ("" with no contact either: no Contact line)
+# aap_templates_description_owner: ""
+
+## the Contact line's Developer=
+# aap_templates_description_contact: ""
+
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account
 ## has Execute on AND that carries the AAP label below is added to the portal - no edit here, no

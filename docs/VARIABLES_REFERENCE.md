@@ -201,6 +201,7 @@ File: `roles/aap_portal_setup/defaults/main.yml`
 | `portal_setup_credentials` | `{}` | the AAP credential of each kind workflows.yml names: machine, machine_windows, aap, act_model_key, stigman_api, stigman_api_writer, windows_share ... A template with a kind not named here is skipped, said. |
 | `portal_setup_portal_user` | (empty) | the portal's AAP account (its user name): Execute and Approve on these; "" = no roles given |
 | `portal_setup_overwrite` | `false` | true = also bring up to date what was made or changed by hand (never deletes) |
+| `portal_setup_describe` | `true` | 1.79.11: the templates and workflows get the catalog's five-line descriptions (aap/job_templates.yml; Contact from aap_templates_description_owner / _contact) - false = workflows.yml's one line, as before |
 | `portal_setup_schedules` | `[]` | schedules on templates or workflows of workflows.yml, e.g. the checklist import every 15 minutes: [{name: "Checklists every 15 minutes", target: "Checklists imported into STIG Manager", every_minutes: 15}] |
 | `portal_setup_scorecard_template` | `"STIG - weekly scorecard"` | 1.68.1 the STIG scorecard, so it is not set up by hand: a job template of its own (workflow 40's check template copied - project, inventory, execution environment, credentials and Variables - with stigman_ckl_import_mode: scorecard) and a weekly schedule. Each is made once; one that is there is left as it is. "" = non… (all of it: the role file) |
 | `portal_setup_scorecard_schedule` | `"weekly Mon 06:00"` | 'weekly Mon 06:00' or 'daily 06:00', in report_time_zone ("" = UTC); "" = no schedule |
@@ -258,6 +259,11 @@ File: `roles/aap_templates/defaults/main.yml`
 | `aap_templates_portal_label_area` | `"{{ portal_label_area \| default('portal-area:') }}"` | the prefix of its group label |
 | `aap_templates_catalog` | (empty) | "" = the repository's aap/job_templates.yml; a path here = your own catalog |
 | `aap_templates_ca_path` | `"{{ report_history_aap_ca_path \| default('') }}"` | a CA file for AAP's own HTTPS certificate |
+| `aap_templates_describe` | `false` | 1.79.11: true = write the catalog's descriptions on the templates and workflows found (docs/SETUP_AAP.md, "Describe"). |
+| `aap_templates_describe_only` | `false` | true = only the descriptions: no template made, checked or labelled |
+| `aap_templates_describe_overwrite` | `false` | true = write over a hand-written description too |
+| `aap_templates_description_owner` | (empty) | the Contact line's Owner= ("" with no contact either: no Contact line) |
+| `aap_templates_description_contact` | (empty) | the Contact line's Developer= |
 
 ## aap_workflow_gates
 

@@ -4185,5 +4185,25 @@ class Results1782(unittest.TestCase):
         self.assertIn('    tech = ""', src)
 
 
+
+class Described17911(unittest.TestCase):
+    """1.79.11: a template described by AAP - set up job templates (aap_templates_describe): its card says what it does (the
+    Does line), the Details panel the other lines; any other description as it is."""
+
+    def test_the_lines(self):
+        text = ("** Does: Runs read-only Linux checks.\n** Targets: Linux hosts of the Limit\n** Produces: a report\n"
+                "** Supports: Run constraint=Read-only on target hosts; writes report email\n** Contact: Owner=OPS-TEAM")
+        d = sp.described(text)
+        self.assertEqual(d["Does"], "Runs read-only Linux checks.")
+        self.assertEqual(d["Contact"], "Owner=OPS-TEAM")
+        self.assertEqual(sp.described("Health check, made by hand"), {})
+        self.assertEqual(sp.described("** Targets: no Does line"), {})
+        h = sp.described_html({"described": d})
+        self.assertIn("<dt>Supports</dt><dd>Run constraint=Read-only on target hosts; writes report email</dd>", h)
+        self.assertNotIn("<dt>Does</dt>", h)                                      # the card's own line, above it
+        self.assertEqual(sp.described_html({}), "")
+        self.assertIn("&lt;b&gt;", sp.described_html({"described": {"Does": "x", "Targets": "<b>"}}))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

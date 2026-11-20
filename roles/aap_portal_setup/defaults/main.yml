@@ -18,6 +18,9 @@ portal_setup_inventories:
 portal_setup_credentials: {}
 portal_setup_portal_user: ""                     # the portal's AAP account (its user name): Execute and Approve on these; "" = no roles given
 portal_setup_overwrite: false                    # true = also bring up to date what was made or changed by hand (never deletes)
+# 1.79.11: the templates and workflows get the catalog's five-line descriptions (aap/job_templates.yml; Contact from
+# aap_templates_description_owner / _contact) - false = workflows.yml's one line, as before
+portal_setup_describe: true
 # schedules on templates or workflows of workflows.yml, e.g. the checklist import every 15 minutes:
 #   [{name: "Checklists every 15 minutes", target: "Checklists imported into STIG Manager", every_minutes: 15}]
 portal_setup_schedules: []

@@ -707,6 +707,61 @@ the catalog does not name (a Teams webhook you added stays). A template takes on
 one of a type it already has (your Windows Machine credential beside the Linux one) is left off, and said. A new
 template gets its Variables file with every setting switched off - switch on what you need.
 
+### Describe the templates
+
+Every job template and workflow of the project can carry a short description in AAP (1.79.11): what it does, what it
+runs on, what it makes, what it reads and writes, and who to ask. Before you turn a job off, its description says what
+it is for. The same job writes them: **AAP - set up job templates** with `aap_templates_describe: true`.
+
+```
+** Does: Runs read-only Linux checks (disk, services, time, SELinux, accounts ...) and fails hosts with findings ...
+** Targets: Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential) ...
+** Produces: Findings per host in the job output, the report email and website page when set ...
+** Supports: Run constraint=Read-only on target hosts (...); writes report email/website
+** Contact: Owner=<your team>, Developer=<who changes it>
+```
+
+1. In the template's Variables (`aap/extra_vars/aap_templates_setup.yml`):
+
+   ```yaml
+   aap_templates_describe: true
+   aap_templates_describe_only: true              # only the descriptions: no template made, checked or labelled
+   aap_templates_description_owner: "Ops team"    # the Contact line; leave both empty for no Contact line
+   aap_templates_description_contact: "Automation team"
+   ```
+
+2. Launch it with Job type **Check**. It lists every template and workflow of the project, with the old and the new
+   first line:
+   - *WOULD DESCRIBE* - an empty description, or one this job wrote before (it starts with `** Does:`);
+   - *KEPT (hand-written)* - a description someone wrote: left as it is. `aap_templates_describe_overwrite: true`
+     writes over it too;
+   - *left to its own job* - one **AAP - set up portal actions** made: that job writes the same five lines itself, with
+     its own mark after them (`portal_setup_describe`, on by default) - run it to bring them up to date;
+   - *no description known* - a template whose playbook is not in the catalog, or a workflow the catalog does not
+     know: left as it is;
+   - *not in AAP* - a catalog template or workflow your AAP does not have.
+   None of these fails the job. Only a description AAP refuses to save turns it red, and the others are still written.
+3. Launch it again with Job type **Run**. Run it again after each update of site-automation: the descriptions stay
+   current, and a hand-written one is still kept.
+
+How it finds them:
+
+- **A job template by its playbook** in the project, whatever you named it. Every template of that playbook gets
+  the description. For a playbook with two catalog templates (*ServiceNow health* and *ServiceNow health - nodes*),
+  the name decides first, then the template's Variables.
+- **A workflow by its name**, else by the playbooks of its steps (the workflow gate aside). Your own service watch
+  workflow is found by its steps, under any name. Two catalog workflows with the same steps (*Patch with checks*,
+  *Patch with a dry run first*) are found by name only.
+- The descriptions are in `aap/job_descriptions.yml`. The Owner and Developer come only from your settings, never from
+  the repository.
+
+The site portal shows the *Does* line on each card, and the other lines in its **Details** panel.
+
+**AAP - set up job templates and AAP - set up portal actions in one go:** with `aap_templates_describe: true` and
+`aap_templates_describe_only: false`, the job first makes or checks the templates, then describes them - a template it
+made in this run gets its description in the same run. A list AAP did not give (AAP not reached) is a warning: nothing
+is written for it, and the job stays green.
+
 ### Move templates to another inventory
 
 One template - `AAP - move templates to another inventory` (`playbooks/aap_inventory_move.yml`), with only the **Red

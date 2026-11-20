@@ -137,3 +137,24 @@ class Api(object):
         if code == 404:
             return "AAP has no API at %s/api/controller/v2/ or /api/v2/ (HTTP 404): the credential's URL must be AAP's own address" % self.conn["host"]
         return "AAP answered HTTP %d: %s" % (code, error_text(data))
+
+
+# 1.79.11: a template's or workflow's description in five short labeled lines (aap/job_templates.yml's description, and the
+# Contact line from the site's settings only) - written by AAP - set up job templates (aap_templates_describe) and by
+# AAP - set up portal actions on its own templates and workflows
+DESCRIBED_LABELS = (("does", "Does"), ("targets", "Targets"), ("produces", "Produces"), ("supports", "Supports"))
+DESCRIBED_LINE_MAX = 160
+
+
+def described_text(desc, owner="", contact=""):
+    """The lines ("** Does: ..."), each at most 160 characters; the Contact line only with an owner or a contact; '' when
+    desc has no Does."""
+    def one(v):
+        return " ".join(str(v or "").split())
+    if not isinstance(desc, dict) or not one(desc.get("does")):
+        return ""
+    lines = [("** %s: %s" % (label, one(desc.get(key))))[:DESCRIBED_LINE_MAX] for key, label in DESCRIBED_LABELS if one(desc.get(key))]
+    who = ", ".join(x for x in (("Owner=" + one(owner)) if one(owner) else "", ("Developer=" + one(contact)) if one(contact) else "") if x)
+    if who:
+        lines.append(("** Contact: " + who)[:DESCRIBED_LINE_MAX])
+    return "\n".join(lines)

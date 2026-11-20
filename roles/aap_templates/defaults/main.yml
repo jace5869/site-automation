@@ -30,3 +30,9 @@ aap_templates_portal_label: "{{ portal_label | default('portal') }}"            
 aap_templates_portal_label_area: "{{ portal_label_area | default('portal-area:') }}"   # the prefix of its group label
 aap_templates_catalog: ""                      # "" = the repository's aap/job_templates.yml; a path here = your own catalog
 aap_templates_ca_path: "{{ report_history_aap_ca_path | default('') }}"   # a CA file for AAP's own HTTPS certificate
+# 1.79.11: true = write the catalog's descriptions on the templates and workflows found (docs/SETUP_AAP.md, "Describe").
+aap_templates_describe: false
+aap_templates_describe_only: false             # true = only the descriptions: no template made, checked or labelled
+aap_templates_describe_overwrite: false        # true = write over a hand-written description too
+aap_templates_description_owner: ""            # the Contact line's Owner= ("" with no contact either: no Contact line)
+aap_templates_description_contact: ""          # the Contact line's Developer=

@@ -40,6 +40,11 @@ portal_setup_portal_user: svc_site_portal
 ## true = also bring up to date what was made or changed by hand (never deletes)
 # portal_setup_overwrite: false
 
+## 1.79.11: the templates and workflows get the catalog's five-line descriptions
+## (aap/job_templates.yml; Contact from aap_templates_description_owner / _contact) - false =
+## workflows.yml's one line, as before
+# portal_setup_describe: true
+
 ## schedules on templates or workflows of workflows.yml, e.g. the checklist import every 15 minutes:
 ## [{name: "Checklists every 15 minutes", target: "Checklists imported into STIG Manager",
 ## every_minutes: 15}]
@@ -108,6 +113,13 @@ portal_setup_portal_user: svc_site_portal
 ## Take templates off the portal again (the label only; the roles stay and nothing is deleted): the
 ## same shape.
 # portal_unpublish_templates: []
+
+# ---- aap_templates -------------------------------------------------------------------------------
+## the Contact line's Owner= ("" with no contact either: no Contact line)
+# aap_templates_description_owner: ""
+
+## the Contact line's Developer=
+# aap_templates_description_contact: ""
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it

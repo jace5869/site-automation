@@ -14,6 +14,53 @@
 - **Downloads.** *Download proposal (.md)* in each opened row (built in the page, no inline script); one *Automation backlog.docx* attached to the report email (every cluster in a table, a proposal for each of the top clusters; the report website serves the page, not files); the workbook's *Automation backlog* sheet with every cluster and phase. `roles/incident_docs/tasks/write_doc.yml` writes a Word file for another role.
 - Tests: `tests/test_insights_backlog.py` (the formulas on made-up XINC tickets, rate x months = tickets, ACT's JSON and bad JSON, the cache, ACT off, the Word file, the .md, the page at 1280 and 800 px, light and dark, under `script-src 'self'`), the insights e2e (the words, bad JSON, ACT off, the Word file in the mail).
 
+## 1.79.11 — 2026-11-20
+
+**To set up: nothing.** Optional: in **AAP - set up job templates**, `aap_templates_describe: true` (with
+`aap_templates_describe_only: true` for the descriptions alone), and the Contact line's
+`aap_templates_description_owner` and `aap_templates_description_contact`. Launch it with **Check** first.
+
+**Descriptions on the job templates and workflows in AAP.** Each template and workflow of the project can now say what
+it is for, so a job nobody remembers can be understood before anyone turns it off. Five short lines:
+
+```
+** Does: <one sentence>
+** Targets: <what it runs on>
+** Produces: <reports, emails, records>
+** Supports: Run constraint=<read-only, or what it changes>; writes <what>
+** Contact: Owner=<yours>, Developer=<yours>
+```
+
+- **The catalog**: every one of the 152 templates in `aap/job_templates.yml` has its description, and 49 workflows
+  (the site portal's, and the ones the docs tell you to build) have theirs. They are written by hand in
+  `aap/job_descriptions.yml`, from each playbook and its roles. *Supports* says plainly whether the job only reads, or
+  what it writes: the hosts, AAP, STIG Manager, ServiceNow, vCenter, the share, the report database, the email and the
+  report website.
+- **Found as you named them**: a job template by its playbook in the project, every template of that playbook (two
+  catalog templates of one playbook: by name, then by their Variables). A workflow by its name, else by the playbooks
+  of its steps: your service watch workflow is found under its own name. Two catalog workflows with the same steps are
+  found by name only.
+- **Never over yours**: an empty description, or one this job wrote (`** Does:`), is written. A hand-written one is
+  kept unless `aap_templates_describe_overwrite: true`.
+- **The site portal's templates and workflows** (the ones people click most): **AAP - set up portal actions** now
+  writes the same five lines on them itself, its fingerprint mark kept last, so it still knows its own
+  (`portal_setup_describe: true` by default). AAP - set up job templates leaves those to it.
+- **In one run**: with `aap_templates_describe_only: false`, the templates are made first, then described.
+- **Never red for what it cannot find**: a catalog template not in AAP, a template or workflow the catalog does not
+  know, AAP not reached - each listed (a warning), the job green. Only a description AAP refuses to save turns it red;
+  the others are still written. A workflow is matched only when every job step is a template of the project; by its
+  steps only with the same steps as often, and with an approval when its description promises one.
+  Check lists every change, old and new first line.
+- **The site portal** shows the *Does* line on each card, and *Targets*, *Produces*, *Supports* and *Contact* in its
+  Details panel.
+- Tests: `run_aap_describe_test.sh` (the stand-in AAP: Check, the run, a renamed template, two of one playbook, the
+  workflow by its steps, one without its approval and one of another project left, hand-written kept then overwritten,
+  the portal's left, unknown and missing listed, the Contact line, `aap_templates_only`, a refused write, AAP not
+  reached), `run_portal_setup_test.sh` (the five lines on its templates and workflows, its mark last),
+  `test_job_catalog.py` (a description for every entry, at most 160
+  characters a line; the workflows), `test_site_portal.py` (`Described17911`). Docs: `SETUP_AAP.md` ("Describe the
+  templates"), `VARIABLES_REFERENCE`, `aap/extra_vars`.
+
 ## 1.79.9 — 2026-11-20
 
 **To set up:** run **Site portal - deploy** again. Nothing else.

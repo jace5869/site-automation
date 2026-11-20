@@ -66,7 +66,7 @@ import json
 import re
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_aap import Api, connection, error_text
+from ansible.module_utils.site_aap import Api, connection, error_text, described_text
 
 MARK = re.compile(r"\s*\[set up by AAP - set up portal actions, fingerprint ([0-9a-f]{12})\]\s*$")
 MARK_TEXT = " [set up by AAP - set up portal actions, fingerprint %s]"
@@ -195,7 +195,7 @@ class Setup(object):
             self.note("template", t["name"], "skipped", why=why or "no inventory %r (portal_setup_inventories)" % (t.get("inventory") or "default"))
             return (None, "skipped") if with_action else None
         prompts = t.get("prompts") or {}
-        want = {"name": t["name"], "description": str(t.get("description") or ""), "job_type": "run", "project": refs["project"],
+        want = {"name": t["name"], "description": self.described("job", t), "job_type": "run", "project": refs["project"],
                 "playbook": t["playbook"], "inventory": inv, "ask_variables_on_launch": bool(prompts.get("variables")),
                 "ask_limit_on_launch": bool(prompts.get("limit")), "become_enabled": bool(t.get("become")),
                 "extra_vars": json.dumps(t.get("extra_vars") or {}, sort_keys=True) if t.get("extra_vars") else ""}
@@ -332,10 +332,17 @@ class Setup(object):
         self.note("schedule", sname, "create", {"rrule": [None, rrule]})
         return True
 
+    def described(self, kind, x):
+        """1.79.11: the catalog's five lines for this template or workflow (describe: aap/job_templates.yml's, by name), else
+        its workflows.yml description; this job's fingerprint mark still goes after it (MARK_TEXT)."""
+        d = (getattr(self, "p", None) or {}).get("describe") or {}
+        text = described_text(((d.get(kind) or {}).get(x.get("name")) or {}), d.get("owner") or "", d.get("contact") or "")
+        return text or str(x.get("description") or "")
+
     # ---- workflows
     def workflow(self, w, tpl_ids, refs):
         prompts = w.get("prompts") or {}
-        want = {"name": w["name"], "description": str(w.get("description") or ""), "organization": refs["org"],
+        want = {"name": w["name"], "description": self.described("workflow", w), "organization": refs["org"],
                 "ask_variables_on_launch": bool(prompts.get("variables")), "ask_limit_on_launch": bool(prompts.get("limit")),
                 "extra_vars": json.dumps(w.get("extra_vars") or {}, sort_keys=True) if w.get("extra_vars") else ""}
         nodes = w.get("nodes") or []
@@ -786,6 +793,7 @@ def main():
                            publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""),
                            unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
                            area_label=dict(type="str", default="portal-area:"), publish_max=dict(type="int", default=50),
+                           describe=dict(type="dict", default={}),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params

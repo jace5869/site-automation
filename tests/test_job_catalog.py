@@ -2,6 +2,7 @@
 docs/JOB_TEMPLATES.md (names and playbooks) and up to date with its generator, so the two cannot drift; and the credential
 kinds read right from the wordings the Variables files use."""
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -94,6 +95,76 @@ class Catalog(unittest.TestCase):
         self.assertEqual(by["ACT - triage finding"].get("made_by"), "AAP - set up portal actions")
         self.assertTrue(by["STIG recheck"].get("portal"))
         self.assertEqual(by["ServiceNow health - nodes"].get("extra_vars"), {"servicenow_health_part": "nodes"})
+
+    # ---- 1.79.11: the descriptions aap_templates_describe writes
+    LABELS = (("does", "Does"), ("targets", "Targets"), ("produces", "Produces"), ("supports", "Supports"))
+    WRITES = re.compile(r"\b(writes?|changes?|Reads only|Read-only)\b", re.I)
+
+    def lines(self, d):
+        return ["** %s: %s" % (label, d.get(k) or "") for k, label in self.LABELS]
+
+    def test_every_template_has_a_description(self):
+        """Every entry: Does, Targets, Produces, Supports - each line (with its label) at most 160 characters, one line,
+        plain text; Supports says the run constraint and what it writes (a missing one fails here)."""
+        import yaml
+        with open(os.path.join(ROOT, "aap", "job_descriptions.yml")) as f:
+            source = yaml.safe_load(f)
+        cat = self.catalog()
+        self.assertEqual(sorted(source["templates"]), sorted(e["name"] for e in cat))         # none missing, none left over
+        for e in cat:
+            d = e.get("description") or {}
+            for k, _ in self.LABELS:
+                self.assertTrue(str(d.get(k) or "").strip(), "%s: no %s" % (e["name"], k))
+            for line in self.lines(d):
+                self.assertLessEqual(len(line), 160, "%s: %s" % (e["name"], line))
+                self.assertNotIn("\n", line)
+                self.assertFalse(re.search(r"\b(purchase|buy|cost)\b", line, re.I), line)
+            self.assertTrue(d["supports"].startswith("Run constraint="), e["name"])
+            self.assertTrue(self.WRITES.search(d["supports"]), e["name"])
+
+    def test_workflows(self):
+        """The catalog's workflows: a name each, once; their steps' playbooks there; the four lines as the templates'."""
+        import yaml
+        with open(os.path.join(ROOT, "aap", "job_templates.yml")) as f:
+            wfs = yaml.safe_load(f).get("workflows") or []
+        self.assertGreater(len(wfs), 10)
+        self.assertEqual(len(set(w["name"] for w in wfs)), len(wfs))
+        sw = [w for w in wfs if w["name"].startswith("Service watch")]
+        self.assertTrue(sw and "playbooks/service_watch.yml" in sw[0]["playbooks"])          # the user's: found by its steps too
+        for w in wfs:
+            self.assertTrue(w["playbooks"], w["name"])
+            for pb in w["playbooks"]:
+                self.assertTrue(os.path.isfile(os.path.join(ROOT, pb)), "%s: %s" % (w["name"], pb))
+            for line in self.lines(w["description"]):
+                self.assertLessEqual(len(line), 160, "%s: %s" % (w["name"], line))
+            self.assertTrue(w["description"]["supports"].startswith("Run constraint="), w["name"])
+
+    def test_the_text_written(self):
+        """The module's five lines: the labels, the cap, the Contact line only from the settings."""
+        import importlib.util
+        for name in ("site_aap",):
+            spec = importlib.util.spec_from_file_location("ansible.module_utils." + name, os.path.join(ROOT, "plugins", "module_utils", name + ".py"))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["ansible.module_utils." + name] = mod
+            spec.loader.exec_module(mod)
+        spec = importlib.util.spec_from_file_location("site_aap_describe", os.path.join(ROOT, "roles", "aap_templates", "library", "site_aap_describe.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        d = {"does": "Checks.", "targets": "Linux hosts", "produces": "a report", "supports": "Run constraint=Read-only; writes nothing " + "x" * 300}
+        t = m.text_of(d, "", "")
+        self.assertEqual(t.splitlines()[0], "** Does: Checks.")
+        self.assertEqual(len(t.splitlines()), 4)                                    # no Contact line without the settings
+        self.assertEqual(len(t.splitlines()[3]), 160)                               # the cap
+        self.assertTrue(m.text_of(d, "OPS", "").endswith("** Contact: Owner=OPS"))
+        self.assertTrue(m.text_of(d, "OPS", "DEV").endswith("** Contact: Owner=OPS, Developer=DEV"))
+        self.assertEqual(m.text_of({"does": ""}, "OPS", "DEV"), "")
+        self.assertTrue(m._vars_have("---\nservicenow_health_part: nodes\n", {"servicenow_health_part": "nodes"}))
+        self.assertTrue(m._vars_have('{"servicenow_health_part": "nodes"}', {"servicenow_health_part": "nodes"}))
+        self.assertFalse(m._vars_have("servicenow_health_part: all\n", {"servicenow_health_part": "nodes"}))
+        # (Codex) parsed, not searched: a comment after the value is fine, a commented-out line is not set
+        self.assertTrue(m._vars_have("servicenow_health_part: nodes   # the Linux nodes\n", {"servicenow_health_part": "nodes"}))
+        self.assertFalse(m._vars_have("# servicenow_health_part: nodes\n", {"servicenow_health_part": "nodes"}))
+        self.assertFalse(m._vars_have("{not yaml: [", {"servicenow_health_part": "nodes"}))
 
 
 if __name__ == "__main__":

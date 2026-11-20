@@ -71,6 +71,10 @@ got="$(st '[(n["identifier"], [m["identifier"] for m in s["nodes"] if m["id"] in
     && pass "workflow 47: check -> gate -> approve -> apply -> recheck -> gate -> update" || fail "workflow 47's nodes" "$got"
 got="$(st '[(x["name"], x["rrule"]) for x in s["schedules"]]')"
 case "$got" in *"Recheck every 15 minutes"*"INTERVAL=15"*) pass "the schedule";; *) fail "the schedule" "$got";; esac
+# 1.79.11: the catalog's five lines (aap/job_templates.yml), this job's fingerprint mark still last
+got="$(st '[(x["name"], x["description"].startswith("** Does: "), "\n** Supports: Run constraint=" in x["description"], x["description"].split("\n")[-1].endswith("]") and "[set up by AAP - set up portal actions, fingerprint " in x["description"].split("\n")[-1]) for x in s["workflow_job_templates"] + s["job_templates"] if x["name"] in ("STIG - recheck one host", "STIG recheck")]')"
+[ "$got" = "[('STIG - recheck one host', True, True, True), ('STIG recheck', True, True, True)]" ] \
+    && pass "the five lines on its workflows and templates (the catalog's), its mark last" || fail "the descriptions" "$got"
 
 # ---- a second run changes nothing
 n="$(writes)"

@@ -511,9 +511,11 @@ class Aap(object):
             name = "%s_%d" % ("wf" if typ == "workflow" else "jt", tid)         # the id never moves to another template
             title = cfg.titles.get(tname.casefold()) or next(
                 (t for t in (rules.site_portal_title_label(l, cfg.label_title) for l in sorted(labels)) if t), "") or tname[:120]
-            desc = " ".join(str(r.get("description") or "").split())
+            lines = described(r.get("description"))          # 1.79.11: "** Does: ..." - the card says what it does
+            desc = lines.get("Does") or " ".join(str(r.get("description") or "").split())
             out["actions"][name] = {
                 "name": name, "title": title, "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area, "area_from": area_from,
+                "described": lines,
                 "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
                 "limit_from": rules.LIMIT_VAR if limit else "", "limit_inv": limit_inv, "limit_inv_name": inv_name, "who": None, "discovered": True, "tid": tid, "started_by": named,
                 "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area))
@@ -2297,10 +2299,32 @@ def details_html(cfg, portal, cn, name):
     return ('<div class="dbody"><div class="hd2"><h2 id="dt">%s</h2><a class="btn" href="%s" data-close>Close</a></div><div class="meta"><span class="ty">%s</span></div>%s'
             '<h3>Labels</h3>%s<h3>Asks for</h3><ul class="plain">%s</ul>%s<h3>Last 5 runs</h3><ul class="plain runs">%s</ul><div class="btns">%s</div></div>'
             % (esc(a["title"]), cfg.path, "Workflow" if a["aap"]["type"] == "workflow" else "Job template",
-               (("<p>%s</p>" % esc(line)) if line else '<p class="muted-line">No description</p>') + area_line(a),
+               (("<p>%s</p>" % esc(line)) if line else '<p class="muted-line">No description</p>') + described_html(a) + area_line(a),
                ('<div class="lab">%s</div>' % labels) if labels else '<p class="muted-line">None</p>', asks,
                ('<h3>The form (from the survey in AAP)</h3><table class="q"><thead><tr><th>Question</th><th>Type</th></tr></thead><tbody>%s</tbody></table>' % qs) if qs else "",
                rs, run))
+
+
+DESCRIBED = re.compile(r"^\s*\*\*\s*(Does|Targets|Produces|Supports|Contact)\s*:\s*(.+?)\s*$")
+
+
+def described(text):
+    """1.79.11: a template's description in the five labeled lines AAP - set up job templates writes (aap_templates_describe):
+    {Does, Targets, Produces, Supports, Contact} - {} for any other description (then shown as it is)."""
+    out = {}
+    text = re.sub(r"\s*\[set up by AAP - set up portal actions, fingerprint \w+\]\s*$", "", str(text or ""))   # that job's mark
+    for line in text.splitlines():
+        m = DESCRIBED.match(line)
+        if m and m.group(1) not in out:
+            out[m.group(1)] = m.group(2)[:300]
+    return out if out.get("Does") else {}
+
+
+def described_html(a):
+    """The Details panel's lines of a described template: what it runs on, makes, reads and writes, and who to ask."""
+    d = a.get("described") or {}
+    rows = "".join("<dt>%s</dt><dd>%s</dd>" % (esc(k), esc(d[k])) for k in ("Targets", "Produces", "Supports", "Contact") if d.get(k))
+    return ('<dl class="described">%s</dl>' % rows) if rows else ""
 
 
 def area_line(a):

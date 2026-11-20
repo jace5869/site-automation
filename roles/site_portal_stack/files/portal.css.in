@@ -340,6 +340,7 @@ dialog.drawer{margin:0 0 0 auto;width:min(460px,100vw);height:100vh;max-height:n
 .banner2.bad{border-color:var(--critical-bd);background:var(--critical-bg)}
 .banner2.run{border-color:var(--info-bd);background:var(--info-bg)}
 .banner2 svg{margin-top:3px;flex:none;width:16px;height:16px}
+.described{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:8px 0 10px;font-size:13px}.described dt{font-weight:650;color:var(--muted)}.described dd{margin:0;overflow-wrap:anywhere}
 .facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--edge);border-radius:10px}
 .facts>div{padding:10px 14px;border-left:1px solid var(--line);border-top:1px solid var(--line);min-width:0}
 .facts>div:nth-child(-n+4){border-top:0}

@@ -3,11 +3,22 @@
 # Platform" credential's variables. A Check run only reads.
 - name: Job templates | the catalog
   ansible.builtin.set_fact:
-    _at_catalog: >-
-      {{ (lookup('ansible.builtin.file', aap_templates_catalog if aap_templates_catalog | length > 0
-                 else role_path ~ '/../../aap/job_templates.yml') | from_yaml).job_templates }}
+    _at_doc: >-
+      {{ lookup('ansible.builtin.file', aap_templates_catalog if aap_templates_catalog | length > 0
+                else role_path ~ '/../../aap/job_templates.yml') | from_yaml }}
+
+- name: Job templates | its templates and workflows; the descriptions this repository wrote before (replaced as ours)
+  ansible.builtin.set_fact:
+    _at_catalog: "{{ _at_doc.job_templates }}"
+    _at_workflows: "{{ _at_doc.workflows | default([]) }}"
+    _at_ours: >-
+      {%- set pw = lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml -%}
+      {{ (['Made by AAP - set up job templates (aap/job_templates.yml)']
+          + (pw.templates | default([]) + pw.workflows | default([])) | selectattr('description', 'defined') | map(attribute='description') | list)
+         | map('string') | map('trim') | select | unique | list }}
 
 - name: Job templates | made or checked, in AAP
+  when: not aap_templates_describe_only | bool
   site_aap_templates:
     catalog: "{{ _at_catalog }}"
     organization: "{{ aap_templates_organization }}"
@@ -26,6 +37,7 @@
   register: _at
 
 - name: Job templates | what was done
+  when: not aap_templates_describe_only | bool
   ansible.builtin.debug:
     msg: >-
       {%- set out = [] -%}
@@ -50,6 +62,7 @@
       {{ out or ['nothing in the catalog matches aap_templates_only'] }}
 
 - name: Job templates | in short
+  when: not aap_templates_describe_only | bool
   ansible.builtin.debug:
     msg: >-
       {%- set n = {} -%}
@@ -57,7 +70,62 @@
       {%- set nl = _at.results | selectattr('labels', 'defined') | selectattr('labels') | list | length -%}
       {{ (n | dictsort | map('join', ': ') | join(', ') or 'nothing') ~ ((', ' ~ ('would label portal: ' if ansible_check_mode else 'labelled portal: ') ~ nl) if nl else '') }}
 
+# 1.79.11: the descriptions (aap_templates_describe) - after the templates are made, so a new one is described in the same
+# run; nothing found or read there is ever a failure (a warning); only a write AAP refuses stops the job
+- name: Job templates | the descriptions (aap_templates_describe)
+  when: aap_templates_describe | bool or aap_templates_describe_only | bool
+  block:
+    - name: Job templates | the descriptions - written on the templates and workflows found
+      site_aap_describe:
+        catalog: "{{ _at_catalog }}"
+        workflows: "{{ _at_workflows }}"
+        organization: "{{ aap_templates_organization }}"
+        project: "{{ aap_templates_project }}"
+        owner: "{{ aap_templates_description_owner | default('') }}"
+        contact: "{{ aap_templates_description_contact | default('') }}"
+        overwrite: "{{ aap_templates_describe_overwrite | bool }}"
+        only: "{{ aap_templates_only }}"
+        ours: "{{ _at_ours }}"
+        ca_path: "{{ aap_templates_ca_path }}"
+      register: _atd
+
+    - name: Job templates | the descriptions - what was done
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- set verb = {'describe': ('WOULD DESCRIBE' if ansible_check_mode else 'described'), 'right': 'already right',
+                          'kept': 'KEPT (hand-written)', 'left': 'left to its own job', 'not in AAP': 'not in AAP',
+                          'no description known': 'no description known',
+                          'failed': 'FAILED'} -%}
+          {%- for r in _atd.results -%}
+          {%-   set _ = out.append(verb[r.action] ~ ' - ' ~ r.kind ~ " '" ~ r.name ~ "'"
+                                   ~ ((" (catalog: '" ~ r.catalog ~ "')") if r.catalog and r.catalog != r.name else '')
+                                   ~ ((' - ' ~ r.why) if r.why else '')) -%}
+          {%-   if r.action in ['describe', 'kept', 'failed'] -%}
+          {%-     set _ = out.append('    was: ' ~ r.was) -%}
+          {%-     set _ = out.append('    now: ' ~ r.now) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out or ['nothing matches aap_templates_only'] }}
+
+    - name: Job templates | the descriptions - in short
+      ansible.builtin.debug:
+        msg: >-
+          {%- set n = {} -%}
+          {%- for r in _atd.results -%}{%- set _ = n.update({r.kind ~ ' ' ~ r.action: n.get(r.kind ~ ' ' ~ r.action, 0) + 1}) -%}{%- endfor -%}
+          {{ n | dictsort | map('join', ': ') | join(', ') or 'nothing' }}
+
+    - name: Job templates | the descriptions - WARNING, not read (nothing was written for it)
+      ansible.builtin.debug:
+        msg: "{{ _atd.notes }}"
+      when: _atd.notes | default([]) | length > 0
+
+    - name: Job templates | the descriptions - a write AAP refused
+      ansible.builtin.fail:
+        msg: "{{ _atd.problems }}"
+      when: _atd.problems | length > 0
+
 - name: Job templates | a name not found, AAP not read, or a write that failed - see above
   ansible.builtin.fail:
     msg: "{{ _at.problems }}"
-  when: _at.problems | length > 0
+  when: not aap_templates_describe_only | bool and _at.problems | length > 0
