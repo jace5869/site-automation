@@ -178,13 +178,14 @@ class Catalog(unittest.TestCase):
         self.assertTrue(m.text_of(d, "OPS", "").endswith("** Contact: Owner=OPS"))
         self.assertTrue(m.text_of(d, "OPS", "DEV").endswith("** Contact: Owner=OPS, Developer=DEV"))
         self.assertEqual(m.text_of({"does": ""}, "OPS", "DEV"), "")
-        self.assertTrue(m._vars_have("---\nservicenow_health_part: nodes\n", {"servicenow_health_part": "nodes"}))
-        self.assertTrue(m._vars_have('{"servicenow_health_part": "nodes"}', {"servicenow_health_part": "nodes"}))
-        self.assertFalse(m._vars_have("servicenow_health_part: all\n", {"servicenow_health_part": "nodes"}))
+        sa = sys.modules["ansible.module_utils.site_aap"]               # 1.79.19: the matcher, shared with the renames
+        self.assertTrue(sa.vars_have("---\nservicenow_health_part: nodes\n", {"servicenow_health_part": "nodes"}))
+        self.assertTrue(sa.vars_have('{"servicenow_health_part": "nodes"}', {"servicenow_health_part": "nodes"}))
+        self.assertFalse(sa.vars_have("servicenow_health_part: all\n", {"servicenow_health_part": "nodes"}))
         # (Codex) parsed, not searched: a comment after the value is fine, a commented-out line is not set
-        self.assertTrue(m._vars_have("servicenow_health_part: nodes   # the Linux nodes\n", {"servicenow_health_part": "nodes"}))
-        self.assertFalse(m._vars_have("# servicenow_health_part: nodes\n", {"servicenow_health_part": "nodes"}))
-        self.assertFalse(m._vars_have("{not yaml: [", {"servicenow_health_part": "nodes"}))
+        self.assertTrue(sa.vars_have("servicenow_health_part: nodes   # the Linux nodes\n", {"servicenow_health_part": "nodes"}))
+        self.assertFalse(sa.vars_have("# servicenow_health_part: nodes\n", {"servicenow_health_part": "nodes"}))
+        self.assertFalse(sa.vars_have("{not yaml: [", {"servicenow_health_part": "nodes"}))
 
 
 if __name__ == "__main__":

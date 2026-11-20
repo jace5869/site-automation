@@ -769,6 +769,72 @@ The site portal shows the *Does* line on each card, and the other lines in its *
 made in this run gets its description in the same run. A list AAP did not give (AAP not reached) is a warning: nothing
 is written for it, and the job stays green.
 
+### Rename and match your templates
+
+Your job templates and workflows can take the catalog's names (1.79.19), so they read like these guides and the site
+portal's cards. The same job can also bring some of their fields to the catalog's. It is **AAP - set up job
+templates** again, with three settings. It never deletes anything.
+
+1. In the template's Variables (`aap/extra_vars/aap_templates_setup.yml`):
+
+   ```yaml
+   aap_templates_rename: true
+   aap_templates_create_missing: false     # rename and match only: no catalog template you lack is made
+   aap_templates_match: [inventory, credentials, prompts, ee, labels]    # or fewer; [] = none
+   aap_templates_rename_map: {}            # e.g. {"Our container watch": "Service watch - approve or self-heal"}
+   ```
+
+2. Launch it with Job type **Check**. Nothing is written. It lists:
+   - *WOULD RENAME* - `job 'Daily health check' -> 'Health check' - by the playbook`;
+   - *NOT RENAMED (name taken)* - AAP has that name already (a job template or a workflow, in any organization).
+     Rename or remove that one first;
+   - *NOT RENAMED (one of several)* - two of your templates run one catalog template. *In short* names them:
+     `2 job templates run playbooks/stigman_update.yml: 'STIG Manager - update', 'STIG Manager update' - 'STIG
+     Manager - update' has the catalog's name; the other left`. With neither named right, it says *name one in
+     aap_templates_rename_map*;
+   - *not renamed* - with the reason: an area left out, a template another job makes, or one a site portal action
+     runs (see below);
+   - *WOULD FIX* - the fields `aap_templates_match` brings right, each as *has X, should be Y*. Other fields that
+     differ are named on the next line.
+   *In short* counts what is already right.
+3. Launch it again with Job type **Run**. The names change, then the fields. A rename AAP refuses turns the job red
+   and is named. The other renames are still done.
+4. Run it again: everything is *already right*, and nothing is written.
+
+How it finds them - the way the descriptions do:
+
+- **A job template by its playbook** in the project. For a playbook with two catalog templates (*ServiceNow health*
+  and *ServiceNow health - nodes*), the name decides first, then the template's Variables.
+- **A workflow by its name**, else by the playbooks of its steps. One that fits two catalog workflows is not renamed,
+  nor one with another kind of step (a workflow inside it, a project or inventory update).
+- **`aap_templates_rename_map`** goes first: `{"Your name": "New name"}`. It names any template or workflow of the
+  organization, also one the catalog does not know. It also picks the one to rename when you have several of one
+  catalog template.
+
+What is never renamed unless the map names it (a name the map gives stays: the next run does not rename it again):
+
+- **The areas in `aap_templates_rename_skip_areas`** (default `[Network]`: the networking templates - every one that
+  runs on the Network execution environment). The match leaves them out too.
+- **The templates and workflows AAP - set up portal actions makes** (*STIG recheck*, *Disk - clean up (approved)* ...):
+  that job knows its own by name. Nothing is renamed onto those names either.
+- **One a site portal action runs** - named in `portal_aap_names`, `portal_actions_extra` or `portal_actions`. The site
+  portal looks it up by that name when it starts. When the map renames it, the job prints the line to change, e.g.
+  `portal_aap_names: disk_space_request - change 'Patch' to 'Patch hosts'`. Change it in your settings, then run
+  **Site portal - deploy**.
+
+What `aap_templates_match` brings right, on your templates that the catalog knows:
+
+| Word | What changes |
+| --- | --- |
+| `inventory` | the inventory, to `aap_templates_inventory` |
+| `credentials` | the kinds the catalog needs and the template lacks are added. Nothing is taken off: a template takes one credential of a type, so a Machine credential of yours stays, and that is said |
+| `prompts` | Prompt on launch for Limit, Variables, Inventory and Job type |
+| `ee` | the execution environment, from `aap_templates_ee` |
+| `labels` | the site portal's labels (`portal` and `portal-area:<area>`) |
+
+A rename changes only the name. The template's id, description, Variables, survey, schedules and credentials stay. With
+`aap_templates_describe: true`, the descriptions are written in the same run, under the new names.
+
 ### Move templates to another inventory
 
 One template - `AAP - move templates to another inventory` (`playbooks/aap_inventory_move.yml`), with only the **Red

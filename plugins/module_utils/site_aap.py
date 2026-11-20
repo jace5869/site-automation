@@ -158,3 +158,74 @@ def described_text(desc, owner="", contact=""):
     if who:
         lines.append(("** Contact: " + who)[:DESCRIBED_LINE_MAX])
     return "\n".join(lines)
+
+
+# 1.79.19: the catalog matcher - what AAP - set up job templates' descriptions (site_aap_describe, 1.79.11) and its renames
+# (site_aap_rename) both go by: a job template of the project by its playbook, a workflow by its name, else by the
+# playbooks of its steps
+WORKFLOW_GATE = "playbooks/workflow_gate.yml"            # in many workflows: never what tells them apart
+
+
+def vars_of(text):
+    """A template's Variables (JSON or YAML text) as a dict - {} when they cannot be read."""
+    t = str(text or "").strip()
+    if not t:
+        return {}
+    try:
+        d = json.loads(t)
+    except ValueError:
+        try:
+            import yaml
+            d = yaml.safe_load(t)
+        except Exception:                               # noqa: BLE001 - not readable: no Variables of its own
+            return {}
+    return d if isinstance(d, dict) else {}
+
+
+def vars_have(text, want):
+    """A template's Variables carry each of want's keys with its value (as set: a commented line is not set)."""
+    have = vars_of(text)
+    return all(k in have and str(have[k]).lower() == str(v).lower() for k, v in (want or {}).items())
+
+
+def catalog_entry(t, entries):
+    """The catalog entry a job template is, of the entries of its playbook: the one of its name, else (a playbook of
+    several) the one whose Variables it has, else the one with none of its own - None when there is none."""
+    entries = list(entries or [])
+    if not entries:
+        return None
+    e = next((x for x in entries if x.get("name") == t.get("name")), None)
+    if e is None and len(entries) > 1:
+        e = next((x for x in entries if x.get("extra_vars") and vars_have(t.get("extra_vars"), x["extra_vars"])), None) \
+            or next((x for x in entries if not x.get("extra_vars")), entries[0])
+    return e or entries[0]
+
+
+def workflow_steps(nodes, pb_of):
+    """A workflow's nodes -> (Counter of its steps' playbooks - the gate aside, the number of steps of a template not of the
+    project (pb_of: {template id: playbook}), whether it has an approval)."""
+    import collections
+    steps, foreign, approval = collections.Counter(), 0, False
+    for n in nodes or []:
+        uj = (n.get("summary_fields") or {}).get("unified_job_template") or {}
+        if uj.get("unified_job_type") == "workflow_approval":
+            approval = True
+        elif uj.get("unified_job_type") == "job" and uj.get("id") is not None:
+            pb = pb_of.get(int(uj["id"]))
+            if pb is None:
+                foreign += 1                         # a template of another project: not the site-automation workflow
+            else:
+                steps[pb] += 1
+    steps.pop(WORKFLOW_GATE, None)
+    return steps, foreign, approval
+
+
+def workflow_fits(steps, approval, workflows, wants_approval=None):
+    """The catalog workflows with these steps (the gate aside) - one that promises an approval only on one that has one.
+    wants_approval(entry): whether it promises one (the descriptions: "approv" in its Supports line)."""
+    import collections
+    if wants_approval is None:
+        def wants_approval(c):
+            return "approv" in str((c.get("description") or {}).get("supports") or "").lower()
+    fits = [c for c in workflows or [] if steps == collections.Counter(x for x in c.get("playbooks") or [] if x != WORKFLOW_GATE)]
+    return [c for c in fits if approval or not wants_approval(c)]

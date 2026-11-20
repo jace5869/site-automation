@@ -30,6 +30,37 @@
 - **Downloads.** *Download proposal (.md)* in each opened row (built in the page, no inline script); one *Automation backlog.docx* attached to the report email (every cluster in a table, a proposal for each of the top clusters; the report website serves the page, not files); the workbook's *Automation backlog* sheet with every cluster and phase. `roles/incident_docs/tasks/write_doc.yml` writes a Word file for another role.
 - Tests: `tests/test_insights_backlog.py` (the formulas on made-up XINC tickets, rate x months = tickets, ACT's JSON and bad JSON, the cache, ACT off, the Word file, the .md, the page at 1280 and 800 px, light and dark, under `script-src 'self'`), the insights e2e (the words, bad JSON, ACT off, the Word file in the mail).
 
+## 1.79.19 — 2026-11-20
+
+**To set up: nothing.** New settings, all off by default: `aap_templates_rename` (false), `aap_templates_rename_map`
+({}), `aap_templates_match` ([]), `aap_templates_rename_skip_areas` ([Network]), `aap_templates_create_missing` (true).
+
+**AAP - set up job templates - rename and match your templates** (docs/SETUP_AAP.md, "Rename and match your
+templates"). Check lists everything first; a run never deletes.
+
+- **Renamed to the catalog's names:** your job templates found by their playbook in the project, and your workflows
+  by their name or the playbooks of their steps - the matcher of the descriptions (now in `site_aap`, shared).
+  `aap_templates_rename_map` {"Your name": "New name"} goes first and names any template or workflow, also one the
+  catalog does not know. Only the name changes: id, description, Variables, survey, schedules stay.
+- **Never renamed:** onto a name AAP has (a job template or a workflow, any organization - the site portal finds a
+  name alone), or two onto one; one of several templates of one catalog template (*in short*: `2 job templates run X:
+  'A', 'B' - name one in aap_templates_rename_map`); the areas of `aap_templates_rename_skip_areas` (Network: also
+  every template of the Network EE); what AAP - set up portal actions makes (by its name, or onto one); a workflow
+  with another kind of step; one a site portal action runs (`portal_aap_names`, `portal_actions_extra`,
+  `portal_actions`) - only by the map, with the line to change. A name the map gave stays. Each said with its reason;
+  *already right* counted. With `aap_templates_describe`, Check shows the descriptions under the new names.
+- **`aap_templates_match`** (inventory, credentials, prompts, ee, labels): those fields brought to the catalog's on
+  your templates without `aap_templates_overwrite`, each *has X, should be Y*; the other differences named. Credentials
+  are only added: a template's credential of a type the catalog wants another of stays, said.
+- **`aap_templates_create_missing: false`**: a catalog template your AAP lacks is not made, only counted - for a run
+  that only renames and matches.
+- A rename AAP refuses: FAILED and named, the job red; the other renames still done.
+- Docs: SETUP_AAP, VARIABLES_REFERENCE, aap/extra_vars, the job's catalog description; the PDFs.
+- Tests: `run_aap_rename_test.sh` (10 checks: by playbook, Variables, steps, the map; clashes across kinds and
+  organizations, two of one, Network, the portal's own, portal actions; match; Check writes nothing; a second run
+  already right, the map's name kept; a map naming one twice; a refused rename);
+  `run_aap_templates_test.sh` and `run_aap_describe_test.sh` unchanged and green.
+
 ## 1.79.15 — 2026-11-20
 
 **To set up: nothing.** Two new settings with working defaults: `fapolicyd_rules_guard_seconds`,

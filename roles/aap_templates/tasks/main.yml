@@ -17,6 +17,76 @@
           + (pw.templates | default([]) + pw.workflows | default([])) | selectattr('description', 'defined') | map(attribute='description') | list)
          | map('string') | map('trim') | select | unique | list }}
 
+# 1.79.19: your templates and workflows renamed to the catalog's names first (aap_templates_rename, aap_templates_rename_map) -
+# so the templates below are found by those names (a Check run: read as renamed)
+- name: Job templates | renamed to the catalog's names (aap_templates_rename)
+  when: not aap_templates_describe_only | bool and (aap_templates_rename | bool or aap_templates_rename_map | length > 0)
+  block:
+    - name: Job templates | renamed to the catalog's names - read and renamed
+      site_aap_rename:
+        catalog: "{{ _at_catalog }}"
+        workflows: "{{ _at_workflows }}"
+        organization: "{{ aap_templates_organization }}"
+        project: "{{ aap_templates_project }}"
+        rename: "{{ aap_templates_rename | bool }}"
+        rename_map: "{{ aap_templates_rename_map }}"
+        skip_areas: "{{ aap_templates_rename_skip_areas }}"
+        made_elsewhere: "{{ _at_made_elsewhere }}"
+        portal_targets: "{{ _at_portal_targets }}"
+        only: "{{ aap_templates_only }}"
+        ca_path: "{{ aap_templates_ca_path }}"
+      register: _atr
+      vars:
+        # what AAP - set up portal actions makes: its spec (portal_setup_workflows or the repository's) and your extras
+        _at_made_elsewhere: >-
+          {%- set base = portal_setup_workflows if portal_setup_workflows | default({}) | length > 0
+                         else lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml -%}
+          {%- set pw = (base | site_portal_spec_merge(portal_setup_templates_extra | default([]), portal_setup_workflows_extra | default([]))).spec -%}
+          {{ (pw.templates | default([]) + pw.workflows | default([])) | map(attribute='name') | map('string') | list }}
+        # (Codex) every template or workflow a site portal action runs, as the portal merges them, and the setting that names it
+        _at_portal_targets: >-
+          {%- set base = portal_actions if portal_actions | default({}) | length > 0
+                         else (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/actions.yml') | from_yaml).actions | default({}, true) -%}
+          {%- set merged = (base | site_portal_actions_merge(portal_actions_extra | default({}), portal_actions_off | default([]),
+                                                              portal_aap_names | default({}))).actions -%}
+          {%- set extra = portal_actions_extra | default({}) -%}
+          {%- set named = portal_aap_names | default({}) -%}
+          {%- set out = [] -%}
+          {%- for k, a in merged.items() if a.aap is defined -%}
+          {%-   set _ = out.append({'action': k, 'type': a.aap.type | default(''), 'name': a.aap.name | default(''),
+                                    'setting': 'portal_aap_names' if k in named else ('portal_actions_extra' if k in extra else 'portal_actions')}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Job templates | renamed to the catalog's names - what was done
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- set verb = {'rename': ('WOULD RENAME' if ansible_check_mode else 'renamed'), 'clash': 'NOT RENAMED (name taken)',
+                          'twice': 'NOT RENAMED (one of several)', 'skipped': 'not renamed', 'not found': 'not found',
+                          'failed': 'FAILED'} -%}
+          {#- already right: counted in short only (the user's own names that are the catalog's are most of them) -#}
+          {%- for r in _atr.results if r.action != 'right' -%}
+          {%-   set _ = out.append(verb[r.action] ~ ' - ' ~ r.kind ~ " '" ~ r.name ~ "'" ~ ((" -> '" ~ r.new ~ "'") if r.new else '')
+                                   ~ ((' - ' ~ r.why) if r.why else '')) -%}
+          {%- endfor -%}
+          {{ out or ['nothing to rename'] }}
+
+    - name: Job templates | renamed to the catalog's names - in short
+      ansible.builtin.debug:
+        msg: >-
+          {%- set n = {} -%}
+          {%- for r in _atr.results -%}
+          {%-   set k = r.kind ~ ' ' ~ ('already right' if r.action == 'right' else r.action) -%}
+          {%-   set _ = n.update({k: n.get(k, 0) + 1}) -%}
+          {%- endfor -%}
+          {{ [n | dictsort | map('join', ': ') | join(', ') or 'nothing'] + (_atr.twice | default([])) + (_atr.portal | default([])) }}
+
+    - name: Job templates | renamed - a setting, AAP not read, or a rename AAP refused (named above)
+      ansible.builtin.fail:
+        msg: "{{ _atr.problems }}"
+      when: _atr.problems | length > 0
+
 - name: Job templates | made or checked, in AAP
   when: not aap_templates_describe_only | bool
   site_aap_templates:
@@ -34,6 +104,10 @@
     portal_label: "{{ aap_templates_portal_label }}"
     portal_label_area: "{{ aap_templates_portal_label_area }}"
     variables_dir: "{{ role_path ~ '/../..' }}"
+    match: "{{ aap_templates_match }}"
+    match_skip_areas: "{{ aap_templates_rename_skip_areas }}"
+    create_missing: "{{ aap_templates_create_missing | bool }}"
+    renamed: "{{ (_atr.renamed | default({'job': {}})).job if ansible_check_mode else {} }}"
     ca_path: "{{ aap_templates_ca_path }}"
   register: _at
 
@@ -45,7 +119,8 @@
       {%- set verb = {'create': ('WOULD CREATE' if ansible_check_mode else 'created'), 'fix': ('WOULD FIX' if ansible_check_mode else 'fixed'),
                       'right': 'already right', 'differs': 'DIFFERS', 'other name': 'same playbook, other name',
                       'skipped': 'SKIPPED', 'left': 'left to another job', 'failed': 'FAILED'} -%}
-      {%- for r in _at.results -%}
+      {#- 1.79.19: not made with aap_templates_create_missing: false - counted in short only -#}
+      {%- for r in _at.results if r.action != 'missing' -%}
       {%-   set _ = out.append(verb[r.action] ~ " - '" ~ r.name ~ "'" ~ ((' - ' ~ r.why) if r.why and r.action not in ['create', 'fix'] else '')) -%}
       {%-   if r.also | default('') -%}
       {%-     set _ = out.append('    ' ~ r.also) -%}
@@ -60,7 +135,8 @@
       {%-     set _ = out.append('    ' ~ f ~ ': ' ~ ('has ' ~ (v[0] | string) ~ ', should be ' if v[0] is not none else '') ~ (v[1] | string)) -%}
       {%-   endfor -%}
       {%- endfor -%}
-      {{ out or ['nothing in the catalog matches aap_templates_only'] }}
+      {{ out or ([('only catalog templates not in AAP, not made - counted in short (aap_templates_create_missing: false)')]
+                 if _at.results else ['nothing in the catalog matches aap_templates_only']) }}
 
 - name: Job templates | in short
   when: not aap_templates_describe_only | bool
@@ -69,7 +145,8 @@
       {%- set n = {} -%}
       {%- for r in _at.results -%}{%- set _ = n.update({r.action: n.get(r.action, 0) + 1}) -%}{%- endfor -%}
       {%- set nl = _at.results | selectattr('labels', 'defined') | selectattr('labels') | list | length -%}
-      {{ (n | dictsort | map('join', ': ') | join(', ') or 'nothing') ~ ((', ' ~ ('would label portal: ' if ansible_check_mode else 'labelled portal: ') ~ nl) if nl else '') }}
+      {{ (n | dictsort | map('join', ': ') | join(', ') or 'nothing') ~ ((', ' ~ ('would label portal: ' if ansible_check_mode else 'labelled portal: ') ~ nl) if nl else '')
+         ~ ((' (missing: not made - aap_templates_create_missing: false)') if n.get('missing', 0) > 0 else '') }}
 
 # 1.79.11: the descriptions (aap_templates_describe) - after the templates are made, so a new one is described in the same
 # run; nothing found or read there is ever a failure (a warning); only a write AAP refuses stops the job
@@ -87,6 +164,7 @@
         overwrite: "{{ aap_templates_describe_overwrite | bool }}"
         only: "{{ aap_templates_only }}"
         vendored: "{{ _at_doc.vendored | default([]) }}"
+        renamed: "{{ (_atr.renamed | default({})) if ansible_check_mode else {} }}"
         ours: "{{ _at_ours }}"
         ca_path: "{{ aap_templates_ca_path }}"
       register: _atd

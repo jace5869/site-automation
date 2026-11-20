@@ -34,6 +34,7 @@ options:
   ours: {description: "Descriptions this repository wrote before (replaced like one of ours).", type: list, elements: str, default: []}
   overwrite: {description: "Write over a hand-written description too (aap_templates_describe_overwrite).", type: bool, default: false}
   only: {description: "Only the templates whose AAP or catalog name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
+  renamed: {description: "1.79.19 - {job: {old: new}, workflow: {old: new}}: a Check run of the renames - read as renamed.", type: dict, default: {}}
   vendored: {description: "1.79.11d - ACT's own playbooks (aap/job_templates.yml vendored, each {name, playbook, description}): a template that runs one is described by its playbook; never not in AAP.", type: list, elements: dict, default: []}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
@@ -48,12 +49,11 @@ notes: {description: "What could not be read (AAP not reached, a list not read):
 twice: {description: "1.79.11d - catalog templates the site has more than one template of (the same playbook): one line each.", type: list}
 '''
 
-import collections
 import fnmatch
-import json
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_aap import Api, connection, described_text
+from ansible.module_utils.site_aap import (Api, catalog_entry, connection, described_text, vars_of as _vars_of, workflow_fits,
+                                            workflow_steps)
 
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user who may change the organization\'s templates)')
@@ -84,28 +84,6 @@ def text_of(desc, owner="", contact=""):
 def first(text):
     t = str(text or "").strip()
     return (t.splitlines()[0][:120] + (" ..." if len(t.splitlines()) > 1 or len(t.splitlines()[0]) > 120 else "")) if t else "(empty)"
-
-
-def _vars_of(text):
-    """A template's Variables (JSON or YAML text) as a dict - {} when they cannot be read."""
-    t = str(text or "").strip()
-    if not t:
-        return {}
-    try:
-        d = json.loads(t)
-    except ValueError:
-        try:
-            import yaml
-            d = yaml.safe_load(t)
-        except Exception:                               # noqa: BLE001 - not readable: no Variables of its own
-            return {}
-    return d if isinstance(d, dict) else {}
-
-
-def _vars_have(text, want):
-    """A template's Variables carry each of want's keys with its value (as set: a commented line is not set)."""
-    have = _vars_of(text)
-    return all(k in have and str(have[k]).lower() == str(v).lower() for k, v in (want or {}).items())
 
 
 class Describe(object):
@@ -184,6 +162,9 @@ class Describe(object):
             return
         proj = int(projs[0]["id"])
         tpls = [t for t in self.all("job_templates/?organization=%d" % org) if t.get("organization") == org]
+        ren = p.get("renamed") or {}
+        if self.check and ren:                  # 1.79.19 (Codex): a Check run shows what Run writes, after the renames
+            tpls = [dict(t, name=(ren.get("job") or {})[t.get("name")]) if t.get("name") in (ren.get("job") or {}) else t for t in tpls]
         pb_of = dict((int(t["id"]), str(t.get("playbook") or "")) for t in tpls if t.get("project") == proj)
         mine = [t for t in tpls if t.get("project") == proj]
         owner, contact = p["owner"], p["contact"]
@@ -201,12 +182,8 @@ class Describe(object):
                               why="its playbook %s is not in the catalog - left as it is" % (pb or "(none)"))
                 continue
             # a playbook of several catalog templates: the one of its name, else the one whose Variables it has, else
-            # the one with none of its own
-            e = next((x for x in es if x["name"] == t.get("name")), None)
-            if e is None and len(es) > 1:
-                e = next((x for x in es if x.get("extra_vars") and _vars_have(t.get("extra_vars"), x["extra_vars"])), None) \
-                    or next((x for x in es if not x.get("extra_vars")), es[0])
-            e = e or es[0]
+            # the one with none of its own (1.79.19: site_aap.catalog_entry, the renames' too)
+            e = catalog_entry(t, es)
             found.add(e["name"])
             if self.wanted(t.get("name"), e["name"]):
                 runs.setdefault(e["name"], (pb, []))[1].append((str(t.get("name") or ""), _vars_of(t.get("extra_vars"))))
@@ -224,31 +201,20 @@ class Describe(object):
                 self.note("job", e["name"], e["name"], "not in AAP", why="no template in project %r runs %s" % (p["project"], e.get("playbook")))
         # the workflows: by name, else by the playbooks of their steps
         wfs = [w for w in self.all("workflow_job_templates/?organization=%d" % org) if w.get("organization") == org]
+        if self.check and ren:
+            wfs = [dict(w, name=(ren.get("workflow") or {})[w.get("name")]) if w.get("name") in (ren.get("workflow") or {}) else w for w in wfs]
         cat = [w for w in p["workflows"] or [] if isinstance(w, dict) and w.get("name")]
         done = set()
         for w in sorted(wfs, key=lambda x: str(x.get("name") or "").casefold()):
-            # its steps: the playbooks of its job templates (each as often as it runs), whether every one is of the project,
-            # and whether it has an approval
-            steps, foreign, approval = collections.Counter(), 0, False
-            for n in self.all("workflow_job_template_nodes/?workflow_job_template=%d" % int(w["id"])):
-                uj = (n.get("summary_fields") or {}).get("unified_job_template") or {}
-                if uj.get("unified_job_type") == "workflow_approval":
-                    approval = True
-                elif uj.get("unified_job_type") == "job" and uj.get("id") is not None:
-                    pb = pb_of.get(int(uj["id"]))
-                    if pb is None:
-                        foreign += 1                     # a template of another project: not the site-automation workflow
-                    else:
-                        steps[pb] += 1
-            gate = "playbooks/workflow_gate.yml"         # in many workflows: never what tells them apart
-            steps.pop(gate, None)
+            # its steps: the playbooks of its job templates (each as often as it runs, the gate aside), whether every one is
+            # of the project, and whether it has an approval (1.79.19: site_aap.workflow_steps, the renames' too)
+            steps, foreign, approval = workflow_steps(
+                self.all("workflow_job_template_nodes/?workflow_job_template=%d" % int(w["id"])), pb_of)
             ours = bool(steps) and not foreign
             entry = next((c for c in cat if c["name"] == w.get("name")), None) if ours else None
             how = "its name"
             if entry is None and ours:
-                fits = [c for c in cat if steps == collections.Counter(x for x in c.get("playbooks") or [] if x != gate)]
-                # one that promises an approval only on a workflow that has one
-                fits = [c for c in fits if approval or "approv" not in str((c.get("description") or {}).get("supports") or "").lower()]
+                fits = workflow_fits(steps, approval, cat)      # one that promises an approval only on one that has one
                 if len(fits) == 1:
                     entry, how = fits[0], "the playbooks of its steps"
                 elif len(fits) > 1:                  # never a guess between two of the catalog's
@@ -280,7 +246,7 @@ def main():
                            owner=dict(type="str", default=""), contact=dict(type="str", default=""),
                            ours=dict(type="list", elements="str", default=[]), overwrite=dict(type="bool", default=False),
                            only=dict(type="list", elements="str", default=[]),
-                           vendored=dict(type="list", elements="dict", default=[]),
+                           vendored=dict(type="list", elements="dict", default=[]), renamed=dict(type="dict", default={}),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params

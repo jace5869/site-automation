@@ -5,7 +5,9 @@ one per template of docs/JOB_TEMPLATES.md), made in AAP through its own API, or 
 one that differs is listed field by field and brought right only with overwrite. Never deletes; never touches a
 template's schedules, survey or Variables after it is made, nor a credential of a type the catalog does not name. A
 template running the same playbook under another name is listed, not made twice. Everything is read and checked first;
-in check mode nothing is written. Only a credential's id, name and type are read out. Standard library only."""
+in check mode nothing is written. Only a credential's id, name and type are read out. 1.79.19: match brings named
+fields right without overwrite (credentials only added); renamed reads a Check run's renames (site_aap_rename) as done;
+create_missing: false makes no template. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -29,13 +31,21 @@ options:
   portal_label: {description: "The site portal's own label for the templates it reads (matched as written, case too).", type: str, default: portal}
   portal_label_area: {description: "The prefix of the site portal's group label (portal-area:<area>).", type: str, default: "portal-area:"}
   variables_dir: {description: "The folder of the catalog's Variables files (the repository's root).", type: str, default: ''}
+  match: {description: "1.79.19 (aap_templates_match): the fields brought to the catalog's on the templates there, without overwrite -
+    inventory, credentials (the missing kinds added, none taken off), prompts, ee, labels (the portal's).", type: list, elements: str, default: []}
+  match_skip_areas: {description: "1.79.19: the catalog areas match leaves out (aap_templates_rename_skip_areas; Network = also the
+    Network EE's).", type: list, elements: str, default: []}
+  create_missing: {description: "1.79.19: false = a catalog template not in AAP is not made, only counted (renames and match
+    only).", type: bool, default: true}
+  renamed: {description: "1.79.19: {old: new} - the renames a Check run of aap_templates_rename would make: the templates are read as
+    renamed.", type: dict, default: {}}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
 author: site automation
 '''
 
 RETURN = r'''
-results: {description: "Each template: {name, action (create|fix|right|differs|other name|skipped|left|failed), diff ({field:
+results: {description: "Each template: {name, action (create|fix|right|differs|other name|skipped|left|missing|failed), diff ({field:
   [has, should be]}), why, labels (the portal labels it gets, or would)}.", type: list}
 problems: {description: "What stopped the job before any write: a name not found, AAP not reached.", type: list}
 '''
@@ -53,7 +63,12 @@ NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansibl
 DESC = "Made by AAP - set up job templates (aap/job_templates.yml)"
 SHOW = {"playbook": "playbook", "project": "project", "execution_environment": "execution environment",
         "ask_limit_on_launch": "prompt for Limit", "ask_variables_on_launch": "prompt for Variables",
-        "ask_inventory_on_launch": "prompt for Inventory", "ask_job_type_on_launch": "prompt for Job Type"}
+        "ask_inventory_on_launch": "prompt for Inventory", "ask_job_type_on_launch": "prompt for Job Type", "inventory": "inventory"}
+# 1.79.19: aap_templates_match's words -> the fields (credentials and labels apart); playbook and project never: they are
+# what a template is found by
+MATCH = {"inventory": ("inventory",), "prompts": ("ask_limit_on_launch", "ask_variables_on_launch", "ask_inventory_on_launch",
+                                                  "ask_job_type_on_launch"),
+         "ee": ("execution_environment",), "credentials": (), "labels": ()}
 
 
 def _q(s):
@@ -74,6 +89,14 @@ def off(text):
         s = line.strip()
         out.append(line if (not s or s.startswith("#") or s == "---") else "# " + line)
     return "\n".join(out) + "\n"
+
+
+def areas_of(e):
+    """A catalog entry's areas for aap_templates_rename_skip_areas: its own, and Network for the Network EE's (as the renames)."""
+    out = set([str(e.get("area") or "")])
+    if str(e.get("ee") or "") == "network":
+        out.add("Network")
+    return set(x.casefold() for x in out if x)
 
 
 class Templates(object):
@@ -167,6 +190,13 @@ class Templates(object):
         pats = [str(x).casefold() for x in self.p["only"] or []]
         return not pats or any(fnmatch.fnmatchcase(e["name"].casefold(), x) for x in pats)
 
+    def matched(self, e):
+        """aap_templates_match's words for this catalog entry - none for an area aap_templates_rename_skip_areas leaves out."""
+        skip = set(str(x).casefold() for x in self.p.get("match_skip_areas") or [])
+        if areas_of(e) & skip:
+            return []
+        return [w for w in self.p.get("match") or [] if w in MATCH]
+
     @staticmethod
     def multi(type_name):
         """A credential type a job template may carry more than one of (Vault, each its own vault id)."""
@@ -178,6 +208,10 @@ class Templates(object):
         if self.problems:
             return []
         tpls = self.all("job_templates/")
+        renamed = self.p.get("renamed") or {}
+        if self.check and renamed:            # 1.79.19: a Check run of the renames - each read under its new name
+            tpls = [dict(t, name=renamed[t.get("name")]) if t.get("organization") == self.org_id and t.get("name") in renamed
+                    else t for t in tpls]
         by_name = {}
         for t in tpls:
             by_name.setdefault(t.get("name"), []).append(t)
@@ -197,7 +231,8 @@ class Templates(object):
             if len(ours) > 1:                  # Codex: a problem before any write - never one of them picked
                 self.problems.append("AAP has %d job templates named %r in the organization: rename one" % (len(ours), name))
                 continue
-            if self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal")):
+            if self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal")) \
+                    or (ours and "labels" in self.matched(e)):
                 to_label.append(e)
             if e.get("made_by"):
                 other = [] if ours else self.same_playbook(tpls, e)
@@ -258,6 +293,9 @@ class Templates(object):
                               "makes it under this name too" % ", ".join(repr(t["name"]) for t in other[:3]))
                     self.hint(e, other)
                     continue
+                if not self.p.get("create_missing", True):     # 1.79.19: renames and match only
+                    self.note(name, "missing", why="not made (aap_templates_create_missing: false)")
+                    continue
                 if not self.inventory:          # Codex: needed only to make one - said before any write
                     self.problems.append("aap_templates_inventory is not set: %r would be made, and a template is made with an "
                                          "inventory" % name)
@@ -269,12 +307,17 @@ class Templates(object):
                 steps.append(("create", e, fields, want_creds, kinds, text))
                 continue
             t = ours[0]
-            diff = {}
+            if self.p.get("match") and self.inventory:      # 1.79.19: the inventory only with aap_templates_match
+                fields["inventory"] = self.inventory
+            m = self.matched(e)
+            diff, mdiff = {}, {}                  # mdiff: what aap_templates_match brings right without overwrite
             for k, v in fields.items():
-                if t.get(k) != v:
+                if t.get(k) != v and (k != "inventory" or "inventory" in m):
                     diff[SHOW[k]] = [self.show(k, t.get(k)), self.show(k, v)]
+                    if any(k in MATCH[w] for w in m):
+                        mdiff[SHOW[k]] = diff[SHOW[k]]
             have = [(int(c["id"]), c.get("name"), c.get("credential_type")) for c in self.all("job_templates/%d/credentials/" % int(t["id"]))]
-            cfix = []                             # per type: (to attach, to take off) - a type compared as a set (Codex)
+            cfix, mcfix, kept = [], [], []         # per type: (to attach, to take off) - a type compared as a set (Codex)
             for (ti, tn), cs in sorted(by_type.items(), key=lambda x: str(x[0])):
                 want_ids = set(c[0] for c in cs)
                 add = [c for c in cs if not any(h[0] == c[0] for h in have)]
@@ -284,9 +327,28 @@ class Templates(object):
                 cfix.append((add, drop))
                 kind = next(k for k in kinds if any(c in self.creds[k] for c in cs))
                 diff["credential %s" % kind] = [", ".join(h[1] for h in drop) or "none", ", ".join(c[1] for c in add)]
+                if "credentials" in m:
+                    # 1.79.19: match only adds - one of that type there (a template takes one) stays, said
+                    if drop:
+                        kept.append("credential %s: %s kept (a %s credential is there; aap_templates_overwrite: true puts %s instead)"
+                                    % (kind, ", ".join(h[1] for h in drop), tn, ", ".join(c[1] for c in add)))
+                    else:
+                        mcfix.append((add, []))
+                        mdiff["credential %s" % kind] = diff["credential %s" % kind]
             if not diff:
                 self.note(name, "right")
                 continue
+            if not self.p["overwrite"] and (mdiff or kept):
+                # what match leaves: the other fields that differ (said), and a credential kept (said on its own line)
+                kept_keys = set(x.split(":", 1)[0] for x in kept)
+                rest = sorted(k for k in diff if k not in mdiff and k not in kept_keys)
+                also = ["differs too: %s - aap_templates_overwrite: true brings it right" % ", ".join(rest)] if rest else []
+                also += kept
+                if also:
+                    self.left_off[name] = "; ".join(filter(None, [self.left_off.get(name)] + also))
+                if mdiff:
+                    steps.append(("fix", e, dict((k, v) for k, v in fields.items() if SHOW[k] in mdiff), mcfix, int(t["id"]), mdiff, True))
+                    continue
             steps.append(("fix", e, dict((k, v) for k, v in fields.items() if SHOW[k] in diff), cfix, int(t["id"]), diff))
         # the playbooks to set: in the project as AAP has it synced (Codex) - a missing one stops before any write
         need = sorted(set(st[2]["playbook"] for st in steps if "playbook" in st[2]))
@@ -302,7 +364,7 @@ class Templates(object):
                                          "run this again" % (self.p["project"], ", ".join(gone)))
         # the labels: read now (their ids, each template's own) - only the writes are left for later (Codex)
         self.label_plan = {}
-        if self.p["label_portal"] not in ("", "none") and not self.problems:
+        if (self.p["label_portal"] not in ("", "none") or to_label) and not self.problems:
             names = sorted(set(n for e in to_label for n in self.labels_for(e)))
             self.label_id = {}
             for n in names:
@@ -344,6 +406,12 @@ class Templates(object):
                 if v == i:
                     return n
             return ("execution environment %s" % v) if v else "the project's"
+        if k == "inventory":
+            if v == self.inventory:
+                return self.p["inventory"]
+            if not hasattr(self, "_inventories"):
+                self._inventories = dict((int(r["id"]), r.get("name")) for r in self.all("inventories/"))
+            return repr(self._inventories.get(v, "inventory %s" % v)) if v else "none"
         if isinstance(v, bool):
             return "yes" if v else "no"
         return v
@@ -406,7 +474,7 @@ class Templates(object):
         if self.problems:
             return
         self.steps(steps)
-        if self.problems or self.p["label_portal"] in ("", "none"):
+        if self.problems or not getattr(self, "label_plan", None):
             return
         try:
             self.label_all()
@@ -417,7 +485,7 @@ class Templates(object):
         for st in steps:
             kind, e = st[0], st[1]
             name = e["name"]
-            if kind == "fix" and not self.p["overwrite"]:
+            if kind == "fix" and not self.p["overwrite"] and not (len(st) > 6 and st[6]):
                 self.note(name, "differs", st[5], "aap_templates_overwrite: true brings it right")
                 continue
             if self.check:
@@ -470,6 +538,8 @@ def main():
                            label_portal=dict(type="str", default="none", choices=["none", "portal-actions", "all"]),
                            portal_label=dict(type="str", default="portal"), portal_label_area=dict(type="str", default="portal-area:"),
                            variables_dir=dict(type="str", default=""),
+                           match=dict(type="list", elements="str", default=[]), match_skip_areas=dict(type="list", elements="str", default=[]),
+                           renamed=dict(type="dict", default={}), create_missing=dict(type="bool", default=True),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params

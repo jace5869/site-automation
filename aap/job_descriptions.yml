@@ -733,10 +733,10 @@ templates:
     produces: "The portal's templates and workflows in AAP; the job output says field by field what was made, changed or left as it is."
     supports: "Run constraint=Reads only (no hosts); writes AAP templates, workflows (nodes rebuilt), roles, schedules, labels; deletes no template or workflow"
   "AAP - set up job templates":
-    does: "Makes the job templates of aap/job_templates.yml in AAP, or checks the existing ones field by field against that catalog."
+    does: "Makes the catalog's job templates in AAP or checks them; can rename yours to the catalog's names and match their fields."
     targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."
-    produces: "Missing templates made; the job output lists what was made, what differs and which templates run the same playbook."
-    supports: "Run constraint=Reads only (no hosts); writes AAP job templates (fixes with overwrite), labels, descriptions (aap_templates_describe); no deletes"
+    produces: "Templates made, renamed or matched; the job output lists each change (old -> new), what differs and why one was left."
+    supports: "Run constraint=Reads only (no hosts); writes AAP job templates and workflow names (rename), fields, labels, descriptions; no deletes"
   "AAP - describe templates":
     does: "Writes the five-line description (Does, Targets, Produces, Supports, Contact) on every AAP template and workflow it knows."
     targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."

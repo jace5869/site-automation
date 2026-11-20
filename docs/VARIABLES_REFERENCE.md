@@ -242,7 +242,7 @@ File: `roles/aap_template_audit/defaults/main.yml`
 
 File: `roles/aap_templates/defaults/main.yml`
 
-> ---- AAP - set up job templates (playbooks/aap_templates_setup.yml; docs/SETUP_AAP.md "Create the job templates from the catalog") Makes the job templates of aap/job_templates.yml (one per template of docs/JOB_TEMPLATES.md) in AAP, or checks the ones there. A missing one is made; one that differs is listed field by field and brought right only with aap_templates_overwrite. Never deletes, and never touches a template's schedules, survey or Variables after it is made, nor a credential of a type the catalog does not name. Run it with Check first: it then only reads and says what it would make or change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
+> ---- AAP - set up job templates (playbooks/aap_templates_setup.yml; docs/SETUP_AAP.md "Create the job templates from the catalog") Makes the job templates of aap/job_templates.yml (one per template of docs/JOB_TEMPLATES.md) in AAP, or checks the ones there. A missing one is made; one that differs is listed field by field and brought right only with aap_templates_overwrite. Never deletes, and never touches a template's schedules, survey or Variables after it is made, nor a credential of a type the catalog does not name. Run it with Check first: it then only reads and says what it would make or change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization. 1.79.19: it can also rename your templates and workflows to the catalog's names, and match their fields (below).
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -266,6 +266,11 @@ File: `roles/aap_templates/defaults/main.yml`
 | `aap_templates_describe_list_missing` | `false` | true = list each catalog template / workflow not in AAP (false: counted only) |
 | `aap_templates_description_owner` | (empty) | the Contact line's Owner= ("" with no contact either: no Contact line) |
 | `aap_templates_description_contact` | (empty) | the Contact line's Developer= |
+| `aap_templates_rename` | `false` | 1.79.19 (docs/SETUP_AAP.md, "Rename and match your templates"; run Check first): true = your job templates (found by playbook) and workflows (by name or steps) get the catalog's names |
+| `aap_templates_rename_map` | `{}` | {"Your name": "New name"}: first, for any template or workflow (one the catalog does not know too) |
+| `aap_templates_match` | `[]` | the fields brought to the catalog's on your templates, without aap_templates_overwrite: any of inventory, credentials (only the missing kinds added - none taken off), prompts, ee, labels (the portal's) |
+| `aap_templates_create_missing` | `true` | false = a catalog template your AAP does not have is not made, only counted (true: made, as before 1.79.19) |
+| `aap_templates_rename_skip_areas` | `[Network]` | the areas left out of the renames and the match (the catalog's area; Network = also every template of the Network EE) |
 
 ## aap_workflow_gates
 

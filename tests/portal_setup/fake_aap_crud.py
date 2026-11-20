@@ -84,6 +84,9 @@ def node_view(s, n):
     if n.get("approval"):
         a = next(a for a in s["approvals"] if a["id"] == n["approval"])
         ujt = {"id": a["id"], "name": a["name"], "description": a["description"], "timeout": a["timeout"], "unified_job_type": "workflow_approval"}
+    elif n.get("workflow"):                                       # 1.79.19: a nested workflow's node
+        w = next(x for x in s["workflow_job_templates"] if x["id"] == n["workflow"])
+        ujt = {"id": w["id"], "name": w["name"], "unified_job_type": "workflow_job"}
     elif n.get("unified_job_template"):
         jt = next(j for j in s["job_templates"] if j["id"] == n["unified_job_template"])
         ujt = {"id": jt["id"], "name": jt["name"], "unified_job_type": "job"}
@@ -338,6 +341,11 @@ class H(BaseHTTPRequestHandler):
                 if m.group(1) == "credentials" and any(c["name"] == b.get("name") and c.get("organization") == r.get("organization")
                                                        and c["id"] != r["id"] for c in s["credentials"]):
                     return self.send(400, {"__all__": ["Credential with this Name and Organization already exists."]})
+                # 1.79.19: a rename onto a name the organization has (AAP: unique per organization and kind)
+                if m.group(1) in ("job_templates", "workflow_job_templates") and "name" in b and any(
+                        x["name"] == b["name"] and x.get("organization") == r.get("organization") and x["id"] != r["id"] for x in s[m.group(1)]):
+                    return self.send(400, {"__all__": ["%s with this Name and Organization already exists." % (
+                        "Job template" if m.group(1) == "job_templates" else "Workflow job template")]})
                 if m.group(1) == "schedules" and "rrule" in b and rrule_problem(b["rrule"]):
                     return self.send(400, {"rrule": [rrule_problem(b["rrule"])]})
                 r.update(b)
