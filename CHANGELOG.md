@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.100.0 — 2026-11-21
+
+**Report website - speed**
+
+**To set up: nothing.**
+
+Large web tables start with 100 rows. **Show all N rows** opens the rest. Search,
+filters, CSV and Columns cover the full table, and links still open the row they name.
+The STIG scorecard builds a finding or host's detail table when opened. The index
+lists the five newest runs for each report, with older retained runs one click away.
 ## 1.99.0 — 2026-11-21
 
 **Site portal - speed.** Discovery reads up to eight templates at once. Unchanged forms are due for a detail check

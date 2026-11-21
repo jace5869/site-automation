@@ -1,12 +1,7 @@
-/* site-automation - the report website's script (the atlas, brief and ops looks; roles/site_email/templates/site_report.js). 0.63.0:
-   site_report_web writes it beside the index (site-report.js) and each page loads it from there, in its head - a web
-   server whose Content-Security-Policy allows no inline script (script-src 'self') still runs it; the page carries it
-   inline too, for where the file is not there (a page saved or copied by itself), and it runs once. Without it the
-   page reads the same: Light / Auto / Dark, the row height, the section rail (and putting it away, 0.66.0) and
-   Columns are HTML and CSS; this adds keeping those choices, Print, sorting, filtering, the search, CSV and the Copy
-   buttons. It looks for each part of
-   the page before it uses it - a page from an older release loads the newest script too. ASCII only (the Windows
-   writer writes it as ASCII). */
+/* The atlas, brief and ops report pages load site-report.js from the website's own origin.
+   The publisher extracts it from the rendered template and writes one shared ASCII file.
+   Older pages load it too. Light / Auto / Dark, density, the section rail and Columns use
+   HTML and CSS. This script remembers choices and handles row expansion, search and export. */
 (function(){
   if(window.siteReport)return;
   /* sorting (1.20.0): a cell's value as a key. A lone number (a sign, thousands separators, a decimal point, a % after
@@ -39,6 +34,47 @@
   function ready(f){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',f);else f()}
   ready(function(){
   function all(s,el){return [].slice.call((el||document).querySelectorAll(s))}
+  // A block holds [element descriptors, nodes]. Strings are text, including strings that look like tags.
+  function unpack(block){
+    var data=JSON.parse(block.textContent),fragment=document.createDocumentFragment();
+    function build(n,svg){
+      if(typeof n==='string')return document.createTextNode(n);
+      if(n[0]===-1){
+        var files=document.querySelector('.sfiles'),w=files&&document.createTreeWalker(files,NodeFilter.SHOW_COMMENT),c;
+        while(w&&(c=w.nextNode()))if(c.data===n[1]&&c.nextSibling){
+          var copy=c.nextSibling.cloneNode(true);
+          if(copy.tagName==='A'){copy.className='dl';copy.textContent='Download '+copy.download}
+          return copy;
+        }
+        return document.createTextNode('');
+      }
+      var shape=data[0][n[0]],tag=shape[0];svg=svg||tag==='svg';
+      var el=svg?document.createElementNS('http://www.w3.org/2000/svg',tag):document.createElement(tag);
+      shape[1].forEach(function(a){el.setAttribute(a[0]==='viewbox'?'viewBox':a[0],a[1]||'')});
+      for(var i=1;i<n.length;i++)el.appendChild(build(n[i],svg));
+      return el;
+    }
+    data[1].forEach(function(n){fragment.appendChild(build(n,false))});
+    block.replaceWith(fragment);
+  }
+  function detailText(block){
+    function read(data){return data[1].map(function(n){return value(n,data[0])}).join('')}
+    function value(n,shapes){
+      if(typeof n==='string')return n;
+      if(n[0]===-1)return n[1].split('/').pop();
+      if(shapes[n[0]][0]==='script')return read(JSON.parse(n[1]));
+      return n.slice(1).map(function(child){return value(child,shapes)}).join('');
+    }
+    return read(JSON.parse(block.textContent));
+  }
+  function bindNew(root){
+    bindCopy(root);
+    all('.tw table',root).forEach(function(tb){bindTable(tb);tb._capApply()});
+    if(typeof bindSpark==='function')all('svg.spark[data-points]',root).forEach(bindSpark);
+  }
+  function expandAll(){
+    all('.tw table').forEach(function(tb){if(tb._expand){tb._expand();tb._capApply()}});
+  }
   /* a switch of the bar: its radio buttons work by themselves (CSS); here the choice is kept in this browser and set
      again on the next page */
   function seg(id,attr,key,def){var g=document.getElementById(id);if(!g)return;
@@ -126,10 +162,10 @@
     return f&&f.nodeType===3?f.textContent.trim()+(u?': '+u.textContent.trim():''):one(th)}
   function tr(r,t){return '<tr>'+r.map(function(x){return '<'+t+' style="border:1px solid #999;padding:3px 6px;text-align:left">'+esc(x)+'</'+t+'>'}).join('')+'</tr>'}
   /* a table as shown: the columns not taken off (Columns), the rows not filtered out or searched away, in their order */
-  function view(tb,f){var hs=[].slice.call(tb.tHead.rows[0].cells),on=[];
+  function view(tb,f){if(tb._expand)tb._expand();if(tb._capApply)tb._capApply();var hs=[].slice.call(tb.tHead.rows[0].cells),on=[];
     hs.forEach(function(h,i){if(getComputedStyle(h).display!=='none'&&!h.classList.contains('k-x'))on.push(i)});   /* not the open buttons' column */
     return [on.map(function(i){return head(hs[i])}),
-      [].filter.call(tb.tBodies[0].rows,function(r){return !r.hidden&&!r.classList.contains('xr')}).map(function(r){return on.map(function(i){return f(r.cells[i])})})]}
+      [].filter.call(tb.tBodies[0].rows,function(r){return (!r.hidden||r._c)&&!r.classList.contains('xr')}).map(function(r){return on.map(function(i){return f(r.cells[i])})})]}
   /* a section as text and HTML: its lines as a list, its table (as shown) as rows with tabs between the columns, its
      cards one after the other; its words (what the section is) only when it has nothing else */
   function grab(body){var P=[],H=[],W=[],WH=[];
@@ -148,11 +184,14 @@
     return P.length?[P.join('\n\n'),H.join('')]:[W.join('\n\n'),WH.join('')]}
   /* a rule's check or fix text: its command lines (data-copy) - 1.73.0: a text with no command has no button, never the
      whole text; a Start here card: its command (the pre before the button) */
-  all('.code .copy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
+  function bindCopy(root){
+  all('.code .copy',root).forEach(function(c){if(c._copyBound)return;c._copyBound=true;c.hidden=false;c.addEventListener('click',function(){
     put(c,c.hasAttribute('data-copy')?c.getAttribute('data-copy'):c.previousElementSibling.textContent,'')})});
   /* a command in a table (Look further, Command, Hint, Next step): its Copy button, the command alone */
-  all('.ccopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
+  all('.ccopy',root).forEach(function(c){if(c._copyBound)return;c._copyBound=true;c.hidden=false;c.addEventListener('click',function(){
     put(c,c.hasAttribute('data-copy')?c.getAttribute('data-copy'):c.previousElementSibling.textContent.trim(),'')})});
+  }
+  bindCopy(document);
   /* Copy link (1.72.0, the index): an address made from the page's own (data-rel) when report_web_url is not set; in a
      line's summary the click copies and does not open or close the line */
   all('.tcopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(e){var v=c.getAttribute('data-copy');
@@ -213,36 +252,64 @@
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
   /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
   function vis(r){var o=!!(r._f||r._s||r._p||r._d||r._ot),h=o||!!r._c;if(r.hidden!==h)r.hidden=h;
-    /* only the 25-row cap hides it: Print shows it (a row a filter or the search hid stays out) */
+    /* only the row cap hides it: Print shows it (a row a filter or the search hid stays out) */
     if(!!r._c&&!o){if(!r.hasAttribute('data-cap'))r.setAttribute('data-cap','')}else if(r.hasAttribute('data-cap'))r.removeAttribute('data-cap');
     /* 1.68.0: a row that opens (tr.xr after it): shown when its row is and it was opened */
     if(r._x){var xh=h||!r._o;if(r._x.hidden!==xh)r._x.hidden=xh}}
   /* the open button of such a row: its rules, or its hosts, under it; its small table fitted */
   document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.xb');if(!b)return;var r=b.closest('tr');
-    if(!r||!r._x)return;r._o=!r._o;b.setAttribute('aria-expanded',String(r._o));vis(r);fit()});
+    if(!r)return;
+    if(r._detail){unpack(r._detail);r._detail=null;r._x=r.nextElementSibling;bindNew(r._x)}
+    if(!r._x)return;
+    r._o=!r._o;b.setAttribute('aria-expanded',String(r._o));vis(r);fit()});
   /* 1.76.5: a cell said in words keeps its raw key (a check id, a raw JSON message) in its title: the table's data-keys {n: columns, k: [[row, column, key]]} */
-  all('table[data-keys]').forEach(function(tb){try{var d=JSON.parse(tb.getAttribute('data-keys')),b=[].filter.call(tb.tBodies[0].rows,function(x){return !x.classList.contains('xr')}),off=tb.rows[0].cells.length-d.n;
-    d.k.forEach(function(e){var r=b[e[0]],c=r&&r.cells[e[1]+off];if(c&&c.title==='')c.title=e[2]})}catch(x){}});
-  /* 1.76.5: a table of more than 30 rows shows its first 25 with Show all N (a search or a filter looks in every row, whatever the cap says) */
+  function cellKeys(tb){if(!tb.matches('table[data-keys]'))return;try{var d=JSON.parse(tb.getAttribute('data-keys')),b=[].filter.call(tb.tBodies[0].rows,function(x){return !x.classList.contains('xr')}),off=tb.rows[0].cells.length-d.n;
+    d.k.forEach(function(e){var r=b[e[0]],c=r&&r.cells[e[1]+off];if(c&&c.title==='')c.title=e[2]})}catch(x){}}
+  /* Older pages have every row in their markup and keep their 25-row fold. Published row blocks start at row 101. */
   /* a table's cap is lifted by its own filter box or column filters, or by the page's search, the page's filter buttons or the time line's controls (each its own flag: one table's box does not open another's) */
   var CAP=25,gQ=false,gF=false,gO=false,counts=[];
   function capFree(tb){return gQ||gF||gO||!!tb._cq||!!tb._cf}
   function capAll(){all('.tw table').forEach(function(tb){if(tb._capApply)tb._capApply()})}
-  all('.tw table').forEach(function(tb){
-    var body=tb.tBodies[0],rows=[].slice.call(body.rows).filter(function(r){return !r.classList.contains('xr')});
-    rows.forEach(function(r){var n=r.nextElementSibling;if(n&&n.classList.contains('xr'))r._x=n});
-    var capOn=rows.length>CAP+5,capBtn=null,capTxt=null,capAll_=null;tb._capApply=function(){capApply()};
-    /* a critical or warning row is never folded; the rows a filter or the search took away do not count towards the 25 */
-    function capApply(){if(!capOn)return;var k=0,fr=capFree(tb),open=!!tb._open||fr,folded=0,left=0;
+  var deferredIds=Object.create(null);
+  function bindTable(tb){
+    if(tb._capApply)return;
+    var body=tb.tBodies[0],rows=[],pending=body.querySelector(':scope > script.defer-main,:scope > script.defer-mini');
+    function register(start){
+      for(var i=start;i<body.rows.length;i++){
+        var r=body.rows[i];if(r.classList.contains('xr'))continue;
+        rows.push(r);var n=r.nextElementSibling;if(n&&n.classList.contains('xr'))r._x=n;
+        if(n&&n.classList.contains('defer-detail'))r._detail=n;
+      }
+      cellKeys(tb);
+    }
+    register(0);
+    var modern=document.documentElement.hasAttribute('data-row-window'),limit=modern?100:CAP;
+    var capOn=!!pending||(!modern&&rows.length>CAP+5);
+    var capBtn=null,capTxt=null,capAll_=null;tb._capApply=capApply;
+    if(pending){
+      var countAll=pending.getAttribute('data-count'),ids=JSON.parse(pending.getAttribute('data-ids'));
+      ids.forEach(function(id){deferredIds[id]=tb});
+      tb._expand=function(){
+        if(!pending)return;
+        var start=body.rows.length;unpack(pending);pending=null;register(start);
+        ids.forEach(function(id){delete deferredIds[id]});
+        bindNew(body);
+        if(typeof otApply==='function'&&body.querySelector('tr[data-cls]'))otApply(false,true);
+      };
+    }
+    /* The older fold always includes severe rows. Both limits count only rows that pass the active filters. */
+    function capApply(){if(!capOn)return;
+      if(pending){if(!(tb._open||gQ||gF||tb._cq||tb._cf))return;tb._expand()}
+      var k=0,fr=capFree(tb),open=!!tb._open||fr,folded=0,left=0;
       [].forEach.call(body.rows,function(r){if(r.classList.contains('xr'))return;var off=!!(r._f||r._s||r._p||r._d||r._ot),
-          sev=r.classList.contains('r-critical')||r.classList.contains('r-warning');
-        if(!off)k++;r._c=!open&&!off&&!sev&&k>CAP;if(r._c)folded++;else if(!off)left++;r.classList.toggle('capped',!!r._c);vis(r)});
-      if(capBtn){capBtn.hidden=open||!folded;if(capTxt)capTxt.nodeValue='The first '+left+' of '+(left+folded)+' rows are shown (critical and warning rows always are). ';
-        if(capAll_)capAll_.textContent='Show all '+(left+folded)}
+          sev=!modern&&(r.classList.contains('r-critical')||r.classList.contains('r-warning'));
+        if(!off)k++;r._c=!open&&!off&&!sev&&k>limit;if(r._c)folded++;else if(!off)left++;r.classList.toggle('capped',!!r._c);vis(r)});
+      if(capBtn){capBtn.hidden=open||!folded;if(capTxt)capTxt.nodeValue='The first '+left+' of '+(left+folded)+' rows are shown'+(modern?'. ':' (critical and warning rows always are). ');
+        if(capAll_)capAll_.textContent='Show all '+(left+folded)+(modern?' rows':'')}
       counts.forEach(function(c){c()})}
-    if(capOn&&tb.parentNode){capBtn=document.createElement('p');capBtn.className='capbar';capTxt=document.createTextNode('The first '+CAP+' of '+rows.length+' rows are shown. ');capBtn.appendChild(capTxt);
-      var cb=document.createElement('button');cb.type='button';cb.className='btn';cb.textContent='Show all '+rows.length;capAll_=cb;
-      cb.addEventListener('click',function(){tb._open=true;capApply()});capBtn.appendChild(cb);tb.parentNode.parentNode.insertBefore(capBtn,tb.parentNode.nextSibling)}
+    if(capOn&&tb.parentNode){capBtn=document.createElement('p');capBtn.className='capbar';capTxt=document.createTextNode('The first '+limit+' of '+(countAll||rows.length)+' rows are shown. ');capBtn.appendChild(capTxt);
+      var cb=document.createElement('button');cb.type='button';cb.className='btn';cb.textContent='Show all '+(countAll||rows.length)+(modern?' rows':'');capAll_=cb;
+      cb.addEventListener('click',function(){tb._open=true;capApply();fit('grow');longCells(tb)});capBtn.appendChild(cb);tb.parentNode.parentNode.insertBefore(capBtn,tb.parentNode.nextSibling)}
     /* a header's click sorts by its column, the next one the other way; the arrows as characters (textContent: a page
        under Trusted Types sorts too). A first click on a column whose values are already in order as the rows stand
        now (the VM tables come sorted by VM), not all the same (empty cells aside), sorts it the other way, so the click
@@ -251,6 +318,7 @@
     tb.querySelectorAll('th button').forEach(function(btn){var th=btn.parentNode,i=th.cellIndex;   /* 1.68.0: a column may have no button */
       th.addEventListener('click',function(e){if(!btn.contains(e.target))btn.click()});
       btn.addEventListener('click',function(){
+      if(tb._expand)tb._expand();
       var by=rows.map(function(r){return [r,skey(cval(r.cells[i]))]}),
           order=function(asc){return by.slice().sort(function(a,b){return scmp(a[1],b[1],asc)}).map(function(x){return x[0]})},
           s=th.getAttribute('aria-sort'),asc=s!=='ascending',
@@ -259,7 +327,7 @@
       if(!s&&inc&&diff)asc=false;
       tb.querySelectorAll('th').forEach(function(h){var a=h.querySelector('.sort');h.removeAttribute('aria-sort');if(a)a.textContent='\u2195'});
       th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').textContent=asc?'\u25b2':'\u25bc';
-      order(asc).forEach(function(r){body.appendChild(r);if(r._x)body.appendChild(r._x)});capApply()})});
+      order(asc).forEach(function(r){body.appendChild(r);if(r._x||r._detail)body.appendChild(r._x||r._detail)});capApply()})});
     var tools=tb.parentNode.previousElementSibling;
     if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown'),
         dd=[].slice.call(tools.querySelectorAll('select[data-f]'));
@@ -268,16 +336,22 @@
       tools.hidden=false;if(f)f.hidden=false;
       var count=function(){if(!n)return;var k=0;rows.forEach(function(r){if(!r.hidden)k++});n.textContent=k<rows.length?k+' of '+rows.length:''};
       counts.push(count);
-      if(f)f.addEventListener('input',function(){var q=f.value.trim().toLowerCase();tb._cq=!!q;
-        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});capApply();count()});
+      if(f)f.addEventListener('input',function(){if(tb._expand)tb._expand();var q=f.value.trim().toLowerCase();tb._cq=!!q;
+        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});capApply();count();if(tb._expand)fit('grow')});
       /* one choice at a time per list (1.67.0): a row stays when the chosen value is one of its own (data-f<n>: |a|b|) */
-      dd.forEach(function(s){s.parentNode.hidden=false;s.addEventListener('change',function(){tb._cf=dd.some(function(x){return !!x.value});
+      dd.forEach(function(s){s.parentNode.hidden=false;s.addEventListener('change',function(){if(tb._expand)tb._expand();tb._cf=dd.some(function(x){return !!x.value});
         rows.forEach(function(r){var off=false;dd.forEach(function(x){var v=x.value;
-          if(v&&(r.getAttribute('data-f'+x.getAttribute('data-f'))||'').indexOf('|'+v+'|')<0)off=true});r._d=off;vis(r)});capApply();count()})})}
-  });
-  all('.tw table').forEach(function(tb){if(tb._capApply)tb._capApply()});
+          if(v&&(r.getAttribute('data-f'+x.getAttribute('data-f'))||'').indexOf('|'+v+'|')<0)off=true});r._d=off;vis(r)});capApply();count();if(tb._expand)fit('grow')})})}
+  }
+  all('.tw table').forEach(bindTable);
+  capAll();
+  window.addEventListener('beforeprint',expandAll);
   /* a link to a row past the cap (a dashboard's drill link, Open item, a timeline line) shows every row of that table first */
-  function liftFor(h){var t=h&&h.length>1&&document.getElementById(decodeURIComponent(h.slice(1))),tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply()}}
+  function liftFor(h){if(!h||h.length<2)return;var id=decodeURIComponent(h.slice(1)),pending=deferredIds[id];
+    if(pending){pending._open=true;pending._capApply();fit('grow')}
+    var t=document.getElementById(id);
+    if(t){var sec=t.closest('details.sec');if(sec)sec.open=true;if(pending)t.scrollIntoView()}
+    var tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply()}}
   document.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;   /* 1.87.2: a new tab - the report stays as it is */
     var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a)try{liftFor(a.getAttribute('href'))}catch(x){}},true);
   window.addEventListener('hashchange',function(){try{liftFor(location.hash)}catch(x){}});try{liftFor(location.hash)}catch(x){}
@@ -559,7 +633,7 @@
     box.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;var a=e.target.closest&&e.target.closest('a[data-drill]');if(!a)return;
       var id=(a.getAttribute('href')||'').slice(1),t=id&&document.getElementById(id);if(!t)return;
       var sec=t.closest('details.sec');if(sec&&!sec.open)sec.open=true;
-      if(a.hasAttribute('data-open')&&t.tagName==='TR'&&t._x&&!t._o){var b=t.querySelector('.xb');if(b)b.click()}})});
+      if(a.hasAttribute('data-open')&&t.tagName==='TR'&&(t._x||t._detail)&&!t._o){var b=t.querySelector('.xb');if(b)b.click()}})});
   /* the search: every section's rows, lines and cards that have the words, the others put away; a section without
      any, away too (all of it when its title has them); the matches marked where the browser can (CSS highlights) */
   var find=document.getElementById('find');
@@ -567,7 +641,7 @@
       HL=window.CSS&&CSS.highlights&&window.Highlight;
     box.hidden=false;
     /* what an item says, in lower case, once: a row its cells; a line or a card its words but its buttons' (Copy) */
-    var low=function(el){if(el._t===undefined){var s=(el.textContent||'')+(el._x?' '+el._x.textContent:'');   /* a row: what opens under it too */
+    var low=function(el){if(el._t===undefined){var detail=el._detail;var s=(el.textContent||'')+(detail?' '+detailText(detail):el._x?' '+el._x.textContent:'');   /* a row: what opens under it too */
         if(el.tagName!=='TR'){s='';var w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT,null),t;
           while((t=w.nextNode()))if(!t.parentNode.closest('button'))s+=t.nodeValue+' '}
         el._t=s.toLowerCase()}return el._t};
@@ -576,7 +650,7 @@
       return (f&&f.nodeType===3?f.textContent:(h?h.textContent:'')).toLowerCase()};
     var mark=function(q){if(!HL)return;CSS.highlights['delete']('site-find');if(!q)return;var h=new Highlight(),n=0;
       secs.forEach(function(d){if(d.hidden||n>=3000)return;var w=document.createTreeWalker(d.querySelector('.body')||d,NodeFilter.SHOW_TEXT,null),t;
-        while(n<3000&&(t=w.nextNode())){var pe=t.parentNode;if(pe.closest('[hidden],button,svg,summary,.tools2'))continue;
+        while(n<3000&&(t=w.nextNode())){var pe=t.parentNode;if(pe.closest('[hidden],button,svg,script,summary,.tools2'))continue;
           var s=t.nodeValue.toLowerCase(),i=s.indexOf(q);
           while(i>=0&&n<3000){var r=document.createRange();r.setStart(t,i);r.setEnd(t,i+q.length);h.add(r);n++;i=s.indexOf(q,i+q.length)}}});
       CSS.highlights.set('site-find',h)};
@@ -639,9 +713,10 @@
     if(cur&&ic&&cur!==ic){var nw=full?ic:ic.cloneNode(true);m.replaceChild(nw,cur)}
     m.setAttribute('data-tip',tip);m.setAttribute('aria-label',aria)};
   otMarks.forEach(function(m){m._rel0=m.classList.contains('ot-rel')?1:0});
-  var otApply=function(){
+  var otApply=function(changed,loading){
+    if(changed)all('.tw table').forEach(function(tb){if(tb._expand&&tb.querySelector('tr[data-cls]'))tb._expand()});
     otMarks.forEach(function(m){if(!m._ev)return;var v=otVisible(m._ev);m.classList.toggle('ot-off',!v.length);if(v.length)otMark(m,v)});
-    var wi=-1;otRows.forEach(function(tr){var t=tr.closest('table');if(t&&wi<0){var h=all('thead th',t).map(function(x){return x.textContent.trim()});wi=h.findIndex(function(x){return x.indexOf('What happened')===0})}
+    otRows=all('tr[data-cls]');var wi=-1;otRows.forEach(function(tr){var t=tr.closest('table');if(t&&wi<0){var h=all('thead th',t).map(function(x){return x.textContent.trim()});wi=h.findIndex(function(x){return x.indexOf('What happened')===0})}
       var ev={r:tr.getAttribute('data-rel')==='1'?1:0,c:tr.getAttribute('data-cls')};
       var hide=!otVisible([ev]).length||(tr.hasAttribute('data-rep')&&!OT.rep);if(!!tr._ot!==hide){tr._ot=hide;vis(tr)}      /* one more input to vis(), beside the table's filter and the search */
       var f=tr.getAttribute('data-fold'),td=wi>=0?tr.cells[wi]:null;
@@ -649,7 +724,7 @@
         sx.textContent=OT.rep?'':' \u00d7'+q[0]+', '+q[1]+(q[2]!==q[1]?'-'+q[2]:'');tr._t=undefined;if(OT.rep)td.removeAttribute('title');else td.title=q[3]}});
     gO=otRows.some(function(tr){return !!tr._ot});capAll();    /* a control that hides rows opens the folded ones: the table says what it shows */
     counts.forEach(function(c){c()});                       /* the tables' "n of m" */
-    if(find&&find.value.trim()&&typeof run==='function')run();            /* an active search counts again: its rows, its sections' badges, "n found" */
+    if(!loading&&find&&find.value.trim()&&typeof run==='function')run();            /* an active search counts again: its rows, its sections' badges, "n found" */
     if(otCtl){all('input[name=ot-show]',otCtl).forEach(function(i){i.checked=i.value===OT.show});
       all('input[name=ot-kind]',otCtl).forEach(function(i){i.checked=!OT.off[i.value]});var r=otCtl.querySelector('input[name=ot-rep]');if(r)r.checked=OT.rep}};
   var otSave=function(){try{localStorage.setItem(OTK,JSON.stringify({show:OT.show,off:OT.off,rep:OT.rep}))}catch(e){}};
@@ -658,10 +733,10 @@
       if(sv.off&&typeof sv.off==='object')OT.off=sv.off;OT.rep=!!sv.rep}}catch(e){}
     otCtl.hidden=false;otApply();
     otCtl.addEventListener('change',function(e){var i=e.target;if(i.name==='ot-show')OT.show=i.value;else if(i.name==='ot-kind'){if(i.checked)delete OT.off[i.value];else OT.off[i.value]=true}
-      else if(i.name==='ot-rep')OT.rep=i.checked;otSave();otApply()})}
+      else if(i.name==='ot-rep')OT.rep=i.checked;otSave();otApply(true)})}
   else if(otRows.length){otApply()}
   var tips=all('[data-tip]'),sparks=all('svg.spark[data-points]');
-  if(tips.length||sparks.length){
+  if(tips.length||sparks.length||document.querySelector('script.defer-main')){
     var tt=document.createElement('div'),owner=null,pinned=null,NS='http://www.w3.org/2000/svg';
     tt.className='tt';tt.id='site-tip';tt.setAttribute('role','tooltip');tt.hidden=true;document.body.appendChild(tt);
     var place=function(x,y){var w=tt.offsetWidth,h=tt.offsetHeight,vw=document.documentElement.clientWidth,vh=window.innerHeight,
@@ -676,7 +751,7 @@
     /* a mark's events as a list: a header ("26 events . 17:20-17:24"), one line each - time, level icon, what, where - the critical first, then by
        time; each line links to its row in The events. Hover shows it; a click (or Enter) pins it so it can be scrolled; Esc or a click elsewhere closes */
     var RANKS={critical:4,warning:3,low:2,info:1,ok:0};
-    var rowFor=function(n){var tr=document.getElementById('ot-row-'+n);if(tr&&tr.hasAttribute('data-rep')&&!OT.rep){var h=document.getElementById(tr.getAttribute('data-head')||'');if(h)tr=h}return tr};      /* a folded repeat: its head's row (data-head), whatever the sort */
+    var rowFor=function(n){liftFor('#ot-row-'+n);var tr=document.getElementById('ot-row-'+n);if(tr&&tr.hasAttribute('data-rep')&&!OT.rep){var h=document.getElementById(tr.getAttribute('data-head')||'');if(h)tr=h}return tr};      /* a folded repeat: its head's row (data-head), whatever the sort */
     /* an incident link (data-ev): parsed - https, a host, no user or password, no spaces or markup characters - as the report's safe_link asks */
     var okUrl=function(u){if(typeof u!=='string'||!u||u.length>2000||/[\s\x00-\x1f\x7f<>"'`\\]/.test(u))return false;
       if(!/^https:\/\/[^\/?#\\]/i.test(u))return false;      /* the host is written out: URL() would read https:///x as host x */
@@ -722,7 +797,7 @@
       el.addEventListener('blur',function(){if(owner===el&&!pinned)hide()});
       if(el._ev){el.addEventListener('click',function(){if(pinned===el)hide();else pin(el)});
         el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();if(pinned===el)hide();else pin(el)}})}});
-    sparks.forEach(function(svg){var d;try{d=JSON.parse(svg.getAttribute('data-points'))}catch(e){return}if(!d||!d.length)return;
+    var bindSpark=function(svg){if(svg._at)return;var d;try{d=JSON.parse(svg.getAttribute('data-points'))}catch(e){return}if(!d||!d.length)return;
       var name=svg.getAttribute('data-label')||'',vb=svg.viewBox.baseVal,cur=-1,g=document.createElementNS(NS,'line'),dot=document.createElementNS(NS,'circle');
       g.setAttribute('class','hg');g.setAttribute('y1','0');g.setAttribute('y2',String(vb.height));dot.setAttribute('class','hd');dot.setAttribute('r','4');
       svg.setAttribute('aria-describedby','site-tip');
@@ -740,7 +815,8 @@
       svg.addEventListener('focus',function(){if(keyed(svg))at(d.length-1)});
       svg.addEventListener('blur',function(){if(owner===svg)hide()});
       svg.addEventListener('keydown',function(e){var k={ArrowLeft:cur-1,ArrowRight:cur+1,Home:0,End:d.length-1}[e.key];
-        if(k!==undefined){e.preventDefault();at(k)}})});
+        if(k!==undefined){e.preventDefault();at(k)}})};
+    sparks.forEach(bindSpark);
     document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!tt.hidden){var o=owner;hide();if(o&&o.focus&&o._ev){o._quiet=1;o.focus()}}});
     document.addEventListener('pointerdown',function(e){if(owner&&!owner.contains(e.target)&&!(pinned&&tt.contains(e.target)))hide()});
     /* a scroll hides it - but the element with the keyboard's focus keeps it, moved with it (Tab scrolls to it) */

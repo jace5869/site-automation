@@ -136,6 +136,7 @@ import errno
 import fnmatch
 import hashlib
 import html as htmllib
+from html.parser import HTMLParser
 import json
 import os
 import posixpath
@@ -940,6 +941,82 @@ def web_page(page, images, theme='portal'):
     return page if theme in WEB_LOOKS else page.replace('</head>', WEB_STYLE + '\n</head>', 1)
 
 
+class _RowNodes(HTMLParser):
+    """Encode the templates' escaped row markup once. Repeated tag/attribute sets share a descriptor."""
+    VOID = {'br', 'wbr', 'input', 'img', 'hr'}
+
+    def __init__(self):
+        super(_RowNodes, self).__init__()
+        self.shapes = []
+        self.indices = {}
+        self.nodes = []
+        self.stack = [self.nodes]
+        self.ids = []
+        self.file_mark = ''
+
+    def handle_starttag(self, tag, attrs):
+        if self.file_mark:
+            return
+        shape = (tag, tuple(attrs))
+        if shape not in self.indices:
+            self.indices[shape] = len(self.shapes)
+            self.shapes.append(shape)
+        node = [self.indices[shape]]
+        self.stack[-1].append(node)
+        if tag not in self.VOID:
+            self.stack.append(node)
+        for key, value in attrs:
+            if key == 'id' and tag == 'tr':
+                self.ids.append(value)
+
+    def handle_endtag(self, tag):
+        if not self.file_mark and tag not in self.VOID:
+            self.stack.pop()
+
+    def handle_data(self, data):
+        if not self.file_mark and (len(self.stack) > 1 or data.strip()):
+            self.stack[-1].append(data)
+
+    def handle_comment(self, comment):
+        # The ledger may retire a download after publication. Its Files entry carries the current link or reason.
+        if comment.startswith('sf:'):
+            self.file_mark = comment
+            self.stack[-1].append([-1, comment])
+        elif comment == '/' + self.file_mark:
+            self.file_mark = ''
+
+
+def json_block(value):
+    """Data for an HTML raw-text element. A value can never introduce its closing tag."""
+    return json.dumps(value, separators=(',', ':')).replace('<', r'\u003c')
+
+
+def deferred_page(html, rel, js, name):
+    """Finish the website copy after file links have been resolved and the external script extracted."""
+    if not js:
+        return html
+    html = html.replace('<script src="%s"></script>' % name, script_tag(rel, js, name), 1)
+    if name != SCRIPT:
+        return html
+    html = INLINE_RE.sub('', html, count=1)
+    html = html.replace('<html ', '<html data-row-window ', 1)
+    # Inner blocks are encoded first, so unopened details and their nested tables stay inert when outer rows load.
+
+    def block(m):
+        rows = _RowNodes()
+        rows.feed(m.group(2))
+        rows.close()
+        data = json_block([rows.shapes, rows.nodes])
+        ids = htmllib.escape(json.dumps(rows.ids, separators=(',', ':')), quote=True)
+        return ('<script type="application/json" class="defer-%s" data-count="%s" data-ids="%s">%s</script>'
+                % (kind, m.group(1) or '', ids, data))
+
+    for kind in ('mini', 'detail', 'main'):
+        if '<!--defer-' + kind in html:
+            html = re.sub(r'<!--defer-%s(?: (\d+))?-->(.*?)<!--/defer-%s-->' % (kind, kind), block, html, flags=re.S)
+    return html
+
+
 def page_script(html):
     """The script a page carries (an atlas page: roles/site_email/templates/site_report.js, inline in it; a page with a
     script file of its own: data-file); '' for a page without."""
@@ -1182,11 +1259,78 @@ INDEX_PAGE = """<!DOCTYPE html>
 """
 
 
+# The plain index also works on a file share. Keep compact display values beside each button so opening
+# older runs needs neither a fetch nor a second copy of the publisher's timezone and status rules.
+INDEX_SCRIPT = """(function(){
+// A board published without a report script still keeps the theme choice.
+if(!window.siteReport){
+  var root=document.documentElement;
+  try{var theme=localStorage.getItem('site-report-theme');
+    if(theme==='light'||theme==='dark')root.setAttribute('data-theme',theme)}catch(e){}
+  document.addEventListener('DOMContentLoaded', function(){
+    var seg=document.getElementById('theme');
+    if(!seg)return;
+    var selected=seg.querySelector('input[value="'+(root.getAttribute('data-theme')||'auto')+'"]');
+    if(selected)selected.checked=true;
+    seg.addEventListener('change',function(e){
+      var n=e.target.value;
+      if(n==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',n);
+      try{if(n==='auto')localStorage.removeItem('site-report-theme');else localStorage.setItem('site-report-theme',n)}catch(e){}
+    });
+  });
+}
+document.addEventListener('click', function(event){
+  var button=event.target.closest('button.older-runs');
+  if(!button)return;
+  var table=button.previousElementSibling, body=table.tBodies[0];
+  var block=button.nextElementSibling, sample=body.rows[0];
+  JSON.parse(block.textContent).forEach(function(run){
+    var row=body.insertRow();
+    run.forEach(function(value,i){
+      var cell=sample.cells[i].cloneNode(false);row.appendChild(cell);
+      if(Array.isArray(value)){
+        var link=sample.querySelector('a').cloneNode(false);
+        link.href=value[0]; link.textContent=value[1]; link.title=value[2]; cell.appendChild(link);
+      }else cell.textContent=value;
+    });
+  });
+  button.remove();
+  block.remove();
+});
+})();
+"""
+INDEX_SCRIPT_FILE = 'site-report-index.js'
+
+
+def older_runs(runs, index, tz, board=False, generated=''):
+    if len(runs) <= 5:
+        return ''
+    values = []
+    for run in runs[5:]:
+        when = local_time(run.get('when') or '', tz) or 'this run'
+        job = htmllib.unescape(_job(run.get('job')))
+        link = [_href(index, run['page']), (_short(run.get('when'), generated, tz) or when) if board else when,
+                ' - '.join(x for x in (when, job) if x)]
+        state = BOARD_WORD[_state(run.get('status'))] if board else PAL.get(run.get('status'), PAL['unknown'])[3]
+        title = run.get('title') or ''
+        counts = run.get('counts')
+        if board:
+            findings = _counts_html(counts, True) if isinstance(counts, dict) else '-'
+            values.append([link, state, htmllib.unescape(findings), title])
+        else:
+            values.append([state, link, job, title])
+    return ('<button type="button" class="older-runs lcopy">Show %s</button>'
+            '<script type="application/json" class="older-data">%s</script>') % (
+                _plural(len(values), 'older run', 'older runs'), json_block(values))
+
+
 def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base='', files_line=''):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs; at the foot
     the space the hosted files take and the limits (1.79.8, files_line - never the files themselves)."""
+    index_controls = (theme in WEB_LOOKS and not js) or any(len(_runs(r)) > 5 for r in reports)
+    history_tag = script_tag(index, INDEX_SCRIPT, INDEX_SCRIPT_FILE) if index_controls else ''
     if theme in WEB_LOOKS:                               # 1.72.0: the board, in the look's colours
-        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line)
+        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line, history_tag)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -1219,7 +1363,7 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
             '<td style="padding:5px 0;color:#5b6b66;font-size:13px;min-width:200px;">%s</td></tr>'
             % (_pill(x.get('status'), True), _href(index, x['page']), e(local_time(x.get('when'), tz) or 'this run'),
                ' <span style="color:#5b6b66;font-size:12px;">(newest)</span>' if not i else '', _job(x.get('job')),
-               e(x.get('title') or '')) for i, x in enumerate(runs))
+               e(x.get('title') or '')) for i, x in enumerate(runs[:5]))
         rows.append(
             '<details class="r a%d" style="border-top:1px solid #e4ece9;"><summary style="display:flex;flex-wrap:wrap;'
             'align-items:center;gap:6px 14px;padding:10px 12px;"><span class="caret">&#9656;</span>'
@@ -1227,10 +1371,10 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
             '<div style="color:#5b6b66;font-size:13px;">%s</div></span>'
             '<span style="white-space:nowrap;color:#45534e;font-size:13px;">%s%s &middot; %d run%s</span></summary>'
             '<div style="padding:2px 12px 12px 36px;overflow-x:auto;"><table cellpadding="0" cellspacing="0" border="0" '
-            'style="border-collapse:collapse;">%s</table></div></details>'
+            'style="border-collapse:collapse;">%s</table>%s</div></details>'
             % (tab[a], _pill(r.get('status')), name, e(r.get('title') or ''), run,
                (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's',
-               lines or '<tr><td style="color:#5b6b66;">No page of its runs listed.</td></tr>'))
+               lines or '<tr><td style="color:#5b6b66;">No page of its runs listed.</td></tr>', older_runs(runs, index, tz)))
     # All, then the areas, A to Z (Other last); a dot on an area with a Critical or a Warning
     tabs, rules = [], []
     for i, label in enumerate(['All'] + areas):
@@ -1248,7 +1392,7 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
                 % (logo[1], logo[0], logo[1], logo[2])) if logo else ''
     return INDEX_PAGE % {
         'header': e(header_text), 'card': card, 'logo': logo_img, 'n': len(reports), 'generated': e(local_time(generated, tz)), 'tiles': tiles,
-        'style': INDEX_STYLE % ''.join(rules),
+        'style': INDEX_STYLE % ''.join(rules) + history_tag,
         'tabs': (''.join(t[0] for t in tabs) + '\n<div class="bar">' + ''.join(t[1] for t in tabs) + '</div>\n') if reports else '',
         'th': 'font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#45534e;',
         'rows': '\n'.join(rows) or '<div style="padding:12px;color:#5b6b66;">No reports yet.</div>',
@@ -1267,18 +1411,6 @@ ATLAS_SWITCH = (
     'cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></svg><span>Auto</span></label>'
     '<input type="radio" name="site-report-theme" id="theme-dark" value="dark"><label for="theme-dark" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 015.8 2.4a6 6 '
     '0 107.8 7.8z" fill="currentColor"/></svg><span>Dark</span></label></div>')
-ATLAS_EARLY = ("<script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')"
-               "document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>")
-ATLAS_SCRIPT = """<script>
-(function(){
-  if(window.siteReport)return;                     // site-report.js ran: it does this
-  var root=document.documentElement,seg=document.getElementById('theme');if(!seg)return;
-  var c=seg.querySelector('input[value="'+(root.getAttribute('data-theme')||'auto')+'"]');if(c)c.checked=true;
-  seg.addEventListener('change',function(ev){var n=ev.target.value;
-    if(n==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',n);
-    try{if(n==='auto')localStorage.removeItem('site-report-theme');else localStorage.setItem('site-report-theme',n)}catch(e){}})
-})();
-</script>"""
 
 
 def first_step(report):
@@ -1577,7 +1709,7 @@ def _place_areas(areas, size):
     return wide
 
 
-def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas', files_line=''):
+def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas', files_line='', history_tag=''):
     """1.72.0: the index page in the look made for a browser (atlas, brief, ops): At a glance (Runs ok, Not checked,
     Critical up since last run, Didn't run on time), the findings of the newest runs, Look at these first, a tab per
     area (radio buttons, no script), a card per area with each report's line (its state, what it said, the change since
@@ -1638,10 +1770,10 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
                e(_short(x.get('when'), generated, tz) or 'this run'),
                ' <span class="mutec">(newest)</span>' if not i else '', _state(x.get('status')), BOARD_ICON[_state(x.get('status'))],
                BOARD_WORD[_state(x.get('status'))], _counts_html(x.get('counts'), True) if isinstance(x.get('counts'), dict) else '-',
-               e(x.get('title') or '')) for i, x in enumerate(runs))
+               e(x.get('title') or '')) for i, x in enumerate(runs[:5]))
         table = ('<div class="runs"><table><thead><tr><th>Run</th><th>State</th><th>Findings</th><th>What it said</th></tr></thead><tbody>%s'
-                 '</tbody></table><p class="mutec small">The last %s keep their pages (report_web_history).</p></div>'
-                 % (lines, _plural(len(runs), 'run', 'runs')) if runs else '<div class="runs"><p class="mutec small">No page of its runs listed.</p></div>')
+                 '</tbody></table>%s<p class="mutec small">The last %s keep their pages (report_web_history).</p></div>'
+                 % (lines, older_runs(runs, index, tz, True, generated), _plural(len(runs), 'run', 'runs')) if runs else '<div class="runs"><p class="mutec small">No page of its runs listed.</p></div>')
         rows[a].append((not bad, name.lower(), (
             '<details class="%s" id="%s" data-name="%s"%s><summary><span class="si si-%s si-norm" title="%s">%s<span class="vh">%s</span></span>'
             '<span class="si si-late" title="%s">%s<span class="vh">%s</span></span>'
@@ -1723,7 +1855,7 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
             if reports else '<div class="none">No reports yet. A report job writes its page here when it runs.</div>\n')
     return ('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n'
-            '<title>' + e(header_text) + ' - reports</title>\n' + ATLAS_EARLY + ('\n' + script_tag(index, js) if js else '') +
+            '<title>' + e(header_text) + ' - reports</title>\n' + (script_tag(index, js) if js else '') + history_tag +
             '\n<style>\n' + style + '</style>\n</head>\n<body class="board look-' + e(look) + '">\n'
             '<div class="top"><div class="in">' + mark + '<div><h1>' + e(header_text) + '</h1><div class="site">' +
             _plural(len(reports), 'report', 'reports') + ' in ' + _plural(len(areas), 'area', 'areas') + '</div></div><div class="grow"></div>'
@@ -1732,7 +1864,7 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
             '<main>\n<section class="hero" aria-label="At a glance">' + tiles + '</section>\n' + totals + '\n' + lookfirst + '\n' + body +
             '<div class="foot"><span>The sparkline: each report&#39;s critical and warning findings over its last 12 runs, newest right. A gap: not counted.</span>' +
             ('<span class="files-used">' + e(files_line) + '</span>' if files_line else '') +
-            '<span>Light, dark and the area tabs work without the page&#39;s script.</span></div>\n</main>\n' + ATLAS_SCRIPT + '\n</body>\n</html>\n')
+            '<span>Light, dark and the area tabs work without the page&#39;s script.</span></div>\n</main>\n</body>\n</html>\n')
 
 
 def history(old, entry, n):
@@ -2162,7 +2294,6 @@ def main():
         html = banner_inject(web_page(p['html'], p['images'], p['theme']), banner)
         js = page_script(html)
         js_name = page_script_name(html)                 # site-report.js, or the page's own file (data-file)
-        js_tag = '<script src="%s"></script>' % js_name
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
         entry.pop('banner', None)                        # this run's banner, never one the entry brings
@@ -2214,7 +2345,7 @@ def main():
                 put(folder + '/' + f['name'], rf.read_bytes(f), f['ctype'])
                 hosted_written.append(folder + '/' + f['name'])
             return publish_rest(target, step, folder, written, busy, put, known, reports, old, entry, is_newest, html, js,
-                                js_name, js_tag, banner, gone_lines)
+                                js_name, banner, gone_lines)
         except Fail:
             # a publish that stops part way: the files it put there taken away again (never left outside the ledger)
             if not isinstance(target, Staged):
@@ -2227,7 +2358,7 @@ def main():
                     target.rmdir(folder)
             raise
 
-    def publish_rest(target, step, folder, written, busy, put, known, reports, old, entry, is_newest, html, js, js_name, js_tag,
+    def publish_rest(target, step, folder, written, busy, put, known, reports, old, entry, is_newest, html, js, js_name,
                      banner, gone_lines):
         """publish()'s pages, index and cleanup, after this run's files (a Fail here: publish takes them away again)."""
         web_look = p['theme'] in WEB_LOOKS
@@ -2236,7 +2367,7 @@ def main():
                 continue
             h = rf.put_files(html, step['hosted'], step['refused'], rel, folder, web_look)   # the latest page links the run's
             h = back_link(h, rel, back_to if inside(back_to) else '', banner)   # 1.87.2: the way back to the index, from this page's place
-            put(rel, h.replace(js_tag, script_tag(rel, js, js_name), 1) if js else h, 'text/html; charset=utf-8', rel == latest)
+            put(rel, deferred_page(h, rel, js, js_name), 'text/html; charset=utf-8', rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
                 if step['hosted']:
@@ -2253,7 +2384,7 @@ def main():
             sjs, sname = page_script(h), page_script_name(h)
             if sjs and not (js and sname == js_name):
                 scripts[sname] = sjs
-            put(rel, h.replace('<script src="%s"></script>' % sname, script_tag(rel, sjs, sname), 1) if sjs else h, 'text/html; charset=utf-8')
+            put(rel, deferred_page(h, rel, sjs, sname), 'text/html; charset=utf-8')
             if p['json']:
                 doc = dict(p['data'], page=rel, url=_join(base, rel), latest='', index='')
                 doc.update(dict((k, sp[k]) for k in ('report', 'runs') if k in sp))
@@ -2398,6 +2529,8 @@ def main():
                     raise Fail('the index lock %s.lock is no longer this job\'s (taken over, or another job\'s made over it) - the '
                                'index not written; tried again' % _json_name(index))
                 renew_lock(target, box['lock'], token)
+            if script_tag(index, INDEX_SCRIPT, INDEX_SCRIPT_FILE) in index_page:
+                put(INDEX_SCRIPT_FILE, INDEX_SCRIPT, 'text/javascript; charset=utf-8')
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
             put(index, index_page, 'text/html; charset=utf-8', True)
             release_lock(target, box.pop('lock', None), token)   # after both: never an older index page over a newer one

@@ -101,8 +101,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{ r.title | e }}</title>
-<script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);
-var d=localStorage.getItem('site-report-density');if(d==='compact')document.documentElement.setAttribute('data-density',d)}catch(e){}</script>
 <script src="site-report.js"></script>
 <style>
 {#- the palette (roles/site_email/library/site_report_web.py has the same, for the index - tests/test_report_web.py
@@ -742,11 +740,13 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 <thead><tr>{% for c in t.columns %}<th class="{{ 'k-num' if t.kinds[loop.index0] | default('') in ['num', 'cat1', 'cat2', 'cat3'] else 'k-mid' }}" scope="col">{{ c | e }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in t.rows %}
+{%- if loop.index == 101 %}<!--defer-mini {{ loop.length }}-->{% endif %}
 {%- set xl = (t.links[loop.index0] if t.links is defined and t.links | length > loop.index0 else '') | default('', true) %}{#- 1.69.2: a second link column (links2, at link2_col: a host's Collection opens the collection) #}{%- set xl2 = (t.links2[loop.index0] if t.links2 is defined and t.links2 | length > loop.index0 else '') | default('', true) %}
 {%- set xt = (t.link_titles[loop.index0] if t.link_titles is defined and t.link_titles | length > loop.index0 else '') | default('', true) %}{%- set xt2 = (t.link2_titles[loop.index0] if t.link2_titles is defined and t.link2_titles | length > loop.index0 else '') | default('', true) %}
 {%- set gr = (t.row_status[loop.index0] if t.row_status is defined and t.row_status | length > loop.index0 else '') | default('', true) %}
-<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}{% set cu = xl if loop.first else (xl2 if loop.index0 == t.link2_col | default(1) else '') %}{% set ct = xt if loop.first else xt2 %}{% set tx = ('' if cell is none else cell) | string %}<td class="{{ 'k-num' if kd in ['num', 'cat1', 'cat2', 'cat3'] else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if cu %}<a class="hl" href="{{ cu | e }}" target="_blank" rel="noopener" title="{{ ct | e }}">{% endif %}{% if tx in {'CAT I': 1, 'CAT II': 2, 'CAT III': 3} %}<span class="catc k{{ {'CAT I': 1, 'CAT II': 2, 'CAT III': 3}[tx] }}"><i aria-hidden="true"></i>{{ tx }}</span>{% elif kd in ['cat1', 'cat2', 'cat3'] and tx not in ['0', '', '-'] %}<span class="cn"><i class="cq k{{ kd[3] }}" aria-hidden="true"></i>{{ tx | e }}</span>{% elif kd == 'wrap' %}<span class="cv">{% for w in tx.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ tx | e }}{% endif %}{% if cu %}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>{% endif %}</td>{% endfor %}</tr>
+<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}{% set cu = xl if loop.first else (xl2 if loop.index0 == t.link2_col | default(1) else '') %}{% set ct = xt if loop.first else xt2 %}{% set tx = ('' if cell is none else cell) | string %}<td class="{{ 'k-num' if kd in ['num', 'cat1', 'cat2', 'cat3'] else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if cu %}<a class="hl" href="{{ cu | e }}" target="_blank" rel="noopener" title="{{ ct | e }}">{% endif %}{% if tx in {'CAT I': 1, 'CAT II': 2, 'CAT III': 3} %}<span class="catc k{{ {'CAT I': 1, 'CAT II': 2, 'CAT III': 3}[tx] }}"><i aria-hidden="true"></i>{{ tx }}</span>{% elif kd in ['cat1', 'cat2', 'cat3'] and tx not in ['0', '', '-'] %}<span class="cn"><i class="cq k{{ kd[3] }}" aria-hidden="true"></i>{{ tx | e }}</span>{% elif kd == 'wrap' %}<span class="cv">{% for w in tx.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w.isascii() and w.isalpha() and w | length <= 12 %}{{ w | e }}{% elif w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ tx | e }}{% endif %}{% if cu %}<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8 7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>{% endif %}</td>{% endfor %}</tr>
 {%- endfor %}
+{%- if t.rows | length > 100 %}<!--/defer-mini-->{% endif %}
 </tbody>
 </table></div>
 {%- endif %}
@@ -905,6 +905,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 </tr></thead>
 <tbody>
 {%- for row in s.rows %}
+{%- if loop.index == 101 %}<!--defer-main {{ loop.length }}-->{% endif %}
 {%- set ri = loop.index0 %}
 {%- set dt = (s.details[ri] if s.details is defined and s.details | length > ri else none) %}
 {%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
@@ -957,10 +958,10 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- elif kd == 'wrap' %}
 {#- a column the report says wraps (1.12.0): its lines kept, a word up to 16 characters kept whole (cluster1-01, AFF-A400),
     a longer one breaks at its hyphens rather than widen the table (na-cluster-site-a-prod) #}
-<td class="k-wrap" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><span class="cv">{% for ln in text.split('\n') %}{% if not loop.first %}{{ '\n' }}{% endif %}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ dw(w, ('link' in kinds or 'buttons' in kinds)) }}{% endif %}{% endfor %}{% endfor %}</span></td>
+<td class="k-wrap" data-l="{{ lbl | e }}" data-v="{{ text | e }}"><span class="cv">{% for ln in text.split('\n') %}{% if not loop.first %}{{ '\n' }}{% endif %}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if s.details is defined and w.isascii() and w.isalpha() and w | length <= 12 %}{{ w | e }}{% elif w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ dw(w, ('link' in kinds or 'buttons' in kinds)) }}{% endif %}{% endfor %}{% endfor %}</span></td>
 {%- elif kd == 'mid' %}
 {#- each word kept whole: a line breaks at a space, never at a hyphen inside an id (RHEL-09-412035) #}
-<td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for ln in text.split('\n') %}{{ '\n' if not loop.first else '' }}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 24 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ dw(w, ('link' in kinds or 'buttons' in kinds)) }}{% endif %}{% endfor %}{% endfor %}</span></td>
+<td class="k-mid" data-l="{{ lbl | e }}"><span class="cv">{% for ln in text.split('\n') %}{{ '\n' if not loop.first else '' }}{% for w in ln.split(' ') %}{{ ' ' if not loop.first else '' }}{% if s.details is defined and w.isascii() and w.isalpha() and w | length <= 12 %}{{ w | e }}{% elif w | length <= 24 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ dw(w, ('link' in kinds or 'buttons' in kinds)) }}{% endif %}{% endfor %}{% endfor %}</span></td>
 {%- else %}
 <td class="k-{{ ('num' if kd == 'pct' else kd) | e }}" data-l="{{ lbl | e }}">{% if ('link' in kinds or 'buttons' in kinds) and kd == 'long' and '\n' not in text and text | length > 24 %}<span class="cv">{% for w in text.split(' ') %}{{ ' ' if not loop.first else '' }}{{ dw(w, true) }}{% endfor %}</span>{% else %}{% set kv = text | e if kd in ['num', 'pct'] else keep(text) %}{% if '<' in kv %}<span class="cv">{{ kv }}</span>{% else %}{{ kv }}{% endif %}{% endif %}</td>
 {%- endif %}
@@ -968,9 +969,10 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endfor %}
 </tr>
 {%- if dt %}
-<tr class="xr" hidden><td class="xd" colspan="{{ s.columns | length }}">{% for t in (dt if dt is sequence and dt is not string and dt is not mapping else [dt]) %}{{ xmini(t) }}{% endfor %}</td></tr>
+<!--defer-detail--><tr class="xr" hidden><td class="xd" colspan="{{ s.columns | length }}">{% for t in (dt if dt is sequence and dt is not string and dt is not mapping else [dt]) %}{{ xmini(t) }}{% endfor %}</td></tr><!--/defer-detail-->
 {%- endif %}
 {%- endfor %}
+{%- if s.rows | length > 100 %}<!--/defer-main-->{% endif %}
 </tbody>
 </table></div>
 {%- else %}
@@ -997,9 +999,11 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 <thead><tr>{% for c in t.columns %}<th class="{{ 'k-num' if t.kinds[loop.index0] | default('') == 'num' else 'k-mid' }}" scope="col">{{ c | e }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in t.rows %}
+{%- if loop.index == 101 %}<!--defer-mini {{ loop.length }}-->{% endif %}
 {%- set gr = (t.row_status[loop.index0] if t.row_status is defined and t.row_status | length > loop.index0 else '') | default('', true) %}
-<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}<td class="{{ 'k-num' if kd == 'num' else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if gr in words and (cell | string).startswith('CAT ') %}{{ chip(gr, cell | string) }}{% elif kd == 'wrap' %}<span class="cv">{% for w in (cell | string).split(' ') %}{{ ' ' if not loop.first else '' }}{% if w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ cell | e }}{% endif %}</td>{% endfor %}</tr>
+<tr{% if gr in words %} class="r-{{ gr }}"{% endif %}>{% for cell in row %}{% set kd = t.kinds[loop.index0] | default('') %}<td class="{{ 'k-num' if kd == 'num' else ('k-wrap' if kd == 'wrap' else 'nw') }}" data-l="{{ t.columns[loop.index0] | e }}">{% if gr in words and (cell | string).startswith('CAT ') %}{{ chip(gr, cell | string) }}{% elif kd == 'wrap' %}<span class="cv">{% for w in (cell | string).split(' ') %}{{ ' ' if not loop.first else '' }}{% if w.isascii() and w.isalpha() and w | length <= 12 %}{{ w | e }}{% elif w | length <= 16 %}<span class="w">{{ nbw(w) }}</span>{% else %}{{ w | e }}{% endif %}{% endfor %}</span>{% else %}{{ cell | e }}{% endif %}</td>{% endfor %}</tr>
 {%- endfor %}
+{%- if t.rows | length > 100 %}<!--/defer-mini-->{% endif %}
 </tbody>
 </table></div>
 {%- endfor %}

@@ -158,7 +158,8 @@ class Module(unittest.TestCase):
         self.assertIn(":root:has(#theme-light:checked){--bg:#f3f5f7;", html)
         self.assertIn(":root:has(#theme-dark:checked){--bg:#0b0f14;", html)
         self.assertIn(':root[data-theme="dark"]{--bg:#0b0f14;', html)      # older browsers without :has(): the script
-        self.assertIn("localStorage.setItem('site-report-theme',n)", html)
+        self.assertIn(rw.script_tag("index.html", rw.INDEX_SCRIPT, rw.INDEX_SCRIPT_FILE), html)
+        self.assertIn("localStorage.setItem('site-report-theme',n)", rw.INDEX_SCRIPT)
         self.assertNotIn("<button", html)
 
     def test_index_page(self):
@@ -655,9 +656,9 @@ class SiteScript(unittest.TestCase):
 
     def test_the_index_loads_it(self):
         html = rw.index_html([], "index.html", "x", None, "now", (), "atlas", "var a;\n")
-        self.assertIn(rw.ATLAS_EARLY + "\n" + rw.script_tag("index.html", "var a;\n"), html)
-        self.assertIn("if(window.siteReport)return;", html)                           # its own script then does nothing
-        self.assertNotIn("<script src=", rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
+        self.assertIn(rw.script_tag("index.html", "var a;\n"), html)
+        self.assertNotIn("<script>", html)
+        self.assertNotIn('<script src="site-report.js', rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
         self.assertNotIn("<script src=", rw.index_html([], "index.html", "x", None, "now", (), "portal", "var a;\n"))
 
     def test_a_page_with_a_script_file_of_its_own(self):
@@ -1648,6 +1649,107 @@ class Outlook1872(unittest.TestCase):
             src = fh.read()
         self.assertNotIn("Segoe UI Variable", src)
         self.assertEqual(src.count("<!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--></head>"), 2)
+
+
+
+class ReportSpeed(unittest.TestCase):
+    def page(self, look, count):
+        rows = [['', 'item-%04d' % i, 'Placeholder words'] for i in range(count)]
+        details = [{'columns': ['Host'], 'kinds': ['wrap'], 'rows': [['example-%04d' % i]],
+                    'text': 'detail-%04d </script><b>text</b>' % i} for i in range(count)]
+        section = dict(title='Findings', columns=['Open', 'Item', 'Description'], kinds=['x', 'mid', 'wrap'],
+                       rows=rows, details=details, row_tags=[{'id': 'item-%04d' % i} for i in range(count)])
+        doc = dict(title='Example scorecard', status='ok', sections=[section])
+        raw = Back1872().env().get_template('report_%s.html.j2' % look).render(
+            _report=doc, _page_runs=[], _page_logo_cid='', _email_footer='Example', report_email_header_text='Example')
+        js = rw.page_script(raw)
+        return rw.deferred_page(raw, 'page.html', js, rw.SCRIPT), js
+
+    def test_first_hundred_and_dom_budget(self):
+        from html.parser import HTMLParser
+
+        class Elements(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.tags = []
+                self.text_nodes = 0
+
+            def handle_data(self, data):
+                self.text_nodes += 1
+
+            def handle_starttag(self, tag, attrs):
+                self.tags.append((tag, dict(attrs)))
+
+        for look in ('atlas', 'brief', 'ops'):
+            page, _ = self.page(look, 2000)
+            dom = Elements()
+            dom.feed(page)
+            self.assertEqual([a['id'] for tag, a in dom.tags if tag == 'tr' and 'id' in a],
+                             ['item-%04d' % i for i in range(100)], look)
+            self.assertLess(len(dom.tags) + dom.text_nodes, 3000, look)
+            self.assertFalse(any(tag == 'table' and a.get('class') == 'mini' for tag, a in dom.tags), look)
+            self.assertFalse(any(tag == 'script' and not a.get('src') and a.get('type') != 'application/json'
+                                 for tag, a in dom.tags), look)
+            block, = [a for tag, a in dom.tags if a.get('class') == 'defer-main']
+            self.assertEqual(block['data-count'], '2000')
+            self.assertEqual(json.loads(block['data-ids']), ['item-%04d' % i for i in range(100, 2000)])
+
+    def test_index_keeps_history_but_draws_five_runs(self):
+        runs = [_run(i, '2026-10-%02d 06:00 UTC' % i) for i in range(8, 0, -1)]
+        with tempfile.TemporaryDirectory() as folder:
+            for look in ('atlas', 'brief', 'ops', 'portal'):
+                with self.subTest(look=look):
+                    with open(os.path.join(folder, 'index.json'), 'w') as f:
+                        json.dump({'reports': [dict(runs[0], key='example/latest.html', runs=runs)]}, f)
+                    out = run_module(web_args(folder, theme=look, prune=False))
+                    self.assertFalse(out.get('failed'), out)
+                    with open(os.path.join(folder, 'index.html')) as f:
+                        page = f.read()
+                    for run in runs[:5]:
+                        self.assertIn('href="%s"' % run['page'], page)
+                    for run in runs[5:]:
+                        self.assertNotIn('href="%s"' % run['page'], page)
+                    data = json.loads(re.search(r'class="older-data">(.*?)</script>', page)[1])
+                    self.assertEqual([next(cell[0] for cell in row if isinstance(cell, list)) for row in data],
+                                     [r['page'] for r in runs[5:]])
+                    self.assertTrue(os.path.isfile(os.path.join(folder, rw.INDEX_SCRIPT_FILE)))
+                    with open(os.path.join(folder, 'index.json')) as f:
+                        self.assertEqual(next(r for r in json.load(f)['reports'] if r['key'] == 'example/latest.html')['runs'], runs)
+
+    @unittest.skipUnless(shutil.which('google-chrome') or shutil.which('chromium'), 'no Chrome or Chromium')
+    def test_browser_show_all_search_filter_export_and_link(self):
+        page, js = self.page('ops', 105)
+        # Each probe starts on a fresh page and uses the published external script under the portal's script policy.
+        prelude = """var tb=document.querySelector('.tw table'), rows=()=>Array.from(tb.tBodies[0].rows).filter(r=>!r.hidden&&!r.classList.contains('xr')),
+                       more=document.querySelector('.capbar button'), answer=document.querySelector('output');"""
+        probes = [
+            ("var n=rows().length;var label=more.textContent;more.click();answer.textContent=[n,label,rows().length].join('|')",
+             '100|Show all 105 rows|105'),
+            ("var f=document.querySelector('#find');f.value='detail-0104';f.dispatchEvent(new Event('search'));"
+             "var r=rows()[0];r.querySelector('.xb').click();answer.textContent=[rows().length,r.id,r.nextElementSibling.querySelector('p').textContent].join('|')",
+             '1|item-0104|detail-0104 &lt;/script&gt;&lt;b&gt;text&lt;/b&gt;'),
+            ("var f=document.querySelector('.filter');f.value='item-0104';f.dispatchEvent(new Event('input'));answer.textContent=rows()[0].id", 'item-0104'),
+            ("var a=document.createElement('a');a.href='#item-0104';document.body.append(a);var n=history.length;a.click();"
+             "answer.textContent=[history.length===n,document.querySelector(a.hash).hidden].join('|')", 'true|false'),
+            ("var c=document.querySelector('details.cols .c3');c.click();navigator.msSaveOrOpenBlob=async function(b){var csv=await b.text();"
+             "answer.textContent=[csv.trim().split('\\r\\n').length,csv.includes('item-0104'),csv.includes('Placeholder words')].join('|')};"
+             "document.querySelector('.csv').click()", '106|true|false'),
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            for name, content in [(rw.SCRIPT, js), ('page.html', page.replace('<head>', '''<head><meta http-equiv="Content-Security-Policy" content="script-src 'self'">''')
+                                   .replace('</body>', '<output></output><script src="probe.js"></script></body>'))]:
+                with open(os.path.join(folder, name), 'w') as f:
+                    f.write(content)
+            for probe, expected in probes:
+                with self.subTest(expected=expected):
+                    with open(os.path.join(folder, 'probe.js'), 'w') as f:
+                        f.write("document.addEventListener('DOMContentLoaded',function(){" + prelude + probe + "})")
+                    result = subprocess.run([shutil.which('google-chrome') or shutil.which('chromium'), '--headless', '--no-sandbox',
+                                             '--disable-gpu', '--allow-file-access-from-files', '--user-data-dir=' + folder + '/profile',
+                                             '--dump-dom', '--virtual-time-budget=3000', 'file://' + folder + '/page.html'],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('<output>' + expected + '</output>', result.stdout)
 
 
 class WideTables(unittest.TestCase):
