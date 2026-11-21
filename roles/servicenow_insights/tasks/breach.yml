@@ -4,6 +4,10 @@
 # ({template}/about-to-breach/latest.html, written over each run, off the website's index: the full report keeps its line),
 # its email only to servicenow_breach_email_to, its workbook. Then the play ends.
 
+- name: "Insights | the site's index (1.87.2 - the about-to-breach page's All reports link; its own include writes no index)"
+  ansible.builtin.set_fact:
+    _snb_site_index: "{{ report_web_index | default('index.html') }}"
+
 - name: Breach | read the running SLAs and the breaches of the last {{ servicenow_breach_days }} days from ServiceNow
   site_servicenow_insights:
     url: "{{ _sni_url }}"
@@ -67,6 +71,7 @@
     report_web_page: "{{ _snb_page }}"
     report_web_latest: ""
     report_web_index: ""
+    report_web_site_index: "{{ _snb_site_index | default('') }}"   # 1.87.2: the All reports link (the site's index)
   when: >-
     _snb.ok | default(false) | bool and (report_web_dest | default('', true) | string | trim | length > 0
     or servicenow_breach_email_to | default([], true) | length > 0)

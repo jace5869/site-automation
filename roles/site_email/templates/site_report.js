@@ -278,7 +278,8 @@
   all('.tw table').forEach(function(tb){if(tb._capApply)tb._capApply()});
   /* a link to a row past the cap (a dashboard's drill link, Open item, a timeline line) shows every row of that table first */
   function liftFor(h){var t=h&&h.length>1&&document.getElementById(decodeURIComponent(h.slice(1))),tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply()}}
-  document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a)try{liftFor(a.getAttribute('href'))}catch(x){}},true);
+  document.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;   /* 1.87.2: a new tab - the report stays as it is */
+    var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a)try{liftFor(a.getAttribute('href'))}catch(x){}},true);
   window.addEventListener('hashchange',function(){try{liftFor(location.hash)}catch(x){}});try{liftFor(location.hash)}catch(x){}
   /* 1.87.2: a link to a place on this page (the rail, Open item, a drill link, a table of contents) goes there without a step in the browser's history:
      the address shows it (history.replaceState - no new step), so Back leaves the report in one click. What the browser does for a #link
@@ -288,17 +289,22 @@
     function still(){if(H.classList.contains('motion-off')||H.getAttribute('data-motion')==='off'||/[?&]motion=off\b/.test(location.search))return true;
       if(H.classList.contains('motion-always'))return false;return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)}
     var marked=null;
+    /* one highlight: a row the address names when the page opens is marked the same way (no tr:target in the CSS) */
+    try{var t0=location.hash.length>1&&document.getElementById(decodeURIComponent(location.hash.slice(1)));if(t0&&t0.tagName==='TR'){marked=t0;t0.classList.add('is-target')}}catch(x){}
     document.addEventListener('click',function(e){
       if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
       var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||(a.target&&a.target!=='_self')||a.hasAttribute('download'))return;
       var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1))}catch(x){return}
       var t=id?document.getElementById(id):null;if(id&&!t)return;
       e.preventDefault();
-      for(var d=t&&t.parentNode;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;
+      for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;   /* the place itself too: a closed section opens */
       try{history.replaceState(history.state,'',id?h:location.pathname+location.search)}catch(x){}
       if(marked)marked.classList.remove('is-target');marked=t&&t.tagName==='TR'?t:null;if(marked)marked.classList.add('is-target');
       var b=still()?'instant':'auto';
-      try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}})})();
+      try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}
+      /* the keyboard goes on from there (the next Tab is in the place, not back in the rail): focus, without a second scroll */
+      var f=t&&(t.tagName==='DETAILS'?t.querySelector('summary'):t);
+      if(f){if(!/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(f.tagName)&&!f.hasAttribute('tabindex'))f.setAttribute('tabindex','-1');try{f.focus({preventScroll:true})}catch(x){}}})})();
   /* 1.76.5: a table cell of more than 4 lines shows 4 and "more" (CSS draws the word; the cell's text is as it was) - measured once its section is open */
   function longCells(root){all('.tw td .cv',root).forEach(function(cv){var td=cv.parentNode;if(td._lc||!td.offsetParent)return;
     var lh=parseFloat(getComputedStyle(cv).lineHeight)||20;if(cv.offsetHeight>lh*4.6){td._lc=1;td.classList.add('cl')}else td._lc=0})}
@@ -550,7 +556,7 @@
     draw({});
     document.addEventListener('site-facets',function(e){draw(e.detail||{})});
     /* a link to a row below (a rule, a host): its section opened, the row opened under it (its check, fix text and hosts) */
-    box.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[data-drill]');if(!a)return;
+    box.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;var a=e.target.closest&&e.target.closest('a[data-drill]');if(!a)return;
       var id=(a.getAttribute('href')||'').slice(1),t=id&&document.getElementById(id);if(!t)return;
       var sec=t.closest('details.sec');if(sec&&!sec.open)sec.open=true;
       if(a.hasAttribute('data-open')&&t.tagName==='TR'&&t._x&&!t._o){var b=t.querySelector('.xb');if(b)b.click()}})});

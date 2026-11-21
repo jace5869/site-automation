@@ -65,6 +65,7 @@ options:
   dest: {description: The report folder (an absolute path) or the http(s) address it is uploaded to., type: str, required: true}
   url: {description: The address people open the folder at (default - dest when it is http(s))., type: str, default: ''}
   files: {description: "The names inside the folder - {page, latest, index} (report_web_files); '' = none.", type: dict, required: true}
+  site_index: {description: "1.87.2 - where the site's index is, for the pages' All reports link when this call writes none (files.index ''): the ticket insights' site, unit and team pages. '' = files.index.", type: str, default: ""}
   page_url: {description: "The page's address, as the report job printed it (the copy job; '' = url and the page's name).", type: str, default: ''}
   html: {description: The page (not with keep)., type: str, default: ''}
   images: {description: "Pictures in the page: [{cid: name, path: file}].", type: list, elements: dict, default: []}
@@ -2054,7 +2055,7 @@ def main():
         argument_spec=dict(
             dest=dict(type='str', required=True),
             url=dict(type='str', default=''),
-            files=dict(type='dict', required=True),
+            files=dict(type='dict', required=True), site_index=dict(type='str', default=''),
             html=dict(type='str', default=''),
             images=dict(type='list', elements='dict', default=[]),
             data=dict(type='dict', default={}),
@@ -2110,6 +2111,7 @@ def main():
     where = ('%s:%s' % (win, dest.rstrip('/\\'))) if win else smb[1] if smb else dest.rstrip('/')
     bs = bool(win or smb)                                # places written with backslashes
     page, latest, index = (str(p['files'].get(k) or '') for k in ('page', 'latest', 'index'))
+    back_to = index or str(p.get('site_index') or '').strip()      # 1.87.2: the index the pages link back to (written here or not)
     base = (p['url'].strip() or (dest if re.match(r'(?i)https?://', dest) and not win else '')).rstrip('/')
     urls = dict(url=p['page_url'].strip() or _join(base, page), latest_url=_join(base, latest), index_url=_join(base, index))
     if not page and not p['pages']:                    # pages alone (1.14.0): only those, no page of its own, no index
@@ -2231,7 +2233,7 @@ def main():
             if not rel:
                 continue
             h = rf.put_files(html, step['hosted'], step['refused'], rel, folder, web_look)   # the latest page links the run's
-            h = back_link(h, rel, index, banner)        # 1.87.2: the way back to the index, from this page's place
+            h = back_link(h, rel, back_to if inside(back_to) else '', banner)   # 1.87.2: the way back to the index, from this page's place
             put(rel, h.replace(js_tag, script_tag(rel, js, js_name), 1) if js else h, 'text/html; charset=utf-8', rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
@@ -2245,7 +2247,7 @@ def main():
             if not rel:
                 continue
             h = rf.put_files(banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner), [], [], rel, '')
-            h = back_link(h, rel, index, banner)
+            h = back_link(h, rel, back_to if inside(back_to) else '', banner)
             sjs, sname = page_script(h), page_script_name(h)
             if sjs and not (js and sname == js_name):
                 scripts[sname] = sjs

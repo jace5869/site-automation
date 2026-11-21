@@ -20,6 +20,10 @@
   Outlook (Word) mis-measures a variable font. The emails and pages ask for "Segoe UI" only, never its Variable cuts (atlas, brief,
   ops, the ticket insights; the portal stays as it was), and tell Outlook alone to keep normal letter-spacing (`<!--[if mso]>`).
   The web looks are unchanged elsewhere. Test: Outlook1872 (every look's email).
+- Review fixes: the ticket insights' site, unit and team pages (written without the index) link to the site's index too
+  (`site_report_web` site_index); a rail link to a closed section opens it; the keyboard goes on from the place (focus, no
+  second scroll); a Ctrl/Cmd-click opens the new tab and leaves the report as it is; a row the address names when the page opens
+  is marked like a clicked one (one highlight); the insights' team tab is kept in the address (replaced, no step) and opens again.
 - Tests: `tests/test_report_web.py` Back1872: the link's address from every depth, none without an index, every look's marker
   for the web only, the insights pages, no `pushState` and no hash writes. `tests/email/run_web_test.sh`: the run's page,
   latest, a page three folders down, the copy job (glass), and the email without it.

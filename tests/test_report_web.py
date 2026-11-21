@@ -1527,6 +1527,30 @@ class Back1872(unittest.TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_f_pages_without_their_own_index(self):
+        """Codex P1: the ticket insights' site, unit and team pages are written without the index (files.index ''): they link to
+        the site's (site_index); with neither, no link."""
+        d = tempfile.mkdtemp()
+        try:
+            html = "<html><head></head><body><div class=\"appbar-in\"><!--site-report-back--></div><p>team</p></body></html>"
+            out = run_module(dict(web_args(d, html=html, files={"page": "", "latest": "", "index": ""}, site_index="index.html",
+                                           pages=[{"page": "insights/team/a.html", "html": html}])))
+            self.assertFalse(out.get("failed"), out)
+            with open(os.path.join(d, "insights", "team", "a.html")) as fh:
+                self.assertIn('<a class="sr-back" href="../../index.html"', fh.read())
+            self.assertFalse(os.path.exists(os.path.join(d, "index.html")))                       # the index is not written by this call
+            e = tempfile.mkdtemp()
+            run_module(dict(web_args(e, html=html, files={"page": "", "latest": "", "index": ""}, pages=[{"page": "t/a.html", "html": html}])))
+            with open(os.path.join(e, "t", "a.html")) as fh:
+                self.assertNotIn("sr-back", fh.read())
+            shutil.rmtree(e, ignore_errors=True)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        with open(os.path.join(REPO, "roles", "site_email", "tasks", "pages.yml")) as fh:
+            self.assertIn("site_index: \"{{ _web_site_index | default('') }}\"", fh.read())
+        with open(os.path.join(REPO, "roles", "servicenow_insights", "tasks", "main.yml")) as fh:
+            self.assertIn("report_web_site_index: \"{{ _sni_site_index | default('') }}\"", fh.read())
+
     def env(self):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")), autoescape=False,
@@ -1555,7 +1579,8 @@ class Back1872(unittest.TestCase):
             self.assertEqual(len(rw.BACK_RE.findall(web)), 1, look)
             if look in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
                 self.assertIn('<div class="appbar"><div class="appbar-in"><!--site-report-back-->', web, look)       # first in the top bar, before the title
-                self.assertIn("tr:target>td,tr.is-target>td{", web, look)                                         # the row the click marks, as :target would
+                self.assertIn("tr.is-target>td{", web, look)                                                      # one highlight: the click's and the address's
+                self.assertNotIn("tr:target>", web, look)                                                         # no CSS :target highlight
                 continue
             self.assertRegex(web, r"<!--site-report-back w=(1000|full)-->", look)
             mail = env.get_template(look).render(base)
@@ -1583,14 +1608,20 @@ class Back1872(unittest.TestCase):
         self.assertIn("var a=e.target.closest&&e.target.closest('a[href^=\"#\"]')", h)
         self.assertIn("e.preventDefault();", h)
         self.assertIn("history.replaceState(history.state,'',id?h:location.pathname+location.search)", h)
-        self.assertIn("if(d.tagName==='DETAILS'&&!d.open)d.open=true;", h)                                       # the closed section opens, as the browser would
+        self.assertIn("for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;", h)   # the place itself opens too (Codex)
+        self.assertIn("f.focus({preventScroll:true})", h)                                                         # the keyboard goes on from there
+        self.assertIn("t0.classList.add('is-target')", h)                                                         # a row the address names: the same mark
+        self.assertIn("document.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;", js)   # the lift: not for a new tab
+        self.assertIn("box.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;var a=e.target.closest&&e.target.closest('a[data-drill]')", js)
         self.assertIn("var b=still()?'instant':'auto';", h)                                                       # the page's scroll-behavior; at once when still
         self.assertIn("@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}", rw.WEB_STYLE)       # the email looks on the web: smooth too
         self.assertIn("if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;", h)  # a drill link's own handler, a new tab: theirs
         self.assertIn("if(id&&!t)return;", h)                                                                     # a name not on the page: the browser's
-        self.assertIn("document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^=\"#\"]');if(a)try{liftFor(", js)   # the row past the cap: lifted first (capture)
+        self.assertIn("var a=e.target.closest&&e.target.closest('a[href^=\"#\"]');if(a)try{liftFor(", js)   # the row past the cap: lifted first (capture)
         import servicenow_insights_page as ip
         self.assertIn('try{history.replaceState(null,"",u)}catch(e){if(!win)location.replace("#p="', ip.SCRIPT)   # the period stays in the address, no step
+        self.assertIn('hs.push("tab="+encodeURIComponent(id));', ip.SCRIPT)                                     # the team tab too (Codex), restored on load
+        self.assertIn("var m=/[#&]tab=([^&]*)/.exec(location.hash)", ip.SCRIPT)
 
 
 class Outlook1872(unittest.TestCase):

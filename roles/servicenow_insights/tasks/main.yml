@@ -506,6 +506,7 @@
     _sni_fast: >-
       {{ _sni_web.on | bool and not report_web_copy | default(false) | bool and report_web_host | default('', true) | string | trim | length == 0
          and servicenow_insights_pages_per_call | int > 0 and not ansible_check_mode }}
+    _sni_site_index: "{{ report_web_index | default('index.html') }}"     # 1.87.2: the site's index, for the pages' All reports link
 
 - name: Insights | each site's, directorate's and team's page on the report website (and a team's email to its lead)
   ansible.builtin.include_role:
@@ -523,6 +524,7 @@
     report_web_page: "{{ _sni_file.page }}"
     report_web_latest: ""
     report_web_index: ""
+    report_web_site_index: "{{ _sni_site_index | default('') }}"
     _sni_page_opts: >-
       {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_file.page, _sni_job.v), 'variant': _sni_job.v,
                               'variant_links': _sni_web | servicenow_insights_variant_links(_sni_team, _sni_file.page),

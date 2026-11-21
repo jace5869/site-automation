@@ -589,17 +589,22 @@ SCRIPT = r"""(function(){"use strict";
     function still(){if(H.classList.contains('motion-off')||H.getAttribute('data-motion')==='off'||/[?&]motion=off\b/.test(location.search))return true;
       if(H.classList.contains('motion-always'))return false;return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)}
     var marked=null;
+    /* one highlight: a row the address names when the page opens is marked the same way (no tr:target in the CSS) */
+    try{var t0=location.hash.length>1&&document.getElementById(decodeURIComponent(location.hash.slice(1)));if(t0&&t0.tagName==='TR'){marked=t0;t0.classList.add('is-target')}}catch(x){}
     document.addEventListener('click',function(e){
       if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
       var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||(a.target&&a.target!=='_self')||a.hasAttribute('download'))return;
       var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1))}catch(x){return}
       var t=id?document.getElementById(id):null;if(id&&!t)return;
       e.preventDefault();
-      for(var d=t&&t.parentNode;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;
+      for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;   /* the place itself too: a closed section opens */
       try{history.replaceState(history.state,'',id?h:location.pathname+location.search)}catch(x){}
       if(marked)marked.classList.remove('is-target');marked=t&&t.tagName==='TR'?t:null;if(marked)marked.classList.add('is-target');
       var b=still()?'instant':'auto';
-      try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}})})();
+      try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}
+      /* the keyboard goes on from there (the next Tab is in the place, not back in the rail): focus, without a second scroll */
+      var f=t&&(t.tagName==='DETAILS'?t.querySelector('summary'):t);
+      if(f){if(!/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(f.tagName)&&!f.hasAttribute('tabindex'))f.setAttribute('tabindex','-1');try{f.focus({preventScroll:true})}catch(x){}}})})();
 if(window.siteInsights)return;window.siteInsights=1;   /* the page's copy and site-insights.js: whichever runs first */
 try{var th=localStorage.getItem("site-report-theme");if(th==="light"||th==="dark")document.documentElement.setAttribute("data-theme",th)}catch(e){}   /* the website's light / dark choice */
 function init(){
@@ -656,7 +661,11 @@ D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointe
  th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);var ar=D.createElement("span");ar.className="ar";ar.textContent=(dir==="asc"?" \u25b2":" \u25bc");th.appendChild(ar);
  var by=[].map.call(tb.rows,function(r){return[r,skey(cval(r.cells[i]))]});by.sort(function(a,b){return scmp(a[1],b[1],asc)});by.forEach(function(x){tb.appendChild(x[0])})})});
 D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-tab");D.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b?"true":"false")});
- D.querySelectorAll(".tabs~.panel").forEach(function(p){p.classList.toggle("on",p.id===id)})})});
+ D.querySelectorAll(".tabs~.panel").forEach(function(p){p.classList.toggle("on",p.id===id)});
+ /* 1.87.2: the tab in the address (replaced: no new step), the rest of it kept - a reload or a shared link opens it again */
+ var hs=location.hash.replace(/^#/,"").split("&").filter(function(x){return x&&!/^tab=/.test(x)});hs.push("tab="+encodeURIComponent(id));
+ try{history.replaceState(history.state,"","#"+hs.join("&"))}catch(x){}})});
+(function(){var m=/[#&]tab=([^&]*)/.exec(location.hash),b=null;try{b=m&&D.querySelector('.tab[data-tab="'+CSS.escape(decodeURIComponent(m[1]))+'"]')}catch(x){}if(b)b.click()})();
 /* the team picker and the side bar's filter (0.96.0); t opens the picker, / goes to the search, Esc closes */
 var pk=D.getElementById("picker"),pq=D.getElementById("pickq"),pl=pk?[].slice.call(pk.querySelectorAll(".pickpop a")):[],ai=-1;
 function shown(){return pl.filter(function(a){return !a.parentNode.hidden})}

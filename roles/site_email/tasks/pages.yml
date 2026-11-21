@@ -10,6 +10,7 @@
     dest: "{{ report_web_dest | trim }}"
     url: "{{ report_web_url | default('') | trim }}"
     files: {page: "", latest: "", index: ""}
+    site_index: "{{ _web_site_index | default('') }}"         # 1.87.2: the pages' All reports link (the index the main page wrote)
     pages: >-
       {{ _pages_model | servicenow_insights_pages(_pages_chunk, _pages_web, _pages_opts, {
            'doc_opts': _pages_doc_opts, 'logo_img': '<img class="logoimg" src="cid:site-report-logo" alt="">' if _pages_logo | bool else '',

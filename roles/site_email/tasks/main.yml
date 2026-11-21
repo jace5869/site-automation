@@ -231,18 +231,28 @@
          | report_banner_subject(_banner) }}
   when: _email_any | bool
 
+- name: Email | the names the report website's files are made from
+  ansible.builtin.set_fact:
+    _web_names: >-
+      {%- set t = now(utc=true) -%}
+      {{ {'template': _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true),
+          'template_id': awx_job_template_id | default(tower_job_template_id | default('local')),
+          'job': awx_job_id | default(tower_job_id | default('local')),
+          'status': _web_report.status | default('info'),
+          'date': t.strftime('%Y-%m-%d'), 'time': t.strftime('%H%M'),
+          'year': t.strftime('%Y'), 'month': t.strftime('%m'), 'day': t.strftime('%d')} | combine(report_web_names | default({})) }}
+  when: _web_on | bool
+
 - name: Email | the report website's file names (report_web_page, report_web_latest, report_web_index)
   ansible.builtin.set_fact:
     _web_files: >-
-      {%- set t = now(utc=true) -%}
-      {{ {'page': report_web_page, 'latest': report_web_latest, 'index': report_web_index} | report_web_files(
-           {'template': _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true),
-            'template_id': awx_job_template_id | default(tower_job_template_id | default('local')),
-            'job': awx_job_id | default(tower_job_id | default('local')),
-            'status': _web_report.status | default('info'),
-            'date': t.strftime('%Y-%m-%d'), 'time': t.strftime('%H%M'),
-            'year': t.strftime('%Y'), 'month': t.strftime('%m'), 'day': t.strftime('%d')} | combine(report_web_names | default({})))
+      {{ {'page': report_web_page, 'latest': report_web_latest, 'index': report_web_index} | report_web_files(_web_names)
          | report_web_folder(_report_web_folder | default('')) }}
+    # 1.87.2: where the site's index is, also for a page that does not write it (the ticket insights' site, unit and team
+    # pages: report_web_index "" there, the site's own in report_web_site_index) - the page's All reports link
+    _web_site_index: >-
+      {{ ({'page': 'x.html', 'latest': '', 'index': report_web_index or report_web_site_index | default('')} | report_web_files(_web_names)
+          | report_web_folder(_report_web_folder | default(''))).index }}
     _web_when: "{{ now(utc=true, fmt='%Y-%m-%d %H:%M UTC') }}"
   when: _web_on | bool
 
@@ -310,6 +320,7 @@
         dest: "{{ report_web_dest | trim }}"
         url: "{{ report_web_url | default('') | trim }}"
         files: "{{ _web_files }}"
+        site_index: "{{ _web_site_index | default('') }}"
         # report_web_copy: no page made here - the copy job makes it from what is kept
         # _report_html: a page the report made itself (the ticket insights) - its logo in place of <!--site-report-logo-->
         html: >-
