@@ -116,6 +116,7 @@ class Api(object):
 
     def probe(self):
         """Find the API path (api/controller/v2/ first) and check the login: '' or why not."""
+        self.probe_status = None
         if not self.conn["host"] or not self.conn["login"]:
             self.base = ""
             return self.no_credential
@@ -126,6 +127,7 @@ class Api(object):
             code, data = self.call("GET", "me/", base=base)
             if code != 404:
                 break
+        self.probe_status = code
         if code == 200:
             me = (data.get("results") or [{}])[0] if isinstance(data.get("results"), list) else data
             self.user = str((me if isinstance(me, dict) else {}).get("username") or "")

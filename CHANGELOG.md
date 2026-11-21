@@ -2,10 +2,13 @@
 
 ## 1.99.0 — 2026-11-21
 
-**Site portal - speed.** Discovery reads up to eight templates at once and reuses unchanged forms for up to 10 minutes (staggered; a template whose modified time or labels change is read again at once).
-The next refresh after expiry checks workflow steps and launch requirements again. After a restart the portal shows its
-saved catalog and refresh time while reconnecting to AAP in the background. Launch checks use live data. The portal keeps
-the latest 5,000 launches in memory and reads other history from the log file. Portal nginx compresses static assets only.
+**Site portal - speed.** Discovery reads up to eight templates at once. Unchanged forms are due for a detail check
+after 1 to 10 minutes, depending on the template ID. The next refresh checks workflow steps and launch requirements
+when due, when a template's modified time or labels change, or whenever its label summary is incomplete.
+After a restart the portal serves its unexpired saved catalog during background discovery. Changing the expiry policy
+or trust bundle invalidates the saved catalog. If AAP rejects the credential at restart, the portal drops the saved
+discovered cards immediately. Launch checks use live data. The portal keeps the latest 5,000 launches in memory and
+reads other history from the log file. Portal nginx compresses static assets only.
 The report website supports gzip and static file ETags. The portal image requires Python 3.8 or later.
 
 To set up: run Site portal - deploy.

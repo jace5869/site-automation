@@ -2582,6 +2582,39 @@ class Speed1990(unittest.TestCase):
         self.assertIn(("GET", "job_templates/1/survey_spec/"), self.api.paths)
         self.assertEqual(portal.same_template(action), "")
 
+    def test_missing_unified_labels_rereads_only_the_typed_template(self):
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        portal.refresh()
+
+        def route(method, path, body):
+            code, data = self.route(method, path, body)
+            if path.startswith("unified_job_templates/?"):
+                data["results"][0]["summary_fields"] = {"user_capabilities": {"start": True}}
+            return code, data
+
+        self.api.route = route
+        portal.refresh(force=True)
+        self.assertIn("jt_1", portal.actions)
+        self.rows[0]["summary_fields"]["labels"] = {"count": 0, "results": []}
+        self.api.paths.clear()
+        portal.refresh(force=True)
+        self.assertNotIn("jt_1", portal.actions)
+        self.assertEqual(len(self.api.paths), 2, self.api.paths)
+        self.assertEqual(self.api.paths[1], ("GET", "job_templates/1/"))
+
+    def test_detail_reads_keep_their_minute_offset_after_each_read(self):
+        from unittest import mock
+        self.rows = self.rows[:10]
+        with mock.patch.object(sp.time, "monotonic", return_value=0) as clock:
+            self.aap.discover({})
+            for minute in range(1, 12):
+                clock.return_value = minute * 60
+                self.api.paths.clear()
+                self.aap.discover({})
+                expected = {row["id"] for row in self.rows if minute % (10 - row["id"] % 10) == 0}
+                details = [int(path.split("/")[1]) for _, path in self.api.paths if re.fullmatch(r"job_templates/\d+/", path)]
+                self.assertCountEqual(details, expected, minute)
+
     def test_template_ttl_rechecks_workflow_steps_and_launch_requirements(self):
         from unittest import mock
         workflow = self.rows[-1]
@@ -2605,11 +2638,11 @@ class Speed1990(unittest.TestCase):
         with mock.patch.object(sp.time, "monotonic", return_value=100) as clock:
             first = self.aap.discover({})["actions"]
             self.assertEqual(first["wf_17"]["limit_inv"], 31)
-            clock.return_value += self.aap.TEMPLATE_TTL - 61      # still kept (each entry's age is staggered by up to 59 s)
+            clock.return_value += 59
             self.aap.discover({})
             launch["passwords_needed_to_start"] = ["password"]
             node["always_nodes"] = [102]
-            clock.return_value += 61                              # past every entry's time: read again
+            clock.return_value += self.aap.TEMPLATE_TTL - 59
             changed = self.aap.discover({})["actions"]
             self.assertNotIn("jt_1", changed)
             self.assertNotEqual(first["wf_17"]["sig"], changed["wf_17"]["sig"])
@@ -2655,28 +2688,30 @@ class Speed1990(unittest.TestCase):
         portal = sp.Portal(self.cfg, aap=self.aap)
         portal.refresh()
         self.assertEqual(os.stat(portal.catalog_file).st_mode & 0o777, 0o600)
-        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        entered, release = threading.Event(), threading.Event()
         restarted = sp.Portal(self.cfg, aap=sp.Aap(self.cfg, api=self.api))
         self.assertTrue(restarted.restored)
-        refresh = restarted.refresh
+        discover = restarted.aap.discover
 
-        def background():
+        def background(builtin):
             entered.set()
-            if release.wait(5):
-                refresh()
-            finished.set()
+            if not release.wait(5):
+                raise AssertionError("discovery stalled")
+            return discover(builtin)
 
-        restarted.refresh = background
-        restarted.refresh_soon()
-        try:
-            self.assertTrue(entered.wait(5))
-            self.api.paths.clear()
-            self.assertIn("jt_1", [card["name"] for card in restarted.catalog("Example user")])
-            self.assertFalse(self.api.paths)
-            self.rows.pop(0)
-        finally:
-            release.set()
-            self.assertTrue(finished.wait(5))
+        restarted.aap.discover = background
+        with sp.ThreadPoolExecutor(max_workers=1) as pool:
+            refresh = pool.submit(restarted.refresh)
+            try:
+                self.assertTrue(entered.wait(5))
+                self.api.paths.clear()
+                self.assertIn("jt_1", [card["name"] for card in restarted.catalog("Example user")])
+                self.assertFalse(self.api.paths)
+                self.rows.pop(0)
+            finally:
+                release.set()
+            self.assertTrue(refresh.result())
+        self.assertFalse(restarted.restored)
         self.assertNotIn("jt_1", restarted.actions)
         self.cfg.aap_token = "another-placeholder"
         self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
@@ -2691,14 +2726,54 @@ class Speed1990(unittest.TestCase):
         self.assertIn("Last refreshed " + sp.clock(self.cfg, restarted.whole_at),
                       sp.home_page(self.cfg, restarted, "Example user"))
         self.api.base = ""
-        with mock.patch.object(self.api, "probe", return_value="Unavailable"):
+        with mock.patch.object(self.api, "probe", return_value="Unavailable") as probe:
             restarted.refresh(force=True)
+            self.assertFalse(restarted.refresh())
+            probe.assert_called_once_with()
             self.assertTrue(restarted.restored)
             self.assertIn("jt_1", restarted.actions)
         self.api.base = StubApi.base
         restarted.refresh(force=True)
         self.assertFalse(restarted.restored)
         self.assertEqual(self.aap.ready, "")
+
+    def test_restart_rejects_changed_expiry_policy_and_future_snapshot(self):
+        from unittest import mock
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        portal.refresh()
+        with mock.patch.object(self.cfg, "discover_seconds", self.cfg.discover_seconds * 10):
+            self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+        with mock.patch.object(sp, "KEEP_WHOLE", sp.KEEP_WHOLE + 1):
+            self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+        with mock.patch.object(sp.time, "time", return_value=portal.whole_at - 1):
+            self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+
+    def test_restart_rejects_replaced_trust_bundle(self):
+        self.cfg.aap_ca = os.path.join(self.cfg.data, "trust.pem")
+        with open(self.cfg.aap_ca, "wb") as fh:
+            fh.write(b"placeholder trust bundle")
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        portal.refresh()
+        self.assertTrue(sp.Portal(self.cfg, aap=self.aap).restored)
+        with open(self.cfg.aap_ca, "wb") as fh:
+            fh.write(b"replacement placeholder")
+        self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+
+    def test_restart_discards_denied_catalog(self):
+        from unittest import mock
+        self.cfg.aap_token = "placeholder"
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        for status in (401, 403):
+            with self.subTest(status=status):
+                portal.refresh(force=True)
+                restarted = sp.Portal(self.cfg)
+                self.assertTrue(restarted.restored)
+                with mock.patch.object(restarted.aap.api, "call", return_value=(status, {})) as call:
+                    restarted.refresh()
+                    call.assert_called_once_with("GET", "me/", base="api/controller/v2/")
+                self.assertEqual(restarted.actions, restarted.builtin)
+                self.assertFalse(restarted.restored)
+                self.assertFalse(sp.Portal(self.cfg).restored)
 
     def test_netmap_weak_etag_in_list(self):
         from unittest import mock

@@ -350,6 +350,11 @@ def backoff(fails, cap):
 KEEP_WHOLE = 10                 # a whole read is kept through failed reads for this many portal_discover_seconds, then what could be read serves (said)
 
 
+def empty_discovery(error=""):
+    return {"actions": {}, "skipped": [], "clashes": [], "error": error, "seen": 0, "incomplete": False,
+            "labelled": 0, "no_execute": [], "no_execute_why": "", "account": ""}
+
+
 @dataclass
 class TemplateRead:
     """One template, before the catalog-wide inventory cap is applied in name order."""
@@ -366,7 +371,7 @@ class Aap(object):
     """AAP's API with the portal's account. Names resolved once (and again when AAP says 404)."""
 
     # a template's details are kept this long (its modified time and labels unchanged); each entry's age is staggered by its
-    # id over the first minute, so the re-reads spread out instead of all coming in one refresh. A workflow's steps or launch
+    # id in one-minute increments, so the re-reads spread out instead of all coming in one refresh. A workflow's steps or launch
     # requirements changed without touching the workflow show within this time (AAP still checks them at launch).
     TEMPLATE_TTL = 600
 
@@ -388,15 +393,19 @@ class Aap(object):
         self.listing_locks = {}
         self.estimates = {}             # template id -> (tasks of its last good run, when asked)
         self.listing_lock = threading.Lock()
-        self.template_reads = {}        # (kind, id) -> (list revision, TemplateRead, monotonic read time)
+        self.template_reads = {}        # (kind, id) -> (list revision, TemplateRead, monotonic due time)
+        self.role_checked_ids = None
         self.changed_templates = set()
         self.inv_names = {}             # 1.78.4: inventory id -> its name (the picker's words), or None when the account cannot read it
 
     def connect(self):
+        return self.connect_status()[0]
+
+    def connect_status(self):
         with self.lock:
             why = "" if self.api.base else self.api.probe()
             self.ready, self.user = why, self.api.user
-            return why
+            return why, getattr(self.api, "probe_status", None) if why else 200
 
     def call(self, method, path, body=None):
         if not self.api.base:
@@ -505,7 +514,7 @@ class Aap(object):
     def _known_templates(self, out):
         """Use one current controller list when it confirms the previously role-checked IDs.
         A changed grant or a controller without complete capabilities needs the separate role/label lists."""
-        if not self.template_reads:
+        if self.role_checked_ids is None:
             return None
         rows, why = self._paged("unified_job_templates/?type=job_template,workflow_job_template&order_by=name&page_size=200")
         if why:
@@ -528,7 +537,7 @@ class Aap(object):
                     no_execute.append(row["name"])
             else:
                 return None
-        if {(kind, row["id"]) for _, kind, row in found} != self.template_reads.keys():
+        if {(kind, row["id"]) for _, kind, row in found} != self.role_checked_ids:
             return None
         out["no_execute"] = sorted(no_execute, key=str.lower)
         return found
@@ -538,7 +547,7 @@ class Aap(object):
         The job templates and workflows the account has Execute on (role_level=execute_role) that carry the label; the form of each is
         its survey's. A template a built-in action already runs is not added twice: the built-in wins."""
         cfg = self.cfg
-        out = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "incomplete": False, "labelled": 0, "no_execute": [], "no_execute_why": "", "account": ""}
+        out = empty_discovery()
         seen_inv = set()                                # 1.78.4: the distinct inventories of the Limits so far (portal_inventories_max)
         prior_inventories = sorted(iid for iid, name in self.inv_names.items() if name is not None)
         self.inv_names = {}
@@ -554,6 +563,7 @@ class Aap(object):
                     out["error"] = why
                     return out
                 found.extend((typ, kind, row) for row in rows)
+            self.role_checked_ids = {(kind, row["id"]) for _, kind, row in found}
             self._cannot_run(found, out)
         elif len(prior_inventories) > 1:
             rows, why = self._paged("inventories/?id__in=%s&page_size=200" % ",".join(map(str, prior_inventories)))
@@ -573,10 +583,10 @@ class Aap(object):
             for typ, kind, row in found:
                 key = (kind, int(row["id"]))
                 labels = (row.get("summary_fields") or {}).get("labels") or {}
-                complete = labels.get("count", 0) == len(labels.get("results") or [])
+                complete = isinstance(labels.get("results"), list) and labels.get("count") == len(labels["results"])
                 revision = (row.get("modified") if complete else None, labels, have.get((typ, row.get("name"))))
                 hit = previous.get(key)
-                if revision[0] and hit and hit[0] == revision and read_at - hit[2] < self.TEMPLATE_TTL - (key[1] % 60):
+                if revision[0] and hit and hit[0] == revision and read_at < hit[2]:
                     reads.append((row, key, revision, hit[1], None))
                 else:
                     reads.append((row, key, revision, None, pool.submit(self._read_template, typ, kind, row, have, unified)))
@@ -585,7 +595,11 @@ class Aap(object):
                 result = future.result()
             tname = str(row.get("name") or "")
             if revision[0] and not result.retry:
-                kept[key] = (revision, result, read_at) if future is not None else previous[key]
+                if future is None:
+                    kept[key] = previous[key]
+                else:
+                    due = read_at + self.TEMPLATE_TTL - (key[1] % 10) * 60
+                    kept[key] = (revision, result, due)
             out["labelled"] += int(result.labelled)
             if result.clash:
                 out["clashes"].append((tname, result.clash))
@@ -1433,7 +1447,7 @@ class Portal(object):
         self.actions, problems = rules.check_actions((doc or {}).get("actions") if isinstance(doc, dict) else doc)
         multi_host(self.actions, cfg)
         self.builtin = dict(self.actions)
-        self.found = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "labelled": 0, "no_execute": [], "no_execute_why": "", "account": ""}
+        self.found = empty_discovery()
         self.summaries = {}                             # 1.78.4: person -> (when, the answer of summary)
         self.report_links = {}                          # 1.78.4: workflow job id -> (when, the report its steps left)
         self.found_at = 0.0
@@ -1453,11 +1467,21 @@ class Portal(object):
         self.key_locks = {}             # not twice: (action, finding_id, target) -> a lock held from the check to the log
 
         self.catalog_file = os.path.join(cfg.data, "catalog-cache.json") if cache_catalog and cfg.label and cfg.aap_url else None
+        self.connected = False
         self.restored = False
         self.cached_off = {}
         if self.catalog_file:
             # Bind the saved forms to this controller, credential, settings and local actions. Only the MAC goes to disk.
-            scope = [1, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca, cfg.label, cfg.label_approval, cfg.label_area,
+            ca_digest = None
+            if cfg.aap_verify and cfg.aap_ca:
+                try:
+                    with open(cfg.aap_ca, "rb") as fh:
+                        ca_digest = hashlib.sha256(fh.read()).hexdigest()
+                except OSError:
+                    self.catalog_file = None
+                    return
+            scope = [2, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
+                     cfg.label, cfg.label_approval, cfg.label_area,
                      cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.limit_max,
                      cfg.inventories_max, cfg.requesters, cfg.approvers, doc]
             self.catalog_key = hmac.digest(self.key, json.dumps(scope, sort_keys=True).encode(), "sha256")
@@ -1469,7 +1493,8 @@ class Portal(object):
                 envelope = json.load(fh)
             snapshot = envelope["snapshot"]
             mac = hmac.digest(self.catalog_key, json.dumps(snapshot).encode(), "sha256").hex()
-            if not hmac.compare_digest(mac, envelope["mac"]) or time.time() - snapshot["at"] >= KEEP_WHOLE * self.cfg.discover_seconds:
+            age = time.time() - snapshot["at"]
+            if not hmac.compare_digest(mac, envelope["mac"]) or not 0 <= age < KEEP_WHOLE * self.cfg.discover_seconds:
                 return
             self.found = snapshot["found"]
             self.actions = {**self.found["actions"], **self.builtin}
@@ -1507,14 +1532,15 @@ class Portal(object):
                 os.unlink(tmp)
 
     def start_aap(self):
-        why = self.aap.connect()
+        why, status = self.aap.connect_status()
         if why:
             self.log.add({"event": "start", "aap": why})
         else:
             res = self.aap.resolve(self.builtin)
             self.log.add({"event": "start", "aap": "ok", "account": self.aap.user,
                           "actions": {k: (v[1] or "ok") for k, v in sorted(res.items())}})
-            self.restored = False
+            self.connected = True
+        return why, status
 
     def _key(self):
         """The pages' token key, kept in the data volume (a restart does not void open pages)."""
@@ -1562,9 +1588,14 @@ class Portal(object):
         try:
             if self.found_ready and not force and time.time() - self.found_at < self.cfg.discover_seconds:
                 return False
-            if self.restored:
-                self.start_aap()
-            got = self.aap.discover(self.builtin)
+            why, status = self.start_aap() if self.restored and not self.connected else ("", None)
+            if why:
+                got = empty_discovery(why)
+                if status in (401, 403):
+                    self.found_whole = False
+                    self.whole_at = 0.0
+            else:
+                got = self.aap.discover(self.builtin)
             if got["error"] or got.get("incomplete"):
                 self.found_fails += 1                   # asked again later each time: 15 s, 30, 60 ... up to portal_discover_seconds
             else:
@@ -1580,6 +1611,7 @@ class Portal(object):
                 self.found = got
                 old = set(k for k, a in self.actions.items() if a.get("discovered"))
                 self.actions = dict((k, a) for k, a in self.actions.items() if k not in old)
+                self.restored = False
                 self._save_catalog()
                 return True
             if got.get("incomplete"):                   # AAP did not answer for a template just now: the last whole read stays, asked again soon
@@ -1599,6 +1631,7 @@ class Portal(object):
             for k, a in got["actions"].items():
                 merged.setdefault(k, a)
             self.actions = merged
+            self.restored = False
             self._save_catalog()
             return True
         finally:
