@@ -857,6 +857,10 @@ there is one card, and the deploy says so.
 (a page without its rows, fewer rows than AAP counted), is never taken as "the template is gone". The portal keeps the cards and the host list it
 had from the last whole read, says so on the page, and asks again in a few seconds. A refusal (403, 404) is an answer: the template is left out. The last whole read is kept for 10 times `portal_discover_seconds` at most.
 
+Discovery checks the template list on each refresh, reuses forms with an unchanged revision and labels, and reads up to eight changed templates at once.
+A restart can show the last whole catalog from `PORTAL_DATA/catalog-cache.json` while AAP refreshes in the background. An expired catalog, or one from
+another controller, credential or catalog configuration, is not used. The saved forms do not replace the checks made at launch.
+
 **Limits.** A person's page and progress calls to the portal share one limit of 90 a minute (`/jobs`, `/jobs/N`, `/api/jobs/N` and the
 progress call each ask AAP). **Refresh** reads AAP once a minute for everyone: a click inside that minute shows *Refreshed N s ago* and the cards
 the last read made. Two tabs on one running job count its events once.

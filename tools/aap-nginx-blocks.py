@@ -267,14 +267,16 @@ def block_keycloak(s):
 
 
 def reports_inner(s, pad):
+    compression = [pad + line for line in ("gzip on;", "gzip_types text/css text/javascript application/javascript application/json;",
+                                           "gzip_vary on;", "etag on;")]
     if s["REPORTS_UPSTREAM"]:
-        return [pad + "proxy_pass %s/;" % s["REPORTS_UPSTREAM"],
+        return compression + [pad + "proxy_pass %s/;" % s["REPORTS_UPSTREAM"],
                 pad + "proxy_http_version 1.1;",
                 pad + "proxy_set_header Host %s;" % re.sub(r"^https?://", "", s["REPORTS_UPSTREAM"]),
                 pad + "proxy_set_header X-Forwarded-Proto https;",
                 pad + "proxy_set_header X-Forwarded-For $remote_addr;",
                 pad + "limit_except GET HEAD { deny all; }   # people only read here"]
-    return [pad + "index index.html;",
+    return compression + [pad + "index index.html;",
             pad + "limit_except GET HEAD { deny all; }   # people only read here; the jobs write the folder, not nginx",
             pad + "add_header Cache-Control \"no-cache\";    # a new run's page shows at once",
             pad + "add_header X-Content-Type-Options nosniff;"]

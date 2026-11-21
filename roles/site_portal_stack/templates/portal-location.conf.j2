@@ -3,6 +3,10 @@ location = {{ portal_path | regex_replace('/$', '') }} {
     return 301 {{ portal_path }};
 }
 location {{ portal_path }} {
+    gzip on;
+    gzip_types text/css text/javascript application/javascript application/json;
+    gzip_vary on;
+    etag on;
     resolver {{ _portal_resolvers | join(' ') }} valid=30s ipv6=off;   # the podman network {{ _portal_net_name }}'s DNS
     set $site_portal_app http://site-portal-app:8080;
     rewrite ^{{ portal_path }}(.*)$ /$1 break;

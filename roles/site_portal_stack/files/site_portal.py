@@ -23,6 +23,8 @@ account of the deploy's "SolarWinds (read-only)" credential (a podman secret too
 and only the listed actions can be launched. Every launch, refusal and decision is a JSON line in
 PORTAL_DATA/portal-log.jsonl and in the journal. Standard library only."""
 import collections
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 import datetime
 import fnmatch
 import hashlib
@@ -35,6 +37,7 @@ import re
 import secrets
 import stat
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -272,30 +275,70 @@ class Log(object):
         self.path = path
         self.lock = threading.Lock()
 
+        self.stamp = None
+        self.records = []
+        self.launches = []
+        self.terminated = True
+
+    @staticmethod
+    def _stamp(st):
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
+
     def add(self, rec):
         rec = dict({"at": now_iso()}, **rec)
         line = json.dumps(rec, sort_keys=True)
         with self.lock:
             if self.path:
-                with open(self.path, "a") as fh:
-                    fh.write(line + "\n")
+                data = (line + "\n").encode("utf-8")
+                with open(self.path, "ab") as fh:
+                    before = os.fstat(fh.fileno())
+                    fh.write(data)
+                    fh.flush()
+                    after = os.fstat(fh.fileno())
+                if before.st_size == 0:
+                    self.records, self.launches, self.terminated = [], [], True
+                if (before.st_size == 0 or self._stamp(before) == self.stamp) and self.terminated and after.st_size == before.st_size + len(data):
+                    record = json.loads(line)
+                    self.records.append(record)
+                    if record.get("event") == "launch":
+                        self.launches.append(record)
+                    self.stamp = self._stamp(after)
+                else:
+                    self.stamp = None                   # a writer outside the portal changed the file
             sys.stdout.write(line + "\n")
             sys.stdout.flush()
         return rec
 
     def read(self, event=None, limit=5000):
-        if not self.path or not os.path.exists(self.path):
+        if not self.path:
             return []
-        out = []
-        with self.lock, open(self.path) as fh:
-            for line in fh:
-                try:
-                    r = json.loads(line)
-                except ValueError:
-                    continue
-                if event is None or r.get("event") == event:
-                    out.append(r)
-        return out[-limit:]
+        with self.lock:
+            try:
+                if self._stamp(os.stat(self.path)) != self.stamp:
+                    records = []
+                    with open(self.path, "rb") as fh:
+                        stamp = self._stamp(os.fstat(fh.fileno()))
+                        terminated = True
+                        for line in fh:
+                            terminated = line.endswith(b"\n")
+                            try:
+                                record = json.loads(line)
+                            except ValueError:
+                                continue
+                            if isinstance(record, dict):
+                                records.append(record)
+                    self.records = records
+                    self.launches = [r for r in records if r.get("event") == "launch"]
+                    self.stamp, self.terminated = stamp, terminated
+            except FileNotFoundError:
+                self.records, self.launches, self.stamp = [], [], None
+                return []
+            rows = self.records
+            if event == "launch":
+                rows = self.launches
+            elif event is not None:
+                rows = [r for r in rows if r.get("event") == event]
+            return rows[-limit:]
 
 
 # ---- AAP --------------------------------------------------------------------------------------------------------------
@@ -305,6 +348,18 @@ def backoff(fails, cap):
 
 
 KEEP_WHOLE = 10                 # a whole read is kept through failed reads for this many portal_discover_seconds, then what could be read serves (said)
+
+
+@dataclass
+class TemplateRead:
+    """One template, before the catalog-wide inventory cap is applied in name order."""
+    action: dict = None
+    skipped: str = ""
+    labelled: bool = True
+    clash: str = ""
+    inventory: int = None
+    transient: bool = False
+    retry: bool = False
 
 
 class Aap(object):
@@ -328,6 +383,8 @@ class Aap(object):
         self.listing_locks = {}
         self.estimates = {}             # template id -> (tasks of its last good run, when asked)
         self.listing_lock = threading.Lock()
+        self.template_reads = {}        # (kind, id) -> (list revision, TemplateRead)
+        self.changed_templates = set()
         self.inv_names = {}             # 1.78.4: inventory id -> its name (the picker's words), or None when the account cannot read it
 
     def connect(self):
@@ -440,123 +497,184 @@ class Aap(object):
         A 403 or 404 is an answer: the template is not for the portal."""
         return code is None or code < 0 or code in (408, 429) or code >= 500
 
+    def _known_templates(self, out):
+        """Use one current controller list when it confirms the previously role-checked IDs.
+        A changed grant or a controller without complete capabilities needs the separate role/label lists."""
+        if not self.template_reads:
+            return None
+        rows, why = self._paged("unified_job_templates/?type=job_template,workflow_job_template&order_by=name&page_size=200")
+        if why:
+            return None
+        found, no_execute = [], []
+        for row in rows:
+            kind = row.get("type") if isinstance(row, dict) else None
+            if kind not in ("job_template", "workflow_job_template"):
+                return None
+            summary = row.get("summary_fields") or {}
+            start = (summary.get("user_capabilities") or {}).get("start")
+            if start is True:
+                found.append(("job" if kind == "job_template" else "workflow", kind + "s", row))
+            elif start is False:
+                labels = summary.get("labels") or {}
+                listed = labels.get("results") or []
+                if labels.get("count") != len(listed):
+                    return None
+                if any(label.get("name") == self.cfg.label for label in listed):
+                    no_execute.append(row["name"])
+            else:
+                return None
+        if {(kind, row["id"]) for _, kind, row in found} != self.template_reads.keys():
+            return None
+        out["no_execute"] = sorted(no_execute, key=str.lower)
+        return found
+
     def discover(self, builtin):
         """-> {'actions': {name: action}, 'skipped': [(template, why)], 'clashes': [(template, built-in action)], 'error': ''}.
         The job templates and workflows the account has Execute on (role_level=execute_role) that carry the label; the form of each is
         its survey's. A template a built-in action already runs is not added twice: the built-in wins."""
         cfg = self.cfg
         out = {"actions": {}, "skipped": [], "clashes": [], "error": "", "seen": 0, "incomplete": False, "labelled": 0, "no_execute": [], "no_execute_why": "", "account": ""}
-        taken = set(builtin)
         seen_inv = set()                                # 1.78.4: the distinct inventories of the Limits so far (portal_inventories_max)
+        prior_inventories = sorted(iid for iid, name in self.inv_names.items() if name is not None)
         self.inv_names = {}
         have = dict(((a["aap"]["type"], a["aap"]["name"]), n) for n, a in builtin.items())
-        found = []
-        for typ, kind in (("job", "job_templates"), ("workflow", "workflow_job_templates")):
-            rows, why = self._paged("%s/?role_level=execute_role&order_by=name&page_size=200" % kind)
-            if why:
-                out["error"] = why
-                return out
-            for r in rows:
-                found.append((typ, kind, r))
+        out["account"] = str(self.user or getattr(self.api, "user", "") or "")[:80]
+        found = self._known_templates(out)
+        if found is None:
+            found = []
+            for typ, kind in (("job", "job_templates"), ("workflow", "workflow_job_templates")):
+                rows, why = self._paged("%s/?role_level=execute_role&order_by=name&page_size=200" % kind)
+                if why:
+                    out["error"] = why
+                    return out
+                found.extend((typ, kind, row) for row in rows)
+            self._cannot_run(found, out)
+        elif len(prior_inventories) > 1:
+            rows, why = self._paged("inventories/?id__in=%s&page_size=200" % ",".join(map(str, prior_inventories)))
+            if not why:
+                self.inv_names = {row["id"]: str(row.get("name") or row["id"])[:80] for row in rows if row.get("id") in prior_inventories}
         out["seen"] = len(found)
-        self._cannot_run(found, out)
-        for typ, kind, r in sorted(found, key=lambda x: (str(x[2].get("name") or "").lower(), x[0], int(x[2].get("id") or 0))):
-            tname = str(r.get("name") or "")
-            labels, tr = self.labels_t(kind, r)
-            if labels is None:
-                out["skipped"].append((tname, "its labels could not be read completely"))
-                out["incomplete"] = out["incomplete"] or tr     # AAP did not answer: the card is not gone, this pass is just not whole. A template that is
-                continue                                        # unreadable every time is only left out (with its reason)
-            if cfg.label not in labels:
-                out["skipped"].append((tname, "no label %s" % cfg.label))
-                continue
-            out["labelled"] += 1
-            if (typ, tname) in have:
-                out["clashes"].append((tname, have[(typ, tname)]))
-                continue
-            tid = int(r["id"])
-            vars_, skipped, named, spec_doc = {}, [], False, None
-            if r.get("survey_enabled"):
-                code, spec = self.call("GET", "%s/%d/survey_spec/" % (kind, tid))
-                if code != 200:
-                    out["skipped"].append((tname, "its survey could not be read: %s" % site_aap.error_text(spec)))
-                    out["incomplete"] = out["incomplete"] or self._unsure(code)
-                    continue
-                qs = [q for q in (spec.get("spec") or []) if isinstance(q, dict)]
-                asked = next((q for q in qs if q.get("variable") == "portal_requested_by"), None)       # asked in the survey: the portal fills it from the card
-                named = asked is not None
-                if asked is not None and not rules.takes_name(asked):
-                    out["skipped"].append((tname, "its portal_requested_by question must be text (or textarea), with a maximum of at least 200 and no minimum over 1"))
-                    continue
-                spec_doc = spec
-                vars_, skipped = rules.survey_vars(dict(spec, spec=[q for q in qs if q.get("variable") != "portal_requested_by"]))
-            if skipped:
-                out["skipped"].append((tname, "; ".join("%s: %s" % x for x in skipped[:3])))
-                continue
-            code, info = self.call("GET", "%s/%d/launch/" % (kind, tid))
-            if code != 200:
-                out["skipped"].append((tname, "its launch settings could not be read: %s" % site_aap.error_text(info)))
-                out["incomplete"] = out["incomplete"] or self._unsure(code)
-                continue
-            need = launch_needs(info)
-            if code == 200 and need:
-                out["skipped"].append((tname, "it needs %s at launch, which the portal cannot give" % need))
-                continue
-            if typ == "job" and (cfg.label_approval in labels or tname in cfg.approval_required):
-                out["skipped"].append((tname, "marked for approval, but a job template starts at once: use a workflow with an approval step"))
-                continue
-            limit = bool(r.get("ask_limit_on_launch"))
-            limit_inv, inv_name = None, ""
-            if limit:                                   # 1.78.4: the Limit is checked against THAT template's own inventory, which the portal's account can read
-                if typ == "job":
-                    if r.get("ask_inventory_on_launch") or not r.get("inventory"):
-                        out["skipped"].append((tname, "its inventory is asked at launch (ask_inventory_on_launch) or not set: the portal needs the inventory the Limit is checked against"))
-                        continue
-                    limit_inv = int(r["inventory"])
+        found.sort(key=lambda x: (str(x[2].get("name") or "").lower(), x[0], int(x[2].get("id") or 0)))
+        with self.lock:
+            previous = self.template_reads
+            for key in self.changed_templates:
+                previous.pop(key, None)
+            self.changed_templates.clear()
+        kept = {}
+        reads = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for typ, kind, row in found:
+                key = (kind, int(row["id"]))
+                labels = (row.get("summary_fields") or {}).get("labels") or {}
+                complete = labels.get("count", 0) == len(labels.get("results") or [])
+                revision = (row.get("modified") if complete else None, labels, have.get((typ, row.get("name"))))
+                hit = previous.get(key)
+                if revision[0] and hit and hit[0] == revision:
+                    reads.append((row, key, revision, hit[1], None))
                 else:
-                    limit_inv, why, tr = self.workflow_inventory(tid, r)
-                    if limit_inv is None:
-                        out["skipped"].append((tname, why))
-                        out["incomplete"] = out["incomplete"] or tr
-                        continue
-                inv_name, why, tr = self._inventory_ok(limit_inv, seen_inv)
+                    reads.append((row, key, revision, None, pool.submit(self._read_template, typ, kind, row, have)))
+        for row, key, revision, result, future in reads:
+            if future is not None:
+                result = future.result()
+            tname = str(row.get("name") or "")
+            if revision[0] and not result.retry:
+                kept[key] = (revision, result)
+            out["labelled"] += int(result.labelled)
+            if result.clash:
+                out["clashes"].append((tname, result.clash))
+                continue
+            iid = result.inventory
+            if iid is not None:
+                inv_name, why, tr = self._inventory_ok(iid, seen_inv)
                 if why:
                     out["skipped"].append((tname, why))
-                    out["incomplete"] = out["incomplete"] or tr
+                    out["incomplete"] |= tr
                     continue
-                seen_inv.add(limit_inv)
-                vars_ = dict([(rules.LIMIT_VAR, {"kind": "hosts", "label": "Hosts", "required": True, "default": None,
-                                                "max": cfg.limit_max,
-                                                "help": "Hosts or groups of the inventory %s: up to %d hosts (a group counts by its hosts)" % (inv_name, cfg.limit_max)})] + list(vars_.items()))
-            marked = cfg.label_approval in labels or tname in cfg.approval_required
-            sigf = dict(rules.exec_fields(r), approval_marked=bool(marked))
-            if typ == "workflow":
-                shape, tr = self.workflow_shape_t(tid)
-                if shape is None:
-                    out["skipped"].append((tname, "its steps could not be read"))
-                    out["incomplete"] = out["incomplete"] or tr
-                    continue
-                sigf["steps"] = shape
-            sigf["limit_inv"] = limit_inv or 0                 # a form drawn for another inventory is not launched against this one
-            lab = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
-                        and l[len(cfg.label_area):].strip()), "")
-            area, area_from = rules.area_for(tname, str(r.get("playbook") or ""), lab, cfg.playbook_areas, cfg.area_rules)
-            name = "%s_%d" % ("wf" if typ == "workflow" else "jt", tid)         # the id never moves to another template
-            title = cfg.titles.get(tname.casefold()) or next(
-                (t for t in (rules.site_portal_title_label(l, cfg.label_title) for l in sorted(labels)) if t), "") or tname[:120]
-            lines = described(r.get("description"))          # 1.79.11: "** Does: ..." - the card says what it does
-            desc = lines.get("Does") or " ".join(str(r.get("description") or "").split())
-            out["actions"][name] = {
-                "name": name, "title": title, "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area, "area_from": area_from,
-                "described": lines,
-                "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
-                "limit_from": rules.LIMIT_VAR if limit else "", "limit_inv": limit_inv, "limit_inv_name": inv_name, "who": None, "discovered": True, "tid": tid, "started_by": named,
-                "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area))
-                                 and not (cfg.label_title and l.startswith(cfg.label_title)))[:8],
-                "last": ((r.get("summary_fields") or {}).get("last_job") or {}),
-                "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
-                "approval": cfg.label_approval in labels or tname in cfg.approval_required}
+                seen_inv.add(iid)
+            if result.skipped:
+                out["skipped"].append((tname, result.skipped))
+                out["incomplete"] |= result.transient
+                continue
+            action = dict(result.action, last=(row.get("summary_fields") or {}).get("last_job") or {})
+            if iid is not None:
+                hosts = {"kind": "hosts", "label": "Hosts", "required": True, "default": None, "max": cfg.limit_max,
+                         "help": "Hosts or groups of the inventory %s: up to %d hosts (a group counts by its hosts)" % (inv_name, cfg.limit_max)}
+                action.update(limit_inv_name=inv_name, vars={rules.LIMIT_VAR: hosts, **action["vars"]})
+            out["actions"][action["name"]] = action
+        self.template_reads = kept
+        self.inv_names = {iid: self.inv_names[iid] for iid in seen_inv}
         return out
+
+    def _read_template(self, typ, kind, r, have):
+        cfg = self.cfg
+        tname = str(r.get("name") or "")
+        labels, tr = self.labels_t(kind, r)
+        if labels is None:
+            return TemplateRead(skipped="its labels could not be read completely", labelled=False, transient=tr, retry=True)
+        if cfg.label not in labels:
+            return TemplateRead(skipped="no label %s" % cfg.label, labelled=False)
+        if (typ, tname) in have:
+            return TemplateRead(clash=have[(typ, tname)])
+        tid = int(r["id"])
+        vars_, skipped, named, spec_doc = {}, [], False, None
+        if r.get("survey_enabled"):
+            code, spec = self.call("GET", "%s/%d/survey_spec/" % (kind, tid))
+            if code != 200:
+                return TemplateRead(skipped="its survey could not be read: %s" % site_aap.error_text(spec), transient=self._unsure(code), retry=True)
+            qs = [q for q in (spec.get("spec") or []) if isinstance(q, dict)]
+            asked = next((q for q in qs if q.get("variable") == "portal_requested_by"), None)       # asked in the survey: the portal fills it from the card
+            named = asked is not None
+            if asked is not None and not rules.takes_name(asked):
+                return TemplateRead(skipped="its portal_requested_by question must be text (or textarea), with a maximum of at least 200 and no minimum over 1")
+            spec_doc = spec
+            vars_, skipped = rules.survey_vars(dict(spec, spec=[q for q in qs if q.get("variable") != "portal_requested_by"]))
+        if skipped:
+            return TemplateRead(skipped="; ".join("%s: %s" % x for x in skipped[:3]))
+        code, info = self.call("GET", "%s/%d/launch/" % (kind, tid))
+        if code != 200:
+            return TemplateRead(skipped="its launch settings could not be read: %s" % site_aap.error_text(info), transient=self._unsure(code), retry=True)
+        need = launch_needs(info)
+        if need:
+            return TemplateRead(skipped="it needs %s at launch, which the portal cannot give" % need)
+        if typ == "job" and (cfg.label_approval in labels or tname in cfg.approval_required):
+            return TemplateRead(skipped="marked for approval, but a job template starts at once: use a workflow with an approval step")
+        limit = bool(r.get("ask_limit_on_launch"))
+        limit_inv = None
+        if limit:                                   # 1.78.4: the Limit is checked against THAT template's own inventory, which the portal's account can read
+            if typ == "job":
+                if r.get("ask_inventory_on_launch") or not r.get("inventory"):
+                    return TemplateRead(skipped="its inventory is asked at launch (ask_inventory_on_launch) or not set: the portal needs the inventory the Limit is checked against")
+                limit_inv = int(r["inventory"])
+            else:
+                limit_inv, why, tr = self.workflow_inventory(tid, r)
+                if limit_inv is None:
+                    return TemplateRead(skipped=why, transient=tr, retry=True)
+        marked = cfg.label_approval in labels or tname in cfg.approval_required
+        sigf = dict(rules.exec_fields(r), approval_marked=bool(marked))
+        if typ == "workflow":
+            shape, tr = self.workflow_shape_t(tid)
+            if shape is None:
+                return TemplateRead(skipped="its steps could not be read", inventory=limit_inv, transient=tr, retry=True)
+            sigf["steps"] = shape
+        sigf["limit_inv"] = limit_inv or 0                 # a form drawn for another inventory is not launched against this one
+        lab = next((l[len(cfg.label_area):].strip() for l in sorted(labels) if cfg.label_area and l.startswith(cfg.label_area)
+                    and l[len(cfg.label_area):].strip()), "")
+        area, area_from = rules.area_for(tname, str(r.get("playbook") or ""), lab, cfg.playbook_areas, cfg.area_rules)
+        name = "%s_%d" % ("wf" if typ == "workflow" else "jt", tid)         # the id never moves to another template
+        title = cfg.titles.get(tname.casefold()) or next(
+            (t for t in (rules.site_portal_title_label(l, cfg.label_title) for l in sorted(labels)) if t), "") or tname[:120]
+        lines = described(r.get("description"))          # 1.79.11: "** Does: ..." - the card says what it does
+        desc = lines.get("Does") or " ".join(str(r.get("description") or "").split())
+        action = {
+            "name": name, "title": title, "description": "", "summary": desc[:rules.SUMMARY_MAX], "area": area, "area_from": area_from,
+            "described": lines,
+            "kinds": [], "button": "", "when": {}, "fixes": True, "aap": {"type": typ, "name": tname}, "vars": vars_,
+            "limit_from": rules.LIMIT_VAR if limit else "", "limit_inv": limit_inv, "limit_inv_name": "", "who": None, "discovered": True, "tid": tid, "started_by": named,
+            "labels": sorted(l for l in labels if l != cfg.label and l != cfg.label_approval and not (cfg.label_area and l.startswith(cfg.label_area))
+                             and not (cfg.label_title and l.startswith(cfg.label_title)))[:8],
+            "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
+            "approval": cfg.label_approval in labels or tname in cfg.approval_required}
+        return TemplateRead(action=action, inventory=limit_inv)
 
     def _inventory_ok(self, iid, seen):
         """An inventory the Limit of a found template is checked against -> (its name, '' or why not): the account must be able to read it, and at most
@@ -629,7 +747,6 @@ class Aap(object):
         """1.78.2, for the help on the Actions page: the templates that carry the label that the account can see (its Auditor role) but may not run -
         the label's own list against the Execute list. Names only; a failure here only leaves the line out (no_execute_why), it never makes a read partial."""
         cfg = self.cfg
-        out["account"] = str(self.user or getattr(self.api, "user", "") or "")[:80]
         have = set((kind, int(r.get("id") or 0)) for _t, kind, r in found)
         for kind in ("job_templates", "workflow_job_templates"):
             rows, why = self._paged("%s/?labels__name=%s&order_by=name&page_size=200" % (kind, urllib.parse.quote(cfg.label, safe="")))
@@ -1295,7 +1412,7 @@ def multi_host(actions, cfg):
 class Portal(object):
     """What the pages ask for."""
 
-    def __init__(self, cfg, aap=None, log=None):
+    def __init__(self, cfg, aap=None, log=None, cache_catalog=True):
         self.cfg = cfg
         os.makedirs(cfg.data, exist_ok=True)
         self.log = log or Log(os.path.join(cfg.data, "portal-log.jsonl"))
@@ -1322,6 +1439,69 @@ class Portal(object):
         self.prog = collections.OrderedDict()           # 1.78.0: job id -> Progress (the last 60 jobs followed)
         self.polls = {}                 # CN -> [times of its progress calls]
         self.key_locks = {}             # not twice: (action, finding_id, target) -> a lock held from the check to the log
+
+        self.catalog_file = os.path.join(cfg.data, "catalog-cache.json") if cache_catalog and cfg.label and cfg.aap_url else None
+        self.restored = False
+        self.cached_off = {}
+        if self.catalog_file:
+            # Bind the saved forms to this controller, credential, settings and local actions. Only the MAC goes to disk.
+            scope = [1, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca, cfg.label, cfg.label_approval, cfg.label_area,
+                     cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.limit_max,
+                     cfg.inventories_max, cfg.requesters, cfg.approvers, doc]
+            self.catalog_key = hmac.digest(self.key, json.dumps(scope, sort_keys=True).encode(), "sha256")
+            self._load_catalog()
+
+    def _load_catalog(self):
+        try:
+            with open(self.catalog_file) as fh:
+                envelope = json.load(fh)
+            snapshot = envelope["snapshot"]
+            mac = hmac.digest(self.catalog_key, json.dumps(snapshot).encode(), "sha256").hex()
+            if not hmac.compare_digest(mac, envelope["mac"]) or time.time() - snapshot["at"] >= KEEP_WHOLE * self.cfg.discover_seconds:
+                return
+            self.found = snapshot["found"]
+            self.actions = {**self.found["actions"], **self.builtin}
+            self.cached_off = snapshot["off"]
+            self.last = snapshot.get("last", {})
+            self.whole_at = snapshot["at"]
+            self.found_whole = self.found_ready = self.restored = True
+        except (OSError, KeyError, ValueError, TypeError):
+            pass
+
+    def _save_catalog(self):
+        if not self.catalog_file:
+            return
+        tmp = None
+        try:
+            if self.found.get("incomplete") or self.found["error"]:
+                # The previous whole catalog aged out. A restart must not bring it back.
+                try:
+                    os.unlink(self.catalog_file)
+                except FileNotFoundError:
+                    pass
+                return
+            snapshot = {"at": self.whole_at, "found": self.found, "last": getattr(self, "last", {}),
+                        "off": {n: row[1] for n, row in self.aap.ids.items()}}
+            mac = hmac.digest(self.catalog_key, json.dumps(snapshot).encode(), "sha256").hex()
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.cfg.data, delete=False) as fh:
+                tmp = fh.name
+                json.dump({"snapshot": snapshot, "mac": mac}, fh)
+            os.replace(tmp, self.catalog_file)
+            tmp = None
+        except OSError as e:
+            self.log.add({"event": "catalog", "why": "could not keep the catalog: %s" % e})
+        finally:
+            if tmp:
+                os.unlink(tmp)
+
+    def start_aap(self):
+        why = self.aap.connect()
+        if why:
+            self.log.add({"event": "start", "aap": why})
+        else:
+            res = self.aap.resolve(self.builtin)
+            self.log.add({"event": "start", "aap": "ok", "account": self.aap.user,
+                          "actions": {k: (v[1] or "ok") for k, v in sorted(res.items())}})
 
     def _key(self):
         """The pages' token key, kept in the data volume (a restart does not void open pages)."""
@@ -1369,6 +1549,8 @@ class Portal(object):
         try:
             if self.found_ready and not force and time.time() - self.found_at < self.cfg.discover_seconds:
                 return False
+            if self.restored:
+                self.start_aap()
             got = self.aap.discover(self.builtin)
             if got["error"] or got.get("incomplete"):
                 self.found_fails += 1                   # asked again later each time: 15 s, 30, 60 ... up to portal_discover_seconds
@@ -1385,6 +1567,7 @@ class Portal(object):
                 self.found = got
                 old = set(k for k, a in self.actions.items() if a.get("discovered"))
                 self.actions = dict((k, a) for k, a in self.actions.items() if k not in old)
+                self._save_catalog()
                 return True
             if got.get("incomplete"):                   # AAP did not answer for a template just now: the last whole read stays, asked again soon
                 if self.found_whole and time.time() - self.whole_at < KEEP_WHOLE * self.cfg.discover_seconds:
@@ -1403,8 +1586,10 @@ class Portal(object):
             for k, a in got["actions"].items():
                 merged.setdefault(k, a)
             self.actions = merged
+            self._save_catalog()
             return True
         finally:
+            self.restored = False
             self.found_ready = True
             self.found_lock.release()
 
@@ -1602,6 +1787,9 @@ class Portal(object):
             why = self.same_template(a)
             if why:
                 self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "template changed: " + why})
+                kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
+                with self.aap.lock:
+                    self.aap.changed_templates.add((kind, a["tid"]))
                 self.refresh(force=True)                # the cards follow what AAP has now
                 return 409, {"error": "Not started: this job changed in AAP (%s) - open it again from the Actions page." % why
                              if why != "changed" else "Not started: this job changed in AAP - open it again from the Actions page."}
@@ -1649,7 +1837,8 @@ class Portal(object):
         """The actions this person may run, as the cards show them: [{name, title, line, type, approval, labels, last: {status, finished}, off, dialog}]."""
         acts = self.mine(cn)
         t = time.time()
-        if t - getattr(self, "last_at", 0) > self.LAST_TTL:
+        restoring = getattr(self, "restored", False)
+        if not restoring and t - getattr(self, "last_at", 0) > self.LAST_TTL:
             self.last_at = t
             need = [a for a in acts if not a.get("discovered") and a["name"] not in self.aap.ids]
             if need:
@@ -1666,7 +1855,7 @@ class Portal(object):
             self.last = dict((n, info.get(k, {})) for n, k in keyed.items())
         out = []
         for a in sorted(acts, key=lambda x: x["title"].lower()):
-            _, off = self.aap.ids.get(a["name"], (None, ""))
+            _, off = self.aap.ids.get(a["name"], (None, self.cached_off.get(a["name"], "") if restoring else ""))
             last = (getattr(self, "last", {}) or {}).get(a["name"]) or a.get("last") or {}
             out.append({"name": a["name"], "title": a["title"], "line": a.get("summary") or a.get("description") or "", "wf": a["aap"]["type"] == "workflow",
                         "approval": bool(a["approval"]) and a["aap"]["type"] == "workflow", "labels": a.get("labels") or [], "area": a.get("area") or AREA_OTHER,
@@ -3138,7 +3327,8 @@ def make_handler(cfg, portal, static_dir):
                 body = body.encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
+            if code != 304:
+                self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", cache)
             self.send_header("Content-Security-Policy", csp)
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -3186,6 +3376,14 @@ def make_handler(cfg, portal, static_dir):
         def do_HEAD(self):
             self.do_GET()
 
+        def _unchanged(self, tag):
+            return any(item.strip() in (tag, "W/" + tag, "*") for item in self.headers.get("If-None-Match", "").split(","))
+
+        def _static(self, data, ctype, cache="no-cache"):
+            tag = '"%s"' % hashlib.sha256(data).hexdigest()
+            code = 304 if self._unchanged(tag) else 200
+            return self._send(code, b"" if code == 304 else data, ctype, [("ETag", tag)], cache=cache)
+
         def do_GET(self):
             u = urllib.parse.urlsplit(self.path)
             path = u.path
@@ -3194,8 +3392,8 @@ def make_handler(cfg, portal, static_dir):
                                         "logo": ("on" if cfg.logo else cfg.logo_why) if (cfg.logo or cfg.logo_why) else "",
                                         "netmap": "on" if live else ("off" if not cfg.netmap else cfg.netmap_why)})
             if path == "/static/banner.css":            # the reports' banner colours (report_banner_color): no inline style
-                return self._send(200, ".banner{background:%s;color:%s}\n" % (cfg.banner["bg"], cfg.banner["fg"]),
-                                  "text/css; charset=utf-8", [("Cache-Control", "no-cache")])
+                css = ".banner{background:%s;color:%s}\n" % (cfg.banner["bg"], cfg.banner["fg"])
+                return self._static(css.encode(), TYPES[".css"])
             # 1.68.1: a scorecard link's go page and the script nginx adds to STIG Manager's page - no sign-in here: they
             # carry only ids, and STIG Manager checks who may read what
             if path == "/stigman/go":
@@ -3206,16 +3404,16 @@ def make_handler(cfg, portal, static_dir):
             if path == "/static/logo" and cfg.logo:       # the site's logo (portal_logo): the file's type was checked when the service started
                 try:
                     with open(cfg.logo, "rb") as fh:
-                        return self._send(200, fh.read(LOGO_MAX + 1)[:LOGO_MAX], cfg.logo_type, None, cache="max-age=3600")
+                        return self._static(fh.read(LOGO_MAX + 1)[:LOGO_MAX], cfg.logo_type, cache="max-age=3600")
                 except OSError:
                     return self._send(404, b"", "text/plain")
             if path in ("/static/portal.js", "/static/portal.css", "/static/portal-theme.js", "/static/stigman-go.js", "/static/stigman-open.js"):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
-                    return self._send(200, fh.read(), TYPES[os.path.splitext(name)[1]], [("Cache-Control", "no-cache")])
+                    return self._static(fh.read(), TYPES[os.path.splitext(name)[1]])
             if path.startswith("/static/") and path[8:] in statics:          # 1.85.0: the network map's files
                 with open(os.path.join(static_dir, path[8:]), "rb") as fh:
-                    return self._send(200, fh.read(), TYPES[os.path.splitext(path)[1]], [("Cache-Control", "no-cache")])
+                    return self._static(fh.read(), TYPES[os.path.splitext(path)[1]])
             api = path.startswith("/api/")
             cn = self._who(api)
             if not cn:
@@ -3351,7 +3549,7 @@ def make_handler(cfg, portal, static_dir):
                 return self._send(404, b"Not found", "text/plain")
             tag = '"%x-%x"' % (int(st.st_mtime_ns), st.st_size)
             meta = [("ETag", tag), ("Last-Modified", self.date_time_string(int(st.st_mtime)))]
-            if tag in [x.strip() for x in (self.headers.get("If-None-Match") or "").split(",")]:
+            if self._unchanged(tag):
                 return self._send(304, b"", ctype, meta, csp=REPORT_CSP, cache="no-cache")
             with open(full, "rb") as fh:
                 data = fh.read()
@@ -3474,13 +3672,10 @@ def serve(cfg):
         portal.log.add({"event": "note", "why": cfg.tz_note})
     if cfg.logo_why:
         portal.log.add({"event": "note", "why": cfg.logo_why})
-    why = portal.aap.connect()
-    if why:
-        portal.log.add({"event": "start", "aap": why})
+    if portal.restored:
+        portal.refresh_soon()
     else:
-        res = portal.aap.resolve(portal.actions)
-        portal.log.add({"event": "start", "aap": "ok", "account": portal.aap.user,
-                        "actions": {k: (v[1] or "ok") for k, v in sorted(res.items())}})
+        portal.start_aap()
     host, _, port = cfg.listen.rpartition(":")
     httpd = PortalServer((host or "0.0.0.0", int(port)), make_handler(cfg, portal, os.path.join(APP, "static")))
     httpd.serve_forever()
@@ -3489,7 +3684,7 @@ def serve(cfg):
 def aap_check(cfg):
     """For the deploy (site_portal.py --aap-check, in the container): AAP's answer, each action's state, and AAP's
     ALLOW_JINJA_IN_EXTRA_VARS (an account that may not read AAP's settings: said, not an error) -> JSON on stdout."""
-    portal = Portal(cfg, log=Log(""))
+    portal = Portal(cfg, log=Log(""), cache_catalog=False)
     out = {"aap": portal.aap.connect() or "ok", "account": portal.aap.user, "actions": {}, "jinja": "", "jinja_http": 0}
     if out["aap"] == "ok":
         out["actions"] = {k: (v[1] or "ok") for k, v in sorted(portal.aap.resolve(portal.actions).items())}

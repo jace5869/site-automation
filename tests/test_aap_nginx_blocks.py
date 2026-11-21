@@ -130,6 +130,7 @@ class TheBlocks(unittest.TestCase):
         text, steps = blocks(**FOLDER)
         c = part(text, "site-automation reports")
         for line in ("location = /reports { return 301 /reports/; }", "location /reports/ {",
+                     "gzip on;", "gzip_types text/css text/javascript application/javascript application/json;", "etag on;",
                      "alias /usr/share/nginx/site-reports/;", "index index.html;", "limit_except GET HEAD { deny all; }",
                      'add_header Cache-Control "no-cache";', "add_header X-Content-Type-Options nosniff;"):
             self.assertIn(line, c, line)

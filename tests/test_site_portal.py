@@ -2040,7 +2040,7 @@ class Found(unittest.TestCase):
         self.assertEqual(rules.check_values({"vars": v}, {"n": "9007199254740993"})[1], {})
 
     def test_44_the_first_discovery_is_waited_for(self):
-        p = sp.Portal(self.cfg, aap=sp.Aap(self.cfg), log=sp.Log(""))
+        p = sp.Portal(self.cfg, aap=sp.Aap(self.cfg), log=sp.Log(""), cache_catalog=False)
         p.aap.connect()
         p.found_at = time.time()                                                                                         # as when another request has begun to ask
         self.assertFalse(p.found_ready)
@@ -2514,6 +2514,154 @@ class StubApi(object):
 
 def page(rows, nxt=None, count=None):
     return 200, {"count": len(rows) if count is None else count, "next": StubApi.base + nxt if nxt else None, "results": rows}
+
+
+class Speed1990(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        actions = os.path.join(tmp.name, "actions.json")
+        with open(actions, "w") as fh:
+            json.dump({"actions": ACTIONS}, fh)
+        self.cfg = sp.Config({"PORTAL_DATA": tmp.name, "PORTAL_ACTIONS": actions, "PORTAL_AAP_URL": "https://controller.example.test"})
+        self.rows = [{"type": kind, "id": index, "name": "Example %02d" % index, "modified": "2026-11-21T00:00:00Z",
+                      "survey_enabled": True, "summary_fields": {"labels": {"count": 1, "results": [{"name": "portal"}]},
+                                                                 "user_capabilities": {"start": True}}}
+                     for index, kind in enumerate(["job_template"] * 16 + ["workflow_job_template"], 1)]
+        self.api = StubApi(self.route)
+        self.aap = sp.Aap(self.cfg, api=self.api)
+
+    def route(self, method, path, body):
+        if path.startswith("unified_job_templates/?"):
+            return page(self.rows)
+        if "?role_level=" in path or "?labels__name=" in path:
+            return page([row for row in self.rows if path.startswith(row["type"] + "s/") and
+                         ("?labels__name=" in path or row["summary_fields"]["user_capabilities"]["start"])])
+        if path.endswith(("/launch/", "/survey_spec/")):
+            return 200, {}
+        if "/workflow_nodes/" in path:
+            return page([])
+        return 404, {}
+
+    def test_parallel_then_one_list_and_only_changed_details(self):
+        workers, gate = set(), threading.Barrier(8, timeout=5)
+
+        def route(method, path, body):
+            if path.endswith("/survey_spec/") and threading.get_ident() not in workers:
+                workers.add(threading.get_ident())
+                gate.wait()
+            return self.route(method, path, body)
+
+        self.api.route = route
+        first = self.aap.discover({})
+        self.assertEqual((len(workers), len(first["actions"])), (8, len(self.rows)))
+        self.api.route = self.route
+        self.api.paths.clear()
+        self.assertEqual(self.aap.discover({}), first)
+        self.assertEqual(len(self.api.paths), 1, self.api.paths)
+        self.assertTrue(self.api.paths[0][1].startswith("unified_job_templates/?"))
+        self.rows[-1].update(name="Renamed workflow", modified="2026-11-21T01:00:00Z")
+        self.api.paths.clear()
+        self.assertEqual(self.aap.discover({})["actions"]["wf_17"]["title"], "Renamed workflow")
+        self.assertEqual(len(self.api.paths), 4, self.api.paths)
+        self.assertTrue(all(path.startswith("workflow_job_templates/17/") for _, path in self.api.paths[1:]))
+        self.rows[0]["summary_fields"]["user_capabilities"]["start"] = False
+        updated = self.aap.discover({})
+        self.assertNotIn("jt_1", updated["actions"])
+        self.assertEqual(updated["no_execute"], ["Example 01"])
+
+    def test_restart_serves_catalog_during_refresh(self):
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        portal.refresh()
+        self.assertEqual(os.stat(portal.catalog_file).st_mode & 0o777, 0o600)
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        restarted = sp.Portal(self.cfg, aap=sp.Aap(self.cfg, api=self.api))
+        self.assertTrue(restarted.restored)
+        refresh = restarted.refresh
+
+        def background():
+            entered.set()
+            if release.wait(5):
+                refresh()
+            finished.set()
+
+        restarted.refresh = background
+        restarted.refresh_soon()
+        try:
+            self.assertTrue(entered.wait(5))
+            self.api.paths.clear()
+            self.assertIn("jt_1", [card["name"] for card in restarted.catalog("Example user")])
+            self.assertFalse(self.api.paths)
+            self.rows.pop(0)
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(5))
+        self.assertNotIn("jt_1", restarted.actions)
+        self.cfg.aap_token = "another-placeholder"
+        self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+
+    def test_cached_forms_still_check_inventory_access(self):
+        inventories = {31: "First inventory", 32: "Second inventory"}
+        for row, iid in zip(self.rows, inventories):
+            row.update(ask_limit_on_launch=True, inventory=iid)
+
+        def route(method, path, body):
+            if path.startswith("inventories/?id__in="):
+                return page([{"id": iid, "name": name} for iid, name in inventories.items()])
+            if path.startswith("inventories/"):
+                name = inventories.get(int(path.split("/")[1]))
+                return (200, {"name": name}) if name else (403, {})
+            return self.route(method, path, body)
+
+        self.api.route = route
+        first = self.aap.discover({})
+        self.api.paths.clear()
+        self.assertEqual(self.aap.discover({}), first)
+        self.assertEqual(len(self.api.paths), 2, self.api.paths)
+        del inventories[31]
+        self.assertNotIn("jt_1", self.aap.discover({})["actions"])
+
+    def test_log_reads_only_on_external_change(self):
+        from unittest import mock
+        path = os.path.join(self.cfg.data, "portal-log.jsonl")
+        with open(path, "w") as fh:
+            fh.write('{"event":"launch","job_id":1}\ninvalid line\n')
+        log = sp.Log(path)
+        with mock.patch.object(sp, "open", wraps=open, create=True) as opened:
+            self.assertEqual(log.read("launch")[0]["job_id"], 1)
+            log.add({"event": "launch", "job_id": 2})
+            log.add({"event": "note"})
+            self.assertEqual(log.read("launch", limit=1)[0]["job_id"], 2)
+            self.assertEqual(len(log.read()), 3)
+            reads = lambda: sum("r" in call.args[1] for call in opened.call_args_list)
+            self.assertEqual(reads(), 1)
+            with open(path, "w") as fh:
+                fh.write('{"event":"launch","job_id":3}\n')
+            log.add({"event": "launch", "job_id": 4})
+            self.assertEqual([row["job_id"] for row in log.read("launch")], [3, 4])
+            self.assertEqual(reads(), 2)
+            self.assertEqual(len(log.read()), 2)
+            self.assertEqual(reads(), 2)
+            stamp = os.stat(path)
+            with open(path, "r+b") as fh:
+                fh.seek(len('{"event":"launch","job_id":'))
+                fh.write(b"5")
+            os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 1000000000))
+            self.assertEqual([row["job_id"] for row in log.read("launch")], [5, 4])
+            self.assertEqual(reads(), 3)
+
+    def test_proxied_static_etag(self):
+        from unittest import mock
+        handler = sp.make_handler(self.cfg, sp.Portal(self.cfg, aap=self.aap), os.path.join(FILES, "static"))
+        request = object.__new__(handler)
+        request.path, request.headers, request._send = "/static/portal.js", {}, mock.Mock()
+        request.do_GET()
+        status, body, _, headers = request._send.call_args.args
+        self.assertEqual(status, 200)
+        self.assertTrue(body)
+        request.headers["If-None-Match"] = "W/" + dict(headers)["ETag"]
+        request.do_GET()
+        self.assertEqual(request._send.call_args.args[:2], (304, b""))
 
 
 class Spin1796(unittest.TestCase):
@@ -3266,6 +3414,9 @@ class RoleFiles(unittest.TestCase):
         for line in ("ssl_verify_client       on;", "ssl_crl                 /etc/site-portal-tls/crl.pem;",
                      "    location /portal/ {", "        proxy_pass $site_portal_app;"):
             self.assertIn(line, s)
+        for config in (s, t):
+            for line in ("gzip on;", "gzip_types text/css text/javascript application/javascript application/json;", "gzip_vary on;", "etag on;"):
+                self.assertIn(line, config)
 
     def test_nginx_stigman_links(self):
         """1.68.1: the optional lines - STIG Manager's page (/ and /index.html only) with the portal's script added, the page
