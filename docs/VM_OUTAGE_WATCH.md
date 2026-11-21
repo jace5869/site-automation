@@ -204,6 +204,7 @@ VM's red alarm known by its entity only (1.90.0). An alarm that went back to nor
 - It starts at the first problem about the subject itself in the 30 minutes before. Its cluster and datastores do not count here.
 - It ends at that critical event.
 - The legend says what it spans, for example *Outlined red: Lead-up to #27: 10:48 to 10:58 CET (10 min)*.
+- The box has a tab, *Lead-up · 10 min*, and a solid edge at the critical event (1.90.1). Its tint deepens towards that event.
 - The red shade is something else: it is a host's down stretch.
 
 When there is no lead-up to draw, one muted line says why. For example: *No lead-up drawn: nothing about esx07 came in the 30 min before its first
@@ -213,23 +214,46 @@ critical alarm (#26, 10:58).* The time zone is under the lane names, for example
 
 1. A header, for example *26 events · 17:20-17:24*.
 2. One line per event: time, level icon, what, and where. The critical ones come first, then by time.
-3. Click the mark (or press Enter) to keep the list open so you can scroll it. Esc or a click elsewhere closes it.
-4. Click a line to go to its row in *The events*.
+3. Click a line to go to its row in *The events*.
+
+**Open a mark (1.90.1).** Click a mark, or press Enter or Space on it, or tap it. Its events open under its lane:
+
+1. The header: the mark, what happened, its time and level. Tags say *Ends the lead-up* or *In the lead-up*, and *About esx07* when it is about
+   the subject.
+2. A mark of several events lists them by time. The worst is picked; click another line (or press Enter on it) to see its facts.
+3. The facts of the picked event: where, host, VM, cluster, vCenter, the alarm, the kind, whether it is about the outage, its place in the
+   lead-up, the incident link, and a button to its row in *The events*.
+4. Esc, *Close*, a second click or a click elsewhere closes it. One mark is open at a time.
+
+**Motion** (`report_motion`). When the time line scrolls into view:
+
+- the marks come in left to right;
+- the lead-up box draws in back from its critical event, and that event pings once;
+- an opened mark slides open, and a mark the filters leave out shrinks away.
+
+With `report_motion: false`, or when the system asks for less motion, everything is simply there. Print is always still.
 
 **Related.** A mark about the subject, its ESXi host, its cluster, or the datastores and port groups that events of its host name has an outline ring
 and full colour. The other marks are dimmed but stay there and can be hovered. The legend says what is outlined, and *The events* gets a
 *Related* column. A snapshot is related only when it is on a subject VM itself, because a snapshot commit can stun a VM. If no subject can be worked out,
 nothing is marked and a muted line says why.
 
-**Filters.** Above the chart, in two rows:
+**Filters.** Above the chart, in two rows, then the host, vCenter and VM row:
 
 | Control | What it does |
 |---|---|
 | Show: All / Related only | hides the unrelated marks and rows |
 | Kinds | ticks for Host, HA, Datastore and storage, Network, VM power and heartbeat, CPU and memory usage, Snapshots, Other; the kind comes from the event's type and words |
 | Show every repeat | lists every row of a repeat (below) |
+| Host, vCenter, VM (1.90.1) | two lists and a search box; the choices are only the hosts, vCenters and VMs of the page's own events. *Clear* puts them back |
 
-The controls filter the chart and *The events* together. The choice is kept in this browser.
+The controls filter the chart and *The events* together:
+
+- A lane's count follows them: *4 of 29 events*. So does the row's *5 of 32 events*.
+- With a host, vCenter or VM chosen, the kinds' counts are that host's (vCenter's, VM's).
+- An opened mark that the controls leave out closes.
+- Show, Kinds and Show every repeat are kept in this browser. The host, vCenter and VM are not kept, and none of it goes into the page's address.
+- A list with only one choice is left out. With one host, one vCenter and one VM, there is no row.
 
 **Repeats.** Identical events one after another (the same lane, what, where and level) fold into one row, for example *×4, 17:21-17:40*; the times
 are in the row's title. *Show every repeat* lists them all. Without the script every row shows. The email and the workbook are unchanged.

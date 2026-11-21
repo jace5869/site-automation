@@ -425,6 +425,39 @@ that site_exclude is not honoured there - so the two never drift.
   default. The restart: the flag already in the file, the old container running without it - removed by id, recreated, MITIGATED.
   It runs against a stand-in podman and podman-compose (`tests/java4shell/fake`), which act like the old podman-compose.
 
+## 1.90.1 — 2026-11-21
+
+**To set up: nothing.**
+
+**VM - outage watch: the review's time line in the pop look** (report_outage.html.j2, report_hover.css.j2,
+site_report.js, plugins/filter/outage_timeline_filters.py), as the approved mockup (mockup-outage-pop).
+
+- **Host, vCenter and VM.** A row above the lanes: two lists and a VM search box.
+  - The choices are only the hosts, vCenters and VMs of the page's own events. A list with one choice is left out.
+  - The marks, the tips' lists and *The events* follow it, with the controls above (Show, Kinds, repeats).
+  - The lanes' counts say *4 of 29 events*; the row says *5 of 32 events*, with *Clear*. The kinds' counts are the
+    chosen host's.
+  - Nothing goes into the address, and the choice is not kept.
+- **A mark opens.** A click, Enter, Space or a tap opens its events under its lane. Hover still shows the quick tip.
+  - The header: the mark, what happened, time and level, and *Ends the lead-up* / *In the lead-up* / *About esx07*.
+  - Several events: a line each, the worst picked. The facts of the picked one: where, host, VM, cluster, vCenter,
+    alarm, kind, about the outage, its place in the lead-up, the incident link, a button to its row in *The events*.
+  - Esc, *Close*, a second click or a click elsewhere closes it. One at a time. A filter that leaves it out closes it.
+  - Before, a click pinned the tip's list.
+- **The lead-up, drawn:** a tab (*Lead-up · 10 min*), a solid edge at the critical event, a tint that deepens towards
+  it. Drawn by the page itself, so it prints.
+- **Motion** (`report_motion`, the 1.86.0 pop layer): the marks come in left to right once the time line is in view,
+  the lead-up draws in back from its critical event and that event pings once. An opened mark slides open; a mark the
+  filters leave out shrinks away and leaves the Tab order. Still with `report_motion: false` or reduced motion.
+- Each event's line (data-ev) also carries its host, VM, vCenter (short names), cluster, alarm and place in the
+  lead-up; the lead-up its number and length. The email and the workbook are unchanged. All three looks.
+- docs/VM_OUTAGE_WATCH.md ("The list, the related events and the filters").
+- Tests: tests/test_outage_timeline.py PopLook (the event lines, the lead-up, the page in each look);
+  tests/test_report_hover.py in Chromium: RealChromeOutageWhere (the row's choices and counts with run_1900 and a
+  second vCenter, Clear, the address and history untouched; the facts of #27 and #26, a group of 12, a filter that
+  closes it), test_8 (click, Enter, Space, Esc, Close, one at a time, its row), and the row-hidden and incident-link
+  tests through the opened mark.
+
 ## 1.90.0 — 2026-11-21
 
 **To set up: nothing.**

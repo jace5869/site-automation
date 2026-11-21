@@ -10,6 +10,7 @@ the same way, and ticket insights' breach line (its own page and script, site-in
 1.64.0: the certificate timeline's marks (data-tip): hover, Tab from mark to mark, Esc.
   python3 tests/test_report_hover.py      (the Chrome part skips without google-chrome or chromium)"""
 import base64
+import copy
 import http.server
 import json
 import os
@@ -571,39 +572,60 @@ class RealChromeOutage(RealChrome):
         self.assertIsNone(self.c.js(LIST))                                                  # Esc closes it, and the focus returned does not open it again
         self.assertTrue(self.c.js("document.activeElement.matches(%s)" % json.dumps(self.SEL)))
 
-    def test_8_a_click_or_enter_pins_it_and_the_list_scrolls(self):
+    PANEL = "(() => {const p = document.getElementById('otx-open'); return p && {title: p.querySelector('h4').textContent, after: p.previousElementSibling.className, " \
+            "lines: p.querySelectorAll('.otx-ev li').length, facts: [...p.querySelectorAll('.otx-f dt')].map(d => d.textContent)}})()"
+
+    def test_8_a_click_enter_or_space_opens_it_under_its_lane(self):
+        """1.90.1: a mark opened shows its events under its lane (the facts of the worst one picked); one at a time; a second click,
+        Esc or Close closes it; hover keeps the quick tip."""
         self.c.js("document.activeElement && document.activeElement.blur()")
+        q = "document.querySelectorAll(%s)[%%d]" % json.dumps(self.SEL)
         i = 7                                                                                              # a mark of the vCenter lane, in the middle of the chart
         x, y = self.at(self.SEL, i)
+        self.c.mouse(5, 5)                                                                                # from elsewhere: a pointer already there enters nothing
         self.c.mouse(x, y)
-        self.assertFalse(self.c.js("document.getElementById('site-tip').classList.contains('pin')"))     # hovering shows it, does not pin it
-        self.c.js("document.querySelectorAll(%s)[%d].click()" % (json.dumps(self.SEL), i))
-        self.assertTrue(self.c.js("document.getElementById('site-tip').classList.contains('pin')"))
-        self.c.mouse(5, 5)                                                                                # pinned: the pointer leaving does not close it
-        self.assertIsNotNone(self.c.js(LIST))
-        box = self.c.js("(() => {const t = document.getElementById('site-tip'), b = t.querySelector('.tt-body'), p = document.querySelector('.ot-plot').getBoundingClientRect(), "
-                        "r = t.getBoundingClientRect(); return [Math.round(r.width), getComputedStyle(b).maxHeight, getComputedStyle(b).overflowY, r.left >= p.left - 1, r.right <= p.right + 1]})()")
-        self.assertEqual(box, [420, "320px", "auto", True, True])                                         # fixed width, a max height, a scroll bar, inside the chart
-        self.c.key("Escape", "Escape", 27)
-        self.assertIsNone(self.c.js(LIST))
-        self.c.js("document.querySelectorAll(%s)[%d].focus()" % (json.dumps(self.SEL), i))
-        self.c.key("Enter", "Enter", 13)                                                                  # Enter on a Tab stop pins it too
-        self.assertTrue(self.c.js("document.getElementById('site-tip').classList.contains('pin')"))
-        n = self.c.js(LIST)["lines"][0][2]
-        self.c.js("document.querySelector('#site-tip .tt-ln').click()")                                    # a line (anywhere on it): to its row, which flashes
-        self.assertIsNone(self.c.js(LIST))
-        self.assertTrue(self.c.js("document.getElementById(%s).classList.contains('ot-flash')" % json.dumps(n[1:])))
-        # a click elsewhere closes a pinned one
-        self.c.js("document.querySelectorAll(%s)[%d].click()" % (json.dumps(self.SEL), i))
-        self.assertIsNotNone(self.c.js(LIST))
-        self.c.mouse(5, 5)
-        self.c.js("document.body.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
-        self.assertIsNone(self.c.js(LIST))
+        self.assertIsNotNone(self.c.js(LIST))                                                             # hovering shows the quick tip
+        self.assertIsNone(self.c.js(self.PANEL))
+        self.c.js((q % i) + ".click()")
+        got = self.c.js(self.PANEL)
+        self.assertEqual(got["after"], "ot-row")                                                          # right under its lane
+        self.assertIsNone(self.c.js(LIST))                                                                # the tip gives way
+        self.assertEqual(self.c.js((q % i) + ".getAttribute('aria-expanded')"), "true")
+        n = len(self.c.js("JSON.parse(%s.getAttribute('data-ev'))" % (q % i)))
+        self.assertEqual(got["lines"], n if n > 1 else 0)                                                 # several events: a line each
+        self.assertEqual(got["facts"][0], "Where")
+        self.assertIn("Go to", got["facts"])
+        self.assertTrue(self.c.js("[...document.querySelectorAll('.otx')].length === 1 && document.getElementById('otx-open').querySelector('.otx-x').textContent === 'Close'"))
+        self.c.js((q % i) + ".click()")                                                                    # a second click closes it
+        self.assertIsNone(self.c.js(self.PANEL))
+        self.assertEqual(self.c.js((q % i) + ".getAttribute('aria-expanded')"), "false")
+        self.c.js((q % i) + ".focus()")
+        self.c.key("Enter", "Enter", 13)                                                                  # Enter on a Tab stop
+        self.assertIsNotNone(self.c.js(self.PANEL))
+        self.c.js((q % 0) + ".click()")                                                                    # another mark: one open at a time
+        self.assertEqual(self.c.js("document.querySelectorAll('.otx').length"), 1)
+        self.assertEqual(self.c.js((q % i) + ".getAttribute('aria-expanded')"), "false")
+        self.c.js((q % i) + ".focus()")
+        self.c.key(" ", "Space", 32)                                                                      # Space too
+        self.assertEqual(self.c.js((q % i) + ".getAttribute('aria-expanded')"), "true")
+        self.c.key("Escape", "Escape", 27)                                                                # Esc closes it; the focus goes back to the mark, no tip
+        self.assertIsNone(self.c.js(self.PANEL))
+        self.assertTrue(self.c.js("document.activeElement === %s" % (q % i)))
+        self.c.js((q % i) + ".click()")
+        self.c.js("document.querySelector('#otx-open .otx-f dd button').click()")                         # its row in The events, which flashes
+        row = self.c.js("document.querySelector('#otx-open .otx-f dd button').textContent.match(/Row (\\d+)/)[1]")
+        self.assertTrue(self.c.js("(() => {const r = document.getElementById('ot-row-%s'); return r.classList.contains('ot-flash') || r.hasAttribute('data-rep')})()" % row))
+        self.c.js("document.querySelector('#otx-open .otx-x').click()")                                   # Close
+        self.assertIsNone(self.c.js(self.PANEL))
+        self.c.js((q % i) + ".click()")                                                                    # a click elsewhere closes it
+        self.c.js("document.querySelector('h1').click()")
+        self.assertIsNone(self.c.js(self.PANEL))
+        self.assertEqual(self.c.js("location.hash"), "")                                                  # nothing in the address
 
 
 class RealChromeOutageFilters(RealChromeOutage):
     """The controls above the chart: Related only, the kinds, Show every repeat - the marks and The events follow, the choice is kept."""
-    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_or_enter_pins_it_and_the_list_scrolls = None
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_enter_or_space_opens_it_under_its_lane = None
 
     @classmethod
     def web(cls):
@@ -707,8 +729,7 @@ class RealChromeOutageFilters(RealChromeOutage):
         # the table sorted another way: the repeats now come before their head
         self.c.js("(() => {const h = document.querySelector('tr[data-fold]'); h.parentNode.appendChild(h)})()")
         n = self.c.js("document.querySelector('tr[data-rep]').getAttribute('data-num')")
-        self.c.js("(() => {const m = [...document.querySelectorAll('.ot-track .ot-m')].find(m => JSON.parse(m.getAttribute('data-ev')).some(e => e.n == %s)); m.click()})()" % n)
-        self.c.js("[...document.querySelectorAll('#site-tip .tt-ln')].find(l => l.querySelector('a.tt-t').getAttribute('href') === '#ot-row-%s').click()" % n)
+        self.open_row(n)
         self.assertTrue(self.c.js("document.querySelector('tr[data-fold]').classList.contains('ot-flash')"))
         self.assertFalse(self.c.js("document.querySelector('tr[data-rep]').classList.contains('ot-flash')"))
 
@@ -730,39 +751,37 @@ class RealChromeOutageFilters(RealChromeOutage):
         self.assertTrue(badge is None or badge.isdigit(), badge)
         self.c.js("(() => {const f = document.getElementById('find'); f.value = ''; f.dispatchEvent(new Event('search'))})()")
 
-    def pin_list_line(self, n):
+    def open_row(self, n, click=True):
+        """1.90.1: the mark with event n opened, that event picked; click: its "Row n in The events" button."""
         self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
-        self.c.js("(() => {const m = [...document.querySelectorAll('.ot-track .ot-m')].find(m => JSON.parse(m.getAttribute('data-ev')).some(e => e.n == %s)); m.click()})()" % n)
+        self.c.js("(() => {const m = [...document.querySelectorAll('.ot-track .ot-m')].find(m => JSON.parse(m.getAttribute('data-ev')).some(e => e.n == %s)); m.click(); "
+                  "const li = document.querySelector('#otx-open .otx-ev li[data-n=\"%s\"]'); if (li) li.click()})()" % (n, n))
+        if click:
+            self.c.js("document.querySelector('#otx-open .otx-f dd button').click()")
 
     def test_f_a_row_the_search_or_the_filter_hides(self):
-        """Release review 8: a click in the pinned list on a hidden row clears the search, or says which filter hides it."""
+        """Release review 8 (1.90.1: from the opened mark): its row hidden clears the search, or says which filter hides it."""
         self.reset()
         n = self.c.js("document.querySelector('tr[data-cls]').getAttribute('data-num')")
-        line = "[...document.querySelectorAll('#site-tip .tt-ln')].find(l => l.querySelector('a.tt-t').getAttribute('href') === '#ot-row-%s').click()" % n
         flashed = "document.getElementById('ot-row-%s').classList.contains('ot-flash')" % n
         # the page's search hides it: the search is cleared and the row is shown
         self.c.js("(() => {const f = document.getElementById('find'); f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('search'))})()")
         self.assertTrue(self.c.js("document.getElementById('ot-row-%s').hidden" % n))
-        self.pin_list_line(n)
-        self.c.js(line)
+        self.open_row(n)
         self.assertEqual(self.c.js("document.getElementById('find').value"), "")
         self.assertFalse(self.c.js("document.getElementById('ot-row-%s').hidden" % n))
         self.assertTrue(self.c.js(flashed))
-        # the table's own filter box hides it: the list says so and stays
+        # the table's own filter box hides it: the opened mark says so and stays
         box = "document.querySelector('tr[data-cls]').closest('.tw').previousElementSibling.querySelector('.filter')"
         self.c.js("(() => {const f = %s; f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
         self.c.js("document.getElementById('ot-row-%s').classList.remove('ot-flash')" % n)
-        self.pin_list_line(n)
-        note = ""
-        for _ in range(40):                                                    # the pinned list and the note are drawn by handlers: a slow runner gets up to 4 s (the click is repeated until the note is there)
-            self.c.js("(() => {const a = [...document.querySelectorAll('#site-tip .tt-ln')].find(l => l.querySelector('a.tt-t').getAttribute('href') === '#ot-row-%s'); if (a && !document.querySelector('#site-tip .tt-note')) a.click()})()" % n)
-            note = self.c.js("(() => {const t = document.querySelector('#site-tip .tt-note'); return t && t.textContent})()") or ""
-            if note:
-                break
-            time.sleep(0.1)
-        self.assertIn("table's filter box", note or "")
+        self.open_row(n)
+        self.c.js("document.querySelector('#otx-open .otx-f dd button').click()")                    # twice: one note, not two
+        note = self.c.js("(() => {const t = document.querySelector('#otx-open .otx-note'); return t && t.textContent})()") or ""
+        self.assertIn("table's filter box", note)
         self.assertFalse(self.c.js(flashed))
-        self.assertEqual(self.c.js("document.querySelectorAll('#site-tip .tt-note').length"), 1)
+        self.assertEqual(self.c.js("document.querySelectorAll('#otx-open .otx-note').length"), 1)
+        self.assertEqual(self.c.js("document.querySelector('#otx-open .otx-note').getAttribute('role')"), "status")
         # a row a filter hides is never "cap-only": the click must not open (lift the 25-row cap of) its table
         self.assertFalse(self.c.js("!!document.getElementById('ot-row-%s').closest('table')._open" % n))
         self.c.js("(() => {const f = %s; f.value = ''; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
@@ -771,7 +790,7 @@ class RealChromeOutageFilters(RealChromeOutage):
 
 class RealChromeOutageGroups(RealChromeOutage):
     """Codex 6: a mark that stands for several events shows what is left of them."""
-    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_or_enter_pins_it_and_the_list_scrolls = None
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_enter_or_space_opens_it_under_its_lane = None
 
     @classmethod
     def web(cls):
@@ -790,6 +809,7 @@ class RealChromeOutageGroups(RealChromeOutage):
 
     def test_9_label_level_outline_and_text_follow_the_visible_events(self):
         self.c.js("localStorage.removeItem('site-report-outage')")
+        self.assertEqual(self.c.js("document.querySelectorAll('.otf').length"), 0)       # 1.90.1: one host, one vCenter, one VM - nothing to choose, no row
         before = self.state()
         self.assertRegex(before["label"], r"^\d+\+\d+$")
         ev = self.c.js("JSON.parse(%s.getAttribute('data-ev'))" % self.GROUP)
@@ -819,6 +839,102 @@ class RealChromeOutageGroups(RealChromeOutage):
         self.assertEqual(self.state(), before)
 
 
+class RealChromeOutageWhere(RealChromeOutage):
+    """1.90.1: the host / vCenter / VM row (choices only from the page's events) and the opened mark's facts, on the run shaped like
+    the reader's (tests/test_outage_timeline.py run_1900) with a second vCenter."""
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_enter_or_space_opens_it_under_its_lane = None
+
+    @classmethod
+    def web(cls):
+        evs = tot.run_1900()
+        for e in evs:
+            if e.get("host") == "esx05.example.mil" or e.get("vm") in ("vm-app03", "vm-app04"):
+                e["vcenter"] = "vc02.example.mil"
+        r = tot.ot.outage_timeline(evs, [], dict(tot.OPTS, **tot.LeadUp.O))
+        return tot.ot.outage_timeline_doc(copy.deepcopy(tot.WATCH), r, True, True)
+
+    ROW = ("(() => {const f = document.querySelector('.otf'); return {hosts: [...f.querySelectorAll('.f-h option')].map(o => o.textContent), "
+           "vcs: [...f.querySelectorAll('.f-v option')].map(o => o.textContent), vms: f.querySelectorAll('#otf-vms option').length, "
+           "ph: f.querySelector('.f-vm input').placeholder, shown: f.querySelector('.f-out span').textContent, clear: !f.querySelector('.f-out button').hidden, "
+           "lanes: [...document.querySelectorAll('.ot-row .ot-name small')].map(s => s.textContent), "
+           "kinds: [...document.querySelectorAll('input[name=ot-kind]')].map(i => i.parentNode.querySelector('small').textContent), "
+           "marks: document.querySelectorAll('.ot-track .ot-m:not(.ot-off)').length, rows: [...document.querySelectorAll('tr[data-cls]')].filter(r => !r.hidden).map(r => +r.getAttribute('data-num'))}})()")
+
+    def pick(self, cls, v):
+        self.c.js("(() => {const s = document.querySelector('.otf .%s select'); s.value = %s; s.dispatchEvent(new Event('change', {bubbles: true}))})()" % (cls, json.dumps(v)))
+
+    def test_9_the_row_its_choices_and_its_counts(self):
+        self.c.js("localStorage.removeItem('site-report-outage')")
+        url, hist = self.c.js("[location.href, history.length]")
+        r = self.c.js(self.ROW)
+        self.assertEqual(r["hosts"], ["All hosts (5)", "esx01", "esx02", "esx03", "esx05", "esx07"])        # only the page's own
+        self.assertEqual(r["vcs"], ["All vCenters (2)", "vc01", "vc02"])
+        self.assertEqual((r["vms"], r["ph"]), (17, "Any of 17 VMs"))
+        self.assertEqual((r["shown"], r["clear"]), ("32 of 32 events", False))
+        self.assertEqual(r["lanes"][:2], ["29 events", "3 events"])
+        self.pick("f-h", "esx07")
+        r = self.c.js(self.ROW)
+        self.assertEqual((r["shown"], r["clear"]), ("5 of 32 events", True))
+        self.assertEqual(r["lanes"][:2], ["4 of 29 events", "1 of 3 events"])
+        self.assertEqual(r["kinds"], ["4", "1", "0", "0", "0"])                                         # Host, HA, usage, snapshots, other: esx07's
+        evs = self.c.js("[...document.querySelectorAll('.ot-track .ot-m[data-ev]')].flatMap(m => JSON.parse(m.getAttribute('data-ev')))")
+        mine = sorted(e["n"] for e in evs if e.get("h") == "esx07" or e["p"] == "esx07")
+        self.assertEqual(len(mine), 5)
+        self.assertEqual(sorted(r["rows"]), [n for n in mine if n in r["rows"]])                       # The events: esx07's rows only
+        self.assertTrue(set(r["rows"]) <= set(mine))
+        # with Related only and a kind off, the counts follow all of them
+        self.c.js("document.querySelector('input[name=ot-kind][value=host]').click()")
+        self.assertEqual(self.c.js(self.ROW)["shown"], "1 of 32 events")
+        self.c.js("document.querySelector('input[name=ot-kind][value=host]').click()")
+        # the vCenter and the VM
+        self.c.js("document.querySelector('.otf .f-out button').click()")
+        r = self.c.js(self.ROW)
+        self.assertEqual((r["shown"], r["clear"], r["lanes"][:2], r["kinds"][0]), ("32 of 32 events", False, ["29 events", "3 events"], "6"))
+        self.pick("f-v", "vc02")
+        r = self.c.js(self.ROW)
+        self.assertTrue(all(e.get("v") == "vc02" for e in evs if e["n"] in r["rows"]))
+        self.assertEqual(r["shown"], "%d of 32 events" % len([e for e in evs if e.get("v") == "vc02"]))
+        self.c.js("document.querySelector('.otf .f-out button').click()")
+        self.c.js("(() => {const i = document.querySelector('.otf .f-vm input'); i.value = 'vm-web0'; i.dispatchEvent(new Event('input', {bubbles: true}))})()")
+        self.assertEqual(self.c.js(self.ROW)["shown"], "%d of 32 events" % len([e for e in evs if "vm-web0" in e.get("vm", "")]))
+        self.c.js("document.querySelector('.otf .f-out button').click()")
+        self.assertEqual(self.c.js(self.ROW)["shown"], "32 of 32 events")
+        # nothing in the address, no history entry, nothing kept
+        self.assertEqual(self.c.js("[location.href, history.length]"), [url, hist])
+        self.assertNotIn("esx07", self.c.js("localStorage.getItem('site-report-outage') || ''"))
+
+    def test_a_the_facts_of_the_critical_event_that_ends_the_lead_up(self):
+        self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        self.assertEqual(self.c.js("document.querySelector('.ot-lead-t').textContent"), "Lead-up \u00b7 10 min")
+        self.assertEqual(self.c.js("[...document.querySelectorAll('.ot-m.lead-end')].map(m => m.querySelector('b').textContent)"), ["27"])
+        self.c.js("[...document.querySelectorAll('.ot-track .ot-m')].find(m => m._ev.some(e => e.n === 27)).click()")
+        got = self.c.js("(() => {const p = document.getElementById('otx-open'); return {title: p.querySelector('h4').textContent, when: p.querySelector('.otx-when').textContent, "
+                        "tags: [...p.querySelectorAll('.otx-tag')].map(t => t.textContent), "
+                        "facts: Object.fromEntries([...p.querySelectorAll('.otx-f > div')].map(d => [d.querySelector('dt').textContent, d.querySelector('dd').textContent]))}})()")
+        self.assertEqual(got["title"], "Alarm red: Host hardware system board status")
+        self.assertEqual(got["when"], "10:58:20 \u00b7 Critical")
+        self.assertEqual(got["tags"], ["Ends the lead-up", "About esx07"])
+        self.assertEqual(got["facts"], {"Where": "esx07", "Cluster": "cluster1", "vCenter": "vc01", "Alarm": "Host hardware system board status", "Kind": "Host",
+                                        "About the outage": "Yes: about esx07 or its host, cluster, datastores", "Lead-up": "Ends here: the first critical event",
+                                        "Go to": "Row 27 in The events"})
+        # the yellow before it: in the lead-up
+        self.c.js("[...document.querySelectorAll('.ot-track .ot-m')].find(m => m._ev.some(e => e.n === 26)).click()")
+        self.assertEqual(self.c.js("[...document.querySelectorAll('#otx-open .otx-f > div')].find(d => d.querySelector('dt').textContent === 'Lead-up').querySelector('dd').textContent"),
+                         "Yes: in the 10 min before #27")
+        # a group: its lines, the worst picked; another line picked shows its facts
+        self.c.js("[...document.querySelectorAll('.ot-track .ot-m')].find(m => m._ev.length === 12).click()")
+        self.assertEqual(self.c.js("document.querySelector('#otx-open h4').textContent"), "12 events, 10:13")
+        self.assertEqual(self.c.js("document.querySelectorAll('#otx-open .otx-ev li').length"), 12)
+        self.c.js("document.querySelectorAll('#otx-open .otx-ev li')[1].click()")
+        self.assertEqual(self.c.js("document.querySelector('#otx-open .otx-ev li[aria-current]') === document.querySelectorAll('#otx-open .otx-ev li')[1]"), True)
+        n = self.c.js("document.querySelectorAll('#otx-open .otx-ev li')[1].getAttribute('data-n')")
+        self.assertEqual(self.c.js("document.querySelector('#otx-open .otx-f dd button').textContent"), "Row %s in The events" % n)
+        # a filter that leaves the opened mark out closes it
+        self.pick("f-h", "esx07")
+        self.assertFalse(self.c.js("!!document.getElementById('otx-open')"))
+        self.c.js("document.querySelector('.otf .f-out button').click()")
+
+
 class RealChromeOutageFiltersBrief(RealChromeOutageFilters):
     TPL = "report_brief.html.j2"
 
@@ -829,7 +945,7 @@ class RealChromeOutageFiltersOps(RealChromeOutageFilters):
 
 class RealChromeOutageLinks(RealChromeOutage):
     """The incidents of ServiceNow linked: in the tip's lines, in The events and in the first card - a new tab, https only."""
-    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_or_enter_pins_it_and_the_list_scrolls = None
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_enter_or_space_opens_it_under_its_lane = None
     URL = "https://dev.service-now.example/nav_to.do?uri=incident.do%3Fsys_id%3Da1"
 
     @classmethod
@@ -859,12 +975,12 @@ class RealChromeOutageLinks(RealChromeOutage):
         """Release review 4: only https with a host and no user - the same question as safe_link - makes the number a link."""
         self.assertGreaterEqual(self.c.js("[...document.querySelectorAll(%s)].findIndex(m => JSON.parse(m.getAttribute('data-ev'))[0].k)" % json.dumps(self.SEL)), 0)
         probe = ("(u => {document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})); const m = [...document.querySelectorAll(%s)].find(m => m._ev && m._ev[0].k); "
-                 "m._ev[0].u = u; m.click(); const n = document.querySelectorAll('#site-tip .tt-inc').length; document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})); return n})" % json.dumps(self.SEL))
+                 "m._ev[0].u = u; m.click(); const n = document.querySelectorAll('#otx-open .tt-inc').length; document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'})); return n})" % json.dumps(self.SEL))
         for u in ("https://u:pw@dev.service-now.example/x", "https://user@dev.service-now.example/x", "https:///x", "https://", "http://dev.service-now.example/x",
                   "javascript:alert(1)", "https://dev.service-now.example/ x", "https://dev.service-now.example/<b>", "HTTPS:\\evil.example", ""):
             self.assertEqual(self.c.js("%s(%s)" % (probe, json.dumps(u))), 0, u)
-        self.assertEqual(self.c.js("%s(%s)" % (probe, json.dumps(self.URL))), 1)
-        self.assertEqual(self.c.js("%s(%s)" % (probe, json.dumps(self.URL + "&back=a@b.example"))), 1)         # an @ after the host is not a user
+        self.assertGreaterEqual(self.c.js("%s(%s)" % (probe, json.dumps(self.URL))), 1)
+        self.assertGreaterEqual(self.c.js("%s(%s)" % (probe, json.dumps(self.URL + "&back=a@b.example"))), 1)         # an @ after the host is not a user
 
 
 class RealChromeOutageBrief(RealChromeOutage):

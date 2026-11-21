@@ -1499,6 +1499,55 @@ class LeadUp(unittest.TestCase):
         h = render("atlas", {"title": "Outage review", "status": "critical", "summary": [], "sections": [{"title": "Time line", "outage": c}]})
         self.assertNotIn('class="ot-lead"', h)
         self.assertIn("No lead-up drawn: nothing about esx07", h)
+        self.assertNotIn('<div class="ot-plot has-lead">', h)
+        self.assertNotIn(' lead-end"', h)
+
+
+class PopLook(unittest.TestCase):
+    """1.90.1: the time line in the pop look - what the page filters by (host, VM, vCenter of each event), what an opened mark
+    shows (cluster, alarm, its place in the lead-up) and the lead-up drawn (its tab, its end)."""
+
+    def chart(self, evs):
+        r = ot.outage_timeline(evs, [], dict(OPTS, **LeadUp.O))
+        return next(s for s in r["web_sections"] if s.get("outage"))["outage"]
+
+    def events(self, c):
+        return dict((e["n"], e) for g in c["lanes"] for m in g["marks"] for e in m["ev"])
+
+    def test_each_event_says_where_it_was(self):
+        ev = self.events(self.chart(run_1900()))
+        self.assertEqual(ev[27], {"n": 27, "t": "10:58:20", "m": "10:58", "l": "critical", "w": "Alarm red: Host hardware system board status", "p": "esx07",
+                                  "r": 1, "c": "host", "h": "esx07", "v": "vc01", "cl": "cluster1", "a": "Host hardware system board status", "lu": 2})
+        vm = next(e for e in ev.values() if e.get("vm") == "vm-web03")
+        self.assertEqual((vm["p"], vm["h"], vm["v"]), ("vm-web03", "esx03", "vc01"))                 # a VM's alarm: its host too (short names)
+        self.assertNotIn("vm", ev[27])                                                                 # only what is known
+        boot = next(e for e in ev.values() if e["w"].startswith("Host booted") or "boot" in e["w"].lower())
+        self.assertNotIn("a", boot)                                                                    # an event, not an alarm
+
+    def test_the_lead_up_in_each_event_and_mark(self):
+        c = self.chart(run_1900())
+        ev = self.events(c)
+        self.assertEqual(sorted(n for n, e in ev.items() if e.get("lu")), [26, 27])                    # the yellow 10 min before, and #27 that ends it
+        self.assertEqual(ev[26]["lu"], 1)
+        self.assertEqual((c["lead"]["num"], c["lead"]["span"]), (27, "10 min"))
+        self.assertEqual([m["label"] for g in c["lanes"] for m in g["marks"] if m["lead_end"]], ["27"])
+        nolead = self.chart([e for e in run_1900() if not (e["alarm"] == "Host hardware system board status" and e["to"] == "yellow")])
+        self.assertFalse(any(e.get("lu") for e in self.events(nolead).values()))
+        self.assertFalse(any(m["lead_end"] for g in nolead["lanes"] for m in g["marks"]))
+
+    def test_the_page_draws_the_tab_and_the_end(self):
+        sys.path.insert(0, HERE)
+        from test_report_fit import render
+        c = self.chart(run_1900())
+        web = {"title": "Outage review", "status": "critical", "summary": [], "sections": [{"title": "Time line", "outage": c}]}
+        for look in ("atlas", "brief", "ops"):
+            h = render(look, web)
+            self.assertIn('<div class="ot-plot has-lead">', h, look)
+            self.assertIn('data-lead="27" data-lead-span="10 min"><span class="ot-lead-t">Lead-up &middot; 10 min</span></i>', h, look)
+            self.assertEqual(h.count(' lead-end"'), 1, look)
+            self.assertIn('data-subject="esx07"', h, look)
+            self.assertIn("A click (or <b>Enter</b> on a Tab stop, or a tap) opens its events below the lane", h, look)
+            self.assertNotIn("keeps the list open", h, look)
 
 
 if __name__ == "__main__":

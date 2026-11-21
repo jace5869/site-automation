@@ -710,7 +710,23 @@
   otMarks.forEach(function(m){try{m._ev=JSON.parse(m.getAttribute('data-ev'))}catch(e){m._ev=null}
     var b=m.querySelector('b');m._b=b;m._lab0=b?b.textContent:'';m._svg0=m.querySelector('svg');m._tip0=m.getAttribute('data-tip')||'';m._aria0=m.getAttribute('aria-label')||'';
     m._lv0=OTLV.filter(function(l){return m.classList.contains('ot-'+l)})[0]||'info';m._sub=m.classList.contains('ot-rel')||m.classList.contains('ot-dim')});
-  var otVisible=function(list){return list.filter(function(e){return !(OT.show==='rel'&&!e.r)&&!OT.off[e.c]})};
+  /* 1.90.1: the host / vCenter / VM row above the lanes - its choices only the page's own events (data-ev: h, v, vm); it narrows the marks,
+     their lists, The events, the lanes' and the kinds' counts with the controls above. Kept nowhere: nothing in the address, nothing stored */
+  var OTF={h:'',v:'',vm:''},otByN={},otEvs=[],otEl=document.querySelector('.ot'),otHook={},otShown=null,otClear=null;
+  otMarks.forEach(function(m){(m._ev||[]).forEach(function(e){otByN[e.n]=e;otEvs.push(e)})});
+  var otPass=function(e){return !(OTF.h&&e.h!==OTF.h&&e.p!==OTF.h)&&!(OTF.v&&e.v!==OTF.v)&&!(OTF.vm&&String(e.vm||'').toLowerCase().indexOf(OTF.vm.toLowerCase())<0)};
+  var otVisible=function(list){return list.filter(function(e){return !(OT.show==='rel'&&!e.r)&&!OT.off[e.c]&&otPass(e)})};
+  /* the counts: a lane "4 of 29 events" while something narrows it, the kinds' counts within the host / vCenter / VM, "5 of 32 events" */
+  var otCount=function(){if(!otEl)return;var on=!!(OTF.h||OTF.v||OTF.vm),kinds={},n=0;
+    otEvs.forEach(function(e){if(otPass(e))kinds[e.c]=(kinds[e.c]||0)+1;if(otVisible([e]).length)n++});
+    all('.ot-row',otEl).forEach(function(r){var sub=r.querySelector('.ot-name small'),ms=all('.ot-m[data-ev]',r),a=0,v=0;if(!sub||!ms.length)return;
+      ms.forEach(function(m){a+=(m._ev||[]).length;v+=otVisible(m._ev||[]).length});if(sub._t0===undefined)sub._t0=sub.textContent;
+      sub.textContent=v<a?v+' of '+a+(a===1?' event':' events'):sub._t0;sub.classList.toggle('f-of',v<a)});
+    if(otCtl)all('input[name=ot-kind]',otCtl).forEach(function(i){var k=i.parentNode.querySelector('small');if(!k)return;if(k._t0===undefined)k._t0=k.textContent;
+      k.textContent=on?String(kinds[i.value]||0):k._t0});
+    if(otShown){otShown.textContent='';var b=document.createElement('b');b.textContent=String(n);otShown.appendChild(b);
+      otShown.appendChild(document.createTextNode(' of '+otEvs.length+(otEvs.length===1?' event':' events')));otClear.hidden=!on}
+    if(otHook.re)otHook.re()};
   /* a mark that stands for several events shows what is left of them: its number (first+others), its worst level and icon, whether the
      rest are related (the outline), and its tip and aria text - as it was when all of them show */
   var otMark=function(m,v){
@@ -728,13 +744,13 @@
     m.setAttribute('data-tip',tip);m.setAttribute('aria-label',aria)};
   otMarks.forEach(function(m){m._rel0=m.classList.contains('ot-rel')?1:0});
   var otApply=function(changed){
-    var filtered=OT.show!=='all'||Object.keys(OT.off).length>0;
+    var filtered=OT.show!=='all'||Object.keys(OT.off).length>0||!!(OTF.h||OTF.v||OTF.vm);      /* 1.90.1: the host / vCenter / VM row too */
     var tables=all('.tw table').filter(function(tb){return tb.querySelector('tr[data-cls]')});
     tables.forEach(function(tb){if(tb._expand&&(changed||filtered||!OT.rep))tb._expand();
       tb._otFree=filtered||(!OT.rep&&!!tb.querySelector('tr[data-rep]'))});
     otMarks.forEach(function(m){if(!m._ev)return;var v=otVisible(m._ev);m.classList.toggle('ot-off',!v.length);if(v.length)otMark(m,v)});
     otRows=all('tr[data-cls]');var wi=-1;otRows.forEach(function(tr){var t=tr.closest('table');if(t&&wi<0){var h=all('thead th',t).map(function(x){return x.textContent.trim()});wi=h.findIndex(function(x){return x.indexOf('What happened')===0})}
-      var ev={r:tr.getAttribute('data-rel')==='1'?1:0,c:tr.getAttribute('data-cls')};
+      var ev=otByN[tr.getAttribute('data-num')]||{r:tr.getAttribute('data-rel')==='1'?1:0,c:tr.getAttribute('data-cls')};
       var hide=!otVisible([ev]).length||(tr.hasAttribute('data-rep')&&!OT.rep);if(!!tr._ot!==hide){tr._ot=hide;vis(tr)}      /* one more input to vis(), beside the table's filter and the search */
       var f=tr.getAttribute('data-fold'),td=wi>=0?tr.cells[wi]:null;
       if(f&&td){var q=f.split('|'),sx=td._sx;if(!sx){sx=td._sx=document.createElement('span');sx.className='ot-fold';td.appendChild(sx)}      /* its own node: the cell's link stays */
@@ -744,8 +760,35 @@
     if(find&&find.value.trim()&&typeof run==='function')run();
     else if(tables.length)fitRows(document);
     if(otCtl){all('input[name=ot-show]',otCtl).forEach(function(i){i.checked=i.value===OT.show});
-      all('input[name=ot-kind]',otCtl).forEach(function(i){i.checked=!OT.off[i.value]});var r=otCtl.querySelector('input[name=ot-rep]');if(r)r.checked=OT.rep}};
+      all('input[name=ot-kind]',otCtl).forEach(function(i){i.checked=!OT.off[i.value]});var r=otCtl.querySelector('input[name=ot-rep]');if(r)r.checked=OT.rep}
+    otCount()};
   var otSave=function(){try{localStorage.setItem(OTK,JSON.stringify({show:OT.show,off:OT.off,rep:OT.rep}))}catch(e){}};
+  if(otEl&&otEvs.length){
+    var otU=function(f){var o=[];otEvs.forEach(function(e){var x=f(e);if(x&&o.indexOf(x)<0)o.push(x)});return o.sort()};
+    var oh=otU(function(e){return e.h}),ov=otU(function(e){return e.v}),om=otU(function(e){return e.vm});
+    if(oh.length>1||ov.length>1||om.length>1){      /* one host, one vCenter, one VM: nothing to choose - no row */
+      var fr=document.createElement('div');fr.className='otf';fr.setAttribute('role','group');fr.setAttribute('aria-label','Filter the time line by host, vCenter or VM');
+      var otSel=function(cls,name,list,word,key){if(list.length<2)return null;var l=document.createElement('label');l.className=cls;l.appendChild(document.createTextNode(name));
+        var x=document.createElement('select');x.appendChild(new Option(word+' ('+list.length+')',''));list.forEach(function(v){x.appendChild(new Option(v,v))});
+        x.addEventListener('change',function(){OTF[key]=x.value;otApply()});l.appendChild(x);fr.appendChild(l);return x};
+      var fh=otSel('f-h','Host',oh,'All hosts','h'),fv=otSel('f-v','vCenter',ov,'All vCenters','v'),fm=null;
+      if(om.length>1){var lm=document.createElement('label');lm.className='f-vm';lm.appendChild(document.createTextNode('VM'));
+        fm=document.createElement('input');fm.type='search';fm.placeholder='Any of '+om.length+' VMs';fm.autocomplete='off';fm.setAttribute('list','otf-vms');
+        var dl=document.createElement('datalist');dl.id='otf-vms';om.forEach(function(v){dl.appendChild(new Option(v))});
+        fm.addEventListener('input',function(){OTF.vm=fm.value.trim();otApply()});lm.appendChild(fm);lm.appendChild(dl);fr.appendChild(lm)}
+      var fo=document.createElement('div');fo.className='f-out';otShown=document.createElement('span');otShown.setAttribute('aria-live','polite');
+      otClear=document.createElement('button');otClear.type='button';otClear.textContent='Clear';otClear.hidden=true;
+      otClear.addEventListener('click',function(){OTF={h:'',v:'',vm:''};[fh,fv,fm].forEach(function(x){if(x)x.value=''});otApply();var f0=fh||fv||fm;if(f0)f0.focus()});
+      fo.appendChild(otShown);fo.appendChild(otClear);fr.appendChild(fo);
+      var ob=document.querySelector('.ot-over')||otEl;ob.parentNode.insertBefore(fr,ob)}
+    /* motion (html.pop-move: report_motion, the system's reduced-motion wish): the marks come in left to right once the time line is in view,
+       the lead-up draws in back from its critical event, its tab shows, that event pings once. Still: all of it is simply there */
+    if(document.documentElement.classList.contains('pop-move')&&'IntersectionObserver' in window){
+      otEl.classList.add('ot-wait');otMarks.forEach(function(m){m.style.setProperty('--ot-d',Math.round((parseFloat(m.style.left)||0)*9)+'ms')});
+      var otIo=new IntersectionObserver(function(es){if(!es.some(function(x){return x.isIntersecting}))return;otIo.disconnect();
+        (window.requestAnimationFrame||setTimeout)(function(){otEl.classList.add('ot-go');otEl.classList.remove('ot-wait');
+          setTimeout(function(){otEl.classList.remove('ot-go');otMarks.forEach(function(m){m.style.removeProperty('--ot-d')})},2700)})},{threshold:0.2});
+      otIo.observe(otEl)}}
   if(otCtl){
     try{var sv=JSON.parse(localStorage.getItem(OTK)||'null');if(sv&&typeof sv==='object'){if(sv.show==='rel'&&otCtl.querySelector('input[value=rel]'))OT.show='rel';
       if(sv.off&&typeof sv.off==='object')OT.off=sv.off;OT.rep=!!sv.rep}}catch(e){}
@@ -774,6 +817,18 @@
     var okUrl=function(u){if(typeof u!=='string'||!u||u.length>2000||/[\s\x00-\x1f\x7f<>"'`\\]/.test(u))return false;
       if(!/^https:\/\/[^\/?#\\]/i.test(u))return false;      /* the host is written out: URL() would read https:///x as host x */
       try{var a=new URL(u);return a.protocol==='https:'&&!!a.hostname&&!a.username&&!a.password&&u.replace(/^https:\/\//i,'').split(/[\/?#]/)[0].indexOf('@')<0}catch(x){return false}};
+    /* to row n of The events: the search that hides it is cleared, a table the 25-row cap folds opens; a row a filter hides is said (say) */
+    var otGo=function(n,say){var tr=rowFor(n);if(!tr)return false;
+      if(tr.hidden&&tr._s&&find&&typeof run==='function'){find.value='';run()}                   /* the search hides it: the search is cleared */
+      if(tr._c&&!(tr._f||tr._d||tr._p||tr._ot||tr._s)){var tb0=tr.closest('table');if(tb0){tb0._open=true;if(tb0._capApply)tb0._capApply()}}                  /* a row only the 25-row cap folds: the table opens first (a row a filter hides is never cap-only: the filter's note wins) */
+      if(tr.hidden){say('Row '+n+' is hidden by '+(tr._f?"the table's filter box":tr._d?"the table's column filters":tr._p?'the filter buttons at the top of the page':tr._ot?"the time line's controls (host, vCenter, VM, Show, kinds, repeats)":'a filter')+'.');return true}
+      hide();var d=tr.closest('details');if(d)d.open=true;
+      tr.scrollIntoView({block:'center'});tr.classList.add('ot-flash');setTimeout(function(){tr.classList.remove('ot-flash')},2200);return true};
+    /* what happened, an incident of ServiceNow's number a link (a new tab) */
+    var otWhat=function(e,cls){var w=document.createElement('span');w.className=cls;var at=e.u&&e.k?e.w.indexOf(e.k):-1;
+      if(at>=0&&okUrl(e.u)){w.appendChild(document.createTextNode(e.w.slice(0,at)));var inc=document.createElement('a');inc.className='tt-inc';inc.href=e.u;inc.target='_blank';
+        inc.rel='noopener noreferrer';inc.textContent=e.k;w.appendChild(inc);w.appendChild(document.createTextNode(e.w.slice(at+e.k.length)))}
+      else w.appendChild(document.createTextNode(e.w));return w};
     var showList=function(el,x,y){var list=otVisible(el._ev||[]);if(!list.length){hide();return}
       if(owner&&owner!==el&&owner._off)owner._off();owner=el;tt.textContent='';tt.className='tt tt-list'+(pinned===el?' pin':'');
       var bytime=list.slice().sort(function(a,b){return a.n-b.n}),first=bytime[0].m,last=bytime[bytime.length-1].m;
@@ -783,25 +838,15 @@
         var ln=document.createElement('div'),ic=document.querySelector('.ot-legend .ot-'+e.l+' svg');ln.className='tt-ln'+(e.r?' rel':'');
         var t=document.createElement('a');t.className='tt-t';t.href='#ot-row-'+e.n;t.textContent=e.t;t.title='Go to row '+e.n+' of The events';ln.appendChild(t);
         var i=document.createElement('span');i.className='tt-i ot-'+e.l;if(ic)i.appendChild(ic.cloneNode(true));i.setAttribute('aria-hidden','true');ln.appendChild(i);
-        var w=document.createElement('span');w.className='tt-w';
-        var at=e.u&&e.k?e.w.indexOf(e.k):-1;           /* an incident of ServiceNow: its number is a link (a new tab) */
-        if(at>=0&&okUrl(e.u)){w.appendChild(document.createTextNode(e.w.slice(0,at)));var inc=document.createElement('a');inc.className='tt-inc';inc.href=e.u;inc.target='_blank';
-          inc.rel='noopener noreferrer';inc.textContent=e.k;w.appendChild(inc);w.appendChild(document.createTextNode(e.w.slice(at+e.k.length)))}
-        else w.appendChild(document.createTextNode(e.w));
+        var w=otWhat(e,'tt-w');
         if(e.p){var p=document.createElement('small');p.textContent=e.p;w.appendChild(p)}ln.appendChild(w);
-        var go=function(ev){var tr=rowFor(e.n);if(!tr)return;ev.preventDefault();
-          if(tr.hidden&&tr._s&&find&&typeof run==='function'){find.value='';run()}                   /* the search hides it: the search is cleared */
-          if(tr._c&&!(tr._f||tr._d||tr._p||tr._ot||tr._s)){var tb0=tr.closest('table');if(tb0){tb0._open=true;if(tb0._capApply)tb0._capApply()}}                  /* a row only the 25-row cap folds: the table opens first (a row a filter hides is never cap-only: the filter's note wins) */
-          if(tr.hidden){var nt=tt.querySelector('.tt-note')||document.createElement('div');nt.className='tt-note';nt.setAttribute('role','status');
-            nt.textContent='Row '+e.n+' is hidden by '+(tr._f?"the table's filter box":tr._d?"the table's column filters":tr._p?'the filter buttons at the top of the page':tr._ot?"the time line's controls (Show, kinds, repeats)":'a filter')+'.';tt.appendChild(nt);return}
-          hide();var d=tr.closest('details');if(d)d.open=true;
-          tr.scrollIntoView({block:'center'});tr.classList.add('ot-flash');setTimeout(function(){tr.classList.remove('ot-flash')},2200)};
+        var go=function(ev){if(otGo(e.n,function(t){var nt=tt.querySelector('.tt-note')||document.createElement('div');nt.className='tt-note';nt.setAttribute('role','status');
+          nt.textContent=t;tt.appendChild(nt)}))ev.preventDefault()};
         t.addEventListener('click',go);
         ln.addEventListener('click',function(ev){if(ev.target.closest&&ev.target.closest('a'))return;go(ev)});          /* the line goes to its row; the incident link opens ServiceNow */
         body.appendChild(ln)});
       tt.appendChild(body);if(pinned===el){body.tabIndex=0;body.setAttribute('aria-label','Events of this mark')}
       tt.hidden=false;place(x,y);if(pinned===el)body.focus()};
-    var pin=function(el){if(!el._ev)return;pinned=el;var r=el.getBoundingClientRect();showList(el,r.left+r.width/2,r.top)};
     var keyed=function(el){try{return el.matches(':focus-visible')}catch(e){return true}};
     var bindTip=function(el){if(el._at)return;if(!el.hasAttribute('tabindex'))el.tabIndex=0;el.removeAttribute('title');el.setAttribute('aria-describedby','site-tip');
       var ln=function(){return el.getAttribute('data-tip').split('\n')};
@@ -813,9 +858,63 @@
       el.addEventListener('pointerup',function(e){if(e.pointerType!=='mouse'&&owner!==el)at()});
       el.addEventListener('focus',function(){if(el._quiet){el._quiet=0;return}if(keyed(el)&&!pinned)at()});
       el.addEventListener('blur',function(){if(owner===el&&!pinned)hide()});
-      if(el._ev){el.addEventListener('click',function(){if(pinned===el)hide();else pin(el)});
-        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();if(pinned===el)hide();else pin(el)}})}};
+      if(el._ev){el.setAttribute('aria-expanded','false');el.addEventListener('click',function(){otOpen(el)});
+        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();otOpen(el)}})}};
     tips.forEach(bindTip);
+    /* 1.90.1: a mark opened (a click, Enter, Space, a tap): its events under its lane, as an opened row of the pop look - the worst first
+       picked, the facts of the picked one beside them (where, host, VM, cluster, vCenter, alarm, kind, about the outage, its place in the
+       lead-up, its row in The events). Esc or Close closes it; one open at a time; hover keeps the quick tip */
+    var otPanel=null,otOpenM=null,OTWD={critical:'Critical',warning:'Warning',low:'Low',info:'Note',ok:'Back to normal'},otKn={};
+    var otSubj=otEl&&otEl.getAttribute('data-subject')||'',otLd=document.querySelector('.ot-lead[data-lead]'),otLn=otLd?otLd.getAttribute('data-lead'):'',
+      otLs=otLd?otLd.getAttribute('data-lead-span')||'':'';
+    if(otCtl)all('input[name=ot-kind]',otCtl).forEach(function(i){otKn[i.value]=[].filter.call(i.parentNode.childNodes,function(x){return x.nodeType===3}).map(function(x){return x.nodeValue}).join('').trim()});
+    var otClose=function(back){var m=otOpenM;if(otPanel&&otPanel.parentNode)otPanel.parentNode.removeChild(otPanel);otPanel=otOpenM=null;otHook.re=null;
+      if(m){m.setAttribute('aria-expanded','false');m.removeAttribute('aria-controls');if(back){m._quiet=1;m.focus()}}};
+    var otFacts=function(dl,e){dl.textContent='';var nt=dl.parentNode&&dl.parentNode.querySelector('.otx-note');if(nt)nt.parentNode.removeChild(nt);
+      var add=function(k,v,wide,node){if(!v&&!node)return;var g=document.createElement('div');if(wide)g.className='wide';var t=document.createElement('dt');t.textContent=k;
+        var d=document.createElement('dd');if(node)d.appendChild(node);else d.textContent=v;g.appendChild(t);g.appendChild(d);dl.appendChild(g)};
+      var o=function(x){return x&&x!==e.p?x:''};
+      add('Where',e.p);add('Host',o(e.h));add('VM',o(e.vm));add('Cluster',o(e.cl));add('vCenter',o(e.v));add('Alarm',e.a||'',String(e.a||'').length>22);add('Kind',otKn[e.c]||'');
+      if(otSubj)add('About the outage',e.r?'Yes: about '+otSubj+' or its host, cluster, datastores':'No',true);
+      if(e.lu)add('Lead-up',e.lu===2?'Ends here: the first critical event':'Yes: in the '+(otLs?otLs+' ':'')+'before #'+otLn,true);
+      if(e.k&&e.u&&okUrl(e.u)){var inc=document.createElement('a');inc.className='tt-inc';inc.href=e.u;inc.target='_blank';inc.rel='noopener noreferrer';
+        inc.textContent=e.k;add('Incident','',false,inc)}
+      var b=document.createElement('button');b.type='button';b.textContent='Row '+e.n+' in The events';
+      b.addEventListener('click',function(){otGo(e.n,function(t){var p=dl.parentNode,x=p.querySelector('.otx-note')||document.createElement('p');x.className='otx-note';
+        x.setAttribute('role','status');x.textContent=t;p.appendChild(x)})});
+      add('Go to','',false,b)};
+    var otOpen=function(m){if(otOpenM===m){otClose(true);return}otClose();if(!otVisible(m._ev||[]).length)return;
+      hide();otOpenM=m;m.setAttribute('aria-expanded','true');m.setAttribute('aria-controls','otx-open');
+      var p=otPanel=document.createElement('div');p.className='otx';p.id='otx-open';p.setAttribute('role','region');p.setAttribute('aria-labelledby','otx-title');
+      var build=function(){var ev=otVisible(m._ev||[]).sort(function(a,b){return a.n-b.n}),pick=null;p.textContent='';
+        var first=ev.slice().sort(function(a,b){return (RANKS[b.l]||0)-(RANKS[a.l]||0)||a.n-b.n})[0],lv=OTLV.indexOf(first.l)<0?'info':first.l;
+        var h=document.createElement('div');h.className='otx-h';var c=m.cloneNode(true);c.className='ot-m otx-chip ot-'+lv;
+        ['style','data-ev','data-tip','title','role','tabindex','aria-label','aria-describedby','aria-expanded','aria-controls'].forEach(function(a){c.removeAttribute(a)});
+        c.setAttribute('aria-hidden','true');h.appendChild(c);
+        var h4=document.createElement('h4');h4.id='otx-title';var a0=ev[0].m,a1=ev[ev.length-1].m;
+        h4.textContent=ev.length>1?ev.length+' events, '+a0+(a1!==a0?'\u2013'+a1:''):first.w;h.appendChild(h4);
+        var wn=document.createElement('span');wn.className='otx-when';wn.textContent=ev.length>1?'the worst: '+OTWD[lv]:first.t+' \u00b7 '+OTWD[lv];h.appendChild(wn);
+        var tag=function(t,cl){var x=document.createElement('span');x.className='otx-tag'+(cl?' '+cl:'');x.textContent=t;h.appendChild(x)};
+        if(ev.some(function(e){return e.lu===2}))tag('Ends the lead-up');else if(ev.some(function(e){return e.lu}))tag('In the lead-up');
+        if(otSubj&&ev.some(function(e){return e.r}))tag('About '+otSubj,'rel');
+        var x=document.createElement('button');x.type='button';x.className='otx-x';x.textContent='Close';x.addEventListener('click',function(){otClose(true)});h.appendChild(x);
+        p.appendChild(h);var dl=document.createElement('dl');dl.className='otx-f';
+        if(ev.length>1){var ul=document.createElement('ul');ul.className='otx-ev';ul.setAttribute('aria-label','Events of this mark');
+          ev.forEach(function(e){var li=document.createElement('li');if(otSubj&&!e.r)li.className='dim';li.tabIndex=0;li.setAttribute('data-n',String(e.n));li.setAttribute('aria-label',e.t+', '+OTWD[e.l]+', '+e.w);
+            var ic=document.createElement('span'),sv=document.querySelector('.ot-legend .ot-'+e.l+' svg');ic.className='ic ot-'+e.l;ic.setAttribute('aria-hidden','true');if(sv)ic.appendChild(sv.cloneNode(true));li.appendChild(ic);
+            var t=document.createElement('span');t.className='t';t.textContent=e.t;li.appendChild(t);
+            var w=otWhat(e,'w'),sm=document.createElement('small');sm.textContent=[e.p,e.h&&e.h!==e.p?e.h:'',e.v].filter(function(q){return q}).join(' \u00b7 ');w.appendChild(sm);li.appendChild(w);
+            var pk=function(){all('li',ul).forEach(function(q){q.removeAttribute('aria-current')});li.setAttribute('aria-current','true');otFacts(dl,e)};
+            li.addEventListener('click',function(k){if(k.target.closest&&k.target.closest('a'))return;pk()});
+            li.addEventListener('keydown',function(k){if(k.target===li&&(k.key==='Enter'||k.key===' ')){k.preventDefault();pk()}});
+            if(e===first){li.setAttribute('aria-current','true');pick=e}ul.appendChild(li)});p.appendChild(ul)}
+        p.appendChild(dl);otFacts(dl,pick||first)};
+      build();
+      otHook.re=function(){if(m.classList.contains('ot-off')||!otVisible(m._ev||[]).length){otClose();return}build()};
+      var lane=m.closest('.ot-row');lane.parentNode.insertBefore(p,lane.nextSibling)};
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&otPanel)otClose(true)});
+    document.addEventListener('click',function(e){var t=e.target;if(!otPanel||otPanel.contains(t)||!t.closest)return;
+      if(t.closest('.ot-m[data-ev]')||t.closest('.otf')||t.closest('[data-ot-ctl]'))return;otClose()});
     var bindSpark=function(svg){if(svg._at)return;var d;try{d=JSON.parse(svg.getAttribute('data-points'))}catch(e){return}if(!d||!d.length)return;
       var name=svg.getAttribute('data-label')||'',vb=svg.viewBox.baseVal,cur=-1,g=document.createElementNS(NS,'line'),dot=document.createElementNS(NS,'circle');
       g.setAttribute('class','hg');g.setAttribute('y1','0');g.setAttribute('y2',String(vb.height));dot.setAttribute('class','hd');dot.setAttribute('r','4');

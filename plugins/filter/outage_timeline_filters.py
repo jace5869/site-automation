@@ -807,11 +807,19 @@ def outage_timeline(events, tickets=None, opts=None):
         ticks.append({"at": _pct(t, z0, z1), "text": text, "wide": len(tks) > 5 and i % 2 == 1})
     def evd(e):
         """One event as a mark's list line (the page's script reads it): n, time, minute, level, what, where, related, kind - and, for an incident
-        of ServiceNow, its number and link."""
+        of ServiceNow, its number and link. 1.90.1: what the page filters by and an opened mark shows - its host, VM, vCenter (short names),
+        cluster and alarm, each when known - and its place in the lead-up (in: 1, the critical event that ends it: 2)."""
         d = {"n": e["num"], "t": loc(e["t"]).strftime("%H:%M:%S"), "m": loc(e["t"]).strftime("%H:%M"), "l": e["level"], "w": e["what"], "p": e["where"],
              "r": 1 if e["related"] else 0, "c": e["cls"]}
         if e.get("url"):
             d.update(k=e["ticket"], u=e["url"])
+        kind = str(e.get("kind") or "")
+        for k, v in (("h", _short(e.get("host"))), ("vm", str(e.get("vm") or "")), ("v", _short(e.get("vcenter"))),
+                     ("cl", str(e.get("cluster") or "")), ("a", kind[6:] if kind.startswith("alarm:") else "")):
+            if v:
+                d[k] = v
+        if lead_up is not None and lead_up[0] <= e["t"] <= lead_up[1]["t"]:
+            d["lu"] = 2 if e is lead_up[1] else 1
         return d
     lanes = []
     for key, name in LANES:
@@ -822,6 +830,7 @@ def outage_timeline(events, tickets=None, opts=None):
                                                          (" - " + e["where"]) if e["where"] else "")} for e in mine])
         for m in marks:
             m["rel"] = 2 if all(x["r"] for x in m["ev"]) else 1 if any(x["r"] for x in m["ev"]) else 0
+            m["lead_end"] = any(x.get("lu") == 2 for x in m["ev"])
             m["data"] = json.dumps(m["ev"], ensure_ascii=False, separators=(",", ":"))
         sub = "%d event%s" % (len(mine), "" if len(mine) == 1 else "s") if mine else "nothing"
         if key in ("servicenow", "act"):
@@ -844,7 +853,7 @@ def outage_timeline(events, tickets=None, opts=None):
     lead_band = None
     if lead_up is not None:
         l0, lc = lead_up
-        lead_band = {"from": _pct(l0, z0, z1), "to": _pct(lc["t"], z0, z1),
+        lead_band = {"from": _pct(l0, z0, z1), "to": _pct(lc["t"], z0, z1), "num": lc["num"], "span": _span((lc["t"] - l0).total_seconds()),
                      "text": "Lead-up to #%d: %s to %s %s (%s)" % (lc["num"], hm(l0), loc(lc["t"]).strftime("%H:%M") if loc(l0).date() == loc(lc["t"]).date() else hm(lc["t"]), zname(lc["t"]), _span((lc["t"] - l0).total_seconds()))}
     whole = (end - begin).total_seconds()
     overview = None
