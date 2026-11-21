@@ -41,7 +41,7 @@ building and room text, none placed - an empty globe).
   to 60 sites.
 - **Compatible:** the first run after the upgrade says *Sites read a new way* once (node and link changes still compared; a
   missing node's site read by today's rule); a kept 1.85 map (the copy job) still draws.
-- **Review round:** a value with "/" keeps it (subnets read 10.1.0.0/16, /8 as 10.0.0.0/8; a Location such as
+- **Review round:** a value with "/" keeps it (subnets read whole, such as 198.51.100.0/24, and a /8 with its own network address; a Location such as
   "Bldg 0/Floor 2" stays whole); the part rule takes -1 and never stops the job; a custom property's values are shown
   only when named or read (never an e-mail address, a phone number or a serial-like value); a 1.85 copy read by a
   custom property is not *read a new way*; auto keeps last run's reading on a near tie; the portal's kept map is tied

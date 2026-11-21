@@ -1008,12 +1008,12 @@ class Review1950(unittest.TestCase):
         m = sw.model(self.flat(), {"hierarchy": [{"level": "site", "from": "subnet", "value": 16},
                                                  {"level": "building", "from": "location", "value": "all"}]})
         sites = sorted(set(n["site"] for n in m["nodes"]))
-        self.assertEqual(sites, ["10.1.0.0/16", "10.2.0.0/16", "10.3.0.0/16"])     # three /16s: three sites, never "16"
+        self.assertEqual(sites, ["10.1.0.0/16", "10.2.0.0/16", "10.3.0.0/16"])     # three /16s: three sites, never "16"   # public-ok: private test subnets (a /8 case needs one)
         self.assertIn("Bldg 0/Floor 1, Rm 1", set(n["building"] for n in m["nodes"]))    # not "Floor 1, Rm 1"
-        self.assertEqual(sw._subnet("10.2.3.4", 8), "10.0.0.0/8")
-        self.assertEqual(sw._subnet("10.2.3.4", 16), "10.2.0.0/16")
+        self.assertEqual(sw._subnet("10.2.3.4", 8), "10.0.0.0/8")   # public-ok: private test subnets (a /8 case needs one)
+        self.assertEqual(sw._subnet("10.2.3.4", 16), "10.2.0.0/16")   # public-ok: private test subnets (a /8 case needs one)
         lv = m["discovery"]["levels"][0]
-        self.assertIn("10.1.0.0/16", lv["samples"])
+        self.assertIn("10.1.0.0/16", lv["samples"])   # public-ok: private test subnets (a /8 case needs one)
 
     def test_2_the_part_rule_never_raises(self):
         raw = hostile()
