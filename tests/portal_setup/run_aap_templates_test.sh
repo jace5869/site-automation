@@ -219,10 +219,11 @@ cat > "$work/stig.json" <<'EOF2'
                                "stigman_api_writer": "STIG Manager API", "act_model_key": "ACT model key"}}
 EOF2
 before="$(writes)"
+export ANSIBLE_SHOW_CUSTOM_STATS=1
 run --check -e "@$work/stig.json"; rc=$?
 if [ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "WOULD CREATE - 'STIG - full scan - Linux check'" && has "WOULD CREATE - 'STIG Manager - update'" \
     && has "WOULD CREATE - 'Workflow gate - has a plan'" && has "WOULD CREATE - workflow 'STIG - full scan and upload'" \
-    && has "WOULD CREATE - workflow 'STIG - drift scan and upload'" \
+    && ! has '"aap_setup_fingerprints":' && has "WOULD CREATE - workflow 'STIG - drift scan and upload'" \
     && has "node linux: 'STIG - full scan - Linux check'; on failure -> gate_linux" && has "node windows: 'STIG - full scan - Windows check'; on failure -> gate_windows" \
     && has "node gate_linux: 'Workflow gate - has a plan'; on success -> approve; its Variables: workflow_gate_var: stigman_update_plan" \
     && has "node gate_windows: 'Workflow gate - has a plan'; on success -> approve; its Variables: workflow_gate_var: stigman_update_plan_windows" \
@@ -306,6 +307,30 @@ STIG update labels []"
     || fail "STIG jobs, a run" "rc $rc; got:
 $got
 $(grep -E "created|SKIPPED|FAILED|fatal|msg" "$work/out.txt" | head -10)"
+# The workflow map is a Run artifact. Seed it as AAP history for the next launch.
+if "$py" - "$work/out.txt" "$work/state.json" <<'PYEND'
+import json, re, sys
+from pathlib import Path
+output, state = map(Path, sys.argv[1:])
+stats, _ = json.JSONDecoder().raw_decode(output.read_text().rsplit("RUN: ", 1)[1].lstrip())
+fps = stats["aap_setup_fingerprints"]
+s = json.loads(state.read_text())
+for scan in ("full", "drift"):
+    name = "STIG - %s scan and upload" % scan
+    desc = next(w["description"] for w in s["workflow_job_templates"] if w["name"] == name)
+    assert desc.startswith("** Does: ") and "[set up by" not in desc, name
+    assert re.fullmatch("[0-9a-f]{12}", fps["workflow/" + name]), name
+# Older success, baseline, failed Run, successful Check. Only the baseline should be used.
+s["jobs"] = [{"id": i, "job_template": 7, "status": status, "artifacts": artifacts}
+             for i, status, artifacts in [(89, "successful", {"aap_setup_fingerprints": {}}),
+                                          (90, "successful", {"aap_setup_fingerprints": fps}),
+                                          (91, "failed", {"aap_setup_fingerprints": {}}),
+                                          (92, "successful", {})]]
+state.write_text(json.dumps(s))
+PYEND
+then pass "both workflows have clean descriptions and a fingerprint in the Run artifact"
+else fail "workflow descriptions and artifact"; fi
+unset ANSIBLE_SHOW_CUSTOM_STATS
 ev="$(tpl 'STIG - drift scan - Windows check' "['extra_vars']")"
 case "$ev" in *"check_stig_update_new_by_import: \"true\""*"check_stig_update_plan_var: \"stigman_update_plan_windows\""*) pass "... the Windows drift check hands its plan on as stigman_update_plan_windows and makes new assets by the import's planner" ;;
     *) fail "the drift check's fixed Variables" "$ev" ;; esac
@@ -315,6 +340,12 @@ run -e "@$work/stig.json"; rc=$?
     && pass "STIG jobs, a second run: already right, nothing written" || fail "STIG jobs, second run" "rc $rc; $(writes) vs $before; $(grep -E "workflow|fatal" "$work/out.txt" | head -6)"
 [ "$(st "len([w for w in s['workflow_job_templates'] if w['name'] == 'STIG Manager updated, with an approval'])")" = 1 ] \
     && pass "... the old workflow is still there (named, never deleted)" || fail "the old workflow was deleted"
+# A changed catalog description is safe to apply when AAP still matches the previous Run.
+before="$(writes)"
+run --check -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_description_owner": "Example team"}'; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "WOULD UPDATE - workflow 'STIG - full scan and upload'" \
+    && has "WOULD UPDATE - workflow 'STIG - drift scan and upload'" && pass "Check reads the previous Run's workflow fingerprints" \
+    || fail "workflow history lookup" "$(grep -E 'workflow|fatal' "$work/out.txt" | tail -12)"
 # 1.83.1 (P2-1): a step whose fixed Variables lack the plan var differs - never "already right"; overwrite sets
 # only those keys, a person's own settings kept
 setst "[j.update(extra_vars=j['extra_vars'].replace('check_stig_update_plan_var: \"stigman_update_plan_windows\"\\n', '') + 'site_note: mine\\n') for j in s['job_templates'] if j['name'] == 'STIG - drift scan - Windows check' and j['organization'] == 1]"

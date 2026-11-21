@@ -128,7 +128,7 @@ esac
     && [ "$(st_links 306)" = "$before_306" ] && pass "already gated, unknown, ACT's fix, no approval: not one link changed" \
     || fail "untouched workflows" "$(st_links 303) $(st_links 304)"
 got="$(st '[(j["playbook"], j["ask_variables_on_launch"], j["project"], j["inventory"], j["execution_environment"], "fingerprint" in j["description"]) for j in s["job_templates"] if j["name"] == "Workflow gate - has a plan"]')"
-[ "$got" = "[('playbooks/workflow_gate.yml', True, 2, 3, 5, True)]" ] && pass "the gate template made once: its playbook, Variables on launch, the setup job's mark" \
+[ "$got" = "[('playbooks/workflow_gate.yml', True, 2, 3, 5, False)]" ] && pass "the gate template made once: its playbook, Variables on launch, no fingerprint in the description" \
     || fail "gate template" "$got"
 grep -q "Gate template 'Workflow gate - has a plan': made" "$work/out.txt" && grep -q "GATED NOW - STIG Manager updated - Linux and Windows" "$work/out.txt" \
     && pass "the table: gated now" || fail "the table" "$(grep -E "GATE|Gate" "$work/out.txt" | head)"

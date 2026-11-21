@@ -448,9 +448,15 @@ workflows the actions launch, from `roles/site_portal_stack/files/workflows.yml`
 **Execute** on them, and **Approve** on the workflows with an approval node. Nothing more.
 
 - **It never deletes** a template or a workflow.
-- **A hand edit is kept.** A template or workflow changed by hand since the job wrote it is listed as *CHANGED BY HAND*
-  and left as it is. One of the same name the job did not make is listed as *NOT MADE BY THIS JOB* and left alone.
-  `portal_setup_overwrite: true` writes them again.
+- **A hand edit is kept.** On Run, the job saves a fingerprint per template or workflow in its AAP job artifact
+  `aap_setup_fingerprints`, keyed by `template/<name>` or `workflow/<name>`. Check publishes no map. Through the AAP API the job reads the ten most recent
+  completed jobs of this setup template. It takes the newest successful run that supplied a map and checks the fields
+  it manages in AAP, including the description and workflow nodes. A difference is listed as *CHANGED BY HAND* and
+  left alone. With no history or old marker, the job compares AAP with what it would write. An exact match becomes
+  its baseline. A difference is kept, as is a differing object missing from a known map (*NOT MADE BY THIS JOB*).
+  `portal_setup_overwrite: true` lets the job write it again.
+- **Upgrading from an older release.** When the managed fields still match their old fingerprint, Check says
+  *would remove the old fingerprint text* and Run takes it off the description. A hand-edited object is left alone.
 - **Check first.** With Job type **Check** it only reads, and lists field by field what it would change.
 - **The gate.** A workflow with an approval gets the step *Workflow gate - has a plan* between its check and the
   approval. Only a check that handed on a plan reaches the approval; one that failed on an error ends there.
@@ -1223,8 +1229,8 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 7. Remove `/etc/site-portal`.
 8. In AAP: remove the job template `Site portal - deploy`, the portal account's roles on workflows 40, 44, 45 and 49
    to 51, its token, then the account.
-9. What step 102 made (*AAP - set up portal actions*: each one's description ends "set up by AAP - set up portal
-   actions"): the workflows 40, 44, 45, 49, 50 and 51, their job templates (`workflows.yml` in
+9. What step 102 made (see the *AAP - set up portal actions* job results and its
+   `aap_setup_fingerprints` artifact): the workflows 40, 44, 45, 49, 50 and 51, their job templates (`workflows.yml` in
    `roles/site_portal_stack/files` lists them), *Workflow gate - has a plan*, and the schedules of
    `portal_setup_schedules`. Remove a workflow first, then its templates. The job never deletes them itself. Keep what
    you use elsewhere (workflow 40, the gate). Then the job templates `AAP - set up portal actions` and `AAP - add

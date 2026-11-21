@@ -75,6 +75,9 @@ wfs = [{"id": 200, "name": "Our container watch", "organization": 1, "descriptio
        {"id": 201, "name": "Our own flow", "organization": 1, "description": "by hand"},
        {"id": 202, "name": "Watch, no approval", "organization": 1, "description": ""},
        {"id": 203, "name": "Daily health", "organization": 1, "description": ""}]
+wfs.append({"id": 204, "name": "STIG - full scan and upload", "organization": 1,
+            "description": "Old workflow description [set up by AAP - set up job templates, fingerprint 0123456789ab]"})
+nodes.append(dict(nodes[0], id=392, wf=204))
 approvals = [{"id": 500, "name": "Approve the fix", "description": "", "timeout": 0}]
 s = {"next": 1000, "organizations": [{"id": 1, "name": "Default"}], "projects": [{"id": 2, "name": "site-automation", "organization": 1},
      {"id": 6, "name": "Old project", "organization": 1}], "inventories": [{"id": 3, "name": "Site hosts", "organization": 1}],
@@ -106,6 +109,8 @@ desc() { "$py" -c 'import json,sys; s=json.load(open(sys.argv[1])); k=sys.argv[2
 print(next(r for r in s[k] if r["id"] == i).get("description") or "", end="")' "$work/state.json" "$1" "$2"; }
 want() { "$py" -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]], end="")' "$work/expect.json" "$1"; }
 writes() { [ -f "$work/writes.jsonl" ] && wc -l < "$work/writes.jsonl" || echo 0; }
+legacy_portal="$(desc job_templates 107)"
+legacy_workflow="$(desc workflow_job_templates 204)"
 : > "$work/all-out.txt"
 OWN='{"aap_templates_description_owner": "OPS-TEAM", "aap_templates_description_contact": "DEV-TEAM"}'
 
@@ -115,7 +120,8 @@ if [ "$rc" -eq 0 ] && [ "$(writes)" -eq 0 ] && grep -q "WOULD DESCRIBE - job 'He
    && grep -q "WOULD DESCRIBE - job 'My Linux look' (catalog: 'Troubleshoot')" "$work/out.txt" \
    && grep -q "WOULD DESCRIBE - job 'Patching' (catalog: 'Patch hosts')" "$work/out.txt" \
    && grep -q "KEPT (hand-written) - job 'STIG - drift report'" "$work/out.txt" \
-   && grep -q "left to its own job - job 'ACT - triage finding'" "$work/out.txt" \
+   && grep -q "left to its own job - job 'ACT - triage finding'.*takes the old fingerprint text off on its next Run" "$work/out.txt" \
+   && grep -q "left to its own job - workflow 'STIG - full scan and upload'.*its next Run takes the old fingerprint text off" "$work/out.txt" \
    && grep -q "no description known - job 'Our own job' - its playbook playbooks/our_own.yml is not in the catalog" "$work/out.txt" \
    && grep -q "no description known - workflow 'Our own flow'" "$work/out.txt" \
    && grep -q "no description known - workflow 'Watch, no approval'" "$work/out.txt" \
@@ -140,14 +146,14 @@ if [ "$rc" -eq 0 ] && [ "$(desc job_templates 100)" = "$(want hc)" ] && [ "$(des
    && [ "$(desc job_templates 102)" = "Written by our team: runs Mondays" ] && [ "$(desc job_templates 105)" = "Ours, not the repository's" ] \
    && [ "$(desc workflow_job_templates 201)" = "by hand" ] && [ "$(desc job_templates 108)" = "" ] \
    && [ "$(desc workflow_job_templates 202)" = "" ] && [ "$(desc workflow_job_templates 203)" = "" ] \
-   && desc job_templates 107 | grep -q "fingerprint 0123456789ab" \
+   && [ "$(desc job_templates 107)" = "$legacy_portal" ] && [ "$(desc workflow_job_templates 204)" = "$legacy_workflow" ] \
    && [ "$(desc job_templates 109)" = "$(want podman)" ] && [ "$(desc job_templates 110)" = "$(want patch)" ]; then
     pass "a run: the five lines written (renamed: by playbook; two of one playbook: by Variables; the workflow by its steps); the rest untouched"
 else fail "the run" "$(cat "$work/out.txt")"; fi
 if "$py" - "$work/writes.jsonl" <<'PYEND'
 import json, sys
 w = [json.loads(l) for l in open(sys.argv[1])]
-sys.exit(0 if w and all(x["method"] == "PATCH" and list(x["body"]) == ["description"] for x in w) else 1)
+sys.exit(0 if w and all(x["method"] == "PATCH" and list(x["body"]) == ["description"] and "[set up by" not in x["body"]["description"] for x in w) else 1)
 PYEND
 then pass "only PATCHes of the description - never another field, never a POST or a DELETE"
 else fail "the writes" "$(cat "$work/writes.jsonl")"; fi
@@ -182,7 +188,7 @@ else fail "second run" "$(cat "$work/out.txt")"; fi
 # 4. no owner or contact: no Contact line (ours: written again); overwrite takes the hand-written one
 run -e aap_templates_describe_overwrite=true
 if [ "$rc" -eq 0 ] && [ "$(desc job_templates 100)" = "$(want hc_nocontact)" ] && desc job_templates 102 | grep -q "^\*\* Does: " \
-   && [ "$(desc job_templates 105)" = "Ours, not the repository's" ] && desc job_templates 107 | grep -q "fingerprint"; then
+   && [ "$(desc job_templates 105)" = "Ours, not the repository's" ] && [ "$(desc job_templates 107)" = "$legacy_portal" ] && [ "$(desc workflow_job_templates 204)" = "$legacy_workflow" ]; then
     pass "no owner/contact: no Contact line; aap_templates_describe_overwrite: the hand-written one written, the unknown and the portal's still left"
 else fail "overwrite / contact" "$(cat "$work/out.txt")"; fi
 

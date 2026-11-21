@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest.mock import Mock
 
 import yaml
 
@@ -107,6 +108,69 @@ class Spec(unittest.TestCase):
                                                      {"id": "b", "approval": {"name": "ok?", "timeout": 60}, "extra_data": {"x": 1}}]}]}
         self.assertEqual(S.check_spec(sp), ["workflow 'W', node a: extra_data is a mapping, on a template's node",
                                             "workflow 'W', node b: extra_data is a mapping, on a template's node"])
+
+
+class SyncFingerprints(unittest.TestCase):
+    want = {"name": "Example", "description": "Catalog description"}
+    key = "workflow/Example"
+
+    def reconcile(self, have, known=None, check=False, overwrite=False):
+        api = Mock()
+        api.call.return_value = (200, {"results": [dict(self.want, id=7, description=have)]})
+        sync = site_aap_workflows.Sync(api, {"known": known, "overwrite": overwrite}, check, S.MARK, "portal_setup_overwrite")
+        oid, action = sync.reconcile("workflow", "workflow_job_templates", "Example", self.want)
+        self.assertEqual(oid, 7)
+        writes = [c.args for c in api.call.call_args_list if c.args[0] != "GET"]
+        return action, sync.out, writes, sync.results[-1]["why"]
+
+    def fp(self, description):
+        return site_aap_workflows.fingerprint(dict(self.want, description=description, extra=None))
+
+    def test_create_records_the_workflow_parts_in_the_map(self):
+        api = Mock()
+        api.call.side_effect = [(200, {"results": []}), (201, {"id": 7})]
+        sync = site_aap_workflows.Sync(api, {"overwrite": False}, False, S.MARK, "portal_setup_overwrite")
+        parts = [{"id": "example-step"}]
+        write_parts = Mock(return_value=parts)
+        result = sync.reconcile("workflow", "workflow_job_templates", "Example", self.want, extra_write=write_parts)
+        self.assertEqual(result, (7, "create"))
+        api.call.assert_called_with("POST", "workflow_job_templates/", self.want)
+        write_parts.assert_any_call(7, True)
+        self.assertEqual(sync.out, {self.key: site_aap_workflows.fingerprint(dict(self.want, extra=parts))})
+
+    def test_known_map_allows_catalog_update_and_preserves_other_entries(self):
+        previous = self.fp("Previous description")
+        known = {self.key: previous, "workflow/Other": "0123456789ab"}
+        action, out, writes, _ = self.reconcile("Previous description", known)
+        self.assertEqual(action, "update")
+        self.assertEqual(writes, [("PATCH", "workflow_job_templates/7/", self.want)])
+        self.assertEqual(out, {self.key: self.fp(self.want["description"]), "workflow/Other": "0123456789ab"})
+        self.assertEqual(known[self.key], previous)
+
+    def test_hand_edit_keeps_the_recorded_fingerprint_until_overwrite(self):
+        known = {self.key: self.fp("Previous description")}
+        action, out, writes, _ = self.reconcile("Edited by hand", known)
+        self.assertEqual((action, out, writes), ("hand-edited", known, []))
+        action, out, writes, _ = self.reconcile("Edited by hand", out, overwrite=True)
+        self.assertEqual((action, out), ("update", {self.key: self.fp(self.want["description"])}))
+        self.assertEqual(writes, [("PATCH", "workflow_job_templates/7/", self.want)])
+
+    def test_without_history_only_an_exact_match_is_adopted(self):
+        desc = self.want["description"]
+        self.assertEqual(self.reconcile(desc)[:3], ("unchanged", {self.key: self.fp(desc)}, []))
+        self.assertEqual(self.reconcile("Edited by hand")[:3], ("hand-edited", {}, []))
+        self.assertEqual(self.reconcile("Edited by hand", known={})[:3], ("not ours", {}, []))
+
+    def test_old_marker_migration_on_check_and_run(self):
+        desc = self.want["description"]
+        fp = self.fp(desc)
+        marker = " [set up by AAP - set up portal actions, fingerprint %s]" % fp
+        self.assertEqual(self.reconcile(desc + marker, check=True),
+                         ("update", {self.key: fp}, [], "would remove the old fingerprint text"))
+        self.assertEqual(self.reconcile(desc + marker),
+                         ("update", {self.key: fp}, [("PATCH", "workflow_job_templates/7/", {"description": desc})],
+                          "removed the old fingerprint text"))
+        self.assertEqual(self.reconcile("Edited by hand" + marker)[:3], ("hand-edited", {self.key: fp}, []))
 
 
 class AddGates(unittest.TestCase):

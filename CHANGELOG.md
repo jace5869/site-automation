@@ -49,6 +49,15 @@ To set up: run Site portal - deploy.
 - **The ops look at 800-1000 px:** the section links take a row of their own, as wide as the page, instead of two links
   squeezed beside *All reports* (1.87.2).
 - Tests: `tests/test_netmap.py` Hotfix1951 and Hotfix1951Page (each fails on 1.95.0), Portal.test_b.
+## 1.93.0 — 2026-11-22
+
+**To set up:** run **AAP - set up portal actions** and **AAP - set up job templates** once with Job type **Run**.
+The jobs remove the old fingerprint text from descriptions that still match what they wrote.
+
+Both jobs now keep their fingerprints in the AAP job artifact `aap_setup_fingerprints`. Each compares the fields it
+manages with the newest successful run that supplied a map. With no history or old marker, it compares them with
+what it would write today. Hand edits are listed and kept unless overwrite is enabled. Check previews the migration
+and publishes no map.
 
 ## 1.95.0 — 2026-11-21
 

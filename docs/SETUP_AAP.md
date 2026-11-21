@@ -712,6 +712,14 @@ and upload*, after their templates ([STIG_JOBS.md](STIG_JOBS.md)):
   check), Prompt on launch for **Limit**;
 - the site portal's label on the workflow, never on its steps.
 
+On Run, **AAP - set up job templates** saves a fingerprint for each managed workflow under `workflow/<name>` in the
+AAP job artifact `aap_setup_fingerprints`. Check publishes no map. Through the AAP API the job reads this template's ten most recent
+completed jobs. It uses the newest successful run that supplied a map to check the current description, managed fields and
+nodes in AAP. If they still match, the job can apply catalog changes. A difference is a hand edit and is left alone
+unless you set `aap_templates_overwrite: true`. With no history or old marker, an exact match with what the job would
+write becomes the baseline. A difference is kept. On upgrade, Check reports *would remove the old fingerprint text*
+for a matching old marker. Run removes it from the description and saves the fingerprint in the artifact.
+
 A Check run lists each node of each workflow. It also names an old template or workflow it finds: *replaced by ...,
 delete it when ready*, or *rename ... when ready* (your *STIG answer keys*). It never deletes or renames one.
 When what replaces it is not in AAP and would not be made (it was skipped), it says *KEEP* instead: keep the old one.
@@ -754,8 +762,8 @@ it is for. The same job writes them: **AAP - set up job templates** with `aap_te
    - *WOULD DESCRIBE* - an empty description, or one this job wrote before (it starts with `** Does:`);
    - *KEPT (hand-written)* - a description someone wrote: left as it is. `aap_templates_describe_overwrite: true`
      writes over it too;
-   - *left to its own job* - one **AAP - set up portal actions** made: that job writes the same five lines itself, with
-     its own mark after them (`portal_setup_describe`, on by default) - run it to bring them up to date;
+   - *left to its own job* - a description carrying an old setup fingerprint. Run **AAP - set up portal actions** for its
+     templates and workflows, or **AAP - set up job templates** for its STIG workflows, to remove the old text;
    - *no description known* - a template whose playbook is not in the catalog, or a workflow the catalog does not
      know: left as it is;
    - *not in AAP* - a catalog template or workflow your AAP does not have: counted in *in short* only.
