@@ -90,7 +90,7 @@ check "no email (report_email_to empty)" test "$(mails)" = 0
 check "latest.html is the same page" cmp -s "$d/$page" "$d/latest.html"
 check "1.87.2: All reports at the top of the page and of latest (the atlas top bar), to the index relative to each, data-site-index set" bash -c \
     "for f in '$d/$page' '$d/latest.html'; do grep -q '<div class=\"appbar-in\"><a class=\"sr-back\" href=\"../index.html\"' \"\$f\" \
-     && grep -q '<html data-site-index=\"../index.html\"' \"\$f\" && test \"\$(grep -o 'class=\"sr-back\"' \"\$f\" | wc -l)\" = 1 || exit 1; done"
+     && grep -Eq '<html [^>]*data-site-index=\"\\.\\./index\\.html\"' \"\$f\" && test \"\$(grep -o 'class=\"sr-back\"' \"\$f\" | wc -l)\" = 1 || exit 1; done"
 check "1.87.2: the index has no way back to itself" bash -c "! grep -q 'sr-back' '$work/reports/index.html'"
 check "the page: the atlas look (the default), the logo inside it (data:), no cid:" bash -c "grep -q '<div class=\"eyebrow\">Linux - Certificate trust report</div>' '$d/$page' && grep -q '<span>AAP job 907</span>' '$d/$page' \
     && grep -q 'src=\"data:image/png;base64,' '$d/$page' && ! grep -q 'cid:' '$d/$page' && grep -q 'width=\"42\" height=\"56\"' '$d/$page' \
@@ -184,7 +184,8 @@ run "the brief look (0.92.0, calm since 0.94.0): the page and the index" ok "{\"
 check "the page: the verdict as a chip, the ruled figures, the logo inside it (at most 64 px tall), the script beside it, no cid:" bash -c "p=\"\$(ls '$work'/brief/linux-certificate-trust-report/*_job-907.html)\" \
     && grep -q '<div class=\"verdict c-warning\">' \"\$p\" && grep -q '<span>Needs attention</span>' \"\$p\" && grep -q '<div class=\"tiles\">' \"\$p\" \
     && grep -q 'width=\"48\" height=\"64\"' \"\$p\" && grep -q 'src=\"data:image/png;base64,' \"\$p\" && ! grep -q 'cid:' \"\$p\" \
-    && grep -q 'script src=\"../site-report.js?v=' \"\$p\" && test -s '$work/brief/site-report.js'"
+    && s=\"\$(grep -oE 'script src=\"\\.\\./site-report\\.[0-9a-f]{64}\\.js\"' \"\$p\" | grep -oE '[0-9a-f]{64}')\" \
+    && test -s \"$work/brief/site-report.\$s.js\" && test \"\$(sha256sum < \"$work/brief/site-report.\$s.js\" | cut -c1-64)\" = \"\$s\""
 check "index.html: the board in the brief look - At a glance, calm (no red tile), its area's card, the logo" bash -c "i='$work/brief/index.html' \
     && grep -q '<body class=\"board look-brief\">' \"\$i\" && grep -q '<section class=\"hero\" aria-label=\"At a glance\">' \"\$i\" \
     && ! grep -q 'class=\"tile t-bad\"' \"\$i\" && grep -q 'width=\"48\" height=\"64\"' \"\$i\" \
@@ -198,7 +199,8 @@ check "the page: the header card, its chip and number, the tiles, the cards, the
     && grep -q '<header class=\"hero card h-warning\">' \"\$p\" && grep -q 'Warning</span>' \"\$p\" && grep -q '<div class=\"tiles t' \"\$p\" \
     && grep -q '<div class=\"secs\">' \"\$p\" && grep -q '<div class=\"cf\"><span class=\"src\">' \"\$p\" && grep -q 'height=\"48\"' \"\$p\" \
     && grep -q 'src=\"data:image/png;base64,' \"\$p\" && ! grep -q 'cid:' \"\$p\" \
-    && grep -q 'script src=\"../site-report.js?v=' \"\$p\" && test -s '$work/ops/site-report.js' && ! grep -Eq '<link|src=\"https?:|@import' \"\$p\""
+    && s=\"\$(grep -oE 'script src=\"\\.\\./site-report\\.[0-9a-f]{64}\\.js\"' \"\$p\" | grep -oE '[0-9a-f]{64}')\" \
+    && test -s \"$work/ops/site-report.\$s.js\" && test \"\$(sha256sum < \"$work/ops/site-report.\$s.js\" | cut -c1-64)\" = \"\$s\" &&! grep -Eq '<link|src=\"https?:|@import' \"\$p\""
 check "index.html: the board in the ops look - the four tiles, nothing to look at first, every report by area" bash -c "i='$work/ops/index.html' \
     && grep -q '<body class=\"board look-ops\">' \"\$i\" && grep -q 'Runs ok</span>' \"\$i\" && grep -q 'Critical up since last run</span>' \"\$i\" \
     && grep -q 'Didn&#39;t run on time</span>' \"\$i\" && ! grep -q '<section class=\"look\" aria-labelledby=\"look-h\">' \"\$i\" \

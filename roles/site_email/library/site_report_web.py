@@ -2390,6 +2390,10 @@ def main():
                     if not verified[name]:
                         busy.append([name, 'script verification failed'])
                 except (Fail, OSError, UnicodeError) as e:
+                    if passing(e):                       # a failure that passes (HTTP 503, a session gone): the whole
+                        if isinstance(e, Fail):          # publish tried again (report_web_retries), not inline rows
+                            raise
+                        raise Fail('writing %s: %s' % (name, e))
                     busy.append([name, str(e)])
                     verified[name] = False
             return verified[name]

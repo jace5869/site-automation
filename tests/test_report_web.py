@@ -1732,6 +1732,32 @@ m.Target.write = write_asset""" % (asset, failure, failure)
                         self.assertIn(asset, html)
                         self.assertEqual(html.count('<tr>'), 100)
 
+    def test_passing_script_failure_retries_the_publish(self):
+        """An HTTP 503 (a failure that passes) on the versioned script is tried again from the start, the retry said -
+        never a silent page with every row inline; a real error (HTTP 403) still keeps every row inline, no retry."""
+        rows = ['<tr><td>Example %d</td></tr>' % i for i in range(105)]
+        args_html = SiteScript.PAGE.replace('<body>', '<body><table>' + ''.join(rows[:100]) +
+                                            '<!--defer-main 105-->' + ''.join(rows[100:]) + '<!--/defer-main--></table>')
+        asset = rw.report_script_file(rw.page_script(args_html))
+        for why, retried, deferred in (('HTTP 503 Service Unavailable', ['http 503'], True), ('HTTP 403 Forbidden', [], False)):
+            with self.subTest(why=why), tempfile.TemporaryDirectory() as dest:
+                patch = """write = m.Target.write
+left = [1]
+def write_asset(self, rel, text, ctype):
+    if rel == %r and left[0]:
+        left[0] -= 1
+        raise m.Fail('uploading https://web/r/' + rel + ': %s')
+    return write(self, rel, text, ctype)
+m.Target.write = write_asset""" % (asset, why)
+                out = run_module(web_args(dest, html=args_html, retries=3, retry_delay=0), patch)
+                self.assertTrue(out.get('published'), out)
+                self.assertEqual(out.get('retried'), retried, out)
+                with open(os.path.join(dest, web_args(dest)['files']['page'])) as f:
+                    html = f.read()
+                self.assertEqual('class="defer-main"' in html, deferred)
+                self.assertEqual(asset in html, deferred)
+                self.assertEqual(html.count('<tr>'), 100 if deferred else 105)
+
     def test_retained_page_keeps_its_decoder_after_upgrade(self):
         with tempfile.TemporaryDirectory() as dest:
             for version in (1, 2):

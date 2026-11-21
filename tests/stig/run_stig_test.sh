@@ -159,8 +159,12 @@ if grep -q "Check text and fix text (2 rules)" "$m" && grep -q "sudo grep -ir Pe
    && [ "$(grep -c 'stigs/RHEL_9_STIG/revisions/V2R7/rules' "$work/sm.log")" -eq $((n0 + 1)) ]
 then echo "ok   - the email: each rule's texts once, its command alone, no button; one read of the revision's rules"
 else echo "FAIL - the email's check and fix text"; grep -n "Check text\|Command\|No command" "$m" | head; grep -c "revisions/V2R7/rules" "$work/sm.log"; fails=$((fails + 1)); fi
-if [ -n "$page" ] && grep -q 'data-copy="sudo grep -ir PermitRootLogin /etc/ssh/sshd_config">Copy check</button>' "$page" \
-   && grep -q '<p class="rtn">No command in this text</p>' "$page" && grep -q 'class="xb"' "$page" && ! grep -q "Copies the whole text" "$page"
+# 1.100.0: a rule's texts are built when its row opens (a defer-detail block): the page unpacked as site-report.js does
+[ -n "$page" ] && "$py" "$repo/tests/email/unpack_deferred.py" "$page" > "$work/unpacked.html"
+if [ -n "$page" ] && grep -q 'class="defer-detail"' "$page" && ! grep -q 'class="defer-' "$work/unpacked.html" \
+   && grep -q 'data-copy="sudo grep -ir PermitRootLogin /etc/ssh/sshd_config">Copy check</button>' "$work/unpacked.html" \
+   && grep -q '<p class="rtn">No command in this text</p>' "$work/unpacked.html" && grep -q 'class="xb"' "$page" \
+   && ! grep -q "Copies the whole text" "$work/unpacked.html"
 then echo "ok   - the website: a rule's row opens to its texts, Copy copies the command only, none - no button"
 else echo "FAIL - the website's check and fix text"; find "$work/web" -type f | head; f=$(find "$work/web" -name "*.html" ! -name index.html | head -1); [ -n "$f" ] && command grep -o "class=\"xb\"\|rtx\|data-copy=\"[^\"]*\"\|rule_texts\|Check text" "$f" | sort | uniq -c | head; fails=$((fails + 1)); fi
 run "check_stig_rule_texts: false - none read, none shown" fail -e "$sm_on" -e check_stig_rule_texts=false -- "!Check and fix text:"
