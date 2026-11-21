@@ -154,8 +154,9 @@ exec(sys.argv[2])' "$work/sm.json" "$2" 2> "$work/err.txt"
 # 1. the full scan's check
 fresh
 play stig_full_scan.yml "full scan: every rule planned, new assets in their routes' collections, the host's own collection first" fail -- \
-    "NEW ASSET app01 (app01.example.mil) in Enterprise (route 2)" "NEW ASSET rhel02 (rhel02.example.mil) in Ops (route 1)" \
-    "NEW ASSET rhel03 (rhel03.example.mil) in Platforms (route 3)" "Platforms/rhel01 RHEL_9_STIG RHEL-09-412035: no review -> Open (submitted)" \
+    "NEW ASSET app01 (app01.example.mil) in Enterprise by route 1 (names *APP*)" \
+    "NEW ASSET rhel02 (rhel02.example.mil) in Ops by check_stig_stigman_collection (inventory_hosts rhel02.example.mil)" \
+    "NEW ASSET rhel03 (rhel03.example.mil) in Platforms by route 2 (os rhel)" "Platforms/rhel01 RHEL_9_STIG RHEL-09-412035: no review -> Open (submitted)" \
     "Platforms/rhel01 RHEL_9_STIG RHEL-09-215040: no review -> Not Applicable (submitted)" "Platforms/rhel01 RHEL_9_STIG RHEL-09-214020: Open -> Not a Finding (submitted)" \
     "NEEDS APPROVAL - " "!RHEL-09-999990: no review" "!Platforms/rhel01 RHEL_9_STIG RHEL-09-255045" "!NEW ASSET rhel01" "!NEW ASSET WEB01" "!asset WEB01" \
     '"stigman_update_plan": ['
@@ -192,9 +193,20 @@ play stig_full_scan.yml "no route: no collection for a new asset - never guessed
     -e '{"check_stig_stigman_collection_routes": []}' -- "no collection for a new asset app01" "!NEW ASSET app01" "!NEW ASSET rhel03" \
     "NEW ASSET rhel02 (rhel02.example.mil) in Ops"
 
+# 2b. 1.103.0: by the STIG it was scanned with - the first route that fits any of a host's STIGs takes the whole host;
+# a stigs route that fits nothing falls to the next; a host's own collection still wins
+fresh
+play stig_full_scan.yml "routes by STIG: rhel03 by its RHEL 9 STIG, app01 by its name, rhel02 its own" fail \
+    -e '{"check_stig_stigman_collection_routes": [{"stigs": "*Cisco*", "collection": "Platforms"}, {"stigs": "rhel_9*", "collection": "Enterprise"}, {"os": "rhel", "collection": "Platforms"}]}' -- \
+    "NEW ASSET rhel03 (rhel03.example.mil) in Enterprise by route 2 (stigs rhel_9*)" "NEW ASSET app01 (app01.example.mil) in Enterprise by route 2" \
+    "NEW ASSET rhel02 (rhel02.example.mil) in Ops by check_stig_stigman_collection" "!in Platforms by route"
+play stig_full_scan.yml "a route that is not one (stigs: a number) stops the job, named, nothing planned" fail \
+    -e '{"check_stig_stigman_collection_routes": [{"stigs": 7, "collection": "Platforms"}]}' -- \
+    "check_stig_stigman_collection_routes, route 1: stigs is a list of names or patterns (or text with commas), not 7" "!NEW ASSET"
+
 # 3. Check: the same plan, nothing kept
 fresh; rm -rf "${work:?}/kept"
-play stig_full_scan.yml "Check: the same plan, nothing kept, only GET" fail --check -- "NEW ASSET app01 (app01.example.mil) in Enterprise (route 2)" "NEEDS APPROVAL - "
+play stig_full_scan.yml "Check: the same plan, nothing kept, only GET" fail --check -- "NEW ASSET app01 (app01.example.mil) in Enterprise by route 1 (names *APP*)" "NEEDS APPROVAL - "
 only_get "  ... only GET requests reached STIG Manager"
 [ -n "$(find "$work/kept" -name 'latest-*' 2>/dev/null)" ] && { echo "FAIL - Check kept a checklist on a host"; fails=$((fails + 1)); } || echo "ok   - ... no checklist kept on the hosts"
 left_over "  ... no folder of the run left"
@@ -224,7 +236,7 @@ printf 'all:\n  vars: {ansible_connection: local, ansible_python_interpreter: %s
 export INV
 play stig_recheck.yml "drift scan: rhel01 rechecked, app01 (no asset) scanned in full and planned in Enterprise - one plan" fail \
     --limit 'rhel01.example.mil,app01.example.mil' -e check_stig_update_create_assets=true -e check_stig_update_new_by_import=true -- \
-    "NO ASSET in STIG Manager (no asset named" "NEW ASSET app01 (app01.example.mil) in Enterprise (route" "NEEDS APPROVAL - " \
+    "NO ASSET in STIG Manager (no asset named" "NEW ASSET app01 (app01.example.mil) in Enterprise by route 1" "NEEDS APPROVAL - " \
     "rhel01 RHEL_9_STIG V-257821: Open -> Not a Finding" "!stig:stigman"
 only_get "  ... only GET requests reached STIG Manager"
 left_over "  ... no folder of the run left"

@@ -1040,7 +1040,8 @@ class Routes(unittest.TestCase):
         self.assertNotIn("(route", plan[0]["line"])
         cks, plan, left, st, searched, rts, held, f = run_routes(routed(), VC, TO_VMWARE)
         self.assertEqual((plan[0]["route"], cks[0]["route"]), (1, "route 1 (stigs VMW_*) -> VMware"))
-        self.assertIn("in VMware (route 1) with", plan[0]["line"])
+        self.assertIn("in VMware by route 1 (stigs VMW_*) with", plan[0]["line"])
+        self.assertEqual(plan[0]["route_name"], "route 1 (stigs VMW_*)")
 
     def test_two_stigs_two_routes_the_first_rule_wins(self):
         files = [ckfile("rhel01.ckl", aria("rhel01")), ckfile("rhel01.cklb", rhel("rhel01"))]
@@ -1530,7 +1531,7 @@ class RouteReport(unittest.TestCase):
         s = r["sections"][0]
         self.assertEqual(s["title"], "Approve writes these reviews to STIG Manager and moves 1 asset, assigns 1 STIG")
         self.assertEqual(s["rows"][0][:3], ["MOVE", "VMware / vc01", ARIA])
-        self.assertTrue(s["rows"][0][5].startswith("from Staging (route 1), then its 3 review(s)"), s["rows"][0][5])
+        self.assertTrue(s["rows"][0][5].startswith("from Staging by route 1 (stigs VMW_*), then its 3 review(s)"), s["rows"][0][5])
         self.assertEqual(s["rows"][1][:3], ["ASSIGN", "Linux / rhel01", "RHEL_9_STIG V2R9"])
         self.assertEqual(s["rows"][1][5], "the STIG assigned to it, then its 3 review(s)")
         self.assertIn("VMware / vc01 (moved first)", [x[1] for x in s["rows"]])

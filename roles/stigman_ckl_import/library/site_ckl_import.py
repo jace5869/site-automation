@@ -72,7 +72,8 @@ options:
   routes:
     description: "[{collection (name or id), stigs (the matched installed STIG's id or title), names (host name or FQDN, or its short name), roles,
       tech_areas (the checklist's) - fnmatch, any case, a list or text with commas; os (the target's: rhel, windows); inventory_hosts (the
-      targets' inventory names, whole and exact - a host's own collection); each given must fit}] - the first that fits a host wins."
+      targets' inventory names, whole and exact - a host's own collection); each given must fit; title (1.103.0, optional: the
+      rule's name in the plan, default route <n>)}] - the first that fits a host wins: the whole host, with all its STIGs."
     type: list
     elements: dict
     default: []
@@ -769,9 +770,11 @@ def read_routes(routes, cols):
         if not isinstance(r.get("collection"), (str, int)) or isinstance(r.get("collection"), bool) or not str(r.get("collection")).strip():
             raise Fail("stigman_ckl_import_routes, rule %d: collection is one collection's name or id, not %r - nothing planned"
                        % (n, r.get("collection")))
-        bad = sorted(set(r) - set(("collection",) + ROUTE_KEYS))
+        bad = sorted(set(r) - set(("collection", "title") + ROUTE_KEYS))
         if bad:
             raise Fail("stigman_ckl_import_routes, rule %d: %s is not a rule's key (collection, %s)" % (n, ", ".join(bad), ", ".join(ROUTE_KEYS)))
+        if r.get("title") is not None and not isinstance(r.get("title"), str):
+            raise Fail("stigman_ckl_import_routes, rule %d: title is the rule's name in the plan (text), not %r - nothing planned" % (n, r.get("title")))
         want = str(r["collection"]).strip()
         got = [c for c in cols if (c.get("name") or "").lower() == want.lower() or str(c.get("collectionId")) == want]
         if not got:
@@ -787,8 +790,16 @@ def read_routes(routes, cols):
             raise Fail("stigman_ckl_import_routes, rule %d: %s has no names (%r) - give it names or patterns, or leave the key out "
                        "(a rule with only a collection fits every host); nothing planned" % (n, empty[0], r.get(empty[0])))
         text = "; ".join("%s %s" % (k, ", ".join(rule[k])) for k in ROUTE_KEYS if rule[k]) or "every host"
-        out.append(dict(rule, n=n, want=want, collection=as_col(got[0]), text=text, error=""))
+        # 1.103.0: title - how the plan names the rule (the STIG scans: "route 2" of check_stig_stigman_collection_routes,
+        # or check_stig_stigman_collection); default "route <n>"
+        title = str(r.get("title") or "").strip() or "route %d" % n
+        out.append(dict(rule, n=n, want=want, collection=as_col(got[0]), text=text, title=title, error=""))
     return out
+
+
+def by_route(r):
+    """How the plan names a route: 'route 1 (stigs *Windows_Server*)'."""
+    return "%s (%s)" % (r.get("title") or "route %d" % r["n"], r["text"])
 
 
 def _any(patterns, values):
@@ -1058,10 +1069,10 @@ def plan_all(p, client, files):
         rcol = route["collection"] if route else None
         rnote = ""
         if route:
-            rnote = "route %d (%s) -> %s" % (route["n"], route["text"], route["want"])
+            rnote = "%s -> %s" % (by_route(route), route["want"])
             if others:
                 rnote += "; it fits %s too - the first rule in the list wins" % ", ".join(
-                    "route %d (%s, by %s)" % (r["n"], r["want"], b) for r, b in others)
+                    "%s (%s, by %s)" % (r.get("title") or "route %d" % r["n"], r["want"], b) for r, b in others)
         elif routes and name:
             rnote = "no route fits - " + (("written where it is: %s" % ", ".join(c["name"] for c, _a in real)) if real else
                                           ("stays in %s" % staging["name"]) if hits else ("created in %s" % staging["name"]) if staging
@@ -1308,9 +1319,11 @@ def plan_all(p, client, files):
                             "" if auto_all else ", approved in AAP", ", ".join(na["files"])))[:200],
                         "line": "NEW ASSET %s%s in %s%s with %s - then %d review(s): Not a Finding %d, Open %d, Not Applicable %d" % (
                             na["name"], (" (" + na["fqdn"] + ")") if na["fqdn"] else "", home["name"],
-                            (" (route %d)" % na["route"]["n"]) if na["route"] else "",
+                            (" by " + by_route(na["route"])) if na["route"] else "",
                             ", ".join("%s %s" % (b, na["revisions"][b]) for b in na["benchmarks"]), len(mine), n["pass"], n["fail"],
                             n["notapplicable"])})
+        if na["route"]:                  # 1.103.0: how the plan names its route (none without routes: the plan as before)
+            creates[-1]["route_name"] = by_route(na["route"])
     # a move or an assignment with nothing to write after it is still planned: the route (or the STIG) is the point of it
     for it in list(moves.values()) + list(assigns.values()):
         if it["kind"] == "move":
@@ -1351,8 +1364,9 @@ def move_item(p, asset, host, src, dest, route, hidden, acl_unread):
             "assetId": str(asset.get("assetId") or ""), "collection": dest["name"], "collectionId": dest["collectionId"],
             "from": src["name"], "fromId": src["collectionId"], "fqdn": asset.get("fqdn") or "", "stigs": sorted(benches(asset)),
             "labels": label_names(asset), "maxTs": (asset.get("statusStats") or {}).get("maxTs") or "", "route": route["n"],
-            "hidden": notes, "files": [],
-            "line": "MOVE %s from %s to %s (route %d)%s" % (name, src["name"], dest["name"], route["n"], ("; " + "; ".join(notes)) if notes else "")}
+            "route_name": by_route(route), "hidden": notes, "files": [],
+            "line": "MOVE %s from %s to %s (%s)%s" % (name, src["name"], dest["name"], route.get("title") or "route %d" % route["n"],
+                                                      ("; " + "; ".join(notes)) if notes else "")}
 
 
 def assign_item(p, row, col, bench, rev):

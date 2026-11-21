@@ -525,7 +525,7 @@ route="{\"stigman_ckl_import_src\": \"$work/route\", \"stigman_ckl_import_collec
 play stigman_ckl_import.yml -e "$route"
 grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan8.json"
 [ "$rc" = 2 ] && grep -q "MOVE rhel10 from Staging to Linux (route 1)" "$work/out.txt" && grep -q "MOVE rhel12 from Staging to Linux (route 1)" "$work/out.txt" \
-    && grep -q "NEW ASSET gpos01 (gpos01.example.mil) in Linux (route 1) with General_Purpose_Operating_System_SRG V3R1" "$work/out.txt" \
+    && grep -qF "NEW ASSET gpos01 (gpos01.example.mil) in Linux by route 1 (stigs RHEL_*, *_SRG) with General_Purpose_Operating_System_SRG V3R1" "$work/out.txt" \
     && grep -q "ASSIGN RHEL_9_STIG V2R8 to rhel13 in Linux" "$work/out.txt" \
     && grep -q "not moved - a person decides: the group auditors would lose rhel11" "$work/out.txt" && ! grep -q "MOVE rhel11" "$work/out.txt" \
     && ok "the check with a route: rhel10 and rhel12 to move, gpos01 (its SRG checklist) new in Linux, RHEL_9_STIG for rhel13; rhel11 held - its Restricted group" \

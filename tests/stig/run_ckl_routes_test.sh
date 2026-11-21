@@ -138,9 +138,9 @@ ckl "$s/esx01/esx.ckl" esx01 "$esxi" ESXI-80; ckl "$s/vc01/vc.ckl" vc01 "$vcsa" 
 s1="{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $routes}"
 play stigman_ckl_import.yml "1. routes, the check: four new assets, each in its route's collection - NEEDS APPROVAL" 2 -e "$s1" -e "$wf" -- \
     "NEEDS APPROVAL - 12 review(s) of 4 asset(s) to write to STIG Manager, and 4 new asset(s) to create" \
-    "NEW ASSET win01 (win01.example.mil) in Windows (route 1) with $win V2R3 - then 3 review(s): Not a Finding 1, Open 1, Not Applicable 1" \
-    "NEW ASSET rhel01 (rhel01.example.mil) in Linux (route 2) with $rhel V2R5" \
-    "NEW ASSET esx01 (esx01.example.mil) in VMware (route 3) with $esxi V2R2" "NEW ASSET vc01 (vc01.example.mil) in VMware (route 3) with $vcsa V2R2" \
+    "NEW ASSET win01 (win01.example.mil) in Windows by route 1 (stigs *Windows_Server*) with $win V2R3 - then 3 review(s): Not a Finding 1, Open 1, Not Applicable 1" \
+    "NEW ASSET rhel01 (rhel01.example.mil) in Linux by route 2 (stigs RHEL_*) with $rhel V2R5" \
+    "NEW ASSET esx01 (esx01.example.mil) in VMware by route 3 (names esx*, vc*) with $esxi V2R2" "NEW ASSET vc01 (vc01.example.mil) in VMware by route 3 (names esx*, vc*) with $vcsa V2R2" \
     "[route 1 (stigs *Windows_Server*) -> Windows]" "[route 3 (names esx*, vc*) -> VMware]" "!in Staging" "\"stigman_update_plan\": ["
 plan_of "$work/plan1.json"
 if report | "$py" -c '
@@ -154,12 +154,12 @@ assert any("Route: route 2 (stigs RHEL_*) -> Linux" in x[-1] for x in t["Each ch
 '; then echo "ok   - ... the report: the routes in order, each checklist with its route"; else echo "FAIL - the routes in the report"; fails=$((fails + 1)); fi
 sent "... the check sent nothing to STIG Manager"
 play stigman_update.yml "1. the update in Check mode: would create each in its collection, would write" ok -e "@$work/plan1.json" -e "$writer" --check -- \
-    "would create - NEW ASSET win01 (win01.example.mil) in Windows (route 1)" "would create - NEW ASSET vc01 (vc01.example.mil) in VMware (route 3)" \
+    "would create - NEW ASSET win01 (win01.example.mil) in Windows by route 1" "would create - NEW ASSET vc01 (vc01.example.mil) in VMware by route 3" \
     "its reviews: would write 3"
 [ "$(writes)" = 0 ] && echo "ok   - ... nothing written" || { echo "FAIL - Check wrote"; fails=$((fails + 1)); }
 sent "... Check: no PATCH, PUT or POST"
 play stigman_update.yml "1. the update: created in Windows, Linux, VMware and written" ok -e "@$work/plan1.json" -e "$writer" -- \
-    "created - NEW ASSET win01 (win01.example.mil) in Windows (route 1)" "created - NEW ASSET rhel01 (rhel01.example.mil) in Linux (route 2)" \
+    "created - NEW ASSET win01 (win01.example.mil) in Windows by route 1" "created - NEW ASSET rhel01 (rhel01.example.mil) in Linux by route 2" \
     "created - NEW ASSET esx01" "created - NEW ASSET vc01" "its reviews: written 3"
 held "... in STIG Manager: win01 in Windows, rhel01 in Linux, esx01 and vc01 in VMware, 3 reviews each, Staging empty" '
 assert [c for c, a in where("win01")] == ["2"] and [c for c, a in where("rhel01")] == ["3"], (where("win01"), where("rhel01"))
@@ -190,7 +190,7 @@ import json, sys
 r = json.load(sys.stdin)
 s = r["sections"][0]
 assert s["title"] == "Approve writes these reviews to STIG Manager and moves 1 asset", s["title"]
-assert s["rows"][0][:2] == ["MOVE", "Linux / rhel02"] and s["rows"][0][5].startswith("from Staging (route 2), then its 2 review(s)"), s["rows"][0]
+assert s["rows"][0][:2] == ["MOVE", "Linux / rhel02"] and s["rows"][0][5].startswith("from Staging by route 2 (stigs RHEL_*), then its 2 review(s)"), s["rows"][0]
 assert [x[1] for x in s["rows"][1:]] == ["Linux / rhel02 (moved first)"] * 2, s["rows"]
 assert [x["value"] for x in r["summary"] if x["label"] == "To move"] == [1], r["summary"]
 '; then echo "ok   - ... the report: MOVE first, its reviews (moved first), the To move tile"; else echo "FAIL - the move in the report"; fails=$((fails + 1)); fi
@@ -321,7 +321,7 @@ play stigman_ckl_import.yml "6. auto all, only Full in Staging (Manage in Linux)
 nothing6
 edit "d['grants']['stigwrite']['1'] = 3"
 play stigman_ckl_import.yml "6. ... with Manage in Linux: rhel06 moved, rhel07 created in Linux and written at once, the files moved" ok -e "$s6" -e "$writer" -- \
-    "moved - MOVE rhel06 from Staging to Linux (route 2)" "created - NEW ASSET rhel07 (rhel07.example.mil) in Linux (route 2)" \
+    "moved - MOVE rhel06 from Staging to Linux (route 2)" "created - NEW ASSET rhel07 (rhel07.example.mil) in Linux by route 2 (stigs RHEL_*)" \
     "its reviews: written 3" "moved - rhel06.ckl - imported/$day/" "moved - rhel07.ckl - imported/$day/rhel07.ckl" "!NEEDS APPROVAL -"
 held "... rhel06 and rhel07 in Linux, 3 reviews each" '
 assert [c for c, a in where("rhel06")] == ["3"] and [c for c, a in where("rhel07")] == ["3"], (where("rhel06"), where("rhel07"))
@@ -359,7 +359,7 @@ s="$work/s8"; ckl "$s/win02/win.ckl" win02 "$win" WN22-SO; ckl "$s/win02/iis.ckl
 r8="[{\"collection\": \"Windows\", \"stigs\": [\"*Windows_Server*\"]}, {\"collection\": \"Linux\", \"stigs\": [\"IIS_*\"]}]"
 play stigman_ckl_import.yml "8. win02 fits Windows (rule 1) and Linux (rule 2): created in Windows with both STIGs - the first rule wins" 2 \
     -e "{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $r8}" -e "$wf" -- \
-    "NEW ASSET win02 (win02.example.mil) in Windows (route 1) with $iis V3R1, $win V2R3 - then 6 review(s)" \
+    "NEW ASSET win02 (win02.example.mil) in Windows by route 1 (stigs *Windows_Server*) with $iis V3R1, $win V2R3 - then 6 review(s)" \
     "it fits route 2 (Linux, by $iis) too - the first rule in the list wins" "!in Linux"
 if report | "$py" -c 'import json, sys; r = json.load(sys.stdin)
 rows = dict((x["title"].split(" (")[0], x) for x in r["sections"])["Each checklist"]["rows"]
@@ -367,7 +367,7 @@ assert len(rows) == 2 and all("the first rule in the list wins" in x[-1] for x i
 then echo "ok   - ... the report says it for each of its checklists"; else echo "FAIL - the first rule in the report"; fails=$((fails + 1)); fi
 r8="[{\"collection\": \"Linux\", \"stigs\": [\"IIS_*\"]}, {\"collection\": \"Windows\", \"stigs\": [\"*Windows_Server*\"]}]"
 play stigman_ckl_import.yml "8. the rules the other way round: in Linux (rule 1)" 2 -e "{\"stigman_ckl_import_src\": \"$s\", \"stigman_ckl_import_routes\": $r8}" -e "$wf" -- \
-    "NEW ASSET win02 (win02.example.mil) in Linux (route 1)" "it fits route 2 (Windows, by $win) too - the first rule in the list wins"
+    "NEW ASSET win02 (win02.example.mil) in Linux by route 1 (stigs IIS_*)" "it fits route 2 (Windows, by $win) too - the first rule in the list wins"
 sent "... nothing sent"
 
 # ==== 9. a route to a collection the client cannot read: the job fails before any write ======================================

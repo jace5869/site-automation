@@ -220,11 +220,14 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 
 ## 1.83.0, where a new asset goes (the STIG full scan and the STIG drift scan; workflow 40's router,
 ## site_ckl_import): a host's own check_stig_stigman_collection first, then the first of these that
-## fits - match: its inventory name (or check_stig_stigman_asset; * and ?, any case), os: rhel or
-## windows (its STIG), both given: both must fit. No route and no collection: listed (no collection
-## for a new asset), never guessed. Your collections' names go in your all.yml, e.g. - {match:
-## "*APP*", collection: "<your app servers collection>"} - {os: rhel, collection: "<your platforms
-## collection>"} - {os: windows, collection: "<your platforms collection>"}
+## fits. A route has a collection and any of: match (its inventory name or
+## check_stig_stigman_asset), stigs (1.103.0: the STIG it was scanned with, its id or title), roles,
+## tech_areas (the checklist's), os (rhel or windows) - * and ?, any case; each key given must fit.
+## The first route that fits ANY of a host's STIGs takes the whole host (one collection per asset):
+## put the specific STIG rules first. No route and no collection: listed (no collection for a new
+## asset), never guessed. Your collections' names go in your all.yml, e.g. - {match: "*DC*", stigs:
+## ["*Active_Directory*"], collection: "<Directory servers>"} - {stigs: ["*Cisco*", "*Palo_Alto*"],
+## collection: "<Networks>"} - {os: windows, collection: "<Platforms>"}
 # check_stig_stigman_collection_routes: []
 
 # ---- portal_result -------------------------------------------------------------------------------

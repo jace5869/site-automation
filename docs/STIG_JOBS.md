@@ -56,15 +56,35 @@ another host's is not planned. The host's FQDN is the inventory's, else a dotted
 
 A host's own `check_stig_stigman_collection` is for that host only, by its whole inventory name.
 
-A route fits by the host's inventory name (`match`, `*` and `?`, any case), by its OS (`os`: `rhel` or `windows`), or
-both. Put your real collection names in your own `all.yml`:
+A route has a collection and one or more of these keys. Each key given must fit. All take `*` and `?`, any case.
+
+| Key | What it is matched with |
+|---|---|
+| `match` | the host's inventory name, or its `check_stig_stigman_asset` |
+| `stigs` | the STIG the host was scanned with: its id or its title (1.103.0) |
+| `roles` | the checklist's role, e.g. `Domain Controller` (1.103.0) |
+| `tech_areas` | the checklist's technology area (1.103.0) |
+| `os` | `rhel` or `windows` |
+
+So a route can go by STIG, by naming convention, or by both. Put your real collection names in your own `all.yml`:
 
 ```yaml
 check_stig_stigman_collection_routes:
-  - {match: "*APP*", collection: "<your app servers collection>"}
-  - {os: rhel, collection: "<your platforms collection>"}
-  - {os: windows, collection: "<your platforms collection>"}
+  - {match: "*DC*", stigs: ["*Active_Directory*"], collection: "<Directory servers>"}
+  - {stigs: ["*Cisco*", "*Palo_Alto*"], collection: "<Networks>"}
+  - {match: "SITA*", collection: "<Platforms>"}
+  - {os: windows, collection: "<Platforms>"}
 ```
+
+**One collection per asset.** A host scanned against several STIGs goes whole to the first route that fits any of them.
+It is never split across collections. A domain controller scanned with the Windows Server, AD Domain and AD Forest
+STIGs goes by the first route above. With `{os: windows}` first, it would go to `<Platforms>`.
+
+**So the order matters.** Put the specific STIG rules first and the broad ones (`os`, a whole site's names) last.
+
+The plan says which route placed each new asset, in your own numbering:
+`NEW ASSET dc01 (dc01.example.mil) in <Directory servers> by route 1 (stigs *Active_Directory*; names *DC*)`.
+When a later route fits too, the checklist's line says so. A host's own `check_stig_stigman_collection` still wins.
 
 An asset only in a collection of `check_stig_stigman_collections_exclude` (`Archive*`, `SCA*` ...) is not found there.
 The host then gets a new asset in its route's collection. The copy in the archive is left as it is.
