@@ -72,10 +72,15 @@ def main():
                            chunk=dict(type="int", default=500), max_nodes=dict(type="int", default=5000),
                            snapshot=dict(type="raw", default={}), snapshot_links=dict(type="bool", default=True), last=dict(type="str", default=""),
                            run=dict(type="str", default=""), view=dict(type="str", default="globe"),
-                           no_site=dict(type="str", default="No site")),
+                           no_site=dict(type="str", default="Not placed"), site_pattern=dict(type="str", default=""),
+                           hierarchy=dict(type="list", elements="raw", default=[]), roles=dict(type="dict", default={}),
+                           discover=dict(type="bool", default=True)),
         supports_check_mode=True,
     )
     p = module.params
+    bad = site_swis.check_opts({"site_pattern": p["site_pattern"], "hierarchy": p["hierarchy"], "roles": p["roles"]})
+    if bad:                                                # before anything is read: said, nothing asked of SolarWinds
+        module.fail_json(msg="The network map's settings: " + "; ".join(bad))
     env = os.environ
     user, password = env.get("SOLARWINDS_USERNAME", ""), env.get("SOLARWINDS_PASSWORD", "")
     url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
@@ -96,11 +101,14 @@ def main():
         client = site_swis.Client(url, user, password, verify=verify, ca_path=ca, timeout=p["timeout"])
     except site_swis.SwisError as e:                   # not https, or a login in the address: said, the address not repeated
         module.fail_json(msg="netmap_solarwinds_url / the credential's address: %s" % e)
-    raw = site_swis.collect(client, {"site_by": p["site_by"], "lat_property": p["lat_property"], "lon_property": p["lon_property"],
-                                     "properties": p["properties"], "page": p["page"], "chunk": p["chunk"], "max_nodes": p["max_nodes"]})
+    raw = site_swis.collect(client, {"site_by": p["site_by"] if str(p["site_by"]).lower() not in ("auto", "location") else "",
+                                     "lat_property": p["lat_property"], "lon_property": p["lon_property"], "discover": p["discover"],
+                                     "properties": p["properties"] + [h.get("value") for h in p["hierarchy"] if isinstance(h, dict) and h.get("from") == "property"],
+                                     "page": p["page"], "chunk": p["chunk"], "max_nodes": p["max_nodes"]})
     m = site_swis.model(raw, {"site_by": p["site_by"], "site_split": p["site_split"], "sites": p["sites"],
                               "lat_property": p["lat_property"], "lon_property": p["lon_property"], "properties": p["properties"],
-                              "warn_util": p["warn_util"], "no_site": p["no_site"]})
+                              "warn_util": p["warn_util"], "no_site": p["no_site"], "site_pattern": p["site_pattern"],
+                              "hierarchy": p["hierarchy"], "roles": p["roles"]})
     prev = p["snapshot"] if isinstance(p["snapshot"], dict) else {}
     snap = site_swis.snapshot(m, prev, p["snapshot_links"]) if raw["reachable"] else {}     # not read: nothing kept, the copy before stays the baseline
     compared = bool(raw["reachable"] and prev.get("v") == 2 and isinstance(prev.get("n"), dict))   # an empty inventory's copy is a baseline too

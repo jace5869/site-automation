@@ -1385,11 +1385,15 @@ File: `roles/netmap_report/defaults/main.yml`
 | `netmap_validate_certs` | `true` | Check SolarWinds' HTTPS certificate. Orion's own is self-signed: put the CA that signed yours in netmap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/orion-ca.pem"), or set false. The credential's own settings win. |
 | `netmap_ca_path` | (empty) | the CA file (PEM) SolarWinds' certificate is checked with; "" = the execution environment's own trust |
 | `netmap_timeout` | `60` | seconds for one request (no answer: asked once more) |
-| `netmap_site_by` | `Location` | ---- Sites: which nodes make a site, and where it is on the map ---------------------------------------------------------- A node's site: its Location (the default), or the name of a node custom property (e.g. Site). With Location, the site is the text before the first netmap_site_split ("Site A, building 1, IDF 2" ->… (all of it: the role file) |
-| `netmap_site_split` | `","` | the site = the Location text before this ("" = the whole value) |
-| `netmap_lat_property` | (empty) | Where a site is, in this order: 1. SolarWinds' Worldwide Map (Orion.WorldMap.Point: its nodes' points, their middle); 2. two node custom properties with the latitude and longitude (their names here, e.g. Latitude / Longitude); 3. netmap_sites below (the site's name as the map shows it, any case). A site with none of t… (all of it: the role file) |
+| `netmap_site_by` | `auto` | ---- Sites: which nodes make a site, and where it is on the map ---------------------------------------------------------- 1.95.0: auto = read it (the Discovery section says how): the nodes' names, Location's parts, the custom properties, the IPv4 subnets and the links - for the site, the building in it and the closet… (all of it: the role file) |
+| `netmap_site_split` | `","` | Location's parts are split at this ("Site A, building 1" -> Site A); "" = one part |
+| `netmap_site_pattern` | (empty) | 1.95.0: the site is this regular expression's first group in the node's caption (else its DNS name), e.g. '^([A-Z]{4})' or '^([A-Z]{4}[0-9]{4})'; before netmap_site_by. "" = not used |
+| `netmap_hierarchy` | `[]` | 1.95.0: each level as you name it, instead of the discovery: [{level: site\|building\|closet, from: pattern\|property\|location\| subnet\|part\|topology\|none, value: ...}] - pattern: a regular expression (its first group); property: a custom property's name; location: Location's part (1, 2 ... -1 the last, all); subnet: 8, 1… (all of it: the role file) |
+| `netmap_roles` | `{}` | 1.95.0: a device's role by its name (* and ?), instead of what its name, model and links say, e.g. {"*-WC??": wireless}; the roles: core, distribution, access, firewall, router, wireless, server, other |
+| `netmap_discover` | `true` | read every node custom property's name and values for the discovery (false: only netmap_properties) |
+| `netmap_lat_property` | (empty) | Where a site is, in this order: 1. SolarWinds' Worldwide Map (Orion.WorldMap.Point: its nodes' points, their middle); 2. two node custom properties with the latitude and longitude (their names here, e.g. Latitude / Longitude); 3. netmap_sites below: the site's name as the map shows it (any case), else a pattern with *… (all of it: the role file) |
 | `netmap_lon_property` | (empty) | the node custom property holding the site's longitude ("" = not used) |
-| `netmap_sites` | `{}` | e.g. {"Site A": {lat: 39.4, lon: -93.2}, "Site B": {lat: 34.9, lon: -112.8}} - usually in all.yml |
+| `netmap_sites` | `{}` | e.g. {"Site A": {lat: 39.4, lon: -93.2}, "SITB*": {lat: 34.9, lon: -112.8}} - usually in all.yml |
 | `netmap_properties` | `[]` | more node custom properties shown in a node's panel and the workbook, e.g. [Region, Building] |
 | `netmap_view` | `globe` | ---- The map -------------------------------------------------------------------------------------------------------------- the world view's first look: globe or flat (each viewer's own choice, once made, is kept in their browser) |
 | `netmap_link_warn_percent` | `90` | a link this busy (in or out, %) is Warning; 0 = never by load (an interface SolarWinds marks Warning still is) |
@@ -2152,7 +2156,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_ready_retries` | `30` | How long to wait after (re)starting for the service to answer |
 | `portal_ready_delay` | `4` | seconds between those tries |
 | `portal_netmap` | `auto` | ---- 1.85.0: the live Network map (docs/NETWORK_MAP.md, "Live on the portal") ----------------------------------------------- The portal's server reads SolarWinds (SWQL queries only, the report job's own reader) every netmap_live_seconds while someone has the page open - one read every viewer shares - and the page ani… (all of it: the role file) |
-| `netmap_live_seconds` | `60` | how often (30 at least); after 5 minutes with nobody on the page it is not read until someone opens it |
+| `netmap_live_seconds` | `60` | the status read: how often (30 at least); after 5 minutes with nobody on the page it is not read until someone opens it |
+| `netmap_full_seconds` | `1800` | 1.95.0: the whole read (the nodes, their sites, the links: about 15 queries) at most this often (300 at least) |
 | `portal_solarwinds_url` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_URL') or netmap_solarwinds_url \| default(''…` | SolarWinds' address and certificate check: the credential's, else netmap_solarwinds_url / netmap_validate_certs |
 | `portal_solarwinds_validate_certs` | (worked out by the role; see its file) | check SolarWinds' certificate (the credential's verify, else netmap_validate_certs) |
 | `portal_solarwinds_ca_file` | (empty) | the CA that signed SolarWinds' certificate, a file ON THE PORTAL SERVER (PEM), added to what the service trusts; "" = the server's own CAs (portal_trust_host_cas) only |

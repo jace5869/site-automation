@@ -14,18 +14,32 @@ netmap_ca_path: ""                       # the CA file (PEM) SolarWinds' certifi
 netmap_timeout: 60                       # seconds for one request (no answer: asked once more)
 
 # ---- Sites: which nodes make a site, and where it is on the map ----------------------------------------------------------
-# A node's site: its Location (the default), or the name of a node custom property (e.g. Site). With Location, the site is
-# the text before the first netmap_site_split ("Site A, building 1, IDF 2" -> Site A); "" = the whole value. A node with
-# none: on the site "No site".
-netmap_site_by: Location
-netmap_site_split: ","                           # the site = the Location text before this ("" = the whole value)
+# 1.95.0: auto = read it (the Discovery section says how): the nodes' names, Location's parts, the custom properties, the
+# IPv4 subnets and the links - for the site, the building in it and the closet (the distribution switch above). Or name it:
+# Location (the text before netmap_site_split, as before 1.95.0) or a node custom property (e.g. Site). A node with none:
+# on the site "Not placed".
+netmap_site_by: auto
+netmap_site_split: ","                           # Location's parts are split at this ("Site A, building 1" -> Site A); "" = one part
+# 1.95.0: the site is this regular expression's first group in the node's caption (else its DNS name), e.g. '^([A-Z]{4})'
+# or '^([A-Z]{4}[0-9]{4})'; before netmap_site_by. "" = not used
+netmap_site_pattern: ""
+# 1.95.0: each level as you name it, instead of the discovery: [{level: site|building|closet, from: pattern|property|location|
+# subnet|part|topology|none, value: ...}] - pattern: a regular expression (its first group); property: a custom property's
+# name; location: Location's part (1, 2 ... -1 the last, all); subnet: 8, 16 or 24; part: the name's part (1, 2 ...);
+# topology: the distribution switch above (closet); none: the level is not used. e.g.
+# [{level: building, from: location, value: 1}]
+netmap_hierarchy: []
+# 1.95.0: a device's role by its name (* and ?), instead of what its name, model and links say, e.g. {"*-WC??": wireless};
+# the roles: core, distribution, access, firewall, router, wireless, server, other
+netmap_roles: {}
+netmap_discover: true                    # read every node custom property's name and values for the discovery (false: only netmap_properties)
 # Where a site is, in this order: 1. SolarWinds' Worldwide Map (Orion.WorldMap.Point: its nodes' points, their middle);
 # 2. two node custom properties with the latitude and longitude (their names here, e.g. Latitude / Longitude);
-# 3. netmap_sites below (the site's name as the map shows it, any case). A site with none of them waits in the map's
-# Unplaced tray (the Sites view and the tables have it as any other) and the report lists it.
+# 3. netmap_sites below: the site's name as the map shows it (any case), else a pattern with * and ? ("SITA*": every site
+# whose name starts SITA, at one place; the most specific pattern wins). A site with none of them shows as a tile.
 netmap_lat_property: ""
 netmap_lon_property: ""                         # the node custom property holding the site's longitude ("" = not used)
-netmap_sites: {}                         # e.g. {"Site A": {lat: 39.4, lon: -93.2}, "Site B": {lat: 34.9, lon: -112.8}} - usually in all.yml
+netmap_sites: {}                         # e.g. {"Site A": {lat: 39.4, lon: -93.2}, "SITB*": {lat: 34.9, lon: -112.8}} - usually in all.yml
 netmap_properties: []                    # more node custom properties shown in a node's panel and the workbook, e.g. [Region, Building]
 
 # ---- The map --------------------------------------------------------------------------------------------------------------

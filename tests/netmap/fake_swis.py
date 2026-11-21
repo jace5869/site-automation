@@ -5,7 +5,7 @@
 
 FIXTURE: tests/netmap/fixture.py. Like SWIS: POST /SolarWinds/InformationService/v3/Json/Query with {"query", "parameters"},
 HTTP Basic login (401 with {"Message"} when wrong), the answer {"results": [...]}; a SWQL error is HTTP 400 with
-{"Message": ...}. It understands the SELECTs site_swis.py sends: Metadata.Entity, Orion.InstalledModule, Orion.Engines,
+{"Message": ...}. It understands the SELECTs site_swis.py sends: Metadata.Entity, Metadata.Property, Orion.InstalledModule, Orion.Engines,
 Orion.Nodes N (named columns, N.CustomProperties.X, N.WorldMapPoint.Latitude/Longitude), Orion.TopologyConnections,
 Orion.TopologyData, Orion.NPM.Interfaces WHERE InterfaceID IN @ids; TOP n; ORDER BY ... WITH ROWS a TO b. A custom
 property the fixture has not: 400, "Cannot resolve property". Every request is a line in LOG: "POST <path> <entity>
@@ -32,7 +32,7 @@ HIDE = set(x for x in os.environ.get("FAKE_SWIS_HIDE", "").split(",") if x)
 STATE, DELAY, FAIL = os.environ.get("FAKE_SWIS_STATE", ""), float(os.environ.get("FAKE_SWIS_DELAY", "0")), os.environ.get("FAKE_SWIS_FAIL", "")
 PATH = "/SolarWinds/InformationService/v3/Json/Query"
 ENT = {"Orion.Nodes", "Orion.NPM.Interfaces", "Orion.TopologyConnections", "Orion.TopologyData", "Orion.WorldMap.Point",
-       "Orion.InstalledModule", "Orion.Engines", "Metadata.Entity"}
+       "Orion.InstalledModule", "Orion.Engines", "Metadata.Entity", "Metadata.Property"}
 SECRET = re.compile(r"\b(Community|RWCommunity|LicenseKey)\b|\*")
 SQ = re.compile(r"^SELECT (?:TOP (\d+) )?(.*?) FROM (\S+)(?: (\w+))?(?: WHERE (.*?))?(?: ORDER BY (.*?))?(?: WITH ROWS (\d+) TO (\d+))?$", re.S)
 
@@ -111,6 +111,11 @@ def run(q, params):
     if ent == "Metadata.Entity":
         names = params.get("names") or []
         rows = [{"FullName": n} for n in names if n in ENT and n not in HIDE]
+    elif ent == "Metadata.Property":           # 1.95.0: the node custom properties' names (the discovery), and a navigation one
+        if params.get("e") != "Orion.NodesCustomProperties" or cols != ["Name", "Type"]:
+            raise Bad("Metadata.Property: an EntityName and Name, Type expected")
+        rows = [{"Name": p, "Type": "System.String"} for p in fx["properties"]] + [{"Name": "Node", "Type": "Orion.Nodes"},
+                                                                                     {"Name": "NodeID", "Type": "System.Int32"}]
     elif ent == "Orion.InstalledModule":
         rows = [dict((c, x.get(c)) for c in cols) for x in fx["modules"]]
     elif ent == "Orion.Engines":
