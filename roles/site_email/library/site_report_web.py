@@ -710,9 +710,12 @@ PS_WRITER = r"""# site-automation - the report website (roles/site_email, report
 $ErrorActionPreference = 'Stop'
 $dest = %(dest)s
 $out = @{ ok = $false; error = ''; written = @(); deleted = @(); left = @(); busy = @(); pending = @() }
-function Save-File([string[]] $Parts, [string] $Text, [bool] $Soft = $false) {
+function Save-File([string[]] $Parts, [string] $Text, [bool] $Soft = $false, [bool] $OnlyChanged = $false) {
     $path = $dest
     foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
+    if ($OnlyChanged -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+        if ((Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue) -ceq $Text) { return }
+    }
     $dir = Split-Path -Path $path -Parent
     if (-not (Test-Path -LiteralPath $dir -PathType Container)) { $null = New-Item -ItemType Directory -Path $dir -Force }
     $tmp = Join-Path -Path $dir -ChildPath ('.' + (Split-Path -Path $path -Leaf) + '.tmp')
@@ -884,8 +887,10 @@ def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=(), index=Non
         if text not in seen:
             seen[text] = '$t%d' % len(seen)
             body.append('    %s = %s' % (seen[text], _ps_text(text)))
-        body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), seen[text],
-                                                ' $true' if rel in soft else ''))
+        flags = ' $true' if rel in soft else ''
+        if rel == INDEX_SCRIPT_FILE:                      # Staged cannot read this file until the writer runs on the server
+            flags = (flags or ' $false') + ' $true'
+        body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), seen[text], flags))
     if ix.get('json') and ix['json'] in idx:
         parts = (lambda r: ', '.join(_ps_quote(x) for x in r.split('/')))
         if not safe_name(ix['pending'], WRITTEN):
@@ -998,7 +1003,6 @@ def deferred_page(html, rel, js, name):
     html = html.replace('<script src="%s"></script>' % name, script_tag(rel, js, name), 1)
     if name != SCRIPT:
         return html
-    html = INLINE_RE.sub('', html, count=1)
     html = html.replace('<html ', '<html data-row-window ', 1)
     # Inner blocks are encoded first, so unopened details and their nested tables stay inert when outer rows load.
 
@@ -1014,6 +1018,8 @@ def deferred_page(html, rel, js, name):
     for kind in ('mini', 'detail', 'main'):
         if '<!--defer-' + kind in html:
             html = re.sub(r'<!--defer-%s(?: (\d+))?-->(.*?)<!--/defer-%s-->' % (kind, kind), block, html, flags=re.S)
+    if 'class="defer-' in html:
+        html = html.replace('</body>', '<noscript>Enable JavaScript to view additional rows and row details.</noscript></body>', 1)
     return html
 
 
@@ -1225,6 +1231,8 @@ INDEX_STYLE = """<style>
 .bar label{display:inline-block;cursor:pointer;background:#ffffff;border:2px solid #cfdcd7;border-radius:999px;padding:6px 14px;
 margin:0 6px 8px 0;font-size:13px;font-weight:700;color:#45534e}
 .bar label:hover{border-color:#0f6b4f}
+.older-runs>summary{cursor:pointer;padding:6px 0;font-weight:600}
+@media print{.older-runs>summary{display:none}}
 .r>summary{list-style:none;cursor:pointer}
 .r>summary::-webkit-details-marker{display:none}
 .r>summary:hover{background:#f3f8f6}
@@ -1259,8 +1267,6 @@ INDEX_PAGE = """<!DOCTYPE html>
 """
 
 
-# The plain index also works on a file share. Keep compact display values beside each button so opening
-# older runs needs neither a fetch nor a second copy of the publisher's timezone and status rules.
 INDEX_SCRIPT = """(function(){
 // A board published without a report script still keeps the theme choice.
 if(!window.siteReport){
@@ -1279,55 +1285,23 @@ if(!window.siteReport){
     });
   });
 }
-document.addEventListener('click', function(event){
-  var button=event.target.closest('button.older-runs');
-  if(!button)return;
-  var table=button.previousElementSibling, body=table.tBodies[0];
-  var block=button.nextElementSibling, sample=body.rows[0];
-  JSON.parse(block.textContent).forEach(function(run){
-    var row=body.insertRow();
-    run.forEach(function(value,i){
-      var cell=sample.cells[i].cloneNode(false);row.appendChild(cell);
-      if(Array.isArray(value)){
-        var link=sample.querySelector('a').cloneNode(false);
-        link.href=value[0]; link.textContent=value[1]; link.title=value[2]; cell.appendChild(link);
-      }else cell.textContent=value;
-    });
-  });
-  button.remove();
-  block.remove();
-});
 })();
 """
 INDEX_SCRIPT_FILE = 'site-report-index.js'
 
 
-def older_runs(runs, index, tz, board=False, generated=''):
-    if len(runs) <= 5:
-        return ''
-    values = []
-    for run in runs[5:]:
-        when = local_time(run.get('when') or '', tz) or 'this run'
-        job = htmllib.unescape(_job(run.get('job')))
-        link = [_href(index, run['page']), (_short(run.get('when'), generated, tz) or when) if board else when,
-                ' - '.join(x for x in (when, job) if x)]
-        state = BOARD_WORD[_state(run.get('status'))] if board else PAL.get(run.get('status'), PAL['unknown'])[3]
-        title = run.get('title') or ''
-        counts = run.get('counts')
-        if board:
-            findings = _counts_html(counts, True) if isinstance(counts, dict) else '-'
-            values.append([link, state, htmllib.unescape(findings), title])
-        else:
-            values.append([state, link, job, title])
-    return ('<button type="button" class="older-runs lcopy">Show %s</button>'
-            '<script type="application/json" class="older-data">%s</script>') % (
-                _plural(len(values), 'older run', 'older runs'), json_block(values))
+def run_tables(rows, table):
+    recent = table % ''.join(rows[:5])
+    if len(rows) <= 5:
+        return recent
+    return recent + ('<details class="older-runs"><summary>Show %s</summary>%s</details>' %
+                     (_plural(len(rows) - 5, 'older run', 'older runs'), table % ''.join(rows[5:])))
 
 
 def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base='', files_line=''):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs; at the foot
     the space the hosted files take and the limits (1.79.8, files_line - never the files themselves)."""
-    index_controls = (theme in WEB_LOOKS and not js) or any(len(_runs(r)) > 5 for r in reports)
+    index_controls = theme in WEB_LOOKS and not js
     history_tag = script_tag(index, INDEX_SCRIPT, INDEX_SCRIPT_FILE) if index_controls else ''
     if theme in WEB_LOOKS:                               # 1.72.0: the board, in the look's colours
         return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line, history_tag)
@@ -1356,25 +1330,25 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
         if r.get('page'):
             run = '<a href="%s" style="color:#45534e;">%s</a>' % (_href(index, r['page']), run or 'this run')
         runs = _runs(r)
-        lines = ''.join(
+        lines = [
             '<tr><td style="padding:5px 12px 5px 0;">%s</td><td style="padding:5px 12px 5px 0;white-space:nowrap;">'
             '<a href="%s" style="color:#0f6b4f;font-weight:600;">%s</a>%s</td>'
             '<td style="padding:5px 12px 5px 0;white-space:nowrap;color:#45534e;font-size:13px;">%s</td>'
             '<td style="padding:5px 0;color:#5b6b66;font-size:13px;min-width:200px;">%s</td></tr>'
             % (_pill(x.get('status'), True), _href(index, x['page']), e(local_time(x.get('when'), tz) or 'this run'),
                ' <span style="color:#5b6b66;font-size:12px;">(newest)</span>' if not i else '', _job(x.get('job')),
-               e(x.get('title') or '')) for i, x in enumerate(runs[:5]))
+               e(x.get('title') or '')) for i, x in enumerate(runs)]
         rows.append(
             '<details class="r a%d" style="border-top:1px solid #e4ece9;"><summary style="display:flex;flex-wrap:wrap;'
             'align-items:center;gap:6px 14px;padding:10px 12px;"><span class="caret">&#9656;</span>'
             '<span style="width:120px;">%s</span><span style="flex:1 1 260px;min-width:0;">%s'
             '<div style="color:#5b6b66;font-size:13px;">%s</div></span>'
             '<span style="white-space:nowrap;color:#45534e;font-size:13px;">%s%s &middot; %d run%s</span></summary>'
-            '<div style="padding:2px 12px 12px 36px;overflow-x:auto;"><table cellpadding="0" cellspacing="0" border="0" '
-            'style="border-collapse:collapse;">%s</table>%s</div></details>'
+            '<div style="padding:2px 12px 12px 36px;overflow-x:auto;">%s</div></details>'
             % (tab[a], _pill(r.get('status')), name, e(r.get('title') or ''), run,
                (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's',
-               lines or '<tr><td style="color:#5b6b66;">No page of its runs listed.</td></tr>', older_runs(runs, index, tz)))
+               run_tables(lines or ['<tr><td style="color:#5b6b66;">No page of its runs listed.</td></tr>'],
+                          '<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">%s</table>')))
     # All, then the areas, A to Z (Other last); a dot on an area with a Critical or a Warning
     tabs, rules = [], []
     for i, label in enumerate(['All'] + areas):
@@ -1572,6 +1546,8 @@ main{max-width:1240px;margin:0 auto;padding:18px 20px 40px}
 .spv{min-width:18px;text-align:right;font-size:13px;color:var(--ink)}
 .nos{font-size:12px;color:var(--mute);width:136px;text-align:right}
 .runs{padding:0 0 12px 32px}
+.older-runs>summary{cursor:pointer;padding:6px 0;font-weight:600}
+@media print{.older-runs>summary{display:none}}
 .runs table{border-collapse:collapse;width:100%;font-size:12.5px}
 .runs th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:700;padding:4px 8px 4px 0;border-bottom:1px solid var(--line)}
 .runs td{padding:6px 8px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
@@ -1763,17 +1739,18 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
                     'Copy link</button>' % e(href))
         when_s = _short(r.get('when'), generated, tz)
         runs = _runs(r)
-        lines = ''.join(
+        lines = [
             '<tr><td class="nw"><a href="%s" title="%s">%s</a>%s</td><td class="nw"><span class="st-i st-%s">%s</span> <span class="st-w">%s</span></td>'
             '<td class="nw">%s</td><td class="wr">%s</td></tr>'
             % (_href(index, x['page']), ' - '.join(t for t in (e(local_time(x.get('when') or '', tz)), _job(x.get('job'))) if t),
                e(_short(x.get('when'), generated, tz) or 'this run'),
                ' <span class="mutec">(newest)</span>' if not i else '', _state(x.get('status')), BOARD_ICON[_state(x.get('status'))],
                BOARD_WORD[_state(x.get('status'))], _counts_html(x.get('counts'), True) if isinstance(x.get('counts'), dict) else '-',
-               e(x.get('title') or '')) for i, x in enumerate(runs[:5]))
-        table = ('<div class="runs"><table><thead><tr><th>Run</th><th>State</th><th>Findings</th><th>What it said</th></tr></thead><tbody>%s'
-                 '</tbody></table>%s<p class="mutec small">The last %s keep their pages (report_web_history).</p></div>'
-                 % (lines, older_runs(runs, index, tz, True, generated), _plural(len(runs), 'run', 'runs')) if runs else '<div class="runs"><p class="mutec small">No page of its runs listed.</p></div>')
+               e(x.get('title') or '')) for i, x in enumerate(runs)]
+        history = run_tables(lines, '<table><thead><tr><th>Run</th><th>State</th><th>Findings</th><th>What it said</th></tr></thead>'
+                             '<tbody>%s</tbody></table>')
+        table = ('<div class="runs">%s<p class="mutec small">The last %s keep their pages (report_web_history).</p></div>'
+                 % (history, _plural(len(runs), 'run', 'runs')) if runs else '<div class="runs"><p class="mutec small">No page of its runs listed.</p></div>')
         rows[a].append((not bad, name.lower(), (
             '<details class="%s" id="%s" data-name="%s"%s><summary><span class="si si-%s si-norm" title="%s">%s<span class="vh">%s</span></span>'
             '<span class="si si-late" title="%s">%s<span class="vh">%s</span></span>'
@@ -2530,7 +2507,12 @@ def main():
                                'index not written; tried again' % _json_name(index))
                 renew_lock(target, box['lock'], token)
             if script_tag(index, INDEX_SCRIPT, INDEX_SCRIPT_FILE) in index_page:
-                put(INDEX_SCRIPT_FILE, INDEX_SCRIPT, 'text/javascript; charset=utf-8')
+                try:
+                    there = target.read(INDEX_SCRIPT_FILE)
+                except (Fail, OSError):
+                    there = None
+                if there != INDEX_SCRIPT:
+                    put(INDEX_SCRIPT_FILE, INDEX_SCRIPT, 'text/javascript; charset=utf-8', soft=True)
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
             put(index, index_page, 'text/html; charset=utf-8', True)
             release_lock(target, box.pop('lock', None), token)   # after both: never an older index page over a newer one
@@ -2640,7 +2622,7 @@ def main():
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
             pend = box.get('pending') or {}
-            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, js_name],
+            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, INDEX_SCRIPT_FILE, js_name],
                                    target.dirs, target.edits,
                                    {'json': _json_name(index), 'html': index, 'sha': str(p['index_sha'] or '').upper(),
                                     'pending': pend.get('name') or '', 'pending_text': pend.get('text') or '', 'consumed': pend.get('consumed') or [],

@@ -1660,6 +1660,9 @@ class ReportSpeed(unittest.TestCase):
         section = dict(title='Findings', columns=['Open', 'Item', 'Description'], kinds=['x', 'mid', 'wrap'],
                        rows=rows, details=details, row_tags=[{'id': 'item-%04d' % i} for i in range(count)])
         doc = dict(title='Example scorecard', status='ok', sections=[section])
+        return self.publish(look, doc)
+
+    def publish(self, look, doc):
         raw = Back1872().env().get_template('report_%s.html.j2' % look).render(
             _report=doc, _page_runs=[], _page_logo_cid='', _email_footer='Example', report_email_header_text='Example')
         js = rw.page_script(raw)
@@ -1681,19 +1684,16 @@ class ReportSpeed(unittest.TestCase):
                 self.tags.append((tag, dict(attrs)))
 
         for look in ('atlas', 'brief', 'ops'):
-            page, _ = self.page(look, 2000)
+            page, js = self.page(look, 2000)
             dom = Elements()
             dom.feed(page)
             self.assertEqual([a['id'] for tag, a in dom.tags if tag == 'tr' and 'id' in a],
                              ['item-%04d' % i for i in range(100)], look)
             self.assertLess(len(dom.tags) + dom.text_nodes, 3000, look)
             self.assertFalse(any(tag == 'table' and a.get('class') == 'mini' for tag, a in dom.tags), look)
-            # no row data in inline script; the one inline script allowed is the early theme lines (atlas, brief: they
-            # save a flash of the wrong theme on a page opened as a file, and do nothing else)
-            inline = [a for tag, a in dom.tags if tag == 'script' and not a.get('src') and a.get('type') != 'application/json']
-            self.assertLessEqual(len(inline), 1, look)
-            if inline:
-                self.assertIn("localStorage.getItem('site-report-theme')", page, look)
+            inline = [a.get('id') for tag, a in dom.tags if tag == 'script' and not a.get('src') and a.get('type') != 'application/json']
+            self.assertEqual(inline, ['site-report-js'] if look == 'ops' else [None, 'site-report-js'], look)
+            self.assertEqual(rw.page_script(page), js, look)
             block, = [a for tag, a in dom.tags if a.get('class') == 'defer-main']
             self.assertEqual(block['data-count'], '2000')
             self.assertEqual(json.loads(block['data-ids']), ['item-%04d' % i for i in range(100, 2000)])
@@ -1709,16 +1709,62 @@ class ReportSpeed(unittest.TestCase):
                     self.assertFalse(out.get('failed'), out)
                     with open(os.path.join(folder, 'index.html')) as f:
                         page = f.read()
-                    for run in runs[:5]:
-                        self.assertIn('href="%s"' % run['page'], page)
-                    for run in runs[5:]:
-                        self.assertNotIn('href="%s"' % run['page'], page)
-                    data = json.loads(re.search(r'class="older-data">(.*?)</script>', page)[1])
-                    self.assertEqual([next(cell[0] for cell in row if isinstance(cell, list)) for row in data],
-                                     [r['page'] for r in runs[5:]])
-                    self.assertTrue(os.path.isfile(os.path.join(folder, rw.INDEX_SCRIPT_FILE)))
+                    older = re.search(r'<details class="older-runs"><summary>Show 3 older runs</summary>(.*?)</details>', page, re.S)[1]
+                    for i, run in enumerate(runs):
+                        href = 'href="%s"' % run['page']
+                        self.assertIn(href, page)
+                        self.assertEqual(href in older, i >= 5)
+                    self.assertIn('st-i st-ok' if look != 'portal' else rw._pill('ok', True), older)
+                    if look != 'portal':
+                        self.assertTrue(os.path.isfile(os.path.join(folder, rw.INDEX_SCRIPT_FILE)))
                     with open(os.path.join(folder, 'index.json')) as f:
                         self.assertEqual(next(r for r in json.load(f)['reports'] if r['key'] == 'example/latest.html')['runs'], runs)
+
+    def check_browser_page(self, folder, page, probe, expected):
+        with open(os.path.join(folder, 'probe.js'), 'w') as f:
+            f.write("document.addEventListener('DOMContentLoaded',function(){" + probe + "})")
+        with open(os.path.join(folder, 'page.html'), 'w') as f:
+            f.write(page.replace('</body>', '<output></output><script src="probe.js"></script></body>'))
+        result = subprocess.run([shutil.which('google-chrome') or shutil.which('chromium'), '--headless', '--no-sandbox',
+                                 '--disable-gpu', '--allow-file-access-from-files', '--user-data-dir=' + folder + '/profile',
+                                 '--dump-dom', '--virtual-time-budget=3000', 'file://' + folder + '/page.html'],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('<output>' + expected + '</output>', result.stdout)
+
+    @unittest.skipUnless(shutil.which('google-chrome') or shutil.which('chromium'), 'no Chrome or Chromium')
+    def test_standalone_rows_and_details(self):
+        page, js = self.page('ops', 105)
+        probe = """var buttons=document.querySelectorAll('.capbar button');
+          var initial=document.querySelector('.shown').textContent;
+          buttons[0].click();
+          var rows=Array.from(document.querySelectorAll('tr[id^=item-]'));
+          rows[104].querySelector('.xb').click();
+          document.querySelector('output').textContent=[buttons.length,initial,rows.every((r,i)=>
+            !r.hidden && r.id==='item-'+String(i).padStart(4,'0')),rows.length,rows[104].nextElementSibling.querySelector('p').textContent].join('|');"""
+        with tempfile.TemporaryDirectory() as folder:
+            for external in (False, True):
+                with self.subTest(external=external):
+                    if external:
+                        with open(os.path.join(folder, rw.SCRIPT), 'w') as f:
+                            f.write(js)
+                    self.check_browser_page(folder, page, probe, '1|100 of 105|true|105|detail-0104 &lt;/script&gt;&lt;b&gt;text&lt;/b&gt;')
+
+    @unittest.skipUnless(shutil.which('google-chrome') or shutil.which('chromium'), 'no Chrome or Chromium')
+    def test_saved_outage_filter_counts_all_events_on_load(self):
+        tags = [dict(data=dict(cls='example', rel=int(i >= 100))) for i in range(150)]
+        tags[-1]['data']['rep'] = '1'
+        section = dict(title='The events', columns=['What happened'], rows=[['Example event %d' % i] for i in range(150)],
+                       row_tags=tags, outage=dict(subject='Example', lanes=[dict(name='Example')]))
+        page, _ = self.publish('ops', dict(title='Example outage review', status='ok', sections=[section]))
+        probe = """document.querySelector('output').textContent=[document.querySelectorAll('tr[data-cls]').length,
+          document.querySelectorAll('tr[data-cls]:not([hidden])').length,document.querySelector('.shown').textContent].join('|');"""
+        with tempfile.TemporaryDirectory() as folder:
+            for saved, visible in [({}, 149), ({'show': 'rel', 'rep': True}, 50)]:
+                with self.subTest(saved=saved):
+                    seed = "<script>localStorage.setItem('site-report-outage',JSON.stringify(%s))</script>" % json.dumps(saved)
+                    self.check_browser_page(folder, page.replace('<head>', '<head>' + seed), probe,
+                                            '150|%d|%d of 150' % (visible, visible))
 
     @unittest.skipUnless(shutil.which('google-chrome') or shutil.which('chromium'), 'no Chrome or Chromium')
     def test_browser_show_all_search_filter_export_and_link(self):
@@ -1740,20 +1786,13 @@ class ReportSpeed(unittest.TestCase):
              "document.querySelector('.csv').click()", '106|true|false'),
         ]
         with tempfile.TemporaryDirectory() as folder:
-            for name, content in [(rw.SCRIPT, js), ('page.html', page.replace('<head>', '''<head><meta http-equiv="Content-Security-Policy" content="script-src 'self'">''')
-                                   .replace('</body>', '<output></output><script src="probe.js"></script></body>'))]:
-                with open(os.path.join(folder, name), 'w') as f:
-                    f.write(content)
+            with open(os.path.join(folder, rw.SCRIPT), 'w') as f:
+                f.write(js)
+            page = page.replace('<head>', """<head><meta http-equiv="Content-Security-Policy" content="script-src 'self'">""")
             for probe, expected in probes:
                 with self.subTest(expected=expected):
-                    with open(os.path.join(folder, 'probe.js'), 'w') as f:
-                        f.write("document.addEventListener('DOMContentLoaded',function(){" + prelude + probe + "})")
-                    result = subprocess.run([shutil.which('google-chrome') or shutil.which('chromium'), '--headless', '--no-sandbox',
-                                             '--disable-gpu', '--allow-file-access-from-files', '--user-data-dir=' + folder + '/profile',
-                                             '--dump-dom', '--virtual-time-budget=3000', 'file://' + folder + '/page.html'],
-                                            capture_output=True, text=True, timeout=30)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn('<output>' + expected + '</output>', result.stdout)
+                    self.check_browser_page(folder, page, prelude + probe, expected)
+
 
 
 class WideTables(unittest.TestCase):

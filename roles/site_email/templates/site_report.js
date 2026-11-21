@@ -169,17 +169,26 @@
   /* a section as text and HTML: its lines as a list, its table (as shown) as rows with tabs between the columns, its
      cards one after the other; its words (what the section is) only when it has nothing else */
   function grab(body){var P=[],H=[],W=[],WH=[];
+    function table(tb){var v=view(tb,one),hd=v[0],rs=v[1];
+      P.push([hd].concat(rs).map(function(r){return r.join('\t')}).join('\n'));
+      H.push('<table style="border-collapse:collapse">'+tr(hd,'th')+rs.map(function(r){return tr(r,'td')}).join('')+'</table>')}
     [].forEach.call(body.children,function(el){
       if(el.classList.contains('tools2')||el.hidden)return;
       if(el.tagName==='UL'){var li=[].filter.call(el.children,function(x){return !x.hidden}).map(one).filter(Boolean);
         P.push(li.map(function(x){return '- '+x}).join('\n'));H.push('<ul>'+li.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+'</ul>');return}
-      if(el.classList.contains('tw')){var v=view(el.querySelector('table'),one),hd=v[0],rs=v[1];
-        P.push([hd].concat(rs).map(function(r){return r.join('\t')}).join('\n'));
-        H.push('<table style="border-collapse:collapse">'+tr(hd,'th')+rs.map(function(r){return tr(r,'td')}).join('')+'</table>');return}
+      if(el.classList.contains('tw')){table(el.querySelector('table'));return}
+      if(el.classList.contains('grps')){all('.gt,summary,.gl,.gh,.tw table',el).forEach(function(part){
+        if(part.closest('[hidden]'))return;
+        if(part.tagName==='TABLE')table(part);else{var label=one(part);P.push(label);H.push('<p>'+esc(label)+'</p>')}
+      });return}
+      if(el.tagName==='SCRIPT')return;
       if(el.classList.contains('cards')){[].forEach.call(el.querySelectorAll('.todo'),function(a){if(a.hidden)return;
           var l=[one(a.querySelector('.row1')),one(a.querySelector('h3')),one(a.querySelector('.subj')),one(a.querySelector('.next'))].filter(Boolean),
               pre=a.querySelector('pre'),code=pre?pre.textContent:'';
           P.push(l.join('\n')+(code?'\n'+code:''));H.push(l.map(function(x){return '<p>'+esc(x)+'</p>'}).join('')+(code?'<pre>'+esc(code)+'</pre>':''))});return}
+      if(el.querySelector('script')){
+        el=el.cloneNode(true);all('script',el).forEach(function(script){script.remove()})
+      }
       var t=one(el);if(t){W.push(t);WH.push('<p>'+esc(t)+'</p>')}});
     return P.length?[P.join('\n\n'),H.join('')]:[W.join('\n\n'),WH.join('')]}
   /* a rule's check or fix text: its command lines (data-copy) - 1.73.0: a text with no command has no button, never the
@@ -267,8 +276,8 @@
     d.k.forEach(function(e){var r=b[e[0]],c=r&&r.cells[e[1]+off];if(c&&c.title==='')c.title=e[2]})}catch(x){}}
   /* Older pages have every row in their markup and keep their 25-row fold. Published row blocks start at row 101. */
   /* a table's cap is lifted by its own filter box or column filters, or by the page's search, the page's filter buttons or the time line's controls (each its own flag: one table's box does not open another's) */
-  var CAP=25,gQ=false,gF=false,gO=false,counts=[];
-  function capFree(tb){return gQ||gF||gO||!!tb._cq||!!tb._cf}
+  var CAP=25,gQ=false,gF=false,counts=[];
+  function capFree(tb){return gQ||gF||!!tb._otFree||!!tb._cq||!!tb._cf}
   function capAll(){all('.tw table').forEach(function(tb){if(tb._capApply)tb._capApply()})}
   var deferredIds=Object.create(null);
   function bindTable(tb){
@@ -294,12 +303,11 @@
         var start=body.rows.length;unpack(pending);pending=null;register(start);
         ids.forEach(function(id){delete deferredIds[id]});
         bindNew(body);
-        if(typeof otApply==='function'&&body.querySelector('tr[data-cls]'))otApply(false,true);
       };
     }
     /* The older fold always includes severe rows. Both limits count only rows that pass the active filters. */
     function capApply(){if(!capOn)return;
-      if(pending){if(!(tb._open||gQ||gF||tb._cq||tb._cf))return;tb._expand()}
+      if(pending){if(!(tb._open||capFree(tb)))return;tb._expand()}
       var k=0,fr=capFree(tb),open=!!tb._open||fr,folded=0,left=0;
       [].forEach.call(body.rows,function(r){if(r.classList.contains('xr'))return;var off=!!(r._f||r._s||r._p||r._d||r._ot),
           sev=!modern&&(r.classList.contains('r-critical')||r.classList.contains('r-warning'));
@@ -309,7 +317,7 @@
       counts.forEach(function(c){c()})}
     if(capOn&&tb.parentNode){capBtn=document.createElement('p');capBtn.className='capbar';capTxt=document.createTextNode('The first '+limit+' of '+(countAll||rows.length)+' rows are shown. ');capBtn.appendChild(capTxt);
       var cb=document.createElement('button');cb.type='button';cb.className='btn';cb.textContent='Show all '+(countAll||rows.length)+(modern?' rows':'');capAll_=cb;
-      cb.addEventListener('click',function(){tb._open=true;capApply();fit('grow');longCells(tb)});capBtn.appendChild(cb);tb.parentNode.parentNode.insertBefore(capBtn,tb.parentNode.nextSibling)}
+      cb.addEventListener('click',function(){tb._open=true;capApply();fitRows(tb)});capBtn.appendChild(cb);tb.parentNode.parentNode.insertBefore(capBtn,tb.parentNode.nextSibling)}
     /* a header's click sorts by its column, the next one the other way; the arrows as characters (textContent: a page
        under Trusted Types sorts too). A first click on a column whose values are already in order as the rows stand
        now (the VM tables come sorted by VM), not all the same (empty cells aside), sorts it the other way, so the click
@@ -327,31 +335,31 @@
       if(!s&&inc&&diff)asc=false;
       tb.querySelectorAll('th').forEach(function(h){var a=h.querySelector('.sort');h.removeAttribute('aria-sort');if(a)a.textContent='\u2195'});
       th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').textContent=asc?'\u25b2':'\u25bc';
-      order(asc).forEach(function(r){body.appendChild(r);if(r._x||r._detail)body.appendChild(r._x||r._detail)});capApply()})});
+      order(asc).forEach(function(r){body.appendChild(r);if(r._x||r._detail)body.appendChild(r._x||r._detail)});capApply();if(tb._expand)fitRows(tb)})});
     var tools=tb.parentNode.previousElementSibling;
     if(tools&&tools.classList.contains('tools2')){var f=tools.querySelector('.filter'),n=tools.querySelector('.shown'),
         dd=[].slice.call(tools.querySelectorAll('select[data-f]'));
       if(!f&&!dd.length)return;
       /* an older page: the whole row of tools was hidden */
       tools.hidden=false;if(f)f.hidden=false;
-      var count=function(){if(!n)return;var k=0;rows.forEach(function(r){if(!r.hidden)k++});n.textContent=k<rows.length?k+' of '+rows.length:''};
-      counts.push(count);
+      var count=function(){if(!n)return;var total=pending?+countAll:rows.length,k=0;rows.forEach(function(r){if(!r.hidden)k++});n.textContent=k<total?k+' of '+total:''};
+      counts.push(count);count();
       if(f)f.addEventListener('input',function(){if(tb._expand)tb._expand();var q=f.value.trim().toLowerCase();tb._cq=!!q;
-        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});capApply();count();if(tb._expand)fit('grow')});
+        rows.forEach(function(r){r._f=!!q&&r.textContent.toLowerCase().indexOf(q)<0;vis(r)});capApply();count();if(tb._expand)fitRows(tb)});
       /* one choice at a time per list (1.67.0): a row stays when the chosen value is one of its own (data-f<n>: |a|b|) */
       dd.forEach(function(s){s.parentNode.hidden=false;s.addEventListener('change',function(){if(tb._expand)tb._expand();tb._cf=dd.some(function(x){return !!x.value});
         rows.forEach(function(r){var off=false;dd.forEach(function(x){var v=x.value;
-          if(v&&(r.getAttribute('data-f'+x.getAttribute('data-f'))||'').indexOf('|'+v+'|')<0)off=true});r._d=off;vis(r)});capApply();count();if(tb._expand)fit('grow')})})}
+          if(v&&(r.getAttribute('data-f'+x.getAttribute('data-f'))||'').indexOf('|'+v+'|')<0)off=true});r._d=off;vis(r)});capApply();count();if(tb._expand)fitRows(tb)})})}
   }
   all('.tw table').forEach(bindTable);
   capAll();
   window.addEventListener('beforeprint',expandAll);
   /* a link to a row past the cap (a dashboard's drill link, Open item, a timeline line) shows every row of that table first */
   function liftFor(h){if(!h||h.length<2)return;var id=decodeURIComponent(h.slice(1)),pending=deferredIds[id];
-    if(pending){pending._open=true;pending._capApply();fit('grow')}
+    if(pending){pending._open=true;pending._capApply();fitRows(pending)}
     var t=document.getElementById(id);
     if(t){var sec=t.closest('details.sec');if(sec)sec.open=true;if(pending)t.scrollIntoView()}
-    var tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply()}}
+    var tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply();fitRows(tb)}}
   document.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;   /* 1.87.2: a new tab - the report stays as it is */
     var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a)try{liftFor(a.getAttribute('href'))}catch(x){}},true);
   window.addEventListener('hashchange',function(){try{liftFor(location.hash)}catch(x){}});try{liftFor(location.hash)}catch(x){}
@@ -380,6 +388,7 @@
       var f=t&&(t.tagName==='DETAILS'?t.querySelector('summary'):t);
       if(f){if(!/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(f.tagName)&&!f.hasAttribute('tabindex'))f.setAttribute('tabindex','-1');try{f.focus({preventScroll:true})}catch(x){}}})})();
   /* 1.76.5: a table cell of more than 4 lines shows 4 and "more" (CSS draws the word; the cell's text is as it was) - measured once its section is open */
+  function fitRows(root){fit('grow');longCells(root)}
   function longCells(root){all('.tw td .cv',root).forEach(function(cv){var td=cv.parentNode;if(td._lc||!td.offsetParent)return;
     var lh=parseFloat(getComputedStyle(cv).lineHeight)||20;if(cv.offsetHeight>lh*4.6){td._lc=1;td.classList.add('cl')}else td._lc=0})}
   document.addEventListener('click',function(e){var td=e.target.closest&&e.target.closest('td.cl');if(td&&!e.target.closest('a,button,input,select'))td.classList.toggle('open')});
@@ -409,7 +418,7 @@
           w.parentNode.insertBefore(p,w.nextSibling)}
         if(sec._none)sec._none.hidden=!empty;if(w.hidden!==empty)w.hidden=empty});
       all('.grps').forEach(function(g){var off=!g.querySelector('details.grp:not([hidden])');if(g.hidden!==off)g.hidden=off});
-      counts.forEach(function(c){c()});fit();
+      counts.forEach(function(c){c()});fitRows(document);
       /* 1.71.0: a dashboard draws its panels again (site-facets) */
       var ev;try{ev=new CustomEvent('site-facets',{detail:{pf:ch.pf,col:ch.col,cat:ch.cat,h:ch.h}})}catch(e){ev=null}if(ev)document.dispatchEvent(ev)};
     var put=function(k,v){ch[k]=v;
@@ -419,7 +428,7 @@
     all('select[data-fk]',fx).forEach(function(s){s.addEventListener('change',function(){put(s.getAttribute('data-fk'),s.value)})});
     all('input[data-fk]',fx).forEach(function(s){var tm;s.addEventListener('input',function(){clearTimeout(tm);
       tm=setTimeout(function(){put(s.getAttribute('data-fk'),s.value.trim().toLowerCase())},150)})})});
-  all('details.grp').forEach(function(d){d.addEventListener('toggle',function(){fit()})});
+  all('details.grp').forEach(function(d){d.addEventListener('toggle',function(){if(d.open)fitRows(d)})});
   /* 1.71.0: dashboards ([data-dash]: report_dash.html.j2, its data in the script of type application/json; the rules in
      plugins/filter/report_dash_filters.py). The page's filters (the .facets above, keys col, pf, cat, h) draw every panel
      again from the facts: the tiles, the stacked bars, the weekly line (its hover and its table), the top lists; a panel
@@ -669,7 +678,7 @@
       found.textContent=q?(ns?total+' found in '+ns+' section'+(ns===1?'':'s'):'Nothing found'):'';
       box.classList.toggle('none-found',!!q&&!ns);
       counts.forEach(function(c){c()});mark(q);
-      if(window.requestAnimationFrame)requestAnimationFrame(function(){fit()});else fit()};
+      if(window.requestAnimationFrame)requestAnimationFrame(function(){fitRows(document)});else fitRows(document)};
     find.addEventListener('input',function(){clearTimeout(tm);tm=setTimeout(run,150)});
     find.addEventListener('search',run);
     find.addEventListener('keydown',function(e){
@@ -713,8 +722,11 @@
     if(cur&&ic&&cur!==ic){var nw=full?ic:ic.cloneNode(true);m.replaceChild(nw,cur)}
     m.setAttribute('data-tip',tip);m.setAttribute('aria-label',aria)};
   otMarks.forEach(function(m){m._rel0=m.classList.contains('ot-rel')?1:0});
-  var otApply=function(changed,loading){
-    if(changed)all('.tw table').forEach(function(tb){if(tb._expand&&tb.querySelector('tr[data-cls]'))tb._expand()});
+  var otApply=function(changed){
+    var filtered=OT.show!=='all'||Object.keys(OT.off).length>0;
+    var tables=all('.tw table').filter(function(tb){return tb.querySelector('tr[data-cls]')});
+    tables.forEach(function(tb){if(tb._expand&&(changed||filtered||!OT.rep))tb._expand();
+      tb._otFree=filtered||(!OT.rep&&!!tb.querySelector('tr[data-rep]'))});
     otMarks.forEach(function(m){if(!m._ev)return;var v=otVisible(m._ev);m.classList.toggle('ot-off',!v.length);if(v.length)otMark(m,v)});
     otRows=all('tr[data-cls]');var wi=-1;otRows.forEach(function(tr){var t=tr.closest('table');if(t&&wi<0){var h=all('thead th',t).map(function(x){return x.textContent.trim()});wi=h.findIndex(function(x){return x.indexOf('What happened')===0})}
       var ev={r:tr.getAttribute('data-rel')==='1'?1:0,c:tr.getAttribute('data-cls')};
@@ -722,9 +734,10 @@
       var f=tr.getAttribute('data-fold'),td=wi>=0?tr.cells[wi]:null;
       if(f&&td){var q=f.split('|'),sx=td._sx;if(!sx){sx=td._sx=document.createElement('span');sx.className='ot-fold';td.appendChild(sx)}      /* its own node: the cell's link stays */
         sx.textContent=OT.rep?'':' \u00d7'+q[0]+', '+q[1]+(q[2]!==q[1]?'-'+q[2]:'');tr._t=undefined;if(OT.rep)td.removeAttribute('title');else td.title=q[3]}});
-    gO=otRows.some(function(tr){return !!tr._ot});capAll();    /* a control that hides rows opens the folded ones: the table says what it shows */
-    counts.forEach(function(c){c()});                       /* the tables' "n of m" */
-    if(!loading&&find&&find.value.trim()&&typeof run==='function')run();            /* an active search counts again: its rows, its sections' badges, "n found" */
+    capAll();
+    counts.forEach(function(c){c()});
+    if(find&&find.value.trim()&&typeof run==='function')run();
+    else if(tables.length)fitRows(document);
     if(otCtl){all('input[name=ot-show]',otCtl).forEach(function(i){i.checked=i.value===OT.show});
       all('input[name=ot-kind]',otCtl).forEach(function(i){i.checked=!OT.off[i.value]});var r=otCtl.querySelector('input[name=ot-rep]');if(r)r.checked=OT.rep}};
   var otSave=function(){try{localStorage.setItem(OTK,JSON.stringify({show:OT.show,off:OT.off,rep:OT.rep}))}catch(e){}};
