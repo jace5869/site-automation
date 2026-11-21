@@ -295,7 +295,7 @@ tr.selrow td{background:var(--accent-soft)}
 .method{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;font-size:13px}
 code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:5px;padding:0 5px}
 .hide{display:none!important}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (prefers-reduced-motion:reduce){:root:not(.motion-always) *{transition:none!important}}
 
 /* the generated page */
 .logoimg{height:38px;width:auto;max-width:170px;flex:none}

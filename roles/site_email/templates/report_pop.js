@@ -25,22 +25,30 @@
   function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined&&txt!==null)e.textContent=String(txt);return e}
   var raf=window.requestAnimationFrame||function(f){return setTimeout(function(){f(Date.now())},16)};
 
-  /* count-up: the number of a tile; a value that is not one number with words around it (a date, two numbers) stays */
+  /* count-up: the number of a tile; a value that is not one number with words around it (a date, two numbers) stays.
+     1.86.0 review: the number it ends on is read once (v._popEnd) and kept; a count still running is stopped (its number
+     put back) before another starts - a team picked twice within the count never ends on a number in between, nor on 0 */
+  /* no count running: the number on the page is the one (the page may have written it); a count running: the one it ends on */
+  function popEnd(v){if(v._popStop)return v._popEnd;var tn=[].filter.call(v.childNodes,function(n){return n.nodeType===3&&/\d/.test(n.nodeValue)})[0];
+    if(!tn)return null;v._popTn=tn;v._popEnd=tn.nodeValue;return v._popEnd}
   function countUp(v){
     if(v.getAttribute('data-pop-n'))return;v.setAttribute('data-pop-n','1');
-    var tn=[].filter.call(v.childNodes,function(n){return n.nodeType===3&&/\d/.test(n.nodeValue)})[0];if(!tn)return;
-    var m=tn.nodeValue.match(/^(\D*)(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\D*)$/);if(!m)return;
-    var to=parseFloat((m[2]+(m[3]||'')).replace(/,/g,'')),dec=m[3]?m[3].length-1:0,comma=m[2].indexOf(',')>=0,end=tn.nodeValue;
+    if(v._popStop)v._popStop();
+    var end=popEnd(v),tn=v._popTn;if(end===null||!tn)return;
+    var m=end.match(/^(\D*)(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\D*)$/);if(!m)return;
+    var to=parseFloat((m[2]+(m[3]||'')).replace(/,/g,'')),dec=m[3]?m[3].length-1:0,comma=m[2].indexOf(',')>=0;
     /* still, a hidden value (another period's, another team's) or a page nobody looks at: the number as it is */
-    if(still||!to||to>1e9||v.hidden||v.closest('[hidden]')||document.visibilityState==='hidden'){v.classList.add('pop-done');return}
+    if(still||!to||to>1e9||v.hidden||v.closest('[hidden]')||document.visibilityState==='hidden'){tn.nodeValue=end;v.classList.add('pop-done');return}
     function fmt(x){var s=x.toFixed(dec);if(comma)s=s.replace(/\B(?=(\d{3})+(?!\d))/g,',');return m[1]+s+m[4]}
-    var t0=null,dur=900,last=fmt(0),over=false;
-    /* the page's own script may write the value meanwhile (a period button): then it is left alone */
-    function done(){if(over)return;over=true;if(tn.nodeValue===last)tn.nodeValue=end;v.classList.add('pop-done')}
-    function step(t){if(over)return;if(tn.nodeValue!==last){over=true;v.classList.add('pop-done');return}
+    var t0=null,dur=900,last=fmt(0),over=false,timer=0;
+    function stop(){over=true;clearTimeout(timer);v._popStop=null}
+    function done(){if(over)return;stop();if(tn.nodeValue===last)tn.nodeValue=end;v.classList.add('pop-done');if(window.reportPopSlim)window.reportPopSlim()}
+    v._popStop=function(){if(over)return;stop();if(tn.nodeValue===last)tn.nodeValue=end};
+    /* the page's own script may write the value meanwhile (a period button): then it is its number from now on */
+    function step(t){if(over)return;if(tn.nodeValue!==last){stop();v._popEnd=tn.nodeValue;v.classList.add('pop-done');return}
       if(t0===null)t0=t;var p=Math.min(1,(t-t0)/dur),k=1-Math.pow(1-p,3);
       if(p<1){last=fmt(to*k);tn.nodeValue=last;raf(step)}else done()}
-    tn.nodeValue=last;raf(step);setTimeout(done,dur+400)}
+    tn.nodeValue=last;raf(step);timer=setTimeout(done,dur+400)}
 
   /* draw-in: a chart's lines draw, its bars grow from their base */
   function drawIn(svg){
@@ -124,7 +132,7 @@
       ts.slice(0,3).forEach(function(x){var l=x.querySelector('.pt-l,.k,.lbl,.eyebrow'),v=x.querySelector('.v');if(!l||!v)return;
         var lc=l.cloneNode(true);all('[aria-hidden],.pt-ic,.vh,svg,button',lc).forEach(function(z){z.parentNode.removeChild(z)});
         var s=el('span');s.appendChild(el('i','',(lc.textContent||'').replace(/\s+/g,' ').trim()));s.appendChild(document.createTextNode(' '));
-        s.appendChild(el('b','',((v.firstChild&&v.firstChild.nodeType===3?v.firstChild.nodeValue:v.textContent)||'').trim()));k.appendChild(s)})}
+        var e=popEnd(v);s.appendChild(el('b','',(e!==null?e:(v.firstChild&&v.firstChild.nodeType===3?v.firstChild.nodeValue:v.textContent)||'').trim()));k.appendChild(s)})}
     bar.appendChild(mini);fill();window.reportPopSlim=fill;
     var top=document.querySelector('.hero,#glance')||h1;
     if('IntersectionObserver' in window)new IntersectionObserver(function(es){var on=!es[0].isIntersecting;
@@ -143,7 +151,8 @@
       /* a sort puts the rows back in a new order: the fold row stays last */
       if(tb.tHead)tb.tHead.addEventListener('click',function(){setTimeout(function(){b.appendChild(tr)},0)})});
     var cur='';
-    function has(r,t){return (r.getAttribute('data-team')||'').indexOf('|'+t+'|')>=0}
+    /* a row's teams: a JSON list (1.86.0 review: a team's name may hold any character) */
+    function has(r,t){if(!r._tl){try{r._tl=JSON.parse(r.getAttribute('data-team')||'[]')}catch(e){r._tl=[]}}return r._tl.indexOf(t)>=0}
     function apply(name,save){cur=name;
       btns.forEach(function(b){b.setAttribute('aria-pressed',String((b.getAttribute('data-team')||'')===name))});
       if(sel&&sel.value!==name)sel.value=name;

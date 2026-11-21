@@ -163,7 +163,7 @@
   function view(tb,f){if(tb._expand)tb._expand();if(tb._capApply)tb._capApply();var hs=[].slice.call(tb.tHead.rows[0].cells),on=[];
     hs.forEach(function(h,i){if(getComputedStyle(h).display!=='none'&&!h.classList.contains('k-x'))on.push(i)});   /* not the open buttons' column */
     return [on.map(function(i){return head(hs[i])}),
-      [].filter.call(tb.tBodies[0].rows,function(r){return (!r.hidden||r._c)&&!r.classList.contains('xr')}).map(function(r){return on.map(function(i){return f(r.cells[i])})})]}
+      [].filter.call(tb.tBodies[0].rows,function(r){return (!r.hidden||r._c)&&!r.classList.contains('xr')&&!r.classList.contains('pt-fold')}).map(function(r){return on.map(function(i){return f(r.cells[i])})})]}
   /* a section as text and HTML: its lines as a list, its table (as shown) as rows with tabs between the columns, its
      cards one after the other; its words (what the section is) only when it has nothing else */
   function grab(body){var P=[],H=[],W=[],WH=[];
@@ -284,7 +284,7 @@
     var body=tb.tBodies[0],rows=[],pending=body.querySelector(':scope > script.defer-main,:scope > script.defer-mini');
     function register(start){
       for(var i=start;i<body.rows.length;i++){
-        var r=body.rows[i];if(r.classList.contains('xr'))continue;
+        var r=body.rows[i];if(r.classList.contains('xr')||r.classList.contains('pt-fold'))continue;
         rows.push(r);var n=r.nextElementSibling;if(n&&n.classList.contains('xr'))r._x=n;
         if(n&&n.classList.contains('defer-detail'))r._detail=n;
       }
@@ -329,7 +329,7 @@
       var by=rows.map(function(r){return [r,skey(cval(r.cells[i]))]}),
           order=function(asc){return by.slice().sort(function(a,b){return scmp(a[1],b[1],asc)}).map(function(x){return x[0]})},
           s=th.getAttribute('aria-sort'),asc=s!=='ascending',
-          now=[].map.call(body.rows,function(r){return skey(cval(r.cells[i]))}),inc=true,diff=false;
+          now=[].filter.call(body.rows,function(r){return !r.classList.contains('pt-fold')}).map(function(r){return skey(cval(r.cells[i]))}),inc=true,diff=false;
       for(var j=1;j<now.length;j++){var c=scmp(now[j-1],now[j],true);if(c>0)inc=false;if(c<0&&now[j]!==null)diff=true}
       if(!s&&inc&&diff)asc=false;
       tb.querySelectorAll('th').forEach(function(h){var a=h.querySelector('.sort');h.removeAttribute('aria-sort');if(a)a.textContent='\u2195'});
@@ -410,7 +410,7 @@
          gives way to one line; a list of collections with none shown goes away */
       all('details.sec').forEach(function(sec){var tb=sec.querySelector('.tw table');
         if(!tb||!tb.tBodies[0]||!tb.querySelector('tbody tr[data-pf],tbody tr[data-col]'))return;
-        var rows=[].slice.call(tb.tBodies[0].rows).filter(function(r){return !r.classList.contains('xr')}),k=rows.filter(function(r){return !r.hidden}).length,
+        var rows=[].slice.call(tb.tBodies[0].rows).filter(function(r){return !r.classList.contains('xr')&&!r.classList.contains('pt-fold')}),k=rows.filter(function(r){return !r.hidden}).length,
             h2=sec.querySelector('summary h2'),c=sec.querySelector('summary .count'),t=h2&&h2.firstChild,w=tb.closest('.tw'),
             empty=!k&&rows.some(function(r){return r._p});
         var any=ch.pf||ch.col||ch.cat||ch.h;
@@ -665,19 +665,22 @@
           var s=t.nodeValue.toLowerCase(),i=s.indexOf(q);
           while(i>=0&&n<3000){var r=document.createRange();r.setStart(t,i);r.setEnd(t,i+q.length);h.add(r);n++;i=s.indexOf(q,i+q.length)}}});
       CSS.highlights.set('site-find',h)};
-    var run=function(){var q=find.value.trim().toLowerCase(),total=0,ns=0;gQ=!!q;capAll();
-      secs.forEach(function(d){var body=d.querySelector('.body'),k=0;if(!body)return;
+    var run=function(){var q=find.value.trim().toLowerCase(),total=0,ns=0,others=0;gQ=!!q;capAll();
+      secs.forEach(function(d){var body=d.querySelector('.body'),k=0,km=0;if(!body)return;
         var whole=!q||title(d).indexOf(q)>=0;
         all('.tw tbody tr',body).forEach(function(r){if(r.classList.contains('xr')||r.closest('.xr')||r.classList.contains('pt-fold'))return;
-          var on=whole||low(r).indexOf(q)>=0;r._s=!on;vis(r);if(on&&!r.hidden)k++});
+          var on=whole||low(r).indexOf(q)>=0;r._s=!on;vis(r);if(on&&!r.hidden)k++;
+          /* 1.86.0 review: a match folded away only as another team's - counted, so its section and the fold button stay */
+          else if(on&&r._tm&&!(r._f||r._p||r._d||r._ot||r._sv))km++});
         all('ul.lines>li,ul.passed>li,.todo',body).forEach(function(el){var on=whole||low(el).indexOf(q)>=0;if(el.hidden===on)el.hidden=!on;if(on)k++});
         [].forEach.call(body.children,function(el){if((el.tagName==='P'||el.classList.contains('snote'))&&low(el).indexOf(q)>=0)k++});
-        var away=!!q&&!k&&!whole;if(d.hidden!==away)d.hidden=away;
-        if(q&&!d.hidden){d.open=true;total+=k;ns++}
+        var away=!!q&&!k&&!km&&!whole;if(d.hidden!==away)d.hidden=away;
+        if(q&&!d.hidden){d.open=true;total+=k;others+=km;ns++}
         (links[d.id]||[]).forEach(function(a){var m=a.querySelector('.m');a.classList.toggle('off',d.hidden);
           if(m)m.textContent=q&&!d.hidden?String(k):''})});
       capAll();                                                  /* the folded rows again, from the rows the search left */
-      found.textContent=q?(ns?total+' found in '+ns+' section'+(ns===1?'':'s'):'Nothing found'):'';
+      found.textContent=q?(ns?total+' found in '+ns+' section'+(ns===1?'':'s')+(others?', '+others+' more in other teams':''):'Nothing found'):'';
+      if(window.reportPopFold)window.reportPopFold();               /* the fold buttons count the other teams' matches */
       box.classList.toggle('none-found',!!q&&!ns);
       counts.forEach(function(c){c()});mark(q);
       if(window.requestAnimationFrame)requestAnimationFrame(function(){fitRows(document)});else fitRows(document)};

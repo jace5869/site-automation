@@ -612,7 +612,7 @@ class AtlasLook(unittest.TestCase):
         self.assertIn('<details class="cols"><summary class="btn"', h)
         for i, c in enumerate(["Host", "Result", "State", "Status"], 1):
             self.assertIn('<label><input type="checkbox" class="c%d" checked>%s</label>' % (i, c), h)
-            self.assertIn(".body:has(.cols .c%d:not(:checked)) .tw>table>:is(thead,tbody)>tr:not(.xr)>:is(th,td):nth-child(%d){display:none!important}" % (i, i), h)
+            self.assertIn(".body:has(.cols .c%d:not(:checked)) .tw>table>:is(thead,tbody)>tr:not(.xr):not(.pt-fold)>:is(th,td):nth-child(%d){display:none!important}" % (i, i), h)
         self.assertNotIn(".cols .c5", h)
         self.assertIn('<button class="btn csv" type="button" hidden', h)
         self.assertIn('<button class="call" type="button" hidden>Show all</button>', h)
@@ -803,7 +803,7 @@ class BriefLook(unittest.TestCase):
         self.assertIn(":root:has(#theme-light:checked){--ink:#182027;", flat)
         self.assertIn(":root:has(#theme-dark:checked){--ink:#e0e0e0;", flat)
         self.assertIn('@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){', h)
-        self.assertIn("@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}", h)
+        self.assertIn("@media (prefers-reduced-motion:reduce){:root:not(.motion-always) *{transition:none!important;animation:none!important}", h)
         self.assertIn("@media print{", h)
         palette = h[h.index("<style>"):h.index("/* one family")]
         self.assertNotRegex(palette, r"#000\b|#000000|#fff\b|#ffffff")         # the palette: never pure black or white

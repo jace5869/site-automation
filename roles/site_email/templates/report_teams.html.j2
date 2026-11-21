@@ -38,7 +38,7 @@
 <ol>
 {%- for c in v.todo %}
 {%- set cst = c.status if c.status in words else 'warning' %}
-<li>{{ chip(cst, chipword[cst]) }}<div><b>{{ c.title | e }}</b> <span class="mut">{{ c.subject | e }}{{ (' &middot; ' | safe ~ c.meta | e) if c.meta | default('') else '' }}</span>
+<li>{{ chip(cst, c.chip | default(chipword[cst], true)) }}<div><b>{{ c.title | e }}</b> <span class="mut">{{ c.subject | e }}{{ (' &middot; ' | safe ~ c.meta | e) if c.meta | default('') else '' }}</span>
 {%- if c.code | default('') %}
 <div class="code"><pre>{{ c.code | e }}</pre><button class="copy" type="button" hidden>Copy</button></div>
 {%- endif %}</div></li>
@@ -50,7 +50,7 @@
 </div>
 <div class="pt-card pt-sev2"><h3>Findings by severity, per team</h3>
 {%- for b in tv.bars %}
-<div class="sb-row{{ ' me' if b.team == v.team else '' }}"><span class="sb-n">{{ b.team | e }}</span><span class="sb-bar" role="img" aria-label="{{ b.team | e }}: {{ b.text | e }}">{% for g in b.segs %}<i class="sb-{{ {'critical': 'crit', 'warning': 'warn', 'low': 'low'}[g.k] }} sbw{{ (g.w / 5) | round | int * 5 }}" title="{{ g.n }} {{ g.k }}"></i>{% endfor %}</span><span class="sb-v">{{ b.text | e }}</span></div>
+<div class="sb-row{{ ' me' if b.team == v.team else '' }}"><span class="sb-n">{{ b.team | e }}</span><span class="sb-bar" role="img" aria-label="{{ b.team | e }}: {{ b.text | e }}">{% for g in b.segs %}<i class="sb-{{ {'critical': 'crit', 'warning': 'warn', 'low': 'low'}[g.k] }} sbw{{ [(g.w / 5) | round | int * 5, 5] | max }}" title="{{ g.n }} {{ g.k }}"></i>{% endfor %}</span><span class="sb-v">{{ b.text | e }}</span></div>
 {%- endfor %}
 <div class="sb-leg"><span><i class="sb-crit"></i>Critical</span><span><i class="sb-warn"></i>Warning</span><span><i class="sb-low"></i>Low</span></div>
 </div>

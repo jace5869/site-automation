@@ -1832,7 +1832,8 @@ _CELL_SOFT = re.compile(r"(?<=[_./\\,-])(?=[^\s_./\\,-])")
 
 
 _TIDY_CONTENT = ("rows", "lines", "text", "cards", "board", "squares", "matrix", "timeline", "heat", "outage", "details", "groups", "tiles", "glance",
-                 "buttons", "links", "sparks", "actions", "passed", "rule_texts", "cell_links")
+                 "buttons", "links", "sparks", "actions", "passed", "rule_texts", "cell_links",
+                 "team_view")              # 1.86.0 review: the team view has no rows of its own - an all-clear run keeps it
 _ALL_CLEAR = re.compile(r"^Every [^.]{3,100} (?:is|are) (?:OK|up|online|healthy|fine|clear|reachable|connected|running|answering|in sync|available|on|at|below|within|under|in)\b[^.]*\.?$", re.I)
 _NOTHING = re.compile(r"^(none|nothing|nothing found|nothing is [a-z ]{1,40}|-)\.?$", re.I)
 
@@ -2605,7 +2606,8 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                 warn += sev != "critical"
             # a finding's "fix" is what to do, for a person: shown with the finding, never run (the hint is what ACT runs as evidence)
             row = [sev.upper(), f.get("check", ""), str(f.get("summary", "")) + ((" What to do: %s" % f["fix"]) if f.get("fix") else ""), f.get("hint", "")]
-            tag = {"data": {"team": "|%s|" % "|".join(tmap.get(h) or [tv.get("other") or "Unassigned"]), "sev": sev}} if tv else None
+            # 1.86.0 review: the row's teams as a JSON list - a team name may hold any character (OPS never matches OPS|WEB)
+            tag = {"data": {"team": json.dumps(tmap.get(h) or [tv.get("other") or "Unassigned"], separators=(",", ":")), "sev": sev}} if tv else None
             rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []) + ([tag] if tv else []))
     rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 1, r[0]))
     tags = [r.pop() for r in rows] if tv else []           # each row's team and severity (1.86.0)

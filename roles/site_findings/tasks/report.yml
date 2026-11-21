@@ -159,7 +159,8 @@
     _sf_team_notes: >-
       {{ report_teams | report_teams_notes(dict(ansible_play_hosts_all | zip(ansible_play_hosts_all | map('extract', hostvars)
                                                                              | map(attribute='group_names', default=[]))),
-                                           groups.keys() | list, awx_inventory_name | default(tower_inventory_name | default(''))) }}
+                                           groups.keys() | list, awx_inventory_name | default(tower_inventory_name | default('')),
+                                           report_team_other) }}
   run_once: true
   when: report_teams | default({}) | length > 0
 

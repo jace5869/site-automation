@@ -288,7 +288,7 @@ class Look(unittest.TestCase):
         h = render(DOC)
         self.assertIn(".cdd,.todo.later{display:block!important}", h)
         self.assertIn(".hstrip::details-content{content-visibility:visible}", h)
-        self.assertIn("@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}", h)
+        self.assertIn("@media (prefers-reduced-motion:reduce){:root:not(.motion-always) *{transition:none!important;animation:none!important}", h)
 
     def test_every_fixture_renders(self):
         import glob

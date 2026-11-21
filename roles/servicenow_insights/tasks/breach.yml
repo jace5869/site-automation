@@ -60,7 +60,7 @@
       {{ _snb_model | servicenow_insights_breach_page({'look': _sni_opts.look, 'header_text': report_email_header_text | default('Site automation report'),
            'generated': (report_time_zone | default('', true) | string | report_time_now) or (now(fmt='%Y-%m-%d %H:%M %Z') | trim),
            'job': awx_job_id | default(tower_job_id | default('local')), 'url': _snb.url | default(_sni_url),
-           'ticket_links': _sni_opts.ticket_links, 'ticket_base': _sni_opts.ticket_base,
+           'ticket_links': _sni_opts.ticket_links, 'ticket_base': _sni_opts.ticket_base, 'motion': _sni_opts.motion,
            'prefixes': servicenow_insights_ticket_prefixes | default({}, true),
            'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
            'links': {'full': (report_web_latest | default('{template}/latest.html', true)) | servicenow_insights_rel(_snb_page)}}) }}

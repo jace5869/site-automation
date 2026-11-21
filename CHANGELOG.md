@@ -335,6 +335,18 @@ ticket insights.
 - Tests: `tests/test_report_teams.py` (matching, the report, the runs, the three looks, motion, the script, the
   insights' bar); `tests/findings/run_findings_test.sh` (the page, the artifacts, the notes, the email unchanged,
   `report_teams: {}` and `report_motion: off`), on both ansible-core versions.
+- **Review round:**
+  - an all-clear run keeps the team view;
+  - a team picked again within the count ends on its own numbers;
+  - the page search counts other teams' matches, says *N more in other teams* and keeps the section;
+  - the fold row is no data row (Columns, Copy, CSV, sort);
+  - `report_motion: off` is still at once, no element waits invisible;
+  - `always` beats the system's reduced motion; the About-to-breach pages follow `report_motion`;
+  - a row's teams are a JSON list (a team name may hold any character);
+  - two teams of one name, or one named as `report_team_other`, are the first only (said);
+  - a team's hosts that did not report are in its *What to do first* (*Not checked*);
+  - the header bar is no longer forced sticky at 640 px and narrower or in print (pages without teams are as before);
+  - long names wrap in the cards; a small share keeps a visible bar; print shows Everyone's view.
 
 ## 1.85.0 — 2026-11-20
 

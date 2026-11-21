@@ -407,6 +407,8 @@ team its own part. The email does not change.
   `teams` (the site portal and later workflow steps can read them).
 - A setting the job cannot read never fails it. The job says what to fix: a part it cannot read, a team that matches
   no host of this run, a `group:` that is not in the inventory.
+- A team's name is its words with single spaces. Two teams of one name (any case), or a team named as
+  `report_team_other`: the first only, and the job says which was left out (rename it).
 - `report_teams: {}` (the default): no teams, every page as before.
 
 The ticket insights' pages have their own teams: the assignment groups. Chips over *At a glance* link to each group's

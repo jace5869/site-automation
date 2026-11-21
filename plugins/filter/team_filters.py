@@ -26,19 +26,27 @@ OTHER = "Unassigned"
 RUNS = 5                                        # the team view's runs: this one and the 4 before it
 
 
-def _rules(report_teams):
+def _rules(report_teams, other=OTHER):
     """report_teams -> ([(team, [(kind, value)])], [problems]). A team or a matcher that cannot be read is left out
-    and said; a team with no matcher left is left out."""
+    and said; a team with no matcher left is left out. 1.86.0 review: a name is its words with single spaces, and two
+    teams of one name (any case) or a team named as report_team_other are the first one only - the rest left out, said."""
     out, bad = [], []
     if not report_teams:
         return out, bad
     if not isinstance(report_teams, dict):
         return out, ["report_teams is not a mapping of team: [matchers] - no teams this run"]
+    seen = set([" ".join(str(other or OTHER).split()).casefold()])
     for team, ms in report_teams.items():
-        name = str(team if team is not None else "").strip()
+        name = " ".join(str(team if team is not None else "").split())
         if not name:
             bad.append("report_teams: a team without a name - left out")
             continue
+        if name.casefold() in seen:
+            bad.append("report_teams: %s - %s - left out (rename it)" % (
+                name, "the name of the hosts no team has (report_team_other)" if name.casefold() == " ".join(str(other or OTHER).split()).casefold()
+                else "another team has this name"))
+            continue
+        seen.add(name.casefold())
         if isinstance(ms, str):
             ms = [ms]
         if not isinstance(ms, (list, tuple)):
@@ -75,7 +83,7 @@ def _match(kind, val, host, groups, inventory):
 def site_teams(host, group_names=None, inventory="", report_teams=None, other=OTHER):
     """The host's teams, in report_teams' order (the first is its owner); [other] when none matches; [] without
     report_teams (no teams)."""
-    rules, _ = _rules(report_teams)
+    rules, _ = _rules(report_teams, other)
     if not rules:
         return []
     groups = set(str(g) for g in group_names or [])
@@ -85,7 +93,7 @@ def site_teams(host, group_names=None, inventory="", report_teams=None, other=OT
 
 def report_team_map(host_groups, inventory="", report_teams=None, other=OTHER):
     """{host: [its groups]} -> {host: [its teams]} (site_teams for each); {} without report_teams."""
-    rules, _ = _rules(report_teams)
+    rules, _ = _rules(report_teams, other)
     if not rules:
         return {}
     return dict((str(h), site_teams(h, gs, inventory, report_teams, other)) for h, gs in (host_groups or {}).items())
@@ -93,15 +101,15 @@ def report_team_map(host_groups, inventory="", report_teams=None, other=OTHER):
 
 def report_team_names(report_teams=None, other=OTHER):
     """The teams in report_teams' order, then other; [] without report_teams."""
-    rules, _ = _rules(report_teams)
+    rules, _ = _rules(report_teams, other)
     return [t for t, _ in rules] + [str(other or OTHER)] if rules else []
 
 
-def report_teams_notes(report_teams, host_groups=None, inventory_groups=None, inventory=""):
+def report_teams_notes(report_teams, host_groups=None, inventory_groups=None, inventory="", other=OTHER):
     """What the job says about report_teams, never failing it: a part it cannot read, a team that matches no host of this
     run, a group: that is not in the inventory. host_groups {host: [groups]} (this run's hosts), inventory_groups: the
     inventory's group names (the groups magic variable's keys)."""
-    rules, notes = _rules(report_teams)
+    rules, notes = _rules(report_teams, other)
     known = set(str(g) for g in inventory_groups or [])
     hg = host_groups or {}
     for team, rs in rules:
@@ -147,10 +155,11 @@ def team_block(by_host, missing, team_map, names, cards, other=OTHER, report_tea
         out["figures"][team] = {"hosts": len(hs), "reported": len(rep), "missing": len(hs) - len(rep),
                                 "healthy": len(rep) - len(bad), "critical": crit, "warning": warn, "low": low,
                                 "findings": len(fs), "owned": len(owned), "shared": len(hs) - len(owned)}
-        c, _ = cards(dict((h, by_host[h]) for h in rep), [], 3)
+        # 1.86.0 review: the team's hosts that did not report too - never a green "nothing to do" for a team nobody heard from
+        c, _ = cards(dict((h, by_host[h]) for h in rep), [h for h in hs if h not in by_host], 3)
         out["todo"][team] = c
         out["counts"][team] = [crit, warn, low]          # "" = everyone, each finding once
-    rules, _ = _rules(report_teams)
+    rules, _ = _rules(report_teams, other)
     out["map"] = "; ".join("%s: %s" % (t, ", ".join(("%s:%s" % (k, v)) for k, v in rs)) for t, rs in rules)
     return out
 

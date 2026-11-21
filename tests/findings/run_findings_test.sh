@@ -147,7 +147,7 @@ page=$(grep -rl --include='*.html' 'class="pop-teams"' "$work/reports" 2>/dev/nu
 [ -n "$page" ] && grep -q 'data-team="TEAM-A" aria-pressed="false">TEAM-A <span class="pt-n">2</span>' "$page" \
   && grep -q 'data-team="TEAM-B" aria-pressed="false">TEAM-B <span class="pt-n">3</span>' "$page" \
   && grep -q 'data-team="Unassigned" aria-pressed="false">Unassigned <span class="pt-n">0</span>' "$page" \
-  && grep -q '<tr data-team="|TEAM-A|TEAM-B|" data-sev="warning">' "$page" && grep -q '<span class="t">Your team</span>' "$page" \
+  && grep -qF '<tr data-team="[&#34;TEAM-A&#34;,&#34;TEAM-B&#34;]" data-sev="warning">' "$page" && grep -q '<span class="t">Your team</span>' "$page" \
   && ! grep -q '<span class="t">Start here</span>' "$page" && grep -q 'reportPop' "$page" \
   && echo "ok   - ...the website: the picker (a shared host in both teams, Unassigned with 0), each row's teams, Your team for Start here" \
   || { echo "FAIL - team view page ($page)"; bad=$((bad + 1)); }

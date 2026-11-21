@@ -122,8 +122,8 @@ class Report(unittest.TestCase):
         r = report()
         fs = [s for s in r["sections"] if s["title"] == "Findings"][0]
         tags = dict((row[0] + "/" + row[2], t["data"]) for row, t in zip(fs["rows"], fs["row_tags"]))
-        self.assertEqual(tags["app01" + D + "/selinux"], {"team": "|TEAM-B|TEAM-C|", "sev": "critical"})
-        self.assertEqual(tags["db01" + D + "/patching"], {"team": "|TEAM-B|", "sev": "low"})
+        self.assertEqual(tags["app01" + D + "/selinux"], {"team": '["TEAM-B","TEAM-C"]', "sev": "critical"})
+        self.assertEqual(tags["db01" + D + "/patching"], {"team": '["TEAM-B"]', "sev": "low"})
         self.assertEqual(len(fs["row_tags"]), len(fs["rows"]))
 
     def test_the_team_view_takes_start_heres_place(self):
@@ -190,7 +190,7 @@ class Pages(unittest.TestCase):
             self.assertEqual(h.count('class="pop-teams"'), 1, look)
             self.assertIn('<button type="button" class="pt-b pt-un" data-team="Unassigned" aria-pressed="false">Unassigned <span class="pt-n">1</span></button>', h)
             self.assertIn('<div class="pop-team-view" data-team="TEAM-A" hidden>', h)
-            self.assertIn('<tr data-team="|TEAM-B|TEAM-C|" data-sev="critical"', h)
+            self.assertIn('<tr data-team="[&#34;TEAM-B&#34;,&#34;TEAM-C&#34;]" data-sev="critical"', h)
             self.assertIn("3 fewer than last run", h)
             self.assertNotIn('>Start here<', h)
             self.assertIn("window.reportPop", h)
@@ -236,6 +236,84 @@ class Pages(unittest.TestCase):
                 self.skipTest("%s: %s" % (t, e))
             self.assertNotIn("pop-team", h)
             self.assertNotIn("reportPop", h)
+
+
+class Review1860(unittest.TestCase):
+    """The fixes of the 1.86.0 review (Neon)."""
+    def test_names_twice_or_as_the_other_are_left_out(self):
+        t = {"TEAM-A": ["group:linux_web"], " team-a ": ["group:infra"], "TEAM  B": ["group:linux_db"], "unassigned": ["group:tools"],
+             "OPS|WEB": ["host:app01*"], "OPS": ["host:app02*"]}
+        self.assertEqual(tf.report_team_names(t), ["TEAM-A", "TEAM B", "OPS|WEB", "OPS", "Unassigned"])
+        notes = tf.report_teams_notes(t, HG, ["linux_web", "linux_db", "infra", "tools"])
+        self.assertIn("report_teams: team-a - another team has this name - left out (rename it)", notes)
+        self.assertIn("report_teams: unassigned - the name of the hosts no team has (report_team_other) - left out (rename it)", notes)
+        self.assertEqual(tf.site_teams("app02" + D, ["infra"], "", t), ["OPS"])            # OPS is not OPS|WEB
+        r = sf.findings_report(F, "Health check", MISSING, [], [], None,
+                               {"map": tf.report_team_map(HG, "", t), "names": tf.report_team_names(t), "other": "Unassigned", "setting": t})
+        tags = dict((k, v) for k, v in (r.get("row_tags") or {}).items()) if isinstance(r.get("row_tags"), dict) else {}
+        self.assertTrue(all(isinstance(__import__("json").loads(v["team"]), list) for v in tags.values()) if tags else True)
+
+    def test_a_team_nobody_heard_from_is_not_all_clear(self):
+        t = report()["teams"]
+        todo = t["todo"]["Unassigned"]                                      # tools01: it did not report
+        self.assertEqual([(c["status"], c.get("chip")) for c in todo], [("warning", "Not checked")])
+        self.assertIn("tools01" + D, todo[0]["subject"])
+        h = render("atlas", report(), sf.report_runs(past(), report(), 14, 36))
+        self.assertIn("Not checked", h)
+
+    def test_an_all_clear_run_keeps_the_team_view(self):
+        clean = dict((h, []) for h in HG)
+        r = sf.findings_report(clean, "Health check", [], [], [], None, teams())
+        self.assertIn("Your team", [s["title"] for s in sf.report_tidy(r)["sections"]])
+
+    def test_the_fold_row_is_no_data_row(self):
+        sr = open(os.path.join(TPL, "site_report.js"), encoding="utf-8").read()
+        self.assertIn("return !r.hidden&&!r.classList.contains('xr')&&!r.classList.contains('pt-fold')}", sr)      # Copy and CSV
+        self.assertIn("rows=[].slice.call(body.rows).filter(function(r){return !r.classList.contains('xr')&&!r.classList.contains('pt-fold')});", sr)
+        self.assertIn("', '+others+' more in other teams'", sr)
+        for look in ("atlas", "brief", "ops"):
+            self.assertIn("tr:not(.xr):not(.pt-fold)>:is(th,td):nth-child(", open(os.path.join(TPL, "report_%s.html.j2" % look), encoding="utf-8").read())
+
+    def test_motion_switches(self):
+        css = open(os.path.join(TPL, "report_pop.css.j2"), encoding="utf-8").read()
+        self.assertIn("@media screen and (min-width:640.02px){.appbar,header.bar{position:sticky}}", css)
+        self.assertNotIn("\n.appbar,header.bar{position:sticky}", css)                  # never over the looks' 640 px and print rules
+        self.assertIn(".motion-off *,.pop-still *{animation:none!important;transition:none!important}", css)
+        for look in ("brief", "ops"):
+            self.assertIn("@media (prefers-reduced-motion:reduce){:root:not(.motion-always) *{transition:none!important;animation:none!important}",
+                          open(os.path.join(TPL, "report_%s.html.j2" % look), encoding="utf-8").read())
+        self.assertIn("'motion': _sni_opts.motion", open(os.path.join(REPO, "roles", "servicenow_insights", "tasks", "breach.yml"), encoding="utf-8").read())
+        js = open(os.path.join(TPL, "report_pop.js"), encoding="utf-8").read()
+        self.assertIn("if(v._popStop)v._popStop();", js)
+        self.assertIn("r._tl=JSON.parse(r.getAttribute('data-team')||'[]')", js)
+
+    def test_in_a_browser(self):
+        """Count-up: TEAM-A, TEAM-B, TEAM-A within the count ends on TEAM-A's numbers. Search with a team chosen: a match in another team
+        keeps the section, said."""
+        chrome = shutil.which("google-chrome") or shutil.which("chromium")
+        if not chrome:
+            self.skipTest("no Chrome here")
+        import tempfile
+        h = render("atlas", report(), sf.report_runs(past(), report(), 14, 36))
+        probe = ('<script>addEventListener("load",function(){var D=document,o={};function b(t){return D.querySelector(\'.pop-team .pt-b[data-team="\'+t+\'"]\')}'
+                 'function tiles(){return [].map.call(D.querySelectorAll(".pop-team-view:not([hidden]) .pt-tile .v"),function(v){return v.firstChild.nodeValue.trim()})}'
+                 'setTimeout(function(){b("TEAM-A").click();setTimeout(function(){o.a0=tiles().join("|");b("TEAM-B").click();setTimeout(function(){b("TEAM-A").click();setTimeout(function(){o.a1=tiles().join("|");'
+                 'var f=D.getElementById("find");f.value="selinux";f.dispatchEvent(new Event("input"));setTimeout(function(){'
+                 'var d=[].filter.call(D.querySelectorAll("details"),function(x){var s=x.querySelector("summary h2");return s&&/Findings/.test(s.textContent)})[0];'
+                 'o.sec=d?!d.hidden:null;o.found=(D.querySelector(".find-n,#found,.found")||{}).textContent||"";'
+                 'var fb=D.querySelector(".pt-fb");o.fold=fb?fb.textContent:"";D.title="R "+JSON.stringify(o)},600)},2500)},120)},2500)},1500)})</script></body>')
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "p.html")
+            with open(p, "w") as fh:
+                fh.write(h.replace("</body>", probe, 1))
+            out = subprocess.run([chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=16000", "--window-size=1280,900",
+                                  "--dump-dom", "file://" + p], capture_output=True, text=True, timeout=120).stdout
+        m = re.search(r"<title>R (.*?)</title>", out)
+        self.assertTrue(m, out[-400:])
+        o = __import__("json").loads(m.group(1).replace("&quot;", '"').replace("&amp;", "&"))
+        self.assertEqual(o["a1"], o["a0"])                     # TEAM-A again: its own numbers, not one in between, not 0
+        self.assertTrue(o["sec"], o)                           # app01's SELinux finding is TEAM-B's: the section stays
+        self.assertIn("more in other teams", o["found"] + " " + o["fold"])
 
 
 class Insights(unittest.TestCase):

@@ -470,7 +470,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set ncol = namespace(n=0) %}
 {%- for s in r.sections | default([]) if s.columns is defined and s.columns | length > ncol.n %}{% set ncol.n = s.columns | length %}{% endfor %}
 {%- for i in range(1, ncol.n + 1) %}
-.body:has(.cols .c{{ i }}:not(:checked)) .tw>table>:is(thead,tbody)>tr:not(.xr)>:is(th,td):nth-child({{ i }}){display:none!important}
+.body:has(.cols .c{{ i }}:not(:checked)) .tw>table>:is(thead,tbody)>tr:not(.xr):not(.pt-fold)>:is(th,td):nth-child({{ i }}){display:none!important}
 {%- endfor %}
 /* narrower than the rail: the bar's list of sections keeps room beside the search */
 @media (max-width:1199.98px){.nav{flex:1 1 180px}.find{flex:0 1 220px;min-width:140px}
@@ -506,7 +506,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 @media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}
   .hero>*{animation:rise .5s var(--ease) both}.hero>:nth-child(2){animation-delay:.05s}.hero>:nth-child(3){animation-delay:.1s}.hero>:nth-child(n+4){animation-delay:.14s}
   .tile{animation:rise .5s var(--ease) both;animation-delay:.18s}.tile:nth-child(2){animation-delay:.24s}.tile:nth-child(3){animation-delay:.3s}.tile:nth-child(n+4){animation-delay:.36s}}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}html{scroll-behavior:auto}}
+@media (prefers-reduced-motion:reduce){:root:not(.motion-always) *{transition:none!important;animation:none!important}:root:not(.motion-always){scroll-behavior:auto}}
 @page{size:landscape;margin:12mm}
 @media print{
   :root{--appbar:0px}
