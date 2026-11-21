@@ -1,0 +1,604 @@
+---
+# java4shell.yml - CVE-2026-114938 ("Java4Shell"): check, and optionally mitigate. One file, ansible-core only.
+#
+# Checks on each host (read only, the default):
+#   - the CPU: AVX-512 VBMI (avx512vbmi in /proc/cpuinfo) - the flaw needs it;
+#   - each running Keycloak container (podman or docker): the RUNNING JVM's version and flags (jcmd);
+#   - every other Java process on the host (a ServiceNow on-prem node, Tomcat ...): its version and flags.
+#     Root never runs a program found through a process: the version comes from jcmd run as the process's own user,
+#     else from the JDK's release file; the flags from jcmd, else from the command line and JAVA_TOOL_OPTIONS.
+# Affected: OpenJDK 17.0.6 and later without the fix. Fixed: 17.0.21.1, 21.0.13.1, 25.0.5.1 and later.   (versions, not addresses: public-ok)
+# Mitigated: the running JVM has UseBASE64Intrinsics off (-XX:-UseBASE64Intrinsics), or -XX:UseAVX=2 or lower on its
+# command line.
+#
+# Run it (any ansible-core, no collections):
+#   Check:            ansible-playbook -i myhost, -u myuser -b -K java4shell.yml
+#   Preview the fix:  ... -e j4s_fix=true --check          (nothing written; the changed lines are shown)
+#   Fix:              ... -e j4s_fix=true                  (the compose file, a backup kept beside it; no restart)
+#   Fix and recreate: ... -e j4s_fix=true -e j4s_restart=true   (Keycloak only, --no-deps; the flag checked live)
+#
+# Never reboots a host. Only the Keycloak service is recreated, and only with j4s_restart=true. ServiceNow and other
+# Java processes are only reported. An edit the playbook is not sure of is refused, with what to add by hand.
+
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml   # J4S-STANDALONE: the air-gapped copy is this file without these two lines
+
+- name: Java4Shell (CVE-2026-114938) - check, and optionally mitigate Keycloak
+  hosts: "{{ j4s_hosts | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  become: "{{ j4s_become | default(true) }}"
+  gather_facts: false
+
+  vars:
+    j4s_compose_file: /podman/stigman/docker-compose.yml   # the compose file that runs Keycloak
+    j4s_service: ""              # the Keycloak service's name in it; empty = each service whose own image has j4s_match
+    j4s_match: keycloak          # a running container is Keycloak when its image has this word
+    j4s_fix: false               # true = add the flag to the compose file (a backup is kept beside it)
+    j4s_restart: false           # true = recreate the Keycloak service (--no-deps), then read its flag again
+    j4s_restart_cmd: ""          # your own restart command instead (run in the compose file's folder)
+    j4s_image: ""                # optional: an image to put on the Keycloak service, e.g. quay.io/keycloak/keycloak:26.8.2-3
+    j4s_engine: ""               # podman or docker; empty = the one running Keycloak (else podman, else docker)
+    j4s_engine_user: ""          # rootless podman: the user that runs the containers; empty = root
+    j4s_scan_host_jvms: true     # also report every other Java process on the host (ServiceNow, Tomcat ...)
+    j4s_flag: "-XX:-UseBASE64Intrinsics"
+    _j4s_env:
+      J4S_FLAG: "{{ j4s_flag }}"
+      J4S_MATCH: "{{ j4s_match }}"
+      J4S_SCAN: "{{ j4s_scan_host_jvms | bool }}"
+      J4S_ENGINE: "{{ j4s_engine }}"
+      J4S_ENGINE_USER: "{{ j4s_engine_user }}"
+
+  tasks:
+    - name: Java4Shell | read the CPU, the Keycloak containers and the host's other Java processes
+      ansible.builtin.shell:
+        cmd: |
+          {% raw %}python3 - <<'J4S_PY'
+          import json, os, pwd, re, shutil, subprocess
+          FLAG = os.environ["J4S_FLAG"]
+          MATCH = os.environ["J4S_MATCH"].lower()
+          SCAN = os.environ["J4S_SCAN"] == "True"
+          ENGINE = os.environ.get("J4S_ENGINE", "")
+          EUSER = os.environ.get("J4S_ENGINE_USER", "")
+          FIXED = {17: (17, 0, 21, 1), 21: (21, 0, 13, 1), 25: (25, 0, 5, 1)}
+          ROOT = os.geteuid() == 0
+
+          def run(cmd, timeout=60, env=None):
+              try:
+                  p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env)
+                  return p.returncode, p.stdout.decode("utf-8", "replace")
+              except Exception as e:
+                  return 99, str(e)
+
+          def as_user(name, cmd):
+              """cmd as another user (root only): never root running a program a user could have put there."""
+              if not ROOT or not name or name == "root":
+                  return cmd
+              return ["runuser", "-u", name, "--"] + cmd
+
+          def uname(uid):
+              try:
+                  return pwd.getpwuid(uid).pw_name
+              except Exception:
+                  return ""
+
+          engine_env = dict(os.environ)
+          if EUSER:
+              try:
+                  engine_env["XDG_RUNTIME_DIR"] = "/run/user/%d" % pwd.getpwnam(EUSER).pw_uid
+              except KeyError:
+                  pass
+
+          def eng(*args, timeout=60):
+              return run(as_user(EUSER, [ENG] + list(args)), timeout=timeout, env=engine_env)
+
+          def parse_version(text):
+              """The version a JVM reports: 'JDK 21.0.13' (jcmd VM.version), 'version "21.0.13"' (java -version) or
+              JAVA_VERSION="21.0.13" (a JDK's release file) -> ('21.0.13', (21, 0, 13, 0), prerelease?)"""
+              m = (re.search(r"^JDK (\S+)", text or "", re.M) or re.search(r'version "([^"]+)"', text or "")
+                   or re.search(r'^JAVA_VERSION="([^"]+)"', text or "", re.M))
+              if not m:
+                  return "", (), False
+              v = m.group(1)
+              pre = bool(re.search(r"-(ea|internal|beta|rc)\b", text or "", re.I))   # anywhere: VM.version's build line too
+              nums = [int(x) for x in re.findall(r"\d+", re.split(r"[-+]", v)[0].replace("_", "."))]
+              if nums and nums[0] == 1 and len(nums) > 1:          # 1.8.0_402 = Java 8
+                  nums = nums[1:]
+              return v, tuple((nums + [0, 0, 0, 0])[:4]), pre
+
+          def flags_live(text):
+              """From jcmd VM.flags -all: UseBASE64Intrinsics, and UseAVX only when set on the command line (a CPU
+              without AVX-512 gives UseAVX=2 by itself - not a mitigation that holds on a newer host)."""
+              b = re.search(r"\bUseBASE64Intrinsics\s*=\s*(true|false)", text or "")
+              a = re.search(r"\bUseAVX\s*=\s*(\d+)[^\n]*\{command line\}", text or "")
+              if not b:
+                  return None, ""
+              off = b.group(1) == "false" or bool(a and int(a.group(1)) <= 2)
+              return off, "live JVM flags (jcmd): UseBASE64Intrinsics=%s%s" % (b.group(1), ", -XX:UseAVX=" + a.group(1) if a else "")
+
+          def flags_argv(argv, environ):
+              """Without jcmd: the JVM options in effect - JAVA_TOOL_OPTIONS, then JDK_JAVA_OPTIONS, then the options before
+              the main class or -jar; the last one of each wins."""
+              import shlex
+              try:
+                  tool = shlex.split(environ.get("JAVA_TOOL_OPTIONS", ""))
+                  jdk = shlex.split(environ.get("JDK_JAVA_OPTIONS", ""))
+                  late = shlex.split(environ.get("_JAVA_OPTIONS", ""))   # HotSpot reads it last: it wins
+              except ValueError:
+                  return None, "JVM options not read (quoting) - flags unknown"
+              if any(a.startswith("@") for a in argv[1:] + jdk):
+                  return None, "JVM options come from an @argument file - flags unknown"
+              opts = tool + jdk
+              takes_value = {"-cp", "-classpath", "--class-path", "-p", "--module-path", "--add-modules", "--add-opens",
+                             "--add-exports", "--add-reads", "--patch-module", "--upgrade-module-path", "--limit-modules"}
+              i, args = 1, argv
+              while i < len(args):
+                  a = args[i]
+                  if a in ("-jar", "-m", "--module") or not a.startswith("-"):
+                      break
+                  opts.append(a)
+                  i += 2 if a in takes_value else 1
+              opts = opts + late
+              b64 = [o for o in opts if o in ("-XX:-UseBASE64Intrinsics", "-XX:+UseBASE64Intrinsics")]
+              avx = [o for o in opts if re.match(r"^-XX:UseAVX=\d+$", o)]
+              off = (b64 and b64[-1] == "-XX:-UseBASE64Intrinsics") or (avx and int(avx[-1].split("=")[1]) <= 2)
+              return bool(off), "JVM options (no jcmd): " + ("has %s" % (b64[-1] if b64 else avx[-1]) if (b64 or avx) else "flag not there")
+
+          def verdict(vtext, off, how, vbmi, source):
+              v, parts, pre = parse_version(vtext)
+              if not parts:
+                  return v or "unknown", "UNKNOWN", "Java version not read", how
+              major = parts[0]
+              affected = major >= 17 and parts >= (17, 0, 6, 0) and (major not in FIXED or parts < FIXED[major])
+              if not affected and pre and major in FIXED and parts >= FIXED[major]:
+                  return v, "UNKNOWN", "Java %s is a pre-release build - not proof of the released fix" % v, how
+              if not affected:
+                  if major < 17 or parts < (17, 0, 6, 0):
+                      return v, "OK", "Java %s is not affected" % v, how
+                  if source == "installed":
+                      return v, "UNKNOWN", "Java %s on disk has the fix, but the running JVM was not read - restart it if it started before the update" % v, how
+                  return v, "OK", "Java %s has the fix" % v, how
+              fix = "%d.%d.%d.%d" % FIXED[major] if major in FIXED else "a supported release (17, 21 or 25)"
+              if off is True:
+                  return v, "MITIGATED", "affected Java %s; the flag is live - update to %s or later when you can" % (v, fix), how
+              if off is None:
+                  return v, "UNKNOWN", "affected Java %s; its flags could not be read" % v, how
+              if vbmi is None:
+                  return v, "VULNERABLE", "affected Java %s, flag not live, and the CPU could not be read - treat as exposed" % v, how
+              if vbmi:
+                  return v, "VULNERABLE", "affected Java %s on a CPU with AVX-512 VBMI and the flag is not live - mitigate now" % v, how
+              return v, "AT RISK", ("affected Java %s; this CPU has no AVX-512 VBMI, so not exploitable here - but on a newer "
+                                    "host it would be (a VM moved): mitigate, or update to %s" % (v, fix)), how
+
+          out = {"vbmi": None, "cpu": "", "engine": "", "containers": [], "jvms": [], "notes": []}
+          try:
+              for ln in open("/proc/cpuinfo"):
+                  if ln.startswith("model name") and not out["cpu"]:
+                      out["cpu"] = ln.split(":", 1)[1].strip()
+                  if ln.startswith("flags"):
+                      out["vbmi"] = "avx512vbmi" in ln.split()
+                      break
+          except Exception as e:
+              out["notes"].append("CPU not read: %s" % e)
+
+          # the engine: the one asked for, else the one that runs a Keycloak container, else podman, else docker
+          have = [e for e in ("podman", "docker") if shutil.which(e)]
+          if ENGINE and ENGINE not in have:
+              print(json.dumps({"vbmi": out["vbmi"], "cpu": out["cpu"], "engine": "", "containers": [], "jvms": [], "notes": [],
+                                "lines": ["j4s_engine is %s, but %s is not installed - nothing read" % (ENGINE, ENGINE)],
+                                "worst": "NOTHING FOUND - j4s_engine not installed"}))
+              raise SystemExit(0)
+          ENG = ENGINE
+          found = {}
+          for e in ([ENG] if ENG else have):
+              ENG = e
+              rc, ps = eng("ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}")
+              if rc != 0:
+                  out["notes"].append("%s ps failed: %s" % (e, ps.strip()[:200]))
+                  continue
+              rows = [l.split("\t") for l in ps.splitlines() if l.count("\t") == 2 and MATCH in l.split("\t")[2].lower()]
+              if rows:
+                  found[e] = rows
+                  break
+          ENG = next(iter(found), ENGINE or (have[0] if have else ""))
+          out["engine"] = ENG
+          if not have:
+              out["notes"].append("neither podman nor docker found")
+          for cid, name, image in found.get(ENG, []):
+              try:
+                  pid_main = "io.quarkus.bootstrap.runner.QuarkusEntryPoint"
+                  _, vv = eng("exec", cid, "sh", "-c", "jcmd %s VM.version 2>/dev/null || jcmd 1 VM.version 2>/dev/null" % pid_main)
+                  src = "running"
+                  if not parse_version(vv)[1]:                   # the release file of the JDK PID 1 runs from
+                      _, vv = eng("exec", cid, "sh", "-c", 'head -c 4096 "$(dirname "$(dirname "$(readlink /proc/1/exe)")")/release"')
+                      src = "installed"
+                  _, jc = eng("exec", cid, "sh", "-c", "jcmd %s VM.flags -all 2>/dev/null || jcmd 1 VM.flags -all 2>/dev/null" % pid_main)
+                  off, how = flags_live(jc)
+                  if off is None:
+                      _, argv = eng("exec", cid, "sh", "-c", "tr '\\0' '\\n' < /proc/1/cmdline")
+                      _, envr = eng("exec", cid, "sh", "-c", "tr '\\0' '\\n' < /proc/1/environ")
+                      environ = dict(l.split("=", 1) for l in envr.splitlines() if "=" in l)
+                      if os.path.basename((argv.splitlines() or [""])[0]) in ("java", "alt-java"):
+                          off, how = flags_argv(argv.splitlines(), environ)
+                      else:
+                          how = "flags not read (no jcmd, PID 1 is not java)"
+                  _, lb = eng("inspect", "--format", "{{json .Config.Labels}}", cid)
+                  try:
+                      labels = json.loads(lb) or {}
+                  except Exception:
+                      labels = {}
+                  v, status, why, how = verdict(vv, off, how, out["vbmi"], src)
+                  out["containers"].append(dict(
+                      id=cid, name=name, image=image, java=v, status=status, why=why, how=how,
+                      service=labels.get("com.docker.compose.service") or labels.get("io.podman.compose.service") or "",
+                      project=labels.get("com.docker.compose.project") or labels.get("io.podman.compose.project") or "",
+                      systemd=labels.get("PODMAN_SYSTEMD_UNIT", "")))
+              except Exception as e:
+                  out["notes"].append("container %s not read: %s" % (name, e))
+
+          if SCAN:
+              for pid in sorted((p for p in os.listdir("/proc") if p.isdigit()), key=int):
+                  try:
+                      exe = os.readlink("/proc/%s/exe" % pid)
+                      if os.path.basename(exe.split(" (deleted)")[0]) not in ("java", "alt-java"):
+                          continue
+                      cg = open("/proc/%s/cgroup" % pid).read()
+                      if re.search(r"libpod|docker|containerd|crio|kubepods", cg):
+                          continue                                  # a container's JVM: Keycloak is read above
+                      argv = open("/proc/%s/cmdline" % pid, "rb").read().decode("utf-8", "replace").split("\0")
+                      environ = dict(x.split("=", 1) for x in open("/proc/%s/environ" % pid, "rb").read()
+                                     .decode("utf-8", "replace").split("\0") if "=" in x)
+                      uid = os.stat("/proc/%s" % pid).st_uid
+                      owner = uname(uid)
+                      deleted = " (deleted)" in exe or "(deleted)" in "".join(
+                          l for l in open("/proc/%s/maps" % pid) if "libjvm.so" in l)
+                      home = os.path.dirname(os.path.dirname(exe.split(" (deleted)")[0]))
+                      jcmd = os.path.join(home, "bin", "jcmd")
+                      vv, jc, src = "", "", "installed"
+                      # jcmd runs as the process's own user, and as root only when root owns it and nobody else can change it
+                      st = os.stat(jcmd) if os.path.exists(jcmd) else None
+                      if st and uid != 0 and owner:                   # never as root: a root JVM is read from its files
+                          _, vv = run(as_user(owner, [jcmd, pid, "VM.version"]))
+                          _, jc = run(as_user(owner, [jcmd, pid, "VM.flags", "-all"]))
+                          src = "running" if parse_version(vv)[1] else "installed"
+                      if not parse_version(vv)[1]:
+                          vv = ""
+                          try:
+                              fd = os.open(os.path.join(home, "release"), os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+                              try:
+                                  if __import__("stat").S_ISREG(os.fstat(fd).st_mode):
+                                      vv = os.read(fd, 4096).decode("utf-8", "replace")
+                              finally:
+                                  os.close(fd)
+                          except Exception:
+                              pass
+                      off, how = flags_live(jc)
+                      if off is None:
+                          off, how = flags_argv(argv, environ)
+                      v, status, why, how = verdict(vv, off, how, out["vbmi"], src)
+                      if deleted and status == "OK":
+                          status, why = "UNKNOWN", "the JVM's files were replaced on disk since it started - restart it, then check again"
+                      kind = "ServiceNow" if re.search(r"glide", " ".join(argv) + exe, re.I) else "Java"
+                      main = next((w for w in argv[1:] if w and not w.startswith("-") and re.search(r"[A-Za-z]", w)), "")
+                      out["jvms"].append(dict(pid=int(pid), kind=kind, user=owner or str(uid), exe=exe, main=main[:80],
+                                              java=v, status=status, why=why, how=how))
+                  except Exception:
+                      continue                                      # a process that ended while being read
+
+          lines = ["CPU: %s - AVX-512 VBMI %s" % (out["cpu"] or "unknown",
+                   {True: "YES (the flaw can be reached)", False: "no", None: "UNKNOWN (cpuinfo not read)"}[out["vbmi"]])]
+          for c in out["containers"]:
+              lines.append("%s - Keycloak container %s (%s), Java %s: %s [%s]" % (c["status"], c["name"], c["image"], c["java"], c["why"], c["how"]))
+          if not out["containers"]:
+              lines.append("No running Keycloak container found with %s as %s (j4s_match: %s)" % (ENG or "no engine", EUSER or uname(os.geteuid()), MATCH))
+              others = set()
+              for p in (x for x in os.listdir("/proc") if x.isdigit()):
+                  try:
+                      if open("/proc/%s/comm" % p).read().strip() == "conmon" and os.stat("/proc/" + p).st_uid != (pwd.getpwnam(EUSER).pw_uid if EUSER else os.geteuid()):
+                          others.add(uname(os.stat("/proc/" + p).st_uid) or "uid %d" % os.stat("/proc/" + p).st_uid)
+                  except Exception:
+                      pass
+              if others:
+                  lines.append("Containers run under other users (rootless podman): %s - run again with -e j4s_engine_user=<user>" % ", ".join(sorted(others)))
+          for j in out["jvms"]:
+              lines.append("%s - %s pid %d (user %s) %s, Java %s (%s): %s [%s]" % (j["status"], j["kind"], j["pid"], j["user"], j["main"], j["java"], j["exe"], j["why"], j["how"]))
+          out["lines"] = lines + out["notes"]
+          out["worst"] = next((s for s in ("VULNERABLE", "AT RISK", "UNKNOWN", "MITIGATED", "OK")
+                               if s in [x["status"] for x in out["containers"] + out["jvms"]]),
+                              "NOTHING FOUND - no Keycloak container and no Java process were read")
+          print(json.dumps(out))
+          J4S_PY{% endraw %}
+      environment: "{{ _j4s_env }}"
+      register: _j4s_read
+      changed_when: false
+      check_mode: false
+
+    - name: Java4Shell | what was found
+      ansible.builtin.set_fact:
+        _j4s: "{{ _j4s_read.stdout | from_json }}"
+
+    - name: Java4Shell | the report
+      ansible.builtin.debug:
+        msg: "{{ ['RESULT: ' ~ _j4s.worst] + _j4s.lines }}"
+
+    - name: Java4Shell | mitigate Keycloak in the compose file
+      when: j4s_fix | bool or j4s_image | length > 0
+      block:
+        - name: Java4Shell | add the flag to the Keycloak service (a backup is kept beside the file)
+          ansible.builtin.shell:
+            cmd: |
+              {% raw %}python3 - <<'J4S_PY'
+              import difflib, json, os, re, shutil, sys, time
+              path = os.environ["J4S_FILE"]
+              flag = os.environ["J4S_FLAG"]
+              want = os.environ["J4S_SERVICE"]
+              match = os.environ["J4S_MATCH"].lower()
+              image = os.environ["J4S_IMAGE"]
+              fix = os.environ["J4S_FIX"] == "True"
+              check = os.environ["J4S_CHECK"] == "True"
+              res = {"changed": False, "services": [], "refused": [], "shown": [], "backup": ""}
+
+              def done(code):
+                  print(json.dumps(res)); sys.exit(code)
+
+              def refuse(why):
+                  res["refused"].append(why); done(1)
+
+              if not os.path.exists(path):
+                  refuse("%s is not there - set j4s_compose_file" % path)
+              if os.path.islink(path):
+                  refuse("%s is a symbolic link - point j4s_compose_file at the real file" % path)
+              first_st = os.lstat(path)
+              with open(path) as f:
+                  text = f.read()
+              if "\t" in text:
+                  refuse("the file has tab characters - add the flag by hand")
+              lines = text.split("\n")
+              ind = lambda s: len(s) - len(s.lstrip(" "))
+              content = lambda s: bool(s.strip()) and not s.strip().startswith("#")
+
+              def scalar(raw):
+                  """A one-line YAML scalar we can rewrite safely -> its text, else None (quotes inside, escapes, block)."""
+                  raw = raw.strip()
+                  if raw[:1] == '"':
+                      m = re.match(r'^"([^"\\]*)"\s*(#.*)?$', raw)
+                      return m.group(1) if m else None
+                  if raw[:1] == "'":                             # its text goes back between double quotes: none inside
+                      m = re.match(r"^'([^'\"\\]*)'\s*(#.*)?$", raw)
+                      return m.group(1) if m else None
+                  if raw[:1] in "|>&*!{[" or '"' in raw or "'" in raw:
+                      return None
+                  return re.sub(r"\s+#.*$", "", raw)
+
+              def block_end(start, base, seq_same=False):
+                  j = start + 1
+                  while j < len(lines) and (not content(lines[j]) or ind(lines[j]) > base
+                                            or (seq_same and ind(lines[j]) == base and lines[j].lstrip().startswith("- "))):
+                      j += 1
+                  while j > start + 1 and not content(lines[j - 1]):
+                      j -= 1
+                  return j
+
+              top = next((i for i, l in enumerate(lines) if re.match(r"^services:\s*(#.*)?$", l)), None)
+              if top is None:
+                  refuse("no top-level 'services:'")
+              send = block_end(top, 0)
+              first = next((i for i in range(top + 1, send) if content(lines[i])), None)
+              if first is None:
+                  refuse("'services:' is empty")
+              si = ind(lines[first])
+              svcs = [i for i in range(top + 1, send) if content(lines[i]) and ind(lines[i]) == si
+                      and re.match(r"""^\s*["']?[\w.\-]+["']?:\s*(#.*)?$""", lines[i])]
+              targets = []
+              for s in svcs:
+                  name = lines[s].strip().split(":")[0].strip("\"'")
+                  end = block_end(s, si)
+                  body = [i for i in range(s + 1, end) if content(lines[i])]
+                  ki = ind(lines[body[0]]) if body else si + 2
+                  own = [i for i in body if ind(lines[i]) == ki]
+                  img_i = next((i for i in own if re.match(r"^\s*image:", lines[i])), None)
+                  img = scalar(lines[img_i].split(":", 1)[1]) if img_i is not None else ""
+                  if (want and name == want) or (not want and img and match in img.lower()):
+                      targets.append(dict(s=s, end=end, name=name, ki=ki, own=own, img_i=img_i, img=img))
+              if not targets:
+                  refuse("no service %s in the file" % (repr(want) if want else "whose image has %r" % match))
+
+              edits = []                                     # (line index, new text or None, inserted lines)
+              for t in reversed(targets):                    # from the bottom, so an insert keeps the indexes above
+                  name, ki, own = t["name"], t["ki"], t["own"]
+                  block = "\n".join(lines[t["s"]:t["end"]])
+                  if re.search(r"<<\s*:|&\w|\*\w", block):
+                      refuse("%s uses YAML anchors or merges (<<:) - add JAVA_OPTS_APPEND: \"%s\" by hand" % (name, flag))
+                  if re.search(r"^\s*env_file\s*:", block, re.M) and fix:
+                      res["services"].append({"name": name, "did": ["note: it also has env_file - if JAVA_OPTS_APPEND is set there, this line replaces it"]})
+                  did = []
+                  if image:
+                      if t["img_i"] is None or t["img"] is None:
+                          refuse("%s: its image line is not a plain value - change it by hand" % name)
+                      if t["img"] != image:
+                          lines[t["img_i"]] = " " * ki + "image: " + image
+                          did.append("image -> %s" % image)
+                  if fix:
+                      env = next((i for i in own if re.match(r"^\s*environment:", lines[i])), None)
+                      step = ki - ind(lines[t["s"]])
+                      if env is None:
+                          lines[t["end"]:t["end"]] = [" " * ki + "environment:", " " * (ki + step) + 'JAVA_OPTS_APPEND: "%s"' % flag]
+                          did.append("environment: added, with JAVA_OPTS_APPEND")
+                      else:
+                          rest = re.sub(r"\s+#.*$", "", lines[env].split(":", 1)[1]).strip()
+                          if rest:
+                              refuse("%s: environment is written on one line (%s...) - add JAVA_OPTS_APPEND: \"%s\" by hand" % (name, rest[:12], flag))
+                          eend = block_end(env, ki, seq_same=True)
+                          items = [i for i in range(env + 1, eend) if content(lines[i])]
+                          is_list = bool(items) and lines[items[0]].lstrip().startswith("-")
+                          ei = ind(lines[items[0]]) if items else ki + step
+                          hits = [i for i in items if re.match(r"""^\s*(-\s*)?["']?JAVA_OPTS_APPEND(["']?\s*:|=|["']?\s*(#.*)?$)""", lines[i])]
+                          if len(hits) > 1:
+                              refuse("%s: JAVA_OPTS_APPEND is there twice - fix it by hand" % name)
+                          if hits:
+                              h = hits[0]
+                              raw = lines[h].strip()
+                              if is_list:
+                                  body = raw[1:].strip()
+                                  val = scalar(body)
+                                  if val is None or "=" not in val:
+                                      refuse("%s: the JAVA_OPTS_APPEND entry is not a plain NAME=value - add %s by hand" % (name, flag))
+                                  old = val.split("=", 1)[1]
+                              else:
+                                  val = scalar(re.split(r":", raw, 1)[1])
+                                  if val is None:
+                                      refuse("%s: JAVA_OPTS_APPEND's value has quotes or escapes inside - add %s by hand" % (name, flag))
+                                  old = val
+                              toks = [o for o in old.split() if o in ("-XX:-UseBASE64Intrinsics", "-XX:+UseBASE64Intrinsics")]
+                              if toks and toks[-1] == "-XX:-UseBASE64Intrinsics":
+                                  did.append("already has %s" % flag)
+                              else:
+                                  new = (old + " " + flag).strip()
+                                  lines[h] = " " * ind(lines[h]) + ('- "JAVA_OPTS_APPEND=%s"' % new if is_list else 'JAVA_OPTS_APPEND: "%s"' % new)
+                                  did.append("JAVA_OPTS_APPEND: %s added to its options" % flag)
+                          else:
+                              line = " " * ei + ('- "JAVA_OPTS_APPEND=%s"' % flag if is_list else 'JAVA_OPTS_APPEND: "%s"' % flag)
+                              lines[eend:eend] = [line]
+                              did.append("JAVA_OPTS_APPEND added")
+                  res["services"].append({"name": name, "did": did})
+
+              new = "\n".join(lines)
+              if new != text:
+                  res["changed"] = True
+                  res["shown"] = ["%d line(s) changed, %d added (option values are not shown)" % (
+                      sum(1 for a, b in zip(text.split("\n"), new.split("\n")) if a != b and len(text.split("\n")) == len(new.split("\n"))),
+                      len(new.split("\n")) - len(text.split("\n")))]
+                  if not check:
+                      fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)   # the file read above, never one swapped in since
+                      st = os.fstat(fd)
+                      if (st.st_ino, st.st_dev) != (first_st.st_ino, first_st.st_dev):
+                          os.close(fd); refuse("%s changed while it was read - run again" % path)
+                      res["backup"] = "%s.bak-java4shell-%s" % (path, time.strftime("%Y%m%d-%H%M%S"))
+                      bfd = os.open(res["backup"], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                      with os.fdopen(bfd, "w") as f:                # private (0600), owned like the file
+                          f.write(text)
+                          os.fchown(f.fileno(), st.st_uid, st.st_gid)
+                      with os.fdopen(fd, "r+") as f:                # in place: the same file keeps its owner, ACLs, SELinux label
+                          f.seek(0); f.write(new); f.truncate()
+              done(0)
+              J4S_PY{% endraw %}
+          environment:
+            J4S_FILE: "{{ j4s_compose_file }}"
+            J4S_FLAG: "{{ j4s_flag }}"
+            J4S_SERVICE: "{{ j4s_service }}"
+            J4S_MATCH: "{{ j4s_match }}"
+            J4S_IMAGE: "{{ j4s_image }}"
+            J4S_FIX: "{{ j4s_fix | bool }}"
+            J4S_CHECK: "{{ ansible_check_mode }}"
+          register: _j4s_edit
+          check_mode: false            # it honours check mode itself: shows the change, writes nothing
+          changed_when: _j4s_edit.rc == 0 and (_j4s_edit.stdout | from_json).changed and not ansible_check_mode
+          failed_when: false
+
+        - name: Java4Shell | the change
+          ansible.builtin.debug:
+            msg: "{{ (['REFUSED - nothing written: ' ~ (_e.refused | join('; '))] if _e.refused else [])
+                     + (_e.services | map(attribute='name') | zip(_e.services | map(attribute='did') | map('join', '; ')) | map('join', ': ') | list)
+                     + (['(check mode: nothing written)'] if ansible_check_mode and _e.changed else [])
+                     + (['backup: ' ~ _e.backup] if _e.backup else [])
+                     + (_e.shown if _e.changed else ['no change to the file']) }}"
+          vars:
+            _e: "{{ _j4s_edit.stdout | from_json }}"
+          failed_when: _j4s_edit.rc != 0
+
+        - name: Java4Shell | the file still reads as YAML (else the backup is put back)
+          ansible.builtin.shell:
+            cmd: |
+              set -u
+              f={{ j4s_compose_file | quote }}
+              b={{ (_j4s_edit.stdout | from_json).backup | quote }}
+              if python3 -c 'import yaml' 2>/dev/null; then
+                python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1]))' "$f" && echo "ok: YAML" && exit 0
+                [ -L "$f" ] || cat "$b" > "$f"; echo "the new file did not parse - the backup was put back"; exit 1
+              fi
+              echo "skipped: no PyYAML on the host"
+          register: _j4s_yaml
+          changed_when: false
+          when: (_j4s_edit.stdout | from_json).backup | length > 0
+
+    - name: Java4Shell | recreate Keycloak so the flag is live
+      when: j4s_restart | bool and not ansible_check_mode
+      vars:
+        _j4s_svcs: "{{ ((_j4s_edit.stdout | default('{}') | from_json).services | default([]) | map(attribute='name') | list)
+                       or ([j4s_service] if j4s_service | length > 0 else []) }}"
+      block:
+        - name: Java4Shell | which service to recreate
+          ansible.builtin.assert:
+            that: _j4s_svcs | length > 0
+            fail_msg: "No Keycloak service named: run with j4s_fix=true, or set j4s_service. Nothing restarted."
+            quiet: true
+
+        - name: Java4Shell | recreate the service (no dependencies)
+          ansible.builtin.shell:
+            cmd: |
+              set -eu
+              cd "$(dirname {{ j4s_compose_file | quote }})"
+              f={{ j4s_compose_file | quote }}
+              e={{ _j4s.engine | quote }}
+              run() { if [ -n {{ j4s_engine_user | quote }} ] && [ "$(id -u)" = 0 ]; then
+                        runuser -u {{ j4s_engine_user | quote }} -- env XDG_RUNTIME_DIR=/run/user/$(id -u {{ j4s_engine_user | quote }}) "$@"
+                      else "$@"; fi; }
+              own={{ j4s_restart_cmd | quote }}
+              if [ -n "$own" ]; then echo "+ $own"; run sh -c "$own"; exit 0; fi   # as the engine user, like the containers
+              unit={{ _j4s.containers | map(attribute='systemd') | select | first | default('') | quote }}
+              # podman-compose labels every container with a unit name; only a unit that is really running owns it
+              if [ -n "$unit" ] && { systemctl is-active --quiet "$unit" 2>/dev/null || run systemctl --user is-active --quiet "$unit" 2>/dev/null; }; then
+                echo "Keycloak runs under the systemd unit $unit: set j4s_restart_cmd to how you restart it"; exit 3
+              fi
+              # older podman-compose (RHEL's) starts an existing container again instead of recreating it, so the new
+              # environment never reaches it: remove exactly this service's containers (by id, volumes kept) first
+              for c in {{ _j4s.containers | selectattr('service', 'in', _j4s_svcs) | map(attribute='id') | map('quote') | join(' ') }}; do
+                set -x; run $e rm -f "$c"; set +x
+              done
+              if [ "$e" = podman ] && command -v podman-compose >/dev/null; then set -x; run podman-compose -f "$f" up -d --no-deps {{ _j4s_svcs | map('quote') | join(' ') }}
+              elif [ "$e" = podman ] && podman compose version >/dev/null 2>&1; then set -x; run podman compose -f "$f" up -d --no-deps --force-recreate {{ _j4s_svcs | map('quote') | join(' ') }}
+              elif [ "$e" = docker ] && docker compose version >/dev/null 2>&1; then set -x; run docker compose -f "$f" up -d --no-deps --force-recreate {{ _j4s_svcs | map('quote') | join(' ') }}
+              elif [ "$e" = docker ] && command -v docker-compose >/dev/null; then set -x; run docker-compose -f "$f" up -d --no-deps --force-recreate {{ _j4s_svcs | map('quote') | join(' ') }}
+              else echo "no compose tool for $e found: set j4s_restart_cmd"; exit 3
+              fi
+          register: _j4s_up
+          changed_when: true           # it recreates the service whenever it runs (as the shell module says by itself)
+
+        - name: Java4Shell | wait for each recreated Keycloak and read its flag
+          ansible.builtin.shell:
+            cmd: |
+              set -u
+              e={{ _j4s.engine | quote }}
+              run() { if [ -n {{ j4s_engine_user | quote }} ] && [ "$(id -u)" = 0 ]; then
+                        runuser -u {{ j4s_engine_user | quote }} -- env XDG_RUNTIME_DIR=/run/user/$(id -u {{ j4s_engine_user | quote }}) "$@"
+                      else "$@"; fi; }
+              # this compose project only (its label, else the folder's name as compose names it), stopped ones too
+              p={{ (_j4s.containers | selectattr('service', 'in', _j4s_svcs) | map(attribute='project') | select | first
+                    | default(j4s_compose_file | dirname | basename | lower)) | quote }}
+              for i in $(seq 1 36); do
+                bad=0; seen=0; out=""; why=""
+                for s in {{ _j4s_svcs | map('quote') | join(' ') }}; do
+                  # docker compose and newer podman-compose label com.docker.compose.*; older podman-compose io.podman.compose.*
+                  ids=$(run $e ps -a -q --filter "label=com.docker.compose.project=$p" --filter "label=com.docker.compose.service=$s")
+                  [ -z "$ids" ] && ids=$(run $e ps -a -q --filter "label=io.podman.compose.project=$p" --filter "label=io.podman.compose.service=$s")
+                  # last: this service's running containers whose image is Keycloak's (j4s_match), any project label
+                  [ -z "$ids" ] && ids=$(run $e ps --filter "label=com.docker.compose.service=$s" --format '{% raw %}{{.ID}} {{.Image}}{% endraw %}' | grep -i {{ j4s_match | quote }} | cut -d' ' -f1)
+                  [ -z "$ids" ] && ids=$(run $e ps --filter "label=io.podman.compose.service=$s" --format '{% raw %}{{.ID}} {{.Image}}{% endraw %}' | grep -i {{ j4s_match | quote }} | cut -d' ' -f1)
+                  [ -z "$ids" ] && { bad=1; why="no container found for service $s (project $p)"; }
+                  for c in $ids; do
+                    seen=$((seen+1))
+                    r=$(run $e exec "$c" sh -c 'jcmd io.quarkus.bootstrap.runner.QuarkusEntryPoint VM.flags -all 2>/dev/null || jcmd 1 VM.flags -all 2>/dev/null' | grep -E '\bUseBASE64Intrinsics\b' || true)
+                    case "$r" in *"= false"*) out="$out$s/$c: UseBASE64Intrinsics = false (live)\n";;
+                      "") bad=1; why="$s/$c: its JVM flags could not be read yet (no jcmd, or Keycloak still starting)";;
+                      *) bad=1; why="$s/$c: $(echo $r | tr -s ' ')";; esac
+                  done
+                done
+                if [ "$seen" -gt 0 ] && [ "$bad" = 0 ]; then printf "$out"; echo "MITIGATED: the flag is live in every recreated container"; exit 0; fi
+                sleep 5
+              done
+              printf "$out"; echo "NOT confirmed after 3 minutes: $seen container(s) seen. Last reason: $why"
+              echo "Run the playbook again without j4s_fix: its report reads the running JVM and says MITIGATED or not."; exit 1
+          register: _j4s_after
+          changed_when: false
+
+        - name: Java4Shell | after the restart
+          ansible.builtin.debug:
+            msg: "{{ _j4s_after.stdout_lines }}"

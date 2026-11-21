@@ -96,7 +96,7 @@ def main():
         if want and rows[pb][0] != want:
             fails.append("docs/JOB_TEMPLATES.md: playbooks/%s is '%s' there, '%s' in scripts/gen_template_vars.py"
                          % (pb, rows[pb][0], want))
-        if not re.search(r"\]\([A-Z_]+\.md(#[\w-]+)?\)", rows[pb][1]):
+        if not re.search(r"\]\([A-Z0-9_]+\.md(#[\w-]+)?\)", rows[pb][1]):
             fails.append("docs/JOB_TEMPLATES.md: playbooks/%s has no link to its how-to" % pb)
     for pb in rows:
         if not os.path.isfile(os.path.join(ROOT, "playbooks", pb)):

@@ -161,6 +161,8 @@ jobs:
           python tests/test_ontap_capacity.py
           python tests/test_ucs_inventory.py
           python tests/test_netmap.py
+          python tests/test_java4shell.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_java4shell.py
           python tests/test_incident_docs.py
           python tests/test_evaluate_stig_update.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_evaluate_stig_update.py

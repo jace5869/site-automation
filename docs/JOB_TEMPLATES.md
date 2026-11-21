@@ -69,6 +69,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Linux - auditd tuning | `playbooks/auditd_tuning.yml` | Report; with approved changes, a change (the audit configuration; never a reboot) | [RUNBOOKS.md](RUNBOOKS.md#auditd-tuning-playbooksauditd_tuningyml) |
 | Linux - auditd tuning - check | `playbooks/auditd_tuning.yml` (`auditd_tuning_workflow: true`; the workflow's first step) | Workflow step | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#52-auditd-tuning-with-an-approval) |
 | fapolicyd | `playbooks/fapolicyd.yml` | Report; with approved changes, a change; workflow 36 (as *fapolicyd - check* and *fapolicyd - approved*) | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-playbooksfapolicydyml), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-with-an-approval-daily) |
+| Security - Java4Shell check (Keycloak) | `playbooks/java4shell.yml` | Report (reads only; preview the fix as Check first); with `j4s_fix`, a change (the compose file; Keycloak recreated only with `j4s_restart`) | [JAVA4SHELL.md](JAVA4SHELL.md) |
 
 ## Windows servers
 

@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""tests/test_java4shell.py: a stand-in of RHEL's older podman-compose - "up" STARTS an existing container again (its old
+environment), and only creates a new one when there is none: the new one has the flag when the compose file gives it. Test only."""
+import json
+import os
+import sys
+
+S = os.environ["J4S_FAKE_STATE"]
+st = json.load(open(S))
+a = sys.argv[1:]
+f = a[a.index("-f") + 1]
+svcs = [x for x in a[a.index("up") + 1:] if not x.startswith("-")]
+text = open(f).read()
+for s in svcs:
+    old = [c for c in st["containers"] if c["service"] == s]
+    if old:
+        for c in old:
+            c["running"] = True
+        st["log"].append("restarted " + s)
+        continue
+    st["n"] += 1
+    st["containers"].append({"id": "kc%dnew" % st["n"], "name": "%s_%s_1" % (st["project"], s), "image": "quay.io/keycloak/keycloak:25.0.5",
+                             "service": s, "project": st["project"], "running": True, "flag": "-XX:-UseBASE64Intrinsics" in text})
+    st["log"].append("created " + s)
+json.dump(st, open(S, "w"))

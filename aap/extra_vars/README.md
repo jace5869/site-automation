@@ -88,6 +88,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | PKI - DoD bundle check | `playbooks/pki_bundle_check.yml` | [pki_bundle_check.yml](pki_bundle_check.yml) |
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
 | Report website - copy | `playbooks/report_web_copy.yml` | [report_web_copy.yml](report_web_copy.yml) |
+| Security - Java4Shell check (Keycloak) | `playbooks/java4shell.yml` | [java4shell.yml](java4shell.yml) |
 | Service - restart | `playbooks/service_restart.yml` | [service_restart.yml](service_restart.yml) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | [service_fix_approved.yml](service_fix_approved.yml) |
 | Service watch - check | `playbooks/service_watch.yml` | [service_watch.yml](service_watch.yml) |

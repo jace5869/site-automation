@@ -893,6 +893,26 @@ job_templates:
         plan as job artifacts
       supports: Run constraint=Read-only on target hosts by default; changes them only with fapolicyd_approved (trust, rules,
         mode, service, package)
+  - name: Security - Java4Shell check (Keycloak)
+    playbook: playbooks/java4shell.yml
+    credentials: [machine]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: true
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/java4shell.yml
+    area: Linux
+    ask_job_type: true
+    description:
+      does: Checks CPU and each Keycloak container's running Java for CVE-2026-114938; reports other Java (ServiceNow); can
+        add the JVM flag
+      targets: 'Linux hosts of the Limit (Machine credential, sudo): the compose file (/podman/stigman) and the containers
+        of podman or docker'
+      produces: RESULT (VULNERABLE, AT RISK, MITIGATED, OK) and a line per JVM in the job output; with j4s_fix the compose
+        change and a backup
+      supports: Run constraint=Read-only unless j4s_fix (edits the compose file) or j4s_restart (recreates Keycloak only);
+        never reboots
   - name: Windows connection test
     playbook: playbooks/win_connection_test.yml
     credentials: [machine_windows]

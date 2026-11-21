@@ -818,6 +818,19 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # check_trust_remove: false
 # check_trust_remove_severities: [critical, warning]
 """),
+    "java4shell.yml": ("Security - Java4Shell check (Keycloak)", "Machine", "", """\
+## 1.91.0 (docs/JAVA4SHELL.md). Limit: the Keycloak host(s). Reads only, unless:
+## j4s_fix: add -XX:-UseBASE64Intrinsics to the Keycloak service in the compose file (a backup beside it) - run as Check first to preview
+# j4s_fix: false
+## j4s_restart: recreate the Keycloak service (--no-deps), then read the flag live - logins pause about a minute
+# j4s_restart: false
+## where the compose file is, and the Keycloak service's name in it (empty: each service whose image has "keycloak")
+# j4s_compose_file: /podman/stigman/docker-compose.yml
+# j4s_service: ""
+## rootless podman: the user that runs the containers; Keycloak started by systemd: your restart command
+# j4s_engine_user: ""
+# j4s_restart_cmd: ""
+"""),
     "tmp_cleanup.yml": ("Linux - tmp cleanup", "Machine", "", """\
 ## In workflow 42 it cleans what the disk space report planned, after the approval (nothing to set). On its own: Limit
 ## the hosts, run it as Check first, then with tmp_cleanup_confirm: true

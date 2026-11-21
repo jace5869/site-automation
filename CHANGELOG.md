@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.91.0 — 2026-11-21
+
+**To set up: the job template *Security - Java4Shell check (Keycloak)*** ("AAP - set up job templates" makes it: Machine credential,
+Limit and Variables prompted). Nothing else.
+
+**Java4Shell (CVE-2026-114938): check and mitigate Keycloak** (`playbooks/java4shell.yml`, [JAVA4SHELL.md](docs/JAVA4SHELL.md)).
+ansible-core only. In AAP it honours site_exclude like every job (`import_playbook: site_exclude.yml` and the hosts suffix); the
+air-gapped copy is the same file without that one import (its two lines) (`tests/test_java4shell.py --standalone`), which says in its head
+that site_exclude is not honoured there - so the two never drift.
+
+- **Check (the default, reads only):**
+  - the CPU (AVX-512 VBMI), and each running Keycloak container's own JVM: its version and flags from `jcmd`;
+  - every other Java process on the host (ServiceNow, Tomcat ...), reported only. Root never runs a program found through a process.
+  - Result: VULNERABLE, AT RISK, MITIGATED, UNKNOWN, OK or NOTHING FOUND, with a line per JVM.
+- **Fix (`j4s_fix`):** adds `JAVA_OPTS_APPEND: "-XX:-UseBASE64Intrinsics"` to the Keycloak service in the compose file
+  (`j4s_compose_file`, default `/podman/stigman/docker-compose.yml`): a map or a list environment, an existing value extended.
+  A private backup beside it. Check mode shows the change and writes nothing. Refused, with what to add by hand: a one-line
+  environment, anchors or merges, quotes inside the value, tabs, a symbolic link.
+- **Restart (`j4s_restart`):** removes that service's old containers by id (volumes kept), recreates it alone (`--no-deps`,
+  `--force-recreate`), and reads the flag live: MITIGATED or why not. RHEL's older podman-compose only started the old container,
+  so the new environment never reached it. A systemd-run Keycloak: `j4s_restart_cmd`. Never reboots.
+- In the repo as written and reviewed (two Codex passes, a real Keycloak 26.8.2-2), plus `changed_when: true` on the recreate task
+  for ansible-lint (what the shell module says anyway).
+- Tests: `tests/test_java4shell.py` runs it with ansible-playbook (2.16 and the current core); the air-gapped copy parses alone (no
+  site_exclude.yml beside it): check mode writes nothing; the edit
+  cases (map, list, an existing value, none, already there); refused (one-line, merge); a missing file or service; read only by
+  default. The restart: the flag already in the file, the old container running without it - removed by id, recreated, MITIGATED.
+  It runs against a stand-in podman and podman-compose (`tests/java4shell/fake`), which act like the old podman-compose.
+
 ## 1.87.2 — 2026-11-21
 
 **Nothing to set up.** The next run of a report writes its page with the new link.

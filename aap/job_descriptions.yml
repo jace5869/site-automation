@@ -27,6 +27,11 @@ templates:
     targets: "Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential)"
     produces: "The disk space report by email and on the report website when set; a tmp cleanup plan artifact for workflow 42's approval"
     supports: "Run constraint=Read-only on target hosts (adds its disk-history sample and syslog lines); writes the report email and website when set"
+  "Security - Java4Shell check (Keycloak)":
+    does: "Checks CPU and each Keycloak container's running Java for CVE-2026-114938; reports other Java (ServiceNow); can add the JVM flag"
+    targets: "Linux hosts of the Limit (Machine credential, sudo): the compose file (/podman/stigman) and the containers of podman or docker"
+    produces: "RESULT (VULNERABLE, AT RISK, MITIGATED, OK) and a line per JVM in the job output; with j4s_fix the compose change and a backup"
+    supports: "Run constraint=Read-only unless j4s_fix (edits the compose file) or j4s_restart (recreates Keycloak only); never reboots"
   "Linux - tmp cleanup":
     does: "Deletes old files in /tmp (10 days) and /var/tmp (30 days), never sockets or files systemd, ssh or Kerberos keep, to free space."
     targets: "Linux hosts of the Limit (Machine credential); in workflow 42 only the hosts and folders the disk space report planned"

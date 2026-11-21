@@ -31,6 +31,8 @@ _demo_internal: "{{ demo_empty }}"
 
 # read with "| default(...)" and set by nothing in playbooks/ or roles/, yet not a setting
 INTERNAL = {
+    "j4s_hosts": "1.91.0: playbooks/java4shell.yml is one self-contained file (no role): its settings are in its own vars and docs/JAVA4SHELL.md",
+    "j4s_become": "1.91.0: playbooks/java4shell.yml is one self-contained file (no role): its settings are in its own vars and docs/JAVA4SHELL.md",
     "act_triage": "the ACT triage job's hand-over (set_stats in vendor/act)",
     "act_triage_result": "what the vendored act_triage role leaves behind",
     "ad_lockout_now": "the tests' fixed clock (tests/ad)",

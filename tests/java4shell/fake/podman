@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""tests/test_java4shell.py: a stand-in podman - containers in a JSON file (J4S_FAKE_STATE), a Keycloak JVM whose
+UseBASE64Intrinsics is what the container was created with. Test only: nothing runs."""
+import json
+import os
+import sys
+
+S = os.environ["J4S_FAKE_STATE"]
+st = json.load(open(S))
+a = sys.argv[1:]
+
+
+def save():
+    json.dump(st, open(S, "w"))
+
+
+def labels_of(c):
+    return {"com.docker.compose.service": c["service"], "com.docker.compose.project": c["project"]}
+
+
+def match(c, filters):
+    for f in filters:
+        k, _, v = f.partition("=")[2].partition("=")
+        if labels_of(c).get(k) != v:
+            return False
+    return True
+
+
+if a[:2] == ["compose", "version"]:
+    sys.exit(1)                                     # no podman compose: podman-compose is used
+if a[0] == "ps":
+    filters = [a[i + 1] for i, x in enumerate(a) if x == "--filter"]
+    rows = [c for c in st["containers"] if match(c, filters) and (c["running"] or "-a" in a)]
+    fmt = a[a.index("--format") + 1] if "--format" in a else ""
+    for c in rows:
+        if "-q" in a:
+            print(c["id"])
+        elif "{{.Names}}" in fmt:
+            print("%s\t%s\t%s" % (c["id"], c["name"], c["image"]))
+        else:
+            print("%s %s" % (c["id"], c["image"]))
+    sys.exit(0)
+if a[0] == "inspect":
+    c = next(c for c in st["containers"] if c["id"] == a[-1])
+    print(json.dumps(labels_of(c)))
+    sys.exit(0)
+if a[0] == "exec":
+    c = next((c for c in st["containers"] if c["id"] == a[1]), None)
+    cmd = a[-1]
+    if c is None:
+        sys.exit(125)
+    if "VM.version" in cmd:
+        print("12345:\nOpenJDK 64-Bit Server VM version 21.0.5+11-LTS\nJDK 21.0.5")
+    elif "VM.flags" in cmd:
+        print("12345:\n     bool UseBASE64Intrinsics                      = %s                                   {default}"
+              % ("false" if c["flag"] else "true"))
+    sys.exit(0)
+if a[0] == "rm":
+    st["containers"] = [c for c in st["containers"] if c["id"] not in a[1:]]
+    st["log"].append("rm " + " ".join(x for x in a[1:] if x != "-f"))
+    save()
+    sys.exit(0)
+sys.exit(2)

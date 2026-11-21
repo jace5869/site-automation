@@ -81,6 +81,7 @@ LAUNCH_DOCS = {
     "ServiceNow - weekly activity report": {"ask_variables": True},   # docs/SERVICENOW_WAR.md, Step 2
     "ServiceNow - ticket insights": {"ask_variables": True},          # docs/SERVICENOW_INSIGHTS.md, every hour
     "Network device certificate renewal": {"ask_limit": False},       # docs/SETUP_AAP.md: runs on the controller
+    "Security - Java4Shell check (Keycloak)": {"ask_variables": True},  # docs/JAVA4SHELL.md: j4s_fix / j4s_restart at launch (1.91.0)
     # 1.83.0: a workflow's gate takes its node's Variables (workflow_gate_var) - docs/WORKFLOWS_AND_SCHEDULES.md, the gate
     "Workflow gate - has a plan": {"ask_variables": True},
 }
