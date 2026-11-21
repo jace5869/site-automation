@@ -524,6 +524,25 @@ asset, the Windows step after the Linux plan, an unreachable server and the gate
 names, a gate that runs the update, also with `aap_templates_only` naming only the workflow, a failed link, a
 workflow made again). docs/STIG_JOBS.md, SETUP_AAP.md, WORKFLOWS_AND_SCHEDULES.md, JOB_TEMPLATES.md.
 
+## 1.82.0 — 2026-11-21
+
+**To set up: nothing.** No new settings; a report's page and email read differently from the next run.
+
+**The head of every report: the name alone, the counts, the scope** (`plugins/module_utils/report_head.py`):
+- The title is the report's name ("STIG drift", not "STIG drift report: 3 finding(s) on 2 of 2 host(s)"). Under it, the counts as chips - the status icon and the words, the worst first, 2 to 4, no 0 unless everything is 0, plural words - then one muted scope line.
+- All three web looks (atlas, brief, ops) draw the chips. The four emails stay plain: the name, one line of counts, the scope line. The text email the same.
+- The email subject is the name and the top counts, 60 characters at most ("VMware health: 5 critical, 7 warnings"). The browser tab and the report website's index carry it too.
+- The scope line is the subtitle's first clause (80 characters at most); how it was read (the commands, the method) goes to the end of the page and the email as one line (`head_method`). "(s)" plurals never show: "2 changes", "1 host".
+- Worked out from the title and subtitle every report already has, so no playbook changes. A report that knows better sets `head_name`, `head_counts`, `head_scope` or `head_subject` (the fapolicyd denials report does).
+
+**ACT's analysis as cards** (fapolicyd first):
+- `act_causes.from_text` reads ACT's labelled text (BLOCKED, WHY, LEGITIMATE?, FIX, RISK; the commands in backticks) as causes. A finding that names a denied file becomes a cause; one that names none is left out.
+- The fapolicyd denials report and the fapolicyd job's report show *What to do first* and one card per denied file over all the hosts: the confidence, the evidence (what ACT read, then the denial lines), numbered steps with a **Copy** on each command. The approval is said once above the cards (`cause_note`).
+- A host whose answer names no file keeps its closed text section.
+- `report_cause_cards` options: `label` (the word above a card's ids), `note`, `own_evidence`, `title`.
+
+Tests: `tests/test_report_head.py` (the rules, every report fixture of the tests, the three web looks and four emails), `act_causes.from_text` and the fapolicyd cards in `tests/test_act_causes.py` and the denials e2e.
+
 ## 1.81.2 — 2026-11-20
 
 **To set up: nothing.** Small hardening of the Automation backlog (1.81.0); drafts kept before are asked for once more, because the key changed.

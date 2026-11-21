@@ -21,6 +21,7 @@
     the rail can be put away (its button: a check box the CSS acts on) - a narrow strip with the button to bring it
     back, the tables get its width and the bar lists the sections again; the script keeps the choice. -#}
 {%- set r = (_page_report | default(_report)) | report_tidy -%}
+{%- set rhead = (_page_report | default(_report)) | report_head -%}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
 {%- set runs = _page_runs | default(_email_runs | default([])) -%}
@@ -109,7 +110,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>{{ r.title | e }}</title>
+<title>{{ rhead.subject | e }}</title>
 <script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);
 var d=localStorage.getItem('site-report-density');if(d==='compact')document.documentElement.setAttribute('data-density',d)}catch(e){}</script>
 <script src="site-report.js"></script>
@@ -508,6 +509,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set hover_look = 'atlas' %}
 {%- include 'report_hover.css.j2' %}
 {%- include 'report_pop.css.j2' %}
+{%- include 'report_head.css.j2' %}
 {%- include 'report_causes.css.j2' %}
 {%- include 'report_matrix.css.j2' %}
 {%- if r.sections | default([]) | selectattr('links', 'defined') | list or r.sections | default([]) | selectattr('actions', 'defined') | list or r.sections | default([]) | selectattr('cell_links', 'defined') | list or r.sections | default([]) | selectattr('buttons', 'defined') | list %}
@@ -655,10 +657,8 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- if job_name %}
 <div class="eyebrow">{{ job_name | e }}</div>
 {%- endif %}
-<h1>{{ r.title | e }}</h1>
-{%- if r.subtitle | default('') %}
-<div class="sub">{{ r.subtitle | e }}</div>
-{%- endif %}
+<h1>{{ rhead.name | e }}</h1>
+{%- include 'report_head.html.j2' %}
 <div class="state">
 {{ chip(st, (r.status_prefix | default('')) ~ words[st]) }}
 <span class="meta">{%- if job_id %}<span>AAP job {{ job_id | e }}</span>{% endif %}{% if awx_user_name | default('') %}<span>run by {{ awx_user_name | e }}</span>{% endif %}</span>
@@ -1007,6 +1007,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endif %}
 {%- endfor %}
 <footer>
+{%- if rhead.method %}{{ rhead.method | e }}<br>{% endif %}
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
 {{ _email_footer | default('') | e }}
 </footer>

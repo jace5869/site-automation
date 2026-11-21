@@ -64,16 +64,16 @@ mail='"report_email_to": ["helpdesk@example.mil"], "report_email_smtp_host": "lo
 
 inv find_one unlock_ok
 run "one account: locked out, from PC123, what to do, every DC" ok '{"ad_lockout_user": "CORP\\jdoe", "ad_lockout_exchange_servers": ["EXCH*"]}' \
-    'corp.test: read by dc01.corp.test' 'Account lockout: CORP\\jdoe LOCKED OUT - from PC123' \
+    'corp.test: read by dc01.corp.test' 'CORP\\jdoe LOCKED OUT' 'from PC123' \
     'Most bad passwords came from PC123 (192.0.2.50)' 'kept trying after the account was locked out' \
     'EXCH01 is a mail server' 'DC01 (PDC)' 'UNREACHABLE' 'locks an account out after 5 bad passwords within 30 minutes' \
     '!was NOT unlocked'
 run "emailed, HTML and plain text" ok "{\"ad_lockout_user\": \"jdoe\", $mail}" \
-    '[AAP] Account lockout: CORP\jdoe LOCKED OUT - from PC123' 'Content-Type: text/html' 'X-Envelope-To: helpdesk@example.mil'
+    '[AAP] Account lockout: CORP\jdoe LOCKED OUT' 'Content-Type: text/html' 'X-Envelope-To: helpdesk@example.mil'
 run "the unlock: on the PDC emulator, said first" ok '{"ad_lockout_user": "CORP\\jdoe", "ad_lockout_unlock": true}' \
-    'Account lockout: CORP\\jdoe unlocked by this job - from PC123' 'UNLOCKED by this job on DC01' 'then UNLOCK it if it is locked out'
+    'CORP\\jdoe unlocked by this job' 'from PC123' 'UNLOCKED by this job on DC01' 'then UNLOCK it if it is locked out'
 CHECK=1 run "a dry run unlocks nothing" ok '{"ad_lockout_user": "CORP\\jdoe", "ad_lockout_unlock": true}' \
-    'Would be unlocked (dry run)' 'Account lockout: CORP\\jdoe LOCKED OUT'
+    'Would be unlocked (dry run)' 'CORP\\jdoe LOCKED OUT'
 run "the source computers of the inventory: what runs as the account" ok '{"ad_lockout_user": "jdoe", "ad_lockout_check_sources": true}' \
     'Looking on pc123.corp.test' 'On PC123: the service BackupAgent' 'has a DISCONNECTED session' 'drive H: mapped' \
     'WS9 is not in this job' "s inventory: check it by hand"
@@ -85,13 +85,13 @@ run "a refused unlock fails the job, after the report" fail '{"ad_lockout_user":
     'NOT unlocked: Insufficient access rights' 'jdoe was NOT unlocked: Insufficient access rights'
 inv find_upn unlock_ok
 run "an account in no domain: stops before the Security logs" fail '{"ad_lockout_user": "JDOE@corp.test, nobody, OTHER\\x, o'"'"'brien"}' \
-    'No account named nobody, OTHER\\x in corp.test' '!Account lockout:'
+    'No account named nobody, OTHER\\x in corp.test' '!LOCKED OUT'
 inv find_no_ad unlock_ok
 run "no DC can read its domain: says why, per DC" fail '{"ad_lockout_user": "jdoe"}' \
-    'No domain controller could read its domain' 'dc01.corp.test: ActiveDirectory PowerShell module' 'dc03.corp.test: ntlm' '!Account lockout:'
+    'No domain controller could read its domain' 'dc01.corp.test: ActiveDirectory PowerShell module' 'dc03.corp.test: ntlm' '!LOCKED OUT'
 inv find_all unlock_ok
 run "no account given: every account locked out now, each with its source" ok '{}' \
-    'Account lockout: 2 account(s) locked out now (corp.test)' 'PC123 (8), EXCH01 (2), WS9 (1)' 'CORP\\erin' \
+    '2 accounts locked out now' 'corp.test' 'PC123 (8), EXCH01 (2), WS9 (1)' 'CORP\\erin' \
     'fine-grained password policy Admins-PSO' 'the DCs may not audit Account Lockout'
 
 # ---- the real playbook and the role's own tasks (collect.yml, sources.yml): each script replaced by
@@ -133,19 +133,19 @@ INV
         echo "ok   - $name"
     }
     e2e "the playbook: the scripts run, the PDC reads, the report" ok '{"ad_lockout_user": "CORP\\jdoe"}' \
-        'corp.test: read by dc01.corp.test' 'Account lockout: CORP\\jdoe LOCKED OUT - from PC123' 'DCs read: 1 of 1' \
+        'corp.test: read by dc01.corp.test' 'CORP\\jdoe LOCKED OUT' 'from PC123' 'DCs read: 1 of 1' \
         'Most bad passwords came from PC123 (192.0.2.50)'
     e2e "the playbook: the unlock runs on the PDC" ok '{"ad_lockout_user": "jdoe", "ad_lockout_unlock": true}' \
-        'Lockout | unlock jdoe (ad_lockout_unlock)' 'Account lockout: CORP\\jdoe unlocked by this job - from PC123'
+        'Lockout | unlock jdoe (ad_lockout_unlock)' 'CORP\\jdoe unlocked by this job' 'from PC123'
     CHECK=1 e2e "the playbook in check mode: read, nothing unlocked" ok '{"ad_lockout_user": "jdoe", "ad_lockout_unlock": true}' \
         'Would be unlocked (dry run)'
     e2e "the playbook: the source computer looked on" ok '{"ad_lockout_user": "jdoe", "ad_lockout_check_sources": true}' \
         'Looking on pc123.corp.test' 'On PC123: the service BackupAgent'
     LIMIT="dc01.corp.test" e2e "a Limit of the DC only (no localhost): read, the report - the source computer outside it said" ok \
         '{"ad_lockout_user": "jdoe", "ad_lockout_check_sources": true}' \
-        'Account lockout: CORP\\jdoe LOCKED OUT - from PC123' "Not looked on - outside the job's Limit (dc01.corp.test): pc123.corp.test"
+        'CORP\\jdoe LOCKED OUT' 'from PC123' "Not looked on - outside the job's Limit (dc01.corp.test): pc123.corp.test"
     LIMIT="dc01.corp.test,localhost" e2e "a Limit with localhost in it (the habit of before 0.32.0): the same" ok \
-        '{"ad_lockout_user": "jdoe"}' 'Account lockout: CORP\\jdoe LOCKED OUT - from PC123'
+        '{"ad_lockout_user": "jdoe"}' 'CORP\\jdoe LOCKED OUT' 'from PC123'
 else
     echo "skip - the playbook with its own tasks (no pwsh)"
 fi

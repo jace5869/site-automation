@@ -93,7 +93,7 @@ import email, email.policy, sys, zipfile
 m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
 html = m.get_body(preferencelist=("html",)).get_content()
 open(sys.argv[2], "w").write(html)
-assert m["Subject"].startswith("[AAP] NetApp ONTAP capacity trends: 2 aggregates full within 90 days"), m["Subject"]
+assert m["Subject"].startswith("[AAP] NetApp ONTAP capacity trends: 2 aggregates full"), m["Subject"]          # 1.82.0: the name and the top counts, 60 characters at most
 assert "<svg" not in html and "Trend</th>" not in html, "a trend line in the email"
 for text in ("Volumes filling again", "Fastest growing volumes", "Snapshot space", "aggr2_node04", "vol_home", "used space dropped 13%",
              "Read-only: GET requests to the ONTAP REST API"):

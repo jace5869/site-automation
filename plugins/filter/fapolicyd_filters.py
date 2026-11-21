@@ -21,7 +21,18 @@ _sp = importlib.util.spec_from_file_location("site_fapolicyd_for_filters", os.pa
 _audit = importlib.util.module_from_spec(_sp)
 _sp.loader.exec_module(_audit)
 
+# ACT's labelled answer as causes, and the cause cards (plugins/module_utils/act_causes.py; site_filters.report_cause_cards) - 1.82.0
+_sp = importlib.util.spec_from_file_location("act_causes_for_fapolicyd", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "module_utils", "act_causes.py"))
+_ac = importlib.util.module_from_spec(_sp)
+_sp.loader.exec_module(_ac)
+_sp = importlib.util.spec_from_file_location("site_filters_for_fapolicyd", os.path.join(os.path.dirname(os.path.abspath(__file__)), "site_filters.py"))
+_sf = importlib.util.module_from_spec(_sp)
+_sp.loader.exec_module(_sf)
+
 ORDER = {"critical": 0, "warning": 1, "ok": 2}
+APPROVAL = ("Every fix below changes what fapolicyd trusts: it needs ISSO / change approval before you apply it. ACT read the "
+            "evidence only; nothing was applied.")
 NOTE = ("ACT's proposals (a trust entry, a narrow rule) are security-control changes: route them through your "
         "security approval (e.g. the ISSO) before anyone applies them.")
 
@@ -162,9 +173,11 @@ def _groups(hv):
             continue
         path = _audit.event_path(e)[0]
         exe = str(e["syscall"].get("exe", "")) or "(unknown)"
-        g = out.setdefault((exe, path or "(unknown)"), {"count": 0, "last": ""})
+        g = out.setdefault((exe, path or "(unknown)"), {"count": 0, "last": "", "ex": []})
         g["count"] += 1
         g["last"] = max(g["last"], _when(e["time"]))
+        if len(g["ex"]) < 3:         # the newest lines are not kept apart: three of the first are enough to show the kind
+            g["ex"].append({"time": _when(e["time"]), "sort": str(e["time"]), "message": "denied %s -> %s" % (exe, path or "(unknown)")})
     return out
 
 
@@ -191,8 +204,9 @@ def _denial_model(hostvars_list, names):
     groups = {}
     for h in read:
         for (exe, path), g in h["groups"].items():
-            x = groups.setdefault((exe, path), {"program": exe, "file": path, "count": 0, "hosts": [], "last": "", "verdicts": {}})
+            x = groups.setdefault((exe, path), {"program": exe, "file": path, "count": 0, "hosts": [], "last": "", "verdicts": {}, "examples": []})
             x["count"] += g["count"]
+            x["examples"] += [dict(e, host=_short(h["host"])) for e in g.get("ex") or []]
             x["hosts"].append(h["host"])
             x["last"] = max(x["last"], g["last"])
             w, st = _verdict(h, exe, path)
@@ -260,6 +274,64 @@ def _host_detail(h):
     return sec
 
 
+def act_cards(hosts, items, opts=None):
+    """ACT's answers of several hosts as the cause cards (1.82.0). hosts: [{host, act, ...}] (host_result); items: [{id, file, level,
+    hosts, count, examples}] - what the report is about, a denied file each. Each host's text goes through act_causes.from_text (its
+    findings that name a file of the items become causes); the hosts' causes are joined (merge) and shown by report_cause_cards.
+    -> {sections: [What to do first, the cards], email: [...], left: [hosts whose answer is shown as text because ACT did not run,
+    erred, or said something that names no file], cards}; None when no host's answer gave a cause."""
+    by_item = dict((i["id"], i) for i in items)
+    parsed, left, ran = [], [], False
+    for h in hosts:
+        a = h.get("act")
+        if a is None or str(a.get("status")) == "error":
+            if a is not None:
+                left.append(h["host"])
+            continue
+        ran = True
+        mine = [{"id": i["id"], "needles": [i["file"]]} for i in items if h["host"] in i.get("hosts_full", i.get("hosts", []))]
+        r = _ac.from_text(a.get("summary") or a.get("stop_reason") or "", mine)
+        for c in r["causes"]:
+            c["hosts"] = [_short(h["host"])]
+        if r["causes"]:
+            parsed.append(r)
+        if not r["causes"] or r.get("unplaced"):
+            left.append(h["host"])
+    if not parsed:
+        return None
+    merged = _ac.merge(parsed)
+    o = dict({"noun": "denied file", "label": "File", "note": APPROVAL, "own_evidence": True, "max_evidence": 4,
+              "title": "Why the denials: causes and fixes"}, **(opts or {}))
+    cc = _sf.report_cause_cards(merged, [dict(i, hosts=[_short(x) for x in i.get("hosts", [])]) for i in items], o)
+    return {"sections": cc["web"], "email": cc["email"], "left": left, "cards": cc["cards"], "sheet": cc["sheet"]}
+
+
+def _items(rows):
+    """The denied files of the model (_denial_model's rows) as the cards' items."""
+    out = []
+    for n, x in enumerate(rows, 1):
+        out.append({"id": "D%d" % n, "file": x["file"], "level": "warning", "title": "%s denied" % x["file"], "hosts": x["hosts"],
+                    "count": x["count"], "examples": x.get("examples") or []})
+    return out
+
+
+def _block_items(hostvars_list, names):
+    """The block groups of the hosts' reading (_fr.blocks: what fapolicyd blocked, or would block) as the cards' items, over the hosts."""
+    groups = {}
+    for n, hv in zip(names, hostvars_list):
+        fr = _get(hv, "_fr")
+        for g in (fr.get("blocks") if hasattr(fr, "get") else None) or []:
+            x = groups.setdefault((g.get("exe") or "?", g.get("path") or "?"), {"file": g.get("path") or "?", "count": 0, "hosts": [], "examples": []})
+            x["count"] += int(g.get("count") or 0)
+            if n not in x["hosts"]:
+                x["hosts"].append(n)
+            x["examples"].append({"time": str(g.get("last") or ""), "sort": str(g.get("last") or ""), "host": _short(n),
+                                  "message": "%s %s -> %s (%s) x%d" % ("blocked" if g.get("kind") == "denied" else "would block", g.get("exe") or "?",
+                                                                      g.get("path") or "?", g.get("perm", "?"), int(g.get("count") or 0))})
+    rows = sorted(groups.values(), key=lambda x: (-x["count"], x["file"]))
+    return _items(rows)
+
+
 def fapolicyd_denials_report(hostvars_list, names, since="today", title="", web=True, top=None):
     """[hostvars of each host], [their names], the ausearch -ts keyword, the title -> roles/site_email's _report. web: the
     website's page (everything); not web: the email (the tiles, the top of the table, the hosts with a problem)."""
@@ -283,8 +355,11 @@ def fapolicyd_denials_report(hostvars_list, names, since="today", title="", web=
         head.append("auditd not running on %d" % len(noaudit))
     report = {
         "title": "%s: %s" % (title or "fapolicyd denials", ", ".join(head) if head else "no denials since %s" % since),
+        "head_counts": [[n, w, st] for n, w, st in ((len(denied), "hosts with denials" if len(denied) != 1 else "host with denials", "warning"),
+                                                     (len(down), "fapolicyd not running", "critical"), (len(noaudit), "auditd not running", "warning")) if n] or None,
         "subtitle": "%d host(s) read - denials since %s (the audit log: ausearch -m FANOTIFY -ts %s)" % (len(read), since, since),
         "status": status,
+        "head_scope": ["%d host%s read" % (len(read), "" if len(read) == 1 else "s"), "denials since %s" % since, "ausearch -m FANOTIFY -ts %s" % since],
         "summary": [{"label": "Denials", "value": total, "status": "warning" if total else "ok"},
                     {"label": "Hosts with denials", "value": len(denied), "status": "warning" if denied else "ok"}]
                    + ([{"label": "Programs denied", "value": len(m["by_program"]), "status": "warning"}] if m["by_program"] else [])
@@ -313,6 +388,7 @@ def fapolicyd_denials_report(hostvars_list, names, since="today", title="", web=
         secs.append(sec)
     elif denied:       # hosts counted denials, but no ausearch text came back (an older run of the job): the totals only
         secs.append({"title": "Denials", "lines": ["%d denial(s) on %d host(s); the programs and files are in the hosts table." % (total, len(denied))]})
+    cards = act_cards(read, _items(m["rows"])) if problem and m["rows"] else None          # 1.82.0: ACT's answers as cause cards
     if problem:
         hrows, hstatus, hcell = [], [], []
         for h in problem:
@@ -322,12 +398,17 @@ def fapolicyd_denials_report(hostvars_list, names, since="today", title="", web=
             hcell.append(["", "ok" if h["active"] == "active" else "critical", "ok" if h["auditd"] == "active" else "warning",
                           "warning" if h["count"] else "", "", ""])
         secs.append({"title": "Hosts with denials or a problem", "status": status if status != "ok" else "warning",
-                     "text": ("Each host's ACT analysis is under this table, closed. auditd not running = denials are not recorded." if web else
+                     "text": (("ACT's analysis is under this table: What to do first, then a card for each denied file. " if cards else
+                               "Each host's ACT analysis is under this table, closed. ") + "auditd not running = denials are not recorded." if web else
                               "auditd not running = denials are not recorded. ACT's analysis of each host is on the report website."),
                      "columns": ["Host", "fapolicyd", "auditd", "Denials", "Programs", "ACT"], "rows": hrows,
                      "row_status": hstatus, "cell_status": hcell, "kinds": ["wrap", "", "", "num", "wrap", ""]})
         if web:
-            secs.extend(_host_detail(h) for h in problem)
+            if cards:
+                secs.extend(cards["sections"])
+            secs.extend(_host_detail(h) for h in problem if cards is None or h["host"] in cards["left"])
+        elif cards:
+            secs.extend(cards["email"])
     if quiet:
         secs.append({"title": "No denials", "status": "ok", "lines": ["%d host(s): fapolicyd running, auditd running, nothing "
                                                                         "denied since %s - %s" % (len(quiet), since, ", ".join(sorted(quiet)))]})
@@ -486,6 +567,7 @@ def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
         "title": "%s: %s" % (title or "fapolicyd fix", ", ".join(head) if head else "nothing to fix"),
         "subtitle": "%d host(s) read - fapolicyd's trust files, SELinux labels, db_max_size and service%s"
                     % (len(read), " - Check: nothing changed" if check else ""),
+        "head_scope": ["%d host%s" % (len(read), "" if len(read) == 1 else "s")] + (["Check: nothing changed"] if check else []),
         "status": status,
         "summary": [{"label": "Fixes to approve", "value": len(proposals), "status": "warning" if proposals else "ok"},
                     {"label": "fapolicyd not running", "value": len(down), "status": "critical" if down else "ok"}]
@@ -783,6 +865,7 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
         "title": "%s: %s" % (title or "fapolicyd rules", ", ".join(head) if head else "nothing blocked since %s, nothing to change" % since),
         "subtitle": "%d host(s) read - what fapolicyd blocked since %s (ausearch -m FANOTIFY -ts %s), the trust entries and rules "
                     "to let it through, the rules files' clean-up%s" % (len(read), since, since, " - Check: nothing changed" if check else ""),
+        "head_scope": ["%d host%s" % (len(read), "" if len(read) == 1 else "s"), "blocked since %s" % since] + (["Check: nothing changed"] if check else []),
         "status": status,
         "summary": [{"label": "Blocked", "value": denied, "status": "warning" if denied else "ok"},
                     {"label": "Would be blocked (permissive)", "value": would, "status": "warning" if would else "ok"},
@@ -977,7 +1060,7 @@ def fapolicyd_act_evidence(fr, ff=None):
     return "\n".join(out)
 
 
-def fapolicyd_all_report(hostvars_list, names, since="today", title="", check=False, workflow=False):
+def fapolicyd_all_report(hostvars_list, names, since="today", title="", check=False, workflow=False, web=False):
     """The fapolicyd job's one report: getting fapolicyd running (the fix's report) and its blocks, trust entries and
     rules (the rules' report), one list of changes to approve, ACT's analysis when it ran (fapolicyd_act); the workflow's
     check (workflow): what Approve makes on each host, and what is held back for a person."""
@@ -1002,6 +1085,7 @@ def fapolicyd_all_report(hostvars_list, names, since="today", title="", check=Fa
     report = {"title": "%s: %s" % (title or "fapolicyd", ", ".join(head) if head else "running, nothing blocked since %s, nothing to change" % since),
               "subtitle": "%s - and what keeps fapolicyd down: its trust files, SELinux labels, db_max_size, the service"
                           % ru["subtitle"],
+              "head_scope": ru.get("head_scope"),
               "status": status, "summary": summary, "sections": [], "footer": RNOTE}
     secs = report["sections"]
     for t, new in (("What this run fixed", "Getting fapolicyd running: what this run did"),
@@ -1052,10 +1136,15 @@ def fapolicyd_all_report(hostvars_list, names, since="today", title="", check=Fa
                          "lines": ["%s: %s - %s" % x for x in w["held"]]})
     if "What fapolicyd blocked" in rs:
         secs.append(rs["What fapolicyd blocked"])
-    for n, hv in zip(names, hostvars_list):
-        a = _get(hv, "act_triage_result")
-        if hasattr(a, "keys") and _get(hv, "_fa_act_ran"):
-            secs.extend(act_sections(n, dict(a)))
+    ran = [(n, dict(_get(hv, "act_triage_result"))) for n, hv in zip(names, hostvars_list)
+           if hasattr(_get(hv, "act_triage_result"), "keys") and _get(hv, "_fa_act_ran")]
+    items = _block_items(hostvars_list, names)
+    cards = act_cards([{"host": n, "act": a} for n, a in ran], items) if ran and items else None
+    if cards:                                  # 1.82.0: ACT's answers as cause cards (the email: what to do first and the table); a host whose answer they do not show keeps its text
+        secs.extend(cards["sections"] if web else cards["email"])
+    for n, a in ran:
+        if cards is None or n in cards["left"]:
+            secs.extend(act_sections(n, a))
     person = list((fs.get("For a person") or {}).get("lines") or []) + list((rs.get("For a person") or {}).get("lines") or [])
     for n, hv in zip(names, hostvars_list):
         if _get(hv, "_fa_rules_wait") is True or str(_get(hv, "_fa_rules_wait", "")).strip() == "True":

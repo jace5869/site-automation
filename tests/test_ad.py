@@ -77,7 +77,7 @@ class Healthy(unittest.TestCase):
         sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
         import site_filters  # noqa: E402
         txt = site_filters.report_text(self.r["report"])
-        self.assertIn("Active Directory health report", txt)
+        self.assertIn("Active Directory health\n", txt)         # 1.82.0: the name alone as the title
         self.assertIn("Inbound replication", txt)
 
 

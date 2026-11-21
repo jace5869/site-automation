@@ -21,7 +21,7 @@ def render(doc, **v):
     import jinja2
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(TPL), autoescape=False)
     env.filters.update(report_cell_html=sf.report_cell_html, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar, report_hidden_columns=sf.report_hidden_columns,
-                       safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+                       safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
     base = {"_report": doc, "_email_footer": "AAP job 9 (Linux - Disk), started by admin, 2026-11-17 06:00 UTC.", "_page_logo_cid": "",
             "_page_runs": [], "_page_template": "Linux - Disk <space>", "_page_job": "9", "report_email_header_text": "Site <automation> report"}
     base.update(v)
@@ -56,7 +56,8 @@ class Header(unittest.TestCase):
     def test_the_header_card(self):
         h = render(DOC)
         self.assertIn('<header class="hero card h-critical">', h)
-        self.assertIn('<span class="stc s-critical"><span class="d" aria-hidden="true"></span>Critical</span>\n<h1>Disk report: 2 &lt;full&gt;</h1>', h)
+        self.assertIn('<span class="stc s-critical"><span class="d" aria-hidden="true"></span>Critical</span>\n<h1>Disk report</h1>', h)
+        self.assertIn("<b>2</b> <span>&lt;full&gt;</span>", h)                  # 1.82.0: the name alone; its count a chip under it
         self.assertIn('<p class="say">Review what needs attention, worst first.</p>', h)
         # the headline number: the first tile that is Critical and not 0 (not the first tile)
         self.assertIn('<div class="hn"><div class="bn c-critical">2</div><div class="cap">Past &lt;90%&gt;</div></div>', h)
@@ -351,7 +352,7 @@ class Escaping(unittest.TestCase):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(TPL), autoescape=False)
         env.filters.update(report_cell_html=sf.report_cell_html, report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar, report_hidden_columns=sf.report_hidden_columns,
-                       safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+                       safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         files = sorted(glob.glob(os.path.join(REPO, "tests", "fixtures", "report_fit", "*.json")))
         self.assertGreater(len(files), 100)
         for look in ("ops", "atlas", "brief"):

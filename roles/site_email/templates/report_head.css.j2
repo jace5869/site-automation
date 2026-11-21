@@ -1,0 +1,10 @@
+{#- 1.82.0: the head of a report page (atlas, brief, ops): the counts as chips under the name (the status icon and the words, never colour alone),
+    the scope as one muted line. Colours come from the look's own --ok/--warning/--critical, --edge, --muted and --ink. -#}
+.hcounts{display:flex;flex-wrap:wrap;gap:8px 10px;margin:12px 0 0;padding:0;list-style:none}
+.hcounts .hct{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--edge);border-radius:999px;padding:4px 12px 4px 9px;font-size:15px;line-height:1.3;color:var(--ink);background:var(--card-strong)}
+.hcounts .hct b{font-size:19px;line-height:1;font-weight:750;font-variant-numeric:tabular-nums}
+.hcounts .hct svg{width:16px;height:16px;flex:none}
+.hcounts .s-ok svg{color:var(--ok)}.hcounts .s-warning svg{color:var(--warning)}.hcounts .s-critical svg{color:var(--critical)}.hcounts .s-info svg{color:var(--muted)}
+.hcounts .s-ok{border-color:var(--ok-bd)}.hcounts .s-warning{border-color:var(--warning-bd)}.hcounts .s-critical{border-color:var(--critical-bd)}
+.hscope{margin:12px 0 0;color:var(--muted);font-size:14px;max-width:96ch;text-wrap:pretty}
+@media print{.hcounts .hct{background:none}}

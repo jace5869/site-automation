@@ -72,8 +72,9 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 | `report_email_html_template` | `report.html.j2` | your own look instead (below) |
 | `report_email_subject_prefix` | `[AAP]` | put before every subject |
 
-The subject is the report's title with its counts, e.g. `[AAP] Health check: 3 finding(s) on 2 of
-48 host(s)`. Every email ends with the AAP job number, the template, who started it and when. A dry
+The subject (1.82.0) is the report's name with its top counts, 60 characters at most, e.g. `[AAP] STIG drift:
+3 findings`. The page and the email show the name alone as the title, the counts under it and a muted scope line
+([WEB_REPORTS.md](WEB_REPORTS.md#the-head-of-a-report-1820)). Every email ends with the AAP job number, the template, who started it and when. A dry
 run (Check) sends nothing. A job without `report_email_to` says `No email: report_email_to is not
 set`.
 

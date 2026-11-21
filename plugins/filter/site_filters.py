@@ -139,6 +139,11 @@ _spec = importlib.util.spec_from_file_location(
     "site_banner", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_banner.py"))
 _banner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_banner)
+# the head of a report (1.82.0): name, counts, scope, subject (plugins/module_utils/report_head.py)
+_spec = importlib.util.spec_from_file_location("report_head", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "report_head.py"))
+_head = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_head)
+report_head = _head.report_head
 # the times a report shows, in report_time_zone (1.49.0), shared the same way (there: ansible.module_utils.site_time)
 _spec = importlib.util.spec_from_file_location(
     "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
@@ -2280,10 +2285,12 @@ def report_text(report, footer="", runs=None):
     """A report (roles/site_email: title, subtitle, summary, sections with columns/rows or lines,
     footer) as plain text, tables in aligned columns. runs: the strip of past runs (report_runs), as one line."""
     r = report or {}
-    title = str(r.get("title") or "Report")
+    hd = _head.report_head(r)
+    title = hd["name"] if r.get("title") else "Report"
     out = [title, "=" * len(title)]
-    if r.get("subtitle"):
-        out.append(str(r["subtitle"]))
+    for line in (hd["counts_text"], hd["scope_text"]):
+        if line:
+            out.append(line)
     if runs:
         out.append("Last %d runs, oldest first: %s" % (len(runs), " ".join(
             b["status"] + (" (this run)" if b.get("current") else "") for b in runs)))
@@ -2311,6 +2318,8 @@ def report_text(report, footer="", runs=None):
         out += report_rule_texts_text(s)            # 1.73.0: a STIG rule's check and fix text
         out += ["- " + str(x) for x in s.get("lines") or [] if str(x).strip()]
     out += ["", "--"]
+    if hd.get("method"):
+        out.append(hd["method"])
     if r.get("footer"):
         out.append(str(r["footer"]))
     if footer:
@@ -2680,7 +2689,13 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                          "passed_checks": list(dict.fromkeys(str(c) for c in checks or []))})
     if not sections:
         sections.append({"title": "Result", "lines": ["No findings."]})
-    out = {"title": t, "status": status, "summary": summary, "sections": sections,
+    # 1.82.0: the head - the counts by severity, the hosts as the scope
+    h_counts = [[n, w, st] for n, w, st in ((crit, "critical", "critical"), (warn, "warning" if warn == 1 else "warnings", "warning"),
+                                             (low, "low", "info")) if n] or [[0, "findings", "ok"]]
+    h_scope = ([] if single else ["%d of %d hosts with findings" % (len(bad), len(hosts))]) + (["%d did not report" % len(missing)] if missing else [])
+    if head:                                  # a top section's headline is the title's own words (STIG recheck: 2 rules open): the head reads them from it
+        h_counts = h_scope = None
+    out = {"title": t, "head_counts": h_counts, "head_scope": h_scope or None, "status": status, "summary": summary, "sections": sections,
            "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
     if tv and not own:
         # the findings' own tiles make way for the team's (the extra sections' boxes stay: patch age, the Console)
@@ -2921,7 +2936,9 @@ def report_cause_cards(parsed, items, opts=None):
     """parsed: act_causes.parse (or act_analysis_parse with causes); items: the report's [{id, level (critical|error|warning|
     low|info), title, hosts, count, examples: [{time, host, message}]}] - times and hosts as they are shown. opts: noun
     ('pattern'), max_evidence (5), overall (ACT's own words on what to do first - the answer to a question asked - shown
-    above the first step). -> {cards, first (the top card's first step), web: [What to do first, the cards],
+    above the first step), label ('Pattern': the word above a card's ids, 'File'), note (one line said once above the cards: what every
+    step needs, e.g. an approval), own_evidence (true: ACT's own evidence lines first, then the job's lines, up to max_evidence).
+    -> {cards, first (the top card's first step), web: [What to do first, the cards],
     email: [the same as lines and a table], sheet (every cause, every step), by_item: {id: [card id, label]}, noise}.
     An item no cause names and that is not noise gets a card of its own, "not explained"."""
     o, pa = opts or {}, parsed or {}
@@ -2946,8 +2963,8 @@ def report_cause_cards(parsed, items, opts=None):
         ex = [e for p in pats if p in its for e in its[p].get("examples") or []]
         ex.sort(key=lambda e: str(e.get("sort") or e.get("time") or ""), reverse=True)
         ev = [{"t": str(e.get("time") or ""), "h": str(e.get("host") or ""), "m": str(e.get("message") or "")} for e in ex[:nmax]]
-        if not ev:
-            ev = [{"t": "", "h": "", "m": x} for x in (c.get("evidence") or [])[:nmax]]
+        own = [{"t": "", "h": "", "m": x} for x in (c.get("evidence") or [])[:nmax]]
+        ev = (own + ev)[:nmax] if o.get("own_evidence") else (ev or own)
         conf = c.get("confidence")
         band = act_causes.band(conf)
         cards.append({"key": c.get("key"), "title": c.get("title") or "", "patterns": pats, "hosts": hosts, "lines": lines,
@@ -2985,8 +3002,12 @@ def report_cause_cards(parsed, items, opts=None):
         if first:
             sec["cause_first"] = first
         web.append(sec)
-    web.append({"title": "Likely causes and fixes", "status": CAUSE_STATUS.get(worst, "info"), "count_text": count, "causes": cards,
+    web.append({"title": o.get("title") or "Likely causes and fixes", "status": CAUSE_STATUS.get(worst, "info"), "count_text": count, "causes": cards,
                 "noise": [{"id": p, "why": (pa.get("noise_why") or {}).get(p, "")} for p in noise]})
+    if o.get("label"):
+        web[-1]["noun_label"] = str(o["label"])
+    if o.get("note"):
+        web[-1]["cause_note"] = str(o["note"])
     rows, email = [], []
     for k in cards:
         st = k["steps"][0] if k["steps"] else {}
@@ -2997,9 +3018,9 @@ def report_cause_cards(parsed, items, opts=None):
                       "lines": overall + (["Cause %d · %s (%s, %s)" % (first["n"], first["title"], first["patterns_text"], first["hosts_text"]),
                                            "1. " + _step_line(first["step"])]
                                           if first else [])})
-    email.append({"title": "Likely causes and fixes", "text": count + ". Each cause's steps: the report website and the workbook.",
+    email.append({"title": o.get("title") or "Likely causes and fixes", "text": ((str(o["note"]) + " ") if o.get("note") else "") + count + ". Each cause's steps: the report website and the workbook.",
                   "status": CAUSE_STATUS.get(worst, "info"),
-                  "columns": ["#", "Cause", noun.capitalize() + "s", "Hosts", "Confidence", "First step"], "rows": rows,
+                  "columns": ["#", "Cause", (o.get("label") or noun.capitalize()) + "s", "Hosts", "Confidence", "First step"], "rows": rows,
                   "kinds": ["num", "wrap", "", "wrap", "", "wrap"], "wrap": True,
                   "cell_status": [["", "", "", "", k["conf_status"], ""] for k in cards],
                   "row_status": [k["status"] for k in cards]})
@@ -3038,6 +3059,7 @@ class FilterModule(object):
     def filters(self):
         return {"report_cause_cards": report_cause_cards, "report_hidden_columns": report_hidden_columns, "safe_link": safe_link, "safe_ref": safe_ref, "safe_site_url": safe_site_url, "safe_data": safe_data, "report_rule_texts_html": report_rule_texts_html, "report_banner": report_banner, "report_banner_hosts": report_banner_hosts, "report_banner_html": report_banner_html, "report_banner_text": report_banner_text,
                 "report_banner_subject": report_banner_subject, "report_act_off": report_act_off,
+                "report_head": report_head, "report_plural": _head.plural,
                 "report_act_old": report_act_old,
                 "from_csv": from_csv, "days_until": days_until, "site_result": site_result,
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,

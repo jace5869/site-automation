@@ -68,7 +68,7 @@ m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.
 h = re.sub(r"<span class=\"(?:sa|g)-lab\"[^>]*>[^<]*</span>", "", m.get_body(preferencelist=("html",)).get_content())
 open(sys.argv[2], "w").write(re.sub(r"<span class=\"(?:sa|g)-brk\">([^<]*)</span>", r"\1", h))
 print(m["Subject"])' "$eml" "$html" > "$work/subject.txt"
-if [ -n "$eml" ] && grep -q "^\[AAP\] NetApp ONTAP health report: .* critical, .* warning on 3 cluster(s)" "$work/subject.txt" \
+if [ -n "$eml" ] && grep -q "^\[AAP\] NetApp ONTAP health: .* critical, .* warning" "$work/subject.txt" \
    && grep -q 'bgcolor="#b91c1c"[^>]*>DOWN<' "$html" && grep -q 'bgcolor="#15803d"[^>]*>UP<' "$html" \
    && grep -q 'bgcolor="#b91c1c"[^>]*>92%<' "$html" && grep -q 'bgcolor="#b45309"[^>]*>87%<' "$html" \
    && grep -q 'bgcolor="#b91c1c"[^>]*>UNREACHABLE<' "$html" && grep -q "Read-only: GET requests to the ONTAP REST API" "$html" \

@@ -139,7 +139,7 @@ PY
 if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     decoded "$(ls "$work/mail"/* | head -1)"; m="$work/mail.txt"
     if grep -q "1. Drifted - the host fails what STIG Manager has as Not a Finding" "$m" && grep -q "Every host - the scan, STIG Manager, the counts" "$m" \
-       && grep -q "Fails STIG Manager has no review for" "$m" && grep -q "RHEL Servers / localhost (V2R7)" "$m" && grep -q "Subject: .*STIG drift report" "$m" \
+       && grep -q "Fails STIG Manager has no review for" "$m" && grep -q "RHEL Servers / localhost (V2R7)" "$m" && grep -q "Subject: .*STIG drift: [0-9]* critical" "$m" \
        && grep -q "Not a Finding (submitted)" "$m" && grep -q "Last passed" "$m" && grep -q "Start here" "$m" \
        && grep -q "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages" "$m"
     then echo "ok   - the email: Start here with the command to check the rule again, drifted (last passed), every host (collection / asset, revision), no review"

@@ -71,8 +71,13 @@
              | fapolicyd_all_report(ansible_play_hosts_all, fapolicyd_since | default('today'), site_report_title | default(''),
                                     ansible_check_mode, fapolicyd_workflow | default(false) | bool) }}
         # 1.67.0 part C (report_portal_url): each block's buttons (Allow this ...) in a section of their own, on the website's copy
+        # 1.82.0: the website's page has ACT's analysis as cards; the email, as what to do first and a table
         _report_web: >-
-          {{ _report | combine({'sections': _report.sections | default([]) + [_fa_more]}) if _fa_more else {} }}
+          {{ _fa_web | combine({'sections': _fa_web.sections | default([]) + [_fa_more]}) if _fa_more else _fa_web }}
+        _fa_web: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | fapolicyd_all_report(ansible_play_hosts_all, fapolicyd_since | default('today'), site_report_title | default(''),
+                                    ansible_check_mode, fapolicyd_workflow | default(false) | bool, true) }}
         _fa_more: >-
           {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars) | map(attribute='_fa_sf', default={})
                                            | map(attribute='entries', default=[])))

@@ -134,7 +134,7 @@ if [ -s "$work/kept/recheck/latest-results.xml" ] && ! ls "$work/kept"/*_summary
 else echo "FAIL - what was kept"; ls -laR "$work/kept"; fails=$((fails + 1)); fi
 if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     decoded "$(ls "$work/mail"/* | head -1)"; m="$work/mail.txt"
-    if grep -q "Subject: .*STIG recheck: 2 rules open" "$m" && grep -q "2 rules open, 5 status updates in STIG Manager, 1 for manual review" "$m" && ! grep -qi "no findings" "$m" \
+    if grep -q "Subject: .*STIG recheck: 2 rules open" "$m" && grep -q "2 rules open · 5 status updates · 1 for manual review" "$m" && ! grep -qi "no findings" "$m" \
        && grep -q "1. Open in STIG Manager - the host passes now: update the review" "$m" \
        && grep -q "2. Not Reviewed in STIG Manager - the scan has an answer" "$m" && grep -q "3. Still open - the scan agrees with STIG Manager" "$m" \
        && grep -q "Manual review - the scan gave no answer" "$m" && grep -q "no SCAP check for it (a manual check)" "$m" \

@@ -80,11 +80,11 @@ print("SUBJECT:", m["Subject"])
 print(m.get_body(preferencelist=("plain",)).get_content())
 print("HTMLPART:", "yes" if m.get_body(preferencelist=("html",)).get_content_subtype() == "html" else "no")
 PY
-grep -q 'SUBJECT: \[AAP\] Health check: 2 finding(s) on 2 of 3 host(s)' "$work/parts.txt" \
+grep -q 'SUBJECT: \[AAP\] Health check: 1 critical, 1 warning' "$work/parts.txt" \
   && grep -Eq '^win01 +CRITICAL +services +Spooler is stopped +Get-Service Spooler$' "$work/parts.txt" \
   && grep -Eq '^web01 +WARNING +disk +/var is 86% full' "$work/parts.txt" && grep -q '^Healthy (1)' "$work/parts.txt" \
   && grep -q '^Checks run: disk, services' "$work/parts.txt" && grep -q 'HTMLPART: yes' "$work/parts.txt" \
-  && echo "ok   - the email: counts in the subject, findings table (critical first), healthy hosts, HTML part" \
+  && echo "ok   - the email: the name and the counts in the subject, findings table (critical first), healthy hosts, HTML part" \
   || { echo "FAIL - email content"; cat "$work/parts.txt" | head -30; bad=$((bad + 1)); }
 femail pass 'site_fail_on: [] - same email, the job is green' -e "$mail" -e '{"site_fail_on": []}'
 [ "$(ls "$work/mail" | grep -c 'eml$')" = 2 ] && echo "ok   - ...emailed" || { echo "FAIL - not emailed when green"; bad=$((bad + 1)); }
@@ -117,7 +117,7 @@ print("SUBJECT:", m["Subject"])
 print(m.get_body(preferencelist=("plain",)).get_content())
 print("HTML:", m.get_body(preferencelist=("html",)).get_content())
 PY
-grep -q 'SUBJECT: \[AAP\] Health check: 1 finding(s) on 1 of 3 host(s)' "$work/parts.txt" \
+grep -q 'SUBJECT: \[AAP\] Health check: 1 warning' "$work/parts.txt" \
   && grep -q '^Patch age by group' "$work/parts.txt" \
   && grep -Eq '^SITEA-linux-web +2 +- +1 +1 +61 +0% +1 late$' "$work/parts.txt" \
   && grep -Eq '^SITEA-linux-db +1 +1 +- +- +5 +100% +On time$' "$work/parts.txt" \

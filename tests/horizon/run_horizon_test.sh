@@ -121,7 +121,7 @@ mock
 run "capacity: a full pool (red), every pool, pages of 4 followed, emailed" ok horizon_capacity_report.yml \
     '{"horizon_page_size": 4, "report_email_to": ["vdi-team@example.mil"], "report_email_smtp_host": "localhost", "report_email_smtp_port": '"$smtp"',
       "report_email_from": "aap@example.mil", "report_email_security": "none"}' \
-    'Horizon capacity: 1 pool(s) full or nearly' 'full: no desktop left for the next user' '24 desktop(s) at most' \
+    'Horizon capacity: 1 pool(s) full or nearly' 'full: no desktop left for the next user' '24 desktops at most' \
     'IC-Win11      instant clone  10   10        2     2       5       1      3         20%' 'sessions on RDS hosts' 'X-Envelope-To: vdi-team@example.mil'
 kill "$spid" 2>/dev/null; spid=""
 

@@ -615,14 +615,18 @@ Playbook to this one.
 - **One table of the denials**, a row for each program and file, over all the hosts: how many, on which hosts, last seen,
   and ACT's verdict (*Fix proposed*, *Analysed*, *ACT error*). The **Host** and **Program** lists above it keep the rows
   that have the one you choose. Every column sorts, and **Columns** and **CSV** work as on every table.
-- **The hosts** under it: fapolicyd, auditd, denials, programs. Each host's ACT answer is a closed section under that
-  table, and the rail lists the sections only, never the hosts.
-- **The email is short:** the tiles, the most frequent denials and the hosts with a problem. The workbook
+- **The hosts** under it: fapolicyd, auditd, denials, programs.
+- **ACT's analysis as cards (1.82.0):** *What to do first*, then one card for each denied file over all the hosts. A card
+  has ACT's confidence, its evidence (what ACT read, then the denial lines), and numbered steps, a **Copy** on each command.
+  The approval is said once above the cards: every fix changes what fapolicyd trusts, so it needs your ISSO / change approval.
+- **When ACT's answer names no file**, that host's answer stays a closed section under the cards, as before; the rail lists
+  the sections only, never the hosts.
+- **The email is short:** the tiles, the most frequent denials, the hosts with a problem, *What to do first* and a table of the causes. The workbook
   (`report_email_xlsx: true`) has every denial and every host.
 
 | The report shows | Means | Do |
 |---|---|---|
-| a host with denials, ACT's analysis and `ACT proposes (for your security approval): fapolicyd-cli --file add ...` | fapolicyd blocked a program; ACT says whether it looks legitimate and the narrowest trust entry or rule | review it with your ISSO - a trust entry or a rule is a security-control change - then apply it by hand |
+| a card with steps such as `fapolicyd-cli --file add ...` (or, on a host whose answer names no file, ACT's closed section) | fapolicyd blocked a program; ACT says whether it looks legitimate and the narrowest trust entry or rule | review it with your ISSO - a trust entry or a rule is a security-control change - then apply it by hand |
 | `fapolicyd not running` (red) | application allow-listing is off | the [fapolicyd](#fapolicyd-playbooksfapolicydyml) job: why, and the fix to approve |
 | `auditd` not active | denials are not recorded: the job sees none | `systemctl start auditd` |
 | *No denials* while things are blocked | the deny rules do not audit (`deny` or `deny_syslog` instead of `deny_audit`) | `deny_audit` in the rules (the RHEL default rules use it) |

@@ -66,14 +66,66 @@ class Model(unittest.TestCase):
         self.assertEqual(h["rows"][0][:4], [BIG, "active", "active", 27])
         self.assertEqual(h["rows"][0][4:], ["bash, python3", "Analysed"])
         details = [x for x in self.web["sections"] if x["title"].endswith("ACT's analysis")]
-        self.assertEqual(len(details), 5)                                                     # one a host, not three
+        # 1.82.0: web01 and db01 answered with findings that name files: cards. The three others' answers name none: their text, closed.
+        self.assertEqual(sorted(x["title"] for x in details), ["app-server-long-name-07: ACT's analysis", "app02: ACT's analysis", "web02: ACT's analysis"])
         self.assertTrue(all(x["collapsed"] and x["rail"] is False for x in details))
         rail = [x["title"] for x in self.web["sections"] if x.get("rail", True)]
-        self.assertEqual(rail, ["At a glance", "Denials by program and file", "Hosts with denials or a problem", "No denials"])
+        self.assertEqual(rail, ["At a glance", "Denials by program and file", "Hosts with denials or a problem", "What to do first",
+                                "Why the denials: causes and fixes", "No denials"])
+
+    def test_acts_answers_as_cause_cards(self):
+        sec = self.s["Why the denials: causes and fixes"]
+        self.assertEqual((sec["noun_label"], sec["count_text"]), ("File", "3 causes · 4 denied files"))
+        self.assertIn("ISSO", sec["cause_note"])                                               # the approval, said once
+        cards = sec["causes"]
+        self.assertEqual([c["patterns"] for c in cards], [["D1"], ["D2"], ["D4"], ["D3"]])
+        first = cards[0]
+        self.assertEqual(first["hosts"], ["app-server-long-name-07", "db01", "web01", "web02"])          # every host that was denied it
+        self.assertEqual([s["cmd"] for s in first["steps"]][:2], ["fapolicyd-cli --file add /opt/monitor/agent --trust-file monitor", "fapolicyd-cli --update"])
+        self.assertTrue(first["evidence"][0]["m"].startswith("the same agent binary") or "SHA-256" in first["evidence"][0]["m"])      # ACT's own reading first
+        self.assertTrue(any(e["m"].startswith("denied /usr/bin/bash -> /opt/monitor/agent") for e in first["evidence"]))     # then the denial lines
+        self.assertTrue(cards[3]["unexplained"] and cards[3]["steps"] == [])                  # plugin.jar: no answer named it
+        self.assertEqual(self.s["What to do first"]["cause_first"]["n"], 1)
+        # the email: the first step and the table, no cards
+        mail = dict((x["title"], x) for x in self.mail["sections"])
+        self.assertIn("What to do first", mail)
+        self.assertEqual(mail["Why the denials: causes and fixes"]["columns"][2], "Files")
+
+    def test_no_card_when_acts_answers_name_no_file(self):
+        hvs, names = fleet.hostvars()
+        for hv in hvs:
+            if "act_triage_result" in hv:
+                hv["act_triage_result"] = dict(hv["act_triage_result"], summary=fleet.MD)
+        r = ff.fapolicyd_denials_report(hvs, names, "today", "fapolicyd denials", True)
+        titles = [x["title"] for x in r["sections"]]
+        self.assertNotIn("What to do first", titles)
+        self.assertEqual(sum(1 for t in titles if t.endswith("ACT's analysis")), 5)                  # every host keeps its text
+
+    def test_the_fapolicyd_jobs_report_shows_the_cards_too(self):
+        """1.82.0: the job's one report (roles/fapolicyd): its blocks over the hosts are the items; the website's page has the cards, the email the first step and the table."""
+        block = {"exe": "/usr/bin/bash", "path": "/opt/monitor/agent", "perm": "execute", "kind": "denied", "count": 5, "last": "09:12"}
+        hvs = [{"_fr": {"state": "read", "active": "active", "blocks": [block]}, "_fa_act_ran": True,
+                "act_triage_result": {"status": "done", "summary": fleet.MD_DB}}]
+        web = ff.fapolicyd_all_report(hvs, ["web01.example.mil"], "today", "fapolicyd", False, False, True)
+        mail = ff.fapolicyd_all_report(hvs, ["web01.example.mil"], "today", "fapolicyd", False, False, False)
+        w = dict((x["title"], x) for x in web["sections"])
+        m = dict((x["title"], x) for x in mail["sections"])
+        cards = w["Why the denials: causes and fixes"]["causes"]
+        self.assertEqual([c["patterns"] for c in cards], [["D1"]])
+        self.assertEqual(cards[0]["steps"][0]["cmd"], "fapolicyd-cli --file add /opt/monitor/agent --trust-file monitor")
+        self.assertNotIn("causes", m["Why the denials: causes and fixes"])
+        self.assertEqual(m["Why the denials: causes and fixes"]["columns"][2], "Files")
+        self.assertIn("What to do first", m)
+        # the answer also names /srv/db/tools/vacuum.sh, which this host never blocked: that finding is not placed, so the host keeps its text
+        self.assertIn("web01.example.mil: ACT's analysis", w)
+
+    def test_the_head_is_set_by_the_report(self):
+        self.assertEqual(self.web["head_counts"], [[5, "hosts with denials", "warning"], [1, "auditd not running", "warning"]])
+        self.assertEqual(self.web["head_scope"][:2], ["7 hosts read", "denials since today"])
 
     def test_the_email_is_short(self):
         titles = [x["title"] for x in self.mail["sections"]]
-        self.assertEqual(titles, ["The denials that happen most", "Hosts with denials or a problem", "No denials"])
+        self.assertEqual(titles, ["The denials that happen most", "Hosts with denials or a problem", "What to do first", "Why the denials: causes and fixes", "No denials"])
         self.assertNotIn("filters", self.mail["sections"][0])
         self.assertFalse(any(x["title"].endswith("ACT's analysis") for x in self.mail["sections"]))
         self.assertEqual([x["label"] for x in self.mail["summary"]], [x["label"] for x in self.web["summary"]])        # the same tiles
@@ -120,7 +172,7 @@ class Pages(unittest.TestCase):
             rail = rail[:rail.index("</nav>")]
             self.assertIn("At a glance", rail)
             self.assertNotIn("ACT&#39;s analysis", rail.replace("'", "&#39;"))                  # the rail lists the sections, not the hosts
-            self.assertEqual(rail.count("<a href"), 4, look)                                   # the four sections (not the hosts' answers)
+            self.assertEqual(rail.count("<a href"), 6, look)                                   # the six sections: with the two of the cards (not the hosts' texts)
 
     def test_a_report_without_filters_is_as_before(self):
         plain = {"title": "T", "status": "ok", "summary": [], "sections": [{"title": "A", "columns": ["x", "y"], "rows": [["1", "2"]]}]}

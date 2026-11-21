@@ -715,6 +715,7 @@ def outage_timeline(events, tickets=None, opts=None):
         near = [e for e in signals if e["level"] == "critical" and 0 <= (e["t"] - crit0["t"]).total_seconds() <= SAME_S]
         # the host's own event says more than the alarm about it
         head = next((e for e in near if e["lane"] == "host"), crit0)
+    h_counts, h_scope, h_subject = None, None, None          # 1.82.0: the head of the page (report_head): the name, the times as counts, the cause as the scope
     if not evs:
         title = "Outage review: no outage event in the last %s" % length if not o.get("fixed") else "Outage review: no outage event in the window"
     else:
@@ -728,6 +729,11 @@ def outage_timeline(events, tickets=None, opts=None):
         lead = ("%s: %s" % (head["where"], _lower_first(head["label"])) if head["where"] else head["label"]) if head else \
             "%d event%s, none a problem" % (len(evs), "" if len(evs) == 1 else "s")
         title = "Outage review: %s%s" % (_cut(lead, 90), ("; " + ", ".join(parts)) if parts else "")
+        h_counts = ([[_span(down_s), "down, still down" if still else "down", "critical"]] if spans else []) + \
+                   ([[_span(to_ticket), "to the ticket", "warning" if to_ticket > 3600 else "ok"]] if to_ticket is not None else
+                    ([["", "no ticket", "warning"]] if "no ticket" in parts else []))
+        h_scope = [_cut(lead, 120)]
+        h_subject = "Outage review: %s" % _cut(lead, 40)
         if cleared_only:
             title = "Outage review: cleared before the review - %s: %s, raised %s, cleared %s%s" % (
                 _cut(c_text or "alarms", 40), _cut(", ".join(c_alarms[:2]), 60), hm(r_from), hm(r_to), " (a short usage blip, Low)" if blip else "")
@@ -958,7 +964,7 @@ def outage_timeline(events, tickets=None, opts=None):
     if not o.get("tickets_asked"):
         out.append("ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
     out += notes
-    return {"title": title, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
+    return {"title": title, "head_counts": h_counts, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
             "lines": out, "aar": aar, "window": window_text, "events": len(evs),
             "skip": bool(blip and o.get("skip_blips")),
             "cleared_before_review": cleared_only, "blip": blip,
@@ -978,6 +984,9 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
     own = list(doc.get("sections") or [])
     if review:
         out["title"] = timeline["title"]
+        for k in ("head_counts", "head_scope", "head_subject"):       # 1.82.0
+            if timeline.get(k) is not None:
+                out[k] = timeline[k]
         out["summary"] = list(timeline.get("boxes") or [])
         out["subtitle"] = "%s Review of %s. Now: %s" % (timeline.get("trigger_line", "").rstrip(".") + "." if timeline.get("trigger_line") else "",
                                                        timeline.get("window", ""), doc.get("title", ""))

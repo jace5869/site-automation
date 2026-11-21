@@ -51,7 +51,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ r.title | e }}</title>
+{%- set rhead = r | report_head %}
+<title>{{ rhead.subject | e }}</title>
 {%- if 'S' in fit.k or 'L' in fit.k %}
 <style>
 @media (max-width:860px){
@@ -75,9 +76,12 @@
 {%- if logo_cid %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="color:#ffffff;">
 {%- endif %}
-<div style="font-size:20px;font-weight:bold;">{{ r.title | e }}</div>
-{%- if r.subtitle | default('') %}
-<div style="font-size:14px;margin-top:4px;">{{ r.subtitle | e }}</div>
+<div style="font-size:20px;font-weight:bold;">{{ rhead.name | e }}</div>
+{%- if rhead.counts_text %}
+<div style="font-size:15px;margin-top:4px;">{{ rhead.counts_text | e }}</div>
+{%- endif %}
+{%- if rhead.scope_text %}
+<div style="font-size:14px;margin-top:4px;">{{ rhead.scope_text | e }}</div>
 {%- endif %}
 {%- if logo_cid %}
 </td><td width="{{ logo_size[0] + 16 }}" align="right" valign="middle" style="padding-left:16px;"><img src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="" style="display:block;border:0;width:{{ logo_size[0] }}px;height:{{ logo_size[1] }}px;"></td></tr></table>
@@ -172,6 +176,7 @@
 <tr><td style="padding:14px 20px 14px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="border:1px solid #1d4ed8;border-radius:16px;padding:5px 14px;"><a href="{{ _email_web_url | e }}" style="color:#1d4ed8;font-size:13px;font-weight:600;text-decoration:none;display:inline-block;">Open the full report &rarr;</a></td></tr></table></td></tr>
 {%- endif %}
 <tr><td style="padding:12px 20px 16px 20px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
+{%- if rhead.method %}{{ rhead.method | e }}<br>{% endif %}
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
 {{ _email_footer | e }}
 </td></tr>

@@ -12,6 +12,7 @@
     small upper-case labels. Input as report_brief.html.j2: _report, _page_logo_cid/_page_logo_size, _page_runs,
     _page_job/_page_template, _email_footer. Every value is escaped. -#}
 {%- set r = (_page_report | default(_report)) | report_tidy(false) -%}
+{%- set rhead = (_page_report | default(_report)) | report_head -%}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
 {%- set runs = _page_runs | default(_email_runs | default([])) -%}
@@ -103,7 +104,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>{{ r.title | e }}</title>
+<title>{{ rhead.subject | e }}</title>
 <script src="site-report.js"></script>
 <style>
 {#- the palette (roles/site_email/library/site_report_web.py has the same, for the index - tests/test_report_web.py
@@ -525,6 +526,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- set hover_look = 'ops' %}
 {%- include 'report_hover.css.j2' %}
 {%- include 'report_pop.css.j2' %}
+{%- include 'report_head.css.j2' %}
 {%- include 'report_causes.css.j2' %}
 {%- include 'report_matrix.css.j2' %}
 {%- if r.sections | default([]) | selectattr('links', 'defined') | list or r.sections | default([]) | selectattr('actions', 'defined') | list or r.sections | default([]) | selectattr('cell_links', 'defined') | list or r.sections | default([]) | selectattr('buttons', 'defined') | list %}
@@ -888,7 +890,9 @@ footer{margin-top:32px}
 <div class="hgrid">
 <div class="hl">
 <span class="stc s-{{ st }}"><span class="d" aria-hidden="true"></span>{{ r.status_prefix | default('') }}{{ opsword[st] }}</span>
-<h1>{{ r.title | e }}</h1>
+<h1>{{ rhead.name | e }}</h1>
+{%- set head_scope = false %}
+{%- include 'report_head.html.j2' %}
 {%- if say and not r.dashboard | default({}) and not r.status_prefix | default('') %}
 <p class="say">{{ say }}</p>
 {%- endif %}
@@ -899,9 +903,9 @@ footer{margin-top:32px}
 {%- endif %}
 </div>
 {%- set crumbs = job_name or job_id or awx_user_name | default('') %}
-{%- if r.subtitle | default('') or crumbs or runs %}
+{%- if rhead.scope_text or crumbs or runs %}
 <details class="hstrip">
-<summary><span class="ln1">{{ (r.subtitle | default('', true) or ((job_name ~ ' - ') if job_name else '') ~ ('AAP job ' ~ job_id if job_id else 'The run')) | e }}</span><span class="tog" aria-hidden="true"><span class="sh">SHOW</span><span class="hd">HIDE</span></span><span class="vh">Show the details</span></summary>
+<summary><span class="ln1">{{ (rhead.scope_text or ((job_name ~ ' - ') if job_name else '') ~ ('AAP job ' ~ job_id if job_id else 'The run')) | e }}</span><span class="tog" aria-hidden="true"><span class="sh">SHOW</span><span class="hd">HIDE</span></span><span class="vh">Show the details</span></summary>
 <div class="hmore">
 {%- if crumbs %}
 <div class="crumb">
@@ -1430,6 +1434,7 @@ footer{margin-top:32px}
 {%- endif %}
 </div>
 <footer>
+{%- if rhead.method %}{{ rhead.method | e }}<br>{% endif %}
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
 {{ _email_footer | default('') | e }}
 </footer>

@@ -617,7 +617,10 @@ def incident_email(record, opts=None):
     if notes:
         secs.append({"title": "Notes", "lines": notes})
     secs.append({"title": "Next", "lines": ["Open the attachments, check them, and save or send them on as your process says."]})
-    return {"title": "%s%s" % (kind, (": " + what) if what else ""), "status": "warning" if notes else "info",
+    title = "%s%s" % (kind, (": " + what) if what else "")
+    # 1.82.0: the head - what the person typed (an outage's name, the SOP's title) is the one chip, never read as a count ("503 Web portal returns")
+    return {"title": title, "head_name": kind, "head_counts": [["", " ".join(str(what).split()), "info"]] if what else [], "head_subject": title,
+            "status": "warning" if notes else "info",
             "subtitle": ("Launched by " + r["by"]) if r.get("by") else "",
             "summary": [{"label": "Documents", "value": len(files)}] + ([{"label": "Start", "value": r["start"]}] if r.get("start") else []),
             "sections": secs}

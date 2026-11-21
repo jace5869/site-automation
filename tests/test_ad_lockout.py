@@ -245,7 +245,7 @@ class Everyone(unittest.TestCase):
 
     def test_text(self):
         t = sf.report_text(report(fs=finds("find_all"), asked=False)["report"])
-        self.assertIn("Account lockout: 2 account(s) locked out now", t)
+        self.assertIn("Account lockout\n===============\n2 accounts locked out now", t)         # 1.82.0: the name, then the counts line
         self.assertIn("Lockout caller (4740)", t)
 
 

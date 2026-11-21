@@ -175,7 +175,7 @@ run "STIG Manager: drift (CAT I), the web site's own asset (disagree), a STIG th
     "the asset win01 (Windows Servers) does not have MS_Edge_STIG assigned in STIG Manager" "!not compared with STIG Manager" "by hand 1"
 if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     decoded "$(ls "$work/mail"/* | head -1)"; m="$work/mail.txt"
-    if grep -q "Subject: .*Windows STIG drift report" "$m" && grep -q "1. Drifted - the host fails what STIG Manager has as Not a Finding" "$m" \
+    if grep -q "Subject: .*Windows STIG drift: [0-9]* critical" "$m" && grep -q "1. Drifted - the host fails what STIG Manager has as Not a Finding" "$m" \
        && grep -q "win01 - Microsoft Windows Server 2022" "$m" && grep -q "win01 - Microsoft IIS 10.0 Site - Default Web Site" "$m" \
        && grep -q "Start here" "$m" && grep -q "Found: LmCompatibilityLevel is 3." "$m" && grep -q "Found: directory browsing is on." "$m" \
        && grep -q "What Evaluate-STIG found - in full" "$m" \

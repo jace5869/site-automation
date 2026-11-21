@@ -140,7 +140,7 @@ run "plan add: the approval email has the IP, the exact lines, who asked, the re
 check "  ...the plan changed no file" cmp -s "$work/orig/r1" "$work/r1/main.cf"
 plan="$(stats mail_relay_plan | sed "s/\"date\": \"$today\"/\"date\": \"2026-01-02\"/")"
 run "approved add (planned on another day): exactly the planned lines, on both relays" ok mail_relay_approved.yml "$plan" \
-    'Subject: [AAP] Mail relay whitelist - added 198.51.100.3 (Payroll app (svc-payroll))' '2 of 2 relay(s) changed' \
+    'Subject: [AAP] Mail relay whitelist - added 198.51.100.3 (Payroll app (svc-payroll))' '2 of 2 relays changed' \
     'The lines added' "$(c 198.51.100.3 'Payroll app (svc-payroll)' 2026-01-02 jdoe)" "!by jdoe] $today"
 check "  ...relay1: the comment line above mynetworks, ', 198.51.100.3' at its end, every other byte as it was" same "$work/r1/main.cf" \
     "# Postfix main.cf - relay1\nmyhostname = relay1.example.mil\nrelayhost = [192.0.2.25]\ninet_interfaces = 192.0.2.5, 127.0.0.1\n$(c 198.51.100.3 'Payroll app (svc-payroll)' 2026-01-02 jdoe)\nmynetworks = 127.0.0.0/8, 192.0.2.10, 192.0.2.11, 198.51.100.3\nmynetworks_style = host\nsmtpd_relay_restrictions = permit_mynetworks,\n    reject_unauth_destination"
@@ -277,7 +277,7 @@ CHECK=1 run "format as Check: shows the new list, writes nothing" ok mail_relay_
     '# localhost [AAP]' '# Printer  [added 2026-10-22 by jdoe]' 'No VMware vCenter credential on the template'
 check "  ...main.cf as it was, no copy made" bash -c "cmp -s '$work/fmt_before' '$work/r1/main.cf' && ! ls '$work'/r1/main.cf.before-format-* 2>/dev/null"
 run "format: one address per line, the add's comment on its address, named from DNS" ok mail_relay_format.yml "$FMT" \
-    'Subject: [AAP] Mail relay whitelist - one address per line' '2 of 2 relay(s) formatted' 'a copy of the file before:' \
+    'Subject: [AAP] Mail relay whitelist - one address per line' '2 of 2 relays formatted' 'a copy of the file before:' \
     'The list on relay1' '127.0.0.1   localhost' 'matched a VM'
 check "  ...relay1 one address per line, every other line as it was" same "$work/r1/main.cf" "$fmt_after"
 check "  ...Postfix reads the same addresses" postfix_reads "$work/r1" "127.0.0.0/8 127.0.0.1 192.0.2.10 192.0.2.11"

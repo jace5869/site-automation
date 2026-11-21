@@ -307,6 +307,101 @@ def from_records(records, ids=None):
     return {"parsed": True, "overall": "", "causes": causes, "noise": noise, "noise_why": noise_why, "errors": errors}
 
 
+# ---- ACT's labelled text as causes (1.82.0) ---------------------------------------------------------------------------------------------
+# A job that runs ACT's own playbook (vendor/act: the fapolicyd denials) cannot ask for the JSON above. Its answer is text, by labels:
+# BLOCKED / WHY / LEGITIMATE? / FIX / RISK (or ROOT CAUSE, CONFIDENCE) for each distinct finding, the commands in `backticks`.
+# from_text reads that into the shape of parse - one cause for each finding that names an item - and leaves out what it cannot place.
+_LABELS = ("blocked", "why", "legitimate", "fix", "risk", "root cause", "cause", "confidence")
+_LABEL = re.compile(r"^\s*(?:[-*+\u2022]\s+|\d{1,2}[.)]\s+)?(?:\*\*|__)?\s*(BLOCKED|WHY|LEGITIMATE\??|FIX|RISK|ROOT CAUSE|CAUSE|CONFIDENCE)\s*(?:\*\*|__)?\s*[:\u2014-]\s*(?:\*\*|__)?\s*(.*)$", re.I)
+_HEAD = re.compile(r"^\s*(?:#{1,6}\s+|(?:\*\*|__)\s*(?:Finding|Issue|Block|Denial)\b|(?:\d{1,2}[.)]\s+)(?:\*\*|__))", re.I)
+_APPROVAL = re.compile(r"\(?\s*(?:not applied\s*[:;,-]?\s*)?(?:(?:these |this )?(?:need|needs|requires?) (?:your )?(?:isso|security|change)[^).`]*)\)?\.?|\(\s*not applied[^)`]*\)|not applied\b[^.`]*\.?", re.I)
+
+
+def _plain(s):
+    return " ".join(re.sub(r"\*\*|__", "", str(s)).replace("`", "").split())
+
+
+def _split_blocks(text):
+    blocks, cur = [], None
+    for raw in str(text or "").splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        m = _LABEL.match(line)
+        head = _HEAD.match(line) and not m
+        lab = m.group(1).lower().rstrip("?") if m else ""
+        # a new finding: a heading; a label the finding already has; or a subject (BLOCKED, ROOT CAUSE) after its FIX
+        if head or (m and (cur is None or cur["f"].get(lab) or (lab in ("blocked", "root cause", "cause") and cur["f"].get("fix")))):
+            if cur and cur["f"]:
+                blocks.append(cur)
+            cur = {"head": _plain(re.sub(r"^\s*(?:#{1,6}\s+|\d{1,2}[.)]\s+)", "", line)) if head else "", "f": {}, "last": None, "raw": []}
+            if head:
+                continue
+        if m:
+            if cur is None:
+                cur = {"head": "", "f": {}, "last": None, "raw": []}
+            k = m.group(1).lower().rstrip("?")
+            cur["f"][k] = [m.group(2)]
+            cur["last"] = k
+        elif cur is not None and cur["last"]:
+            cur["f"][cur["last"]].append(line.strip())
+    if cur and cur["f"]:
+        blocks.append(cur)
+    return blocks
+
+
+def _fix_steps(fix):
+    """The FIX text -> steps: each `command` with the words before it as what to do; a FIX with no command is one step of words."""
+    fix = _APPROVAL.sub("", " ".join(str(fix).split())).strip()
+    parts = re.split(r"`([^`]+)`", fix)
+    steps, words = [], ""
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            words = part
+            continue
+        do = re.split(r"(?<=[.;:])\s+|,?\s+then\s+|\s+and\s+", words.strip())[-1] if words.strip() else ""
+        do = re.sub(r"^(?:then|and|or|next|finally)\b[ ,]*", "", do.strip(" ,;:"), flags=re.I)
+        do = re.sub(r"\s+(?:with|using|by running|by using|run|running|via)$", "", do.strip(" ,;:"), flags=re.I).strip()
+        steps.append({"do": (do[:1].upper() + do[1:]) if do else "Run", "cmd": part.strip(), "why": ""})
+    if not steps and fix:
+        steps = [{"do": fix, "cmd": "", "why": ""}]
+    return steps
+
+
+def from_text(text, items):
+    """ACT's labelled text -> the shape of parse. items: [{id, needles: [text that names the item, e.g. its file]}]. A finding names the
+    items whose needle it mentions (one cause each); a finding that names none is left out - and listed in "unplaced", the number
+    of them, so a report keeps the text of an answer it could not place."""
+    errors, causes, owner, unplaced = [], [], {}, 0
+    for n, b in enumerate(_split_blocks(text), 1):
+        f = dict((k, _plain(" ".join(v))) for k, v in b["f"].items())
+        if not f.get("fix"):
+            continue
+        whole = " ".join(f.values()) + " " + b["head"]
+        pats = [str(i["id"]) for i in items or [] if any(nd and nd in whole for nd in i.get("needles") or [])]
+        pats = [p for p in pats if p not in owner]
+        if not pats:
+            unplaced += 1
+            continue
+        head = re.sub(r"^(?:Finding|Issue|Block|Denial)\s*\d*\s*[:.-]?\s*", "", b["head"], flags=re.I).strip(" *_:")
+        title = f.get("blocked") or head or f.get("root cause") or f.get("cause") or "Cause %d" % n
+        ev = [(("Legitimate? " if k == "legitimate" else "") + f[k]) for k in ("why", "root cause", "legitimate") if f.get(k) and f[k] != title]
+        steps = _fix_steps(" ".join(b["f"]["fix"]))
+        if f.get("risk"):
+            if steps:
+                steps[-1]["why"] = "Risk: " + f["risk"]
+        conf = f.get("confidence")
+        raw = {"key": "d-" + "-".join(pats).lower(), "title": title, "patterns": pats, "hosts": [], "confidence": conf,
+               "evidence": ev, "steps": steps}
+        cz = _cause(raw, n, errors)
+        if cz is None:
+            continue
+        for p in pats:
+            owner[p] = cz["key"]
+        causes.append(cz)
+    return {"parsed": bool(causes), "overall": "", "causes": causes, "noise": [], "noise_why": {}, "errors": errors, "unplaced": unplaced}
+
+
 def merge(answers):
     """The parsed answers of several batches -> one, the same whatever their order: causes of one key joined (the union of
     their patterns and hosts, the highest confidence, the steps, title and evidence of the surest one); a pattern two causes

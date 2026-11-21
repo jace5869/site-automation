@@ -76,7 +76,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ r.title | e }}</title>
+{%- set rhead = r | report_head %}
+<title>{{ rhead.subject | e }}</title>
 {%- if 'S' in fit.k or 'L' in fit.k %}
 <style>
 @media (max-width:860px){
@@ -111,9 +112,12 @@
 <td align="right" valign="middle" style="white-space:nowrap;padding-left:10px;">{{ pill(st) }}</td>
 </tr></table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="1" style="height:1px;line-height:1px;font-size:0;border-top:1px solid {{ line }};padding:0;mso-line-height-rule:exactly;">&nbsp;</td></tr></table>
-<div style="font-size:21px;font-weight:700;color:{{ ink }};line-height:1.3;margin-top:12px;">{{ r.title | e }}</div>
-{%- if r.subtitle | default('') %}
-<div style="font-size:14px;color:{{ muted }};margin-top:4px;">{{ r.subtitle | e }}</div>
+<div style="font-size:21px;font-weight:700;color:{{ ink }};line-height:1.3;margin-top:12px;">{{ rhead.name | e }}</div>
+{%- if rhead.counts_text %}
+<div style="font-size:15px;color:{{ ink }};margin-top:4px;">{{ rhead.counts_text | e }}</div>
+{%- endif %}
+{%- if rhead.scope_text %}
+<div style="font-size:14px;color:{{ muted }};margin-top:4px;">{{ rhead.scope_text | e }}</div>
 {%- endif %}
 </td></tr></table>
 </td></tr>
@@ -256,6 +260,7 @@
 <tr><td align="center"><table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#ffffff" style="background:#ffffff;border:1px solid {{ accent }};border-radius:16px;padding:5px 14px;"><a href="{{ _email_web_url | e }}" style="color:{{ accent }};font-size:13px;font-weight:600;text-decoration:none;display:inline-block;">Open the full report &rarr;</a></td></tr></table></td></tr>
 {%- endif %}
 <tr><td align="center" style="text-align:center;font-size:12px;color:{{ muted }};line-height:1.6;padding:18px 10px 4px 10px;">
+{%- if rhead.method %}{{ rhead.method | e }}<br>{% endif %}
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
 {{ _email_footer | e }}
 </td></tr>

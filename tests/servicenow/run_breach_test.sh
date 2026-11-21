@@ -158,9 +158,19 @@ team=$(grep -rl 'Ops\|Network Operations ·' "$top" --include=latest.html | xarg
 if [ -n "$team" ]; then
     check "a team's page: only its tickets" "$team" 'id="breach"' 'XINC0041872' 'XINC0041915' '!XINC0041901' '!XRITM0019220'
 else echo "FAIL - no Network Operations page"; fails=$((fails + 1)); fi
-grep -q 'About to breach, least time left first' "$work"/mail/*.eml && grep -q 'Breaches, last 30 days' "$work"/mail/*.eml \
-    && ! grep -q 'VPN drops every' "$work"/mail/*.eml \
+# 1.82.0: the mail's text part is decoded first (base64 or quoted-printable, whichever the library picks); the description is out of the
+# breach section only - the P1 and P2 table further down names it, as it always did
+"$py" - "$work"/mail/*.eml <<'PYM' \
     && echo "ok   -   ... the email: the section first, no description" || { echo "FAIL - the full email"; fails=$((fails + 1)); }
+import email, email.policy, re, sys
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+t = m.get_body(preferencelist=("plain",)).get_content()
+h = m.get_body(preferencelist=("html",)).get_content()
+assert "About to breach, least time left first" in t and "Breaches, last 30 days" in t, "sections"
+a = t.split("About to breach, least time left first", 1)[1]
+a = a.split("Breaches, last 30 days", 1)[0]
+assert "VPN drops every" not in a and "VPN drops every" not in h.split("Breaches, last 30 days", 1)[0], "description in the section"
+PYM
 rm -f "$work"/mail/*.eml
 
 run "full, servicenow_insights_breach false: no section, no task_sla read for it" ok "{$BASE, \"servicenow_insights_breach\": false, \"report_web_dest\": \"$work/off\"}" \

@@ -200,7 +200,7 @@ class CommandLook(unittest.TestCase):
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
         env.filters["report_hidden_columns"] = sf.report_hidden_columns
-        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM"], "rows": [["<x>"]]}]),
                 "_email_footer": "AAP job 9", "_email_logo_cid": "", "_email_runs": [],
@@ -275,7 +275,7 @@ class PortalLook(unittest.TestCase):
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
         env.filters["report_hidden_columns"] = sf.report_hidden_columns
-        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
                                            "cell_status": [["", "critical"]]},
@@ -333,7 +333,7 @@ class GlassLook(PortalLook):
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
         env.filters["report_hidden_columns"] = sf.report_hidden_columns
-        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
                                 summary=REPORT["summary"] + [{"label": "Old <ones>", "value": 3, "status": "warning"}],
                                 sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
@@ -357,8 +357,8 @@ class GlassLook(PortalLook):
 
     def test_email_preview_line_phone_rules_no_browser_only_parts(self):
         h = self.render()
-        # the line under the subject in the inbox: the subtitle, then the warning and critical numbers
-        self.assertIn("mso-hide:all;font-size:1px;line-height:1px;color:#dde8f0;\">&lt;b&gt;sub&lt;/b&gt; · Old &lt;ones&gt;: 3</div>", h)
+        # the line under the subject in the inbox: the counts, the scope (the subtitle), then the warning and critical numbers
+        self.assertIn("mso-hide:all;font-size:1px;line-height:1px;color:#dde8f0;\">4 deleted · &lt;b&gt;sub&lt;/b&gt; · Old &lt;ones&gt;: 3</div>", h)
         self.assertIn("@media (max-width:760px)", h)
         for web_only in ("<svg", "backdrop-filter", "@media print", 'class="g-bg"'):
             self.assertNotIn(web_only, h)
@@ -480,7 +480,7 @@ class AtlasLook(unittest.TestCase):
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
         env.filters["report_hidden_columns"] = sf.report_hidden_columns
-        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, subtitle="<b>sub</b>", sections=[
                     {"title": "Start here", "status": "critical", "cards": [
                         {"status": "critical", "chip": "Critical", "meta": "Certificate", "title": "<t>", "subject": "web01",
@@ -677,7 +677,7 @@ class BriefLook(unittest.TestCase):
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
         env.filters["report_hidden_columns"] = sf.report_hidden_columns
-        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, status="critical", subtitle="<b>sub</b>", summary=[{"label": "Past <90%>", "value": 2, "status": "critical"},
                                                                                          {"label": "Hosts", "value": 12, "note": "read"}],
                                 sections=[
@@ -724,7 +724,8 @@ class BriefLook(unittest.TestCase):
         self.assertIn('<span class="eyebrow">Linux - Disk &lt;space&gt;</span>', h)
         i = self.render(_report=dict(REPORT, status="info", sections=[]))
         self.assertNotIn('class="verdict', i)
-        self.assertIn('<h1 class="big">Snapshot cleanup: deleted 4</h1>', i)
+        self.assertIn('<h1 class="big">Snapshot cleanup</h1>', i)       # 1.82.0: the name alone; "deleted 4" is a chip under it
+        self.assertIn("<b>4</b> <span>deleted</span>", i)
         self.assertRegex(i, r'<span class="chip s-info( sh| c\d)?">')                # the status still said: icon and word
         self.assertIn('<div class="verdict c-ok">', self.render(_report=dict(REPORT, status="ok", sections=[])))
 
@@ -825,7 +826,7 @@ class WebColumns(unittest.TestCase):
                                  autoescape=False)
         env.filters["report_cell_html"] = sf.report_cell_html
         env.filters["report_hidden_columns"] = sf.report_hidden_columns
-        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+        env.filters.update(safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
         base = {"_report": dict(REPORT, sections=[dict(self.SEC)]), "_email_footer": "AAP job 9", "_page_logo_cid": "",
                 "_page_runs": [], "report_email_header_text": "Site automation report"}
         base.update(v)
@@ -992,7 +993,7 @@ window.addEventListener('load',function(){var R={errors:E},root=document.documen
                     p = os.path.join(d, "page.html")
                     with open(p, "w") as f:
                         f.write(h)
-                    out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--window-size=900,800",
+                    out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--window-size=900,1200",         # 1.82.0: the head is taller (chips, a scope line): the table is in view
                                           "--virtual-time-budget=6000", "--dump-dom", "file://" + p],
                                          capture_output=True, text=True, timeout=120)
                 m = re.search(r'<pre id="out">(.*?)</pre>', out.stdout, re.S)

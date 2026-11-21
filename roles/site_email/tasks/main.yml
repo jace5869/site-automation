@@ -7,6 +7,9 @@
 #   _report:
 #     title: "VMware secure boot report: 3 VM(s) to fix"      # also the subject (after the prefix)
 #     subtitle: "141 VMs in vcsa01"                            # optional
+#     # 1.82.0: the page and the email show the title as a NAME alone, the counts in it as a line (chips on the website), the subtitle and
+#     # what else the title says as a scope line, and a short subject (60 characters at most). report_head works them out from title and
+#     # subtitle; a report that knows better sets head_name, head_counts ([[5, critical, critical]]), head_scope ([text]) or head_subject.
 #     status: warning                                          # ok | warning | critical | info: the header colour
 #     summary: [{label: VMs, value: 141}, {label: Secure boot OFF, value: 3, status: warning}]
 #     sections:
@@ -227,7 +230,7 @@
       {%- set _left = (hostvars['localhost'] | default({})).site_excluded | default([]) -%}
       {{ (' ' ~ (_left | site_exclude_line(10)) ~ '.') if _left | length > 0 else '' }}
     _email_subject: >-
-      {{ ((report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ (_report.title if _report is defined else _report_subject))
+      {{ ((report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ ((_report | report_head).subject if _report is defined else _report_subject))
          | report_banner_subject(_banner) }}
   when: _email_any | bool
 
@@ -357,7 +360,7 @@
         entry:
           key: "{{ _web_files.latest or _web_files.page.split('/')[0] }}"
           name: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('Report'))), true) }}"
-          title: "{{ _web_report.title | default('') }}"
+          title: "{{ (_web_report | report_head).subject }}"
           status: "{{ _web_report.status | default('info') }}"
           when: "{{ _web_when }}"
           job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"

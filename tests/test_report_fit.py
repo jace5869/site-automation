@@ -72,7 +72,7 @@ def render(look, doc):
     sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
     import site_filters as sf
     env.filters.update(report_sparkline=sf.report_sparkline, report_runway_bar=sf.report_runway_bar, report_hidden_columns=sf.report_hidden_columns,   # 1.57.0: the runway board
-                       safe_link=sf.safe_link, report_tidy=sf.report_tidy, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
+                       safe_link=sf.safe_link, report_tidy=sf.report_tidy, report_head=sf.report_head, safe_ref=sf.safe_ref, safe_site_url=sf.safe_site_url, safe_data=sf.safe_data)
     return env.get_template("report_%s.html.j2" % look).render(
         _report=doc, _email_footer="AAP job 9", _page_logo_cid="", _page_runs=[],
         report_email_header_text="Site automation report")

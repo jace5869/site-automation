@@ -787,7 +787,7 @@ class Looks(unittest.TestCase):
                 _page_runs=[], report_email_header_text="x")
             self.assertNotIn('class="ot"', h)
             self.assertNotIn("What happened, in order", h)
-            for text in ("Outage review: esx03: all paths down to a storage device; 46 min down, ticket after 93 min", "First signal to ticket",
+            for text in ("Outage review", "esx03: all paths down to a storage device", "46 min down", "93 min to the ticket", "First signal to ticket",
                          "HA restarted 14 VMs", "Signal to ticket", "93 min", "Root cause (incident_root_cause)"):
                 self.assertIn(text, h, look)
 

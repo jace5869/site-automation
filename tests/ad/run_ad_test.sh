@@ -53,11 +53,11 @@ mail='{"report_email_to": ["ad-team@example.mil"], "report_email_smtp_host": "lo
 run "the PDC emulator reads the domain, not the first DC" ok '{}' \
     'corp.test: read by dc01.corp.test'
 run "a broken domain: red, the unreachable DC listed, the job stays green" ok '{}' \
-    'Active Directory health report: ' 'critical, ' 'UNREACHABLE' 'ntlm: the specified credentials were rejected' \
+    'Active Directory health' 'critical' 'UNREACHABLE' 'ntlm: the specified credentials were rejected' \
     'DC02  corp.test' '8453 (replication access was denied)' 'No email: report_email_to is not set'
 run "emailed, HTML and plain text" ok "$mail" \
-    '[AAP] Active Directory health report: ' 'Content-Type: text/html' 'X-Envelope-To: ad-team@example.mil' \
-    'emailed \"[AAP] Active Directory health report:'
+    '[AAP] Active Directory health: ' 'Content-Type: text/html' 'X-Envelope-To: ad-team@example.mil' \
+    'emailed \"[AAP] Active Directory health:'
 # 1.63.0: the replication matrix - on the website (atlas) DC x DC; the email has the late links, not the matrix; the
 # workbook every link; the trend says it has no history outside AAP; the artifact ad_repl for the next runs
 mkdir -p "$work/web"
@@ -86,7 +86,7 @@ run "ad_report_fail: a critical finding fails the job" fail '{"ad_report_fail": 
 run "a dry run (Check) shows the same report" ok '{}' 'Inbound replication'
 CHECK=1 run "  ...in check mode" ok '{}' 'Inbound replication'
 LIMIT=dc01.corp.test run "a healthy domain is green, also with ad_report_fail" ok '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' \
-    'Active Directory health report: all 1 domain controller(s) healthy (corp.test)'
+    'Active Directory health' 'all 1 domain controller healthy (corp.test)'
 # 1.94.0: From SolarWinds - no credential: one line under Not read; SolarWinds itself (a fake over HTTPS, the
 # "SolarWinds (read-only)" credential's variables): the section, the email's own table of the AD monitors not up, and the
 # job's result never changed by it
@@ -104,7 +104,7 @@ run "From SolarWinds: read live, the section, the AD monitors not up in the emai
 grep -qF 'ro&"<test>9' "$work/out.txt" "$work"/mail/*.eml && { echo "FAIL - the SolarWinds password is in the output or the mail"; fails=$((fails + 1)); }
 grep -q 'SECRET-COLUMN-ASKED' "$work/swis.log" && { echo "FAIL - a secret column was asked of SolarWinds"; fails=$((fails + 1)); }
 LIMIT=dc01.corp.test run "From SolarWinds never fails the job: a healthy domain stays green with ad_report_fail" ok \
-    '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' 'Active Directory health report: all 1 domain controller(s) healthy (corp.test)' \
+    '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' 'Active Directory health' 'all 1 domain controller healthy (corp.test)' \
     'From SolarWinds (swis-live): 1 DC(s)'
 run "ad_solarwinds: false - not read, no line" ok '{"ad_solarwinds": false}' 'Inbound replication'
 grep -q 'From SolarWinds (swis-live)\|SolarWinds: not read\|SolarWinds: down or warning' "$work/out.txt" && { echo "FAIL - ad_solarwinds: false still reads SolarWinds"; fails=$((fails + 1)); }

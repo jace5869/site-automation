@@ -207,6 +207,23 @@ Hover and trend lines need the atlas or brief look (`report_web_theme`); the ema
   a web server with `Content-Security-Policy: script-src 'self'` runs it. Without the script the page reads the same: the
   lines are still drawn, and the tables have every value.
 
+### The head of a report (1.82.0)
+
+Every report's head, on the website in all three looks and in the email, is the same four things. The title is the report's
+name alone ("VMware health", never "VMware health report: 5 critical, 7 warning(s) - 2 datacenter(s), ..."). Under it:
+
+- **The counts**, a chip each with its icon and its words (never colour alone), the worst first: 2 to 4, never a 0 unless
+  everything is 0, plural words (no "(s)"). In the email they are one plain line.
+- **The scope**, one muted line: what was read, how many, when - what the old title and subtitle said besides the counts.
+  Only the subtitle's first clause is kept, 80 characters at most; the rest (how it was read, the commands) is the
+  report's method line at the end of the page (`head_method` sets it).
+- **The subject** of the email (after `report_email_subject_prefix` and the banner): the name and the top counts, 60 characters at most.
+
+The head is worked out from the title and subtitle a report already has (`plugins/module_utils/report_head.py`), so no
+playbook changes. A report that knows better sets `head_name`, `head_counts` (`[[5, "critical", "critical"]]`),
+`head_scope` (a list of lines) or `head_subject` in its document, and that one is used. The browser tab and the
+report website's index carry the subject.
+
 ### The brief look (0.92.0; calm and soft since 0.94.0)
 
 `report_web_theme: brief` draws the same pages read like a morning brief. Everything above stays - the bar, the rail,

@@ -143,7 +143,13 @@ def netmap_doc(res, opts=None):
         summary.append({"label": "Unplaced sites", "value": len(unplaced), "status": "warning", "note": "netmap_sites"})
     sub = "%s (SWIS, read-only) · %s" % (vtext, ("compared with %s" % o["last"]) if r.get("compared") and o.get("last")
                                          else "not compared: %s" % (o.get("why_not_compared") or "no kept copy of an earlier run"))
+    nsites = len([s for s in sites if s["name"] != m.get("no_site")])
+    # 1.82.0: the head - the name alone, what is down and warning as counts, what was read as the scope
+    h_counts = [[n, w, st] for n, w, st in ((cnt["Down"], "down", "critical"), (len(wan_down), "WAN link%s down" % ("" if len(wan_down) == 1 else "s"), "critical"),
+                                             (cnt["Warning"], "warning" if cnt["Warning"] == 1 else "warnings", "warning")) if n] or [[0, "down or warning", "ok"]]
     return {"title": title, "status": "critical" if cnt["Down"] or wan_down else "warning" if cnt["Warning"] or wan_warn or unplaced else "ok",
+            "head_name": "Network map", "head_counts": h_counts,
+            "head_scope": [_plural(nsites, "site"), _plural(len(nodes), "node")],
             "subtitle": sub, "summary": summary, "sections": sections}
 
 

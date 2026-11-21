@@ -150,7 +150,7 @@ if [ -n "$eml" ] && "$py" - "$eml" "$work/card.xlsx" <<'PY'
 import email, email.policy, sys, zipfile
 m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
 html = m.get_body(preferencelist=("html",)).get_content()
-assert m["Subject"].startswith("[AAP] STIG compliance: 4 CAT I open on 2 collections, 1 more than last week"), m["Subject"]
+assert m["Subject"].startswith("[AAP] STIG compliance: 4 CAT I open, 1 more than last week"), m["Subject"]
 assert "<svg" not in html, "a trend line in the email"
 assert "Top 5 rules" not in html and "Findings (" not in html and "How the scorecard counts" not in html, "1.68.0: a short email"
 for text in ("CAT I open", "Closed this week", "By collection (3)", "By platform (4)", "SITEA - Windows Server", "At a glance", "SV-257985",

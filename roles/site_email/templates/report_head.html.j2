@@ -1,0 +1,16 @@
+{#- 1.82.0: the counts and the scope of a report's head, from `rhead` (report_head). `head_scope` false: the counts only (the ops look, whose strip says the scope). -#}
+{%- if rhead.counts %}
+<ul class="hcounts" aria-label="Counts">
+{%- for c in rhead.counts %}
+<li class="hct s-{{ c.status if c.status in ['ok', 'warning', 'critical'] else 'info' }}">
+{%- if c.status == 'ok' %}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.4 8.6l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{%- elif c.status == 'warning' %}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>
+{%- elif c.status == 'critical' %}<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.4" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3"/><path d="M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+{%- else %}<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".95" fill="currentColor"/></svg>{% endif -%}
+{%- if c.n != '' and c.n is not none %}<b>{{ c.n | e }}</b>{% endif %} <span>{{ c.words | e }}</span></li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- if rhead.scope and head_scope | default(true) %}
+<div class="hscope">{{ rhead.scope_text | e }}</div>
+{%- endif %}

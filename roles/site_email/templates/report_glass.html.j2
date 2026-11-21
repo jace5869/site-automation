@@ -54,7 +54,8 @@
 {%- for t in r.summary | default([]) if t.status | default('') in ['warning', 'critical'] -%}
 {%- set _ = flagged.append(t.label ~ ': ' ~ t.value) -%}
 {%- endfor -%}
-{%- set preview = ([r.subtitle | default('')] + flagged) | select | join(' · ') -%}
+{%- set rhead = r | report_head -%}
+{%- set preview = ([rhead.counts_text, rhead.scope_text] + flagged) | select | join(' · ') -%}
 {%- macro svg(kind, color, size) -%}
 {#- web copy only: line icons, 24 x 24 #}
 <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="{{ color }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block;">
@@ -111,7 +112,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ r.title | e }}</title>
+<title>{{ rhead.subject | e }}</title>
 <style>
 {#- phones, in the email and the page: tiles two by two (one below 340 px), the header and the runs stacked, tables scrolling sideways; a mail program without these rules shows the layout as it is #}
 @media (max-width:760px){
@@ -205,9 +206,12 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- endif %}
 <td class="g-head-text" valign="middle">
 <div style="font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:{{ label }};">{{ report_email_header_text | default('Site automation report') | e }}</div>
-<div class="g-title" style="font-size:25px;font-weight:700;color:{{ ink }};line-height:1.25;margin-top:6px;">{{ r.title | e }}</div>
-{%- if r.subtitle | default('') %}
-<div style="font-size:15px;color:{{ muted }};margin-top:4px;">{{ r.subtitle | e }}</div>
+<div class="g-title" style="font-size:25px;font-weight:700;color:{{ ink }};line-height:1.25;margin-top:6px;">{{ rhead.name | e }}</div>
+{%- if rhead.counts_text %}
+<div style="font-size:16px;color:{{ ink }};margin-top:4px;">{{ rhead.counts_text | e }}</div>
+{%- endif %}
+{%- if rhead.scope_text %}
+<div style="font-size:15px;color:{{ muted }};margin-top:4px;">{{ rhead.scope_text | e }}</div>
 {%- endif %}
 <div style="font-size:12px;color:{{ muted }};margin-top:8px;">{{ ('AAP job ' ~ job_id) if job_id else 'Run from the command line' }}{% if job_name %} &middot; {{ job_name | e }}{% endif %}</div>
 </td>
@@ -393,6 +397,7 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 <tr><td>
 <table role="presentation" class="g-card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ solid }}" style="width:100%;{{ glass }}border-radius:16px;"><tr>
 <td style="padding:12px 20px;font-size:12px;color:{{ muted }};line-height:1.6;">
+{%- if rhead.method %}{{ rhead.method | e }}<br>{% endif %}
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
 {{ _email_footer | e }}
 </td>

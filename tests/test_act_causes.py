@@ -173,5 +173,71 @@ class Merge(unittest.TestCase):
         self.assertTrue(any("P1 in causes" in e for e in m["errors"]))
 
 
+LABELLED = """Several programs were blocked.
+**Finding 1: monitoring agent not trusted**
+* **ROOT CAUSE:** the agent binary /opt/monitor/agent is not in the trust database after the update.
+* **FIX:** verify it with `sha256sum /opt/monitor/agent`, then add it with `fapolicyd-cli --file add /opt/monitor/agent --trust-file monitor` and `fapolicyd-cli --update` (needs ISSO approval).
+* **RISK:** it lets the agent run.
+
+BLOCKED: /usr/bin/python3 -> /var/tmp/backup.py (execute)
+WHY: no rule allows /var/tmp
+LEGITIMATE?: doubtful, no package owns it
+FIX: move it with `install -m 0750 /var/tmp/backup.py /usr/local/sbin/backup.py`. Not applied: needs ISSO approval.
+CONFIDENCE: medium
+
+BLOCKED: /usr/bin/sh -> /srv/other/thing.sh (execute)
+FIX: ask the owner.
+"""
+ITEMS = [{"id": "D1", "needles": ["/opt/monitor/agent"]}, {"id": "D2", "needles": ["/var/tmp/backup.py"]}, {"id": "D3", "needles": ["/never/named"]}]
+
+
+class FromText(unittest.TestCase):
+    """1.82.0: ACT's labelled text (the fapolicyd prompt's BLOCKED / WHY / LEGITIMATE? / FIX / RISK) as causes."""
+
+    def test_each_finding_that_names_an_item_is_a_cause(self):
+        r = ac.from_text(LABELLED, ITEMS)
+        self.assertTrue(r["parsed"])
+        by = dict((c["patterns"][0], c) for c in r["causes"])
+        self.assertEqual(sorted(by), ["D1", "D2"])
+        self.assertEqual(by["D1"]["title"], "monitoring agent not trusted")
+        self.assertEqual([(s["do"], s["cmd"]) for s in by["D1"]["steps"]],
+                         [("Verify it", "sha256sum /opt/monitor/agent"), ("Add it", "fapolicyd-cli --file add /opt/monitor/agent --trust-file monitor"),
+                          ("Run", "fapolicyd-cli --update")])
+        self.assertEqual(by["D1"]["steps"][-1]["why"], "Risk: it lets the agent run.")
+        self.assertEqual(by["D2"]["confidence"], 65)
+        self.assertEqual(by["D2"]["evidence"], ["no rule allows /var/tmp", "Legitimate? doubtful, no package owns it"])
+        self.assertEqual(by["D2"]["steps"][0]["cmd"], "install -m 0750 /var/tmp/backup.py /usr/local/sbin/backup.py")
+
+    def test_what_names_no_item_is_counted_not_guessed(self):
+        r = ac.from_text(LABELLED, ITEMS)
+        self.assertEqual(r["unplaced"], 1)                      # the /srv/other finding
+        self.assertEqual(ac.from_text("Everything looks fine.", ITEMS)["causes"], [])
+        self.assertFalse(ac.from_text("", ITEMS)["parsed"])
+        self.assertFalse(ac.from_text(None, None)["parsed"])
+
+    def test_an_item_is_in_one_cause_only(self):
+        r = ac.from_text("BLOCKED: /opt/monitor/agent\nFIX: `a`\nBLOCKED: /opt/monitor/agent again\nFIX: `b`", ITEMS)
+        self.assertEqual([c["patterns"] for c in r["causes"]], [["D1"]])
+        self.assertEqual(r["unplaced"], 1)
+
+    def test_the_approval_words_are_not_a_step(self):
+        r = ac.from_text("BLOCKED: /opt/monitor/agent\nFIX: Not applied: needs your ISSO / change approval. Trust it with `fapolicyd-cli --file add /opt/monitor/agent`.", ITEMS)
+        self.assertEqual([s["cmd"] for s in r["causes"][0]["steps"]], ["fapolicyd-cli --file add /opt/monitor/agent"])
+        self.assertNotIn("ISSO", " ".join(s["do"] for s in r["causes"][0]["steps"]))
+
+    def test_a_finding_without_a_command_is_one_step_of_words(self):
+        r = ac.from_text("BLOCKED: /opt/monitor/agent\nFIX: ask the owner whether it is approved", ITEMS)
+        self.assertEqual(r["causes"][0]["steps"], [{"do": "ask the owner whether it is approved", "cmd": "", "why": ""}])
+
+    def test_it_joins_across_hosts_like_any_answer(self):
+        a, b = ac.from_text(LABELLED, ITEMS), ac.from_text(LABELLED, ITEMS)
+        for c in a["causes"]:
+            c["hosts"] = ["web01"]
+        for c in b["causes"]:
+            c["hosts"] = ["db01"]
+        m = ac.merge([a, b])
+        self.assertEqual(sorted(c["hosts"][0] if len(c["hosts"]) == 1 else "+".join(c["hosts"]) for c in m["causes"]), ["db01+web01", "db01+web01"])
+
+
 if __name__ == "__main__":
     unittest.main()

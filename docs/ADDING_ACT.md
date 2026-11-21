@@ -382,6 +382,11 @@ pattern not asked about. Some things are left out and said instead:
 - a command too long to keep whole (a cut command is never offered to copy);
 - a cause that names no pattern.
 
+A job that runs ACT's own playbook (`vendor/act`, the fapolicyd denials) cannot ask for that shape. Its answer is text by
+labels - BLOCKED, WHY, LEGITIMATE?, FIX, RISK for each finding, the commands in backticks - and `act_causes.from_text` reads
+it: a finding that names a denied file becomes a cause (the commands its steps, the risk the last step's reason), and one
+that names no file is left out. A host whose answer has such a finding gets no text section; the others keep theirs.
+
 An answer in the older shape (one analysis per item) becomes one cause per item, also beside batches of the
 new shape. Answers asked in batches are joined the same way whatever order they come back in. Each pattern's
 own record in the job's output follows the joined cause. The report shows the
