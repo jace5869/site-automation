@@ -160,6 +160,9 @@ portal_public_url: https://stigman.example.mil/portal/
 ## a template with this label too is marked "approval" on its card
 # portal_label_approval: portal-approval
 
+## 1.92.0: a workflow step with this label too keeps its own card (a useful report alone)
+# portal_label_alone: portal-alone
+
 ## 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area:
 ## label and no area for its playbook (* and ? only, any case, first match wins)
 # portal_area_rules: []

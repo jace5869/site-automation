@@ -2137,6 +2137,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_label` | `portal` | 1.78.0: actions found in AAP, like a catalogue: a job template or workflow the portal's account has Execute on AND that carries the AAP label below is added to the portal - no edit here, no redeploy; take Execute or the label away and it goes at the next refresh. The form is the template's survey; the card's area is a… (all of it: the role file) |
 | `portal_discover_seconds` | `60` | how long what was found is kept (10 to 3600) |
 | `portal_label_approval` | `portal-approval` | a template with this label too is marked "approval" on its card |
+| `portal_label_alone` | `portal-alone` | 1.92.0: a workflow step with this label too keeps its own card (a useful report alone) |
 | `portal_area_rules` | `[]` | 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area: label and no area for its playbook (* and ? only, any case, first match wins) |
 | `portal_label_area` | `"portal-area:"` | a label that starts with this puts the card in an area (the rest of the label is its name) |
 | `portal_approval_required` | `[]` | template names that are marked "approval" without the label |

@@ -172,6 +172,7 @@
     refused: "{{ _at.refused | default([]) }}"       # steps not fit to wire (another playbook, a Limit prompt)
     overwrite: "{{ aap_templates_overwrite | bool }}"
     labels: "{{ [aap_templates_portal_label, aap_templates_portal_label_area ~ 'STIG'] if aap_templates_portal_label else [] }}"
+    alone_label: "{{ portal_label_alone | default('portal-alone', true) }}"
     describe:
       workflow: "{{ dict(_at_workflows | map(attribute='name') | zip(_at_workflows | map(attribute='description', default={}))) }}"
       owner: "{{ aap_templates_description_owner | default('') }}"
@@ -195,7 +196,8 @@
       {%- set out = [] -%}
       {%- set verb = {'create': ('WOULD CREATE' if ansible_check_mode else 'created'), 'update': ('WOULD UPDATE' if ansible_check_mode else 'updated'),
                       'unchanged': 'already right', 'hand-edited': 'CHANGED BY HAND', 'not ours': 'NOT MADE BY THIS JOB',
-                      'skipped': 'SKIPPED', 'label': 'label', 'old': 'OLD', 'kept': 'KEEP', 'failed': 'FAILED'} -%}
+                      'skipped': 'SKIPPED', 'label': 'label', 'old': 'OLD', 'kept': 'KEEP', 'failed': 'FAILED',
+                      'attention': 'TO DO BY HAND'} -%}
       {%- for r in _atw.results -%}
       {%-   set _ = out.append(verb.get(r.action, r.action) ~ ' - ' ~ r.kind ~ " '" ~ r.name ~ "'" ~ ((' - ' ~ r.why) if r.why else '')) -%}
       {%-   for n in r.nodes | default([]) -%}

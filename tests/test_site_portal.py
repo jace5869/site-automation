@@ -807,12 +807,14 @@ class Live(unittest.TestCase):
               "expires": time.time() + 3 * 3600}
         ap.update(kw)
         fake_aap.STATE["approvals"][aid] = ap
+        self.portal.pend = None             # 1.92.0: the approvals every viewer shares are kept 10 s - as if those seconds had passed
         return wid, aid
 
     def _gone(self, wid, aid):
         fake_aap.STATE["approvals"].pop(aid, None)
         fake_aap.STATE["jobs"].pop(aid, None)
         fake_aap.STATE["jobs"].pop(wid, None)
+        self.portal.pend = None
 
     def test_13a_every_pending_approval_is_listed(self):
         wid, aid = self._scheduled_approval()
@@ -830,7 +832,7 @@ class Live(unittest.TestCase):
         wid, aid = self._scheduled_approval()
         try:
             a = next(x for x in json.loads(self.req("/api/approvals")[1])["approvals"] if x["id"] == aid)               # a person who is no approver sees it, cannot decide it
-            self.assertEqual((a["may_decide"], a["reason"]), (False, "Only the approvers decide - decide it in AAP."))
+            self.assertEqual((a["may_decide"], a["why"], a["reason"]), (False, "approvers", "You are not in portal_approvers - only the approvers decide."))
             self.assertEqual(self.post("/api/approvals/%d/approve" % aid, {})[0], 403)
         finally:
             self._gone(wid, aid)
@@ -4470,8 +4472,9 @@ class Motion1870(unittest.TestCase):
         self.assertIn("html.moves:not(.settled) :is(.ftiles>.ft,.acts>li>.tcard,.two-pane>*,.card.strip){animation:up .45s", c)        # the first load only
         self.assertIn("@media print{html.moves *,html.moves *::before,html.moves *::after,html.moves *::backdrop{animation:none !important;transition:none !important}", c)
         self.assertIn("html.moves .toast.timed::after{", c)
-        self.assertIn("animation:left 12s linear forwards}", c)
-        self.assertIn("const TOAST_MS = 12000;", self.read("static", "portal.js"))                              # the line and the toast: the same 12 s
+        self.assertIn("animation:left 8s linear forwards}", c)
+        self.assertIn("const TOAST_MS = 8000;", self.read("static", "portal.js"))                                # the line and the toast: the same 8 s (1.92.0)
+        self.assertIn("html.moves .toast.held::after{animation-play-state:paused}", c)                           # held while pointed at
         self.assertIn(".tcard.off::before{content:\"Off\"", c)
         self.assertIn(".nav .bdg[hidden],.appbar .nav a .bdg[hidden]{display:none}", c)                         # a badge with nothing to count is gone, not an empty dot
         self.assertNotIn("data:image", sec)                                                                     # the lock is the service's drawn icon, not a data: mask
@@ -4530,7 +4533,7 @@ class Motion1870(unittest.TestCase):
 
     def test_6_the_ring_moves_on_from_its_last_fill(self):
         js = self.read("static", "portal.js")
-        swap = js[js.index("else if (np && !pane.dataset.skel) {"):][:300]
+        swap = js[js.index("else if (np && !pane.dataset.skel) {"):][:1400]          # 1.92.0: the decision box is kept across the swap too
         self.assertIn("ringFrom(pane) : undefined", swap)
         self.assertIn("ringIn(pane, was);", swap)
         self.assertIn("pane.dataset.skel ||", js)                                                                # a skeleton up: the page is leaving, no swap

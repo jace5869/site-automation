@@ -565,17 +565,56 @@ Workflow 46 takes Linux and Windows hosts. Workflow 48 is for Linux hosts, as `c
 
 `/portal/approvals` lists **every** pending workflow approval in AAP that the portal's account can see, whoever started the run (the portal, a schedule, a person in AAP);
 one that has timed out is left out. Each shows the workflow, who or what started it, the approval's name and description, the time left before it times out,
-and a link to the report the steps before it left (a job artifact `site_report_url`), when there is one.
+the check's plan (*What it will change*, below) and the report the steps before it left (a job artifact `site_report_url`) as a button: **Open the full report**.
 
 - **Approve** and **Deny** are there only for the people in `portal_approvers`, and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
-  (*Sure? Yes, approve / Back*). Every other row is grey, with one line that says why and to decide it in AAP: *Only the approvers decide*, *You started this run*, or *no Approve role*.
+  (*Sure? Yes, approve / Back*).
+- **Everyone else sees why, in words to act on**, with the setting's name:
+  - *You are not in `portal_approvers`* - only the approvers decide.
+  - *You started this run* - another approver decides (`portal_allow_self_approval`).
+  - *The portal's account has no Approve role on this workflow* - give it Approve in AAP, or decide there.
 - **The header badge.** *Approvals* shows how many are waiting for you to decide here; *Jobs* shows how many of your jobs run. Both update every 10 seconds while the page is open.
-- **Not your own run.** An approver who started a run through the portal does not get Approve and Deny for it: one
-  muted line says another approver decides. The portal refuses such a decision and logs it.
+  A new one for you to decide brings a toast: *Approval waiting: the workflow*, with a link to its job page.
+  - Once per approval in a browser session; none for the job page that is open, none on the Approvals page.
+  - Two at a time (*+N more*); one closes after 8 seconds, and waits while the pointer or the keyboard is on it.
+  - Never over the page's main column: 1500 px and wider in a gutter on the right; the Jobs page over its job list;
+    other pages under the heading; 900 px and narrower at the bottom, in the middle.
+- **Not your own run.** An approver who started a run through the portal does not get Approve and Deny for it. The portal refuses such a decision and logs it.
   `portal_allow_self_approval: true` allows it.
 - **AAP records the decision as the portal's own account.** The portal's log keeps who decided: the name on the
   card, the decision and the time. The page says so.
+- **At 900 px and narrower** each approval is a card: its name and who started it, the run and its plan, the time, the decision.
 - AAP's own approval page works as before.
+
+### On the job page (1.92.0)
+
+A workflow that waits for an approval shows the decision on its own job page, under the banner: **The check's plan**.
+
+- The time left, *What it will change*, **Open the full report**.
+- For an approver who may decide: **Approve** and **Deny**, the same rules, the same question (*Sure?*) and the same log as on `/portal/approvals`.
+- For anyone else: why not (the three lines above) and a link to **Approvals**.
+- The page asks AAP again every 10 seconds while it waits (3 seconds while it runs). An open panel stays open, and a question being answered is not redrawn.
+- **The steps in run order.** They follow the workflow's links (check, gate, approval, apply), not AAP's node ids.
+- **Plan ready.** A check that failed on purpose with a plan - the gate after it succeeded, or it left `site_approval_summary` - is *Plan ready*, not a red *Failed*. A check that really failed stays red.
+
+### What it will change
+
+Each of our checks that waits for an approval leaves a short summary of its plan: the job artifact `site_approval_summary`
+(`roles/site_approval_summary`, one shared helper).
+
+- **Closed:** one line of counts - *2 changes · 1 host · 1 critical*.
+- **Open** (click it): each host and up to 10 of its items, each with its level (Critical, Warning, Low, Info), then *and N more*.
+- The checks that write it: the fapolicyd check, the STIG full and drift scans, the checklist import's check, Disk - plan a clean up,
+  Service - look, and fapolicyd - allow this: check. Two side by side (Linux and Windows) are one summary.
+- A check without one shows only the report button.
+- At most 50 items are kept. Only short words of the check's own: no command output, no secret.
+
+### Fewer AAP calls (1.92.0)
+
+The pending approvals are read **once for everyone**, every 10 seconds at most: the page, the job page and every
+person's header badge use that one read. A workflow seen for the first time costs three more calls for all the new ones
+together (their workflow jobs, their nodes, their check jobs' report and summary), kept while it waits. 30 waiting
+approvals: 4 calls the first time, then 1 every 10 seconds, whoever is looking.
 
 ## Who started what
 
@@ -889,10 +928,26 @@ by *(answer)*, and not at all when the form has a password.
 | `portal_label_area` | `portal-area:` | the start of an area label |
 | `portal_area_rules` | `[]` | `[{match: "Linux - *", area: Linux}]`: the area of a found template with no area label and no area for its playbook (`*` and `?` only, any case, the first match wins) |
 | `portal_label_approval` | `portal-approval` | the approval label |
+| `portal_label_alone` | `portal-alone` | 1.92.0: a workflow's step with this label too keeps a card of its own |
 | `portal_approval_required` | `[]` | template names marked *Approval* without the label |
 | `portal_limit_max` | 50 | the hosts a found template's Limit may stand for (1 to 500) |
 | `portal_inventories_max` | 10 | the distinct inventories the found templates' Limits are checked against (1 to 50); a template beyond it is skipped, said |
 | `portal_action_max_hosts` | 50 | the hosts a built-in action's Limit may stand for (1 to 500) |
+
+### Workflows, not their parts (1.92.0)
+
+The Actions page shows a workflow, not its steps. A job template that carries the label `portal` and is a step of a
+workflow on the portal (found in AAP or built in) gets **no card of its own**.
+
+- **A step that is a useful report on its own** (a check people run alone) keeps its card: give it the label
+  `portal-alone` (`portal_label_alone`) too.
+- **Never alone**, whatever its labels: a template that runs `playbooks/stigman_update.yml` or
+  `playbooks/workflow_gate.yml`. They do nothing without a workflow's plan.
+- **Why isn't my template here?** says it in one line, *Hidden as workflow steps: N*. Open it for each name and the
+  workflow it is a step of.
+- **AAP - set up portal actions** never gives the label to a step (a publish pattern that matches one says so and skips it).
+  Its **Check** - and **AAP - set up job templates**' - lists each step that carries the label:
+  *remove the portal label from X (a step of Y)*. It is said, never removed.
 
 ## Add your jobs in bulk
 

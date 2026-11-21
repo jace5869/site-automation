@@ -16,6 +16,11 @@ import json
 from ansible.module_utils.site_aap import error_text, setup_description
 
 
+# 1.92.0: the playbooks that do nothing without a workflow's plan - never a portal card of their own, whatever their labels
+# (the same list as the portal's LOCAL_ONLY_PLAYBOOKS)
+NEVER_ALONE = ("playbooks/stigman_update.yml", "playbooks/workflow_gate.yml")
+
+
 def _q(name):
     try:
         from urllib.parse import quote
@@ -98,6 +103,52 @@ class Sync(object):
 
     def note(self, kind, name, action, diff=None, why=""):
         self.results.append({"kind": kind, "name": name, "action": action, "diff": diff or {}, "why": why})
+
+    # ---- 1.92.0: the portal shows a workflow, never its parts - a step template never carries the portal's label
+    def label_names(self, api_kind, row):
+        """A template's label names (AAP lists ten in the row: the rest are read)."""
+        sf = (row.get("summary_fields") or {}).get("labels") or {}
+        got = [str(x.get("name") or "") for x in sf.get("results") or []]
+        if int(sf.get("count") or 0) > len(got):
+            got = [str(x.get("name") or "") for x in self.all("%s/%d/labels/" % (api_kind, int(row["id"])))]
+        return got
+
+    def portal_steps(self, label, more_workflows=()):
+        """{job template id: [the names of the workflows it is a step of]} - each workflow that carries the label, and
+        more_workflows (rows about to get it)."""
+        wfs = {}
+        for r in list(self.all("workflow_job_templates/?labels__name=%s" % _q(label))) + list(more_workflows):
+            wfs[int(r["id"])] = str(r.get("name") or r["id"])
+        out = {}
+        for wid in sorted(wfs):
+            for n in self.all("workflow_job_template_nodes/?workflow_job_template=%d" % wid):
+                uj = (n.get("summary_fields") or {}).get("unified_job_template") or {}
+                if uj.get("unified_job_type") == "job" and uj.get("id") is not None:
+                    names = out.setdefault(int(uj["id"]), [])
+                    if wfs[wid] not in names:
+                        names.append(wfs[wid])
+        return out
+
+    def step_labels(self, label, alone_label, steps=None):
+        """The Check's word on the portal's label (said, never removed): a job template that carries it and runs a playbook
+        that does nothing without a workflow's plan (NEVER_ALONE), or is a step of a workflow that carries it - unless it
+        also carries alone_label (a check that is a useful report on its own). -> how many were said."""
+        if not label:
+            return 0
+        steps = self.portal_steps(label) if steps is None else steps
+        n = 0
+        for r in self.all("job_templates/?labels__name=%s" % _q(label)):
+            name, pb = str(r.get("name") or ""), str(r.get("playbook") or "")
+            if pb in NEVER_ALONE:
+                why = "remove the %s label from %s: it runs %s, which does nothing without a workflow's plan (never removed here)" % (label, name, pb)
+            elif int(r["id"]) in steps and alone_label not in self.label_names("job_templates", r):
+                why = "remove the %s label from %s (a step of %s); or give it the label %s too when it is a useful report on its own (never removed here)" % (
+                    label, name, ", ".join(steps[int(r["id"])]), alone_label)
+            else:
+                continue
+            self.note("step label", "%s: %s" % (name, label), "attention", why=why)
+            n += 1
+        return n
 
     # ---- a job template or a workflow: made, brought up to date, or left (hand-edited / not ours)
     def reconcile(self, kind, api_kind, name, want, extra_read=None, extra_write=None):

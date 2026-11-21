@@ -121,3 +121,11 @@
         per_host: false
         aggregate: false
       run_once: true
+
+    - name: Disk plan | what it will change, for the approval (site_approval_summary - the site portal's What it will change)
+      ansible.builtin.include_role:
+        name: site_approval_summary
+      vars:
+        approval_summary_title: "Disk clean up - {{ finding.data.mount }} is {{ finding.data.pct }}% full"
+        approval_summary_items: >-
+          {{ {inventory_hostname: _dc_plan} | site_approval_items('warning', 'Delete {files} file(s) in {path}, older than {days} days') }}

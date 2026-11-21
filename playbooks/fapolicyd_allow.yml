@@ -126,6 +126,15 @@
       run_once: true
       when: portal_fapolicyd_phase == 'check'
 
+    - name: Allow this | what it will change, for the approval (site_approval_summary - the site portal's What it will change)
+      ansible.builtin.include_role:
+        name: site_approval_summary
+      vars:
+        approval_summary_title: "fapolicyd - allow {{ _fal_prog | truncate(60) }} to open {{ _fal_path | truncate(80) }}"
+        approval_summary_items:
+          - {host: "{{ inventory_hostname }}", what: "{{ _fal_line }} (it changes a security control)", level: critical}
+      when: portal_fapolicyd_phase == 'check'
+
     - name: Allow this | the approved line is this denial's own - and the one the plan gave
       ansible.builtin.assert:
         that:

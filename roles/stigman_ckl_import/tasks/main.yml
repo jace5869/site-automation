@@ -297,6 +297,15 @@
     stigman_ckl_import_workflow | bool and _ci_wait | length > 0 and not _ci.error
     and stigman_ckl_import_plan_var | default('stigman_update_plan') != 'stigman_update_plan'
 
+# 1.92.0: what the approval will write, in a few lines (site_approval_summary - the site portal's What it will change)
+- name: Import checklists | what it will change, for the approval (site_approval_summary)
+  ansible.builtin.include_role:
+    name: site_approval_summary
+  vars:
+    approval_summary_title: "{{ stigman_ckl_import_title | default('Checklist import') }} - what the approval writes to STIG Manager"
+    approval_summary_items: "{{ _ci_wait | stig_ckl_approval_items }}"
+  when: stigman_ckl_import_workflow | bool and _ci_wait | length > 0 and not _ci.error
+
 - name: Import checklists | not read
   ansible.builtin.fail:
     msg: "Nothing planned: {{ _ci.error }}"

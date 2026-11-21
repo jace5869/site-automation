@@ -1,0 +1,15 @@
+---
+# 1.92.0: what a workflow's check plans to change, for the person who approves it - the job artifact site_approval_summary
+# (plugins/filter/approval_summary_filters.py: {title, counts, items: [{host, what, level}]}, 50 items at most). The site
+# portal shows it on the Approvals page and the job page ("What it will change"). Each check of ours that waits for an
+# approval calls this role once, after it has its plan, with its own words - two hand-overs, not settings:
+#   approval_summary_title   one line: what this plan is
+#   approval_summary_items   [{host, what, level}] - level: critical, warning, low or info; what: one line
+# docs/SITE_PORTAL.md, "What it will change".
+- name: Approval summary | what the plan will change (site_approval_summary)
+  ansible.builtin.set_stats:
+    data:
+      site_approval_summary: "{{ approval_summary_items | default([]) | site_approval_summary(approval_summary_title | default('')) }}"
+    per_host: false
+    aggregate: false
+  run_once: true

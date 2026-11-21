@@ -101,6 +101,17 @@ def names(v):
 # workflows' update step (1.87.1: it writes the approved plan to STIG Manager's API and must not take a Limit)
 LOCAL_ONLY_PLAYBOOKS = frozenset(["playbooks/workflow_gate.yml", "playbooks/stigman_update.yml"])
 
+
+def step_ids(nodes):
+    """1.92.0: a workflow's nodes -> the ids of the job templates it runs as steps (approval nodes and the rest left out)."""
+    out = []
+    for n in nodes or []:
+        u = (n.get("summary_fields") or {}).get("unified_job_template") or {}
+        jid = u.get("id") if u.get("id") is not None else n.get("unified_job_template")
+        if str(u.get("unified_job_type") or "") == "job" and jid is not None and int(jid) not in out:
+            out.append(int(jid))
+    return out
+
 class Config(object):
     """The settings: the file PORTAL_SETTINGS names (JSON - the deploy writes it), then the environment over it (the
     secret: PORTAL_AAP_TOKEN)."""
@@ -153,6 +164,7 @@ class Config(object):
         self.label = ("portal" if e.get("PORTAL_LABEL") is None else str(e.get("PORTAL_LABEL"))).strip()          # an empty label is "no discovery", not the default
         self.discover_seconds = max(10, min(3600, int(g("PORTAL_DISCOVER_SECONDS", "60"))))
         self.label_approval = g("PORTAL_LABEL_APPROVAL", "portal-approval").strip()
+        self.label_alone = g("PORTAL_LABEL_ALONE", "portal-alone").strip()          # 1.92.0: a workflow step with it keeps its card
         self.label_area = g("PORTAL_LABEL_AREA", "portal-area:").strip()
         self.motion = str(g("PORTAL_MOTION", "auto")).strip().lower()                  # 1.78.3: auto (the system's reduced-motion request) | always | off
         if self.motion not in ("auto", "always", "off"):
@@ -352,7 +364,7 @@ KEEP_WHOLE = 10                 # a whole read is kept through failed reads for 
 
 def empty_discovery(error=""):
     return {"actions": {}, "skipped": [], "clashes": [], "error": error, "seen": 0, "incomplete": False,
-            "labelled": 0, "no_execute": [], "no_execute_why": "", "account": ""}
+            "labelled": 0, "no_execute": [], "no_execute_why": "", "account": "", "hidden": []}
 
 
 @dataclass
@@ -365,6 +377,9 @@ class TemplateRead:
     inventory: int = None
     transient: bool = False
     retry: bool = False
+    labels: list = None          # 1.92.0: a labelled template's label names (its playbook beside them) - the steps a workflow hides
+    playbook: str = ""
+    steps: list = None           # 1.92.0: a workflow's job template steps (their ids), read with its shape
 
 
 class Aap(object):
@@ -374,6 +389,7 @@ class Aap(object):
     # id in one-minute increments, so the re-reads spread out instead of all coming in one refresh. A workflow's steps or launch
     # requirements changed without touching the workflow show within this time (AAP still checks them at launch).
     TEMPLATE_TTL = 600
+    RESOLVE_BACKOFF = 600            # 1.92.0: a built-in workflow AAP said is not there: looked up again after this (seconds)
 
     def __init__(self, cfg, api=None):
         self.cfg = cfg
@@ -387,6 +403,7 @@ class Aap(object):
         self.ready = ""                 # '' = asked and answered; else why not
         self.user = ""
         self.ids = {}                   # action name -> (id, why off)
+        self.resolve_seen = {}          # 1.92.0: action name -> (when it was last looked up, whether AAP did not really answer)
         self.inv_id = None
         self.hosts = {}                 # host name -> (known, when asked)
         self.listings = {}              # 1.78.0: the inventories' hosts and groups (inventory_listing); "default" is portal_inventory, an id is another inventory (1.78.4)
@@ -420,6 +437,7 @@ class Aap(object):
         for name, a in sorted(actions.items()):
             kind = "workflow_job_templates" if a["aap"]["type"] == "workflow" else "job_templates"
             code, data = self.call("GET", "%s/?name=%s" % (kind, urllib.parse.quote(a["aap"]["name"])))
+            self.resolve_seen[name] = (time.monotonic(), self._unsure(code))
             rows = data.get("results") or [] if code == 200 else []
             rows = [r for r in rows if r.get("name") == a["aap"]["name"]]
             if code != 200:
@@ -548,6 +566,8 @@ class Aap(object):
         its survey's. A template a built-in action already runs is not added twice: the built-in wins."""
         cfg = self.cfg
         out = empty_discovery()
+        labelled_jobs = []                              # 1.92.0: (id, name, playbook, labels) of each labelled job template
+        wf_steps = {}                                   # 1.92.0: job template id -> [the portal workflows it is a step of]
         seen_inv = set()                                # 1.78.4: the distinct inventories of the Limits so far (portal_inventories_max)
         prior_inventories = sorted(iid for iid, name in self.inv_names.items() if name is not None)
         self.inv_names = {}
@@ -601,6 +621,8 @@ class Aap(object):
                     due = read_at + self.TEMPLATE_TTL - (key[1] % 10) * 60
                     kept[key] = (revision, result, due)
             out["labelled"] += int(result.labelled)
+            if result.labels is not None and key[0] == "job_templates":
+                labelled_jobs.append((key[1], tname, result.playbook, result.labels))
             if result.clash:
                 out["clashes"].append((tname, result.clash))
                 continue
@@ -622,8 +644,13 @@ class Aap(object):
                          "help": "Hosts or groups of the inventory %s: up to %d hosts (a group counts by its hosts)" % (inv_name, cfg.limit_max)}
                 action.update(limit_inv_name=inv_name, vars={rules.LIMIT_VAR: hosts, **action["vars"]})
             out["actions"][action["name"]] = action
+            if result.steps:                            # 1.92.0: a workflow with a card - its steps have none of their own
+                wf_title = cfg.titles.get(tname.casefold()) or tname
+                for jid in result.steps:
+                    wf_steps.setdefault(jid, []).append(wf_title)
         self.template_reads = kept
         self.inv_names = {iid: self.inv_names[iid] for iid in seen_inv}
+        self._hide_steps(out, builtin, labelled_jobs, wf_steps)
         return out
 
     def _read_template(self, typ, kind, r, have, unified):
@@ -639,6 +666,13 @@ class Aap(object):
             return TemplateRead(skipped="its labels could not be read completely", labelled=False, transient=tr, retry=True)
         if cfg.label not in labels:
             return TemplateRead(skipped="no label %s" % cfg.label, labelled=False)
+        res = self._read_labelled(typ, kind, r, have, tname, labels)
+        res.labels, res.playbook = list(labels), str(r.get("playbook") or "")       # 1.92.0: _hide_steps reads them
+        return res
+
+    def _read_labelled(self, typ, kind, r, have, tname, labels):
+        """_read_template's part for a template that carries the label."""
+        cfg = self.cfg
         if (typ, tname) in have:
             return TemplateRead(clash=have[(typ, tname)])
         tid = int(r["id"])
@@ -677,8 +711,9 @@ class Aap(object):
                     return TemplateRead(skipped=why, transient=tr, retry=True)
         marked = cfg.label_approval in labels or tname in cfg.approval_required
         sigf = dict(rules.exec_fields(r), approval_marked=bool(marked))
+        steps = None
         if typ == "workflow":
-            shape, tr = self.workflow_shape_t(tid)
+            shape, tr, steps = self.workflow_shape_steps(tid)
             if shape is None:
                 return TemplateRead(skipped="its steps could not be read", inventory=limit_inv, transient=tr, retry=True)
             sigf["steps"] = shape
@@ -700,7 +735,47 @@ class Aap(object):
                              and not (cfg.label_title and l.startswith(cfg.label_title)))[:8],
             "sig": rules.template_sig(tname, limit, spec_doc, r.get("inventory"), bool(r.get("ask_inventory_on_launch")), sigf),
             "approval": cfg.label_approval in labels or tname in cfg.approval_required}
-        return TemplateRead(action=action, inventory=limit_inv)
+        return TemplateRead(action=action, inventory=limit_inv, steps=steps)
+
+    def _hide_steps(self, out, builtin, labelled_jobs, wf_steps):
+        """1.92.0: the portal shows a workflow, never its parts. A labelled job template that is a step of a portal workflow (found
+        here or built in) has no card of its own - unless it also carries portal_label_alone (a check that is a useful report on its
+        own); one that runs a playbook that does nothing without a workflow's plan (LOCAL_ONLY_PLAYBOOKS) never has one, whatever its
+        labels. Each is listed in out['hidden'] as (name, why) for the help ("Why isn't my template here?")."""
+        # the built-in workflows' steps too; one not resolved yet (AAP was not there at the start, or it is new) is resolved here
+        # first (1.92.0 review) - and a read AAP did not answer leaves this pass incomplete, so the last whole list stays
+        # 1.92.0 on 1.99.0: one AAP said is not there is looked up again after RESOLVE_BACKOFF, not on every pass (one GET each); one AAP did
+        # not really answer for is asked again next pass, and leaves this one incomplete
+        wf_builtin = dict((n, a) for n, a in builtin.items() if a["aap"]["type"] == "workflow")
+        now = time.monotonic()
+
+        def due(n):
+            at, unsure = self.resolve_seen.get(n, (None, True))
+            return at is None or unsure or now - at >= self.RESOLVE_BACKOFF
+        todo = dict((n, a) for n, a in wf_builtin.items() if not (self.ids.get(n) or (None, ""))[0] and (n not in self.ids or due(n)))
+        if todo:
+            self.resolve(todo)
+            if any(self.resolve_seen.get(n, (None, True))[1] for n in todo):
+                out["incomplete"] = True
+        for name, a in sorted(wf_builtin.items()):
+            tid = (self.ids.get(name) or (None, ""))[0]
+            if tid:
+                rows, why, tr = self._paged_t("workflow_job_templates/%d/workflow_nodes/?order_by=id&page_size=200" % int(tid))
+                if why:
+                    out["incomplete"] = out["incomplete"] or tr
+                for jid in ([] if why else step_ids(rows)):
+                    wf_steps.setdefault(jid, []).append(a.get("title") or a["aap"]["name"])
+        for jid, tname, pb, labels in labelled_jobs:
+            if pb in LOCAL_ONLY_PLAYBOOKS:
+                why = "never on its own: it runs %s, which does nothing without a workflow's plan" % pb
+            elif jid in wf_steps and self.cfg.label_alone not in labels:
+                ws = sorted(set(wf_steps[jid]))
+                why = "a step of %s" % ", ".join(ws)
+            else:
+                continue
+            out["actions"].pop("jt_%d" % jid, None)
+            out["skipped"] = [x for x in out["skipped"] if x[0] != tname]
+            out["hidden"].append((tname, why))
 
     def _inventory_ok(self, iid, seen):
         """An inventory the Limit of a found template is checked against -> (its name, '' or why not): the account must be able to read it, and at most
@@ -1024,13 +1099,17 @@ class Aap(object):
 
     def workflow_shape_t(self, tid):
         """-> (the fingerprint or None, transient)."""
+        return self.workflow_shape_steps(tid)[:2]
+
+    def workflow_shape_steps(self, tid):
+        """-> (the fingerprint or None, transient, the ids of its job template steps - 1.92.0, to hide them from the Actions page)."""
         rows, why, tr = self._paged_t("workflow_job_templates/%d/workflow_nodes/?order_by=id&page_size=200" % tid)
         if why:
-            return None, tr
+            return None, tr, []
         import hashlib
         doc = [[r.get("id"), r.get("unified_job_template"), sorted(r.get("success_nodes") or []), sorted(r.get("failure_nodes") or []),
                 sorted(r.get("always_nodes") or []), r.get("limit"), r.get("extra_data"), r.get("all_parents_must_converge")] for r in rows]
-        return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24], False
+        return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24], False, step_ids(rows)
 
     def inventory_items(self, text="", limit=200, iid=None):
         """The picker's list: hosts and groups whose name contains text (any case), by name -> {items: [{name, kind, count}], matches, total, truncated}."""
@@ -1417,6 +1496,108 @@ def result_buttons(arts):
     return out[:6]
 
 
+# 1.92.0: what a check's plan will change, as the check left it (roles/site_approval_summary: the job artifact site_approval_summary) - shown on the
+# Approvals page and the job page. Only these fields, as text, cut short; never a raw value as HTML.
+SUMMARY_LEVELS = ("critical", "warning", "low", "info")
+SUMMARY_ITEMS = 50                                  # the most items kept (the check keeps no more either)
+SUMMARY_PER_HOST = 10                               # the most items shown for a host: then "and N more"
+
+
+def approval_summary(v):
+    """A check's site_approval_summary -> {title, counts {changes, hosts, critical, warning}, hosts: [{host, items: [{what, level}], more}]} or None."""
+    if not isinstance(v, dict):
+        return None
+    items = []
+    for it in (v.get("items") or [])[:SUMMARY_ITEMS] if isinstance(v.get("items"), list) else []:
+        if not isinstance(it, dict) or not str(it.get("what") or "").strip():
+            continue
+        lv = str(it.get("level") or "info").strip().lower()
+        items.append({"host": clean(it.get("host") or "")[:120].strip() or "-", "what": " ".join(clean(it["what"]).split())[:240],
+                      "level": lv if lv in SUMMARY_LEVELS else "info"})
+    c = v.get("counts") if isinstance(v.get("counts"), dict) else {}
+
+    def num(k, dflt):
+        try:
+            return max(0, int(c.get(k)))
+        except (TypeError, ValueError):
+            return dflt
+    hosts = []
+    for it in items:
+        h = next((x for x in hosts if x["host"] == it["host"]), None)
+        if h is None:
+            h = {"host": it["host"], "items": [], "more": 0}
+            hosts.append(h)
+        if len(h["items"]) < SUMMARY_PER_HOST:
+            h["items"].append({"what": it["what"], "level": it["level"]})
+        else:
+            h["more"] += 1
+    counts = {"changes": num("changes", len(items)), "hosts": num("hosts", len(hosts)),
+              "critical": num("critical", len([i for i in items if i["level"] == "critical"])),
+              "warning": num("warning", len([i for i in items if i["level"] == "warning"]))}
+    if not items and not counts["changes"]:
+        return None
+    return {"title": " ".join(clean(v.get("title") or "").split())[:160], "counts": counts, "hosts": hosts,
+            "shown": len(items), "left_out": max(0, counts["changes"] - len(items))}
+
+
+def run_order(steps):
+    """1.92.0: a workflow job's steps in the order they run - from the first (no link leads to it) along the success, failure and always links,
+    a level at a time - never by AAP's node ids (a node added later gets a higher id wherever it sits). A step no link reaches, or a
+    list without links, keeps its place at the end."""
+    ids = [x.get("node") for x in steps if x.get("node") is not None]
+    if not ids:
+        return list(steps)
+    by = dict((x["node"], x) for x in steps if x.get("node") is not None)
+    nxt = lambda x: [i for k in ("success", "failure", "always") for i in (x.get(k) or []) if i in by]       # noqa: E731
+    led = set(i for x in by.values() for i in nxt(x))
+    level, seen, out = sorted(i for i in ids if i not in led), set(), []
+    while level:
+        new = []
+        for i in level:
+            if i not in seen:
+                seen.add(i)
+                out.append(by[i])
+                new += nxt(by[i])
+        level = sorted(set(i for i in new if i not in seen))
+    return out + [x for x in steps if x.get("node") is None or x["node"] not in seen]
+
+
+def plan_ready(step, by_node):
+    """1.92.0: a check that failed on purpose with a plan for the approval: it left site_approval_summary, or the step its failure leads to
+    (the workflow gate) succeeded. A check that really failed (the gate failed after it, or nothing followed) stays Failed."""
+    if step.get("type") != "job" or step.get("status") not in ("failed", "error"):
+        return False
+    if step.get("has_plan"):
+        return True
+    return any((by_node.get(i) or {}).get("status") == "successful" for i in step.get("failure") or [])
+
+
+def merge_summaries(sums):
+    """1.92.0: the site_approval_summary of each check job of one workflow (Linux and Windows side by side, one approval) -> one:
+    the items one after the other, the counts added up, the first title."""
+    sums = [x for x in sums or [] if isinstance(x, dict)]
+    if len(sums) < 2:
+        return sums[0] if sums else None
+    counts = {}
+    for k in ("changes", "hosts", "critical", "warning"):
+        try:
+            counts[k] = sum(int((x.get("counts") or {}).get(k) or 0) for x in sums)
+        except (TypeError, ValueError):
+            counts[k] = 0
+    return {"title": next((x.get("title") for x in sums if x.get("title")), ""), "counts": counts,
+            "items": [i for x in sums for i in (x.get("items") if isinstance(x.get("items"), list) else [])][:SUMMARY_ITEMS]}
+
+
+def plan_chips(counts):
+    """The closed line's words: '2 changes', '1 host', '1 critical', '1 warning' -> [(word, kind)] (kind: n, critical, warning)."""
+    out = [("%d change%s" % (counts["changes"], "" if counts["changes"] == 1 else "s"), "n"),
+           ("%d host%s" % (counts["hosts"], "" if counts["hosts"] == 1 else "s"), "n")]
+    for k in ("critical", "warning"):
+        if counts.get(k):
+            out.append(("%d %s" % (counts[k], k), k))
+    return out
+
+
 PER_HOST_VARS = ("finding_id", "report_job")        # a value of one host: such an action is one job for each finding
 
 
@@ -1449,7 +1630,10 @@ class Portal(object):
         self.builtin = dict(self.actions)
         self.found = empty_discovery()
         self.summaries = {}                             # 1.78.4: person -> (when, the answer of summary)
-        self.report_links = {}                          # 1.78.4: workflow job id -> (when, the report its steps left)
+        self.pend = None                                # 1.92.0: (when, (code, the pending approvals)) - every viewer's, kept PENDING_TTL
+        self.pend_lock = threading.Lock()
+        self.wf_info = {}                               # 1.92.0: waiting workflow job id -> {wj, report, plan}: read once while it waits
+        self.wf_tmp = {}                                # 1.92.0 review: one not fully read (or a check still running): this cycle only
         self.found_at = 0.0
         self.whole_at = 0.0
         self.found_fails = 0                            # failed reads in a row (the back-off)
@@ -1873,6 +2057,9 @@ class Portal(object):
         out = {"job_id": jid, "url": "%sjobs/%d" % (self.cfg.path, jid), "at": rec["at"]}
         if ignored:
             out["warning"] = "AAP ignored %s: the template's launch settings changed since the portal started." % ", ".join(sorted(ignored))
+        if a["aap"]["type"] == "workflow":
+            with self.pend_lock:
+                self.pend = None                        # 1.92.0: its approval is seen on the next look, not after the shared 10 s
         return 201, out
 
     # -- 1.78.0: the cards of the Actions page
@@ -1932,14 +2119,25 @@ class Portal(object):
                "pct": None, "hosts_line": "", "result_line": ""}
         if view.get("type") == "workflow_job":
             steps = []
-            for s in view.get("steps") or []:
+            raw = view.get("steps") or []
+            by_node = dict((x.get("node"), x) for x in raw if x.get("node") is not None)
+            for s in raw:
                 approval = s.get("type") == "workflow_approval"
                 word = "Waiting for approval" if approval and s.get("status") in ("pending", "running") else STEP_WORD.get(s.get("status"), "Pending")
+                note = "Must be approved by an approver of the portal" if word == "Waiting for approval" else ""
+                if plan_ready(s, by_node):              # 1.92.0: failed on purpose, with a plan - not a red Failed
+                    word = "Plan ready"
+                    c = (s.get("plan") or {}).get("counts") or {}
+                    note = ("Stopped on purpose: %d change%s wait%s for a decision" % (c["changes"], "" if c["changes"] == 1 else "s", "s" if c["changes"] == 1 else "")
+                            if c.get("changes") else "Stopped on purpose: its plan waits for a decision")
+                elif s.get("type") == "job" and s.get("status") == "successful" and any(
+                        plan_ready(x, by_node) and s.get("node") in (x.get("failure") or []) for x in raw):
+                    note = "The plan needs an approval"
                 steps.append({"name": s.get("name") or "", "type": "Approval" if approval else "Job", "status": s.get("status"), "word": word, "job": s.get("job"),
-                              "note": "Must be approved by an approver of the portal" if word == "Waiting for approval" else ""})
+                              "note": note})
             out["steps"] = steps
-            n, finished = len(steps), len([s for s in steps if s["word"] in ("Done", "Skipped")])
-            cur = next((s for s in steps if s["word"] not in ("Done", "Skipped")), None)
+            n, finished = len(steps), len([s for s in steps if s["word"] in ("Done", "Skipped", "Plan ready")])
+            cur = next((s for s in steps if s["word"] not in ("Done", "Skipped", "Plan ready")), None)
             if cur and not done:
                 out["now"] = "Step %d of %d - %s" % (finished + 1, n, "waiting for an approver" if cur["word"] == "Waiting for approval" else cur["name"])
             out["pct"] = pct(finished, n, done) if n else None
@@ -2012,7 +2210,8 @@ class Portal(object):
         return cap is not False
 
     def summary(self, cn):
-        """1.78.4, for the badges and toasts of every page: {running, recent: [{id, title, group}] (this person's newest 10), approvals (what this person may decide now)}.
+        """1.78.4, for the badges and toasts of every page: {running, recent: [{id, title, group}] (this person's newest 10), approvals (what this person may decide now),
+        waiting (1.92.0: those approvals, for the toast "Approval waiting")}.
         Kept 10 seconds for each person, so a page that asks every 10 s costs AAP one read in that time."""
         t = time.time()
         with self.lock:
@@ -2024,8 +2223,13 @@ class Portal(object):
                "recent": [{"id": j["id"], "title": j["title"], "group": j["group"], "status": j["status"]} for j in jobs
                           if j["group"] == "running" or j["id"] in set(x["id"] for x in jobs[:10])], "approvals": 0}
         if cn in self.cfg.approvers:
+            # 1.92.0: from the approvals every viewer shares (pending(): no AAP call of its own); the ones new to this person make a toast
             code, data = self.approvals(cn)
-            out["approvals"] = len([a for a in data.get("approvals", []) if a.get("may_decide")]) if code == 200 else None
+            mine = [a for a in data.get("approvals", []) if a.get("may_decide")] if code == 200 else []
+            out["approvals"] = len(mine) if code == 200 else None
+            # portal: the portal started it, so its job page opens; else the toast goes to Approvals (1.92.0 review)
+            out["waiting"] = [{"id": a["id"], "workflow_job": a["workflow_job"], "title": a["title"], "left": a["time_left"],
+                               "portal": a["launched_in"] == "the portal"} for a in mine[:20]]
         with self.lock:
             self.summaries[cn] = (t, out)
             if len(self.summaries) > 500:
@@ -2096,7 +2300,11 @@ class Portal(object):
                 steps.append({"name": (sf.get("unified_job_template") or {}).get("name") or j.get("name") or "",
                               "job": j.get("id"), "type": j.get("type") or (sf.get("unified_job_template") or {}).get("unified_job_type", ""),
                               "status": j.get("status") or ("not run" if n.get("do_not_run") else "waiting"),
-                              "failed": bool(j.get("failed"))})
+                              "failed": bool(j.get("failed")),
+                              # 1.92.0: the node and its links - the steps in run order, and a check that failed on purpose
+                              "node": n.get("id"), "success": list(n.get("success_nodes") or []), "failure": list(n.get("failure_nodes") or []),
+                              "always": list(n.get("always_nodes") or [])})
+            steps = run_order(steps)
             view["steps"] = steps
             view["artifacts"] = {}
             links, arts = [], []
@@ -2106,6 +2314,8 @@ class Portal(object):
                     if code == 200:
                         links += links_in(jd.get("artifacts") or {})
                         arts.append(jd.get("artifacts") or {})
+                        s["plan"] = approval_summary((jd.get("artifacts") or {}).get("site_approval_summary"))
+                        s["has_plan"] = isinstance((jd.get("artifacts") or {}).get("site_approval_summary"), dict)
             view["links"] = [{"label": k, "url": v} for k, v in links]
             view["buttons"] = result_buttons(arts)
             self.outcome(view, arts, rec or parent or {})
@@ -2163,61 +2373,103 @@ class Portal(object):
             else "%s/#/jobs/%s/%d/output" % (base, part, jid)
 
     # -- approvals
-    def _report_link(self, wid):
-        """The report page the workflow's earlier steps left (a job artifact site_report_url) -> {label, url} or None. Kept a minute for each workflow job."""
-        t = time.time()
-        with self.lock:
-            hit = self.report_links.get(wid)
-            if hit and t - hit[0] < 60:
-                return hit[1]
-        out = None
-        code, nodes = self.aap.call("GET", "workflow_jobs/%d/workflow_nodes/?page_size=200&order_by=id" % wid)
-        for n in (nodes.get("results") or []) if code == 200 else []:
-            j = ((n.get("summary_fields") or {}).get("job") or {})
-            if j.get("id") and j.get("type") == "job" and j.get("status") in DONE:
-                c2, jd = self.aap.call("GET", "jobs/%d/" % int(j["id"]))
-                b = result_buttons([jd.get("artifacts") or {}]) if c2 == 200 else []
-                b = [x for x in b if x["primary"]]
-                if b:
-                    out = {"label": b[0]["label"], "url": b[0]["url"]}
-        with self.lock:
-            self.report_links[wid] = (t, out)
-            if len(self.report_links) > 200:
-                self.report_links.pop(next(iter(self.report_links)))
-        return out
+    PENDING_TTL = 10                                    # 1.92.0: seconds the pending approvals are kept for every viewer
 
-    def approvals(self, cn=""):
-        """1.78.4: EVERY pending workflow approval in AAP that the portal's account can see (paged), the expired ones left out -> (code, {approvals}). Each has its workflow, who or what
-        started it (a person in the portal, a schedule, a person in AAP), its own name and description, the time left, the report the steps before it left, and
-        whether this person may decide it here: an approver (portal_approvers), not their own run (portal_allow_self_approval), and the account has Approve on it - else a reason
-        that says to decide in AAP. With a person who is not an approver: only the approvals of runs they may see. With none (the decision's check): all of them."""
+    def pending(self, fresh=False):
+        """1.92.0: every pending approval AAP has, read once for every viewer and page and kept PENDING_TTL seconds -> (code, {rows} or {error}).
+        A cycle is one read of the pending list. A workflow job not seen before costs, for all of the new ones together, one read of
+        the workflow jobs (id__in), one of their nodes and one of their check jobs (the report and site_approval_summary they left);
+        that is kept while it waits. Before 1.92.0 each viewer's page read each approval's workflow job (33 calls for 30 waiting)."""
+        t = time.time()
+        with self.pend_lock:
+            if not fresh and self.pend and t - self.pend[0] < self.PENDING_TTL:
+                return self.pend[1]
+            rows, why = self.aap._paged("workflow_approvals/?status=pending&order_by=created&page_size=200", 10)
+            if why:
+                res = (502, {"error": "AAP could not be asked for approvals: %s" % why})
+            else:
+                now = time.time()
+                rows = [ap for ap in rows if not (parse_time(ap.get("approval_expiration")) is not None and parse_time(ap.get("approval_expiration")) < now)
+                        and ((ap.get("summary_fields") or {}).get("source_workflow_job") or {}).get("id")]
+                wids = sorted(set(int(ap["summary_fields"]["source_workflow_job"]["id"]) for ap in rows))
+                new = [w for w in wids if w not in self.wf_info]
+                self.wf_tmp = {}
+                if new:
+                    self._learn(new)
+                self.wf_info = dict((w, v) for w, v in self.wf_info.items() if w in wids)     # an approval decided: its workflow is forgotten
+                res = (200, {"rows": rows})
+            self.pend = (time.time(), res)
+            return res
+
+    def _learn(self, wids):
+        """What the approvals page and the job page show of a waiting workflow, read once for all the new ones (three calls, whatever their number):
+        the workflow jobs, their nodes, their finished check jobs' artifacts - the report (site_report_url ...) and site_approval_summary."""
+        ids = ",".join(str(w) for w in wids)
+        wjs, why = self.aap._paged("workflow_jobs/?id__in=%s&page_size=200" % ids, 5)
+        wjs = dict((int(x["id"]), x) for x in (wjs if not why else []))
+        nodes, why = self.aap._paged("workflow_job_nodes/?workflow_job__in=%s&order_by=id&page_size=200" % ids, 10)
+        nodes_ok = not why
+        by_wf, jobs = {}, []
+        for n in nodes if not why else []:
+            j = (n.get("summary_fields") or {}).get("job") or {}
+            if j.get("id") and j.get("type") == "job" and j.get("status") in DONE:
+                by_wf.setdefault(int(n.get("workflow_job") or 0), []).append(int(j["id"]))
+                jobs.append(int(j["id"]))
+        arts = {}
+        if jobs:
+            rows, why = self.aap._paged("jobs/?id__in=%s&page_size=200" % ",".join(str(j) for j in sorted(set(jobs))), 5)
+            nodes_ok = nodes_ok and not why
+            for r in rows if not why else []:
+                if "artifacts" in r:
+                    arts[int(r["id"])] = r.get("artifacts") or {}
+            for jid in sorted(set(jobs) - set(arts)):          # an AAP whose list leaves the artifacts out: each check job once
+                c2, jd = self.aap.call("GET", "jobs/%d/" % jid)
+                arts[jid] = (jd.get("artifacts") or {}) if c2 == 200 and isinstance(jd, dict) else {}
+        for w in wids:
+            # 1.92.0 review: a workflow whose reads failed, or whose checks are not all over yet (Linux and Windows side by side),
+            # is read again next cycle - never kept half known
+            if w not in wjs or not nodes_ok or any(n.get("workflow_job") == w and ((n.get("summary_fields") or {}).get("job") or {}).get("type") == "job"
+                                                    and ((n.get("summary_fields") or {}).get("job") or {}).get("status") not in DONE + ("pending", "waiting", "new", None)
+                                                    for n in nodes or []):
+                if w in wjs and nodes_ok:
+                    al = [arts.get(j) or {} for j in by_wf.get(w, [])]
+                    b = [x for x in result_buttons(al) if x["primary"]]
+                    self.wf_tmp[w] = {"wj": wjs.get(w), "report": {"label": b[-1]["label"], "url": b[-1]["url"]} if b else None,
+                                      "plan": approval_summary(merge_summaries([a.get("site_approval_summary") for a in al]))}
+                continue
+            al = [arts.get(j) or {} for j in by_wf.get(w, [])]
+            b = [x for x in result_buttons(al) if x["primary"]]
+            plan = approval_summary(merge_summaries([a.get("site_approval_summary") for a in al]))
+            self.wf_info[w] = {"wj": wjs.get(w), "report": {"label": b[-1]["label"], "url": b[-1]["url"]} if b else None, "plan": plan}
+
+    def approvals(self, cn="", fresh=False):
+        """1.78.4: EVERY pending workflow approval in AAP that the portal's account can see, the expired ones left out -> (code, {approvals}). Each has its workflow,
+        who or what started it (a person in the portal, a schedule, a person in AAP), its own name and description, the time left, the report the steps
+        before it left and (1.92.0) the check's plan (site_approval_summary), and whether this person may decide it here: an approver (portal_approvers),
+        not their own run (portal_allow_self_approval), and the account has Approve on it - else the reason, in words to act on. With a person who is not
+        an approver: only the approvals of runs they may see. With none (the decision's check): all of them. 1.92.0: from pending() - no AAP call here."""
+        code, got = self.pending(fresh=fresh)               # fresh: a decision reads AAP again (1.92.0 review)
+        if code != 200:
+            return code, got
         wf_ids = {}
         for name, a in self.actions.items():
             if a["aap"]["type"] == "workflow":
                 tid, _ = self.state(name)
                 if tid:
                     wf_ids[tid] = a
-        rows, why = self.aap._paged("workflow_approvals/?status=pending&order_by=created&page_size=200", 10)
-        if why:
-            return 502, {"error": "AAP could not be asked for approvals: %s" % why}
         mine = self.launched()
-        out, wjobs, now = [], {}, time.time()
-        for ap in rows:
-            exp = parse_time(ap.get("approval_expiration"))
-            if exp is not None and exp < now:                       # timed out: AAP will not take a decision on it
-                continue
-            src = (ap.get("summary_fields") or {}).get("source_workflow_job") or {}
-            wid = src.get("id")
-            if not wid:
-                continue
-            if int(wid) not in wjobs:
-                c2, wj = self.aap.call("GET", "workflow_jobs/%d/" % int(wid))
-                wjobs[int(wid)] = wj if c2 == 200 and isinstance(wj, dict) else None
-            wj = wjobs[int(wid)]
+        out, now = [], time.time()
+        for ap in got["rows"]:
+            wid = int(ap["summary_fields"]["source_workflow_job"]["id"])
+            info = self.wf_info.get(wid) or self.wf_tmp.get(wid) or {}
+            wj = info.get("wj")
             if wj is None:
                 continue
+            exp = parse_time(ap.get("approval_expiration"))
+            if exp is not None and exp < now:                   # timed out since the shared read: AAP will not take a decision on it
+                continue
             a = wf_ids.get(int(wj.get("workflow_job_template") or 0))
-            rec = mine.get(int(wid)) or {}
+            rec = mine.get(wid) or {}
             if cn and cn not in self.cfg.approvers and not (self.may_see(cn, rec) if rec else (a is not None and rules.may_run(a, cn, self.cfg.requesters))):
                 continue
             sf = wj.get("summary_fields") or {}
@@ -2229,26 +2481,34 @@ class Portal(object):
                 started, by = "AAP: %s" % (((sf.get("created_by") or {}).get("username")) or "a person there"), ""
             left = (exp - now) if exp is not None else None
             out.append({"id": ap.get("id"), "name": ap.get("name") or "", "description": str(ap.get("description") or "")[:300], "created": ap.get("created") or "",
-                        "timeout": ap.get("approval_expiration") or "", "workflow_job": int(wid), "workflow": wj.get("name", ""),
+                        "timeout": ap.get("approval_expiration") or "", "workflow_job": wid, "workflow": wj.get("name", ""),
                         "action": a["name"] if a else "", "title": a["title"] if a else (wj.get("name") or ""),
                         "requested_by": by, "values": rec.get("values") or {}, "launched_in": started,
-                        "time_left": dur_text(left) if left is not None else "", "report": self._report_link(int(wid)) if cn else None,
+                        "time_left": dur_text(left) if left is not None else "", "report": info.get("report") if cn else None,
+                        "plan": info.get("plan") if cn else None,
                         "can_approve": self._can_approve(ap),
                         "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
         for a in out:
             a["self"] = bool(cn) and a["requested_by"] == cn
             a["may_decide"] = cn in self.cfg.approvers and not (a["self"] and not self.cfg.self_approval) and a["can_approve"]
-            a["reason"] = ("" if a["may_decide"] else
-                           "Only the approvers decide - decide it in AAP." if cn not in self.cfg.approvers else
-                           "You started this run, so another approver decides (portal_allow_self_approval: false)." if a["self"] and not self.cfg.self_approval else
-                           "The portal's account has no Approve role on it - decide it in AAP.")
+            # 1.92.0: why not, in words the person can act on - the setting named
+            a["why"] = ("" if a["may_decide"] else "approvers" if cn not in self.cfg.approvers else
+                        "self" if a["self"] and not self.cfg.self_approval else "role")
+            a["reason"] = {"": "", "approvers": "You are not in portal_approvers - only the approvers decide.",
+                           "self": "You started this run - another approver decides (portal_allow_self_approval).",
+                           "role": "The portal's account has no Approve role on this workflow - give it Approve in AAP, or decide there."}[a["why"]]
         return 200, {"approvals": out, "self_approval": self.cfg.self_approval}
+
+    def approval_of(self, wid, cn):
+        """1.92.0, the job page: the approval workflow job wid waits for, as approvals() gives it to this person, or None."""
+        code, data = self.approvals(cn)
+        return next((a for a in data.get("approvals", []) if a["workflow_job"] == wid), None) if code == 200 else None
 
     def decide(self, cn, ip, aid, decision):
         if cn not in self.cfg.approvers:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision, "why": "not an approver"})
             return 403, {"error": "You are not on the list of approvers (portal_approvers)."}
-        code, listing = self.approvals()
+        code, listing = self.approvals(fresh=True)          # 1.92.0 review: never the shared 10 s read for a decision
         if code != 200:
             return code, listing
         ap = next((x for x in listing["approvals"] if x["id"] == aid), None)
@@ -2262,12 +2522,16 @@ class Portal(object):
                           "why": "self-approval: the person started this run"})
             return 403, {"error": "You started this run: another approver decides (portal_allow_self_approval: false)."}
         code, data = self.aap.call("POST", "workflow_approvals/%d/%s/" % (aid, decision), {})
+        with self.pend_lock:
+            self.pend = None                            # 1.92.0 review: taken or not, the next look reads AAP again
         if code not in (200, 201, 202, 204):
             self.log.add({"event": "decision_failed", "user": cn, "ip": ip, "approval": aid, "decision": decision,
                           "http": code, "why": site_aap.error_text(data)})
             return 502, {"error": "AAP did not take it (HTTP %s): %s" % (code, site_aap.error_text(data))}
         self.log.add({"event": "decision", "user": cn, "ip": ip, "approval": aid, "decision": decision,
                       "action": ap["action"], "workflow_job": ap["workflow_job"], "requested_by": ap["requested_by"]})
+        with self.lock:
+            self.summaries.clear()
         return 200, {"ok": True, "decision": decision, "workflow_job": ap["workflow_job"]}
 
 
@@ -2464,6 +2728,12 @@ def why_panel(cfg, portal):
                   (("<p class=\"muted-line\">and %d more</p>" % (len(skipped) - 30)) if len(skipped) > 30 else ""))
     else:
         li.append('<li>Skipped: none</li>')
+    hidden = f.get("hidden") or []
+    if hidden:                                          # 1.92.0: the workflow is on the page, not its parts
+        li.append('<li class="hid"><details><summary>Hidden as workflow steps: <b>%d</b></summary><ul>%s</ul>%s'
+                  '<p class="muted-line">The workflow is the card. A step that is a useful report on its own keeps a card with the label <code>%s</code> too.</p></details></li>'
+                  % (len(hidden), "".join('<li><b>%s</b> - %s</li>' % (esc(n), esc(w)) for n, w in hidden[:30]),
+                     ("<p class=\"muted-line\">and %d more</p>" % (len(hidden) - 30)) if len(hidden) > 30 else "", esc(cfg.label_alone)))
     if cfg.logo_why:
         li.append('<li class="muted-line">The logo is not shown: %s.</li>' % esc(cfg.logo_why.rstrip(".")))
     if not f.get("labelled") and cfg.publish_org and not f.get("no_execute") and not f.get("no_execute_why"):
@@ -3018,6 +3288,55 @@ def job_results_html(buttons):
         '<a class="btn%s" href="%s" target="_blank" rel="noopener">%s%s</a>' % (" pri" if x["primary"] else "", esc(x["url"]), esc(x["label"]), icon("arrow")) for x in buttons)
 
 
+CHEV = '<svg class="ic chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+LEVEL_CHIP = {"critical": ("bad", "s-critical", "Critical"), "warning": ("wait", "s-warning", "Warning"), "low": ("skip", "s-low", "Low"), "info": ("skip", "s-info", "Info")}
+WHY_HTML = {"approvers": "<b>You are not in <code>portal_approvers</code></b> - only the approvers decide.",
+            "self": "<b>You started this run</b> - another approver decides (<code>portal_allow_self_approval</code>).",
+            "role": "<b>The portal's account has no Approve role on this workflow</b> - give it Approve in AAP, or decide there."}
+
+
+def plan_html(plan):
+    """1.92.0: "What it will change" - closed, one line of count chips; open (in place, no script needed: details), each host's items with their level,
+    then "and N more". The check's own words, as text."""
+    if not plan:
+        return ""
+    chips = "".join('<span class="chip %s">%s%s</span>' % ("n" if k == "n" else LEVEL_CHIP[k][1], "" if k == "n" else icon(LEVEL_CHIP[k][0]), esc(w))
+                    for w, k in plan_chips(plan["counts"]))
+    hosts = "".join('<div class="hg"><div class="hn">%s</div><ul>%s</ul>%s</div>' % (
+        esc(h["host"]), "".join('<li><span class="chip %s">%s%s</span><span>%s</span></li>' % (LEVEL_CHIP[i["level"]][1], icon(LEVEL_CHIP[i["level"]][0]),
+                                                                                         LEVEL_CHIP[i["level"]][2], esc(i["what"])) for i in h["items"]),
+        ('<p class="more">and %d more</p>' % h["more"]) if h["more"] else "") for h in plan["hosts"])
+    more = ('<p class="more">and %d more in the report (the check lists %d here)</p>' % (plan["left_out"], plan["shown"])) if plan["left_out"] else ""
+    return ('<details class="wic"><summary>%s<span class="t">What it will change</span><span class="cnt">%s</span></summary><div class="wicp">%s%s%s</div></details>'
+            % (CHEV, chips, ('<p class="pt">%s</p>' % esc(plan["title"])) if plan["title"] else "", hosts, more))
+
+
+def report_btn(report, cls="btn"):
+    """1.92.0: the check's report as a real button (it was a plain link, easy to miss)."""
+    if not report or not safe_url(report.get("url")):
+        return ""
+    return '<a class="%s" href="%s" target="_blank" rel="noopener">Open the full report %s</a>' % (cls, esc(report["url"]), icon("arrow"))
+
+
+def decide_box_html(cfg, a):
+    """1.92.0: on the job page of a workflow waiting for approval - the check's plan and the decision, with the same rules and code as /portal/approvals
+    (portal_approvers, the Approve role, not one's own run unless portal_allow_self_approval; Sure?; logged). Someone who may not decide sees why and a
+    link to Approvals."""
+    left = ('<span class="left">Times out in %s</span>' % esc(a["time_left"])) if a.get("time_left") else ""
+    plan = plan_html(a.get("plan"))
+    rep = report_btn(a.get("report"))
+    if a.get("may_decide"):
+        act = ('<div class="dbtns" data-aid="%d"><button type="button" class="pri" data-d="approve">Approve</button><button type="button" class="deny" data-d="deny">Deny</button>'
+               '<span class="sp"></span>%s<span class="state" aria-live="polite"></span>'
+               '<span class="log">Logged with your name, the decision and the time. AAP records it as the portal\'s account.</span></div>' % (int(a["id"]), rep))
+    else:
+        act = ('<div class="dwhy">%s<span>%s They decide on <a href="%sapprovals">Approvals</a>.</span></div>%s'
+               % (icon("lock"), WHY_HTML.get(a.get("why"), esc(a.get("reason", ""))), cfg.path, ('<div class="dbtns">%s</div>' % rep) if rep else ""))
+    nothing = "" if plan or rep else '<p class="muted-line">The check left no summary and no report: open the check\'s job below.</p>'
+    return ('<div class="decide" id="decide"><div class="dtop"><span class="eyebrow2">The check\'s plan</span>%s</div>%s%s%s</div>'
+            % (left, ('<div>%s</div>' % plan) if plan else "", nothing, act))
+
+
 def job_pane_html(cfg, portal, cn, jid, via=None):
     """The right pane of the Jobs page for one job - rendered here, so the page shows the latest snapshot without scripts, and the script swaps this
     same HTML in every 3 s while the job runs (data-done tells it to stop)."""
@@ -3031,6 +3350,7 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
     approval_wait = any(s_["word"] == "Waiting for approval" for s_ in pg.get("steps") or [])
     wf = j.get("type") == "workflow_job"
     title = j.get("action_title") or j.get("name") or "Job %d" % jid
+    decide = ""                                         # 1.92.0: the decision box, while it waits for an approval
     if done:
         ok = st == "successful"
         if wf:
@@ -3041,14 +3361,23 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
                   "<b>%s</b> - %s." % ("Failed" if st in ("failed", "error") else esc(st.capitalize()), esc(pg.get("result_line") or "AAP reports the job %s" % st))
         cls, ik = ("ok", "ok") if ok else ("bad", "bad")
     elif approval_wait:
-        msg, cls, ik = "<b>Waiting for approval</b> - an approver must decide before it goes on.", "run", "wait"
+        # 1.92.0: the decision here, in the banner's box - the approval as approvals() gives it to this person
+        appr = portal.approval_of(jid, cn) if wf else None
+        c = ((appr or {}).get("plan") or {}).get("counts") or {}
+        what = (" - the check planned %d change%s on %d host%s." % (c["changes"], "" if c["changes"] == 1 else "s", c["hosts"], "" if c["hosts"] == 1 else "s")) if c.get("changes") else "."
+        if appr and appr.get("may_decide"):
+            msg = "<b>Waiting for your decision</b>%s Approve to apply %s, Deny to stop here." % (esc(what), "them" if c.get("changes") else "it")
+        else:
+            msg = "<b>Waiting for an approver</b>%s Nothing changes until an approver approves." % esc(what)
+        cls, ik = "wait", "wait"
+        decide = decide_box_html(cfg, appr) if appr else ""
     else:
         step = pg.get("now", "").split(" - ")[0].lower()
         msg, cls, ik = "<b>Running</b>%s%s" % ((" - " + esc(step)) if step else "", (" \u00b7 " + esc(pg["hosts_line"])) if pg.get("hosts_line") else ""), "run", "run"
     ring = ring_html(pg, done, approval_wait)
     banner = '<div class="banner2 %s%s">%s<span>%s</span></div>' % (cls, " has-ring" if ring else "", ring or icon(ik), msg)
     nowbox = ""
-    if not done and pg.get("now"):
+    if not done and pg.get("now") and not approval_wait:          # 1.92.0: waiting - the banner and the decision box say it
         pc = pg.get("pct")
         bar = '<progress class="pb" max="100"%s aria-label="Progress, an estimate"></progress>' % ((' value="%d"' % pc) if pc is not None else "")
         nowbox = '<div class="now"><div class="nl">%s<b>Now</b> \u00b7 %s</div>%s%s</div>' % (icon("run"), esc(pg["now"]), bar, ('<p class="muted-line">%s</p>' % esc(note_pct(pc, pg.get("est")))) if pc is not None and pg.get("est") else "")
@@ -3062,14 +3391,17 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
         hosts = '<div><h3>Hosts</h3><div class="hosts">%s</div><p class="muted-line">%s</p></div>' % (chips, esc(pg.get("hosts_line", "")))
     steps = ""
     if pg.get("steps"):
-        rows = "".join('<tr><td>%s</td><td>%s</td><td>%s%s</td><td class="mono">%s</td></tr>' % (
-            esc(s_["name"]), esc(s_["type"]),
+        rows = "".join('<tr%s><td class="ord">%d</td><td>%s</td><td>%s</td><td>%s%s</td><td class="mono">%s</td></tr>' % (
+            ' class="now-row"' if s_["word"] == "Waiting for approval" and not done else "", k + 1, esc(s_["name"]), esc(s_["type"]),
+            # 1.92.0: a check that failed on purpose with its plan - Plan ready, never a red Failed
+            ('<span class="chip s-plan">%sPlan ready</span>' % icon("job")) if s_["word"] == "Plan ready" else
             # 1.79.5: a step still running or waiting in a workflow that is over is not finished - no turning mark
             ('<span class="chip s-info">%sNot finished</span>' % icon("skip")) if done and s_["status"] in ("running", "pending", "waiting", "new") else
             status_chip(s_["status"], s_["word"] == "Waiting for approval") if s_["word"] != "Pending" else '<span class="chip s-info">Pending</span>',
             ('<div class="muted-line">%s</div>' % esc(s_["note"])) if s_["note"] else "",
-            ('<a href="%sjobs/%d?via=%d">%d</a>' % (cfg.path, int(s_["job"]), jid, int(s_["job"]))) if s_.get("job") else "-") for s_ in pg["steps"])
-        steps = '<div><h3>Steps</h3><div class="tw"><table><thead><tr><th>Step</th><th>Type</th><th>Status</th><th>AAP job</th></tr></thead><tbody>%s</tbody></table></div></div>' % rows
+            ('<a href="%sjobs/%d?via=%d">%d</a>' % (cfg.path, int(s_["job"]), jid, int(s_["job"]))) if s_.get("job") else "-") for k, s_ in enumerate(pg["steps"]))
+        steps = ('<div><h3>Steps - in run order</h3><div class="tw"><table><thead><tr><th>#</th><th>Step</th><th>Type</th><th>Status</th><th>AAP job</th></tr></thead>'
+                 '<tbody>%s</tbody></table></div></div>' % rows)
     ev = "".join('<li class="ev %s">%s<span>%s</span></li>' % ("ok" if x["k"] in ("ok", "changed") else "bad" if x["k"] == "bad" else "wait" if x["k"] in ("unreach",) else "skip",
                                                                icon("ok" if x["k"] in ("ok", "changed") else "bad" if x["k"] == "bad" else "wait" if x["k"] == "unreach" else "skip"),
                                                                ("<b>%s</b> - %s" % (esc(x["host"]), esc(x["text"])) if x["host"] else esc(x["text"]))) for x in pg.get("lines") or [])
@@ -3096,11 +3428,14 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
     foot = ('<div class="btns pane-btns"><a class="btn" href="%sjobs/%d%s">%s Refresh</a>%s<button type="button" class="btn" data-copylink>Copy link</button><button type="button" class="btn" data-print>Print</button>%s'
             '<span class="foot" id="upd" data-at="%d">Updated %s%s</span></div>'
             % (cfg.path, jid, ("?via=%d" % via) if via else "", icon("refresh"), again, aap, int(time.time()), esc(time.strftime("%H:%M:%S", time.gmtime())) + " UTC",
-               "" if done else " \u00b7 refreshes every 3 s while it runs"))
-    return ('<section class="card jd" id="jd" data-job="%d"%s data-done="%d" data-status="%s"><div class="hd"><div><h2>%s</h2><p class="muted-line">%s \u00b7 asked for through the portal</p></div>%s</div>'
-            '%s%s%s%s%s%s%s%s%s%s%s%s</section>'
-            % (jid, (' data-via="%d"' % via) if via else "", 1 if done else 0, esc(st), esc(title), "Workflow" if wf else "Job template", status_chip(st, approval_wait and not done),
-               banner, nowbox, hosts, steps, happened, nxt, result, facts, answers, links, tech, foot))
+               "" if done else " \u00b7 refreshes every 10 s while it waits" if approval_wait else " \u00b7 refreshes every 3 s while it runs"))
+    return ('<section class="card jd" id="jd" data-job="%d"%s data-done="%d" data-status="%s"%s><div class="hd"><div><h2>%s</h2><p class="muted-line">%s \u00b7 asked for through the portal</p></div>%s</div>'
+            '%s%s%s%s%s%s%s%s%s%s%s%s%s</section>'
+            % (jid, (' data-via="%d"' % via) if via else "", 1 if done else 0, esc(st),
+               # 1.92.0: waiting for a person - asked again every 10 s, not 3
+               ' data-wait="10000"' if approval_wait and not done else "",
+               esc(title), "Workflow" if wf else "Job template", status_chip(st, approval_wait and not done),
+               banner, decide, nowbox, hosts, steps, happened, nxt, result, facts, answers, links, tech, foot))
 
 
 def jobs_page(cfg, portal, cn, sel=None, scope="mine", via=None):
@@ -3111,7 +3446,7 @@ def jobs_page(cfg, portal, cn, sel=None, scope="mine", via=None):
     right = job_pane_html(cfg, portal, cn, sel, via) if sel is not None else '<section class="card jd" id="jd" data-done="1"><p class="empty">Nothing started yet. Run an action from the Actions page.</p></section>'
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>Jobs</h1><p class="lede">What the portal started, and what AAP says about it now.</p></div>'
             '<div class="two-pane">%s%s</div>' % (job_list_html(cfg, portal, cn, items, sel, scope), right))
-    return shell(cfg, "Jobs", body, cn, page="jobs")
+    return shell(cfg, "Jobs", body, cn, token=portal.token(cn), page="jobs")      # 1.92.0 review: the job page's Approve / Deny post
 
 
 def job_page(cfg, portal, cn, jid, via, scope="mine"):

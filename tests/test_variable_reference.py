@@ -37,6 +37,8 @@ INTERNAL = {
     "act_triage_result": "what the vendored act_triage role leaves behind",
     "ad_lockout_now": "the tests' fixed clock (tests/ad)",
     "ad_report_now": "the tests' fixed clock (tests/ad)",
+    "approval_summary_title": "1.92.0: a check's hand-over to roles/site_approval_summary (include_role vars), not a setting",
+    "approval_summary_items": "1.92.0: a check's hand-over to roles/site_approval_summary (include_role vars), not a setting",
     "stigman_update_plan_windows": "1.83.0: the STIG workflows' Windows check hands its plan on under this name (set_stats with "
                                    "check_stig_update_plan_var); undefined means no Windows plan - a default would pass the no-plan guard",
     "portal_requested_by": "sent only by the site portal at launch; undefined means the portal did not launch the job",

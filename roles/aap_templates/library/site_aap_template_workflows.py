@@ -25,6 +25,7 @@ options:
   fixing: {description: "Check mode: the templates the job would bring right in this run (aap_templates_overwrite) - their steps not refused for what it fixes.", type: list, elements: str, default: []}
   overwrite: {description: "Bring a workflow made by hand, or changed since, to the catalog's (its nodes made again).", type: bool, default: false}
   labels: {description: "The labels each workflow gets (the portal's label and its area's).", type: list, elements: str, default: []}
+  alone_label: {description: "1.92.0: the label that keeps a step template on the portal as a card of its own (portal_label_alone).", type: str, default: portal-alone}
   describe: {description: "{workflow: {name: {does, targets, produces, supports}}, owner, contact} - the description written.", type: dict, default: {}}
   known: {description: Fingerprints keyed by organization ID/kind/name from the latest setup Run with a map., type: dict}
   only: {description: "Only the workflows whose name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
@@ -34,7 +35,7 @@ author: site automation
 '''
 
 RETURN = r'''
-results: {description: "Each: {kind (workflow|label|old), name, action (create|update|unchanged|hand-edited|not ours|skipped|label|
+results: {description: "Each: {kind (workflow|label|old|step label), name, action (create|update|unchanged|hand-edited|not ours|skipped|label|attention|
   old|kept|failed), diff, why}.", type: list}
 problems: {description: What stopped it (the organization not found, AAP not reached)., type: list}
 '''
@@ -174,6 +175,9 @@ class Workflows(Sync):
                     there = self.is_there(api_kind, e["name"])
                     for n in olds:
                         self.old(n, e["name"], there)
+        # 1.92.0: a step template that carries the portal's label is said (never removed): the portal shows the workflow
+        if self.p["labels"]:
+            self.step_labels(self.p["labels"][0], self.p.get("alone_label") or "portal-alone")
 
 
 def main():
@@ -184,6 +188,7 @@ def main():
                            uses=dict(type="dict", default={}), renamed=dict(type="list", elements="str", default=[]),
                            refused=dict(type="list", elements="str", default=[]), project=dict(type="str", required=True),
                            overwrite=dict(type="bool", default=False), labels=dict(type="list", elements="str", default=[]),
+                           alone_label=dict(type="str", default="portal-alone"),
                            describe=dict(type="dict", default={}), known=dict(type="dict", default=None), only=dict(type="list", elements="str", default=[]),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)

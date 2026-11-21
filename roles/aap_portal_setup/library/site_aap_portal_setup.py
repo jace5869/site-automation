@@ -50,6 +50,7 @@ options:
   unpublish: {description: "1.78.1: patterns of the names to take off the portal: the label (publish_label) is removed, never a role.", type: list, elements: str, default: []}
   publish_label: {description: The label that marks a template for the portal (portal_label)., type: str, default: portal}
   area_label: {description: The start of an area label (portal_label_area)., type: str, default: "portal-area:"}
+  alone_label: {description: "1.92.0: the label that keeps a workflow's step on the portal as a card of its own (portal_label_alone): a check that is a useful report alone.", type: str, default: portal-alone}
   publish_organization: {description: "1.78.1c: an organization's name; when set, only the job templates and workflows of that organization are matched by publish and unpublish (with [\"*\"], every one of them). Empty = any organization.", type: str, default: ""}
   publish_max: {description: "1.78.1: the most templates one pattern may match; more, and nothing is changed (the list is said).", type: int, default: 50}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
@@ -68,7 +69,7 @@ import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, setup_description, connection
-from ansible.module_utils.site_aap_workflows import Sync, _q, _norm, fingerprint  # noqa: F401 - fingerprint: as before, for its callers
+from ansible.module_utils.site_aap_workflows import Sync, _q, _norm, fingerprint, NEVER_ALONE  # noqa: F401 - fingerprint: as before, for its callers
 
 MARK = re.compile(r" \[set up by AAP - set up portal actions, fingerprint ([0-9a-f]{12})\]\Z")
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
@@ -316,15 +317,26 @@ class Setup(Sync):
         """[(label id, name)] of a template or workflow (all of them: AAP lists ten in the row)."""
         return [(int(x["id"]), str(x.get("name") or "")) for x in self.all("%s/%d/labels/" % (api_kind, int(row["id"])))]
 
-    def publish_apply(self, plan):
+    def publish_apply(self, plan, steps=None):
         p = self.p
         label, prefix = p.get("publish_label") or "portal", p.get("area_label") or "portal-area:"
+        steps = steps or {}
         uid = None
         if plan["publish"]:
             if p["portal_user"]:
                 uid = self.one_id("users", p["portal_user"], "User")
             for api_kind, row in plan["publish"]:
                 name, oid = str(row.get("name")), int(row["id"])
+                # 1.92.0: the portal shows the workflow, never its parts - a step (or a playbook that only runs a
+                # workflow's plan) is never given the label, even when a pattern matches it
+                if api_kind == "job_templates" and str(row.get("playbook") or "") in NEVER_ALONE:
+                    self.note("label", "%s: %s" % (name, label), "skipped",
+                              why="it runs %s, which does nothing without a workflow's plan: the workflow carries the label" % row.get("playbook"))
+                    continue
+                if api_kind == "job_templates" and oid in steps:
+                    self.note("label", "%s: %s" % (name, label), "skipped",
+                              why="a step of %s: the workflow carries the label, never its steps" % ", ".join(steps[oid]))
+                    continue
                 org = row.get("organization") or ((row.get("summary_fields") or {}).get("organization") or {}).get("id")
                 if not org:                                   # a label is held by an organization: without one, nothing of it is done
                     self.note("label", "%s: %s" % (name, label), "skipped", why="no organization (nothing was done for it)")
@@ -481,7 +493,28 @@ class Setup(Sync):
                 self.grant("organizations", org, p["organization"], ["Auditor"], uid)
         for s in p["schedules"] or []:
             self.schedule(s, ids)
-        self.publish_apply(plan)
+        label = p.get("publish_label") or "portal"
+        # 1.92.0 review: the steps of the built-in workflows too (workflows.yml's and the actions'), not only of the labelled
+        # and the published ones: as AAP has them, and as the spec has them for a workflow this Check would only make
+        builtin = []
+        for w in p["spec"].get("workflows") or []:
+            oid = (wf_ids.get(w["name"]) or (None, False))[0]
+            if oid and oid > 0:
+                builtin.append({"id": oid, "name": w["name"]})
+        for name, a in sorted((p["actions"] or {}).items()):
+            t = (a or {}).get("aap") or {}
+            if t.get("type") == "workflow" and t.get("name") not in [b["name"] for b in builtin]:
+                rows = self.by_name("workflow_job_templates", t.get("name", ""))
+                if len(rows) == 1:
+                    builtin.append({"id": int(rows[0]["id"]), "name": t["name"]})
+        steps = self.portal_steps(label, [r for k, r in plan["publish"] if k == "workflow_job_templates"] + builtin)
+        for w in p["spec"].get("workflows") or []:
+            for n in w.get("nodes") or []:
+                tid = tpl_ids.get(n.get("template"))
+                if tid and tid > 0 and w["name"] not in steps.get(tid, []):
+                    steps.setdefault(tid, []).append(w["name"])
+        self.publish_apply(plan, steps)
+        self.step_labels(label, p.get("alone_label") or "portal-alone", steps)     # 1.92.0: said, never removed
 
 
 def check_spec(spec):
@@ -581,7 +614,7 @@ def main():
                            scorecard=dict(type="dict", default={}),
                            publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""),
                            unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
-                           area_label=dict(type="str", default="portal-area:"), publish_max=dict(type="int", default=50),
+                           area_label=dict(type="str", default="portal-area:"), alone_label=dict(type="str", default="portal-alone"), publish_max=dict(type="int", default=50),
                            describe=dict(type="dict", default={}), known=dict(type="dict", default=None),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)

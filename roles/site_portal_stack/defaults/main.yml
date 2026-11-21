@@ -90,6 +90,7 @@ portal_action_max_hosts: 50                       # 1.78.2: the hosts one built-
 portal_label: portal                              # the AAP label that marks a template for the portal ('' = no discovery)
 portal_discover_seconds: 60                       # how long what was found is kept (10 to 3600)
 portal_label_approval: portal-approval            # a template with this label too is marked "approval" on its card
+portal_label_alone: portal-alone                  # 1.92.0: a workflow step with this label too keeps its own card (a useful report alone)
 portal_area_rules: []                             # 1.78.4: [{match: "Linux - *", area: Linux}] - the area of a found template with no portal-area: label and no area for its playbook (* and ? only, any case, first match wins)
 portal_label_area: "portal-area:"                 # a label that starts with this puts the card in an area (the rest of the label is its name)
 portal_approval_required: []                      # template names that are marked "approval" without the label

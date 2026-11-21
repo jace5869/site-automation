@@ -1835,7 +1835,8 @@ class PlanOnlyEntry(unittest.TestCase):
         for word in ("write.yml", "stigman_update", "action", "main.yml", "include_tasks", "import_tasks"):
             self.assertNotIn(word, text.replace("stigman_update_plan", "plan_var_name"), word)
         roles = [t["ansible.builtin.include_role"] for t in tasks if "ansible.builtin.include_role" in t]
-        self.assertEqual(sorted(r["name"] for r in roles), ["check_stig", "site_email"])     # the attachments check (GET), the report
+        # the attachments check (GET), the report, and (1.92.0) the approval's summary - set_stats only, nothing written anywhere
+        self.assertEqual(sorted(r["name"] for r in roles), ["check_stig", "site_approval_summary", "site_email"])
         self.assertEqual([r.get("tasks_from") for r in roles if r["name"] == "check_stig"], ["update_attachments.yml"])
         mod = [t["site_ckl_import"] for t in tasks if "site_ckl_import" in t]
         self.assertEqual(len(mod), 1)

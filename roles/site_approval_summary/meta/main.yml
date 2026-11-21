@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: site_approval_summary
+  description: What a workflow's check plans to change, as the job artifact site_approval_summary (the site portal's "What it will change").
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

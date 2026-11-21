@@ -139,6 +139,14 @@
       run_once: true
       when: fapolicyd_workflow | default(false) | bool and _fa_workflow.count | int > 0
 
+    - name: Fapolicyd | what it will change, for the approval (site_approval_summary - the site portal's What it will change)
+      ansible.builtin.include_role:
+        name: site_approval_summary
+      vars:
+        approval_summary_title: "fapolicyd - the changes to approve ({{ _fa_workflow.count }} on {{ _fa_workflow.plan | length }} host(s))"
+        approval_summary_items: "{{ _fa_workflow.plan | site_approval_items('warning') }}"
+      when: fapolicyd_workflow | default(false) | bool and _fa_workflow.count | int > 0
+
     - name: Fapolicyd | NEEDS APPROVAL
       ansible.builtin.fail:
         msg: >-

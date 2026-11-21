@@ -142,6 +142,51 @@ controllers' health* (user-approved mockup):
   SAM, alerts and interfaces; the section in every look and the workbook); `tests/ad/run_ad_test.sh` (no credential, read
   live through the role, the email's table, never fails the job, `ad_solarwinds: false`).
 
+## 1.92.0 — 2026-11-21
+
+**To set up:** nothing for the portal (redeploy it: **Site portal - deploy**). Run **AAP - set up portal actions** with
+Job type **Check**: it lists each workflow step that carries the label `portal` (*remove the portal label from X*). Take
+the label off by hand, or add `portal-alone` to a step that is a useful report on its own.
+
+**Site portal - streamline workflows** (the user's mockup; docs/SITE_PORTAL.md, "Approvals" and "Workflows, not
+their parts").
+- **The Actions page shows the workflow, not its parts.** A labelled step of a portal workflow (found in AAP or
+  built in) has no card of its own, unless it also has `portal-alone` (`portal_label_alone`).
+  `playbooks/stigman_update.yml` and `playbooks/workflow_gate.yml` never have one. *Why isn't my template here?*:
+  *Hidden as workflow steps: N*, with each name and its workflow.
+- **AAP - set up portal actions never labels a step.** Its Check, and **AAP - set up job templates**' Check, list each
+  step that carries the label (said, never removed).
+- **The job page of a workflow waiting for approval:**
+  - *The check's plan* under the banner: the time left, *What it will change*, **Open the full report**.
+  - Approve / Deny with *Sure?*, by the same rules and code as `/portal/approvals`; anyone else sees why and a link to
+    Approvals.
+  - The steps in run order (from the workflow's links, not node ids).
+  - A check that failed on purpose with a plan is **Plan ready**, not a red Failed.
+- **Approvals:** each row has *What it will change* and **Open the full report** (a button, not a plain line). Whoever
+  may not decide sees why, by the setting's name: not in `portal_approvers`, started this run
+  (`portal_allow_self_approval`), or no Approve role. At 900 px and narrower each approval is a card.
+- **A toast** when an approval new for you waits: *Approval waiting: the workflow* - once a session, none for the open
+  job page; two at a time (*+N more*), 8 s (held while pointed at), never over the main column.
+- **What it will change** (`site_approval_summary`, `roles/site_approval_summary`): our checks that wait for an approval
+  leave a short summary - fapolicyd, the STIG full and drift scans, the checklist import, the disk clean-up plan, the
+  service look, fapolicyd allow-this. Counts closed; each host's items open; 50 items at most, text only.
+- **Fewer AAP calls:** the pending approvals are read once for every viewer, kept 10 seconds; a new workflow costs three
+  batched reads (its job, its nodes, its check jobs). 30 waiting: 4 calls, then 1 every 10 seconds (was 33, per person).
+- Tests: `tests/test_portal_workflows.py` (in CI) - the discovery rule, the why-list, the setup Check, the call count,
+  the job page, the summary.
+- **Review round:**
+  - a decision reads AAP again (never the shared 10 s read), and an approval timed out since is left out;
+  - a built-in workflow not resolved yet is resolved before its steps are hidden;
+  - an AAP read that did not answer keeps the last whole list;
+  - neither setup job labels a step of a built-in workflow;
+  - the job page's Approve / Deny carry the page's token;
+  - the list reloads after a decision;
+  - a workflow read only in part is read again;
+  - a toast for a run not started in the portal opens Approvals.
+- **On 1.99.0's discovery** (the portal speed release): a template's details are still read in parallel and kept;
+  its labels, playbook and a workflow's steps are kept with them, and a step read that fails still marks the pass
+  incomplete (the last whole list stays).
+
 ## 1.91.0 — 2026-11-21
 
 **To set up: the job template *Security - Java4Shell check (Keycloak)*** ("AAP - set up job templates" makes it: Machine credential,

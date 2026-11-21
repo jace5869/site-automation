@@ -30,6 +30,7 @@ for n, wf, a in (("STIG - recheck one host", 1, 0), ("Disk - clean up (approved)
     tpl(n, wf, a)                      # "fapolicyd - allow this" is left out: its card shows Off
 aap = fake_aap.serve(0, stop=True)
 fake_aap.seed_found()                        # 1.78.0: a template found in AAP (labelled, a survey, a Limit), for its form
+fake_aap.seed_steps()                        # 1.92.0: a labelled workflow with labelled steps (hidden, never alone, portal-alone)
 fake_aap.add_template("workflow_job_templates", "Rotate the service account password across every host of the long-named enclave group", ["portal", "portal-area:Accounts", "portal-approval"],
                       [{"variable": "env", "question_name": "Which environment should this run in, and for how long should it keep going", "type": "multiplechoice", "required": True,
                         "choices": "development\ntest\nproduction", "default": "test"},
@@ -75,6 +76,14 @@ _r = call("/api/actions/stig_recheck", body={"vars": {"target": "web01.example.m
 ids["clean"] = call("/api/actions/disk_cleanup", body={"vars": {"target": "web01.example.mil", "report_job": "907", "finding_id": "disk_full:/var"}})["job_id"]
 ids["restart"] = call("/api/actions/service_restart", body={"vars": {"target": "web03.example.mil", "report_job": "907", "finding_id": "service_down:chronyd"}})["job_id"]
 ST = fake_aap.STATE
+# 1.92.0: a run that waits with a plan - check (failed on purpose, its site_approval_summary and report) -> gate -> approval -> apply
+_rt = next(t for t in T["workflow_job_templates"] if t["name"] == "Service - restart")
+_rt.update(plan=True, arts={"site_report_url": "https://reports.example.mil/service-watch/2026-11-21_job-plan.html",
+                            "site_approval_summary": {"title": "Service restart - what the check planned", "counts": {"changes": 2, "hosts": 1, "critical": 1, "warning": 1},
+                                                      "items": [{"host": "web01.example.mil", "what": "Restart crond (down since 05:52, 3 restarts failed in a row)", "level": "critical"},
+                                                                {"host": "web01.example.mil", "what": "Clear the failed state of crond.service (systemctl reset-failed)", "level": "warning"}]}})
+ids["plan"] = call("/api/actions/service_restart", body={"vars": {"target": "web01.example.mil", "report_job": "907", "finding_id": "service_down:crond"}})["job_id"]
+_rt.update(plan=False, arts=None)
 ids["live"] = call("/api/actions/stig_recheck", body={"vars": {"target": "web03.example.mil"}})["job_id"]      # 1.78.2: one that is really running, for the spinning icons
 for wf in (ids["recheck"], ids["clean"]):                    # done: the approval given, the run's seconds over
     for n in ST["jobs"][wf].get("nodes") or []:
@@ -104,7 +113,8 @@ class Front(BaseHTTPRequestHandler):
                  ("found-wide", "/portal/actions/" + NAME["Rotate the service account password across every host of the long-named enclave group"]),
                  ("jobs", "/portal/jobs"), ("job-running", "/portal/jobs/%d" % ids["live"]), ("jobs-all", "/portal/jobs?scope=all&__who=appr"),
                  ("details", "/portal/actions/disk_cleanup/details"), ("home-failed", "/portal/?show=failed"),
-                 ("pick-two-hosts", "/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil")]
+                 ("pick-two-hosts", "/portal/actions/disk_cleanup?hosts=web01.example.mil,web03.example.mil"),
+                 ("job-plan", "/portal/jobs/%d" % ids["plan"]), ("job-plan-appr", "/portal/jobs/%d?__who=appr" % ids["plan"])]   # 1.92.0
         frames = [(n, u, th, w) for w in widths for th in ("light", "dark") for n, u in pages]
         html_ = ["<!doctype html><meta charset=utf-8><body>"]
         for i, (n, u, th, w) in enumerate(frames):

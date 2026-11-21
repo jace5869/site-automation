@@ -20,6 +20,8 @@ const ICON = {
   run: [["circle", {cx: 8, cy: 8, r: 5.2, "stroke-dasharray": "20 12"}]],
   wait: [["circle", {cx: 8, cy: 8, r: 5.4}], ["path", {d: "M8 5v3.3l2 1.3"}]],
   skip: [["circle", {cx: 8, cy: 8, r: 5.4}], ["path", {d: "M5.6 8h4.8"}]],
+  arrow: [["path", {d: "M6 3.5L10.5 8 6 12.5", "stroke-linejoin": "round"}]],                                     // 1.92.0: the report button
+  lock: [["rect", {x: 3.4, y: 7, width: 9.2, height: 6.2, rx: 1.5}], ["path", {d: "M5.5 7V5.4a2.5 2.5 0 015 0V7"}]],   // 1.92.0: may not decide
 };
 function icon(kind) {
   const s = document.createElementNS(SVG, "svg");
@@ -132,7 +134,8 @@ function initRun(f) {                  // the confirm page's form, or the Run di
 // the first load and bump when they change later; a running row counts its run time; the job's ring moves on from its last fill; a skeleton shows the
 // next page's shape while it loads. All of it is made of elements and attributes - no HTML from strings, no inline style.
 const moves = () => document.documentElement.classList.contains("moves");
-const TOAST_MS = 12000;                       // a toast that closes by itself; portal.css draws its time left over the same 12 s
+const TOAST_MS = 8000;                        // a toast that closes by itself (1.92.0: 8 s, was 12); portal.css draws its time left over the same 8 s
+const TOAST_SHOWN = 2;                        // 1.92.0: toasts shown at once; the rest wait ("+N more")
 function bump(node) {
   if (!moves()) return;
   node.classList.remove("mv-bump");
@@ -243,6 +246,15 @@ function jobsPage() {
   let pane = $("jd"), wait = 3000, timer = 0, busy = false, last = 0;
   if (!pane) return;
   ringIn(pane);
+  // 1.92.0: the job page's Approve / Deny (the server drew them for an approver who may decide): the same question and call as Approvals
+  const decideBox = () => {
+    const row = pane.querySelector("#decide .dbtns[data-aid]");
+    if (!row || row.dataset.wired) return;
+    row.dataset.wired = "1";
+    decider(row, +row.dataset.aid, () => { last = 0; wait = 0; tick(); });
+  };
+  decideBox();
+  if (+pane.dataset.wait) wait = +pane.dataset.wait;
   clock();
   document.addEventListener("visibilitychange", clock);
   $("jrows").addEventListener("click", (ev) => {              // 1.87.0: another job picked - its pane's shape while its page loads
@@ -311,12 +323,19 @@ function jobsPage() {
         let stale = false;
         if (np && np.dataset.error) stale = true;                                // AAP could not say just now: the pane stays as it was
         else if (np && !pane.dataset.skel) {
-          const was = np.dataset.job === pane.dataset.job ? ringFrom(pane) : undefined;
-          pane.replaceWith(document.importNode(np, true)); pane = $("jd");
+          const same = np.dataset.job === pane.dataset.job;
+          const was = same ? ringFrom(pane) : undefined;
+          const fresh = document.importNode(np, true);
+          // 1.92.0: the decision box stays as the person left it - a question being answered is not swapped away; an open panel stays open
+          const oldBox = same && pane.querySelector("#decide"), newBox = fresh.querySelector("#decide");
+          if (oldBox && newBox && oldBox.dataset.hold) newBox.replaceWith(oldBox);
+          else if (oldBox && newBox && oldBox.querySelector("details.wic[open]") && newBox.querySelector("details.wic")) newBox.querySelector("details.wic").open = true;
+          pane.replaceWith(fresh); pane = $("jd");
           ringIn(pane, was);
+          decideBox();
         }
         putList(doc.querySelector("#jl"));
-        wait = stale ? Math.min(Math.max(wait * 2, 6000), 30000) : (paneLive() ? 3000 : 6000);
+        wait = stale ? Math.min(Math.max(wait * 2, 6000), 30000) : (paneLive() ? (+pane.dataset.wait || 3000) : 6000);
       }
     } catch (e) { wait = Math.min(wait * 2, 30000); }                       // a failed answer: ask again later, never stop for good
     busy = false;
@@ -656,11 +675,125 @@ function rememberRunning(id) {
   } catch (e) { /* no memory in this browser: the toast needs a look while it runs */ }
 }
 
+// ---- 1.92.0: Approve / Deny with one more question, in place (Sure? Yes, approve / Back) - the Approvals page's rows and the job page's box alike.
+// row: where the buttons are drawn; after(d): what follows a decision AAP took (the list read again, the job's pane asked again).
+function decider(row, aid, after) {
+  const msg = el("span", "state");
+  msg.setAttribute("aria-live", "polite");
+  const box = row.closest(".decide");
+  const keep = row.querySelector(".log"), rep = row.querySelector("a.btn");
+  const hold = (on) => { if (box) { if (on) box.dataset.hold = "1"; else delete box.dataset.hold; } };
+  const draw = () => {
+    hold(false);
+    row.replaceChildren();
+    for (const [d, label] of [["approve", "Approve"], ["deny", "Deny"]]) {
+      const b = el("button", d === "deny" ? "deny" : "pri", label);
+      b.type = "button";
+      b.addEventListener("click", () => confirmIt(d));
+      row.append(b);
+    }
+    if (rep) row.append(el("span", "sp"), rep);
+    row.append(msg);
+    if (keep) row.append(keep);
+  };
+  const confirmIt = (d) => {
+    hold(true);                                                   // the job page's pane is not swapped under a question
+    row.replaceChildren();
+    const yes = el("button", d === "deny" ? "deny" : "pri", d === "approve" ? "Yes, approve" : "Yes, deny");
+    const back = el("button", "", "Back");
+    yes.type = back.type = "button";
+    row.append(el("span", "chip s-warning", "Sure?"), yes, back, msg);
+    if (keep) row.append(keep);
+    back.addEventListener("click", draw);
+    yes.focus();
+    yes.addEventListener("click", async () => {
+      for (const x of row.querySelectorAll("button")) x.disabled = true;
+      msg.className = "state";
+      msg.textContent = (d === "approve" ? "Approving" : "Denying") + "…";
+      try {
+        await post("api/approvals/" + aid + "/" + d, {});
+        msg.textContent = (d === "approve" ? "Approved" : "Denied") + ". The workflow goes on in AAP.";
+        row.replaceChildren(msg);                                 // the question is answered: no Sure? left to hold the list (1.92.0 review)
+        hold(false);
+        setTimeout(() => after(d), 1500);
+      } catch (e) {
+        msg.textContent = e.message;
+        msg.className = "state bad";
+        for (const x of row.querySelectorAll("button")) x.disabled = false;
+      }
+    });
+  };
+  draw();
+}
+
+// 1.92.0: "What it will change" - closed, one line of count chips; open, each host's items with their level (as the job page draws it: plan_html)
+const LEVEL = {critical: ["bad", "s-critical", "Critical"], warning: ["wait", "s-warning", "Warning"], low: ["skip", "s-low", "Low"], info: ["skip", "s-info", "Info"]};
+function chev() {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("class", "ic chev"); s.setAttribute("viewBox", "0 0 16 16"); s.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", "M6 4l4 4-4 4"); p.setAttribute("fill", "none"); p.setAttribute("stroke", "currentColor"); p.setAttribute("stroke-width", "1.8");
+  p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+  s.append(p);
+  return s;
+}
+function planEl(plan) {
+  if (!plan) return null;
+  const c = plan.counts || {};
+  const d = el("details", "wic"), sm = el("summary"), cnt = el("span", "cnt");
+  const words = [[c.changes + " change" + (c.changes === 1 ? "" : "s"), ""], [c.hosts + " host" + (c.hosts === 1 ? "" : "s"), ""]];
+  for (const k of ["critical", "warning"]) if (c[k]) words.push([c[k] + " " + k, k]);
+  for (const [w, k] of words) {
+    const ch = el("span", "chip " + (k ? LEVEL[k][1] : "n"));
+    if (k) ch.append(icon(LEVEL[k][0]));
+    ch.append(document.createTextNode(w));
+    cnt.append(ch);
+  }
+  sm.append(chev(), el("span", "t", "What it will change"), cnt);
+  const body = el("div", "wicp");
+  if (plan.title) body.append(el("p", "pt", plan.title));
+  for (const h of plan.hosts || []) {
+    const g = el("div", "hg"), ul = el("ul");
+    g.append(el("div", "hn", h.host));
+    for (const it of h.items || []) {
+      const lv = LEVEL[it.level] || LEVEL.info, li = el("li"), ch = el("span", "chip " + lv[1]);
+      ch.append(icon(lv[0]), document.createTextNode(lv[2]));
+      li.append(ch, el("span", "", it.what));
+      ul.append(li);
+    }
+    g.append(ul);
+    if (h.more) g.append(el("p", "more", "and " + h.more + " more"));
+    body.append(g);
+  }
+  if (plan.left_out) body.append(el("p", "more", "and " + plan.left_out + " more in the report (the check lists " + plan.shown + " here)"));
+  d.append(sm, body);
+  return d;
+}
+// 1.92.0: why someone may not decide, with the setting's name to search for (the service says which: approvers, self, role)
+function whyEl(a) {
+  const box = el("div", "dwhy"), t = el("span");
+  const code = (x) => el("code", "", x);
+  if (a.why === "approvers") t.append(el("b", "", "You are not in "), code("portal_approvers"), document.createTextNode(" - only the approvers decide."));
+  else if (a.why === "self") t.append(el("b", "", "You started this run"), document.createTextNode(" - another approver decides ("), code("portal_allow_self_approval"), document.createTextNode(")."));
+  else if (a.why === "role") t.append(el("b", "", "The portal's account has no Approve role on this workflow"), document.createTextNode(" - give it Approve in AAP, or decide there."));
+  else t.textContent = a.reason || "Decide it in AAP.";
+  box.append(icon("lock"), t);
+  return box;
+}
+function reportEl(rep, cls) {
+  if (!rep || !/^https?:\/\//.test(rep.url)) return null;
+  const a = el("a", cls || "btn sm2", "Open the full report ");
+  a.href = rep.url; a.target = "_blank"; a.rel = "noopener";
+  a.append(icon("arrow"));
+  return a;
+}
+
 // ---- approvals: every workflow approval waiting in AAP that the portal's account can see; Approve / Deny (with one more question, in place) for the approvers
 function approvalsPage() {
   const box = $("approvals");
   if (!box) return;
   const approver = box.dataset.approver === "1";
+  const open = new Set();                                        // the panels open across the 15 s reads
   async function load() {
     let r;
     try {
@@ -670,6 +803,7 @@ function approvalsPage() {
       $("a-status").className = "status bad";
       return;
     }
+    if (box.querySelector(".decs .chip.s-warning")) return;      // someone is answering Sure?: the list is read again after
     const list = r.approvals || [];
     const mineN = list.filter((a) => a.may_decide).length;
     $("a-status").textContent = list.length ? list.length + " waiting" + (approver ? ", " + mineN + " for you to decide here." : ".") : "Nothing is waiting for a decision.";
@@ -689,59 +823,44 @@ function approvalsPage() {
       who.append(el("div", "mono", a.requested_by || a.launched_in || "not through the portal"), el("div", "sub", a.requested_by ? (a.launched_in || "") : ""));
       const run = el("td");
       run.append(wf, el("div", "sub", vals));
-      if (a.report && /^https?:\/\//.test(a.report.url)) {
-        const rl = el("a", "", a.report.label);
-        rl.href = a.report.url; rl.target = "_blank"; rl.rel = "noopener";
-        run.append(el("div", "sub", "Its report: "), rl);
+      const apw = el("div", "apw"), plan = planEl(a.plan), rep = reportEl(a.report);
+      let wrow = null;
+      if (plan) {
+        apw.append(plan);
+        // wide: the open panel is a row of its own under the approval (the whole width); narrow (cards): in place
+        plan.addEventListener("toggle", () => {
+          if (plan.open) {
+            open.add(a.id);
+            wrow = el("tr", "wicrow" + (a.may_decide ? " hot-warning" : ""));
+            const td = el("td");
+            td.colSpan = 5;
+            td.append(plan.querySelector(".wicp").cloneNode(true));
+            wrow.append(td);
+            tr.after(wrow);
+          } else {
+            open.delete(a.id);
+            if (wrow) wrow.remove();
+            wrow = null;
+          }
+        });
       }
+      if (rep) { const d = el("div"); d.append(rep); apw.append(d); }
+      if (!plan && !rep) apw.append(el("div", "sub", "The check left no summary and no report."));
+      else if (!plan) apw.append(el("div", "sub", "The check left no summary: the report has the plan."));
+      run.append(apw);
       const since = el("td", "mono nw");
       since.append(el("div", "", when(a.created_text)), el("div", "sub", a.time_left ? a.time_left + " left" : (a.timeout_text ? "Times out " + when(a.timeout_text) : "")));
-      const act = el("td", "nw");
+      const act = el("td", "nw decs");
       if (a.may_decide) {
         const row = el("div", "row-btns");
-        const msg = el("span", "state");
-        msg.setAttribute("aria-live", "polite");
-        const draw = () => {
-          row.replaceChildren();
-          for (const [d, label] of [["approve", "Approve"], ["deny", "Deny"]]) {
-            const b = el("button", d === "deny" ? "deny" : "pri", label);
-            b.type = "button";
-            b.addEventListener("click", () => confirmIt(d));
-            row.append(b);
-          }
-          row.append(msg);
-        };
-        const confirmIt = (d) => {                                    // one more question, in place: Yes, approve / Back
-          row.replaceChildren();
-          const yes = el("button", d === "deny" ? "deny" : "pri", d === "approve" ? "Yes, approve" : "Yes, deny");
-          const back = el("button", "", "Back");
-          yes.type = back.type = "button";
-          row.append(el("span", "chip s-warning", "Sure?"), yes, back, msg);
-          back.addEventListener("click", draw);
-          yes.focus();
-          yes.addEventListener("click", async () => {
-            for (const x of row.querySelectorAll("button")) x.disabled = true;
-            msg.textContent = (d === "approve" ? "Approving" : "Denying") + "…";
-            try {
-              await post("api/approvals/" + a.id + "/" + d, {});
-              msg.textContent = (d === "approve" ? "Approved" : "Denied") + ". The workflow goes on in AAP.";
-              setTimeout(load, 1500);
-            } catch (e) {
-              msg.textContent = e.message;
-              msg.className = "state bad";
-              for (const x of row.querySelectorAll("button")) x.disabled = false;
-            }
-          });
-        };
-        draw();
+        decider(row, a.id, () => load());
         act.append(row);
       } else {
-        const lock = el("span", "state lockline");
-        lock.append(icon("skip"), document.createTextNode(" " + (a.reason || "Decide it in AAP.")));
-        act.append(lock);
+        act.append(whyEl(a));
       }
       tr.append(what, who, run, since, act);
       tb.append(tr);
+      if (plan && open.has(a.id)) plan.open = true;
     }
     const th = (t) => el("th", "", t);
     const head = el("thead");
@@ -774,18 +893,56 @@ function liveBadges() {
   const bJobs = badge("jobs"), bAppr = badge("approvals");
   let box = null, fails = 0, timer = 0;
   const key = "site-portal-jobs";
-  const toast = (title, text, bad, id) => {
+  // 1.92.0: at most TOAST_SHOWN at a time (the rest wait, "+N more"), bottom right in a gutter the page leaves free while one
+  // shows (html.toasting; bottom centre at 900 px and narrower); one that closes by itself waits while the pointer or the
+  // keyboard is on it
+  const queue = [];
+  let more = null;
+  const tidy = () => {
+    if (queue.length && box && box.children.length - (more ? 1 : 0) < TOAST_SHOWN) put(queue.shift());
+    if (queue.length) {
+      if (!more) { more = el("div", "tmore"); box.append(more); }
+      more.textContent = "+" + queue.length + " more";
+    } else if (more) { more.remove(); more = null; }
+    place();
+  };
+  const put = (t) => {
+    box.insertBefore(t, more);
+    if (t.classList.contains("timed")) {
+      let left = TOAST_MS, at = Date.now(), timer = setTimeout(() => close(t), left);
+      const hold = () => { clearTimeout(timer); left -= Date.now() - at; t.classList.add("held"); };
+      const go = () => { if (t.contains(document.activeElement) || t.matches(":hover")) return; at = Date.now(); t.classList.remove("held"); timer = setTimeout(() => close(t), Math.max(left, 1500)); };
+      t.addEventListener("mouseenter", hold); t.addEventListener("focusin", hold);
+      t.addEventListener("mouseleave", go); t.addEventListener("focusout", () => setTimeout(go, 0));
+    }
+  };
+  const close = (t) => { t.remove(); tidy(); };
+  // where the stack goes, so it never covers the page's main column: 1500 px and wider, a gutter on the right (html.toasting);
+  // the Jobs page's two columns, over the job list (bottom left); any other page, in the page under its heading; 900 px and
+  // narrower, bottom centre
+  const place = () => {
+    if (!box) return;
+    const w = window.innerWidth, two = !!document.querySelector(".two-pane") && w > 1000;
+    const at = w <= 900 ? "tb" : w >= 1500 ? "tr" : two ? "tl" : "ti";
+    box.className = "toasts " + at;
+    const main = document.querySelector("main"), hero = main && main.querySelector(".hero");
+    if (at === "ti" && main) { if (box.parentNode !== main) (hero ? hero.after(box) : main.prepend(box)); }
+    else if (box.parentNode !== document.body) document.body.append(box);
+    document.documentElement.classList.toggle("toasting", at === "tr" && !!box.querySelector(".toast"));
+  };
+  let rz = 0;
+  window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(place, 150); });
+  const toast = (title, text, bad, id, label, kind, href) => {
     if (!box) { box = el("div", "toasts"); box.setAttribute("role", "status"); box.setAttribute("aria-live", "polite"); document.body.append(box); }
-    const t = el("div", "toast" + (bad ? " bad" : " timed"));
+    const t = el("div", "toast" + (bad ? " bad" : " timed") + (kind ? " " + kind : ""));
     const x = el("button", "tx", "×");
     x.type = "button"; x.setAttribute("aria-label", "Dismiss");
-    x.addEventListener("click", () => t.remove());
-    const a = el("a", "", "Open job " + id);
-    a.href = BASE + "jobs/" + id;
+    x.addEventListener("click", () => close(t));
+    const a = el("a", "", label || "Open job " + id);
+    a.href = BASE + (href || "jobs/" + id);
     t.append(x, el("b", "", title), el("p", "", text), a);
-    box.append(t);
-    while (box.children.length > 3) box.firstChild.remove();
-    if (!bad) setTimeout(() => t.remove(), TOAST_MS);
+    if (box.querySelectorAll(".toast").length < TOAST_SHOWN) put(t); else queue.push(t);
+    tidy();
   };
   const show = (b, n) => {
     if (!b) return;
@@ -816,6 +973,17 @@ function liveBadges() {
         }
       }
       try { localStorage.setItem(key, JSON.stringify(now)); } catch (e) { /* private window: no memory, toasts still work for this page */ }
+      // 1.92.0: an approval new for this person to decide - one toast for each, once in this browser session; none for the one
+      // whose job page is open (its box is there)
+      let shown = [];
+      try { shown = JSON.parse(sessionStorage.getItem("site-portal-approvals") || "[]"); } catch (e) { shown = []; }
+      for (const w of (r.waiting || []).filter((w) => shown.indexOf(w.id) < 0)) {
+        shown.push(w.id);
+        if (document.querySelector('#jd[data-job="' + w.workflow_job + '"]') || document.body.dataset.page === "approvals") continue;
+        toast("Approval waiting: " + w.title, "Job " + w.workflow_job + " waits for your decision" + (w.left ? " - " + w.left + " left." : "."), false, w.workflow_job,
+              "Open it and decide", "appr", w.portal ? "" : "approvals");          // not started here: its job page is not the portal's
+      }
+      try { sessionStorage.setItem("site-portal-approvals", JSON.stringify(shown.slice(-200))); } catch (e) { /* no memory: each page shows them again */ }
       timer = setTimeout(tick, 10000);
     } catch (e) {
       fails += 1;

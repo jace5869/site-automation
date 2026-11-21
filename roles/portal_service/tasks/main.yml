@@ -75,6 +75,15 @@
   run_once: true
   when: portal_service_phase == 'look'
 
+- name: Service | what it will change, for the approval (site_approval_summary - the site portal's What it will change)
+  ansible.builtin.include_role:
+    name: site_approval_summary
+  vars:
+    approval_summary_title: "Restart {{ _ps_name }} on {{ inventory_hostname }} ({{ finding.data.state | default('down') }})"
+    approval_summary_items:
+      - {host: "{{ inventory_hostname }}", what: "Restart {{ _ps_name }} - {{ finding.data.state | default('down') }} in the check", level: critical}
+  when: portal_service_phase == 'look'
+
 - name: Service | the restart, and its status after
   ansible.builtin.include_tasks: "restart_{{ portal_service_os }}.yml"
   when: portal_service_phase == 'restart'

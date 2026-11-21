@@ -18,6 +18,9 @@ import ansible.module_utils  # noqa: E402
 import site_aap  # noqa: E402
 sys.modules.setdefault("ansible.module_utils.site_aap", site_aap)
 ansible.module_utils.site_aap = site_aap
+import site_aap_workflows  # noqa: E402 - 1.92.0: site_aap_templates takes NEVER_ALONE from it
+sys.modules.setdefault("ansible.module_utils.site_aap_workflows", site_aap_workflows)
+ansible.module_utils.site_aap_workflows = site_aap_workflows
 import site_aap_templates as T  # noqa: E402
 
 FIXED = {"check_stig_update_workflow": "true", "check_stig_update_plan_var": "stigman_update_plan_windows"}

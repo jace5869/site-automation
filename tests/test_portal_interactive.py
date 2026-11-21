@@ -131,7 +131,10 @@ class Interactive(unittest.TestCase):
         self.open("approvals")
         self.wait("document.querySelectorAll('#approvals tbody tr').length > 0", "the approvals were drawn")
         self.assertGreater(self.c.js("document.querySelectorAll('#approvals tr.locked').length"), 0)
-        self.assertIn("decide it in AAP", self.c.js("document.querySelector('#approvals tr.locked .lockline').textContent"))
+        # 1.92.0: why, in words to act on - the setting named
+        self.assertEqual(self.c.js("document.querySelector('#approvals tr.locked .dwhy').textContent"),
+                         "You are not in portal_approvers - only the approvers decide.")
+        self.assertEqual(self.c.js("document.querySelector('#approvals tr.locked .dwhy code').textContent"), "portal_approvers")
         self.assertEqual(self.c.js("document.querySelectorAll('#approvals button').length"), 0)
 
     # ---- without scripts: the pages are what they were

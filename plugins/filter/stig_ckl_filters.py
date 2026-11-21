@@ -454,9 +454,35 @@ def stig_collection_routes(hosts, routes=None):
     return out
 
 
+def stig_ckl_approval_items(plan):
+    """1.92.0: the plan an approval writes to STIG Manager (the checklist import's, the STIG scans') in a few words each, for the
+    site portal's "What it will change" (roles/site_approval_summary): [{host, what, level}] - host: the asset. A new asset,
+    a move and a STIG assigned first; then each review: Open of a CAT I rule critical, Open warning, the rest low."""
+    out = []
+    for p in plan or []:
+        if not isinstance(p, dict):
+            continue
+        asset = str(p.get("asset") or "?")
+        kind = p.get("kind")
+        if kind == "create":
+            out.append({"host": asset, "level": "warning", "what": "Create the asset in %s, then write its %d review(s)" % (p.get("collection") or "?", p.get("reviews", 0))})
+        elif kind == "move":
+            out.append({"host": asset, "level": "warning", "what": "Move it from %s to %s, then write its %d review(s)" % (p.get("from") or "?", p.get("collection") or "?", p.get("reviews", 0))})
+        elif kind == "assign":
+            out.append({"host": asset, "level": "warning", "what": "Assign %s %s to it" % (p.get("benchmark") or "the STIG", p.get("revision") or "")})
+        elif not p.get("new_asset"):
+            res = p.get("result")
+            was = (p.get("was") or {}).get("result")
+            out.append({"host": asset, "level": "critical" if res == "fail" and p.get("severity") == "high" else "warning" if res == "fail" else "low",
+                        "what": "%s %s: %s%s" % (p.get("version") or p.get("v") or "?", CAT.get(p.get("severity"), ""), SM_WORD.get(res, res or "?"),
+                                                 " (was %s)" % SM_WORD.get(was, was) if was else " (no review yet)")})
+    return out
+
+
 class FilterModule(object):
     def filters(self):
-        return {"stig_ckl_file_lines": stig_ckl_file_lines, "stig_ckl_lines": stig_ckl_lines, "stig_ckl_report": stig_ckl_report,
+        return {"stig_ckl_approval_items": stig_ckl_approval_items,
+                "stig_ckl_file_lines": stig_ckl_file_lines, "stig_ckl_lines": stig_ckl_lines, "stig_ckl_report": stig_ckl_report,
                 "stig_ckl_settled": stig_ckl_settled, "stig_ckl_move_lines": stig_ckl_move_lines,
                 "stig_ckl_for_attachments": stig_ckl_for_attachments, "stig_ckl_after_attachments": stig_ckl_after_attachments,
                 "stig_collection_routes": stig_collection_routes}

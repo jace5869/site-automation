@@ -129,6 +129,9 @@ aap_templates_credentials:
 ## = no discovery)
 # portal_label: portal
 
+## 1.92.0: a workflow step with this label too keeps its own card (a useful report alone)
+# portal_label_alone: portal-alone
+
 ## a label that starts with this puts the card in an area (the rest of the label is its name)
 # portal_label_area: "portal-area:"
 

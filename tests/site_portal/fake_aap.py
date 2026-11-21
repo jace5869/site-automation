@@ -126,6 +126,13 @@ def job_status(j):
         return j["status"]
     if j["type"] == "workflow_job":
         nodes = [STATE["jobs"][n] for n in j["nodes"] if n in STATE["jobs"]]
+        if any(n["type"] == "workflow_approval" and n.get("status") == "pending" for n in nodes):
+            return "running"                        # 1.92.0: a check that failed on purpose waits at its approval - AAP keeps the workflow running
+        if j.get("links"):                          # 1.92.0: the plan workflow - its check's failure is handled (the gate): the apply decides
+            ap = next(n for n in nodes if n["type"] == "workflow_approval")
+            if ap.get("status") != "successful":
+                return "failed"
+            return {"pending": "running", "waiting": "running"}.get(job_status(nodes[0]), job_status(nodes[0]))
         sts = [job_status(n) for n in nodes]
         if any(s in ("failed", "error") for s in sts):
             return "failed"
@@ -161,6 +168,9 @@ def view(j):
         out["job_template"] = j.get("template_id")
         out["artifacts"] = {"site_report": {"url": "https://reports.example.mil/linux-health/2026-11-15_job-%d.html" % j["id"]},
                             "counts": {"critical": 0, "warning": 1}} if st == "successful" else {}
+        if j.get("arts") is not None and st in ("successful", "failed"):        # 1.92.0: a check's own artifacts (its plan) - all it left
+            out["artifacts"] = dict(j["arts"])
+            return out
         ev = j.get("extra_vars") or {}
         if st in ("successful", "failed") and ev.get("finding_id"):          # part C: a fix's result
             out["artifacts"]["portal_result"] = {"finding_id": ev["finding_id"], "fixed": "true" if st == "successful" else "false",
@@ -183,6 +193,24 @@ def view(j):
 TASKS = ["Disk | Checking free space", "Services | Checking the services", "Time | Checking the clock", "Packages | Listing updates", "Logs | Reading the journal",
          "Net | Checking the links", "Users | Checking the accounts", "Disk | Checking inodes", "Cert | Checking certificates", "Audit | Reading audit rules",
          "Report | Writing the report", "Report | Saving the report"]
+
+
+def node_rows(j):
+    """A workflow job's nodes as AAP lists them: each with its job, its workflow job and its links (success, failure, always - node ids).
+    The node ids are the workflow's own (id * 100 + its place), so the batched read (workflow_job_nodes/) gives the same ids."""
+    rows = []
+    links = j.get("links") or {}
+    for i, nid in enumerate(j["nodes"]):
+        n = STATE["jobs"][nid]
+        lk = links.get(i) or {}
+        st = job_status(n)
+        rows.append({"id": j["id"] * 100 + i, "workflow_job": j["id"], "do_not_run": False,
+                     "success_nodes": [j["id"] * 100 + x for x in lk.get("success", [])],
+                     "failure_nodes": [j["id"] * 100 + x for x in lk.get("failure", [])], "always_nodes": [],
+                     "summary_fields": {
+                         "job": {"id": n["id"], "name": n["name"], "type": n["type"], "status": st, "failed": st == "failed"},
+                         "unified_job_template": {"name": n.get("step_name") or n["name"], "unified_job_type": n["type"]}}})
+    return rows
 
 
 def events(j):
@@ -269,7 +297,7 @@ class H(BaseHTTPRequestHandler):
             more = len(rows) > page * size
             nxt = (BASE + "job_templates/?" + "&".join("%s=%s" % (k, v) for k, v in dict(q, page=str(page + 1)).items())) if more else None
             return self._send(200, {"count": len(rows), "next": nxt, "results": rows[(page - 1) * size:page * size]})
-        if p == "jobs/":                                            # the report jobs: filters playbook, playbook__startswith, status__in, finished__gt
+        if p == "jobs/" and not q.get("id__in"):                    # the report jobs: filters playbook, playbook__startswith, status__in, finished__gt
             rows = list(STATE["reports"]) if AUDITOR else []
             if q.get("playbook"):                                   # AAP's playbook is the path in the project: only the whole path matches
                 rows = [r for r in rows if r["playbook"] == q["playbook"]]
@@ -432,13 +460,19 @@ class H(BaseHTTPRequestHandler):
             j = STATE["jobs"].get(int(m.group(1)))
             if not j:
                 return self._send(404, {"detail": "Not found."})
-            rows = []
-            for i, nid in enumerate(j["nodes"]):
-                n = STATE["jobs"][nid]
-                rows.append({"id": 900 + i, "do_not_run": False, "summary_fields": {
-                    "job": {"id": n["id"], "name": n["name"], "type": n["type"], "status": job_status(n), "failed": job_status(n) == "failed"},
-                    "unified_job_template": {"name": n["name"], "unified_job_type": n["type"]}}})
+            rows = node_rows(j)
             return self._send(200, {"count": len(rows), "results": rows})
+        if p == "workflow_job_nodes/" and q.get("workflow_job__in"):       # 1.92.0: the nodes of several workflow jobs, one call
+            rows = []
+            for i in q["workflow_job__in"].split(","):
+                if i.isdigit() and int(i) in STATE["jobs"]:
+                    rows += node_rows(STATE["jobs"][int(i)])
+            return self._paged_list(q, p, rows)
+        if p in ("workflow_jobs/", "jobs/") and q.get("id__in"):          # 1.92.0: several workflow jobs (or jobs), one call
+            want = "workflow_job" if p == "workflow_jobs/" else "job"
+            rows = [view(STATE["jobs"][int(i)]) for i in q["id__in"].split(",") if i.isdigit() and int(i) in STATE["jobs"]
+                    and STATE["jobs"][int(i)]["type"] == want]
+            return self._paged_list(q, p, rows)
         if p == "workflow_approvals/":
             rows = []
             for a in sorted(STATE["approvals"].values(), key=lambda x: x["created"]):
@@ -484,6 +518,20 @@ class H(BaseHTTPRequestHandler):
                 STATE["jobs"][jid] = {"id": jid, "type": "job", "name": t["name"], "created": now, "limit": limit, "extra_vars": ev, "template_id": t["id"]}
                 return self._send(201, {"job": jid, "id": jid, "ignored_fields": ignored})
             wid = new_id()
+            if t.get("plan"):                       # 1.92.0: check (fails on purpose, with its plan) -> gate -> approval -> apply
+                cid, gid, aid, pid = new_id(), new_id(), new_id(), new_id()
+                STATE["jobs"][cid] = {"id": cid, "type": "job", "name": t["name"] + " - check", "created": now - 60, "limit": limit, "extra_vars": ev,
+                                      "force": t.get("check_status", "failed"), "arts": t.get("arts") or {}}
+                STATE["jobs"][gid] = {"id": gid, "type": "job", "name": "Workflow gate - has a plan", "created": now - 30, "force": "successful", "arts": {}}
+                STATE["jobs"][aid] = {"id": aid, "type": "workflow_approval", "name": "Approve the changes", "created": now, "status": "pending"}
+                STATE["approvals"][aid] = {"id": aid, "name": "Approve the changes", "status": "pending", "created": now, "workflow": wid,
+                                           "description": "Approve to apply the check's plan"}
+                STATE["jobs"][pid] = {"id": pid, "type": "job", "name": t["name"] + " - apply", "created": now, "limit": limit, "extra_vars": ev, "after": aid}
+                # listed apply, approval, gate, check (AAP's node ids need not follow the run): the links give the order
+                STATE["jobs"][wid] = {"id": wid, "type": "workflow_job", "name": t["name"], "created": now - 60, "nodes": [pid, aid, gid, cid],
+                                      "links": {3: {"failure": [2]}, 2: {"success": [1]}, 1: {"success": [0]}},
+                                      "template": t["id"], "extra_vars": ev, "limit": limit}
+                return self._send(201, {"workflow_job": wid, "id": wid, "ignored_fields": ignored})
             nodes = []
             after = None
             if t.get("approval"):
@@ -544,6 +592,28 @@ def seed_found():
     add_template("job_templates", "Quick check (found)", ["portal", "portal-area:Health"], spec, limit=True, description="A quick check, found in AAP.")
     add_template("job_templates", "Run but not labelled", ["other"])
     add_template("job_templates", "Odd survey (found)", ["portal"], [{"variable": "f", "type": "file"}])
+
+
+def seed_steps():
+    """1.92.0: a labelled workflow whose steps carry the label too - 'Linux - fapolicyd - daily' runs 'fapolicyd - check' (labelled: hidden as its step),
+    'STIG Manager - update' (labelled, portal-alone too: never alone - it runs playbooks/stigman_update.yml) and 'Disk - report (step)' (labelled and
+    portal-alone: a useful report on its own, its card stays), and an approval. -> {name: id}."""
+    ids = {}
+    for name, labels, pb in (("fapolicyd - check", ["portal"], "playbooks/fapolicyd.yml"),
+                             ("STIG Manager - update", ["portal", "portal-alone"], "playbooks/stigman_update.yml"),
+                             ("Disk - report (step)", ["portal", "portal-alone"], "playbooks/disk_report.yml")):
+        ids[name] = add_template("job_templates", name, labels, description="A step of the fapolicyd workflow.")
+        STATE["templates"]["job_templates"][-1]["playbook"] = pb
+    steps = [ids["fapolicyd - check"], None, ids["STIG Manager - update"], ids["Disk - report (step)"]]
+    nodes = []
+    for i, jid in enumerate(steps):
+        u = {"id": 7900 + i, "name": "Approve the changes", "unified_job_type": "workflow_approval"} if jid is None else \
+            {"id": jid, "name": next(t["name"] for t in STATE["templates"]["job_templates"] if t["id"] == jid), "unified_job_type": "job"}
+        nodes.append({"id": 7800 + i, "unified_job_template": u["id"], "success_nodes": [7800 + i + 1] if i + 1 < len(steps) else [], "failure_nodes": [],
+                      "always_nodes": [], "summary_fields": {"unified_job_template": u}})
+    ids["Linux - fapolicyd - daily"] = add_template("workflow_job_templates", "Linux - fapolicyd - daily", ["portal", "portal-area:Linux"],
+                                                    description="Checks fapolicyd's denials and applies the plan after an approval.", nodes=nodes)
+    return ids
 
 
 if os.environ.get("FAKE_AAP_SEED_FOUND") == "1":

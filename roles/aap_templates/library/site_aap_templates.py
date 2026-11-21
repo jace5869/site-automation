@@ -59,6 +59,7 @@ import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, connection
+from ansible.module_utils.site_aap_workflows import NEVER_ALONE
 
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user with Admin on the organization - it makes job templates)')
@@ -202,6 +203,30 @@ class Templates(object):
         self.results.append({"name": name, "action": action, "diff": diff or {}, "why": why})
         return self.results[-1]
 
+    def workflow_steps(self):
+        """1.92.0 review: {template name: [the workflows it is a step of]} - the portal's own workflows
+        (roles/site_portal_stack/files/workflows.yml) and the catalog's (aap/job_templates.yml), as the repository has them."""
+        out = {}
+        root = self.p.get("variables_dir") or ""
+        try:
+            import yaml
+        except ImportError:                              # pragma: no cover - PyYAML comes with ansible-core
+            return out
+        for rel, key in (("roles/site_portal_stack/files/workflows.yml", "workflows"), ("aap/job_templates.yml", "workflows")):
+            path = os.path.join(root, rel)
+            if not root or not os.path.isfile(path):
+                continue
+            with open(path) as fh:
+                doc = yaml.safe_load(fh) or {}
+            for w in doc.get(key) or []:
+                for n in (w or {}).get("nodes") or []:
+                    t = (n or {}).get("template")
+                    if t:
+                        names = out.setdefault(t, [])
+                        if w.get("name") not in names:
+                            names.append(w.get("name"))
+        return out
+
     def write(self, method, path, body=None):
         code, d = self.api.call(method, path, body)
         if code not in (200, 201, 202, 204):
@@ -289,6 +314,8 @@ class Templates(object):
             if t.get("organization") == self.org_id:
                 self.tid.setdefault(t.get("name"), int(t["id"]))
         to_label = []                          # the catalog entries to label (label_portal)
+        steps_of = self.workflow_steps()       # 1.92.0 review: the steps of every workflow we make - never labelled
+        self.step_skip = {}
         for e in self.p["catalog"]:
             if not self.wanted(e):
                 continue
@@ -301,7 +328,13 @@ class Templates(object):
             # the portal's label, its steps are not jobs to launch alone
             if (self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal"))
                     or (ours and "labels" in self.matched(e))) and name not in (self.p.get("needed") or []):
-                to_label.append(e)
+                # 1.92.0 review: a step of a workflow (the portal's own, the catalog's) or a playbook that only runs a workflow's
+                # plan is never labelled - the portal shows the workflow, not its parts
+                if name in steps_of or str(e.get("playbook") or "") in NEVER_ALONE:
+                    self.step_skip[name] = ("not labelled portal: a step of %s - the workflow carries the label" % ", ".join(steps_of[name])
+                                            if name in steps_of else "not labelled portal: it runs %s, which does nothing without a workflow's plan" % e.get("playbook"))
+                else:
+                    to_label.append(e)
             if e.get("made_by") and ours and name in (self.p.get("needed") or []):
                 # 1.83.0 (Codex P1, final pass): a step there under its catalog name is checked as one under another name -
                 # a "Workflow gate - has a plan" that runs the update would get the plan before the approval
@@ -720,6 +753,10 @@ def main():
     order = dict((e.get("name"), i) for i, e in enumerate(p["catalog"]))
     s.results.sort(key=lambda r: order.get(r["name"], 10 ** 6))
     changed = any(r["action"] in ("create", "fix") or r.get("labels") for r in s.results) or getattr(s, "wrote", False)
+    for r in s.results:                                  # 1.92.0 review: a step not labelled - said on its own line
+        why = (getattr(s, "step_skip", {}) or {}).get(r.get("name"))
+        if why:
+            r["also"] = (r["also"] + "; " + why) if r.get("also") else why
     module.exit_json(changed=changed, results=s.results, problems=s.problems, uses=s.uses, renamed=s.renamed, refused=s.refused)
 
 

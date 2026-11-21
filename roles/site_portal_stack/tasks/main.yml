@@ -569,6 +569,7 @@
       PORTAL_LABEL: "{{ portal_label }}"
       PORTAL_DISCOVER_SECONDS: "{{ portal_discover_seconds }}"
       PORTAL_LABEL_APPROVAL: "{{ portal_label_approval }}"
+      PORTAL_LABEL_ALONE: "{{ portal_label_alone }}"
       PORTAL_LABEL_AREA: "{{ portal_label_area }}"
       PORTAL_AREA_RULES: "{{ portal_area_rules | default([]) | to_json }}"
       PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"

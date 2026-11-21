@@ -183,6 +183,16 @@
       run_once: true
       when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0 and check_stig_update_plan_var | default('stigman_update_plan') != 'stigman_update_plan'
 
+    # 1.92.0: what the approval will write, in a few lines (site_approval_summary - the site portal's What it will change);
+    # a host with no asset is planned in full below, and that plan's summary (this one first) is the job's last word
+    - name: STIG Manager - what it will change, for the approval (site_approval_summary)
+      ansible.builtin.include_role:
+        name: site_approval_summary
+      vars:
+        approval_summary_title: "STIG drift scan - what the approval writes to STIG Manager"
+        approval_summary_items: "{{ _stig_update_plan | stig_ckl_approval_items }}"
+      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
+
     # 1.73.0 (check_stig_rule_texts): each rule the tables above list, with DISA's check text and fix text - from STIG
     # Manager (read-only, once per STIG revision) or Evaluate-STIG's checklist (roles/check_stig/tasks/texts.yml)
     - name: Each listed rule's check text and fix text (check_stig_rule_texts)
