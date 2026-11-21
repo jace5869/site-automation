@@ -7,6 +7,13 @@
     var t = localStorage.getItem("site-report-theme");
     if (t === "light" || t === "dark") root.setAttribute("data-theme", t);
   } catch (e) { /* no storage: Auto */ }
+  // 1.87.0: motion, decided before the page is drawn (so nothing shows and then jumps to its start): portal_motion always (html.motion-always) moves,
+  // off (html.motion-off) never, auto moves unless the system asks for less - and follows that setting when it changes. portal.css: html.moves.
+  var cl = root.classList;
+  var mq = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  var motion = function () { cl.toggle("moves", cl.contains("motion-always") || (!cl.contains("motion-off") && !(mq && mq.matches))); };
+  motion();
+  if (mq && mq.addEventListener) mq.addEventListener("change", motion);
   document.addEventListener("DOMContentLoaded", function () {
     var g = document.getElementById("theme");
     if (!g) return;

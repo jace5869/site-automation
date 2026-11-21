@@ -57,9 +57,11 @@ portal_public_url: https://stigman.example.mil/portal/
 ## Add one only after a test
 # portal_stigman_open_versions: ["1.6.16", "1.6.17", "1.6.18"]
 
-## 1.78.3: the running icons and the progress stripe turn. auto: unless the system asks for reduced
-## motion (as now); always: even then (their image may turn animations off by policy - use it only
-## if the site agrees); off: never. Print is still in every mode. auto | always | off
+## 1.78.3: the running icons and the progress stripe turn; 1.87.0: also the pages' motion - cards
+## and tiles come in, counts go up, a card lifts, the job's ring moves, toasts slide in, panels open
+## smoothly. auto: unless the system asks for reduced motion (as now); always: even then (their
+## image may turn animations off by policy - use it only if the site agrees); off: never. Print is
+## still in every mode. auto | always | off
 # portal_motion: auto
 
 ## the pages' title

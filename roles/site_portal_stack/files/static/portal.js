@@ -128,6 +128,71 @@ function initRun(f) {                  // the confirm page's form, or the Run di
   });
 }
 
+// ---- 1.87.0: motion (portal.css, html.moves - portal-theme.js sets it from portal_motion and the system's reduced-motion request). Counts go up on
+// the first load and bump when they change later; a running row counts its run time; the job's ring moves on from its last fill; a skeleton shows the
+// next page's shape while it loads. All of it is made of elements and attributes - no HTML from strings, no inline style.
+const moves = () => document.documentElement.classList.contains("moves");
+const TOAST_MS = 12000;                       // a toast that closes by itself; portal.css draws its time left over the same 12 s
+function bump(node) {
+  if (!moves()) return;
+  node.classList.remove("mv-bump");
+  void node.offsetWidth;                      // so the bump starts again
+  node.classList.add("mv-bump");
+}
+function countUp(node) {                      // "All 12" -> All 0 ... All 12; what is not a number stays
+  const tn = Array.from(node.childNodes).find((n) => n.nodeType === 3 && /\d/.test(n.nodeValue));
+  const m = tn && /^(\D*)(\d+)(.*)$/.exec(tn.nodeValue);
+  if (!m || !moves() || !Number(m[2])) return;
+  const to = Number(m[2]), t0 = performance.now();
+  tn.nodeValue = m[1] + "0" + m[3];
+  const step = (t) => {
+    if (!tn.isConnected) return;              // the page put a new count in meanwhile: that one is final
+    const p = Math.min(1, Math.max(0, (t - t0) / 700));
+    tn.nodeValue = m[1] + Math.round(to * (1 - Math.pow(1 - p, 3))) + m[3];
+    if (p < 1) requestAnimationFrame(step); else bump(node);
+  };
+  requestAnimationFrame(step);
+}
+function runTimes() {                         // the rows of running jobs: "running · 7 min 5 s", from their start (data-t0, UTC seconds) - read again each time, so rows swapped in count too
+  const now = Date.now() / 1000;
+  for (const li of document.querySelectorAll("#jrows li[data-t0]")) {
+    const sm = li.querySelector(".r small");
+    if (!sm || li.dataset.st !== "running") continue;
+    sm.classList.add("mv-el");
+    sm.textContent = "running \u00b7 " + took(Math.max(0, now - Number(li.dataset.t0)));
+  }
+}
+function ringFrom(pane) {                     // the fill the ring shows now (its stroke-dashoffset), or null
+  const a = pane && pane.querySelector(".ring .a");
+  return a ? a.getAttribute("stroke-dashoffset") : null;
+}
+function ringIn(pane, from) {                 // the service drew the ring at its fill; with motion it moves there from "from" (empty on the first load)
+  const r = pane && pane.querySelector(".ring");
+  if (!r || !moves() || from === null) return;
+  const a = r.querySelector(".a"), to = r.dataset.o;
+  if (from === undefined) from = a.getAttribute("stroke-dasharray");
+  if (String(from) === String(to)) return;
+  a.classList.add("mv-hold");                 // jump to where it was, then move on
+  a.setAttribute("stroke-dashoffset", from);
+  void getComputedStyle(a).strokeDashoffset;
+  a.classList.remove("mv-hold");
+  requestAnimationFrame(() => requestAnimationFrame(() => a.setAttribute("stroke-dashoffset", to)));
+}
+function skeleton(box, rows) {                // the shape of what comes, while the next page loads; Back (the page from the cache) puts the old content back
+  if (!box || box.dataset.skel) return;
+  const k = el("div", "skel");
+  k.setAttribute("aria-busy", "true");
+  k.setAttribute("aria-label", "Loading");
+  for (const c of rows) k.append(el("i", c));
+  box._kept = Array.from(box.childNodes);
+  box.dataset.skel = "1";
+  box.replaceChildren(k);
+}
+window.addEventListener("pageshow", (ev) => {
+  if (!ev.persisted) return;
+  for (const b of document.querySelectorAll("[data-skel]")) { b.replaceChildren(...(b._kept || [])); delete b.dataset.skel; }
+});
+
 // ---- the Jobs page (1.78.0): a list on the left (My jobs | All jobs, search, status chips), the job on the right. The server renders both
 // (the page reads the same without scripts); while the job runs this swaps the server's pane in every 3 s - and stops when it says it is done.
 function jobList() {                         // the chips and the search filter the rows on the page -> apply (again, after the rows change)
@@ -160,6 +225,16 @@ function jobsPage() {
   // budget as before. Nothing is asked while the page is hidden; coming back asks at once, but never sooner than the wait in force.
   let pane = $("jd"), wait = 3000, timer = 0, busy = false, last = 0;
   if (!pane) return;
+  ringIn(pane);
+  runTimes();
+  setInterval(runTimes, 1000);
+  $("jrows").addEventListener("click", (ev) => {              // 1.87.0: another job picked - its pane's shape while its page loads
+    const a = ev.target.closest && ev.target.closest("a");
+    if (!a || ev.defaultPrevented || ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    if (a.getAttribute("href").split("?")[0].endsWith("/jobs/" + pane.dataset.job)) return;
+    for (const li of $("jrows").children) li.classList.toggle("on", li === a.parentNode);
+    skeleton(pane, ["h", "s", "b", "", "", "s", "b"]);
+  });
   const paneLive = () => !!(pane && pane.dataset.done === "0" && pane.dataset.job);
   const listLive = () => !!document.querySelector("#jrows li[data-st=running]");
   function putList(fresh) {                    // the rows and the chips' counts; the search box stays (its focus, what is typed), the filter applies again
@@ -181,6 +256,7 @@ function jobsPage() {
       out.push(n);
     }
     rows.replaceChildren(...out);
+    runTimes();
     if (chips && nc) {                          // the counts; the pressed chip is set again by apply
       const pressed = Array.from(chips.children).find((b) => b.getAttribute("aria-pressed") === "true");
       chips.replaceChildren(...Array.from(nc.children).map((b) => document.importNode(b, true)));
@@ -197,7 +273,7 @@ function jobsPage() {
   }
   async function tick() {
     clearTimeout(timer);
-    if (busy || document.hidden || !(paneLive() || listLive())) return;
+    if (busy || document.hidden || pane.dataset.skel || !(paneLive() || listLive())) return;
     const early = wait - (Date.now() - last);
     if (early > 50) { timer = setTimeout(tick, early); return; }               // a resume never asks sooner than the wait in force
     busy = true;
@@ -216,7 +292,11 @@ function jobsPage() {
         const np = both && doc.querySelector("#jd");
         let stale = false;
         if (np && np.dataset.error) stale = true;                                // AAP could not say just now: the pane stays as it was
-        else if (np) { pane.replaceWith(document.importNode(np, true)); pane = $("jd"); }
+        else if (np && !pane.dataset.skel) {
+          const was = np.dataset.job === pane.dataset.job ? ringFrom(pane) : undefined;
+          pane.replaceWith(document.importNode(np, true)); pane = $("jd");
+          ringIn(pane, was);
+        }
         putList(doc.querySelector("#jl"));
         wait = stale ? Math.min(Math.max(wait * 2, 6000), 30000) : (paneLive() ? 3000 : 6000);
       }
@@ -501,6 +581,10 @@ function homeActions() {
 
 function homePage() {
   homeLive(homeActions() || (() => {}));
+  const r = $("refresh");
+  if (r && r.form) r.form.addEventListener("submit", () => {
+    for (const c of Array.from(document.querySelectorAll("#agrid li:not([hidden]) > .tcard")).slice(0, 6)) skeleton(c, ["h", "s", "", "", "b"]);
+  });
 }
 
 // ---- 1.79.5: a card's "Last run" while that run is not over: the page asks for itself again every 15 s (the service keeps AAP's answer a minute)
@@ -674,7 +758,7 @@ function liveBadges() {
   const key = "site-portal-jobs";
   const toast = (title, text, bad, id) => {
     if (!box) { box = el("div", "toasts"); box.setAttribute("role", "status"); box.setAttribute("aria-live", "polite"); document.body.append(box); }
-    const t = el("div", "toast" + (bad ? " bad" : ""));
+    const t = el("div", "toast" + (bad ? " bad" : " timed"));
     const x = el("button", "tx", "×");
     x.type = "button"; x.setAttribute("aria-label", "Dismiss");
     x.addEventListener("click", () => t.remove());
@@ -683,9 +767,14 @@ function liveBadges() {
     t.append(x, el("b", "", title), el("p", "", text), a);
     box.append(t);
     while (box.children.length > 3) box.firstChild.remove();
-    if (!bad) setTimeout(() => t.remove(), 12000);
+    if (!bad) setTimeout(() => t.remove(), TOAST_MS);
   };
-  const show = (b, n) => { if (!b) return; b.hidden = !(n > 0); b.textContent = n > 99 ? "99+" : String(n || ""); };
+  const show = (b, n) => {
+    if (!b) return;
+    const t = n > 99 ? "99+" : String(n || "");
+    b.hidden = !(n > 0);
+    if (b.textContent !== t) { b.textContent = t; if (!b.hidden) bump(b); }
+  };
   async function tick() {
     clearTimeout(timer);
     if (document.visibilityState === "hidden") { timer = setTimeout(tick, 10000); return; }
@@ -753,4 +842,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (p === "approvals") approvalsPage();
   liveBadges();
   keyboard();
+  // 1.87.0: the first load's counts go up (after the page's own code put them in); then the page is settled - nothing comes in again
+  for (const n of document.querySelectorAll("#ftiles .v, #agrid .grp > h2 .count, #jchips button")) countUp(n);
+  setTimeout(() => document.documentElement.classList.add("settled"), 1200);
 });

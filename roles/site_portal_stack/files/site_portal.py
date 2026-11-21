@@ -2286,7 +2286,7 @@ def home_page(cfg, portal, cn, query=None):
                    icon("wf" if c["wf"] else "job"), esc(c["title"]), "Workflow" if c["wf"] else "Job template",
                    ('<span class="badge">Approval</span>' if c["approval"] else "") + ('<span class="badge off">%s Off</span>' % icon("lock") if off else ""),
                    ('<p>%s</p>' % esc(c["line"])) if c["line"] else '<p class="none">No description</p>', last_run_html(cfg, c["last"]) if not off else
-                   '<p class="offline" title="%s"><span>Off: %s</span></p>' % (esc(off), esc(off)),
+                   '<p class="offline" title="%s">%s<span>Off: %s</span></p>' % (esc(off), icon("lock"), esc(off)),
                    ('<div class="lab">%s</div>' % "".join('<span class="tg">%s</span>' % esc(l) for l in c["labels"])) if c["labels"] else "",
                    cfg.path, esc(c["name"]),
                    ('<a class="btn pri" href="%sactions/%s"%s data-run>Run %s</a>' % (cfg.path, esc(c["name"]), picks, icon("arrow"))) if not off else ""))
@@ -2695,6 +2695,34 @@ def status_chip(st, approval=False, live=True):
     return '<span class="chip %s">%s%s</span>' % (cls, icon(kind, live), esc(word))
 
 
+def started_attr(x):
+    """1.87.0: a running row's start as UTC seconds (data-t0) - portal.js counts its run time from it, never from the shown text (that is in report_time_zone)."""
+    t = _aap_dt(x.get("started")) if x.get("group") == "running" else None
+    return ' data-t0="%d"' % int(t.timestamp()) if t else ""
+
+
+RING_L = 106.8          # the ring's circle: 2 * pi * 17
+
+
+def ring_html(pg, done, waiting):
+    """1.87.0: the job page's ring - a workflow's steps (the one it is on counts half) or a job's estimate from its last good run; '' when the job is over
+    or nothing is known (no ring is better than a made-up one). Drawn here (SVG attributes, no style), so it reads the same without scripts; portal.js
+    only moves it from the last fill to the new one when the pane is swapped in."""
+    if done:
+        return ""
+    if pg.get("steps_n"):
+        n = pg["steps_n"]
+        f, label = min(1.0, (pg.get("steps_done", 0) + 0.5) / n), "%d/%d" % (min(n, pg.get("steps_done", 0) + 1), n)
+    elif pg.get("pct") is not None and pg.get("est"):
+        f, label = max(0, min(100, pg["pct"])) / 100.0, "%d%%" % max(0, min(100, pg["pct"]))
+    else:
+        return ""
+    o = RING_L * (1 - f)
+    return ('<span class="ring%s" aria-hidden="true" data-o="%.1f"><svg viewBox="0 0 42 42"><circle class="t" cx="21" cy="21" r="17"/>'
+            '<circle class="a" cx="21" cy="21" r="17" transform="rotate(-90 21 21)" stroke-dasharray="%.1f" stroke-dashoffset="%.1f"/></svg><b>%s</b></span>'
+            % ("" if waiting else " run", o, RING_L, o, label))
+
+
 def job_list_html(cfg, portal, cn, items, sel, scope):
     approver = cn in cfg.approvers
     counts = dict((g, len([x for x in items if x["group"] == g])) for g, _w in portal.GROUPS)
@@ -2703,9 +2731,9 @@ def job_list_html(cfg, portal, cn, items, sel, scope):
         ('<a class="%s" href="%sjobs?scope=all">All jobs</a>' % ("on" if scope == "all" else "", cfg.path)) if approver else "")
     chips = '<button type="button" data-st="" aria-pressed="true">All %d</button>' % len(items) + "".join(
         '<button type="button" data-st="%s" aria-pressed="false">%s %d</button>' % (g, w, counts[g]) for g, w in portal.GROUPS)
-    rows = "".join('<li data-st="%s" data-status="%s" data-q="%s"%s><a href="%sjobs/%d?scope=%s"><span class="d %s" aria-hidden="true"></span><span class="t">%s<small>Job %d%s</small></span>'
+    rows = "".join('<li data-st="%s" data-status="%s" data-q="%s"%s%s><a href="%sjobs/%d?scope=%s"><span class="d %s" aria-hidden="true"></span><span class="t">%s<small>Job %d%s</small></span>'
                    '<span class="r">%s<small>%s</small></span></a></li>'
-                   % (x["group"], esc(x["status"]), esc(("%s %d %s" % (x["title"], x["id"], x["by"])).lower()), ' class="on" aria-current="true"' if x["id"] == sel else "", cfg.path, x["id"],
+                   % (x["group"], esc(x["status"]), esc(("%s %d %s" % (x["title"], x["id"], x["by"])).lower()), ' class="on" aria-current="true"' if x["id"] == sel else "", started_attr(x), cfg.path, x["id"],
                       "all" if scope == "all" else "mine", GROUP_DOT[x["group"]], esc(x["title"]), x["id"],
                       (" \u00b7 " + esc(x["by"])) if scope == "all" else "", esc(shown(cfg, x["started"])), esc(dur_text(x["elapsed"]) if x["group"] != "running" else "running"))
                    for x in items)
@@ -2779,7 +2807,8 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
     else:
         step = pg.get("now", "").split(" - ")[0].lower()
         msg, cls, ik = "<b>Running</b>%s%s" % ((" - " + esc(step)) if step else "", (" \u00b7 " + esc(pg["hosts_line"])) if pg.get("hosts_line") else ""), "run", "run"
-    banner = '<div class="banner2 %s">%s<span>%s</span></div>' % (cls, icon(ik), msg)
+    ring = ring_html(pg, done, approval_wait)
+    banner = '<div class="banner2 %s%s">%s<span>%s</span></div>' % (cls, " has-ring" if ring else "", ring or icon(ik), msg)
     nowbox = ""
     if not done and pg.get("now"):
         pc = pg.get("pct")

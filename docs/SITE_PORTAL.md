@@ -628,7 +628,7 @@ AAP yourself). It never gives a write role.
 | `portal_finding_days` | 7 | how far back the report jobs are read (14 at most) |
 | `portal_finding_jobs` | 5 | the last this many runs of each report playbook |
 | `portal_finding_playbooks` | the report playbooks of `finding_ref` | which playbooks count as reports |
-| `portal_motion` | `auto` | `auto`: the running icons and the stripe turn unless the system asks for reduced motion. `always` overrides the system's reduced-motion request (use only if the site agrees; a Windows image may turn animations off by policy). `off`: never. Print is still in every mode |
+| `portal_motion` | `auto` | What moves: the running icons and the stripe, and (1.87.0) the pages' motion - see *What moves* below. `auto`: it moves unless the system asks for reduced motion. `always` overrides the system's reduced-motion request (use only if the site agrees; a Windows image may turn animations off by policy). `off`: never. Print is still in every mode |
 | `portal_pick_max_launches` | 10 | jobs one confirm page may start (1 to 200) |
 | `portal_pick_max_hosts` | 50 | the hosts the finding steps take at once, groups counted by their hosts (1 to 500) |
 | `portal_setup_portal_auditor` | false | the setup job gives the account Auditor on `portal_setup_organization` |
@@ -778,6 +778,21 @@ An address must be http or https with a host and no user name; anything else is 
 
 **What is running turns.** The running icon (the status chip, the host chips, the *Now* line) and the ring in the jobs list turn, and the bar has a
 moving stripe. All of it stops under the browser's *reduce motion* setting and in print; `portal_motion` changes that (see the settings table).
+
+**What moves (1.87.0).** The pages move a little, so a change is easy to see:
+
+- On the first load, the filter tiles, the cards and the panes come in one after another, and the counts go up to their number.
+- An available card lifts under the pointer or the keyboard. An off card is parked: hatched, an *Off* tab in the corner, its reason with a lock, no *Run*.
+- A running job in the list counts its run time each second, from the time AAP started it.
+- The job's page has a ring: a workflow's steps (`2/3`; the step it is on counts half), or a job's estimate from its last good run (`40%`).
+  A job with no estimate has no ring. The ring moves on from its last fill each time the page asks again.
+- A *Now* bar with no estimate has a light that sweeps across it.
+- Picking another job, or **Refresh** on the Actions page, shows the shape of what comes while the next page loads.
+- Toasts slide in; one that closes by itself (12 s) shows its time left as a line. A count on *Jobs* or *Approvals* bumps when it changes.
+- The Run dialog and the Details panel open smoothly.
+
+All of it follows `portal_motion`: `auto` moves unless the system asks for reduced motion, `always` moves anyway, `off` never.
+Without scripts nothing of it moves, and print never moves. What is information - the run time, the ring's fill, the off card - is there in every mode.
 
 ## Add a job to the portal from AAP
 

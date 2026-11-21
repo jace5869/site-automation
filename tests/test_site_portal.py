@@ -3804,6 +3804,7 @@ class Motion1782(unittest.TestCase):
         self.assertIn("progress.pb::-webkit-progress-value{animation:stripe 1s linear infinite}", no_pref)
         self.assertIn("progress.pb::-moz-progress-bar{animation:stripe 1s linear infinite}", no_pref)
         rest = re.sub(r"html\.motion-always [^{]*\{animation:(?:spin|stripe) 1s linear infinite\}", "", c.replace(no_pref, ""))
+        rest = rest.replace('html.moves .jd[data-done="0"] .ring.run svg{animation:spin 2.4s linear infinite}', "")     # 1.87.0: the ring, under html.moves (Motion1870)
         self.assertNotRegex(rest, r"animation:\s*(spin|stripe)")                                         # nowhere else but portal_motion: always (the old pulse is a different rule)
         self.assertIn("@media print{html .ic-run,html .jrows .d.run{animation:none !important}", c)
 
@@ -3985,7 +3986,8 @@ class OffState1784(unittest.TestCase):
         self.assertNotIn("data-run", off)                                                            # no Run on an off card, only Details
         self.assertIn("data-details", off)
         self.assertRegex(off, r'<span class="badge off"><svg class="ic"[^>]*>.*?</svg> Off</span>')   # a chip with a lock
-        self.assertIn('<p class="offline" title="the template is not in AAP (Disk - clean up one mount)"><span>Off: the template is not in AAP (Disk - clean up one mount)</span></p>', off)
+        self.assertRegex(off, r'<p class="offline" title="the template is not in AAP \(Disk - clean up one mount\)"><svg class="ic"[^>]*>.*?</svg>'
+                              r'<span>Off: the template is not in AAP \(Disk - clean up one mount\)</span></p>')            # 1.87.0: the reason with its lock
         shutil.rmtree(d, ignore_errors=True)
 
     def test_3_the_text_passes_aa_in_every_look_and_theme(self):
@@ -4061,6 +4063,116 @@ class Motion1783(unittest.TestCase):
             self.assertEqual(name("always", reduced), "spin")                    # always: it turns anyway
             self.assertEqual(name("off", []), "none")                            # off: never
             self.assertEqual(name("off", reduced), "none")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class Motion1870(unittest.TestCase):
+    """1.87.0: motion (mockup 3) - html.moves from portal_motion and the system's request, set before the page is drawn; everything that moves needs it;
+    the run time from the job's UTC start, never the shown text; the ring drawn by the service from what is known, never a guess; no HTML from strings."""
+
+    def cfg(self, **env):
+        d = tempfile.mkdtemp()
+        return sp.Config(dict({"PORTAL_DATA": os.path.join(d, "data"), "PORTAL_REPORTS": "/tmp", "PORTAL_ACTIONS": "/nonexistent", "PORTAL_AAP_URL": "http://127.0.0.1:9",
+                               "PORTAL_AAP_TOKEN": "x"}, **env))
+
+    def read(self, *p):
+        with open(os.path.join(FILES, *p)) as fh:
+            return fh.read()
+
+    def test_1_everything_that_moves_needs_html_moves(self):
+        c = self.read("static", "portal.css")
+        sec = c[c.index("/* 1.87.0: motion."):]
+        body = re.sub(r"/\*.*?\*/", "", sec, flags=re.S)
+        body = body[:body.index("@media print{")]
+        for rule in re.findall(r"[^{}]+\{[^{}]*\}", re.sub(r"@keyframes [\w-]+\{(?:[^{}]*\{[^{}]*\})+\}", "", body)):
+            sel, decl = rule.split("{", 1)
+            if re.search(r"\b(animation|transition)\s*:", decl) and "transition:none" not in decl:
+                top = re.sub(r"\([^()]*\)", "()", sel).split(",")                                              # a list: each part, not what is inside :is()
+                self.assertTrue(all(x.strip().startswith("html.moves") for x in top), sel.strip())
+        self.assertIn("html.moves:not(.settled) :is(.ftiles>.ft,.acts>li>.tcard,.two-pane>*,.card.strip){animation:up .45s", c)        # the first load only
+        self.assertIn("@media print{html.moves *,html.moves *::before,html.moves *::after,html.moves *::backdrop{animation:none !important;transition:none !important}", c)
+        self.assertIn("html.moves .toast.timed::after{", c)
+        self.assertIn("animation:left 12s linear forwards}", c)
+        self.assertIn("const TOAST_MS = 12000;", self.read("static", "portal.js"))                              # the line and the toast: the same 12 s
+        self.assertIn(".tcard.off::before{content:\"Off\"", c)
+        self.assertIn(".nav .bdg[hidden],.appbar .nav a .bdg[hidden]{display:none}", c)                         # a badge with nothing to count is gone, not an empty dot
+        self.assertNotIn("data:image", sec)                                                                     # the lock is the service's drawn icon, not a data: mask
+
+    def test_2_the_class_is_decided_in_the_head(self):
+        t = self.read("static", "portal-theme.js")
+        self.assertIn('cl.toggle("moves", cl.contains("motion-always") || (!cl.contains("motion-off") && !(mq && mq.matches)))', t)
+        self.assertIn('mq.addEventListener("change", motion)', t)
+        h = sp.shell(self.cfg(), "T", "<p>x</p>")
+        self.assertLess(h.index("portal-theme.js\"></script>"), h.index("</head>"))
+        self.assertNotIn("portal-theme.js\" defer", h)                                                          # before the page is drawn
+
+    def test_3_no_html_from_strings_no_inline_style(self):
+        js = self.read("static", "portal.js") + self.read("static", "portal-theme.js")
+        for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", ".style.", "setAttribute(\"style\"", "cssText"):
+            self.assertNotIn(bad, js, bad)
+
+    def test_4_the_run_time_comes_from_the_utc_start(self):
+        class P(object):
+            GROUPS = sp.Portal.GROUPS
+        items = [{"id": 7, "title": "Recheck", "status": "running", "group": "running", "started": "2026-11-20T15:01:30.5Z", "elapsed": 12, "by": "DOE.JANE"},
+                 {"id": 6, "title": "Clean", "status": "successful", "group": "succeeded", "started": "2026-11-20T14:01:00Z", "elapsed": 600, "by": "DOE.JANE"},
+                 {"id": 5, "title": "Odd", "status": "running", "group": "running", "started": "", "elapsed": None, "by": "DOE.JANE"}]
+        h = sp.job_list_html(self.cfg(PORTAL_TIME_ZONE="Europe/Berlin"), P(), "DOE.JANE", items, None, "mine")
+        self.assertIn('data-st="running" data-status="running" data-q="recheck 7 doe.jane" data-t0="1795186890">', h)      # 15:01:30 UTC, whatever the zone shown
+        self.assertEqual(h.count("data-t0="), 1)                                                                 # not for a finished job, nor one without a start
+        js = self.read("static", "portal.js")
+        self.assertIn('document.querySelectorAll("#jrows li[data-t0]")', js)
+        self.assertIn("runTimes();\n", js[js.index("rows.replaceChildren(...out);"):][:60])                       # rows swapped in count too
+
+    def test_5_the_ring_is_drawn_from_what_is_known(self):
+        self.assertEqual(sp.ring_html({"steps_n": 3, "steps_done": 1}, True, False), "")                       # over: no ring
+        r = sp.ring_html({"steps_n": 3, "steps_done": 1}, False, False)
+        self.assertIn('<span class="ring run" aria-hidden="true" data-o="53.4">', r)                            # on step 2 of 3, counted half: 1.5 of 3 done
+        self.assertIn("<b>2/3</b>", r)
+        self.assertIn('stroke-dashoffset="53.4"', r)
+        self.assertIn('transform="rotate(-90 21 21)"', r)                                                       # the arc starts at the top; the turn is the svg's
+        self.assertNotIn("style", r)
+        self.assertIn('class="ring"', sp.ring_html({"steps_n": 2, "steps_done": 0}, False, True))               # waiting for an approver: it does not turn
+        self.assertIn("<b>40%</b>", sp.ring_html({"pct": 40, "est": 300}, False, False))                        # a job: its estimate from the last good run
+        self.assertEqual(sp.ring_html({"pct": 40, "est": None}, False, False), "")                              # nothing known: no ring, never a made-up fill
+        self.assertEqual(sp.ring_html({}, False, False), "")
+        r = sp.ring_html({"steps_n": 3, "steps_done": 1}, False, False)
+        self.assertEqual(re.search(r'data-o="([\d.]+)"', r).group(1), "%.1f" % (sp.RING_L * (1 - 1.5 / 3)))
+
+    def test_6_the_ring_moves_on_from_its_last_fill(self):
+        js = self.read("static", "portal.js")
+        swap = js[js.index("else if (np && !pane.dataset.skel) {"):][:300]
+        self.assertIn("ringFrom(pane) : undefined", swap)
+        self.assertIn("ringIn(pane, was);", swap)
+        self.assertIn("pane.dataset.skel ||", js)                                                                # a skeleton up: the page is leaving, no swap
+        self.assertIn('for (const n of document.querySelectorAll("#ftiles .v, #agrid .grp > h2 .count, #jchips button")) countUp(n);', js)
+        self.assertIn('document.documentElement.classList.add("settled")', js)
+        self.assertIn("if (ev.persisted) return;".replace("if (ev.persisted)", "if (!ev.persisted)"), js)        # Back: the content, not the skeleton
+
+    @unittest.skipUnless(shutil.which("chromium-browser") or shutil.which("google-chrome") or shutil.which("chromium"), "no browser")
+    def test_7_in_a_browser(self):
+        b = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+        css, theme = os.path.join(FILES, "static", "portal.css"), os.path.join(FILES, "static", "portal-theme.js")
+        d = tempfile.mkdtemp()
+
+        def look(mode, flag):
+            page = ('<!doctype html><html class="%s"><head><link rel="stylesheet" href="file://%s"><script src="file://%s"></script></head><body>'
+                    '<ul class="acts"><li><article class="card tcard">x</article></li></ul><pre id="r"></pre>'
+                    '<script>window.onload=function(){document.getElementById("r").textContent=document.documentElement.className+"|"+'
+                    'getComputedStyle(document.querySelector(".tcard")).animationName}</script></body></html>' % (("motion-" + mode) if mode else "", css, theme))
+            with open(os.path.join(d, "p.html"), "w") as fh:
+                fh.write(page)
+            out = subprocess.run([b, "--headless=new", "--no-sandbox", "--disable-gpu", "--virtual-time-budget=200", "--dump-dom"] + flag + ["file://" + os.path.join(d, "p.html")],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=60).stdout
+            cls, anim = re.search(r'<pre id="r">(.*?)</pre>', out, re.S).group(1).split("|")
+            return "moves" in cls.split(), anim
+        try:
+            reduced = ["--force-prefers-reduced-motion"]
+            self.assertEqual(look("", []), (True, "up"))                         # auto, no request: the cards come in
+            self.assertEqual(look("", reduced), (False, "none"))                 # auto, the system asks for less: still
+            self.assertEqual(look("always", reduced), (True, "up"))              # always: anyway
+            self.assertEqual(look("off", []), (False, "none"))                   # off: never
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

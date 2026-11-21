@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.87.0 — 2026-11-21
+
+**Nothing to set up.** `portal_motion` (auto) now covers the pages' motion too; run *Site portal - deploy* to get the new pages.
+
+**Site portal: motion** (mockup 3). The pages move a little, so a change is easy to see. Design only: no new page, setting or call.
+
+- **First load:** the filter tiles, the cards and the panes come in one after another; the counts go up to their number. A pane or list the page
+  swaps in later does not come in again.
+- **Cards:** an available card lifts under the pointer or the keyboard and has a thick accent edge. An off card is parked at a glance: hatched,
+  an *Off* tab in the corner, its reason in a box with a lock (two lines at most), no *Run*.
+- **A running job:**
+  - the jobs list counts its run time each second, from AAP's start time (`data-t0`, UTC), never from the shown time;
+  - the job's page has a ring, drawn by the service: a workflow's steps (`2/3`, the step it is on counts half) or a job's estimate from its last good run (`40%`);
+  - a job with no estimate has no ring (no made-up fill). The ring moves on from its last fill when the pane is swapped in;
+  - a *Now* bar with no estimate has a light that sweeps across it.
+- **Loading:** picking another job, or **Refresh** on the Actions page, shows the shape of what comes while the next page loads. *Back* shows the page, not the shape.
+- **Toasts** slide in; one that closes by itself (12 s) shows its time left as a line. A count on *Jobs* or *Approvals* bumps when it changes.
+- **The Run dialog and the Details panel** open smoothly; so does a *details* box, where the browser can.
+- **Fixed:** a nav count with nothing to count showed as an empty dot; it is gone now.
+- **`portal_motion`:**
+  - `auto` moves unless the system asks for reduced motion (and follows that setting when it changes), `always` moves anyway, `off` never;
+  - the choice is made in `portal-theme.js`, before the page is drawn, so nothing shows and then jumps;
+  - without scripts nothing new moves; print never moves;
+  - the run time, the ring's fill and the off card are there in every mode.
+- No inline script or style, no HTML from strings: the ring is SVG attributes and the skeletons are elements. Offline.
+- Tests: `tests/test_site_portal.py` Motion1870 (the stylesheet: everything that moves needs `html.moves`; the class in the head; no HTML from
+  strings; the UTC start; the ring from what is known; a headless browser for auto, always, off and reduced motion).
+  `tests/site_portal/portal_demo.py` takes `PORTAL_DEMO_MOTION`.
+
 ## 1.85.0 — 2026-11-20
 
 **To set up: a "SolarWinds (read-only)" credential type and credential, and the job template *Network map*

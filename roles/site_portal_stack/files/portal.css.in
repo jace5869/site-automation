@@ -236,6 +236,7 @@ textarea.hosts{min-height:84px}
 /* 1.78.4: the live badges and toasts, the keyboard list, a locked approval */
 .nav .bdg,.appbar .nav a .bdg{display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font:700 11px/1 var(--mono);padding:0 5px;margin-left:6px}
 .nav a[href$="approvals"] .bdg{background:var(--warning);color:#fff}
+.nav .bdg[hidden],.appbar .nav a .bdg[hidden]{display:none}                     /* 1.87.0: nothing to count - no empty dot */
 .toasts{position:fixed;right:20px;bottom:20px;z-index:50;display:grid;gap:10px;width:min(340px,calc(100vw - 40px))}
 .toast{background:var(--card-solid);border:1px solid var(--edge);border-left:4px solid var(--ok);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.22);padding:12px 36px 12px 14px;position:relative}
 .toast.bad{border-left-color:var(--critical)}
@@ -249,7 +250,7 @@ tr.locked td b,tr.locked td a{color:var(--ink)}
 tr.locked .lockline{display:inline-flex;gap:6px;align-items:flex-start;white-space:normal;color:var(--ink)}
 @media print{.toasts,.keys,.bdg{display:none}}
 .grp>h2{margin:0;padding:6px 0 12px;font-family:var(--display);font-size:clamp(17px,1.3vw,20px);font-weight:650;letter-spacing:-.015em;display:flex;align-items:baseline;gap:10px}
-.grp>h2 .count{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--muted)}
+.grp>h2 .count{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--muted);display:inline-block}
 details.hlp{margin:0 0 14px;padding:0}
 details.hlp>summary{cursor:pointer;padding:10px 16px;font-size:13.5px;font-weight:600;color:var(--ink)}
 details.hlp .whyb{padding:0 16px 12px;font-size:13.5px}
@@ -290,13 +291,19 @@ details.hlp code{font-family:var(--mono);font-size:12.5px}
 .tcard:not(.off){border-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent),var(--shadow)}
 .tcard:not(.off) .btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .tcard:not(.off) .btn.pri:hover{filter:brightness(.9)}
-.tcard.off{background:var(--card-strong);border:1px dashed var(--muted);box-shadow:none}
+.tcard.off{background:var(--card-strong);border:1px dashed var(--muted);box-shadow:none;position:relative;overflow:hidden}
+/* 1.87.0: an off card is parked at a glance - hatched, an Off tab, the reason in a box with its lock, no Run; an available card has its thick accent edge */
+.tcard.off{background:repeating-linear-gradient(135deg,transparent 0 10px,color-mix(in srgb,var(--muted) 7%,transparent) 10px 20px),var(--card-strong)}
+.tcard.off::before{content:"Off";position:absolute;top:0;right:0;padding:3px 12px 4px 14px;border-bottom-left-radius:10px;font-size:11px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;background:var(--muted);color:var(--card);pointer-events:none}          /* a corner tab: inside the card (a turned ribbon would overflow it) */
+.tcard:not(.off){border-top-width:4px}
 .tcard.off h3,.tcard.off p,.tcard.off .meta,.tcard.off .ty{color:var(--muted)}
 .tcard.off .ico{background:var(--line);color:var(--muted)}
 .tcard.off .btn{background:transparent;color:var(--ink);border-color:var(--muted)}
 .tcard.off .badge.off{display:inline-flex;align-items:center;gap:4px;border-style:solid;border-color:var(--muted);background:transparent;color:var(--ink)}
 .tcard.off .badge.off svg{width:12px;height:12px}
-.tcard.off p.offline{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;color:var(--ink)}
+.tcard.off p.offline{display:flex;gap:6px;align-items:flex-start;font-size:13px;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:8px;padding:6px 9px;margin:2px 0}
+.tcard.off p.offline svg{flex:none;width:14px;height:14px;margin-top:2px;opacity:.75}
+.tcard.off p.offline span{min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 dialog.dlg{width:min(640px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;background:var(--card-solid);color:var(--ink);border:1px solid var(--edge);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);padding:22px 24px}
 dialog.dlg::backdrop{background:rgba(10,12,16,.55)}
 dialog.dlg h2{margin:0 0 4px;font-family:var(--display);font-size:20px}
@@ -393,3 +400,59 @@ html.motion-off progress.pb::-moz-progress-bar{animation:none}
 /* 1.79.5: a job that is over never turns - its pane says data-done="1"; a row or a card's last run that is not running has no .d.run / .ic-run (portal.js and the service) */
 html .jd[data-done="1"] .ic-run,html.motion-always .jd[data-done="1"] .ic-run{animation:none}
 @media print{html .ic-run,html .jrows .d.run{animation:none !important}html progress.pb::-webkit-progress-value{animation:none !important}html progress.pb::-moz-progress-bar{animation:none !important}}
+/* 1.87.0: motion. portal-theme.js puts html.moves on before the page is drawn - portal_motion always: yes; off: never; auto: unless the system asks
+   for less motion (it follows a change). Everything below that moves needs html.moves, so without scripts nothing here moves (the 1.78.2 rules above
+   still turn what runs). What does not move - the ring's fill, a skeleton's shape, the run time - is there for everyone. Print never moves. */
+/* the first load: tiles, cards and panes come in one after another; portal.js puts html.settled on after it, so a pane or list swapped in later stays put */
+@keyframes up{from{opacity:0;transform:translateY(12px)}}
+html.moves:not(.settled) :is(.ftiles>.ft,.acts>li>.tcard,.two-pane>*,.card.strip){animation:up .45s cubic-bezier(.3,.7,.2,1) both}
+html.moves:not(.settled) :is(.ftiles>.ft:nth-child(2),.acts>li:nth-child(2)>.tcard,.two-pane>:nth-child(2)){animation-delay:60ms}
+html.moves:not(.settled) :is(.ftiles>.ft:nth-child(3),.acts>li:nth-child(3)>.tcard){animation-delay:120ms}
+html.moves:not(.settled) :is(.ftiles>.ft:nth-child(4),.acts>li:nth-child(4)>.tcard){animation-delay:180ms}
+html.moves:not(.settled) .acts>li:nth-child(n+5)>.tcard{animation-delay:240ms}
+/* an available card lifts under the pointer or the keyboard */
+html.moves #agrid .tcard{transition:transform .18s cubic-bezier(.3,.7,.2,1),box-shadow .18s cubic-bezier(.3,.7,.2,1)}
+html.moves #agrid .tcard:not(.off):is(:hover,:focus-within){transform:translateY(-4px);box-shadow:inset 0 3px 0 var(--accent),0 16px 34px -18px rgba(0,0,0,.45)}
+/* counts: portal.js counts them up on the first load, and a count that changes later (a nav badge) bumps */
+@keyframes bump{from{transform:scale(.6)}}
+html.moves .mv-bump{animation:bump .5s cubic-bezier(.3,1.6,.5,1)}
+/* a running job: the list counts its run time (data-t0, UTC); the job's page has a ring - a workflow's steps, or a job's estimate - drawn by the service */
+.jrows .d.run{width:14px;height:14px}
+.jrows small.mv-el{color:var(--info);font-weight:650;font-variant-numeric:tabular-nums}
+.banner2.has-ring{align-items:center}
+.banner2 .ring{position:relative;display:inline-grid;place-items:center;flex:none;width:42px;height:42px;margin:-6px 0}
+.banner2 .ring svg{position:absolute;inset:0;width:100%;height:100%;margin:0}
+.ring .t{fill:none;stroke:color-mix(in srgb,var(--info) 18%,transparent);stroke-width:5}
+.ring .a{fill:none;stroke:var(--info);stroke-width:5;stroke-linecap:round}
+.ring b{position:relative;font-size:11px;font-variant-numeric:tabular-nums}
+html.moves .ring .a{transition:stroke-dashoffset .8s cubic-bezier(.3,.7,.2,1)}
+html.moves .ring .a.mv-hold{transition:none}
+html.moves .jd[data-done="0"] .ring.run svg{animation:spin 2.4s linear infinite}
+/* the Now bar with no estimate: a light sweeps across it */
+@keyframes sweep{to{background-position:140% 0,0 0}}
+html.moves progress.pb:not([value]){background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--info) 55%,transparent),transparent) -40% 0/40% 100% no-repeat,var(--line);animation:sweep 1.3s cubic-bezier(.45,.05,.55,.95) infinite}
+html.moves progress.pb:not([value])::-webkit-progress-bar{background:transparent}
+html.moves progress.pb:not([value])::-moz-progress-bar{background:transparent}
+/* skeletons: the shape of the next job's pane, or of the cards on Refresh, while the next page loads */
+@keyframes shim{to{background-position:-300% 0}}
+.skel{display:grid;gap:12px;padding:4px 0}
+.skel i{display:block;height:14px;border-radius:7px;background:var(--line)}
+.skel i.h{height:26px;width:55%}.skel i.s{width:35%}.skel i.b{height:60px}
+html.moves .skel i{background:linear-gradient(90deg,var(--line) 0,color-mix(in srgb,var(--line) 40%,var(--card)) 40%,var(--line) 80%) 0 0/300% 100%;animation:shim 1.2s linear infinite}
+/* toasts slide in; one that closes by itself shows its time left as a line (12 s: TOAST_MS in portal.js) */
+@keyframes toast-in{from{transform:translateX(110%);opacity:0}}
+@keyframes left{to{transform:scaleX(0)}}
+.toast{overflow:hidden}
+html.moves .toast{animation:toast-in .42s cubic-bezier(.2,1.25,.4,1)}
+html.moves .toast.timed::after{content:"";position:absolute;left:0;bottom:0;height:3px;width:100%;background:var(--ok);opacity:.55;transform-origin:left;animation:left 12s linear forwards}
+/* the Run dialog pops, the Details panel slides in, a <details> opens smoothly (where the browser can) */
+@keyframes drawer-in{from{transform:translateX(40px);opacity:0}}
+@keyframes pop{from{transform:scale(.94);opacity:0}}
+@keyframes fade{from{opacity:0}}
+html.moves dialog.drawer[open]{animation:drawer-in .32s cubic-bezier(.3,.7,.2,1)}
+html.moves dialog.dlg:not(.drawer)[open]{animation:pop .26s cubic-bezier(.3,1.2,.5,1)}
+html.moves dialog[open]::backdrop{animation:fade .3s}
+html.moves{interpolate-size:allow-keywords}
+html.moves details::details-content{height:0;overflow:clip;transition:height .3s cubic-bezier(.3,.7,.2,1),content-visibility .3s allow-discrete}
+html.moves details[open]::details-content{height:auto}
+@media print{html.moves *,html.moves *::before,html.moves *::after,html.moves *::backdrop{animation:none !important;transition:none !important}html.moves details::details-content{height:auto}}

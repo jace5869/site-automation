@@ -45,7 +45,8 @@ reports = os.path.join(tmp, "reports"); os.makedirs(reports)
 cfg = sp.Config({"PORTAL_DATA": os.path.join(tmp, "data"), "PORTAL_REPORTS": reports, "PORTAL_ACTIONS": os.path.join(tmp, "actions.json"),
                  "PORTAL_AAP_URL": "http://127.0.0.1:%d" % aap.server_address[1], "PORTAL_AAP_TOKEN": "fake-token", "PORTAL_INVENTORY": "Site hosts",
                  "PORTAL_APPROVERS": '["SMITH.JOHN.A.1234567891"]', "PORTAL_TIME_ZONE": "UTC", "PORTAL_THEME": look, "PORTAL_FINDING_PLAYBOOKS": '["health_check.yml", "disk_report.yml"]', "PORTAL_TITLE": "Site automation",
-                 "PORTAL_BANNER": {"on": False}})
+                 "PORTAL_BANNER": {"on": False},
+                 "PORTAL_MOTION": os.environ.get("PORTAL_DEMO_MOTION", "auto")})          # 1.87.0: auto, always or off
 real = sys.stdout
 sys.stdout = open(os.devnull, "w")
 if os.environ.get("PORTAL_DEMO_LAST_TTL"):    # 1.79.5: the cards' last run read again sooner (tests/test_portal_interactive.py)
