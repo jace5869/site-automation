@@ -5,7 +5,7 @@
     a box. Tables as in atlas (columns sized by what they hold, headings that stay, sort, filter, Columns, CSV, Copy on
     each command), and a column of percentages (87%) drawn as bars beside its numbers. Light and dark from one palette
     (designed in oklch, written in hex so every browser draws it - docs/WEB_REPORTS.md, "The brief look"), the system's
-    own fonts (Segoe UI Variable on Windows; nothing loaded from elsewhere), status always an icon and a word, text at
+    own fonts (Segoe UI on Windows - not its Variable cuts, which classic Outlook mis-measures; nothing loaded from elsewhere), status always an icon and a word, text at
     4.5:1 or better on every surface. Motion only to say where to look: the verdict and the figures rise in once, never
     with reduced motion or in print. The parts the script works on are atlas's (the same class names and ids), so
     site_report.js serves both looks; without the script it reads the same. Input as report_atlas.html.j2: _report,
@@ -148,9 +148,9 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
 /* the switches work without the page's script too (a web server's Content-Security-Policy can block it): radio buttons */
 :root:has(#theme-light:checked){ {{- light -}} }
 :root:has(#theme-dark:checked){ {{- dark -}} }
-/* one family, two optical sizes (Segoe UI Variable's Display for the large words, Text for the rest), and a mono */
-:root{--sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
-  --display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+/* one family and a mono - Segoe UI, never its Variable cuts: classic Outlook mis-measures a variable font (1.87.2) */
+:root{--sans:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --display:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;
   --ease:cubic-bezier(.16,1,.3,1);--cy:10px;--cx:14px;--fs:14px;--appbar:72px}
 :root[data-density="compact"]{--cy:5px;--cx:10px;--fs:13.5px}
@@ -567,7 +567,8 @@ table.mini th{padding:8px var(--cx);text-align:left;cursor:default}table.mini th
 .glance li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 12px;border:1px solid var(--edge);border-radius:10px;background:var(--card-strong)}
 .glance .gn2{font-weight:650;color:var(--ink)}.glance a.gn2{text-decoration:underline;text-underline-offset:3px}
 .glance .gt2{color:var(--label);font-variant-numeric:tabular-nums}
-tr:target>td{background:var(--hover)!important}
+tr:target>td,tr.is-target>td{background:var(--hover)!important}
+a.sr-back:hover,a.sr-back:focus-visible{opacity:1!important;text-decoration:underline!important}
 .fb .sw2{display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--cat);margin-right:7px;flex:none}
 .fhost{min-width:200px}
 .fbr{flex-basis:100%;height:0}
@@ -600,10 +601,11 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 @media (prefers-reduced-motion:reduce){.xb svg{transition:none}}
 @media (max-width:640px){tr.xr>td.xd{padding:4px 8px 12px}}
 </style>
+<!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--><!-- 1.87.2: classic Outlook (Word) mis-measures negative em letter-spacing: none there -->
 </head>
 <body>
 {%- set secs = r.sections | default([]) %}
-<div class="appbar"><div class="appbar-in">
+<div class="appbar"><div class="appbar-in"><!--site-report-back-->
 <div class="brand">
 {%- if logo_cid %}
 <img class="logo" src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="">

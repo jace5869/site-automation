@@ -1475,6 +1475,150 @@ class Release1720(unittest.TestCase):
         self.assertTrue(got["copy"])
         self.assertFalse(got["open"])                                                  # Copy link copies, the line stays shut
 
+class Back1872(unittest.TestCase):
+    """1.87.2: every page on the website has "All reports" (to the index, relative to the page), put in at publish time - never in the email;
+    a link inside the page and the insights' period and view replace the address (no pushState), so Back leaves the report in one click."""
+    LOOKS = ("report.html.j2", "report_portal.html.j2", "report_command.html.j2", "report_glass.html.j2", "report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2")
+
+    def test_a_the_link_is_relative_to_the_page(self):
+        p = "<html><head></head><body><div class=\"appbar-in\"><!--site-report-back--><div class=\"brand\">S</div></div></body></html>"
+        for rel, index, href in (("vm/2026-10-01_0600_job-1.html", "index.html", "../index.html"), ("vm/latest.html", "index.html", "../index.html"),
+                                 ("HQ-East/vm/2026/w-1.html", "index.html", "../../../index.html"), ("reports/vm/x.html", "reports/index.html", "../index.html"),
+                                 ("top.html", "index.html", "index.html"), ("a b/p.html", "index.html", "../index.html")):
+            h = rw.back_link(p, rel, index)
+            self.assertIn('<div class="appbar-in"><a class="sr-back" href="%s" style="' % href, h, rel)
+            self.assertIn('<html data-site-index="%s">' % href, h, rel)
+            self.assertIn("All reports</a><div class=\"brand\">", h)
+            self.assertNotIn("site-report-back", h)
+        self.assertEqual(rw.back_link(p, "vm/x.html", ""), p)                                       # no index: no link, no attribute (decided here, not guessed)
+        self.assertEqual(rw.back_link(p, "index.html", "index.html"), p)                             # the index itself
+        w = rw.back_link("<html><body><table><tr><td><!--site-report-back w=900--><table></table></td></tr></table></body></html>", "vm/x.html", "index.html")
+        self.assertIn('<td><div class="sr-backbar" style="max-width:900px;margin:0 auto 10px;text-align:left;color:#1f2937;', w)
+        f = rw.back_link("<html><body><table><tr><td><!--site-report-back w=full--><table></table></td></tr></table></body></html>", "vm/x.html", "index.html")
+        self.assertIn('<td><div class="sr-backbar" style="margin:0 auto 10px;text-align:left;', f)                # glass, portal: as wide as the card's shell
+        banner = {"on": True, "text": "UNCLASSIFIED", "bg": "#007a33", "fg": "#ffffff"}
+        b = rw.banner_inject("<html><body><p>x</p></body></html>", banner)
+        n = rw.back_link(b, "vm/x.html", "index.html", banner)                                       # no marker: a line at the top, under the banner
+        self.assertLess(n.index("UNCLASSIFIED"), n.index("sr-backbar"))
+        self.assertLess(n.index("sr-backbar"), n.index("<p>x</p>"))
+        self.assertIn('href="../index.html"', rw.back_link("<html><body><p>x</p></body></html>", "vm/x.html", "index.html"))
+        self.assertIn('href="../a%20%22b%22.html"', rw.back_link(p, "vm/x.html", 'a "b".html'))      # quoted in the address, escaped in the attribute
+
+    def test_b_published_pages_have_it(self):
+        d = tempfile.mkdtemp()
+        try:
+            html = "<html><head></head><body><div class=\"appbar-in\"><!--site-report-back--></div><p>report</p></body></html>"
+            out = run_module(web_args(d, html=html, pages=[{"page": "vm/more/part.html", "html": html}]))
+            self.assertFalse(out.get("failed"), out)
+            for rel, href in (("vm/2026-10-01_0600_job-1.html", "../index.html"), ("vm/latest.html", "../index.html"), ("vm/more/part.html", "../../index.html")):
+                with open(os.path.join(d, rel)) as fh:
+                    h = fh.read()
+                self.assertIn('<a class="sr-back" href="%s"' % href, h, rel)
+                self.assertIn('data-site-index="%s"' % href, h, rel)
+            with open(os.path.join(d, "index.html")) as fh:
+                self.assertNotIn("sr-back", fh.read())
+            e = tempfile.mkdtemp()
+            out = run_module(web_args(e, html=html, files={"page": "vm/p.html", "latest": "", "index": ""}))        # no index: nothing to go back to
+            with open(os.path.join(e, "vm", "p.html")) as fh:
+                h = fh.read()
+            self.assertNotIn("sr-back", h)
+            self.assertNotIn("data-site-index", h)
+            shutil.rmtree(e, ignore_errors=True)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def env(self):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")), autoescape=False,
+                                 extensions=["jinja2.ext.loopcontrols", "jinja2.ext.do"])
+        for k in dir(sf):
+            f = getattr(sf, k)
+            if callable(f) and not k.startswith("_"):
+                env.filters[k] = f
+        import report_dash_filters as rd
+        env.filters.update(dict((k, getattr(rd, k)) for k in dir(rd) if k.startswith("report_")))
+        try:
+            import ansible.plugins.filter.core as fc                                                                 # to_json, regex_replace ... (Ansible's own)
+            env.filters.update(dict((k, f) for k, f in fc.FilterModule().filters().items() if k not in env.filters))
+        except ImportError:
+            pass
+        return env
+
+    def test_c_every_look_marks_its_top_for_the_web_only(self):
+        env = self.env()
+        doc = {"title": "T", "subtitle": "", "status": "warning", "summary": [{"label": "Hosts", "value": 3, "status": "warning"}],
+               "sections": [{"title": "A", "lines": ["x"]}, {"title": "B", "lines": ["y"]}, {"title": "C", "lines": ["z"]}]}
+        base = dict(_report=doc, _email_footer="AAP job 7 (T), started by x, 2026-11-21 06:00 UTC.", report_email_header_text="Site automation report",
+                    awx_job_id=7, awx_job_template_name="T")
+        for look in self.LOOKS:
+            web = env.get_template(look).render(dict(base, _page_runs=[], _page_logo_cid="", _page_logo_size=[0, 0]))
+            self.assertEqual(len(rw.BACK_RE.findall(web)), 1, look)
+            if look in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
+                self.assertIn('<div class="appbar"><div class="appbar-in"><!--site-report-back-->', web, look)       # first in the top bar, before the title
+                self.assertIn("tr:target>td,tr.is-target>td{", web, look)                                         # the row the click marks, as :target would
+                continue
+            self.assertRegex(web, r"<!--site-report-back w=(1000|full)-->", look)
+            mail = env.get_template(look).render(base)
+            self.assertNotIn("site-report-back", mail, look)                                                         # the email: as it was
+            self.assertNotIn("All reports", mail, look)
+
+    def test_d_insights_pages_have_it(self):
+        import servicenow_insights_page as ip
+        with open(os.path.join(REPO, "plugins", "filter", "servicenow_insights_page.py")) as fh:
+            src = fh.read()
+        self.assertEqual(src.count('<header class="bar gut"><div class="wrap"><!--site-report-back--><div class="brand">'), 2)       # the report and the breach page
+        self.assertIn("history.replaceState(history.state,'',id?h:location.pathname+location.search)", ip.SCRIPT)
+
+    def test_e_no_step_in_the_history(self):
+        files = [os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), os.path.join(REPO, "plugins", "filter", "servicenow_insights_page.py")]
+        files += [os.path.join(REPO, "roles", "netmap_report", "files", "web", f) for f in os.listdir(os.path.join(REPO, "roles", "netmap_report", "files", "web")) if f.endswith(".js")]
+        for f in files:
+            with open(f) as fh:
+                t = fh.read()
+            self.assertNotIn("pushState", t, f)                                                                   # tabs, filters, Columns, search, the period: never a step
+            self.assertNotRegex(t, r"location\.hash\s*=(?!=)", f)                                                 # nor a plain hash write (a step too)
+        with open(files[0]) as fh:
+            js = fh.read()
+        h = js[js.index("1.87.2: a link to a place on this page"):]
+        self.assertIn("var a=e.target.closest&&e.target.closest('a[href^=\"#\"]')", h)
+        self.assertIn("e.preventDefault();", h)
+        self.assertIn("history.replaceState(history.state,'',id?h:location.pathname+location.search)", h)
+        self.assertIn("if(d.tagName==='DETAILS'&&!d.open)d.open=true;", h)                                       # the closed section opens, as the browser would
+        self.assertIn("var b=still()?'instant':'auto';", h)                                                       # the page's scroll-behavior; at once when still
+        self.assertIn("@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}", rw.WEB_STYLE)       # the email looks on the web: smooth too
+        self.assertIn("if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;", h)  # a drill link's own handler, a new tab: theirs
+        self.assertIn("if(id&&!t)return;", h)                                                                     # a name not on the page: the browser's
+        self.assertIn("document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^=\"#\"]');if(a)try{liftFor(", js)   # the row past the cap: lifted first (capture)
+        import servicenow_insights_page as ip
+        self.assertIn('try{history.replaceState(null,"",u)}catch(e){if(!win)location.replace("#p="', ip.SCRIPT)   # the period stays in the address, no step
+
+
+class Outlook1872(unittest.TestCase):
+    """1.87.2: classic Outlook (the Word engine) mis-measures a variable font and negative em letter-spacing - the title and the status
+    box came out with overlapping and gapped letters. No email asks for "Segoe UI Variable" before "Segoe UI"; the web looks tell Outlook
+    (and only it) to keep normal letter-spacing."""
+
+    def test_every_look_email(self):
+        env = Back1872().env()
+        doc = {"title": "fapolicyd: 2 hosts need action", "subtitle": "", "status": "critical", "summary": [{"label": "Hosts", "value": 9, "status": "critical"}],
+               "sections": [{"title": "A", "lines": ["x"]}, {"title": "B", "lines": ["y"]}, {"title": "C", "lines": ["z"]}]}
+        base = dict(_report=doc, _email_footer="AAP job 7 (T), started by x, 2026-11-21 06:00 UTC.", report_email_header_text="Site automation report",
+                    awx_job_id=7, awx_job_template_name="T")
+        for look in Back1872.LOOKS:
+            h = env.get_template(look).render(base)
+            v, s_ = h.find("Segoe UI Variable"), h.find('Segoe UI"') if '"Segoe UI"' in h else h.find("Segoe UI")
+            self.assertTrue(v < 0 or (0 <= s_ < v), look)                                               # never a variable font first
+            self.assertNotIn("Segoe UI Variable", h, look)
+            self.assertNotRegex(h, r'style="[^"]*letter-spacing:\s*-[0-9.]+em', look)                   # no negative em spacing inline
+            if look in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
+                self.assertIn("<!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]-->", h, look)
+        import servicenow_insights_page as ip
+        with open(ip.__file__) as fh:
+            src = fh.read()
+        self.assertNotIn("Segoe UI Variable", src)
+        self.assertEqual(src.count("<!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--></head>"), 2)
+
+
 class WideTables(unittest.TestCase):
     """1.79.2: the wide hardware and capacity tables start with their least-used columns behind Columns."""
     COLS = ["Cluster", "Controller", "Model", "Serial", "System ID", "ONTAP", "HA partner", "CPU", "Memory", "System firmware", "SP / BMC",

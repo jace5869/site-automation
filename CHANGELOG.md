@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.87.2 — 2026-11-21
+
+**Nothing to set up.** The next run of a report writes its page with the new link.
+
+**The report website: back to the list in one click** (a user's report).
+
+- **All reports** (with a small arrow) at the top of every page on the website: in the top bar, before the title (atlas, brief, ops,
+  the ticket insights), or on a line above the card (the default, portal, command and glass looks). It leads to the index relative
+  to the page: the run's page, the template's latest page, more pages, and the copy job's pages. Put in when the page is published
+  (`site_report_web`), with `data-site-index` on `<html>`; no index, no link. The email is as it was.
+- **Back leaves the report in one click:** a link to a place on the page (the rail, *Open item*, a drill link, *On this page*) goes
+  there with `history.replaceState`, no new step. The closed section around it opens and the row is marked, as the browser would.
+  The scroll follows the page's own scroll-behavior (smooth on the web looks and now the email looks on the web, under
+  no-preference), at once when motion is off (the system's request, `?motion=off`).
+- The ticket insights' period buttons and the view kept the period in the address with a new step each time (`pushState`, a
+  plain hash on old browsers); they replace it now. Nothing in the report scripts adds a step any more.
+- **Outlook: the title and the status box with overlapping letters** (a user's fapolicyd email, the brief and ops looks): classic
+  Outlook (Word) mis-measures a variable font. The emails and pages ask for "Segoe UI" only, never its Variable cuts (atlas, brief,
+  ops, the ticket insights; the portal stays as it was), and tell Outlook alone to keep normal letter-spacing (`<!--[if mso]>`).
+  The web looks are unchanged elsewhere. Test: Outlook1872 (every look's email).
+- Tests: `tests/test_report_web.py` Back1872: the link's address from every depth, none without an index, every look's marker
+  for the web only, the insights pages, no `pushState` and no hash writes. `tests/email/run_web_test.sh`: the run's page,
+  latest, a page three folders down, the copy job (glass), and the email without it.
+
 ## 1.87.1 — 2026-11-21
 
 **To set up:** run **Site portal - deploy** once.

@@ -928,7 +928,8 @@ def inline_images(page, images):
 
 # in a browser, the email's background fills the window (the outer table at least as tall, its content at the top)
 WEB_STYLE = ('<style>body>table:first-of-type{height:100vh}'
-             'body>table:first-of-type>tbody>tr>td{vertical-align:top}</style>')
+             'body>table:first-of-type>tbody>tr>td{vertical-align:top}'
+             '@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}</style>')   # 1.87.2: a #link moves smoothly, as on the web looks
 
 
 def web_page(page, images, theme='portal'):
@@ -955,6 +956,41 @@ def script_tag(rel, js, name=SCRIPT):
     """The <script> that loads the script file (site-report.js, or the page's own) into the file rel (a page or the
     index), its version in the address - a browser that keeps a copy takes the new one."""
     return '<script src="%s?v=%s"></script>' % (_href(rel, name), hashlib.sha1(js.encode('utf-8')).hexdigest()[:10])
+
+
+# 1.87.2: "All reports" at the top of every page on the website - put in at publish time, where the page's place and the index's are known
+# (never in the email: its body has no marker, or a comment only). A look marks the spot: <!--site-report-back--> in a top bar (the link alone,
+# its colour the bar's), <!--site-report-back w=N--> above an email look's card N px wide, w=full in its shell (as wide as
+# the card - the web's own width; a line of its own). No marker: a line at the top.
+BACK_RE = re.compile(r'<!--site-report-back(?: w=(\d{3,4}|full))?-->')
+BACK_ICON = ('<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" style="flex:none"><path d="M10 3.5L5.5 8l4.5 4.5" fill="none" '
+             'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+BACK_STYLE = ('display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none;font-size:13px;font-weight:600;'
+              'line-height:1.4;white-space:nowrap;opacity:.88')
+BACK_LINE = 'margin:0 auto 10px;text-align:left;color:#1f2937;font-family:\'Segoe UI\',Arial,Helvetica,sans-serif'
+
+
+def back_link(page, rel, index, banner=None):
+    """The page rel with its way back to the index (an <a> to it, relative to rel) and data-site-index on <html>; page as it is when there is
+    no index (a page that is not on a website with one) or rel is the index."""
+    if not page or not index or not rel or rel == index:
+        return page
+    href = htmllib.escape(_href(rel, index), quote=True)
+    a = '<a class="sr-back" href="%s" style="%s">%sAll reports</a>' % (href, BACK_STYLE, BACK_ICON)
+
+    def put(m):
+        w = m.group(1)
+        return ('<div class="sr-backbar" style="%s%s">%s</div>' % ('' if w == 'full' else 'max-width:%spx;' % w, BACK_LINE, a)) if w else a
+    out, n = BACK_RE.subn(put, page, count=1)
+    if not n:                                            # a page without the marker: a line of its own at the top, under the banner
+        m = re.search(r'<body\b[^>]*>', out, re.I)
+        at = m.end() if m else 0
+        t = banner_inject('<body>\x00</body>', banner or {})
+        top = t[len('<body>'):t.index('\x00')]
+        if top and out.startswith(top, at):
+            at += len(top)
+        out = out[:at] + '<div class="sr-backbar" style="padding:10px 16px 0;%s">%s</div>' % (BACK_LINE, a) + out[at:]
+    return re.sub(r'<html\b', '<html data-site-index="%s"' % href, out, count=1, flags=re.I)
 
 
 def _href(src, dst):
@@ -2195,6 +2231,7 @@ def main():
             if not rel:
                 continue
             h = rf.put_files(html, step['hosted'], step['refused'], rel, folder, web_look)   # the latest page links the run's
+            h = back_link(h, rel, index, banner)        # 1.87.2: the way back to the index, from this page's place
             put(rel, h.replace(js_tag, script_tag(rel, js, js_name), 1) if js else h, 'text/html; charset=utf-8', rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
@@ -2208,6 +2245,7 @@ def main():
             if not rel:
                 continue
             h = rf.put_files(banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner), [], [], rel, '')
+            h = back_link(h, rel, index, banner)
             sjs, sname = page_script(h), page_script_name(h)
             if sjs and not (js and sname == js_name):
                 scripts[sname] = sjs

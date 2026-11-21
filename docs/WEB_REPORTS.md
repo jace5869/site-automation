@@ -398,6 +398,18 @@ vmware-snapshot-cleanup/
   shows each folder's line; one that stopped can be deleted on the server.
 - Every page stands alone: the logo is inside it (no separate image file), no scripts, no outside fonts or styles.
 
+### Back to the list (1.87.2)
+
+- **All reports**, with a small arrow, is at the top of every page on the website: first in the top bar (atlas, brief, ops, the ticket
+  insights), or on a line above the report's card (the other looks). It leads to the index, from wherever the page is
+  (`report_web_page` can put a page several folders down).
+- It is put in when the page is written to the website, so the email never has it. A page written with no index (`report_web_index`
+  empty) has no link; the page says so in `data-site-index` on its first tag.
+- A link to a place on the same page (a section in the rail, *Open item*, a dashboard's drill link, the insights' *On this page*) goes
+  there and shows it in the address, but adds no step to the browser's history. The tabs, filters, *Columns*, the search and the
+  insights' period and view add none either. So **Back** leaves the report in one click.
+- The page scrolls there smoothly (the ticket insights at once, as before), unless the system asks for reduced motion (or `?motion=off`).
+
 ### The index page: tabs, and each report's last runs
 
 Since 1.72.0 the index is calm: red only when a run needs a look. Findings are counts in plain ink, so a report with

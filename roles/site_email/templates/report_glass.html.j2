@@ -197,6 +197,7 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 <!--[if mso]><table role="presentation" width="760" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="760"><![endif]-->
 <table role="presentation" class="g-shell" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:900px;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:{{ ink }};">
 <tr><td>
+{%- if _page_runs is defined %}<!--site-report-back w=full-->{% endif %}
 <table role="presentation" class="g-card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ solid }}" style="width:100%;{{ glass }}"><tr><td style="padding:20px 22px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
 {%- if logo_cid %}

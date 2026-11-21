@@ -280,6 +280,25 @@
   function liftFor(h){var t=h&&h.length>1&&document.getElementById(decodeURIComponent(h.slice(1))),tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply()}}
   document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a)try{liftFor(a.getAttribute('href'))}catch(x){}},true);
   window.addEventListener('hashchange',function(){try{liftFor(location.hash)}catch(x){}});try{liftFor(location.hash)}catch(x){}
+  /* 1.87.2: a link to a place on this page (the rail, Open item, a drill link, a table of contents) goes there without a step in the browser's history:
+     the address shows it (history.replaceState - no new step), so Back leaves the report in one click. What the browser does for a #link
+     is done here: the closed section around it opens, a row is marked (is-target, as tr:target), and the page scrolls to it - as the page's own scroll-behavior says
+     (smooth under no-preference), at once when motion is off (a motion-off page or ?motion=off, the system's request). A link with a modifier key, another target or a name not on the page: the browser's own. */
+  (function(){var H=document.documentElement;
+    function still(){if(H.classList.contains('motion-off')||H.getAttribute('data-motion')==='off'||/[?&]motion=off\b/.test(location.search))return true;
+      if(H.classList.contains('motion-always'))return false;return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)}
+    var marked=null;
+    document.addEventListener('click',function(e){
+      if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
+      var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||(a.target&&a.target!=='_self')||a.hasAttribute('download'))return;
+      var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1))}catch(x){return}
+      var t=id?document.getElementById(id):null;if(id&&!t)return;
+      e.preventDefault();
+      for(var d=t&&t.parentNode;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;
+      try{history.replaceState(history.state,'',id?h:location.pathname+location.search)}catch(x){}
+      if(marked)marked.classList.remove('is-target');marked=t&&t.tagName==='TR'?t:null;if(marked)marked.classList.add('is-target');
+      var b=still()?'instant':'auto';
+      try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}})})();
   /* 1.76.5: a table cell of more than 4 lines shows 4 and "more" (CSS draws the word; the cell's text is as it was) - measured once its section is open */
   function longCells(root){all('.tw td .cv',root).forEach(function(cv){var td=cv.parentNode;if(td._lc||!td.offsetParent)return;
     var lh=parseFloat(getComputedStyle(cv).lineHeight)||20;if(cv.offsetHeight>lh*4.6){td._lc=1;td.classList.add('cl')}else td._lc=0})}

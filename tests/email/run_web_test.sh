@@ -88,6 +88,10 @@ page="$(ls "$d" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}_job-907\.html$')
 check "named {date}_{time}_job-{job}.html in the template's folder" test -n "$page"
 check "no email (report_email_to empty)" test "$(mails)" = 0
 check "latest.html is the same page" cmp -s "$d/$page" "$d/latest.html"
+check "1.87.2: All reports at the top of the page and of latest (the atlas top bar), to the index relative to each, data-site-index set" bash -c \
+    "for f in '$d/$page' '$d/latest.html'; do grep -q '<div class=\"appbar-in\"><a class=\"sr-back\" href=\"../index.html\"' \"\$f\" \
+     && grep -q '<html data-site-index=\"../index.html\"' \"\$f\" && test \"\$(grep -o 'class=\"sr-back\"' \"\$f\" | wc -l)\" = 1 || exit 1; done"
+check "1.87.2: the index has no way back to itself" bash -c "! grep -q 'sr-back' '$work/reports/index.html'"
 check "the page: the atlas look (the default), the logo inside it (data:), no cid:" bash -c "grep -q '<div class=\"eyebrow\">Linux - Certificate trust report</div>' '$d/$page' && grep -q '<span>AAP job 907</span>' '$d/$page' \
     && grep -q 'src=\"data:image/png;base64,' '$d/$page' && ! grep -q 'cid:' '$d/$page' && grep -q 'width=\"42\" height=\"56\"' '$d/$page' \
     && grep -q 'class=\"seg\" id=\"theme\"' '$d/$page' && grep -q 'prefers-color-scheme:dark' '$d/$page'"
@@ -144,6 +148,7 @@ run "your own names: report_web_page with {site}, report_web_names, no latest, n
       \"report_web_json\": false, \"report_web_names\": {\"site\": \"HQ East\"}, $aapjob}"
 check "HQ-East/linux-certificate-trust-report/<year>/warning-907.html" bash -c "ls '$work'/reports/HQ-East/linux-certificate-trust-report/*/warning-907.html >/dev/null \
     && ! ls '$work'/reports/HQ-East/linux-certificate-trust-report/*/*.json 2>/dev/null"
+check "1.87.2: a page three folders down links ../../../index.html" bash -c "grep -q 'class=\"sr-back\" href=\"../../../index.html\"' '$work'/reports/HQ-East/linux-certificate-trust-report/*/warning-907.html"
 run "  another template under the same {site} folder, no latest, report_web_history 1: nothing deleted" ok \
     "{\"report_web_dest\": \"$work/reports\", \"report_web_page\": \"{site}/{template}/{year}/{status}-{job}.html\", \"report_web_latest\": \"\",
       \"report_web_json\": false, \"report_web_names\": {\"site\": \"HQ East\"}, \"report_web_history\": 1, \"awx_job_id\": 4183,
@@ -275,6 +280,9 @@ t = [x for x in open(sys.argv[1]).read().splitlines() if x.strip()]
 rx = r"^Full report: https://reports.example.mil/linux-certificate-trust-report/.*_job-907.html$"
 assert re.match(rx, t[0]) and re.match(rx, t[-1]), (t[0], t[-1])' "$work/plain.txt"
 check "the email keeps its logo attached (cid:)" grep -q 'Content-ID: <site-report-logo>' "$work/mail/1.eml"
+check "1.87.2: the email has no All reports link and no marker; its web page (report_web_theme) has the link" bash -c \
+    "! grep -qE 'sr-back|site-report-back|All reports' '$work/html.txt' && ! grep -q 'All reports' '$work/plain.txt' \
+     && f=\$(ls -t '$d'/*_job-907.html | head -1) && grep -q 'class=\"sr-back\" href=\"../index.html\"' \"\$f\" && ! grep -q 'site-report-back' \"\$f\""
 
 # On a Windows server (report_web_host): the read script and the script site_report_web makes, run by pwsh here in
 # place of WinRM (report_web_host_connection: local) - the real WinRM in CI's Windows job
@@ -435,6 +443,8 @@ cp1="$(ls "$cd1" 2>/dev/null | grep -E '_job-907\.html$')"
 check "the classified report job's page has its banner, top and bottom; the other none (1.3.0)" bash -c \
     "test \"\$(grep -o 'class=\"site-banner ' '$work/copy/vmware-snapshot-cleanup/latest.html' | wc -l)\" = 2 \
      && grep -q 'background:#c8102e;color:#ffffff' '$work/copy/vmware-snapshot-cleanup/latest.html' && ! grep -q site-banner '$cd1/latest.html'"
+check "1.87.2: the copy job's pages (glass) have All reports to the copy folder's index" bash -c \
+    "grep -q '<div class=\"sr-backbar\" style=\"margin:0 auto 10px;' '$cd1/$cp1' && grep -q 'class=\"sr-back\" href=\"../index.html\"' '$cd1/latest.html' && test -s '$work/copy/index.html'"
 check "the page the report job named, latest, the JSON" bash -c "test -n '$cp1' && test -s '$cd1/latest.html' && test -s '$cd1/${cp1%.html}.json' && test -s '$cd1/latest.json'"
 check "the page is the report job's: its number and template, its footer - not the copy job's (999)" bash -c "grep -q 'AAP job 907 &middot; Linux - Certificate trust report' '$cd1/$cp1' \
     && grep -q 'AAP job 907 (Linux - Certificate trust report)' '$cd1/$cp1' && ! grep -q 'job 999' '$cd1/$cp1' && ! grep -q 'Report website - copy' '$cd1/$cp1'"

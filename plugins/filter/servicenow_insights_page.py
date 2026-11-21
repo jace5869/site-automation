@@ -502,8 +502,8 @@ BRIEF_CSS = r"""
   --good:#0e6538; --good-bg:rgba(14,101,56,.1); --warn:#844b0b; --warn-bg:rgba(132,75,11,.1); --crit:#a82823; --crit-bg:rgba(168,40,35,.1);
   --info:#2b58b1; --info-bg:rgba(43,88,177,.1);
   --shadow:none;
-  --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
-  --display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --sans:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --display:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#121212; --surface:#1e1e1e; --surface-2:#2c2c2c; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.05);
@@ -581,6 +581,25 @@ section.card{border-radius:14px;border:1px solid var(--line)}
 
 SCRIPT_FILE = "site-insights.js"           # written beside the website's index by site_report_web; the page loads it from there
 SCRIPT = r"""(function(){"use strict";
+  /* 1.87.2: a link to a place on this page (the rail, Open item, a drill link, a table of contents) goes there without a step in the browser's history:
+     the address shows it (history.replaceState - no new step), so Back leaves the report in one click. What the browser does for a #link
+     is done here: the closed section around it opens, a row is marked (is-target, as tr:target), and the page scrolls to it - as the page's own scroll-behavior says
+     (smooth under no-preference), at once when motion is off (a motion-off page or ?motion=off, the system's request). A link with a modifier key, another target or a name not on the page: the browser's own. */
+  (function(){var H=document.documentElement;
+    function still(){if(H.classList.contains('motion-off')||H.getAttribute('data-motion')==='off'||/[?&]motion=off\b/.test(location.search))return true;
+      if(H.classList.contains('motion-always'))return false;return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)}
+    var marked=null;
+    document.addEventListener('click',function(e){
+      if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
+      var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||(a.target&&a.target!=='_self')||a.hasAttribute('download'))return;
+      var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1))}catch(x){return}
+      var t=id?document.getElementById(id):null;if(id&&!t)return;
+      e.preventDefault();
+      for(var d=t&&t.parentNode;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;
+      try{history.replaceState(history.state,'',id?h:location.pathname+location.search)}catch(x){}
+      if(marked)marked.classList.remove('is-target');marked=t&&t.tagName==='TR'?t:null;if(marked)marked.classList.add('is-target');
+      var b=still()?'instant':'auto';
+      try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}})})();
 if(window.siteInsights)return;window.siteInsights=1;   /* the page's copy and site-insights.js: whichever runs first */
 try{var th=localStorage.getItem("site-report-theme");if(th==="light"||th==="dark")document.documentElement.setAttribute("data-theme",th)}catch(e){}   /* the website's light / dark choice */
 function init(){
@@ -827,7 +846,7 @@ if(cvd&&cvt){var E=eng(JSON.parse(cvd.textContent)),CV=E.CV,C=E.C,figs=E.figs,al
   rows.forEach(function(r){var tr=D.createElement("tr");[[r[0],null],[nf(r[1]),r[1]],[nf(r[2]),r[2]],[nf(r[3]),r[3]],[fh(rr(r[4])),r[4]===null?-1:r[4]],[pc(rr(r[5])),r[5]===null?-1:r[5]]].forEach(function(c2,k){
    var td=D.createElement("td");td.textContent=c2[0];td.setAttribute("data-l",lab[k]);if(k){td.className="n";td.setAttribute("data-v",c2[1])}tr.appendChild(td)});tb.appendChild(tr)});
   res.hidden=false;var hv=(cvp?"preset:"+encodeURIComponent(cvp):enc(idx))+(vv===null?"":"&v="+vv)+(per!==P0&&per.name?"&p="+encodeURIComponent(per.name):"");
-  if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.hash="cv="+hv}}
+  if(push!==false)try{history.replaceState(null,"","#cv="+hv)}catch(e){location.replace("#cv="+hv)}}
  function tick(idx){var want={};idx.forEach(function(i){want[i]=1});all.forEach(function(b){b.checked=!!want[+b.getAttribute("data-g")]});tally()}
  pres.forEach(function(x){x.addEventListener("click",function(){tick(dec(x.getAttribute("data-idx")));press(x.getAttribute("data-name"));apply()})});
  D.getElementById("cvgo").addEventListener("click",function(){apply();D.getElementById("cvres").scrollIntoView({block:"nearest"})});
@@ -882,7 +901,7 @@ if(ppb&&ppd){var PE=eng(JSON.parse(ppd.textContent)),PC=PE.C,PS={};PE.CV.groups.
     else if(k==="unable"&&PC.out)tile(t,L,pp(f.una,f.res),c&&dl(r1(sh(f.una,f.res)),r1(sh(c.una,c.res)),true,true),"of the incidents resolved");
     else tile(t,L,"",null,"",true)});
    if(fc)PE.chart(fc,PS,p.a,p.b)}
-  if(push){var u=win?location.pathname+location.search:"#p="+encodeURIComponent(p.name);try{history.pushState(null,"",u)}catch(e){if(!win)location.hash="p="+encodeURIComponent(p.name)}}}
+  if(push){var u=win?location.pathname+location.search:"#p="+encodeURIComponent(p.name);try{history.replaceState(null,"",u)}catch(e){if(!win)location.replace("#p="+encodeURIComponent(p.name))}}}
  function fromhash(){if(/[#&]cv=/.test(location.hash))return;var m=/[#&]p=([^&]*)/.exec(location.hash),p=m?PPB.byname(decodeURIComponent(m[1])):null;choose(p||PP0,false)}
  copier("ppcopy");window.addEventListener("popstate",fromhash);fromhash();
 }
@@ -1650,9 +1669,9 @@ def servicenow_insights_breach_page(bm, opts=None):
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
     full = (o.get("links") or {}).get("full") or ""
     out = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
-           '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
+           '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style><!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--></head><body>' % (
                e("About to breach – " + (bm.get("head") or "ServiceNow")), CSS + ORG_CSS, look_css),
-           '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow - about to breach</h1>'
+           '<header class="bar gut"><div class="wrap"><!--site-report-back--><div class="brand">%s<div style="min-width:0"><h1>ServiceNow - about to breach</h1>'
            '<div class="sub">%s · generated %s%s</div></div></div></header>' % (
                logo, e(o.get("scope_label") or "All assignment groups"), e(o.get("generated") or ""),
                (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else ""),
@@ -1833,7 +1852,7 @@ def servicenow_insights_page(model, key="all", opts=None):
         return e(text if text is not None else g)
 
     head = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
-            '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style></head><body>' % (
+            '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style><!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--></head><body>' % (
                 e("Ticket insights – " + s["name"]), CSS + ORG_CSS, look_css)]
     # the site's logo (report_logo_file) goes in place of the comment when the page is published; else the initials
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
@@ -1885,7 +1904,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                 .replace("Sites, directorates and teams", "Units and teams")
     teamnav = ""
     head.append(
-        '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow ticket insights</h1>'
+        '<header class="bar gut"><div class="wrap"><!--site-report-back--><div class="brand">%s<div style="min-width:0"><h1>ServiceNow ticket insights</h1>'
         '<div class="sub">%s · %s (%s) · generated %s%s</div>%s</div></div>'
         '<div class="tools">%s<label class="search" for="q"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" '
         'fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'

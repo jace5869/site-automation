@@ -1892,7 +1892,8 @@ class PageFits(unittest.TestCase):
 class PagePeriods(unittest.TestCase):
     """1.39.0: the period bar on the All page and on every unit's and team's page - the page's own rows, the window as
     written until a period is chosen; At a glance and the opened and resolved chart worked out by the Custom view's script
-    (the same figs()), the rest marked whole window; the period in the address (#p=1m), Back to the one before; under
+    (the same figs()), the rest marked whole window; the period in the address (#p=1m) - 1.87.2: replaced, no step in the history (Back
+    leaves the report in one click); under
     require-trusted-types-for 'script'; it fits at 1280 px and on a phone."""
 
     PROBE = ('<script>var V=[];document.addEventListener("securitypolicyviolation",function(e){V.push(e.violatedDirective)});'
@@ -1903,8 +1904,8 @@ class PagePeriods(unittest.TestCase):
              'o.say=!D.getElementById("ppsay").hidden;o.whole=[].slice.call(D.querySelectorAll("#glance .tile[data-pp=\'-\'] .chip.ppw")).filter(function(x){return !x.hidden}).length;'
              'o.notes=[].slice.call(D.querySelectorAll("section.card .sh .chip.ppw")).filter(function(x){return !x.hidden}).length;o.chart=!!D.querySelector("#ppflow .cvsvg");'
              'o.act=[].slice.call(D.querySelectorAll("#glance .act .chip.ppw, .brief-hero>.chip.ppw")).filter(function(x){return !x.hidden}).length;'
-             'D.querySelector("#ppbar button.cvpd[data-name=\'3m\']").click();o.h3=location.hash;o.t3=tv("opened");history.back();'
-             'setTimeout(function(){o.hb=location.hash;o.tb=tv("opened");D.querySelector("#ppbar button.cvpd[data-name=\'all\']").click();o.ta=tv("opened");o.ha=location.hash;'
+             'var n0=history.length;D.querySelector("#ppbar button.cvpd[data-name=\'3m\']").click();o.h3=location.hash;o.t3=tv("opened");o.steps=history.length-n0;'
+             'setTimeout(function(){D.querySelector("#ppbar button.cvpd[data-name=\'all\']").click();o.ta=tv("opened");o.ha=location.hash;'
              'o.acta=[].slice.call(D.querySelectorAll("#glance .act .chip.ppw, .brief-hero>.chip.ppw")).filter(function(x){return !x.hidden}).length;'
              'o.v=V;D.title="R "+JSON.stringify(o)},300)}catch(e){V.push("thrown: "+e.message);o.v=V;D.title="R "+JSON.stringify(o)}},300)})</script></body>')
     CSP = '<head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'">'
@@ -1990,7 +1991,7 @@ class PagePeriods(unittest.TestCase):
             self.assertGreater(got["notes"], 10)
             self.assertEqual((got["act"], got["acta"]), (1, 0), got)       # What the period says: the window's sentences, said so
             self.assertEqual((got["h3"], got["t3"]), ("#p=3m", self.want(m, key, "3m")[0]))
-            self.assertEqual((got["hb"], got["tb"]), ("#p=1m", got["t0"]))        # Back
+            self.assertEqual(got["steps"], 0, got)                              # 1.87.2: the period replaces the address - Back leaves the report
             w = re.search(r'<div class="tile" data-pp="opened"><span class="eyebrow">Tickets</span><span class="v">([\d,]+)', P.servicenow_insights_page(m, key, OPTS)).group(1)
             self.assertEqual((got["ta"], got["ha"]), (w, ""))               # the window: the page as written
         # without a hash: the window, nothing marked
