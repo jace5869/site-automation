@@ -84,9 +84,10 @@ def main():
     index = open(os.path.join(ROOT, "docs", "JOB_TEMPLATES.md"), encoding="utf-8").read()
     rows = {}
     for ln in index.splitlines():
-        m = re.match(r"^\|\s*(.+?)\s*\|\s*`playbooks/([\w.]+\.yml)`\s*\|(.*)\|\s*$", ln)
+        # 1.83.0: a workflow step's row names its fixed settings after the playbook; a playbook's first row is its own
+        m = re.match(r"^\|\s*(.+?)\s*\|\s*`playbooks/([\w.]+\.yml)`[^|]*\|(.*)\|\s*$", ln)
         if m:
-            rows[m.group(2)] = (m.group(1).replace("**", "").strip(), m.group(3))
+            rows.setdefault(m.group(2), (m.group(1).replace("**", "").strip(), m.group(3)))
     for pb in sorted(os.path.basename(p) for p in glob.glob(os.path.join(ROOT, "playbooks", "*.yml"))):
         if pb not in rows:
             fails.append("docs/JOB_TEMPLATES.md: no line for playbooks/%s" % pb)
