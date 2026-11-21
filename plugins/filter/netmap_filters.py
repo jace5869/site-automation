@@ -51,7 +51,7 @@ def netmap_doc(res, opts=None):
     wan_warn = [w for w in wan if w[0]["status"] == "Warning"]
     changes = r.get("changes") or []
     sites = [s for s in m.get("sites") or [] if s.get("nodes")]
-    unplaced = [s for s in sites if s.get("lat") is None]
+    unplaced = [s for s in sites if s.get("lat") is None and s["name"] != m.get("no_site")]   # 1.95.0: "Not placed" is no site
     ver = r.get("version") or {}
     vtext = "SolarWinds %s" % ver["platform"] if ver.get("platform") else "SolarWinds"
     sections = []
@@ -89,19 +89,24 @@ def netmap_doc(res, opts=None):
                "row_status": ["critical" if c["kind"].endswith("→ Down") else "warning" if c["kind"] in ("Missing node", "Missing link") or c["kind"].endswith("→ Warning") else "" for c in changes]}
         sections.append(_cut(sec["rows"], o, sec, "changes"))
     if sites:
-        rows = [[s["name"], s["nodes"], s["down"], s["warning"], WORD.get(s["worst"], s["worst"]),
+        nb = {}
+        for n in nodes:
+            if n.get("building"):
+                nb.setdefault(n["site"], set()).add(n["building"])
+        rows = [[s["name"], s["nodes"], len(nb.get(s["name"], ())), s["down"], s["warning"], WORD.get(s["worst"], s["worst"]),
                  ("%.2f, %.2f" % (s["lat"], s["lon"])) if s.get("lat") is not None else "Unplaced",
                  FROM.get(s.get("from"), "-")] for s in sites]
         sec = {"title": "Sites (%d)" % len(sites), "status": "info",
-               "columns": ["Site", "Nodes", "Down", "Warning", "Worst", "Lat, long", "Placed by"],
+               "columns": ["Site", "Nodes", "Buildings", "Down", "Warning", "Worst", "Lat, long", "Placed by"],
                "rows": rows, "row_status": ["critical" if s["down"] else "" for s in sites]}
         sections.append(_cut(rows, o, sec, "sites"))
     if unplaced:
         sections.append({"title": "Unplaced sites (%d)" % len(unplaced), "status": "warning",
-                         "text": "No coordinates from SolarWinds' Worldwide Map or the custom properties: give each one in "
-                                 "netmap_sites (all.yml), e.g. {\"%s\": {lat: 39.4, lon: -93.2}}. They are in the Sites view and "
-                                 "these tables as any other site." % unplaced[0]["name"],
-                         "lines": ["%s (%s)" % (s["name"], _plural(s["nodes"], "node")) for s in unplaced]})
+                         "text": "No coordinates from SolarWinds' Worldwide Map or the custom properties: give them in netmap_sites "
+                                 "(all.yml) by name or by a pattern - e.g. {\"%s\": {lat: 39.4, lon: -93.2}}, or {\"%s*\": {...}} for every "
+                                 "site whose name starts so. The map shows them as tiles." % (unplaced[0]["name"], unplaced[0]["name"][:4]),
+                         "lines": ["%s (%s)" % (s["name"], _plural(s["nodes"], "node")) for s in unplaced[:30]]
+                                  + (["and %d more (the workbook's Sites sheet lists them all)" % (len(unplaced) - 30)] if len(unplaced) > 30 else [])})
     nr = list(r.get("not_read") or [])
     if m.get("cut"):
         nr.append({"what": "nodes past netmap_max_nodes", "why": "only the first %d nodes were read" % len(nodes)})
@@ -109,11 +114,12 @@ def netmap_doc(res, opts=None):
         nr.append({"what": "%s" % _plural(m["hidden_links"], "link"), "why": "to a node this account may not see (its limitation in SolarWinds) - left out"})
     if nr:
         sections.append({"title": "Not all read", "status": "warning", "lines": ["%s: %s" % (x["what"], x["why"]) for x in nr]})
+    sections.extend(_discovery_sections(m, full=bool(o.get("web"))))   # the email: the rule a level; the page: all of it
     links = [l for l in m.get("links") or [] if not l.get("gone")]
-    title = "Network map: %d down, %d warning - %s, %s" % (cnt["Down"], cnt["Warning"], _plural(len(sites), "site"), _plural(len(nodes), "node"))
+    title = "Network map: %d down, %d warning - %s, %s" % (cnt["Down"], cnt["Warning"], _plural(len([s for s in sites if s["name"] != m.get("no_site")]), "site"), _plural(len(nodes), "node"))
     if wan_down:
         title += " - %s down" % _plural(len(wan_down), "WAN link")
-    summary = [{"label": "Nodes", "value": len(nodes), "note": "%s · %s" % (_plural(len(sites), "site"), _plural(len(links), "link"))},
+    summary = [{"label": "Nodes", "value": len(nodes), "note": "%s · %s" % (_plural(len([s for s in sites if s["name"] != m.get("no_site")]), "site"), _plural(len(links), "link"))},
                {"label": "Down", "value": cnt["Down"], "status": "critical" if cnt["Down"] else "ok", "note": "no answer to SolarWinds"},
                {"label": "Warning", "value": cnt["Warning"], "status": "warning" if cnt["Warning"] else "ok", "note": "up, with a problem"},
                {"label": "WAN links down", "value": len(wan_down), "status": "critical" if wan_down else "ok", "note": "of %d" % len(wan)}]
@@ -127,6 +133,51 @@ def netmap_doc(res, opts=None):
             "subtitle": sub, "summary": summary, "sections": sections}
 
 
+def _pct(x):
+    return "%d%%" % round((x or 0) * 100)
+
+
+def _discovery_sections(m, full=True):
+    """1.95.0: how the sites, buildings and closets were read - the rule a level, the readings, the fields, the roles (last:
+    the explanation after the results)."""
+    d = m.get("discovery") or {}
+    if not d.get("levels"):
+        return []
+    out = [{"title": "Discovery: how the sites, buildings and closets were read", "status": "info",
+            "text": d.get("best") or "", "columns": ["Level", "Read from", "Nodes", "Groups", "Agrees with", "Decided by", "Examples"],
+            "rows": [[lv["level"].capitalize(), lv["rule"], _pct(lv["coverage"]), lv["groups"], ", ".join(lv.get("agrees") or []) or "-",
+                      lv.get("decided") or "-", ", ".join(lv.get("samples") or [])] for lv in d["levels"]]}]
+    if not full:
+        out[0]["text"] = (d.get("best") or "") + " The report's page and the workbook's Discovery sheet show every reading and field."
+        return out
+    site = d["levels"][0]
+    rd = site.get("readings") or []
+    if rd:
+        out.append({"title": "Discovery: the readings of the site", "status": "info",
+                    "text": "The chosen one first; the others as they scored (coverage x a sane number of groups x the links inside "
+                            "x how whole the groups are). Set one in all.yml: netmap_site_pattern or netmap_hierarchy.",
+                    "columns": ["", "Read from", "Nodes", "Groups", "Links inside", "Pieces a group", "Score", "Examples"],
+                    "rows": [["chosen" if r.get("chosen") else "", r["rule"], _pct(r["coverage"]), r["groups"],
+                              "-" if r.get("cohesion") is None else _pct(r["cohesion"]), r.get("pieces", 1),
+                              "-" if r.get("score") is None else r["score"], ", ".join(r.get("samples") or [])] for r in rd]})
+    if d.get("fields"):
+        out.append({"title": "Discovery: what the nodes carry", "status": "info",
+                    "text": "Each field: how many nodes have a value, how many different values, and five of them.",
+                    "columns": ["Field", "Nodes with a value", "Different values", "Examples"],
+                    "rows": [[f["field"], f["filled"], f["distinct"], ", ".join(f["samples"])] for f in d["fields"]]})
+    if d.get("roles"):
+        out.append({"title": "Discovery: the devices' roles", "status": "info",
+                    "text": "From the name (CR, DS, AS, FW ...), else the model, else the number of links; netmap_roles sets one by name.",
+                    "columns": ["Role", "Devices", "From the name", "From the model", "From the links", "netmap_roles"],
+                    "rows": [[r["role"], r["n"], r.get("name", 0), r.get("model", 0), r.get("links", 0), r.get("netmap_roles", 0)] for r in d["roles"]]})
+    un = d.get("unplaced_nodes") or []
+    if un:
+        out.append({"title": "Discovery: nodes not placed (%d)" % len(un), "status": "info",
+                    "text": "No site from the reading above: they are on the site \"%s\"." % (m.get("no_site") or "Not placed"),
+                    "lines": un[:30] + (["and %d more" % (len(un) - 30)] if len(un) > 30 else [])})
+    return out
+
+
 def netmap_xlsx(res):
     """The workbook: Nodes, Links, WAN links, Sites, Changes - a row each, nothing cut."""
     r = res or {}
@@ -136,9 +187,10 @@ def netmap_xlsx(res):
     nodes = sorted(m.get("nodes") or [], key=lambda n: (n["site"].lower(), ORDER.get(n["status"], 9), n["name"].lower()))
     links = [l for l in m.get("links") or [] if l["a"] in ids and l["b"] in ids]
     sheets = [
-        {"name": "Nodes", "columns": ["Node", "Status", "Site", "Role", "IP", "Vendor", "Model", "Location", "Response", "SolarWinds says",
-                                      "Change", "NodeID"] + props,
-         "rows": [[n["name"], "Missing" if n.get("gone") else n["status"], n["site"], n.get("role", ""), n.get("ip", ""), n.get("vendor", ""),
+        {"name": "Nodes", "columns": ["Node", "Status", "Site", "Building", "Closet", "Role", "Role from", "IP", "Vendor", "Model", "Location", "Response",
+                                      "SolarWinds says", "Change", "NodeID"] + props,
+         "rows": [[n["name"], "Missing" if n.get("gone") else n["status"], n["site"], n.get("building", ""), n.get("closet", ""), n.get("role", ""),
+                   n.get("role_from", ""), n.get("ip", ""), n.get("vendor", ""),
                    n.get("model", ""), n.get("loc", ""), n.get("resp", ""), n.get("why", ""),
                    "missing since the last run" if n.get("gone") else "new" if n.get("new") else ("%s → %s" % (n["was"], n["status"]) if n.get("was") else ""),
                    n["id"]] + [(n.get("props") or {}).get(p, "") for p in props] for n in nodes]},
@@ -154,6 +206,16 @@ def netmap_xlsx(res):
                    s["lon"] if s.get("lon") is not None else "", FROM.get(s.get("from"), "unplaced")] for s in m.get("sites") or []]},
         {"name": "Changes", "columns": ["Change", "What", "Site", "Detail"],
          "rows": [[c["kind"], c["what"], c["site"], c.get("detail", "")] for c in r.get("changes") or []]}]
+    d = m.get("discovery") or {}
+    if d.get("levels"):                                  # 1.95.0: how it was read - the rule a level, every reading, every field
+        rows = []
+        for lv in d["levels"]:
+            for x in lv.get("readings") or []:
+                rows.append([lv["level"], "chosen" if x.get("chosen") else "", x["rule"], x["coverage"], x["groups"], x.get("cohesion"), x.get("pieces"),
+                             x.get("score"), lv.get("decided") if x.get("chosen") else "", ", ".join(x.get("samples") or [])])
+        rows += [["field", "", f["field"], f["filled"], f["distinct"], "", "", "", "", ", ".join(f["samples"])] for f in d.get("fields") or []]
+        sheets.append({"name": "Discovery", "columns": ["Level", "Chosen", "Read from", "Coverage (nodes with a value)", "Groups", "Links inside",
+                                                        "Pieces a group", "Score", "Decided by", "Examples"], "rows": rows})
     return sheets
 
 
@@ -171,9 +233,18 @@ def netmap_lines(res):
     if v.get("modules"):
         out.append("Modules: " + ", ".join(v["modules"]))
     out.append("Topology from %s" % (m.get("topology") or "nowhere (no links)"))
-    for s in m.get("sites") or []:
+    d = m.get("discovery") or {}
+    if d.get("best"):                                    # 1.95.0: the discovery, in the job's output
+        out.append("Discovery: " + d["best"])
+        for lv in d.get("levels") or []:
+            out.append("  %s: %s - %d groups, %s of the nodes (%s)" % (lv["level"], lv["rule"], lv["groups"], _pct(lv["coverage"]), lv.get("decided") or "-"))
+        for f in sorted(d.get("fields") or [], key=lambda f: (-f["filled"], f["distinct"]))[:12]:
+            out.append("  field %s: %d nodes, %d values, e.g. %s" % (f["field"], f["filled"], f["distinct"], ", ".join(f["samples"][:3])))
+    for s in (m.get("sites") or [])[:60]:
         out.append("%s: %d nodes, %d down, %d warning - %s" % (s["name"], s["nodes"], s["down"], s["warning"],
                    ("%.3f, %.3f (%s)" % (s["lat"], s["lon"], FROM.get(s["from"], s["from"]))) if s.get("lat") is not None else "unplaced"))
+    if len(m.get("sites") or []) > 60:
+        out.append("... and %d more sites (the report's Sites table)" % (len(m["sites"]) - 60))
     out.extend("Not read - %s: %s" % (x["what"], x["why"]) for x in r.get("not_read") or [])
     out.append("Changes since the last run: %d" % len(r.get("changes") or []) if r.get("compared") else "Not compared with an earlier run")
     return out
