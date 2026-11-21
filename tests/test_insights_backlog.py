@@ -39,10 +39,10 @@ VIP = {"on": True, "tiers": ["VIP"], "of": {"u-vip": 0}, "people": ["caller_id"]
 N = [0]
 
 
-def ticket(issue, hops=0, good=True, vip=False, ci="", day=1):
+def ticket(issue, hops=0, good=True, vip=False, ci="", day=1, cat="Hardware"):
     N[0] += 1
     return ({"sys_id": "s%05d" % N[0], "number": "XINC%07d" % N[0], "table": "incident", "opened_at": "2026-03-%02d 08:00:00" % day,
-             "done_at": "2026-03-%02d 09:00:00" % day, "close_notes": GOOD if good else "fixed", "category": "Hardware", "reassignment_count": hops,
+             "done_at": "2026-03-%02d 09:00:00" % day, "close_notes": GOOD if good else "fixed", "category": cat, "reassignment_count": hops,
              "cmdb_ci": ci, "caller_id": "u-vip" if vip else "u-1", "short_description": "Printer %s will not print" % issue}, issue)
 
 
@@ -97,18 +97,78 @@ class Formulas(unittest.TestCase):
         self.assertEqual((p1["settles"], p2["settles"]), (24 - 10, 24))             # good notes: never passed on / all
         self.assertLessEqual(p1["defl"], p2["defl"])
         self.assertLessEqual(p2["defl"], p3["defl"])
-        self.assertEqual([p["complexity"] for p in a["ph"]], [1, 2, 4])             # median handoffs 0: no extra point
-        self.assertEqual([p["effort"] for p in a["ph"]], [1, 6, 20])                # days per complexity point 1, 3, 5
+        self.assertEqual([p["complexity"] for p in a["ph"]], [2, 3, 5])             # a printer: on-site hardware, one more point in every phase (median handoffs 0: none)
+        self.assertEqual([p["cx_parts"] for p in a["ph"]][0], {"base": 1, "hand": 0, "notes": 0, "onsite": 1})
+        self.assertEqual([p["effort"] for p in a["ph"]], [2, 9, 25])                # days per complexity point 1, 3, 5
         self.assertEqual({p["impact"] for p in a["ph"]}, {5})                       # the top cluster
         for p in a["ph"]:                                                           # score = deflection % x impact / (5 x complexity)
             self.assertEqual(p["score"], int(round(p["defl"] * p["impact"] / (5.0 * p["complexity"]))))
         self.assertEqual(a["best"], max(range(3), key=lambda i: (a["ph"][i]["score"], -i)) + 1)
-        # the median handoffs 2 or more: one more complexity point in every phase (at most 5)
+        # the median handoffs 2 or more: two more points in every phase (at most 5)
         t, i = made()
         for x in t[:25]:
             x["reassignment_count"] = 2
         a2 = rows_of(t, i)["rows"][0]
-        self.assertEqual([p["complexity"] for p in a2["ph"]], [2, 3, 5])
+        self.assertEqual([p["complexity"] for p in a2["ph"]], [4, 5, 5])
+
+    def test_complexity_is_the_clusters_own(self):
+        """1.89.0: the phase's base plus what is true of THIS cluster, so the grid spreads: handoffs (1 or 2+), a fix nobody wrote down
+        (phases 2 and 3), on-site hardware (every phase). At most 5."""
+        def cx(cat, hops, good):
+            t = [ticket("Thing", hops=hops, good=good, day=1 + k % 27, cat=cat)[0] for k in range(20)]
+            return [p["complexity"] for p in rows_of(t, dict((x["sys_id"], "Thing") for x in t))["rows"][0]["ph"]]
+        self.assertEqual(cx("Software", 0, True), [1, 2, 4])               # the base
+        self.assertEqual(cx("Software", 1, True), [2, 3, 5])               # passed once
+        self.assertEqual(cx("Software", 2, True), [3, 4, 5])               # passed twice or more
+        self.assertEqual(cx("Software", 0, False), [1, 3, 5])              # no close note says what was done: phases 2 and 3
+        self.assertEqual(cx("Hardware", 0, True), [2, 3, 5])               # on-site hardware
+        self.assertEqual(cx("Hardware", 2, False), [4, 5, 5])              # all of it, capped
+        self.assertIn("(fix not written down)", B.tip_phase(rows_of()["rows"][0]["ph"][1], rows_of()["rows"][0]))
+        self.assertTrue(B.ONSITE.search("Docking station dead") and B.ONSITE.search("Software Hardware") and not B.ONSITE.search("Password reset"))
+
+    def test_impact_is_where_the_rate_sits_among_the_clusters(self):
+        """1.89.0: fifths of the clusters by tickets a month (1 lowest, 5 highest), one more for 10% VIP tickets - not a row of 1s under one big cluster."""
+        t, issue = [], {}
+        for c in range(10):
+            for k in range(5 + c * 7):
+                x = ticket("Cluster %d" % c, day=1 + k % 27, cat="Software", vip=(c == 0 and k < 2))[0]
+                t.append(x)
+                issue[x["sys_id"]] = "Cluster %d" % c
+        rows = rows_of(t, issue)["rows"]
+        im = dict((r["name"], r["ph"][0]["impact"]) for r in rows)
+        self.assertEqual([im["Cluster %d" % c] for c in range(1, 10)], sorted(im["Cluster %d" % c] for c in range(1, 10)))        # never lower for more tickets
+        self.assertEqual(set(im.values()), {1, 2, 3, 4, 5})                                   # the whole grid is used
+        self.assertEqual(im["Cluster 9"], 5)
+        self.assertEqual(im["Cluster 0"], 1 + 1)                                              # the lowest fifth, one up: 2 of 5 tickets for a VIP (40%)
+        for r in rows:
+            self.assertEqual({p["impact"] for p in r["ph"]}, {im[r["name"]]})
+            for p in r["ph"]:
+                self.assertEqual(p["quad"], B.quadrant(p["complexity"], p["impact"]))
+                self.assertGreaterEqual(p["hours"], 0)
+        self.assertEqual((B.quadrant(2, 4), B.quadrant(3, 5), B.quadrant(1, 3), B.quadrant(5, 1)), ("q", "m", "f", "h"))
+
+    def test_impact_ties_and_small_backlogs(self):
+        """Review: the clusters tied at the lowest rate are all 1 (not lifted by how many tie), the highest is 5, two clusters are 1 and 5, and 1 is reachable with 2 to 4."""
+        def impacts(sizes):
+            t, issue = [], {}
+            for c, n in enumerate(sizes):
+                for k in range(n):
+                    x = ticket("Cluster %d" % c, day=1 + k % 27, cat="Software")[0]
+                    t.append(x)
+                    issue[x["sys_id"]] = "Cluster %d" % c
+            return [r["ph"][0]["impact"] for r in sorted(rows_of(t, issue, vip=None)["rows"], key=lambda r: r["n"])]
+        self.assertEqual(impacts([5] * 7 + [10, 20, 30])[:7], [1] * 7)                 # not 4: the seven that tie are the lowest
+        self.assertEqual(set(impacts([5] * 6)), {1})                                   # all tied: nobody outranks anybody
+        self.assertEqual(impacts([5, 9]), [1, 5])
+        self.assertEqual(impacts([5, 9, 12]), [1, 3, 5])
+        self.assertEqual(impacts([5, 9, 12, 20])[0], 1)
+        self.assertEqual(impacts([5, 9, 12, 20])[-1], 5)
+        self.assertEqual(impacts([7]), [5])
+
+    def test_the_median_of_handoffs_is_not_cut_in_the_tip(self):
+        r = rows_of()["rows"][0]
+        self.assertIn("median handoffs: 1.5)", B.tip_phase(r["ph"][0], dict(r, hand_med=1.5)))
+        self.assertIn("median handoffs: 2)", B.tip_phase(r["ph"][0], dict(r, hand_med=2)))
 
     def test_phase_3_counts_each_ticket_once_and_is_capped(self):
         # every ticket of the cluster has a good note and is back on its CI within a day: P2 settles all of them, P3 adds nothing (no double count)
@@ -241,6 +301,30 @@ class ActText(unittest.TestCase):
         self.assertIn("at most %d characters" % B.LIMITS["summary"], task)
 
 
+class LastPass1890(unittest.TestCase):
+    """1.89.0, the last Codex pass: the filters compare unrounded figures; UPS is not a pop-up; a bad handoff count stays in the grid."""
+
+    def test_pop_ups_are_not_ups_hardware(self):
+        self.assertFalse(B.ONSITE.search("Blocked browser pop-ups"))
+        self.assertFalse(B.ONSITE.search("pop ups blocked"))
+        self.assertTrue(B.ONSITE.search("UPS on battery"))
+        self.assertTrue(B.ONSITE.search("rack UPS failed"))
+
+    def test_a_negative_handoff_count_adds_nothing(self):
+        ph = B._phase(0, 5, [set(), set(), set()], {"hand_med": -1, "onsite": False, "notes_low": False}, 3)
+        self.assertEqual(ph["complexity"], 1)
+        self.assertEqual(ph["cx_parts"]["hand"], 0)
+
+    def test_the_filter_data_carries_the_unrounded_share_and_hours(self):
+        ph = B._phase(1, 125, [set(range(62)), set(range(62)), set(range(62))], {"hand_med": 0, "onsite": False, "notes_low": False}, 3)
+        self.assertEqual(ph["defl"], 50)                          # the card's whole percent
+        self.assertAlmostEqual(ph["defl_x"], 49.6)                # the filter's: 49.6 never passes "50% or more"
+        bm = rows_of()
+        for r in bm["rows"]:
+            for p_ in r["ph"]:
+                self.assertAlmostEqual(p_["hours"], B.labor_h(r, bm["months"]) * p_["defl_x"] / 100.0)
+
+
 class Hardening(unittest.TestCase):
     """The first Codex review of 1.81.0."""
 
@@ -289,11 +373,11 @@ class Hardening(unittest.TestCase):
         self.assertEqual(B.window_months(None, None), 1.0)
 
     def test_the_median_of_an_even_cluster_is_the_median(self):
-        t = [ticket("Even", hops=h, day=1 + i)[0] for i, h in enumerate([0, 0, 1, 2, 2, 2])]
+        t = [ticket("Even", hops=h, day=1 + i, cat="Software")[0] for i, h in enumerate([0, 0, 1, 2, 2, 2])]
         i = dict((x["sys_id"], "Even") for x in t)
         a = rows_of(t, i, opts=dict(OPTS, backlog_min_tickets=1))["rows"][0]
         self.assertEqual(a["hand_med"], 1.5)
-        self.assertEqual(a["ph"][0]["complexity"], 1)                                 # 1.5 is under 2: no extra point
+        self.assertEqual(a["ph"][0]["complexity"], 2)                                 # 1.5 is under 2: one extra point (passed once), not two
 
     def test_every_cluster_stays_in_the_model_and_the_word_table(self):
         t, i = [], {}
@@ -352,7 +436,7 @@ class Hardening(unittest.TestCase):
         # 125 tickets: 35 settled by phase 1 (28.0), 71 by phase 2 (56.8 / 2 = 28.4): both show 28, the second is better
         t = []
         for k in range(125):
-            x, _n = ticket("Spooler", hops=0 if k < 35 else 1 if k < 71 else 0, good=k < 71, day=1 + k % 27)
+            x, _n = ticket("Spooler", hops=0 if k < 35 else 1 if k < 71 else 0, good=k < 71, day=1 + k % 27, cat="Software")
             t.append(x)
         i = dict((x["sys_id"], "Spooler") for x in t)
         a = rows_of(t, i)["rows"][0]
@@ -364,7 +448,7 @@ class Hardening(unittest.TestCase):
     def test_the_tiles_say_whole_window_and_the_line_counts_the_drafts(self):
         m = json.loads(json.dumps(__import__("test_servicenow_insights").site()["model"]))
         bm = m["scopes"]["all"]["autobl"]
-        self.assertEqual(P.backlog_tiles(bm).count("whole window"), 3)
+        self.assertEqual(P.backlog_tiles(bm).count("whole window"), 5 if bm.get("vip_on") else 4)
         bm["act_on"], bm["top_n"] = True, 5
         for r in bm["rows"][:3]:
             r["text"], r["why_not"] = B.read_draft(draft()), ""
@@ -414,6 +498,39 @@ class Hardening(unittest.TestCase):
         self.assertTrue(any("marking" in n for n in names))
         self.assertTrue(any("document" in n for n in names))
         self.assertEqual(len(t["rescue"]), 1)                                            # one rescue for all of it: the email goes without the file
+
+    def test_the_hours_filter_reads_the_hours_unrounded(self):
+        """Review: a cluster with 99.5 hours a year does not pass 'Hours / yr >= 100' (the page's numbers are not rounded to whole hours)."""
+        m = json.loads(json.dumps(__import__("test_servicenow_insights").site()["model"]))
+        bm = m["scopes"]["all"]["autobl"]
+        bm["rows"][0]["ph"][0]["hours"] = 99.5
+        import html
+        h = html.unescape(P.backlog_section(bm, {}))
+        got = json.loads(re.search(r'data-ph="(\[\[.*?\]\])"', h).group(1))
+        self.assertEqual(got[0][3], 99.5)
+
+    def test_the_vip_button_is_there_only_when_a_cluster_has_vip_tickets(self):
+        m = json.loads(json.dumps(__import__("test_servicenow_insights").site()["model"]))
+        bm = m["scopes"]["all"]["autobl"]
+        import html
+        if bm.get("vip_on") and any(r["vip"] for r in bm["rows"]):
+            self.assertIn('data-pre="vip"', P.backlog_section(bm, {}))
+        for r in bm["rows"]:
+            r["vip"] = 0
+        bm["vip_on"] = True
+        self.assertNotIn('data-pre="vip"', P.backlog_section(bm, {}))                 # no VIP ticket anywhere: no button, no empty table
+        bm["rows"][0]["vip"] = 1
+        h = html.unescape(P.backlog_section(bm, {}))
+        self.assertIn("Clusters that have VIP tickets", h)                              # under a fourth of the clusters have one: said as it is
+        self.assertIn(".pre .btn.on{", P.CSS)
+
+    def test_a_page_older_than_1_89_0_does_not_break_the_shared_script(self):
+        """Review: site-insights.js is shared by every report on the website; an older page has no data-ph and has the All / P1 / P2 / P3 buttons (.pf)."""
+        js = P.SCRIPT
+        self.assertIn('var raw=g.getAttribute("data-ph")', js)
+        self.assertIn("if(!Array.isArray(g._ph)||g._ph.length<3)", js)                  # null from JSON.parse(null) is guarded
+        self.assertIn('sec.querySelectorAll(".pf .pb")', js)                            # the old buttons still filter
+        self.assertIn('if(pf&&g.getAttribute("data-p")!==String(pf))return false', js)
 
     def test_the_page_names_only_the_exports_it_has(self):
         m = json.loads(json.dumps(__import__("test_servicenow_insights").site()["model"]))
@@ -608,7 +725,7 @@ class PageHtml(unittest.TestCase):
         self.assertLess(h.index('id="issues"'), h.index('id="backlog"'))                         # right after Top incident issues
         self.assertLess(h.index('id="backlog"'), h.index('id="problems"'))
         self.assertIn('<a href="#backlog">Automation backlog <span class="c">', h)
-        self.assertEqual(h.count('class="tile bktile"'), 3)                                       # At a glance: three tiles
+        self.assertEqual(h.count('class="tile bktile"'), 5)                                       # At a glance: five tiles (1.89.0: two added, no new row)
         self.assertLess(h.index('id="glance"'), h.index('class="tile bktile"'))
         self.assertLess(h.index('class="tile bktile"'), h.index('id="teams"'))
         for w in ("Priority", "Issue", "Tickets / month", "Hours saved / yr", "VIP", "Score"):
@@ -777,18 +894,105 @@ class RealChrome(unittest.TestCase):
         name = self.bm["rows"][0]["label"]
         self.c.js("(() => {const q = document.querySelector('#backlog .bks'); q.value = %s; q.dispatchEvent(new Event('input', {bubbles: true}))})()" % json.dumps(name.lower()))
         self.assertEqual(self.groups(), [name])
-        self.assertEqual(self.c.js("document.querySelector('#backlog .bkn').textContent"), "Showing 1–1 of 1")
+        self.assertEqual(self.c.js("document.querySelector('#backlog .bkn').textContent"), "Showing 1–1 of 1 (of 14 clusters)")
         self.c.js("(() => {const q = document.querySelector('#backlog .bks'); q.value = 'zzzz-nothing'; q.dispatchEvent(new Event('input', {bubbles: true}))})()")
         self.assertEqual(self.groups(), [])
         self.assertEqual(self.c.js("document.querySelector('#backlog .bkn').textContent"), "No cluster matches")
         self.c.js("(() => {const q = document.querySelector('#backlog .bks'); q.value = ''; q.dispatchEvent(new Event('input', {bubbles: true}))})()")
         for p in (1, 2, 3):
-            self.c.js("document.querySelector('#backlog .pf .pb[data-f=\"%d\"]').click()" % p)
+            self.setf("pr", str(p))
             want = [r["label"] for r in self.bm["rows"] if r["prio"] == p]
             self.assertEqual(sorted(self.groups()), sorted(want), p)
-            self.assertEqual(self.c.js("document.querySelector('#backlog .pf .pb.on').textContent"), "P%d" % p)
-        self.c.js("document.querySelector('#backlog .pf .pb[data-f=\"0\"]').click()")
+        self.setf("pr", "")
         self.assertEqual(len(self.groups()), n)
+
+    def setf(self, f, v):
+        self.c.js("(() => {const f = document.querySelector('#backlog .f-%s'); f.value = %s; f.dispatchEvent(new Event('change', {bubbles: true}))})()" % (f, json.dumps(v)))
+
+    def phase(self, i):
+        self.c.js("document.querySelectorAll('#backlog .mxph .pb')[%d].click()" % i)
+
+    def reset(self):
+        self.c.js("document.querySelector('#backlog .js-pre[data-pre=\"reset\"]').click()")
+        self.phase(0)
+
+    def cells(self):
+        return self.c.js("[...document.querySelectorAll('#backlog .mxc')].map(c => [+c.dataset.cx, +c.dataset.im, +(c.querySelector('.k') || {}).textContent || 0, c.disabled, c.className])")
+
+    def test_the_matrix_adds_up_at_every_phase(self):
+        """1.89.0: each cell counts the clusters at its (complexity, impact) of the phase; the cells add up to every cluster, the quadrant chips too."""
+        rows = self.bm["rows"]
+        for i in range(3):
+            self.reset()
+            self.phase(i)
+            want = {}
+            for r in rows:
+                k = (r["ph"][i]["complexity"], r["ph"][i]["impact"])
+                want[k] = want.get(k, 0) + 1
+            got = dict(((c[0], c[1]), c[2]) for c in self.cells() if c[2])
+            self.assertEqual(got, want, i)
+            self.assertEqual(sum(got.values()), len(rows))
+            self.assertTrue(all(c[3] == (c[2] == 0) for c in self.cells()))                  # an empty cell is not a button that does anything
+            qn = self.c.js("[...document.querySelectorAll('#backlog .qb')].map(b => [b.dataset.q, +b.querySelector('.qc').textContent])")
+            self.assertEqual(dict(qn), dict((k, sum(1 for r in rows if r["ph"][i]["quad"] == k)) for k in "qmfh"), i)
+            self.assertEqual(len(self.groups()), len(rows))                                  # a phase alone narrows nothing
+        self.reset()
+
+    def test_a_cell_a_quadrant_and_the_filters_narrow_the_table(self):
+        rows = self.bm["rows"]
+        self.reset()
+        cell = max((c for c in self.cells() if c[2]), key=lambda c: c[2])
+        self.c.js("document.querySelector('#backlog .mxc[data-cx=\"%d\"][data-im=\"%d\"]').click()" % (cell[0], cell[1]))
+        want = [r["label"] for r in rows if (r["ph"][0]["complexity"], r["ph"][0]["impact"]) == (cell[0], cell[1])]
+        self.assertEqual(sorted(self.groups()), sorted(want))
+        self.assertFalse(self.c.js("document.querySelector('#backlog .cellchip').hidden"))
+        self.assertIn("Cell: complexity %d" % cell[0], self.c.js("document.querySelector('#backlog .cct').textContent"))
+        self.assertIn("(of %d clusters)" % len(rows), self.c.js("document.querySelector('#backlog .bkn').textContent"))
+        self.c.js("document.querySelector('#backlog .js-clearcell').click()")
+        self.assertEqual(len(self.groups()), len(rows))
+        # a quadrant (and a phase: the same cluster can be a quick win in one and a major project in another)
+        for i in (0, 1):
+            self.phase(i)
+            self.c.js("document.querySelector('#backlog .qb[data-q=\"h\"]').click()")
+            self.assertEqual(sorted(self.groups()), sorted(r["label"] for r in rows if r["ph"][i]["quad"] == "h"), i)
+            self.c.js("document.querySelector('#backlog .qb[data-q=\"h\"]').click()")
+        self.reset()
+        # the filters add: complexity at most 2 at phase 2, a category, the top 3 of each category
+        self.phase(1)
+        self.setf("cx", "3")
+        self.assertEqual(sorted(self.groups()), sorted(r["label"] for r in rows if r["ph"][1]["complexity"] <= 3))
+        cat = rows[0]["cat"]
+        self.setf("cat", cat)
+        self.assertEqual(sorted(self.groups()), sorted(r["label"] for r in rows if r["ph"][1]["complexity"] <= 3 and r["cat"] == cat))
+        self.setf("cat", "")
+        self.setf("cx", "")
+        self.setf("top", "c3")
+        seen = {}
+        for r in rows:
+            seen[r["cat"]] = seen.get(r["cat"], 0) + 1
+        self.assertEqual(len(self.groups()), sum(min(3, v) for v in seen.values()))
+        self.setf("top", "10")
+        self.assertEqual(self.groups(), [r["label"] for r in rows[:10]])
+        self.setf("top", "")
+        self.setf("hrs", "100")
+        self.assertEqual(sorted(self.groups()), sorted(r["label"] for r in rows if r["ph"][1]["hours"] >= 100))
+        self.reset()
+        self.assertEqual(len(self.groups()), len(rows))
+        self.assertEqual(self.c.js("document.querySelector('#backlog .bks').value"), "")
+
+    def test_the_matrix_is_made_without_innerhtml_and_fits_800(self):
+        with open(os.path.join(HERE, "..", "plugins", "filter", "servicenow_insights_page.py")) as f:
+            body = f.read()
+        mx = body[body.index("1.89.0: the matrix (complexity vs impact at a phase)"):body.index("if(document.readyState===\"loading\")")]
+        self.assertNotIn("innerHTML", mx)
+        self.assertNotIn("insertAdjacentHTML", mx)
+        for w, narrow in ((1280, False), (800, True)):
+            self.c.call("Emulation.setDeviceMetricsOverride", width=w, height=900, deviceScaleFactor=1, mobile=False)
+            self.assertEqual(self.c.js("document.documentElement.scrollWidth - document.documentElement.clientWidth"), 0, w)
+            self.assertEqual(self.c.js("getComputedStyle(document.querySelector('#backlog .qseg')).display === 'none'"), narrow, w)   # chips -> a select
+            self.assertEqual(self.c.js("getComputedStyle(document.querySelector('#backlog .qsel')).display === 'none'"), not narrow, w)
+            self.assertTrue(self.c.js("[...document.querySelectorAll('#backlog .mxc')].every(c => c.getBoundingClientRect().right <= document.querySelector('#backlog .mxw').getBoundingClientRect().right + 1)"), w)
+        self.c.call("Emulation.clearDeviceMetricsOverride")
 
     def test_sorting(self):
         names = lambda: self.c.js("[...document.querySelectorAll('#backlog tbody.bkg')].map(g => g.querySelector('.bkt .t').textContent)")   # noqa: E731
@@ -831,7 +1035,7 @@ class RealChrome(unittest.TestCase):
         self.load()                                                                         # a new visit: still set, the suggestion remembered
         self.assertEqual(self.c.js("document.getElementById('%s').getAttribute('data-p')" % gid), other)
         self.assertEqual(self.c.js("document.getElementById('%s').getAttribute('data-sug')" % gid), sug)
-        self.c.js("document.querySelector('#backlog .pf .pb[data-f=\"%s\"]').click()" % other)           # and the filter follows it
+        self.setf("pr", other)                                                                    # and the filter follows it (the select; the old buttons only on pages from before 1.89.0)
         self.assertIn(self.c.js("document.getElementById('%s').querySelector('.t').textContent" % gid), self.groups())
 
     def test_without_storage_the_page_still_works(self):
@@ -922,7 +1126,7 @@ class RealChromePaging(unittest.TestCase):
     def test_a_search_looks_in_every_page_and_goes_back_to_the_first(self):
         self.c.js("document.querySelector('#backlog .bknext').click()")
         self.c.js("(() => {const q = document.querySelector('#backlog .bks'); q.value = ' 119'; q.dispatchEvent(new Event('input', {bubbles: true}))})()")
-        self.assertEqual((self.shown(), self.counter()), (1, "Showing 1–1 of 1"))
+        self.assertEqual((self.shown(), self.counter()), (1, "Showing 1–1 of 1 (of 120 clusters)"))
         self.c.js("(() => {const q = document.querySelector('#backlog .bks'); q.value = ''; q.dispatchEvent(new Event('input', {bubbles: true}))})()")
         self.assertEqual(self.counter(), "Showing 1–50 of 120")
 

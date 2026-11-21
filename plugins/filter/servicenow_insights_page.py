@@ -427,12 +427,66 @@ a.glink{color:inherit;text-decoration:underline;text-decoration-color:var(--line
 a.glink:hover{color:var(--accent);text-decoration-color:currentColor}
 svg a.glink text{fill:var(--fg-2)}svg a.glink:hover text{fill:var(--accent);text-decoration:underline}
 @media print{.bar{position:static}.toc,.tools,.teamnav{display:none}.layout{grid-template-columns:1fr}section.card{box-shadow:none;break-inside:avoid-page}}/* 1.81.0: the Automation backlog */
-#backlog .bkc{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 10px}
-#backlog .bkc .search input{width:220px;margin:0}
 #backlog .bkn{font-size:12px;margin-left:auto}
 #backlog .bkpg{display:flex;gap:6px}
 #backlog .bkpg .btn{padding:4px 10px;font-size:12px}
 #backlog .bkpg .btn:disabled{opacity:.45;cursor:default}
+/* 1.89.0: the matrix (complexity vs impact), the quadrants, the presets and the filters - they all narrow the one table */
+.bkt5{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+#backlog .mxw{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 12px;background:var(--surface)}
+.mxhead{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 10px;font-size:14px}
+.mxhead .mxph{margin-left:auto}
+.mxph .pb{font-size:12px;padding:5px 10px}
+.mxbody{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.mxgrid{display:grid;grid-template-columns:auto;gap:4px;position:relative;padding-left:22px;flex:0 1 560px;min-width:0}
+.mxr{display:grid;grid-template-columns:22px repeat(5,minmax(0,1fr));gap:4px}
+.mxh{font-size:11px;font-weight:700;color:var(--muted);text-align:center;align-self:end}
+.mxi{align-self:center;text-align:right;padding-right:4px}
+.mxyl{position:absolute;left:-4px;top:50%;transform:translate(-50%,-50%) rotate(-90deg);font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.mxxl{text-align:center;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-top:2px;padding-left:26px}
+.mxc{all:unset;box-sizing:border-box;min-height:54px;border-radius:6px;padding:5px 7px;display:flex;flex-direction:column;justify-content:center;
+  align-items:flex-start;cursor:pointer;background:var(--surface-2);color:var(--fg);border:1px solid var(--line-2);font-variant-numeric:tabular-nums}
+.mxc.qx{margin-left:4px}.mxc.qy{margin-top:4px}
+.mxc .k{font-size:17px;font-weight:700;line-height:1.1}
+.mxc .h{font-size:11px;line-height:1.2;opacity:.9}
+.mxc.l0{background:transparent;border-style:dashed;color:var(--muted);cursor:default}
+.mxc.l0 .k{font-size:12px;font-weight:400}
+.mxc.l1,.mxleg i.l1{background:color-mix(in srgb,var(--heat) 14%,var(--surface));border-color:transparent}
+.mxc.l2,.mxleg i.l2{background:color-mix(in srgb,var(--heat) 30%,var(--surface));border-color:transparent}
+.mxc.l3,.mxleg i.l3{background:color-mix(in srgb,var(--heat) 48%,var(--surface));border-color:transparent}
+:root{--mxi5:#fff;--mxp4:70%}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--mxi5:#08130f;--mxp4:52%}}
+:root[data-theme="dark"]{--mxi5:#08130f;--mxp4:52%}
+.mxc.l4,.mxleg i.l4{background:color-mix(in srgb,var(--heat) var(--mxp4),var(--surface));border-color:transparent;color:var(--fg)}
+.mxc.l5,.mxleg i.l5{background:color-mix(in srgb,var(--heat) 88%,var(--fg));border-color:transparent;color:var(--mxi5)}
+.mxc:hover:not(.l0){outline:2px solid var(--fg-2);outline-offset:1px}
+.mxc:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mxc.sel{outline:3px solid var(--accent);outline-offset:2px}
+.mxc.dim{opacity:.35}
+.mxleg{flex:1 1 200px;max-width:280px;display:grid;grid-template-columns:auto auto;gap:4px 8px;align-content:start}
+.mxleg>span:first-child{grid-column:1/3}
+.mxramp{grid-column:1/3;display:flex;gap:3px}
+.mxramp i{flex:1;height:12px;border-radius:3px;display:block}
+.mxrr{text-align:right}
+.mxleg p{grid-column:1/3;margin:6px 0 0;line-height:1.4}
+.bkc{display:grid;gap:8px;margin:0 0 10px}
+.crow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.clab{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);min-width:46px}
+.qseg{display:inline-flex;flex-wrap:wrap;gap:6px}
+.qb{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--fg-2);padding:4px 10px;cursor:pointer}
+.qb .qc{font-variant-numeric:tabular-nums;color:var(--fg)}
+.qb.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.qb.on .qc{color:var(--on-accent)}
+.qsel{display:none}
+.pre{display:inline-flex;gap:6px;margin-left:auto}
+.pre .btn.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.sm{font-size:12px;padding:4px 10px}
+.cellchip{display:inline-flex;gap:6px;align-items:center;font-size:12px;border:1px solid var(--accent);border-radius:999px;padding:2px 4px 2px 10px;background:var(--accent-soft)}
+.cellchip[hidden]{display:none}
+.fl{display:inline-flex;gap:5px;align-items:center;font-size:12px;color:var(--muted)}
+.fl select,.qsel{width:auto;max-width:150px;margin:0;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--fg);color-scheme:inherit}
+.bkc .search input{width:220px;margin:0}
+.crow.c3 .bkn{margin-left:auto}
 .pseg{display:inline-flex;flex-wrap:nowrap;white-space:nowrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
 .pseg .pb{flex:none;min-width:26px;border:0;border-right:1px solid var(--line);background:transparent;color:var(--fg-2);font:inherit;font-size:11px;font-weight:700;padding:3px 5px;cursor:pointer;white-space:nowrap}
 .pseg .pb:last-child{border-right:0}
@@ -489,7 +543,9 @@ tr.bkx td{padding:4px 14px 16px;background:var(--surface)}
 .bktile:hover{border-color:var(--accent)}
 .bktile .tsm{font-size:16px;line-height:1.3;display:block}
 #backlog .fair{margin-top:10px}
-@media (max-width:900px){.bkd{grid-template-columns:1fr} table.bk th{white-space:normal} table.bk td,table.bk td.n,table.bk th{padding-left:8px;padding-right:8px}}
+@media (max-width:900px){.bkd{grid-template-columns:1fr} table.bk th{white-space:normal} table.bk td,table.bk td.n,table.bk th{padding-left:8px;padding-right:8px}
+  .mxgrid{flex-basis:100%}.mxleg{max-width:none}.qseg{display:none}.qsel{display:inline-block}.pre{margin-left:0}
+  .mxc{min-height:48px;padding:4px 5px}.mxc .k{font-size:15px}.clab{min-width:0}}
 """
 
 # 0.92.0: the website's brief look (report_web_theme: brief - opts look): the same page in the brief palette and type
@@ -562,7 +618,7 @@ OPS_DARK_VARS = """
   --bg:#0f1626; --surface:#141d30; --surface-2:#18223a; --line:#24304a; --line-2:#1f2a42;
   --fg:#e6eaf3; --fg-2:#b9c2d6; --muted:#9ba6bd; --accent:#8ec5ff; --accent-soft:rgba(142,197,255,.12); --on-accent:#0b1220;
   --good:#5fd08a; --good-bg:rgba(95,208,138,.1); --warn:#f2b84b; --warn-bg:rgba(242,184,75,.1); --crit:#ff8080; --crit-bg:rgba(255,128,128,.1);
-  --info:#a3adc2; --info-bg:rgba(163,173,194,.1); --s1:#7d3df3; --s2:#9780e7; --heat:#7d3df3;
+  --info:#a3adc2; --info-bg:rgba(163,173,194,.1); --s1:#7d3df3; --s2:#9780e7; --heat:#7d3df3; --mxi5:#fff;
   --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark"""
 OPS_CSS = r"""
 :root{
@@ -570,7 +626,7 @@ OPS_CSS = r"""
   --fg:#14213d; --fg-2:#33405e; --muted:#4b5672; --accent:#1d4ed8; --accent-soft:rgba(29,78,216,.09); --on-accent:#ffffff;
   --good:#137a3a; --good-bg:rgba(19,122,58,.09); --warn:#995200; --warn-bg:rgba(153,82,0,.09); --crit:#c0262d; --crit-bg:rgba(192,38,45,.08);
   --info:#566079; --info-bg:rgba(86,96,121,.09); --s1:#6d28d9; --s2:#9f7aea; --heat:#6d28d9;
-  --shadow:0 1px 2px rgba(20,33,61,.05);
+  --shadow:0 1px 2px rgba(20,33,61,.05); --mxp4:60%;
   --lab:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){@DARK@}}
 :root[data-theme="dark"]{@DARK@}
@@ -958,24 +1014,77 @@ if(ppb&&ppd){var PE=eng(JSON.parse(ppd.textContent)),PC=PE.C,PS={};PE.CV.groups.
  copier("ppcopy");window.addEventListener("popstate",fromhash);fromhash();
 }
 window.addEventListener("beforeprint",function(){D.querySelectorAll("main details").forEach(function(d){d.open=true})});
-/* 1.81.0: the Automation backlog - search, a priority filter (P1 to P3), sorting, 50 a page, a row that opens, the row's priority (the suggestion from the score;
-   what a reader sets is kept in this browser only, under the cluster's id) and the proposal as .md (its text is in the page's JSON: nothing is built from the page) */
+/* 1.81.0: the Automation backlog - search, sorting, 50 a page, a row that opens, the row's priority (the suggestion from the score;
+   what a reader sets is kept in this browser only, under the cluster's id) and the proposal as .md (its text is in the page's JSON: nothing is built from the page).
+   1.89.0: the matrix (complexity vs impact at a phase), its cells, the quadrants, a high-VIP preset and the filters all narrow the same table;
+   a cell's words are set as text, never as markup. */
 (function(){var sec=D.getElementById("backlog");if(!sec)return;var tb=sec.querySelector("table.bk"),groups=[].slice.call(tb.tBodies),data={};
  try{data=JSON.parse(D.getElementById("bk-data").textContent)}catch(x){data={}}
- var q=sec.querySelector(".bks"),cnt=sec.querySelector(".bkn"),prev=sec.querySelector(".bkprev"),next=sec.querySelector(".bknext"),PAGE=50,page=0,pf=0,store={};
+ var q=sec.querySelector(".bks"),cnt=sec.querySelector(".bkn"),prev=sec.querySelector(".bkprev"),next=sec.querySelector(".bknext"),PAGE=50,page=0,store={};
+ var cells=[].slice.call(sec.querySelectorAll(".mxc")),qbs=[].slice.call(sec.querySelectorAll(".qb")),qsel=sec.querySelector(".qsel"),chip=sec.querySelector(".cellchip"),cct=sec.querySelector(".cct");
+ var F={};["pr","cat","ai","top","cx","defl","hrs"].forEach(function(k){F[k]=sec.querySelector(".f-"+k)});
+ var pf=0,st={ph:0,cell:null,quad:"",vip:false},QN={q:"Quick wins",m:"Major projects",f:"Fill-ins",h:"High effort, low impact"};
+ groups.forEach(function(g){var raw=g.getAttribute("data-ph");try{g._ph=raw?JSON.parse(raw):null}catch(x){g._ph=null}
+  if(!Array.isArray(g._ph)||g._ph.length<3)g._ph=[[0,0,0,0],[0,0,0,0],[0,0,0,0]]});   /* a page older than 1.89.0 shares this script and has no data-ph: its rows count for nothing */
  try{store=JSON.parse(localStorage.getItem("bk-prio")||"{}")||{}}catch(x){store={}}
  function setP(g,p){g.setAttribute("data-p",p);g.rows[0].cells[0].setAttribute("data-v",p);
   g.querySelectorAll(".bkm .pb").forEach(function(b){var on=b.getAttribute("data-p")===String(p);b.classList.toggle("on",on);b.setAttribute("aria-pressed",on?"true":"false")})}
  groups.forEach(function(g){var p=store[g.id];if(p===1||p===2||p===3)setP(g,p)});
- function shown(){var s=(q.value||"").trim().toLowerCase();return groups.filter(function(g){return(!s||g.getAttribute("data-s").indexOf(s)>=0)&&(!pf||g.getAttribute("data-p")===String(pf))})}
- function draw(){var list=shown(),pages=Math.max(1,Math.ceil(list.length/PAGE));if(page>=pages)page=pages-1;
+ function quadOf(cx,im){return im>=4?(cx<=2?"q":"m"):(cx<=2?"f":"h")}
+ function fmt(n){return Math.round(n).toLocaleString("en-US")}
+ function val(k){return F[k]?F[k].value:""}
+ /* every filter but the cell and the quadrant: what the matrix and the quadrant counts add up */
+ function base(){var s=(q.value||"").trim().toLowerCase(),t=val("top");
+  return groups.filter(function(g){var p=g._ph[st.ph];
+   if(s&&g.getAttribute("data-s").indexOf(s)<0)return false;
+   if(val("pr")&&g.getAttribute("data-p")!==val("pr"))return false;
+   if(pf&&g.getAttribute("data-p")!==String(pf))return false;
+   if(val("cat")&&g.getAttribute("data-cat")!==val("cat"))return false;
+   if(val("ai")&&g.getAttribute("data-ai")!==val("ai"))return false;
+   if(t==="c3"?+g.getAttribute("data-catrank")>3:(t&&+g.getAttribute("data-rank")>+t))return false;
+   if(val("cx")&&p[0]>+val("cx"))return false;
+   if(val("defl")&&p[2]<+val("defl"))return false;
+   if(val("hrs")&&p[3]<+val("hrs"))return false;
+   if(st.vip&&g.getAttribute("data-vtop")!=="1")return false;
+   return true})}
+ function shown(b){return b.filter(function(g){var p=g._ph[st.ph];
+  if(st.cell&&(p[0]!==st.cell[0]||p[1]!==st.cell[1]))return false;
+  if(st.quad&&quadOf(p[0],p[1])!==st.quad)return false;return true})}
+ function put(c,k,h){while(c.firstChild)c.removeChild(c.firstChild);var a=D.createElement("span");a.className="k";a.textContent=k;c.appendChild(a);
+  if(h){var b=D.createElement("span");b.className="h";b.textContent=h;c.appendChild(b)}}
+ function drawMatrix(b){if(!cells.length)return;var n={},h={},qn={q:0,m:0,f:0,h:0},max=1;
+  b.forEach(function(g){var p=g._ph[st.ph],k=p[0]+"-"+p[1];n[k]=(n[k]||0)+1;h[k]=(h[k]||0)+p[3];qn[quadOf(p[0],p[1])]++});
+  Object.keys(n).forEach(function(k){if(n[k]>max)max=n[k]});
+  cells.forEach(function(c){var cx=+c.getAttribute("data-cx"),im=+c.getAttribute("data-im"),k=cx+"-"+im,v=n[k]||0,lv=v?Math.max(1,Math.ceil(5*v/max)):0;
+   c.className=c.className.replace(/\s?l\d|\s?sel|\s?dim/g,"")+" l"+lv+(st.cell&&st.cell[0]===cx&&st.cell[1]===im?" sel":"")+(st.quad&&quadOf(cx,im)!==st.quad?" dim":"");
+   put(c,v?String(v):"\u2013",v?fmt(h[k])+" h/yr":"");c.disabled=!v;
+   var tx="Complexity "+cx+", impact "+im+": "+v+" cluster"+(v===1?"":"s")+(v?", "+fmt(h[k])+" hours a year":"");c.setAttribute("aria-label",tx);
+   c.title="Complexity "+cx+" \u00b7 impact "+im+" \u00b7 phase "+(st.ph+1)+" ("+QN[quadOf(cx,im)]+")\n"+v+" cluster"+(v===1?"":"s")+(v?", "+fmt(h[k])+" h a year saved at this phase: the sum of each cluster's labor \u00f7 the window's months \u00d7 12 \u00d7 the phase's deflection\nClick to show them in the table.":"")});
+  qbs.forEach(function(x){var k=x.getAttribute("data-q");x.querySelector(".qc").textContent=qn[k];x.classList.toggle("on",st.quad===k);x.setAttribute("aria-pressed",st.quad===k?"true":"false")});
+  if(qsel){[].forEach.call(qsel.options,function(o){if(o.value)o.textContent=QN[o.value]+" ("+qn[o.value]+")"});qsel.value=st.quad}}
+ function draw(){var b=base(),list=shown(b),pages=Math.max(1,Math.ceil(list.length/PAGE));drawMatrix(b);if(page>=pages)page=pages-1;
   groups.forEach(function(g){g.hidden=true});list.slice(page*PAGE,page*PAGE+PAGE).forEach(function(g){g.hidden=false});
-  var a=list.length?page*PAGE+1:0,b=Math.min(list.length,page*PAGE+PAGE);
-  cnt.textContent=list.length?"Showing "+a+"\u2013"+b+" of "+list.length:"No cluster matches";prev.disabled=page===0;next.disabled=page>=pages-1;
-  var pg=sec.querySelector(".bkpg");if(pg)pg.hidden=pages<2}
- q.addEventListener("input",function(){page=0;draw()});prev.addEventListener("click",function(){page--;draw()});next.addEventListener("click",function(){page++;draw()});
+  var a=list.length?page*PAGE+1:0,z=Math.min(list.length,page*PAGE+PAGE);
+  cnt.textContent=list.length?"Showing "+a+"\u2013"+z+" of "+list.length+(list.length<groups.length?" (of "+groups.length+" clusters)":""):"No cluster matches";
+  prev.disabled=page===0;next.disabled=page>=pages-1;var pg=sec.querySelector(".bkpg");if(pg)pg.hidden=pages<2;
+  if(chip){chip.hidden=!st.cell;if(st.cell)cct.textContent="Cell: complexity "+st.cell[0]+" \u00b7 impact "+st.cell[1]+" \u00b7 phase "+(st.ph+1)}
+  sec.querySelectorAll('.js-pre[data-pre="vip"]').forEach(function(x){x.classList.toggle("on",st.vip);x.setAttribute("aria-pressed",st.vip?"true":"false")})}
+ function redraw(){page=0;draw()}
+ /* a page older than 1.89.0: its All / P1 / P2 / P3 buttons (.pf) as before */
  sec.querySelectorAll(".pf .pb").forEach(function(b){b.addEventListener("click",function(){pf=+b.getAttribute("data-f");page=0;
   sec.querySelectorAll(".pf .pb").forEach(function(x){var on=x===b;x.classList.toggle("on",on);x.setAttribute("aria-pressed",on?"true":"false")});draw()})});
+ sec.querySelectorAll(".mxph .pb").forEach(function(b){b.addEventListener("click",function(){st.ph=+b.getAttribute("data-ph");st.cell=null;
+  sec.querySelectorAll(".mxph .pb").forEach(function(x){var on=x===b;x.classList.toggle("on",on);x.setAttribute("aria-pressed",on?"true":"false")});redraw()})});
+ cells.forEach(function(c){c.addEventListener("click",function(){var k=[+c.getAttribute("data-cx"),+c.getAttribute("data-im")];
+  st.cell=st.cell&&st.cell[0]===k[0]&&st.cell[1]===k[1]?null:k;st.quad="";redraw()})});
+ qbs.forEach(function(x){x.addEventListener("click",function(){var k=x.getAttribute("data-q");st.quad=st.quad===k?"":k;st.cell=null;redraw()})});
+ if(qsel)qsel.addEventListener("change",function(){st.quad=qsel.value;st.cell=null;redraw()});
+ var cc=sec.querySelector(".js-clearcell");if(cc)cc.addEventListener("click",function(){st.cell=null;redraw()});
+ sec.querySelectorAll(".js-pre").forEach(function(x){x.addEventListener("click",function(){var k=x.getAttribute("data-pre");
+  if(k==="reset"){st={ph:st.ph,cell:null,quad:"",vip:false};q.value="";Object.keys(F).forEach(function(f){if(F[f])F[f].value=""})}
+  if(k==="vip")st.vip=!st.vip;redraw()})});
+ Object.keys(F).forEach(function(f){if(F[f])F[f].addEventListener("change",redraw)});
+ q.addEventListener("input",redraw);prev.addEventListener("click",function(){page--;draw()});next.addEventListener("click",function(){page++;draw()});
  tb.addEventListener("click",function(ev){var t=ev.target.closest(".bkt"),pb=ev.target.closest(".bkm .pb"),md=ev.target.closest(".js-md");
   if(t){var g=t.closest("tbody"),x=g.querySelector(".bkx"),open=x.hidden;x.hidden=!open;g.classList.toggle("open",open);t.setAttribute("aria-expanded",open?"true":"false")}
   else if(pb){var gg=pb.closest("tbody"),p=+pb.getAttribute("data-p");setP(gg,p);store[gg.id]=p;try{localStorage.setItem("bk-prio",JSON.stringify(store))}catch(x2){}draw()}
@@ -1738,18 +1847,24 @@ def servicenow_insights_breach_page(bm, opts=None):
 
 
 def backlog_tiles(bm):
-    """At a glance (1.81.0): the Automation backlog's three tiles - the clusters with the P1 count, the hours saved a year, the top candidate."""
-    B = _sibling("servicenow_insights_backlog")
+    """At a glance (1.81.0; five tiles since 1.89.0): the Automation backlog's clusters with the P1 count, the hours saved a year, the backlog's
+    tickets a month and their share of all incidents, the VIP tickets in it, the top candidate."""
     rows = (bm or {}).get("rows") or []
     if not rows:
         return ""
     t = bm["top"]
-    return ('<div class="tiles bkt3">'
+    rate = sum(r["rate"] for r in rows)
+    share = 100.0 * sum(r["n"] for r in rows) / bm["total"] if bm.get("total") else 0.0
+    vip = sum(r["vip"] for r in rows)
+    return ('<div class="tiles bkt3 bkt5">'
             '<a class="tile bktile" href="#backlog"><span class="eyebrow">Automation backlog</span><span class="v">%s</span><span class="d">clusters, %s at P1 · whole window</span></a>'
             '<a class="tile bktile" href="#backlog"><span class="eyebrow">Hours saved / year</span><span class="v">%s</span><span class="d">if every cluster reached its best phase · whole window</span></a>'
+            '<a class="tile bktile" href="#backlog"><span class="eyebrow">Backlog tickets / month</span><span class="v">%.1f</span><span class="d">%.0f%% of all incidents · whole window</span></a>'
+            '<a class="tile bktile" href="#backlog"><span class="eyebrow">VIP tickets</span><span class="v">%s</span><span class="d">%s</span></a>'
             '<a class="tile bktile" href="#backlog"><span class="eyebrow">Top candidate</span><span class="v"><span class="tsm">%s</span></span>'
             '<span class="d">score %d · %.1f a month · phase %d · whole window</span></a></div>' % (
-                n(len(rows)), n(bm["p1"]), n(round(bm["saved"])), e(t[0]), t[1], t[2], t[3]))
+                n(len(rows)), n(bm["p1"]), n(round(bm["saved"])), rate, share, n(vip) if bm.get("vip_on") else "—",
+                "in the backlog's clusters · whole window" if bm.get("vip_on") else "no VIP tiers are set up", e(t[0]), t[1], t[2], t[3]))
 
 
 def _bq(text, plain=None):
@@ -1780,14 +1895,59 @@ def backlog_section(bm, o=None, url="", pre=None):
             B.W_VOLUME, B.W_PHASE, B.W_VIP)),
     ]
     th = "".join('<th class="%s" data-bks="%s" tabindex="0" aria-sort="none"><span class="thl">%s</span>%s</th>' % (c, k, e(t), _bq(tip)) for t, c, k, tip in head)
-    out = ['<div class="bkc"><label class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">'
-           '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="bks" placeholder="Search clusters" aria-label="Search clusters"></label>'
-           '<span class="pseg pf js" role="group" aria-label="Show priority">'
-           '<button type="button" class="pb on" data-f="0" aria-pressed="true">All</button><button type="button" class="pb" data-f="1">P1</button>'
-           '<button type="button" class="pb" data-f="2">P2</button><button type="button" class="pb" data-f="3">P3</button></span>'
-           '<span class="bkn mut" role="status"></span><span class="bkpg js"><button type="button" class="btn bkprev">‹ Previous</button>'
-           '<button type="button" class="btn bknext">Next ›</button></span></div>'
-           '<div class="bkw"><table class="bk" id="bktable"><thead><tr>%s</tr></thead>' % th]
+    vshare = sorted(r["vip"] / float(r["n"]) for r in rows)
+    vcut = vshare[int(len(vshare) * .75)] if vip_on and vshare else 2.0           # the top fourth by VIP share starts here
+    cats = sorted(set(r["cat"] for r in rows if r["cat"]))
+    ais = [a for a in B.AI_LABELS if any(((r.get("text") or {}).get("ai_label") or "") == a for r in rows)]
+    by_cat = {}
+    for r in rows:                                                                  # rows are in score order: the rank in the category too
+        by_cat[r["cat"]] = by_cat.get(r["cat"], 0) + 1
+        r["_catrank"] = by_cat[r["cat"]]
+
+    def opt(v, t, sel=False):
+        return '<option value="%s"%s>%s</option>' % (e(v), " selected" if sel else "", e(t))
+    quads = "".join('<button type="button" class="qb js" data-q="%s" aria-pressed="false" title="%s"><span class="qn">%s</span> <b class="qc">0</b></button>' % (
+        k, e(rr), e(nm)) for k, nm, rr in B.QUADS)
+    qsel = '<select class="qsel js" aria-label="Quadrant">%s</select>' % (opt("", "All quadrants", True) + "".join(opt(k, nm) for k, nm, rr in B.QUADS))
+    presets = ('<span class="pre js"><button type="button" class="btn sm js-pre" data-pre="reset">Reset</button>%s</span>' % (
+        ('<button type="button" class="btn sm js-pre" data-pre="vip" aria-pressed="false" title="%s">High VIP impact</button>' % (
+            ("Clusters that have VIP tickets (fewer than a fourth of the clusters do)" if vcut <= 0 else
+             "Clusters whose share of VIP tickets is in the top fourth (%.0f%% or more)" % (100 * vcut))))
+        if vip_on and vcut <= 1 and any(r["vip"] for r in rows) else ""))
+    filt = ('<label class="fl">Priority <select class="f-pr"><option value="" selected>All</option><option value="1">P1</option><option value="2">P2</option><option value="3">P3</option></select></label>'
+            '<label class="fl">Category <select class="f-cat">%s</select></label>%s'
+            '<label class="fl">Top <select class="f-top">%s</select></label>'
+            '<label class="fl">Complexity ≤ <select class="f-cx">%s</select></label>'
+            '<label class="fl">Deflection ≥ <select class="f-defl">%s</select></label>'
+            '<label class="fl">Hours / yr ≥ <select class="f-hrs">%s</select></label>') % (
+        opt("", "All", True) + "".join(opt(x, x) for x in cats),
+        ('<label class="fl">AI <select class="f-ai">%s</select></label>' % (opt("", "All", True) + "".join(opt(x, x.replace("Development-Assist", "Dev-Assist").replace("Runtime-Integrated", "Runtime")) for x in ais))) if ais else "",
+        opt("", "All", True) + opt("10", "Top 10") + opt("25", "Top 25") + opt("c3", "3 per category"),
+        opt("", "Any", True) + "".join(opt(str(k), "%d" % k) for k in (1, 2, 3, 4)),
+        opt("", "Any", True) + "".join(opt(str(k), "%d%%" % k) for k in (25, 50, 75)),
+        opt("", "Any", True) + "".join(opt(str(k), "%d h" % k) for k in (10, 25, 50, 100)))
+    ph_btn = "".join('<button type="button" class="pb%s" data-ph="%d" aria-pressed="%s">Phase %d</button>' % (
+        " on" if i == 0 else "", i, "true" if i == 0 else "false", i + 1) for i in range(3))
+    mx_rows = "".join('<div class="mxr" role="row"><div class="mxh mxi" role="rowheader">%d</div>%s</div>' % (
+        im, "".join('<button type="button" class="mxc%s%s" role="gridcell" data-cx="%d" data-im="%d"></button>' % (
+            " qx" if cx == 3 else "", " qy" if im == 3 else "", cx, im) for cx in range(1, 6))) for im in range(5, 0, -1))
+    matrix = ('<div class="mxw js"><div class="mxhead"><b>Complexity vs impact</b>%s<span class="pseg mxph" role="group" aria-label="Phase">%s</span></div>'
+              '<div class="mxbody"><div class="mxgrid" role="grid" aria-label="Clusters by complexity and impact"><div class="mxyl">Impact %s</div>'
+              '<div class="mxr mxtop" role="row"><div class="mxh mxi"></div>%s</div>%s<div class="mxxl">Complexity %s</div></div>'
+              '<div class="mxleg"><span class="mut sm">Clusters in a cell</span><span class="mxramp" aria-hidden="true">%s</span>'
+              '<span class="mut sm">fewer</span><span class="mut sm mxrr">more</span>'
+              '<p class="mut sm">Each cell: the clusters, and the hours they would save a year at this phase. Top left = quick wins. Click a cell to filter the table.</p></div></div></div>') % (
+        _bq("Complexity and impact of each cluster at the chosen phase.<br>" + B.tip_cx() + "<br>" + B.tip_im()), ph_btn, _bq(B.tip_im()),
+        "".join('<div class="mxh" role="columnheader">%d</div>' % cx for cx in range(1, 6)), mx_rows, _bq(B.tip_cx()),
+        "".join('<i class="l%d"></i>' % k for k in range(1, 6)))
+    controls = ('<div class="bkc"><div class="crow js"><span class="clab">Show</span><span class="qseg" role="group" aria-label="Quadrant">%s</span>%s%s'
+                '<span class="cellchip" hidden><span class="cct"></span><button type="button" class="btn sm js-clearcell">Clear cell</button></span></div>'
+                '<div class="crow js"><span class="clab">Filter</span>%s</div>'
+                '<div class="crow c3"><label class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">'
+                '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="bks" placeholder="Search clusters" aria-label="Search clusters"></label>'
+                '<span class="bkn mut" role="status"></span><span class="bkpg js"><button type="button" class="btn bkprev">‹ Previous</button>'
+                '<button type="button" class="btn bknext">Next ›</button></span></div></div>') % (quads, qsel, presets, filt)
+    out = [matrix + controls + '<div class="bkw"><table class="bk" id="bktable"><thead><tr>%s</thead>' % (th + "</tr>")]
     data = {}
     files = []                          # what this report really carries: the Word file only when it was made, the sheet only with the workbook
     if (o or {}).get("backlog_docx"):
@@ -1795,7 +1955,7 @@ def backlog_section(bm, o=None, url="", pre=None):
     if (o or {}).get("backlog_xlsx"):
         files.append("every cluster is on the workbook's Automation backlog sheet")
     files_note = ('<span class="mut sm">%s.</span>' % e((files[0][0].upper() + files[0][1:]) + ("; " + files[1] if len(files) > 1 else ""))) if files else ""
-    for r in rows:
+    for rank, r in enumerate(rows, 1):
         t = r.get("text")
         miss = r.get("why_not") or B.OFF_TEXT
         ai = (t or {}).get("ai_label") or ""
@@ -1823,7 +1983,7 @@ def backlog_section(bm, o=None, url="", pre=None):
                     "Text by ACT%s · figures filled in by code" % (" (kept from an earlier run)" if (t or {}).get("cached") else "") if t else
                     "Figures filled in by code", ex))
         out.append(
-            '<tbody class="bkg" id="%s" data-s="%s" data-p="%d" data-sug="%d"><tr class="bkm">'
+            '<tbody class="bkg" id="%s" data-s="%s" data-p="%d" data-sug="%d" data-cat="%s" data-ai="%s" data-rank="%d" data-catrank="%d" data-vtop="%d" data-ph="%s"><tr class="bkm">'
             '<td class="ps" data-v="%d"><span class="pseg" role="group" aria-label="Priority of %s">%s</span></td>'
             '<td class="ti"><button type="button" class="bkt" aria-expanded="false"><span class="caret">›</span><span class="t">%s</span></button>'
             '<span class="m">%s%s</span></td>'
@@ -1834,7 +1994,10 @@ def backlog_section(bm, o=None, url="", pre=None):
             '<div class="dlrow"><button type="button" class="btn js-md js" data-id="%s">Download proposal (.md)</button>'
             '%s'
             '</div></td></tr></tbody>' % (
-                r["id"], e(" ".join([r["label"], r["name"], r["cat"], ai, " ".join(r["examples"])]).lower()), sug, sug, sug, e(r["label"]), pbtn, e(r["label"]),
+                r["id"], e(" ".join([r["label"], r["name"], r["cat"], ai, " ".join(r["examples"])]).lower()), sug, sug, e(r["cat"]), e(ai), rank, r["_catrank"],
+                1 if (vip_on and r["vip"] and r["vip"] / float(r["n"]) >= vcut) else 0,
+                e(json.dumps([[p_["complexity"], p_["impact"], p_.get("defl_x", p_["defl"]), float(p_.get("hours") or 0)] for p_ in r["ph"]], separators=(",", ":"))),
+                sug, e(r["label"]), pbtn, e(r["label"]),
                 ('<span class="chip">%s</span>' % e(r["cat"])) if r["cat"] else "", ai_badge,
                 r["rate"], e(B.tip_rate(r, bm)), r["rate"], r["share"], r["saved"], e(B.tip_saved(r, bm)), n(round(r["saved"])), r["vip"] if vip_on else 0,
                 n(r["vip"]) if vip_on else "—", r["score"], e(B.tip_score(r, bm)), r["score"], left, "".join(phases), r["id"], files_note))

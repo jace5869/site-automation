@@ -524,6 +524,26 @@ report_hover.css.j2). A reader's run had two red alarms on a host and still said
   a lead-up too), nothing critical, the page in each look, the title, what triggered it, an alarm back to green that no longer stands,
   and *Now:* on the verdict in each look. test_the_headline: a warning before the critical event no longer leads.
 
+## 1.89.0 — 2026-11-21
+
+**To set up: nothing.** The Automation backlog reads differently from the next run; no new settings.
+
+**The Automation backlog: a complexity vs impact matrix** (`plugins/filter/servicenow_insights_page.py`, `servicenow_insights_backlog.py`; docs/SERVICENOW_INSIGHTS.md):
+- **The matrix** above the table: every cluster in a cell of complexity (1 to 5) against impact (1 to 5) at the phase you pick (*Phase 1*, *2*, *3*). A cell shows its clusters and the hours a year they would save at that phase; a darker cell has more. A click on a cell shows its clusters in the table (*Clear cell*).
+- **Show:** the four quadrants with their counts (*Quick wins*, *Major projects*, *Fill-ins*, *High effort, low impact*; one list on a narrow screen), *High VIP impact* (the top fourth by VIP share; only with VIP tiers) and *Reset*.
+- **Filter:** priority, category, AI label, top 10 / 25 / 3 per category, complexity at most, deflection at least, hours a year at least - all at the chosen phase. They, the cells, the quadrants and the search narrow the one table: *Showing 1-50 of 12 (of 64 clusters)*. The priority buttons in a row stay.
+- **At a glance** has five tiles (two added: the backlog's tickets a month with their share of all incidents, and the VIP tickets), no new row.
+- The matrix is made with `textContent` (no markup is built from the page), works offline, and fits 800 px.
+
+**A spread over the grid, not one value per cluster:**
+- **Complexity is the cluster's own.** The phase's base (1, 2, 4) plus one point each for: the median ticket passed between groups once (2 points for twice or more); the fix not written down (under 30% of the resolved tickets have a close note that says what was done; phases 2 and 3); on-site hardware (the category or name says printer, laptop, phone ...; every phase). At most 5. The hover of a phase shows each part.
+- **Impact is where the cluster's tickets a month sit among all clusters** (fifths, 1 to 5), one more when 10% or more of its tickets were raised for a VIP. Before, it was the rate against the top cluster's, which left nearly every cluster at 1.
+- A cluster is ranked by how many clusters have *fewer* tickets a month, over the others: clusters tied at the lowest rate are all 1 (not lifted by how many tie), the highest is 5, two clusters are 1 and 5, and 1 can be reached with two to four clusters. Where many clusters sit at the 5-ticket floor, their impact is 1, not 4 or 5, so their priorities come out lower than a count of "this many or fewer" would give.
+- A phase's score, the best phase, and the priority follow from them, so some priorities change on an existing report.
+- The page's script (`site-insights.js`) is shared by every report on the website: a page from before 1.89.0 loads it without error (its rows count for nothing in the matrix) and its All / P1 / P2 / P3 buttons still filter. The hours a year are the exact numbers (a cluster with 99.5 hours does not pass "Hours / yr ≥ 100"). *High VIP impact* shows only when a cluster has VIP tickets, looks pressed when it is, and says so when fewer than a fourth of the clusters have one. The phase's tooltip shows a median of 1.5 handoffs as 1.5. The matrix's cell numbers are 4.5:1 or better in all three looks, light and dark (the ops look and the brief look's dark cells were lower).
+
+Tests: `tests/test_insights_backlog.py` (the signals, the fifths and their ties, the quadrants; the matrix, cells, quadrants and filters in a real browser, at 1280 and 800 px).
+
 ## 1.88.0 — 2026-11-21
 
 **To set up: nothing.** No new setting.

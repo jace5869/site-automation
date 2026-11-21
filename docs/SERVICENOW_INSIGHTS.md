@@ -32,7 +32,7 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Categories** (1.7.0) | incidents per category (against the window before), their median time to resolve and SLAs met, the group they are mostly in; a data-quality line - no category, Other, off your official list (named); *Who opens what* - per person, what they opened by category and catalog item (1.70.4) |
 | **Satisfaction** (1.7.0) | the incident surveys, each on its own scale (or `servicenow_insights_survey_scale`, 1.70.4), by survey: the average graded Good, Fair or Low, by month and by group (1.16.0, see *Satisfaction*) |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
-| **Automation backlog** (1.81.0) | right after *Top incident issues* on the site's page: every issue ranked by what automating it would save, with a priority (P1 to P3), tickets a month, hours saved a year, VIP tickets and a score; open one for ACT's strategy, summary and problem and three phase cards. At a glance has three tiles for it. See *Automation backlog* below |
+| **Automation backlog** (1.81.0) | right after *Top incident issues* on the site's page: every issue ranked by what automating it would save, with a priority (P1 to P3), tickets a month, hours saved a year, VIP tickets and a score; open one for ACT's strategy, summary and problem and three phase cards. At a glance has five tiles for it. The complexity vs impact matrix and its filters (1.89.0) narrow the table. See *Automation backlog* below |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
 | **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
 | **Most requested services** | the catalog items ranked (▲ ▼ against the window before), the median time to fulfil, SLA met, the trend; and **requests opened as incidents** (an install, an account, access - things the catalog offers), when ACT ran |
@@ -539,8 +539,8 @@ own read ACL.
 ## Automation backlog (1.81.0)
 
 A section of this report, not a new one: it sits right after *Top incident issues* on the site's page (the team pages do not
-repeat it), with a link in the side bar and three tiles in *At a glance* (they always show the whole window, not a period chosen there) - the clusters with how many are P1, the hours saved a
-year if every cluster reached its best phase, and the top candidate. It ranks every issue (a cluster) by what automating it
+repeat it), with a link in the side bar and five tiles in *At a glance* (they always show the whole window, not a period chosen there) - the clusters with how many are P1, the hours saved a
+year if every cluster reached its best phase, the backlog's tickets a month with their share of all incidents, the VIP tickets, and the top candidate. It ranks every issue (a cluster) by what automating it
 would save.
 
 **The clusters are the issues of Top incident issues** - ACT's grouped short descriptions, or the category and subcategory with ACT off. Clusters with fewer than `servicenow_insights_backlog_min_tickets` (5) tickets in the window are left out, with one line under the table saying how many. A ticket with no category, or the category Other, reads *Not categorised*.
@@ -564,9 +564,28 @@ the cell. The window is the report's own (the months are its days ÷ 30.4375).
 | Complexity | 1 | 2 | 4 |
 | Effort (days per complexity point) | 1 | 3 | 5 |
 
-Complexity is one more (at most 5) when the median handoffs are 2 or more. Impact is 1 to 5 from the cluster's rate against the
-top cluster's. A phase's score = deflection % × impact ÷ (5 × complexity). The deflection is an estimate from the close notes: it
+**Complexity is the cluster's own (1.89.0).** The phase's base (1, 2, 4), plus one point for each of these that is true of this cluster, at most 5:
+
+| Signal | Points | Phases |
+|---|---|---|
+| The median ticket was passed between groups | 1 for once, 2 for twice or more | all |
+| The fix is not written down: under 30% of the resolved tickets have a close note that says what was done | 1 | 2 and 3 |
+| On-site hardware: its category or name says printer, scanner, monitor, laptop, desktop, keyboard, phone, docking station, kiosk and the like | 1 | all |
+
+**Impact is 1 to 5** from where the cluster's tickets a month sit among all the clusters (fifths: 1 the lowest, 5 the highest; clusters tied at the lowest rate are all 1), and one more
+when 10% or more of its tickets were raised for a VIP. Both spread the clusters over the whole grid. A phase's score = deflection % × impact ÷ (5 × complexity). The deflection is an estimate from the close notes: it
 says what the notes show, not what a script would settle. The hover shows the count behind it (*41 of 74 tickets*). The best phase is the one with the best unrounded score.
+
+**The matrix and the filters (1.89.0).** Above the table, *Complexity vs impact* puts every cluster in a cell for the phase you pick (*Phase 1*, *2* or *3*).
+A cell shows how many clusters are in it and the hours a year they would save at that phase; a darker cell has more.
+Hover a cell for its figures; click it to show its clusters in the table (*Clear cell* undoes it).
+
+- **Show** has the four quadrants with their counts: *Quick wins* (complexity 1 to 2, impact 4 to 5), *Major projects* (complexity 3 to 5, impact
+  4 to 5), *Fill-ins* (complexity 1 to 2, impact 1 to 3) and *High effort, low impact* (complexity 3 to 5, impact 1 to 3). On a narrow screen they are one list.
+  *High VIP impact* keeps the clusters whose VIP share is in the top fourth (only with VIP tiers set up), and *Reset* clears everything.
+- **Filter** narrows by priority, category, AI label (with ACT's words), the top 10 or 25 by score or 3 per category, complexity at most
+  1 to 4, deflection at least 25 to 75% and hours a year at least 10 to 100, all at the chosen phase. With the search box, the cells and the quadrants they all narrow the same table, 50 a page:
+  *Showing 1-50 of 12 (of 64 clusters)*.
 
 **ACT writes only the words.** With `servicenow_insights_act: true`, one question per cluster for the top
 `servicenow_insights_backlog_issues` (15) by score: a strategy, an AI label (Development-Assist, Runtime-Integrated or None), a

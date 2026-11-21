@@ -21,8 +21,18 @@ W_VOLUME, W_PHASE, W_VIP = 0.5, 0.3, 0.2
 CUT_P1, CUT_P2 = 40, 20         # score at or above: P1; at or above: P2; else P3
 P3_CAP = 80                    # phase 3 settles at most this share: zero-touch is an estimate, never "everything"
 MIN_TICKETS = 5                # clusters with fewer tickets in the window are left out (servicenow_insights_backlog_min_tickets)
-# the three phases: name, complexity before the handoff point, effort days per complexity point
+# the three phases: name, complexity before the cluster's own signals, effort days per complexity point
 PHASES = [("Self-service and KB", 1, 1), ("ServiceNow + PowerShell", 2, 3), ("Zero-touch", 4, 5)]
+# 1.89.0: what makes ONE cluster more complex than the next (added to the phase's base, at most 5): the median ticket passed between groups
+# (1 time: +1, 2 or more: +2), the fix is not written down (under NOTES_MIN percent of its resolved tickets have a close note that says
+# what was done; phases 2 and 3: a script cannot copy what the notes do not say), and on-site hardware (a person has to be there, every phase)
+NOTES_MIN = 30
+ONSITE = re.compile(r"\b(hardware|printers?|scanners?|monitors?|displays?|laptops?|desktops?|keyboards?|mouse|docking|docks?|headsets?|phones?|handsets?|"
+                    r"badges?|smart ?cards?|kiosks?|projectors?|toner|cabling|cables?|racks?|(?<!pop[- ])ups)\b", re.I)    # UPS, not "pop-ups" (review)
+# quadrants of the matrix (complexity, impact): the page's Show row, and the counts of its chips
+QUADS = (("q", "Quick wins", "complexity 1 to 2, impact 4 to 5"), ("m", "Major projects", "complexity 3 to 5, impact 4 to 5"),
+         ("f", "Fill-ins", "complexity 1 to 2, impact 1 to 3"), ("h", "High effort, low impact", "complexity 3 to 5, impact 1 to 3"))
+VIP_IMPACT = 0.10               # a cluster with this share of VIP tickets (or more) is one step higher in impact
 AI_LABELS = ("Development-Assist", "Runtime-Integrated", "None")
 LIMITS = {"strategy": 240, "summary": 300, "problem": 300, "approach": 200, "need": 60, "ai_note": 160}
 NEEDS_MAX = 4
@@ -83,7 +93,17 @@ def suggest_priority(score):
     return 1 if score >= CUT_P1 else 2 if score >= CUT_P2 else 3
 
 
-def _phase(i, n, sets, hand_med, impact):
+def labor_h(r, months):
+    """Hours a year the cluster's tickets take: (the hours per ticket and per handoff) ÷ the window's months × 12."""
+    return (H_TICKET * r["n"] + H_HANDOFF * r["hand"]) / months * 12.0
+
+
+def quadrant(cx, impact):
+    """The matrix's quadrant of a (complexity, impact) pair: q quick wins, m major projects, f fill-ins, h high effort and low impact."""
+    return ("q" if cx <= 2 else "m") if impact >= 4 else ("f" if cx <= 2 else "h")
+
+
+def _phase(i, n, sets, sig, impact):
     """One phase's figures. sets: the ticket ids each phase would settle, each a superset of the one before - every ticket is
     counted once. Deflection (the tickets the phase would settle): phase 1 - resolved with a close note that says what was done
     and never passed between groups; phase 2 - every ticket with such a note (a script can do what the note says); phase 3 - those
@@ -92,10 +112,12 @@ def _phase(i, n, sets, hand_med, impact):
     settles = len(sets[i])
     if i == 2:
         settles = min(settles, int(n * P3_CAP / 100.0))
-    cx = min(5, base + (1 if hand_med >= 2 else 0))
+    parts = {"base": base, "hand": min(2, max(0, int(sig.get("hand_med") or 0))), "notes": 1 if (i >= 1 and sig.get("notes_low")) else 0,
+             "onsite": 1 if sig.get("onsite") else 0}
+    cx = min(5, sum(parts.values()))
     defl = 100.0 * settles / n if n else 0.0
-    return {"i": i + 1, "name": name, "complexity": cx, "impact": impact, "effort": cx * per, "per": per, "settles": settles,
-            "defl": int(round(defl)), "score": int(round(defl * impact / (5.0 * cx))) if cx else 0,
+    return {"i": i + 1, "name": name, "complexity": cx, "cx_parts": parts, "impact": impact, "quad": quadrant(cx, impact), "effort": cx * per, "per": per, "settles": settles,
+            "defl": int(round(defl)), "defl_x": defl, "score": int(round(defl * impact / (5.0 * cx))) if cx else 0,
             "score_x": (defl * impact / (5.0 * cx)) if cx else 0.0, "capped": i == 2 and len(sets[2]) > settles}
 
 
@@ -151,23 +173,34 @@ def backlog_rows(tickets, issues_of, since, until, opts=None, vip=None, repeat_d
         cat = sorted(cats.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
         cat = "Not categorised" if cat in ("(none)", "Other") else cat
         ex = sorted(lst, key=lambda it: it.get("opened_at") or "", reverse=True)[:3]
+        resolved = sum(1 for it in lst if it.get("done_at"))
         raw.append({"name": name, "label": cluster_label(name), "cat": cat, "n": n, "hand": hand, "hand_med": med, "good": good, "good0": good0, "rec": len(rec), "sets": sets, "vip": nv,
+                    "resolved": resolved, "onsite": bool(ONSITE.search("%s %s" % (name, cat))),
                     "examples": [x.get("number") for x in ex if x.get("number")], "ids": sorted(_ticket_key(x, F, o) for x in lst if x.get("sys_id"))})
     min_n = int(_o(o, "backlog_min_tickets", MIN_TICKETS))
     left_out = [r for r in raw if r["n"] < min_n]
     raw = [r for r in raw if r["n"] >= min_n]
     top_rate = max([r["n"] for r in raw] or [1]) / months
     rows = []
+    counts = sorted(r["n"] for r in raw)
     for r in raw:
         n, rate = r["n"], r["n"] / months
-        impact = max(1, min(5, int(math.ceil(5.0 * rate / top_rate - 1e-9))))
-        ph = [_phase(i, n, r["sets"], r["hand_med"], impact) for i in range(3)]
+        # 1.89.0: impact = where the cluster's tickets a month sit among all the clusters (fifths: 1 for the lowest fifth ... 5 for the highest),
+        # one more when VIP_IMPACT of its tickets were raised for a VIP - a spread over the grid, not a row of 1s under one big cluster
+        # strictly smaller, over the others: tied lowest clusters are all 1, the highest is 5, two clusters are 1 and 5 (review)
+        pos = sum(1 for c in counts if c < n) / float(len(counts) - 1) if len(counts) > 1 else 1.0
+        impact = max(1, min(5, 1 + min(4, int(pos * 5)) + (1 if (vip and vip.get("on") and r["vip"] >= VIP_IMPACT * n) else 0)))
+        sig = {"hand_med": r["hand_med"], "onsite": r["onsite"], "notes_low": (r["resolved"] == 0 or 100.0 * r["good"] < NOTES_MIN * r["resolved"])}
+        ph = [_phase(i, n, r["sets"], sig, impact) for i in range(3)]
         best = max(range(3), key=lambda i: (round(ph[i]["score_x"], 6), -i)) + 1             # on the unrounded scores: 28.4 beats 28.0
         labor = H_TICKET * n + H_HANDOFF * r["hand"]
-        saved = labor / months * 12.0 * ph[best - 1]["defl"] / 100.0
+        saved = labor / months * 12.0 * ph[best - 1]["defl_x"] / 100.0
         vol = 100.0 * rate / top_rate
         vipv = min(100.0, 100.0 * r["vip"] / n * 5.0) if n else 0.0
         score = W_VOLUME * vol + W_PHASE * ph[best - 1]["score_x"] + W_VIP * vipv
+        r["impact"] = impact
+        for p_, hrs_ in zip(ph, [labor_h(r, months) * p["defl_x"] / 100.0 for p in ph]):
+            p_["hours"] = hrs_                                    # hours a year this phase would save (the matrix's cells add them up)
         r.update({"id": cluster_id(r["name"]), "rate": rate, "share": 100.0 * n / all_total if all_total else 0.0, "labor": labor,
                   "saved": saved, "vol": vol, "vipv": vipv, "score": int(round(score)), "score_x": score, "ph": ph, "best": best,
                   "prio": suggest_priority(int(round(score)))})
@@ -197,9 +230,23 @@ def tip_score(r, bm):
 
 
 def tip_phase(p, r):
-    return ("Deflection = tickets this phase settles ÷ tickets = %s of %s tickets%s<br>Complexity = %d (base) + 1 if median handoffs ≥ 2<br>"
-            "Effort = %d days per complexity point<br>Score = %d%% × %d ÷ (5 × %d) = %d" % (
-                _fmt(p["settles"]), _fmt(r["n"]), (" (an estimate, at most %d%%)" % P3_CAP) if p["i"] == 3 else "", PHASES[p["i"] - 1][1], p["per"], p["defl"], p["impact"], p["complexity"], p["score"]))
+    c = p.get("cx_parts") or {"base": PHASES[p["i"] - 1][1], "hand": 0, "notes": 0, "onsite": 0}
+    return ("Deflection = tickets this phase settles ÷ tickets = %s of %s tickets%s<br>Complexity = %d (phase base) + %d (median handoffs: %g) + %d (fix not written down) "
+            "+ %d (on-site hardware) = %d, at most 5<br>Impact = %d (see the matrix)<br>Effort = %d days per complexity point<br>Score = %d%% × %d ÷ (5 × %d) = %d" % (
+                _fmt(p["settles"]), _fmt(r["n"]), (" (an estimate, at most %d%%)" % P3_CAP) if p["i"] == 3 else "", c["base"], c["hand"], r.get("hand_med") or 0,
+                c["notes"], c["onsite"], p["complexity"], p["impact"], p["per"], p["defl"], p["impact"], p["complexity"], p["score"]))
+
+
+def tip_cx(bm=None):
+    """The matrix's complexity axis, in words."""
+    return ("Complexity of the phase, 1 to 5 = the phase's base (1, 2, 4) + 1 if the median ticket was passed between groups once, 2 if twice or more "
+            "+ 1 if fewer than %d%% of its resolved tickets have a close note that says what was done (phases 2 and 3) + 1 for on-site hardware." % NOTES_MIN)
+
+
+def tip_im(bm=None):
+    """The matrix's impact axis, in words."""
+    return ("Impact, 1 to 5 = where the cluster's tickets a month sit among all clusters (fifths) + 1 if %d%% or more of its tickets were raised for a VIP."
+            % round(100 * VIP_IMPACT))
 
 
 # ---- ACT's words -------------------------------------------------------------------------------------------------
