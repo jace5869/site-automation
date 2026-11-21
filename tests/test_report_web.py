@@ -1688,8 +1688,12 @@ class ReportSpeed(unittest.TestCase):
                              ['item-%04d' % i for i in range(100)], look)
             self.assertLess(len(dom.tags) + dom.text_nodes, 3000, look)
             self.assertFalse(any(tag == 'table' and a.get('class') == 'mini' for tag, a in dom.tags), look)
-            self.assertFalse(any(tag == 'script' and not a.get('src') and a.get('type') != 'application/json'
-                                 for tag, a in dom.tags), look)
+            # no row data in inline script; the one inline script allowed is the early theme lines (atlas, brief: they
+            # save a flash of the wrong theme on a page opened as a file, and do nothing else)
+            inline = [a for tag, a in dom.tags if tag == 'script' and not a.get('src') and a.get('type') != 'application/json']
+            self.assertLessEqual(len(inline), 1, look)
+            if inline:
+                self.assertIn("localStorage.getItem('site-report-theme')", page, look)
             block, = [a for tag, a in dom.tags if a.get('class') == 'defer-main']
             self.assertEqual(block['data-count'], '2000')
             self.assertEqual(json.loads(block['data-ids']), ['item-%04d' % i for i in range(100, 2000)])
