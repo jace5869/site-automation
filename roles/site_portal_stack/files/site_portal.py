@@ -3328,6 +3328,8 @@ class NetLive(object):
             etag = '%s-%s"' % (etag[:-1], hashlib.sha1(stale.encode("utf-8")).hexdigest()[:8])
         if from_disk and etag:          # the kept map: its own tag, so the first fresh read of the same map is still sent
             etag = '%s-d"' % etag[:-1]
+        if cut and etag:                # a cut status read: its own tag too (the head says so)
+            etag = '%s-c"' % etag[:-1]
         if etag and etag_matches(etag_in, etag):
             return 304, "", etag
         return 200, json.dumps(head)[:-1] + ',"map":' + m + "}", etag

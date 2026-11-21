@@ -15,7 +15,7 @@
   var HOME = { lam: -35, phi: 28, k: 1 }, KEY = 'site-netmap-view', DEBUG = /[?&]debug=1\b/.test(location.search);
   var G = { lam: HOME.lam, phi: HOME.phi, k: HOME.k, flat: false, mix: 0, morph: null, W: 0, H: 0, dpr: 1, hover: null, spin: true, idle: 0, fly: null };
   function dict() { return Object.create(null); }      // keyed by site names from SolarWinds: no inherited keys
-  function own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
   var sites = [], bySite = dict(), arcs = [], D = null;
   function still() { return window.NM.still(); }
 
@@ -45,11 +45,12 @@
     });
     var oldArcs = dict(); arcs.forEach(function (A) { oldArcs[A.key] = A; });
     arcs = Object.keys(pair).map(function (k) {
-      var p = pair[k], a = p.a, b = p.b, ls = p.ls, up = ls.filter(function (x) { return x.l.status !== 'Down'; });
-      var down = !up.length, warn = !down && (up.length < ls.length || ls.some(function (x) { return x.l.status === 'Warning'; }));
+      var p = pair[k], a = p.a, b = p.b, ls = p.ls, up = ls.filter(function (x) { return x.l.status === 'Up' || x.l.status === 'Warning'; });
+      var unk = !up.length && ls.some(function (x) { return x.l.status === 'Unknown'; });   // 1.95.1: not read is not Up - grey, still
+      var down = !up.length && !unk, warn = !down && !unk && (up.length < ls.length || ls.some(function (x) { return x.l.status === 'Warning'; }));
       var bw = ls.reduce(function (s, x) { return s + bps(x.l.speed); }, 0);
       var pin = up.reduce(function (m, x) { return Math.max(m, x.pin || 0); }, 0), pout = up.reduce(function (m, x) { return Math.max(m, x.pout || 0); }, 0);
-      var why = down ? (ls.length > 1 ? 'all ' + ls.length + ' links down' : (ls[0].l.why || 'down')) : up.length < ls.length ? (ls.length - up.length) + ' of ' + ls.length + ' links down'
+      var why = unk ? 'not in the last status read' : down ? (ls.length > 1 ? 'all ' + ls.length + ' links down' : (ls[0].l.why || 'down')) : up.length < ls.length ? (ls.length - up.length) + ' of ' + ls.length + ' links down or not known'
         : (ls.filter(function (x) { return x.l.status === 'Warning'; }).map(function (x) { return x.l.why; })[0] || '');
       var om = Math.acos(Math.max(-1, Math.min(1, dot(a.v, b.v)))), pts = [], ll = [];
       for (var i = 0; i <= 64; i++) {
@@ -59,11 +60,11 @@
         ll.push([Math.atan2(q[1], q[0]) / RAD, Math.asin(Math.max(-1, Math.min(1, q[2] / (Math.hypot(q[0], q[1], q[2]) || 1)))) / RAD]);
       }
       for (var j = 1; j < ll.length; j++) { while (ll[j][0] - ll[j - 1][0] > 180) ll[j][0] -= 360; while (ll[j][0] - ll[j - 1][0] < -180) ll[j][0] += 360; }   // one line across the date line
-      var o = oldArcs[k], status = down ? 'Down' : warn ? 'Warning' : 'Up';
+      var o = oldArcs[k], status = unk ? 'Unknown' : down ? 'Down' : warn ? 'Warning' : 'Up';
       var L = { status: status, 'in': Math.round(pin), out: Math.round(pout), why: why };
       return { key: k, l: L, a: a, b: b, pts: pts, ll: ll, w: Math.max(1.6, Math.min(6.5, 1.6 + 1.25 * Math.log(Math.max(bw, 1e8) / 1e8) / Math.LN10)), scr: [],
         oIn: o ? o.oIn : Math.random() * 40, oOut: o ? o.oOut : Math.random() * 40, flash: o && o.l.status !== status && (status === 'Down' || o.l.status === 'Down') ? performance.now() : o ? o.flash : 0,
-        tip: a.name + ' ↔ ' + b.name + (bw ? ' · ' + speedText(bw) : '') + (ls.length > 1 ? ' (' + ls.length + ' links)' : '') + ' · ' + (down ? 'no traffic' : L['in'] + '% in / ' + L.out + '% out') + ' · ' + status + (why ? ' (' + why + ')' : '') };
+        tip: a.name + ' ↔ ' + b.name + (bw ? ' · ' + speedText(bw) : '') + (ls.length > 1 ? ' (' + ls.length + ' links)' : '') + ' · ' + (down ? 'no traffic' : unk ? 'traffic not known' : L['in'] + '% in / ' + L.out + '% out') + ' · ' + status + (why ? ' (' + why + ')' : '') };
     });
     if (tray) {                                       // the sites without coordinates: buttons that open them in the Sites view
       var un = (D.unplaced || []).filter(function (s) { return D.sites.indexOf(s) >= 0; });
@@ -260,15 +261,16 @@
     c.stroke();
   }
   function arc(A, dt, hot, now) {
-    var c = ctx, l = A.l, w = A.w * (hot ? 1.5 : 1), down = l.status === 'Down', warn = l.status === 'Warning';
+    var c = ctx, l = A.l, w = A.w * (hot ? 1.5 : 1), down = l.status === 'Down', warn = l.status === 'Warning', unk = l.status === 'Unknown';
     var fl = A.flash && now - A.flash < 4000 && !still();          // it just went down (or came back): a ring of light runs along it
     c.lineCap = 'round'; c.lineJoin = 'round';
-    if (!still() && !down) { A.oIn += dt * (.006 + .05 * l['in'] / 100) * 6; A.oOut += dt * (.006 + .05 * l.out / 100) * 6; }
+    if (!still() && !down && !unk) { A.oIn += dt * (.006 + .05 * l['in'] / 100) * 6; A.oOut += dt * (.006 + .05 * l.out / 100) * 6; }
     A.scr.forEach(function (r) {
       if (r.length < 2) return;
       c.setLineDash([]); c.strokeStyle = K['ng-ocean']; c.lineWidth = w + 3; c.globalAlpha = .9; poly(r, 0, 0);     // a surface casing: the arc reads on land and sea
       c.globalAlpha = 1;
       if (fl) { c.strokeStyle = alpha(down ? K['nm-down'] : K['nm-up'], .25 + .25 * Math.sin((now - A.flash) / 160)); c.lineWidth = w + 8; poly(r, 0, 0); }
+      if (unk) { c.strokeStyle = alpha(K['nm-unk'], .7); c.lineWidth = Math.max(1.6, w * .6); c.setLineDash([2, 5]); c.lineDashOffset = 0; poly(r, 0, 0); c.setLineDash([]); return; }
       if (down) { c.strokeStyle = K['nm-down']; c.lineWidth = Math.max(2, w * .8); c.setLineDash([6, 6]); c.lineDashOffset = 0; poly(r, 0, 0); c.setLineDash([]); return; }
       c.strokeStyle = warn ? alpha(K['nm-warn'], .35) : alpha(band(Math.max(l['in'], l.out)), .30); c.lineWidth = w + 1; poly(r, 0, 0);
       var lw = Math.max(1.4, w / 2), o = Math.max(1, w / 4);

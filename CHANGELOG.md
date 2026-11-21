@@ -29,6 +29,11 @@ To set up: run Site portal - deploy.
   a cut read says so in the live line. A whole read that places sites (or takes them away) turns the Map on (or off).
 - The portal: the kept map from disk has its own ETag, so the first fresh read of the same map is sent; its state is read
   under the lock.
+- **Never Up from data not read:** a link is Down first (an interface or an end down), then *not known* when an end or
+  an interface was not in the last read (or an end's status is not known) - never Up from missing data; on the globe such
+  a WAN arc is grey and still, "not in the last status read"; a cut status read has its own ETag (its head says so).
+- **The discovery** counts each link once (A->B and B->A are one, as the map); a name reading counts only the named
+  nodes when most nodes have a name (a mostly IP-only Orion is read on all of them).
 - **The ops look at 800-1000 px:** the section links take a row of their own, as wide as the page, instead of two links
   squeezed beside *All reports* (1.87.2).
 - Tests: `tests/test_netmap.py` Hotfix1951 and Hotfix1951Page (each fails on 1.95.0), Portal.test_b.

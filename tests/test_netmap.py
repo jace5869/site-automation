@@ -877,6 +877,11 @@ class Portal(unittest.TestCase):
         self.assertNotEqual(tag_disk, tag_fresh)
         self.assertEqual(code2, 200)                                                 # not a 304: the viewer gets from_disk: false
         self.assertFalse(json.loads(body)["from_disk"])
+        kept.raw = {"status_cut": True}                                              # a cut status read: its own tag, its head says so
+        code3, body3, tag_cut = kept.answer(tag_fresh)
+        self.assertEqual(code3, 200)
+        self.assertNotEqual(tag_cut, tag_fresh)
+        self.assertTrue(json.loads(body3)["cut"])
 
     def test_5_who_may_see_it(self):
         r = urllib.request.Request(self.base + "/api/netmap", headers={"X-SSL-Client-Verify": "NONE"})
@@ -1176,12 +1181,12 @@ class Hotfix1951Page(unittest.TestCase):
     """1.95.1: a WAN link stored remote -> local is drawn in the Site view; a site called "constructor" is not placed; a site
     whose devices are all Unknown is not "all up"."""
 
-    def page(self, data, js):
+    def page(self, data, js, globe=False):
         with open(os.path.join(WEB, "netmap-map.html")) as fh:
             markup = fh.read()
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
-        for n in ("netmap.js", "netmap.css"):
+        for n in ("netmap.js", "netmap.css") + (("netglobe.js", "world-land.js") if globe else ()):
             shutil.copy(os.path.join(WEB, n), d)
         with open(os.path.join(d, "t.js"), "w") as fh:
             fh.write("window.addEventListener('load',function(){setTimeout(function(){var r={};try{%s}catch(e){r.err=String(e)}"
@@ -1189,7 +1194,8 @@ class Hotfix1951Page(unittest.TestCase):
         with open(os.path.join(d, "p.html"), "w") as fh:
             fh.write('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="netmap.css"></head><body>%s'
                      '<script type="application/json" id="netmap-data">%s</script><pre id="res"></pre>'
-                     '<script src="netmap.js"></script><script src="t.js"></script></body></html>' % (markup, json.dumps(data).replace("</", "<\\/")))
+                     '%s<script src="netmap.js"></script>%s<script src="t.js"></script></body></html>' % (markup, json.dumps(data).replace("</", "<\\/"), '<script src="world-land.js"></script>' if globe else "",
+                       '<script src="netglobe.js"></script>' if globe else ""))
         out = subprocess.run([_browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1280,900", "--virtual-time-budget=5000",
                               "--dump-dom", "file://" + os.path.join(d, "p.html")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                              universal_newlines=True, timeout=120).stdout
@@ -1215,6 +1221,17 @@ class Hotfix1951Page(unittest.TestCase):
         self.assertTrue(r["mapOff"], r)                                              # no site is placed: the Map stays off
         self.assertIn("not known", r["tiles"])
         self.assertNotIn("SITC0301" + "all up", r["tiles"].replace(" ", ""))
+
+    def test_3_an_unknown_wan_link_is_grey_and_still(self):
+        nodes = [{"id": 1, "name": "SITA0101-CR01", "site": "SITA0101", "role": "core", "status": "Up"},
+                 {"id": 2, "name": "SITB0201-CR01", "site": "SITB0201", "role": "core", "status": "Up"}]
+        links = [{"a": 1, "b": 2, "status": "Unknown", "why": "not in the last status read", "wan": True, "speed": "1G"}]
+        r = self.page({"run": "t", "sites": ["SITA0101", "SITB0201"], "geo": {"SITA0101": [38.9, -77.0], "SITB0201": [40.7, -74.0]},
+                       "nodes": nodes, "links": links},
+                      "var A=ngTest.arcs()[0];r.status=A.l.status;r.why=A.l.why;", globe=True)
+        self.assertNotIn("err", r)
+        self.assertEqual((r["status"], r["why"]), ("Unknown", "not in the last status read"))
+
 
 
 class Hotfix1951(unittest.TestCase):
@@ -1258,6 +1275,34 @@ class Hotfix1951(unittest.TestCase):
         m = sw.model(new, {})
         node = [n for n in m["nodes"] if n["id"] == n0["id"]][0]
         self.assertEqual((node["status"], node.get("stale"), node["why"]), ("Unknown", True, "not in the last status read"))
+
+
+    def test_5_each_link_once_for_the_discovery(self):
+        raw = hostile()
+        for n in raw["nodes"]:                           # names that say no role: the links' count decides it
+            n["name"] = re.sub(r"(?i)-(CR|DS|AS|core|acc)(?=-?\d)", "-n", n["name"])
+        both = dict(raw, connections=raw["connections"] + [[c[2], c[3], c[0], c[1]] for c in raw["connections"]])
+        a, b = sw.model(raw, {}), sw.model(both, {})
+        self.assertEqual([(n["site"], n["building"], n["closet"], n["role"]) for n in a["nodes"]],
+                         [(n["site"], n["building"], n["closet"], n["role"]) for n in b["nodes"]])
+        self.assertEqual(a["discovery"]["levels"][0]["readings"], b["discovery"]["levels"][0]["readings"])
+
+    def test_6_a_mostly_ip_fleet_is_not_a_name_reading(self):
+        nodes = [{"id": i, "name": ("SITA%04d-AS01" % i) if i < 5 else "198.51.100.%d" % i, "dns": "", "ip": "198.51.100.%d" % i,
+                  "status_code": 1, "status_text": "", "vendor": "", "model": "", "location": "", "props": {}, "wm": None} for i in range(100)]
+        m = sw.model({"nodes": nodes, "connections": [], "interfaces": [], "custom_properties": [], "topology_ok": True}, {})
+        part = [r for r in m["discovery"]["levels"][0]["readings"] if r["rule"] == "name part 1"]
+        self.assertTrue(not part or part[0]["coverage"] <= 0.1, part)
+
+    def test_7_never_up_from_data_not_read(self):
+        raw = hostile()
+        n0, n1 = raw["nodes"][0]["id"], raw["nodes"][1]["id"]
+        raw["connections"] = [[n0, 0, n1, 0]]
+        raw["nodes"][0]["stale"], raw["nodes"][0]["status_code"] = True, None          # no interface records, one end not read
+        l = sw.model(raw, {})["links"][0]
+        self.assertEqual((l["status"], l.get("stale")), ("Unknown", True))
+        raw["nodes"][1]["status_code"] = 2                                             # the other end down: Down first
+        self.assertEqual(sw.model(raw, {})["links"][0]["status"], "Down")
 
 
 if __name__ == "__main__":

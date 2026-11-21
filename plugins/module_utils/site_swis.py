@@ -379,7 +379,7 @@ def status(client, raw, opts=None):
             n = dict(n, status_code=r.get("Status"), status_text=str(r.get("StatusDescription") or ""), resp=r.get("ResponseTime"),
                      loss=r.get("PercentLoss"), unmanaged=bool(r.get("UnManaged")), stale=False)
         else:                                            # 1.95.1: not in this read (removed, not visible, past the cut): not known
-            n = dict(n, status_code=None, status_text="not in the last status read", resp=None, loss=None, stale=True)
+            n = dict(n, status_code=None, status_text="not in the last status read", resp=None, loss=None, unmanaged=False, stale=True)
         new["nodes"].append(n)
     new["status_cut"] = bool(cut)
     ids = sorted(set(i.get("InterfaceID") for i in raw.get("interfaces") or [] if isinstance(i.get("InterfaceID"), int)))
@@ -798,7 +798,8 @@ def discover(raw_nodes, pairs, o):
                 continue
             vals = dict((n["id"], scoped(fn)(n)) for n in raw_nodes)
             m = _measure(vals, pairs, linked)
-            if f in ("part", "pattern") and named and len(named) < N:   # a name reading: of the nodes that have a name to read
+            if f in ("part", "pattern") and named and len(named) < N and len(named) * 2 >= N:   # a name reading, when most
+                m["coverage_all"] = m["coverage"]                                                # nodes have a name: of them
                 m["coverage"] = sum(1 for i in named if vals.get(i)) / float(len(named))
             if lv == "site":
                 lo, hi = 2, max(3, N // 5)                     # soft: a reading over hi is marked down, never ruled out
@@ -983,7 +984,13 @@ def model(raw, opts=None):
             conf[site_key(k, "")] = [_num(v["lat"]), _num(v["lon"])]
     # 1.95.0: where each node belongs - read (discovery), or as all.yml says
     rid = set(r["id"] for r in raw.get("nodes") or [])
-    pairs = [(c[0], c[2]) for c in raw.get("connections") or [] if c[0] in rid and c[2] in rid and c[0] != c[2]]
+    pairs, seen_p = [], set()                            # 1.95.1: each link once, as the links below (A->B and B->A are one)
+    for c in raw.get("connections") or []:
+        if c[0] in rid and c[2] in rid and c[0] != c[2]:
+            k = tuple(sorted([(str(c[0]), str(c[1])), (str(c[2]), str(c[3]) if len(c) > 3 else "")]))
+            if k not in seen_p:
+                seen_p.add(k)
+                pairs.append((c[0], c[2]))
     found = discover(raw.get("nodes") or [], pairs, dict(o, discover_props=list(raw.get("custom_properties") or [])
                                                           + [p for p in o.get("properties") or [] if p not in (raw.get("custom_properties") or [])]))
     nodes, names = [], {}
@@ -1062,12 +1069,17 @@ def model(raw, opts=None):
         if pin is not None or pout is not None:
             l["in"], l["out"] = int(round(max(0, min(100, pin or 0)))), int(round(max(0, min(100, pout or 0))))
         down = [x for x, f in ((ids[a]["name"], fa), (ids[b]["name"], fb)) if f and (f.get("OperStatus") == 2 or f.get("Status") == 2)]
-        if (fa or fb) and all((not f) or f.get("stale") for f in (fa, fb)):     # 1.95.1: no end in the last status read
-            l["status"], l["why"], l["stale"] = UNKNOWN, "not in the last status read", True
-        elif down:
+        stale_if = any(f and f.get("stale") for f in (fa, fb))
+        stale_node = any(ids[x].get("stale") for x in (a, b))
+        if down:
             l["status"], l["why"] = DOWN, "interface down on " + " and ".join(down)
         elif DOWN in (ids[a]["status"], ids[b]["status"]):
             l["status"], l["why"] = DOWN, "%s is down" % (ids[a]["name"] if ids[a]["status"] == DOWN else ids[b]["name"])
+        elif stale_if or stale_node or UNKNOWN in (ids[a]["status"], ids[b]["status"]):   # 1.95.1: never Up from data not read
+            l["status"], l["why"] = UNKNOWN, "not in the last status read" if (stale_if or stale_node) else "an end's status is not known"
+            l["stale"] = bool(stale_if or stale_node)
+            l.pop("in", None)
+            l.pop("out", None)
         elif any(f and f.get("Status") == 3 for f in (fa, fb)):
             l["status"], l["why"] = WARNING, "interface warning in SolarWinds"
         elif warn_util and max(l.get("in", 0), l.get("out", 0)) >= warn_util:
