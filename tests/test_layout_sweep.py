@@ -219,7 +219,7 @@ class Pages(unittest.TestCase):
         h = render("atlas", fixture("ad_report"))
         self.assertIn("@media (min-width:1200px){.nav{flex-wrap:wrap;overflow:hidden;", h)
         self.assertIn(".nav{position:relative;", h)
-        self.assertIn("@media print{.capbar{display:none}tr[data-cap][hidden]{display:table-row}}", h)
+        self.assertIn("@media print{.capbar{display:none}tr[data-cap][hidden]{display:table-row!important}}", h)
 
     def test_7_nothing_empty_in_the_net_drops_page(self):
         h = render("atlas", fixture("vm_net_drops_doc"))
@@ -294,7 +294,7 @@ class InBrowser(unittest.TestCase):
               'document.getElementById("res").textContent=[r.hidden,r.hasAttribute("data-cap")].join(",")')
         self.assertEqual(answer(dom(render("atlas", self.DOC40), 1280, js)), "true,true")
         for look in ("atlas", "brief", "ops"):
-            self.assertIn("tr[data-cap][hidden]{display:table-row}", render(look, self.DOC40))
+            self.assertIn("tr[data-cap][hidden]{display:table-row!important}", render(look, self.DOC40))
 
     def test_3_a_cell_of_more_than_4_lines_shows_4_and_more(self):
         doc = {"title": "t", "status": "ok", "sections": [{"title": "S", "columns": ["VM", "Why"], "kinds": ["", "wrap"],

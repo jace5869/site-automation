@@ -70,10 +70,8 @@
   function bindNew(root){
     bindCopy(root);
     all('.tw table',root).forEach(function(tb){bindTable(tb);tb._capApply()});
+    if(typeof bindTip==='function')all('[data-tip]',root).forEach(bindTip);
     if(typeof bindSpark==='function')all('svg.spark[data-points]',root).forEach(bindSpark);
-  }
-  function expandAll(){
-    all('.tw table').forEach(function(tb){if(tb._expand){tb._expand();tb._capApply()}});
   }
   /* a switch of the bar: its radio buttons work by themselves (CSS); here the choice is kept in this browser and set
      again on the next page */
@@ -276,8 +274,8 @@
     d.k.forEach(function(e){var r=b[e[0]],c=r&&r.cells[e[1]+off];if(c&&c.title==='')c.title=e[2]})}catch(x){}}
   /* Older pages have every row in their markup and keep their 25-row fold. Published row blocks start at row 101. */
   /* a table's cap is lifted by its own filter box or column filters, or by the page's search, the page's filter buttons or the time line's controls (each its own flag: one table's box does not open another's) */
-  var CAP=25,gQ=false,gF=false,counts=[];
-  function capFree(tb){return gQ||gF||!!tb._otFree||!!tb._cq||!!tb._cf}
+  var CAP=25,printing=false,gQ=false,gF=false,counts=[];
+  function capFree(tb){return printing||gQ||gF||!!tb._otFree||!!tb._cq||!!tb._cf}
   function capAll(){all('.tw table').forEach(function(tb){if(tb._capApply)tb._capApply()})}
   var deferredIds=Object.create(null);
   function bindTable(tb){
@@ -353,7 +351,8 @@
   }
   all('.tw table').forEach(bindTable);
   capAll();
-  window.addEventListener('beforeprint',expandAll);
+  window.addEventListener('beforeprint',function(){printing=true;capAll()});
+  window.addEventListener('afterprint',function(){printing=false;capAll()});
   /* a link to a row past the cap (a dashboard's drill link, Open item, a timeline line) shows every row of that table first */
   function liftFor(h){if(!h||h.length<2)return;var id=decodeURIComponent(h.slice(1)),pending=deferredIds[id];
     if(pending){pending._open=true;pending._capApply();fitRows(pending)}
@@ -749,7 +748,7 @@
       else if(i.name==='ot-rep')OT.rep=i.checked;otSave();otApply(true)})}
   else if(otRows.length){otApply()}
   var tips=all('[data-tip]'),sparks=all('svg.spark[data-points]');
-  if(tips.length||sparks.length||document.querySelector('script.defer-main')){
+  if(tips.length||sparks.length||document.querySelector('script.defer-main,script.defer-detail,script.defer-mini')){
     var tt=document.createElement('div'),owner=null,pinned=null,NS='http://www.w3.org/2000/svg';
     tt.className='tt';tt.id='site-tip';tt.setAttribute('role','tooltip');tt.hidden=true;document.body.appendChild(tt);
     var place=function(x,y){var w=tt.offsetWidth,h=tt.offsetHeight,vw=document.documentElement.clientWidth,vh=window.innerHeight,
@@ -798,7 +797,7 @@
       tt.hidden=false;place(x,y);if(pinned===el)body.focus()};
     var pin=function(el){if(!el._ev)return;pinned=el;var r=el.getBoundingClientRect();showList(el,r.left+r.width/2,r.top)};
     var keyed=function(el){try{return el.matches(':focus-visible')}catch(e){return true}};
-    tips.forEach(function(el){if(!el.hasAttribute('tabindex'))el.tabIndex=0;el.removeAttribute('title');el.setAttribute('aria-describedby','site-tip');
+    var bindTip=function(el){if(el._at)return;if(!el.hasAttribute('tabindex'))el.tabIndex=0;el.removeAttribute('title');el.setAttribute('aria-describedby','site-tip');
       var ln=function(){return el.getAttribute('data-tip').split('\n')};
       var emit=function(x,y){if(el._ev)showList(el,x,y);else show(el,ln(),x,y)};
       var at=el._at=function(){var r=el.getBoundingClientRect();emit(r.left+r.width/2,r.top)};
@@ -809,7 +808,8 @@
       el.addEventListener('focus',function(){if(el._quiet){el._quiet=0;return}if(keyed(el)&&!pinned)at()});
       el.addEventListener('blur',function(){if(owner===el&&!pinned)hide()});
       if(el._ev){el.addEventListener('click',function(){if(pinned===el)hide();else pin(el)});
-        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();if(pinned===el)hide();else pin(el)}})}});
+        el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();if(pinned===el)hide();else pin(el)}})}};
+    tips.forEach(bindTip);
     var bindSpark=function(svg){if(svg._at)return;var d;try{d=JSON.parse(svg.getAttribute('data-points'))}catch(e){return}if(!d||!d.length)return;
       var name=svg.getAttribute('data-label')||'',vb=svg.viewBox.baseVal,cur=-1,g=document.createElementNS(NS,'line'),dot=document.createElementNS(NS,'circle');
       g.setAttribute('class','hg');g.setAttribute('y1','0');g.setAttribute('y2',String(vb.height));dot.setAttribute('class','hd');dot.setAttribute('r','4');

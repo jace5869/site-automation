@@ -8,6 +8,8 @@
 
 Large web tables start with 100 rows. **Show all N rows** opens the rest. Search,
 filters, CSV and Columns cover the full table, and links still open the row they name.
+Printing includes every row that passes the filters. If the website cannot verify the
+versioned report script, it publishes every row in the page markup.
 The STIG scorecard builds a finding or host's detail table when opened. The index
 lists the five newest runs for each report, with older retained runs one click away.
 ## 1.99.0 — 2026-11-21

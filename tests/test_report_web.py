@@ -648,17 +648,17 @@ class SiteScript(unittest.TestCase):
 
     def test_loaded_from_the_top_of_the_folder(self):
         js = rw.page_script(self.PAGE)
-        v = hashlib.sha1(js.encode("utf-8")).hexdigest()[:10]
-        self.assertEqual(rw.script_tag("Linux - health check/latest.html", js), '<script src="../site-report.js?v=%s"></script>' % v)
-        self.assertEqual(rw.script_tag("site/a/b/p.html", js), '<script src="../../../site-report.js?v=%s"></script>' % v)
-        self.assertEqual(rw.script_tag("index.html", js), '<script src="site-report.js?v=%s"></script>' % v)
+        v = hashlib.sha256(js.encode("utf-8")).hexdigest()
+        self.assertEqual(rw.script_tag("Linux - health check/latest.html", js), '<script src="../site-report.%s.js"></script>' % v)
+        self.assertEqual(rw.script_tag("site/a/b/p.html", js), '<script src="../../../site-report.%s.js"></script>' % v)
+        self.assertEqual(rw.script_tag("index.html", js), '<script src="site-report.%s.js"></script>' % v)
         self.assertNotEqual(rw.script_tag("index.html", js + " "), rw.script_tag("index.html", js))   # a new script: a new address
 
     def test_the_index_loads_it(self):
         html = rw.index_html([], "index.html", "x", None, "now", (), "atlas", "var a;\n")
         self.assertIn(rw.script_tag("index.html", "var a;\n"), html)
         self.assertNotIn("<script>", html)
-        self.assertNotIn('<script src="site-report.js', rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
+        self.assertNotIn('<script src="site-report.', rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
         self.assertNotIn("<script src=", rw.index_html([], "index.html", "x", None, "now", (), "portal", "var a;\n"))
 
     def test_a_page_with_a_script_file_of_its_own(self):
@@ -1440,7 +1440,7 @@ class Release1720(unittest.TestCase):
         try:
             with open(os.path.join(d, "index.html"), "w") as f:
                 f.write(rw.index_html([late, fine], "index.html", "Site reports", None, when(0), (), "ops", js, None, ""))
-            with open(os.path.join(d, "site-report.js"), "w") as f:
+            with open(os.path.join(d, rw.report_script_file(js)), "w") as f:
                 f.write(js)
             srv = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: RH.Csp(*a, directory=d, **k))
             threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -1658,7 +1658,7 @@ class ReportSpeed(unittest.TestCase):
         details = [{'columns': ['Host'], 'kinds': ['wrap'], 'rows': [['example-%04d' % i]],
                     'text': 'detail-%04d </script><b>text</b>' % i} for i in range(count)]
         section = dict(title='Findings', columns=['Open', 'Item', 'Description'], kinds=['x', 'mid', 'wrap'],
-                       rows=rows, details=details, row_tags=[{'id': 'item-%04d' % i} for i in range(count)])
+                       rows=rows, details=details, row_tags=[{'id': 'item-%04d' % i, 'data': {'tip': 'Example tip %d' % i}} for i in range(count)])
         doc = dict(title='Example scorecard', status='ok', sections=[section])
         return self.publish(look, doc)
 
@@ -1693,10 +1693,81 @@ class ReportSpeed(unittest.TestCase):
             self.assertFalse(any(tag == 'table' and a.get('class') == 'mini' for tag, a in dom.tags), look)
             inline = [a.get('id') for tag, a in dom.tags if tag == 'script' and not a.get('src') and a.get('type') != 'application/json']
             self.assertEqual(inline, ['site-report-js'] if look == 'ops' else [None, 'site-report-js'], look)
+            self.assertIn('@media print{.capbar{display:none}tr[data-cap][hidden]{display:table-row!important}', page, look)
             self.assertEqual(rw.page_script(page), js, look)
             block, = [a for tag, a in dom.tags if a.get('class') == 'defer-main']
             self.assertEqual(block['data-count'], '2000')
             self.assertEqual(json.loads(block['data-ids']), ['item-%04d' % i for i in range(100, 2000)])
+
+    def test_publish_verifies_decoder_before_deferring_rows(self):
+        rows = ['<tr><td>Example %d</td></tr>' % i for i in range(105)]
+        args_html = SiteScript.PAGE.replace('<body>', '<body><table>' + ''.join(rows[:100]) +
+                                            '<!--defer-main 105-->' + ''.join(rows[100:]) + '<!--/defer-main--></table>')
+        source = rw.page_script(args_html)
+        asset = rw.report_script_file(source)
+        for failure in ('locked', 'missing after write', ''):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as dest:
+                patch = """write = m.Target.write
+def write_asset(self, rel, text, ctype):
+    if rel == %r:
+        if %r == 'locked':
+            raise m.Fail('locked')
+        if %r:
+            return
+    return write(self, rel, text, ctype)
+m.Target.write = write_asset""" % (asset, failure, failure)
+                args = web_args(dest, html=args_html, pages=[dict(page='extra.html', html=args_html)])
+                out = run_module(args, patch)
+                self.assertTrue(out.get('published'), out)
+                for rel in [args['files']['page'], args['files']['latest'], 'extra.html']:
+                    with open(os.path.join(dest, rel)) as f:
+                        html = f.read()
+                    if failure:
+                        self.assertEqual(html.count('<tr>'), 105)
+                        self.assertIn(rows[-1], html)
+                        self.assertNotIn('class="defer-main"', html)
+                        self.assertNotIn(asset, html)
+                    else:
+                        self.assertLess(out['written'].index(asset), out['written'].index(rel))
+                        self.assertIn(asset, html)
+                        self.assertEqual(html.count('<tr>'), 100)
+
+    def test_retained_page_keeps_its_decoder_after_upgrade(self):
+        with tempfile.TemporaryDirectory() as dest:
+            for version in (1, 2):
+                html = SiteScript.PAGE.replace('siteReport=1', 'siteReport=%d' % version)
+                args = web_args(dest, page='example/run-%d.html' % version, html=html)
+                self.assertTrue(run_module(args).get('published'))
+            for version in (1, 2):
+                source = rw.page_script(SiteScript.PAGE.replace('siteReport=1', 'siteReport=%d' % version))
+                name = rw.report_script_file(source)
+                with open(os.path.join(dest, 'example/run-%d.html' % version)) as f:
+                    self.assertIn('../' + name, f.read())
+                with open(os.path.join(dest, name)) as f:
+                    self.assertEqual(f.read(), source)
+
+    @unittest.skipUnless(PWSH, "no pwsh")
+    def test_windows_verifies_script_on_destination(self):
+        source = rw.page_script(SiteScript.PAGE)
+        asset = rw.report_script_file(source)
+        tail = '<tr><td>Example tail</td></tr>'
+        html = SiteScript.PAGE.replace('<body>', '<body><table><!--defer-main 101-->' + tail + '<!--/defer-main--></table>')
+        with tempfile.TemporaryDirectory() as dest:
+            args = web_args(dest, html=html, theme='ops', windows_host='example')
+            out = run_module(args)
+            self.assertTrue(out.get('published'), out)
+            for verified in (True, False):
+                if not verified:
+                    with open(os.path.join(dest, asset), 'w') as f:
+                        f.write('different content')
+                result = clm(out['script'])['write']
+                self.assertTrue(result['ok'], result)
+                self.assertEqual(bool(result['busy']), not verified)
+                for rel in (args['files']['page'], args['files']['latest']):
+                    with open(os.path.join(dest, rel)) as f:
+                        page = f.read()
+                    self.assertEqual(asset in page, verified)
+                    self.assertEqual(tail in page, not verified)
 
     def test_index_keeps_history_but_draws_five_runs(self):
         runs = [_run(i, '2026-10-%02d 06:00 UTC' % i) for i in range(8, 0, -1)]
@@ -1746,7 +1817,7 @@ class ReportSpeed(unittest.TestCase):
             for external in (False, True):
                 with self.subTest(external=external):
                     if external:
-                        with open(os.path.join(folder, rw.SCRIPT), 'w') as f:
+                        with open(os.path.join(folder, rw.report_script_file(js)), 'w') as f:
                             f.write(js)
                     self.check_browser_page(folder, page, probe, '1|100 of 105|true|105|detail-0104 &lt;/script&gt;&lt;b&gt;text&lt;/b&gt;')
 
@@ -1775,6 +1846,15 @@ class ReportSpeed(unittest.TestCase):
         probes = [
             ("var n=rows().length;var label=more.textContent;more.click();answer.textContent=[n,label,rows().length].join('|')",
              '100|Show all 105 rows|105'),
+            ("window.dispatchEvent(new Event('beforeprint'));var printed=rows().length;"
+             "window.dispatchEvent(new Event('afterprint'));var restored=rows().length;"
+             "var f=document.querySelector('.filter');f.value='item-0104';f.dispatchEvent(new Event('input'));"
+             "window.dispatchEvent(new Event('beforeprint'));answer.textContent=[printed,restored,rows().length,rows()[0].id].join('|')",
+             '105|100|1|item-0104'),
+            ("var first=rows()[0]._at;more.click();var r=rows()[104];"
+             "r.dispatchEvent(new PointerEvent('pointerenter',{pointerType:'mouse'}));var tip=document.querySelector('#site-tip');"
+             "answer.textContent=[first===rows()[0]._at,r.tabIndex,tip.hidden,tip.textContent].join('|')",
+             'true|0|false|Example tip 104'),
             ("var f=document.querySelector('#find');f.value='detail-0104';f.dispatchEvent(new Event('search'));"
              "var r=rows()[0];r.querySelector('.xb').click();answer.textContent=[rows().length,r.id,r.nextElementSibling.querySelector('p').textContent].join('|')",
              '1|item-0104|detail-0104 &lt;/script&gt;&lt;b&gt;text&lt;/b&gt;'),
@@ -1786,7 +1866,7 @@ class ReportSpeed(unittest.TestCase):
              "document.querySelector('.csv').click()", '106|true|false'),
         ]
         with tempfile.TemporaryDirectory() as folder:
-            with open(os.path.join(folder, rw.SCRIPT), 'w') as f:
+            with open(os.path.join(folder, rw.report_script_file(js)), 'w') as f:
                 f.write(js)
             page = page.replace('<head>', """<head><meta http-equiv="Content-Security-Policy" content="script-src 'self'">""")
             for probe, expected in probes:

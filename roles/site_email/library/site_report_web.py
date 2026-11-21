@@ -58,9 +58,9 @@ description:
     wrong password, access denied, no such share or folder, the realm) is not retried.
   - With required false, a publish that still fails is not a failure - published false and error (why) are returned,
     with a warning; the role then says it in the email.
-  - A page in the atlas, brief or ops look carries its script (roles/site_email/templates/site_report.js); it is written beside the
-    folder's top as site-report.js too (when it changed), and the page and the index load it from there - a web server
-    whose Content-Security-Policy allows no inline script (script-src 'self') runs that one.
+  - Atlas, brief and ops pages load a content-versioned script from the report folder. The publisher verifies it before
+    writing deferred rows. If verification fails, it includes all rows in the HTML. Older script versions stay available
+    to previously published pages.
 options:
   dest: {description: The report folder (an absolute path) or the http(s) address it is uploaded to., type: str, required: true}
   url: {description: The address people open the folder at (default - dest when it is http(s))., type: str, default: ''}
@@ -658,6 +658,7 @@ class Staged(object):
 
     def __init__(self, index_json, index_text, gone=()):
         self.index_json, self.index_text, self.files, self.removed = index_json, index_text, [], []
+        self.script_fallbacks = {}
         self.dirs, self.edits, self.gone = [], [], set(gone or [])      # 1.79.8: folders, pages to strike, pages not there
 
     def read(self, rel):
@@ -862,12 +863,24 @@ def inside(rel):
     return len(parts) >= 2 and rf.ours('/'.join(parts[:-1])) and rf.safe_file_name(parts[-1]) == parts[-1]
 
 
-def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=(), index=None):
+def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=(), index=None, script_fallbacks=None):
     """The PowerShell script that writes files [(rel, text)] into dest, then deletes remove [rel]; a text used twice is
     in it once. One of soft (latest, the index) open there all that time is left for the next run, not a failure.
     1.79.8: a file given as bytes is written from base64; then the pages of edits [(rel, [(regex, put)])] are changed
     (their removed files' links), and the run folders of dirs removed when empty."""
     body, seen = [], {}
+    fallbacks = script_fallbacks or {}
+    assets = {asset for asset, _ in fallbacks.values()}
+
+    def page_text(rel, normal):
+        if rel not in fallbacks:
+            return normal
+        asset, fallback = fallbacks[rel]
+        fallback = fallback.encode('ascii', 'xmlcharrefreplace').decode('ascii')
+        return '$(if ($ready[%s]) { %s } else { %s })' % (_ps_quote(asset), normal, _ps_text(fallback))
+
+    if assets:
+        body.append('    $ready = @{}')
     for rel in [f[0] for f in files] + list(remove) + [e[0] for e in edits]:   # only names inside dest (main checked them)
         if not inside(rel):
             raise Fail('the file name %s is not a name inside report_web_dest - nothing was written' % rel)
@@ -887,16 +900,33 @@ def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=(), index=Non
         if text not in seen:
             seen[text] = '$t%d' % len(seen)
             body.append('    %s = %s' % (seen[text], _ps_text(text)))
+        if rel in assets:
+            key = _ps_quote(rel)
+            body.extend([
+                '    try {',
+                '        $path = Join-Path $dest %s' % key,
+                '        if (-not (Test-Path -LiteralPath $path)) { Save-File @(%s) %s }' % (key, seen[text]),
+                '        if ((Get-Content -LiteralPath $path -Raw) -cne %s) { throw "script verification failed" }' % seen[text],
+                '        $ready[%s] = $true' % key,
+                '    } catch { $out.busy += @(%s + ": " + [string]$_.Exception.Message) }' % key,
+            ])
+            continue
         flags = ' $true' if rel in soft else ''
+        if rel == SCRIPT and report_script_file(text) in assets:
+            # A legacy reader may still request the alias. Its lock must not interrupt the verified page or fallback.
+            body.append('    if ($ready[%s]) { try { Save-File @(%s) %s $true $true }' %
+                        (_ps_quote(report_script_file(text)), _ps_quote(rel), seen[text]))
+            body.append('        catch { $out.busy += @(%s + ": " + [string]$_.Exception.Message) } }' % _ps_quote(rel))
+            continue
         if rel == INDEX_SCRIPT_FILE:                      # Staged cannot read this file until the writer runs on the server
             flags = (flags or ' $false') + ' $true'
-        body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), seen[text], flags))
+        body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), page_text(rel, seen[text]), flags))
     if ix.get('json') and ix['json'] in idx:
         parts = (lambda r: ', '.join(_ps_quote(x) for x in r.split('/')))
         if not safe_name(ix['pending'], WRITTEN):
             raise Fail('the file name %s is not a name inside report_web_dest - nothing was written' % ix['pending'])
         body.append('    $ti = %s' % _ps_text(idx[ix['json']]))
-        body.append('    $th = %s' % _ps_text(idx.get(ix.get('html'), '') or ''))
+        body.append('    $th = %s' % page_text(ix.get('html'), _ps_text(idx.get(ix.get('html'), '') or '')))
         body.append('    $tp = %s' % _ps_text(ix['pending_text']))
         for nm in ix.get('consumed') or []:
             if not safe_name(nm, ('.json',)):
@@ -1036,9 +1066,15 @@ def page_script_name(html):
     return (m.group(1) or SCRIPT) if m else SCRIPT
 
 
+def report_script_file(js):
+    return 'site-report.%s.js' % hashlib.sha256(js.encode('utf-8')).hexdigest()
+
+
 def script_tag(rel, js, name=SCRIPT):
     """The <script> that loads the script file (site-report.js, or the page's own) into the file rel (a page or the
     index), its version in the address - a browser that keeps a copy takes the new one."""
+    if name == SCRIPT:
+        return '<script src="%s"></script>' % _href(rel, report_script_file(js))
     return '<script src="%s?v=%s"></script>' % (_href(rel, name), hashlib.sha1(js.encode('utf-8')).hexdigest()[:10])
 
 
@@ -2339,12 +2375,41 @@ def main():
                      banner, gone_lines):
         """publish()'s pages, index and cleanup, after this run's files (a Fail here: publish takes them away again)."""
         web_look = p['theme'] in WEB_LOOKS
+        verified = {}
+
+        def ready(source):
+            name = report_script_file(source)
+            if name not in verified:
+                try:
+                    there = target.read(name)
+                    if there is None:
+                        put(name, source, 'text/javascript; charset=utf-8')
+                        # The Windows writer performs its read-back on the destination.
+                        there = source if isinstance(target, Staged) else target.read(name)
+                    verified[name] = there == source
+                    if not verified[name]:
+                        busy.append([name, 'script verification failed'])
+                except (Fail, OSError, UnicodeError) as e:
+                    busy.append([name, str(e)])
+                    verified[name] = False
+            return verified[name]
+
+        def publish_page(h, rel, source, name, soft=False):
+            if source and name == SCRIPT:
+                fallback = h.replace(SCRIPT_TAG, '', 1)
+                if not ready(source):
+                    put(rel, fallback, 'text/html; charset=utf-8', soft)
+                    return
+                if isinstance(target, Staged):
+                    target.script_fallbacks[rel] = (report_script_file(source), fallback)
+            put(rel, deferred_page(h, rel, source, name), 'text/html; charset=utf-8', soft)
+
         for rel in (page, latest if is_newest else ''):
             if not rel:
                 continue
             h = rf.put_files(html, step['hosted'], step['refused'], rel, folder, web_look)   # the latest page links the run's
             h = back_link(h, rel, back_to if inside(back_to) else '', banner)   # 1.87.2: the way back to the index, from this page's place
-            put(rel, deferred_page(h, rel, js, js_name), 'text/html; charset=utf-8', rel == latest)
+            publish_page(h, rel, js, js_name, rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
                 if step['hosted']:
@@ -2359,9 +2424,9 @@ def main():
             h = rf.put_files(banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner), [], [], rel, '')
             h = back_link(h, rel, back_to if inside(back_to) else '', banner)
             sjs, sname = page_script(h), page_script_name(h)
-            if sjs and not (js and sname == js_name):
+            if sjs and not (js and sname == js_name) and (sname != SCRIPT or ready(sjs)):
                 scripts[sname] = sjs
-            put(rel, deferred_page(h, rel, sjs, sname), 'text/html; charset=utf-8')
+            publish_page(h, rel, sjs, sname)
             if p['json']:
                 doc = dict(p['data'], page=rel, url=_join(base, rel), latest='', index='')
                 doc.update(dict((k, sp[k]) for k in ('report', 'runs') if k in sp))
@@ -2369,14 +2434,15 @@ def main():
         for sname, sjs in sorted(scripts.items()):       # the more pages' script, when the page above did not carry it
             try:
                 there = target.read(sname)
-            except Fail:
+            except (Fail, OSError, UnicodeError):
                 there = None
             if there != sjs:
                 put(sname, sjs, 'text/javascript; charset=utf-8', True)
-        if js:                                           # the pages' script, where they load it from - when it changed
+        # Keep the legacy alias for older pages and for index builds from a custom report.
+        if js and (js_name != SCRIPT or ready(js)):
             try:
                 there = target.read(js_name)
-            except Fail:
+            except (Fail, OSError, UnicodeError):
                 there = None
             if there != js:
                 put(js_name, js, 'text/javascript; charset=utf-8', True)
@@ -2384,8 +2450,10 @@ def main():
         if js and js_name != SCRIPT:
             try:
                 index_js = target.read(SCRIPT) or ''
-            except Fail:
+            except (Fail, OSError, UnicodeError):
                 index_js = ''
+        if index and index_js and not ready(index_js):
+            index_js = ''
         index_text = ''
         deleted, not_deleted, gone = [], [], []
         if index:
@@ -2499,6 +2567,8 @@ def main():
             index_text = json.dumps(out_doc, indent=2, sort_keys=True, default=str) + '\n'
             index_page = banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz,
                                                   base, files_line), top)
+            if isinstance(target, Staged) and index_js:
+                target.script_fallbacks[index] = (report_script_file(index_js), index_page.replace(script_tag(index, index_js), '', 1))
             if box.get('lock'):
                 # the fence: still this job's lock (not taken over as stale, not overwritten over HTTP) - else nothing written
                 if not lock_held(target, box['lock'], token):
@@ -2565,6 +2635,9 @@ def main():
                 module.warn('The report website: an older run\'s %s could not be deleted (%s) - give the account Modify on '
                             'the folder, or report_web_delete_old: false' % (rel, why))
         for rel, why in busy:
+            if rel in verified and not verified[rel]:
+                module.warn('The report website could not verify %s (%s). Pages using it include all rows inline.' % (rel, why))
+                continue
             module.warn('The report website: %s was not written - it stayed open somewhere (a browser, an editor) for the '
                         '10 seconds the job tried; the next run writes it (%s)' % (rel, why))
         return dict(target=target, written=written, index_text=index_text, is_newest=is_newest, gone=gone,
@@ -2626,7 +2699,7 @@ def main():
                                    target.dirs, target.edits,
                                    {'json': _json_name(index), 'html': index, 'sha': str(p['index_sha'] or '').upper(),
                                     'pending': pend.get('name') or '', 'pending_text': pend.get('text') or '', 'consumed': pend.get('consumed') or [],
-                                    'wait': p['lock_wait']} if index and pend else None).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
+                                    'wait': p['lock_wait']} if index and pend else None, target.script_fallbacks).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
         module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
                          unlisted=[r.get('key') for r in gone],
                          newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, published=True, retried=retried,
