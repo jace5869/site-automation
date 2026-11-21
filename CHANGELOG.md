@@ -14,10 +14,15 @@
 - **labels:** the bubbles and the worst first, then the first free place of eighteen round the dot; never on a dot, never on
   another label, never out of the drawing; a label placed away from its dot gets a thin dotted leader to it; a label that fits
   nowhere is left off - every dot and bubble names itself on hover and keyboard focus.
+- A failure **inside** an AD site (DC to DC) colours its dot or bubble too, labels it and draws it first; a line is dotted
+  only when no connection in it has a WAN link (a link with no speed known says so; "WAN: not read" when SolarWinds was
+  not read); a single connection's card keeps everything (partitions, the full error, WAN status, the network-map pair);
+  the hover highlight on lines; the same place stays open after a resize; opening one thing closes the others.
 - Tests: `tests/test_ad_map.py` Places1011 in Chromium on a 25-location, 40-AD-site forest (`tests/ad/admap_fixture.py`):
   no dots on dots, no label on a dot or another label or out of the drawing, every label next to its dot or joined to it,
   at 1280 and 800; an opened location with nothing
-  under its disc; one place = the ring.
+  under its disc; one place = the ring; a
+  failure inside an AD site makes its bubble critical; open state never stale; the same place open after a resize.
 
 ## 1.101.0 — 2026-11-21
 

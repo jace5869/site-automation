@@ -265,6 +265,38 @@ r.bubbles=svg.querySelectorAll('.am-s.bub').length;r.dots=dots.length;r.dotsOver
         self.assertEqual(r["land"], 0)                                           # no geography
         self.assertEqual((r["bubbles"], r["dots"], r["dotsOverlap"], r["labelsOverlap"]), (0, 8, 0, 0))
 
+    def test_4_a_failure_inside_an_ad_site_colours_its_bubble(self):
+        import admap_fixture as fx
+        js = ("var b=document.querySelector('.am-s.bub');r.cls=b.getAttribute('class');"
+              "r.label=[].map.call(b.querySelectorAll('text:not(.cnt)'),function(t){return t.textContent}).join('|');"
+              "r.first=document.querySelector('.am-s').getAttribute('aria-label');")
+        r = self.page(*fx.inside_fail(), js=js)
+        self.assertNotIn("err", r)
+        self.assertIn("k-critical", r["cls"])                               # the DC-to-DC failure inside SITA-A1
+        self.assertIn("SITA0102", r["label"])                               # labelled (forced as the worst)
+        self.assertTrue(r["first"].startswith("SITA0102"), r)               # drawn first: the worst first
+
+    def test_5_open_state_is_never_stale(self):
+        import admap_fixture as fx
+        js = ("amTest.openLoc();amTest.openMember();"
+              "var dot=[].filter.call(document.querySelectorAll('.am-s.many'),function(g){return !/HQ-/.test(g.getAttribute('aria-label'))})[0];"
+              "r.dot=dot.getAttribute('aria-label').split(',')[0];dot.dispatchEvent(new MouseEvent('click',{bubbles:true}));"
+              "r.close=[].map.call(document.querySelectorAll('.am-close text'),function(t){return t.textContent});")
+        r = self.page(*fx.realistic(), js=js)
+        self.assertNotIn("err", r)
+        self.assertEqual(len(r["close"]), 1, r)                             # only the clicked dot's DCs are open
+        self.assertTrue(r["close"][0].startswith(r["dot"] + " · "), r)
+
+    def test_6_the_same_place_stays_open_after_a_resize(self):
+        import admap_fixture as fx
+        js = ("amTest.openLoc();var a=document.querySelector('.am-close text').textContent;"
+              "document.body.style.width='800px';window.dispatchEvent(new Event('resize'));"
+              "setTimeout(function(){r.a=a;r.b=(document.querySelector('.am-close text')||{}).textContent;"
+              "document.getElementById('res').textContent=JSON.stringify(r)},400);return;")
+        r = self.page(*fx.realistic(), js=js)
+        self.assertNotIn("err", r)
+        self.assertEqual(r["a"].split(" · ")[:2], (r["b"] or "").split(" · ")[:2], r)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

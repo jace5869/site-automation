@@ -73,3 +73,24 @@ def one_place(n=8):
     swis = {"dcs": swdcs, "netmap": {"ok": True, "source": "db-snapshot", "names": ["HUBA0001"], "places": {"HUBA0001": [38.9, -77.0]},
                                      "node_site": node_site, "wan": [], "no_site": "Not placed"}}
     return {"dcs": dcs, "links": links, "now": now.strftime("%Y-%m-%dT%H:%M:%SZ")}, swis
+
+
+def inside_fail():
+    """A two-AD-site location (SITA0102) whose links between sites are all healthy, but two DCs INSIDE one of its AD sites
+    fail to replicate: the bubble must still be critical."""
+    places = {"HUBA0001": [38.9, -77.0], "SITA0102": [41.0, -95.0], "SITC0103": [34.0, -112.0]}
+    plan = [("HQ-MAIN", "HUBA0001"), ("SITA-A1", "SITA0102"), ("SITA-B2", "SITA0102"), ("SITC0103", "SITC0103")]
+    dcs, swdcs, node_site, nid = [], [], {}, 300
+    for ad, l in plan:
+        for i in range(2):
+            nid += 1
+            n = "%s-DC%d" % (ad.replace("-", ""), i + 1)
+            dcs.append({"name": n, "site": ad, "read": True}); swdcs.append({"dc": n, "node_id": nid}); node_site[str(nid)] = l
+    links = []
+    for a, b in [("HQMAIN-DC1", "SITAA1-DC1"), ("HQMAIN-DC1", "SITAB2-DC1"), ("HQMAIN-DC1", "SITC0103-DC1"), ("SITAA1-DC1", "SITAB2-DC1")]:
+        links.append({"to": b, "frm": a, "nc": "corp.test", "last_success": iso(.2), "failures": 0})
+    links.append({"to": "SITAA1-DC2", "frm": "SITAA1-DC1", "nc": "corp.test", "last_success": iso(40), "failures": 3,
+                  "error": "1722 (the RPC server is unavailable)", "last_failure": iso(.1)})
+    swis = {"dcs": swdcs, "netmap": {"ok": True, "source": "db-snapshot", "names": sorted(places), "places": places,
+                                     "node_site": node_site, "wan": [], "no_site": "Not placed"}}
+    return {"dcs": dcs, "links": links, "now": now.strftime("%Y-%m-%dT%H:%M:%SZ")}, swis
