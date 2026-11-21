@@ -430,5 +430,46 @@ class Review1940(unittest.TestCase):
         self.assertTrue(af._plain("1,200") and af._plain(2.5) and not af._plain("98%"))
 
 
+
+class Counts1940(unittest.TestCase):
+    """1.94.0 third review: SolarWinds' rows are never the run's counts (run history, the trend); times with an offset;
+    Orion's Critical; a down with no Up event while the node is up."""
+
+    def test_1_run_counts_unchanged(self):
+        import importlib.util
+        for name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files"):   # as Ansible gives them (test_report_web)
+            if "ansible.module_utils." + name not in sys.modules:
+                sp = importlib.util.spec_from_file_location("ansible.module_utils." + name, os.path.join(ROOT, "plugins", "module_utils", name + ".py"))
+                mod = importlib.util.module_from_spec(sp)
+                sys.modules["ansible.module_utils." + name] = mod
+                sp.loader.exec_module(mod)
+        spec = importlib.util.spec_from_file_location("srw", os.path.join(ROOT, "roles", "site_email", "library", "site_report_web.py"))
+        srw = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(srw)
+        r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap())
+        v = af.ad_swis_view(dict(r, asked=True), {}, {"now": NOW})
+        for name in ("ad_report", "ad_reader_report"):
+            doc = json.load(open(os.path.join(ROOT, "tests", "fixtures", "report_fit", name + ".json")))
+            for flat in (False, True):
+                self.assertEqual(srw.run_counts(af.ad_swis_insert(doc, v, flat)), srw.run_counts(doc), (name, flat))
+
+    def test_2_an_offset_is_converted(self):
+        self.assertEqual(ad._utc("2026-10-15T08:53:00+02:00"), t("2026-10-15 06:53"))
+        self.assertEqual(ad._utc("2026-10-15T01:53:00-05:00"), t("2026-10-15 06:53"))
+
+    def test_3_critical_and_an_open_down(self):
+        nodes = [{"node_id": 1, "name": "dc01", "dns": "", "ip": "", "status": "Warning", "status_code": 14},
+                 {"node_id": 2, "name": "dc02", "dns": "", "ip": "", "status": "Up", "status_code": 1}]
+        rows = ad._dc_rows([{"dc": "DC01"}, {"dc": "DC02"}], ad.match([{"dc": "DC01"}, {"dc": "DC02"}], nodes), {}, {},
+                           {2: {"at": "2026-10-15 06:15", "minutes": 38, "ongoing": True}}, False)
+        self.assertEqual(rows[0]["status"], "Critical")
+        self.assertEqual((rows[1]["last_down"]["ongoing"], rows[1]["last_down"]["open"]), (False, True))
+        v = af.ad_swis_view({"asked": True, "ok": True, "source": "db-snapshot", "read_at": "2026-10-15 06:43", "age_min": 10, "sam": False,
+                             "events": True, "dcs": rows}, {}, {"now": NOW})
+        r = dict((x[1], x) for x in v["section"]["rows"])
+        self.assertEqual(v["section"]["cell_status"][0][2], "critical")
+        self.assertIn("its end not in SolarWinds' events", r["DC02"][5])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

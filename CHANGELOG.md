@@ -72,7 +72,8 @@ controllers' health* (user-approved mockup):
   snapshot that is all there is is said as old;
 - matched by the full name, then a short name only one node has, then an IP only one node has; never one node for two
   DCs; *Not in SolarWinds* in blue, *Not matched* (with why) in amber;
-- read only, never fails the job, never changes the report's counts, status, headline or `ad_report_fail`; what could not
+- read only, never fails the job, never changes the report's counts (the run history's and the trend's too: the section
+  is shown, not counted), status, headline or `ad_report_fail`; what could not
   be read is said in fixed words (never a database's user or host).
 - Settings: `ad_solarwinds`, `ad_solarwinds_max_age`, `ad_solarwinds_days`, `ad_solarwinds_cpu_warn` / `_mem_warn`,
   `ad_solarwinds_timeout`.

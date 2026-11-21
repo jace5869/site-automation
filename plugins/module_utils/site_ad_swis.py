@@ -67,11 +67,18 @@ def _utc(x):
     s = str(x or "").strip()
     if not s:
         return None
-    s = re.sub(r"\.\d+", "", s).replace("Z", "").replace("T", " ")
-    s = re.sub(r"[+-]\d\d:?\d\d$", "", s).strip()
+    s = re.sub(r"\.\d+", "", s).replace("T", " ")
+    off = datetime.timedelta(0)
+    m = re.search(r"(Z|[+-]\d\d:?\d\d)$", s)
+    if m:                                                # an offset: converted to UTC, not dropped
+        z = m.group(1)
+        if z != "Z":
+            sign = 1 if z[0] == "+" else -1
+            off = sign * datetime.timedelta(hours=int(z[1:3]), minutes=int(z[-2:]))
+        s = s[:m.start()].strip()
     for f in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
-            return datetime.datetime.strptime(s, f)
+            return datetime.datetime.strptime(s, f) - off
         except ValueError:
             pass
     return None
@@ -196,12 +203,16 @@ def _dc_rows(dcs, found, apps, alerts, downs, sam, ifaces=None):
                "cpu": None, "mem": None, "apps": None, "alerts": [], "last_down": None, "node_id": None, "ifaces": None}
         if node:
             nid = node.get("node_id")
-            rec.update(node_id=nid, status=node.get("status") or sw.UNKNOWN, status_text=node.get("status_text") or "",
+            crit = str(node.get("status_code")) == "14"          # Orion's Critical: worse than a warning, said as it is
+            rec.update(node_id=nid, status="Critical" if crit else (node.get("status") or sw.UNKNOWN), status_text=node.get("status_text") or "",
                        last_poll=_hm(_utc(node.get("last_poll"))), cpu=_pct(node.get("cpu_pct")), mem=_pct(node.get("mem_pct")))
             if sam:
                 rec["apps"] = summarize_apps(apps.get(nid) or [])
             rec["alerts"] = list(alerts.get(nid) or [])
-            rec["last_down"] = downs.get(nid)
+            ld = downs.get(nid)
+            if ld and ld.get("ongoing") and rec["status"] != sw.DOWN:   # no Node Up event seen, but the node is up: not ongoing
+                ld = dict(ld, ongoing=False, open=True)
+            rec["last_down"] = ld
             if ifaces is not None:                       # None: not read; []: none monitored
                 rec["ifaces"] = list(ifaces.get(nid) or [])
         res.append(rec)
@@ -400,14 +411,21 @@ def _live_apps(client, ids):
 
 def _live_alerts(client, ids):
     node_col = _cols(client, "Orion.AlertObjects", [("RelatedNodeId", "RelatedNodeID")])[0] or "RelatedNodeId"
-    objs = client.query("SELECT AlertObjectID, AlertID, EntityType, EntityCaption, %s FROM Orion.AlertObjects WHERE %s IN @ids" % (node_col, node_col),
-                        {"ids": ids})
+    def chunked(sql, keys):                              # IN @ids in chunks of 500 (a long list is one query too many)
+        out = []
+        for i in range(0, len(keys), 500):
+            out += client.query(sql, {"ids": keys[i:i + 500]})
+        return out
+    objs = chunked("SELECT AlertObjectID, AlertID, EntityType, EntityCaption, %s FROM Orion.AlertObjects WHERE %s IN @ids" % (node_col, node_col), list(ids))
     if not objs:
         return {}
-    act = client.query("SELECT AlertActiveID, AlertObjectID, TriggeredDateTime, TriggeredMessage, Acknowledged FROM Orion.AlertActive "
-                       "WHERE AlertObjectID IN @ids", {"ids": [o.get("AlertObjectID") for o in objs]})
-    conf = dict((c.get("AlertID"), c) for c in client.query("SELECT AlertID, Name, Severity FROM Orion.AlertConfigurations WHERE AlertID IN @ids",
-                                                            {"ids": sorted(set(o.get("AlertID") for o in objs))}))
+    act = chunked("SELECT AlertActiveID, AlertObjectID, TriggeredDateTime, TriggeredMessage, Acknowledged FROM Orion.AlertActive "
+                  "WHERE AlertObjectID IN @ids", [o.get("AlertObjectID") for o in objs])
+    if not act:
+        return {}
+    conf = dict((c.get("AlertID"), c) for c in chunked("SELECT AlertID, Name, Severity FROM Orion.AlertConfigurations WHERE AlertID IN @ids",
+                                                       sorted(set(o.get("AlertID") for o in objs if o.get("AlertObjectID") in
+                                                                  set(a.get("AlertObjectID") for a in act)))))
     by_obj = dict((o.get("AlertObjectID"), o) for o in objs)
     out = {}
     for a in act:

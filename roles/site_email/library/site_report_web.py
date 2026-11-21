@@ -1042,7 +1042,7 @@ def run_counts(report):
     """1.72.0: a run's findings by level -> {critical, warning, low} or None (not counted). The report's own counts when
     it gives them (report.counts: {critical: n, warning: n, low: n}); else its tables' rows by row_status - a report that
     shows one finding in two tables counts it twice, so a report that does should give its own. No table with
-    row_status (a report that only informs): None."""
+    row_status (a report that only informs): None. A section with counted: false is left out."""
     if not isinstance(report, dict):
         return None
     given = report.get('counts')
@@ -1053,6 +1053,8 @@ def run_counts(report):
             pass
     out, seen = dict((k, 0) for k in COUNT_KEYS), False
     for sec in report.get('sections') or []:
+        if isinstance(sec, dict) and sec.get('counted') is False:     # 1.94.0: another system's view (From SolarWinds): shown, not counted
+            continue
         rs = sec.get('row_status') if isinstance(sec, dict) else None
         if isinstance(rs, list):
             seen = True

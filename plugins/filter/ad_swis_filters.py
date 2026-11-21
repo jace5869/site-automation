@@ -21,7 +21,7 @@ _spec.loader.exec_module(_tm)
 
 TITLE = "From SolarWinds"
 AFTER = ("Domain controllers' health", "Domain controllers")
-WORD = {"Down": "critical", "Warning": "warning", "Unknown": "warning", "Up": "ok"}
+WORD = {"Down": "critical", "Critical": "critical", "Warning": "warning", "Unknown": "warning", "Up": "ok"}
 SEV = {2: "critical", 3: "critical", 1: "warning"}        # Orion's alert severities: 2 critical, 3 serious, 1 warning
 RANK = {"critical": 0, "warning": 1, "info": 2, "ok": 3, "": 4}
 
@@ -173,6 +173,8 @@ def _view(res, ad, opts=None):
             ld_cell = "-"
         elif ld.get("ongoing"):
             ld_cell, stc["Last down (%d days)" % days] = "now, for %s" % _dur(ld.get("minutes")), "critical"
+        elif ld.get("open"):                                 # a Node Down with no Node Up after it, but the node is up now
+            ld_cell = "%s (its end not in SolarWinds' events)" % (_tm.local(ld.get("at") + " UTC", tz) if tz else ld.get("at") + " UTC")
         else:
             ld_cell = "%s, for %s" % (_tm.local(ld.get("at") + " UTC", tz) if tz else ld.get("at") + " UTC", _dur(ld.get("minutes")))
             if (now - (_utc(ld.get("at")) or now)).total_seconds() < 86400:
@@ -219,7 +221,7 @@ def _view(res, ad, opts=None):
                 src, " AD monitors: the SolarWinds AD application templates (SAM)." if sam else (" " + (r.get("sam_why") or "No SAM on this Orion") + "."),
                 "SolarWinds' node-down events" if events else "not read live (only the snapshot keeps SolarWinds' events)"))
     bad = [x for x in rows if x[4] in ("critical", "warning")]
-    sec = {"title": TITLE, "status": "critical" if any(x[4] == "critical" for x in rows) else ("warning" if bad else "ok"),
+    sec = {"title": TITLE, "counted": False, "status": "critical" if any(x[4] == "critical" for x in rows) else ("warning" if bad else "ok"),
            "columns": cols, "kinds": kinds, "rows": [x[2] for x in rows], "cell_status": [x[3] for x in rows],
            "row_status": [x[4] for x in rows], "details": [x[5] for x in rows], "text": text}
     n_dn = sum(1 for x in rows if x[2][2] == "Down")
@@ -229,7 +231,7 @@ def _view(res, ad, opts=None):
     if r.get("stale"):
         lines.append("From SolarWinds: the snapshot is older than ad_solarwinds_max_age")
     flat = [[x[2][1], c[0], c[1], c[2], c[3]] for x in rows for d in x[5] if d.get("title") == "AD monitors (SAM) not up" for c in d["rows"]]
-    extra = {"title": "From SolarWinds: AD monitors not up", "status": sec["status"] if flat else "ok",
+    extra = {"title": "From SolarWinds: AD monitors not up", "counted": False, "status": sec["status"] if flat else "ok",
              "columns": ["DC", "Component", "Status", "Value", "Message"], "rows": flat,
              "row_status": ["critical" if f[2] == "Down" else "warning" for f in flat],
              "text": "Each AD monitor (SAM) that is not up, per DC (on the website: open the DC's row)."} if flat else None
