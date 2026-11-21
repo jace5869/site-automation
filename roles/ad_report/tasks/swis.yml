@@ -21,6 +21,16 @@
     password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
     tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
     ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    # 1.101.0: where the network map puts the DCs' nodes (the replication map) - the netmap_* settings, as all.yml has them
+    netmap: >-
+      {{ {} if not ad_repl_map_web | bool else
+         {'site_by': netmap_site_by | default('auto'), 'site_split': netmap_site_split | default(','),
+          'sites': netmap_sites | default({}, true), 'site_pattern': netmap_site_pattern | default(''),
+          'hierarchy': netmap_hierarchy | default([], true), 'roles': netmap_roles | default({}, true),
+          'properties': netmap_properties | default([], true), 'lat_property': netmap_lat_property | default(''),
+          'lon_property': netmap_lon_property | default(''), 'discover': netmap_discover | default(true) | bool,
+          'max_nodes': netmap_max_nodes | default(5000) | int, 'no_site': netmap_no_site | default('Not placed'),
+          'max_age': solarwinds_db_max_age | default(20) | int} }}
   register: _ad_swis_read
   failed_when: false                     # never the job's result: a module that fails is a Not read line (ad_swis_view)
   when: _ad_swis_db | length > 0 or _ad_swis_sw | bool

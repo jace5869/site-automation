@@ -28,7 +28,8 @@ def main():
                            host=dict(type="str", default=""), port=dict(type="int", default=3309), database=dict(type="str", default="site_reports"),
                            user=dict(type="str", default=""), password=dict(type="str", default="", no_log=True),
                            tls=dict(type="bool", default=False), ca_file=dict(type="str", default=""), connect_timeout=dict(type="int", default=10),
-                           url=dict(type="str", default=""), validate_certs=dict(type="bool", default=True), ca_path=dict(type="str", default="")),
+                           url=dict(type="str", default=""), validate_certs=dict(type="bool", default=True), ca_path=dict(type="str", default=""),
+                           netmap=dict(type="dict", default={})),        # 1.101.0: the netmap_* settings (the replication map's places)
         supports_check_mode=True)
     p = module.params
     opts = {"max_age": p["max_age"], "days": p["days"], "now": p["now"],
@@ -62,6 +63,8 @@ def main():
                     "domain": str(d.get("domain") or "")} for d in p["dcs"]], opts, conn=conn,
                   swdb=site_swis_db, client=client)
     res["why"] = why + res["why"]
+    if p["netmap"] and (conn is not None or client is not None):
+        res["netmap"] = ad.netmap_place(dict(p["netmap"], orion=opts["orion"]), res.get("dcs") or [], conn=conn, client=client)
     res["asked"] = bool(conn is not None or client is not None or why)
     if conn is not None:
         try:

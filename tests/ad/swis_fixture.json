@@ -13,7 +13,12 @@
    "CPULoad": 18,
    "PercentMemoryUsed": 44,
    "LastSync": "2026-10-15T06:51:00Z",
-   "cp": {}
+   "cp": {},
+   "Vendor": "Windows",
+   "MachineType": "Windows 2022 Server",
+   "Location": "HQ, Bldg 1",
+   "ResponseTime": 2,
+   "PercentLoss": 0
   },
   {
    "NodeID": 12,
@@ -26,7 +31,12 @@
    "CPULoad": 97,
    "PercentMemoryUsed": 91,
    "LastSync": "2026-10-15T06:50:00Z",
-   "cp": {}
+   "cp": {},
+   "Vendor": "Windows",
+   "MachineType": "Windows 2022 Server",
+   "Location": "HQ, Bldg 1",
+   "ResponseTime": 2,
+   "PercentLoss": 0
   },
   {
    "NodeID": 30,
@@ -39,7 +49,12 @@
    "CPULoad": 5,
    "PercentMemoryUsed": 20,
    "LastSync": "2026-10-15T06:51:00Z",
-   "cp": {}
+   "cp": {},
+   "Vendor": "Cisco",
+   "MachineType": "C9300",
+   "Location": "HQ, MDF",
+   "ResponseTime": 2,
+   "PercentLoss": 0
   }
  ],
  "points": [],

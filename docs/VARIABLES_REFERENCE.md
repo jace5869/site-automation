@@ -356,6 +356,8 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_repl_db_create` | `true` | make the table ad_repl_point on the first run; false = an admin makes it (docs/REPORT_DATABASE.md) |
 | `ad_repl_db_timeout` | `10` | seconds to wait for the report database's connection |
 | `ad_repl_db_keep_days` | `400` | delete the database's points older than this many days (0 = never) |
+| `ad_repl_map_web` | `true` | ---- Replication map (1.101.0): the AD sites where the network map places their sites, on the report website ----- Each AD site is matched to a network-map site: ad_site_map first, then the DCs' own SolarWinds nodes (From SolarWinds), then the same name, then the same code. The places and the WAN traffic come from the… (all of it: the role file) |
+| `ad_site_map` | `{}` | an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301} |
 | `ad_time_warn_seconds` | `5` | a DC's clock against the PDC emulator (the PDC: against its NTP source) |
 | `ad_time_crit_seconds` | `60` | clock offset -> red (Kerberos fails at 300) |
 | `ad_time_sync_warn_hours` | `24` | Windows Time last synchronized longer ago than this |

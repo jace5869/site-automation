@@ -86,6 +86,31 @@ A row is the DC replicating **from**, a column the DC replicating **to**. A cell
 
 The matrix and the trend are on the report website only (the atlas and brief looks). The email has the late links.
 
+### The replication map (1.101.0)
+
+On the report website, before the matrix: the AD sites and their replication connections, placed where the network map
+places their sites.
+
+1. **The sites' places** come from the network map's own read (the SolarWinds snapshot, else SolarWinds itself) and its
+   own model with the `netmap_*` settings - keep those in all.yml, as the Network map template has them, so the two maps
+   agree. No place: the sites in a ring around the one with the most DCs.
+2. **Each AD site is matched to a network-map site** - the section *How AD sites were matched* (website, email, workbook)
+   says how for each: `ad_site_map` (set by hand), then **the DCs' own nodes** (each DC found in SolarWinds by From
+   SolarWinds, all of the site's in one network-map site - no naming luck needed), then the same name in any case, then
+   the same code without separators. The rest: *none*, "set ad_site_map".
+3. **The lines:** colour = time since the last success (the matrix's scale: `ad_repl_low_hours`, `ad_repl_warn_hours`,
+   `ad_repl_crit_hours`); between sites curved and as wide as the WAN traffic between their network-map sites, the dashes
+   moving with it (`report_motion`); no WAN link in SolarWinds: dotted. Point at a line or tab to it: the partitions, the
+   last success and failure, the WAN link's speed and %.
+4. **A site with several DCs** (its number on the dot) opens in place into its DCs and the connections inside it (thin,
+   straight - no WAN); its label closes it.
+5. Shown, never counted: the report's counts, status, headline and run history stay AD's.
+
+| Setting | Default | What |
+|---|---|---|
+| `ad_repl_map_web` | `true` | the map and *How AD sites were matched*; `false` = neither |
+| `ad_site_map` | `{}` | an AD site -> its network-map site by hand, e.g. `{HQ: SITA0101}` |
+
 ### From SolarWinds (1.94.0)
 
 Each domain controller as SolarWinds sees it, right after *Domain controllers' health*, and a tile *SolarWinds: down or

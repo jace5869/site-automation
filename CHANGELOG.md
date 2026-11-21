@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.101.0 — 2026-11-21
+
+**Nothing to set up.** With the netmap_* settings in all.yml (as the Network map template has them) and a SolarWinds or
+Report database credential on *Active Directory health report* (1.94.0), the map places the sites; without them, a ring.
+`ad_site_map` names an AD site's network-map site by hand when nothing else matches it.
+
+**The AD health report: the replication map** (the report website; user-approved mockup B + B+):
+- the AD sites where the network map places their sites (its own read and model, so the two maps agree), the replication
+  connections between them coloured by the time since the last success (the matrix's scale), as wide as the WAN traffic
+  between them in SolarWinds with the dashes moving with it (dotted: no WAN link); a site with several DCs opens in place
+  into its DCs and the connections inside it; hover or keyboard focus gives each line's partitions, last success and
+  failure, and the WAN link;
+- **How AD sites were matched** (website, email, workbook): `ad_site_map`, then the DCs' own SolarWinds nodes, then the
+  name, then the code; the rest "set ad_site_map";
+- shown, never counted; the email keeps the matrix and the links table.
+- **From SolarWinds** reads through 1.96.1's own readers (apps_live, alerts_live; one read-only transaction; another
+  Orion's snapshot is not this one's - orion_key); the copied SAM and alert queries are gone.
+- Settings: `ad_repl_map_web`, `ad_site_map`.
+- Tests: `tests/test_ad_map.py` (the matching rules, the pairs, the sections, no netmap read, never raises, the page piece,
+  CSP-safe; the network map's own placement against the fake SolarWinds); `tests/ad/run_ad_test.sh` (the map on the
+  website page, the matching in the email, not the map); `tests/test_ad_swis.py` Orion1101.
+
 ## 1.100.0 — 2026-11-21
 
 **Report website - speed**

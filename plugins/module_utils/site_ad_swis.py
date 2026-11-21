@@ -425,3 +425,71 @@ def read(dcs, opts, conn=None, swdb=None, client=None):
             why.append("the old snapshot could not be read either: %s" % _say(e))
     return {"ok": False, "source": "", "read_at": "", "age_min": None, "interval_min": None, "stale": False, "why": why, "sam": False,
             "sam_why": "", "events": False, "dcs": []}
+
+
+def netmap_place(nm, dcs_rows, conn=None, client=None):
+    """1.101.0: where the network map puts the DCs' nodes - its own read (site_swis_db.answer: the snapshot, else SolarWinds
+    itself) and its own model (site_swis.model with the netmap_* settings), so the AD map never disagrees with the network map.
+    nm: the netmap_* settings (site_by, site_split, sites, site_pattern, hierarchy, roles, properties, lat_property,
+    lon_property, discover, max_nodes, max_age (min), orion). -> {ok, source, why, node_site {node id: site}, names,
+    places {site: [lat, lon]}, wan [{a, b, n, bps, util, status, ifs}], no_site}. Never raises; why in fixed words."""
+    o = dict(nm or {})
+    hier = [h.get("value") for h in o.get("hierarchy") or [] if isinstance(h, dict) and h.get("from") == "property"]
+    sb = str(o.get("site_by") or "auto")
+    collect = {"site_by": "" if sb.lower() in ("auto", "location") else sb, "lat_property": o.get("lat_property") or "",
+               "lon_property": o.get("lon_property") or "", "properties": list(o.get("properties") or []) + hier,
+               "discover": o.get("discover", True), "page": 1000, "max_nodes": int(o.get("max_nodes") or 5000)}
+    model_o = {"site_by": sb, "site_split": o.get("site_split", ","), "sites": o.get("sites") or {}, "lat_property": o.get("lat_property") or "",
+               "lon_property": o.get("lon_property") or "", "properties": o.get("properties") or [], "no_site": o.get("no_site") or "Not placed",
+               "site_pattern": o.get("site_pattern") or "", "hierarchy": o.get("hierarchy") or [], "roles": o.get("roles") or {}}
+    bad = sw.check_opts(model_o)
+    if bad:
+        return {"ok": False, "why": "the netmap settings cannot work here (%s)" % "; ".join(bad)[:200]}
+    why = []
+    try:
+        age = o.get("max_age")
+        raw = sdb.answer(collect, conn, client, None if age is None else int(age) * 60, why, orion=o.get("orion") or "")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "why": "the network map's sites were not read (%s)" % _say(e)}
+    if not raw or not raw.get("nodes"):
+        return {"ok": False, "why": "the network map's sites were not read (%s)" % ("no SolarWinds to read" if raw is None else "no nodes")}
+    try:
+        m = sw.model(raw, model_o)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "why": "the network map's sites could not be worked out (%s)" % e.__class__.__name__}
+    site_of = dict((n["id"], n["site"]) for n in m["nodes"])
+    ids = set(d.get("node_id") for d in dcs_rows or [] if d.get("node_id") is not None)
+    ifs = dict((i.get("InterfaceID"), i) for i in raw.get("interfaces") or [])
+    pairs = {}
+    for l in m.get("links") or []:
+        if not l.get("wan"):
+            continue
+        sa, sbb = site_of.get(l["a"]), site_of.get(l["b"])
+        if not sa or not sbb or sa == sbb:
+            continue
+        k = tuple(sorted([sa, sbb]))
+        p = pairs.setdefault(k, {"a": k[0], "b": k[1], "n": 0, "bps": 0, "util": None, "status": sw.UP, "ifs": []})
+        sp = [x for x in (_pctnum(ifs.get(l.get("ka"), {}).get("Speed")), _pctnum(ifs.get(l.get("kb"), {}).get("Speed"))) if x]
+        p["n"] += 1
+        p["bps"] += min(sp) if sp else 0
+        if l.get("in") is not None or l.get("out") is not None:
+            p["util"] = max(p["util"] or 0, l.get("in") or 0, l.get("out") or 0)
+        if sw.RANK.get(l.get("status"), 2) < sw.RANK.get(p["status"], 2):
+            p["status"] = l["status"]
+        if len(p["ifs"]) < 3:
+            na, nb = (next((n["name"] for n in m["nodes"] if n["id"] == x), "") for x in (l["a"], l["b"]))
+            p["ifs"].append("%s %s - %s %s" % (na, l.get("ia") or "", nb, l.get("ib") or ""))
+    src = raw.get("source") or ""
+    return {"ok": True, "source": src, "age_min": int(raw.get("age_seconds") or 0) // 60,
+            "why": "" if src == "db-snapshot" else ("read live from SolarWinds" + ("" if not why else " (the snapshot not used)")),
+            "node_site": dict((str(i), site_of.get(i)) for i in ids if site_of.get(i)), "names": [x["name"] for x in m["sites"]],
+            "places": dict((x["name"], [x["lat"], x["lon"]]) for x in m["sites"] if x.get("lat") is not None),
+            "wan": list(pairs.values()), "no_site": m.get("no_site") or "Not placed"}
+
+
+def _pctnum(x):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None

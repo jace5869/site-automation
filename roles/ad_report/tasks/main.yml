@@ -84,14 +84,33 @@
 # the email: the late links before Inbound replication; the website (atlas, brief): the matrix, the late links and the
 # trend there; the workbook (report_email_xlsx): the report's tables and every link. 1.94.0: From SolarWinds in all three
 # (the email and the workbook: the AD monitors not up as a table of their own - their rows do not open)
+# 1.101.0: the replication map (the report website) and How AD sites were matched (the website, the email, the workbook)
+- name: AD | the replication map (1.101.0)
+  ansible.builtin.set_fact:
+    _ad_map: >-
+      {{ _ad.repl | ad_repl_map(_ad_swis_read | default({}), {
+           'ad_site_map': ad_site_map | default({}, true), 'low_hours': ad_repl_low_hours | float,
+           'warn_hours': ad_repl_warn_hours | float, 'crit_hours': ad_repl_crit_hours | float,
+           'motion': report_motion | default('auto') | string | lower}) }}
+  when: ad_repl_map_web | bool and _ad.repl is defined
+
+- name: AD | the replication map
+  ansible.builtin.debug:
+    msg: "{{ _ad_map.lines }}"
+  when: _ad_map.lines is defined
+
 - name: AD | the report to print and email
   ansible.builtin.set_fact:
-    _ad_doc: "{{ _ad.report | ad_swis_insert(_ad_swis_view | default({}), true) | ad_repl_insert(_ad_repl.sections | default([])) }}"
+    _ad_doc: >-
+      {{ _ad.report | ad_swis_insert(_ad_swis_view | default({}), true) | ad_repl_insert(_ad_repl.sections | default([]))
+         | ad_repl_insert(_ad_map.sections | default([]) | ad_map_sections(false)) }}
     _ad_web: >-
       {{ _ad.report | ad_swis_insert(_ad_swis_view | default({})) | ad_repl_insert(_ad_repl.web_sections | default([]))
-         if _ad_repl.web_sections is defined or (_ad_swis_view | default({})).section | default(none) else {} }}
+         | ad_repl_insert(_ad_map.sections | default([]), 'Replication matrix' if _ad_repl.web_sections is defined else 'Inbound replication')
+         if _ad_repl.web_sections is defined or (_ad_swis_view | default({})).section | default(none) or _ad_map.sections | default([]) else {} }}
     _ad_xlsx: >-
-      {{ (_ad.report | ad_swis_insert(_ad_swis_view | default({}), true) | ad_repl_insert(_ad_repl.sections) | report_xlsx_sheets) + _ad_repl.sheets
+      {{ (_ad.report | ad_swis_insert(_ad_swis_view | default({}), true) | ad_repl_insert(_ad_repl.sections)
+          | ad_repl_insert(_ad_map.sections | default([]) | ad_map_sections(false)) | report_xlsx_sheets) + _ad_repl.sheets
          if _ad_repl.sheets is defined and report_email_xlsx | default(false) | bool else [] }}
 
 - name: AD | report

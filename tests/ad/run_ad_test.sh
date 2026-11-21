@@ -103,6 +103,16 @@ run "From SolarWinds: read live, the section, the AD monitors not up in the emai
     'From SolarWinds: AD monitors not up' 'Last success 7 h ago: 8524' 'Not in SolarWinds'
 grep -qF 'ro&"<test>9' "$work/out.txt" "$work"/mail/*.eml && { echo "FAIL - the SolarWinds password is in the output or the mail"; fails=$((fails + 1)); }
 grep -q 'SECRET-COLUMN-ASKED' "$work/swis.log" && { echo "FAIL - a secret column was asked of SolarWinds"; fails=$((fails + 1)); }
+# 1.101.0: the replication map - on the website (its piece: markup, data, script), How AD sites were matched in the email too
+mkdir -p "$work/web2"; rm -f "$work"/mail/*.eml
+run "the replication map on the website, How AD sites were matched in the email" ok \
+    "$(echo "$mail" | sed 's/}$//'), \"report_web_dest\": \"$work/web2\", \"netmap_sites\": {\"DC*\": {\"lat\": 38.9, \"lon\": -77.0}}}" \
+    'Replication map: ' 'How AD sites were matched'
+page2="$(find "$work/web2" -name latest.html | head -1)"
+if [ -z "$page2" ] || ! grep -q 'id="admap-data"' "$page2" || ! grep -q 'class="am"' "$page2" || grep -q '@@ADMAP@@' "$page2"; then
+    echo "FAIL - the replication map is not on the website's page ($page2)"; fails=$((fails + 1))
+else echo "ok   - the replication map on the website's page"; fi
+grep -l 'admap-data' "$work"/mail/*.eml >/dev/null 2>&1 && { echo "FAIL - the replication map is in the email"; fails=$((fails + 1)); }
 LIMIT=dc01.corp.test run "From SolarWinds never fails the job: a healthy domain stays green with ad_report_fail" ok \
     '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' 'Active Directory health' 'all 1 domain controller healthy (corp.test)' \
     'From SolarWinds (swis-live): 1 DC(s)'

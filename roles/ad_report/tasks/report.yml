@@ -31,6 +31,8 @@
     # the website's copy (atlas, brief): the replication matrix and its trend too (1.63.0); the workbook: every link
     _report_web: "{{ _ad_web | combine({'footer': _ad_footer}) if _ad_web | default({}, true) else {} }}"
     _report_xlsx: "{{ _ad_xlsx | default([]) }}"
+    # 1.101.0: the replication map's piece of the website page (markup, style, script, data: report_page_piece)
+    _report_page_extra: "{{ _ad_map.extra | default({}) }}"
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
 - name: AD | no email
