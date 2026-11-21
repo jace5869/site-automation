@@ -164,7 +164,9 @@ SV ...), else the model, else the number of links.
 **The report says how** - the section *Discovery*, last (the workbook's *Discovery* sheet, the job's output):
 - the rule chosen a level, how many nodes it covers, its groups, what agrees with it, and **what decided** it;
 - the other readings with their scores, the chosen one first;
-- every field: how many nodes have a value, how many different values, and five of them;
+- every field: how many nodes have a value, how many different values, and five of them - a custom property's
+  values only when `netmap_properties` or `netmap_hierarchy` names it or a level reads it (the others: name and counts,
+  so a contact, a serial or a note is never published); e-mail addresses, phone numbers and serial-like values never;
 - the roles and where each came from; the nodes not placed (on the site *Not placed*).
 
 **Or name it yourself** (all.yml), and the job uses it as it is:

@@ -577,6 +577,7 @@ class Files(unittest.TestCase):
         for n in ("site_swis.py", "netmap.js", "netglobe.js", "world-land.js", "netmap-live.js", "netmap.css", "netmap-map.html"):
             self.assertIn(n, tasks)
         self.assertIn("site-portal-swis", tasks)
+        self.assertIn("netmap_check_opts", tasks)                                   # 1.95.0 review: a bad setting stops the deploy
         unit = open(os.path.join(ROOT, "roles", "site_portal_stack", "templates", "site-portal-app.container.j2")).read()
         self.assertIn("Secret=site-portal-swis,type=env,target=PORTAL_SWIS_LOGIN", unit)
         d = yaml.safe_load(open(os.path.join(ROOT, "roles", "site_portal_stack", "defaults", "main.yml")))
@@ -747,9 +748,15 @@ class Portal(unittest.TestCase):
         d0, _ = self.wait_map(lambda d: d.get("map") and not d.get("stale"))
         links = len(d0["map"]["links"])
         self.fake.set_state({"break": ["Orion.TopologyConnections"]})
-        try:
-            d, _ = self.wait_map(lambda d: d.get("stale"))
-            self.assertIn("the links were not refreshed", d["stale"])
+        try:                                     # 1.95.0 review (8): the whole read failed - the kept map, its status read fresh
+            fell = lambda: [e for e in self.portal.log.read("netmap") if "whole map failed" in json.dumps(e)]
+            before = len(fell())
+            for _ in range(100):
+                if len(fell()) > before:
+                    break
+                time.sleep(0.1)
+            self.assertIn("the links were not refreshed", json.dumps(fell()[-1]))
+            d, _ = self.wait_map(lambda d: d.get("kind") == "status" and not d.get("stale"))
             self.assertEqual(len(d["map"]["links"]), links)                                # not a map without links
         finally:
             self.fake.set_state({})
@@ -804,6 +811,53 @@ class Portal(unittest.TestCase):
         self.assertEqual(len(data["nodes"]), len(raw["nodes"]))
         live.raw, live.full_at = got, time.time()
         self.assertEqual(live.read_once()[2], "status")
+
+    def test_a_the_kept_map_belongs_to_its_settings(self):
+        """1.95.0 review: the kept map names SolarWinds' address and the settings - another address: not shown; other settings:
+        shown, but the next read is whole; a setting that cannot work is said, never read; the file is made 0600 anew."""
+        sp = self.sp
+        raw = sw.collect(sw.Client(self.fake.url, "svc_swis_ro", PW, verify=False), {})
+
+        class Src(object):
+            kind = "swis-live"
+            calls = []
+
+            def read_full(self):
+                self.calls.append("full")
+                return raw
+
+            def read_status(self, r):
+                self.calls.append("status")
+                return r
+        data_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, data_dir, True)
+        tmp = os.path.join(data_dir, "netmap-cache.json.tmp")
+        with open(tmp, "w") as fh:                                                    # a leftover, world-readable
+            fh.write("x")
+        os.chmod(tmp, 0o644)
+        cfg = sp.Config(dict(self.env, PORTAL_DATA=data_dir))
+        live = sp.NetLive(cfg, self.portal.log, source=Src())
+        data, got, kind = live.read_once()
+        live.read_at, live.full_at, live.raw, live.kind = time.time(), time.time(), got, kind
+        live._save(json.dumps(data), got)
+        self.assertEqual(oct(os.stat(os.path.join(data_dir, "netmap-cache.json")).st_mode & 0o777), "0o600")
+        same = sp.NetLive(cfg, self.portal.log, source=Src())
+        self.assertTrue(same.from_disk and same.raw)                                  # the same settings: kept, status next
+        cfg.netmap_opts = dict(cfg.netmap_opts, hierarchy=[{"level": "building", "from": "none"}])
+        other = sp.NetLive(cfg, self.portal.log, source=Src())
+        self.assertTrue(other.from_disk and other.map_json)                           # shown at once ...
+        self.assertIsNone(other.raw)                                                  # ... but the next read is whole
+        Src.calls[:] = []
+        other.read_once()
+        self.assertEqual(Src.calls, ["full"])
+        cfg.swis_url = "https://orion-b.corp.example.mil:17774"
+        self.assertFalse(sp.NetLive(cfg, self.portal.log, source=Src()).from_disk)    # another SolarWinds: not its map
+        cfg.netmap_opts = dict(cfg.netmap_opts, site_pattern="([", roles=["x"])
+        bad = sp.NetLive(cfg, self.portal.log, source=Src())
+        with self.assertRaises(ValueError) as e:
+            bad.read_once()
+        self.assertIn("netmap_site_pattern", str(e.exception))
+        self.assertIn("netmap_roles", str(e.exception))
 
     def test_5_who_may_see_it(self):
         r = urllib.request.Request(self.base + "/api/netmap", headers={"X-SSL-Client-Verify": "NONE"})
@@ -929,6 +983,101 @@ def _browser():
         if shutil.which(b):
             return shutil.which(b)
     return None
+
+
+class Review1950(unittest.TestCase):
+    """1.95.0 review round: a value holding "/" keeps it, the part rule never raises, a custom property's values are not
+    published unless named, an old copy's reading, the auto reading kept on a near tie, a missing node's site in capitals."""
+
+    def flat(self, n_sites=3, per=6):
+        """Sites only an address tells apart: one /16 each, names that do not (placeholders only)."""
+        nodes, conns, nid = [], [], 0
+        for s in range(n_sites):
+            first = None
+            for k in range(per):
+                nid += 1
+                nodes.append({"id": nid, "name": "node-%03d" % nid, "dns": "", "ip": "10.%d.%d.%d" % (s + 1, k, 5), "status_code": 1, "status_text": "",
+                              "vendor": "Cisco", "model": "C9300", "location": "Bldg %d/Floor %d, Rm 1" % (s, k % 2), "resp": 1, "loss": 0,
+                              "unmanaged": False, "props": {}, "wm": None})
+                if first:
+                    conns.append([first, 0, nid, 0])
+                first = first or nid
+        return {"nodes": nodes, "connections": conns, "interfaces": [], "custom_properties": [], "topology_ok": True, "read_at": "2026-11-21T09:00:00Z"}
+
+    def test_1_a_value_with_a_slash_keeps_it(self):
+        m = sw.model(self.flat(), {"hierarchy": [{"level": "site", "from": "subnet", "value": 16},
+                                                 {"level": "building", "from": "location", "value": "all"}]})
+        sites = sorted(set(n["site"] for n in m["nodes"]))
+        self.assertEqual(sites, ["10.1.0.0/16", "10.2.0.0/16", "10.3.0.0/16"])     # three /16s: three sites, never "16"
+        self.assertIn("Bldg 0/Floor 1, Rm 1", set(n["building"] for n in m["nodes"]))    # not "Floor 1, Rm 1"
+        self.assertEqual(sw._subnet("10.2.3.4", 8), "10.0.0.0/8")
+        self.assertEqual(sw._subnet("10.2.3.4", 16), "10.2.0.0/16")
+        lv = m["discovery"]["levels"][0]
+        self.assertIn("10.1.0.0/16", lv["samples"])
+
+    def test_2_the_part_rule_never_raises(self):
+        raw = hostile()
+        m = sw.model(raw, {"hierarchy": [{"level": "site", "from": "part", "value": -1}]})
+        site = dict((n["name"] or n["ip"], n["site"]) for n in m["nodes"])
+        self.assertEqual(site["SITA0101-B02-AS03"], "AS03")                        # the last part, not the one before
+        for v in (9, "all", "x", None, -9):                                         # past the end, not a number: no group, no error
+            sw.model(raw, {"hierarchy": [{"level": "site", "from": "part", "value": v}]})
+        self.assertTrue(sw.check_opts({"hierarchy": [{"level": "site", "from": "part", "value": "all"}]}))
+        self.assertEqual(sw.check_opts({"hierarchy": [{"level": "site", "from": "part", "value": -1}]}), [])
+        self.assertEqual(sw.check_opts({"hierarchy": [{"level": "site", "from": "location", "value": "all"}]}), [])
+
+    def test_3_a_custom_property_is_not_published_unless_named(self):
+        raw = hostile()
+        raw["custom_properties"] = ["Dept", "Contact", "Serial"]
+        for i, n in enumerate(raw["nodes"]):
+            n["props"].update({"Contact": "jane.doe%d@corp.example.mil" % (i % 3), "Serial": "FCW22%06dAB" % i})
+        secret = ("jane.doe", "FCW22")
+        m = sw.model(raw, {})
+        res = {"reachable": True, "map": m, "changes": [], "compared": False}
+        out = json.dumps([m["discovery"], nf.netmap_doc(res, {"web": True}), nf.netmap_doc(res), nf.netmap_xlsx(res), nf.netmap_lines(res)])
+        for w in secret:
+            self.assertNotIn(w, out)
+        f = dict((x["field"], x) for x in m["discovery"]["fields"])
+        self.assertTrue(f["custom property Contact"]["hidden"])
+        self.assertEqual(f["custom property Contact"]["samples"], [])
+        self.assertEqual(f["custom property Contact"]["distinct"], 3)              # its counts are still said
+        self.assertIn("values not shown", out)
+        m = sw.model(raw, {"properties": ["Contact", "Serial"]})                     # named: shown, but never an address or a serial
+        f = dict((x["field"], x) for x in m["discovery"]["fields"])
+        self.assertEqual(set(f["custom property Contact"]["samples"]), {"(not shown)"})
+        self.assertEqual(set(f["custom property Serial"]["samples"]), {"(not shown)"})
+        self.assertIn("NETOPS", json.dumps(sw.model(raw, {"properties": ["Dept"]})["discovery"]["fields"]))   # a plain value: shown
+
+    def test_4_an_old_copy_by_a_property_is_not_a_new_way(self):
+        raw = hostile()
+        for n in raw["nodes"]:
+            n["props"]["Site"] = (n["name"] or "x")[:4].upper()
+        raw["custom_properties"] = ["Dept", "Site"]
+        old = sw.snapshot(sw.model(raw, {"site_by": "Site"}))
+        old.pop("h")                                                                 # a 1.85 copy: no "h"
+        ch = sw.compare(sw.model(raw, {"site_by": "Site"}), json.loads(json.dumps(old)))
+        self.assertNotIn("Sites read a new way", [c["kind"] for c in ch])
+
+    def test_5_auto_keeps_last_runs_reading_on_a_near_tie(self):
+        raw = hostile()
+        m = sw.model(raw, {})
+        lv = m["discovery"]["levels"][0]
+        rd = [r for r in lv["readings"] if not r["chosen"] and r["score"] is not None and r["score"] >= lv["readings"][0]["score"] * (1 - sw.TIE)]
+        if rd:                                                                       # a reading within the tie: last run's stays
+            fp = "site:%s:%s" % (rd[0]["from"], rd[0]["value"])
+            again = sw.model(raw, {"prev_fingerprint": fp})
+            self.assertEqual(again["fingerprint"], fp)
+            self.assertIn("kept from the last run", again["discovery"]["levels"][0]["decided"])
+        far = "site:location:-1"                                                     # one that loses by more: not kept
+        self.assertEqual(sw.model(raw, {"prev_fingerprint": far})["fingerprint"], m["fingerprint"])
+
+    def test_6_a_missing_nodes_site_read_in_capitals(self):
+        raw = hostile()                                                              # the name's letter run, kept from the last run
+        m = sw.model(raw, {"prev_fingerprint": "site:pattern:^([A-Z]+|[0-9]+)"})
+        self.assertEqual(m["discovery"]["levels"][0]["from"], "pattern")
+        fn = sw._resite(m)
+        self.assertEqual(fn({"name": "sitc-acc-09"}), "SITC")                       # discovery reads the name in capitals: so here
+        self.assertEqual(fn({"name": "SITC-ACC-09"}), "SITC")
 
 
 @unittest.skipUnless(_browser(), "no google-chrome or chromium")

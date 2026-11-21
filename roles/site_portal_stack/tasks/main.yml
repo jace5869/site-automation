@@ -215,6 +215,18 @@
     quiet: true
   when: _portal_netmap | bool
 
+# 1.95.0: the discovery settings the live map reads - one that cannot work stops the deploy, with the reason
+- name: Settings | the live Network map's discovery settings
+  ansible.builtin.assert:
+    that: _netmap_bad | length == 0
+    fail_msg: "{{ _netmap_bad | join('; ') }} - nothing was changed. docs/NETWORK_MAP.md"
+    quiet: true
+  vars:
+    _netmap_bad: >-
+      {{ {'site_pattern': netmap_site_pattern | default(''), 'hierarchy': netmap_hierarchy | default([], true),
+          'roles': netmap_roles | default({}, true)} | netmap_check_opts }}
+  when: _portal_netmap | bool
+
 # 1.78.2: the caps are settings; one outside its range stops the deploy, naming the setting
 - name: Settings | {{ item.name }} is in its range
   ansible.builtin.assert:

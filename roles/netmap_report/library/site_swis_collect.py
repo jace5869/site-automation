@@ -108,7 +108,8 @@ def main():
     m = site_swis.model(raw, {"site_by": p["site_by"], "site_split": p["site_split"], "sites": p["sites"],
                               "lat_property": p["lat_property"], "lon_property": p["lon_property"], "properties": p["properties"],
                               "warn_util": p["warn_util"], "no_site": p["no_site"], "site_pattern": p["site_pattern"],
-                              "hierarchy": p["hierarchy"], "roles": p["roles"]})
+                              "hierarchy": p["hierarchy"], "roles": p["roles"],
+                              "prev_fingerprint": p["snapshot"].get("h") if isinstance(p["snapshot"], dict) else ""})
     prev = p["snapshot"] if isinstance(p["snapshot"], dict) else {}
     snap = site_swis.snapshot(m, prev, p["snapshot_links"]) if raw["reachable"] else {}     # not read: nothing kept, the copy before stays the baseline
     compared = bool(raw["reachable"] and prev.get("v") == 2 and isinstance(prev.get("n"), dict))   # an empty inventory's copy is a baseline too

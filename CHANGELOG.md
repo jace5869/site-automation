@@ -41,11 +41,19 @@ building and room text, none placed - an empty globe).
   to 60 sites.
 - **Compatible:** the first run after the upgrade says *Sites read a new way* once (node and link changes still compared; a
   missing node's site read by today's rule); a kept 1.85 map (the copy job) still draws.
+- **Review round:** a value with "/" keeps it (subnets read 10.1.0.0/16, /8 as 10.0.0.0/8; a Location such as
+  "Bldg 0/Floor 2" stays whole); the part rule takes -1 and never stops the job; a custom property's values are shown
+  only when named or read (never an e-mail address, a phone number or a serial-like value); a 1.85 copy read by a
+  custom property is not *read a new way*; auto keeps last run's reading on a near tie; the portal's kept map is tied
+  to SolarWinds' address and the settings, a whole read that fails falls back to a status read, a bad setting stops
+  the deploy.
 - Measured on a synthetic 1,125-node Orion: the model in 0.12 s; the page's data 460 KB; the page drawn in under 0.1 s,
   a level in 2-3 ms.
 - Tests: `tests/test_netmap.py` Discovery1950 (an untidy Orion: two naming schemes, DNS- and IP-only names, no building
   part, nodes with no link, one /24 for two buildings; the overrides; the checks; patterns; the new-way line; 1,000 nodes
-  quick), the portal's two speeds, the map kept on disk shown with SolarWinds down, the seam with another source.
+  quick), the portal's two speeds, the map kept on disk shown with SolarWinds down, the seam with another source;
+  Review1950 (the review round, each test failing on the code before it); Building1950 in Chromium (down and warning
+  shown, Show all, no line crosses a box).
 
 ## 1.91.0 — 2026-11-21
 

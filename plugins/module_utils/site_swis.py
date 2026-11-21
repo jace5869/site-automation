@@ -525,7 +525,8 @@ def _subnet(ip, bits):
     if not m:
         return None
     o = [int(x) for x in m.groups()]
-    return ".".join(str(x) for x in o[:bits // 8]) + ".0/%d" % bits
+    k = bits // 8
+    return ".".join(str(x) for x in o[:k] + [0] * (4 - k)) + "/%d" % bits
 
 
 def _loc_part(loc, i, split):
@@ -615,11 +616,14 @@ WHY = {"coverage": "it covers more nodes", "groups": "its number of groups is sa
        "pieces": "its groups hold together on their own links"}
 
 
+TIE = 0.02                                              # a near tie: within 2% of the best score
+
+
 def _rank(rows):
     """Best first; a near tie (within 2%) goes to a name pattern, then Location, then a subnet, then a property."""
     order = {"part": 0, "pattern": 0, "location": 1, "subnet": 2, "property": 3}
     top = max([r["score"] for r in rows] or [0])
-    return sorted(rows, key=lambda r: (0 if top - r["score"] <= 0.02 * max(top, 1e-9) else 1, -r["score"] if top - r["score"] > 0.02 * max(top, 1e-9) else 0,
+    return sorted(rows, key=lambda r: (0 if top - r["score"] <= TIE * max(top, 1e-9) else 1, -r["score"] if top - r["score"] > TIE * max(top, 1e-9) else 0,
                                        order.get(r["from"], 9), r["groups"]))
 
 
@@ -659,7 +663,16 @@ def _rule_fn(rule, nodes_by_id, split, subnet_default=24):
     if f == "subnet":
         return lambda n: _subnet(n.get("ip"), int(v or subnet_default))
     if f == "part":
-        return lambda n: (lambda p: p[int(v) - 1] if len(p) >= int(v) else None)(name_parts(n))
+        try:
+            k = int(v)
+        except (TypeError, ValueError):
+            return lambda n: None                          # check_opts says why; model() never raises over a setting
+        i = k - 1 if k > 0 else k
+
+        def part(n):
+            p = name_parts(n)
+            return p[i] if p and -len(p) <= i < len(p) else None
+        return part
     return lambda n: None
 
 
@@ -688,7 +701,7 @@ def check_opts(o):
                 bad.append("netmap_hierarchy (%s): %r is not a regular expression: %s" % (r["level"], str(r.get("value"))[:60], e))
         if r["from"] == "property" and not IDENT.match(str(r.get("value") or "")):
             bad.append("netmap_hierarchy (%s): %r is not a property name" % (r["level"], r.get("value")))
-        if r["from"] in ("location", "part") and not re.match(r"^(-?[1-9]|all)$", str(r.get("value") or "")):
+        if r["from"] in ("location", "part") and not re.match(r"^(-?[1-9]|all)$" if r["from"] == "location" else r"^-?[1-9]$", str(r.get("value") or "")):
             bad.append("netmap_hierarchy (%s): value is the part's number (1, 2 ... or -1 for the last)%s" % (r["level"], ", or all" if r["from"] == "location" else ""))
         if r["from"] == "subnet" and str(r.get("value") or "24") not in ("8", "16", "24"):
             bad.append("netmap_hierarchy (%s): a subnet is 8, 16 or 24" % r["level"])
@@ -747,16 +760,17 @@ def discover(raw_nodes, pairs, o):
         cnt = {}
         for x in have:
             cnt[x] = cnt.get(x, 0) + 1
-        out["fields"].append({"field": label, "filled": len(have), "distinct": len(cnt),
+        out["fields"].append({"field": label, "from": f, "value": v, "filled": len(have), "distinct": len(cnt),
                               "samples": [k for k, _ in sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0]))[:5]]})
     result = {}
     for lv in LEVELS:
         prev = result.get(LEVELS[LEVELS.index(lv) - 1]) if lv != "site" else None
 
         def scoped(fn, prev=prev):
+            fn = _safe(fn)
             if prev is None:
                 return fn
-            return lambda n: (lambda a, b: (a + "/" + b) if a and b else None)(prev.get(n["id"]), fn(n))
+            return lambda n: (lambda a, b: (a + SCOPE + b) if a and b else None)(prev.get(n["id"]), fn(n))
         rows = []
         if lv == "closet":
             role0 = dict((n["id"], _role(n, {}, o.get("roles"))[0]) for n in raw_nodes)
@@ -768,7 +782,7 @@ def discover(raw_nodes, pairs, o):
             if lv == "site":
                 lo, hi = 2, max(3, N // 5)                     # soft: a reading over hi is marked down, never ruled out
             else:
-                per = max(1, len(set(x.split("/", 1)[0] for x in m["sizes"])))
+                per = max(1, len(set(x.split(SCOPE, 1)[0] for x in m["sizes"])))
                 lo, hi = 1, per * 30
                 if lv != "site":
                     lo = 1
@@ -785,15 +799,15 @@ def discover(raw_nodes, pairs, o):
             site_of = result.get("site") or {}
             for i in list(site_of):                            # no building level: the closets are the site's
                 if not bld.get(i) and site_of.get(i):
-                    bld[i] = site_of[i] + "/"
+                    bld[i] = site_of[i] + SCOPE
             vals = {}
             for n in raw_nodes:
                 i = n["id"]
                 if role0[i] == "distribution":
-                    vals[i] = (bld.get(i) or "") + "/" + short_name(n) if bld.get(i) else None
+                    vals[i] = (bld.get(i) or "") + SCOPE + short_name(n) if bld.get(i) else None
                 elif role0[i] in ("access", "wireless", "server", "other"):
                     up = sorted(j for j in adj.get(i, ()) if role0.get(j) == "distribution" and bld.get(j) and bld.get(j) == bld.get(i))
-                    vals[i] = (bld.get(i) + "/" + short_name(by_id[up[0]])) if up else None
+                    vals[i] = (bld.get(i) + SCOPE + short_name(by_id[up[0]])) if up else None
                 else:
                     vals[i] = None
             m = _measure(vals, pairs, linked)
@@ -814,34 +828,89 @@ def discover(raw_nodes, pairs, o):
                           **{"from": r["from"], "value": r.get("value"), "score": None, "f": {}, "vals": vals, "decided": "set in all.yml (%s)" % (r.get("by") or "netmap_hierarchy")})
         else:
             chosen = rows[0] if rows and rows[0]["score"] > (0.05 if lv == "site" else 0.2) else None
+            pf = str(o.get("prev_fingerprint") or "")
+            if lv == "site" and chosen is not None and pf and pf != "site:%s:%s" % (chosen["from"], chosen["value"]):
+                kept = [r for r in rows if "site:%s:%s" % (r["from"], r["value"]) == pf and r["score"] >= chosen["score"] * (1 - TIE)]
+                if kept:                                       # auto: last run's reading stays unless it loses by more than a near tie
+                    kept[0]["decided"] = "kept from the last run (within %d%% of %s)" % (round(TIE * 100), chosen["label"])
+                    rows = kept + [r for r in rows if r is not kept[0]]
+                    chosen = kept[0]
             if chosen is None:
                 chosen = {"label": "none", "rule": "none: no reading holds up", "from": "none", "value": "", "vals": dict((n["id"], None) for n in raw_nodes),
                           "coverage": 0.0, "groups": 0, "cohesion": None, "pieces": 1.0, "sizes": {}, "score": None, "f": {}, "decided": "no reading covers enough nodes"}
-            else:
+            elif not chosen.get("decided"):
                 chosen["decided"] = _decided(chosen, rows[1] if len(rows) > 1 else None)
         result[lv] = chosen["vals"]
-        samples = _uniq(k.split("/")[-1] for k, _ in sorted(chosen["sizes"].items(), key=lambda kv: (-kv[1], kv[0])))[:5]
+        samples = _uniq(_own(k) for k, _ in sorted(chosen["sizes"].items(), key=lambda kv: (-kv[1], kv[0])))[:5]
         agrees = [r["label"] for r in rows if r is not chosen and r["coverage"] > .5 and r["vals"] is not chosen["vals"]
                   and _agree(chosen["vals"], r["vals"]) > .97 and _agree(r["vals"], chosen["vals"]) > .97][:3]
         out["levels"].append({"level": lv, "rule": chosen["rule"], "from": chosen["from"], "value": chosen.get("value"), "coverage": round(chosen["coverage"], 3),
                               "groups": chosen["groups"], "cohesion": None if chosen["cohesion"] is None else round(chosen["cohesion"], 3),
                               "pieces": round(chosen["pieces"], 2), "samples": samples, "agrees": agrees, "decided": chosen["decided"],
-                              "readings": [{"rule": r["label"], "from": r["from"], "chosen": r is chosen, "score": r["score"], "coverage": round(r["coverage"], 3),
+                              "readings": [{"rule": r["label"], "from": r["from"], "value": r.get("value"), "chosen": r is chosen, "score": r["score"], "coverage": round(r["coverage"], 3),
                                             "groups": r["groups"], "cohesion": None if r["cohesion"] is None else round(r["cohesion"], 3),
-                                            "pieces": round(r["pieces"], 2), "samples": _uniq(k.split("/")[-1] for k, _ in sorted(r["sizes"].items(), key=lambda kv: (-kv[1], kv[0])))[:3]}
+                                            "pieces": round(r["pieces"], 2), "samples": _uniq(_own(k) for k, _ in sorted(r["sizes"].items(), key=lambda kv: (-kv[1], kv[0])))[:3]}
                                            for r in ([chosen] + [x for x in rows if x is not chosen])[:6]]})
     deg = {}
     for a, b in pairs:
         deg[a] = deg.get(a, 0) + 1
         deg[b] = deg.get(b, 0) + 1
     out["role"] = dict((n["id"], _role(n, deg, o.get("roles"))) for n in raw_nodes)
+    # a custom property's values are shown only when the site named it or a level reads it: never a contact, serial or note
+    named = set(str(x) for x in (o.get("properties") or [])) | set(str(r.get("value")) for r in over.values() if r.get("from") == "property")
+    named |= set(str(lv["value"]) for lv in out["levels"] if lv["from"] == "property")
+    for fd in out["fields"]:
+        if fd["from"] == "property" and str(fd["value"]) not in named:
+            fd["samples"], fd["hidden"] = [], True
+        fd["samples"] = [_redact(x, fd["from"] == "property") for x in fd["samples"]]
+    for lv in out["levels"]:
+        lv["samples"] = [_redact(x, lv["from"] == "property") for x in lv["samples"]]
+        for r in lv["readings"]:
+            if r["from"] == "property" and not r["chosen"] and str(r.get("value")) not in named:
+                r["samples"], r["hidden"] = [], True
+            r["samples"] = [_redact(x, r["from"] == "property") for x in r["samples"]]
     for lv in LEVELS:
-        out[lv] = dict((i, (v.split("/")[-1] if v else None)) for i, v in result[lv].items())
+        out[lv] = dict((i, (_own(v) if v else None)) for i, v in result[lv].items())
     s = out["levels"][0]
     out["best"] = ("Sites read from %s: %d of %d nodes in %d sites (%s)." % (s["rule"], round(s["coverage"] * N), N, s["groups"], s["decided"])
                    if s["groups"] else "No reading gives the nodes a site: set netmap_site_pattern or netmap_hierarchy (docs/NETWORK_MAP.md).")
     out["fingerprint"] = "site:%s:%s" % (s["from"], s.get("value"))
     return out
+
+
+SCOPE = "\x1f"                                          # between a level's scope and its own value: never in a value read
+
+
+EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
+PHONE = re.compile(r"(\+?\d[\d\s().-]{6,}\d)")
+SERIAL = re.compile(r"^(?=(?:.*\d){5})[A-Z0-9-]{10,}$", re.I)
+
+
+def _redact(x, prop=False):
+    """An example shown in the report: an e-mail address or a phone number is not shown; nor, from a custom property, a
+    serial-like value (a name or a subnet keeps its digits)."""
+    t = str(x)
+    if EMAIL.search(t) or (prop and SERIAL.match(t.strip())):
+        return "(not shown)"
+    if PHONE.search(t) and not IPV4.match(t.split("/")[0]):
+        return "(not shown)"
+    return t
+
+
+def _safe(fn):
+    """A reading -> one that never raises (a bad value is no group) and never holds SCOPE."""
+    def f(n):
+        try:
+            x = fn(n)
+        except Exception:
+            return None
+        return x.replace(SCOPE, " ") if isinstance(x, str) else x
+    return f
+
+
+def _own(v):
+    """A scoped value (site SCOPE building SCOPE closet) -> its own part, whatever "/" or "," it holds."""
+    return str(v).rsplit(SCOPE, 1)[-1]
 
 
 def _uniq(it):
@@ -994,7 +1063,13 @@ def model(raw, opts=None):
             "topology_ok": bool(raw.get("topology_ok")), "no_site": no_site,
             "discovery": {"levels": found["levels"], "fields": found["fields"], "best": found["best"],
                           "roles": _role_counts(nodes), "unplaced_nodes": sorted(n["name"] for n in nodes if n["site"] == no_site)},
-            "fingerprint": found["fingerprint"]}
+            "fingerprint": found["fingerprint"], "legacy_fingerprint": _legacy_fingerprint(o)}
+
+
+def _legacy_fingerprint(o):
+    """What a 1.85 copy (no "h") was read by: its netmap_site_by - Location by default, else that property."""
+    sb = str(o.get("site_by") or "").strip()
+    return "site:property:%s" % sb if sb and sb.lower() not in ("auto", "location") else "site:location:1"
 
 
 def _role_counts(nodes):
@@ -1055,7 +1130,7 @@ def compare(m, snap):
     old_l = set(old_lab)
     # 1.95.0: the copy's sites were read another way (an older version: Location; another rule): said once, and a missing
     # node's site is read again from its name by today's rule - never a site of the old reading
-    new_way = (snap.get("h") or "site:location:1") != (m.get("fingerprint") or "")
+    new_way = (snap.get("h") or m.get("legacy_fingerprint") or "site:location:1") != (m.get("fingerprint") or "")
     resite = _resite(m) if new_way else None
     links_whole, nodes_whole = bool(m.get("topology_ok")), not m.get("cut")   # removals only from a whole read
     ids = dict((str(n["id"]), n) for n in m["nodes"])
@@ -1119,10 +1194,15 @@ def _resite(m):
     lv = ((m.get("discovery") or {}).get("levels") or [{}])[0]
     no_site = m.get("no_site") or "Not placed"
     if lv.get("from") in ("pattern", "part") and lv.get("value"):
-        try:
-            fn = _rule_fn({"from": lv["from"], "value": lv["value"]}, {}, ",")
-        except (re.error, ValueError):
-            return lambda n: no_site
+        auto = [fn for label, f, v, fn in readings([], []) if label == lv.get("rule")]
+        if auto:                                           # a reading discovery found: the same function (the name in capitals)
+            fn = auto[0]
+        else:                                              # netmap_site_pattern / netmap_hierarchy: as the job applied it
+            try:
+                fn = _rule_fn({"from": lv["from"], "value": lv["value"]}, {}, ",")
+            except (re.error, ValueError):
+                return lambda n: no_site
+        fn = _safe(fn)
         return lambda n: fn(n) or no_site
     return lambda n: no_site
 

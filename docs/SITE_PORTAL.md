@@ -735,7 +735,10 @@ SolarWinds. Behind it, while someone has the page open, the server reads the sta
 every viewer shares, never one per viewer - and the page asks the server for it (`/portal/api/netmap`, with an ETag: an
 unchanged map costs nothing).
 A node that goes down pulses red, a link that drops stops and turns red, a toast says what changed, and *updated N s
-ago* says how fresh it is. A read that fails keeps the last map and says why.
+ago* says how fresh it is. A read that fails keeps the last map and says why; a whole read that fails is followed by
+a status read of the kept map. The kept map names SolarWinds' address and the netmap settings: after a deploy that
+changes the address it is not shown; one that changes a setting shows it, and the next read is whole. A netmap
+setting that cannot work (`netmap_site_pattern`, `netmap_hierarchy`, `netmap_roles`) stops the deploy, with the reason.
 
 - The login is one podman secret on the server (`site-portal-swis`), as the AAP token: never in a file, the unit or
   the logs. The service's log says each read that fails (once) and when it reads again.

@@ -5,6 +5,20 @@ the map's markup, data, style and script, put into the page by report_page_exten
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import importlib.util
+import os
+
+# the discovery settings' check (1.95.0): plugins/module_utils/site_swis.py, loaded as ad_filters.py loads site_time
+_spec = importlib.util.spec_from_file_location(
+    "site_swis", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_swis.py"))
+_sw = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_sw)
+
+
+def netmap_check_opts(o):
+    """The portal deploy's netmap settings -> what is wrong with them ([] = fine): the job's own check (check_opts)."""
+    return _sw.check_opts(o if isinstance(o, dict) else {})
+
 
 MARK = "@@NETMAP@@"                     # the map section's place in the page (report_page_extend puts the map there)
 ORDER = {"Down": 0, "Warning": 1, "Unknown": 2, "Up": 3}
@@ -159,12 +173,14 @@ def _discovery_sections(m, full=True):
                     "columns": ["", "Read from", "Nodes", "Groups", "Links inside", "Pieces a group", "Score", "Examples"],
                     "rows": [["chosen" if r.get("chosen") else "", r["rule"], _pct(r["coverage"]), r["groups"],
                               "-" if r.get("cohesion") is None else _pct(r["cohesion"]), r.get("pieces", 1),
-                              "-" if r.get("score") is None else r["score"], ", ".join(r.get("samples") or [])] for r in rd]})
+                              "-" if r.get("score") is None else r["score"], _examples(r)] for r in rd]})
     if d.get("fields"):
         out.append({"title": "Discovery: what the nodes carry", "status": "info",
-                    "text": "Each field: how many nodes have a value, how many different values, and five of them.",
+                    "text": "Each field: how many nodes have a value, how many different values, and five of them. A custom property's "
+                            "values are shown only when netmap_properties or netmap_hierarchy names it, or a level reads it; e-mail "
+                            "addresses, phone numbers and serial-like values never.",
                     "columns": ["Field", "Nodes with a value", "Different values", "Examples"],
-                    "rows": [[f["field"], f["filled"], f["distinct"], ", ".join(f["samples"])] for f in d["fields"]]})
+                    "rows": [[f["field"], f["filled"], f["distinct"], _examples(f)] for f in d["fields"]]})
     if d.get("roles"):
         out.append({"title": "Discovery: the devices' roles", "status": "info",
                     "text": "From the name (CR, DS, AS, FW ...), else the model, else the number of links; netmap_roles sets one by name.",
@@ -212,11 +228,18 @@ def netmap_xlsx(res):
         for lv in d["levels"]:
             for x in lv.get("readings") or []:
                 rows.append([lv["level"], "chosen" if x.get("chosen") else "", x["rule"], x["coverage"], x["groups"], x.get("cohesion"), x.get("pieces"),
-                             x.get("score"), lv.get("decided") if x.get("chosen") else "", ", ".join(x.get("samples") or [])])
-        rows += [["field", "", f["field"], f["filled"], f["distinct"], "", "", "", "", ", ".join(f["samples"])] for f in d.get("fields") or []]
+                             x.get("score"), lv.get("decided") if x.get("chosen") else "", _examples(x)])
+        rows += [["field", "", f["field"], f["filled"], f["distinct"], "", "", "", "", _examples(f)] for f in d.get("fields") or []]
         sheets.append({"name": "Discovery", "columns": ["Level", "Chosen", "Read from", "Coverage (nodes with a value)", "Groups", "Links inside",
                                                         "Pieces a group", "Score", "Decided by", "Examples"], "rows": rows})
     return sheets
+
+
+def _examples(x):
+    """A field's or a reading's examples - or why a custom property's are not shown."""
+    if x.get("hidden"):
+        return "(values not shown: name it in netmap_properties to see them)"
+    return ", ".join(x.get("samples") or [])
 
 
 def netmap_lines(res):
@@ -239,7 +262,8 @@ def netmap_lines(res):
         for lv in d.get("levels") or []:
             out.append("  %s: %s - %d groups, %s of the nodes (%s)" % (lv["level"], lv["rule"], lv["groups"], _pct(lv["coverage"]), lv.get("decided") or "-"))
         for f in sorted(d.get("fields") or [], key=lambda f: (-f["filled"], f["distinct"]))[:12]:
-            out.append("  field %s: %d nodes, %d values, e.g. %s" % (f["field"], f["filled"], f["distinct"], ", ".join(f["samples"][:3])))
+            out.append("  field %s: %d nodes, %d values%s" % (f["field"], f["filled"], f["distinct"],
+                                                               (", e.g. " + ", ".join(f["samples"][:3])) if f.get("samples") else ""))
     for s in (m.get("sites") or [])[:60]:
         out.append("%s: %d nodes, %d down, %d warning - %s" % (s["name"], s["nodes"], s["down"], s["warning"],
                    ("%.3f, %.3f (%s)" % (s["lat"], s["lon"], FROM.get(s["from"], s["from"]))) if s.get("lat") is not None else "unplaced"))
@@ -272,4 +296,5 @@ def netmap_summary_counts(res):
 class FilterModule(object):
     def filters(self):
         return {"netmap_doc": netmap_doc, "netmap_xlsx": netmap_xlsx, "netmap_lines": netmap_lines,
-                "netmap_page_extra": netmap_page_extra, "netmap_summary_counts": netmap_summary_counts}
+                "netmap_page_extra": netmap_page_extra, "netmap_summary_counts": netmap_summary_counts,
+                "netmap_check_opts": netmap_check_opts}

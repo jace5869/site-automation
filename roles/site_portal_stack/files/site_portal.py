@@ -2953,16 +2953,32 @@ class NetLive(object):
         self.source = source or SwisSource(cfg)
         self.raw, self.full_at, self.kind, self.from_disk = None, 0.0, "", False
         self.cache = os.path.join(cfg.data, "netmap-cache.json")
+        o = cfg.netmap_opts
+        self.bad = site_swis.check_opts(o)                   # a setting that cannot work: said as the reason, never read
+        self.fp = ""                                         # the last read's site reading (auto keeps it on a near tie)
         self._load()
+
+    def _sig(self):
+        """(SolarWinds' address, the netmap settings) as two short hashes: a kept map read elsewhere or by other settings."""
+        try:
+            url = site_swis.base_url(self.cfg.swis_url)
+        except Exception:  # pylint: disable=broad-except
+            url = str(self.cfg.swis_url or "")
+        return (hashlib.sha1(url.encode("utf-8")).hexdigest()[:16],
+                hashlib.sha1(json.dumps(self.cfg.netmap_opts, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16])
 
     def _load(self):
         """The map kept on disk (the last good one): shown at once, as of its time - the next read replaces it."""
         try:
             with open(self.cache, encoding="utf-8") as fh:
                 d = json.load(fh)
-            if d.get("v") == 1 and isinstance(d.get("map"), str) and d["map"]:
+            sig_url, sig_opts = self._sig()
+            if d.get("v") == 1 and isinstance(d.get("map"), str) and d["map"] and d.get("url") == sig_url:
                 self.map_json, self.read_at, self.full_at = d["map"], float(d.get("read_at") or 0), float(d.get("full_at") or 0)
                 self.raw = d.get("raw") if isinstance(d.get("raw"), dict) else None
+                self.fp = str(d.get("fp") or "")
+                if d.get("opts") != sig_opts:           # the settings changed since: shown as it was, the next read is whole
+                    self.raw, self.full_at, self.fp = None, 0.0, ""
                 self.etag = '"%s"' % hashlib.sha1(self.map_json.encode("utf-8")).hexdigest()[:20]
                 self.from_disk, self.kind = True, d.get("kind") or "full"
         except (OSError, ValueError, TypeError):
@@ -2970,11 +2986,16 @@ class NetLive(object):
 
     def _save(self, body, raw):
         tmp = self.cache + ".tmp"
+        sig_url, sig_opts = self._sig()
         try:
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.unlink(tmp)                               # a leftover (any mode): gone, then made new 0600
+            except FileNotFoundError:
+                pass
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump({"v": 1, "read_at": self.read_at, "full_at": self.full_at, "kind": self.kind, "map": body, "raw": raw}, fh,
-                          separators=(",", ":"), ensure_ascii=False)
+                json.dump({"v": 1, "read_at": self.read_at, "full_at": self.full_at, "kind": self.kind, "map": body, "raw": raw,
+                           "url": sig_url, "opts": sig_opts, "fp": self.fp}, fh, separators=(",", ":"), ensure_ascii=False)
             os.replace(tmp, self.cache)                          # whole or not at all
         except OSError as e:
             self.log.add({"event": "netmap", "cache": "not kept", "why": clean(str(e), 200)})
@@ -2995,14 +3016,25 @@ class NetLive(object):
         """One read: the whole map when there is none or it is netmap_full_seconds old, else the status only -> (data, raw)."""
         c, o = self.cfg, self.cfg.netmap_opts
         full_every = max(NETMAP_FULL_MIN, int(o.get("full_seconds") if o.get("full_seconds") is not None else 1800))
+        if self.bad:
+            raise ValueError("a netmap setting cannot work: " + "; ".join(self.bad))
         if self.raw is None or time.time() - self.full_at >= full_every:
-            raw, kind = self.source.read_full(), "full"
+            try:
+                raw, kind = self.source.read_full(), "full"
+            except Exception as e:  # pylint: disable=broad-except
+                if self.raw is None:
+                    raise
+                self.log.add({"event": "netmap", "read": "whole map failed, status read on the kept one", "why": clean(str(e), 200)})
+                raw, kind = self.source.read_status(self.raw), "status"       # the whole map failed: the kept one, its status fresh
+                self.full_at = time.time() - full_every + max(NETMAP_FULL_MIN // 2, self.cfg.netmap_seconds)   # whole again soon
         else:
             raw, kind = self.source.read_status(self.raw), "status"
         m = site_swis.model(raw, {"site_by": o.get("site_by") or "auto", "site_split": o.get("site_split", ","), "sites": o.get("sites") or {},
                                   "lat_property": o.get("lat_property") or "", "lon_property": o.get("lon_property") or "",
                                   "properties": o.get("properties") or [], "warn_util": o.get("warn_util", 90), "no_site": o.get("no_site") or "Not placed",
-                                  "site_pattern": o.get("site_pattern") or "", "hierarchy": o.get("hierarchy") or [], "roles": o.get("roles") or {}})
+                                  "site_pattern": o.get("site_pattern") or "", "hierarchy": o.get("hierarchy") or [], "roles": o.get("roles") or {},
+                                  "prev_fingerprint": self.fp})
+        self.fp = m.get("fingerprint") or self.fp
         ver = (raw.get("version") or {}).get("platform")
         data = site_swis.page_data(m, run=shown(c, raw.get("read_at") or now_iso()), view=o.get("view") or "globe",
                                    source="SolarWinds%s (SWIS, read-only, live)" % ((" " + ver) if ver else ""))
