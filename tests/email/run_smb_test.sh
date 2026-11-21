@@ -90,7 +90,7 @@ check "  ...the page, latest, their JSON and the index on the server" \
     'cd /srv/its/aap/reports && ls linux-health-check/*_job-501.html && grep -q "Test formatted report" linux-health-check/latest.html && [ -f linux-health-check/latest.json ] && grep -q "linux-health-check/latest.html" index.json && [ -f index.html ]'
 check "  ...no temporary file left" '[ -z "$(find /srv/its/aap/reports -name "*.tmp")" ]'
 check "  ...site-report.js beside the index, the page and the index load it" \
-    'cd /srv/its/aap/reports && grep -q "window.siteReport" site-report.js && grep -q "src=\"../site-report.js?v=" linux-health-check/latest.html && grep -q "src=\"site-report.js?v=" index.html'
+    'cd /srv/its/aap/reports && v=$(grep -o "src=\"../site-report\.[0-9a-f]*\.js\"" linux-health-check/latest.html | head -1 | sed "s|src=\"../||; s|\"||") && [ -n "$v" ] && grep -q "window.siteReport" "$v" && grep -Eq "src=\"site-report(\.[0-9a-f]+)?\.js" index.html'
 run "a second template: added to the index; the address with report_web_url" ok -e "$smb" \
     -e '{"awx_job_template_name": "VM - health report", "awx_job_id": 502, "report_web_url": "https://reports.example.mil/aap"}' \
     -- 'Report: https://reports.example.mil/aap/vm-health-report/'
