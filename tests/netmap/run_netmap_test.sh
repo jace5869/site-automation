@@ -99,7 +99,7 @@ run "the first run: read, the report, emailed, on the website" ok "{$base, $mail
     "SolarWinds 2025.4.1 at https://127.0.0.1:$port:" "nodes (1 down" "Topology from Orion.TopologyConnections" \
     "Site A: 299 nodes" "(SolarWinds' Worldwide Map)" "Site D: 164 nodes" "(custom properties)" "Site F: 134 nodes" "(netmap_sites)" \
     "Site J: " "unplaced" "Not compared with an earlier run" "Network map: 1 down" "WAN link down" "not compared: " \
-    "Unplaced sites (3)" '"netmap_snapshot": {' "to net@example.mil"
+    "Unplaced sites (2)" '"netmap_snapshot": {' "to net@example.mil"
 reads_only "$work/swis.log"
 check "paged: Orion.Nodes asked page by page (WITH ROWS, 500 a page)" bash -c "test \$(grep -c ' Orion.Nodes ' '$work/swis.log') -ge 3"
 check "the interfaces in chunks of IDs (WHERE InterfaceID IN @ids)" bash -c "test \$(grep -c ' Orion.NPM.Interfaces ' '$work/swis.log') -ge 6"
@@ -148,7 +148,7 @@ s = json.load(open(sys.argv[1])); assert s["v"] == 2 and len(s["n"]) > 1400 and 
 
 # ---- other Orions: no TopologyConnections, no Worldwide Map; a property it does not have; site by a property -----------
 run "an Orion without TopologyConnections and the Worldwide Map: TopologyData, sites A-C unplaced" ok \
-    "{$base, \"netmap_solarwinds_url\": \"https://127.0.0.1:$((port + 4))\"}" "Topology from Orion.TopologyData" "Unplaced sites (6)"
+    "{$base, \"netmap_solarwinds_url\": \"https://127.0.0.1:$((port + 4))\"}" "Topology from Orion.TopologyData" "Unplaced sites (5)"
 check "no WorldMapPoint asked of that Orion" bash -c "! grep -q 'WorldMapPoint' '$work/swis2.log'"
 run "a custom property this Orion does not have: said, the rest read" ok "{$base, \"netmap_properties\": [\"Region\", \"Nope\"]}" \
     "Not read - custom property Nope: SolarWinds could not run this query (HTTP 400) - is it one of your node custom properties?" "Site A: 299 nodes"

@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.95.0 — 2026-11-21
+
+**Nothing to set up.** The next *Network map* run reads where each node belongs; its report's *Discovery* section says how.
+A site that set `netmap_site_by` (Location or a property) keeps it. Run *Site portal - deploy* once for the new page.
+
+**The network map, redesigned for a big, untidy Orion** (a site's first run: 967 nodes, 270 "sites" from Location's
+building and room text, none placed - an empty globe).
+
+- **Where a node belongs - read, and said** (`netmap_site_by: auto`, the new default): site > building > closet, from what
+  should agree - the name's parts (split at - _ . and where a digit meets a letter) and their letter and digit runs,
+  Location's parts, every node custom property (their names from SolarWinds' metadata: `netmap_discover`), the IPv4 /16
+  and /24, and the links (a site holds together on its own links; sites meet at a hub). Each level takes the reading
+  that covers the most nodes with a sane number of groups where the links stay inside; the closet is the distribution
+  switch above. Roles: core, distribution, access, firewall, router, wireless, server, other - from the name, the model,
+  the links.
+- **Said:** the report's *Discovery* section (last) and the workbook's *Discovery* sheet - the rule a level, what agrees,
+  what decided it, the other readings (the chosen one first), every field (nodes with a value, different values, five of
+  them), the roles by source, the nodes not placed. The job's output has it too.
+- **Or named:** `netmap_site_pattern` (a regular expression's first group in the caption), `netmap_hierarchy` (each
+  level: pattern, property, location, subnet, part, topology, none), `netmap_roles` (a role by name, `*` and `?`). A
+  setting that cannot work stops the job before SolarWinds is asked.
+- **`netmap_sites` by pattern:** `{"SITA*": {lat, lon}}` places every site whose name starts so (the name itself first,
+  then the most specific pattern).
+- **The map, one level at a time** (the report website and the portal):
+  - *World*: site tiles, worst first, with **Links between sites** (counted, down first), or the globe when most sites
+    are placed (*Tiles / Map*): sites on one spot share a label and a count, and no label covers another;
+  - *Site*: its buildings, the links between them counted;
+  - *Building*: its devices in tiers - edge, core, servers and wireless, then each closet (a distribution switch over its
+    access switches) wrapping in rows, never wider than the page; 18 a closet, down and warning always among them, and
+    *Show all N*; the lines keep to the gaps, the gutter and a channel above each row of closets - none crosses a box;
+  - *Device*: its links' interfaces and neighbours.
+- **The bar:** breadcrumbs, one search (sites, buildings, devices, IPs; grouped; arrow keys), three chips (Down, Warnings,
+  Changed), Filters (role, vendor). No site list of 270, no *Expand all*, no World/Sites switch. No history step.
+- **The portal is quick:** the last map is kept on disk (`PORTAL_DATA/netmap-cache.json`, 0600) and shown at once, *as of
+  HH:MM*, also after a restart; behind it the status every `netmap_live_seconds` (2 or 3 queries) and the whole map every
+  `netmap_full_seconds` (new, 1800). The reader is a seam (`SwisSource`: read_full, read_status) the report database's
+  snapshot (1.96.0) will plug into.
+- **The report:** Sites with their buildings; the unplaced sites listed up to 30 with the pattern hint; the job's output up
+  to 60 sites.
+- **Compatible:** the first run after the upgrade says *Sites read a new way* once (node and link changes still compared; a
+  missing node's site read by today's rule); a kept 1.85 map (the copy job) still draws.
+- Measured on a synthetic 1,125-node Orion: the model in 0.12 s; the page's data 460 KB; the page drawn in under 0.1 s,
+  a level in 2-3 ms.
+- Tests: `tests/test_netmap.py` Discovery1950 (an untidy Orion: two naming schemes, DNS- and IP-only names, no building
+  part, nodes with no link, one /24 for two buildings; the overrides; the checks; patterns; the new-way line; 1,000 nodes
+  quick), the portal's two speeds, the map kept on disk shown with SolarWinds down, the seam with another source.
+
 ## 1.91.0 — 2026-11-21
 
 **To set up: the job template *Security - Java4Shell check (Keycloak)*** ("AAP - set up job templates" makes it: Machine credential,

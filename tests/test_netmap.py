@@ -155,7 +155,7 @@ class Swis(unittest.TestCase):
         self.assertEqual([by["Site %s" % c]["from"] for c in "ABCDEFGH"], ["worldmap"] * 3 + ["property"] * 2 + ["setting"] * 3)
         self.assertEqual(by["Site F"]["lat"], 2.4)                                          # netmap_sites any case: "site f"
         self.assertIsNone(by["Site J"]["lat"])
-        self.assertEqual(m["unplaced"], ["Site J", "constructor", "No site"])
+        self.assertEqual(m["unplaced"], ["Site J", "constructor", "Not placed"])        # 1.95.0: the nodes with no site
         self.assertEqual(by["Site A"]["nodes"], 299)
         self.assertEqual(sw.site_key("Site A, building 1, IDF 2"), "Site A")
         self.assertEqual(sw.site_key("Site A, building 1", ""), "Site A, building 1")
@@ -177,10 +177,10 @@ class Swis(unittest.TestCase):
     def test_roles(self):
         r = dict((n["name"], n["role"]) for n in self.m["nodes"])
         self.assertEqual(r["sa-core01"], "core")
-        self.assertEqual(r["sa-fw01"], "fw")
-        self.assertEqual(r["sa-dist01"], "dist")
-        self.assertEqual(r["sa-wlc01"], "wlc")
-        self.assertEqual(r["sa-acc001"], "acc")
+        self.assertEqual(r["sa-fw01"], "firewall")                  # 1.95.0: the roles' words (name, model, links; netmap_roles)
+        self.assertEqual(r["sa-dist01"], "distribution")
+        self.assertEqual(r["sa-wlc01"], "wireless")
+        self.assertEqual(r["sa-acc001"], "access")
 
     def test_middle_across_the_date_line(self):
         p = sw._mean_point([[10, 179.5], [10, -179.5]])
@@ -437,7 +437,7 @@ class Report(unittest.TestCase):
         self.assertNotIn("The map", t)                                                     # the email: no map
         self.assertTrue(t[0].startswith("Down or warning"))
         self.assertTrue(any(x.startswith("What changed since the last run (1)") for x in t))
-        self.assertIn("Unplaced sites (3)", t)
+        self.assertIn("Unplaced sites (2)", t)                                   # 1.95.0: "Not placed" is no site, not counted
         down = next(s for s in d["sections"] if s["title"].startswith("Down or warning"))
         self.assertEqual(len(down["rows"]), 5)                                             # netmap_max_rows
         self.assertIn("netmap_max_rows: 5", down["text"])
@@ -454,7 +454,7 @@ class Report(unittest.TestCase):
 
     def test_workbook(self):
         sheets = nf.netmap_xlsx(self.res)
-        self.assertEqual([s["name"] for s in sheets], ["Nodes", "Links", "WAN links", "Sites", "Changes"])
+        self.assertEqual([s["name"] for s in sheets], ["Nodes", "Links", "WAN links", "Sites", "Changes", "Discovery"])   # 1.95.0: Discovery
         self.assertEqual(len(sheets[0]["rows"]), len(self.res["map"]["nodes"]))
         self.assertIn("Region", sheets[0]["columns"])
         for s in sheets:
@@ -741,6 +741,9 @@ class Portal(unittest.TestCase):
         self.wait_map(lambda d: d.get("map") and not d.get("stale"))                    # and back once SolarWinds answers
 
     def test_7_codex2_links_not_refreshed_keep_the_last_map(self):
+        sp = self.sp
+        sp.NETMAP_FULL_MIN, self.cfg.netmap_opts["full_seconds"] = 0, 0          # 1.95.0: the whole read each time (the topology is read only there)
+        self.addCleanup(lambda: (setattr(sp, "NETMAP_FULL_MIN", 300), self.cfg.netmap_opts.pop("full_seconds", None)))
         d0, _ = self.wait_map(lambda d: d.get("map") and not d.get("stale"))
         links = len(d0["map"]["links"])
         self.fake.set_state({"break": ["Orion.TopologyConnections"]})
@@ -752,12 +755,253 @@ class Portal(unittest.TestCase):
             self.fake.set_state({})
         self.wait_map(lambda d: d.get("map") and not d.get("stale"))
 
+    def test_8_two_speeds_and_the_map_kept_on_disk(self):
+        """1.95.0: after a whole read, the status only (2-3 queries) until netmap_full_seconds; the last good map is kept on disk
+        (PORTAL_DATA/netmap-cache.json, 0600) and a new reader shows it at once - as of its time - before it reads anything."""
+        sp = self.sp
+        d0, _ = self.wait_map(lambda d: d.get("map") and not d.get("stale"))
+        d1, _ = self.wait_map(lambda d: d.get("kind") == "status")
+        self.assertEqual(d1["source"], "swis-live")
+        path = os.path.join(self.cfg.data, "netmap-cache.json")
+        self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+        with open(path) as fh:
+            kept = json.load(fh)
+        self.assertEqual(kept["v"], 1)
+        self.assertNotIn(PW, json.dumps(kept))                                      # the login is never in it
+        self.fake.set_state({"break": ["Metadata.Entity", "Orion.Nodes"]})          # SolarWinds refusing: the kept map still shows at once
+        try:
+            t = time.time()
+            live = sp.NetLive(self.cfg, self.portal.log)
+            code, body, etag = live.answer()
+            self.assertLess(time.time() - t, 1.0)
+            d = json.loads(body)
+            self.assertTrue(d["from_disk"] and d["map"]["nodes"] and d["as_of"])
+            self.assertIsNone(live.thread)                                           # nothing read for that: no viewer asked yet
+        finally:
+            self.fake.set_state({})
+
+    def test_9_the_seam_takes_another_source(self):
+        """1.95.0: a source gives collect()'s raw dict (read_full) and a status read (read_status) - the report database's snapshot
+        (1.96.0) is meant to be one."""
+        sp = self.sp
+        raw = sw.collect(sw.Client(self.fake.url, "svc_swis_ro", PW, verify=False), {"lat_property": "Lat", "lon_property": "Lon"})
+
+        class Src(object):
+            kind = "db-snapshot"
+            calls = []
+
+            def read_full(self):
+                self.calls.append("full")
+                return raw
+
+            def read_status(self, r):
+                self.calls.append("status")
+                return r
+        cfg = sp.Config(dict(self.env, PORTAL_DATA=tempfile.mkdtemp()))
+        live = sp.NetLive(cfg, self.portal.log, source=Src())
+        data, got, kind = live.read_once()
+        self.assertEqual((kind, Src.calls), ("full", ["full"]))
+        self.assertEqual(len(data["nodes"]), len(raw["nodes"]))
+        live.raw, live.full_at = got, time.time()
+        self.assertEqual(live.read_once()[2], "status")
+
     def test_5_who_may_see_it(self):
         r = urllib.request.Request(self.base + "/api/netmap", headers={"X-SSL-Client-Verify": "NONE"})
         with self.assertRaises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(r, timeout=10)
         self.assertEqual(e.exception.code, 403)
 
+
+
+def hostile():
+    """A made-up Orion that is not tidy (placeholders only): two naming schemes (SITA0101-B01-AS03 and sitc-2-acc-04), DNS-only
+    and IP-only captions, sites with no building part, nodes with no link, one /24 shared by two buildings, Location noise."""
+    import random
+    rnd = random.Random(7)
+    nodes, conns, nid = [], [], [1]
+
+    def node(name, ip, loc, dns="", vendor="Cisco", model="C9300-48P", status=1):
+        nid[0] += 1
+        nodes.append({"id": nid[0], "name": name, "dns": dns, "ip": ip, "status_code": status, "status_text": "", "vendor": vendor, "model": model,
+                      "location": loc, "resp": 3, "loss": 0, "unmanaged": False, "props": {"Dept": rnd.choice(["", "NETOPS", "J6"])}, "wm": None})
+        return nid[0]
+    hub = node("HUBA0001-CR01", "198.18.0.1", "Hub")
+    for i, code in enumerate(["SITA0101", "SITB0201", "SITD0301", "SITE0401", "SITF0501", "SITG0601"]):
+        core = node("%s-B01-CR01" % code, "198.18.%d.1" % (i + 1), "Bldg 1, Rm %d" % rnd.randint(1, 300))
+        conns.append([hub, 0, core, 0])
+        for b in (1, 2):
+            ds = node("%s-B%02d-DS01" % (code, b), "198.18.%d.%d" % (i + 1, 10 + b), "Bldg %d, MDF" % b)      # both buildings in one /24
+            conns.append([core, 0, ds, 0])
+            for a in range(4):
+                conns.append([ds, 0, node("%s-B%02d-AS%02d" % (code, b, a), "198.18.%d.%d" % (i + 1, 20 + b * 10 + a), "Bldg %d, IDF %d" % (b, a)), 0])
+    for i, code in enumerate(["sitc", "sith", "sitj", "sitk"]):                                       # the other scheme, no building part
+        core = node("%s-core-01" % code, "198.19.%d.1" % i, "Camp Example")
+        conns.append([hub, 0, core, 0])
+        for a in range(5):
+            conns.append([core, 0, node("%s-acc-%02d" % (code, a), "198.19.%d.%d" % (i, 10 + a), "Camp Example"), 0])
+    for k in range(12):                                                                              # no links, odd names
+        node("", "198.51.100.%d" % (k + 1), "", dns="ups-%02d.corp.example.mil" % k, vendor="APC", model="Smart-UPS")
+    for k in range(5):
+        node("198.51.100.%d" % (k + 40), "198.51.100.%d" % (k + 40), "")
+    return {"nodes": nodes, "connections": conns, "interfaces": [], "custom_properties": ["Dept"], "topology_ok": True, "read_at": "2026-11-21T09:00:00Z"}
+
+
+class Discovery1950(unittest.TestCase):
+    """1.95.0: where a node belongs (site > building > closet) and its role, read from what agrees - on an untidy Orion."""
+
+    def test_a_untidy_names(self):
+        raw = hostile()
+        m = sw.model(raw, {})
+        lv = dict((x["level"], x) for x in m["discovery"]["levels"])
+        site = dict((n["name"] or n["ip"], n["site"]) for n in m["nodes"])
+        self.assertEqual(site["SITA0101-B02-AS03"], "SITA0101")
+        self.assertEqual(site["sitc-acc-03"], "SITC")                       # the other scheme: its first part
+        self.assertEqual(lv["site"]["readings"][0]["chosen"], True)         # fix (a): the chosen reading first
+        self.assertTrue(lv["site"]["decided"])
+        self.assertGreaterEqual(lv["site"]["groups"], 10)
+        self.assertLess(lv["site"]["groups"], 40)                           # not one group per node, not two halves
+        self.assertIn(dict((n["name"], n["building"]) for n in m["nodes"])["SITB0201-B02-AS01"], ("B02", "Bldg 2"))   # the /24 holds both: never it
+        self.assertNotEqual(lv["building"]["from"], "subnet")
+        self.assertIn("Not placed", [s["name"] for s in m["sites"]] + [m.get("no_site")])
+        roles = dict((n["name"], n["role"]) for n in m["nodes"])
+        self.assertEqual((roles["SITA0101-B01-CR01"], roles["SITA0101-B01-DS01"], roles["SITA0101-B01-AS00"]), ("core", "distribution", "access"))
+        self.assertEqual(roles["sith-core-01"], "core")
+        fields = dict((f["field"], f) for f in m["discovery"]["fields"])
+        self.assertIn("custom property Dept", fields)
+        self.assertLessEqual(len(fields["custom property Dept"]["samples"]), 5)
+        self.assertTrue(m["discovery"]["best"].startswith("Sites read from "))
+
+    def test_b_all_yml_names_it(self):
+        raw = hostile()
+        m = sw.model(raw, {"site_pattern": r"^([A-Za-z]{4})", "hierarchy": [{"level": "building", "from": "none"}], "roles": {"*-AS0?": "wireless"}})
+        lv = dict((x["level"], x) for x in m["discovery"]["levels"])
+        self.assertEqual(lv["site"]["decided"], "set in all.yml (netmap_site_pattern)")
+        self.assertEqual(dict((n["name"], n["site"]) for n in m["nodes"])["SITA0101-B02-AS03"], "SITA")
+        self.assertEqual(set(n["building"] for n in m["nodes"]), {""})
+        r = dict((n["name"], (n["role"], n["role_from"])) for n in m["nodes"])
+        self.assertEqual(r["SITA0101-B02-AS03"], ("wireless", "netmap_roles"))
+        m = sw.model(raw, {"site_by": "Location"})                          # as before 1.95.0: Location up to the first comma
+        self.assertEqual(dict((n["name"], n["site"]) for n in m["nodes"])["SITA0101-B02-AS03"], "Bldg 2")
+        self.assertEqual(m["fingerprint"], "site:location:1")
+
+    def test_c_the_settings_are_checked(self):
+        self.assertEqual(sw.check_opts({"site_pattern": "^([A-Z]{4})", "hierarchy": [{"level": "building", "from": "location", "value": 1}], "roles": {"x*": "core"}}), [])
+        bad = " ".join(sw.check_opts({"site_pattern": "^[A-Z]{4}", "hierarchy": [{"level": "floor", "from": "pattern"}, {"level": "site", "from": "pattern", "value": "(("}],
+                                      "roles": {"x*": "printer"}}))
+        for w in ("has no group", "level is one of", "is not a regular expression", "netmap_roles"):
+            self.assertIn(w, bad)
+
+    def test_d_netmap_sites_by_pattern(self):
+        conf = {"SITA*": [1.0, 2.0], "SITA01*": [3.0, 4.0], "SITB0201": [5.0, 6.0]}
+        self.assertEqual(sw.place(conf, "SITA0101"), [3.0, 4.0])            # the most specific pattern
+        self.assertEqual(sw.place(conf, "sitA0999"), [1.0, 2.0])            # any case
+        self.assertEqual(sw.place(conf, "SITB0201"), [5.0, 6.0])            # the name itself first
+        self.assertIsNone(sw.place(conf, "SITC0301"))
+        m = sw.model(hostile(), {"sites": {"SITA*": {"lat": 10, "lon": 20}}})
+        self.assertEqual([s["from"] for s in m["sites"] if s["name"] == "SITA0101"], ["setting"])
+
+    def test_e_sites_read_a_new_way(self):
+        raw = hostile()
+        old = sw.snapshot(sw.model(raw, {"site_by": "Location"}))
+        gone = raw["nodes"].pop(5)
+        m = sw.model(raw, {})
+        ch = sw.compare(m, json.loads(json.dumps(old)))
+        self.assertEqual(ch[0]["kind"], "Sites read a new way")             # said once, first
+        miss = [c for c in ch if c["kind"] == "Missing node"]
+        self.assertEqual([c["what"] for c in miss], [gone["name"]])
+        self.assertEqual(miss[0]["site"], gone["name"].split("-")[0])       # its site by today's rule, never the old reading's
+        self.assertEqual(sw.compare(sw.model(raw, {}), sw.snapshot(sw.model(raw, {}))), [])   # the same rule: nothing said
+
+    def test_f_a_big_network_stays_quick(self):
+        raw = hostile()
+        base = list(raw["nodes"])
+        for k in range(1, 8):                                                # about 1,000 nodes
+            for n in base:
+                if n["name"]:
+                    raw["nodes"].append(dict(n, id=n["id"] + 1000 * k, name=n["name"].replace("SIT", "S%dT" % k, 1)))
+        t = time.time()
+        sw.model(raw, {})
+        self.assertLess(time.time() - t, 3.0)
+
+
+def _browser():
+    for b in ("google-chrome", "chromium", "chromium-browser"):
+        if shutil.which(b):
+            return shutil.which(b)
+    return None
+
+
+@unittest.skipUnless(_browser(), "no google-chrome or chromium")
+class Building1950(unittest.TestCase):
+    """1.95.0: a building's closets - down and warning devices always among the shown ones, Show all lists every one, and no
+    link line crosses a device box or another closet (the routing keeps to the gaps, the gutter and the channels)."""
+
+    def page(self, js):
+        nodes = [{"id": 1, "name": "SITA0101-CR01", "site": "SITA0101", "building": "B01", "role": "core", "status": "Up"},
+                 {"id": 2, "name": "SITA0101-CR02", "site": "SITA0101", "building": "B01", "role": "core", "status": "Up"},
+                 {"id": 3, "name": "SITA0101-FW01", "site": "SITA0101", "building": "B01", "role": "firewall", "status": "Up"}]
+        links = [{"a": 3, "b": 1, "status": "Up"}, {"a": 1, "b": 2, "status": "Up"}]
+        nid = 10
+        for d in range(1, 6):                         # 5 closets of 30: two rows at 1280 px, so lower closets' uplinks cross a row
+            did = nid; nid += 1
+            nodes.append({"id": did, "name": "SITA0101-DS%02d" % d, "site": "SITA0101", "building": "B01", "role": "distribution", "status": "Up"})
+            links += [{"a": 1, "b": did, "status": "Up"}, {"a": 2, "b": did, "status": "Up"}]
+            for i in range(30):
+                st = "Down" if (d == 1 and i == 29) else ("Warning" if (d == 1 and i == 28) else "Up")
+                nodes.append({"id": nid, "name": "SITA0101-AS%02d%02d" % (d, i), "site": "SITA0101", "building": "B01", "closet": "SITA0101-DS%02d" % d,
+                              "role": "access", "status": st})
+                links.append({"a": did, "b": nid, "status": st if st == "Down" else "Up"})
+                nid += 1
+        data = {"run": "test", "sites": ["SITA0101"], "nodes": nodes, "links": links, "view": "tiles"}
+        with open(os.path.join(WEB, "netmap-map.html")) as fh:
+            markup = fh.read()
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        for n in ("netmap.js", "netmap.css"):
+            shutil.copy(os.path.join(WEB, n), d)
+        with open(os.path.join(d, "t.js"), "w") as fh:
+            fh.write("window.addEventListener('load',function(){setTimeout(function(){var r={};try{%s}catch(e){r.err=String(e)}"
+                     "document.getElementById('res').textContent=JSON.stringify(r)},300)});" % js)
+        with open(os.path.join(d, "p.html"), "w") as fh:
+            fh.write('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="netmap.css"></head><body>%s'
+                     '<script type="application/json" id="netmap-data">%s</script><pre id="res"></pre>'
+                     '<script src="netmap.js"></script><script src="t.js"></script></body></html>' % (markup, json.dumps(data).replace("</", "<\\/")))
+        out = subprocess.run([_browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1280,900", "--virtual-time-budget=5000",
+                              "--dump-dom", "file://" + os.path.join(d, "p.html")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             universal_newlines=True, timeout=120).stdout
+        return json.loads(re.search(r'<pre id="res">(.*?)</pre>', out, re.S).group(1).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+
+    NAMES = ("function names(){return [].map.call(document.querySelectorAll('.nm-draw .nm-dev'),function(g){return g.getAttribute('aria-label').split(',')[0]})}"
+             "nmTest.go('building','SITA0101','B01');")
+
+    def test_1_down_and_warning_are_shown_and_show_all(self):
+        r = self.page(self.NAMES + "var a=names();r.first=a.length;r.down=a.indexOf('SITA0101-AS0129')>=0;r.warn=a.indexOf('SITA0101-AS0128')>=0;"
+                      "var b=document.querySelector('.nm-more text');r.label=b.textContent;"
+                      "document.querySelector('.nm-more').dispatchEvent(new MouseEvent('click',{bubbles:true}));"
+                      "r.after=names().length;r.label2=document.querySelector('.nm-more text').textContent;")
+        self.assertNotIn("err", r)
+        self.assertEqual(r["first"], 3 + 5 + 5 * 18)          # the top tiers, 5 distribution switches, 18 per closet
+        self.assertTrue(r["down"] and r["warn"], r)            # the 29th and 30th of their closet, shown first anyway
+        self.assertEqual(r["label"], "Show all 30")
+        self.assertEqual(r["after"], 3 + 5 + 30 + 4 * 18)
+        self.assertEqual(r["label2"], "Show fewer")
+
+    def test_2_no_line_crosses_a_box(self):
+        r = self.page(self.NAMES + r"""
+var boxes=[].map.call(document.querySelectorAll('.nm-draw .nm-dev'),function(g){var m=/translate\(([-\d.]+),([-\d.]+)\)/.exec(g.getAttribute('transform'));return [+m[1],+m[2],+m[1]+112,+m[2]+36]});
+var cl=[].map.call(document.querySelectorAll('.nm-closet'),function(e){var x=+e.getAttribute('x'),y=+e.getAttribute('y');return [x,y,x+(+e.getAttribute('width')),y+(+e.getAttribute('height'))]});
+function inside(q,b){return q[0]>b[0]-2&&q[0]<b[2]+2&&q[1]>b[1]-2&&q[1]<b[3]+2}
+function hit(p,q,b){return Math.min(p[0],q[0])<b[2]-1&&Math.max(p[0],q[0])>b[0]+1&&Math.min(p[1],q[1])<b[3]-1&&Math.max(p[1],q[1])>b[1]+1}
+var bad=[],n=0;[].forEach.call(document.querySelectorAll('.nm-draw path.nm-l'),function(pa){n++;var t=pa.getAttribute('d').match(/[MHV]|[-\d.]+/g),x=0,y=0,pts=[],i=0;
+ while(i<t.length){var c=t[i++];if(c==='M'){x=+t[i++];y=+t[i++]}else if(c==='H')x=+t[i++];else y=+t[i++];pts.push([x,y])}
+ var a=pts[0],z=pts[pts.length-1];
+ for(var j=1;j<pts.length;j++){boxes.forEach(function(b){if(!inside(a,b)&&!inside(z,b)&&hit(pts[j-1],pts[j],b))bad.push(pa.getAttribute('d'))});
+  cl.forEach(function(b){if(!inside(a,b)&&!inside(z,b)&&hit(pts[j-1],pts[j],[b[0]+3,b[1]+3,b[2]-3,b[3]-3]))bad.push('closet '+pa.getAttribute('d'))})}});
+r.paths=n;r.bad=bad.slice(0,5);r.rows=cl.length?(cl[cl.length-1][1]>cl[0][1]):false;""")
+        self.assertNotIn("err", r)
+        self.assertTrue(r["rows"], "the fixture should wrap the closets into two rows")
+        self.assertGreater(r["paths"], 100)
+        self.assertEqual(r["bad"], [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
