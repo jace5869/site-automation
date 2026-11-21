@@ -182,7 +182,8 @@
     sites.forEach(function (s) { s.p = null;
       if (G.flat) { var x = wrap(s.lon - G.lam); s.p = flatXY(G.lam + x, s.lat, 0, G.lam); } else { var q = proj(s.v); if (q[2] > 0) s.p = q; } });
     sites.forEach(function (s) { if (s.p) site(s, now, s.p); });
-    labels(sites.filter(function (s) { return s.p; }).sort(function (a, b) { return b.n - a.n; }));
+    var RK = { Down: 0, Warning: 1 };              // 1.95.0: the labels that matter first (the one pointed at, down, warning, the biggest); one with no free place is left out
+    labels(sites.filter(function (s) { return s.p; }).sort(function (a, b) { return ((b === G.hover) - (a === G.hover)) || ((RK[a.worst] != null ? RK[a.worst] : 2) - (RK[b.worst] != null ? RK[b.worst] : 2)) || (b.n - a.n); }));
     var ms = performance.now() - t0; drawMs.push(ms); frames.push(now);
     if (drawMs.length > 240) { drawMs.shift(); frames.shift(); }
     if (perf && (frames.length % 30 === 0 || still())) {
@@ -292,13 +293,28 @@
   }
   function labels(list) {                              // right of the dot, else left, below, above: the first place that is free
     var c = ctx, taken = list.map(function (s) { return [s.p[0] - s.rr - 2, s.p[1] - s.rr - 2, s.p[0] + s.rr + 2, s.p[1] + s.rr + 2]; });
-    c.font = '700 12.5px system-ui,sans-serif'; c.textBaseline = 'middle'; c.lineWidth = 3.5; c.lineJoin = 'round';
+    var groups = [];                                     // sites on (nearly) one spot: one label, the first (the worst) and "+N", and a count
     list.forEach(function (s) {
-      var w = c.measureText(s.name).width, p = s.p, r = s.rr, h = 15, at = [[p[0] + r + 6, p[1]], [p[0] - r - 6 - w, p[1]], [p[0] - w / 2, p[1] + r + 12], [p[0] - w / 2, p[1] - r - 12]];
+      var g = groups.filter(function (g) { return Math.abs(g[0].p[0] - s.p[0]) < 10 && Math.abs(g[0].p[1] - s.p[1]) < 10; })[0];
+      if (g) g.push(s); else groups.push([s]);
+    });
+    c.font = '700 12.5px system-ui,sans-serif'; c.textBaseline = 'middle'; c.lineWidth = 3.5; c.lineJoin = 'round';
+    groups.forEach(function (g) {
+      var s = g[0], name = s.name + (g.length > 1 ? ' +' + (g.length - 1) : '');
+      if (g.length > 1) {                                // the count, on the dot's upper right
+        var bx = s.p[0] + s.rr * .8, by = s.p[1] - s.rr * .8, t = String(g.length);
+        c.font = '800 10px system-ui,sans-serif'; var bw = Math.max(15, c.measureText(t).width + 8);
+        c.beginPath(); c.arc(bx, by, bw / 2, 0, 7); c.fillStyle = K.ink; c.fill(); c.lineWidth = 2; c.strokeStyle = K['ng-ocean']; c.stroke();
+        c.fillStyle = K['ng-ocean']; c.textAlign = 'center'; c.fillText(t, bx, by + .5);
+        taken.push([bx - bw / 2, by - bw / 2, bx + bw / 2, by + bw / 2]);
+        c.font = '700 12.5px system-ui,sans-serif'; c.lineWidth = 3.5;
+      }
+      var w = c.measureText(name).width, p = s.p, r = s.rr + (g.length > 1 ? 6 : 0), h = 15, at = [[p[0] + r + 6, p[1]], [p[0] - r - 6 - w, p[1]], [p[0] - w / 2, p[1] + r + 12], [p[0] - w / 2, p[1] - r - 12]];
       var pick = at.filter(function (q) { var b = [q[0] - 2, q[1] - h / 2, q[0] + w + 2, q[1] + h / 2];
-        return !taken.some(function (t) { return b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]; }); })[0] || at[0];
+        return !taken.some(function (t) { return b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]; }); })[0];
+      if (!pick) return;                                 // crowded: no label (the dot stays; pointing at it, or zooming in, names it)
       taken.push([pick[0] - 2, pick[1] - h / 2, pick[0] + w + 2, pick[1] + h / 2]);
-      c.textAlign = 'left'; c.strokeStyle = K['ng-ocean']; c.strokeText(s.name, pick[0], pick[1]); c.fillStyle = K.ink; c.fillText(s.name, pick[0], pick[1]);
+      c.textAlign = 'left'; c.strokeStyle = K['ng-ocean']; c.strokeText(name, pick[0], pick[1]); c.fillStyle = K.ink; c.fillText(name, pick[0], pick[1]);
     });
   }
 
@@ -336,7 +352,9 @@
   function tipFor(h) {
     if (!h) return '';
     if (h.l) return h.tip;
-    return h.name + ' · ' + GL[h.worst] + ' ' + h.worst + ' · ' + h.n + ' devices · ' + h.c.Down + ' down, ' + h.c.Warning + ' warning · click to open';
+    var near = h.p ? sites.filter(function (o) { return o !== h && o.p && Math.abs(o.p[0] - h.p[0]) < 10 && Math.abs(o.p[1] - h.p[1]) < 10; }).map(function (o) { return o.name; }) : [];
+    return h.name + ' · ' + GL[h.worst] + ' ' + h.worst + ' · ' + h.n + ' devices · ' + h.c.Down + ' down, ' + h.c.Warning + ' warning · click to open' +
+      (near.length ? ' · also here: ' + near.slice(0, 6).join(', ') + (near.length > 6 ? ' +' + (near.length - 6) : '') + ' (zoom in to part them)' : '');
   }
   var drag = null;
   cv.addEventListener('pointerdown', function (e) { drag = { x: e.clientX, y: e.clientY, lam: G.lam, phi: G.phi, moved: false }; cv.setPointerCapture(e.pointerId); });
@@ -441,10 +459,10 @@
     G.k = F.from.k * Math.pow(F.to.k / F.from.k, e);
     if (t >= 1) { G.fly = null; setTimeout(function () { open(F.name); }, 120); }
   }
-  function open(name) { view('sites'); if (window.nmOpenSite) window.nmOpenSite(name); }
+  function open(name) { if (window.nmOpenSite) window.nmOpenSite(name); else view('site'); }   // 1.95.0: the site's own level (netmap.js)
   window.ngFly = fly;
 
-  /* ---- World / Sites ------------------------------------------------------------------------------------------------- */
+  /* ---- the world view, or another level (netmap.js) ------------------------------------------------------------------------------------------------- */
   var vb = [].slice.call(box.querySelectorAll('.nm-v'));
   function view(v) {
     box.setAttribute('data-view', v);
@@ -452,7 +470,7 @@
     if (v === 'world') { if (G.flat) G.fitPending = true; else G.k = Math.min(G.k, 1.2); G.idle = performance.now() + 1500; resize(); start(); }
     else { stop(); tip.hidden = true; }
   }
-  window.nmView = function (v) { view(v); if (v === 'sites' && window.nmShown) window.nmShown(); };
+  window.nmView = function (v) { view(v); };            // 1.95.0: world (this globe), tiles, site, building, device (netmap.js draws those)
   vb.forEach(function (b) {
     b.addEventListener('click', function () {
       var v = b.getAttribute('data-v'); if (v === box.getAttribute('data-view')) return;

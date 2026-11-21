@@ -8,11 +8,12 @@
   if (!box || !live || !window.NM) return;
   var url = live.getAttribute('data-src'), every = Math.max(5, +live.getAttribute('data-poll') || 15) * 1000;
   var tick = live.querySelector('.nm-tick'), toasts = document.getElementById('nm-toasts'), etag = '', readAt = 0, timer = 0, first = true;
-  var stale = '', xerr = '';       // the server's (it could not read SolarWinds) and ours (the portal did not answer): each cleared on its own
+  var stale = '', xerr = '', disk = '';   // disk: 1.95.0 - the map the server kept (on disk), as of its time, while it reads again       // the server's (it could not read SolarWinds) and ours (the portal did not answer): each cleared on its own
   function ago() {
     var why = xerr || stale;
     live.classList.toggle('stale', !!why);
     if (!readAt) { tick.textContent = why ? 'not read: ' + why : 'reading SolarWinds…'; return; }
+    if (disk && !why) { tick.textContent = 'as of ' + disk + ' · refreshing…'; return; }
     var s = Math.max(0, Math.round((Date.now() - readAt) / 1000));
     tick.textContent = (why ? 'not read again: ' + why + ' · ' : '') + 'updated ' + (s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s') + ' ago';
   }
@@ -52,7 +53,7 @@
       var r; try { r = JSON.parse(x.responseText); } catch (e) { xerr = 'the portal sent something else than the map'; ago(); next(every * 2); return; }
       xerr = '';
       etag = x.getResponseHeader('ETag') || '';
-      readAt = r.age == null ? 0 : Date.now() - Math.max(0, +r.age) * 1000; stale = r.stale || '';
+      readAt = r.age == null ? 0 : Date.now() - Math.max(0, +r.age) * 1000; stale = r.stale || ''; disk = r.from_disk ? (r.as_of || 'the last read') : '';
       var w = document.getElementById('nm-why');
       if (r.map) {
         if (w) w.hidden = true;
