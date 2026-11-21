@@ -66,6 +66,10 @@ A route has a collection and one or more of these keys. Each key given must fit.
 | `tech_areas` | the checklist's technology area (1.103.0) |
 | `os` | `rhel` or `windows` |
 
+A key takes a list, or text with commas or one per line (`match: "*DC*, *AD*"` is two patterns). Only `*` and `?` are
+special: a `[` is a `[`. A key given with no value (`match:` left empty) stops the job, named. It never fits every host.
+Since 1.103.1.
+
 So a route can go by STIG, by naming convention, or by both. Put your real collection names in your own `all.yml`:
 
 ```yaml

@@ -24,6 +24,13 @@ MOVE_KEEPS = ("A move keeps the asset's reviews and their history, its STIGs, me
               "staging collection that reached it would lose it - such an asset is not moved, a person decides.")
 
 
+def _rule_name(r):
+    """A route's name in the Routes table: its number, or its title when the plan names it otherwise (the STIG scans: "route 1"
+    of check_stig_stigman_collection_routes after the hosts' own rules, check_stig_stigman_collection)."""
+    n, title = r.get("n", ""), str(r.get("title") or "").strip()
+    return title if title and title != "route %s" % n else str(n)
+
+
 def _where(c):
     return "%s / %s" % (c.get("collection") or "-", c.get("asset") or "-") if c.get("collection") else (c.get("asset") or "-")
 
@@ -348,7 +355,7 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
     if held_moves:
         out.append({"title": "Not moved - a person decides (%d)" % len(held_moves), "status": "warning",
                     "columns": ["Asset", "In", "Its route", "Would lose it", "What to do"],
-                    "rows": [[x.get("asset", ""), x.get("from", ""), "%s (route %s)" % (x.get("to", ""), x.get("route", "?")),
+                    "rows": [[x.get("asset", ""), x.get("from", ""), "%s (%s)" % (x.get("to", ""), x.get("route_name") or "route %s" % x.get("route", "?")),
                               ", ".join(x.get("who") or []), "Move it in STIG Manager yourself, or take it out of that Restricted grant - the "
                               "next run moves it then."] for x in held_moves[:list_max]],
                     "text": MOVE_KEEPS + " These assets stay in the staging collection; their reviews are written there. Their "
@@ -357,7 +364,7 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
         rts = ci["routes"]
         out.append({"title": "Routes (%d)" % len(rts), "status": "critical" if any(r.get("error") for r in rts) else "ok",
                     "columns": ["Rule", "Collection", "Fits", "Problem"],
-                    "rows": [[str(r.get("n", "")), r.get("want", ""), r.get("text", ""), r.get("error") or "-"] for r in rts],
+                    "rows": [[_rule_name(r), r.get("want", ""), r.get("text", ""), r.get("error") or "-"] for r in rts],
                     "text": "stigman_ckl_import_routes, in order: the first rule that fits a host wins. A host no rule fits goes to "
                             "%s. An asset already in another collection is written there and never moved." % (col or "the staging collection")})
     if held:
@@ -416,16 +423,19 @@ def _state(c, done):
 # own routes (site_ckl_import's route_of, workflow 40's router): os the host's own (the scan's), match its names.
 # 1.103.0: stigs (the STIG it was scanned with), roles and tech_areas (the checklist's) too
 ROUTE_OS = ("rhel", "windows")
-ROUTE_LISTS = (("stigs", "stigs"), ("roles", "roles"), ("tech_areas", "tech_areas"))
+# 1.103.1: match too (Neon P1-2: "*DC*, *AD*" was one pattern with a comma in it)
+ROUTE_LISTS = (("match", "names"), ("stigs", "stigs"), ("roles", "roles"), ("tech_areas", "tech_areas"))
 ROUTE_KEYS = ("match", "stigs", "roles", "tech_areas", "os", "collection")
 
 
 def _route_list(v, n, key):
-    """A route's names or patterns: a list of text, or text with commas. Anything else stops the job, named."""
+    """A route's names or patterns: a list of text, or text with commas or one per line. Anything else (none, a number, a
+    mapping, a list holding one) stops the job, named."""
+    import re
     from ansible.errors import AnsibleFilterError
     if isinstance(v, str):
-        got = [x.strip() for x in v.split(",") if x.strip()]
-    elif isinstance(v, list) and all(isinstance(x, str) for x in v):
+        got = [x.strip() for x in re.split(r"[,\n]", v) if x.strip()]
+    elif isinstance(v, (list, tuple)) and all(isinstance(x, str) for x in v):
         got = [x.strip() for x in v if x.strip()]
     else:
         raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: %s is a list of names or patterns (or text "
@@ -454,8 +464,11 @@ def stig_collection_routes(hosts, routes=None):
             # its whole inventory name only, exact - never a pattern or a short name another host may share (Codex P1:
             # node.east's rule took node.west; final pass: db01's took db01.east by its short name)
             out.append({"collection": col, "inventory_hosts": [name], "title": "check_stig_stigman_collection"})
+    if routes is not None and not isinstance(routes, (list, tuple)):
+        raise AnsibleFilterError("check_stig_stigman_collection_routes is a list of routes, not %r - nothing planned" % (routes,))
     for n, r in enumerate(routes or [], 1):
-        if not isinstance(r, dict) or not str(r.get("collection") or "").strip():
+        c = r.get("collection") if isinstance(r, dict) else None
+        if not isinstance(c, (str, int)) or isinstance(c, bool) or not str(c).strip():
             raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: %r is not {collection: <its name>, and match, "
                                      "stigs, roles, tech_areas or os} - nothing planned" % (n, r))
         bad = sorted(set(r) - set(ROUTE_KEYS))
@@ -465,16 +478,12 @@ def stig_collection_routes(hosts, routes=None):
         # the plan names it as the site wrote it: "route 2" of check_stig_stigman_collection_routes (the hosts' own rules
         # above shift the import's numbers)
         rule = {"collection": str(r["collection"]).strip(), "title": "route %d" % n}
-        if r.get("match") is not None:
-            m = r["match"] if isinstance(r["match"], list) else [r["match"]]
-            rule["names"] = [str(x).strip() for x in m if str(x).strip()]
-            if not rule["names"]:
-                raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: match is empty" % n)
+        # 1.103.1 (Neon P1-1): a key given is a condition - match: or os: with no value stops the job, never fits every host
         for key, to in ROUTE_LISTS:
             if key in r:
                 rule[to] = _route_list(r[key], n, key)
-        if r.get("os") is not None:
-            o = str(r["os"]).strip().lower()
+        if "os" in r:
+            o = r["os"].strip().lower() if isinstance(r["os"], str) else None
             if o not in ROUTE_OS:
                 raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: os is rhel or windows, not %r" % (n, r["os"]))
             rule["os"] = [o]

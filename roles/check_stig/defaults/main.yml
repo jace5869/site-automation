@@ -121,7 +121,8 @@ check_stig_update_create_assets: false    # true = create the missing assets (be
 # 1.83.0, where a new asset goes (the STIG full scan and the STIG drift scan; workflow 40's router, site_ckl_import): a
 # host's own check_stig_stigman_collection first, then the first of these that fits. A route has a collection and any of:
 # match (its inventory name or check_stig_stigman_asset), stigs (1.103.0: the STIG it was scanned with, its id or title),
-# roles, tech_areas (the checklist's), os (rhel or windows) - * and ?, any case; each key given must fit. The first route
+# roles, tech_areas (the checklist's), os (rhel or windows) - * and ?, any case (a [ is a [); a list, or text with commas or
+# one per line; each key given must fit, and a key with no value stops the job (1.103.1). The first route
 # that fits ANY of a host's STIGs takes the whole host (one collection per asset): put the specific STIG rules first. No
 # route and no collection: listed (no collection for a new asset), never guessed. Your collections' names go in your
 # all.yml, e.g.

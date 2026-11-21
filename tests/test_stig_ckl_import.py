@@ -1170,7 +1170,7 @@ class Routes(unittest.TestCase):
             self.assertEqual([p["kind"] for p in plan], ["import"] * 3, acl)
             self.assertEqual(set((p["collectionId"], p["assetId"], "moved_asset" in p) for p in plan), {("5", "51", False)}, "its reviews: in staging")
             why = "the user auditor1 would lose vc01 (a Restricted grant in Staging) - move it in STIG Manager yourself, or take it out of that grant"
-            self.assertEqual(held, [{"asset": "vc01", "assetId": "51", "from": "Staging", "to": "VMware", "route": 1, "who": ["the user auditor1"],
+            self.assertEqual(held, [{"asset": "vc01", "assetId": "51", "from": "Staging", "to": "VMware", "route": 1, "route_name": "route 1", "who": ["the user auditor1"],
                                      "files": ["vc01.ckl"], "why": why}], acl)
             self.assertEqual(cks[0]["route"], "route 1 (stigs VMW_*) -> VMware - not moved - a person decides: " + why)
             self.assertIn("/collections/5/grants/11/acl", f.calls)
@@ -1850,6 +1850,67 @@ class PlanOnlyEntry(unittest.TestCase):
         self.assertEqual([(r["name"], r.get("tasks_from")) for r in inc], [("stigman_ckl_import", "plan.yml")])
         with open(os.path.join(ROOT, "roles", "stigman_ckl_import", "tasks", "main.yml")) as f:
             self.assertNotIn("_ci_plan_only", f.read())
+
+
+class Review11031(unittest.TestCase):
+    """1.103.1, Neon's review of 1.103.0: never the wrong collection."""
+
+    def test_a_route_to_a_collection_left_out_by_a_bang_stops_the_plan(self):
+        # P1-4: ["*", "!Linux"] and a route to Linux: Linux was never searched, so its asset looked new and was created again
+        with self.assertRaises(ci.Fail) as e:
+            run_routes(routed(), VC, [{"collection": "Linux", "names": ["vc*"]}], collections=["*", "!Linux"])
+        self.assertIn("route 1 goes to Linux, a collection stigman_ckl_import_collections leaves out (a !): it is never searched",
+                      str(e.exception))
+        # the STIG scans' name for it
+        with self.assertRaises(ci.Fail) as e:
+            run_routes(routed(), VC, [{"collection": "Linux", "names": ["vc*"], "title": "route 3"}], collections=["!Lin*"])
+        self.assertIn("route 3 goes to Linux, a collection stigman_ckl_import_collections leaves out", str(e.exception))
+        # a ! of another collection: planned
+        plan = run_routes(routed(), VC, [{"collection": "Linux", "names": ["vc*"]}], collections=["*", "!Windows"])[1]
+        self.assertEqual([p["collection"] for p in plan if p["kind"] == "create"], ["Linux"])
+
+    def test_a_bracket_in_an_exclusion_is_a_bracket(self):
+        # P1-3: check_stig_stigman_collections_exclude ["[Old]*"] was a character class - it left out Ops too
+        cols = [{"collectionId": "1", "name": "[Old] Archive"}, {"collectionId": "2", "name": "Ops"}, {"collectionId": "3", "name": "Data"}]
+        st, s = ci.pick_collections(cols, ["*"], "", None, True, ["[Old]*"])
+        self.assertEqual([c["name"] for c in s], ["Data", "Ops"])
+        st, s = ci.pick_collections(cols, ["*"], "", None, True, ["[z-a]*"])
+        self.assertEqual(len(s), 3)
+        with self.assertRaises(ci.Fail) as e:
+            run_routes(dict(routed(), collections=routed()["collections"] + [{"collectionId": "4", "name": "[Old] Archive"}]), VC,
+                       [{"collection": "[Old] Archive", "names": ["vc*"]}], collections_exclude=["[old]*"])
+        self.assertIn("route 1 goes to [Old] Archive, a collection check_stig_stigman_collections_exclude leaves out", str(e.exception))
+
+    def test_two_routes_to_one_collection_by_id_and_name_do_not_conflict(self):
+        # P2: "9" and "VMware" are one collection - no "it fits route 2 ... too"
+        cks = run_routes(routed(), VC, [{"collection": "9", "names": ["vc*"]}, {"collection": "VMware", "stigs": ["VMW_*"]},
+                                        {"collection": "Windows", "stigs": ["VMW_*"]}])[0]
+        why = set(c["route"] for c in cks)
+        self.assertEqual(len(why), 1)
+        self.assertIn("it fits route 3 (Windows, by %s) too" % ARIA, why.pop())
+        cks = run_routes(routed(), VC, [{"collection": "9", "names": ["vc*"]}, {"collection": "VMware", "stigs": ["VMW_*"]}])[0]
+        self.assertNotIn("too", " ".join(c["route"] for c in cks))
+
+    def test_the_routes_table_names_a_route_as_the_plan_does(self):
+        # P2: the Routes table numbered the STIG scans' route 1 as 2 when a host had its own collection
+        rules = cf.stig_collection_routes([{"name": "web01.example.mil", "asset": "", "collection": "Windows"}],
+                                          [{"match": "vc*", "collection": "VMware"}])
+        out = run_routes(routed(), VC, rules)
+        self.assertEqual([(r["n"], r["title"]) for r in out[5]], [(1, "check_stig_stigman_collection"), (2, "route 1")])
+        rep = cf.stig_ckl_report({"files": [{"name": "vc01.ckl", "checklists": 1}], "checklists": out[0], "plan": out[1], "left": out[2],
+                                  "routes": out[5]}, out[1], [], True)
+        table = [s for s in rep["sections"] if s["title"].startswith("Routes")][0]
+        self.assertEqual([r[0] for r in table["rows"]], ["check_stig_stigman_collection", "route 1"])
+        # workflow 40's own rules keep their numbers
+        out = run_routes(routed(), VC, [{"collection": "VMware", "names": ["vc*"]}])
+        rep = cf.stig_ckl_report({"files": [], "checklists": out[0], "plan": out[1], "left": out[2], "routes": out[5]}, out[1], [], True)
+        self.assertEqual([r[0] for r in [s for s in rep["sections"] if s["title"].startswith("Routes")][0]["rows"]], ["1"])
+
+    def test_a_routes_missing_collection_is_named_as_the_plan_names_it(self):
+        with self.assertRaises(ci.Fail) as e:
+            run_routes(routed(), VC, [{"collection": "Windows", "inventory_hosts": ["x"], "title": "check_stig_stigman_collection"},
+                                      {"collection": "Lab", "names": ["vc*"], "title": "route 1"}])
+        self.assertIn("stigman_ckl_import_routes, rule 2 (route 1): no collection Lab that the client can read", str(e.exception))
 
 
 if __name__ == "__main__":

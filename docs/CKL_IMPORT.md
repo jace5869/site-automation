@@ -267,6 +267,10 @@ would look new): give it Full there. A collection the client has no grant in is 
 is there only would be created again in its route's collection, so give the client Full in every collection your hosts
 are in. The run reads each collection's assets once: it takes longer the more collections the client can read.
 
+A `!` in `stigman_ckl_import_collections` still leaves a collection out (`['*', '!Archive*']`). A rule whose
+collection is left out that way stops the plan, named (1.103.1). Its assets are never searched, so a host there would
+look new and be created again.
+
 ### Moves out of the staging collection - `stigman_ckl_import_route_move`
 
 A host whose asset is only in the staging collection, and whose rule names another collection, is planned as a

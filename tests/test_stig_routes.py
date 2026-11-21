@@ -170,5 +170,67 @@ class ByStig(unittest.TestCase):
         self.assertIn("rule 1: title is the rule's name in the plan (text), not 3", str(e.exception))
 
 
+class Review11031(unittest.TestCase):
+    """1.103.1, Neon's review of 1.103.0: a key given is a condition, match takes lists as the others, a [ is a [."""
+
+    def test_a_key_with_no_value_stops_the_job_never_fits_every_host(self):
+        # P1-1: match: or os: left empty (or an unset variable) made the route fit every host
+        for r, why in (({"match": None, "collection": "X"}, "route 1: match is a list of names or patterns (or text with commas), not None"),
+                       ({"os": None, "collection": "X"}, "route 1: os is rhel or windows, not None"),
+                       ({"os": 7, "collection": "X"}, "route 1: os is rhel or windows, not 7"),
+                       ({"match": "*APP*", "os": None, "collection": "X"}, "route 1: os is rhel or windows, not None"),
+                       ({"match": 7, "collection": "X"}, "route 1: match is a list of names or patterns (or text with commas), not 7"),
+                       ({"match": [None], "collection": "X"}, "route 1: match is a list"),
+                       ({"match": {}, "collection": "X"}, "route 1: match is a list")):
+            with self.subTest(route=r):
+                with self.assertRaises(AnsibleFilterError) as e:
+                    F.stig_collection_routes([], [r])
+                self.assertIn(why, str(e.exception))
+
+    def test_match_with_commas_or_one_per_line_is_several_patterns(self):
+        # P1-2: "*DC*, *AD*" was one pattern holding a comma, so it never fit and the host went to a later route
+        got = F.stig_collection_routes([], [{"match": "*DC*, *AD*", "collection": "Directory servers"},
+                                            {"stigs": "*Cisco*\n*Juniper*\n", "collection": "Networks"}])
+        self.assertEqual(got[0]["names"], ["*DC*", "*AD*"])
+        self.assertEqual(got[1]["stigs"], ["*Cisco*", "*Juniper*"])
+        rules = [{"match": "*DC*, *AD*", "collection": "Directory servers"}, {"collection": "Platforms"}]
+        _, first, _ = ByStig().route(rules)
+        self.assertEqual(first["want"], "Directory servers")
+        _, first, _ = ByStig().route([{"match": "*AD*\n*DC*", "collection": "Directory servers"}, {"collection": "Platforms"}])
+        self.assertEqual(first["want"], "Directory servers")
+
+    def test_a_bracket_is_a_bracket(self):
+        # P1-3: "[DC]*" was a character class (it took d01 and c01); "[z-a]" stopped the job on Python 3.6
+        t = {"host": "d01", "fqdn": "", "alias": "d01", "os": "windows", "role": "", "tech_area": ""}
+        _, first, _ = ByStig().route([{"match": "[DC]*", "collection": "Directory servers"}, {"collection": "Platforms"}], target=t)
+        self.assertEqual(first["want"], "Platforms")
+        _, first, _ = ByStig().route([{"match": "[DC]*", "collection": "Directory servers"}, {"collection": "Platforms"}],
+                                     target=dict(t, host="[dc]01", alias="[dc]01"))
+        self.assertEqual(first["want"], "Directory servers")
+        _, first, _ = ByStig().route([{"match": "[z-a]*", "collection": "Directory servers"}, {"collection": "Platforms"}], target=t)
+        self.assertEqual(first["want"], "Platforms")
+        _, first, _ = ByStig().route([{"stigs": "*[v2]*", "collection": "Networks"}, {"collection": "Platforms"}],
+                                     stigs=[("X_STIG", "X STIG [v2]")], target=t)
+        self.assertEqual(first["want"], "Networks")
+        _, first, _ = ByStig().route([{"stigs": "*[v2]*", "collection": "Networks"}, {"collection": "Platforms"}],
+                                     stigs=[("X_STIG", "X STIG v")], target=t)
+        self.assertEqual(first["want"], "Platforms")
+
+    def test_routes_not_a_list_and_a_collection_not_a_name_stop_the_job(self):
+        # P2: a number crashed with a TypeError; a mapping or text gave a misleading "route 1"
+        for routes in (7, "Platforms", {"collection": "X"}):
+            with self.subTest(routes=routes):
+                with self.assertRaises(AnsibleFilterError) as e:
+                    F.stig_collection_routes([], routes)
+                self.assertIn("check_stig_stigman_collection_routes is a list of routes, not", str(e.exception))
+        for c in (True, ["Platforms"], {"name": "X"}, None, " "):
+            with self.subTest(collection=c):
+                with self.assertRaises(AnsibleFilterError) as e:
+                    F.stig_collection_routes([], [{"collection": c, "match": "*"}])
+                self.assertIn("route 1: ", str(e.exception))
+                self.assertIn("is not {collection: <its name>", str(e.exception))
+        self.assertEqual(F.stig_collection_routes([], [{"collection": 9, "os": "rhel"}])[0]["collection"], "9")    # an id
+
+
 if __name__ == "__main__":
     unittest.main()

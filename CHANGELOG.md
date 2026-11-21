@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.103.1 — 2026-11-21
+
+**Nothing to set up.** A route that 1.103.0 read wrongly now stops the job, named. Fix it as the message says.
+
+**STIG scans and the checklist import: never the wrong collection (the review of 1.103.0).**
+
+- A route key given with no value (`match:` or `os:` left empty) stops the job. Before, the route then fit every host.
+- `match` takes a list, or text with commas or one per line, as `stigs`, `roles` and `tech_areas` do. Before,
+  `match: "*DC*, *AD*"` was one pattern holding a comma, and it never fit.
+- Only `*` and `?` are special in a route and in `check_stig_stigman_collections_exclude`. A `[` is a `[`. Before,
+  `[DC]*` took `d01`, and `[z-a]` stopped the job on Python 3.6.
+- Workflow 40: a rule whose collection a `!` in `stigman_ckl_import_collections` leaves out stops the plan. Before, that
+  collection was not searched, so a host whose asset was there looked new and was created again.
+- The report's Routes table and its held moves name a route as the plan does (`route 1`,
+  `check_stig_stigman_collection`). Two routes to one collection, by id and by name, are not a conflict.
+- `check_stig_stigman_collection_routes` that is not a list, or a route's collection that is not a name or an id,
+  stops the job, named.
+- Docs: STIG_JOBS.md, CKL_IMPORT.md, the role defaults.
+- Tests: test_stig_routes.py (Review11031), test_stig_ckl_import.py (Review11031), the report_fit fixture of the routes.
+
 ## 1.103.0 — 2026-11-21
 
 **Nothing to set up.** To place new assets by their STIG, add `stigs` to your `check_stig_stigman_collection_routes`

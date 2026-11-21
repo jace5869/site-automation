@@ -718,7 +718,7 @@ def pick_collections(cols, want, staging, grants=None, routed=False, exclude=Non
     # 1.83.0 (collections_exclude): never searched - left out before the grants are looked at (Codex P2: a Restricted
     # grant in an archive the job never reads does not stop it)
     ex = [str(x).strip().lower() for x in exclude or [] if str(x).strip()]
-    out = [c for c in out if not any(fnmatch.fnmatchcase((c.get("name") or "").lower(), x) for x in ex)]
+    out = [c for c in out if not any(fnmatch.fnmatchcase((c.get("name") or "").lower(), _pat(x)) for x in ex)]
     low = [c["name"] for c in out + ([st] if st else []) if grants is not None and grants.get(c["collectionId"], 0) < 2]
     if low and routed:
         raise Fail("the client has only Restricted in %s - with stigman_ckl_import_routes every collection the client reads is "
@@ -780,9 +780,11 @@ def read_routes(routes, cols):
         if not got:
             # a typo, or a collection the client has no grant in: the run stops before anything is written (a host routed
             # there would be written in the staging collection, its file moved, and the route never done)
-            raise Fail("stigman_ckl_import_routes, rule %d: no collection %s that the client can read (it reads: %s) - check the "
+            # 1.103.1: with the rule's title when the plan names it otherwise (the STIG scans' "route 1" may be rule 2 here)
+            named = (" (%s)" % r["title"].strip()) if (r.get("title") or "").strip() not in ("", "route %d" % n) else ""
+            raise Fail("stigman_ckl_import_routes, rule %d%s: no collection %s that the client can read (it reads: %s) - check the "
                        "name, or give the client a grant there; nothing planned" % (
-                           n, want, ", ".join(sorted(c.get("name") or "" for c in cols)) or "none"))
+                           n, named, want, ", ".join(sorted(c.get("name") or "" for c in cols)) or "none"))
         rule = dict((k, _list(r.get(k), n, k)) for k in ROUTE_KEYS)
         empty = [k for k in ROUTE_KEYS if k in r and not rule[k]]
         if empty:
@@ -802,9 +804,15 @@ def by_route(r):
     return "%s (%s)" % (r.get("title") or "route %d" % r["n"], r["text"])
 
 
+def _pat(x):
+    """A pattern with * and ? only, any case: a [ is a [ (Neon P1-3: "[DC]*" was a character class, so it took d01 and c01,
+    and "[z-a]" stopped the job on Python 3.6)."""
+    return str(x).lower().replace("[", "[[]")
+
+
 def _any(patterns, values):
     vals = [v.lower() for v in values if v]
-    return any(fnmatch.fnmatchcase(v, x.lower()) for x in patterns for v in vals)
+    return any(fnmatch.fnmatchcase(v, _pat(x)) for x in patterns for v in vals)
 
 
 def route_of(routes, host, matched):
@@ -830,7 +838,8 @@ def route_of(routes, host, matched):
                 continue
             if first is None:
                 first = r
-            elif r["want"].lower() != first["want"].lower() and r["n"] not in [x[0]["n"] for x in also]:
+            elif (r["collection"]["collectionId"] != first["collection"]["collectionId"]
+                  and r["n"] not in [x[0]["n"] for x in also]):     # 1.103.1: by id - "9" and "VMware" may be one
                 also.append((r, bench))
             break
     return first, also
@@ -932,10 +941,16 @@ def plan_all(p, client, files):
     # there (Archive*, SCA* ...) is not found, so it is planned new in its route's collection; the staging one stays
     ex = [str(x).strip() for x in p.get("collections_exclude") or [] if str(x).strip()]
     staging, searched = pick_collections(cols, (["*"] + [c for c in p["collections"] if str(c).strip().startswith("!")]) if routes else list(p["collections"]), p["collection"], grants, bool(routes), ex)
+    found = set(c["collectionId"] for c in searched)
     for r in routes:
-        if any(fnmatch.fnmatchcase(r["collection"]["name"].lower(), x.lower()) for x in ex):
-            raise Fail("route %d goes to %s, a collection check_stig_stigman_collections_exclude leaves out (never searched, so an "
-                       "asset there would look new) - nothing planned" % (r["n"], r["collection"]["name"]))
+        if any(fnmatch.fnmatchcase(r["collection"]["name"].lower(), _pat(x)) for x in ex):
+            raise Fail("%s goes to %s, a collection check_stig_stigman_collections_exclude leaves out (never searched, so an "
+                       "asset there would look new) - nothing planned" % (r["title"], r["collection"]["name"]))
+        if r["collection"]["collectionId"] not in found:
+            # 1.103.1 (Neon P1-4): a ! in stigman_ckl_import_collections left it out - its assets would not be found, so a host
+            # whose asset is there would be created again
+            raise Fail("%s goes to %s, a collection stigman_ckl_import_collections leaves out (a !): it is never searched, so an "
+                       "asset there would look new - take the ! out, or route elsewhere; nothing planned" % (r["title"], r["collection"]["name"]))
     sid = staging["collectionId"] if staging else None
     many = len(searched) > 1
     stigs = client.get("/stigs") or []
@@ -1087,7 +1102,7 @@ def plan_all(p, client, files):
                 who = restricted_on(client, staging, asset) if (grants or {}).get(staging["collectionId"], 0) >= 3 else None
                 if who:
                     held[aid] = {"asset": asset.get("name") or name, "assetId": aid, "from": staging["name"], "to": rcol["name"],
-                                 "route": route["n"], "who": who, "files": [],
+                                 "route": route["n"], "route_name": route["title"], "who": who, "files": [],
                                  "why": "%s would lose %s (a Restricted grant in %s) - move it in STIG Manager yourself, or take it out of "
                                         "that grant" % (", ".join(who), asset.get("name") or name, staging["name"])}
                 else:
@@ -1347,7 +1362,7 @@ def plan_all(p, client, files):
                        "nothing written. Give it Manage there, or stigman_ckl_import_auto: existing (the approval then does it)"
                        % ", ".join(low))
     return (checklists, creates + list(moves.values()) + list(assigns.values()) + plan, left, staging or {}, [c["name"] for c in searched],
-            [dict((k, r[k]) for k in ("n", "want", "text", "error")) for r in routes], list(held.values()))
+            [dict((k, r[k]) for k in ("n", "title", "want", "text", "error")) for r in routes], list(held.values()))
 
 
 MOVE_KEEPS = ("it keeps its reviews and their history, its STIGs, metadata and labels; a Restricted grant in %s that reached it "
