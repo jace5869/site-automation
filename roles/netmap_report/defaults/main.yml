@@ -50,6 +50,11 @@ netmap_link_warn_percent: 90             # a link this busy (in or out, %) is Wa
 # ---- Reading -------------------------------------------------------------------------------------------------------------
 netmap_page_size: 1000                   # rows a request (the nodes and links are read page by page)
 netmap_max_nodes: 5000                   # nodes read at most (more: the first ones, said in the report)
+# 1.96.0: read the report database's SolarWinds snapshot (the job "SolarWinds - snapshot") instead of SolarWinds, when
+# the template has a "Report database" credential. A snapshot older than solarwinds_db_max_age minutes, or none: SolarWinds
+# itself, and the job output says why. false = always SolarWinds itself.
+netmap_from_db: true
+solarwinds_db_max_age: 20                # minutes a snapshot may be old for a report (all.yml: every report reads it)
 # What changed since the last run: this template's last successful run kept a copy (job artifact netmap_snapshot), read
 # back from AAP with the report's "Red Hat Ansible Automation Platform" credential (as report_history). Without it: "not
 # compared", the rest as usual.

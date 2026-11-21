@@ -2538,7 +2538,7 @@ job_templates:
   - name: Network map
     playbook: playbooks/netmap_report.yml
     credentials: [solarwinds]
-    optional_credentials: [aap]
+    optional_credentials: [aap, report_db]
     ask_limit: false
     ask_variables: false
     ask_inventory: false
@@ -2554,6 +2554,25 @@ job_templates:
         artifacts netmap.
       supports: Run constraint=Reads only (no hosts); SolarWinds is only read (SWQL queries); writes the report email and
         the report website when set
+  - name: SolarWinds - snapshot
+    playbook: playbooks/solarwinds_snapshot.yml
+    credentials: [solarwinds, report_db]
+    optional_credentials: []
+    ask_limit: false
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/solarwinds_snapshot.yml
+    area: Reports
+    description:
+      does: 'Every 10 minutes: reads SolarWinds once and keeps it in the report database, so the reports read the database
+        instead of SolarWinds.'
+      targets: SolarWinds Orion via its SWIS REST API (SolarWinds (read-only) credential); the report database (Report database
+        credential); no Limit.
+      produces: 'One snapshot in the report database: nodes, links, interfaces, active alerts, events, SAM, volumes, VIM;
+        artifacts solarwinds_snapshot.'
+      supports: Run constraint=Reads only (no hosts); SolarWinds is only read (SWQL queries); writes the report database;
+        Concurrent jobs off
   - name: Tenable.sc - scan
     playbook: playbooks/tenable_scan.yml
     credentials: [tenable]

@@ -16,7 +16,12 @@ that no secret column (Community, RWCommunity, LicenseKey) or SELECT * was ever 
                              "break": [entity] (its queries: HTTP 400), "huge": [entity] (an answer of 2 MB of padding)
   FAKE_SWIS_ECHO=1           every error's Message repeats what was sent: the Authorization header and the password (the
                              reader must never pass it on)
-  FAKE_SWIS_DELAY=seconds    each answer that late; FAKE_SWIS_FAIL=file: while it exists, every query is HTTP 503"""
+  FAKE_SWIS_DELAY=seconds    each answer that late; FAKE_SWIS_FAIL=file: while it exists, every query is HTTP 503
+1.96.0 (the SolarWinds snapshot, tests/solarwinds/fixture_more.py): a fixture with "tables" ({entity: rows}) answers those
+entities too - named columns only (another: 400), WHERE <col> IN @p, <col> <> n, EventTime >= @since [AND EventID > @after],
+SELECT <key>, COUNT(<col>) AS <name> FROM <entity> GROUP BY <key>;
+Metadata.Property (EntityName IN @names) lists each entity's columns, a navigation property among them, and
+Orion.NodesCustomProperties' system columns and the fixture's properties. Orion.Nodes' columns may come without the alias."""
 import base64
 import json
 import os
@@ -33,11 +38,8 @@ STATE, DELAY, FAIL = os.environ.get("FAKE_SWIS_STATE", ""), float(os.environ.get
 PATH = "/SolarWinds/InformationService/v3/Json/Query"
 ENT = {"Orion.Nodes", "Orion.NPM.Interfaces", "Orion.TopologyConnections", "Orion.TopologyData", "Orion.WorldMap.Point",
        "Orion.InstalledModule", "Orion.Engines", "Metadata.Entity", "Metadata.Property"}
-# 1.94.0 (the AD report's From SolarWinds): SAM and the alerts, from the fixture's tables of the same keys; only on an Orion
-# whose fixture has them (an Orion without SAM: no "apps" key)
-TABLES = {"Orion.APM.Application": "apps", "Orion.APM.Component": "components", "Orion.AlertActive": "alert_active",
-          "Orion.AlertObjects": "alert_objects", "Orion.AlertConfigurations": "alert_configs"}
-ENT |= set(e for e, k in TABLES.items() if k in fx)
+MORE = fx.get("tables") or {}
+ENT |= set(MORE) | ({"Orion.NodesCustomProperties"} if MORE else set())
 SECRET = re.compile(r"\b(Community|RWCommunity|LicenseKey)\b|\*")
 SQ = re.compile(r"^SELECT (?:TOP (\d+) )?(.*?) FROM (\S+)(?: (\w+))?(?: WHERE (.*?))?(?: ORDER BY (.*?))?(?: WITH ROWS (\d+) TO (\d+))?$", re.S)
 
@@ -63,7 +65,7 @@ def node_rows(cols, alias):
     for n in sorted(fx["nodes"], key=lambda x: x["NodeID"]):
         r = {}
         for c in cols:
-            m = re.match(r"^%s\.(\w+)(?:\.(\w+))?(?: AS (\w+))?$" % alias, c.strip())
+            m = re.match(r"^(?:%s\.)?(\w+)(?:\.(\w+))?(?: AS (\w+))?$" % alias, c.strip())
             if not m:
                 raise Bad("Cannot parse column '%s'" % c)
             a, b, as_ = m.groups()
@@ -104,26 +106,57 @@ def iface_rows(cols, where, params):
     return out
 
 
-def where_rows(rows, cols, where, params, ent):
-    """WHERE <col> IN @p [AND <col> IN @q ...] - all this fake knows; a column a row has not: 400, as SWIS."""
-    conds = []
-    for part in [w for w in re.split(r" AND ", where or "") if w]:
-        m = re.match(r"^(\w+) IN @(\w+)$", part.strip())
-        if not m:
-            raise Bad("this fake knows only WHERE <col> IN @p [AND ...] (%s)" % part[:40])
-        conds.append((m.group(1), set(params.get(m.group(2)) or [])))
-    out = []
-    for r in rows:
-        for c in cols + [c for c, _ in conds]:
-            if c not in r:
-                raise Bad("Cannot resolve property %s of %s" % (c, ent))
-        if all(r.get(c) in vals for c, vals in conds):
-            out.append(dict((c, r.get(c)) for c in cols))
-    return out
+def columns(ent):
+    """An entity's columns, as Metadata.Property lists them."""
+    if ent == "Orion.Nodes":
+        return sorted(set(k for n in fx["nodes"] for k in n if k != "cp"))
+    if ent == "Orion.NPM.Interfaces":
+        return sorted(set(k for i in fx["interfaces"] for k in i))
+    if ent == "Orion.NodesCustomProperties":
+        return ["NodeID", "InstanceType", "Uri", "DisplayName", "Description"] + list(fx["properties"])
+    return sorted(set(k for r in MORE.get(ent) or [] for k in r))
+
+
+def where_ok(where, params):
+    """A test for one row of a generic table: the WHERE forms the snapshot sends."""
+    tests = []
+    for part in re.split(r" AND ", where or ""):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r"^(\w+) IN @(\w+)$", part)
+        if m:
+            vals = set(params.get(m.group(2)) or [])
+            tests.append(lambda r, c=m.group(1), v=vals: r.get(c) in v)
+            continue
+        m = re.match(r"^(\w+) <> (\d+)$", part)
+        if m:
+            tests.append(lambda r, c=m.group(1), v=int(m.group(2)): r.get(c) != v)
+            continue
+        m = re.match(r"^(\w+) (>=|>) @(\w+)$", part)
+        if m:
+            v = params.get(m.group(3))
+            if m.group(2) == ">=":
+                tests.append(lambda r, c=m.group(1), v=v: r.get(c) is not None and r.get(c) >= v)
+            else:
+                tests.append(lambda r, c=m.group(1), v=v: r.get(c) is not None and r.get(c) > v)
+            continue
+        raise Bad("this fake does not know WHERE %s" % part)
+    return lambda r: all(t(r) for t in tests)
 
 
 def run(q, params):
     q = re.sub(r"\s+", " ", q.strip())
+    g = re.match(r"^SELECT (\w+), COUNT\((\w+)\) AS (\w+) FROM (\S+) GROUP BY (\w+)$", q)
+    if g:                                       # 1.96.0: a count per key (SAM's components per application)
+        key, col, name, ent, by = g.groups()
+        if key != by or ent not in MORE or ent in HIDE:
+            raise Bad("Source entity [%s] not found in catalog" % ent)
+        n = {}
+        for r in MORE[ent]:
+            if r.get(col) is not None:
+                n[r.get(key)] = n.get(r.get(key), 0) + 1
+        return [{key: k, name: v} for k, v in sorted(n.items())]
     m = SQ.match(q)
     if not m:
         raise Bad("Incorrect syntax near '%s'" % q[:40])
@@ -134,9 +167,7 @@ def run(q, params):
     if ent == "Metadata.Entity":
         names = params.get("names") or []
         rows = [{"FullName": n} for n in names if n in ENT and n not in HIDE]
-    elif ent == "Metadata.Property":           # 1.95.0: the node custom properties' names (the discovery), and a navigation one
-        if params.get("e") in (fx.get("meta") or {}) and cols == ["Name", "Type"]:     # 1.94.0: an entity's own columns
-            return [{"Name": c, "Type": "System.String"} for c in fx["meta"][params["e"]]]
+    elif ent == "Metadata.Property" and "names" not in params:   # 1.95.0: the node custom properties' names (the discovery)
         if params.get("e") != "Orion.NodesCustomProperties" or cols != ["Name", "Type"]:
             raise Bad("Metadata.Property: an EntityName and Name, Type expected")
         rows = [{"Name": p, "Type": "System.String"} for p in fx["properties"]] + [{"Name": "Node", "Type": "Orion.Nodes"},
@@ -152,12 +183,22 @@ def run(q, params):
             if c not in ("SrcNodeID", "SrcInterfaceID", "DestNodeID", "DestInterfaceID") + (("LayerType",) if ent.endswith("Connections") else ()):
                 raise Bad("Cannot resolve property %s" % c)
         rows = [dict((c, x.get(c)) for c in cols) for x in fx["connections"]]
-    elif ent == "Orion.NPM.Interfaces" and (where or "").startswith("NodeID IN"):     # 1.94.0: a node's interfaces
-        rows = where_rows(fx["interfaces"], cols, where, params, ent)
     elif ent == "Orion.NPM.Interfaces":
         rows = iface_rows(cols, where, params)
-    elif ent in TABLES:
-        rows = where_rows(fx[TABLES[ent]], cols, where, params, ent)
+    elif ent == "Metadata.Property":           # 1.96.0: the snapshot asks which columns each entity has (EntityName IN @names)
+        names = [n for n in params.get("names") or [] if n in ENT and n not in HIDE]
+        rows = []
+        for n in names:
+            rows.extend({"EntityName": n, "Name": c, "IsNavigable": False} for c in columns(n))
+            rows.append({"EntityName": n, "Name": "Engine", "IsNavigable": True})     # a link to another entity: never a column
+        rows = [dict((c, r.get(c)) for c in cols) for r in rows]
+    elif ent in MORE:
+        have = set(columns(ent))
+        for c in cols:
+            if c not in have:
+                raise Bad("Cannot resolve property %s" % c)
+        ok = where_ok(where, params)
+        rows = [dict((c, r.get(c)) for c in cols) for r in MORE[ent] if ok(r)]
     else:
         rows = []
     if top:

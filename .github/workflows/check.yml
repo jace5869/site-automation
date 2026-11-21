@@ -166,6 +166,7 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_java4shell.py
           python tests/test_report_teams.py
           python tests/test_portal_workflows.py
+          python tests/test_solarwinds_snapshot.py
           python tests/test_incident_docs.py
           python tests/test_evaluate_stig_update.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_evaluate_stig_update.py
@@ -477,6 +478,14 @@ jobs:
           docker pull -q mysql:8.4
           CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 bash tests/netapp/run_capacity_db_test.sh
           CAPACITY_DB_TEST_RUNTIME=docker CAPACITY_DB_TEST_IMAGE=mysql:8.4 ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_capacity_db_test.sh
+      - name: SolarWinds snapshot in a real MySQL 8.4 and MariaDB 10.11 (docker), a fake SWIS, the network map reading it (current ansible-core and 2.16)
+        run: |
+          pip install PyMySQL cryptography
+          /tmp/ac216/bin/pip -q install PyMySQL cryptography
+          docker pull -q mysql:8.4
+          docker pull -q mariadb:10.11
+          SNAPSHOT_DB_TEST_RUNTIME=docker SNAPSHOT_DB_TEST_IMAGES="mysql:8.4 mariadb:10.11" bash tests/solarwinds/run_snapshot_test.sh
+          SNAPSHOT_DB_TEST_RUNTIME=docker SNAPSHOT_DB_TEST_IMAGES="mysql:8.4 mariadb:10.11" ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/solarwinds/run_snapshot_test.sh
 
   ansible-linux:
     name: Linux checks, ACT and remediation

@@ -56,8 +56,25 @@
     last: "{{ (_nm_prev.artifacts.netmap_snapshot.at | default('') | regex_replace('^(\\d{4}-\\d\\d-\\d\\d)T(\\d\\d:\\d\\d).*$', '\\1 \\2 UTC')) | report_time_local(report_time_zone | default('', true)) }}"
     run: "{{ _nm_now | report_time_local(report_time_zone | default('', true)) }}"
     view: "{{ netmap_view if netmap_view in ['globe', 'flat'] else 'globe' }}"
+    # 1.96.0: the report database's SolarWinds snapshot first (a "Report database" credential; the reader is enough)
+    db_host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim if netmap_from_db | bool else '' }}"
+    db_port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    db_database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    db_user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    db_password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    db_tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    db_ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    db_max_age: "{{ solarwinds_db_max_age | int }}"
   register: _nm
   check_mode: false                     # it only reads: a dry run (Check) shows the real report
+
+- name: Network map | where the read came from (the report database's snapshot, or SolarWinds itself)
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('From the report database: the SolarWinds snapshot of '
+           ~ ((_nm.snapshot_at[:10] ~ ' ' ~ _nm.snapshot_at[11:16] ~ ' UTC') | report_time_local(report_time_zone | default('', true))) ~ ' (' ~ (_nm.age_seconds | int // 60) ~ ' min old).')
+         if _nm.source | default('') == 'db-snapshot'
+         else ('From SolarWinds itself' ~ ((': ' ~ (_nm.why_live | join('; '))) if _nm.why_live | default([]) | length > 0 else '') ~ '.') }}
 
 - name: Network map | the report
   ansible.builtin.set_fact:

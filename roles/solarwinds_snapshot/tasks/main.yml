@@ -1,0 +1,61 @@
+---
+# SOLARWINDS - SNAPSHOT (playbooks/solarwinds_snapshot.yml). One module does it all (site_swis_snapshot over
+# plugins/module_utils/site_swis_db.py): the read never passes through Ansible's variables, so 10,000 rows cost nothing
+# here. Red when SolarWinds or the database could not be reached: the reports then keep the last whole snapshot until
+# solarwinds_db_max_age.
+- name: SolarWinds snapshot | the report database's credential is attached
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length > 0
+    fail_msg: >-
+      No report database: attach a "Report database" credential (the writer, report_writer) to this job template
+      (aap/credential_types/report_database.yml, docs/REPORT_DATABASE.md). Nothing was read.
+    quiet: true
+
+# A login in the address is refused before the module sees it: a module's arguments are in its result (invocation)
+- name: SolarWinds snapshot | solarwinds_url has no login in it
+  ansible.builtin.assert:
+    that: "'@' not in (solarwinds_url | string)"
+    fail_msg: >-
+      solarwinds_url has a user name or password in it - refused, and not repeated here. Give only the server
+      (orion.yoursite.mil); the login is the "SolarWinds (read-only)" credential's.
+    quiet: true
+
+- name: SolarWinds snapshot | read SolarWinds (SWQL queries only) and keep it
+  site_swis_snapshot:
+    host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    connect_timeout: "{{ solarwinds_db_timeout | int }}"
+    create: "{{ solarwinds_db_create | bool }}"
+    url: "{{ solarwinds_url }}"
+    validate_certs: "{{ solarwinds_validate_certs | bool }}"
+    ca_path: "{{ solarwinds_ca_path }}"
+    timeout: "{{ solarwinds_timeout | int }}"
+    properties: "{{ solarwinds_snapshot_properties }}"
+    skip_properties: "{{ solarwinds_snapshot_skip_properties | default([], true) }}"
+    parts: "{{ solarwinds_snapshot_parts }}"
+    page: "{{ solarwinds_snapshot_page_size | int }}"
+    max_nodes: "{{ solarwinds_snapshot_max_nodes | int }}"
+    max_rows: "{{ solarwinds_snapshot_max_rows | int }}"
+    event_hours: "{{ solarwinds_event_hours | int }}"
+    keep_snapshots: "{{ solarwinds_db_keep_snapshots | int }}"
+    keep_days: "{{ solarwinds_db_keep_days | int }}"
+    event_days: "{{ solarwinds_db_event_days | int }}"
+    job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+  register: _sw_snap
+
+- name: SolarWinds snapshot | what it holds
+  ansible.builtin.debug:
+    msg: "{{ _sw_snap | swis_snapshot_lines(ansible_check_mode) }}"
+
+- name: SolarWinds snapshot | the counts (job artifact solarwinds_snapshot)
+  ansible.builtin.set_stats:
+    data:
+      solarwinds_snapshot: "{{ {'snap_id': _sw_snap.snap_id, 'seconds': _sw_snap.seconds, 'queries': _sw_snap.queries} | combine(_sw_snap.counts) }}"
+    per_host: false
+    aggregate: false
+  when: not ansible_check_mode and _sw_snap.snap_id | default(0) | int > 0

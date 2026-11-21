@@ -1,0 +1,30 @@
+---
+# SolarWinds - snapshot (playbooks/solarwinds_snapshot.yml, 1.96.0). Reads SolarWinds once and keeps it in the report
+# database (docs/REPORT_DATABASE.md, "The SolarWinds snapshot"). The SolarWinds login is a "SolarWinds (read-only)"
+# credential, the database's a "Report database" credential (the writer).
+
+# SolarWinds' address and its certificate: the credential's, else these (the network map's settings when they are set)
+solarwinds_url: "{{ netmap_solarwinds_url | default('') }}"
+solarwinds_validate_certs: "{{ netmap_validate_certs | default(true) }}"   # check SolarWinds' certificate (the credential's SOLARWINDS_VERIFY wins)
+solarwinds_ca_path: "{{ netmap_ca_path | default('') }}"      # the CA file (PEM) SolarWinds' certificate is checked with
+solarwinds_timeout: 60                   # seconds for one request (no answer: asked once more)
+
+# ---- What a snapshot keeps --------------------------------------------------------------------------------------------
+# The node custom properties kept with each node: all (every one SolarWinds has), or a list of names. The database then
+# holds what they hold: leave out any that names a person (solarwinds_snapshot_skip_properties).
+solarwinds_snapshot_properties: all
+solarwinds_snapshot_skip_properties: []          # e.g. [Contact, Owner]
+# The other tables read besides the nodes, links and interfaces: node (the poll, CPU, memory), ip (the nodes' other
+# addresses), iface (the links' interface errors), alert, event, app (SAM), component (SAM, not up), volume, vim
+solarwinds_snapshot_parts: [node, ip, iface, alert, event, app, component, volume, vim]
+solarwinds_snapshot_max_nodes: 20000             # nodes read at most (more: the first ones, said)
+solarwinds_snapshot_max_rows: 50000              # rows of any other table at most
+solarwinds_snapshot_page_size: 1000              # rows a request
+solarwinds_event_hours: 24                       # the first run's events: this many hours back (later runs: what is new)
+
+# ---- The database -------------------------------------------------------------------------------------------------------
+solarwinds_db_create: true               # make the tables on the first run (false: made by hand, docs/REPORT_DATABASE.md)
+solarwinds_db_timeout: 10                # seconds to connect
+solarwinds_db_keep_snapshots: 12         # whole snapshots kept (one hour at one run every 5 minutes)
+solarwinds_db_keep_days: 400             # the snapshots' own rows (their counts) kept this many days; 0 = always
+solarwinds_db_event_days: 400            # events kept this many days (under 1 GB at 3,000 a day); 0 = always

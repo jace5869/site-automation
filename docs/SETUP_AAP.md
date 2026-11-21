@@ -975,6 +975,12 @@ It reads SolarWinds Orion's SWIS API, not your hosts: a read-only Orion account,
 credential, one template. Follow [NETWORK_MAP.md](NETWORK_MAP.md). The same credential on the site portal's
 deploy turns on its live Network map page.
 
+### SolarWinds - snapshot
+
+It reads SolarWinds every 10 minutes and keeps it in the report database, for the reports to read. Two credentials:
+"SolarWinds (read-only)" and "Report database" (the writer). No Limit. Turn **off** *Enable concurrent jobs*. Follow
+[REPORT_DATABASE.md](REPORT_DATABASE.md#the-solarwinds-snapshot-1960).
+
 ### Active Directory - account lockout
 
 For the service desk: is an account locked out, and which computer is locking it out (the DCs'

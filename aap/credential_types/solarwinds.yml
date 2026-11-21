@@ -1,5 +1,6 @@
 # Credential type: "SolarWinds (read-only)"
-# A read-only SolarWinds Orion account for the network map (playbooks/netmap_report.yml) - and, given to the site portal's
+# A read-only SolarWinds Orion account for the network map (playbooks/netmap_report.yml) and the SolarWinds snapshot in
+# the report database (playbooks/solarwinds_snapshot.yml, 1.96.0) - and, given to the site portal's
 # deploy (playbooks/site_portal_deploy.yml, portal_netmap), for the portal's live Network map page. An Orion web console
 # account (Settings > Manage Accounts) with no admin and no node management rights is enough: the map only sends SWQL
 # queries to SWIS (docs/NETWORK_MAP.md, "The read-only account"). A Windows account: DOMAIN\user.

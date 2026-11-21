@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 """Read SolarWinds Orion through SWIS's REST API - queries only (plugins/module_utils/site_swis.py, the same reader the
 site portal's live Network map uses) - and make the network map: sites and where they are, nodes, links, the WAN, what
-changed since the kept copy of the last run. Standard library only."""
+changed since the kept copy of the last run. Standard library only - PyMySQL too for the report database (1.96.0).
+
+1.96.0: with the report database's login (db_host ...), the read is the newest SolarWinds snapshot there when it is at
+most db_max_age minutes old (plugins/module_utils/site_swis_db.py: the same dict collect() gives), else SolarWinds itself.
+Which one it was is source (db-snapshot or swis-live), and why not the snapshot is why_live."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -39,6 +43,15 @@ options:
   run: {description: When this run read SolarWinds (shown)., type: str, default: ''}
   view: {description: "The world view's first look: globe or flat (netmap_view).", type: str, default: globe}
   no_site: {description: The site of nodes without one., type: str, default: No site}
+  db_host: {description: "The report database's server ('' = SolarWinds itself, always).", type: str, default: ''}
+  db_port: {description: Its port., type: int, default: 3309}
+  db_database: {description: The database., type: str, default: site_reports}
+  db_user: {description: The account (the reader is enough)., type: str, default: ''}
+  db_password: {description: Its password., type: str, default: ''}
+  db_tls: {description: Use TLS and check the server's certificate., type: bool, default: false}
+  db_ca_file: {description: The CA file the certificate is checked with., type: str, default: ''}
+  db_timeout: {description: Seconds to connect., type: int, default: 10}
+  db_max_age: {description: "Minutes a snapshot may be old (solarwinds_db_max_age); older - SolarWinds itself.", type: int, default: 20}
 author: site automation
 '''
 
@@ -52,6 +65,10 @@ changes: {description: "Since the kept copy: [{kind, what, site, detail}] (none 
 compared: {description: There was a kept copy to compare with., type: bool}
 data: {description: The page's data (the map's script reads it)., type: dict}
 snapshot: {description: The copy to keep for the next run (job artifact netmap_snapshot)., type: dict}
+source: {description: "Where the read came from: db-snapshot (the report database) or swis-live.", type: str}
+snapshot_at: {description: When SolarWinds was read., type: str}
+age_seconds: {description: The read's age when this run used it., type: int}
+why_live: {description: Why it was not the database's snapshot (empty when it was)., type: list}
 '''
 
 import os
@@ -59,6 +76,8 @@ import time
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_swis
+from ansible.module_utils import site_swis_db
+from ansible.module_utils import site_report_db
 
 
 def main():
@@ -74,7 +93,12 @@ def main():
                            run=dict(type="str", default=""), view=dict(type="str", default="globe"),
                            no_site=dict(type="str", default="Not placed"), site_pattern=dict(type="str", default=""),
                            hierarchy=dict(type="list", elements="raw", default=[]), roles=dict(type="dict", default={}),
-                           discover=dict(type="bool", default=True)),
+                           discover=dict(type="bool", default=True),
+                           db_host=dict(type="str", default=""), db_port=dict(type="int", default=3309),
+                           db_database=dict(type="str", default="site_reports"), db_user=dict(type="str", default=""),
+                           db_password=dict(type="str", default="", no_log=True), db_tls=dict(type="bool", default=False),
+                           db_ca_file=dict(type="str", default=""), db_timeout=dict(type="int", default=10),
+                           db_max_age=dict(type="int", default=20)),
         supports_check_mode=True,
     )
     p = module.params
@@ -82,29 +106,56 @@ def main():
     if bad:                                                # before anything is read: said, nothing asked of SolarWinds
         module.fail_json(msg="The network map's settings: " + "; ".join(bad))
     env = os.environ
+    opts = {"site_by": p["site_by"] if str(p["site_by"]).lower() not in ("auto", "location") else "",
+            "lat_property": p["lat_property"], "lon_property": p["lon_property"], "discover": p["discover"],
+            "properties": p["properties"] + [h.get("value") for h in p["hierarchy"] if isinstance(h, dict) and h.get("from") == "property"],
+            "page": p["page"], "chunk": p["chunk"], "max_nodes": p["max_nodes"]}
+    why, raw = [], None
+    if p["db_host"].strip():               # 1.96.0: the report database's snapshot first
+        if not site_report_db.HAS_PYMYSQL:
+            why.append("the report database: " + site_report_db.NO_PYMYSQL)
+        else:
+            dbp = {"host": p["db_host"].strip(), "port": p["db_port"], "database": p["db_database"], "user": p["db_user"],
+                   "password": p["db_password"], "tls": p["db_tls"], "ca_file": p["db_ca_file"], "connect_timeout": p["db_timeout"]}
+            conn = None
+            try:
+                conn, _tls = site_report_db.connect(dbp)
+                raw = site_swis_db.answer(opts, conn=conn, client=None, max_age=max(0, p["db_max_age"]) * 60, why=why)
+            except Exception as e:  # noqa: BLE001 - not reached, a login refused: said, then SolarWinds itself
+                why.append("the report database could not be reached: %s" % site_report_db.explain(e, dbp))
+            finally:
+                try:
+                    if conn is not None:
+                        conn.close()
+                except Exception:   # noqa: BLE001
+                    pass
+    else:
+        why.append("the report database is not used (no \"Report database\" credential on this template, or netmap_from_db: false)")
     user, password = env.get("SOLARWINDS_USERNAME", ""), env.get("SOLARWINDS_PASSWORD", "")
     url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
-    if not user or not password:
+    if raw is not None:
+        client_url = url
+    elif not user or not password:
         module.fail_json(msg='No SolarWinds account: attach a credential of type "SolarWinds (read-only)" to this job template '
-                             '(aap/credential_types/solarwinds.yml, docs/NETWORK_MAP.md).')
-    if not url:
+                             '(aap/credential_types/solarwinds.yml, docs/NETWORK_MAP.md).%s'
+                             % ((" The report database's snapshot was not used: %s." % "; ".join(why)) if p["db_host"].strip() else ""))
+    elif not url:
         module.fail_json(msg="No SolarWinds address: put it in the SolarWinds (read-only) credential, or set netmap_solarwinds_url "
                              "(e.g. orion.yoursite.mil).")
-    verify = p["validate_certs"]
-    if str(env.get("SOLARWINDS_VERIFY", "")).strip():
-        verify = str(env["SOLARWINDS_VERIFY"]).strip().lower() not in ("0", "false", "no", "off")
-    ca = (env.get("SOLARWINDS_CA_PATH") or p["ca_path"] or "").strip()
-    if verify and ca and not os.path.isfile(ca):
-        module.fail_json(msg="The CA file %s is not there where the job runs (netmap_ca_path, or the credential's CA file): a path "
-                             "inside the project, e.g. {{ playbook_dir }}/files/ca/orion-ca.pem" % ca)
-    try:
-        client = site_swis.Client(url, user, password, verify=verify, ca_path=ca, timeout=p["timeout"])
-    except site_swis.SwisError as e:                   # not https, or a login in the address: said, the address not repeated
-        module.fail_json(msg="netmap_solarwinds_url / the credential's address: %s" % e)
-    raw = site_swis.collect(client, {"site_by": p["site_by"] if str(p["site_by"]).lower() not in ("auto", "location") else "",
-                                     "lat_property": p["lat_property"], "lon_property": p["lon_property"], "discover": p["discover"],
-                                     "properties": p["properties"] + [h.get("value") for h in p["hierarchy"] if isinstance(h, dict) and h.get("from") == "property"],
-                                     "page": p["page"], "chunk": p["chunk"], "max_nodes": p["max_nodes"]})
+    if raw is None:
+        verify = p["validate_certs"]
+        if str(env.get("SOLARWINDS_VERIFY", "")).strip():
+            verify = str(env["SOLARWINDS_VERIFY"]).strip().lower() not in ("0", "false", "no", "off")
+        ca = (env.get("SOLARWINDS_CA_PATH") or p["ca_path"] or "").strip()
+        if verify and ca and not os.path.isfile(ca):
+            module.fail_json(msg="The CA file %s is not there where the job runs (netmap_ca_path, or the credential's CA file): a path "
+                                 "inside the project, e.g. {{ playbook_dir }}/files/ca/orion-ca.pem" % ca)
+        try:
+            client = site_swis.Client(url, user, password, verify=verify, ca_path=ca, timeout=p["timeout"])
+        except site_swis.SwisError as e:                   # not https, or a login in the address: said, the address not repeated
+            module.fail_json(msg="netmap_solarwinds_url / the credential's address: %s" % e)
+        raw = site_swis_db.answer(opts, conn=None, client=client)
+        client_url = client.url
     m = site_swis.model(raw, {"site_by": p["site_by"], "site_split": p["site_split"], "sites": p["sites"],
                               "lat_property": p["lat_property"], "lon_property": p["lon_property"], "properties": p["properties"],
                               "warn_util": p["warn_util"], "no_site": p["no_site"], "site_pattern": p["site_pattern"],
@@ -115,11 +166,13 @@ def main():
     compared = bool(raw["reachable"] and prev.get("v") == 2 and isinstance(prev.get("n"), dict))   # an empty inventory's copy is a baseline too
     changes = site_swis.compare(m, prev) if compared else []
     data = site_swis.page_data(m, last=p["last"] if compared else "", run=p["run"], view=p["view"],
-                               source="SolarWinds%s (SWIS, read-only)" % ((" " + raw["version"]["platform"]) if raw.get("version", {}).get("platform") else ""))
+                               source=site_swis_db.source_text(raw, (raw.get("version") or {}).get("platform") or ""))
     module.exit_json(changed=False, reachable=raw["reachable"], error=raw["error"], version=raw.get("version") or {},
                      not_read=raw.get("not_read") or [], map=m, changes=changes, compared=compared, data=data, snapshot=snap,
-                     url=client.url, seconds=raw.get("seconds", 0), queries=raw.get("queries", 0),
-                     read_at=raw.get("read_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                     url=raw.get("url") or client_url, seconds=raw.get("seconds", 0), queries=raw.get("queries", 0),
+                     read_at=raw.get("read_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                     source=raw.get("source", site_swis_db.SWIS_LIVE), snapshot_at=raw.get("snapshot_at") or "",
+                     age_seconds=raw.get("age_seconds") or 0, why_live=why if raw.get("source") != site_swis_db.DB_SNAPSHOT else [])
 
 
 if __name__ == "__main__":

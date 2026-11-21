@@ -196,6 +196,7 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | NetApp ONTAP - capacity trends | `playbooks/ontap_capacity_trends.yml` | Report | [NETAPP.md](NETAPP.md#capacity-trends) |
 | Cisco UCS inventory | `playbooks/ucs_inventory_report.yml` | Report | [UCS.md](UCS.md#set-it-up) |
 | Network map | `playbooks/netmap_report.yml` | Report | [NETWORK_MAP.md](NETWORK_MAP.md#set-it-up) |
+| SolarWinds - snapshot | `playbooks/solarwinds_snapshot.yml` | Watch (every 10 minutes) | [REPORT_DATABASE.md](REPORT_DATABASE.md#the-solarwinds-snapshot-1960) |
 
 ## Tenable.sc (ACAS)
 

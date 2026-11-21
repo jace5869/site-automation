@@ -1,0 +1,15 @@
+---
+# SOLARWINDS - SNAPSHOT (1.96.0), every 10 minutes. Reads SolarWinds Orion once (SWQL queries to its SWIS REST API, port
+# 17774; nothing is changed there) and keeps it in the report database as one snapshot: the nodes, links, interfaces,
+# active alerts, events, SAM applications, volumes, VIM hosts and VMs. The reports then read the database, never
+# SolarWinds per page. Attach a "SolarWinds (read-only)" and a "Report database" credential; no Limit; Concurrent jobs off.
+# docs/REPORT_DATABASE.md ("The SolarWinds snapshot")
+#   ansible-playbook playbooks/solarwinds_snapshot.yml -e '{"solarwinds_url": "orion.example.mil"}'
+- name: SolarWinds snapshot
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: SolarWinds snapshot
+      ansible.builtin.include_role:
+        name: solarwinds_snapshot

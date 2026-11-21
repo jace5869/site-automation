@@ -1,8 +1,9 @@
 # Credential type: "Report database"
 # The report database (docs/REPORT_DATABASE.md): MySQL 8.4 in its own container on the STIG Manager host, apart from
 # STIG Manager's database (port 3309 on the host). Ticket insights writes its figures there each run
-# (servicenow_insights_db: true) and reads the last 12 months back for the page's trend. The account: report_writer
-# (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, CREATE VIEW, SHOW VIEW on site_reports). Plain TCP unless Use
+# (servicenow_insights_db: true) and reads the last 12 months back for the page's trend. Since 1.96.0 the job
+# SolarWinds - snapshot (playbooks/solarwinds_snapshot.yml) keeps SolarWinds here, and Network map reads it back.
+# The account: report_writer (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, CREATE VIEW, SHOW VIEW on site_reports). Plain TCP unless Use
 # TLS is ticked; then the CA (optional) checks the server's certificate. The password reaches the job only through its
 # environment, never a command line or an extra variable.
 inputs:

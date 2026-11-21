@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: solarwinds_snapshot
+  description: "SolarWinds Orion (SWIS REST, read-only) read once and kept in the report database as a snapshot, for the reports to read."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

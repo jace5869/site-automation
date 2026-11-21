@@ -8,6 +8,8 @@ database.
 Ticket insights is its first user (1.13.0). *NetApp ONTAP - capacity trends* is the second (1.52.0, optional:
 *The capacity trends' points*). Since 1.17.0 it also keeps each ticket's fields, so a run reads only what
 changed (*The ticket store and the ACT cache*).
+Since 1.96.0 it also keeps a copy of SolarWinds, so the reports need not ask SolarWinds each time (*The SolarWinds
+snapshot*).
 
 ## What it keeps
 
@@ -1070,6 +1072,366 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('vm_heat', 1
 | `vm_heat_db_create` | `true` | Make the table on the first run |
 | `vm_heat_db_timeout` | `10` | Seconds to connect |
 | `vm_heat_db_keep_days` | `400` | Delete older points. `0`: never |
+
+## The SolarWinds snapshot (1.96.0)
+
+The job *SolarWinds - snapshot* reads SolarWinds every 10 minutes and keeps one whole copy here. The reports then read
+this database, not SolarWinds. A page that needs SolarWinds answers in a few milliseconds, and SolarWinds is asked once
+per run instead of once per report.
+
+*Network map* reads it first ([NETWORK_MAP.md](NETWORK_MAP.md#from-the-report-database-1960)). The other reports follow,
+one section at a time, each with a mockup first.
+
+### Set it up
+
+1. Make the job template *SolarWinds - snapshot* (`playbooks/solarwinds_snapshot.yml`). *AAP - set up job templates*
+   makes it from the catalog.
+2. Attach two credentials: **SolarWinds (read-only)** and **Report database** (the writer, `report_writer`).
+3. Turn **off** *Enable concurrent jobs*.
+4. Launch it. The first run makes the tables.
+5. The job output says `Snapshot 1 kept.` and what it holds.
+6. Add a schedule: every 10 minutes. 5 to 15 minutes all work.
+7. Add the **Report database** credential to *Network map*. The reader `report_reader` is enough there.
+
+A run takes about as long as SolarWinds needs for its queries: about a minute for 1,000 nodes.
+
+### What a run keeps
+
+| Table | One row per |
+|---|---|
+| `sw_snapshot` | run: when, how long, how many queries, the counts, ok or the reason it failed |
+| `sw_node` | node: name, DNS, IP, the other IPs, status, last poll, CPU, memory, vendor, model, location, custom properties (JSON) |
+| `sw_link` | NPM topology connection: the two nodes and their interfaces |
+| `sw_interface` | interface on a link: speed, % in and out, status, errors and discards this hour and today |
+| `sw_alert_active` | active alert: its name, severity, when it was raised, its message, its object and node |
+| `sw_event` | event: when, its kind, its node and object, its message |
+| `sw_app` | SAM application: its node, its status, and how many components it has and how many are not up |
+| `sw_component` | SAM component that is not up: its application, status, statistic and message |
+| `sw_volume` | volume: its node, size, used and % used |
+| `sw_vim_host` | VIM host: its node, cluster, state, CPU and memory, VMs |
+| `sw_vim_vm` | VIM VM: its host, power state, CPU, memory and IP |
+
+Each table asks only for the columns this Orion has. A module it does not have is said in the job output, not an
+error. For example, no SAM: *Not on this Orion: SAM's applications*.
+
+Never kept: a node's SNMP communities, the license key, who acknowledged an alert, any note.
+
+### Replace by snapshot
+
+Each run is one snapshot, written in one transaction. A report reads the newest snapshot with `ok = 1`, so it always
+sees one whole read, never half of one.
+
+- The state tables keep the last `solarwinds_db_keep_snapshots` (12, one hour at a run every 5 minutes).
+- The rows of `sw_snapshot` itself are kept `solarwinds_db_keep_days` (400). They are a cheap trend of the counts.
+- `sw_event` is one row per SolarWinds event. The first run reads the last `solarwinds_event_hours` (24). Later runs
+  read only the events after the newest kept. Events are kept `solarwinds_db_event_days` (400), so ticket insights can ask whether SolarWinds saw an
+  incident coming. 3,000 events a day for 400 days take under 1 GB.
+- Two runs never write at once: a run takes a database lock first. Another run holding it: this one keeps nothing,
+  says so, and stays green.
+
+Why not deltas: a report would then have to rebuild the state. A snapshot is about 10,000 rows for 1,000 nodes, which
+the database writes in a second.
+
+### When something fails
+
+| | |
+|---|---|
+| SolarWinds not reached | the job is red. A row in `sw_snapshot` says so (`ok = 0`, the reason). The reports go on with the last whole snapshot |
+| The database not reached | the job is red, with what to change |
+| A part not read (alerts, SAM) | said in the job output, the rest is kept, green |
+| A snapshot older than `solarwinds_db_max_age` (20 min) | a report reads SolarWinds itself and says why |
+| A dry run (Check) | reads SolarWinds and the database, writes nothing |
+
+Is it writing? As `report_reader`:
+
+```sql
+SELECT snap_id, read_at, ok, nodes, nodes_down, alerts, seconds, error FROM sw_snapshot ORDER BY snap_id DESC LIMIT 5;
+```
+
+### How a report reads it
+
+The reader is `plugins/module_utils/site_swis_db.py`.
+
+- `answer()` gives the network map's read: the very dict `site_swis.collect()` gives, from the snapshot when it is new
+  enough, else from SolarWinds itself. It adds `snapshot_at`, `age_seconds` and `source` (`db-snapshot` or
+  `swis-live`). A test keeps the two dicts equal.
+- `nodes_for()`, `alerts_for()`, `apps_for()` and `events_between()` are for the other reports. A host is matched by
+  its short name, its DNS name or its IP.
+- `apps_for()` gives each node's SAM applications with their components that are not up, and how many each has ("2 of
+  9 down"). On an Orion without SAM it gives none, and `part_note(snapshot, "app")` says so.
+
+The indexes are for those reads: a node by name or IP, a node's interfaces, alerts, applications and volumes, and the
+events of a time window or a node.
+
+### By hand
+
+If the writer may not create tables, set `solarwinds_db_create: false` and make the tables once as root, in
+`site_reports`. The writer then needs SELECT, INSERT, UPDATE and DELETE. The first statement is the one of *Making the
+tables by hand*. It may run again.
+
+Removing it: `DROP TABLE` each table above, then `DELETE FROM schema_version WHERE component = 'solarwinds';`.
+
+<!-- the statements: site_swis_db.ddl(), word for word (tests/test_solarwinds_snapshot.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_snapshot (
+  snap_id BIGINT NOT NULL AUTO_INCREMENT,
+  read_at DATETIME NOT NULL,
+  finished_at DATETIME NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  ok TINYINT NOT NULL DEFAULT 0,
+  orion VARCHAR(255) NOT NULL DEFAULT '',
+  error VARCHAR(1000) NULL,
+  seconds DECIMAL(8,1) NULL,
+  queries INT NULL,
+  nodes INT NULL,
+  nodes_down INT NULL,
+  nodes_warning INT NULL,
+  links INT NULL,
+  interfaces INT NULL,
+  alerts INT NULL,
+  events INT NULL,
+  apps INT NULL,
+  apps_down INT NULL,
+  components INT NULL,
+  volumes INT NULL,
+  vim_hosts INT NULL,
+  vim_vms INT NULL,
+  core MEDIUMTEXT NULL,
+  not_read MEDIUMTEXT NULL,
+  PRIMARY KEY (snap_id),
+  KEY sw_snapshot_ok (ok, snap_id),
+  KEY sw_snapshot_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_node (
+  snap_id BIGINT NOT NULL,
+  node_id BIGINT NOT NULL,
+  seq INT NOT NULL,
+  name VARCHAR(512) NOT NULL,
+  name_key VARCHAR(255) NOT NULL,
+  dns VARCHAR(512) NULL,
+  ip VARCHAR(64) NULL,
+  ips TEXT NULL,
+  status_code INT NULL,
+  status_text VARCHAR(512) NULL,
+  unmanaged TINYINT NOT NULL DEFAULT 0,
+  vendor VARCHAR(255) NULL,
+  model VARCHAR(255) NULL,
+  location VARCHAR(512) NULL,
+  resp DOUBLE NULL,
+  loss DOUBLE NULL,
+  cpu_pct DOUBLE NULL,
+  mem_pct DOUBLE NULL,
+  last_poll DATETIME NULL,
+  last_boot DATETIME NULL,
+  kind VARCHAR(64) NULL,
+  os_version VARCHAR(255) NULL,
+  wm_lat DOUBLE NULL,
+  wm_lon DOUBLE NULL,
+  props MEDIUMTEXT NULL,
+  PRIMARY KEY (snap_id, node_id),
+  KEY sw_node_name (snap_id, name_key),
+  KEY sw_node_status (snap_id, status_code),
+  KEY sw_node_ip (snap_id, ip)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_link (
+  snap_id BIGINT NOT NULL,
+  seq INT NOT NULL,
+  src_node BIGINT NULL,
+  src_if BIGINT NULL,
+  dst_node BIGINT NULL,
+  dst_if BIGINT NULL,
+  PRIMARY KEY (snap_id, seq),
+  KEY sw_link_src (snap_id, src_node),
+  KEY sw_link_dst (snap_id, dst_node)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_interface (
+  snap_id BIGINT NOT NULL,
+  interface_id BIGINT NOT NULL,
+  seq INT NOT NULL,
+  node_id BIGINT NULL,
+  name VARCHAR(512) NULL,
+  caption VARCHAR(512) NULL,
+  speed DOUBLE NULL,
+  in_pct DOUBLE NULL,
+  out_pct DOUBLE NULL,
+  in_bps DOUBLE NULL,
+  out_bps DOUBLE NULL,
+  status INT NULL,
+  oper_status INT NULL,
+  admin_status INT NULL,
+  in_errors_hour DOUBLE NULL,
+  out_errors_hour DOUBLE NULL,
+  in_discards_hour DOUBLE NULL,
+  out_discards_hour DOUBLE NULL,
+  in_errors_today DOUBLE NULL,
+  out_errors_today DOUBLE NULL,
+  PRIMARY KEY (snap_id, interface_id),
+  KEY sw_interface_node (snap_id, node_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_alert_active (
+  snap_id BIGINT NOT NULL,
+  alert_active_id BIGINT NOT NULL,
+  alert_id BIGINT NULL,
+  name VARCHAR(512) NULL,
+  severity INT NULL,
+  triggered_at DATETIME NULL,
+  message VARCHAR(1000) NULL,
+  acknowledged TINYINT NULL,
+  entity_type VARCHAR(255) NULL,
+  entity_caption VARCHAR(512) NULL,
+  node_id BIGINT NULL,
+  node_caption VARCHAR(512) NULL,
+  PRIMARY KEY (snap_id, alert_active_id),
+  KEY sw_alert_node (snap_id, node_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_event (
+  event_id BIGINT NOT NULL,
+  event_time DATETIME NOT NULL,
+  node_id BIGINT NULL,
+  net_object_type VARCHAR(32) NULL,
+  net_object_id BIGINT NULL,
+  event_type INT NULL,
+  type_name VARCHAR(255) NULL,
+  message VARCHAR(1000) NULL,
+  acknowledged TINYINT NULL,
+  snap_id BIGINT NOT NULL,
+  PRIMARY KEY (event_id),
+  KEY sw_event_time (event_time),
+  KEY sw_event_node (node_id, event_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_app (
+  snap_id BIGINT NOT NULL,
+  app_id BIGINT NOT NULL,
+  node_id BIGINT NULL,
+  name VARCHAR(512) NULL,
+  status INT NULL,
+  status_text VARCHAR(512) NULL,
+  unmanaged TINYINT NULL,
+  components INT NULL,
+  components_not_up INT NULL,
+  PRIMARY KEY (snap_id, app_id),
+  KEY sw_app_node (snap_id, node_id),
+  KEY sw_app_status (snap_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_component (
+  snap_id BIGINT NOT NULL,
+  component_id BIGINT NOT NULL,
+  app_id BIGINT NULL,
+  name VARCHAR(512) NULL,
+  kind VARCHAR(255) NULL,
+  status INT NULL,
+  status_text VARCHAR(512) NULL,
+  value DOUBLE NULL,
+  message VARCHAR(1000) NULL,
+  PRIMARY KEY (snap_id, component_id),
+  KEY sw_component_app (snap_id, app_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_volume (
+  snap_id BIGINT NOT NULL,
+  volume_id BIGINT NOT NULL,
+  node_id BIGINT NULL,
+  caption VARCHAR(512) NULL,
+  kind VARCHAR(255) NULL,
+  size_bytes DOUBLE NULL,
+  used_bytes DOUBLE NULL,
+  used_pct DOUBLE NULL,
+  status INT NULL,
+  PRIMARY KEY (snap_id, volume_id),
+  KEY sw_volume_node (snap_id, node_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_vim_host (
+  snap_id BIGINT NOT NULL,
+  host_id BIGINT NOT NULL,
+  node_id BIGINT NULL,
+  name VARCHAR(512) NULL,
+  name_key VARCHAR(255) NULL,
+  cluster VARCHAR(512) NULL,
+  status INT NULL,
+  connection_state VARCHAR(64) NULL,
+  power_state VARCHAR(64) NULL,
+  cpu_pct DOUBLE NULL,
+  mem_pct DOUBLE NULL,
+  vm_count INT NULL,
+  vm_running INT NULL,
+  product VARCHAR(255) NULL,
+  PRIMARY KEY (snap_id, host_id),
+  KEY sw_vim_host_name (snap_id, name_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS sw_vim_vm (
+  snap_id BIGINT NOT NULL,
+  vm_id BIGINT NOT NULL,
+  host_id BIGINT NULL,
+  node_id BIGINT NULL,
+  name VARCHAR(512) NULL,
+  name_key VARCHAR(255) NULL,
+  power_state VARCHAR(64) NULL,
+  status INT NULL,
+  cpu_pct DOUBLE NULL,
+  mem_pct DOUBLE NULL,
+  ip VARCHAR(64) NULL,
+  guest_state VARCHAR(64) NULL,
+  PRIMARY KEY (snap_id, vm_id),
+  KEY sw_vim_vm_name (snap_id, name_key),
+  KEY sw_vim_vm_host (snap_id, host_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('solarwinds', 1, UTC_TIMESTAMP());
+```
+<!-- end of the SolarWinds statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `solarwinds_snapshot_properties` | `all` | The node custom properties kept, or a list of names |
+| `solarwinds_snapshot_skip_properties` | `[]` | Custom properties never kept, for example one that names a person |
+| `solarwinds_snapshot_parts` | all nine | The other tables read: `node`, `ip`, `iface`, `alert`, `event`, `app`, `component`, `volume`, `vim` |
+| `solarwinds_snapshot_max_nodes` | `20000` | Nodes read at most |
+| `solarwinds_snapshot_max_rows` | `50000` | Rows of any other table at most |
+| `solarwinds_event_hours` | `24` | The first run's events: this many hours back |
+| `solarwinds_db_create` | `true` | Make the tables on the first run |
+| `solarwinds_db_keep_snapshots` | `12` | Whole snapshots kept |
+| `solarwinds_db_keep_days` | `400` | Days the snapshot rows (the counts) are kept. `0`: always |
+| `solarwinds_db_event_days` | `400` | Days events are kept. `0`: always |
+| `solarwinds_db_max_age` | `20` | Minutes a snapshot may be old for a report. In all.yml: every report reads it |
 
 ## TLS (optional)
 

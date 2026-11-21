@@ -181,7 +181,7 @@ def area_of(name, playbook):
         return "Windows"
     if n.startswith("aap - ") and "report" not in n:
         return "Linux"                                   # the AAP setup jobs, together
-    if "report" in n or "inventory" in n or "analysis" in n or n == "network map":
+    if "report" in n or "inventory" in n or "analysis" in n or n in ("network map", "solarwinds - snapshot"):
         return "Reports"
     return "Linux"
 

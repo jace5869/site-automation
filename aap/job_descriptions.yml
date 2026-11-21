@@ -700,6 +700,11 @@ templates:
     targets: "SolarWinds Orion via its SWIS REST API (SolarWinds (read-only) credential); the AAP side, no Limit; AAP for the last run's copy."
     produces: "A plain summary email with a workbook (report_email_to), the map on the report website (report_web_dest), artifacts netmap."
     supports: "Run constraint=Reads only (no hosts); SolarWinds is only read (SWQL queries); writes the report email and the report website when set"
+  "SolarWinds - snapshot":
+    does: "Every 10 minutes: reads SolarWinds once and keeps it in the report database, so the reports read the database instead of SolarWinds."
+    targets: "SolarWinds Orion via its SWIS REST API (SolarWinds (read-only) credential); the report database (Report database credential); no Limit."
+    produces: "One snapshot in the report database: nodes, links, interfaces, active alerts, events, SAM, volumes, VIM; artifacts solarwinds_snapshot."
+    supports: "Run constraint=Reads only (no hosts); SolarWinds is only read (SWQL queries); writes the report database; Concurrent jobs off"
   "Tenable.sc - scan":
     does: "Launches Tenable.sc (ACAS) scans of an inventory group, one scan per zone, so each host is scanned from its own datacenter's scanner."
     targets: "Tenable.sc via its API (Tenable.sc API credential), AAP side; hosts come from tenable_scan_target, not the Limit; hosts are only scanned."

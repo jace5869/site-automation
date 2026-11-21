@@ -144,6 +144,26 @@ Orion's own certificate is self-signed. Choose one:
 
 Success looks like: the email's subject starts with `Network map:`, and the page shows the globe with your sites.
 
+## From the report database (1.96.0)
+
+With the job *SolarWinds - snapshot* running ([REPORT_DATABASE.md](REPORT_DATABASE.md#the-solarwinds-snapshot-1960)),
+the map reads the newest snapshot instead of SolarWinds. The run is then a few seconds shorter, and SolarWinds is not
+asked at all.
+
+1. Add the **Report database** credential to *Network map*. The reader `report_reader` is enough.
+2. Run it. The output says where the read came from:
+   - `From the report database: the SolarWinds snapshot of 2026-11-21 10:05 CET (4 min old).`
+   - or `From SolarWinds itself: ...` with the reason.
+
+It reads SolarWinds itself when:
+
+- the newest snapshot is older than `solarwinds_db_max_age` (20 minutes), or there is none
+- the database cannot be reached
+- `netmap_from_db` is `false`
+
+The map is the same either way: the snapshot gives back exactly what a read of SolarWinds gives. Its time is the
+snapshot's. With the snapshot, the SolarWinds credential is only needed for that fallback.
+
 ## Where a node belongs: site, building, closet (1.95.0)
 
 **Read, not guessed - and said.** The job reads where each node belongs from what should agree (`netmap_site_by: auto`,
@@ -242,6 +262,8 @@ left out, and the job says so: raise it. 1,500 nodes add about 45 KB to the defa
 | `netmap_xlsx` | `true` | attach the workbook |
 | `netmap_fail` | `false` | mark the job failed when SolarWinds could not be read |
 | `netmap_raw` | `false` | print the first nodes and links as read |
+| `netmap_from_db` | `true` | read the report database's SolarWinds snapshot first (1.96.0) |
+| `solarwinds_db_max_age` | `20` | minutes the snapshot may be old; older: SolarWinds itself |
 | `portal_netmap` | `auto` | the portal's live page: auto (with a SolarWinds credential), true, false |
 | `netmap_live_seconds` | `60` | how often the portal reads the status (30 at least) |
 | `netmap_full_seconds` | `1800` | how often the portal reads the whole map (300 at least) |
@@ -280,5 +302,7 @@ read every link (or was cut by `netmap_max_nodes`) calls nothing missing it did 
 | `the links: this Orion has neither Orion.TopologyConnections nor Orion.TopologyData` | NPM's topology is not there: the map shows the nodes without links |
 | `Unplaced sites (N)` | give them coordinates (*How a site gets its place*) |
 | `not compared: ...` | attach the AAP credential (*What changed*); the first run is never compared |
+| `From SolarWinds itself: the newest SolarWinds snapshot is N min old` | the job *SolarWinds - snapshot* has not run lately: its job output says why |
+| `From SolarWinds itself: the report database could not be reached` | the *Report database* credential on this template, and the path to port 3309 |
 | the portal: `The network map is off here: ...` | the deploy had no SolarWinds credential, or `portal_netmap: false` |
 | the portal: `not read again: ...` | the live read failed (or the links could not be read whole): the reason follows; the map shown is the last good one |

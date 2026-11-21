@@ -101,6 +101,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
 | Site portal - deploy | `playbooks/site_portal_deploy.yml` | [site_portal_deploy.yml](site_portal_deploy.yml) |
 | Site portal - open ticket | `playbooks/portal_open_ticket.yml` | [portal_open_ticket.yml](portal_open_ticket.yml) |
+| SolarWinds - snapshot | `playbooks/solarwinds_snapshot.yml` | [solarwinds_snapshot.yml](solarwinds_snapshot.yml) |
 | SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
 | STIG - answer file generator | `playbooks/stig_answer_keys.yml` | [stig_answer_keys.yml](stig_answer_keys.yml) |
 | STIG - fix one rule | `playbooks/stig_fix_rule.yml` | [stig_fix_rule.yml](stig_fix_rule.yml) |

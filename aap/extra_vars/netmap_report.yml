@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Network map"
 #   playbook:    playbooks/netmap_report.yml
-#   credentials: SolarWinds (read-only), Red Hat Ansible Automation Platform (optional: for what changed)
+#   credentials: SolarWinds (read-only), Red Hat Ansible Automation Platform (optional: for what changed), Report database (optional: the SolarWinds snapshot, 1.96.0)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -89,6 +89,15 @@
 
 ## nodes read at most (more: the first ones, said in the report)
 # netmap_max_nodes: 5000
+
+## 1.96.0: read the report database's SolarWinds snapshot (the job "SolarWinds - snapshot") instead
+## of SolarWinds, when the template has a "Report database" credential. A snapshot older than
+## solarwinds_db_max_age minutes, or none: SolarWinds itself, and the job output says why. false =
+## always SolarWinds itself.
+# netmap_from_db: true
+
+## minutes a snapshot may be old for a report (all.yml: every report reads it)
+# solarwinds_db_max_age: 20
 
 ## What changed since the last run: this template's last successful run kept a copy (job artifact
 ## netmap_snapshot), read back from AAP with the report's "Red Hat Ansible Automation Platform"
@@ -337,7 +346,7 @@
 #   - {tab: Horizon, match: ["Horizon*"]}
 #   - {tab: Tenable.sc, match: ["Tenable*"]}
 #   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
-#   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*"]}
+#   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*", "SolarWinds*"]}
 #   - {tab: Linux, match: ["Linux*", "Security*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*", "Evaluate-STIG*",
 #                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*", "ACT - *", "Disk - *", "Service - *"]}
 #   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*", "Site portal*", "Workflow gate*"]}

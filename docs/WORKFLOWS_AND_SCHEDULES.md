@@ -1498,6 +1498,7 @@ night 02:00, after a first run as Check).
 | Network performance | hourly (**Concurrent jobs** off) | workflow 34 |
 | Horizon: broken desktops / reports | hourly in working hours / daily | workflows 30 and 32 |
 | VM outage watch | every 5 to 15 minutes (**Concurrent jobs** off) | workflow 28 |
+| SolarWinds snapshot (for the reports) | every 10 minutes (**Concurrent jobs** off) | template *SolarWinds - snapshot* ([REPORT_DATABASE.md](REPORT_DATABASE.md#the-solarwinds-snapshot-1960)) |
 | Report website - copy | every 15 minutes | template *Report website - copy* ([WEB_REPORTS.md](WEB_REPORTS.md)) |
 | VM deploy tickets | every 15 minutes | template *VM - pick up deploy tickets* ([VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md)) |
 | Network config backup | every day | template *Network config backup* ([NETWORK_CONFIG.md](NETWORK_CONFIG.md)) |

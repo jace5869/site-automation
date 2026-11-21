@@ -24,6 +24,52 @@ reads other history from the log file. Portal nginx compresses static assets onl
 The report website supports gzip and static file ETags. The portal image requires Python 3.8 or later.
 
 To set up: run Site portal - deploy.
+## 1.96.0 — 2026-11-21
+
+**To set up: the job template *SolarWinds - snapshot*, with the "SolarWinds (read-only)" and "Report database"
+(writer) credentials, on a 10-minute schedule, Concurrent jobs off (docs/REPORT_DATABASE.md, "The SolarWinds
+snapshot").** Then add the Report database credential (the reader is enough) to *Network map*. All new settings have
+working defaults. Without the job, nothing changes: *Network map* reads SolarWinds as before.
+
+**SolarWinds in the report database.** One job reads SolarWinds and keeps it. The reports read the database.
+
+- **The job** (`playbooks/solarwinds_snapshot.yml`, `roles/solarwinds_snapshot`):
+  - SolarWinds is only read: SWQL `SELECT`s through the network map's reader, every column named.
+  - Each table asks only for the columns this Orion has (`Metadata.Property`, one query). A module it does not have
+    (no SAM, no VIM) is said, not an error.
+  - Kept: nodes (status, last poll, CPU, memory, vendor, model, IPs, custom properties as JSON), NPM links, the links'
+    interfaces (% in and out, errors and discards), active alerts, events, SAM applications (with how many components
+    each has) and the components not up (with their statistic and message), volumes, VIM hosts and VMs.
+  - Never kept: SNMP communities, the license key, who acknowledged an alert, notes. `solarwinds_snapshot_skip_properties`
+    leaves out a custom property that names a person.
+- **Replace by snapshot:**
+  - each run is one snapshot (`sw_snapshot`), written in one transaction. A reader sees only whole snapshots.
+  - The state tables keep the last 12 (`solarwinds_db_keep_snapshots`). The snapshot rows (the counts) 400 days.
+  - Events: one row per SolarWinds event, read from the newest kept on, kept 400 days (under 1 GB).
+  - A database lock: two runs never write at once.
+  - SolarWinds not reached: the job is red and a row says why (`ok = 0`). The reports keep the last whole snapshot.
+- **The reader** (`plugins/module_utils/site_swis_db.py`):
+  - `answer()` gives exactly the dict `site_swis.collect()` gives, from the newest snapshot when it is at most
+    `solarwinds_db_max_age` (20) minutes old, else from SolarWinds itself. It adds `snapshot_at`, `age_seconds` and
+    `source` (`db-snapshot` or `swis-live`).
+  - `nodes_for()`, `alerts_for()`, `apps_for()` and `events_between()` for the other reports' sections (the 1.96.0
+    plan, each section with a mockup first). `apps_for()` gives a node's applications and their components not up
+    ("2 of 9 down"). `part_note()` says when this Orion has no SAM.
+  - The indexes serve them: a node by name or IP, a node's interfaces, alerts, applications and volumes, events by time
+    and node.
+- **Network map reads it** (`netmap_from_db: true`). The job output says where the read came from, and why when it was
+  SolarWinds itself. With a fresh snapshot, SolarWinds is not asked at all. The map is the same either way.
+- The report website's default tabs: *SolarWinds - snapshot* is under Network and storage (`report_web_tabs`).
+- MySQL 8.4 and MariaDB 10.11.
+- Docs: REPORT_DATABASE.md ("The SolarWinds snapshot", the statements for making the tables by hand), NETWORK_MAP.md
+  ("From the report database"), SETUP_AAP, JOB_TEMPLATES, WORKFLOWS_AND_SCHEDULES, the credential types.
+- Tests:
+  - `tests/test_solarwinds_snapshot.py`: what a snapshot reads and writes, the reader's dict equal to `collect()`'s
+    and the map drawn the same, a module this Orion lacks, events read incrementally, the reader's choice, the job's
+    lines, the doc's statements.
+  - `tests/solarwinds/run_snapshot_test.sh`, on both ansible-core versions, against a real MySQL 8.4 and MariaDB 10.11:
+    the job end to end, the reader against `collect()`, the lock, a dry run, every failure, the network map reading
+    the snapshot.
 ## 1.95.1 — 2026-11-21
 
 **Nothing to set up.** A hotfix of the network map (1.95.0):
