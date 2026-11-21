@@ -8,6 +8,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "plugins", "filter"))
 import stig_ckl_filters as F  # noqa: E402
 from ansible.errors import AnsibleFilterError  # noqa: E402
+import ansible.module_utils  # noqa: E402 - the repository's module_utils as Ansible gives them (ansible.cfg)
+ansible.module_utils.__path__.append(os.path.join(os.path.dirname(HERE), "plugins", "module_utils"))
 
 
 class Routes(unittest.TestCase):
