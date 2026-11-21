@@ -74,6 +74,9 @@ def history(api, job_id, template_id, runs, names=()):
         if isinstance(art, dict) and isinstance(art.get("site_report_run"), dict):
             r = art["site_report_run"]
             report = {"status": str(r.get("status") or ""), "value": r.get("value"), "label": str(r.get("label") or "")}
+            if isinstance(r.get("teams"), dict):     # 1.86.0: each team's [critical, warning, low] (report_teams)
+                report["teams"] = dict((str(k)[:80], [int(x) if isinstance(x, int) else 0 for x in v[:3]])
+                                       for k, v in list(r["teams"].items())[:60] if isinstance(v, list))
         run = {"id": j["id"], "status": str(j.get("status") or ""), "finished": str(j.get("finished") or ""), "report": report}
         if names:
             run["artifacts"] = dict((k, art[k]) for k in names if isinstance(art, dict) and k in art)

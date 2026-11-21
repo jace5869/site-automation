@@ -1907,7 +1907,8 @@ class PagePeriods(unittest.TestCase):
              'var n0=history.length;D.querySelector("#ppbar button.cvpd[data-name=\'3m\']").click();o.h3=location.hash;o.t3=tv("opened");o.steps=history.length-n0;'
              'setTimeout(function(){D.querySelector("#ppbar button.cvpd[data-name=\'all\']").click();o.ta=tv("opened");o.ha=location.hash;'
              'o.acta=[].slice.call(D.querySelectorAll("#glance .act .chip.ppw, .brief-hero>.chip.ppw")).filter(function(x){return !x.hidden}).length;'
-             'o.v=V;D.title="R "+JSON.stringify(o)},300)}catch(e){V.push("thrown: "+e.message);o.v=V;D.title="R "+JSON.stringify(o)}},300)})</script></body>')
+             'o.v=V;D.title="R "+JSON.stringify(o)},300)}catch(e){V.push("thrown: "+e.message);o.v=V;D.title="R "+JSON.stringify(o)}},1500)})</script></body>')
+    # 1500: after the count-up of the tiles (report_pop.js, 1.86.0: 900 ms, its own timer sets the value at the latest)
     CSP = '<head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'">'
 
     def chrome(self, h, frag="", width=1280, probe=None):

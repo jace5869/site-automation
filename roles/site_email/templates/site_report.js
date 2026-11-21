@@ -258,7 +258,8 @@
   fit('grow');
   document.addEventListener('click',function(e){all('details.cols[open]').forEach(function(d){if(!d.contains(e.target))d.open=false})});
   /* a row is shown unless the table's filter, the search or the page's filter buttons (1.67.0) take it away */
-  function vis(r){var o=!!(r._f||r._s||r._p||r._d||r._ot),h=o||!!r._c;if(r.hidden!==h)r.hidden=h;
+  /* 1.86.0: _tm another team's row folded, _sv a severity chip not chosen (report_pop.js) */
+  function vis(r){var o=!!(r._f||r._s||r._p||r._d||r._ot||r._tm||r._sv),h=o||!!r._c;if(r.hidden!==h)r.hidden=h;
     /* only the row cap hides it: Print shows it (a row a filter or the search hid stays out) */
     if(!!r._c&&!o){if(!r.hasAttribute('data-cap'))r.setAttribute('data-cap','')}else if(r.hasAttribute('data-cap'))r.removeAttribute('data-cap');
     /* 1.68.0: a row that opens (tr.xr after it): shown when its row is and it was opened */
@@ -307,7 +308,7 @@
     function capApply(){if(!capOn)return;
       if(pending){if(!(tb._open||capFree(tb)))return;tb._expand()}
       var k=0,fr=capFree(tb),open=!!tb._open||fr,folded=0,left=0;
-      [].forEach.call(body.rows,function(r){if(r.classList.contains('xr'))return;var off=!!(r._f||r._s||r._p||r._d||r._ot),
+      [].forEach.call(body.rows,function(r){if(r.classList.contains('xr')||r.classList.contains('pt-fold'))return;var off=!!(r._f||r._s||r._p||r._d||r._ot||r._tm||r._sv),
           sev=!modern&&(r.classList.contains('r-critical')||r.classList.contains('r-warning'));
         if(!off)k++;r._c=!open&&!off&&!sev&&k>limit;if(r._c)folded++;else if(!off)left++;r.classList.toggle('capped',!!r._c);vis(r)});
       if(capBtn){capBtn.hidden=open||!folded;if(capTxt)capTxt.nodeValue='The first '+left+' of '+(left+folded)+' rows are shown'+(modern?'. ':' (critical and warning rows always are). ');
@@ -353,6 +354,8 @@
   capAll();
   window.addEventListener('beforeprint',function(){printing=true;capAll()});
   window.addEventListener('afterprint',function(){printing=false;capAll()});
+  /* 1.86.0: for report_pop.js (the team picker, the severity chips) - a row's flags applied, then the caps, the counts and the fit */
+  window.siteReport.vis=vis;window.siteReport.rowsChanged=function(){capAll();counts.forEach(function(c){c()});fit()};
   /* a link to a row past the cap (a dashboard's drill link, Open item, a timeline line) shows every row of that table first */
   function liftFor(h){if(!h||h.length<2)return;var id=decodeURIComponent(h.slice(1)),pending=deferredIds[id];
     if(pending){pending._open=true;pending._capApply();fitRows(pending)}
@@ -665,7 +668,7 @@
     var run=function(){var q=find.value.trim().toLowerCase(),total=0,ns=0;gQ=!!q;capAll();
       secs.forEach(function(d){var body=d.querySelector('.body'),k=0;if(!body)return;
         var whole=!q||title(d).indexOf(q)>=0;
-        all('.tw tbody tr',body).forEach(function(r){if(r.classList.contains('xr')||r.closest('.xr'))return;
+        all('.tw tbody tr',body).forEach(function(r){if(r.classList.contains('xr')||r.closest('.xr')||r.classList.contains('pt-fold'))return;
           var on=whole||low(r).indexOf(q)>=0;r._s=!on;vis(r);if(on&&!r.hidden)k++});
         all('ul.lines>li,ul.passed>li,.todo',body).forEach(function(el){var on=whole||low(el).indexOf(q)>=0;if(el.hidden===on)el.hidden=!on;if(on)k++});
         [].forEach.call(body.children,function(el){if((el.tagName==='P'||el.classList.contains('snote'))&&low(el).indexOf(q)>=0)k++});

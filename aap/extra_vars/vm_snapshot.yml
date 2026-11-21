@@ -206,6 +206,15 @@
 ## report_email_theme - the index page is then in the portal look).
 # report_web_theme: atlas
 
+## The motion of the report website's pages (1.86.0; the atlas, brief and ops looks, the ticket
+## insights): numbers count up, cards and tiles come in as they scroll into view, chart lines draw
+## in and bars grow, a line chart gets a crosshair, rows a filter brings back fade in, a slim header
+## with the title, the status and the first tiles stays on top once the top has scrolled away. auto
+## = on unless the viewer's system asks for less motion; always = even then; off = still (the slim
+## header and the team picker stay; nothing moves). Print is always still. The network map (1.85.0)
+## reads it too.
+# report_motion: auto
+
 ## The site portal (1.67.0, docs/SITE_PORTAL.md): its address with /portal, e.g.
 ## https://stigman.yoursite.mil/portal. Set, the report website's pages get its buttons: "Ask ACT"
 ## on fapolicyd and event-log findings, "Recheck" on the STIG drift report's hosts and the
@@ -351,6 +360,17 @@
 # site_act_enabled: true
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## ---- Teams (1.86.0): the team view of the health reports on the report website ------------------
+## Which findings belong to which team: team: [matchers], in order - group:<inventory group>,
+## host:<pattern> (* and ?, any case; without a dot the short name too), inventory:<AAP inventory
+## name>; a bare word is a group. A host is in every team that matches it, the first its owner
+## (counted once in Everyone's numbers); none = report_team_other. The website's page gets a team
+## picker, each team's tiles, first steps and last 5 runs, and the other teams' findings folded; the
+## email is as it was. {} = no teams, every page as before. Set it in all.yml (AAP's inventory
+## Variables), never in the repository - one line a team, e.g. TEAM-A: [group:linux_web,
+## 'host:app*'] (docs/WEB_REPORTS.md, "Teams").
+# report_teams: {}
+
 ## ---- Certificate timeline (1.64.0): a section of the certificate reports ------------------------
 ## Linux, Windows, network devices, vCenter: the next cert_timeline_days on one axis on the report
 ## website (the atlas and brief looks), the renew list in the email, a Timeline sheet in the

@@ -2354,10 +2354,13 @@ def report_time_column(name, zone):
     return _time.column(name, _time.zone(zone)[0])
 
 
-def report_headline(report):
+def report_headline(report, web=None):
     """What the next runs keep of this report (the job artifact site_report_run, roles/site_email): its
-    status, and its first summary value that is a plain number with that value's label."""
+    status, and its first summary value that is a plain number with that value's label. 1.86.0: with teams (report_teams,
+    in the report or its website copy web) each team's [critical, warning, low] too ("" = everyone), for the team view's
+    last runs."""
     r = report or {}
+    tc = ((r.get("teams") or (web or {}).get("teams") or {}).get("counts")) if isinstance(r.get("teams") or (web or {}).get("teams"), dict) else None
     value, label = None, ""
     for t in r.get("summary") or []:
         n = _plain_number((t or {}).get("value"))
@@ -2365,7 +2368,10 @@ def report_headline(report):
             value, label = n, str(t.get("label") or "")
             break
     status = str(r.get("status") or "info")
-    return {"status": status if status in _REPORT_STATUSES else "info", "value": value, "label": label}
+    out = {"status": status if status in _REPORT_STATUSES else "info", "value": value, "label": label}
+    if isinstance(tc, dict) and tc:
+        out["teams"] = dict((str(k)[:80], [int(x or 0) for x in list(v)[:3]]) for k, v in list(tc.items())[:60] if isinstance(v, (list, tuple)))
+    return out
 
 
 def _run_ago(finished, now):
@@ -2405,9 +2411,13 @@ def report_runs(past, report, runs=14, height=36, now=None, zone=""):
         when = _time.local(str(j.get("finished") or "")[:16].replace("T", " "), tz)
         bars.append({"status": st, "value": _plain_number(rep.get("value")), "label": str(rep.get("label") or ""),
                      "when": when or "job %s" % j.get("id"), "ago": _run_ago(j.get("finished"), now), "current": False})
+        if isinstance(rep.get("teams"), dict):          # 1.86.0: the teams' numbers of that run (report_teams)
+            bars[-1]["teams"] = rep["teams"]
     cur = report_headline(report)
     bars.append({"status": cur["status"], "value": cur["value"], "label": cur["label"], "when": "this run", "ago": "",
                  "current": True})
+    if cur.get("teams"):
+        bars[-1]["teams"] = cur["teams"]
     top = max([b["value"] for b in bars if b["value"] is not None] or [0])
     half = max(4, int(height) // 2)
     for b in bars:
@@ -2555,7 +2565,7 @@ def findings_cards(by_host, missing=None, max_cards=6):
     return cards, max(len(found) - int(max_cards), 0)
 
 
-def findings_report(by_host, title, missing=None, checks=None, extra=None, portal=None):
+def findings_report(by_host, title, missing=None, checks=None, extra=None, portal=None, teams=None):
     """The result of a check run (site_findings on every host) as a report for roles/site_email:
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
     not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts. An extra
@@ -2568,9 +2578,15 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     only ones (no Healthy / With findings boxes, no list of healthy hosts). portal (1.67.0, report_portal_url): {url,
     job, actions, os} (part C: actions = the site portal's actions, os = {host: linux | windows}) - each finding gets the
     buttons of the actions whose kinds match it (plugins/filter/finding_filters.py: Ask ACT, Clean up, Restart ...), by
-    reference: this job, the host, the finding's id. Without it the report is as before."""
+    reference: this job, the host, the finding's id. Without it the report is as before. teams (1.86.0, report_teams; the
+    website's copy only): {map: {host: [teams]}, names: [teams in order, Unassigned last], other, setting} - the report's
+    teams (plugins/filter/team_filters.py): each findings row says its host's teams and its severity (row_tags), and the
+    team view (a section "Your team", team_view) takes the place of Start here and of the findings' own tiles. Without
+    it, or with no names, the report is as before."""
     by_host = by_host or {}
     ask = _portal_buttons(portal)
+    tv = teams if isinstance(teams, dict) and (teams.get("names") or []) else None
+    tmap = (tv.get("map") or {}) if tv else {}
     hosts = sorted(by_host)
     missing = sorted(missing or [])
     single = len(hosts) + len(missing) <= 1
@@ -2589,8 +2605,10 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                 warn += sev != "critical"
             # a finding's "fix" is what to do, for a person: shown with the finding, never run (the hint is what ACT runs as evidence)
             row = [sev.upper(), f.get("check", ""), str(f.get("summary", "")) + ((" What to do: %s" % f["fix"]) if f.get("fix") else ""), f.get("hint", "")]
-            rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []))
+            tag = {"data": {"team": "|%s|" % "|".join(tmap.get(h) or [tv.get("other") or "Unassigned"]), "sev": sev}} if tv else None
+            rows.append((row if single else [h] + row) + ([ask(h, f)] if ask else []) + ([tag] if tv else []))
     rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 2 if "LOW" in r[:2] else 1, r[0]))
+    tags = [r.pop() for r in rows] if tv else []           # each row's team and severity (1.86.0)
     links = [r.pop() for r in rows] if ask else []          # each row's buttons: [{label, url}]
     n = len(rows)
     if n:
@@ -2629,7 +2647,12 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     else:
         cards, more = findings_cards(by_host, missing)
         text = "What to act on first: critical, then warning%s. Every finding is in the tables below." % ((" - %d more there" % more) if more else "")
-    if cards:
+    if tv and not own:
+        # 1.86.0: the team view instead of Start here - each team's own first steps, tiles, runs (team_filters.team_block)
+        block = team_module().team_block(by_host, missing, tmap, tv.get("names") or [], findings_cards,
+                                         tv.get("other") or "Unassigned", tv.get("setting"))
+        sections.insert(0, {"title": "Your team", "status": status, "team_view": True, "rail": True})
+    elif cards:
         sections.insert(0, {"title": "Start here", "status": "critical" if any(c.get("status") == "critical" for c in cards) else status,
                             "cards": cards, "text": text})
     if rows:
@@ -2640,6 +2663,9 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
             finding_module().add_buttons_column(sections[-1], links)
         if low:
             sections[-1]["row_status"] = ["low" if "LOW" in r[:2] else "" for r in rows]
+        if tags:
+            sections[-1]["row_tags"] = tags
+            sections[-1]["team_fold"] = True
     if missing:
         sections.append({"title": "Did not report", "status": "warning",
                          "text": "Unreachable, or the job failed on them before the checks ran: their health is unknown.",
@@ -2652,11 +2678,30 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
                          "passed_checks": list(dict.fromkeys(str(c) for c in checks or []))})
     if not sections:
         sections.append({"title": "Result", "lines": ["No findings."]})
-    return {"title": t, "status": status, "summary": summary, "sections": sections,
-            "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
+    out = {"title": t, "status": status, "summary": summary, "sections": sections,
+           "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
+    if tv and not own:
+        # the findings' own tiles make way for the team's (the extra sections' boxes stay: patch age, the Console)
+        block["tiles_kept"] = [b for s in extra or [] for b in list(s.get("boxes") or [])]
+        out["teams"] = block
+    return out
 
 
 _PORTAL = []
+_TEAM = []
+
+
+def team_module():
+    """plugins/filter/team_filters.py, loaded by its path (see portal_module)."""
+    if not _TEAM:
+        import importlib.util
+        import os
+        spec = importlib.util.spec_from_file_location("team_filters_for_reports",
+                                                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "team_filters.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _TEAM.append(mod)
+    return _TEAM[0]
 
 
 def portal_module():

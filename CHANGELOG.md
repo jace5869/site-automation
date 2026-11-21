@@ -297,6 +297,45 @@ no Limit. A step that runs on hosts still needs one.
   strings; the UTC start; the ring from what is known; a headless browser for auto, always, off and reduced motion).
   `tests/site_portal/portal_demo.py` takes `PORTAL_DEMO_MOTION`.
 
+## 1.86.0 — 2026-11-21
+
+**To set up: nothing.** Every page gets the motion (`report_motion: auto`). For the team view, set `report_teams` in
+all.yml (docs/WEB_REPORTS.md, "Teams"); `{}` (the default) leaves every page as it was. The emails do not change.
+
+**Report pop + team view** (the user's mockup 1): the report website's pages, the atlas, brief and ops looks and the
+ticket insights.
+
+- **Teams on the health reports** (`report_teams`, plugins/filter/team_filters.py):
+  - the setting: `team: [matchers]` in order - `group:<inventory group>`, `host:<pattern>` (`*` `?`, any case;
+    without a dot the short name too), `inventory:<AAP inventory>`; a bare word is a group;
+  - a host is in every team that matches it, the first its owner (each finding once in *Everyone*); none =
+    `report_team_other` (*Unassigned*), always shown with its count;
+  - worked out when the job runs and written into the page (no AAP call, offline) and into the job's data:
+    `site_health`'s and each `site_findings` entry's `teams`;
+  - the job says what to fix in the setting (a part it cannot read, a team with no host, a group not in the
+    inventory) and never fails on it.
+- **The team view**, in place of *Start here* (the rail says *Your team*):
+  - a picker: *Everyone*, each team, *Unassigned*, with host counts; a list on a narrow screen or past 7 teams;
+    the choice kept in the browser;
+  - each team's tiles (hosts, healthy as a ring, critical and warning with the change since the last run), *What
+    to do first* (its 3 worst, with Copy), every team's severity bar, its last 5 runs;
+  - the findings table: the team's rows, the others folded behind *Show the other teams' findings (N)*; severity
+    chips over the table. The extra sections' tiles (patch age, the Console) stay.
+  - The last runs come from the run artifact `site_report_run`, which now keeps each team's numbers.
+- **Motion on every page** (`report_motion`: auto, always, off; `roles/site_email/templates/report_pop.js`):
+  - numbers count up; cards and sections come in as they scroll into view; chart lines draw in, bars grow;
+  - a crosshair on line charts; rows a filter brings back fade in; sections open smoothly;
+  - a slim bar under the page's bar with the title, the status and the first tiles once the top has scrolled away.
+  - The viewer's reduced-motion setting is respected (unless `always`); print is still.
+  - `report_motion` moved from the network map's defaults to site_email's: one setting for every page.
+- **Ticket insights:** the same motion; the assignment groups as chips over *At a glance*, each a link to its page;
+  the one last chosen offered as *Your team* on the others.
+- No inline script or style, nothing from elsewhere, ASCII script (the Windows writer); 1280 and 800 px, light and
+  dark, no sideways scroll.
+- Tests: `tests/test_report_teams.py` (matching, the report, the runs, the three looks, motion, the script, the
+  insights' bar); `tests/findings/run_findings_test.sh` (the page, the artifacts, the notes, the email unchanged,
+  `report_teams: {}` and `report_motion: off`), on both ansible-core versions.
+
 ## 1.85.0 — 2026-11-20
 
 **To set up: a "SolarWinds (read-only)" credential type and credential, and the job template *Network map*

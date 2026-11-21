@@ -97,7 +97,8 @@
 {%- for seg in text.split('/') -%}{{ '/<wbr>' if not loop.first else '' }}{%- for part in seg.split('\\') -%}{{ '\\<wbr>' if not loop.first else '' }}{{ keep(part) }}{%- endfor -%}{%- endfor -%}
 {%- endmacro -%}
 <!DOCTYPE html>
-<html lang="en">
+{%- set _motion = report_motion | default('auto') | string | trim | lower %}
+<html lang="en"{% if _motion in ['off', 'always'] %} class="motion-{{ _motion }}"{% endif %}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -523,6 +524,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 }
 {%- set hover_look = 'ops' %}
 {%- include 'report_hover.css.j2' %}
+{%- include 'report_pop.css.j2' %}
 {%- include 'report_causes.css.j2' %}
 {%- include 'report_matrix.css.j2' %}
 {%- if r.sections | default([]) | selectattr('links', 'defined') | list or r.sections | default([]) | selectattr('actions', 'defined') | list or r.sections | default([]) | selectattr('cell_links', 'defined') | list or r.sections | default([]) | selectattr('buttons', 'defined') | list %}
@@ -921,7 +923,7 @@ footer{margin-top:32px}
 {%- endif %}
 </header>
 <!--site-report-files-->
-{%- if r.summary | default([]) and not r.dashboard | default({}) %}
+{%- if r.summary | default([]) and not r.dashboard | default({}) and r.teams is not defined %}
 {#- the row of tiles (1.71.0: a dashboard has its own, in At a glance) by their count (the user: no tile alone on a row): 5 in one row, 6 as 3 + 3, 7 and 8 as 4 + 4 (or
     + 3), 9 and 10 as 5 + 5 (or + 4); 2 to a row at 900 px and under #}
 <div class="tiles t{{ r.summary | length if r.summary | length <= 10 else 'x' }}">
@@ -1004,7 +1006,7 @@ footer{margin-top:32px}
 {%- set cols = s.columns | default([]) %}
 {%- set rws = s.rows | default([]) %}
 {%- set nk = namespace(ok=true, num=true, mx=0, cs=false, w=0) %}
-{%- for k in ['cards', 'board', 'squares', 'matrix', 'timeline', 'heat', 'outage', 'details', 'groups', 'tiles', 'glance', 'cell_links', 'buttons', 'links', 'sparks', 'actions', 'passed', 'causes', 'cause_first'] %}
+{%- for k in ['team_view', 'cards', 'board', 'squares', 'matrix', 'timeline', 'heat', 'outage', 'details', 'groups', 'tiles', 'glance', 'cell_links', 'buttons', 'links', 'sparks', 'actions', 'passed', 'causes', 'cause_first'] %}
 {%- if s[k] is defined and s[k] %}{% set nk.ok = false %}{% endif %}
 {%- endfor %}
 {%- if cols | length > 4 or rws | length > 25 %}{% set nk.ok = false %}{% endif %}
@@ -1036,7 +1038,7 @@ footer{margin-top:32px}
     by hosts open). Each card: the row's first value, one line (the cells that are Critical or Warning, else its
     longest value), Open item (that row) and View details (the row's other values) #}
 {%- set auto = [] %}
-{%- if st in ['critical', 'warning'] and not (secs | selectattr('cards', 'defined') | selectattr('cards') | list) and not r.dashboard | default({}) %}
+{%- if st in ['critical', 'warning'] and not (secs | selectattr('cards', 'defined') | selectattr('cards') | list) and not r.dashboard | default({}) and r.teams is not defined %}
 {%- set catrep = secs | selectattr('cat_cells', 'defined') | selectattr('cat_cells') | list %}
 {%- for s in secs %}
 {%- set si = loop.index %}
@@ -1114,6 +1116,9 @@ footer{margin-top:32px}
 {%- endif %}
 {#- Explore: there is something to open - a table's tools, or a text longer than two lines #}
 {%- set xp = (s.columns is defined and s.rows | default([]) and blist[loop.index0] is none) or s.text | default('') | string | length > 220 %}
+{%- if s.team_view | default(false) and r.teams is defined %}
+{%- include 'report_teams.html.j2' %}
+{%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
 <details class="sec{{ ' start' if start else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
 <summary><div class="hr">{% if ss in words and not (s.glance | default([]) and r.dashboard | default({})) %}<span class="stc s-{{ ss }}"><span class="d" aria-hidden="true"></span>{{ opsword[ss] }}</span>{% elif start %}<span class="lbl">Ranked by severity</span>{% endif %}<span class="sp"></span>
@@ -1418,6 +1423,7 @@ footer{margin-top:32px}
 {%- if xp %}<label class="xpl" for="xp{{ si }}"><span class="o">Explore &rarr;</span><span class="c">Less &uarr;</span></label>{% endif %}</div>
 {%- endif %}
 </details>
+{%- endif %}
 {%- endfor %}
 {%- if run.open %}
 </div>
@@ -1431,6 +1437,7 @@ footer{margin-top:32px}
 </div>
 <script id="site-report-js">
 {% include 'site_report.js' %}
+{% include 'report_pop.js' %}
 </script>
 </body>
 </html>

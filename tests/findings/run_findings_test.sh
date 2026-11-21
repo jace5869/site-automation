@@ -138,4 +138,36 @@ femail pass 'patch age: no section when the patching check did not run' -e "$mai
 grep -E -q 'Patch age: [0-9]|Patch age \| ' "$work/out.txt" && { echo "FAIL - a patch age section without the patching check"; grep -E -m3 'Patch age: [0-9]|Patch age \| ' "$work/out.txt"; bad=$((bad + 1)); } \
   || echo "ok   - ...none"
 
+# ---- 1.86.0 teams (report_teams): the website's team view, each host's teams in the data, the email as it was ----
+rm -rf "$work/reports"; mkdir -p "$work/reports"
+tm='{"site_fail_on": [], "report_web_theme": "atlas",
+     "report_teams": {"TEAM-A": ["group:SITEA-linux-web"], "TEAM-B": ["host:db*", "group:SITEA-linux-web"], "TEAM-C": ["group:no-such-group"]}}'
+ANSIBLE_SHOW_CUSTOM_STATS=1 femail pass 'teams: report_teams set - the job is green' -e "$mail" -e "$tm" -e "{\"report_web_dest\": \"$work/reports\"}"
+page=$(grep -rl --include='*.html' 'class="pop-teams"' "$work/reports" 2>/dev/null | grep -v -e index -e latest | head -1)
+[ -n "$page" ] && grep -q 'data-team="TEAM-A" aria-pressed="false">TEAM-A <span class="pt-n">2</span>' "$page" \
+  && grep -q 'data-team="TEAM-B" aria-pressed="false">TEAM-B <span class="pt-n">3</span>' "$page" \
+  && grep -q 'data-team="Unassigned" aria-pressed="false">Unassigned <span class="pt-n">0</span>' "$page" \
+  && grep -q '<tr data-team="|TEAM-A|TEAM-B|" data-sev="warning">' "$page" && grep -q '<span class="t">Your team</span>' "$page" \
+  && ! grep -q '<span class="t">Start here</span>' "$page" && grep -q 'reportPop' "$page" \
+  && echo "ok   - ...the website: the picker (a shared host in both teams, Unassigned with 0), each row's teams, Your team for Start here" \
+  || { echo "FAIL - team view page ($page)"; bad=$((bad + 1)); }
+grep -q '"teams": \[' "$work/out.txt" && grep -Eq '"TEAM-A",\s*"TEAM-B"' "$work/out.txt" \
+  && echo "ok   - ...site_health and site_findings carry each host's teams (web01: TEAM-A, TEAM-B in order)" \
+  || { echo "FAIL - teams in the artifacts"; grep -n -m5 'teams' "$work/out.txt"; bad=$((bad + 1)); }
+grep -q 'report_teams: TEAM-C matches no host of this run' "$work/out.txt" \
+  && grep -q 'report_teams: TEAM-C - group:no-such-group is not a group of the inventory' "$work/out.txt" \
+  && echo "ok   - ...the job says what to look at in report_teams, and does not fail" || { echo "FAIL - report_teams notes"; bad=$((bad + 1)); }
+python3 - "$(ls -t "$work"/mail/*.eml | head -1)" > "$work/parts.txt" <<'PY'
+import email, email.policy, sys
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+print(m.get_body(preferencelist=("plain",)).get_content())
+print("HTML:", m.get_body(preferencelist=("html",)).get_content())
+PY
+grep -q '^Start here' "$work/parts.txt" && ! grep -q -e 'pop-team' -e 'Your team' -e 'TEAM-A' "$work/parts.txt" \
+  && echo "ok   - ...the email is as it was: Start here, no teams" || { echo "FAIL - teams in the email"; bad=$((bad + 1)); }
+femail pass 'teams: report_teams {} and report_motion: off' -e "$mail" -e '{"site_fail_on": [], "report_motion": "off"}' -e "{\"report_web_dest\": \"$work/reports\"}"
+page=$(ls -t $(grep -rl --include='*.html' 'Health check' "$work/reports" | grep -v -e index -e latest) | head -1)
+[ -n "$page" ] && ! grep -q 'class="pop-teams"' "$page" && grep -q '>Start here<' "$page" && grep -qE '<html [^>]*class="motion-off"' "$page" \
+  && echo "ok   - ...no team view (Start here as before), the page still (motion-off)" || { echo "FAIL - teams off / motion off ($page)"; bad=$((bad + 1)); }
+
 [ $bad -eq 0 ] && echo 'all checks passed' || { echo "$bad failed"; exit 1; }

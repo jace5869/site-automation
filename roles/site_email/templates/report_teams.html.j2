@@ -1,0 +1,94 @@
+{#- 1.86.0: the team view (report_teams; plugins/filter/team_filters.py) - in place of Start here on a health report's
+    website page (the atlas, brief and ops looks; the email is as it was). A picker (Everyone, each team, Unassigned
+    with its count), then the chosen team's tiles (hosts, healthy, critical and warning with the change since the last
+    run), what to do first, the findings by severity of every team and the last 5 runs. report_pop.js shows the chosen
+    team's view and folds the other teams' rows of the findings table; without the script: Everyone's view. -#}
+{%- set tv = r.teams | report_team_view(runs) %}
+{%- set allf = (tv.views | first).fig %}
+<section class="pop-teams" id="s{{ si }}" aria-label="Your team">
+<svg class="pt-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><pattern id="pt-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="pt-hatch-a" width="7" height="7"/><line class="pt-hatch-b" x1="6" y1="0" x2="6" y2="7"/></pattern></defs></svg>
+<div class="pop-team-bar{{ ' many' if tv.names | length > 7 else '' }}">
+<span class="pt-lab" id="pt-lab{{ si }}">Team</span>
+<div class="pop-team" role="group" aria-labelledby="pt-lab{{ si }}" hidden>
+<button type="button" class="pt-b" data-team="" aria-pressed="true">Everyone <span class="pt-n">{{ tv.everyone }}</span></button>
+{%- for n in tv.names %}
+<button type="button" class="pt-b{{ ' pt-un' if n == tv.other else '' }}" data-team="{{ n | e }}" aria-pressed="false">{{ n | e }} <span class="pt-n">{{ tv.counts[n] }}</span></button>
+{%- endfor %}
+</div>
+<select class="pt-sel" aria-labelledby="pt-lab{{ si }}" hidden><option value="">Everyone ({{ tv.everyone }})</option>
+{%- for n in tv.names %}<option value="{{ n | e }}">{{ n | e }} ({{ tv.counts[n] }})</option>{% endfor %}</select>
+<span class="pt-map"{% if tv.map %} title="{{ tv.map | e }}"{% endif %}>From report_teams: {{ tv.names | length - 1 }} team{{ '' if tv.names | length == 2 else 's' }}, {{ tv.counts[tv.other] | default(0) }} host{{ '' if tv.counts[tv.other] | default(0) == 1 else 's' }} in none</span>
+</div>
+{%- for v in tv.views %}
+{%- set f = v.fig %}
+<div class="pop-team-view" data-team="{{ v.team | e }}"{{ ' hidden' if v.team else '' }}>
+<div class="pt-tiles">
+<div class="pt-card pt-tile"><span class="pt-l">Hosts</span><span class="v">{{ f.hosts | default(0) }}</span><span class="d">{{ (f.missing ~ ' did not report') if f.missing | default(0) else 'all reported' }}{{ (', ' ~ f.shared ~ ' shared') if v.team and f.shared | default(0) else '' }}</span></div>
+<div class="pt-card pt-tile pt-ringt">
+{%- if v.pct is not none %}<svg class="pt-ring" viewBox="0 0 64 64" width="60" height="60" aria-hidden="true"><circle class="trk" cx="32" cy="32" r="26"/><circle class="arc" cx="32" cy="32" r="26" pathLength="100" stroke-dasharray="100" stroke-dashoffset="{{ 100 - v.pct }}" transform="rotate(-90 32 32)"/></svg>{% endif %}
+<div><span class="pt-l">Healthy</span><span class="v">{{ (v.pct ~ '%') if v.pct is not none else '-' }}</span><span class="d">{{ f.healthy | default(0) }} of {{ f.reported | default(0) }} that reported</span></div></div>
+{%- for k, lab, ic, act, dd in [('critical', 'Critical', 'c', 'act now', v.d_crit), ('warning', 'Warning', 'w', 'plan a fix', v.d_warn)] %}
+{%- set n = f[k] | default(0) %}
+<div class="pt-card pt-tile t-{{ 'crit' if k == 'critical' else 'warn' }}{{ ' t-zero' if not n else '' }}"><span class="pt-l"><span class="pt-ic {{ ic }}" aria-hidden="true">{{ '!' if ic == 'c' else '&#9650;' | safe }}</span>{{ lab }}</span><span class="v">{{ n }}{% if dd %} <span class="delta {{ dd.dir }}">{{ '&#9650;' | safe if dd.dir == 'up' else ('&#9660;' | safe if dd.dir == 'down' else '=') }} {{ dd.text }}</span>{% endif %}</span><span class="d">{{ act if n else 'none' }}</span></div>
+{%- endfor %}
+</div>
+<div class="pt-grid">
+<div class="pt-card pt-todo"><h3>What to do first</h3>
+{%- if v.todo %}
+<ol>
+{%- for c in v.todo %}
+{%- set cst = c.status if c.status in words else 'warning' %}
+<li>{{ chip(cst, chipword[cst]) }}<div><b>{{ c.title | e }}</b> <span class="mut">{{ c.subject | e }}{{ (' &middot; ' | safe ~ c.meta | e) if c.meta | default('') else '' }}</span>
+{%- if c.code | default('') %}
+<div class="code"><pre>{{ c.code | e }}</pre><button class="copy" type="button" hidden>Copy</button></div>
+{%- endif %}</div></li>
+{%- endfor %}
+</ol>
+{%- else %}
+<p class="pt-none">Nothing to do{{ ' for this team' if v.team else '' }}: no critical or warning finding.</p>
+{%- endif %}
+</div>
+<div class="pt-card pt-sev2"><h3>Findings by severity, per team</h3>
+{%- for b in tv.bars %}
+<div class="sb-row{{ ' me' if b.team == v.team else '' }}"><span class="sb-n">{{ b.team | e }}</span><span class="sb-bar" role="img" aria-label="{{ b.team | e }}: {{ b.text | e }}">{% for g in b.segs %}<i class="sb-{{ {'critical': 'crit', 'warning': 'warn', 'low': 'low'}[g.k] }} sbw{{ (g.w / 5) | round | int * 5 }}" title="{{ g.n }} {{ g.k }}"></i>{% endfor %}</span><span class="sb-v">{{ b.text | e }}</span></div>
+{%- endfor %}
+<div class="sb-leg"><span><i class="sb-crit"></i>Critical</span><span><i class="sb-warn"></i>Warning</span><span><i class="sb-low"></i>Low</span></div>
+</div>
+<div class="pt-card"><h3>The last {{ v.runs | length }} run{{ '' if v.runs | length == 1 else 's' }}</h3>
+{%- set W, H, P = 300, 112, 18 %}
+{%- set slot = (W - 2 * P) / [v.runs | length, 5] | max %}
+{%- set bw = slot * 0.56 %}
+<svg class="pt-runs" role="img" viewBox="0 0 {{ W }} {{ H + 18 }}" aria-label="Critical and warning findings in the last {{ v.runs | length }} runs: {% for h in v.runs %}{{ h.when | e }} {{ h.critical }} critical, {{ h.warning }} warning{{ '; ' if not loop.last else '' }}{% endfor %}">
+<line class="pt-base" x1="{{ P - 6 }}" x2="{{ W - P + 6 }}" y1="{{ H }}" y2="{{ H }}"/>
+{%- for h in v.runs %}
+{%- set x = P + slot * (loop.index0 + 0.22) %}
+{%- set hw = (H - 18) * h.hw / 100 %}{% set hc = (H - 18) * h.hc / 100 %}
+{%- set tip = h.when ~ ': ' ~ h.critical ~ ' critical, ' ~ h.warning ~ ' warning' %}
+{%- if h.warning %}<rect class="r-w" x="{{ '%.1f' | format(x) }}" y="{{ '%.1f' | format(H - hw) }}" width="{{ '%.1f' | format(bw) }}" height="{{ '%.1f' | format([hw - 2, 1] | max) }}" rx="2"><title>{{ tip | e }}</title></rect>{% endif %}
+{%- if h.critical %}<rect class="r-c" x="{{ '%.1f' | format(x) }}" y="{{ '%.1f' | format(H - hw - hc) }}" width="{{ '%.1f' | format(bw) }}" height="{{ '%.1f' | format([hc - 2, 1] | max) }}" rx="2"><title>{{ tip | e }}</title></rect>{% endif %}
+<text class="pt-rv" x="{{ '%.1f' | format(x + bw / 2) }}" y="{{ '%.1f' | format(H - hw - hc - 5) }}" text-anchor="middle">{{ h.critical + h.warning }}</text>
+<text class="pt-rd{{ ' now' if h.now else '' }}" x="{{ '%.1f' | format(x + bw / 2) }}" y="{{ H + 14 }}" text-anchor="middle">{{ h.short | e }}</text>
+{%- endfor %}
+</svg>
+<div class="sb-leg"><span><i class="sb-crit"></i>Critical</span><span><i class="sb-warn"></i>Warning</span></div>
+{%- if v.runs | length == 1 %}
+<p class="pt-one">The runs before this one kept no team numbers (report_teams is new here, or report_history is off).</p>
+{%- endif %}
+</div>
+</div>
+{%- if v.team %}
+{%- set oc, ow = allf.critical | default(0) - f.critical | default(0), allf.warning | default(0) - f.warning | default(0) %}
+<p class="pt-others">Other teams: {{ oc }} critical, {{ ow }} warning - in the findings table, folded.</p>
+{%- endif %}
+</div>
+{%- endfor %}
+{%- if r.teams.tiles_kept | default([]) %}
+<div class="tiles pt-kept t{{ r.teams.tiles_kept | length if r.teams.tiles_kept | length <= 10 else 'x' }}">
+{%- for t in r.teams.tiles_kept %}
+{%- set ts = t.status | default('') %}
+{%- set tvv = ('' if t.value is none else t.value) | string %}
+<div class="card tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and tvv not in ['0', ''] else '' }}"><div class="k">{% if ts in words %}<span class="c-{{ ts }}">{{ icon(ts) }}</span>{% endif %}{{ t.label | e }}</div><div class="v">{{ tvv | e }}</div>{% if t.note | default('') %}<div class="n">{{ t.note | e }}</div>{% endif %}</div>
+{%- endfor %}
+</div>
+{%- endif %}
+</section>

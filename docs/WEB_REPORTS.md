@@ -360,6 +360,82 @@ report_web_theme: atlas                      # the website (the default; brief, 
 report_logo_file: files/report_logo.png      # both
 ```
 
+## Teams (1.86.0)
+
+A health report's page (Linux and Windows health checks, and every report made from host findings) can show each
+team its own part. The email does not change.
+
+**What a team sees:**
+
+- **A team picker** at the top: *Everyone*, each team, and *Unassigned*, each with its number of hosts. On a narrow
+  screen, and with more than 7 teams, it is a list. The browser remembers the choice for every health report.
+- **The team's view**, in place of *Start here*:
+  - tiles: its hosts, how many are healthy (a ring), its critical and warning findings with the change since the
+    last run (*2 fewer than last run*);
+  - *What to do first*: its three worst findings, each with its command and a Copy button;
+  - *Findings by severity, per team*: every team's bar, this team's in front;
+  - *The last 5 runs*: critical and warning per run. Runs from before `report_teams` was set have no team numbers,
+    and the chart says so.
+- **The findings table**: the team's rows. The other teams' rows are folded behind one button,
+  *Show the other teams' findings (N)*. Chips above the table show one severity at a time.
+
+**Set it up** in `all.yml` (AAP's inventory Variables), never in the repository:
+
+1. Name each team and how its hosts are found, in order:
+
+   ```yaml
+   report_teams:
+     TEAM-A: [group:linux_web, group:linux_db]
+     TEAM-B: ['host:app*.corp.example.mil', 'inventory:SITEA Windows']
+     TEAM-C: [group:network]
+   ```
+
+   - `group:<name>`: the host is in that inventory group (the exact name). A bare word is a group too.
+   - `host:<pattern>`: the host's name matches (`*` and `?`, any case). A pattern without a dot matches the short
+     name too: `app*` matches `app01.corp.example.mil`.
+   - `inventory:<name>`: the job runs on that AAP inventory.
+2. Run the health check. Success: the page opens with the team picker, and the job output has no
+   *report_teams - what to look at* task.
+
+**How hosts are placed:**
+
+- A host belongs to every team that matches it, in the setting's order. The first is its owner: *Everyone*'s
+  numbers count each finding once.
+- A host no team matches is in *Unassigned* (`report_team_other`). It is always shown with its count, so gaps show.
+- The teams are worked out when the job runs, where the groups are known, and written into the page: the page needs
+  no AAP call and works offline. The job's data carries them too: `site_health`'s and each `site_findings` entry's
+  `teams` (the site portal and later workflow steps can read them).
+- A setting the job cannot read never fails it. The job says what to fix: a part it cannot read, a team that matches
+  no host of this run, a `group:` that is not in the inventory.
+- `report_teams: {}` (the default): no teams, every page as before.
+
+The ticket insights' pages have their own teams: the assignment groups. Chips over *At a glance* link to each group's
+page, and the one last chosen is offered as *Your team* on the other pages.
+
+## Motion (1.86.0)
+
+The report website's pages (atlas, brief and ops, and the ticket insights) move a little to show what changed and
+where to look:
+
+- the tiles' numbers count up;
+- cards and sections come in as they scroll into view;
+- chart lines draw in and bars grow;
+- a line chart gets a crosshair;
+- rows that a filter brings back fade in;
+- once the top has scrolled away, a slim bar under the page's bar keeps the title, the status and the first tiles
+  (wide screens).
+
+`report_motion` sets it for every page:
+
+| `report_motion` | What moves |
+|---|---|
+| `auto` (default) | all of it, unless the viewer's system asks for less motion |
+| `always` | all of it, even then |
+| `off` | nothing; the slim bar and the team picker still work |
+
+Print is always still. Nothing comes from outside the page, and there is no inline script: a strict
+Content-Security-Policy and an offline network are fine.
+
 ## The classification banner
 
 In a classified enclave every page carries its banner at the top and bottom - each report's page, latest page, the

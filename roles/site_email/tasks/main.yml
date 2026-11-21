@@ -215,7 +215,7 @@
 - name: Email | this report, for the next runs' strip (job artifact site_report_run)
   ansible.builtin.set_stats:
     data:
-      site_report_run: "{{ _report | report_headline }}"
+      site_report_run: "{{ _report | report_headline(_web_report | default({})) }}"
   when: _report is defined and _report_name | default('') | length == 0
 
 - name: Email | the report as text (and HTML)

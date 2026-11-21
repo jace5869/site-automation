@@ -13,6 +13,7 @@ __metaclass__ = type
 import html
 import json
 import math
+import os
 import re
 try:
     from urllib.parse import quote
@@ -578,6 +579,48 @@ section.card{border-radius:14px;border:1px solid var(--line)}
 .eyebrow,th{font-family:var(--lab);letter-spacing:.08em;text-transform:uppercase;font-size:11px}
 .tile{background:var(--surface)}
 """.replace("@DARK@", OPS_DARK_VARS)
+
+def _pop(name):
+    """1.86.0: the report website's motion and team layer (roles/site_email/templates/report_pop.js, report_pop.css.j2 -
+    the atlas, brief and ops pages carry the same): read once from this repository; '' where it is not there."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "roles", "site_email", "templates", name),
+                  encoding="utf-8") as fh:
+            return fh.read()
+    except (IOError, OSError):
+        return ""
+
+
+POP_JS = _pop("report_pop.js")
+POP_CSS = _pop("report_pop.css.j2")
+
+
+def _html_open(o):
+    """<html> with report_motion's class (1.86.0): motion-off, motion-always, or none (auto)."""
+    mo = str((o or {}).get("motion") or "").strip().lower()
+    return '<html lang="en" class="motion-%s">' % mo if mo in ("off", "always") else '<html lang="en">'
+
+
+def pop_team_bar(nodes, teams, links, cur, is_all):
+    """1.86.0: the teams as chips over At a glance - each a link to its page (no script needed), All groups first; more
+    than 7: a list. The script remembers the one last chosen and offers it as "Your team" on the other pages. '' with
+    fewer than 2 teams that have a page."""
+    keys = set(teams or [])
+    tn = [x for x in nodes if x["key"] in keys and links.get(x["key"])]
+    if len(tn) < 2 or not links.get("all"):
+        return ""
+    chip = lambda key, label, title, on: '<a class="pt-b" href="%s" data-team="%s" title="%s"%s>%s</a>' % (
+        e(links["all" if not key else key]), e(key), e(title), ' aria-current="page"' if on else "", e(label))
+    opts = "".join('<option value="%s" data-href="%s"%s>%s</option>' % (e(x["key"]), e(links[x["key"]]), " selected" if x["key"] == cur else "", e(x["full"]))
+                   for x in tn)
+    return ('<div class="pop-team-bar%s" data-pages="1" data-current="%s"><span class="pt-lab" id="pt-lab">Team</span>'
+            '<nav class="pop-team" aria-labelledby="pt-lab">%s%s</nav>'
+            '<select class="pt-sel" aria-labelledby="pt-lab" hidden><option value="" data-href="%s"%s>All assignment groups</option>%s</select>'
+            '<span class="pt-mine" hidden>Your team: <a href="#"></a></span><span class="pt-map">%d assignment groups, each with its page</span></div>') % (
+        " many" if len(tn) > 7 else "", e(cur or ""), chip("", "All groups", "All assignment groups", is_all),
+        "".join(chip(x["key"], x["label"], x["full"], x["key"] == cur) for x in tn),
+        e(links["all"]), " selected" if is_all else "", opts, len(tn))
+
 
 SCRIPT_FILE = "site-insights.js"           # written beside the website's index by site_report_web; the page loads it from there
 SCRIPT = r"""(function(){"use strict";
@@ -1677,9 +1720,9 @@ def servicenow_insights_breach_page(bm, opts=None):
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
     full = (o.get("links") or {}).get("full") or ""
-    out = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+    out = ['<!DOCTYPE html>' + _html_open(o) + '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
            '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style><!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--></head><body>' % (
-               e("About to breach – " + (bm.get("head") or "ServiceNow")), CSS + ORG_CSS, look_css),
+               e("About to breach – " + (bm.get("head") or "ServiceNow")), CSS + ORG_CSS + POP_CSS, look_css),
            '<header class="bar gut"><div class="wrap"><!--site-report-back--><div class="brand">%s<div style="min-width:0"><h1>ServiceNow - about to breach</h1>'
            '<div class="sub">%s · generated %s%s</div></div></div></header>' % (
                logo, e(o.get("scope_label") or "All assignment groups"), e(o.get("generated") or ""),
@@ -1690,7 +1733,7 @@ def servicenow_insights_breach_page(bm, opts=None):
     out.append(breach_section(bm, url, o.get("prefixes") or {}) or '<div class="callout">ServiceNow was not read.</div>')
     out.append('</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
                '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
-                   e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT))
+                   e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT + POP_JS))
     return "".join(out)
 
 
@@ -1860,9 +1903,9 @@ def servicenow_insights_page(model, key="all", opts=None):
             return '<a class="glink" href="%s" title="%s">%s</a>' % (e(links[g]), e(g), e(text if text is not None else g))
         return e(text if text is not None else g)
 
-    head = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+    head = ['<!DOCTYPE html>' + _html_open(o) + '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
             '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s%s</style><!--[if mso]><style>*{letter-spacing:normal!important}</style><![endif]--></head><body>' % (
-                e("Ticket insights – " + s["name"]), CSS + ORG_CSS, look_css)]
+                e("Ticket insights – " + s["name"]), CSS + ORG_CSS + POP_CSS, look_css)]
     # the site's logo (report_logo_file) goes in place of the comment when the page is published; else the initials
     logo = '<!--site-report-logo--><div class="logo" aria-hidden="true">%s</div>' % e(
         "".join(w[0] for w in str(o.get("header_text") or "Site automation").split()[:2]).upper() or "SA")
@@ -2047,6 +2090,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     elif variant and m.get("org") and links.get("all"):      # a split's page: none here - where it is
         sfx = "-" + ("non-" if variant == "out" else "") + _slug((m.get("split") or {}).get("label"))
         body.append('<p class="cvaway"><b>Custom view:</b> on the <a href="%s">All page</a>.</p>' % e(links["all"].replace(sfx + ".html", ".html")))
+    body.append(pop_team_bar(nodes, teams, links, None if is_all else s.get("key"), is_all))     # 1.86.0: the teams as chips
     body.append(section("glance", "At a glance", "%s, compared with the %s before (%s)" % (e(win.get("label")), e(span), e(win.get("prev_label") or "")) if win.get("compare") else e(win.get("label")),
                         tiles(tl) + backlog_tiles(s.get("autobl")) + summ))
     if trend_html:
@@ -2816,7 +2860,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc] + body + [pdata,
         '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
         '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
-            e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT)]
+            e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT + POP_JS)]
     return "".join(out)
 
 

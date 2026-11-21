@@ -103,7 +103,8 @@
 {%- for seg in text.split('/') -%}{{ '/<wbr>' if not loop.first else '' }}{%- for part in seg.split('\\') -%}{{ '\\<wbr>' if not loop.first else '' }}{{ keep(part) }}{%- endfor -%}{%- endfor -%}
 {%- endmacro -%}
 <!DOCTYPE html>
-<html lang="en">
+{%- set _motion = report_motion | default('auto') | string | trim | lower %}
+<html lang="en"{% if _motion in ['off', 'always'] %} class="motion-{{ _motion }}"{% endif %}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -506,6 +507,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 }
 {%- set hover_look = 'atlas' %}
 {%- include 'report_hover.css.j2' %}
+{%- include 'report_pop.css.j2' %}
 {%- include 'report_causes.css.j2' %}
 {%- include 'report_matrix.css.j2' %}
 {%- if r.sections | default([]) | selectattr('links', 'defined') | list or r.sections | default([]) | selectattr('actions', 'defined') | list or r.sections | default([]) | selectattr('cell_links', 'defined') | list or r.sections | default([]) | selectattr('buttons', 'defined') | list %}
@@ -671,7 +673,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 </div>
 </header>
 <!--site-report-files-->
-{%- if r.summary | default([]) %}
+{%- if r.summary | default([]) and r.teams is not defined %}
 <div class="tiles t{{ r.summary | length if r.summary | length <= 10 else 'x' }}">
 {%- for t in r.summary %}
 {%- set ts = t.status | default('') %}
@@ -741,6 +743,9 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
 {%- set si = loop.index %}
+{%- if s.team_view | default(false) and r.teams is defined %}
+{%- include 'report_teams.html.j2' %}
+{%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
 <details class="card sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
 <summary><h2>{{ s.title | e }}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
@@ -999,6 +1004,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endif %}
 </div>
 </details>
+{%- endif %}
 {%- endfor %}
 <footer>
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
@@ -1008,6 +1014,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 </div>
 <script id="site-report-js">
 {% include 'site_report.js' %}
+{% include 'report_pop.js' %}
 </script>
 </body>
 </html>
