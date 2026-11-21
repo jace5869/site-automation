@@ -1,0 +1,40 @@
+---
+# FROM SOLARWINDS (1.94.0): each DC as SolarWinds sees it, after Domain controllers' health. Read only (site_ad_swis:
+# the report database's SolarWinds snapshot, else SolarWinds itself). Never fails the job and never changes the report's
+# counts or status: plugins/filter/ad_swis_filters.py
+- name: AD | SolarWinds - which credential the job has
+  ansible.builtin.set_fact:
+    _ad_swis_db: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+    _ad_swis_sw: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') | trim | length > 0 }}"
+
+- name: AD | SolarWinds - each DC (read only)
+  site_ad_swis:
+    dcs: "{{ _ad.dcs | ad_swis_dcs(hostvars) }}"
+    max_age: "{{ ad_solarwinds_max_age | int }}"
+    days: "{{ ad_solarwinds_days | int }}"
+    now: "{{ ad_report_now | default('') }}"
+    timeout: "{{ ad_solarwinds_timeout | int }}"
+    host: "{{ _ad_swis_db }}"
+    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+  register: _ad_swis_read
+  when: _ad_swis_db | length > 0 or _ad_swis_sw | bool
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: AD | SolarWinds - the section, its tile, what was not read
+  ansible.builtin.set_fact:
+    _ad_swis_view: >-
+      {{ _ad_swis_read | default({}) | ad_swis_view(_ad, {
+           'cpu_warn': ad_solarwinds_cpu_warn | float, 'mem_warn': ad_solarwinds_mem_warn | float,
+           'days': ad_solarwinds_days | int, 'max_age': ad_solarwinds_max_age | int, 'now': ad_report_now | default(''),
+           'time_zone': report_time_zone | default('', true) | string,
+           'explain_off': 'this job has no SolarWinds credential (optional: attach "SolarWinds (read-only)" or the "Report database" '
+                          ~ 'one with the SolarWinds snapshot to see each DC as SolarWinds sees it)'}) }}
+
+- name: AD | SolarWinds
+  ansible.builtin.debug:
+    msg: "{{ _ad_swis_view.lines }}"

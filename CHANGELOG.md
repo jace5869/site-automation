@@ -55,6 +55,30 @@ building and room text, none placed - an empty globe).
   Review1950 (the review round, each test failing on the code before it); Building1950 in Chromium (down and warning
   shown, Show all, no line crosses a box).
 
+## 1.94.0 — 2026-11-21
+
+**To set up (optional):** attach the **SolarWinds (read-only)** credential, or the **Report database** one with the
+SolarWinds snapshot, to *Active Directory health report* ("AAP - set up job templates" offers both). Without either:
+nothing to set up - one line under *Not read* says the section is off.
+
+**The AD health report: From SolarWinds** - each domain controller as SolarWinds sees it, right after *Domain
+controllers' health* (user-approved mockup):
+- its status, the **AD monitors (SAM)** - "2 of 9 down: Replication, Netlogon" - CPU / memory, active alerts, the **last
+  down** in 30 days and one line that reads SolarWinds and AD together ("Down in SolarWinds and in AD: the DC itself");
+- on the website a row opens: the monitors not up (status, value, message), the last poll, the network card; the email and
+  the workbook have the monitors not up as a table of their own; a tile *SolarWinds: down or warning*;
+- from the SolarWinds snapshot in the report database (1.96.0's reader, when it is in the tree) not older than
+  `ad_solarwinds_max_age` (60 min), else SolarWinds itself (the DCs only); the text says which, when and how old; an old
+  snapshot that is all there is is said as old;
+- matched by name, then by the inventory's IP; *Not in SolarWinds* in blue;
+- read only, never fails the job, never changes the report's counts, status or `ad_report_fail`.
+- Settings: `ad_solarwinds`, `ad_solarwinds_max_age`, `ad_solarwinds_days`, `ad_solarwinds_cpu_warn` / `_mem_warn`,
+  `ad_solarwinds_timeout`.
+- Tests: `tests/test_ad_swis.py` (the snapshot through a stand-in with 1.96.0's shapes: name then IP, the interval, the last
+  down, an old snapshot, no snapshot table, no SAM, never raises; live against `tests/netmap/fake_swis.py` over HTTPS with
+  SAM, alerts and interfaces; the section in every look and the workbook); `tests/ad/run_ad_test.sh` (no credential, read
+  live through the role, the email's table, never fails the job, `ad_solarwinds: false`).
+
 ## 1.91.0 — 2026-11-21
 
 **To set up: the job template *Security - Java4Shell check (Keycloak)*** ("AAP - set up job templates" makes it: Machine credential,

@@ -1003,7 +1003,7 @@ job_templates:
   - name: Active Directory health report
     playbook: playbooks/ad_health_report.yml
     credentials: [machine_windows]
-    optional_credentials: []
+    optional_credentials: [solarwinds, report_db]
     ask_limit: true
     ask_variables: true
     ask_inventory: false
@@ -1013,8 +1013,8 @@ job_templates:
     description:
       does: Reads the health of every domain controller and domain (replication, DNS, FSMO, time, certificates, recent changes)
         into one report.
-      targets: Domain controllers over WinRM (Windows Machine credential); in reader mode, AD over LDAP, DNS and Kerberos
-        from the AAP side
+      targets: 'Domain controllers over WinRM (Windows Machine credential); reader mode: LDAP, DNS, Kerberos; SolarWinds read-only
+        (optional)'
       produces: 'Report email (report_email_to), the report website page and job artifacts (ad_health); stays green unless
         ad_report_fail: true'
       supports: Run constraint=Read-only on target hosts; writes the report email and website when set, and the report database

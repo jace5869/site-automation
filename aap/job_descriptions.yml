@@ -267,7 +267,7 @@ templates:
     supports: "Run constraint=Changes target hosts (the ACT folder, its file and permissions); writes nothing else; Check = dry run"
   "Active Directory health report":
     does: "Reads the health of every domain controller and domain (replication, DNS, FSMO, time, certificates, recent changes) into one report."
-    targets: "Domain controllers over WinRM (Windows Machine credential); in reader mode, AD over LDAP, DNS and Kerberos from the AAP side"
+    targets: "Domain controllers over WinRM (Windows Machine credential); reader mode: LDAP, DNS, Kerberos; SolarWinds read-only (optional)"
     produces: "Report email (report_email_to), the report website page and job artifacts (ad_health); stays green unless ad_report_fail: true"
     supports: "Run constraint=Read-only on target hosts; writes the report email and website when set, and the report database with its credential (ad_repl_db)"
   "Active Directory - account lockout":

@@ -369,6 +369,12 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_rid_warn_pct` | `10` | RID pool left, % (at or below) |
 | `ad_rid_crit_pct` | `2` | RID pool left -> red |
 | `ad_no_client_site_warn` | `1` | this many client addresses in no AD subnet -> amber (fewer: blue) |
+| `ad_solarwinds` | `auto` | ---- From SolarWinds (1.94.0): each DC as SolarWinds sees it - status, the AD monitors (SAM), CPU and memory, alerts, last down ---- Read only, on the AAP side: from the SolarWinds snapshot in the report database (a "Report database" credential, the job "SolarWinds - snapshot") when it is not older than ad_solarwinds_… (all of it: the role file) |
+| `ad_solarwinds_max_age` | `60` | minutes: an older snapshot is not used (SolarWinds itself is read; if it cannot be, the old one is shown, said as old) |
+| `ad_solarwinds_days` | `30` | the last down: SolarWinds' node-down events of this many days (the snapshot only) |
+| `ad_solarwinds_cpu_warn` | `90` | CPU load %, at or above: amber |
+| `ad_solarwinds_mem_warn` | `90` | memory used %, at or above: amber |
+| `ad_solarwinds_timeout` | `30` | seconds for each SolarWinds query (live) |
 | `ad_report_max_rows` | `50` | rows per table (problems first); the job's artifacts have all |
 | `ad_report_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark it FAILED when there is a critical finding or a DC could not be read, for workflows. |
 

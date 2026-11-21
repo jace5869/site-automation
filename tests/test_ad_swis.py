@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""1.94.0: the AD health report's "From SolarWinds" - plugins/module_utils/site_ad_swis.py (the snapshot in the report
+database, else SolarWinds itself) and plugins/filter/ad_swis_filters.py (the section, its tile, Not read). The snapshot's
+reader (1.96.0 site_swis_db) is a stand-in with its shapes; SolarWinds is tests/netmap/fake_swis.py over HTTPS with
+tests/ad/swis_fixture.json. Placeholders only.
+  python tests/test_ad_swis.py"""
+import copy
+import datetime
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path[:0] = [os.path.join(ROOT, "plugins", "module_utils"), os.path.join(ROOT, "plugins", "filter"), os.path.join(ROOT, "tests")]
+import jinja2  # noqa: E402
+import site_swis as sw  # noqa: E402
+import site_ad_swis as ad  # noqa: E402
+import ad_swis_filters as af  # noqa: E402
+import site_filters as sf  # noqa: E402
+
+FX = os.path.join(ROOT, "tests", "ad", "swis_fixture.json")
+PW = json.load(open(FX))["password"]
+NOW = "2026-10-15T06:53:00Z"
+DCS = [{"dc": "DC01", "ip": ""}, {"dc": "DC02", "ip": ""}, {"dc": "DC03", "ip": "192.0.2.13"}, {"dc": "DC04", "ip": ""}]
+
+
+def t(s):
+    return datetime.datetime.strptime(s, "%Y-%m-%d %H:%M")
+
+
+class Conn(object):
+    """The report database's session, as far as the interval reads it (sw_snapshot's read_at, newest first)."""
+
+    def __init__(self, stamps):
+        self.stamps = stamps
+
+    def cursor(self):
+        conn = self
+
+        class C(object):
+            def execute(self, sql, args=None):
+                assert sql.startswith("SELECT read_at FROM sw_snapshot ORDER BY snap_id DESC LIMIT 4")
+
+            def fetchall(self):
+                return [(t(x),) for x in conn.stamps]
+        return C()
+
+
+class Snap(object):
+    """1.96.0's site_swis_db, as nuc-dev-2 gave its shapes."""
+
+    def __init__(self, age=600, latest="ok", sam=True, fail=None):
+        self.age, self.kind, self.sam, self.fail, self.calls = age, latest, sam, fail, []
+
+    def latest(self, conn):
+        self.calls.append("latest")
+        if self.kind == "1146":
+            raise Exception("(1146, \"Table 'site_reports.sw_snapshot' doesn't exist\")")
+        if self.kind == "none":
+            return None
+        return {"snap_id": 7, "read_at": t("2026-10-15 06:43"), "age_seconds": self.age, "nodes": 3, "alerts": 1, "events": 4, "core": {}, "not_read": []}
+
+    def last_failure(self, conn):
+        return (t("2026-10-15 06:50"), "login refused")
+
+    def nodes_for(self, conn, snap_id, names):
+        self.calls.append(("nodes_for", tuple(names)))
+        rows = {"dc01": {"node_id": 11, "name": "dc01.corp.test", "name_key": "dc01", "dns": "", "ip": "192.0.2.11", "status_code": 2,
+                         "status": "Down", "status_text": "Node status is Down.", "unmanaged": False, "last_poll": t("2026-10-15 06:40"),
+                         "cpu_pct": None, "mem_pct": None},
+                "dc02": {"node_id": 12, "name": "DC02", "name_key": "dc02", "dns": "", "ip": "192.0.2.12", "status_code": 1, "status": "Up",
+                         "status_text": "", "unmanaged": False, "last_poll": t("2026-10-15 06:41"), "cpu_pct": 97.2, "mem_pct": 91},
+                "192.0.2.13": {"node_id": 13, "name": "srv-dc-third", "name_key": "srv-dc-third", "dns": "", "ip": "192.0.2.13", "status_code": 3,
+                               "status": "Warning", "status_text": "", "unmanaged": False, "last_poll": t("2026-10-15 06:42"), "cpu_pct": 22, "mem_pct": 40}}
+        if self.fail == "nodes_for":
+            raise RuntimeError("boom")
+        return dict((n, rows.get(n)) for n in names)
+
+    def part_note(self, snap, part):
+        return {} if self.sam else {"what": "SAM's applications (Orion.APM.Application)", "why": "not on this Orion (no Orion.APM.Application)", "absent": True}
+
+    def apps_for(self, conn, snap_id, ids):
+        self.calls.append(("apps_for", tuple(ids)))
+        c = lambda n, st: {"component_id": 1, "name": n, "kind": 8, "status": st, "status_code": 2, "status_text": st, "value": "3", "message": "8524"}  # noqa: E731
+        return {11: [{"app_id": 1, "app": "AD", "status": "Unknown", "status_code": 0, "status_text": "", "unmanaged": False, "components": 9,
+                      "components_not_up": [c("x%d" % i, "Unknown") for i in range(9)]}],
+                12: [{"app_id": 2, "app": "AD", "status": "Down", "status_code": 2, "status_text": "", "unmanaged": False, "components": 9,
+                      "components_not_up": [c("Replication", "Down"), c("Netlogon", "Down")]}],
+                13: [{"app_id": 3, "app": "AD", "status": "Warning", "status_code": 3, "status_text": "", "unmanaged": False, "components": 9,
+                      "components_not_up": [c("SYSVOL share", "Warning")]}]}
+
+    def alerts_for(self, conn, snap_id, ids):
+        return {12: [{"name": "High CPU", "severity": 1, "triggered_at": t("2026-10-15 06:20"), "message": "CPU 97", "entity_type": "Orion.Nodes",
+                      "entity_caption": "DC02", "acknowledged": False}]}
+
+    def events_between(self, conn, start, end, ids):
+        assert (end - start).days == 30
+        return [{"event_id": 1, "event_time": t("2026-10-15 06:15"), "node_id": 11, "event_type": 1},
+                {"event_id": 2, "event_time": t("2026-10-14 22:14"), "node_id": 13, "event_type": 1},
+                {"event_id": 3, "event_time": t("2026-10-14 22:20"), "node_id": 13, "event_type": 5},
+                {"event_id": 4, "event_time": t("2026-08-01 10:00"), "node_id": 12, "event_type": 1}]      # outside the 30 days
+
+
+def free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+class Live(object):
+    """tests/netmap/fake_swis.py over HTTPS with the AD fixture."""
+
+    def __init__(self, tmp, hide=""):
+        self.port, self.log = free_port(), os.path.join(tmp, "swis-%s.log" % hide.replace(",", "_"))
+        self.crt, self.key = os.path.join(tmp, "c.pem"), os.path.join(tmp, "k.pem")
+        if not os.path.exists(self.crt):
+            subprocess.check_call(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", self.key, "-out", self.crt, "-days", "2",
+                                   "-subj", "/CN=127.0.0.1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.p = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "netmap", "fake_swis.py"), str(self.port), FX, self.log, self.crt, self.key],
+                                  env=dict(os.environ, FAKE_SWIS_HIDE=hide), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(50):
+            try:
+                socket.create_connection(("127.0.0.1", self.port), 0.2).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        self.client = sw.Client("https://127.0.0.1:%d" % self.port, "svc_swis_ro", PW, verify=False, timeout=10)
+
+    def stop(self):
+        self.p.kill()
+        self.p.wait()
+
+
+class Read1940(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.live = Live(cls.tmp)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.live.stop()
+        shutil.rmtree(cls.tmp, True)
+
+    def test_1_the_snapshot(self):
+        swdb = Snap()
+        r = ad.read(DCS, {"now": NOW, "days": 30, "max_age": 60}, conn=Conn(["2026-10-15 06:43", "2026-10-15 06:33", "2026-10-15 06:24", "2026-10-15 06:13"]), swdb=swdb)
+        self.assertEqual((r["source"], r["age_min"], r["interval_min"], r["stale"]), ("db-snapshot", 10, 10, False))
+        d = dict((x["dc"], x) for x in r["dcs"])
+        self.assertEqual((d["DC01"]["matched"], d["DC03"]["matched"], d["DC04"]["matched"]), ("name", "ip", ""))     # name, then the IP
+        self.assertEqual(d["DC02"]["apps"]["text"], "2 of 9 down: Netlogon, Replication")
+        self.assertEqual(d["DC01"]["apps"]["text"], "9 of 9 unknown")
+        self.assertEqual(d["DC01"]["last_down"], {"at": "2026-10-15 06:15", "minutes": 38, "ongoing": True})
+        self.assertEqual(d["DC03"]["last_down"], {"at": "2026-10-14 22:14", "minutes": 6, "ongoing": False})
+        self.assertIsNone(d["DC02"]["last_down"])                                    # outside the 30 days
+        self.assertEqual([a["name"] for a in d["DC02"]["alerts"]], ["High CPU"])
+        self.assertIsNone(d["DC02"]["ifaces"])                                       # no interfaces_for: not read (said so)
+        self.assertEqual(swdb.calls[1], ("nodes_for", ("dc01", "dc02", "dc03", "dc04")))
+        self.assertEqual(swdb.calls[2], ("nodes_for", ("192.0.2.13",)))           # the misses again, by IP
+
+    def test_2_no_snapshot_table_then_live(self):
+        r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap(latest="1146"), client=self.live.client)
+        self.assertEqual(r["source"], "swis-live")
+        self.assertIn("the job SolarWinds - snapshot has not run", r["why"][0])
+        d = dict((x["dc"], x) for x in r["dcs"])
+        self.assertEqual(d["DC02"]["apps"]["text"], "2 of 9 down: AD Replication (repadmin), Netlogon service")
+        self.assertEqual(d["DC02"]["apps"]["total"], 9)                              # the Up ones counted too
+        self.assertEqual(d["DC02"]["ifaces"], [{"name": "Ethernet1", "status": "Up", "errors": 1204, "discards": 0}])
+        self.assertEqual(d["DC01"]["ifaces"], [])                                    # none monitored
+        self.assertFalse(r["events"])
+        log = open(self.live.log).read()
+        self.assertNotIn("SECRET-COLUMN-ASKED", log)
+        self.assertNotIn(PW, log)
+
+    def test_3_no_whole_snapshot_and_no_solarwinds(self):
+        r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap(latest="none"))
+        self.assertFalse(r["ok"])
+        self.assertIn("login refused", r["why"][0])
+
+    def test_4_an_old_snapshot_is_said_old(self):
+        r = ad.read(DCS, {"now": NOW, "max_age": 60}, conn=Conn([]), swdb=Snap(age=7200))
+        self.assertTrue(r["ok"] and r["stale"])
+        self.assertIn("120 min old", r["why"][0])
+        self.assertIn("login refused", r["why"][0])
+        v = af.ad_swis_view(dict(r, asked=True), {}, {"now": NOW, "max_age": 60})
+        self.assertIn("OLDER than ad_solarwinds_max_age", v["section"]["text"])
+        r = ad.read(DCS, {"now": NOW, "max_age": 60}, conn=Conn([]), swdb=Snap(age=7200), client=self.live.client)
+        self.assertEqual(r["source"], "swis-live")                                   # SolarWinds itself is fresher
+
+    def test_5_no_sam(self):
+        r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap(sam=False))
+        self.assertFalse(r["sam"])
+        v = af.ad_swis_view(dict(r, asked=True), {}, {"now": NOW})
+        self.assertNotIn("AD monitors (SAM)", v["section"]["columns"])
+        self.assertIn("not on this Orion", v["section"]["text"])
+        tmp = tempfile.mkdtemp()
+        live = Live(tmp, hide="Orion.APM.Application,Orion.APM.Component")
+        try:
+            r = ad.read(DCS, {"now": NOW}, client=live.client)
+            self.assertFalse(r["sam"])
+            self.assertTrue(r["ok"])
+        finally:
+            live.stop()
+            shutil.rmtree(tmp, True)
+
+    def test_6_never_raises(self):
+        r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap(fail="nodes_for"))
+        self.assertFalse(r["ok"])
+        self.assertIn("boom", " ".join(r["why"]))
+
+        class Dead(object):
+            def query(self, *a, **k):
+                raise sw.SwisError("SolarWinds did not answer")
+            paged = query
+        r = ad.read(DCS, {"now": NOW}, client=Dead())
+        self.assertFalse(r["ok"])
+        self.assertIn("did not answer", r["why"][0])
+
+
+def ad_doc():
+    return json.load(open(os.path.join(ROOT, "tests", "fixtures", "report_fit", "ad_report.json")))
+
+
+class View1940(unittest.TestCase):
+    def setUp(self):
+        self.r = ad.read(DCS, {"now": NOW}, conn=Conn(["2026-10-15 06:43", "2026-10-15 06:33"]), swdb=Snap())
+        self.r["asked"] = True
+        self.ad = {"problems": [{"domain": "corp.test", "area": "LDAP", "object": "DC01", "severity": "critical", "text": "LDAP not in sync"}]}
+        self.v = af.ad_swis_view(self.r, self.ad, {"now": NOW, "days": 30})
+
+    def test_1_the_section(self):
+        s = self.v["section"]
+        self.assertEqual(s["columns"], ["", "DC", "SolarWinds", "AD monitors (SAM)", "CPU / memory (%)", "Alerts", "Last down (30 days)", "What it means"])
+        self.assertEqual([r[1] for r in s["rows"]], ["DC01", "DC02", "DC03", "DC04"])     # worst first; not found: info
+        r = dict((x[1], x) for x in s["rows"])
+        self.assertEqual(r["DC01"][7], "Down in SolarWinds and in AD (LDAP not in sync): the DC itself")
+        self.assertEqual(r["DC01"][6], "now, for 38 min")
+        self.assertEqual(r["DC02"][4], "97 / 91")
+        self.assertEqual(r["DC04"][2], "Not in SolarWinds")
+        self.assertIn("Not found by name", r["DC04"][7])
+        self.assertIn("taken every 10 min", s["text"])
+        self.assertEqual(s["details"][1][0]["rows"][0][0], "Netlogon")                   # by name within a status; one template: not repeated
+        self.assertEqual(self.v["tile"], {"label": "SolarWinds: down or warning", "status": "critical", "value": 3})
+
+    def test_2_inserted_and_the_counts_unchanged(self):
+        doc = ad_doc()
+        before = (doc["status"], doc["title"], len(doc["sections"]))
+        out = af.ad_swis_insert(doc, self.v)
+        titles = [s["title"] for s in out["sections"]]
+        self.assertEqual(titles.index("From SolarWinds"), titles.index("Domain controllers' health") + 1)
+        self.assertEqual(out["summary"][1]["label"], "SolarWinds: down or warning")
+        self.assertEqual((out["status"], out["title"], len(out["sections"]) - 1), before)    # SolarWinds never changes AD's counts
+
+    def test_3_no_credential_one_line(self):
+        v = af.ad_swis_view({"skipped": True}, {}, {"explain_off": "this job has no SolarWinds credential"})
+        out = af.ad_swis_insert(ad_doc(), v)
+        self.assertNotIn("From SolarWinds", [s["title"] for s in out["sections"]])
+        nr = [s for s in out["sections"] if s["title"] == "Not read"][0]
+        self.assertIn("SolarWinds: not read - this job has no SolarWinds credential", nr["lines"])
+        self.assertNotIn("SolarWinds: down or warning", [x["label"] for x in out["summary"]])
+
+    def test_4_every_look_and_the_workbook(self):
+        doc = af.ad_swis_insert(ad_doc(), self.v, True)                               # the email's and the workbook's form
+        titles = [x["title"] for x in doc["sections"]]
+        self.assertEqual(titles.index("From SolarWinds: AD monitors not up"), titles.index("From SolarWinds") + 1)
+        self.assertNotIn("From SolarWinds: AD monitors not up", [x["title"] for x in af.ad_swis_insert(ad_doc(), self.v)["sections"]])
+        sec = [x for x in doc["sections"] if x["title"] == "From SolarWinds"][0]
+        self.assertEqual(sec["columns"][0], "DC")                                    # the email: no column for rows that open
+        self.assertNotIn("details", sec)
+        self.assertTrue(all(len(r) == len(sec["columns"]) for r in sec["rows"] + sec["cell_status"]))
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROOT, "roles", "site_email", "templates")), autoescape=False)
+        env.filters.update(sf.FilterModule().filters())
+        for look in ("report", "report_atlas", "report_brief", "report_ops"):
+            kw = {} if look == "report" else {"_page_runs": []}
+            html = env.get_template(look + ".html.j2").render(_report=doc, _email_footer="x", _page_logo_cid="", report_email_header_text="x", **kw)
+            self.assertIn("From SolarWinds", html, look)
+            self.assertIn("2 of 9 down: Netlogon, Replication", html, look)
+            self.assertIn("8524", html, look)                                        # the components not up: in the email too
+        sheets = sf.FilterModule().filters()["report_xlsx_sheets"](doc)
+        self.assertIn("From SolarWinds", [s["name"] for s in sheets])
+
+    def test_5_a_time_zone(self):
+        v = af.ad_swis_view(self.r, self.ad, {"now": NOW, "time_zone": "Europe/Berlin"})
+        self.assertIn("08:43 CEST", v["section"]["text"])
+
+    def test_6_dcs_and_their_ips(self):
+        hv = {"dc01.corp.test": {"ansible_host": "192.0.2.11"}, "dc02.corp.test": {"ansible_host": "dc02.corp.test"}}
+        self.assertEqual(af.ad_swis_dcs([{"dc": "DC01", "host": "dc01.corp.test"}, {"dc": "DC02", "host": "dc02.corp.test"}, {"dc": "DC03", "host": "x"}], hv),
+                         [{"dc": "DC01", "ip": "192.0.2.11"}, {"dc": "DC02", "ip": ""}, {"dc": "DC03", "ip": ""}])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

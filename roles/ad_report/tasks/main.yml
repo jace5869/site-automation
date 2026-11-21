@@ -73,18 +73,25 @@
            'time_zone': report_time_zone | default('', true) | string}) }}
   when: _ad_mode.mode == 'admin'
 
+- name: AD | From SolarWinds (1.94.0)
+  ansible.builtin.include_tasks: swis.yml
+  when: (ad_solarwinds | string | lower) not in ['false', 'no', 'off', '0']
+
 - name: AD | the replication matrix (1.63.0)
   ansible.builtin.include_tasks: repl.yml
   when: ad_repl_matrix | bool and _ad.repl is defined
 
 # the email: the late links before Inbound replication; the website (atlas, brief): the matrix, the late links and the
-# trend there; the workbook (report_email_xlsx): the report's tables and every link
+# trend there; the workbook (report_email_xlsx): the report's tables and every link. 1.94.0: From SolarWinds in all three
+# (the email and the workbook: the AD monitors not up as a table of their own - their rows do not open)
 - name: AD | the report to print and email
   ansible.builtin.set_fact:
-    _ad_doc: "{{ _ad.report | ad_repl_insert(_ad_repl.sections | default([])) }}"
-    _ad_web: "{{ _ad.report | ad_repl_insert(_ad_repl.web_sections) if _ad_repl.web_sections is defined else {} }}"
+    _ad_doc: "{{ _ad.report | ad_swis_insert(_ad_swis_view | default({}), true) | ad_repl_insert(_ad_repl.sections | default([])) }}"
+    _ad_web: >-
+      {{ _ad.report | ad_swis_insert(_ad_swis_view | default({})) | ad_repl_insert(_ad_repl.web_sections | default([]))
+         if _ad_repl.web_sections is defined or (_ad_swis_view | default({})).section | default(none) else {} }}
     _ad_xlsx: >-
-      {{ (_ad.report | ad_repl_insert(_ad_repl.sections) | report_xlsx_sheets) + _ad_repl.sheets
+      {{ (_ad.report | ad_swis_insert(_ad_swis_view | default({}), true) | ad_repl_insert(_ad_repl.sections) | report_xlsx_sheets) + _ad_repl.sheets
          if _ad_repl.sheets is defined and report_email_xlsx | default(false) | bool else [] }}
 
 - name: AD | report

@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Active Directory health report"
 #   playbook:    playbooks/ad_health_report.yml
-#   credentials: Machine (Windows)
+#   credentials: Machine (Windows); SolarWinds (read-only) (optional: From SolarWinds); Report database (optional: the replication trend, the SolarWinds snapshot)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -203,6 +203,30 @@
 
 ## this many client addresses in no AD subnet -> amber (fewer: blue)
 # ad_no_client_site_warn: 1
+
+## ---- From SolarWinds (1.94.0): each DC as SolarWinds sees it - status, the AD monitors (SAM), CPU
+## and memory, alerts, last down ---- Read only, on the AAP side: from the SolarWinds snapshot in
+## the report database (a "Report database" credential, the job "SolarWinds - snapshot") when it is
+## not older than ad_solarwinds_max_age, else SolarWinds itself (a "SolarWinds (read-only)"
+## credential). Neither credential: no section, one line under Not read. It never fails the job or
+## changes its status. auto = read when the job has one of the two credentials; false = never
+# ad_solarwinds: auto
+
+## minutes: an older snapshot is not used (SolarWinds itself is read; if it cannot be, the old one
+## is shown, said as old)
+# ad_solarwinds_max_age: 60
+
+## the last down: SolarWinds' node-down events of this many days (the snapshot only)
+# ad_solarwinds_days: 30
+
+## CPU load %, at or above: amber
+# ad_solarwinds_cpu_warn: 90
+
+## memory used %, at or above: amber
+# ad_solarwinds_mem_warn: 90
+
+## seconds for each SolarWinds query (live)
+# ad_solarwinds_timeout: 30
 
 ## rows per table (problems first); the job's artifacts have all
 # ad_report_max_rows: 50

@@ -190,7 +190,8 @@ aap_ee_project: "Site automation"             # your site-automation project's n
 # site_act_fix_user_model: false            # true = a user's saved genai.model set to the jobs' model (a backup beside it)
 # report_email_to: [ops@yoursite.mil]
 """),
-    "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),
+    "ad_health_report.yml": ("Active Directory health report", "Machine (Windows); SolarWinds (read-only) (optional: From SolarWinds); "
+                             "Report database (optional: the replication trend, the SolarWinds snapshot)", "", ""),
     "ad_lockout.yml": ("Active Directory - account lockout", "Machine (Windows)", "", """\
 ## The survey asks for the account (ad_lockout_user, not required: empty = every account locked out now)
 # ad_lockout_unlock: false                   # true = also unlock it (a survey question: Unlock it? no / yes)

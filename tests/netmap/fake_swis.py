@@ -33,6 +33,11 @@ STATE, DELAY, FAIL = os.environ.get("FAKE_SWIS_STATE", ""), float(os.environ.get
 PATH = "/SolarWinds/InformationService/v3/Json/Query"
 ENT = {"Orion.Nodes", "Orion.NPM.Interfaces", "Orion.TopologyConnections", "Orion.TopologyData", "Orion.WorldMap.Point",
        "Orion.InstalledModule", "Orion.Engines", "Metadata.Entity", "Metadata.Property"}
+# 1.94.0 (the AD report's From SolarWinds): SAM and the alerts, from the fixture's tables of the same keys; only on an Orion
+# whose fixture has them (an Orion without SAM: no "apps" key)
+TABLES = {"Orion.APM.Application": "apps", "Orion.APM.Component": "components", "Orion.AlertActive": "alert_active",
+          "Orion.AlertObjects": "alert_objects", "Orion.AlertConfigurations": "alert_configs"}
+ENT |= set(e for e, k in TABLES.items() if k in fx)
 SECRET = re.compile(r"\b(Community|RWCommunity|LicenseKey)\b|\*")
 SQ = re.compile(r"^SELECT (?:TOP (\d+) )?(.*?) FROM (\S+)(?: (\w+))?(?: WHERE (.*?))?(?: ORDER BY (.*?))?(?: WITH ROWS (\d+) TO (\d+))?$", re.S)
 
@@ -99,6 +104,24 @@ def iface_rows(cols, where, params):
     return out
 
 
+def where_rows(rows, cols, where, params, ent):
+    """WHERE <col> IN @p [AND <col> IN @q ...] - all this fake knows; a column a row has not: 400, as SWIS."""
+    conds = []
+    for part in [w for w in re.split(r" AND ", where or "") if w]:
+        m = re.match(r"^(\w+) IN @(\w+)$", part.strip())
+        if not m:
+            raise Bad("this fake knows only WHERE <col> IN @p [AND ...] (%s)" % part[:40])
+        conds.append((m.group(1), set(params.get(m.group(2)) or [])))
+    out = []
+    for r in rows:
+        for c in cols + [c for c, _ in conds]:
+            if c not in r:
+                raise Bad("Cannot resolve property %s of %s" % (c, ent))
+        if all(r.get(c) in vals for c, vals in conds):
+            out.append(dict((c, r.get(c)) for c in cols))
+    return out
+
+
 def run(q, params):
     q = re.sub(r"\s+", " ", q.strip())
     m = SQ.match(q)
@@ -112,6 +135,8 @@ def run(q, params):
         names = params.get("names") or []
         rows = [{"FullName": n} for n in names if n in ENT and n not in HIDE]
     elif ent == "Metadata.Property":           # 1.95.0: the node custom properties' names (the discovery), and a navigation one
+        if params.get("e") in (fx.get("meta") or {}) and cols == ["Name", "Type"]:     # 1.94.0: an entity's own columns
+            return [{"Name": c, "Type": "System.String"} for c in fx["meta"][params["e"]]]
         if params.get("e") != "Orion.NodesCustomProperties" or cols != ["Name", "Type"]:
             raise Bad("Metadata.Property: an EntityName and Name, Type expected")
         rows = [{"Name": p, "Type": "System.String"} for p in fx["properties"]] + [{"Name": "Node", "Type": "Orion.Nodes"},
@@ -127,8 +152,12 @@ def run(q, params):
             if c not in ("SrcNodeID", "SrcInterfaceID", "DestNodeID", "DestInterfaceID") + (("LayerType",) if ent.endswith("Connections") else ()):
                 raise Bad("Cannot resolve property %s" % c)
         rows = [dict((c, x.get(c)) for c in cols) for x in fx["connections"]]
+    elif ent == "Orion.NPM.Interfaces" and (where or "").startswith("NodeID IN"):     # 1.94.0: a node's interfaces
+        rows = where_rows(fx["interfaces"], cols, where, params, ent)
     elif ent == "Orion.NPM.Interfaces":
         rows = iface_rows(cols, where, params)
+    elif ent in TABLES:
+        rows = where_rows(fx[TABLES[ent]], cols, where, params, ent)
     else:
         rows = []
     if top:

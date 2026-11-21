@@ -34,6 +34,7 @@ changes, accounts created / deleted, GPO changes). Then, in this order:
 |---|---|---|
 | **Domains** | each domain: functional levels, schema version, DCs checked / in AD, the PDC emulator, tombstone lifetime, Recycle Bin, RID pool left, the oldest partition's last backup, the krbtgt password's age, the SYSVOL migration state | amber Recycle Bin off, krbtgt older than 180 days, FRS; red RID pool under 2 %, backup older than 30 days or the tombstone lifetime |
 | **Domain controllers** | each DC: site, OS, GC / RODC, the FSMO roles it holds, LDAP answering (and synchronized), DC services not running, dcdiag's failed tests, SYSVOL, its clock, the least free space of its database, log and SYSVOL volumes, uptime. A DC in AD that is not in the inventory is listed in blue | red unreachable, LDAP down, not synchronized, a DC service stopped |
+| **From SolarWinds** (1.94.0) | each DC as SolarWinds sees it: its status, the AD monitors (SolarWinds' AD application templates, SAM: "2 of 9 down: Replication, Netlogon"), CPU / memory, active alerts, the last down in `ad_solarwinds_days` (30), and one line that reads SolarWinds and AD together. On the website a row opens: the monitors not up, the last poll, the network card. Only with a SolarWinds credential - see [From SolarWinds](#from-solarwinds-1940) | red down; amber warning, CPU or memory 90% or more; blue not in SolarWinds |
 | **Operations masters (FSMO)** | who holds each role, whether that holder still exists as a DC, whether it answers on LDAP | red holder gone or not answering |
 | **Replication matrix** (1.63.0) | on the website: every pair of DCs, grouped by site, with how long ago the pair last replicated. The worst pair on top, with what to do. Hover a cell for the partition, times and error. Past `ad_repl_matrix_max_dcs` DCs: site x site. Past 12 sites: the site pairs as a list | per pair, as below; Low from `ad_repl_low_hours` (4 h) |
 | **Replication links that need a look** (1.63.0) | each pair past `ad_repl_low_hours`, worst first, with the numbers. The email has this table instead of the matrix | as below, with Low |
@@ -84,6 +85,34 @@ A row is the DC replicating **from**, a column the DC replicating **to**. A cell
   *Replication by site* (each site's worst age, a column a day, and its *Trend* line as an Excel sparkline).
 
 The matrix and the trend are on the report website only (the atlas and brief looks). The email has the late links.
+
+### From SolarWinds (1.94.0)
+
+Each domain controller as SolarWinds sees it, right after *Domain controllers' health*, and a tile *SolarWinds: down or
+warning*. Read only, on the AAP side - nothing is written to SolarWinds or to the DCs.
+
+1. **Where it reads.** The SolarWinds snapshot in the report database (the job *SolarWinds - snapshot*, every 10 min;
+   attach the **Report database** credential) when it is not older than `ad_solarwinds_max_age` (60 min). Otherwise
+   SolarWinds itself, the DCs only (attach the **SolarWinds (read-only)** credential). Neither: no section, and one line
+   under *Not read* says so. The section's text says which it read, when, and how old it is; an old snapshot that is
+   all there is shows, said as older than `ad_solarwinds_max_age`.
+2. **Matched** by the DC's name (the caption or the DNS name, any case), then by the inventory's IP. Not found: *Not in
+   SolarWinds* (blue) - add the DC to SolarWinds' polling.
+3. **The AD monitors (SAM):** SolarWinds' AD application templates on the DC; a component that is not up is named, with its
+   status, value and message (on the website: open the row; in the email and the workbook: the table *From SolarWinds: AD
+   monitors not up*). An Orion without SAM: the column is left out and the text says so.
+4. **Last down:** SolarWinds' node-down events of `ad_solarwinds_days` (from the snapshot only - read live, it says *not
+   read live*).
+5. **Never the job's result:** the section does not change the report's critical and warning counts, its status or
+   `ad_report_fail`.
+
+| Setting | Default | What |
+|---|---|---|
+| `ad_solarwinds` | `auto` | read when the job has one of the two credentials; `false` = never |
+| `ad_solarwinds_max_age` | `60` | minutes: an older snapshot is not used (SolarWinds itself is read) |
+| `ad_solarwinds_days` | `30` | the last down's window (the snapshot's events) |
+| `ad_solarwinds_cpu_warn` / `ad_solarwinds_mem_warn` | `90` | CPU load / memory used %, at or above: amber |
+| `ad_solarwinds_timeout` | `30` | seconds for each SolarWinds query (live) |
 
 ## Before you start
 

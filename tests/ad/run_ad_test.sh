@@ -87,5 +87,28 @@ run "a dry run (Check) shows the same report" ok '{}' 'Inbound replication'
 CHECK=1 run "  ...in check mode" ok '{}' 'Inbound replication'
 LIMIT=dc01.corp.test run "a healthy domain is green, also with ad_report_fail" ok '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' \
     'Active Directory health report: all 1 domain controller(s) healthy (corp.test)'
+# 1.94.0: From SolarWinds - no credential: one line under Not read; SolarWinds itself (a fake over HTTPS, the
+# "SolarWinds (read-only)" credential's variables): the section, the email's own table of the AD monitors not up, and the
+# job's result never changed by it
+run "From SolarWinds: no credential, one line under Not read" ok '{}' 'SolarWinds: not read - this job has no SolarWinds credential'
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/sw.key" -out "$work/sw.crt" -days 2 -subj /CN=127.0.0.1 >/dev/null 2>&1
+swport="${SWIS_TEST_PORT:-18027}"
+"$py" "$repo/tests/netmap/fake_swis.py" "$swport" "$here/swis_fixture.json" "$work/swis.log" "$work/sw.crt" "$work/sw.key" 2>"$work/swis.err" &
+swpid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$swport") 2>/dev/null && break; sleep 0.1; done
+export SOLARWINDS_URL="https://127.0.0.1:$swport" SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_PASSWORD='ro&"<test>9' SOLARWINDS_VERIFY=false
+rm -f "$work"/mail/*.eml
+run "From SolarWinds: read live, the section, the AD monitors not up in the email" ok "$mail" \
+    'From SolarWinds (swis-live): 3 DC(s)' 'From SolarWinds' '2 of 9 down: AD Replication (repadmin), Netlogon service' \
+    'From SolarWinds: AD monitors not up' 'Last success 7 h ago: 8524' 'Not in SolarWinds'
+grep -qF 'ro&"<test>9' "$work/out.txt" "$work"/mail/*.eml && { echo "FAIL - the SolarWinds password is in the output or the mail"; fails=$((fails + 1)); }
+grep -q 'SECRET-COLUMN-ASKED' "$work/swis.log" && { echo "FAIL - a secret column was asked of SolarWinds"; fails=$((fails + 1)); }
+LIMIT=dc01.corp.test run "From SolarWinds never fails the job: a healthy domain stays green with ad_report_fail" ok \
+    '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' 'Active Directory health report: all 1 domain controller(s) healthy (corp.test)' \
+    'From SolarWinds (swis-live): 1 DC(s)'
+run "ad_solarwinds: false - not read, no line" ok '{"ad_solarwinds": false}' 'Inbound replication'
+grep -q 'From SolarWinds (swis-live)\|SolarWinds: not read\|SolarWinds: down or warning' "$work/out.txt" && { echo "FAIL - ad_solarwinds: false still reads SolarWinds"; fails=$((fails + 1)); }
+kill "$swpid" 2>/dev/null
+unset SOLARWINDS_URL SOLARWINDS_USERNAME SOLARWINDS_PASSWORD SOLARWINDS_VERIFY
 if [ "$fails" -gt 0 ]; then echo "$fails test(s) failed"; exit 1; fi
 echo "all AD report tests passed"

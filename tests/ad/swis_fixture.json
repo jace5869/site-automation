@@ -1,0 +1,316 @@
+{
+ "user": "svc_swis_ro",
+ "password": "ro&\"<test>9",
+ "nodes": [
+  {
+   "NodeID": 11,
+   "Caption": "dc01.corp.test",
+   "DNS": "dc01.corp.test",
+   "IPAddress": "192.0.2.11",
+   "Status": 1,
+   "StatusDescription": "Node status is Up.",
+   "UnManaged": false,
+   "CPULoad": 18,
+   "PercentMemoryUsed": 44,
+   "LastSync": "2026-10-15T06:51:00Z",
+   "cp": {}
+  },
+  {
+   "NodeID": 12,
+   "Caption": "DC02",
+   "DNS": "",
+   "IPAddress": "192.0.2.12",
+   "Status": 1,
+   "StatusDescription": "Node status is Up.",
+   "UnManaged": false,
+   "CPULoad": 97,
+   "PercentMemoryUsed": 91,
+   "LastSync": "2026-10-15T06:50:00Z",
+   "cp": {}
+  },
+  {
+   "NodeID": 30,
+   "Caption": "sw-core-01",
+   "DNS": "",
+   "IPAddress": "192.0.2.30",
+   "Status": 1,
+   "StatusDescription": "Node status is Up.",
+   "UnManaged": false,
+   "CPULoad": 5,
+   "PercentMemoryUsed": 20,
+   "LastSync": "2026-10-15T06:51:00Z",
+   "cp": {}
+  }
+ ],
+ "points": [],
+ "properties": [],
+ "modules": [],
+ "engines": [],
+ "connections": [],
+ "interfaces": [
+  {
+   "InterfaceID": 501,
+   "NodeID": 12,
+   "Caption": "Ethernet1",
+   "Status": 1,
+   "InErrorsThisHour": 1200,
+   "OutErrorsThisHour": 4,
+   "InDiscardsThisHour": 0,
+   "OutDiscardsThisHour": 0
+  }
+ ],
+ "apps": [
+  {
+   "ApplicationID": 101,
+   "NodeID": 11,
+   "Name": "Active Directory 2016-2022 Services and Counters",
+   "Status": 1,
+   "StatusDescription": "Up",
+   "Unmanaged": false
+  },
+  {
+   "ApplicationID": 102,
+   "NodeID": 12,
+   "Name": "Active Directory 2016-2022 Services and Counters",
+   "Status": 2,
+   "StatusDescription": "Down",
+   "Unmanaged": false
+  }
+ ],
+ "components": [
+  {
+   "ComponentID": 1001,
+   "ApplicationID": 101,
+   "Name": "AD Replication (repadmin)",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1002,
+   "ApplicationID": 101,
+   "Name": "Netlogon service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1003,
+   "ApplicationID": 101,
+   "Name": "NTDS service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1004,
+   "ApplicationID": 101,
+   "Name": "DNS Server service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1005,
+   "ApplicationID": 101,
+   "Name": "SYSVOL share response",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1006,
+   "ApplicationID": 101,
+   "Name": "Kerberos KDC service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1007,
+   "ApplicationID": 101,
+   "Name": "W32Time service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1008,
+   "ApplicationID": 101,
+   "Name": "DFS Replication service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1009,
+   "ApplicationID": 101,
+   "Name": "LDAP bind time",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1010,
+   "ApplicationID": 102,
+   "Name": "AD Replication (repadmin)",
+   "ComponentType": 8,
+   "Status": 2,
+   "StatusDescription": "Down",
+   "StatisticData": "3",
+   "ComponentMessage": "Last success 7 h ago: 8524 (DSA operation unable to proceed: DNS lookup failure)"
+  },
+  {
+   "ComponentID": 1011,
+   "ApplicationID": 102,
+   "Name": "Netlogon service",
+   "ComponentType": 8,
+   "Status": 2,
+   "StatusDescription": "Down",
+   "StatisticData": null,
+   "ComponentMessage": "The service is not running"
+  },
+  {
+   "ComponentID": 1012,
+   "ApplicationID": 102,
+   "Name": "NTDS service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1013,
+   "ApplicationID": 102,
+   "Name": "DNS Server service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1014,
+   "ApplicationID": 102,
+   "Name": "SYSVOL share response",
+   "ComponentType": 8,
+   "Status": 3,
+   "StatusDescription": "Warning",
+   "StatisticData": "1850",
+   "ComponentMessage": "Above 1000 ms (warning)"
+  },
+  {
+   "ComponentID": 1015,
+   "ApplicationID": 102,
+   "Name": "Kerberos KDC service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1016,
+   "ApplicationID": 102,
+   "Name": "W32Time service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1017,
+   "ApplicationID": 102,
+   "Name": "DFS Replication service",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  },
+  {
+   "ComponentID": 1018,
+   "ApplicationID": 102,
+   "Name": "LDAP bind time",
+   "ComponentType": 8,
+   "Status": 1,
+   "StatusDescription": "Up",
+   "StatisticData": "0",
+   "ComponentMessage": ""
+  }
+ ],
+ "alert_active": [
+  {
+   "AlertActiveID": 1,
+   "AlertObjectID": 71,
+   "TriggeredDateTime": "2026-10-15T06:20:00Z",
+   "TriggeredMessage": "CPU load is 97 %",
+   "Acknowledged": false
+  }
+ ],
+ "alert_objects": [
+  {
+   "AlertObjectID": 71,
+   "AlertID": 9,
+   "EntityType": "Orion.Nodes",
+   "EntityCaption": "DC02",
+   "RelatedNodeId": 12
+  }
+ ],
+ "alert_configs": [
+  {
+   "AlertID": 9,
+   "Name": "High CPU",
+   "Severity": 1
+  }
+ ],
+ "meta": {
+  "Orion.APM.Component": [
+   "ComponentID",
+   "ApplicationID",
+   "Name",
+   "ComponentType",
+   "Status",
+   "StatusDescription",
+   "StatisticData",
+   "ComponentMessage"
+  ],
+  "Orion.NPM.Interfaces": [
+   "InterfaceID",
+   "NodeID",
+   "Caption",
+   "Status",
+   "InErrorsThisHour",
+   "OutErrorsThisHour",
+   "InDiscardsThisHour",
+   "OutDiscardsThisHour"
+  ],
+  "Orion.AlertObjects": [
+   "AlertObjectID",
+   "AlertID",
+   "EntityType",
+   "EntityCaption",
+   "RelatedNodeId"
+  ]
+ }
+}
