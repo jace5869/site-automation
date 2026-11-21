@@ -137,10 +137,15 @@ portal_ready_delay: 4                               # seconds between those trie
 # The portal's server reads SolarWinds (SWQL queries only, the report job's own reader) every netmap_live_seconds while
 # someone has the page open - one read every viewer shares - and the page animates what changed. auto: on when the deploy
 # job has a "SolarWinds (read-only)" credential; true: on (the deploy stops without one); false: off (no page, no menu
-# entry). The map's own settings are the report's (usually in all.yml): netmap_site_by, netmap_site_split, netmap_sites,
-# netmap_lat_property, netmap_lon_property, netmap_properties, netmap_view, netmap_link_warn_percent, netmap_max_nodes.
+# entry). The map's own settings are the report's (usually in all.yml): netmap_site_by, netmap_site_pattern, netmap_hierarchy,
+# netmap_roles, netmap_site_split, netmap_sites, netmap_lat_property, netmap_lon_property, netmap_properties, netmap_view,
+# netmap_link_warn_percent, netmap_max_nodes.
+# 1.95.0: the page shows the last map the server kept (on disk, kept through a restart) at once, "as of" its time, and the
+# server reads again behind it: the node and link status every netmap_live_seconds (2 queries), the whole map every
+# netmap_full_seconds. Nothing is read while nobody has the page open.
 portal_netmap: auto
-netmap_live_seconds: 60                             # how often (30 at least); after 5 minutes with nobody on the page it is not read until someone opens it
+netmap_live_seconds: 60                             # the status read: how often (30 at least); after 5 minutes with nobody on the page it is not read until someone opens it
+netmap_full_seconds: 1800                           # 1.95.0: the whole read (the nodes, their sites, the links: about 15 queries) at most this often (300 at least)
 # SolarWinds' address and certificate check: the credential's, else netmap_solarwinds_url / netmap_validate_certs
 portal_solarwinds_url: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_URL') or netmap_solarwinds_url | default('') }}"
 # check SolarWinds' certificate (the credential's verify, else netmap_validate_certs)

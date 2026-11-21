@@ -2897,23 +2897,87 @@ def approvals_page(cfg, portal, cn):
 
 
 # ---- 1.85.0: the live network map ----------------------------------------------------------------------------------------
+NETMAP_FULL_MIN = 300           # 1.95.0: the whole read at most this often, whatever netmap_full_seconds says (tests lower it)
 NETMAP_IDLE = 300               # seconds without a viewer after which SolarWinds is no longer read (read again at the next view)
 NETMAP_STATIC = ("world-land.js", "netmap.js", "netglobe.js", "netmap-live.js", "netmap.css")
 
 
-class NetLive(object):
-    """SolarWinds, read by this server alone (plugins/module_utils/site_swis.py: SWQL queries only) every
-    netmap_live_seconds while someone has the Network map open - one cache every viewer shares, never a read per viewer.
-    A read that fails keeps the last map (said: stale, with the reason, the password never in it) and waits longer
-    before the next (15, 30, 60 ... s, never more than netmap_live_seconds x 4)."""
+class SwisSource(object):
+    """1.95.0: where the live map comes from - the seam. A source gives collect()'s raw dict: read_full() (the nodes, their
+    custom properties, the links, ~15 SWQL queries) and read_status(raw) (only the status of the nodes and the links'
+    interfaces, 2 or 3 queries). This one reads SolarWinds itself (SWQL only); the report database's snapshot (1.96.0,
+    site_swis_db) is meant to be another source with the same two calls."""
+    kind = "swis-live"
 
-    def __init__(self, cfg, log):
+    def __init__(self, cfg):
+        self.cfg, self.client = cfg, None
+
+    def _client(self):
+        c = self.cfg
+        if self.client is None or self.client.url != site_swis.base_url(c.swis_url):     # https only, no login in it (else: said, stale)
+            self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, timeout=c.swis_timeout)
+        return self.client
+
+    def read_full(self):
+        o = self.cfg.netmap_opts
+        hier = [h.get("value") for h in o.get("hierarchy") or [] if isinstance(h, dict) and h.get("from") == "property"]
+        raw = site_swis.collect(self._client(), {"site_by": "" if str(o.get("site_by") or "auto").lower() in ("auto", "location") else o.get("site_by"),
+                                                 "lat_property": o.get("lat_property") or "", "lon_property": o.get("lon_property") or "",
+                                                 "properties": list(o.get("properties") or []) + hier, "discover": o.get("discover", True),
+                                                 "page": o.get("page") or 1000, "max_nodes": o.get("max_nodes") or 5000})
+        if not raw.get("reachable"):
+            raise site_swis.SwisError(raw.get("error") or "SolarWinds did not answer")
+        if raw.get("topology") and not raw.get("topology_ok"):        # the links could not be read whole: the last whole map stays
+            raise site_swis.SwisError("the links were not refreshed (%s could not be read whole)" % raw["topology"])
+        return raw
+
+    def read_status(self, raw):
+        o = self.cfg.netmap_opts
+        return site_swis.status(self._client(), raw, {"page": o.get("page") or 1000, "max_nodes": o.get("max_nodes") or 5000})
+
+
+class NetLive(object):
+    """SolarWinds, read by this server alone (plugins/module_utils/site_swis.py: SWQL queries only) while someone has the
+    Network map open - one cache every viewer shares, never a read per viewer. 1.95.0: the last good map is kept on disk
+    (PORTAL_DATA/netmap-cache.json) and shown at once, "as of" its time, also after a restart; behind it, the whole map is
+    read at most every netmap_full_seconds and only the status (node and link) every netmap_live_seconds. A read that fails
+    keeps the last map (said: stale, with the reason, the password never in it) and waits longer before the next (15, 30, 60
+    ... s, never more than netmap_live_seconds x 4)."""
+
+    def __init__(self, cfg, log, source=None):
         self.cfg, self.log = cfg, log
         self.lock = threading.Lock()
         self.wake = threading.Event()
         self.map_json, self.etag, self.read_at, self.next_at = "", "", 0.0, 0.0
         self.stale, self.fails, self.seen, self.thread, self.reads = "", 0, 0.0, None, 0
-        self.client = None
+        self.source = source or SwisSource(cfg)
+        self.raw, self.full_at, self.kind, self.from_disk = None, 0.0, "", False
+        self.cache = os.path.join(cfg.data, "netmap-cache.json")
+        self._load()
+
+    def _load(self):
+        """The map kept on disk (the last good one): shown at once, as of its time - the next read replaces it."""
+        try:
+            with open(self.cache, encoding="utf-8") as fh:
+                d = json.load(fh)
+            if d.get("v") == 1 and isinstance(d.get("map"), str) and d["map"]:
+                self.map_json, self.read_at, self.full_at = d["map"], float(d.get("read_at") or 0), float(d.get("full_at") or 0)
+                self.raw = d.get("raw") if isinstance(d.get("raw"), dict) else None
+                self.etag = '"%s"' % hashlib.sha1(self.map_json.encode("utf-8")).hexdigest()[:20]
+                self.from_disk, self.kind = True, d.get("kind") or "full"
+        except (OSError, ValueError, TypeError):
+            pass                                             # none yet, or unreadable: the first read makes it
+
+    def _save(self, body, raw):
+        tmp = self.cache + ".tmp"
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"v": 1, "read_at": self.read_at, "full_at": self.full_at, "kind": self.kind, "map": body, "raw": raw}, fh,
+                          separators=(",", ":"), ensure_ascii=False)
+            os.replace(tmp, self.cache)                          # whole or not at all
+        except OSError as e:
+            self.log.add({"event": "netmap", "cache": "not kept", "why": clean(str(e), 200)})
 
     def viewed(self):
         """A viewer asked: the reader runs (started now, or woken after a quiet spell)."""
@@ -2928,23 +2992,21 @@ class NetLive(object):
                 self.wake.set()
 
     def read_once(self):
-        c = self.cfg
-        if self.client is None or self.client.url != site_swis.base_url(c.swis_url):     # https only, no login in it (else: said, stale)
-            self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, timeout=c.swis_timeout)
-        o = c.netmap_opts
-        raw = site_swis.collect(self.client, {"site_by": o.get("site_by") or "Location", "lat_property": o.get("lat_property") or "",
-                                              "lon_property": o.get("lon_property") or "", "properties": o.get("properties") or [],
-                                              "page": o.get("page") or 1000, "max_nodes": o.get("max_nodes") or 5000})
-        if not raw.get("reachable"):
-            raise site_swis.SwisError(raw.get("error") or "SolarWinds did not answer")
-        if raw.get("topology") and not raw.get("topology_ok"):        # the links could not be read whole: the last whole map stays
-            raise site_swis.SwisError("the links were not refreshed (%s could not be read whole)" % raw["topology"])
-        m = site_swis.model(raw, {"site_by": o.get("site_by") or "Location", "site_split": o.get("site_split", ","), "sites": o.get("sites") or {},
+        """One read: the whole map when there is none or it is netmap_full_seconds old, else the status only -> (data, raw)."""
+        c, o = self.cfg, self.cfg.netmap_opts
+        full_every = max(NETMAP_FULL_MIN, int(o.get("full_seconds") if o.get("full_seconds") is not None else 1800))
+        if self.raw is None or time.time() - self.full_at >= full_every:
+            raw, kind = self.source.read_full(), "full"
+        else:
+            raw, kind = self.source.read_status(self.raw), "status"
+        m = site_swis.model(raw, {"site_by": o.get("site_by") or "auto", "site_split": o.get("site_split", ","), "sites": o.get("sites") or {},
                                   "lat_property": o.get("lat_property") or "", "lon_property": o.get("lon_property") or "",
-                                  "properties": o.get("properties") or [], "warn_util": o.get("warn_util", 90), "no_site": o.get("no_site") or "No site"})
+                                  "properties": o.get("properties") or [], "warn_util": o.get("warn_util", 90), "no_site": o.get("no_site") or "Not placed",
+                                  "site_pattern": o.get("site_pattern") or "", "hierarchy": o.get("hierarchy") or [], "roles": o.get("roles") or {}})
         ver = (raw.get("version") or {}).get("platform")
-        return site_swis.page_data(m, run=shown(c, raw.get("read_at") or now_iso()), view=o.get("view") or "globe",
-                                   source="SolarWinds%s (SWIS, read-only, live)" % ((" " + ver) if ver else "")), raw
+        data = site_swis.page_data(m, run=shown(c, raw.get("read_at") or now_iso()), view=o.get("view") or "globe",
+                                   source="SolarWinds%s (SWIS, read-only, live)" % ((" " + ver) if ver else ""))
+        return data, raw, kind
 
     def _run(self):
         while True:
@@ -2954,14 +3016,17 @@ class NetLive(object):
                 continue
             started = time.time()
             try:
-                data, raw = self.read_once()
+                data, raw, kind = self.read_once()
                 body = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
                 with self.lock:
                     self.map_json, self.etag = body, '"%s"' % hashlib.sha1(body.encode("utf-8")).hexdigest()[:20]
                     self.read_at, was = started, self.stale
-                    self.stale, self.fails, self.reads = "", 0, self.reads + 1
-                if was or self.reads == 1:
-                    self.log.add({"event": "netmap", "read": "ok", "nodes": len(data["nodes"]), "seconds": raw.get("seconds"),
+                    self.stale, self.fails, self.reads, self.kind, self.from_disk, self.raw = "", 0, self.reads + 1, kind, False, raw
+                    if kind == "full":
+                        self.full_at = started
+                self._save(body, raw)
+                if was or self.reads == 1 or kind == "full":
+                    self.log.add({"event": "netmap", "read": "ok", "kind": kind, "nodes": len(data["nodes"]), "seconds": raw.get("seconds"),
                                   "queries": raw.get("queries"), "not_read": [x.get("what") for x in raw.get("not_read") or []][:10]})
                 wait = self.cfg.netmap_seconds
             except Exception as e:  # pylint: disable=broad-except
@@ -2983,7 +3048,8 @@ class NetLive(object):
         with self.lock:
             m, etag, read_at, stale, nxt = self.map_json, self.etag, self.read_at, self.stale, self.next_at
         head = {"ok": bool(m), "age": int(now - read_at) if read_at else None, "next": max(0, int(nxt - now)) if nxt else self.cfg.netmap_seconds,
-                "poll": self.cfg.netmap_seconds, "stale": stale}
+                "poll": self.cfg.netmap_seconds, "stale": stale, "kind": self.kind, "from_disk": self.from_disk,
+                "as_of": shown(self.cfg, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(read_at))) if read_at else "", "source": self.source.kind}
         if not m:
             head["why"] = ("SolarWinds could not be read: " + stale) if stale else ""
             return 200, json.dumps(head), ""
@@ -3004,12 +3070,13 @@ def netmap_page(cfg, cn, static_dir, statics):
     v = lambda n: statics.get(n, "")
     poll = max(5, min(30, cfg.netmap_seconds // 4))
     body = ('<div class="hero"><h1>Network map</h1>'
-            '<p class="lede">Live from SolarWinds (read only): this server reads it every %d s while the page is open - one read '
-            'that everyone here shares. The daily report keeps the history.</p></div>'
+            '<p class="lede">Live from SolarWinds (read only): the last map this server kept shows at once; while the page is open it '
+            'reads the status every %d s and the whole map every %d min - one read that everyone here shares. The daily report keeps '
+            'the history.</p></div>'
             '<p class="nm-live" id="nm-live" data-src="%sapi/netmap" data-poll="%d"><i class="nm-dotlive" aria-hidden="true"></i>'
             '<span class="nm-tick" aria-live="off">reading SolarWinds…</span></p>'
             '<p class="note" id="nm-why" hidden></p>%s<div class="nm-toasts" id="nm-toasts" aria-live="polite"></div>'
-            % (cfg.netmap_seconds, cfg.path, poll, markup))
+            % (cfg.netmap_seconds, max(NETMAP_FULL_MIN, int(cfg.netmap_opts.get("full_seconds") or 1800)) // 60, cfg.path, poll, markup))
     body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, v(n)) for n in ("world-land.js", "netmap.js", "netglobe.js", "netmap-live.js"))
     return shell(cfg, "Network map", body, cn, page="netmap",
                  head='<link rel="stylesheet" href="%sstatic/netmap.css?v=%s">' % (cfg.path, v("netmap.css")))
