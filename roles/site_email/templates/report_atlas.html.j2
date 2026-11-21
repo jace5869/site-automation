@@ -647,7 +647,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 <div class="sub">{{ r.subtitle | e }}</div>
 {%- endif %}
 <div class="state">
-{{ chip(st, words[st]) }}
+{{ chip(st, (r.status_prefix | default('')) ~ words[st]) }}
 <span class="meta">{%- if job_id %}<span>AAP job {{ job_id | e }}</span>{% endif %}{% if awx_user_name | default('') %}<span>run by {{ awx_user_name | e }}</span>{% endif %}</span>
 {%- if runs %}
 <div class="runs" role="img" aria-label="The last {{ runs | length }} runs">

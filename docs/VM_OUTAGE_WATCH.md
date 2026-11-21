@@ -196,6 +196,19 @@ Leave `vm_watch_review` off on the schedule. A scheduled run that finds somethin
 The time line is easier to read when you know what it is about. The review works out the outage's **subject** from its own events: the hosts that
 went down, and the VMs with a critical event of their own.
 
+When nothing went down and no VM has a critical event, the subject is what has a critical event of its own. That is a host's red alarm, or a
+VM's red alarm known by its entity only (1.90.0). An alarm that went back to normal in the window does not count here.
+
+**The lead-up (1.90.0).** A box outlined in red marks the lead-up to the subject's first critical event:
+
+- It starts at the first problem about the subject itself in the 30 minutes before. Its cluster and datastores do not count here.
+- It ends at that critical event.
+- The legend says what it spans, for example *Outlined red: Lead-up to #27: 10:48 to 10:58 CET (10 min)*.
+- The red shade is something else: it is a host's down stretch.
+
+When there is no lead-up to draw, one muted line says why. For example: *No lead-up drawn: nothing about esx07 came in the 30 min before its first
+critical alarm (#26, 10:58).* The time zone is under the lane names, for example *Time (CET)*.
+
 **The list.** Hover a mark, or Tab to it. The tip is a list:
 
 1. A header, for example *26 events · 17:20-17:24*.
@@ -240,9 +253,13 @@ The four lanes:
   See *The list, the related events and the filters* below.
 - **Levels** are words and icons, never colour alone: Critical, Warning, Low, Note, Back to normal.
 - **Low:** a problem that cleared within `vm_watch_review_low_seconds` (120) is one Low event, "back after 40 s".
-- **What triggered it** is the first line under the title, always: the watch's own findings ("CRITICAL: VM web07 is hung ..."),
-  else - when nothing was down by the time the watch read vCenter - the alarms or the host that had already cleared, else
-  *the review was asked for*.
+- **The title** leads with the first critical event when there is one (1.90.0). A warning before it is its lead-up.
+- **What triggered it** is the first line under the title, always. It is the first of these:
+  1. the watch's own findings ("CRITICAL: VM web07 is hung ...");
+  2. a red alarm still raised at the end of the window (1.90.0), for example "CRITICAL: vSphere HA host status on esx07: red since 11:00:10";
+  3. when nothing was down by the time the watch read vCenter, the alarms or the host that had already cleared;
+  4. *the review was asked for*.
+- **The verdict chip** of a review is the watch's state now, and it says so: *Now: All good* (1.90.0). It is not a verdict on the outage.
 - **An alarm that went back to normal** is shown with its raise, whenever it was raised: the review also reads the alarms'
   status changes `vm_watch_review_lookback_hours` (6) before the window, and the window then starts at the raise. The raise
   gives the subject (the VM) and the red stretch, so the events are marked as related to it.

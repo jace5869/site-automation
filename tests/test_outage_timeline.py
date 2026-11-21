@@ -312,7 +312,7 @@ class ClearedBeforeTheReview(unittest.TestCase):
 class Review(unittest.TestCase):
     def test_the_night_of_the_fixture(self):
         r = made()
-        self.assertEqual(r["title"], "Outage review: esx03: storage path redundancy lost; 46 min down, ticket after 93 min")
+        self.assertEqual(r["title"], "Outage review: esx03: all paths down to a storage device; 46 min down, ticket after 93 min")
         self.assertEqual(r["numbers"], {
             "events": 18, "first_signal": DAY + "00:41:10Z", "ticket": "INC0012345", "signal_to_ticket_s": 5570, "down_s": 2732,
             "hosts_down": ["esx03"], "still_down": [], "ha_restarted": 14, "back": DAY + "02:06:45Z"})
@@ -379,7 +379,7 @@ class Review(unittest.TestCase):
     def test_still_down_at_the_end(self):
         e = [x for x in events() if x["time"] < DAY + "02:00:00Z"]
         r = made(e, [])
-        self.assertEqual(r["title"], "Outage review: esx03: storage path redundancy lost; 85 min down, still down, no ticket")
+        self.assertEqual(r["title"], "Outage review: esx03: all paths down to a storage device; 85 min down, still down, no ticket")
         self.assertEqual(r["numbers"]["still_down"], ["esx03"])
         self.assertEqual(r["numbers"]["back"], "")
         self.assertEqual(r["boxes"][2]["note"], "esx03; still down at the end of the window")
@@ -403,9 +403,9 @@ class Review(unittest.TestCase):
         # an alarm and the host's own event in the same minute: the host's event says more
         e = [alarm("01:19:30", "Host connection and power state", "red", "green"), ev("01:19:40", "HostConnectionLostEvent", H)]
         self.assertTrue(made(e, [])["title"].startswith("Outage review: esx03: host not responding;"))
-        # a warning first, the critical one over a minute later: the first problem leads
+        # a warning first, the critical one over a minute later: the critical one leads (1.90.0; the warning is its lead-up)
         e = [ev("01:00:00", "esx.problem.storage.redundancy.lost", H), ev("01:19:40", "HostConnectionLostEvent", H)]
-        self.assertTrue(made(e, [])["title"].startswith("Outage review: esx03: storage path redundancy lost;"))
+        self.assertTrue(made(e, [])["title"].startswith("Outage review: esx03: host not responding;"))
         # only a flap: it leads, as the Low it is
         e = [ev("01:00:00", "esx.problem.storage.redundancy.lost", H), ev("01:00:30", "esx.clear.storage.redundancy.restored", H)]
         self.assertEqual(made(e, [])["title"], "Outage review: esx03: storage path redundancy lost, back after 30 s; no ticket")
@@ -787,7 +787,7 @@ class Looks(unittest.TestCase):
                 _page_runs=[], report_email_header_text="x")
             self.assertNotIn('class="ot"', h)
             self.assertNotIn("What happened, in order", h)
-            for text in ("Outage review: esx03: storage path redundancy lost; 46 min down, ticket after 93 min", "First signal to ticket",
+            for text in ("Outage review: esx03: all paths down to a storage device; 46 min down, ticket after 93 min", "First signal to ticket",
                          "HA restarted 14 VMs", "Signal to ticket", "93 min", "Root cause (incident_root_cause)"):
                 self.assertIn(text, h, look)
 
@@ -1338,6 +1338,167 @@ class Codex3(unittest.TestCase):
         evs = ot._vcenter_events([ev("01:00:00", "HostConnectionLostEvent", H, vcenter=a), ev("01:10:00", "HostConnectedEvent", H, vcenter=b)])
         _, downs = ot._pairs(evs, 120)
         self.assertEqual([(d[2], d[3]) for d in downs if d[0] == "esx03"], [(None, a)])            # the boot on vc02 does not end vc01's stretch
+
+
+H7 = "esx07.example.mil"
+
+
+def run_1900(vm_reds=False):
+    """1.90.0: a run shaped like the one a reader sent (placeholders only). Six hours, 05:40 to 11:40 CET; the events 10:10 to 11:30.
+    A burst at 10:13: usage alarms raised and back within a minute (Low, #1+19 and more) and two notes. Nothing went down, no VM has a
+    red alarm with its vm field, nothing raised in the window is still open and cleared - but esx07 turns red twice around 11:00
+    (#27, #28), a yellow on it ten minutes before (#26); the green #29 and the yellows #30+1 at 11:10. Kinds: Host 6, HA 6, CPU and
+    memory usage 17, Snapshots 1, Other 2. vm_reds: the two reds are on a VM by its entity only (no vm field), the yellow too."""
+    def a(t, name, to, was, entity, vm="", host=H7, **kw):
+        return ev(t, "AlarmStatusChangedEvent", host, vm=vm, alarm=name, entity=entity, to=to, **dict({"from": was}, **kw))
+    out = []
+    for i in range(12):                                         # the burst: raised and back within a minute (Low)
+        v, h = "vm-web%02d" % (i + 1), "esx0%d.example.mil" % (1 + i % 3)
+        name = "Virtual machine %s usage" % ("CPU" if i % 2 else "memory")
+        out += [a("09:13:%02d" % (i * 4), name, "yellow", "green", v, vm=v, host=h), a("09:14:%02d" % (i * 4), name, "green", "yellow", v, vm=v, host=h)]
+    for i in range(4):                                          # usage, still yellow at the end
+        v = "vm-app%02d" % (i + 1)
+        out.append(a("09:%02d:00" % (22 + i * 5), "Virtual machine CPU usage", "yellow", "green", v, vm=v, host="esx02.example.mil"))
+    out.append(a("10:09:50", "Virtual machine memory usage", "green", "yellow", "vm-old01", vm="vm-old01", host="esx02.example.mil"))   # its raise was before the look-back
+    out += [a("09:13:20", "vSphere HA virtual machine failover failed", "gray", "green", "vm-web05", vm="vm-web05", host="esx02.example.mil"),
+            a("09:13:30", "vSphere HA virtual machine monitoring error", "gray", "green", "vm-web06", vm="vm-web06", host="esx02.example.mil"),
+            a("09:20:00", "vSphere HA virtual machine monitoring action", "yellow", "green", "vm-web03", vm="vm-web03", host="esx01.example.mil"),
+            a("09:31:00", "vSphere HA failover in progress", "yellow", "green", "cluster1", host=""),
+            a("10:10:05", "vSphere HA failover in progress", "yellow", "gray", "cluster1", host="")]
+    on, vm = ("vm-db01", "esx02.example.mil") if vm_reds else (H7, H7)
+    first, second = ("Virtual machine CPU usage", "Virtual machine memory usage") if vm_reds else ("Host hardware system board status", "vSphere HA host status")
+    out += [a("09:48:00", first, "yellow", "green", on, host=vm),                    # the lead-up
+            a("09:58:20", first, "red", "yellow", on, host=vm),                      # the first critical alarm, on the host (or VM) itself
+            a("10:00:10", second, "red", "green", on, host=vm),
+            a("10:10:00", "Host hardware fan status", "yellow", "green", H7)]
+    out += [a("09:25:00", "Virtual machine snapshot consolidation needed", "yellow", "green", "vm-web02", vm="vm-web02", host="esx01.example.mil"),
+            a("09:33:00", "License inventory monitoring", "yellow", "green", "vc01", host=""),
+            a("09:46:00", "Certificate status", "yellow", "green", "vc01", host="")]
+    out += [ev("09:15:00", "esx.audit.host.maxRegisteredVMsExceeded", H7, msg="The host has more VMs registered than it should"),
+            ev("09:40:30", "esx.audit.host.stop.reboot", "esx05.example.mil", msg="The host is being rebooted by its operator"),
+            ev("10:20:00", "esx.audit.host.boot", "esx05.example.mil", msg="The host has booted")]
+    return out
+
+
+class LeadUp(unittest.TestCase):
+    """1.90.0: an outage with critical alarms gets its subject and the lead-up to its first critical alarm (the red window), or one line
+    that says why there is none."""
+    O = {"begin": DAY + "04:40:00Z", "end": DAY + "10:40:00Z", "tickets_asked": True}
+
+    def chart(self, evs, **kw):
+        r = ot.outage_timeline(evs, [], dict(OPTS, **dict(self.O, **kw)))
+        return r, next(s for s in r["web_sections"] if s.get("outage"))["outage"]
+
+    def test_the_shape_of_the_run(self):
+        r, c = self.chart(run_1900())
+        self.assertEqual([(g["name"], g["sub"]) for g in c["lanes"][:2]], [("vCenter alarms", "29 events"), ("Host events", "3 events")])
+        self.assertEqual(dict((k["name"], k["count"]) for k in c["kinds"]),
+                         {"Host": 6, "HA": 6, "CPU and memory usage": 17, "Snapshots": 1, "Other": 2})
+        self.assertEqual([e["n"] for g in c["lanes"] for m in g["marks"] for e in m["ev"] if e["l"] == "critical"], [27, 28])
+
+    def test_the_host_with_the_critical_alarms_is_the_subject(self):
+        _r, c = self.chart(run_1900())
+        self.assertEqual(c["subject"], "esx07")
+        self.assertEqual(c["related_note"], "")
+        self.assertIn("esx07", c["legend_rel"])
+
+    def test_the_lead_up_to_the_first_critical_alarm(self):
+        _r, c = self.chart(run_1900())
+        lead = c["lead"]
+        self.assertEqual(lead["text"], "Lead-up to #27: 10:48 to 10:58 CET (10 min)")
+        self.assertLess(lead["from"], lead["to"])
+        self.assertEqual(c["lead_note"], "")
+        self.assertEqual(c["bands"], [])                                     # nothing was down: no shaded stretch
+
+    def test_no_earlier_signal_says_why(self):
+        evs = [e for e in run_1900() if not (e["alarm"] == "Host hardware system board status" and e["to"] == "yellow")]
+        _r, c = self.chart(evs)
+        self.assertIsNone(c["lead"])
+        self.assertEqual(c["lead_note"], "No lead-up drawn: nothing about esx07 came in the 30 min before its first critical alarm (#26, 10:58).")
+
+    def test_a_signal_too_long_before_is_not_the_lead_up(self):
+        evs = run_1900()
+        next(e for e in evs if e["alarm"] == "Host hardware system board status" and e["to"] == "yellow")["time"] = DAY + "09:20:00Z"
+        _r, c = self.chart(evs)
+        self.assertIsNone(c["lead"])
+        self.assertIn("in the 30 min before its first critical alarm", c["lead_note"])
+
+    def test_the_run_with_its_reds_on_a_vm_by_entity_only(self):
+        _r, c = self.chart(run_1900(vm_reds=True))
+        self.assertEqual(c["subject"], "vm-db01")
+        self.assertEqual(c["lead"]["text"], "Lead-up to #27: 10:48 to 10:58 CET (10 min)")
+        self.assertEqual(c["related_note"], "")
+
+    def test_a_red_vm_alarm_without_its_vm_field(self):
+        evs = [ev("09:50:00", "AlarmStatusChangedEvent", "esx02.example.mil", alarm="Virtual machine CPU usage", entity="vm-db01", to="yellow",
+                  **{"from": "green"}),
+               ev("09:56:00", "AlarmStatusChangedEvent", "esx02.example.mil", alarm="Virtual machine CPU usage", entity="vm-db01", to="red",
+                  **{"from": "yellow"})]
+        _r, c = self.chart(evs)
+        self.assertEqual(c["subject"], "vm-db01")
+        self.assertEqual(c["lead"]["text"], "Lead-up to #2: 10:50 to 10:56 CET (6 min)")
+
+    def test_a_host_that_went_down_keeps_its_subject_and_gets_a_lead_up(self):
+        r = made()
+        c = r["web_sections"][1]["outage"]
+        self.assertEqual(c["subject"], "esx03")
+        self.assertEqual([b["text"] for b in c["bands"]], ["esx03 down: 46 min"])
+        self.assertEqual(c["lead"]["text"], "Lead-up to #4: 12 Nov 01:58 to 02:19 CET (21 min)")   # the redundancy lost, 21 min before all paths down
+
+    def test_nothing_critical_no_lead_up_no_line(self):
+        _r, c = self.chart([e for e in run_1900() if e["to"] != "red"])
+        self.assertIsNone(c["lead"])
+        self.assertEqual(c["lead_note"], "")
+        self.assertNotIn("esx07", c["subject"])                            # the 1.79.12 rule: the VMs of the alarms that cleared
+
+    def test_the_head_leads_with_the_first_critical_event(self):
+        r, _c = self.chart(run_1900())
+        self.assertEqual(r["title"], "Outage review: esx07: alarm red: Host hardware system board status; no ticket")
+        # the reds still raised at the end are what triggered it - not "already cleared" (the Low flaps cleared, the reds did not)
+        self.assertEqual(r["trigger"], ["CRITICAL: Host hardware system board status on esx07: red since 10:58:20, still red at the end of the window",
+                                        "CRITICAL: vSphere HA host status on esx07: red since 11:00:10, still red at the end of the window"])
+        self.assertNotIn("already cleared", r["trigger_line"])
+        self.assertTrue(r["trigger_line"].startswith("Triggered by: CRITICAL: Host hardware system board status on esx07"))
+        self.assertFalse(r["cleared_before_review"])
+
+    def test_an_alarm_that_went_back_to_green_does_not_stand(self):
+        evs = run_1900() + [ev("10:20:00", "AlarmStatusChangedEvent", H7, alarm="Host hardware system board status", entity=H7, to="green",
+                               **{"from": "red"}),
+                            ev("10:21:00", "AlarmStatusChangedEvent", H7, alarm="vSphere HA host status", entity=H7, to="green", **{"from": "red"})]
+        r, _c = self.chart(evs)
+        self.assertFalse(any(t.startswith("CRITICAL:") for t in r["trigger"]))
+        self.assertTrue(r["title"].startswith("Outage review: esx07: alarm red: Host hardware system board status"))
+
+    def test_the_verdict_says_it_is_the_watchs_state_now(self):
+        sys.path.insert(0, HERE)
+        from test_report_fit import render
+        r, _c = self.chart(run_1900())
+        doc = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, True, True)
+        self.assertEqual((doc["status"], doc["status_prefix"]), ("ok", "Now: "))
+        self.assertIn("Now: VM outage watch: nothing down now", doc["subtitle"])
+        for look, word in (("atlas", "Now: All good"), ("brief", "Now: All good"), ("ops", "Now: ")):
+            h = render(look, doc)
+            self.assertIn(word, h, look)
+            self.assertNotIn("Nothing needs action.", h, look)
+        self.assertNotIn("status_prefix", ot.outage_timeline_doc(copy.deepcopy(WATCH), r, True, False))     # a normal run: the watch's own verdict
+        h = render("atlas", copy.deepcopy(WATCH))
+        self.assertNotIn("Now: All good", h)
+
+    def test_the_page_draws_it(self):
+        sys.path.insert(0, HERE)
+        from test_report_fit import render
+        _r, c = self.chart(run_1900())
+        web = {"title": "Outage review", "status": "critical", "summary": [], "sections": [{"title": "Time line", "outage": c}]}
+        for look in ("atlas", "brief", "ops"):
+            h = render(look, web)
+            self.assertIn('class="ot-lead"', h, look)
+            self.assertIn("Lead-up to #27: 10:48 to 10:58 CET (10 min)", h, look)
+            self.assertIn("<em>Time (CET)</em>", h, look)                   # the zone sits under the lane names, never on the last tick
+        evs = [e for e in run_1900() if not (e["alarm"] == "Host hardware system board status" and e["to"] == "yellow")]
+        _r, c = self.chart(evs)
+        h = render("atlas", {"title": "Outage review", "status": "critical", "summary": [], "sections": [{"title": "Time line", "outage": c}]})
+        self.assertNotIn('class="ot-lead"', h)
+        self.assertIn("No lead-up drawn: nothing about esx07", h)
 
 
 if __name__ == "__main__":

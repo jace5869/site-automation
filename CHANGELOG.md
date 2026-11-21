@@ -76,6 +76,37 @@ that site_exclude is not honoured there - so the two never drift.
   default. The restart: the flag already in the file, the old container running without it - removed by id, recreated, MITIGATED.
   It runs against a stand-in podman and podman-compose (`tests/java4shell/fake`), which act like the old podman-compose.
 
+## 1.90.0 — 2026-11-21
+
+**To set up: nothing.**
+
+**VM - outage watch: the review's time line marks the lead-up** (plugins/filter/outage_timeline_filters.py, report_outage.html.j2,
+report_hover.css.j2). A reader's run had two red alarms on a host and still said "nothing is marked as related", with no red window.
+
+- **The subject.** When nothing went down and no VM has a critical event, the subject is what has a critical event of its own:
+  - a host's red alarm;
+  - a VM's red alarm known by its entity only (no vm field).
+  - An alarm that went back to normal in the window does not count, so the 1.79.12 "cleared before the review" rule is unchanged.
+  - Before, a run like this one had no subject. Or, with alarms raised and cleared within a minute (Low), the subject was the VMs of those alarms.
+- **The lead-up.** A box outlined in red, from the first problem about the subject itself in the 30 minutes before its first critical event,
+  to that event. Its cluster and datastores do not count here. The legend says what it spans. With nothing to draw, one muted line says why.
+  The red shade stays a host's down stretch.
+- **The head of the page** (the reader's run led with a yellow and said all was well):
+  - The title leads with the first critical event when there is one. A warning before it is its lead-up. The fixture's night now leads with
+    "all paths down to a storage device", not "storage path redundancy lost".
+  - What triggered it: a red alarm still raised at the end of the window comes before the alarms that cleared. It never reads
+    "already cleared" while a critical alarm stands, whatever was raised and back within a minute around it.
+  - The verdict chip of a review says it is the watch's state now: *Now: All good*. In ops the line under it ("Nothing needs action.") is
+    left out. The looks read a document's `status_prefix` for this.
+- **The axis.** The time zone sits under the lane names (*Time (CET)*). At the right end it ran into the last tick (*11CET*).
+- The email and the workbook are unchanged. All three website looks (atlas, brief, ops).
+- docs/VM_OUTAGE_WATCH.md ("The list, the related events and the filters").
+- Tests: tests/test_outage_timeline.py LeadUp. The fixture is shaped like the reader's run, with placeholders: 29 vCenter alarms and 3 host
+  events, a burst of Low alarms, an amber then two reds on one host, and a variant with the reds on a VM by entity only. Each case has a test: the
+  subject, the lead-up and its text, no lead-up with the line that says why, a problem too long before, a host that went down (its shade kept,
+  a lead-up too), nothing critical, the page in each look, the title, what triggered it, an alarm back to green that no longer stands,
+  and *Now:* on the verdict in each look. test_the_headline: a warning before the critical event no longer leads.
+
 ## 1.87.2 — 2026-11-21
 
 **Nothing to set up.** The next run of a report writes its page with the new link.

@@ -694,7 +694,8 @@ Each run's `.json` (and `latest.json`):
 ```
 
 `report` is the layout every report uses ([EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Emailing a report from another
-playbook"). `runs` is the strip of last runs (with an AAP credential on the template). `index.json`:
+playbook"). Since 1.90.0 it may carry `status_prefix`, for example `"Now: "`. The website looks write it before their verdict
+word. The outage review uses it, because its verdict is the watch's state now. `runs` is the strip of last runs (with an AAP credential on the template). `index.json`:
 `{"generated": "...", "reports": [{"key", "name", "title", "status", "when", "job", "page", "latest", "runs"}, ...]}`,
 worst first; `runs` is that report's last runs on the website, newest first: `[{"page", "status", "when", "job", "title"}]`
 (`report_web_history` of them). Since 1.72.0 each line also has:

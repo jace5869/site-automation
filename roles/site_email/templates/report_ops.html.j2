@@ -871,9 +871,9 @@ footer{margin-top:32px}
 <header class="hero card h-{{ st }}{{ ' dash-hero' if r.dashboard | default({}) else '' }}">
 <div class="hgrid">
 <div class="hl">
-<span class="stc s-{{ st }}"><span class="d" aria-hidden="true"></span>{{ opsword[st] }}</span>
+<span class="stc s-{{ st }}"><span class="d" aria-hidden="true"></span>{{ r.status_prefix | default('') }}{{ opsword[st] }}</span>
 <h1>{{ r.title | e }}</h1>
-{%- if say and not r.dashboard | default({}) %}
+{%- if say and not r.dashboard | default({}) and not r.status_prefix | default('') %}
 <p class="say">{{ say }}</p>
 {%- endif %}
 </div>

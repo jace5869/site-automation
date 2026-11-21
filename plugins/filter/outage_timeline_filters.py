@@ -78,6 +78,7 @@ SAME_S = 60                # the same event at the same place again within this 
 STEPS_MIN = (1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 10080)
 TRACK_PX = 580.0           # the narrowest track the marks must fit (the 800 px window)
 ROWS = 3
+LEAD_S = 1800              # 1.90.0: the lead-up looks back at most this far before the first critical event
 ATTACH = "Attach the ServiceNow API credential to the outage watch template to see and link its incidents (read only)."
 
 
@@ -461,11 +462,14 @@ def _about(e):
     return set(_key(e, x) for x in [e.get("where"), e.get("vm")] + list(e.get("names") or []) if x)
 
 
-def _relate(evs, downs, fallback=None):
+def _relate(evs, downs, fallback=None, cleared=None):
     """The outage's subject, worked out from the events themselves, and which events are about it -> {names, text, note}; each event gets
     "cls" (its kind) and "related". The subject: the hosts that went down and the VMs with a critical event of their own; related: the
     subject, the ESXi host of a subject VM, their cluster, and the datastores and port groups that events of their host name. A snapshot is
-    related only when it is on a subject VM itself (a snapshot commit can stun a VM). Names are told apart by their vCenter."""
+    related only when it is on a subject VM itself (a snapshot commit can stun a VM). Names are told apart by their vCenter.
+    1.90.0: when nothing went down and no VM has a critical event, the subject is what has a critical event of its own (an ESXi host's
+    red alarm, a VM's red alarm known by its entity only) - an alarm that went back to normal in the window (cleared: its
+    _alarm_key) aside; then (fallback) the VMs of the alarms that cleared."""
     for e in evs:
         e["cls"] = _classify(e)
     down_names = set(d[0] for d in downs)
@@ -473,12 +477,17 @@ def _relate(evs, downs, fallback=None):
     vms = set(_key(e, e["vm"]) for e in evs if e["lane"] in ("vcenter", "host") and e["level"] == "critical" and e.get("vm") and e["role"] != "restart")
     vms |= set(_key(e, e["where"]) for e in evs if e["cls"] == "vm" and e["level"] == "critical" and e["lane"] in ("vcenter", "host")
                and str(e.get("kind") or "").startswith("alarm:") and e["where"] and e["where"] not in down_names)
+    if not hosts and not vms:                               # 1.90.0: nothing went down and no VM has a critical event: what has one of its own
+        for e in evs:                                       # (a host's red alarm, a VM's red alarm known by its entity only)
+            if e["lane"] in ("vcenter", "host") and e["level"] == "critical" and e["role"] not in ("restart", "clear") and e.get("where") \
+                    and _alarm_key(e) not in (cleared or ()):
+                (hosts if e["where"] == e.get("host") else vms).add(_key(e, e["where"]))
     if not hosts and not vms and fallback:                  # an outage that had cleared by the review: the VMs of the alarms that cleared
         vms = set(fallback)
     if not hosts and not vms:
         for e in evs:
             e["related"] = False
-        return {"names": [], "text": "", "note": "The subject of the outage could not be worked out (no host went down and no VM has a critical event of its own), "
+        return {"names": [], "keys": set(), "text": "", "note": "The subject of the outage could not be worked out (no host went down and no VM has a critical event of its own), "
                                                   "so nothing is marked as related."}
     related = set(hosts) | set(vms)
     for e in evs:                                           # the ESXi host of a subject VM, and the cluster of the subject
@@ -498,7 +507,7 @@ def _relate(evs, downs, fallback=None):
         else:
             e["related"] = bool(any(_has(related, e, n[1]) for n in _about(e)))
     names = sorted(set(k[1] for k in hosts | vms))
-    return {"names": names, "text": ", ".join(names[:4]) + (" and %d more" % (len(names) - 4) if len(names) > 4 else ""), "note": ""}
+    return {"names": names, "keys": hosts | vms, "text": ", ".join(names[:4]) + (" and %d more" % (len(names) - 4) if len(names) > 4 else ""), "note": ""}
 
 
 def _alarm_key(e):
@@ -623,7 +632,21 @@ def outage_timeline(events, tickets=None, opts=None):
     cleared_runs = [r for r in runs if r["cleared"] is not None]
     open_alarms = [r for r in runs if r["cleared"] is None]
     fallback = set((r["vcenter"], r["vm"] or r["where"]) for r in cleared_runs if r["vm"] or r["where"])
-    subject = _relate(evs, downs, fallback)
+    subject = _relate(evs, downs, fallback, set((r["vcenter"], "alarm:" + r["alarm"], r["where"]) for r in cleared_runs))
+    # 1.90.0: the lead-up - from the first problem about the subject itself (a host or VM of it: not its cluster or datastores) in the
+    # LEAD_S before its first critical event, to that event
+    own = lambda e: bool(_about(e) & subject["keys"])      # noqa: E731
+    crit = next((e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] == "critical" and own(e)), None)
+    lead_up, lead_note = None, ""
+    if crit is not None:
+        ahead = [e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] in BAD and own(e)
+                 and 0 < (crit["t"] - e["t"]).total_seconds() <= LEAD_S]
+        word = "alarm" if str(crit.get("kind") or "").startswith("alarm:") else "event"
+        if ahead:
+            lead_up = (ahead[0]["t"], crit)
+        else:
+            lead_note = "No lead-up drawn: nothing about %s came in the %s before its first critical %s (#%d, %s)." % (
+                crit["where"] or subject["text"], _span(LEAD_S), word, crit["num"], loc(crit["t"]).strftime("%H:%M"))
     dup = set(w for w, _a, _b, v in downs if len(set(x[3] for x in downs if x[0] == w)) > 1)       # one name on two vCenters: told apart
     shown = lambda d: "%s (%s)" % (d[0], (d[3] or "?").split(".")[0]) if d[0] in dup else d[0]      # noqa: E731
     spans = [(shown(d), d[1], d[2] or end, d[2] is None) for d in downs]
@@ -653,6 +676,16 @@ def outage_timeline(events, tickets=None, opts=None):
     for c in (o.get("triggers") or [])[:8]:
         if isinstance(c, dict) and c.get("summary"):
             trig.append("%s: %s" % (str(c.get("severity") or "").upper() or "Found", c["summary"]))
+    # 1.90.0: a red alarm still raised at the end of the window is what the review is about - not "already cleared", whatever
+    # else (alarms raised and back within a minute) cleared around it
+    last_state = {}
+    for e in sorted(vc, key=lambda x: x["t"]):
+        if str(e.get("kind") or "").startswith("alarm:") and e["role"] in ("problem", "clear"):
+            last_state[_alarm_key(e)] = e
+    standing = [e for e in last_state.values() if e["role"] == "problem" and e["level"] == "critical"]
+    if not trig and standing:
+        for e in sorted(standing, key=lambda x: x["t"])[:6]:
+            trig.append("CRITICAL: %s on %s: red since %s, still red at the end of the window" % (e["kind"][6:], e["where"] or "?", hm(e["t"], True)))
     if not trig and (cleared_runs or (spans and not still)):
         for h, a_, b_, _hv in [d for d in downs if d[2] is not None][:3]:
             trig.append("%s: not responding %s to %s (%s), back before the review" % (h, hm(a_, True), hm(b_, True), _span((b_ - a_).total_seconds())))
@@ -675,11 +708,13 @@ def outage_timeline(events, tickets=None, opts=None):
 
     # the title
     # the headline: the first problem - or a critical one in the same minute (one cause often posts several events)
+    # 1.90.0: the first critical event leads when there is one (a warning or a Low before it is the lead-up, not the outage)
     head = first_bad or first
-    if first_bad is not None:
-        near = [e for e in signals if e["level"] == "critical" and (e["t"] - first_bad["t"]).total_seconds() <= SAME_S]
+    crit0 = next((e for e in signals if e["level"] == "critical"), None)
+    if crit0 is not None:
+        near = [e for e in signals if e["level"] == "critical" and 0 <= (e["t"] - crit0["t"]).total_seconds() <= SAME_S]
         # the host's own event says more than the alarm about it
-        head = next((e for e in near if e["lane"] == "host"), near[0] if near and first_bad["level"] != "critical" else head)
+        head = next((e for e in near if e["lane"] == "host"), crit0)
     if not evs:
         title = "Outage review: no outage event in the last %s" % length if not o.get("fixed") else "Outage review: no outage event in the window"
     else:
@@ -800,6 +835,11 @@ def outage_timeline(events, tickets=None, opts=None):
     if cleared_only and not (r_to < z0 or r_from > z1):
         bands.append({"from": _pct(r_from, z0, z1), "to": _pct(r_to, z0, z1),
                       "text": "%s: alarms raised %s, cleared %s" % (c_text, hm(r_from), hm(r_to))})
+    lead_band = None
+    if lead_up is not None:
+        l0, lc = lead_up
+        lead_band = {"from": _pct(l0, z0, z1), "to": _pct(lc["t"], z0, z1),
+                     "text": "Lead-up to #%d: %s to %s %s (%s)" % (lc["num"], hm(l0), loc(lc["t"]).strftime("%H:%M") if loc(l0).date() == loc(lc["t"]).date() else hm(lc["t"]), zname(lc["t"]), _span((lc["t"] - l0).total_seconds()))}
     whole = (end - begin).total_seconds()
     overview = None
     if evs and (z1 - z0).total_seconds() < 0.6 * whole:
@@ -809,7 +849,7 @@ def outage_timeline(events, tickets=None, opts=None):
     chart = {"label": "Outage time line, %s to %s %s" % (hm(z0), hm(z1), zname(z1)), "lanes": lanes, "ticks": ticks, "bands": bands,
              "overview": overview, "zone": zname(z0),
              "legend": [{"level": k, "word": WORD[k]} for k in ("critical", "warning", "low", "info", "ok")],
-             "band_word": down_word,
+             "band_word": down_word, "lead": lead_band, "lead_note": lead_note,
              "subject": subject["text"], "related_note": subject["note"],
              "legend_rel": ("Outlined: about %s or its host, cluster, datastores" % subject["text"]) if subject["text"] else "",
              "kinds": [{"key": k, "name": n, "count": len([e for e in evs if e["cls"] == k])} for k, n in CLASSES if any(e["cls"] == k for e in evs)],
@@ -943,6 +983,7 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
                                                        timeline.get("window", ""), doc.get("title", ""))
         out["subtitle"] = out["subtitle"].strip()
         out["sections"] = mine + own
+        out["status_prefix"] = "Now: "                      # 1.90.0: the verdict is the watch's state now, not the outage's
     else:
         mine = [s for s in mine if s.get("title") in ("What happened, in order", "The events")]
         out["sections"] = own[:1] + mine + own[1:]

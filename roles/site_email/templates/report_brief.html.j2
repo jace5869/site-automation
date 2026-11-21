@@ -655,7 +655,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- if job_id %}<span>AAP job {{ job_id | e }}</span>{% endif %}
 {%- if awx_user_name | default('') %}<span>run by {{ awx_user_name | e }}</span>{% endif %}</div>
 {%- if verdict %}
-<div class="verdict c-{{ st }}">{{ icon(st) }}<span>{{ words[st] }}</span></div>
+<div class="verdict c-{{ st }}">{{ icon(st) }}<span>{{ r.status_prefix | default('') }}{{ words[st] }}</span></div>
 <h1>{{ r.title | e }}</h1>
 {%- else %}
 <h1 class="big">{{ r.title | e }}</h1>
@@ -666,7 +666,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- if runs or not verdict %}
 <div class="state">
 {%- if not verdict %}
-{{ chip(st, words[st]) }}
+{{ chip(st, (r.status_prefix | default('')) ~ words[st]) }}
 {%- endif %}
 {%- if runs %}
 <div class="runs" role="img" aria-label="The last {{ runs | length }} runs">
