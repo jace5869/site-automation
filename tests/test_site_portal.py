@@ -1899,6 +1899,26 @@ class Found(unittest.TestCase):
             self._clean(["Check step", "Workflow gate - has a plan", "Hosts step no limit", "Gated flow", "Gated flow, a host step without Limit"])
             self.portal.refresh(force=True)
 
+    def test_82c_the_stig_update_step_needs_no_limit(self):
+        """1.87.1: STIG - drift scan and upload - the checks, the gate, the approval and STIG Manager - update
+        (playbooks/stigman_update.yml, localhost only, no Limit at launch by design): the workflow is offered."""
+        j1 = fake_aap.add_template("job_templates", "Drift check step", [], None, limit=True, inventory=3)
+        gate = fake_aap.add_template("job_templates", "Workflow gate - has a plan", [], None, limit=False, inventory=3)
+        fake_aap.STATE["templates"]["job_templates"][-1]["playbook"] = "playbooks/workflow_gate.yml"
+        upd = fake_aap.add_template("job_templates", "STIG Manager - update", [], None, limit=False, inventory=3)
+        fake_aap.STATE["templates"]["job_templates"][-1]["playbook"] = "playbooks/stigman_update.yml"
+        wf = fake_aap.add_template("workflow_job_templates", "Drift flow", ["portal"], None, limit=True, inventory=3,
+                                   nodes=[self._node(1, j1, "Drift check step"), self._node(2, gate, "Workflow gate - has a plan"),
+                                          self._node(3, 0, "Approve", "workflow_approval"), self._node(4, upd, "STIG Manager - update")])
+        try:
+            self.portal.refresh(force=True)
+            by = dict((x["aap"]["name"], x) for x in self.portal.actions.values() if x.get("discovered"))
+            self.assertIn("Drift flow", by, self.portal.found.get("skipped"))
+            self.assertEqual(by["Drift flow"]["limit_inv"], 3)
+        finally:
+            self._clean(["Drift check step", "Workflow gate - has a plan", "STIG Manager - update", "Drift flow"])
+            self.portal.refresh(force=True)
+
     def test_83_a_workflow_limit_is_refused_naming_the_step(self):
         fake_aap.STATE["inventories"].append({"id": 52, "name": "Other", "hosts": [], "groups": {}})
         ok = fake_aap.add_template("job_templates", "Plain step", [], None, limit=True, inventory=3)

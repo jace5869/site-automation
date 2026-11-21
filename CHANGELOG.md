@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.87.1 — 2026-11-21
+
+**To set up:** run **Site portal - deploy** once.
+
+**Site portal: the STIG workflows were skipped.** *STIG - full scan and upload* and *STIG - drift scan and upload* were
+listed under "Why isn't my template here?": *step 'STIG Manager - update' does not take a Limit at launch*. That step runs
+only on the AAP side (it writes the approved plan to STIG Manager's API) and must not take a Limit - the workflow's
+Limit would make it skip. The portal now treats `playbooks/stigman_update.yml` like the workflow gate: a step that needs
+no Limit. A step that runs on hosts still needs one.
+- Test: `tests/test_site_portal.py` (a drift workflow with the gate, an approval and the update step is offered).
+
 ## 1.87.0 — 2026-11-21
 
 **Nothing to set up.** `portal_motion` (auto) now covers the pages' motion too; run *Site portal - deploy* to get the new pages.

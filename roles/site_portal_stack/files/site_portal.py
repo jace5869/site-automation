@@ -94,7 +94,9 @@ def names(v):
 
 
 # 1.79.9b: playbooks that run on the AAP side only (hosts: localhost) - a workflow step of one needs no Limit
-LOCAL_ONLY_PLAYBOOKS = frozenset(["playbooks/workflow_gate.yml"])
+# the AAP side only (hosts: localhost): a workflow's Limit has nothing to narrow there - the gate (1.79.9b), and the STIG
+# workflows' update step (1.87.1: it writes the approved plan to STIG Manager's API and must not take a Limit)
+LOCAL_ONLY_PLAYBOOKS = frozenset(["playbooks/workflow_gate.yml", "playbooks/stigman_update.yml"])
 
 class Config(object):
     """The settings: the file PORTAL_SETTINGS names (JSON - the deploy writes it), then the environment over it (the
