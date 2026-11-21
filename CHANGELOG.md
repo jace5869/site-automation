@@ -528,6 +528,12 @@ workflow made again). docs/STIG_JOBS.md, SETUP_AAP.md, WORKFLOWS_AND_SCHEDULES.m
 
 **To set up: nothing.** No new settings; a report's page and email read differently from the next run.
 
+**Review round (1.82.0):**
+- ACT's cards name a file as a whole: `/opt/app/run` is no longer found inside `/opt/app/run.sh`, so a card never offers the trust change of the other file.
+- A host keeps what the job found (fapolicyd off at boot, permissive, a config error) when its ACT answer became cards, or ACT did not run; only the ACT text goes.
+- A health report with hosts that did not report shows "N did not report" as a count, and "no findings" (not "0 findings") only when everything reported.
+- The head of the Cisco UCS and NetApp hardware reports counts what is wrong (not operable, critical faults, clusters or domains not read), worst first, in the page and the subject. The fapolicyd rules, STIG Manager update and log analysis reports set their counts and scope themselves (no "3 of them would-be", no "11 not").
+
 **The head of every report: the name alone, the counts, the scope** (`plugins/module_utils/report_head.py`):
 - The title is the report's name ("STIG drift", not "STIG drift report: 3 finding(s) on 2 of 2 host(s)"). Under it, the counts as chips - the status icon and the words, the worst first, 2 to 4, no 0 unless everything is 0, plural words - then one muted scope line.
 - All three web looks (atlas, brief, ops) draw the chips. The four emails stay plain: the name, one line of counts, the scope line. The text email the same.

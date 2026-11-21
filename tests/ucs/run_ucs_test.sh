@@ -74,7 +74,7 @@ eml="$(ls -t "$work/mail"/*.eml 2>/dev/null | head -1)"
 if [ -n "$eml" ] && "$py" - "$eml" "$work/ucs.html" "$work/ucs.xlsx" <<'PY'
 import email, email.policy, sys, zipfile
 m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
-assert "Cisco UCS: 4 servers" in m["Subject"], m["Subject"]
+assert "Cisco UCS: 2 domains not read, 2 not operable" in m["Subject"], m["Subject"]       # 1.82.0: the head, worst first (60 characters)
 open(sys.argv[2], "w").write(m.get_body(preferencelist=("html",)).get_content())
 x = [p for p in m.iter_attachments() if (p.get_filename() or "").endswith(".xlsx")]
 assert x, "no workbook attached"

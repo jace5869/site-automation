@@ -1586,6 +1586,17 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                                       "would be assigned" if check else "assigned")
     if bad:
         title += ", %d not" % bad
+    # the head: each count with its noun (the title's trailing ", 11 not" is no chip), the worst first
+    nmoved = len([i for i in moves if i.get("state") in ("moved", "would move", "there from an earlier run")])
+    nassigned = len([i for i in assigns if i.get("state") in ("assigned", "would assign", "already so")])
+    one = lambda k, a, b: a if k == 1 else b
+    w_n = n["would write"] if check else n["written"]
+    h_counts = [[k, w, st] for k, w, st in (
+        (bad, "not written", "critical"),
+        (w_n, one(w_n, "review would be written", "reviews would be written") if check else one(w_n, "review written", "reviews written"), "ok"),
+        (made if news else 0, one(made, "asset would be created", "assets would be created") if check else one(made, "asset created", "assets created"), "ok"),
+        (nmoved, one(nmoved, "asset would be moved", "assets would be moved") if check else one(nmoved, "asset moved", "assets moved"), "ok"),
+        (nassigned, one(nassigned, "STIG would be assigned", "STIGs would be assigned") if check else "STIGs assigned", "ok")) if k] or [["no", "reviews written", "ok"]]
     sections = []
     if error:
         sections.append({"title": "Nothing written", "status": "critical", "lines": [error]})
@@ -1627,7 +1638,8 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
                                                               " - but the moves and STIG assignments above, each as the approval allowed it.")})
     elif not error and not news and not firsts:
         sections.append({"title": "Nothing to write", "status": "ok", "lines": ["The check's plan has no review (%d)." % planned]})
-    return {"title": title, "status": status, "subtitle": "The reviews approved in workflow 40 (the checklist import)" if source == "import" else
+    return {"title": title, "head_name": "STIG Manager update", "head_counts": h_counts, "head_scope": ["Check: nothing written"] if check else None,
+            "status": status, "subtitle": "The reviews approved in workflow 40 (the checklist import)" if source == "import" else
                                                      "The reviews approved in workflow 37 (the STIG recheck)",
             "summary": [{"label": "Written" if not check else "Would write", "value": n["would write"] if check else n["written"], "status": "ok"}]
                        + ([{"label": "New assets" if not check else "Would create", "value": made, "status": "ok"}] if news else []) + [

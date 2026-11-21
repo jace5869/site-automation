@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "module_utils"))
 import report_head as H  # noqa: E402
 import site_filters as sf  # noqa: E402
+import stig_filters as stf  # noqa: E402
 
 FIX = os.path.join(HERE, "fixtures", "report_fit")
 
@@ -29,6 +30,32 @@ def fixtures():
         d = load(f)
         if isinstance(d, dict) and d.get("title") and "its tables" not in d["title"] and d["title"] != "T":
             yield os.path.basename(f), d
+
+
+class ReviewRound(unittest.TestCase):
+    """Review of 1.82.0: a count the title only carried in a later group, or not at all, is a chip and in the subject."""
+
+    def test_hosts_that_did_not_report_are_a_count_never_zero_findings(self):
+        d = sf.findings_report({"web01": []}, "Health check", missing=["web02", "web03"])
+        h = H.report_head(d)
+        self.assertEqual([c["text"] for c in h["counts"]], ["2 did not report"])
+        self.assertIn("2 did not report", h["subject"])
+        self.assertNotIn("0 findings", h["subject"] + h["counts_text"])
+        d = sf.findings_report({"web01": [{"severity": "critical", "check": "disk", "finding": "full"}]}, "Health check", missing=["web02"])
+        self.assertEqual([c["text"] for c in H.report_head(d)["counts"]], ["1 critical", "1 did not report"])
+        d = sf.findings_report({"web01": []}, "Health check")                      # nothing found, everyone reported: the zero chip says so
+        h = H.report_head(d)
+        self.assertEqual([c["text"] for c in h["counts"]], ["no findings"])
+
+    def test_the_stig_update_chips_have_their_nouns(self):
+        items = [{"state": "written", "host": "h%d" % i} for i in range(3)] + [{"state": "error", "host": "x"}] * 11
+        h = H.report_head(stf.stig_update_report(items))
+        self.assertEqual([c["text"] for c in h["counts"]], ["11 not written", "3 reviews written"])
+        self.assertNotIn("11 not,", h["subject"] + ",")
+        self.assertEqual(h["name"], "STIG Manager update")
+        h = H.report_head(stf.stig_update_report([{"state": "would write", "host": "h"}], True))
+        self.assertEqual([c["text"] for c in h["counts"]], ["1 review would be written"])
+        self.assertEqual(h["scope"], ["Check: nothing written"])
 
 
 class Rules(unittest.TestCase):

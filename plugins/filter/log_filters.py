@@ -599,6 +599,10 @@ def log_report(data, parsed=None, opts=None):
         title += ", %d host(s) not read" % len(unread)
     worst = "critical" if d.get("critical") or d.get("error") else "warning" if d.get("warning") else "ok"
     status = "critical" if (asked and not ran) or unread else (worst if allp else "ok")
+    h_counts = [[k, w, st] for k, w, st in (
+        (len(unread), "host not read" if len(unread) == 1 else "hosts not read", "critical"),
+        (n_pat if allp else 0, "pattern" if n_pat == 1 else "patterns", worst if worst != "ok" else "info")) if k] or [["no", "patterns", "ok"]]
+    h_scope = ["%d host%s read" % (len(read), "" if len(read) == 1 else "s")]
     model = " ".join(x for x in (o.get("provider"), o.get("model")) if x)
     subtitle = ("The warning, error and critical log lines of %s on %s, grouped into patterns (the same line with other "
                 "numbers, times and names is one pattern)." % (window, o.get("what") or "the hosts"))
@@ -692,7 +696,7 @@ def log_report(data, parsed=None, opts=None):
             s.pop("text", None)
     footer = ("ACT is an AI assistant: it read the evidence only, ran nothing and changed nothing. Confidence is its own estimate."
               if with_act else "Read-only: nothing was changed on any host.")
-    doc = {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections, "footer": footer}
+    doc = {"title": title, "head_name": name, "head_counts": h_counts, "head_scope": h_scope, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections, "footer": footer}
     if cc:
         # the website's version (report_web_theme atlas, brief, ops: _report_web): the cards instead of the email's table,
         # the Patterns table's cause a link to its card; the workbook: every cause and every step (sheet)

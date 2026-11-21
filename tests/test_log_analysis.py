@@ -25,6 +25,8 @@ _spec.loader.exec_module(site_vcenters)
 import log_filters as lf  # noqa: E402
 import site_vmware_logs as vl  # noqa: E402
 import vmware_alarm_filters as va  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import head_of  # noqa: E402
 
 SHIPPED = yaml.safe_load(open(os.path.join(ROOT, "roles", "log_analysis", "vars", "main.yml")))["_log_analysis_profiles"]
 DEFAULTS = yaml.safe_load(open(os.path.join(ROOT, "roles", "log_analysis", "defaults", "main.yml")))
@@ -237,6 +239,17 @@ class ActAndReport(unittest.TestCase):
         self.assertIn("BEGIN_ACT_ANALYSIS", task)
         self.assertIn("(P1)", task)
         self.assertNotIn("The team asks", lf.log_act_task(self.d["problems"], {}))
+
+    def test_the_head_is_the_patterns_and_the_hosts_not_read(self):
+        # review: "1 pattern" is a count, not the scope
+        parsed = va.act_analysis_parse("x\nBEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "o", "items": [
+            {"id": "P1", "cause": "A driver bug.", "evidence": "kernel panic", "fix": "Update the driver.", "confidence": 85}]}) + "\nEND_ACT_ANALYSIS", self.d["problems"])
+        doc = lf.log_report(self.d, parsed, {"act": True, "ran": True, "what": "web", "window": "the last 24 h", "max_items": 1})
+        h = head_of.head(doc)
+        self.assertEqual(h["name"], "Log analysis")
+        self.assertEqual([c["text"] for c in h["counts"]], ["1 host not read", "%d patterns" % self.d["patterns"] if self.d["patterns"] != 1 else "1 pattern"])
+        self.assertNotIn("pattern", h["scope_text"])
+        self.assertIn("read", h["scope_text"])
 
     def test_answer_reads_back_with_the_shared_parser(self):
         answer = ("x\nBEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "Fix the kernel first.", "items": [

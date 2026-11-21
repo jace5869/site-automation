@@ -49,7 +49,7 @@ check() {  # check NAME PYTHON-EXPRESSION on d
 }
 run "the report play's expressions run"
 check "the website's page: At a glance, the denials by program and file with its two lists, the hosts, ACT's answers as cards (1.82.0), the answers that name no file closed" \
-      '[s["title"] for s in d["web"]["sections"]][:3] == ["At a glance", "Denials by program and file", "Hosts with denials or a problem"] and len(d["web"]["sections"][1]["filters"]) == 2 and sum(1 for s in d["web"]["sections"] if s.get("collapsed") and s.get("rail") is False) == 3 and [s["title"] for s in d["web"]["sections"]][3:5] == ["What to do first", "Why the denials: causes and fixes"] and len(d["web"]["sections"][4]["causes"]) == 4'
+      '[s["title"] for s in d["web"]["sections"]][:3] == ["At a glance", "Denials by program and file", "Hosts with denials or a problem"] and len(d["web"]["sections"][1]["filters"]) == 2 and sum(1 for s in d["web"]["sections"] if s.get("collapsed") and s.get("rail") is False) == 5 and [s["title"] for s in d["web"]["sections"]][3:5] == ["What to do first", "Why the denials: causes and fixes"] and len(d["web"]["sections"][4]["causes"]) == 4'
 check "the email is short: no lists, no host answers, the top of the table, what to do first and the causes' table" \
       '[s["title"] for s in d["email"]["sections"]] == ["The denials that happen most", "Hosts with denials or a problem", "What to do first", "Why the denials: causes and fixes", "No denials"] and "filters" not in d["email"]["sections"][0]'
 check "the tiles are the same in both" '[x["label"] for x in d["email"]["summary"]] == [x["label"] for x in d["web"]["summary"]] and d["web"]["summary"][0]["value"] == 74'

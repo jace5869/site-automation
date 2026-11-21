@@ -5,6 +5,7 @@ report, the job's lines, the workbook and the artifact from what the collector r
     python tests/test_ucs_inventory.py"""
 import copy
 import json
+import re
 import os
 import subprocess
 import sys
@@ -18,6 +19,8 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 
 import ucs_inventory_filters as ucs  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import head_of  # noqa: E402
 
 
 def fixture():
@@ -52,6 +55,16 @@ class Report(unittest.TestCase):
     def setUp(self):
         self.c = collected()
         self.d = ucs.ucs_inventory_doc(self.c)
+
+    def test_the_head_counts_what_is_wrong_worst_first(self):
+        # review: the title's later " - " groups (not operable, critical faults, domains not read) are counts in the head and the subject
+        h = head_of.head(self.d)
+        self.assertEqual(h["name"], "Cisco UCS")
+        for n, w in re.findall(r"- (\d+) ([a-z ]+?)(?= -|$)", self.d["title"]):
+            self.assertIn("%s %s" % (n, w), h["counts_text"])
+        self.assertTrue(h["subject"].startswith("Cisco UCS: "))
+        self.assertIn("servers", h["scope_text"])
+        self.assertNotIn("not operable", h["scope_text"])
 
     def test_title_status_summary(self):
         self.assertEqual(self.d["title"], "Cisco UCS: 4 servers, 3 models, 1 domain, 2 fabric interconnects - 2 not operable - "

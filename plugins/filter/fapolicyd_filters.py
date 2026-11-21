@@ -261,8 +261,17 @@ def _top_sections(m):
     return [{"title": "At a glance", "lines": lines}] if lines else []
 
 
-def _host_detail(h):
-    """One host's ACT answer as ONE section, collapsed under the hosts table and not in the rail."""
+def _host_detail(h, cards=False):
+    """One host's ACT answer as ONE section, collapsed under the hosts table and not in the rail. cards: its answer is shown as
+    cards already - only what the job found stays (fapolicyd off at boot, permissive, a config error), never dropped with the text."""
+    if cards:
+        if not h.get("findings"):
+            return None
+        sec = {"title": "%s: what the job found" % _short(h["host"]), "text": "The job's own findings. ACT's analysis is in the cards above.",
+               "lines": list(h["findings"]), "collapsed": True, "rail": False}
+        if h["status"] != "ok":
+            sec["status"] = h["status"]
+        return sec
     secs = act_sections(h["host"], h["act"], h["findings"], h["status"])
     lines = list(secs[0].get("lines") or [])
     for s in secs[1:]:
@@ -406,7 +415,13 @@ def fapolicyd_denials_report(hostvars_list, names, since="today", title="", web=
         if web:
             if cards:
                 secs.extend(cards["sections"])
-            secs.extend(_host_detail(h) for h in problem if cards is None or h["host"] in cards["left"])
+            # a host whose ACT answer became cards keeps its findings only; one where ACT did not run (a Check run, the host
+            # failed) or whose text the cards do not show keeps everything - the findings are never lost with the text
+            for h in problem:
+                shown = cards is not None and h["act"] is not None and str(h["act"].get("status")) != "error" and h["host"] not in cards["left"]
+                sec = _host_detail(h, cards=shown)
+                if sec:
+                    secs.append(sec)
         elif cards:
             secs.extend(cards["email"])
     if quiet:
@@ -866,6 +881,12 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
         "subtitle": "%d host(s) read - what fapolicyd blocked since %s (ausearch -m FANOTIFY -ts %s), the trust entries and rules "
                     "to let it through, the rules files' clean-up%s" % (len(read), since, since, " - Check: nothing changed" if check else ""),
         "head_scope": ["%d host%s" % (len(read), "" if len(read) == 1 else "s"), "blocked since %s" % since] + (["Check: nothing changed"] if check else []),
+        # the counts as the job knows them ("3 of them would-be" is no count)
+        "head_counts": [[k, w, st] for k, w, st in (
+            (len(failed), "not changed", "critical"), (len(perm_hosts), "permissive", "critical"), (len(down), "fapolicyd not running", "critical"),
+            (denied, "blocked" if denied != 1 else "block", "warning"), (would, "would-be block" if would == 1 else "would-be blocks", "info"),
+            (len(proposals), "change to approve" if len(proposals) == 1 else "changes to approve", "warning"),
+            (len(changed), ("would change" if check else "changed") + (" host" if len(changed) == 1 else " hosts"), "ok")) if k] or [["no", "blocks", "ok"]],
         "status": status,
         "summary": [{"label": "Blocked", "value": denied, "status": "warning" if denied else "ok"},
                     {"label": "Would be blocked (permissive)", "value": would, "status": "warning" if would else "ok"},

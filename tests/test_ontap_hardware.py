@@ -14,6 +14,8 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 
 import ontap_hardware_filters as hw  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import head_of  # noqa: E402
 
 KEYS = {"cluster": "/api/cluster", "nodes": "/api/cluster/nodes", "shelves": "/api/storage/shelves", "disks": "/api/storage/disks",
         "ports": "/api/network/ethernet/ports", "fc_ports": "/api/network/fc/ports"}
@@ -45,6 +47,13 @@ class Report(unittest.TestCase):
     def setUp(self):
         self.c = collected()
         self.d = hw.ontap_hardware_doc(self.c)
+
+    def test_the_head_counts_what_is_wrong_worst_first(self):
+        h = head_of.head(self.d)
+        self.assertEqual(h["name"], "NetApp hardware")
+        self.assertEqual([c["text"] for c in h["counts"]], ["2 clusters not read", "1 not up", "1 shelf not ok"])         # worst first; the shelf is in no title group
+        self.assertTrue(h["subject"].startswith("NetApp hardware: 2 clusters not read, 1 not up"))
+        self.assertIn("2 controllers", h["scope_text"])
 
     def test_title_status_summary(self):
         self.assertEqual(self.d["title"], "NetApp hardware: 2 controllers, 1 model, 1 shelf, 4 disks - 1 not up - 2 clusters not read")

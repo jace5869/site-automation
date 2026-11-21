@@ -496,7 +496,14 @@ def ucs_inventory_doc(collected, opts=None):
         summary.append({"label": "Critical faults", "value": len(crit), "status": "warning"})
     if bad:
         summary.append({"label": "Domains not read", "value": len(bad), "status": "critical"})
-    return {"title": title, "status": "critical" if bad else ("warning" if broken or crit else "ok"),
+    # the head: what is wrong, worst first (review: the title's later " - " groups are not counts the head reads)
+    h_counts = [[n, w, st] for n, w, st in ((len(bad), "domain not read" if len(bad) == 1 else "domains not read", "critical"),
+                                             (len(broken), "not operable", "warning"),
+                                             (len(crit), "critical fault" if len(crit) == 1 else "critical faults", "warning")) if n] or [["no", "problems", "ok"]]
+    h_scope = ["%d server%s" % (len(servers), "" if len(servers) == 1 else "s"), "%d model%s" % (len(models), "" if len(models) == 1 else "s"),
+               "%d domain%s" % (len(ok), "" if len(ok) == 1 else "s"), "%d fabric interconnect%s" % (len(fis), "" if len(fis) == 1 else "s")]
+    return {"title": title, "head_name": "Cisco UCS", "head_counts": h_counts, "head_scope": h_scope,
+            "status": "critical" if bad else ("warning" if broken or crit else "ok"),
             "subtitle": "Every fabric interconnect, chassis and server, as UCS Manager reports them - %s" % (
                 ", ".join(d.name for d in ok) or "no domain read"),
             "summary": summary, "sections": sections}

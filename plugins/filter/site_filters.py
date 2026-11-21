@@ -2690,9 +2690,10 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     if not sections:
         sections.append({"title": "Result", "lines": ["No findings."]})
     # 1.82.0: the head - the counts by severity, the hosts as the scope
+    # a host that did not report is a count of its own (review: never lost, and never "0 findings" over them)
     h_counts = [[n, w, st] for n, w, st in ((crit, "critical", "critical"), (warn, "warning" if warn == 1 else "warnings", "warning"),
-                                             (low, "low", "info")) if n] or [[0, "findings", "ok"]]
-    h_scope = ([] if single else ["%d of %d hosts with findings" % (len(bad), len(hosts))]) + (["%d did not report" % len(missing)] if missing else [])
+                                             (len(missing), "did not report", "warning"), (low, "low", "info")) if n] or [["no", "findings", "ok"]]
+    h_scope = [] if single else ["%d of %d hosts with findings" % (len(bad), len(hosts))]
     if head:                                  # a top section's headline is the title's own words (STIG recheck: 2 rules open): the head reads them from it
         h_counts = h_scope = None
     out = {"title": t, "head_counts": h_counts, "head_scope": h_scope or None, "status": status, "summary": summary, "sections": sections,

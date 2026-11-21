@@ -1933,6 +1933,7 @@ class UpdateReportMoves(unittest.TestCase):
         # 1.69.1 changed two things on purpose (the tile Protected (left), which counts attachments and protected; one
         # sentence of the text): put back as they were, the rest must be byte for byte as before
         def as_before(r):
+            r = dict((k, v) for k, v in r.items() if not k.startswith("head_"))      # 1.82.0: the head's own counts, new on purpose
             t = json.dumps(r, sort_keys=True).replace('"Protected (left)"', '"Has attachments (left)"').replace(
                 " and one protected (RA, Risk Acceptance, POAM or POA&M in its detail or comment - stigman_protect_words; Accepted, "
                 "when the setting does not allow it)", "")

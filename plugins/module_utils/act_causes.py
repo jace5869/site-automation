@@ -368,6 +368,12 @@ def _fix_steps(fix):
     return steps
 
 
+def _names(needle, text):
+    """Does text name needle (a path, a name) as a whole? Not inside a longer one: /opt/app/run is not in /opt/app/run.sh, nor
+    in /usr/opt/app/run; a full stop that ends a sentence is no part of the name."""
+    return re.search(r"(?<![\w/.-])" + re.escape(str(needle)) + r"(?![\w/-]|\.[\w/-])", text) is not None
+
+
 def from_text(text, items):
     """ACT's labelled text -> the shape of parse. items: [{id, needles: [text that names the item, e.g. its file]}]. A finding names the
     items whose needle it mentions (one cause each); a finding that names none is left out - and listed in "unplaced", the number
@@ -378,7 +384,8 @@ def from_text(text, items):
         if not f.get("fix"):
             continue
         whole = " ".join(f.values()) + " " + b["head"]
-        pats = [str(i["id"]) for i in items or [] if any(nd and nd in whole for nd in i.get("needles") or [])]
+        pats = [str(i["id"]) for i in sorted(items or [], key=lambda i: -max([len(str(x)) for x in i.get("needles") or []] or [0]))
+                if any(nd and _names(nd, whole) for nd in i.get("needles") or [])]
         pats = [p for p in pats if p not in owner]
         if not pats:
             unplaced += 1

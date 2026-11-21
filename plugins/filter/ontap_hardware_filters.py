@@ -308,7 +308,13 @@ def ontap_hardware_doc(collected, opts=None):
         summary.append({"label": "Shelves not ok", "value": len(shelf_bad), "status": "warning"})
     if bad:
         summary.append({"label": "Clusters not read", "value": len(bad), "status": "critical"})
-    return {"title": title, "status": "critical" if bad else ("warning" if down or shelf_bad else "ok"),
+    h_counts = [[n, w, st] for n, w, st in ((len(bad), "cluster not read" if len(bad) == 1 else "clusters not read", "critical"),
+                                             (len(down), "not up", "warning"), (len(shelf_bad), "shelf not ok" if len(shelf_bad) == 1 else "shelves not ok", "warning")) if n] \
+        or [["no", "problems", "ok"]]
+    h_scope = ["%d controller%s" % (len(nodes), "" if len(nodes) == 1 else "s"), "%d model%s" % (len(models), "" if len(models) == 1 else "s"),
+               "%d shel%s" % (len(shelves), "f" if len(shelves) == 1 else "ves"), "%d disk%s" % (len(disks), "" if len(disks) == 1 else "s")]
+    return {"title": title, "head_name": "NetApp hardware", "head_counts": h_counts, "head_scope": h_scope,
+            "status": "critical" if bad else ("warning" if down or shelf_bad else "ok"),
             "subtitle": "Every controller, shelf and disk, as ONTAP reports them - %s" % (
                 ", ".join(c["_name"] for c in ok) or "no cluster read"),
             "summary": summary, "sections": sections}

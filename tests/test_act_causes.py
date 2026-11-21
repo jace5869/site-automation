@@ -208,6 +208,21 @@ class FromText(unittest.TestCase):
         self.assertEqual(by["D2"]["evidence"], ["no rule allows /var/tmp", "Legitimate? doubtful, no package owns it"])
         self.assertEqual(by["D2"]["steps"][0]["cmd"], "install -m 0750 /var/tmp/backup.py /usr/local/sbin/backup.py")
 
+    def test_a_file_is_named_whole_never_inside_a_longer_one(self):
+        # review: /opt/app/run is not in /opt/app/run.sh - the card for one never offers the trust change of the other
+        txt = ("BLOCKED: /usr/bin/sh -> /opt/app/run.sh (execute)\nFIX: add it with `fapolicyd-cli --file add /opt/app/run.sh`.\n\n"
+               "BLOCKED: /usr/bin/sh -> /opt/app/run (execute)\nFIX: add it with `fapolicyd-cli --file add /opt/app/run`.\n")
+        items = [{"id": "A", "needles": ["/opt/app/run"]}, {"id": "B", "needles": ["/opt/app/run.sh"]}]
+        for order in (items, items[::-1]):
+            r = ac.from_text(txt, order)
+            by = dict((c["patterns"][0], c) for c in r["causes"])
+            self.assertEqual(sorted(by), ["A", "B"])
+            self.assertEqual(by["A"]["steps"][0]["cmd"], "fapolicyd-cli --file add /opt/app/run")
+            self.assertEqual(by["B"]["steps"][0]["cmd"], "fapolicyd-cli --file add /opt/app/run.sh")
+        # a full stop that ends a sentence is not part of the name; a longer path that ends with it is not it
+        self.assertEqual(ac.from_text("BLOCKED: x\nFIX: do it with `true`. It was /opt/app/run.\n", [items[0]])["causes"][0]["patterns"], ["A"])
+        self.assertEqual(ac.from_text("BLOCKED: /usr/opt/app/run\nFIX: do `true`.\n", [items[0]])["causes"], [])
+
     def test_what_names_no_item_is_counted_not_guessed(self):
         r = ac.from_text(LABELLED, ITEMS)
         self.assertEqual(r["unplaced"], 1)                      # the /srv/other finding

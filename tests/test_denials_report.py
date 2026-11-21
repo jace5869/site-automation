@@ -91,6 +91,29 @@ class Model(unittest.TestCase):
         self.assertIn("What to do first", mail)
         self.assertEqual(mail["Why the denials: causes and fixes"]["columns"][2], "Files")
 
+    def test_a_host_keeps_what_the_job_found_when_acts_answer_became_cards(self):
+        # review: the findings of a host (permissive, not enabled at boot, a config error) are never lost with ACT's text -
+        # a host with cards, one where ACT did not run (a Check run, the host failed) and one whose answer erred all keep them
+        hvs, names = fleet.hostvars()
+        for n, hv in zip(names, hvs):
+            if n == "web01.example.mil":
+                hv["_fa_findings"] = hv["_fa_findings"] + ["fapolicyd is permissive (permissive = 1 in fapolicyd.conf)"]
+            if n == "web02.example.mil":
+                hv.pop("act_triage_result")
+                hv["_fa_findings"] = hv["_fa_findings"] + ["fapolicyd is not enabled at boot"]
+            if n == "app02.example.mil":
+                hv["act_triage_result"] = {"status": "error", "stop_reason": "model refused"}
+                hv["_fa_findings"] = hv["_fa_findings"] + ["a config error: db_max_size is not a number"]
+        r = ff.fapolicyd_denials_report(hvs, names, "today", "fapolicyd denials", True)
+        by = dict((x["title"], x) for x in r["sections"])
+        self.assertIn("fapolicyd is permissive (permissive = 1 in fapolicyd.conf)", by["web01: what the job found"]["lines"])      # cards: findings only
+        self.assertNotIn("web01: ACT's analysis", by)
+        self.assertNotIn("ACT's analysis is in the cards above.", " ".join(by["db01: what the job found"].get("lines", [])))
+        self.assertIn("fapolicyd is not enabled at boot", by["web02: ACT's analysis"]["lines"])                       # ACT did not run: all kept
+        self.assertIn("ACT did not run", by["web02: ACT's analysis"]["text"])
+        self.assertIn("a config error: db_max_size is not a number", by["app02: ACT's analysis"]["lines"])
+        self.assertTrue(all(x["collapsed"] and x["rail"] is False for x in r["sections"] if "what the job found" in x["title"]))
+
     def test_no_card_when_acts_answers_name_no_file(self):
         hvs, names = fleet.hostvars()
         for hv in hvs:

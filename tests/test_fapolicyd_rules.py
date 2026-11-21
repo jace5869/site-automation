@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "fapolicyd_rules", "library"))
 import fapolicyd_filters as ff  # noqa: E402
 import site_fapolicyd_rules as fr  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import head_of  # noqa: E402
 
 RULES = {"5": "deny_audit perm=any pattern=ld_so : all", "13": "deny_audit perm=execute all : all",
          "20": "allow_audit perm=open all : dir=/srv/audited/"}
@@ -469,6 +471,10 @@ class ReportTest(unittest.TestCase):
             dict(blocks[0], kind="would deny", count=3)])}, {"_fr": {"state": "not installed"}}, {}], ["a", "b", "c", "gone"])
         s = {x["title"]: x for x in r["sections"]}
         self.assertEqual([(x["label"], x["value"]) for x in r["summary"]][:2], [("Blocked", 2), ("Would be blocked (permissive)", 3)])
+        h = head_of.head(r)                                   # review: "3 of them would-be" is no count - each count has its own noun
+        self.assertNotIn("of them", h["counts_text"])
+        self.assertEqual([c["text"] for c in h["counts"]][:2], ["1 permissive", "2 blocked"])
+        self.assertIn("3 would-be blocks", h["counts_text"])
         self.assertIn("permissive on 1", r["title"])
         self.assertEqual(r["status"], "critical")
         self.assertEqual(s["Changes to approve"]["lines"][0], "trust file: /opt/app/tool size 51 sha256 " + SHA)
