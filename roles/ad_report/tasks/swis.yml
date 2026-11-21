@@ -29,7 +29,7 @@
           'hierarchy': netmap_hierarchy | default([], true), 'roles': netmap_roles | default({}, true),
           'properties': netmap_properties | default([], true), 'lat_property': netmap_lat_property | default(''),
           'lon_property': netmap_lon_property | default(''), 'discover': netmap_discover | default(true) | bool,
-          'max_nodes': netmap_max_nodes | default(5000) | int, 'no_site': netmap_no_site | default('Not placed'),
+          'max_nodes': netmap_max_nodes | default(5000) | int,
           'max_age': solarwinds_db_max_age | default(20) | int} }}
   register: _ad_swis_read
   failed_when: false                     # never the job's result: a module that fails is a Not read line (ad_swis_view)

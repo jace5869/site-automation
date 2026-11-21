@@ -92,11 +92,16 @@
       gL.appendChild(sv('path', { d: d, 'class': 'am-hi', 'stroke-width': (w + 6).toFixed(1) }));
     });
     var taken = [];
-    function label(g, x, y, lines, force) {
-      var w = Math.max.apply(0, lines.map(function (t) { return t.length; })) * 6.6, b = [x, y - 12, x + w, y + 4 + 13 * (lines.length - 1)];
+    function label(g, x, y, lines, force, anchorEnd) {
+      var w = Math.max.apply(0, lines.map(function (t) { return t.length; })) * 6.6;
+      if (anchorEnd) x -= w;
+      x = Math.max(4, Math.min(x, W - w - 4)); y = Math.max(14, Math.min(y, H - 6 - 13 * (lines.length - 1)));   // never cut off
+      var b = [x, y - 12, x + w, y + 4 + 13 * (lines.length - 1)];
       if (!force && taken.some(function (t) { return b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]; })) return;
       taken.push(b); lines.forEach(function (t, i) { g.appendChild(sv('text', { x: x, y: y + i * 13, 'class': i ? 'sub' : null }, [t])); });
     }
+    var disc = null;
+    if (open && pos[open]) { var R0 = Math.min(84, W * 0.08); disc = { x: pos[open][0], y: pos[open][1], r: R0 + 24 }; taken.push([disc.x - disc.r, disc.y - disc.r - 40, disc.x + disc.r, disc.y + disc.r]); }
     var bad = {}; links.forEach(function (l) { if (l.cls === 'critical' || l.cls === 'warning') { bad[l.a] = 1; bad[l.b] = 1; } });
     sites.slice().sort(function (a, b) { return (bad[b.n] ? 1 : 0) - (bad[a.n] ? 1 : 0) || b.dcs.length - a.dcs.length; }).forEach(function (s) {
       var q = pos[s.n]; if (!q) return;
@@ -105,7 +110,14 @@
         'aria-label': many ? s.n + ', ' + s.dcs.length + ' DCs: open' : null });
       g.appendChild(sv('circle', { cx: q[0], cy: q[1], r: r }));
       if (many) g.appendChild(sv('text', { x: q[0], y: q[1] + 4, 'text-anchor': 'middle', 'class': 'cnt' }, [String(s.dcs.length)]));
-      label(g, q[0] + r + 6, q[1] - 1, [s.n, s.nm && s.nm !== s.n ? s.nm : (!s.nm ? 'no network-map site' : '')].filter(Boolean), !!bad[s.n] || many);
+      var lines = [s.n, s.nm && s.nm !== s.n ? s.nm : (!s.nm ? 'no network-map site' : '')].filter(Boolean);
+      var dx = disc ? q[0] - disc.x : 0, dy = disc ? q[1] - disc.y : 0, dd = Math.sqrt(dx * dx + dy * dy);
+      if (disc && dd < disc.r + 70) {                    // under (or by) the opened site's disc: the label just outside it
+        var ux = dd ? dx / dd : 1, uy = dd ? dy / dd : 0, lx = disc.x + ux * (disc.r + 10), ly = disc.y + uy * (disc.r + 14) + 4;
+        label(g, lx, ly, lines, true, ux < 0);
+      } else {
+        label(g, q[0] + r + 6, q[1] - 1, lines, !!bad[s.n] || many);
+      }
       if (many) { var go = function () { open = s.n; draw(); }; g.addEventListener('click', go);
         g.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } }); }
       gS.appendChild(g);
