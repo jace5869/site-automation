@@ -40,7 +40,8 @@
       the templates run on - portal_inventory by default). docs/SITE_PORTAL.md, "Setting it up in AAP".
     quiet: true
 
-- ansible.builtin.import_tasks: descriptions.yml
+- name: Portal setup | the descriptions the templates get
+  ansible.builtin.import_tasks: descriptions.yml
 
 - name: Portal setup | the templates and workflows, in AAP
   site_aap_portal_setup:
