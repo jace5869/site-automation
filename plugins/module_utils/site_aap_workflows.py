@@ -3,8 +3,8 @@
 (roles/aap_portal_setup, its own templates and workflows) and "AAP - set up job templates" (roles/aap_templates, the STIG
 workflows of the catalog): a workflow's nodes (job templates and approval nodes, their success, failure and always links,
 a node's extra_data) made again when they differ; a template or workflow made when AAP has none of that name, brought up
-to date field by field, or left as it is when it was changed by hand since (its description's mark: the fingerprint of
-what the job wrote) or made by someone else - unless overwrite. In check mode nothing is written. Moved here from
+to date field by field, or left as it is when it was changed by hand since (the fingerprints its last successful run handed
+on as a job artifact; 1.93.0: no longer in the description) or made by someone else - unless overwrite. In check mode nothing is written. Moved here from
 site_aap_portal_setup.py unchanged but for the mark and the overwrite setting's name, which each job gives.
 Standard library only."""
 from __future__ import absolute_import, division, print_function
@@ -41,16 +41,21 @@ def fingerprint(fields):
 
 
 class Sync(object):
-    """What a setup job writes, and what it found. p: {overwrite, describe ...}; mark_re / mark_text: its description mark
-    (a regular expression with the fingerprint as group 1, and the text with %s for it); overwrite_name: its setting's name."""
-    def __init__(self, api, p, check, mark_re, mark_text, overwrite_name):
+    """What a setup job writes, and what it found. p: {overwrite, describe, known ...}; mark_re: the description mark older
+    versions wrote (a regular expression with the fingerprint as group 1: taken off on the next Run); overwrite_name: its setting's name."""
+    def __init__(self, api, p, check, mark_re, overwrite_name):
         self.api, self.p, self.check = api, p, check
-        self.mark_re, self.mark_text, self.overwrite_name = mark_re, mark_text, overwrite_name
+        self.mark_re, self.overwrite_name = mark_re, overwrite_name
+        # 1.93.0: known = {"kind/name": fingerprint} from the last successful run's artifact (None: no such run); out = what
+        # this run hands on (set_stats aap_setup_fingerprints)
+        k = p.get("known")
+        self.known = dict(k) if isinstance(k, dict) else None        # anything else (none, "", "None"): no earlier run
+        self.out = dict(self.known or {})
         self.results, self.problems = [], []
         self.cache = {}
 
     def split_desc(self, desc):
-        """(the description without the mark, the fingerprint in it or '')."""
+        """(the description without an old mark, the fingerprint in it or '')."""
         d = str(desc or "")
         m = self.mark_re.search(d)
         return (d[:m.start()], m.group(1)) if m else (d, "")
@@ -107,17 +112,18 @@ class Sync(object):
             self.note(kind, name, "skipped", why="AAP has %d of that name: rename one" % len(rows))
             return None, "skipped"
         desc = want.get("description", "")
+        key = "%s/%s" % (kind, name)
         if not rows:
-            body = dict(want, description=desc + self.mark_text % fingerprint(dict(want, extra=extra_write("wanted", True) if extra_write else None)))
-            code, d = self.write("POST", "%s/" % api_kind, body)
+            code, d = self.write("POST", "%s/" % api_kind, dict(want))
             oid = int(d.get("id")) if d.get("id") else (-1 if self.check else None)      # check mode: one that would be made
             if extra_write and oid and oid > 0:
                 extra_write(oid, True)
+            self.out[key] = fingerprint(dict(want, extra=extra_write("wanted", True) if extra_write else None))
             self.note(kind, name, "create", dict((k, [None, v]) for k, v in want.items()))
             return oid, "create"
         obj = rows[0]
         oid = int(obj["id"])
-        now_desc, mark = self.split_desc(obj.get("description"))
+        now_desc, old = self.split_desc(obj.get("description"))
         now = dict((k, obj.get(k)) for k in want if k != "description")
         now["description"] = now_desc
         now_extra = extra_read(oid) if extra_read else None
@@ -125,27 +131,43 @@ class Sync(object):
         diff = dict((k, [now.get(k), v]) for k, v in want.items() if _norm(now.get(k)) != _norm(v))
         if extra_read and _norm(now_extra) != _norm(want_extra):
             diff["(its parts)"] = [now_extra, want_extra]
-        recorded_ok = mark and mark == fingerprint(dict(now, extra=now_extra))
-        if not mark and not self.p["overwrite"]:
+        fp_now = fingerprint(dict(now, extra=now_extra))
+        fp_want = fingerprint(dict(want, extra=want_extra))
+        # 1.93.0: what this job wrote is judged against the fingerprints its last successful run handed on (self.known, a job
+        # artifact), or an old description mark (migration); with neither, against the text this job would write now
+        recorded = (self.known or {}).get(key) or old
+        matches = fp_now == fp_want
+        if not recorded and not matches and not self.p["overwrite"]:
+            if self.known is None:
+                self.note(kind, name, "hand-edited", diff, "differs from what this job writes, and there is no earlier run to compare with "
+                          "(changed by hand, or made by someone else): left as it is (%s: true writes it again)" % self.overwrite_name)
+                return oid, "hand-edited"
             self.note(kind, name, "not ours", diff, "AAP has one of that name this job did not make: left as it is (%s: true takes it over)" % self.overwrite_name)
             return oid, "not ours"
-        if mark and not recorded_ok and not self.p["overwrite"]:
+        if recorded and recorded != fp_now and not self.p["overwrite"]:
+            self.out[key] = recorded
             self.note(kind, name, "hand-edited", diff, "changed by hand since this job wrote it: left as it is (%s: true writes it again)" % self.overwrite_name)
             return oid, "hand-edited"
-        if not diff and recorded_ok:
+        if not diff:
+            self.out[key] = fp_want
+            if old:                                    # the old fingerprint text at the end of the description: taken off
+                self.write("PATCH", "%s/%d/" % (api_kind, oid), {"description": desc})
+                self.note(kind, name, "update", {"description": [str(obj.get("description") or ""), desc]},
+                          "would remove the old fingerprint text" if self.check else "removed the old fingerprint text")
+                return oid, "update"
             self.note(kind, name, "unchanged")
             return oid, "unchanged"
         body = dict((k, want[k]) for k in want)
-        body["description"] = desc + self.mark_text % fingerprint(dict(want, extra=want_extra))
         self.write("PATCH", "%s/%d/" % (api_kind, oid), body)
         if extra_write and "(its parts)" in diff:
             extra_write(oid, False)
+        self.out[key] = fp_want
         self.note(kind, name, "update", diff)
         return oid, "update"
 
     def described(self, kind, x):
         """1.79.11: the catalog's five lines for this template or workflow (describe: aap/job_templates.yml's, by name), else
-        its workflows.yml description; the job's fingerprint mark still goes after it (its mark_text)."""
+        its workflows.yml description (1.93.0: nothing is added to it)."""
         d = (getattr(self, "p", None) or {}).get("describe") or {}
         text = described_text(((d.get(kind) or {}).get(x.get("name")) or {}), d.get("owner") or "", d.get("contact") or "")
         return text or str(x.get("description") or "")

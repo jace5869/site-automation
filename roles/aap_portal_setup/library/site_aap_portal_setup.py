@@ -3,7 +3,7 @@
 """AAP - set up portal actions (1.67.0 part C, playbooks/aap_portal_setup.yml): the job templates and workflows the site
 portal's actions launch, made or brought up to date through AAP's own API from roles/site_portal_stack/files/workflows.yml
 (and actions.yml for who may run what). Never deletes a template or a workflow. One made or changed by hand since this job
-last wrote it (its description carries the fingerprint of what this job wrote) is listed and left as it is, unless
+last wrote it (the fingerprints this job handed on in its last run) is listed and left as it is, unless
 overwrite. The portal's AAP account gets Execute on the actions' templates and workflows and Approve on the workflows
 with an approval node - nothing more. In check mode it only reads and says, field by field, what it would change.
 The address and login come from the "Red Hat Ansible Automation Platform" credential (plugins/module_utils/site_aap.py).
@@ -16,9 +16,12 @@ module: site_aap_portal_setup
 short_description: Make or update the site portal's job templates and workflows in AAP (never deletes)
 description:
   - Each job template of spec.templates and each workflow of spec.workflows is made when AAP has none of that name, or
-    brought up to date field by field. Its description ends with a mark - the fingerprint of what this module wrote - so a
-    later change by hand is seen; such a template or workflow, or one of that name this module did not make, is listed
-    and left as it is unless overwrite.
+    brought up to date field by field. The fingerprint of what this module wrote goes on in the job's artifact
+    (aap_setup_fingerprints, 1.93.0 - no longer in the description), and known is the last successful run's, so a later change
+    by hand is seen; such a template or workflow, or one of that name this module did not make, is listed and left as it is
+    unless overwrite. Without known (a first run, or the history purged) a description is compared with the text this module
+    would write. A description that still ends with the old mark is this module's: the next Run takes the mark off.
+  - known is {"template/<name>": fingerprint, ...} (null: no earlier run).
   - A workflow's nodes (job templates and approval nodes, their success, failure and always links) are made again when
     they differ from the spec.
   - The portal's account (portal_user) gets Execute on the template or workflow of each action, and Approve on each such
@@ -69,7 +72,6 @@ from ansible.module_utils.site_aap import Api, connection
 from ansible.module_utils.site_aap_workflows import Sync, _q, _norm, fingerprint  # noqa: F401 - fingerprint: as before, for its callers
 
 MARK = re.compile(r"\s*\[set up by AAP - set up portal actions, fingerprint ([0-9a-f]{12})\]\s*$")
-MARK_TEXT = " [set up by AAP - set up portal actions, fingerprint %s]"
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user that may make job templates and workflows in the organization, and give roles on them)')
 
@@ -78,7 +80,7 @@ class Setup(Sync):
     """1.83.0: the reading, writing, reconcile and workflow parts are site_aap_workflows.Sync's (shared with "AAP - set up
     job templates")."""
     def __init__(self, api, p, check):
-        Sync.__init__(self, api, p, check, MARK, MARK_TEXT, "portal_setup_overwrite")
+        Sync.__init__(self, api, p, check, MARK, "portal_setup_overwrite")
 
     # ---- job templates
     def template(self, t, refs, copy=None, with_action=False):
@@ -594,7 +596,7 @@ def main():
                            publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""),
                            unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
                            area_label=dict(type="str", default="portal-area:"), publish_max=dict(type="int", default=50),
-                           describe=dict(type="dict", default={}),
+                           describe=dict(type="dict", default={}), known=dict(type="raw", default=None),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params
@@ -611,7 +613,7 @@ def main():
     except RuntimeError as e:
         s.problems.append(str(e))
     changed = any(r["action"] in ("create", "update", "remove") for r in s.results) and not module.check_mode
-    module.exit_json(changed=changed, results=s.results, problems=s.problems, api=api.base)
+    module.exit_json(changed=changed, results=s.results, problems=s.problems, api=api.base, fingerprints=s.out)
 
 
 if __name__ == "__main__":

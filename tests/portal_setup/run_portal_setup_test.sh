@@ -71,10 +71,12 @@ got="$(st '[(n["identifier"], [m["identifier"] for m in s["nodes"] if m["id"] in
     && pass "workflow 47: check -> gate -> approve -> apply -> recheck -> gate -> update" || fail "workflow 47's nodes" "$got"
 got="$(st '[(x["name"], x["rrule"]) for x in s["schedules"]]')"
 case "$got" in *"Recheck every 15 minutes"*"INTERVAL=15"*) pass "the schedule";; *) fail "the schedule" "$got";; esac
-# 1.79.11: the catalog's five lines (aap/job_templates.yml), this job's fingerprint mark still last
-got="$(st '[(x["name"], x["description"].startswith("** Does: "), "\n** Supports: Run constraint=" in x["description"], x["description"].split("\n")[-1].endswith("]") and "[set up by AAP - set up portal actions, fingerprint " in x["description"].split("\n")[-1]) for x in s["workflow_job_templates"] + s["job_templates"] if x["name"] in ("STIG - recheck one host", "STIG recheck")]')"
-[ "$got" = "[('STIG - recheck one host', True, True, True), ('STIG recheck', True, True, True)]" ] \
-    && pass "the five lines on its workflows and templates (the catalog's), its mark last" || fail "the descriptions" "$got"
+# 1.79.11: the catalog's five lines (aap/job_templates.yml); 1.93.0: nothing after them - no fingerprint text
+got="$(st '[(x["name"], x["description"].startswith("** Does: "), "\n** Supports: Run constraint=" in x["description"], "fingerprint" in x["description"] or "[set up by AAP" in x["description"]) for x in s["workflow_job_templates"] + s["job_templates"] if x["name"] in ("STIG - recheck one host", "STIG recheck")]')"
+[ "$got" = "[('STIG - recheck one host', True, True, False), ('STIG recheck', True, True, False)]" ] \
+    && pass "the five lines on its workflows and templates (the catalog's), and no fingerprint text after them" || fail "the descriptions" "$got"
+got="$(st 'sum(1 for x in s["workflow_job_templates"] + s["job_templates"] if "fingerprint" in x["description"])')"
+[ "$got" = 0 ] && pass "no description of any template or workflow carries a fingerprint" || fail "fingerprint text somewhere" "$got"
 
 # ---- a second run changes nothing
 n="$(writes)"
@@ -108,6 +110,101 @@ if [ "$(st '[j["playbook"] for j in s["job_templates"] if j["name"] == "STIG rec
     pass "portal_setup_overwrite: written again"
 else fail "overwrite" "$(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
 
+# ---- 1.93.0: the fingerprints go on in a job artifact (aap_setup_fingerprints), never in a description
+export ANSIBLE_SHOW_CUSTOM_STATS=1
+cat > "$work/stats.py" <<'EOPY'
+import json, sys
+t = open(sys.argv[1]).read()
+i = t.rfind("RUN: {")
+m = json.JSONDecoder().raw_decode(t[i + 5:].lstrip())[0] if i >= 0 else {}
+print(json.dumps(m.get("aap_setup_fingerprints", {})))
+EOPY
+stats() { "$py" "$work/stats.py" "$work/out.txt"; }
+seed_job() {    # seed_job ID  - a successful run of template 7 that handed on the map of the last run
+    "$py" - "$work/state.json" "$1" "$(stats)" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+s.setdefault("jobs", []).append({"id": int(sys.argv[2]), "job_template": 7, "status": "successful", "finished": "2026-11-21T06:00:00Z",
+                                 "artifacts": {"aap_setup_fingerprints": json.loads(sys.argv[3])}})
+json.dump(s, open(sys.argv[1], "w"))
+EOPY
+}
+run_as() { setup -e "{\"awx_job_id\": $1, \"awx_job_template_id\": 7}" "${@:2}"; }
+desc_of() { st '[j["description"] for j in s["job_templates"] if j["name"] == "STIG recheck"][0]'; }
+run_as 100
+fp="$(stats | "$py" -c 'import json,sys; m=json.load(sys.stdin); print(m.get("template/STIG recheck", ""))')"
+if [ "${#fp}" = 12 ] && [ "$(stats | "$py" -c 'import json,sys; print(len(json.load(sys.stdin)))')" -ge 20 ] && ! desc_of | grep -q fingerprint; then
+    pass "a first run (no earlier run in AAP): compared with the text it would write, all ours; the map goes on as the job artifact (a 12-character fingerprint each), the description has none"
+else fail "first run's artifact" "fp=$fp; $(grep -n "CUSTOM STATS" -A4 "$work/out.txt" | head -8)"; fi
+seed_job 90
+n="$(writes)"
+run_as 101
+if [ "$(writes)" = "$n" ] && grep -q "template 'STIG recheck': as it should be" "$work/out.txt" && ! grep -qE "would be|: made|: changed|BY HAND|NOT MADE" "$work/out.txt"; then
+    pass "a second run, with the last run's artifact: already right, nothing written"
+else fail "second run with an artifact" "$(($(writes) - n)) writes; $(grep -E "STIG recheck|BY HAND" "$work/out.txt" | head -4)"; fi
+"$py" - "$work/state.json" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+for j in s["job_templates"]:
+    if j["name"] == "STIG recheck":
+        j["playbook"] = "playbooks/by_hand.yml"
+json.dump(s, open(sys.argv[1], "w"))
+EOPY
+run_as 102
+if grep -q "template 'STIG recheck': CHANGED BY HAND - left as it is - changed by hand since this job wrote it" "$work/out.txt" \
+    && [ "$(st '[j["playbook"] for j in s["job_templates"] if j["name"] == "STIG recheck"][0]')" = "playbooks/by_hand.yml" ]; then
+    pass "a hand edit, seen against the artifact's fingerprint: said, left as it is"
+else fail "hand edit with an artifact" "$(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
+seed_job 91                      # this run kept the edited one's fingerprint, so the next still sees it
+run_as 103 -e '{"portal_setup_overwrite": true}'
+[ "$(st '[j["playbook"] for j in s["job_templates"] if j["name"] == "STIG recheck"][0]')" = "playbooks/stig_recheck.yml" ] \
+    && pass "with the artifact and portal_setup_overwrite: written again" || fail "overwrite with an artifact" "$(grep "STIG recheck" "$work/out.txt" | head -3)"
+seed_job 92
+# the spec changed (not AAP): with the artifact AAP's copy is the one this job wrote, so it is brought up to date; with no earlier run it could only say "changed by hand"
+n="$(writes)"
+run_as 104 -e '{"portal_setup_describe": false}'
+if grep -q "template 'STIG recheck': changed" "$work/out.txt" && [ "$(writes)" -gt "$n" ] && ! grep -q "BY HAND" "$work/out.txt"; then
+    pass "what the job writes changed in workflows.yml and AAP still has what it wrote: brought up to date, not called hand-edited"
+else fail "spec changed, artifact" "$(grep -E "STIG recheck|BY HAND" "$work/out.txt" | head -4)"; fi
+setup -e '{"portal_setup_describe": true}' -e '{"portal_setup_overwrite": true}'      # back to the catalog's five lines (no artifact read)
+# an old description mark is this job's: Check says it would take it off, the next Run does, the fingerprint stays in the map
+setup --check
+"$py" - "$work/state.json" "$(setup >/dev/null; stats | "$py" -c 'import json,sys; print(json.load(sys.stdin)["template/STIG recheck"])')" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+for j in s["job_templates"]:
+    if j["name"] == "STIG recheck":
+        j["description"] += " [set up by AAP - set up portal actions, fingerprint %s]" % sys.argv[2]
+json.dump(s, open(sys.argv[1], "w"))
+EOPY
+n="$(writes)"
+setup --check
+if [ "$(writes)" = "$n" ] && grep -q "template 'STIG recheck': would be changed - would remove the old fingerprint text" "$work/out.txt" && desc_of | grep -q "fingerprint"; then
+    pass "an old fingerprint mark, Check: says it would remove the old fingerprint text, writes nothing"
+else fail "migration check" "$(($(writes) - n)) writes; $(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
+setup
+if [ "$(desc_of | grep -c fingerprint)" = 0 ] && grep -q "template 'STIG recheck': changed - removed the old fingerprint text" "$work/out.txt" \
+    && [ "$(stats | "$py" -c 'import json,sys; print(len(json.load(sys.stdin)["template/STIG recheck"]))')" = 12 ]; then
+    pass "an old fingerprint mark, Run: taken off, the rest of the description kept, the fingerprint in the new map"
+else fail "migration run" "$(desc_of | tail -2); $(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
+# an old mark whose fingerprint does not match what is there: changed by hand since - never touched
+"$py" - "$work/state.json" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+for j in s["job_templates"]:
+    if j["name"] == "STIG recheck":
+        j["playbook"] = "playbooks/by_hand.yml"
+        j["description"] += " [set up by AAP - set up portal actions, fingerprint 0123456789ab]"
+json.dump(s, open(sys.argv[1], "w"))
+EOPY
+n="$(writes)"
+setup
+if [ "$(writes)" = "$n" ] && grep -q "template 'STIG recheck': CHANGED BY HAND - left as it is" "$work/out.txt" && desc_of | grep -q "fingerprint 0123456789ab"; then
+    pass "an old mark that no longer matches: changed by hand, the description (mark included) left as it is"
+else fail "old mark, hand edit" "$(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
+setup -e '{"portal_setup_overwrite": true}'
+unset ANSIBLE_SHOW_CUSTOM_STATS
+
 # ---- one of that name the job did not make: left alone; a node changed by hand on its workflow: listed
 "$py" - "$work/state.json" <<'EOPY'
 import json, sys
@@ -125,10 +222,10 @@ EOPY
 setup -e '{"portal_setup_credentials": {"machine": "Linux machine", "machine_windows": "Windows machine", "aap": "AAP reader",
             "act_model_key": "ACT model key", "stigman_api": "STIG Manager API", "stigman_api_writer": "STIG Manager API",
             "windows_share": "STIG Manager API"}}'
-if grep -q "template 'STIG Manager - import checklists - check': NOT MADE BY THIS JOB - left as it is" "$work/out.txt" \
+if grep -q "template 'STIG Manager - import checklists - check': CHANGED BY HAND - left as it is - differs from what this job writes, and there is no earlier run to compare with" "$work/out.txt" \
     && grep -q "workflow 'STIG - recheck one host': CHANGED BY HAND - left as it is" "$work/out.txt" \
     && [ "$(st '[j["description"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"][0]')" = "made by a person" ]; then
-    pass "one the job did not make, and a workflow whose node was changed by hand: listed, left as they are"
+    pass "one the job did not make (no earlier run to compare with: said so), and a workflow whose node was changed by hand: listed, left as they are"
 else fail "not ours / node changed" "$(grep -E "import checklists - check|recheck one host" "$work/out.txt" | head)"; fi
 if grep -q "workflow 'Checklists imported into STIG Manager': made" "$work/out.txt"; then
     pass "workflow 40 made, on the template that was there (its approval node too)"

@@ -167,6 +167,17 @@ class H(BaseHTTPRequestHandler):
                         if want is None or r.get("name") == want or r.get("username") == want]
                 rows = by_fields(rows, q)
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
+            if p == "jobs/":                                # 1.93.0: this template's earlier runs (state "jobs": id, job_template, status, artifacts)
+                rows = [dict((k, v) for k, v in j.items() if k != "artifacts") for j in s.get("jobs", [])
+                        if str(j.get("job_template")) == q.get("job_template", str(j.get("job_template")))
+                        and j["id"] < int(q.get("id__lt", "999999999"))
+                        and j.get("status") in q.get("status__in", j.get("status")).split(",")]
+                rows.sort(key=lambda j: -j["id"])
+                return self.send(200, {"count": len(rows), "results": rows[:int(q.get("page_size", "25"))], "next": None})
+            m = re.match(r"^jobs/(\d+)/$", p)
+            if m:
+                j = next((j for j in s.get("jobs", []) if j["id"] == int(m.group(1))), None)
+                return self.send(200, j) if j else self.send(404, {"detail": "Not found."})
             m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/$", p)
             if m:
                 r = next((r for r in s[m.group(1)] if r["id"] == int(m.group(2))), None)

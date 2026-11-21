@@ -26,6 +26,7 @@ options:
   overwrite: {description: "Bring a workflow made by hand, or changed since, to the catalog's (its nodes made again).", type: bool, default: false}
   labels: {description: "The labels each workflow gets (the portal's label and its area's).", type: list, elements: str, default: []}
   describe: {description: "{workflow: {name: {does, targets, produces, supports}}, owner, contact} - the description written.", type: dict, default: {}}
+  known: {description: "1.93.0: {\"workflow/<name>\": fingerprint} - what the last successful run handed on (its job artifact aap_setup_fingerprints); none: no such run, a description is compared with the text this job would write.", type: raw, default: null}
   only: {description: "Only the workflows whose name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
@@ -46,14 +47,13 @@ from ansible.module_utils.site_aap import Api, connection
 from ansible.module_utils.site_aap_workflows import Sync, _q
 
 MARK = re.compile(r"\s*\[set up by AAP - set up job templates, fingerprint ([0-9a-f]{12})\]\s*$")
-MARK_TEXT = " [set up by AAP - set up job templates, fingerprint %s]"
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user with Admin on the organization - it makes job templates and workflows)')
 
 
 class Workflows(Sync):
     def __init__(self, api, p, check):
-        Sync.__init__(self, api, p, check, MARK, MARK_TEXT, "aap_templates_overwrite")
+        Sync.__init__(self, api, p, check, MARK, "aap_templates_overwrite")
 
     def wanted(self, name):
         pats = [str(x).casefold() for x in self.p["only"] or []]
@@ -184,7 +184,7 @@ def main():
                            uses=dict(type="dict", default={}), renamed=dict(type="list", elements="str", default=[]),
                            refused=dict(type="list", elements="str", default=[]), project=dict(type="str", required=True),
                            overwrite=dict(type="bool", default=False), labels=dict(type="list", elements="str", default=[]),
-                           describe=dict(type="dict", default={}), only=dict(type="list", elements="str", default=[]),
+                           describe=dict(type="dict", default={}), known=dict(type="raw", default=None), only=dict(type="list", elements="str", default=[]),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params
@@ -198,7 +198,7 @@ def main():
     except RuntimeError as ex:
         s.problems.append(str(ex))
     changed = not module.check_mode and any(r["action"] in ("create", "update", "label") for r in s.results)
-    module.exit_json(changed=changed, results=s.results, problems=s.problems)
+    module.exit_json(changed=changed, results=s.results, problems=s.problems, fingerprints=s.out)
 
 
 if __name__ == "__main__":

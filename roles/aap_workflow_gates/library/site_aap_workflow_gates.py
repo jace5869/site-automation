@@ -42,8 +42,6 @@ problems: {description: What could not be done., type: list}
 '''
 
 import fnmatch
-import hashlib
-import json
 import os
 
 from ansible.module_utils.basic import AnsibleModule
@@ -69,28 +67,11 @@ NO_GATE = {
     "troubleshoot.yml": "ACT's fix: its check hands on an analysis for every host; the apply step skips what was not approved",
 }
 GATE_PLAYBOOK = "workflow_gate.yml"
-# The mark AAP - set up portal actions writes (site_aap_portal_setup.py): the gate template made here carries it, so that
-# job sees the template as its own
-MARK_TEXT = " [set up by AAP - set up portal actions, fingerprint %s]"
+# 1.93.0: the gate template is made with its description as it is - no fingerprint text (AAP - set up portal actions keeps
+# its fingerprints in a job artifact; one that finds a template it has none for compares it with the text it would write)
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user that may change the workflows: Admin on them, and Use on the project and inventory if the gate '
                  'template must be made)')
-
-
-def _norm(v):
-    """As site_aap_portal_setup: JSON text as its value, None as ''."""
-    if isinstance(v, str) and v[:1] in "{[":
-        try:
-            return json.loads(v)
-        except ValueError:
-            return v
-    return "" if v is None else v
-
-
-def fingerprint(fields):
-    """As site_aap_portal_setup.fingerprint."""
-    norm = dict((k, _norm(v)) for k, v in fields.items())
-    return hashlib.sha256(json.dumps(norm, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 def playbook_file(p):
@@ -187,7 +168,7 @@ class Gates(object):
         if self.check:
             self.gate.update(id=-1, action="would be made")
             return -1
-        body = dict(want, description=want["description"] + MARK_TEXT % fingerprint(dict(want, extra=[])))
+        body = dict(want)
         d = self.write("POST", "job_templates/", body)
         self.gate.update(id=int(d["id"]), action="made")
         return int(d["id"])

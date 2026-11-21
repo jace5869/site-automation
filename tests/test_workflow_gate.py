@@ -112,12 +112,12 @@ class Spec(unittest.TestCase):
 class AddGates(unittest.TestCase):
     """AAP - add workflow gates (part I): its table of checks is the doc's, the gate template it makes is the setup job's."""
 
-    def test_the_fingerprint_is_the_setup_jobs(self):
-        want = {"name": "Workflow gate - has a plan", "description": "d", "job_type": "run", "project": 2, "playbook": "playbooks/workflow_gate.yml",
-                "inventory": 3, "ask_variables_on_launch": True, "ask_limit_on_launch": False, "become_enabled": False, "extra_vars": "",
-                "execution_environment": 5}
-        self.assertEqual(G.fingerprint(dict(want, extra=[])), S.fingerprint(dict(want, extra=[])))
-        self.assertEqual(G.MARK_TEXT, S.MARK_TEXT)
+    def test_the_gate_template_carries_no_fingerprint_text(self):
+        # 1.93.0: its description is written as it is; the setup job judges it by comparing, or by its artifact
+        self.assertFalse(hasattr(G, "MARK_TEXT"))
+        self.assertFalse(hasattr(G, "fingerprint"))
+        with open(os.path.join(REPO, "roles", "aap_workflow_gates", "library", "site_aap_workflow_gates.py")) as f:
+            self.assertNotIn("fingerprint %s", f.read())
 
     def test_the_checks_are_the_docs(self):
         with open(os.path.join(REPO, "docs", "WORKFLOWS_AND_SCHEDULES.md")) as f:

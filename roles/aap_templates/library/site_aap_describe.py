@@ -14,8 +14,8 @@ A template is found by its playbook in the project (the site's own names match t
 playbook of several catalog templates (a second one with its own Variables) by name, then by those Variables. A
 workflow by its name, else by the playbooks of its steps. A description is written when it is empty, or ours (it starts
 with "** Does:", or is a text this repository wrote: the template's "Made by ..." line, the portal job's own); a
-hand-written one is kept unless overwrite; one AAP - set up portal actions wrote (its fingerprint mark) is left to that
-job. Nothing found is never a failure: a catalog template not in AAP, a template or
+hand-written one is kept unless overwrite; one that still ends with the old fingerprint text (1.93.0: the setup jobs no
+longer write it) is left to the setup job, whose next Run takes it off. Nothing found is never a failure: a catalog template not in AAP, a template or
 workflow the catalog does not know - each listed. Only a write AAP refuses fails the job. Check mode only reads.
 Standard library only."""
 from __future__ import absolute_import, division, print_function
@@ -58,7 +58,7 @@ from ansible.module_utils.site_aap import (Api, catalog_entry, connection, descr
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user who may change the organization\'s templates)')
 MARK = "** Does:"
-PORTAL_MARK = "[set up by AAP - set up portal actions, fingerprint "     # roles/aap_portal_setup (MARK_TEXT)
+PORTAL_MARK = "[set up by AAP - set up portal actions, fingerprint "     # 1.93.0: what older versions wrote; the setup job takes it off
 # 1.83.0: the STIG workflows this job makes (site_aap_template_workflows) carry their own mark - left to it, as the portal's
 TEMPLATES_MARK = "[set up by AAP - set up job templates, fingerprint "
 
@@ -123,13 +123,13 @@ class Describe(object):
         path = "job_templates" if kind == "job" else "workflow_job_templates"
         have = str(t.get("description") or "")
         name = str(t.get("name") or "")
-        if PORTAL_MARK in have:                          # AAP - set up portal actions' own: its fingerprint covers it
-            self.note(kind, name, catalog, "left", first(have), why="AAP - set up portal actions writes its description "
-                      "(roles/site_portal_stack/files/workflows.yml) - a change here would make that job leave it")
+        if PORTAL_MARK in have:                          # still the old fingerprint text: the setup job's own to take off
+            self.note(kind, name, catalog, "left", first(have), why="AAP - set up portal actions writes this description and "
+                      "takes the old fingerprint text off on its next Run - a change here would make it leave it as changed by hand")
             return
         if TEMPLATES_MARK in have:                       # 1.83.0 (Codex): a STIG workflow this job made - it wrote the lines too
-            self.note(kind, name, catalog, "left", first(have), why="made by this job with the catalog's lines (its workflows) - "
-                      "a change here would make it leave the workflow as changed by hand")
+            self.note(kind, name, catalog, "left", first(have), why="made by this job with the catalog's lines (its workflows); "
+                      "its next Run takes the old fingerprint text off - a change here would make it leave the workflow as changed by hand")
             return
         if not text:
             self.note(kind, name, catalog, "no description known", first(have), why="the catalog has none for it")

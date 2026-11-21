@@ -34,6 +34,23 @@
       the templates run on - portal_inventory by default). docs/SITE_PORTAL.md, "Setting it up in AAP".
     quiet: true
 
+- name: Portal setup | the fingerprints the last run handed on (this template's job artifact aap_setup_fingerprints, from AAP)
+  ansible.builtin.include_role:
+    name: site_email
+    tasks_from: history_artifacts.yml
+  vars:
+    _hist_artifacts: [aap_setup_fingerprints]
+    _hist_runs: 10
+
+# 1.93.0: the newest successful run that handed a map on (a Check run does not). None: a first run, or its history purged -
+# a description is then compared with the text this job would write.
+- name: Portal setup | the newest of them
+  ansible.builtin.set_fact:
+    _ps_known: >-
+      {{ (_site_hist_runs | default([]) | selectattr('status', 'equalto', 'successful') | selectattr('artifacts', 'defined')
+          | selectattr('artifacts.aap_setup_fingerprints', 'defined') | list | last | default({'artifacts': {}})).artifacts.aap_setup_fingerprints
+         | default(none) }}
+
 - name: Portal setup | the templates and workflows, in AAP
   site_aap_portal_setup:
     spec: "{{ _ps_spec }}"
@@ -62,6 +79,7 @@
     publish_organization: "{{ portal_publish_organization | default('') | string }}"
     # 1.79.11: the catalog's five lines on its templates and workflows (aap/job_templates.yml, by name); the Contact line
     # from aap_templates_description_owner / _contact
+    known: "{{ _ps_known }}"
     describe: >-
       {%- set c = lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml -%}
       {{ {'job': c.job_templates | selectattr('description', 'defined') | items2dict(key_name='name', value_name='description'),
@@ -70,6 +88,13 @@
           'contact': aap_templates_description_contact | default('') | string} if portal_setup_describe | default(true) | bool else {} }}
     ca_path: "{{ portal_setup_aap_ca_path }}"
   register: _ps
+
+# 1.93.0: what this job wrote, handed on as a job artifact for its next run (never in a description). A Check run hands on nothing.
+- name: Portal setup | the fingerprints, for the next run (job artifact aap_setup_fingerprints)
+  ansible.builtin.set_stats:
+    data:
+      aap_setup_fingerprints: "{{ _ps.fingerprints | default({}) }}"
+  when: not ansible_check_mode
 
 - name: Portal setup | what was done
   ansible.builtin.debug:
