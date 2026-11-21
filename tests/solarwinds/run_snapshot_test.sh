@@ -21,7 +21,7 @@ ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 py="${SNAPSHOT_DB_TEST_PYTHON:-$(command -v python3)}"
 images="${SNAPSHOT_DB_TEST_IMAGES:-docker.io/library/mysql:8.4 docker.io/library/mariadb:10.11}"
 dbport="${SNAPSHOT_DB_TEST_PORT:-18560}"
-port=$((dbport + 1))                     # +0 SWIS, +1 SWIS without SAM and VIM, +2 nothing listening, +3 fake AAP
+port=$((dbport + 1))                     # +0 SWIS, +1 SWIS without SAM and VIM, +2 nothing listening, +3 fake AAP, +4..+6 below
 name="${SNAPSHOT_DB_TEST_NAME:-sa-swis-snapshot-test}"
 rt=${SNAPSHOT_DB_TEST_RUNTIME:-$(command -v podman || command -v docker || true)}
 [ -n "$rt" ] || { echo "skip - no podman or docker"; exit 0; }
@@ -55,7 +55,10 @@ FAKE_SWIS_HIDE=Orion.APM.Application,Orion.APM.Component,Orion.VIM.Hosts,Orion.V
 echo '[]' > "$work/jobs.json"
 "$py" "$repo/tests/email/fake_aap.py" $((port + 3)) "$work/jobs.json" 2>"$work/aap.err" & pids+=($!)
 FAKE_SWIS_HIDE=Metadata.Property "$py" "$repo/tests/netmap/fake_swis.py" $((port + 4)) "$work/fx.json" "$work/swis4.log" "$work/srv.pem" "$work/srv.key" & pids+=($!)
-wait_port "$port"; wait_port $((port + 1)); wait_port $((port + 3)); wait_port $((port + 4))
+# 1.96.2: +5 Metadata.Property answers with no rows; +6 every answer 2 s late (a run whose session is closed while it reads)
+FAKE_SWIS_EMPTY=Metadata.Property "$py" "$repo/tests/netmap/fake_swis.py" $((port + 5)) "$work/fx.json" "$work/swis5.log" "$work/srv.pem" "$work/srv.key" & pids+=($!)
+FAKE_SWIS_DELAY=2 "$py" "$repo/tests/netmap/fake_swis.py" $((port + 6)) "$work/fx.json" "$work/swis6.log" "$work/srv.pem" "$work/srv.key" & pids+=($!)
+wait_port "$port"; wait_port $((port + 1)); wait_port $((port + 3)); wait_port $((port + 4)); wait_port $((port + 5)); wait_port $((port + 6))
 SW="SOLARWINDS_URL=https://127.0.0.1:$port SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_CA_PATH=$work/ca.pem"
 AAP="CONTROLLER_HOST=http://127.0.0.1:$((port + 3)) CONTROLLER_USERNAME=audit CONTROLLER_PASSWORD=pw"
 
@@ -362,6 +365,69 @@ EOPY
         -e "{\"netmap_ca_path\": \"$work/ca.pem\"}" -- "From SolarWinds itself: the report database could not be reached" "!$rpw"
     DB_ENV="$DBR" run "netmap_from_db: false - SolarWinds itself" ok netmap_report -e "{\"netmap_ca_path\": \"$work/ca.pem\", \"netmap_from_db\": false}" \
         -- "From SolarWinds itself: the report database is not used"
+
+    # ---- 1.96.2 (the final review of 1.96.1)
+    # P1-4: Metadata.Property answers with no rows - not a whole snapshot either
+    SW_ENV="${SW/:$port /:$((port + 5)) }" DB_ENV="$DBW" run "Metadata.Property with no rows: red, a row with ok 0" fail solarwinds_snapshot \
+        -- "SolarWinds could not be read: which columns this Orion has could not be read (Metadata.Property): it listed no columns of Orion.Nodes"
+    local sid; sid="$(qr "SELECT MAX(snap_id) FROM sw_snapshot")"
+    [ "$(qr "SELECT CONCAT(ok, '/', COALESCE(nodes, 'none')) FROM sw_snapshot WHERE snap_id = $sid")" = "0/none" ] \
+        && ok "  ...snapshot $sid: ok 0, no rows" || bad "  ...snapshot $sid: $(qr "SELECT CONCAT(ok, '/', COALESCE(nodes, 'none')) FROM sw_snapshot WHERE snap_id = $sid")"
+    # P1-2: Orion rebuilt at the same address - its EventIDs start again below the newest kept
+    q report_writer "$wpw" "INSERT INTO sw_event (orion, event_id, event_time, message, snap_id) VALUES ('$one', 900001, UTC_TIMESTAMP() - INTERVAL 1 HOUR, 'the old Orion', 7), ('$one', 900002, UTC_TIMESTAMP() - INTERVAL 1 HOUR, 'the old Orion', 7)" >/dev/null
+    local before_one; before_one="$(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$one'")"
+    local fxev; fxev="$("$py" -c "import json,sys; print(len(json.load(open(sys.argv[1]))['tables']['Orion.Events']))" "$work/fx.json")"
+    DB_ENV="$DBW" run "Orion's EventIDs started again: read by time, kept apart, said, green" ok solarwinds_snapshot \
+        -- "SolarWinds' EventIDs started again (its newest is 500239, the newest kept 900002)" "kept apart from the ones before ($one#2)" "- $fxev new events"
+    [ "$(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$one#2'")" = "$fxev" ] && [ "$(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$one'")" = "$before_one" ] \
+        && ok "  ...all $fxev of its events under $one#2; the $before_one kept before untouched" \
+        || bad "  ...events: $(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$one#2'") new, $(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$one'") old"
+    DB_ENV="$DBW" run "the next run: from its newest on, nothing twice" ok solarwinds_snapshot -- "- 0 new events" "!EventIDs started again"
+    nb="$("$py" - "$repo" "$dbport" "$rpw" <<'EOPY'
+import sys, datetime, pymysql
+sys.path.insert(0, sys.argv[1] + "/plugins/module_utils")
+import site_swis_db
+conn = pymysql.connect(host="127.0.0.1", port=int(sys.argv[2]), user="report_reader", password=sys.argv[3], database="site_reports", ssl_disabled=True)
+print(len(site_swis_db.events_between(conn, datetime.datetime(2000, 1, 1), datetime.datetime(2100, 1, 1), limit=100000)))
+EOPY
+)"
+    [ "$(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$one#2'")" = "$fxev" ] && [ "$nb" = "$((before_one + fxev))" ] \
+        && ok "  ...still $fxev; events_between gives both counts of this Orion ($nb)" || bad "  ...after the next run: events_between $nb"
+    # P1-3: a run whose database session was closed while it read (its lock with it) and another run wrote meanwhile
+    (cd "$repo" && env -u REPORT_DB_HOST SOLARWINDS_PASSWORD="$pw" ${SW/:$port /:$((port + 6)) } $DBW $AAP ANSIBLE_NOCOLOR=1 \
+        ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_SHOW_CUSTOM_STATS=True \
+        "$ap" -i "$work/inv.yml" playbooks/solarwinds_snapshot.yml) > "$work/out-slow.txt" 2>&1 &
+    local slow=$! cid="" newest
+    for _ in $(seq 1 100); do
+        cid="$(q root "$root" "SELECT IS_USED_LOCK('site_reports.sw_snapshot')")"
+        [ -n "$cid" ] && [ "$cid" != None ] && grep -q "Orion" "$work/swis6.log" 2>/dev/null && break
+        cid=""; sleep 0.3
+    done
+    if [ -z "$cid" ]; then
+        bad "the slow run never took the lock"; kill $slow 2>/dev/null; wait $slow 2>/dev/null
+    else
+        q root "$root" "KILL $cid" >/dev/null
+        DB_ENV="$DBW" run "  ...its session closed while it reads: another run writes meanwhile" ok solarwinds_snapshot -- "kept."
+        newest="$(qr "SELECT MAX(snap_id) FROM sw_snapshot")"
+        wait $slow; local rcs=$?
+        tr -s ' \n' '  ' < "$work/out-slow.txt" | sed 's/\\n/ /g; s/\\"/"/g' > "$work/flat-slow.txt"
+        [ $rcs = 0 ] && grep -qF "Another SolarWinds snapshot run wrote snapshot $newest while this run read SolarWinds" "$work/flat-slow.txt" \
+            && grep -qF "this run's older read was not kept" "$work/flat-slow.txt" && [ "$(qr "SELECT MAX(snap_id) FROM sw_snapshot")" = "$newest" ] \
+            && ok "  ...the slow run keeps nothing - snapshot $newest stays the newest; said, green" \
+            || { bad "  ...the slow run: rc $rcs, newest $(qr "SELECT MAX(snap_id) FROM sw_snapshot") (was $newest)"; grep -E 'WARNING|"msg"|fatal' "$work/out-slow.txt" | head -4 | cut -c1-300; }
+    fi
+    # P1-6: an address with a login in it - refused, no piece of it printed
+    SW_ENV="SOLARWINDS_URL=https://svc_leak:Leak9pw/ss@127.0.0.1:$port SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_CA_PATH=$work/ca.pem" DB_ENV="$DBR" \
+        run "the network map: an address with a login in it - refused, never repeated" fail netmap_report \
+        -- "netmap_solarwinds_url / the credential's address: the SolarWinds address is not a server name" "!Leak9pw" "!svc_leak"
+    # P1-5: a snapshot without a property netmap_hierarchy places by is not served
+    DB_ENV="$DBR" run "the network map: netmap_hierarchy by a property the snapshot lacks - SolarWinds itself, said" ok netmap_report \
+        -e "{\"netmap_ca_path\": \"$work/ca.pem\", \"netmap_hierarchy\": [{\"level\": \"building\", \"from\": \"property\", \"value\": \"Nope\"}]}" \
+        -- "From SolarWinds itself: the newest SolarWinds snapshot has no node custom property Nope"
+    # P2-10: solarwinds_db_max_age 0 asks the database nothing
+    DB_ENV="${DBR/PORT=$dbport/PORT=$((port + 2))}" run "the network map: solarwinds_db_max_age 0 - the database not asked" ok netmap_report \
+        -e "{\"netmap_ca_path\": \"$work/ca.pem\", \"solarwinds_db_max_age\": 0}" \
+        -- "From SolarWinds itself: solarwinds_db_max_age is 0: SolarWinds itself every time" "!could not be reached"
 
     # ---- the statements of docs/REPORT_DATABASE.md, by hand
     "$py" - "$dbport" "$root" "$repo" <<'EOPY' && ok "the tables made by hand with the statements of docs/REPORT_DATABASE.md (site_swis_db.ddl())" || bad "the statements by hand"

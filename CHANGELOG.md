@@ -24,6 +24,38 @@ reads other history from the log file. Portal nginx compresses static assets onl
 The report website supports gzip and static file ETags. The portal image requires Python 3.8 or later.
 
 To set up: run Site portal - deploy.
+## 1.96.2 — 2026-11-21
+
+**Nothing to set up.**
+
+**The final review of 1.96.1, fixed** (`plugins/module_utils/site_swis_db.py`, `roles/solarwinds_snapshot`,
+`roles/netmap_report`).
+
+- Events are paged by their EventID, never by row numbers. An event SolarWinds deleted between two pages made the next
+  page skip one.
+- A busy 10 minutes loses nothing. Every event of the last 10 minutes before the newest kept is read again by its time,
+  however many. Before, only the 200 EventIDs below it were.
+- A SolarWinds rebuilt at the same address counts its events from 1 again. The job now sees it: its newest EventID is
+  below the newest kept. Its events are read by their time and kept under `orion#2`, and the job says so. The events
+  kept before stay. `events_between()` gives both.
+- A run whose database session closed while it read SolarWinds lost its lock. Another run could then write a newer
+  snapshot, and this run's older read became the newest. Now it keeps nothing when a newer snapshot is there, and says
+  so (green). The session's `wait_timeout` is set again after it reconnects.
+- `Metadata.Property` answering with no rows is treated as not read: red, `ok = 0`. Before, the snapshot was whole
+  with every custom property missing.
+- A snapshot without a custom property a `netmap_hierarchy` level reads is not served. The network map reads
+  SolarWinds itself and says why.
+- An address with a login in it (`https://user:pass@...`) is refused before anything else. No part of it reaches the
+  job output.
+- Smaller: an IPv6 address matches in any case; `solarwinds_db_max_age: 0` does not ask the database at all; the stale
+  lock check compares seconds; `alerts_live()` reads the active alerts first and stops when there are none; a
+  database error names no host.
+- Tests: `tests/test_solarwinds_snapshot.py` (paging, a busy 10 minutes, EventIDs that start again, the event cursor,
+  a newer snapshot meanwhile, Metadata.Property with no rows, an address with a login, hierarchy properties, max_age
+  0, IPv6); `tests/solarwinds/run_snapshot_test.sh` on MySQL 8.4 and MariaDB 10.11 (EventIDs that start again, a run
+  whose session is killed while another writes, Metadata.Property with no rows, an address with a login, a hierarchy
+  property the snapshot lacks, max_age 0).
+
 ## 1.96.1 — 2026-11-21
 
 **Nothing to set up.**

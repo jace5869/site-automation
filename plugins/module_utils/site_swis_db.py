@@ -188,9 +188,8 @@ PKEY = {"sw_node": ("snap_id", "node_id"), "sw_link": ("snap_id", "seq"), "sw_in
         "sw_alert_active": ("snap_id", "alert_active_id"), "sw_event": ("orion", "event_id"), "sw_app": ("snap_id", "app_id"),
         "sw_component": ("snap_id", "component_id"), "sw_volume": ("snap_id", "volume_id"), "sw_vim_host": ("snap_id", "host_id"),
         "sw_vim_vm": ("snap_id", "vm_id")}
-UP_CODES = (1, 22)
-EVENT_OVERLAP = 200                      # EventIDs read again below the newest kept (an event committed late) ...
-EVENT_OVERLAP_MINUTES = 10               # ... of the last 10 minutes before it                       # Up, and "Up" for an external node (site_swis.STATUS)
+UP_CODES = (1, 22)                       # Up, and "Up" for an external node (site_swis.STATUS)
+EVENT_OVERLAP_MINUTES = 10               # the events of the last 10 minutes before the newest kept are read again
 DOWN_CODES = (2, 12)
 
 
@@ -222,21 +221,46 @@ def stamp(text):
 
 def orion_key(url):
     """Which SolarWinds a snapshot is of: its address's host and port, lower case ('orion.example.mil:17774'). Two
-    spellings of one address are one Orion; another host or port is another (1.96.1, review P1-2)."""
+    spellings of one address are one Orion; another host or port is another (1.96.1, review P1-2). An address with a
+    login in it (an @ anywhere) or that is not a server's name: "" - never a piece of it (1.96.2, review P1-6)."""
     t = str(url or "").strip().lower()
-    t = re.sub(r"^[a-z]+://", "", t).split("/", 1)[0].split("@")[-1]
-    if not t:
+    if "@" in t:
         return ""
-    m = re.match(r"^(\[[^\]]+\]|[^:]+)(?::(\d+))?$", t)
+    t = re.sub(r"^[a-z]+://", "", t).split("/", 1)[0]
+    m = re.match(r"^([a-z0-9._-]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$", t)
     if not m:
-        return t[:255]
+        return ""
     return ("%s:%s" % (m.group(1), m.group(2) or site_swis.PORT))[:255]
+
+
+def next_epoch(key):
+    """The events' key for an Orion whose EventIDs started again (rebuilt at the same address): 'host:port' ->
+    'host:port#2' -> 'host:port#3' (1.96.2, review P1-2). The events kept before stay under their own key."""
+    return "%s#%d" % (str(key or "").partition("#")[0], _epoch_n(str(key or "")) + 1)
+
+
+def _epoch_like(orion):
+    """The LIKE pattern of an Orion's later counts (orion#N), its own _ and % taken literally."""
+    return orion.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "#%"
+
+
+def _epoch_n(key):
+    n = key.partition("#")[2]
+    return int(n) if n.isdigit() else 1
+
+
+def _epochs(cur, orion):
+    """Every key this Orion's events are kept under: orion itself and orion#N, oldest first."""
+    cur.execute("SELECT DISTINCT orion FROM sw_event WHERE orion = %s OR orion LIKE %s", (orion, _epoch_like(orion)))
+    return sorted((str(r[0]) for r in cur.fetchall() if r and r[0] is not None), key=_epoch_n)
 
 
 def short_error(e):
     """A database error for a report's line: no account or host in it (1.96.1, review P2-12)."""
     t = str(e).strip() or e.__class__.__name__
     t = re.sub(r"'[^']*'@'[^']*'", "the account", t)
+    # 1.96.2 (review P2-10): PyMySQL's 2003/2005 name the host ("Can't connect to MySQL server on 'db01' (...)")
+    t = re.sub(r"((?:server|host) (?:on |at )?)'[^']*'", r"\1the database's host", t, flags=re.I)
     return re.sub(r"\s+", " ", t)[:300]
 
 
@@ -361,10 +385,17 @@ def read_swis(client, opts=None):
     client.calls += before
     out = {"raw": raw, "props": [p for p in props if not any(x.get("what") == "custom property %s" % p for x in raw.get("not_read") or [])],
            "worldmap": any(n.get("wm") is not None for n in raw.get("nodes") or []), "extra": extra, "not_read": not_read}
+    if have is not None and "Orion.Nodes" not in have:
+        # 1.96.2 (review P1-4): Metadata.Property answered, but with nothing for Orion.Nodes (an empty list): the same as
+        # not read - every custom property would be left out and every other table "not on this Orion"
+        have = None
+        not_read.append({"what": "which columns this Orion has (Metadata.Property)",
+                         "why": "it listed no columns of Orion.Nodes - the other tables are not read"})
     if raw.get("reachable") and have is None:
         # 1.96.1 (review P1-3): without the columns this Orion has, the custom properties (the sites, the points) and the
         # other tables are not read: never a whole snapshot - written with ok 0, the reports keep the last whole one
-        out["failed"] = "which columns this Orion has could not be read (Metadata.Property): %s" % not_read[0]["why"].split(" - ")[0]
+        why = not_read[-1]["why"].split(" - ")[0] if not_read else "no answer"
+        out["failed"] = "which columns this Orion has could not be read (Metadata.Property): %s" % why
     if not raw.get("reachable") or have is None:
         out.update(seconds=round(time.time() - started, 1), queries=client.calls)
         return out
@@ -397,7 +428,7 @@ def read_swis(client, opts=None):
         entity, cols = _pick(have, p)
         key, got, last = cols[0][1], [], None
         while True:
-            w, prm = ([where] if where else []), dict(params or {})
+            w, prm = ([where] if where else []), dict(params or {})        # where: its own OR in parentheses
             if last is not None:
                 w.append("%s > @last" % key)
                 prm["last"] = last
@@ -454,26 +485,48 @@ def read_swis(client, opts=None):
             not_read.append({"what": "the events' kinds (Orion.EventTypes)", "why": str(e)})
         after = _int(o.get("events_after"))
         days = _int(o.get("event_days")) or 0
+        floor = now_utc() - datetime.timedelta(days=days) if days > 0 else None
+        key = str(o.get("events_orion") or "")
+        out["event_orion"] = key
+        top = None
         if after:
+            # 1.96.2 (review P1-2): an Orion rebuilt at the same address starts its EventIDs again - "EventID > the
+            # newest kept" would read nothing until the new ones pass the old. Its newest EventID below ours: a new
+            # count, read by time and kept under a key of its own (next_epoch), the events kept before untouched.
+            try:
+                r = client.query("SELECT MAX(EventID) AS Newest FROM Orion.Events")
+                top = _int((r[0] if r else {}).get("Newest"))
+            except _swis_errors() as e:
+                not_read.append({"what": "whether Orion's EventIDs started again (its newest EventID)", "why": str(e)})
+        if after and top and top < after:
+            out["events_reset"] = {"newest_there": top, "newest_kept": after}
+            out["event_orion"] = next_epoch(key) if key else ""
+            after = 0
+            where, params = ("EventTime >= @floor", {"floor": iso(floor)}) if floor is not None else ("", {})
+        elif after:
             # 1.96.1 (review P1-1): from the newest kept on, whatever its age - an outage of the job or of Orion longer
-            # than event_hours lost the gap's events. P2-5: EventIDs need not commit in order - the ones of the last
-            # EVENT_OVERLAP_MINUTES before the newest kept are read again (the upsert keeps one of each). Only
-            # solarwinds_db_event_days (what the database keeps) bounds it, and a gap older than that is said.
+            # than event_hours lost the gap's events. 1.96.2 (review P1-2): an event committed late (EventIDs need not
+            # commit in order) is read again by its time - every event of the last EVENT_OVERLAP_MINUTES before the
+            # newest kept, however many (the upsert keeps one of each). Only solarwinds_db_event_days (what the
+            # database keeps) bounds it, and a gap older than that is said.
             last = stamp(o.get("events_after_at"))
-            floor = now_utc() - datetime.timedelta(days=days) if days > 0 else None
             since = last - datetime.timedelta(minutes=EVENT_OVERLAP_MINUTES) if last is not None else None
-            if floor is not None and (since is None or since < floor):
+            if floor is not None and since is not None and since < floor:
                 since = floor
-            where, params = "EventID > @after", {"after": max(0, after - EVENT_OVERLAP)}
+            where, params = "EventID > @after", {"after": after}
             if since is not None:
-                where, params["since"] = where + " AND EventTime >= @since", iso(since)
+                where, params["since"] = "(EventID > @after OR EventTime >= @since)", iso(since)
+            if floor is not None:
+                where, params["floor"] = where + " AND EventTime >= @floor", iso(floor)
             if last is not None and floor is not None and last < floor:
                 not_read.append({"what": "the events between %s and %s" % (iso(last), iso(floor)),
                                  "why": "older than solarwinds_db_event_days (%d): the database would not keep them" % days})
         else:
             since = now_utc() - datetime.timedelta(hours=max(1, float(o.get("event_hours") or 24)))
             where, params = "EventTime >= @since", {"since": iso(since)}
-        rows = paged("event", where, params)
+        # 1.96.2 (review P1-1): paged by EventID, never by row numbers - an event purged between two pages moved the
+        # rest up, and the one at the page's edge was never read
+        rows = keyset("event", where, params)
         out["events_after"] = after or 0
         for r in rows:
             r["type_name"] = names.get(r.get("event_type"))
@@ -550,10 +603,12 @@ def to_rows(snap, snap_id):
     """{table: [tuple in COLS order]} for a read that reached SolarWinds."""
     raw, ex = snap["raw"], snap.get("extra") or {}
     orion = orion_key(raw.get("url"))
+    # the events' key: this Orion's, or its new count's after its EventIDs started again (1.96.2, review P1-2)
+    ev_key = snap.get("event_orion") or (next_epoch(orion) if snap.get("events_reset") and orion else orion)
     more = dict((r.get("node_id"), r) for r in ex.get("node") or [])
     ips = {}
     for r in ex.get("ip") or []:
-        ips.setdefault(r.get("node_id"), []).append(str(r.get("ip") or ""))
+        ips.setdefault(r.get("node_id"), []).append(str(r.get("ip") or "").lower())   # 1.96.2 (P2-9): matched lower case
     out = dict((t, []) for t in COLS)
     for i, n in enumerate(raw.get("nodes") or []):
         m = more.get(n["id"]) or {}
@@ -590,7 +645,7 @@ def to_rows(snap, snap_id):
         t = stamp(e.get("event_time"))
         if t is None or _int(e.get("event_id")) is None:
             continue
-        out["sw_event"].append((orion, _int(e["event_id"]), t, _int(e.get("node_id")), _cut(e.get("net_object_type"), 32),
+        out["sw_event"].append((ev_key, _int(e["event_id"]), t, _int(e.get("node_id")), _cut(e.get("net_object_type"), 32),
                                 _int(e.get("net_object_id")), _int(e.get("event_type")), _cut(e.get("type_name"), 255),
                                 _cut(e.get("message"), 1000), _flag(e.get("acknowledged")), snap_id))
     for a in ex.get("app") or []:
@@ -710,13 +765,21 @@ def unlock(conn):
         pass
 
 
-def newest_event(conn, orion=""):
-    """(EventID, its time) of the newest event kept of this Orion (orion_key), or (0, None) - each Orion its own cursor
-    (1.96.1, review P1-2: a new Orion's EventIDs start again)."""
+def event_cursor(conn, orion=""):
+    """(key, EventID, its time): where this Orion's events go on - the key of its newest count (orion, or orion#N after
+    its EventIDs started again, 1.96.2 review P1-2) and the newest event kept under it, or (orion, 0, None). Each Orion
+    its own cursor (1.96.1, review P1-2)."""
     cur = conn.cursor()
-    cur.execute("SELECT event_id, event_time FROM sw_event WHERE orion = %s ORDER BY event_id DESC LIMIT 1", (orion,))
+    keys = _epochs(cur, orion) if orion else [orion]
+    key = keys[-1] if keys else orion
+    cur.execute("SELECT event_id, event_time FROM sw_event WHERE orion = %s ORDER BY event_id DESC LIMIT 1", (key,))
     r = cur.fetchone()
-    return (int(r[0]), r[1]) if r and r[0] is not None else (0, None)
+    return (key, int(r[0]), r[1]) if r and r[0] is not None else (key, 0, None)
+
+
+def newest_event(conn, orion=""):
+    """(EventID, its time) of the newest event kept of this Orion's newest count (event_cursor), or (0, None)."""
+    return event_cursor(conn, orion)[1:]
 
 
 def _insert(cur, table, rows):
@@ -812,6 +875,19 @@ def latest(conn, now=None, fresh=True):
     age = (now - r[1]).total_seconds() if now is not None else (r[8] or 0)
     return {"snap_id": int(r[0]), "read_at": r[1], "core": core, "not_read": nr, "nodes": r[4], "alerts": r[5], "events": r[6],
             "orion": r[7] or "", "age_seconds": max(0, int(age)), "links": r[9]}
+
+
+def newer_snapshot(conn, before):
+    """The snap_id of a whole snapshot written after before (another run's, while this one read), or 0 (1.96.2, review
+    P1-3: a run that lost its lock never writes its older read as the newest)."""
+    try:
+        conn.rollback()              # a fresh look: this session's transaction began before the other run's commit
+    except Exception:            # noqa: BLE001
+        pass
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(snap_id) FROM sw_snapshot WHERE ok = 1 AND snap_id > %s", (int(before or 0),))
+    r = cur.fetchone()
+    return int(r[0]) if r and r[0] is not None else 0
 
 
 def last_failure(conn):
@@ -930,9 +1006,14 @@ def answer(opts=None, conn=None, client=None, max_age=1200, why=None, now=None, 
     adds snapshot_at, age_seconds and source (db-snapshot or swis-live). why (a list): the reason it was not the
     snapshot is appended. Raises nothing for the database's sake: a database that fails is a reason in why.
     orion (1.96.1, review P1-2): the SolarWinds address the caller would read - a snapshot of another is not served.
-    A snapshot without the custom property site_by, lat_property or lon_property names is not served either (P1-3)."""
+    A snapshot without the custom property site_by, lat_property or lon_property names is not served either (P1-3), nor
+    one without a property opts' hierarchy_properties names (netmap_hierarchy's, 1.96.2 review P1-5)."""
     why = why if why is not None else []
     o = dict(opts or {})
+    if conn is not None and max_age is not None and max_age <= 0:
+        # 1.96.2 (review P2-10): 0 asks nothing of the database
+        why.append("solarwinds_db_max_age is 0: SolarWinds itself every time")      # review a: 0 never serves the snapshot
+        conn = None
     if conn is not None:
         try:
             # 1.96.1 (review c): one read-only transaction - a snapshot pruned between latest() and its rows is never half read
@@ -940,7 +1021,8 @@ def answer(opts=None, conn=None, client=None, max_age=1200, why=None, now=None, 
             s = latest(conn, now, fresh=False)
             cap = max(1, int(o.get("max_nodes") or 5000))
             need = [str(o.get(k) or "").strip() for k in ("site_by", "lat_property", "lon_property")]
-            need = [x for x in need if x and x.lower() not in ("location", "auto")]
+            need += [str(x or "").strip() for x in o.get("hierarchy_properties") or []]
+            need = [x for i, x in enumerate(need) if x and x.lower() not in ("location", "auto") and x not in need[:i]]
             lacks = [x for x in need if s is not None and x not in ((s.get("core") or {}).get("props") or [])]
             if s is None:
                 why.append("the report database has no SolarWinds snapshot yet (the job SolarWinds - snapshot)")
@@ -950,8 +1032,6 @@ def answer(opts=None, conn=None, client=None, max_age=1200, why=None, now=None, 
             elif lacks:
                 why.append("the newest SolarWinds snapshot has no node custom property %s (solarwinds_snapshot_properties or "
                            "solarwinds_snapshot_skip_properties)" % ", ".join(lacks))
-            elif max_age is not None and max_age <= 0:
-                why.append("solarwinds_db_max_age is 0: SolarWinds itself every time")      # review a: 0 never serves the snapshot
             elif max_age is not None and s["age_seconds"] > max_age:
                 why.append("the newest SolarWinds snapshot is %d min old (solarwinds_db_max_age: %d min)" % (s["age_seconds"] // 60, max_age // 60))
                 f = last_failure(conn)
@@ -1006,7 +1086,7 @@ def nodes_for(conn, snap_id, names):
     ks = sorted(set(keys.values()))
     cur = conn.cursor()
     cur.execute("SELECT node_id, name, name_key, dns, ip, status_code, status_text, unmanaged, last_poll, cpu_pct, mem_pct FROM sw_node "
-                "WHERE snap_id = %%s AND (name_key IN (%s) OR ip IN (%s))" % (_ph(len(ks)), _ph(len(ks))), [snap_id] + ks + ks)
+                "WHERE snap_id = %%s AND (name_key IN (%s) OR LOWER(ip) IN (%s))" % (_ph(len(ks)), _ph(len(ks))), [snap_id] + ks + ks)
     rows = _dicts(cur)
     by = {}
     for r in rows:
@@ -1033,7 +1113,7 @@ def nodes_for_all(conn, snap_id, names):
     like = "".join(" OR ips LIKE %s" for _ in ipk)
     cur = conn.cursor()
     cur.execute("SELECT node_id, name, name_key, dns, ip, ips, status_code, status_text, unmanaged, last_poll, cpu_pct, mem_pct "
-                "FROM sw_node WHERE snap_id = %%s AND (name_key IN (%s) OR ip IN (%s)%s) ORDER BY node_id"
+                "FROM sw_node WHERE snap_id = %%s AND (name_key IN (%s) OR LOWER(ip) IN (%s)%s) ORDER BY node_id"
                 % (_ph(len(ks)), _ph(len(ks)), like), [snap_id] + ks + ks + ['%%"%s"%%' % k for k in ipk])
     rows = _dicts(cur)
     for n, k in keys.items():
@@ -1199,11 +1279,16 @@ def alerts_live(client, node_ids, not_read=None):
     ocol = dict(ocols)
     if "node_id" not in ocol:
         return out
-    objs = dict((o["object_id"], o) for o in _by_ids(client, oent, ocols, ocol["node_id"], ids) if o.get("object_id") is not None)
+    # 1.96.2 (review P2-8): the active alerts first (few) - Orion.AlertObjects keeps every object an alert ever had
+    aent, acols = got["alert"]
+    act = [a for a in _rows(client.query("SELECT %s FROM %s" % (_select(acols), aent)), acols) if a.get("object_id") is not None]
+    if not act:
+        return out
+    objs = dict((o["object_id"], o) for o in _by_ids(client, oent, ocols, ocol["object_id"], sorted(set(a["object_id"] for a in act)))
+                if o.get("object_id") is not None and _int(o.get("node_id")) in out)
     if not objs:
         return out
-    aent, acols = got["alert"]
-    act = _by_ids(client, aent, acols, dict(acols)["object_id"], sorted(objs))
+    act = [a for a in act if a["object_id"] in objs]
     confs = {}
     if "alert_config" in got:
         cent, ccols = got["alert_config"]
@@ -1270,16 +1355,19 @@ def part_note(snap, part):
 
 def events_between(conn, start, end, node_ids=None, limit=2000, orion=None):
     """SolarWinds' events in [start, end] (naive UTC datetimes), oldest first, of these nodes (None = all) - of one Orion:
-    orion (orion_key), else the newest whole snapshot's (1.96.1, review P1-2: never two Orions' events mixed)."""
+    orion (orion_key), else the newest whole snapshot's (1.96.1, review P1-2: never two Orions' events mixed). Its
+    events from before its EventIDs started again too (1.96.2: kept under orion#N)."""
     cur = conn.cursor()
-    sql = ("SELECT event_id, event_time, node_id, net_object_type, net_object_id, event_type, type_name, message FROM sw_event "
-           "WHERE event_time >= %s AND event_time <= %s")
-    args = [start, end]
     if orion is None:
-        sql += " AND orion = (SELECT orion FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1)"
-    else:
-        sql += " AND orion = %s"
-        args.append(orion)
+        cur.execute("SELECT orion FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1")
+        r = cur.fetchone()
+        if not r or not r[0]:
+            return []
+        orion = str(r[0])
+    like = _epoch_like(orion)
+    sql = ("SELECT event_id, event_time, node_id, net_object_type, net_object_id, event_type, type_name, message FROM sw_event "
+           "WHERE event_time >= %s AND event_time <= %s AND (orion = %s OR orion LIKE %s)")
+    args = [start, end, orion, like]
     ids = sorted(set(int(i) for i in node_ids or [] if i is not None)) if node_ids is not None else None
     if ids is not None:
         if not ids:

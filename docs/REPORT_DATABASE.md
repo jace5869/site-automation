@@ -1125,15 +1125,22 @@ sees one whole read, never half of one.
 - The rows of `sw_snapshot` itself are kept `solarwinds_db_keep_days` (400). They are a cheap trend of the counts.
 - `sw_event` is one row per SolarWinds event, with the SolarWinds it came from (`orion`, its address's host and port).
   - The first run reads the last `solarwinds_event_hours` (24).
-  - Later runs read every event after the newest kept, however long the job was away (1.96.1). The last 10 minutes
-    before it are read again, for an event SolarWinds wrote late.
-  - Each SolarWinds has its own newest event. A new address, or a rebuilt Orion that counts its events from 1 again,
-    loses nothing.
+  - Later runs read every event after the newest kept, however long the job was away (1.96.1).
+  - Every event of the last 10 minutes before the newest kept is read again, however many there are. SolarWinds may
+    write an event late (1.96.2).
+  - Events are read page by page by their EventID. An event SolarWinds deletes meanwhile never makes the next page
+    skip one (1.96.2).
+  - Each SolarWinds has its own newest event. A new address loses nothing.
+  - A SolarWinds rebuilt at the same address counts its events from 1 again. The job sees its newest EventID below
+    the newest kept. It then reads that SolarWinds' events by their time and keeps them under `orion#2`, and says so.
+    The events kept before stay as they were. `events_between()` gives both (1.96.2).
   - Events are kept `solarwinds_db_event_days` (400), so ticket insights can ask whether SolarWinds saw an incident
     coming. A gap older than that is said in the job output. 3,000 events a day for 400 days take under 1 GB.
 - Two runs never write at once: a run takes a database lock first. Another run holding it: this one keeps nothing,
   says so, and stays green. It is red when the newest whole snapshot is older than `solarwinds_db_max_age`: a run may
   be stuck.
+- A run whose database session closed while it read SolarWinds loses its lock. When another run wrote a snapshot
+  meanwhile, this run keeps nothing: its read is the older one. It says so and stays green (1.96.2).
 
 Why not deltas: a report would then have to rebuild the state. A snapshot is about 10,000 rows for 1,000 nodes, which
 the database writes in a second.
@@ -1143,11 +1150,13 @@ the database writes in a second.
 | | |
 |---|---|
 | SolarWinds not reached | the job is red. A row in `sw_snapshot` says so (`ok = 0`, the reason). The reports go on with the last whole snapshot |
-| SolarWinds does not say which columns it has (`Metadata.Property`) | the same: red, a row with `ok = 0`. Without them the sites and points would be lost |
+| SolarWinds does not say which columns it has (`Metadata.Property` fails, or lists none for `Orion.Nodes`) | the same: red, a row with `ok = 0`. Without them the sites and points would be lost |
 | The database not reached | the job is red, with what to change |
 | A part not read (alerts, SAM) | said in the job output, the rest is kept, green |
 | A snapshot older than `solarwinds_db_max_age` (20 min) | a report reads SolarWinds itself and says why |
 | A snapshot of another SolarWinds address than the report's | the same |
+| A snapshot without a custom property the network map places by (`netmap_site_by`, the latitude and longitude, `netmap_hierarchy`) | the same |
+| `solarwinds_db_max_age: 0` | a report reads SolarWinds itself and does not ask the database |
 | Deleting the older rows fails | the snapshot is kept, a warning says so, the next run tries again |
 | A dry run (Check) | reads SolarWinds and the database, writes nothing |
 

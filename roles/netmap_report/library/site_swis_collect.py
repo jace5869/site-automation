@@ -110,9 +110,20 @@ def main():
             "lat_property": p["lat_property"], "lon_property": p["lon_property"], "discover": p["discover"],
             "properties": p["properties"] + [h.get("value") for h in p["hierarchy"] if isinstance(h, dict) and h.get("from") == "property"],
             "page": p["page"], "chunk": p["chunk"], "max_nodes": p["max_nodes"]}
+    # 1.96.2 (review P1-5): a snapshot without a property netmap_hierarchy places by is not served (every node "Not placed")
+    opts["hierarchy_properties"] = [h.get("value") for h in p["hierarchy"] if isinstance(h, dict) and h.get("from") == "property"]
     why, raw = [], None
     url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
-    if p["db_host"].strip():               # 1.96.0: the report database's snapshot first
+    if url:
+        # 1.96.2 (review P1-6): the address checked before anything uses it - a login in it is refused and never repeated
+        try:
+            site_swis.base_url(url)
+        except site_swis.SwisError as e:
+            module.fail_json(msg="netmap_solarwinds_url / the credential's address: %s" % e)
+    if p["db_host"].strip() and p["db_max_age"] <= 0:
+        # 1.96.2 (review P2-10): 0 asks nothing of the database
+        why.append("solarwinds_db_max_age is 0: SolarWinds itself every time")
+    elif p["db_host"].strip():               # 1.96.0: the report database's snapshot first
         if not site_report_db.HAS_PYMYSQL:
             why.append("the report database: " + site_report_db.NO_PYMYSQL)
         else:

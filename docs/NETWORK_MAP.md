@@ -163,6 +163,8 @@ It reads SolarWinds itself when:
   (1.96.1): a read of SolarWinds would give another map
 - the snapshot lacks the custom property `netmap_site_by`, `netmap_lat_property` or `netmap_lon_property` names
   (1.96.1): left out by `solarwinds_snapshot_skip_properties`, or not in `solarwinds_snapshot_properties`
+- the snapshot lacks a custom property a `netmap_hierarchy` level reads (`from: property`, 1.96.2)
+- `solarwinds_db_max_age` is `0`: the database is not asked at all (1.96.2)
 - the database cannot be reached
 - `netmap_from_db` is `false`
 
@@ -301,7 +303,7 @@ read every link (or was cut by `netmap_max_nodes`) calls nothing missing it did 
 | `SolarWinds' certificate is not trusted` | `netmap_ca_path` or the credential's CA file, or `netmap_validate_certs: false` |
 | `custom property X: SolarWinds could not run this query (HTTP 400) - is it one of your node custom properties?` | the name in `netmap_*_property` / `netmap_properties` is not one of your node custom properties (the case counts) |
 | `the SolarWinds address must be https://` | give the server's name (`orion.yoursite.mil`): the login goes with every query, so plain HTTP is refused |
-| `the SolarWinds address is not a server name` | the credential's address has a login in it, or is not a name: only the server, the login is the credential's |
+| `the SolarWinds address is not a server name` | the credential's address has a login in it, or is not a name: only the server, the login is the credential's. 1.96.2: checked before the report database is asked, and no part of the address is repeated |
 | `SolarWinds not read: ...` (any reason) | the email says so; the report website is not written that run, so its latest page keeps the last good map; nothing is kept for "what changed" |
 | `netmap_solarwinds_url has a user name or password in it` | give only the server; the job stops before anything is read, and the address is not repeated |
 | `the links: this Orion has neither Orion.TopologyConnections nor Orion.TopologyData` | NPM's topology is not there: the map shows the nodes without links |

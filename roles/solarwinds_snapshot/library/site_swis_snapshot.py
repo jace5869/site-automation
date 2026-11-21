@@ -139,7 +139,8 @@ def main():
         shut(conn)
         res["skipped_lock"] = True
         age = None if s is None else s["age_seconds"] // 60
-        if p["max_age"] > 0 and (age is None or age > p["max_age"]):
+        # 1.96.2 (review P2-10): in seconds - a snapshot 20 min 59 s old is older than 20 min
+        if p["max_age"] > 0 and (s is None or s["age_seconds"] > p["max_age"] * 60):
             module.fail_json(msg="Another SolarWinds snapshot run holds the database lock (%s.sw_snapshot)%s, and the newest whole snapshot is %s "
                                  "(solarwinds_db_max_age: %d min): is a run stuck? Look at the template's running jobs."
                                  % (p["database"], where_, "missing" if age is None else "%d min old" % age, p["max_age"]), **res)
@@ -160,14 +161,18 @@ def main():
                                  "snapshot, By hand)" % (where, " (check mode: nothing made)" if module.check_mode and p["create"]
                                                          else " (solarwinds_db_create: false)"), **res)
         orion = swdb.orion_key(client.url)
-        after, after_at = swdb.newest_event(conn, orion)
+        ev_key, after, after_at = swdb.event_cursor(conn, orion)
+        # 1.96.2 (review P1-3): the newest snapshot before the read - a newer one when this run writes means another run
+        # wrote while this one had lost its lock; and no transaction left open over the read
+        before = (swdb.latest(conn) or {}).get("snap_id") or 0
+        conn.commit()
     except Exception as e:      # noqa: BLE001
         shut(conn)
         module.fail_json(msg="The report database %s: %s" % (where, db.explain(e, p)), **res)
     snap = swdb.read_swis(client, {"properties": props, "skip": p["skip_properties"], "parts": p["parts"], "page": p["page"],
                                    "chunk": p["chunk"], "max_nodes": p["max_nodes"], "max_rows": p["max_rows"],
-                                   "events_after": after, "events_after_at": after_at, "event_hours": p["event_hours"],
-                                   "event_days": p["event_days"]})
+                                   "events_after": after, "events_after_at": after_at, "events_orion": ev_key,
+                                   "event_hours": p["event_hours"], "event_days": p["event_days"]})
     raw = snap["raw"]
     res.update(seconds=snap.get("seconds", 0), queries=snap.get("queries", 0), version=raw.get("version") or {},
                not_read=(raw.get("not_read") or []) + (snap.get("not_read") or []))
@@ -184,10 +189,26 @@ def main():
         # 1.96.1 (review P2-9): the read may take minutes - a session the server closed meanwhile is opened again, and the
         # lock taken again (another run may have it now: then this one keeps nothing)
         conn.ping(reconnect=True)
+        conn.cursor().execute("SET SESSION wait_timeout = 1800")       # 1.96.2 (review P1-3): a new session has the default
         if not swdb.lock(conn):
             held(" (taken while this run read SolarWinds)")
+        newer = swdb.newer_snapshot(conn, before)
+        if newer:
+            swdb.unlock(conn)
+            shut(conn)
+            res.update(ok=True, skipped_newer=newer)
+            module.warn("Another SolarWinds snapshot run wrote snapshot %d while this run read SolarWinds (this run's database "
+                        "session was closed meanwhile, and its lock with it): this run's older read was not kept. Turn off "
+                        "Concurrent jobs on the template." % newer)
+            module.exit_json(**res)
         w = swdb.write(conn, snap, p["job"])
         res.update(snap_id=w["snap_id"], ok=w["ok"], counts=w["counts"], changed=True)
+        if w["ok"] and snap.get("events_reset"):
+            r = snap["events_reset"]
+            res["events_reset"] = dict(r, key=snap.get("event_orion") or "")
+            module.warn("SolarWinds' EventIDs started again (its newest is %d, the newest kept %d): was it rebuilt at the same "
+                        "address? Its events are read by their time and kept apart from the ones before (%s); the reports "
+                        "show both." % (r["newest_there"], r["newest_kept"], snap.get("event_orion") or "a key of their own"))
     except Exception as e:      # noqa: BLE001 - a read-only account, a full disk: nothing of this run is kept
         try:
             conn.rollback()

@@ -12,14 +12,16 @@ property the fixture has not: 400, "Cannot resolve property". Every request is a
 <columns asked>"; anything else (another method or path) is logged as it came - the tests check only Query came, and
 that no secret column (Community, RWCommunity, LicenseKey) or SELECT * was ever asked for.
   FAKE_SWIS_HIDE=Orion.TopologyConnections,Orion.WorldMap.Point  entities this Orion does not have
+  FAKE_SWIS_EMPTY=Metadata.Property  entities that answer, with no rows (1.96.2)
   FAKE_SWIS_STATE=file.json  read on every query: {"down": [NodeID], "up": [NodeID], "ifdown": [InterfaceID]} (live changes),
                              "break": [entity] (its queries: HTTP 400), "huge": [entity] (an answer of 2 MB of padding)
   FAKE_SWIS_ECHO=1           every error's Message repeats what was sent: the Authorization header and the password (the
                              reader must never pass it on)
   FAKE_SWIS_DELAY=seconds    each answer that late; FAKE_SWIS_FAIL=file: while it exists, every query is HTTP 503
 1.96.0 (the SolarWinds snapshot, tests/solarwinds/fixture_more.py): a fixture with "tables" ({entity: rows}) answers those
-entities too - named columns only (another: 400), WHERE <col> IN @p, <col> <> n, EventTime >= @since [AND EventID > @after],
-SELECT <key>, COUNT(<col>) AS <name> FROM <entity> [WHERE ...] GROUP BY <key>;
+entities too - named columns only (another: 400), WHERE <col> IN @p, <col> <> n, <col> >= @p, <col> > @p, (a OR b) of those,
+joined by AND; SELECT <key>, COUNT(<col>) AS <name> FROM <entity> [WHERE ...] GROUP BY <key>; SELECT MAX(<col>) AS <name>
+FROM <entity>;
 Metadata.Property (EntityName IN @names) lists each entity's columns, a navigation property among them, and
 Orion.NodesCustomProperties' system columns and the fixture's properties. Orion.Nodes' columns may come without the alias."""
 import base64
@@ -34,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 port, fx, log = int(sys.argv[1]), json.load(open(sys.argv[2])), sys.argv[3]
 cert = sys.argv[4:6] if len(sys.argv) > 5 else None
 HIDE = set(x for x in os.environ.get("FAKE_SWIS_HIDE", "").split(",") if x)
+EMPTY = set(x for x in os.environ.get("FAKE_SWIS_EMPTY", "").split(",") if x)
 STATE, DELAY, FAIL = os.environ.get("FAKE_SWIS_STATE", ""), float(os.environ.get("FAKE_SWIS_DELAY", "0")), os.environ.get("FAKE_SWIS_FAIL", "")
 PATH = "/SolarWinds/InformationService/v3/Json/Query"
 ENT = {"Orion.Nodes", "Orion.NPM.Interfaces", "Orion.TopologyConnections", "Orion.TopologyData", "Orion.WorldMap.Point",
@@ -118,11 +121,15 @@ def columns(ent):
 
 
 def where_ok(where, params):
-    """A test for one row of a generic table: the WHERE forms the snapshot sends."""
+    """A test for one row of a generic table: the WHERE forms the snapshot sends; 1.96.2: (a OR b) of those."""
     tests = []
     for part in re.split(r" AND ", where or ""):
         part = part.strip()
         if not part:
+            continue
+        if part.startswith("(") and part.endswith(")") and " OR " in part:
+            alts = [where_ok(x.strip(), params) for x in part[1:-1].split(" OR ")]
+            tests.append(lambda r, a=alts: any(f(r) for f in a))
             continue
         m = re.match(r"^(\w+) IN @(\w+)$", part)
         if m:
@@ -157,12 +164,21 @@ def run(q, params):
             if r.get(col) is not None and ok(r):
                 n[r.get(key)] = n.get(r.get(key), 0) + 1
         return [{key: k, name: v} for k, v in sorted(n.items())]
+    x = re.match(r"^SELECT MAX\((\w+)\) AS (\w+) FROM (\S+)$", q)
+    if x:                                       # 1.96.2: Orion's newest EventID (did its EventIDs start again?)
+        col, name, ent = x.groups()
+        if ent not in MORE or ent in HIDE:
+            raise Bad("Source entity [%s] not found in catalog" % ent)
+        vals = [r.get(col) for r in MORE[ent] if r.get(col) is not None]
+        return [{name: max(vals) if vals else None}]
     m = SQ.match(q)
     if not m:
         raise Bad("Incorrect syntax near '%s'" % q[:40])
     top, colstr, ent, alias, where, order, r0, r1 = m.groups()
     if ent not in ENT or ent in HIDE:
         raise Bad("Source entity [%s] not found in catalog" % ent)
+    if ent in EMPTY:
+        return []
     cols = [c.strip() for c in colstr.split(",")]
     if ent == "Metadata.Entity":
         names = params.get("names") or []

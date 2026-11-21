@@ -261,6 +261,17 @@ class Parts(unittest.TestCase):
         # 1.96.1 (review P1-3): never a whole snapshot - the sites and points would be lost; written with ok 0
         self.assertTrue(s["failed"].startswith("which columns this Orion has could not be read (Metadata.Property): "), s["failed"])
 
+    def test_metadata_property_that_answers_nothing(self):
+        # 1.96.2 (review P1-4): HTTP 200 with no rows - the same as not read, never ok 1 with every property "absent"
+        f = Fake(self.more, {"FAKE_SWIS_EMPTY": "Metadata.Property"})
+        try:
+            s = sd.read_swis(f.client())
+        finally:
+            f.stop()
+        self.assertTrue(s["raw"]["reachable"])
+        self.assertEqual((s["extra"], s["props"]), ({}, []))
+        self.assertEqual(s["failed"], "which columns this Orion has could not be read (Metadata.Property): it listed no columns of Orion.Nodes")
+
     def test_not_reached(self):
         c = sw.Client("https://127.0.0.1:%d" % free_port(), "svc_swis_ro", PW, timeout=2)
         s = sd.read_swis(c)
@@ -268,19 +279,94 @@ class Parts(unittest.TestCase):
         self.assertEqual(s["extra"], {})
         self.assertIn("refused", s["raw"]["error"])
 
+    def recording(self, f):
+        """f's client, every SWQL it sends kept in .sent (1.96.2: the WHERE and paging are checked)."""
+        c = f.client()
+        c.sent, q = [], c.query
+
+        def query(swql, params=None, *a, **k):
+            c.sent.append((re.sub(r"\s+", " ", swql), dict(params or {})))
+            return q(swql, params, *a, **k)
+        c.query = query
+        return c
+
     def test_the_events_from_the_newest_kept_on(self):
         f = Fake(self.more)
         try:
             ev = json.load(open(self.more))["tables"]["Orion.Events"]
-            s = sd.read_swis(f.client(), {"parts": ["event"], "events_after": ev[-1]["EventID"] - 5, "event_hours": 48})
-            q = [l for l in f.queries() if " Orion.Events " in l]
+            c = self.recording(f)
+            s = sd.read_swis(c, {"parts": ["event"], "events_after": ev[-6]["EventID"], "events_after_at": ev[-6]["EventTime"],
+                                 "events_orion": "o:17774", "event_hours": 48})
         finally:
             f.stop()
-        # the newest kept on, and EVENT_OVERLAP before it again (review P2-5: an event committed late; the upsert keeps one)
-        self.assertEqual([e["event_id"] for e in s["extra"]["event"]], [e["EventID"] for e in ev[-5 - sd.EVENT_OVERLAP:]])
+        # the newest kept on, and the last EVENT_OVERLAP_MINUTES before it again (an event committed late; the upsert keeps one)
+        self.assertEqual([e["event_id"] for e in s["extra"]["event"]], [e["EventID"] for e in ev[-6:]])
         names = dict((t["EventType"], t["Name"]) for t in json.load(open(self.more))["tables"]["Orion.EventTypes"])
         self.assertEqual([e["type_name"] for e in s["extra"]["event"]][-5], names[ev[-5]["EventType"]])
-        self.assertEqual(len(q), 1)
+        q = [x for x, _p in c.sent if " Orion.Events" in x]
+        self.assertEqual(q, ["SELECT MAX(EventID) AS Newest FROM Orion.Events",
+                             "SELECT TOP 1000 EventID, EventTime, NetworkNode, NetObjectType, NetObjectID, EventType, Message, "
+                             "Acknowledged FROM Orion.Events WHERE (EventID > @after OR EventTime >= @since) ORDER BY EventID"])
+        self.assertEqual((s["event_orion"], s["events_after"], s.get("events_reset")), ("o:17774", ev[-6]["EventID"], None))
+        self.assertEqual(sd.counts(sd.to_rows(s, 1), s)["events"], 5)              # only the new ones count
+
+    def test_events_paged_by_eventid_never_by_rows(self):
+        # 1.96.2 (review P1-1): WITH ROWS lost the event at a page's edge when Orion purged one between two pages
+        f = Fake(self.more)
+        try:
+            ev = json.load(open(self.more))["tables"]["Orion.Events"]
+            c = self.recording(f)
+            s = sd.read_swis(c, {"parts": ["event"], "events_after": ev[39]["EventID"], "events_after_at": ev[39]["EventTime"],
+                                 "events_orion": "o:17774", "page": 50, "event_days": 400})
+        finally:
+            f.stop()
+        q = [(x, p_) for x, p_ in c.sent if "FROM Orion.Events WHERE" in x]
+        self.assertEqual(len(q), 5)                                                  # 201 events, 50 a page
+        self.assertFalse(any("WITH ROWS" in x for x, _p in q))
+        self.assertTrue(all(x.startswith("SELECT TOP 50 ") and x.endswith(" ORDER BY EventID") for x, _p in q))
+        self.assertTrue(all("(EventID > @after OR EventTime >= @since) AND EventTime >= @floor AND EventID > @last" in x for x, _p in q[1:]))
+        self.assertEqual([p_["last"] for _x, p_ in q[1:]], [ev[38 + 50 * k]["EventID"] for k in range(1, 5)])     # ev[39] itself again: its time
+        self.assertEqual([e["event_id"] for e in s["extra"]["event"]], [e["EventID"] for e in ev[39:]])
+
+    def test_a_busy_ten_minutes_is_read_whole(self):
+        # 1.96.2 (review P1-2): 300 events committed late (lower EventIDs) in the 10 minutes before the newest kept - the
+        # 200-EventID overlap lost 100 of them; by their time, all are read
+        fx = json.load(open(self.more))
+        ev = fx["tables"]["Orion.Events"]
+        last = sd.stamp(ev[-1]["EventTime"])
+        late = [dict(ev[-1], EventID=400000 + k, EventTime=sd.iso(last - datetime.timedelta(seconds=2 * k))) for k in range(300)]
+        fx["tables"]["Orion.Events"] = ev + late
+        path = os.path.join(TMP, "fx-busy.json")
+        json.dump(fx, open(path, "w"))
+        f = Fake(path)
+        try:
+            s = sd.read_swis(f.client(), {"parts": ["event"], "events_after": ev[-1]["EventID"], "events_after_at": ev[-1]["EventTime"],
+                                          "events_orion": "o:17774", "event_days": 400})
+        finally:
+            f.stop()
+        got = set(e["event_id"] for e in s["extra"]["event"])
+        self.assertTrue(set(e["EventID"] for e in late) <= got, len(got))
+        self.assertNotIn(ev[-2]["EventID"], got)                                     # 12 minutes before: kept already
+
+    def test_eventids_that_started_again(self):
+        # 1.96.2 (review P1-2): Orion rebuilt at the same address - its newest EventID below the newest kept: a new count,
+        # read by time, kept under orion#2; the events kept before stay as they are
+        f = Fake(self.more)
+        try:
+            ev = json.load(open(self.more))["tables"]["Orion.Events"]
+            c = self.recording(f)
+            s = sd.read_swis(c, {"parts": ["event"], "events_after": 900000, "events_after_at": ev[-1]["EventTime"],
+                                 "events_orion": "o:17774", "event_days": 400})
+        finally:
+            f.stop()
+        self.assertEqual(s["events_reset"], {"newest_there": ev[-1]["EventID"], "newest_kept": 900000})
+        self.assertEqual((s["event_orion"], s["events_after"]), ("o:17774#2", 0))
+        self.assertEqual([e["event_id"] for e in s["extra"]["event"]], [e["EventID"] for e in ev])
+        self.assertIn("FROM Orion.Events WHERE EventTime >= @floor ORDER BY EventID", [x for x, _p in c.sent][-1])
+        rows = sd.to_rows(dict(s, raw=dict(s["raw"], url="https://o")), 1)
+        self.assertEqual(set(r[0] for r in rows["sw_event"]), {"o:17774#2"})
+        self.assertEqual(sd.counts(rows, s)["events"], len(ev))
+        self.assertEqual([sd.next_epoch(k) for k in ("o:17774", "o:17774#2", "o:17774#9")], ["o:17774#2", "o:17774#3", "o:17774#10"])
 
     def test_an_outage_longer_than_event_hours_loses_nothing(self):
         # 1.96.1 (review P1-1): the job (or Orion) away 40 hours, event_hours 1 - every event since the newest kept is read
@@ -294,7 +380,7 @@ class Parts(unittest.TestCase):
         got = set(e["event_id"] for e in s["extra"]["event"])
         self.assertTrue(set(e["EventID"] for e in ev[40:]) <= got)                 # 200 events over 40 hours, none lost
         self.assertEqual(s["not_read"], [])
-        self.assertEqual(len(q), 1)
+        self.assertEqual(len(q), 2)                                                # the newest EventID there, then the events
 
     def test_a_gap_older_than_event_days_is_said(self):
         f = Fake(self.more)
@@ -536,13 +622,74 @@ class Answer(unittest.TestCase):
         self.assertEqual(sd.stamp("2026-11-21T09:00:05Z"), datetime.datetime(2026, 11, 21, 9, 0, 5))
         self.assertEqual(sd.stamp(datetime.datetime(2026, 11, 21, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=1)))),
                          datetime.datetime(2026, 11, 21, 9, 0))
-        conn = FakeConn(lambda sql, args: ([("x",)], []))
+        conn = FakeConn(lambda sql, args: ([("x",)], [("orion_1.example.mil:17774",)] if "FROM sw_snapshot" in sql else []))
         sd.events_between(conn, self.NOW, self.NOW)
-        self.assertIn("AND orion = (SELECT orion FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1)", conn.sql[-1][0])
+        self.assertEqual(conn.sql[-2][0], "SELECT orion FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1")
+        # 1.96.2: its events from before its EventIDs started again too (orion#N), its own _ taken literally
+        self.assertIn("AND (orion = %s OR orion LIKE %s)", conn.sql[-1][0])
+        self.assertEqual(conn.sql[-1][1][2:], ["orion_1.example.mil:17774", "orion\\_1.example.mil:17774#%"])
         sd.events_between(conn, self.NOW, self.NOW, orion="orion.example.mil:17774")
-        self.assertEqual(conn.sql[-1][1][-1], "orion.example.mil:17774")
-        sd.newest_event(conn, "orion.example.mil:17774")
-        self.assertEqual((conn.sql[-1][1], "WHERE orion = %s" in conn.sql[-1][0]), (("orion.example.mil:17774",), True))
+        self.assertEqual(conn.sql[-1][1][2:], ["orion.example.mil:17774", "orion.example.mil:17774#%"])
+
+    def test_the_event_cursor_of_the_newest_count(self):
+        def ans(sql, args):
+            if sql.startswith("SELECT DISTINCT orion"):
+                return [("orion",)], [("o:17774#10",), ("o:17774",), ("o:17774#2",)]
+            return [("event_id",), ("event_time",)], [(77, self.NOW)] if args == ("o:17774#10",) else []
+        self.assertEqual(sd.event_cursor(FakeConn(ans), "o:17774"), ("o:17774#10", 77, self.NOW))
+        self.assertEqual(sd.newest_event(FakeConn(ans), "o:17774"), (77, self.NOW))
+        none = FakeConn(lambda sql, args: ([("x",)], []))
+        self.assertEqual(sd.event_cursor(none, "o:17774"), ("o:17774", 0, None))
+
+    def test_a_newer_snapshot_written_meanwhile(self):
+        # 1.96.2 (review P1-3): a run that lost its lock never writes its older read as the newest
+        conn = FakeConn(lambda sql, args: ([("m",)], [(9,)] if args == (7,) else [(None,)]))
+        self.assertEqual(sd.newer_snapshot(conn, 7), 9)
+        self.assertEqual(conn.sql[0], ("ROLLBACK", None))                           # a fresh look, not the read's old view
+        self.assertIn("WHERE ok = 1 AND snap_id > %s", conn.sql[-1][0])
+        self.assertEqual(sd.newer_snapshot(conn, 9), 0)
+
+    def test_an_address_with_a_login_is_never_repeated(self):
+        # 1.96.2 (review P1-6): "user:pa" of https://user:pa/ss@... landed in the reason
+        for u in ("https://user:pa/ss@orion2.example.mil", "https://user:pass@orion2.example.mil:17774", "user@orion2.example.mil",
+                  "https://orion2.example.mil:17774/a@b", "https://or ion.example.mil", "https://orion.example.mil:x"):
+            self.assertEqual(sd.orion_key(u), "", u)
+        self.assertEqual(sd.orion_key("https://[2001:DB8::1]"), "[2001:db8::1]:17774")
+        why = []
+        sd.answer({}, conn=self.snaps(4), now=self.NOW, orion="https://user:pa/ss@orion2.example.mil", why=why)
+        self.assertFalse(any("user" in w or "pa" in w for w in why), why)
+
+    def test_short_error_names_no_host(self):
+        for e in ("(2003, \"Can't connect to MySQL server on 'db01.example.mil' ([Errno 111] Connection refused)\")",
+                  "(2005, \"Unknown MySQL server host 'db01.example.mil' (-2)\")"):
+            self.assertNotIn("db01", sd.short_error(RuntimeError(e)))
+            self.assertIn("the database's host", sd.short_error(RuntimeError(e)))
+
+    def test_an_ipv6_address_matched_in_any_case(self):
+        # 1.96.2 (review P2-9): the column is utf8mb4_bin - the other addresses kept lower case, the address compared so
+        snap = {"raw": {"url": "https://o", "nodes": [{"id": 5, "name": "fw01", "ip": "2001:DB8::A"}]},
+                "extra": {"ip": [{"node_id": 5, "ip": "2001:DB8::B"}]}}
+        row = sd.to_rows(snap, 1)["sw_node"][0]
+        self.assertEqual(json.loads(row[sd.COLS["sw_node"].index("ips")]), ["2001:db8::b"])
+        conn = FakeConn(lambda sql, args: ([("x",)], []))
+        sd.nodes_for(conn, 1, ["2001:DB8::A"])
+        sd.nodes_for_all(conn, 1, ["2001:DB8::A"])
+        self.assertTrue(all("LOWER(ip) IN (%s)" in s for s, _a in conn.sql))
+        self.assertEqual(conn.sql[-1][1][1:], ["2001:db8::a", "2001:db8::a", '%"2001:db8::a"%'])
+
+    def test_max_age_zero_asks_the_database_nothing(self):
+        # 1.96.2 (review P2-10)
+        conn, why = FakeConn(RuntimeError("never asked")), []
+        self.assertIsNone(sd.answer({}, conn=conn, max_age=0, why=why, now=self.NOW))
+        self.assertEqual((why, conn.sql), (["solarwinds_db_max_age is 0: SolarWinds itself every time"], []))
+
+    def test_a_snapshot_without_a_hierarchy_property_is_not_served(self):
+        # 1.96.2 (review P1-5): netmap_hierarchy's properties too - else every node "Not placed"
+        why = []
+        self.assertIsNone(sd.answer({"site_by": "Site", "hierarchy_properties": ["Region", "Site"]}, conn=self.snaps(4), now=self.NOW, why=why))
+        self.assertEqual(why, ["the newest SolarWinds snapshot has no node custom property Region (solarwinds_snapshot_properties or "
+                               "solarwinds_snapshot_skip_properties)"])
+        self.assertEqual(sd.answer({"hierarchy_properties": ["Site"]}, conn=self.snaps(4), now=self.NOW)["source"], "db-snapshot")
 
     def test_name_key(self):
         self.assertEqual([sd.name_key(x) for x in ("ESX07.corp.example.mil", "db01", "192.0.2.7", "", None)],
