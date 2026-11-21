@@ -196,8 +196,8 @@ class Job(unittest.TestCase):
         self.assertNotIn("answers.yml", [t.get("ansible.builtin.include_tasks") for t in self.tasks])
 
     def test_the_drift_scan_and_recheck_stage_inside_their_block_too(self):
-        # 1.77.0c (Codex): the same in main.yml and recheck.yml
-        for name in ("main.yml", "recheck.yml"):
+        # 1.77.0c (Codex): the same in main.yml and the recheck's scan (1.83.0: recheck_scan.yml, the full scan runs it too)
+        for name in ("main.yml", "recheck_scan.yml"):
             with self.subTest(name=name), open(os.path.join(REPO, "roles", "check_stig", "tasks", name)) as f:
                 tasks = yaml.safe_load(f)
                 blk = [t for t in tasks if "answers_done.yml" in str(t.get("always"))]

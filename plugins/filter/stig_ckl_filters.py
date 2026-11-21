@@ -11,7 +11,7 @@ STATE_CHIP = {"planned": "warning", "nothing to write": "ok", "written": "ok", "
               "no STIG on the asset": "critical", "error": "critical", "STIG not on this asset": "info", "in staging too": "info",
               "no grant": "critical"}
 LEFT_WORD = {"accepted": "Accepted in STIG Manager", "protected": "Protected (RA / POA&M words)", "person": "Set by a person since our Open", "conflict": "Checklists disagree", "revision": "Another revision of the rule",
-             "unmatched": "Not in the STIG", "no_asset": "No asset", "no_stig": "STIG not on the asset", "error": "Error", "grant": "No grant"}
+             "unmatched": "Not in the STIG", "no_asset": "No asset", "no_collection": "No collection for a new asset", "no_stig": "STIG not on the asset", "error": "Error", "grant": "No grant"}
 # answers not written that running again does not change: a file with only these (and what is written) is done with
 SETTLED_LEFT = ("same", "accepted", "protected", "person", "unmatched", "revision")
 # what became of a review written at once (auto) that leaves its file done with
@@ -265,7 +265,7 @@ def _moved_section(moved, settled, move_to, list_max):
 
 
 def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, auto="none", auto_plan=None, su=None, check=False,
-                    moved=None, settled=None, move_to=""):
+                    moved=None, settled=None, move_to="", word="Checklist import"):
     """The check's report: what was written at once (auto), what Approve writes, each checklist (its asset, the STIG it matched),
     what is not written and why, the files moved."""
     ci = ci or {}
@@ -293,9 +293,9 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
     nw = len([i for i in wrote if i.get("kind") not in ("create",) + FIRST and i.get("state") in ("written", "would write")])
     status = "critical" if (ci.get("error") or (su or {}).get("error") or wbad) else "warning" if (plan or bad or bad_files or held) else "ok"
     if ci.get("error"):
-        title = "Checklist import: nothing planned - %s" % ci["error"][:120]
+        title = word + ": nothing planned - %s" % ci["error"][:120]
     elif auto_plan:
-        title = "Checklist import: %d review(s) %s" % (nw, "would be written" if check else "written")
+        title = word + ": %d review(s) %s" % (nw, "would be written" if check else "written")
         if wbad or (su or {}).get("error"):
             title += ", %d not" % (len(wbad) or len(auto_plan))
         if plan:
@@ -308,11 +308,11 @@ def stig_ckl_report(ci, plan=None, sections=None, workflow=False, list_max=200, 
                                   "%s%s%s" % (" written" if not check else " would be written", (", %d asset(s) moved" % fm) if fm else "",
                                               (", %d STIG(s) assigned" % fa) if fa else ""), 1)
     elif plan:
-        title = "Checklist import: %d review(s) to write%s%s%s" % (len(revs), (", %d new asset(s)" % len(news)) if news else "",
+        title = word + ": %d review(s) to write%s%s%s" % (len(revs), (", %d new asset(s)" % len(news)) if news else "",
                                                                    (", %d to move" % len(moves)) if moves else "",
                                                                    (", %d STIG(s) to assign" % len(assigns)) if assigns else "")
     else:
-        title = "Checklist import: nothing to write"
+        title = word + ": nothing to write"
     if bad:
         title += ", %d checklist STIG(s) not imported" % len(bad)
     if held_moves:
@@ -411,8 +411,52 @@ def _state(c, done):
     return c.get("state", "")
 
 
+# 1.83.0: check_stig_stigman_collection_routes - where a new asset goes (the STIG full and drift scans) - as the import's
+# own routes (site_ckl_import's route_of, workflow 40's router): os the host's own (the scan's), match its names
+ROUTE_OS = ("rhel", "windows")
+
+
+def stig_collection_routes(hosts, routes=None):
+    """hosts: [{name (the inventory's), asset (check_stig_stigman_asset or ''), collection (check_stig_stigman_collection or
+    '')}]; routes: check_stig_stigman_collection_routes, [{match (the inventory name or asset name: * and ?, any case), os
+    (rhel or windows), collection}] -> the import's routes (stigman_ckl_import_routes' form), in order: first a rule for each
+    host with its own collection (inventory_hosts: that host only, by its whole inventory name; it wins over the routes), then the site's routes - the first that fits wins. A route
+    that is not {collection, match and / or os} stops the job, named."""
+    from ansible.errors import AnsibleFilterError
+    out = []
+    for h in hosts or []:
+        h = h if isinstance(h, dict) else {}
+        col, name = str(h.get("collection") or "").strip(), str(h.get("name") or "").strip()
+        if col and name:
+            # its whole inventory name only, exact - never a pattern or a short name another host may share (Codex P1:
+            # node.east's rule took node.west; final pass: db01's took db01.east by its short name)
+            out.append({"collection": col, "inventory_hosts": [name]})
+    for n, r in enumerate(routes or [], 1):
+        if not isinstance(r, dict) or not str(r.get("collection") or "").strip():
+            raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: %r is not {match: <pattern>, os: rhel|windows, "
+                                     "collection: <its name>} - nothing planned" % (n, r))
+        bad = sorted(set(r) - {"match", "os", "collection"})
+        if bad:
+            raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: %s is not a route's key (match, os, collection)"
+                                     % (n, ", ".join(bad)))
+        rule = {"collection": str(r["collection"]).strip()}
+        if r.get("match") is not None:
+            m = r["match"] if isinstance(r["match"], list) else [r["match"]]
+            rule["names"] = [str(x).strip() for x in m if str(x).strip()]
+            if not rule["names"]:
+                raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: match is empty" % n)
+        if r.get("os") is not None:
+            o = str(r["os"]).strip().lower()
+            if o not in ROUTE_OS:
+                raise AnsibleFilterError("check_stig_stigman_collection_routes, route %d: os is rhel or windows, not %r" % (n, r["os"]))
+            rule["os"] = [o]
+        out.append(rule)
+    return out
+
+
 class FilterModule(object):
     def filters(self):
         return {"stig_ckl_file_lines": stig_ckl_file_lines, "stig_ckl_lines": stig_ckl_lines, "stig_ckl_report": stig_ckl_report,
                 "stig_ckl_settled": stig_ckl_settled, "stig_ckl_move_lines": stig_ckl_move_lines,
-                "stig_ckl_for_attachments": stig_ckl_for_attachments, "stig_ckl_after_attachments": stig_ckl_after_attachments}
+                "stig_ckl_for_attachments": stig_ckl_for_attachments, "stig_ckl_after_attachments": stig_ckl_after_attachments,
+                "stig_collection_routes": stig_collection_routes}

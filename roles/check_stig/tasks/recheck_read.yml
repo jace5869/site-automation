@@ -43,8 +43,11 @@
                 'benchmark': check_stig_stigman_benchmarks[hv.ansible_distribution_major_version | default('') | string] | default('')})) -%}
       {#-     1.68.0 (Codex P1): never with check_stig_recheck_rules ("fix one rule", workflow 47): a host whose asset is gone is
               not made one, nor scanned in full for it, on that rule's approval #}
+      {#-     1.83.0: not with check_stig_update_new_by_import (the STIG drift scan) - a host with no asset is scanned in full
+              and planned by the checklist import's planner instead (tasks/full_scan.yml, full_plan.yml: the routes) #}
       {%-     if hv.check_stig_update_workflow | default(false) | bool and hv.check_stig_update_create_assets | default(false) | bool
-               and hv.check_stig_stigman_collection | default('') and not hv.check_stig_recheck_rules | default([]) -%}
+               and hv.check_stig_stigman_collection | default('') and not hv.check_stig_update_new_by_import | default(false) | bool
+               and not hv.check_stig_recheck_rules | default([]) -%}
       {%-       set _ = out[-1].update({'create': {'name': hv.check_stig_stigman_asset | default('') or h.split('.')[0],
                                                    'fqdn': h if '.' in h else ''}}) -%}
       {%-     endif -%}
@@ -63,6 +66,11 @@
          | stig_only_rules(check_stig_recheck_rules) }}
     _stig_recheck_sm: "{{ _sm_host }}"
     _stig_recheck_new: "{{ _sm_host.create is defined }}"
+    # 1.83.0 (the STIG drift scan): no asset - scanned in full and planned as a new one by the checklist import's planner
+    _stig_new_by_import: >-
+      {{ check_stig_update_workflow | default(false) | bool and check_stig_update_create_assets | default(false) | bool
+         and check_stig_update_new_by_import | default(false) | bool and not check_stig_recheck_rules | default([])
+         and _sm_host.status | default('') == 'not_found' }}
   vars:
     _sm_host: >-
       {{ (_stig_sm.hosts | default({}))[inventory_hostname]

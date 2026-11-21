@@ -1,5 +1,5 @@
 # ==================================================================================================
-# Variables for the job template "STIG answer keys"
+# Variables for the job template "STIG - answer file generator"
 #   playbook:    playbooks/stig_answer_keys.yml
 #   credentials: Machine, STIG Manager API, ACT model key (with answer_keys_act)
 #

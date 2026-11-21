@@ -69,6 +69,113 @@ For the live page, add the same credential to *Site portal - deploy* and run it 
 - Settings of `check_containers`: `check_containers_profiles` (`[netapp_console]`), `_console_pattern`, `_url`, `_log_containers`, `_cert_volume`, `_ports`, `_log_hours`, `_errors_min`, `_clock_warn`, `_clock_crit`, `_disk_warn`, `_disk_crit`, `_cert_warn`, `_cert_crit`, `_backlog_min`, `_run_checks`. docs/RUNBOOKS.md (*NetApp Console*).
 - Tests: `tests/test_console_filters.py` (every parser, the data folder from the mounts, the findings and their wording, the sections), `tests/containers/run_containers_test.sh` (ds_* containers on a fake host: the findings, the three sections, only reads, the generic checks given the Console's wording, profile off, the run in Check mode, a host without ds_* left alone).
 
+## 1.83.1 — 2026-11-20
+
+**To set up: nothing.** Run **AAP - set up job templates** with Job type **Check** again to see the new lines.
+
+**AAP - set up job templates: two Check lines that were wrong.**
+
+- **A workflow step's fixed settings are compared.** Before, a template whose fixed Variables were missing or changed
+  showed *already right*. An example is a Windows check without `check_stig_update_plan_var`. It now shows *DIFFERS*,
+  with a line for each setting: *variable check_stig_update_plan_var: has none, should be stigman_update_plan_windows*.
+  With `aap_templates_overwrite: true` the job sets only those settings. Your own lines in its Variables are kept.
+- **An old name is kept when its replacement was skipped.** Before, an old template or workflow showed *replaced by ...,
+  delete it when ready* even when the new one was skipped. An example is a Windows credential that is not mapped. It now
+  shows *KEEP*: keep the old one until the new one is in AAP.
+- Docs: [docs/SETUP_AAP.md](docs/SETUP_AAP.md), [docs/STIG_JOBS.md](docs/STIG_JOBS.md).
+- Tests: `tests/test_aap_templates_vars.py` (reading and setting the Variables: YAML, JSON, comments, a block value),
+  `tests/portal_setup/run_aap_templates_test.sh` (DIFFERS, the overwrite keeps a person's line, then already right;
+  KEEP when the new workflow is skipped).
+
+## 1.83.0 — 2026-11-20
+
+**To set up:** run **AAP - set up job templates** with Job type **Check**, then **Run** ([docs/STIG_JOBS.md](docs/STIG_JOBS.md)).
+Your own update and gate templates are used (found by their playbook). Map `stigman_api_writer` only when the job
+makes the update. Optional:
+`check_stig_stigman_collection_routes` in your `all.yml`, with your own collection names.
+
+**Three STIG jobs, clearly named.** [docs/STIG_JOBS.md](docs/STIG_JOBS.md) says which one to use, and lists the old
+templates and workflows to delete.
+
+| Job | Scans | Writes, after an approval |
+|---|---|---|
+| STIG - full scan and upload (workflow) | every rule on every host of the Limit, Linux and Windows | every rule's result, the missing assets |
+| STIG - drift scan and upload (workflow) | what STIG Manager has Open or Not Reviewed; a host with no asset in full | what changed, the missing assets |
+| STIG - answer file generator | the rules you pick | nothing (answer key blocks to copy) |
+
+**STIG - full scan and upload** (`playbooks/stig_full_scan.yml`, `win_stig_full_scan.yml`).
+- Each host is scanned in full with Evaluate-STIG, with the drift reports' settings and answer files.
+- Its checklists go to the AAP side. The checklist import's own planner (workflow 40's) plans them.
+- Not a Finding, Open and Not Applicable are written. A manual check stays Not Reviewed. What STIG Manager has so
+  already is left (*Already so*).
+- All of workflow 37's protections stay: `check_stig_update_status`, never a review with attachments or RA / POA&M
+  words, each review read again before it is written. Accepted is written (`check_stig_update_overwrite_accepted`).
+- The assets are named as the inventory names the hosts (or `check_stig_stigman_asset`), never the computer name
+  Evaluate-STIG wrote.
+- OpenSCAP sites: not in the full scan, said.
+
+**STIG - drift scan and upload** is workflow 37, Linux and Windows in one workflow.
+- A host with no asset (Linux or Windows) is scanned in full and planned as a new asset by the same planner
+  (`check_stig_update_new_by_import`).
+- One plan, one approval: the recheck's reviews and the new assets.
+- A host the recheck did not find, but with an asset in another collection, is listed and never given a full update.
+- An asset found by its name whose FQDN is not the host's is still used, and the report says so: *matched by short
+  name; its FQDN differs: <fqdn>*.
+
+**Where a new asset goes** (`check_stig_stigman_collection_routes`, workflow 40's router).
+- A host's own `check_stig_stigman_collection` first, then the first route that fits: `match` (its inventory name)
+  and / or `os` (`rhel`, `windows`).
+- No route and no collection: *no collection for a new asset*. Never guessed.
+- A host is matched by its own name or FQDN only (`db01.east` is never the asset `db01.west`). Two hosts of the Limit
+  with one asset name are not planned: set `check_stig_stigman_asset` on each.
+- A short inventory name (`db01`) keeps the scan's own FQDN, so its asset in another collection is found. An asset
+  with only its short name the same is never made again beside it: not planned, said.
+- A folder read (`check_stig_evaluate_read`) whose checklist is of another FQDN is not planned. With no FQDN in the
+  inventory, a dotted `check_stig_stigman_asset` (`db01.east`) is the host's FQDN for this check.
+- A host under another inventory name (`primary`) keeps the FQDN its scan found. Its asset is found by it, never
+  made twice. An asset with only a short name the same: not planned, said.
+- A host's own collection is that host's only, by its whole inventory name (the import's new route key
+  `inventory_hosts`).
+- `check_stig_stigman_collections_exclude` (`Archive*`, `SCA*` ...) applies to the routed search too. An asset only
+  there is created in its route's collection.
+
+**One workflow, Linux and Windows.** The Linux check and the Windows check run side by side, each with its own gate,
+and one approval follows. The Windows check hands its plan on as `stigman_update_plan_windows`
+(`check_stig_update_plan_var`), and **STIG Manager - update** writes both. A Limit with only Linux hosts, or a Windows
+server that cannot be reached, never keeps the Linux plan from the approval. The AAP side's part runs inside the host
+play: a Limit leaves out any play of localhost alone.
+
+**AAP - set up job templates makes the workflows.**
+- Both workflows with every node and link, the gate's Variables, Prompt on launch for Limit, and the site portal's
+  label on the workflow (never on its steps).
+- The site's own update and gate are used, found by their playbook (*uses 'STIG update' (playbooks/stigman_update.yml)
+  for the update step*). Several: `aap_templates_step_names`. None: made here. It must run that playbook from this
+  site's project and must not ask for a Limit on launch (the workflow's Limit would reach it). A template under the
+  step's own name is checked the same way. A step that fails is *SKIPPED*, and its workflows are not made. The
+  workflows check every step's template again, also when `aap_templates_only` names only a workflow.
+- A step after another (the update after the approval) is made without its template. The template is attached
+  only after its links are read back from AAP, so a failure part way never leaves it a root node that runs. A workflow
+  made again deletes its old nodes leaves first.
+- A template that runs the answer keys' playbook (*STIG answer keys*): *rename it when ready*, never a second one
+  (`aap_templates_create_alias: true` makes one).
+- Check lists each node and names the old templates and workflows it finds (*replaced by ..., delete it when ready*).
+  It never deletes.
+- The node code is shared with AAP - set up portal actions (`plugins/module_utils/site_aap_workflows.py`).
+
+**The check never writes.** The scans plan through the checklist import's plan-only tasks
+(`roles/stigman_ckl_import/tasks/plan.yml`). They have no write and no move, so no extra var can make the check write.
+
+**Also.** The checklist import: a staging collection is optional with routes, `collections_exclude` and `targets`
+(the asset names to use). Evaluate-STIG's checklist copied for the full scan (`site_stig_scan` `copy_to`; Windows:
+`win_stig.ps1` `copy_to: auto` and `remove`, a folder of the run's own under TEMP).
+
+Tests: `tests/stig/run_stig_full_scan_test.sh` (the full scan, routes, Check, OpenSCAP, the update, the drift scan's new
+asset, the Windows step after the Linux plan, an unreachable server and the gate), `tests/test_stig_routes.py`,
+`tests/test_win_stig_full.py` (pwsh), `tests/test_stig_ckl_import.py` (the identity cases, the plan-only tasks),
+`tests/portal_setup/run_aap_templates_test.sh` (the workflows in a stand-in AAP: Check, a run, a second run, the old
+names, a gate that runs the update, also with `aap_templates_only` naming only the workflow, a failed link, a
+workflow made again). docs/STIG_JOBS.md, SETUP_AAP.md, WORKFLOWS_AND_SCHEDULES.md, JOB_TEMPLATES.md.
+
 ## 1.81.2 — 2026-11-20
 
 **To set up: nothing.** Small hardening of the Automation backlog (1.81.0); drafts kept before are asked for once more, because the key changed.

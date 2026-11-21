@@ -28,14 +28,14 @@
     client_id: "{{ _su_login.client_id }}"
     client_secret: "{{ stigman_update_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
     scope: "{{ stigman_update_scope }}"
-    plan: "{{ stigman_update_plan }}"
+    plan: "{{ _su_plan | default(stigman_update_plan) }}"     # 1.83.0: both checks' plans (main.yml); the import's at once: its own
     validate_certs: "{{ stigman_update_validate_certs | bool }}"
     ca_path: "{{ stigman_update_ca_path }}"
     timeout: "{{ stigman_update_timeout | int }}"
     skip_attachments: "{{ stigman_update_skip_attachments | bool }}"
     protect_words: "{{ stigman_protect_words | default(omit) }}"
   register: _su
-  when: stigman_update_plan | length > 0
+  when: (_su_plan | default(stigman_update_plan)) | length > 0
 
 - name: STIG Manager update | each review
   ansible.builtin.debug:

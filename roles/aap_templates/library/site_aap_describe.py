@@ -59,6 +59,8 @@ NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansibl
                  '(an AAP user who may change the organization\'s templates)')
 MARK = "** Does:"
 PORTAL_MARK = "[set up by AAP - set up portal actions, fingerprint "     # roles/aap_portal_setup (MARK_TEXT)
+# 1.83.0: the STIG workflows this job makes (site_aap_template_workflows) carry their own mark - left to it, as the portal's
+TEMPLATES_MARK = "[set up by AAP - set up job templates, fingerprint "
 
 
 def _q(s):
@@ -124,6 +126,10 @@ class Describe(object):
         if PORTAL_MARK in have:                          # AAP - set up portal actions' own: its fingerprint covers it
             self.note(kind, name, catalog, "left", first(have), why="AAP - set up portal actions writes its description "
                       "(roles/site_portal_stack/files/workflows.yml) - a change here would make that job leave it")
+            return
+        if TEMPLATES_MARK in have:                       # 1.83.0 (Codex): a STIG workflow this job made - it wrote the lines too
+            self.note(kind, name, catalog, "left", first(have), why="made by this job with the catalog's lines (its workflows) - "
+                      "a change here would make it leave the workflow as changed by hand")
             return
         if not text:
             self.note(kind, name, catalog, "no description known", first(have), why="the catalog has none for it")

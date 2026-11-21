@@ -43,6 +43,12 @@ aap_templates_credentials:
 ## credential's user needs Use on it
 # aap_templates_inventory_organization: ""
 
+## 1.83.0: the STIG workflows' steps made by another job (the gate, STIG Manager - update): when AAP
+## has none under the catalog's name, your template that runs its playbook is used (Check says "uses
+## ..."). Several run it: name the one here {"STIG Manager - update": "STIG update", "Workflow gate
+## - has a plan": "Has a plan"}
+# aap_templates_step_names: {}
+
 ## the site portal's label (as written, case too)
 # aap_templates_portal_label: "{{ portal_label | default('portal') }}"
 

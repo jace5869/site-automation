@@ -40,5 +40,5 @@
         portal_result_finding_id: "{{ finding_id }}"
         portal_result_fixed: true
         portal_result_after: written to STIG Manager
-        portal_result_summary: "Approved and written to STIG Manager ({{ stigman_update_plan | default([]) | length }} item(s))."
+        portal_result_summary: "Approved and written to STIG Manager ({{ _su_plan | default(stigman_update_plan | default([])) | length }} item(s))."
       when: portal_requested_by is defined and finding_id is defined and not ansible_check_mode

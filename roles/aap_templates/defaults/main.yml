@@ -25,6 +25,10 @@ aap_templates_overwrite: false                 # true = bring a template that di
 # true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other
 # name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions)
 aap_templates_create_alias: false
+# 1.83.0: the STIG workflows' steps made by another job (the gate, STIG Manager - update): when AAP has none under the
+# catalog's name, your template that runs its playbook is used (Check says "uses ..."). Several run it: name the one here
+#   {"STIG Manager - update": "STIG update", "Workflow gate - has a plan": "Has a plan"}
+aap_templates_step_names: {}
 # the site portal's labels (its own label and portal-area:<area>, so the portal finds the templates and groups them):
 #   none (the default), portal-actions (the templates the site portal launches) or all (every template made or matched)
 aap_templates_label_portal: none

@@ -52,6 +52,7 @@ DOCS = [  # (file, chapter title)
     ("docs/NETWORK_MAP.md", "Network map: SolarWinds' sites, WAN links and nodes on a globe, and live on the portal"),
     ("docs/NETWORK_CERTS.md", "Network device certificates: report and renewal"),
     ("docs/TRUST_STORES.md", "Trust stores: who still trusts a compromised or dropped CA"),
+    ("docs/STIG_JOBS.md", "STIG jobs: which one to use"),
     ("docs/STIG_DRIFT.md", "STIG drift: has a server moved away from its checklist?"),
     ("docs/STIG_ANSWER_KEYS.md", "STIG answer keys: a block per rule per STIG, across many hosts, checked and tried"),
     ("docs/NETWORK_PERF.md", "Network performance: is the network slow, and where?"),

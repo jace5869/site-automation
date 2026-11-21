@@ -128,6 +128,21 @@ class StigManager(unittest.TestCase):
         self.assertEqual(smr.match_assets(["web01.example.mil"], self.A), [self.A[0]])
         self.assertEqual(smr.match_assets(["nope"], self.A), [])
 
+    def test_fqdn_differs_said_never_refused(self):
+        """1.83.0 (Codex, hardening): db01.east matched to the asset db01 of db01.west - kept, and said in the report."""
+        west = {"name": "db01", "fqdn": "db01.west.test"}
+        self.assertEqual(smr.match_assets(["db01", "db01.east.test"], [west]), [west])
+        self.assertEqual(smr.fqdn_differs(["db01", "db01.east.test"], west), "db01.west.test")
+        self.assertEqual(smr.fqdn_differs(["db01", "db01.west.test"], west), "")
+        self.assertEqual(smr.fqdn_differs(["db01"], west), "")                  # the host's FQDN not known: nothing said
+        self.assertEqual(smr.fqdn_differs(["db01", "db01.east.test"], {"name": "db01", "fqdn": ""}), "")
+        self.assertEqual(sf._fqdn_note({"fqdn_differs": "db01.west.test"}), " - matched by short name; its FQDN differs: db01.west.test")
+        # through the recheck, into its line and its report row
+        c = dict(sm_list(SV_1=("fail", "accepted")), fqdn_differs="db01.west.test")
+        r = sf.stig_recheck(c, [recheck_scan(SV_1="pass")], "db01.east.test")[0]
+        self.assertIn("matched by short name; its FQDN differs: db01.west.test", sf.stig_recheck_lines(r)[0])
+        self.assertIn("its FQDN differs: db01.west.test", " ".join(str(x) for x in r["row"]["cells"]))
+
     def test_reviews_by_stig_rule_every_revision(self):
         r = smr.reviews_of([{"ruleId": "SV-1r2_rule", "ruleIds": ["SV-1r2_rule", "SV-1r9_rule"], "result": "pass",
                              "status": {"label": "accepted"}, "rule": {"version": "X-1", "severity": "high", "title": "T"}},
@@ -1576,6 +1591,19 @@ class NewAsset(unittest.TestCase):
         c = C()
         self.assertEqual([i["state"] for i in smu.update({"plan": p + [dict(p[0])]}, c, False)], ["created", "bad", "written", "written", "written"])
         self.assertEqual(len(c.made), 1)
+        # 1.83.0 (Codex P1): a Not Reviewed review a person made since the check, with words in it - never written over
+        no = {"result": "", "status": "", "ts": ""}
+        self.assertTrue(smu.same(no, smu.held(None)))
+        self.assertTrue(smu.same(no, smu.held({"result": "notchecked", "ts": "2026-11-20T10:00:00Z"})))
+        self.assertFalse(smu.same(no, smu.held({"result": "notchecked", "ts": "2026-11-20T10:00:00Z", "comment": "looking at it - J"})))
+        self.assertFalse(smu.same(no, smu.held({"result": "notchecked", "ts": "2026-11-20T10:00:00Z", "detail": "see ticket"})))
+        # 1.83.0 (Codex P1): two hosts planned as one new asset (the Linux and Windows checks' plans): neither created, no review written
+        c = C()
+        two = p + [dict(p[0], host="db01.windows.test", fqdn="db01.windows.test")]
+        got = smu.update({"plan": two}, c, False)
+        self.assertEqual([i["state"] for i in got], ["bad", "bad", "asset not created", "asset not created", "asset not created"])
+        self.assertIn("not created; set check_stig_stigman_asset on each", got[0]["why"])
+        self.assertEqual((c.made, c.posts), ([], []))
         # not a plan item the check gives
         bad = [dict(p[0], collectionId="7/../users")] + p[1:]
         self.assertEqual([i["state"] for i in smu.update({"plan": bad}, C(), False)], ["bad"] + ["asset not created"] * 3)

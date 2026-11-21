@@ -244,8 +244,10 @@ any of:
 | `names` | the host name or FQDN, or its short name (`vc11` fits `vc11.example.mil`) | `['esx*', 'vc*']` |
 | `roles` | the checklist's ROLE | `['Domain Controller']` |
 | `tech_areas` | the checklist's TECH_AREA | `['UNIX OS']` |
+| `os` | the host's OS, as the STIG scans give it: `rhel` or `windows` | `['windows']` |
+| `inventory_hosts` | the host's whole inventory name, exact (the STIG scans' `check_stig_stigman_collection`) | `['db01.example.mil']` |
 
-`*` and `?`, any case; a list, or text with commas. Each key given must fit; one value of a key is enough. A key
+`*` and `?`, any case; a list, or text with commas. `inventory_hosts` takes whole names only: no `*`, never a short name. Each key given must fit; one value of a key is enough. A key
 given with no names (`names:` empty, `[]`, `""`) stops the job; a rule with only `collection` fits every host.
 
 - **A new host:** created in its rule's collection, with the STIGs its checklists matched, at that collection's

@@ -501,7 +501,7 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # evaluate_stig_update_zip: files/evaluate-stig
 # evaluate_stig_update_keep: [AnswerFiles]          # your own answer files in Evaluate-STIG's folder, carried over
 """),
-    "stig_answer_keys.yml": ("STIG answer keys", "Machine, STIG Manager API, ACT model key (with answer_keys_act)", "check_stig", """\
+    "stig_answer_keys.yml": ("STIG - answer file generator", "Machine, STIG Manager API, ACT model key (with answer_keys_act)", "check_stig", """\
 ## 1.75.0 / 1.76.0: the Evaluate-STIG answer keys, ready to copy into YOUR answer file - nothing is written anywhere.
 ## The Linux hosts with Evaluate-STIG (pwsh): target - a group, many hosts (at most answer_keys_max_hosts) - or the Limit;
 ## one block per rule per STIG (RHEL 8, 9, 10). Prompt on launch (or a survey) for these:
@@ -556,6 +556,35 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## With it: a host with no asset in STIG Manager gets one in check_stig_stigman_collection, once approved (the
 ## update's client needs the Manage grant there)
 # check_stig_update_create_assets: true
+## 1.83.0, "STIG - drift scan and upload" (its check template sets these): a host with no asset scanned in full and
+## planned by the checklist import's planner - its collection, else the first of check_stig_stigman_collection_routes
+## that fits (usually in all.yml)
+# check_stig_update_new_by_import: true
+# check_stig_stigman_collection_routes: [{match: "*APP*", collection: "<your collection>"}, {os: rhel, collection: "<your collection>"}]
+"""),
+    "stig_full_scan.yml": ("STIG - full scan - Linux check", "Machine, STIG Manager API; Windows file share with check_stig_evaluate_answers", "check_stig", """\
+## 1.83.0, "STIG - full scan and upload": every rule of each Linux host scanned (Evaluate-STIG) and planned as a review;
+## STIG Manager - update writes it after the approval. STIG Manager's address and the scanner: as for the STIG drift
+## report (usually in all.yml)
+check_stig_stigman_api: https://STIGMAN-SERVER/api
+## On the workflow's check template (it sets it): the plan handed on, the job fails on purpose (NEEDS APPROVAL)
+# check_stig_update_workflow: true
+## Where a new asset goes: a host's own collection (per group or host), else the first route that fits (all.yml)
+# check_stig_stigman_collection: RHEL Servers
+# check_stig_stigman_collection_routes: [{match: "*APP*", collection: "<your collection>"}, {os: rhel, collection: "<your collection>"}]
+"""),
+    "win_stig_full_scan.yml": ("STIG - full scan - Windows check", "Machine (Windows), STIG Manager API", "win_check_stig", """\
+## 1.83.0, "STIG - full scan and upload", beside the Linux check: every rule of every STIG Evaluate-STIG finds on each
+## Windows server, planned as a review, handed on as stigman_update_plan_windows (its own gate, the same approval).
+## STIG Manager's address: as for the drift reports (usually in all.yml)
+check_stig_stigman_api: https://STIGMAN-SERVER/api
+## On the workflow's check template (it sets these): the plan handed on, NEEDS APPROVAL
+# check_stig_update_workflow: true
+# check_stig_update_plan_var: stigman_update_plan_windows
+## Evaluate-STIG on the servers, as for the Windows STIG drift report (empty = found)
+# win_check_stig_evaluate: 'C:\\Evaluate-STIG'
+## Where a new asset goes: a server's own collection (per group or host), else the first route that fits (all.yml)
+# check_stig_stigman_collection_routes: [{os: windows, collection: "<your collection>"}]
 """),
     "stigman_ckl_import.yml": ("STIG Manager - import checklists", "STIG Manager API (read-only is enough; with stigman_ckl_import_auto the client that writes), Windows file share", "stigman_ckl_import", """\
 ## Workflow 40's check: the checklists (CKL, CKLB) on your share matched to STIG Manager - the reviews to write and the new
@@ -772,6 +801,11 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## Workflow 37's check ("Windows STIG recheck - check") only: what to write to STIG Manager in the report, handed to
 ## the approval and "STIG Manager - update", the job fails on purpose (NEEDS APPROVAL). This job itself never writes.
 # check_stig_update_workflow: true
+## 1.83.0, "STIG - drift scan and upload" (its Windows check template sets these): a server with no asset scanned in
+## full and planned by the checklist import's planner (the routes); handed on as stigman_update_plan_windows
+# check_stig_update_create_assets: true
+# check_stig_update_new_by_import: true
+# check_stig_update_plan_var: stigman_update_plan_windows
 """),
     "win_trust_report.yml": ("Windows - trust store report", "Machine (Windows)", "win_check_trust", """\
 ## The trust check's list (roles/check_trust/vars/main.yml ships the October 2026 eMudhra set); add your own in

@@ -1092,7 +1092,7 @@ class Routes(unittest.TestCase):
                              ([{"collection": " "}], "stigman_ckl_import_routes, rule 1: collection is one collection's name or id, not ' '"),
                              (["VMware"], "stigman_ckl_import_routes, rule 1: 'VMware' is not a rule - each rule is {collection: "),
                              ([{"collection": "VMware"}, {"collection": "Linux", "hosts": "rhel*"}],
-                              "stigman_ckl_import_routes, rule 2: hosts is not a rule's key (collection, stigs, names, roles, tech_areas)")):
+                              "stigman_ckl_import_routes, rule 2: hosts is not a rule's key (collection, stigs, names, roles, tech_areas, os, inventory_hosts)")):
             d = routed()
             d["assets"]["5"] = [staged()]           # a host in staging: nothing read of it, nothing planned
             f = Fake(d)
@@ -1658,6 +1658,196 @@ class RouteReport(unittest.TestCase):
         fm = cf.FilterModule().filters()
         self.assertIs(fm["stig_ckl_for_attachments"], cf.stig_ckl_for_attachments)
         self.assertIs(fm["stig_ckl_after_attachments"], cf.stig_ckl_after_attachments)
+
+
+
+class FullScanFixes(unittest.TestCase):
+    """1.83.0, Codex on the STIG full scan's use of the planner."""
+
+    def test_an_asset_of_another_fqdn_is_never_this_host(self):
+        assets = [{"assetId": "42", "name": "db01", "fqdn": "db01.west.test"}, {"assetId": "43", "name": "web01", "fqdn": ""}]
+        self.assertEqual(ci.matching(["db01", "db01.east.test"], assets, "db01.east.test"), [])
+        self.assertEqual([a["assetId"] for a in ci.matching(["db01", "db01.west.test"], assets, "db01.west.test")], ["42"])
+        self.assertEqual([a["assetId"] for a in ci.matching(["web01", "web01.east.test"], assets, "web01.east.test")], ["43"])   # no FQDN there: by name
+        self.assertEqual([a["assetId"] for a in ci.matching(["db01", ""], assets)], ["42"])                                   # the checklist's FQDN not known
+
+    def test_a_cklb_rule_keeps_its_revision(self):
+        d = {"target_data": {"host_name": "H"}, "stigs": [{"stig_id": "RHEL_9_STIG", "version": "2", "release_info": "Release: 10",
+                                                             "rules": [{"rule_id": "SV-260001", "rule_id_src": "SV-260001r9_rule", "group_id": "V-260001",
+                                                                        "status": "open"}, {"rule_id": "SV-260002r1_rule", "status": "open"}]}]}
+        got = ci.parse("x.cklb", json.dumps(d).encode())
+        self.assertEqual([r["rule_id"] for r in got["stigs"][0]["rules"]], ["SV-260001r9_rule", "SV-260002r1_rule"])
+
+    def test_routes_see_the_inventory_name_and_the_os(self):
+        cols = [{"collectionId": "1", "name": "Enterprise"}, {"collectionId": "2", "name": "Windows"}, {"collectionId": "3", "name": "Platforms"}]
+        rts = ci.read_routes([{"collection": "Enterprise", "names": ["app*"]}, {"collection": "Windows", "os": ["windows"]},
+                              {"collection": "Platforms"}], cols)
+        alias = {"host": "asset-007", "fqdn": "", "alias": "app01", "os": "rhel"}
+        self.assertEqual(ci.route_of(rts, "asset-007", [("RHEL_9_STIG", "", alias)])[0]["want"], "Enterprise")
+        iis = {"host": "web01", "fqdn": "web01.example.mil", "alias": "web01.example.mil", "os": "windows"}
+        self.assertEqual(ci.route_of(rts, "web01-Default Web Site-NA", [("IIS_10-0_Site_STIG", "IIS 10.0 Site", iis)])[0]["want"], "Windows")
+        share = {"host": "web01", "fqdn": "", "os": ""}                  # a checklist from a share: no os - an os route never fits
+        self.assertEqual(ci.route_of(rts, "web01", [("IIS_10-0_Site_STIG", "", share)])[0]["want"], "Platforms")
+
+    def test_an_excluded_collection_is_left_out_before_its_grant(self):
+        cols = [{"collectionId": "1", "name": "Production"}, {"collectionId": "2", "name": "Archive 2024"}]
+        st, s = ci.pick_collections(cols, ["*"], "", {"1": 2, "2": 1}, True, ["Archive*"])
+        self.assertIsNone(st)
+        self.assertEqual([c["name"] for c in s], ["Production"])
+        with self.assertRaises(ci.Fail):
+            ci.pick_collections(cols, ["*"], "", {"1": 2, "2": 1}, True, [])
+
+
+class FullScanFixes2(unittest.TestCase):
+    """1.83.0, Codex's second pass on the STIG full and drift scans' planning."""
+
+    def plan(self, d, targets, new_only=False, files=None):
+        files = files or [{"name": n, "data": fixture(), "modified": "2026-11-05 10:00 UTC"} for n in targets]
+        got = ci.plan_all(params(collection="", collections=["*"], targets=targets, targets_only=True, new_only=new_only), Fake(d), files)
+        return got[1], files
+
+    def test_by_its_own_name_only(self):
+        d = data()
+        d["assets"]["5"] = [{"assetId": "51", "name": "vrops01.west.test", "fqdn": "", "collection": {"collectionId": "5"}}]
+        self.assertEqual(ci.matching(["vrops01", "vrops01.east.test"], d["assets"]["5"], "vrops01.east.test", True), [])
+        self.assertEqual(len(ci.matching(["vrops01", "vrops01.east.test"], d["assets"]["5"], "vrops01.east.test")), 1)   # a share's: as before
+
+    def test_two_hosts_one_asset_name_neither_planned(self):
+        plan, files = self.plan(data(), {"a/apache.ckl": {"host": "node", "fqdn": "node.west.test", "alias": "node.west.test"},
+                                         "b/apache.ckl": {"host": "node", "fqdn": "node.east.test", "alias": "node.east.test"}})
+        self.assertEqual(plan, [])
+        for f in files:
+            self.assertIn("node.east.test and node.west.test of the Limit would all be the asset node", f["error"])
+
+    def test_a_folder_read_holds_another_hosts_checklist(self):
+        plan, files = self.plan(data(), {"a/apache.ckl": {"host": "web01", "fqdn": "", "alias": "web01", "strict": True}})
+        self.assertEqual(plan, [])
+        self.assertIn("the checklist is of vrops01, not web01", files[0]["error"])
+        plan, files = self.plan(data(), {"a/apache.ckl": {"host": "vrops01", "fqdn": "", "alias": "vrops01.example.mil", "strict": True}})
+        self.assertFalse(files[0].get("error"))         # its own: read (no collection for a new asset here - no route)
+        self.assertEqual(files[0].get("checklists"), 1)
+
+    def test_the_drift_scan_never_gives_a_found_asset_a_full_update(self):
+        d = data()
+        d["assets"]["6"] = [{"assetId": "61", "name": "vrops01", "fqdn": "", "collection": {"collectionId": "6"}}]
+        d["collection_stigs"]["6"] = []
+        plan, files = self.plan(d, {"a/apache.ckl": {"host": "vrops01", "fqdn": "", "alias": "vrops01"}}, new_only=True)
+        self.assertEqual(plan, [])
+        self.assertIn("the drift scan plans only hosts with no asset - vrops01 has one in RHEL", files[0]["error"])
+
+    def test_a_lower_case_source_rule_id_keeps_its_revision(self):
+        d = {"target_data": {"host_name": "H"}, "stigs": [{"stig_id": "RHEL_9_STIG", "version": "2", "release_info": "Release: 10",
+                                                             "rules": [{"rule_id": "SV-257001", "rule_id_src": "sv-257001r987654_rule", "status": "open"}]}]}
+        got = ci.parse("x.cklb", json.dumps(d).encode())
+        self.assertEqual(got["stigs"][0]["rules"][0]["rule_id"], "sv-257001r987654_rule")
+
+class FullScanFinal(FullScanFixes2):
+    """1.83.0, Codex's final pass: a host's identity is never another's (P1 1, 2)."""
+
+    def test_a_folder_read_checklist_of_another_fqdn_with_the_same_short_name(self):
+        # vrops01.example.mil's checklist read for vrops01.east.test: one short name, two hosts - refused before its FQDN is replaced
+        plan, files = self.plan(data(), {"a/apache.ckl": {"host": "vrops01", "fqdn": "vrops01.east.test", "alias": "vrops01.east.test", "strict": True}})
+        self.assertEqual(plan, [])
+        self.assertIn("not planned: the checklist is of vrops01.example.mil, not vrops01.east.test", files[0]["error"])
+
+    def test_a_short_inventory_name_keeps_the_scans_fqdn_and_finds_its_asset(self):
+        d = data()
+        d["assets"]["6"] = [{"assetId": "61", "name": "vrops01.example.mil", "fqdn": "", "collection": {"collectionId": "6"}}]
+        d["collection_stigs"]["6"] = []
+        files = [{"name": "a/apache.ckl", "data": fixture(), "modified": "2026-11-05 10:00 UTC"}]
+        got = ci.plan_all(params(collection="", collections=["*"], targets={"a/apache.ckl": {"host": "vrops01", "fqdn": "", "alias": "vrops01"}},
+                                 targets_only=True), Fake(d), files)
+        self.assertFalse(files[0].get("error"), files[0])
+        self.assertEqual([x for x in got[1] if x.get("kind") == "create"], [])        # never a second asset beside it
+        self.assertEqual([(c["assetId"], c["new"]) for c in got[0]], [("61", False)])  # its asset in RHEL, found by the scan's FQDN
+
+    def test_a_short_name_candidate_it_cannot_tell_apart_is_never_made_again(self):
+        d = data()
+        d["assets"]["6"] = [{"assetId": "62", "name": "vrops01.west.test", "fqdn": "", "collection": {"collectionId": "6"}}]
+        d["collection_stigs"]["6"] = []
+        plan, files = self.plan(d, {"a/apache.ckl": {"host": "vrops01", "fqdn": "", "alias": "vrops01"}})
+        self.assertEqual(plan, [])
+        self.assertIn("not planned: no asset is vrops01 by its own name or FQDN, but vrops01.west.test in RHEL has its short name",
+                      files[0]["error"])
+
+    def test_an_asset_whose_fqdn_is_another_hosts_is_not_a_candidate(self):
+        d = data()
+        d["assets"]["6"] = [{"assetId": "63", "name": "vrops01", "fqdn": "vrops01.west.test", "collection": {"collectionId": "6"}}]
+        d["collection_stigs"]["6"] = []
+        plan, files = self.plan(d, {"a/apache.ckl": {"host": "vrops01", "fqdn": "vrops01.example.mil", "alias": "vrops01.example.mil"}})
+        self.assertNotIn("short name", files[0].get("error") or "")
+
+
+class DirectorCheck(FullScanFixes2):
+    """1.83.0, the director's check: a dotted check_stig_stigman_asset decides a folder read; a scan under an alias keeps
+    the host's own FQDN (P1 2, 3)."""
+
+    def test_a_dotted_asset_override_refuses_another_hosts_folder_checklist(self):
+        # inventory vrops01 (no FQDN), check_stig_stigman_asset vrops01.east: the folder holds vrops01.example.mil's
+        plan, files = self.plan(data(), {"a/apache.ckl": {"host": "vrops01.east", "fqdn": "", "alias": "vrops01", "strict": True}})
+        self.assertEqual(plan, [])
+        self.assertIn("not planned: the checklist is of vrops01.example.mil, not vrops01.east", files[0]["error"])
+
+    def test_a_dotted_override_without_its_domain_is_the_same_host(self):
+        plan, files = self.plan(data(), {"a/apache.ckl": {"host": "vrops01.example", "fqdn": "", "alias": "vrops01", "strict": True}})
+        self.assertNotIn("the checklist is of", files[0].get("error") or "")
+
+    def test_same_host(self):
+        self.assertTrue(ci.same_host("db01.east", "DB01.east.example.mil"))
+        self.assertTrue(ci.same_host("db01.example.mil.", "db01.example.mil"))
+        self.assertFalse(ci.same_host("db01.west.example.mil", "db01.east"))
+        self.assertFalse(ci.same_host("db01.east", "db01.eastern"))
+
+    def test_an_alias_keeps_the_scans_fqdn_and_finds_its_asset(self):
+        # inventory alias primary, scanned on the host itself (vrops01.example.mil): its asset is found, never a duplicate
+        d = data()
+        d["assets"]["6"] = [{"assetId": "64", "name": "vrops01", "fqdn": "vrops01.example.mil", "collection": {"collectionId": "6"}}]
+        d["collection_stigs"]["6"] = []
+        files = [{"name": "a/apache.ckl", "data": fixture(), "modified": "2026-11-05 10:00 UTC"}]
+        got = ci.plan_all(params(collection="", collections=["*"], targets={"a/apache.ckl": {"host": "primary", "fqdn": "", "alias": "primary"}},
+                                 targets_only=True), Fake(d), files)
+        self.assertFalse(files[0].get("error"), files[0])
+        self.assertEqual([x for x in got[1] if x.get("kind") == "create"], [])
+        self.assertEqual([(c["assetId"], c["new"]) for c in got[0]], [("64", False)])
+
+    def test_an_alias_with_only_a_short_name_candidate_is_not_made(self):
+        d = data()
+        d["assets"]["6"] = [{"assetId": "65", "name": "vrops01", "fqdn": "", "collection": {"collectionId": "6"}}]
+        d["collection_stigs"]["6"] = []
+        plan, files = self.plan(d, {"a/apache.ckl": {"host": "primary", "fqdn": "", "alias": "primary"}})
+        self.assertEqual(plan, [])
+        self.assertIn("not planned: no asset is primary by its own name or FQDN, but vrops01 in RHEL has its short name",
+                      files[0]["error"])
+
+
+class PlanOnlyEntry(unittest.TestCase):
+    """1.83.0, Codex's final pass (P1 6): the STIG scans' check plans through the import's plan-only entry point - no
+    variable (the job's extra vars outrank the include's) can make it write or move."""
+
+    def tasks(self, *path):
+        import yaml
+        with open(os.path.join(ROOT, *path)) as f:
+            return yaml.safe_load(f)
+
+    def test_plan_yml_has_no_write_and_no_move(self):
+        tasks = self.tasks("roles", "stigman_ckl_import", "tasks", "plan.yml")
+        text = json.dumps(tasks)
+        for word in ("write.yml", "stigman_update", "action", "main.yml", "include_tasks", "import_tasks"):
+            self.assertNotIn(word, text.replace("stigman_update_plan", "plan_var_name"), word)
+        roles = [t["ansible.builtin.include_role"] for t in tasks if "ansible.builtin.include_role" in t]
+        self.assertEqual(sorted(r["name"] for r in roles), ["check_stig", "site_email"])     # the attachments check (GET), the report
+        self.assertEqual([r.get("tasks_from") for r in roles if r["name"] == "check_stig"], ["update_attachments.yml"])
+        mod = [t["site_ckl_import"] for t in tasks if "site_ckl_import" in t]
+        self.assertEqual(len(mod), 1)
+        self.assertEqual((mod[0]["auto"], mod[0]["route_move"]), ("none", "none"))       # literals, never a variable
+        self.assertNotIn("action", mod[0])
+
+    def test_the_scans_include_plan_yml_never_main(self):
+        tasks = self.tasks("roles", "check_stig", "tasks", "full_plan.yml")
+        inc = [t["ansible.builtin.include_role"] for blk in tasks for t in blk.get("block") or [] if "ansible.builtin.include_role" in t]
+        self.assertEqual([(r["name"], r.get("tasks_from")) for r in inc], [("stigman_ckl_import", "plan.yml")])
+        with open(os.path.join(ROOT, "roles", "stigman_ckl_import", "tasks", "main.yml")) as f:
+            self.assertNotIn("_ci_plan_only", f.read())
 
 
 if __name__ == "__main__":

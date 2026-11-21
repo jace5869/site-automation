@@ -54,6 +54,7 @@ options:
   selected_only: {description: "1.75.0b: with vulns, those rules or nothing - no -SelectVuln, or nothing written with it: not scanned, never in full.", type: bool, default: false}
   rule_texts: {description: "1.77.0: every rule's item keeps its comment and finding details (the first 4000 characters each), not only a fail's details - what an answer file did (STIG answer keys - try my answer file).", type: bool, default: false}
   history: {description: "Compare with the earlier scans and keep this one with them (false - the STIG recheck - neither).", type: bool, default: true}
+  copy_to: {description: "1.83.0 (the STIG full scan, with history false): a folder the job made for this run - Evaluate-STIG's checklist is copied there (copied: its path), in a dry run too, for the job to take to the AAP side and remove. '' = none.", type: str, default: ''}
   answers: {description: "Evaluate-STIG: the folder on the host its answer files were copied to for this run ('' = its own).", type: str, default: ''}
   answers_arg: {description: "Evaluate-STIG's option for that folder (checked in its script).", type: str, default: --AFPath}
   answers_error: {description: "Why the answer files could not be read: Evaluate-STIG is not run, the host is not scanned. Not repeated in the result (the job's output has it).", type: str, default: ''}
@@ -1048,6 +1049,15 @@ class Scan(object):
         out.update(got["info"])
         out.update(scanned=True, why="", time=now.strftime("%Y-%m-%dT%H:%M:%SZ"), counts=counts(items), items=items, previous={},
                    passed_before={}, saved=saved, **got["extra"])
+        # 1.83.0: the full scan takes the checklist to the AAP side (the import's planner reads it); the job removes the folder
+        if p.get("copy_to") and got["results_"] and got["info"]["scanner"] == "Evaluate-STIG" and os.path.isdir(p["copy_to"]):
+            dst = os.path.join(p["copy_to"], "checklist" + got["results_ext"])
+            old = os.umask(0o077)
+            try:
+                shutil.copyfile(got["results_"], dst)
+            finally:
+                os.umask(old)
+            out["copied"] = dst
         return out
 
     def keep(self, d, stamp, summary, results, ext, rep_html, stamps):
@@ -1110,6 +1120,7 @@ def main():
         selected_only=dict(type="bool", default=False),
         rule_texts=dict(type="bool", default=False),
         history=dict(type="bool", default=True),
+        copy_to=dict(type="str", default=""),
         answers=dict(type="str", default=""),
         answers_arg=dict(type="str", default="--AFPath"),
         answers_error=dict(type="str", default=""),

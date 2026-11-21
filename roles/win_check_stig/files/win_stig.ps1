@@ -131,6 +131,10 @@ function Get-MySid {
 #              -SelectVuln when it has it (else it runs in full) - and only they are printed; [] = every rule
 #   history    $false (the recheck): not compared with the earlier scans nor kept with them - the checklist is kept as
 #              dir\recheck\<checklist>.<ext>
+#   copy_to    1.83.0 (the STIG full scan, with history $false): 'auto' - a folder of this run's own under TEMP
+#              (copy_dir: its path), each checklist copied there (copied: its path), in a dry run too; the job takes them to
+#              the AAP side, then runs this script again with remove: that folder
+#   remove     1.83.0: that folder removed - only a folder named site-stig-full-* right under TEMP, nothing else - and done
 $onWindows = ($env:OS -eq 'Windows_NT')
 $aclOn = [bool](Get-Command -Name Get-Acl -ErrorAction SilentlyContinue)
 $privateOk = @()
@@ -141,6 +145,7 @@ if (-not $dir) { $dir = Join-Path ([string]$env:ProgramData) 'site-automation\st
 $keep = [int](Get-Setting 'keep' 10)
 if ($keep -lt 1) { $keep = 1 }
 $save = [bool](Get-Setting 'save' $true)
+$copyTo = [string](Get-Setting 'copy_to' '')
 $timeout = [int](Get-Setting 'timeout' 3600)
 $runAs = [string](Get-Setting 'run_as' 'task')
 $readFrom = [string](Get-Setting 'read' '')
@@ -210,6 +215,31 @@ $facts.found_by = ''
 $facts.read = ''
 $facts.scans = @()
 $facts.os = ''
+# 1.83.0 (the STIG full scan): remove - the folder of an earlier run of it, by its name only; copy_to 'auto' - one for this run
+# Constrained Language Mode safe (Codex): Get-Item's own properties, never a .NET path method
+$tempBase = [string]$env:TEMP
+if (-not $tempBase) { $tempBase = [string]$env:TMP }
+$removeDir = [string](Get-Setting 'remove' '')
+if ($removeDir) {
+    $facts.removed = $false
+    $facts.why = 'not removed: ' + $removeDir + ' is not a folder of the STIG full scan right under TEMP'
+    $item = Get-Item -LiteralPath $removeDir -Force -ErrorAction SilentlyContinue
+    $base = if ($tempBase) { Get-Item -LiteralPath $tempBase -Force -ErrorAction SilentlyContinue } else { $null }
+    # only the folder copy_to 'auto' makes: a real folder (no link or junction), site-stig-full-<32 hex>, right under TEMP
+    # and its owner mark: the token this run's copy_to wrote in it (never another run's folder, or one made by hand)
+    $token = [string](Get-Setting 'remove_token' '')
+    $mark = if ($item -and $item.PSIsContainer) { Join-Path $item.FullName '.site-stig-owner' } else { '' }
+    $owned = $token -cmatch '^[0-9a-f]{32}$' -and $mark -and (Test-Path -LiteralPath $mark -PathType Leaf) -and
+             ([string](Get-Content -LiteralPath $mark -Raw -ErrorAction SilentlyContinue)).Trim() -ceq $token
+    if ($item -and $base -and $owned -and $item.PSIsContainer -and -not $item.LinkType -and $item.Name -cmatch '^site-stig-full-[0-9a-f]{32}$' -and
+        ([string]$item.Parent.FullName).TrimEnd('\', '/') -eq ([string]$base.FullName).TrimEnd('\', '/')) {
+        Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        $facts.removed = -not (Test-Path -LiteralPath $item.FullName)
+        $facts.why = if ($facts.removed) { '' } else { 'not removed: ' + $item.FullName + ' could not be deleted' }
+    }
+    Write-Result
+    exit 0
+}
 if ($onWindows) {
     try { $facts.os = [string](Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).Caption } catch { }
 }
@@ -839,6 +869,13 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
             Copy-Item -LiteralPath $File.FullName -Destination $kept -Force
             $scan.saved = @{ dir = $rd; results = $kept }
         }
+        if ($copyTo -and (Test-Path -LiteralPath $copyTo -PathType Container)) {
+            $copied = Join-Path $copyTo ($key + ([string]$File.Extension).ToLower())
+            $n = 2           # two checklists of one name (sites "Main Site" and "Main_Site"): each its own copy (Codex)
+            while (Test-Path -LiteralPath $copied) { $copied = Join-Path $copyTo ($key + '-' + $n + ([string]$File.Extension).ToLower()); $n++ }
+            Copy-Item -LiteralPath $File.FullName -Destination $copied
+            $scan.copied = $copied
+        }
         return $scan
     }
     if ($save) {
@@ -863,6 +900,16 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
     return $scan
 }
 
+# 1.83.0 (the STIG full scan): copy_to 'auto' - a private folder of this run's own under TEMP, for its checklists
+if ($copyTo -eq 'auto') {
+    if ($tempBase) {
+        $copyTo = Join-Path $tempBase ('site-stig-full-' + [guid]::NewGuid().ToString('N'))
+        New-PrivateFolder $copyTo
+        $facts.copy_token = [guid]::NewGuid().ToString('N')       # its owner mark: remove takes only a folder that has it
+        Set-Content -LiteralPath (Join-Path $copyTo '.site-stig-owner') -Value $facts.copy_token -Encoding ASCII
+        $facts.copy_dir = $copyTo
+    } else { $copyTo = '' }
+}
 try {
     $files = @()
     $readMode = [bool]$readFrom

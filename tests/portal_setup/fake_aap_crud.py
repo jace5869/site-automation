@@ -6,7 +6,7 @@ one by hand. Under api/controller/v2/, Bearer FAKE_AAP_TOKEN. Not AAP: just enou
   job_templates, workflow_job_templates     GET ?name= / <id>/, POST, PATCH <id>/
   job_templates/<id>/credentials/           GET, POST {id} or {id, disassociate}
   workflow_job_templates/<id>/workflow_nodes/   POST;  workflow_job_template_nodes/?workflow_job_template=  GET
-  workflow_job_template_nodes/<id>/         DELETE;  <id>/create_approval_template/, <id>/{success,failure,always}_nodes/ POST
+  workflow_job_template_nodes/<id>/         DELETE; PATCH (inventory, limit, unified_job_template, extra_data);  <id>/create_approval_template/, <id>/{success,failure,always}_nodes/ POST
                                             ({id}, or {id, disassociate: true}: the link removed)
   <kind>/<id>/labels/                       GET;  POST {name, organization} (made if new, then added) or {id, disassociate: true}  (1.78.1)
   <kind>/<id>/object_roles/                 GET (Execute, Approve, Admin)
@@ -15,7 +15,8 @@ one by hand. Under api/controller/v2/, Bearer FAKE_AAP_TOKEN. Not AAP: just enou
   credentials/<id>/                         PATCH (a rename: 400 when the organization has that name - AAP Credentials setup)
   a list GET filters on any other field too (?inventory=3);  schedules/ GET;  workflow_job_template_nodes/<id>/ PATCH;
   inventories/<id>/groups/, inventories/<id>/hosts/   GET ?name= (the state's groups and hosts, each with its inventory)
-A write to a path in the state's "fail_paths" answers 500 (a failure mid-run). Every write is a line in FAKE_AAP_LOG.  fake_aap_crud.py PORT"""
+A write to a path in the state's "fail_paths" answers 500 (a failure mid-run); a link from a node whose identifier is in
+"fail_links_from" too. Every write is a line in FAKE_AAP_LOG.  fake_aap_crud.py PORT"""
 import json
 import os
 import re
@@ -300,6 +301,8 @@ class H(BaseHTTPRequestHandler):
                 m = re.match(r"^workflow_job_template_nodes/(\d+)/(success|failure|always)_nodes/$", p)
                 if m:
                     n = next(x for x in s["nodes"] if x["id"] == int(m.group(1)))
+                    if n["identifier"] in (s.get("fail_links_from") or []) and not b.get("disassociate"):
+                        return self.send(500, {"detail": "a link refused (the test's fail_links_from)"})
                     if b.get("disassociate"):                   # a link removed (the node stays)
                         n[m.group(2)] = [x for x in n[m.group(2)] if x != int(b["id"])]
                     elif int(b["id"]) not in n[m.group(2)]:
@@ -356,7 +359,11 @@ class H(BaseHTTPRequestHandler):
                 n = next((x for x in s["nodes"] if x["id"] == int(m.group(1))), None)
                 if n is None:
                     return self.send(404, {"detail": "Not found."})
-                n.update(dict((k, v) for k, v in b.items() if k in ("inventory", "limit")))
+                if b.get("extra_data"):              # as AAP: Variables only for a template that asks for them on launch
+                    jt = next((j for j in s["job_templates"] if j["id"] == b.get("unified_job_template", n.get("unified_job_template"))), None)
+                    if jt and not jt.get("ask_variables_on_launch"):
+                        return self.send(400, {"extra_data": ["Variables are not allowed on launch for this template."]})
+                n.update(dict((k, v) for k, v in b.items() if k in ("inventory", "limit", "unified_job_template", "extra_data")))
                 save(s)
                 return self.send(200, node_view(s, n))
         return self.send(404, {"detail": "Not found."})

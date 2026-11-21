@@ -343,6 +343,13 @@ def no_grant(grants, it, need):
 def make_assets(p, client, check, grants=None):
     """The plan's new assets -> (their rows, {(collectionId, name lower): assetId, 'check', or None - not created})."""
     rows, ids = [], {}
+    # 1.83.0 (Codex P1): the STIG workflows' two plans (Linux, Windows) may each plan a new asset of one name in one
+    # collection (db01.linux, db01.windows -> db01): neither is created, so no host's reviews reach the other's asset
+    seen = {}
+    for it in p["plan"]:
+        if it.get("kind") == "create":
+            k = (str(it.get("collectionId", "")), str(it.get("asset") or "").lower())
+            seen.setdefault(k, set()).add(str(it.get("fqdn") or it.get("host") or "").lower())
     for n, it in enumerate(p["plan"]):
         if it.get("kind") != "create":
             continue
@@ -352,7 +359,12 @@ def make_assets(p, client, check, grants=None):
                "reviews": it.get("reviews", 0), "assetId": ""}
         rows.append(row)
         key = (c, name.lower())
-        if key in ids:              # the plan has it twice (two hosts, one name): the check never plans that
+        if len(seen.get(key, ())) > 1:  # two hosts, one name: none of them created
+            ids[key] = None
+            row.update(state="bad", why="the plan has this asset for %d hosts (%s) - not created; set check_stig_stigman_asset "
+                                        "on each" % (len(seen[key]), ", ".join(sorted(seen[key]))))
+            continue
+        if key in ids:              # the same host's asset twice: once
             row.update(state="bad", why="the plan has this asset twice - not created again")
             continue
         ids[key] = None
@@ -570,14 +582,18 @@ def label_of(review):
 def held(review):
     """What STIG Manager holds now, in the plan's words: {result, status, ts}."""
     if not review:
-        return {"result": "", "status": "", "ts": ""}
-    return {"result": review.get("result") or "", "status": label_of(review), "ts": review.get("ts") or review.get("touchTs") or ""}
+        return {"result": "", "status": "", "ts": "", "text": False}
+    # text: a person's words in it (detail or comment) - 1.83.0 (Codex P1)
+    return {"result": review.get("result") or "", "status": label_of(review), "ts": review.get("ts") or review.get("touchTs") or "",
+            "text": bool(str(review.get("detail") or "").strip() or str(review.get("comment") or "").strip())}
 
 
 def same(was, now):
     """Is the review as the check read it? No review then: none now (or one of Not Reviewed with nothing in it)."""
     if not was.get("result"):
-        return not now["result"] or (now["result"] == "notchecked" and (not was.get("ts") or now["ts"] == was.get("ts")))
+        # 1.83.0 (Codex P1): a Not Reviewed one made since the check with words in it is a person's - never written over
+        return not now["result"] or (now["result"] == "notchecked" and not now.get("text")
+                                     and (not was.get("ts") or now["ts"] == was.get("ts")))
     return now["result"] == was["result"] and now["status"] == was.get("status", "") and (not was.get("ts") or now["ts"] == was["ts"])
 
 

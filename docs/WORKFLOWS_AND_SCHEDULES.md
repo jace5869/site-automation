@@ -551,6 +551,10 @@ within the day: step 3 reads the same window again. docs/RUNBOOKS.md, "fapolicyd
 
 ### 37. STIG Manager updated, with an approval
 
+**1.83.0:** replaced by **STIG - drift scan and upload**: Linux and Windows in one workflow, and missing assets made.
+**AAP - set up job templates** makes it with every node linked ([STIG_JOBS.md](STIG_JOBS.md)). Delete this one when
+the new one runs.
+
 The STIG recheck's "update the review", written to STIG Manager after a person approves it.
 
 ```workflow

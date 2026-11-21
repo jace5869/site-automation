@@ -1,0 +1,73 @@
+---
+# STIG - FULL SCAN AND UPLOAD (1.83.0), its Windows check (the workflow's second step, after the Linux one:
+# playbooks/stig_full_scan.yml). Every Windows server of the Limit scanned in full - every rule of every STIG
+# Evaluate-STIG finds on it, with the Windows drift report's settings (win_check_stig_*) - and every rule's result planned as a
+# review for STIG Manager by the checklist import's own planner (workflow 40's): Not a Finding, Open (the scan's detail
+# and our comment), Not Applicable; Not Reviewed left for a person; what STIG Manager has so already left (Already so).
+# A host with no asset (not in any collection but check_stig_stigman_collections_exclude) is planned new - in its
+# check_stig_stigman_collection, else the first of check_stig_stigman_collection_routes that fits, else listed. All of
+# workflow 37's protections: check_stig_update_status; never a review with attachments or RA / Risk Acceptance / POAM /
+# POA&M words; Accepted written (check_stig_update_overwrite_accepted); each review read again before it is written.
+# Nothing is written here: on the workflow (check_stig_update_workflow: true) the plan is handed on and the job fails on
+# purpose (NEEDS APPROVAL); STIG Manager - update writes it after the approval. On the workflow the Windows check hands
+# its plan on as stigman_update_plan_windows (check_stig_update_plan_var), beside the Linux check's: two gates, one
+# approval. The AAP side's work runs in this play (delegated, once): a Limit leaves out any play of localhost alone.
+# docs/STIG_JOBS.md.
+#
+#   ansible-playbook playbooks/win_stig_full_scan.yml -e target=windows_servers --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: Windows STIG full scan
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    site_report_title: Windows STIG full scan
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    # the AAP side's folder for the checklists, made once (a play of localhost alone would be left out by the Limit)
+    - name: A folder on the AAP side for this run's checklists (removed after the plan)
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: site-stig-full-
+      register: _fs_dir
+      delegate_to: localhost
+      run_once: true
+      become: false
+      check_mode: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: Its path, for every host
+      ansible.builtin.set_fact:
+        _fs_local: "{{ _fs_dir.path }}"
+
+    - name: Scan in full, the checklists to the AAP side
+      ansible.builtin.include_role:
+        name: win_check_stig
+        tasks_from: full_scan.yml
+
+    - name: Plan every rule's result and the new assets, on the AAP side (the checklist import's planner; once)
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: full_plan.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _fp_title: Windows STIG full scan
+        _fp_hosts: "{{ ansible_play_hosts }}"

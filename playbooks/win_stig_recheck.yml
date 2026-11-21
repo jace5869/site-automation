@@ -26,6 +26,9 @@
   vars:
     site_os: windows
     site_report_title: Windows STIG recheck
+    # 1.83.0: the hosts with no asset the drift scan planned in full (check_stig_update_new_by_import)
+    _fs_new: "{{ ansible_play_hosts | map('extract', hostvars) | selectattr('_stig_new_by_import', 'defined') | selectattr('_stig_new_by_import')
+                 | map(attribute='inventory_hostname') | list }}"
     # report only: no finding is raised for what is open, so the job never says HEALTHY - what is open and what to
     # update are its lines above, and the report's title
     site_report_no_findings: REPORT ONLY - the open findings and STIG Manager's status updates are listed above
@@ -61,6 +64,27 @@
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: start.yml
+
+    # 1.83.0, the STIG drift scan (check_stig_update_new_by_import): a host with no asset is scanned in full - its checklist
+    # goes to a folder on the AAP side, made once here (a play of localhost alone would be left out by the Limit)
+    - name: A folder on the AAP side for the checklists of hosts with no asset (removed after their plan)
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: site-stig-drift-
+      register: _fs_dir
+      delegate_to: localhost
+      run_once: true
+      become: false
+      check_mode: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      when: check_stig_update_workflow | default(false) | bool and check_stig_update_new_by_import | default(false) | bool
+
+    - name: Its path, for every host
+      ansible.builtin.set_fact:
+        _fs_local: "{{ _fs_dir.path }}"
+      when: _fs_dir.path is defined
 
     - name: Read STIG Manager, check those rules again, compare
       ansible.builtin.include_role:
@@ -148,7 +172,16 @@
         per_host: false
         aggregate: false
       run_once: true
-      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
+      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0 and check_stig_update_plan_var | default('stigman_update_plan') == 'stigman_update_plan'
+
+    # 1.83.0: the STIG workflows' Windows check hands its plan on as stigman_update_plan_windows (its own gate, one approval)
+    - name: STIG Manager - hand them on under their own name (check_stig_update_plan_var)
+      ansible.builtin.set_stats:
+        data: "{{ {check_stig_update_plan_var: _stig_update_plan} }}"
+        per_host: false
+        aggregate: false
+      run_once: true
+      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0 and check_stig_update_plan_var | default('stigman_update_plan') != 'stigman_update_plan'
 
     # 1.73.0 (check_stig_rule_texts): each rule the tables above list, with DISA's check text and fix text - from STIG
     # Manager (read-only, once per STIG revision) or Evaluate-STIG's checklist (roles/check_stig/tasks/texts.yml)
@@ -177,6 +210,40 @@
         name: site_findings
         tasks_from: report.yml
 
+    # 1.83.0, the STIG drift scan (check_stig_update_new_by_import): the hosts with no asset, scanned in full, planned as
+    # new assets by the checklist import's planner (the routes) - after this job's own plan, handed on and asked for with it
+    - name: STIG drift scan - the hosts with no asset, planned (the checklist import's planner, on the AAP side; once)
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: full_plan.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _fp_title: "Windows STIG drift scan - new assets"
+        _fp_create: "{{ check_stig_update_create_assets | default(false) | bool }}"
+        _fp_before: "{{ _stig_update_plan | default([]) }}"
+        _fp_hosts: "{{ _fs_new }}"
+        _fp_new_only: true          # a host found in a collection the drift scan did not read: listed, never a full update
+      when: _fs_local is defined and _fs_new | length > 0
+
+    # Codex: no host without an asset (or the plan above stopped before its own cleanup): the folder removed all the same
+    - name: STIG drift scan - the AAP side's folder removed
+      ansible.builtin.file:
+        path: "{{ _fs_local }}"
+        state: absent
+      delegate_to: localhost
+      run_once: true
+      become: false
+      check_mode: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      when: _fs_local is defined
+
     - name: STIG Manager - NEEDS APPROVAL
       ansible.builtin.fail:
         msg: >-
@@ -185,6 +252,6 @@
           ("Approve writes these reviews to STIG Manager"). Approve the workflow's
           step to write them; deny it to write none.{{ (' ' ~ _stig_protected | length ~ ' protected review(s) left as they are (the report: Protected).') if _stig_protected | default([]) else '' }} {{ _stig_update_plan | map(attribute='line') | join(' || ') }}
       run_once: true
-      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
+      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0 and _fs_new | length == 0
       vars:
         _fresh: "{{ _stig_update_plan | selectattr('kind', 'eq', 'refresh') | list }}"

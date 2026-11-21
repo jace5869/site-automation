@@ -117,6 +117,14 @@ def match_assets(names, assets):
     return [a for a in assets if short(a.get("name")) in shorts or (a.get("fqdn") and short(a.get("fqdn")) in shorts)]
 
 
+def fqdn_differs(names, a):
+    """1.83.0 (hardening, kept as it was): the asset was matched by its short name only, and its FQDN is not the host's -
+    said in the report, never refused: '' or its FQDN."""
+    want = [n.lower() for n in names if n]
+    fq = (a.get("fqdn") or "").strip()
+    return fq if fq and fq.lower() not in want and any("." in n for n in want) else ""
+
+
 def rules_of(rows):
     """A STIG revision's rules -> {SV id: {v, rule, version, severity, title}}."""
     out = {}
@@ -471,7 +479,8 @@ def read(p, client):
             continue
         out[hid] = {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "collectionId": str(a["_col"].get("collectionId", "")),
                      "asset": a.get("name", ""),
-                     "assetId": str(a.get("assetId")), "benchmark": bench, "revision": rev, "reviews": rv}
+                     "assetId": str(a.get("assetId")), "benchmark": bench, "revision": rev, "reviews": rv,
+                     "fqdn_differs": fqdn_differs(names, a)}
         if rl is not None:
             out[hid]["rules"] = rl
             out[hid]["earlier"] = earlier(a, bench, rev, rv)

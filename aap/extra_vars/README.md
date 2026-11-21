@@ -101,10 +101,12 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Site portal - deploy | `playbooks/site_portal_deploy.yml` | [site_portal_deploy.yml](site_portal_deploy.yml) |
 | Site portal - open ticket | `playbooks/portal_open_ticket.yml` | [portal_open_ticket.yml](portal_open_ticket.yml) |
 | SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
+| STIG - answer file generator | `playbooks/stig_answer_keys.yml` | [stig_answer_keys.yml](stig_answer_keys.yml) |
 | STIG - fix one rule | `playbooks/stig_fix_rule.yml` | [stig_fix_rule.yml](stig_fix_rule.yml) |
 | STIG - fix one rule - apply | `playbooks/stig_fix_apply.yml` | [stig_fix_apply.yml](stig_fix_apply.yml) |
+| STIG - full scan - Linux check | `playbooks/stig_full_scan.yml` | [stig_full_scan.yml](stig_full_scan.yml) |
+| STIG - full scan - Windows check | `playbooks/win_stig_full_scan.yml` | [win_stig_full_scan.yml](win_stig_full_scan.yml) |
 | STIG - recheck one finding | `playbooks/stig_finding_recheck.yml` | [stig_finding_recheck.yml](stig_finding_recheck.yml) |
-| STIG answer keys | `playbooks/stig_answer_keys.yml` | [stig_answer_keys.yml](stig_answer_keys.yml) |
 | STIG answer keys - try my answer file | `playbooks/stig_answer_keys_try.yml` | [stig_answer_keys_try.yml](stig_answer_keys_try.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | [stigman_availability.yml](stigman_availability.yml) |

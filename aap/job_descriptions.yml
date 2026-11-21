@@ -82,7 +82,30 @@ templates:
     targets: "Windows servers of target (default all) within the Limit, over WinRM (Machine (Windows) credential); STIG Manager API read"
     produces: "The recheck report by email/website when set; a checklist on each server; in workflow 37 the plan stigman_update_plan for the approval"
     supports: "Run constraint=Read-only on target hosts but keeps a checklist in win_check_stig_dir\\recheck; STIG Manager read only; writes report email/website"
-  "STIG answer keys":
+  "STIG - full scan - Linux check":
+    does: "The full scan workflow's first step: every rule of each Linux host's STIG scanned and planned as a review for STIG Manager."
+    targets: "Linux hosts of the Limit, over SSH with sudo (Machine credential); STIG Manager API read; Evaluate-STIG on the hosts"
+    produces: "The plan (reviews and new assets) in its report by email/website and in stigman_update_plan for the approval; fails to ask it"
+    supports: "Run constraint=Read-only on target hosts (the checklist taken to the AAP side, its folder removed); STIG Manager read only (GET)"
+  "STIG - full scan - Windows check":
+    does: "The full scan workflow's second step: every rule of each Windows server scanned and planned, after the Linux step's plan."
+    targets: "Windows servers of the Limit, over WinRM (Machine (Windows) credential); STIG Manager API read; Evaluate-STIG on the servers"
+    produces: "The joined plan (Linux and Windows) in its report by email/website and in stigman_update_plan for the approval"
+    supports: "Run constraint=Read-only on target hosts (the checklists taken to the AAP side, their folder removed); STIG Manager read only (GET)"
+  "STIG - drift scan - Linux check":
+    replaces: ["STIG recheck - check"]
+    does: "The drift scan workflow's first step: rechecks what STIG Manager has Open or Not Reviewed; a host with no asset is scanned in full."
+    targets: "Linux hosts of the Limit, over SSH with sudo (Machine credential); STIG Manager API read"
+    produces: "The recheck report (and the new assets' report) by email/website; the plan in stigman_update_plan for the approval"
+    supports: "Run constraint=Read-only on target hosts (a checklist kept in check_stig_dir/recheck); STIG Manager read only (GET)"
+  "STIG - drift scan - Windows check":
+    replaces: ["Windows STIG recheck - check"]
+    does: "The drift scan workflow's second step: the same on Windows servers, after the Linux step's plan; no asset: scanned in full."
+    targets: "Windows servers of the Limit, over WinRM (Machine (Windows) credential); STIG Manager API read"
+    produces: "The recheck report (and the new assets' report) by email/website; the joined plan in stigman_update_plan for the approval"
+    supports: "Run constraint=Read-only on target hosts (checklists kept in win_check_stig_dir\\recheck); STIG Manager read only (GET)"
+  "STIG - answer file generator":
+    replaces: ["STIG answer keys"]
     does: "Builds Evaluate-STIG AnswerKey blocks per rule (from DISA check text, or drafted by ACT) for people to copy into their own answer files."
     targets: "Linux hosts with Evaluate-STIG (pwsh) of target or the Limit (Machine credential); STIG Manager API read; ACT model on the AAP side"
     produces: "A report of the answer key blocks, with answer XML files attached, by email and on the report website when set"
@@ -1047,6 +1070,48 @@ workflows:
     targets: "Linux hosts in the Limit (the hosts that must run fapolicyd)."
     produces: "fapolicyd report (emailed, on the report website), the approval, the approved job's output."
     supports: "Run constraint=Changes hosts' fapolicyd (start, trust, rules, mode) after an approval; a security control; writes email, website."
+  - name: "STIG - full scan and upload"
+    source: "docs/STIG_JOBS.md (1.83.0); made by AAP - set up job templates"
+    playbooks: [playbooks/stig_full_scan.yml, playbooks/win_stig_full_scan.yml, playbooks/workflow_gate.yml, playbooks/stigman_update.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: linux, template: "STIG - full scan - Linux check", failure: [gate_linux]}
+      - {id: windows, template: "STIG - full scan - Windows check", failure: [gate_windows]}
+      - {id: gate_linux, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: stigman_update_plan}, success: [approve]}
+      - {id: gate_windows, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: stigman_update_plan_windows}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Write the full scan's reviews (and the new assets) to STIG Manager?"
+          timeout: 28800
+          description: "Open the checks' reports: Approve writes these reviews and creates these assets in STIG Manager."
+        success: [update]
+      - {id: update, template: "STIG Manager - update"}
+    does: "Scans every host of the Limit in full (Linux and Windows) and writes every rule's result to STIG Manager once a person approves."
+    targets: "Linux hosts (SSH) and Windows servers (WinRM) of the Limit; the STIG Manager API for the update."
+    produces: "Each check's report (emailed, on the report website), the approval, the update's report of the reviews written and assets made."
+    supports: "Run constraint=Writes STIG Manager (reviews, new assets) after an approval; hosts only read (checklists taken, folders removed)."
+  - name: "STIG - drift scan and upload"
+    source: "docs/STIG_JOBS.md (1.83.0, workflow 37 renamed); made by AAP - set up job templates"
+    playbooks: [playbooks/stig_recheck.yml, playbooks/win_stig_recheck.yml, playbooks/workflow_gate.yml, playbooks/stigman_update.yml]
+    prompts: {limit: true}
+    replaces: ["STIG Manager updated, with an approval", "STIG Manager updated, with an approval (Windows)",
+               "STIG Manager updated (Linux and Windows)"]
+    nodes:
+      - {id: linux, template: "STIG - drift scan - Linux check", failure: [gate_linux]}
+      - {id: windows, template: "STIG - drift scan - Windows check", failure: [gate_windows]}
+      - {id: gate_linux, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: stigman_update_plan}, success: [approve]}
+      - {id: gate_windows, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: stigman_update_plan_windows}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Write the drift scan's reviews (and the new assets) to STIG Manager?"
+          timeout: 28800
+          description: "Open the checks' reports: Approve writes these reviews and creates these assets in STIG Manager."
+        success: [update]
+      - {id: update, template: "STIG Manager - update"}
+    does: "Rechecks what STIG Manager has Open or Not Reviewed on the Limit's hosts, makes missing assets, writes it all once a person approves."
+    targets: "Linux hosts (SSH) and Windows servers (WinRM) of the Limit; the STIG Manager API for the update."
+    produces: "Each check's report (emailed, on the report website), the approval, the update's report of the reviews written and assets made."
+    supports: "Run constraint=Writes STIG Manager (reviews, new assets) after an approval; hosts only read (a checklist file kept)."
   - name: "STIG Manager updated, with an approval"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 37; docs/STIG_DRIFT.md Updating STIG Manager"
     playbooks: [playbooks/stig_recheck.yml, playbooks/workflow_gate.yml, playbooks/stigman_update.yml]

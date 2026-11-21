@@ -108,6 +108,11 @@
     match_skip_areas: "{{ aap_templates_rename_skip_areas }}"
     create_missing: "{{ aap_templates_create_missing | bool }}"
     renamed: "{{ (_atr.renamed | default({'job': {}})).job if ansible_check_mode else {} }}"
+    # 1.83.0: the steps of the catalog's workflows - one another job makes (the gate, STIG Manager - update) is made here
+    # when AAP has none, so the workflows below have every step after one run
+    needed: "{{ _at_workflows | selectattr('nodes', 'defined') | map(attribute='nodes') | flatten
+                | selectattr('template', 'defined') | map(attribute='template') | unique | list }}"
+    step_names: "{{ aap_templates_step_names | default({}) }}"
     ca_path: "{{ aap_templates_ca_path }}"
   register: _at
 
@@ -118,7 +123,7 @@
       {%- set out = [] -%}
       {%- set verb = {'create': ('WOULD CREATE' if ansible_check_mode else 'created'), 'fix': ('WOULD FIX' if ansible_check_mode else 'fixed'),
                       'right': 'already right', 'differs': 'DIFFERS', 'other name': 'same playbook, other name',
-                      'skipped': 'SKIPPED', 'left': 'left to another job', 'failed': 'FAILED'} -%}
+                      'skipped': 'SKIPPED', 'left': 'left to another job', 'failed': 'FAILED', 'uses': 'USES', 'rename': 'RENAME'} -%}
       {#- 1.79.19: not made with aap_templates_create_missing: false - counted in short only -#}
       {%- for r in _at.results if r.action != 'missing' -%}
       {%-   set _ = out.append(verb[r.action] ~ " - '" ~ r.name ~ "'" ~ ((' - ' ~ r.why) if r.why and r.action not in ['create', 'fix'] else '')) -%}
@@ -147,6 +152,51 @@
       {%- set nl = _at.results | selectattr('labels', 'defined') | selectattr('labels') | list | length -%}
       {{ (n | dictsort | map('join', ': ') | join(', ') or 'nothing') ~ ((', ' ~ ('would label portal: ' if ansible_check_mode else 'labelled portal: ') ~ nl) if nl else '')
          ~ ((' (missing: not made - aap_templates_create_missing: false)') if n.get('missing', 0) > 0 else '') }}
+
+# 1.83.0: the catalog's workflows that have nodes (STIG - full scan and upload, STIG - drift scan and upload): made with
+# every node and link, the portal's label on the workflow (never on its steps), after the templates; the old templates and
+# workflows they replace named - never deleted. A Check run only reads.
+- name: Job templates | the catalog's workflows (every node and link), and the old ones they replace
+  when: not aap_templates_describe_only | bool
+  site_aap_template_workflows:
+    workflows: "{{ _at_workflows }}"
+    templates: "{{ _at_catalog }}"
+    organization: "{{ aap_templates_organization }}"
+    project: "{{ aap_templates_project }}"           # every step checked here too, whatever aap_templates_only says
+    planned: "{{ _at.results | selectattr('action', 'eq', 'create') | map(attribute='name') | list }}"
+    fixing: "{{ _at.results | selectattr('action', 'eq', 'fix') | map(attribute='name') | list }}"
+    uses: "{{ _at.uses | default({}) }}"            # the site's own update or gate, used for the step
+    renamed: "{{ _at.renamed | default([]) }}"
+    refused: "{{ _at.refused | default([]) }}"       # steps not fit to wire (another playbook, a Limit prompt)
+    overwrite: "{{ aap_templates_overwrite | bool }}"
+    labels: "{{ [aap_templates_portal_label, aap_templates_portal_label_area ~ 'STIG'] if aap_templates_portal_label else [] }}"
+    describe:
+      workflow: "{{ dict(_at_workflows | map(attribute='name') | zip(_at_workflows | map(attribute='description', default={}))) }}"
+      owner: "{{ aap_templates_description_owner | default('') }}"
+      contact: "{{ aap_templates_description_contact | default('') }}"
+    only: "{{ aap_templates_only }}"
+    ca_path: "{{ aap_templates_ca_path }}"
+  register: _atw
+
+- name: Job templates | the workflows - what was done
+  when: not aap_templates_describe_only | bool
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- set verb = {'create': ('WOULD CREATE' if ansible_check_mode else 'created'), 'update': ('WOULD UPDATE' if ansible_check_mode else 'updated'),
+                      'unchanged': 'already right', 'hand-edited': 'CHANGED BY HAND', 'not ours': 'NOT MADE BY THIS JOB',
+                      'skipped': 'SKIPPED', 'label': 'label', 'old': 'OLD', 'kept': 'KEEP', 'failed': 'FAILED'} -%}
+      {%- for r in _atw.results -%}
+      {%-   set _ = out.append(verb.get(r.action, r.action) ~ ' - ' ~ r.kind ~ " '" ~ r.name ~ "'" ~ ((' - ' ~ r.why) if r.why else '')) -%}
+      {%-   for n in r.nodes | default([]) -%}
+      {%-     set _ = out.append('    node ' ~ n.id ~ ': ' ~ (("'" ~ n.template ~ "'") if n.template | default('') else ("approval '" ~ n.approval.name ~ "'"))
+                               ~ (('; on success -> ' ~ (n.success | join(', '))) if n.success | default([]) else '')
+                               ~ (('; on failure -> ' ~ (n.failure | join(', '))) if n.failure | default([]) else '')
+                               ~ (('; always -> ' ~ (n.always | join(', '))) if n.always | default([]) else '')
+                               ~ (('; its Variables: ' ~ (n.extra_data | dictsort | map('join', ': ') | join(', '))) if n.extra_data | default({}) else '')) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out or ['no catalog workflow matches aap_templates_only'] }}
 
 # 1.79.11: the descriptions (aap_templates_describe) - after the templates are made, so a new one is described in the same
 # run; nothing found or read there is ever a failure (a warning); only a write AAP refuses stops the job
@@ -216,5 +266,5 @@
 
 - name: Job templates | a name not found, AAP not read, or a write that failed - see above
   ansible.builtin.fail:
-    msg: "{{ _at.problems }}"
-  when: not aap_templates_describe_only | bool and _at.problems | length > 0
+    msg: "{{ _at.problems + _atw.problems | default([]) }}"
+  when: not aap_templates_describe_only | bool and (_at.problems + _atw.problems | default([])) | length > 0

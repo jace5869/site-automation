@@ -209,7 +209,230 @@ setst "s.pop('project_playbooks')"
     && pass "a playbook the project lacks: said in Check, before any write" || fail "playbook" "rc $rc; $(grep -E "fatal|not in project" "$work/out.txt" | head -3)"
 
 # ---- never a DELETE, never a secret
-grep -q '"DELETE"' "$work/writes.jsonl" && fail "a DELETE" "$(grep DELETE "$work/writes.jsonl" | head -2)" || pass "never a DELETE"
+# ---- 1.83.0: the STIG jobs - the two workflows with every node and link, their steps (the gate and STIG Manager - update
+# too, when AAP has none), the portal's label on the workflows only, the old names said - never deleted
+setst "s['job_templates'].append(dict(s['job_templates'][1], id=120, name='STIG answer keys', playbook='playbooks/stig_answer_keys.yml'));
+s['workflow_job_templates'].append({'id': 121, 'name': 'STIG Manager updated, with an approval', 'organization': 1, 'description': '', 'labels': []})"
+cat > "$work/stig.json" <<'EOF2'
+{"aap_templates_only": ["STIG - *", "Workflow gate - has a plan", "STIG Manager - update"],
+ "aap_templates_credentials": {"machine": "Linux machine", "machine_windows": "Windows machine", "stigman_api": "STIG Manager API",
+                               "stigman_api_writer": "STIG Manager API", "act_model_key": "ACT model key"}}
+EOF2
+before="$(writes)"
+run --check -e "@$work/stig.json"; rc=$?
+if [ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "WOULD CREATE - 'STIG - full scan - Linux check'" && has "WOULD CREATE - 'STIG Manager - update'" \
+    && has "WOULD CREATE - 'Workflow gate - has a plan'" && has "WOULD CREATE - workflow 'STIG - full scan and upload'" \
+    && has "WOULD CREATE - workflow 'STIG - drift scan and upload'" \
+    && has "node linux: 'STIG - full scan - Linux check'; on failure -> gate_linux" && has "node windows: 'STIG - full scan - Windows check'; on failure -> gate_windows" \
+    && has "node gate_linux: 'Workflow gate - has a plan'; on success -> approve; its Variables: workflow_gate_var: stigman_update_plan" \
+    && has "node gate_windows: 'Workflow gate - has a plan'; on success -> approve; its Variables: workflow_gate_var: stigman_update_plan_windows" \
+    && has "node approve: approval 'Write the full scan's reviews (and the new assets) to STIG Manager?'; on success -> update" \
+    && has "node update: 'STIG Manager - update'" && has "label - workflow 'STIG - full scan and upload' - would label it: portal, portal-area:STIG" \
+    && has "RENAME - 'STIG - answer file generator' - rename 'STIG answer keys' to 'STIG - answer file generator' when ready" \
+    && ! has "WOULD CREATE - 'STIG - answer file generator'" && ! has "OLD - old 'STIG answer keys'" \
+    && has "OLD - old 'STIG Manager updated, with an approval' - workflow replaced by 'STIG - drift scan and upload' - delete it when ready"; then
+    pass "STIG jobs, Check: the templates, both workflows node by node and link by link, the old names - nothing written"
+else echo "      STIG jobs, Check: rc $rc, $(writes) writes vs $before"; fail "STIG jobs, Check" "$(grep -E "WOULD|node|OLD|label|SKIPPED|other name|fatal|msg" "$work/out.txt" | head -40)"; fi
+cp "$work/out.txt" "$work/stig-check.txt"
+# 1.83.1 (P2-5): what replaces an old name is skipped (no Windows credential mapped) - the old one is kept, never
+# "replaced ... delete it when ready"
+before="$(writes)"
+run --check -e "@$work/stig.json" -e '{"aap_templates_credentials": {"machine": "Linux machine", "stigman_api": "STIG Manager API", "stigman_api_writer": "STIG Manager API"}}'; rc=$?
+if [ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "SKIPPED - 'STIG - drift scan - Windows check' - credential kind machine_windows not mapped" \
+    && has "SKIPPED - workflow 'STIG - drift scan and upload'" \
+    && has "KEEP - old 'STIG Manager updated, with an approval' - workflow - keep it: 'STIG - drift scan and upload', which replaces it, is not in AAP and would not be made (see above)" \
+    && ! has "OLD - old 'STIG Manager updated, with an approval'"; then
+    pass "STIG jobs, Check: the new workflow skipped - the old one it replaces is kept (KEEP), never 'delete it when ready'"
+else fail "old name kept when its replacement is skipped" "rc $rc; $(grep -E "SKIPPED|OLD|KEEP|fatal|msg" "$work/out.txt" | head -12)"; fi
+# the site's own update and gate, under other names (the director: never a second one) - used for the steps
+setst "s['job_templates'].append(dict(s['job_templates'][1], id=122, name='STIG update', playbook='playbooks/stigman_update.yml', credentials=[13], ask_limit_on_launch=False));
+s['job_templates'].append(dict(s['job_templates'][1], id=123, name='Has a plan', playbook='playbooks/workflow_gate.yml', credentials=[], ask_variables_on_launch=True, ask_limit_on_launch=False))"
+before="$(writes)"
+run --check -e "@$work/stig.json"; rc=$?
+if [ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "USES - 'STIG Manager - update' - uses 'STIG update' (playbooks/stigman_update.yml) for the update step" \
+    && has "USES - 'Workflow gate - has a plan' - uses 'Has a plan' (playbooks/workflow_gate.yml) for the gate step" \
+    && has "node update: 'STIG update'" && has "node gate_linux: 'Has a plan'; on success -> approve" && ! has "WOULD CREATE - 'STIG Manager - update'" \
+    && ! has "WOULD CREATE - 'Workflow gate - has a plan'"; then
+    pass "STIG jobs, Check: the site's own update and gate (other names) used for the steps, never made again"
+else fail "STIG jobs, Check with the site's own update" "$(grep -E "USES|WOULD|node|SKIPPED|fatal|msg" "$work/out.txt" | head -30)"; fi
+[ -n "${AAP_TEMPLATES_KEEP:-}" ] && cp "$work/out.txt" "$AAP_TEMPLATES_KEEP"        # the STIG jobs' Check output, to read
+run -e "@$work/stig.json"; rc=$?
+got="$("$py" - "$work/state.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+out = []
+for wname in ("STIG - full scan and upload", "STIG - drift scan and upload"):
+    w = [x for x in s["workflow_job_templates"] if x["name"] == wname]
+    if len(w) != 1:
+        print("no workflow %s" % wname); sys.exit(0)
+    w = w[0]
+    nodes = [n for n in s["nodes"] if n["wf"] == w["id"]]
+    by = dict((n["id"], n["identifier"]) for n in nodes)
+    tname = dict((j["id"], j["name"]) for j in s["job_templates"])
+    aname = dict((a["id"], a["name"]) for a in s["approvals"])
+    for n in sorted(nodes, key=lambda n: n["identifier"]):
+        what = tname.get(n["unified_job_template"]) if n.get("unified_job_template") else "approval:" + aname.get(n["approval"], "?")
+        links = ";".join("%s>%s" % (k, ",".join(sorted(by[x] for x in n[k]))) for k in ("success", "failure", "always") if n[k])
+        out.append("%s|%s|%s|%s|%s" % (wname.split(" - ")[1].split()[0], n["identifier"], what, links, json.dumps(n.get("extra_data") or {}, sort_keys=True)))
+    labels = sorted(l["name"] for l in s.get("labels", []) if l["id"] in w.get("labels", []))
+    out.append("%s labels %s limit %s" % (wname.split(" - ")[1].split()[0], ",".join(labels), w.get("ask_limit_on_launch")))
+upd = [j for j in s["job_templates"] if j["name"] == "STIG Manager - update"]
+out.append("update labels %s" % ((upd[0].get("labels") or []) if upd else "none"))
+gate = [j for j in s["job_templates"] if j["name"] == "Workflow gate - has a plan"]
+out.append("gate asks variables %s" % (gate[0].get("ask_variables_on_launch") if gate else "none"))
+mine = [j for j in s["job_templates"] if j["name"] == "STIG update"]
+out.append("STIG update labels %s" % (mine[0].get("labels") or []))
+print("\n".join(out))
+PY
+)"
+want="full|approve|approval:Write the full scan's reviews (and the new assets) to STIG Manager?|success>update|{}
+full|gate_linux|Has a plan|success>approve|{\"workflow_gate_var\": \"stigman_update_plan\"}
+full|gate_windows|Has a plan|success>approve|{\"workflow_gate_var\": \"stigman_update_plan_windows\"}
+full|linux|STIG - full scan - Linux check|failure>gate_linux|{}
+full|update|STIG update||{}
+full|windows|STIG - full scan - Windows check|failure>gate_windows|{}
+full labels portal,portal-area:STIG limit True
+drift|approve|approval:Write the drift scan's reviews (and the new assets) to STIG Manager?|success>update|{}
+drift|gate_linux|Has a plan|success>approve|{\"workflow_gate_var\": \"stigman_update_plan\"}
+drift|gate_windows|Has a plan|success>approve|{\"workflow_gate_var\": \"stigman_update_plan_windows\"}
+drift|linux|STIG - drift scan - Linux check|failure>gate_linux|{}
+drift|update|STIG update||{}
+drift|windows|STIG - drift scan - Windows check|failure>gate_windows|{}
+drift labels portal,portal-area:STIG limit True
+update labels none
+gate asks variables none
+STIG update labels []"
+[ $rc = 0 ] && [ "$got" = "$want" ] && pass "STIG jobs, a run: both workflows made with the site's own update and gate - each node, link, approval, the gate's Variables; labelled; not the update" \
+    || fail "STIG jobs, a run" "rc $rc; got:
+$got
+$(grep -E "created|SKIPPED|FAILED|fatal|msg" "$work/out.txt" | head -10)"
+ev="$(tpl 'STIG - drift scan - Windows check' "['extra_vars']")"
+case "$ev" in *"check_stig_update_new_by_import: \"true\""*"check_stig_update_plan_var: \"stigman_update_plan_windows\""*) pass "... the Windows drift check hands its plan on as stigman_update_plan_windows and makes new assets by the import's planner" ;;
+    *) fail "the drift check's fixed Variables" "$ev" ;; esac
+before="$(writes)"
+run -e "@$work/stig.json"; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "already right - workflow 'STIG - full scan and upload'" && has "already right - workflow 'STIG - drift scan and upload'" \
+    && pass "STIG jobs, a second run: already right, nothing written" || fail "STIG jobs, second run" "rc $rc; $(writes) vs $before; $(grep -E "workflow|fatal" "$work/out.txt" | head -6)"
+[ "$(st "len([w for w in s['workflow_job_templates'] if w['name'] == 'STIG Manager updated, with an approval'])")" = 1 ] \
+    && pass "... the old workflow is still there (named, never deleted)" || fail "the old workflow was deleted"
+# 1.83.1 (P2-1): a step whose fixed Variables lack the plan var differs - never "already right"; overwrite sets
+# only those keys, a person's own settings kept
+setst "[j.update(extra_vars=j['extra_vars'].replace('check_stig_update_plan_var: \"stigman_update_plan_windows\"\\n', '') + 'site_note: mine\\n') for j in s['job_templates'] if j['name'] == 'STIG - drift scan - Windows check' and j['organization'] == 1]"
+nl=$'\n'
+case "$nl$(tpl 'STIG - drift scan - Windows check' "['extra_vars']")" in *"${nl}check_stig_update_plan_var:"*) fail "the test did not take the plan var off" ;; esac
+before="$(writes)"
+run --check -e "@$work/stig.json"; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "DIFFERS - 'STIG - drift scan - Windows check' - aap_templates_overwrite: true brings it right" \
+    && has "variable check_stig_update_plan_var: has none, should be stigman_update_plan_windows" && ! has "already right - 'STIG - drift scan - Windows check'" \
+    && pass "STIG jobs: a Windows check without the plan var - DIFFERS, the variable said, never already right" \
+    || fail "a step's fixed Variables changed" "rc $rc; $(grep -E "DIFFERS|variable|already right - 'STIG|fatal|msg" "$work/out.txt" | head -10)"
+run -e "@$work/stig.json" -e aap_templates_overwrite=true; rc=$?
+ev="$(tpl 'STIG - drift scan - Windows check' "['extra_vars']")"
+case "$rc|$ev" in 0\|*"check_stig_update_plan_var: \"stigman_update_plan_windows\""*"site_note: mine"*) pass "... aap_templates_overwrite: the plan var set again, the person's own setting kept" ;;
+    *) fail "overwrite of the fixed Variables" "rc $rc; $ev; $(grep -E "brought|FAILED|fatal|msg" "$work/out.txt" | head -6)" ;; esac
+before="$(writes)"
+run --check -e "@$work/stig.json"; rc=$?
+[ $rc = 0 ] && has "already right - 'STIG - drift scan - Windows check'" && pass "... then already right" \
+    || fail "already right after the overwrite" "rc $rc; $(grep -E "DIFFERS|variable|fatal" "$work/out.txt" | head -6)"
+# two of the site's templates run the update's playbook: which one is not guessed - aap_templates_step_names names it
+setst "s['job_templates'].append(dict(s['job_templates'][1], id=124, name='STIG update 2', playbook='playbooks/stigman_update.yml', credentials=[13], ask_limit_on_launch=False))"
+run --check -e "@$work/stig.json"; rc=$?
+[ $rc = 0 ] && has "SKIPPED - 'STIG Manager - update' - several templates run playbooks/stigman_update.yml: 'STIG update', 'STIG update 2' - name the one for the update step in aap_templates_step_names" \
+    && pass "STIG jobs: two of the site's update templates - not guessed, said with the setting" || fail "two update templates" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
+run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+[ $rc = 0 ] && has "USES - 'STIG Manager - update' - uses 'STIG update' (playbooks/stigman_update.yml) for the update step" \
+    && has "already right - workflow 'STIG - full scan and upload'" && pass "... aap_templates_step_names: that one used, the workflows already right" \
+    || fail "step_names" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
+# Codex (1.83.0): a workflow of that name in another organization is never this one's
+setst "s['workflow_job_templates'].append(dict([w for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload'][0], id=977, organization=9))"
+run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+[ $rc = 0 ] && has "already right - workflow 'STIG - full scan and upload'" && ! has "of that name: rename one" \
+    && pass "... a workflow of that name in another organization: never this one's" || fail "another organization's workflow" "$(grep -E "SKIPPED|workflow|fatal" "$work/out.txt" | head -8)"
+# Codex (1.83.0): the step named must run its playbook; a reused step that asks for a Limit would do nothing under the workflow's
+run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "Health check"}}'; rc=$?
+[ $rc = 0 ] && has "SKIPPED - 'STIG Manager - update' - aap_templates_step_names names 'Health check' for it, but it runs playbooks/" \
+    && ! has "WOULD CREATE - workflow 'STIG - full scan and upload'" && pass "... a step named that runs another playbook: refused, said" \
+    || fail "step_names to another playbook" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
+setst "[j.update(ask_limit_on_launch=True) for j in s['job_templates'] if j['name'] == 'STIG update']"
+run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+[ $rc = 0 ] && has "SKIPPED - 'STIG Manager - update' - 'STIG update' runs playbooks/stigman_update.yml but asks for a Limit on launch" \
+    && pass "... a reused update that asks for a Limit: refused, said (the workflow's Limit would reach it)" \
+    || fail "reused update with a Limit prompt" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
+
+# Codex P1 (1.83.0, final pass): a template under the gate's own name that runs the update - refused, never wired
+setst "[j.update(ask_limit_on_launch=False) for j in s['job_templates'] if j['name'] == 'STIG update'];
+s['job_templates'].append(dict(s['job_templates'][1], id=125, name='Workflow gate - has a plan', playbook='playbooks/stigman_update.yml', credentials=[13], ask_variables_on_launch=True, ask_limit_on_launch=False))"
+before="$(writes)"
+run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = "$before" ] \
+    && has "SKIPPED - 'Workflow gate - has a plan' - 'Workflow gate - has a plan' runs playbooks/stigman_update.yml - the step must run playbooks/workflow_gate.yml from this project; the workflows that need it are not made" \
+    && has "SKIPPED - workflow 'STIG - full scan and upload' - its step(s) 'Workflow gate - has a plan' refused above - not made or changed" \
+    && has "SKIPPED - workflow 'STIG - drift scan and upload' - its step(s) 'Workflow gate - has a plan' refused above" \
+    && pass "a template under the gate's name that runs the update: refused, its workflows not wired to it (Check)" \
+    || fail "a gate that runs the update" "rc $rc; $(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -10)"
+run -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+[ "$(st "len([n for n in s['nodes'] if n.get('unified_job_template') == 125])")" = 0 ] \
+    && pass "... a run: no node of any workflow runs it" || fail "the gate that runs the update was wired" "rc $rc"
+# the director's check (1.83.0): aap_templates_only naming the workflow alone - the template job plans no step, the workflow
+# job checks each step's template itself
+cat > "$work/stig-wf.json" <<'EOF2'
+{"aap_templates_only": ["STIG - full scan and upload"],
+ "aap_templates_credentials": {"machine": "Linux machine", "machine_windows": "Windows machine", "stigman_api": "STIG Manager API",
+                               "stigman_api_writer": "STIG Manager API", "act_model_key": "ACT model key"}}
+EOF2
+# the update there under its own name, right: the gate is the only step that is wrong
+setst "s['job_templates'].append(dict(s['job_templates'][1], id=126, name='STIG Manager - update', playbook='playbooks/stigman_update.yml', credentials=[13], ask_limit_on_launch=False))"
+before="$(writes)"
+run --check -e "@$work/stig-wf.json"; rc=$?
+[ $rc = 0 ] && [ "$(writes)" = "$before" ] && ! has "SKIPPED - 'Workflow gate - has a plan'" \
+    && has "SKIPPED - workflow 'STIG - full scan and upload' - 'Workflow gate - has a plan' runs playbooks/stigman_update.yml - the step must run playbooks/workflow_gate.yml from this project - not made or changed" \
+    && ! has "workflow 'STIG - drift scan and upload'" \
+    && pass "aap_templates_only naming the workflow alone: its gate that runs the update is still refused (Check)" \
+    || fail "only the workflow: a gate that runs the update" "rc $rc; $(grep -E "SKIPPED|USES|workflow|fatal|msg" "$work/out.txt" | head -10)"
+run -e "@$work/stig-wf.json"; rc=$?
+[ "$(st "len([n for n in s['nodes'] if n.get('unified_job_template') in (125, 126)])")" = 0 ] \
+    && has "SKIPPED - workflow 'STIG - full scan and upload' - 'Workflow gate - has a plan' runs playbooks/stigman_update.yml" \
+    && pass "... a run: never wired" || fail "only the workflow: the gate that runs the update was wired" "rc $rc; $(grep -E "SKIPPED|workflow|fatal" "$work/out.txt" | head -6)"
+setst "[j.update(ask_limit_on_launch=True) for j in s['job_templates'] if j['id'] == 125]; [j.update(playbook='playbooks/workflow_gate.yml') for j in s['job_templates'] if j['id'] == 125]"
+run --check -e "@$work/stig-wf.json"; rc=$?
+[ $rc = 0 ] && has "SKIPPED - workflow 'STIG - full scan and upload' - 'Workflow gate - has a plan' asks for a Limit on launch" \
+    && pass "... a gate of the right playbook that asks for a Limit: refused too" \
+    || fail "only the workflow: a gate with a Limit prompt" "rc $rc; $(grep -E "SKIPPED|workflow|fatal" "$work/out.txt" | head -6)"
+setst "s['job_templates'] = [j for j in s['job_templates'] if j['id'] not in (125, 126)]"
+
+# Codex P1 (1.83.0, final pass): the update is never a root node with its template - a link that fails leaves it running nothing
+setst "ws = [x['id'] for x in s['workflow_job_templates'] if x['name'] == 'STIG - full scan and upload'];
+s['nodes'] = [n for n in s['nodes'] if n['wf'] not in ws]; s['workflow_job_templates'] = [x for x in s['workflow_job_templates'] if x['id'] not in ws];
+s['fail_links_from'] = ['approve']"
+run -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+roots="$(st "sorted(n['identifier'] for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload' for n in s['nodes'] if n['wf'] == w['id'] and n.get('unified_job_template') and not any(n['id'] in p[k] for p in s['nodes'] for k in ('success', 'failure', 'always')))")"
+upd="$(st "[str(n.get('unified_job_template')) for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload' for n in s['nodes'] if n['wf'] == w['id'] and n['identifier'] == 'update']")"
+[ $rc != 0 ] && has "FAILED - workflow 'STIG - full scan and upload'" && [ "$roots" = "['linux', 'windows']" ] && [ "$upd" = "['None']" ] \
+    && pass "the approval's link fails: the job stops, the update node has no template - never a root node that writes" \
+    || fail "a failed link left the update runnable" "rc $rc; roots $roots; update $upd; $(grep -E "FAILED|fatal" "$work/out.txt" | head -4)"
+setst "s.pop('fail_links_from')"
+run -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}' -e aap_templates_overwrite=true; rc=$?
+upd="$(st "[(n.get('unified_job_template'), [p['identifier'] for p in s['nodes'] if n['id'] in p['success']]) for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload' for n in s['nodes'] if n['wf'] == w['id'] and n['identifier'] == 'update']")"
+[ $rc = 0 ] && [ "$upd" = "[(122, ['approve'])]" ] \
+    && pass "... made again (aap_templates_overwrite): the update attached after its approval link" \
+    || fail "the workflow made again" "rc $rc; update $upd; $(grep -E "FAILED|fatal|workflow" "$work/out.txt" | head -6)"
+# a workflow changed by hand, made again: its old nodes deleted leaves first - the update before its approval, never a root
+setst "w = [x for x in s['workflow_job_templates'] if x['name'] == 'STIG - full scan and upload'][0];
+[n.update(extra_data={'workflow_gate_var': 'changed'}) for n in s['nodes'] if n['wf'] == w['id'] and n['identifier'] == 'gate_linux']"
+set -- $(st "' '.join(str(n['id']) for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload' for i in ('update', 'approve') for n in s['nodes'] if n['wf'] == w['id'] and n['identifier'] == i)")
+n0="$(writes)"
+run -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}' -e aap_templates_overwrite=true; rc=$?
+order="$(tail -n +$((n0 + 1)) "$work/writes.jsonl" | "$py" -c "
+import json, sys
+d = [x['path'] for x in map(json.loads, sys.stdin) if x['method'] == 'DELETE']
+print('workflow_job_template_nodes/$1/' in d and 'workflow_job_template_nodes/$2/' in d and d.index('workflow_job_template_nodes/$1/') < d.index('workflow_job_template_nodes/$2/'))")"
+upd="$(st "[(n.get('unified_job_template'), [p['identifier'] for p in s['nodes'] if n['id'] in p['success']]) for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload' for n in s['nodes'] if n['wf'] == w['id'] and n['identifier'] == 'update']")"
+[ $rc = 0 ] && [ "$order" = True ] && [ "$upd" = "[(122, ['approve'])]" ] \
+    && pass "... a hand-changed workflow made again: the update deleted before its approval, then attached after its link" \
+    || fail "deleted leaves first" "rc $rc; order $order ($1 $2); update $upd; $(grep -E "FAILED|fatal|workflow" "$work/out.txt" | head -6)"
+
+grep '"DELETE"' "$work/writes.jsonl" | grep -qv 'workflow_job_template_nodes/' && fail "a DELETE" "$(grep DELETE "$work/writes.jsonl" | grep -v workflow_job_template_nodes/ | head -2)" \
+    || pass "never a DELETE of a template or workflow (only a workflow's own nodes, made again)"
 grep -q "SECRET-PW" "$work/all-out.txt" "$work/writes.jsonl" && fail "a secret" "$(grep -n SECRET-PW "$work/all-out.txt" | head -2)" \
     || pass "no secret in any output or write"
 

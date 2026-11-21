@@ -1,0 +1,65 @@
+---
+# THE STIG FULL SCAN (1.83.0, playbooks/stig_full_scan.yml) and the drift scan's host with no asset
+# (playbooks/stig_recheck.yml, check_stig_update_new_by_import), Linux: every rule of the host's STIG, Evaluate-STIG with
+# the drift report's settings and answer files (tasks/recheck_scan.yml, no -SelectVuln). Its checklist is copied to a
+# folder made for this run, taken to the AAP side (_fs_local/<host>/) and the folder removed - in a
+# dry run too, as it only reads. tasks/full_plan.yml then plans it with the checklist import's planner. OpenSCAP has no
+# checklist for that planner: such a host is listed, not scanned. Output (host facts): _fs_file (the checklist's name
+# under _fs_local) and _fs_target ({host, fqdn}: the asset's name), or _fs_why.
+- name: STIG full scan | Evaluate-STIG only (the import's planner reads its checklist)
+  ansible.builtin.set_fact:
+    _fs_why: >-
+      {{ '' if check_stig_scanner | string == 'evaluate_stig'
+         else 'not scanned: the full scan runs Evaluate-STIG only (check_stig_scanner: ' ~ check_stig_scanner ~ ')' }}
+
+- name: STIG full scan | scan in full, the checklist taken to the AAP side
+  when: _fs_why | length == 0
+  block:
+    - name: STIG full scan | a folder for this run's checklist
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: site-stig-full-
+      register: _fs_tmp
+      check_mode: false             # removed below, in a dry run too
+
+    - name: STIG full scan | every rule of the host's STIG
+      ansible.builtin.include_tasks: recheck_scan.yml
+      vars:
+        _stig_scan_on: true
+        _stig_scan_vulns: []
+        _stig_scan_copy_to: "{{ _fs_tmp.path }}"
+        _stig_scan_save: false          # nothing kept on the host (a drift recheck's checklist there left as it is)
+        _stig_scan_content: false       # Evaluate-STIG: no SCAP content copied to the host
+
+    - name: STIG full scan | the checklist to the AAP side
+      ansible.builtin.fetch:
+        src: "{{ _stig_scan.copied }}"
+        dest: "{{ _fs_local }}/{{ inventory_hostname }}/"
+        flat: true
+        fail_on_missing: true       # a checklist the job could not take is an error, never skipped quietly
+      check_mode: false             # to the job's own folder on the AAP side, removed when the job ends
+      when: _stig_scan.copied is defined
+
+    - name: STIG full scan | what the planner reads for this host
+      ansible.builtin.set_fact:
+        _fs_file: "{{ inventory_hostname }}/{{ _stig_scan.copied | basename }}"
+        _fs_target: "{{ {'host': check_stig_stigman_asset | default('') or inventory_hostname.split('.')[0],
+                          'fqdn': inventory_hostname if '.' in inventory_hostname else '', 'os': 'rhel',
+                          'strict': check_stig_evaluate_read | default('') | length > 0} }}"
+      when: _stig_scan.copied is defined
+
+    - name: STIG full scan | not scanned
+      ansible.builtin.set_fact:
+        _fs_why: "not scanned: {{ _stig_scan.why | default('') or 'Evaluate-STIG wrote no checklist' }}"
+      when: _stig_scan.copied is not defined
+  always:
+    - name: STIG full scan | this run's folder removed
+      ansible.builtin.file:
+        path: "{{ _fs_tmp.path }}"
+        state: absent
+      check_mode: false
+      when: _fs_tmp.path is defined
+
+- name: STIG full scan | this host
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ ('scanned in full - ' ~ _fs_file) if _fs_file is defined else _fs_why }}"

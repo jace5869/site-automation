@@ -686,7 +686,9 @@ and checks the ones already there. It never deletes a template.
    - *WOULD CREATE* - with its playbook, project, credentials, prompts and execution environment;
    - *DIFFERS* - field by field, *has X, should be Y* (the playbook, the project, a credential by kind, the prompts
      for Limit, Variables, Inventory and Job type, the execution environment: a kind you did not map is the
-     project's);
+     project's). A workflow step's fixed settings too, such as `variable check_stig_update_plan_var: has none,
+     should be stigman_update_plan_windows`. Bringing it right sets only those settings. Your own lines in its
+     Variables are kept;
    - *already right*;
    - *same playbook, other name* - a template of yours runs that playbook: it is not made twice. For a workflow
      of yours that names the catalog's template, `aap_templates_create_alias: true` makes it under that name too
@@ -701,6 +703,23 @@ and checks the ones already there. It never deletes a template.
 5. Launch it again with Job type **Run**. It makes the missing templates. A template that differs is left as it is;
    set `aap_templates_overwrite: true` to bring it right. If a write fails, the job stops there and lists what it did
    before it, down to each credential attached.
+
+**The STIG workflows (1.83.0).** The same job makes the workflows *STIG - full scan and upload* and *STIG - drift scan
+and upload*, after their templates ([STIG_JOBS.md](STIG_JOBS.md)):
+- every node and link: the Linux check and the Windows check side by side, each to its own gate (on failure), both
+  gates to one approval (on success), then the update (on success);
+- each gate's Variables (`workflow_gate_var: stigman_update_plan`, and `stigman_update_plan_windows` for the Windows
+  check), Prompt on launch for **Limit**;
+- the site portal's label on the workflow, never on its steps.
+
+A Check run lists each node of each workflow. It also names an old template or workflow it finds: *replaced by ...,
+delete it when ready*, or *rename ... when ready* (your *STIG answer keys*). It never deletes or renames one.
+When what replaces it is not in AAP and would not be made (it was skipped), it says *KEEP* instead: keep the old one.
+
+Your own update and gate are used: a template that runs `playbooks/stigman_update.yml` or `playbooks/workflow_gate.yml`
+under another name is that step (*uses 'STIG update' (playbooks/stigman_update.yml) for the update step*). Several:
+name one in `aap_templates_step_names`. None: the job makes it, with `stigman_api_writer` (the client that may write
+reviews) from `aap_templates_credentials`. A workflow whose step could not be found or made is skipped, said.
 
 What it never changes: a template's schedules and survey, its Variables once it is made, and a credential of a type
 the catalog does not name (a Teams webhook you added stays). A template takes one credential of a type: an optional

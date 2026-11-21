@@ -351,6 +351,10 @@ jobs:
         run: |
           bash tests/stig/run_ckl_routes_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_ckl_routes_test.sh
+      - name: 1.83.0, STIG - full scan and upload and the drift scan's new assets (a stand-in Evaluate-STIG and STIG Manager; the routes, Check, the Windows step after the Linux plan)
+        run: |
+          bash tests/stig/run_stig_full_scan_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_full_scan_test.sh
       - name: The STIG compliance scorecard in the checklist import's report (a stand-in STIG Manager and AAP; scorecard reads no folder, GET only)
         run: |
           bash tests/stig/run_scorecard_test.sh

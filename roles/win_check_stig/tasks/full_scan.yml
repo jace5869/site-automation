@@ -1,0 +1,84 @@
+---
+# THE STIG FULL SCAN (1.83.0, playbooks/win_stig_full_scan.yml) and the drift scan's server with no asset
+# (playbooks/win_stig_recheck.yml, check_stig_update_new_by_import), Windows: every rule of every STIG Evaluate-STIG
+# finds on the server, with the Windows drift report's settings (win_check_stig_*). Each checklist is copied to a folder
+# the script makes for this run under TEMP (copy_to: auto - no Windows collection needed), taken to the AAP side
+# (_fs_local/<host>/) and the folder removed by the script again (remove: only that folder) - in a dry
+# run too, as Evaluate-STIG only reads. The checklist import's planner then plans them (check_stig's tasks/full_plan.yml).
+# Output (host facts): _fs_files (each checklist's name under _fs_local), _fs_target ({host, fqdn}), or _fs_why.
+- name: Windows STIG full scan | every rule, the checklists taken to the AAP side
+  block:
+    - name: Windows STIG full scan | Evaluate-STIG in full (no -SelectVuln)
+      ansible.builtin.script: win_stig.ps1
+      environment:
+        SITE_CHECK_CONFIG: >-
+          {{ {'evaluate': win_check_stig_evaluate, 'read': win_check_stig_evaluate_read,
+              'select': win_check_stig_evaluate_select, 'exclude': win_check_stig_evaluate_exclude,
+              'args': win_check_stig_evaluate_args, 'output': win_check_stig_evaluate_output,
+              'rejected': win_check_stig_evaluate_rejected | bool, 'run_as': win_check_stig_run_as,
+              'powershell': win_check_stig_powershell, 'timeout': win_check_stig_timeout | int,
+              'dir': win_check_stig_dir, 'keep': win_check_stig_keep | int, 'save': false,
+              'search': win_check_stig_search, 'search_depth': win_check_stig_search_depth | int,
+              'vulns': [], 'history': false, 'copy_to': 'auto'} | to_json }}
+      register: _win_check_out
+      changed_when: false
+      failed_when: false
+      check_mode: false             # Evaluate-STIG only reads; in a dry run (save: false) nothing is kept on the server
+
+    - name: Windows STIG full scan | no finding yet (the script's result adds its own)
+      ansible.builtin.set_fact:
+        site_findings: "{{ site_findings | default([]) }}"
+
+    - name: Windows STIG full scan | the script's result
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: win_result.yml
+      vars:
+        _win_check: stig
+
+    - name: Windows STIG full scan | the checklists to the AAP side
+      ansible.builtin.fetch:
+        src: "{{ item }}"
+        dest: "{{ _fs_local }}/{{ inventory_hostname }}/"
+        flat: true
+        fail_on_missing: true       # a checklist the job could not take is an error, never skipped quietly
+      # 1.83.0 (Codex P1): only a scan that finished (scanned) - never the checklists of one that stopped half way
+      loop: "{{ (win_facts.stig.scans | default([]) | selectattr('copied', 'defined') | map(attribute='copied') | list)
+                if win_facts.stig.scanned | default(false) | bool else [] }}"
+      check_mode: false             # to the job's own folder on the AAP side, removed when the job ends
+
+    - name: Windows STIG full scan | what the planner reads for this server
+      ansible.builtin.set_fact:
+        _fs_files: >-
+          {{ (win_facts.stig.scans | default([]) | selectattr('copied', 'defined') | map(attribute='copied')
+             | map('win_basename') | map('regex_replace', '^', inventory_hostname ~ '/') | list)
+             if win_facts.stig.scanned | default(false) | bool else [] }}
+        _fs_target: "{{ {'host': check_stig_stigman_asset | default('') or inventory_hostname.split('.')[0],
+                          'fqdn': inventory_hostname if '.' in inventory_hostname else '', 'os': 'windows',
+                          'strict': win_check_stig_evaluate_read | default('') | length > 0} }}"
+
+    - name: Windows STIG full scan | not scanned
+      ansible.builtin.set_fact:
+        _fs_why: "not scanned: {{ win_facts.stig.why | default('') or 'Evaluate-STIG wrote no checklist' }}"
+      when: _fs_files | length == 0
+  always:
+    - name: Windows STIG full scan | this run's folder removed (the script again, remove - only that folder)
+      ansible.builtin.script: win_stig.ps1
+      environment:
+        SITE_CHECK_CONFIG: "{{ {'remove': win_facts.stig.copy_dir, 'remove_token': win_facts.stig.copy_token | default('')} | to_json }}"
+      register: _fs_rm
+      changed_when: false
+      check_mode: false
+      when: win_facts.stig.copy_dir | default('') | length > 0
+
+    # Codex: a folder that could not be removed is said (its checklists are left on the server)
+    - name: Windows STIG full scan | the folder not removed
+      ansible.builtin.debug:
+        msg: >-
+          WARNING - {{ win_facts.stig.copy_dir }} on {{ inventory_hostname }} was not removed: its checklists are still
+          there - delete the folder by hand
+      when: _fs_rm.stdout is defined and '"removed":true' not in (_fs_rm.stdout | regex_replace('\s', ''))
+
+- name: Windows STIG full scan | this server
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ ('scanned in full - ' ~ (_fs_files | join(', '))) if _fs_files | default([]) else _fs_why }}"

@@ -1,0 +1,120 @@
+---
+# THE STIG FULL SCAN's plan (1.83.0), on the AAP side - included once, delegated to localhost, from the host play
+# (playbooks/stig_full_scan.yml, win_stig_full_scan.yml; the drift scan's hosts with no asset: stig_recheck.yml,
+# win_stig_recheck.yml) - never a play of localhost alone: a Limit would leave it out. The checklists taken from the hosts
+# (tasks/full_scan.yml, win_check_stig's) are planned with the checklist import's own planner (roles/stigman_ckl_import,
+# site_ckl_import - workflow 40's): each host's asset found by its inventory name (or check_stig_stigman_asset) in every
+# collection the client reads but check_stig_stigman_collections_exclude; every Not a Finding, Open and Not Applicable
+# written, Not Reviewed left; what STIG Manager has so already left (Already so); a host with no asset planned new - in
+# its own check_stig_stigman_collection, else the first of check_stig_stigman_collection_routes that fits it, else listed
+# (no collection for a new asset, never guessed); never over a review with attachments or RA / POA&M words; Accepted as
+# check_stig_update_overwrite_accepted says. Only the files of the hosts that finished are read. On a workflow's check
+# (check_stig_update_workflow) the plan is handed on (set_stats, check_stig_update_plan_var: stigman_update_plan, the
+# Windows checks' stigman_update_plan_windows) and the job fails on purpose (NEEDS APPROVAL).
+# Input: _fp_title (the report's), _fp_hosts (the hosts whose files to plan: the play's), _fp_before (a plan to put first:
+# the drift scan's own), _fp_create (plan a new asset for a host with none: true; the drift scan: its setting).
+- name: STIG full scan | the plan so far, kept as it is now
+  ansible.builtin.set_fact:
+    _fp_first: "{{ _fp_before | default([]) | list }}"
+    _fp_var: "{{ check_stig_update_plan_var | default('stigman_update_plan') }}"
+
+- name: STIG full scan | plan, then the AAP side's folder removed
+  block:
+    # handed on first: kept for the approval also when the planner below stops on an error (its own hand-on has it first)
+    - name: STIG full scan | the plan so far, handed on (set_stats)
+      ansible.builtin.set_stats:
+        data: "{{ {_fp_var: _fp_first} }}"
+        per_host: false
+        aggregate: false
+      when: _fp_first | length > 0 and check_stig_update_workflow | default(false) | bool
+
+    - name: STIG full scan | the checklists taken from the hosts, and the hosts not scanned
+      ansible.builtin.set_fact:
+        _fp_scanned: >-
+          {%- set out = [] -%}
+          {%- for h in _fp_hosts if hostvars[h]._fs_target is defined -%}
+          {%-   for f in ([hostvars[h]._fs_file] if hostvars[h]._fs_file is defined else hostvars[h]._fs_files | default([])) -%}
+          {%-     set _ = out.append({'host': h, 'file': f, 'target': hostvars[h]._fs_target}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+        _fp_not: >-
+          {%- set out = [] -%}
+          {%- for h in _fp_hosts if hostvars[h]._fs_why | default('') -%}
+          {%-   set _ = out.append([h, hostvars[h]._fs_why]) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: STIG full scan | the hosts not scanned
+      ansible.builtin.debug:
+        msg: "{{ _fp_not | map('join', ': ') | list }}"
+      when: _fp_not | length > 0
+
+    # routes: computed only when there is something to plan - a wrong route then stops it, the plan so far handed on above
+    - name: STIG full scan | where a new asset goes (each host's own collection, then the routes)
+      ansible.builtin.set_fact:
+        _fp_routes: >-
+          {%- set hs = [] -%}
+          {%- for h in _fp_hosts if hostvars[h]._fs_target is defined -%}
+          {%-   set _ = hs.append({'name': h, 'asset': hostvars[h].check_stig_stigman_asset | default(''),
+                                   'collection': hostvars[h].check_stig_stigman_collection | default('')}) -%}
+          {%- endfor -%}
+          {{ hs | stig_collection_routes(check_stig_stigman_collection_routes | default([])) }}
+      when: _fp_scanned | length > 0
+
+    # 1.83.0 (Codex P1, final pass): the import's plan-only entry point (tasks/plan.yml) - it has no write and no move, so
+    # no extra var (stigman_ckl_import_auto ...) can make this check write
+    - name: STIG full scan | plan the checklists (the checklist import's planner - reads only)
+      when: _fp_scanned | length > 0
+      ansible.builtin.include_role:
+        name: stigman_ckl_import
+        tasks_from: plan.yml
+      vars:
+        stigman_ckl_import_src: "{{ _fs_local }}"
+        stigman_ckl_import_recurse: true
+        stigman_ckl_import_collection: ""
+        stigman_ckl_import_collections: ["*"]
+        stigman_ckl_import_collections_exclude: "{{ check_stig_stigman_collections_exclude | default([]) }}"
+        stigman_ckl_import_routes: "{{ _fp_routes }}"
+        stigman_ckl_import_create_assets: "{{ _fp_create | default(true) | bool }}"     # the full scan: always; the drift scan: its setting
+        stigman_ckl_import_assign_stigs: true          # an asset there without the STIG the scan found: assigned, after the approval
+        stigman_ckl_import_overwrite_accepted: "{{ check_stig_update_overwrite_accepted | default(true) | bool }}"
+        stigman_ckl_import_status: "{{ check_stig_update_status | default('submitted') }}"
+        stigman_ckl_import_detail_max: "{{ check_stig_update_detail_max | default(8000) | int }}"
+        stigman_ckl_import_workflow: "{{ check_stig_update_workflow | default(false) | bool }}"
+        stigman_ckl_import_plan_var: "{{ _fp_var }}"
+        # only the files of the hosts that finished, each named as the inventory names its host (never the checklist's own)
+        stigman_ckl_import_targets_only: true
+        _ci_new_only: "{{ _fp_new_only | default(false) | bool }}"     # the drift scan: hosts with no asset only
+        stigman_ckl_import_targets: >-
+          {%- set out = {} -%}
+          {%- for x in _fp_scanned -%}
+          {%-   set _ = out.update({x.file: x.target | combine({'alias': x.host})}) -%}
+          {%- endfor -%}
+          {{ out }}
+        stigman_ckl_import_plan_before: "{{ _fp_first }}"
+        stigman_ckl_import_title: "{{ _fp_title | default('STIG full scan') }}"
+        stigman_ckl_import_sections_before: >-
+          {{ [{'title': 'Not scanned (' ~ _fp_not | length ~ ')', 'status': 'warning',
+               'lines': _fp_not | map('join', ' - ') | list}] if _fp_not else [] }}
+
+    # nothing scanned here, a plan so far (the drift scan's own) still waits: asked for, so it reaches the approval
+    - name: STIG full scan | NEEDS APPROVAL (the plan so far)
+      ansible.builtin.fail:
+        msg: >-
+          NEEDS APPROVAL - {{ _fp_first | length }} item(s) planned before, in the report ("Approve writes these reviews to
+          STIG Manager"). Nothing new was scanned{{ (': ' ~ (_fp_not | map('join', ': ') | join('; '))) if _fp_not else '' }}.
+          {{ _fp_first | stig_update_lines | join(' || ') }}
+      when: _fp_scanned | length == 0 and _fp_first | length > 0 and check_stig_update_workflow | default(false) | bool
+
+    - name: STIG full scan | nothing scanned
+      ansible.builtin.fail:
+        msg: "Nothing scanned: {{ (_fp_not | map('join', ': ') | join('; ')) or 'no host in the Limit' }}"
+      when: _fp_scanned | length == 0 and _fp_not | length > 0 and not _fp_first
+  always:
+    - name: STIG full scan | the AAP side's folder of this run's checklists, removed
+      ansible.builtin.file:
+        path: "{{ _fs_local }}"
+        state: absent
+      check_mode: false
+      when: _fs_local | default('') | length > 0

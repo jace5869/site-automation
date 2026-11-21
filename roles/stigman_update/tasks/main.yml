@@ -10,12 +10,21 @@
 # reviews unwritten and fails the job.
 - name: STIG Manager update | the plan from the workflow's check (stigman_update_plan)
   ansible.builtin.assert:
-    that: stigman_update_plan is defined and stigman_update_plan is sequence and stigman_update_plan is not string
+    that: >-
+      (stigman_update_plan is defined or stigman_update_plan_windows is defined)
+      and stigman_update_plan | default([]) is sequence and stigman_update_plan | default([]) is not string
+      and stigman_update_plan_windows | default([]) is sequence and stigman_update_plan_windows | default([]) is not string
     fail_msg: >-
       No plan: this job writes only the reviews the STIG recheck's or the checklist import's check listed and an approval
       allowed - run it as the step after the approval in workflow 37 (docs/STIG_DRIFT.md, "Updating STIG Manager, with an
       approval") or 40 (docs/CKL_IMPORT.md). Nothing written.
     quiet: true
+
+# 1.83.0: the STIG workflows' two checks side by side - the Linux check's plan (stigman_update_plan) and the Windows
+# check's (stigman_update_plan_windows), one approval for both
+- name: STIG Manager update | the plan - the Linux check's and the Windows check's
+  ansible.builtin.set_fact:
+    _su_plan: "{{ stigman_update_plan | default([]) + stigman_update_plan_windows | default([]) }}"
 
 - name: STIG Manager update | write them
   ansible.builtin.include_tasks: write.yml
@@ -24,8 +33,8 @@
   ansible.builtin.include_role:
     name: site_email
   vars:
-    _report: "{{ _su['items'] | default([]) | stig_update_report(ansible_check_mode, _su.error | default(''), stigman_update_plan | length,
-                     'import' if stigman_update_plan | selectattr('kind', 'defined') | selectattr('kind', 'eq', 'import') | list else '') }}"
+    _report: "{{ _su['items'] | default([]) | stig_update_report(ansible_check_mode, _su.error | default(''), _su_plan | length,
+                     'import' if _su_plan | selectattr('kind', 'defined') | selectattr('kind', 'eq', 'import') | list else '') }}"
 
 - name: STIG Manager update | not every review was written
   ansible.builtin.fail:

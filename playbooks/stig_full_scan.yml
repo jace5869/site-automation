@@ -1,0 +1,71 @@
+---
+# STIG - FULL SCAN AND UPLOAD (1.83.0), its Linux check (the workflow's first step; Windows servers:
+# playbooks/win_stig_full_scan.yml, the next step). Every Linux host of the Limit scanned in full - every rule of its
+# RHEL STIG, Evaluate-STIG with the drift report's settings and answer files - and every rule's result planned as a
+# review for STIG Manager by the checklist import's own planner (workflow 40's): Not a Finding, Open (the scan's detail
+# and our comment), Not Applicable; Not Reviewed left for a person; what STIG Manager has so already left (Already so).
+# A host with no asset (not in any collection but check_stig_stigman_collections_exclude) is planned new - in its
+# check_stig_stigman_collection, else the first of check_stig_stigman_collection_routes that fits, else listed. All of
+# workflow 37's protections: check_stig_update_status; never a review with attachments or RA / Risk Acceptance / POAM /
+# POA&M words; Accepted written (check_stig_update_overwrite_accepted); each review read again before it is written.
+# Nothing is written here: on the workflow (check_stig_update_workflow: true) the plan is handed on and the job fails on
+# purpose (NEEDS APPROVAL); STIG Manager - update writes it after the approval. OpenSCAP sites: not in the full scan.
+# docs/STIG_JOBS.md.
+#
+#   ansible-playbook playbooks/stig_full_scan.yml -e target=rhel_servers --check
+- name: Leave out the hosts of site_exclude_hosts (1.67.0)
+  ansible.builtin.import_playbook: site_exclude.yml
+
+- name: STIG full scan
+  hosts: "{{ target | default('all') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
+  become: true
+  gather_facts: false
+  vars:
+    site_report_title: STIG full scan
+  pre_tasks:
+    - name: Linux hosts only (Windows servers - their own check, VMware has its own STIG tooling)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    # the AAP side's folder for the checklists, made once (a play of localhost alone would be left out by the Limit)
+    - name: A folder on the AAP side for this run's checklists (removed after the plan)
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: site-stig-full-
+      register: _fs_dir
+      delegate_to: localhost
+      run_once: true
+      become: false
+      check_mode: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: Its path, for every host
+      ansible.builtin.set_fact:
+        _fs_local: "{{ _fs_dir.path }}"
+
+    - name: Scan in full, the checklist to the AAP side
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: full_scan.yml
+
+    - name: Plan every rule's result and the new assets, on the AAP side (the checklist import's planner; once)
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: full_plan.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _fp_title: STIG full scan
+        _fp_hosts: "{{ ansible_play_hosts }}"

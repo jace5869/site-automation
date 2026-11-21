@@ -59,7 +59,10 @@ options:
   port: {description: The share's port., type: int, default: 445}
   max_files: {description: At most this many files., type: int, default: 500}
   max_mb: {description: A file larger than this many MB is left out (and said)., type: int, default: 50}
-  collection: {description: "The collection a new asset is created in (the staging collection), its name (or id); searched last.", type: str, default: ''}
+  collection: {description: "The collection a new asset is created in (the staging collection), its name (or id); searched last. 1.83.0: with routes it may be '' - a new host no route fits is then listed (no collection for a new asset), never created.", type: str, default: ''}
+  targets: {description: "1.83.0: {a file's name as read (its path under src): {host, fqdn, alias, os}} - the asset name and FQDN to use instead of the checklist's own HOST_NAME and HOST_FQDN (the STIG full scan: the inventory's names); alias (the inventory name) and os (rhel, windows) for the routes.", type: dict, default: {}}
+  targets_only: {description: "1.83.0: plan only the files targets names (the STIG full scan: the hosts that finished).", type: bool, default: false}
+  collections_exclude: {description: "1.83.0: collections never searched for a host's asset (names, * and ?, any case) - with routes too. An asset only there is not found, so it is planned new in its route's collection. A route's own collection is never left out.", type: list, elements: str, default: []}
   collections: {description: "The collections a host's asset is looked for in, names or ids (* and ?; '*' = every one the client reads) - [] = collection only.", type: list, elements: str, default: []}
   auto: {description: "none, existing (the reviews of assets that are there: no approval), all (the new assets too) - marks the plan's items (auto).", type: str, default: none}
   action: {description: "plan (read and plan), or move (the files of move to move_to).", type: str, default: plan}
@@ -68,8 +71,8 @@ options:
   create_assets: {description: "Plan a new asset for a host name with none (the update needs the Manage grant).", type: bool, default: true}
   routes:
     description: "[{collection (name or id), stigs (the matched installed STIG's id or title), names (host name or FQDN, or its short name), roles,
-      tech_areas (the checklist's) - fnmatch, any case, a list or text with commas; each given must fit}] - the first that fits
-      a host wins."
+      tech_areas (the checklist's) - fnmatch, any case, a list or text with commas; os (the target's: rhel, windows); inventory_hosts (the
+      targets' inventory names, whole and exact - a host's own collection); each given must fit}] - the first that fits a host wins."
     type: list
     elements: dict
     default: []
@@ -441,7 +444,11 @@ def parse_cklb(data):
         rules = []
         for r in s.get("rules") or []:
             details = str(r.get("finding_details") or "").strip()
-            rules.append({"v": str(r.get("group_id") or ""), "rule_id": str(r.get("rule_id") or r.get("rule_id_src") or ""),
+            # 1.83.0 (Codex P1): the revision-bearing id (rule_id_src, SV-260001r9_rule) when there is one - the guard on
+            # another revision of the rule needs it; rule_id may be the bare SV-260001
+            src = str(r.get("rule_id_src") or "")
+            rid = src if re.match(r"^SV-\d+r\d+", src, re.I) else str(r.get("rule_id") or src)
+            rules.append({"v": str(r.get("group_id") or ""), "rule_id": rid,
                           "version": str(r.get("rule_version") or ""), "title": str(r.get("rule_title") or ""),
                           "severity": str(r.get("severity") or ""), "status": str(r.get("status") or ""), "details": details,
                           "comments": str(r.get("comments") or "").strip(),
@@ -518,11 +525,22 @@ def short(name):
     return (name or "").lower().split(".")[0]
 
 
-def matching(names, assets):
-    """The assets whose name or FQDN is one of names: an exact (case-blind) name or FQDN first, then the short names."""
+def same_host(a, b):
+    """1.83.0 (the director's check): two FQDNs of one host - equal, or one the other with its domain left off
+    (db01.east and db01.east.example.mil); db01.west and db01.east are two hosts."""
+    a, b = (a or "").strip().lower().rstrip("."), (b or "").strip().lower().rstrip(".")
+    return a == b or a.startswith(b + ".") or b.startswith(a + ".")
+
+
+def matching(names, assets, fqdn="", strict=False):
+    """The assets whose name or FQDN is one of names: an exact (case-blind) name or FQDN first, then the short names. 1.83.0
+    (Codex P1): with the checklist's FQDN known, an asset whose own FQDN differs is another host's - never matched by its
+    name (db01.east is not the asset db01 of db01.west)."""
     want = [n.lower() for n in names if n]
+    fq = (fqdn or "").strip().lower()
+    assets = [a for a in assets if not (fq and (a.get("fqdn") or "").strip() and (a.get("fqdn") or "").strip().lower() != fq)]
     exact = [a for a in assets if (a.get("name") or "").lower() in want or (a.get("fqdn") or "").lower() in want]
-    if exact:
+    if exact or strict:     # 1.83.0 (Codex P1): the full scan - by its own name or FQDN only (db01.west is not db01.east)
         return exact
     shorts = set(short(n) for n in want)
     return [a for a in assets if short(a.get("name")) in shorts or (a.get("fqdn") and short(a.get("fqdn")) in shorts)]
@@ -665,16 +683,18 @@ def _coll_hits(cols, w, name_of, id_of):
 PICK_NOTES = []                         # what pick_collections says without stopping (a ! naming no collection)
 
 
-def pick_collections(cols, want, staging, grants=None, routed=False):
+def pick_collections(cols, want, staging, grants=None, routed=False, exclude=None):
     """-> (the staging collection - where a new asset is created -, the collections a host's asset is looked for in): those
     of want (names or ids, * and ?, any case; '*' = every one the client reads), the staging one last. want empty: the
     staging one only (as 0.75.0). grants ({collectionId: roleId}, GET /user): one where the client has less than Full is
     refused - Restricted sees only the assets given to it, so a host there would look new and be created again."""
     names = ", ".join(sorted(c.get("name") or "" for c in cols)) or "none"
-    st = [c for c in cols if (c.get("name") or "").lower() == staging.strip().lower() or str(c.get("collectionId")) == staging.strip()]
-    if not st:
-        raise Fail("no collection %s that the client can read (it reads: %s)" % (staging.strip(), names))
-    st = as_col(st[0])
+    st = None
+    if staging.strip():             # 1.83.0: none with routes - a new host no route fits is listed, never created
+        st = [c for c in cols if (c.get("name") or "").lower() == staging.strip().lower() or str(c.get("collectionId")) == staging.strip()]
+        if not st:
+            raise Fail("no collection %s that the client can read (it reads: %s)" % (staging.strip(), names))
+        st = as_col(st[0])
     out = []
     skip = [str(w).strip()[1:].strip() for w in want or [] if str(w).strip().startswith("!")]     # 1.67.0: ! leaves one out
     want = [w for w in want or [] if not str(w).strip().startswith("!")] or (["*"] if skip else [])
@@ -685,7 +705,7 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
             raise Fail("no collection %s (stigman_ckl_import_collections) that the client can read (it reads: %s)" % (w, names))
         for c in sorted(got, key=lambda c: (c.get("name") or "").lower()):
             c = as_col(c)
-            if c["collectionId"] != st["collectionId"] and c not in out:
+            if (st is None or c["collectionId"] != st["collectionId"]) and c not in out:
                 out.append(c)
     for w in skip:
         gone = _coll_hits(cols, w, lambda c: c.get("name"), lambda c: c.get("collectionId"))
@@ -694,15 +714,19 @@ def pick_collections(cols, want, staging, grants=None, routed=False):
             PICK_NOTES.append("stigman_ckl_import_collections: !%s - no collection %s that the client can read, nothing to leave out" % (w, w))
         ids = set(str(c.get("collectionId")) for c in gone)
         out = [c for c in out if c["collectionId"] not in ids]
-    low = [c["name"] for c in out + [st] if grants is not None and grants.get(c["collectionId"], 0) < 2]
+    # 1.83.0 (collections_exclude): never searched - left out before the grants are looked at (Codex P2: a Restricted
+    # grant in an archive the job never reads does not stop it)
+    ex = [str(x).strip().lower() for x in exclude or [] if str(x).strip()]
+    out = [c for c in out if not any(fnmatch.fnmatchcase((c.get("name") or "").lower(), x) for x in ex)]
+    low = [c["name"] for c in out + ([st] if st else []) if grants is not None and grants.get(c["collectionId"], 0) < 2]
     if low and routed:
         raise Fail("the client has only Restricted in %s - with stigman_ckl_import_routes every collection the client reads is "
                    "searched, and a host whose asset is there would look new (created again): give it Full there" % ", ".join(low))
     if low:
         raise Fail("the client has only Restricted in %s - it may not see every asset there, and a host whose asset is there would "
                    "look new (created again in %s): give it Full there, or leave %s out of stigman_ckl_import_collections" % (
-                       ", ".join(low), st["name"], "it" if len(low) == 1 else "them"))
-    return st, out + [st]
+                       ", ".join(low), st["name"] if st else "its route's collection", "it" if len(low) == 1 else "them"))
+    return st, out + ([st] if st else [])
 
 
 def my_grants(client):
@@ -716,7 +740,9 @@ def my_grants(client):
     return dict((str((g.get("collection") or {}).get("collectionId")), int(g.get("roleId") or 0)) for g in u.get("collectionGrants") or [])
 
 
-ROUTE_KEYS = ("stigs", "names", "roles", "tech_areas")
+# os (1.83.0): the host's (the STIG full scan's targets); inventory_hosts (1.83.0, Codex P1 final pass): a host's own
+# collection (check_stig_stigman_collection) - its whole inventory name, exact: no pattern, never a short name
+ROUTE_KEYS = ("stigs", "names", "roles", "tech_areas", "os", "inventory_hosts")
 
 
 def _list(v, n, key):
@@ -780,8 +806,12 @@ def route_of(routes, host, matched):
         for bench, title, target in matched:
             if r["stigs"] and not _any(r["stigs"], [bench, title]):
                 continue
-            if r["names"] and not _any(r["names"], [x for v in (host, target.get("host"), target.get("fqdn")) if v
+            if r["names"] and not _any(r["names"], [x for v in (host, target.get("host"), target.get("fqdn"), target.get("alias")) if v
                                                     for x in (v, v.split(".")[0])]):
+                continue
+            if r.get("inventory_hosts") and str(target.get("alias") or "").strip().lower() not in [x.lower() for x in r["inventory_hosts"]]:
+                continue                 # exact: db01's own collection never takes db01.east (no pattern, no short name)
+            if r["os"] and not _any(r["os"], [target.get("os")]):
                 continue
             if r["roles"] and not _any(r["roles"], [target.get("role")]):
                 continue
@@ -887,7 +917,15 @@ def plan_all(p, client, files):
     routes = read_routes(p["routes"], cols)
     # with routes, every collection the client reads is searched (whatever stigman_ckl_import_collections says): a host whose
     # asset is anywhere is written where it is - never created again, never moved out of a collection but the staging one
-    staging, searched = pick_collections(cols, (["*"] + [c for c in p["collections"] if str(c).strip().startswith("!")]) if routes else list(p["collections"]), p["collection"], grants, bool(routes))
+    # 1.83.0 (collections_exclude: check_stig_stigman_collections_exclude): never searched, with routes too - an asset only
+    # there (Archive*, SCA* ...) is not found, so it is planned new in its route's collection; the staging one stays
+    ex = [str(x).strip() for x in p.get("collections_exclude") or [] if str(x).strip()]
+    staging, searched = pick_collections(cols, (["*"] + [c for c in p["collections"] if str(c).strip().startswith("!")]) if routes else list(p["collections"]), p["collection"], grants, bool(routes), ex)
+    for r in routes:
+        if any(fnmatch.fnmatchcase(r["collection"]["name"].lower(), x.lower()) for x in ex):
+            raise Fail("route %d goes to %s, a collection check_stig_stigman_collections_exclude leaves out (never searched, so an "
+                       "asset there would look new) - nothing planned" % (r["n"], r["collection"]["name"]))
+    sid = staging["collectionId"] if staging else None
     many = len(searched) > 1
     stigs = client.get("/stigs") or []
     stigs_by_id = dict((s.get("benchmarkId"), s) for s in stigs)
@@ -897,7 +935,7 @@ def plan_all(p, client, files):
         # Manage only where this run can create, move or assign: the staging collection (a new host no rule fits, a move out
         # of it, an assignment there) and each route's collection (a new host, a move into it, an assignment there)
         acts = p["create_assets"] or p["route_move"] == "staging" or p["assign_stigs"]
-        need = ([staging] + [r["collection"] for r in routes]) if acts else []
+        need = (([staging] if staging else []) + [r["collection"] for r in routes]) if acts else []
         low, seen = [], set()
         for c in need:
             if c["collectionId"] not in seen and grants.get(c["collectionId"], 0) < 3:
@@ -913,17 +951,65 @@ def plan_all(p, client, files):
     for f in files:
         if f.get("error"):
             continue
+        if p.get("targets_only") and f["name"] not in (p.get("targets") or {}):
+            # 1.83.0 (Codex P1): a file of a host that did not finish its scan - never planned by the name inside it
+            f.pop("data", None)
+            f["error"] = "not planned: its host's scan did not finish"
+            continue
         try:
             ckl = parse(f["name"], f.pop("data"))
         except Fail as e:
             f["error"] = str(e)
             continue
         f["checklists"] = len(ckl["stigs"])
+        # 1.83.0 (the STIG full scan): the host it was scanned on names its asset - the inventory's name (or
+        # check_stig_stigman_asset) and FQDN, not the computer name Evaluate-STIG wrote
+        tg = (p.get("targets") or {}).get(f["name"])
+        own = str(ckl["target"].get("host") or "").strip()
+        # the checklist's own FQDN (its HOST_FQDN, else a dotted HOST_NAME), and the inventory's for this host: its FQDN, a
+        # dotted inventory name, else a dotted check_stig_stigman_asset (db01 with the asset db01.east - the director's check)
+        own_fq = str(ckl["target"].get("fqdn") or "").strip() or (own if "." in own else "")
+        tg_id = str((tg or {}).get("alias") or (tg or {}).get("host") or "").strip() if isinstance(tg, dict) else ""
+        tg_host = str((tg or {}).get("host") or "").strip() if isinstance(tg, dict) else ""
+        tg_fq = (str(tg.get("fqdn") or "").strip() or next((x for x in (tg_id, tg_host) if "." in x), "")) if isinstance(tg, dict) else ""
+        if isinstance(tg, dict) and tg.get("strict") and own and short(own) not in (short(tg.get("host")), short(tg.get("alias"))):
+            # 1.83.0 (Codex P1): a folder read (check_stig_evaluate_read) may hold another host's checklist - never planned as this one
+            f["error"] = ("not planned: the checklist is of %s, not %s - the folder read (check_stig_evaluate_read, "
+                          "win_check_stig_evaluate_read) holds another host's" % (own, tg.get("alias") or tg.get("host")))
+            continue
+        if isinstance(tg, dict) and tg.get("strict") and own_fq and tg_fq and not same_host(own_fq, tg_fq):
+            # 1.83.0 (Codex P1, final pass): one short name, two hosts (db01.west read for db01.east) - the checklist's own
+            # FQDN decides before it is replaced; never the other host's IP, MAC and results under this one's name
+            f["error"] = ("not planned: the checklist is of %s, not %s - the folder read (check_stig_evaluate_read, "
+                          "win_check_stig_evaluate_read) holds another host's" % (own_fq, tg_fq))
+            continue
+        if isinstance(tg, dict) and str(tg.get("host") or "").strip():
+            ckl["target"]["host"] = str(tg["host"]).strip()
+            # 1.83.0 (Codex P1, final pass): a short inventory name (db01) keeps the scan's own FQDN - so db01.example.mil in
+            # another collection is found, never made a second time. The director's check: a scan run on the host itself
+            # keeps it under an alias too (primary, the host db01.example.mil); a folder read's only when it is this host's
+            keep = own_fq if (not str(tg.get("fqdn") or "").strip() and own_fq and (
+                not tg.get("strict") or short(own_fq) in (short(tg_id), short(tg_host)))) else ""
+            ckl["target"]["fqdn"] = str(tg.get("fqdn") or "").strip() or keep
+            ckl["target"]["alias"] = str(tg.get("alias") or "").strip()     # the inventory's name, for the routes
+            ckl["target"]["os"] = str(tg.get("os") or "").strip().lower()   # rhel or windows, for an os route
         parsed.append((f, ckl))
+    if p.get("targets_only"):
+        # 1.83.0 (Codex P1): two hosts of the Limit with one asset name (node.west, node.east -> node): neither is planned -
+        # never one host's reviews or collection given to the other
+        by = {}
+        for f, ckl in parsed:
+            by.setdefault(asset_name(ckl["target"]).lower(), set()).add(ckl["target"].get("alias") or ckl["target"]["host"])
+        for f, ckl in parsed:
+            hs = by[asset_name(ckl["target"]).lower()]
+            if len(hs) > 1:
+                f["error"] = ("not planned: %s of the Limit would all be the asset %s - set check_stig_stigman_asset on each"
+                              % (" and ".join(sorted(hs)), asset_name(ckl["target"])))
+        parsed = [(f, ckl) for f, ckl in parsed if not f.get("error")]
     host_route = {}
     if routes:
         matched = {}
-        staging_revs = revisions_of(client, staging)
+        staging_revs = revisions_of(client, staging) if staging else {}
         for f, ckl in parsed:
             name = asset_name(ckl["target"])
             for ck in ckl["stigs"] if name else []:
@@ -936,16 +1022,37 @@ def plan_all(p, client, files):
     for f, ckl in parsed:
         name = asset_name(ckl["target"])
         fqdn = "" if ckl["target"]["web"] else ckl["target"]["fqdn"]
+        fq_only = ckl["target"]["fqdn"] if p.get("targets_only") else ""     # the full scan: a web site's host FQDN decides too
         # the host's asset in each collection searched: in the staging collection only when no other has it
         hits, ambiguous = [], []
         for col in searched if name else []:
-            found = matching([name, fqdn], assets_of(client, col))
+            # 1.83.0 (Codex P1): the STIG full scan (targets_only) names each host by the inventory - its FQDN decides there
+            # (db01.east is not the asset db01 of db01.west); a share's checklists (workflow 40) as before
+            found = matching([name, fqdn], assets_of(client, col), fq_only, bool(p.get("targets_only")))
             if len(found) > 1:
                 ambiguous.append((col, found))
             elif found:
                 hits.append((col, found[0]))
-        real = [h for h in hits if h[0]["collectionId"] != staging["collectionId"]]
-        also = [h for h in hits if h[0]["collectionId"] == staging["collectionId"]] if real else []
+        if p.get("targets_only") and name and not hits and not ambiguous:
+            # 1.83.0 (Codex P1, final pass): no asset by its own name or FQDN, but one by its short name (db01 and the asset
+            # db01.west, or a host with no FQDN known) - maybe this host: never a new asset beside it; a person decides
+            loose = [(col, a) for col in searched for a in matching([name, fqdn], assets_of(client, col), fq_only, False)]
+            if loose:
+                f["error"] = ("not planned: no asset is %s by its own name or FQDN, but %s has its short name - if it is this "
+                              "host, set check_stig_stigman_asset to it; if not, give the host its FQDN in the inventory"
+                              % (name, ", ".join(sorted(set("%s in %s" % (a.get("name"), c["name"]) for c, a in loose)))))
+                f["checklists"] = 0
+                continue
+        if p.get("new_only") and (hits or ambiguous):
+            # 1.83.0 (Codex P1): the drift scan plans only hosts with no asset - one found here (outside the collection the
+            # drift scan read) is never given a full update
+            f["error"] = ("not planned: the drift scan plans only hosts with no asset - %s has one in %s; run STIG - full scan "
+                          "and upload, or set check_stig_stigman_collection to it" % (name, ", ".join(sorted(set(
+                              c["name"] for c, _x in hits + ambiguous)))))
+            f["checklists"] = 0
+            continue
+        real = [h for h in hits if h[0]["collectionId"] != sid]
+        also = [h for h in hits if h[0]["collectionId"] == sid] if real else []
         targets = real or hits
         route, others = host_route.get(name.lower(), (None, [])) if name else (None, [])
         rcol = route["collection"] if route else None
@@ -957,9 +1064,10 @@ def plan_all(p, client, files):
                     "route %d (%s, by %s)" % (r["n"], r["want"], b) for r, b in others)
         elif routes and name:
             rnote = "no route fits - " + (("written where it is: %s" % ", ".join(c["name"] for c, _a in real)) if real else
-                                          ("stays in %s" % staging["name"]) if hits else ("created in %s" % staging["name"]))
+                                          ("stays in %s" % staging["name"]) if hits else ("created in %s" % staging["name"]) if staging
+                                          else "no collection for a new asset")
         moving = None           # the host's asset, moved out of the staging collection to its route's
-        if not real and hits and rcol and rcol["collectionId"] != staging["collectionId"]:
+        if staging and not real and hits and rcol and rcol["collectionId"] != staging["collectionId"]:
             asset = hits[0][1]
             aid = str(asset.get("assetId") or "")
             why = "" if p["route_move"] != "none" else "not moved (stigman_ckl_import_route_move: none) - written in %s" % staging["name"]
@@ -993,8 +1101,8 @@ def plan_all(p, client, files):
                 r["result"] = CKL_RESULT.get((r.get("status") or "").lower().replace(" ", "_"), "notchecked")
                 counts[r["result"]] += 1
             base = {"file": f["name"], "modified": f.get("modified", ""), "stig": ck["stig"], "title": ck["title"], "release": ck["revision"],
-                    "host": ckl["target"]["host"], "asset": name, "assetId": "", "collection": staging["name"],
-                    "collectionId": staging["collectionId"], "new": False, "benchmark": "", "revision": "", "match": "", "by": "",
+                    "host": ckl["target"]["host"], "asset": name, "assetId": "", "collection": staging["name"] if staging else "",
+                    "collectionId": sid or "", "new": False, "benchmark": "", "revision": "", "match": "", "by": "",
                     "counts": counts, "planned": 0, "state": "", "why": "", "route": rnote}
             answered = [r for r in ck["rules"] if r["result"] != "notchecked"]
 
@@ -1024,6 +1132,12 @@ def plan_all(p, client, files):
                 leave("no_asset", row["why"], row)
                 continue
             home = rcol or staging          # where a new asset is created: its route's collection, else the staging one
+            if not targets and home is None:
+                # 1.83.0: no route fits, and no staging collection - never guessed
+                row = add(state="no asset", why="no collection for a new asset %s: no route fits it (check_stig_stigman_collection_routes) "
+                                                "and it has no check_stig_stigman_collection" % name)
+                leave("no_collection", row["why"], row)
+                continue
             tries = targets or [(home, None)]
             first_revs = revisions_of(client, tries[0][0])
             m = match_stig(client, ck, stigs, p, None if moving else tries[0][1], first_revs)
@@ -1087,6 +1201,13 @@ def plan_all(p, client, files):
                         leave("error", row["why"], row)
                         continue
                 else:
+                    na = new_assets.get(name.lower())
+                    if p.get("targets_only") and na and na["fqdn"] and fqdn and na["fqdn"].lower() != fqdn.lower():
+                        # 1.83.0 (Codex P1): two hosts, one asset name - never one asset for both
+                        row.update(state="no asset", why="%s is the asset name of %s too - give one of them check_stig_stigman_asset"
+                                   % (name, na["fqdn"]))
+                        leave("no_asset", row["why"], row)
+                        continue
                     new_assets.setdefault(name.lower(), {"name": name, "fqdn": fqdn, "ip": ckl["target"]["ip"], "mac": ckl["target"]["mac"],
                                                          "benchmarks": [], "revisions": {}, "files": [], "col": col, "route": route})
                     na = new_assets[name.lower()]
@@ -1212,7 +1333,7 @@ def plan_all(p, client, files):
             raise Fail("stigman_ckl_import_auto: all creates, moves and assigns at once, and the client has %s - that needs Manage: "
                        "nothing written. Give it Manage there, or stigman_ckl_import_auto: existing (the approval then does it)"
                        % ", ".join(low))
-    return (checklists, creates + list(moves.values()) + list(assigns.values()) + plan, left, staging, [c["name"] for c in searched],
+    return (checklists, creates + list(moves.values()) + list(assigns.values()) + plan, left, staging or {}, [c["name"] for c in searched],
             [dict((k, r[k]) for k in ("n", "want", "text", "error")) for r in routes], list(held.values()))
 
 
@@ -1383,6 +1504,8 @@ def main():
         max_mb=dict(type="int", default=50),
         collection=dict(type="str", default=""),
         collections=dict(type="list", elements="str", default=[]),
+        collections_exclude=dict(type="list", elements="str", default=[]),
+        targets=dict(type="dict", default={}), targets_only=dict(type="bool", default=False), new_only=dict(type="bool", default=False),
         auto=dict(type="str", default="none", choices=["none", "existing", "all"]),
         action=dict(type="str", default="plan", choices=["plan", "move"]),
         move=dict(type="list", elements="dict", default=[]),
@@ -1417,7 +1540,7 @@ def main():
            "held": [], "account": account,
            "source": p["src"], "error": "", "empty": False}
     try:
-        if not p["collection"].strip():
+        if not p["collection"].strip() and not p["routes"] and not p["collections"]:
             raise Fail("no collection (stigman_ckl_import_collection)")
         if not (p["api"] and p["token_url"] and p["client_id"] and p["client_secret"]):
             raise Fail("no STIG Manager or no login for it (check_stig_stigman_api, the \"STIG Manager API\" credential)")

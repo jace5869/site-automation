@@ -212,7 +212,7 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
            "key": each, "benchmark": scan.get("benchmark", ""), "platform": scan.get("platform", ""),
            "checklist_time": scan.get("checklist_time", ""), "found_by": scan.get("found_by", ""),
            "profile": scan.get("profile_title") or scan.get("profile", ""), "counts": scan.get("counts") or {},
-           "saved": scan.get("saved") or {}, "stigman": {k: sm.get(k, "") for k in ("status", "why", "collection", "asset", "benchmark", "revision")},
+           "saved": scan.get("saved") or {}, "stigman": {k: sm.get(k, "") for k in ("status", "why", "collection", "asset", "benchmark", "revision", "fqdn_differs")},
            "previous_time": (scan.get("previous") or {}).get("time", ""),
            "drift": [], "new": [], "disagree": [], "fixed_open": [], "unreviewed": [], "fixed": [], "ignored": [], "by_hand": None,
            "findings": []}
@@ -798,7 +798,8 @@ def _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label, carry=False
            "how": _recheck_how(scan or {}), "evaluate_note": evaluate_note(scan or {}), "saved": (scan or {}).get("saved") or {},
            "answer_files": (scan or {}).get("answer_files") or {},      # 1.77.1
            "stigman": {"status": sm.get("status", ""), "why": sm.get("why", ""), "collection": sm.get("collection", ""),
-                       "asset": smc.get("asset", "") or sm.get("asset", ""), "revision": smc.get("revision", "")},
+                       "asset": smc.get("asset", "") or sm.get("asset", ""), "revision": smc.get("revision", ""),
+                       "fqdn_differs": sm.get("fqdn_differs", "")},
            # what a write needs (playbooks/stigman_update.yml): the collection's and the asset's ids, when the scan answered
            "collectionId": str(sm.get("collectionId") or ""), "assetId": str(smc.get("assetId") or sm.get("assetId") or ""),
            "scan_time": (scan or {}).get("checklist_time") or (scan or {}).get("time") or "",
@@ -882,7 +883,8 @@ def _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label, carry=False
     return out
 
 
-def stig_recheck(sm, scans, host="", statuses=None, ignore=None, which=None, severity=None, stigman_used=True, carry_forward=False):
+def stig_recheck(sm, scans, host="", statuses=None, ignore=None, which=None, severity=None, stigman_used=True, carry_forward=False,
+                 new_by_import=False):
     """One host: its answer from STIG Manager (site_stigman_read: rules: true, or every: true on Windows) and its recheck
     scan (site_stig_scan with vulns - or win_facts.stig's scans) -> one result per checklist in STIG Manager:
     {host, label, scanned, how, stigman, asked_open, asked_not_reviewed, fixed, now_na, still_open, answered, by_hand,
@@ -898,6 +900,13 @@ def stig_recheck(sm, scans, host="", statuses=None, ignore=None, which=None, sev
     win = any(s.get("platform") == "windows" for s in scans)
     empty = {"fixed": [], "now_na": [], "still_open": [], "answered": [], "by_hand": [], "ignored": [], "held": [], "carried": [], "person": [], "asked_open": 0,
              "asked_not_reviewed": 0, "how": "", "evaluate_note": "", "saved": {}, "scanner": "", "stig_version": "", "label": "", "benchmark": ""}
+    if sm.get("status") == "not_found" and new_by_import:
+        # 1.83.0 (the STIG drift scan, check_stig_update_new_by_import): no asset - scanned in full and planned as a new
+        # asset by the checklist import's planner (tasks/full_scan.yml, full_plan.yml): its own report, not a warning here
+        out = dict(empty, host=host, scanned=True, why="", new_import=True,
+                   stigman={"status": "not_found", "why": sm.get("why", ""), "collection": "", "asset": "", "revision": ""}, findings=[])
+        out["row"] = stig_recheck_row(out)
+        return [out]
     if sm.get("status") != "found":
         why = sm.get("why") or ("STIG Manager is not set (check_stig_stigman_api)" if not stigman_used else "not read")
         out = dict(empty, host=host, scanned=False, why="nothing to recheck: " + why,
@@ -937,7 +946,7 @@ def stig_recheck(sm, scans, host="", statuses=None, ignore=None, which=None, sev
     if not asked_any:
         out = dict(empty, host=host, scanned=True, why="",
                    stigman={"status": "found", "why": "", "collection": sm.get("collection", ""), "asset": sm.get("asset", ""),
-                            "revision": sm.get("revision", "")}, findings=[], nothing=True)
+                            "revision": sm.get("revision", ""), "fqdn_differs": sm.get("fqdn_differs", "")}, findings=[], nothing=True)
         out["row"] = stig_recheck_row(out)
         return [out]
     failed = [s for s in scans if not s.get("scanned")]
@@ -961,11 +970,14 @@ def stig_recheck_row(c):
     """The every-host table's row of the recheck and its status."""
     sm = c.get("stigman") or {}
     smtxt = ("%s / %s%s" % (sm.get("collection", ""), sm.get("asset", ""), (" (" + sm["revision"] + ")") if sm.get("revision") else "")
-             if sm.get("status") in ("found", "new") else "not read: " + sm.get("why", ""))
+             if sm.get("status") in ("found", "new") else "not read: " + sm.get("why", "")) + _fqdn_note(sm)
     if sm.get("status") == "new":
         smtxt = "NEW, created once approved: " + smtxt
     if c.get("nothing"):
         return {"cells": [_who(c), "nothing to recheck: no rule Open or Not Reviewed", smtxt] + ["0"] * 7 + ["", ""], "status": "ok"}
+    if c.get("new_import"):
+        return {"cells": [_who(c), "no asset in STIG Manager: scanned in full, planned as a new asset (the new assets' report)",
+                          "not found: " + sm.get("why", "")] + ["0"] * 7 + ["", ""], "status": "info"}
     if not c.get("scanned"):
         return {"cells": [_who(c), "not rechecked: " + c.get("why", ""), smtxt, "%d / %d" % (c.get("asked_open", 0), c.get("asked_not_reviewed", 0))]
                 + [""] * 8, "status": "warning"}
@@ -1246,13 +1258,20 @@ def recheck_headline(results):
     return {"text": text, "status": status, "open": len(opened), "open_status": open_status}
 
 
+def _fqdn_note(sm):
+    """1.83.0: the drift scan matched the asset by its short name only, and its FQDN is another - said, so a person sees it."""
+    return (" - matched by short name; its FQDN differs: %s" % sm["fqdn_differs"]) if sm.get("fqdn_differs") else ""
+
+
 def stig_recheck_lines(c):
     """One recheck result in plain lines, for the job's output."""
     sm = c.get("stigman") or {}
     smtxt = ("%s / %s%s" % (sm.get("collection"), sm.get("asset"), (" (" + sm["revision"] + ")") if sm.get("revision") else "")
-             if sm.get("status") in ("found", "new") else (sm.get("why") or "not read"))
+             if sm.get("status") in ("found", "new") else (sm.get("why") or "not read")) + _fqdn_note(sm)
     if c.get("nothing"):
         return ["%s: nothing to recheck - STIG Manager has no rule Open or Not Reviewed; STIG Manager: %s" % (_who(c), smtxt)]
+    if c.get("new_import"):
+        return ["%s: NO ASSET in STIG Manager (%s) - scanned in full, planned as a new asset (the new assets' report)" % (_who(c), smtxt)]
     if not c.get("scanned"):
         return ["%s: NOT RECHECKED - %s" % (_who(c), c.get("why", ""))]
     if c.get("create"):

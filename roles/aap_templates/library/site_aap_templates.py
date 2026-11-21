@@ -30,6 +30,8 @@ options:
     the portal's label (portal_label) and portal-area:<area>, so the site portal finds them.", type: str, default: none}
   portal_label: {description: "The site portal's own label for the templates it reads (matched as written, case too).", type: str, default: portal}
   portal_label_area: {description: "The prefix of the site portal's group label (portal-area:<area>).", type: str, default: "portal-area:"}
+  needed: {description: "1.83.0: the templates the catalog's workflows need (their nodes). One another job makes (made_by) that AAP has not under its name: a template of the site that runs its playbook is used for the step (said: uses ...), else it is made here.", type: list, elements: str, default: []}
+  step_names: {description: "1.83.0: {a step's catalog name: the site's template to use for it} - when several of the site's templates run its playbook.", type: dict, default: {}}
   variables_dir: {description: "The folder of the catalog's Variables files (the repository's root).", type: str, default: ''}
   match: {description: "1.79.19 (aap_templates_match): the fields brought to the catalog's on the templates there, without overwrite -
     inventory, credentials (the missing kinds added, none taken off), prompts, ee, labels (the portal's).", type: list, elements: str, default: []}
@@ -63,7 +65,8 @@ NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansibl
 DESC = "Made by AAP - set up job templates (aap/job_templates.yml)"
 SHOW = {"playbook": "playbook", "project": "project", "execution_environment": "execution environment",
         "ask_limit_on_launch": "prompt for Limit", "ask_variables_on_launch": "prompt for Variables",
-        "ask_inventory_on_launch": "prompt for Inventory", "ask_job_type_on_launch": "prompt for Job Type", "inventory": "inventory"}
+        "ask_inventory_on_launch": "prompt for Inventory", "ask_job_type_on_launch": "prompt for Job Type", "inventory": "inventory",
+        "extra_vars": "Variables"}
 # 1.79.19: aap_templates_match's words -> the fields (credentials and labels apart); playbook and project never: they are
 # what a template is found by
 MATCH = {"inventory": ("inventory",), "prompts": ("ask_limit_on_launch", "ask_variables_on_launch", "ask_inventory_on_launch",
@@ -99,9 +102,72 @@ def areas_of(e):
     return set(x.casefold() for x in out if x)
 
 
+def _flat(v):
+    """A setting's value as text, to compare: true / false for a boolean, '' for none."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return "" if v is None else str(v)
+
+
+def _as_json(text):
+    """AAP's Variables as a mapping when they are JSON (or empty), else None."""
+    if isinstance(text, dict):
+        return dict(text)
+    if not str(text or "").strip():
+        return {}
+    try:
+        d = json.loads(text)
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _top(key):
+    """A top-level YAML key's line, and the indented lines under it."""
+    return re.compile(r"(?m)^%s:[^\n]*(?:\n[ \t]+[^\n]*)*" % re.escape(key))
+
+
+def vars_of(text):
+    """1.83.1 (P2-1): a template's Variables as AAP has them (JSON or YAML text) -> {top-level key: its value as text}.
+    Standard library only: JSON, else each top-level "key: value" line (a value over several lines reads as '')."""
+    d = _as_json(text)
+    if d is None:
+        d = {}
+        for m in re.finditer(r"(?m)^([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.*?)[ \t]*$", str(text)):
+            v = re.sub(r"\s+#.*$", "", m.group(2))
+            try:
+                v = json.loads(v)
+            except ValueError:
+                v = v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "'\"" else v
+            d.setdefault(m.group(1), v)
+    return dict((k, _flat(v)) for k, v in d.items())
+
+
+def set_vars(text, fixed):
+    """1.83.1 (P2-1): the template's Variables with the catalog's fixed settings set - only those keys changed, the rest of
+    the text (a person's settings, the comments) kept as it is."""
+    d = _as_json(text)
+    if d is not None and str(text or "").strip():
+        d.update(fixed)
+        return json.dumps(d, indent=2)
+    out, missing = str(text or ""), []
+    for k, v in sorted(fixed.items()):
+        line = "%s: %s" % (k, json.dumps(v))
+        out, n = _top(k).subn(lambda m, line=line: line, out, count=1)
+        if not n:
+            missing.append(line)
+    if missing:
+        head = "\n".join(missing) + "\n"
+        m = re.match(r"---[ \t]*\n", out)
+        out = (out[:m.end()] + head + out[m.end():]) if m else ("---\n" + head + out)
+    return out
+
+
 class Templates(object):
     def __init__(self, api, p, check):
         self.api, self.p, self.check = api, p, check
+        self.uses, self.renamed = {}, []       # 1.83.0: {a step's catalog name: the site's template used}; old names to rename
+        self.refused = []                      # 1.83.0 (Codex P1, final pass): steps not fit to wire - their workflows not made
         self.results, self.problems = [], []
 
     def all(self, path):
@@ -231,10 +297,25 @@ class Templates(object):
             if len(ours) > 1:                  # Codex: a problem before any write - never one of them picked
                 self.problems.append("AAP has %d job templates named %r in the organization: rename one" % (len(ours), name))
                 continue
-            if self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal")) \
-                    or (ours and "labels" in self.matched(e)):
+            # 1.83.0 (Codex): never a step of the catalog's workflows (the checks, the gate, the update) - the workflow carries
+            # the portal's label, its steps are not jobs to launch alone
+            if (self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal"))
+                    or (ours and "labels" in self.matched(e))) and name not in (self.p.get("needed") or []):
                 to_label.append(e)
-            if e.get("made_by"):
+            if e.get("made_by") and ours and name in (self.p.get("needed") or []):
+                # 1.83.0 (Codex P1, final pass): a step there under its catalog name is checked as one under another name -
+                # a "Workflow gate - has a plan" that runs the update would get the plan before the approval
+                why = self.step_why(ours[0], e)
+                if why:
+                    self.refused.append(name)
+                    self.note(name, "skipped", why="%s; the workflows that need it are not made" % why)
+                    continue
+            if e.get("made_by") and not ours and name in (self.p.get("needed") or []):
+                # 1.83.0: a step of a catalog workflow AAP has not under its name: the site's own template of its playbook
+                # is used (the director: never a second update or gate), else it is made here (below)
+                if self.use_instead(tpls, e):
+                    continue
+            elif e.get("made_by"):
                 other = [] if ours else self.same_playbook(tpls, e)
                 self.note(name, "left", why=("made by %s (its own job), and it is there" % e["made_by"]) if ours else
                           "NOT IN AAP - %s makes it, with the workflow that runs it: run that job%s"
@@ -286,6 +367,13 @@ class Templates(object):
                 continue
             if not ours:
                 other = self.same_playbook(tpls, e)
+                old = [t["name"] for t in other if t["name"] in (e.get("replaces") or [])]
+                if old and not self.p["create_alias"]:
+                    # 1.83.0: the template this one replaces runs its playbook: renamed by a person, never a second one
+                    self.note(name, "rename", why="rename %r to %r when ready - nothing renames it (aap_templates_create_alias: "
+                              "true makes a new one beside it)" % (old[0], name))
+                    self.renamed.append(old[0])
+                    continue
                 if other and not self.p["create_alias"]:
                     # never "the portal looks for it": its step templates are the portal setup job's (made_by), with
                     # other names - a workflow of the site's own may name the catalog's, hence the alias
@@ -335,6 +423,15 @@ class Templates(object):
                     else:
                         mcfix.append((add, []))
                         mdiff["credential %s" % kind] = diff["credential %s" % kind]
+            if name in (self.p.get("needed") or []) and (SHOW["playbook"] in diff or SHOW["project"] in diff) and not self.p["overwrite"]:
+                self.refused.append(name)        # 1.83.0 (Codex P1, final pass): a step that runs another playbook - never wired
+            # 1.83.1 (P2-1): its fixed Variables (a workflow step's: the plan var, the drift scan's settings) - one missing
+            # or changed differs, never "already right"
+            fixed = e.get("extra_vars") or {}
+            have_vars = vars_of(t.get("extra_vars")) if fixed else {}
+            wrong = [k for k in sorted(fixed) if have_vars.get(k) != _flat(fixed[k])]
+            for k in wrong:
+                diff["variable %s" % k] = [have_vars[k] if k in have_vars else "none", _flat(fixed[k])]
             if not diff:
                 self.note(name, "right")
                 continue
@@ -349,7 +446,10 @@ class Templates(object):
                 if mdiff:
                     steps.append(("fix", e, dict((k, v) for k, v in fields.items() if SHOW[k] in mdiff), mcfix, int(t["id"]), mdiff, True))
                     continue
-            steps.append(("fix", e, dict((k, v) for k, v in fields.items() if SHOW[k] in diff), cfix, int(t["id"]), diff))
+            fix = dict((k, v) for k, v in fields.items() if SHOW[k] in diff)
+            if wrong:
+                fix["extra_vars"] = set_vars(t.get("extra_vars"), fixed)
+            steps.append(("fix", e, fix, cfix, int(t["id"]), diff))
         # the playbooks to set: in the project as AAP has it synced (Codex) - a missing one stops before any write
         need = sorted(set(st[2]["playbook"] for st in steps if "playbook" in st[2]))
         if need and not self.problems:
@@ -381,9 +481,73 @@ class Templates(object):
                     self.label_plan[e["name"]] = missing
         return steps
 
+    def step_why(self, t, e):
+        """1.83.0 (Codex P1, final pass): what keeps a template from being a catalog workflow's step - '' when it may be one.
+        It runs the step's playbook from this site's project; a step the catalog runs without a Limit prompt does not ask
+        for one (the workflow's Limit would reach it); a step given Variables asks for them."""
+        if t.get("playbook") != e["playbook"] or t.get("project") != self.project:
+            return "%r runs %s%s - the step must run %s from this project" % (
+                t["name"], t.get("playbook") or "no playbook", "" if t.get("project") == self.project else " from another project", e["playbook"])
+        if t.get("ask_limit_on_launch") and not e.get("ask_limit"):
+            return ("%r asks for a Limit on launch: the workflow's Limit would reach it and it would do nothing - untick Prompt "
+                    "on launch for Limit on it" % t["name"])
+        if e.get("ask_variables") and not t.get("ask_variables_on_launch"):
+            return ("%r does not ask for Variables on launch, and its workflow node gives it Variables - tick Prompt on launch "
+                    "for Variables on it" % t["name"])
+        return ""
+
+    def use_instead(self, tpls, e):
+        """1.83.0: a workflow's step (the gate, STIG Manager - update) not in AAP under its catalog name: the site's own
+        template of its playbook used instead - one, or the one aap_templates_step_names names. Said either way; True when
+        it is settled here (used, or a problem said), False to make it."""
+        name = e["name"]
+        step = "update" if e["playbook"].endswith("stigman_update.yml") else "gate" if e["playbook"].endswith("workflow_gate.yml") else "workflow"
+        named = (self.p.get("step_names") or {}).get(name)
+        if named:
+            cands = [t for t in tpls if t.get("name") == named and t.get("organization") == self.org_id]
+            if len(cands) != 1:
+                self.note(name, "skipped", why="aap_templates_step_names names %r for it, and AAP has %s - the workflows that "
+                          "need it are not made" % (named, "none of that name" if not cands else "%d of that name" % len(cands)))
+                return True
+            # 1.83.0 (Codex P1): the named template must run this step's playbook, from this site's project
+            t = cands[0]
+            if t.get("playbook") != e["playbook"] or t.get("project") != self.project:
+                self.note(name, "skipped", why="aap_templates_step_names names %r for it, but it runs %s%s - the %s step "
+                          "must run %s from this project; the workflows that need it are not made" % (
+                              named, t.get("playbook") or "no playbook", "" if t.get("project") == self.project else " from another project",
+                              step, e["playbook"]))
+                return True
+        else:
+            # this site's project only: a lab project's copy of the playbook (with its own credentials) is never a step here
+            cands = [t for t in tpls if t.get("playbook") == e["playbook"] and t.get("organization") == self.org_id
+                     and t.get("project") == self.project and t.get("name") != name]
+            if not cands:
+                return False
+            if len(cands) > 1:
+                self.note(name, "skipped", why="several templates run %s: %s - name the one for the %s step in "
+                          "aap_templates_step_names: {%r: '...'}; the workflows that need it are not made"
+                          % (e["playbook"], ", ".join(repr(t["name"]) for t in sorted(cands, key=lambda t: t["name"])), step, name))
+                return True
+        t = cands[0]
+        if t.get("ask_limit_on_launch"):
+            # 1.83.0 (Codex P1): the workflow's Limit would reach it - its play of localhost would match nothing and end green
+            # with nothing done (the gate never asked, the approved plan never written)
+            self.note(name, "skipped", why="%r runs %s but asks for a Limit on launch: the workflow's Limit would reach it and "
+                      "it would do nothing - untick Prompt on launch for Limit on it, then run this again" % (t["name"], e["playbook"]))
+            return True
+        if e.get("ask_variables") and not t.get("ask_variables_on_launch"):
+            self.note(name, "skipped", why="%r runs %s but does not ask for Variables on launch, and its workflow node gives it "
+                      "Variables - tick Prompt on launch for Variables on it, then run this again" % (t["name"], e["playbook"]))
+            return True
+        self.uses[name] = t["name"]
+        self.note(name, "uses", why="uses %r (%s) for the %s step" % (t["name"], e["playbook"], step))
+        return True
+
     def same_playbook(self, tpls, e):
         """The site's own templates (the organization, the project) that run the catalog template's playbook under another name -
         never another template of the catalog (a second template of one playbook: "ServiceNow health - nodes")."""
+        if e.get("extra_vars"):
+            return []                # 1.83.0: a template with fixed Variables is a job of its own (a workflow's step), never an alias
         return [t for t in tpls if t.get("playbook") == e["playbook"] and t.get("project") == self.project
                 and t.get("organization") == self.org_id and t.get("name") != e["name"] and t.get("name") not in self.catalog_names]
 
@@ -540,6 +704,7 @@ def main():
                            variables_dir=dict(type="str", default=""),
                            match=dict(type="list", elements="str", default=[]), match_skip_areas=dict(type="list", elements="str", default=[]),
                            renamed=dict(type="dict", default={}), create_missing=dict(type="bool", default=True),
+                           needed=dict(type="list", elements="str", default=[]), step_names=dict(type="dict", default={}),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params
@@ -555,7 +720,7 @@ def main():
     order = dict((e.get("name"), i) for i, e in enumerate(p["catalog"]))
     s.results.sort(key=lambda r: order.get(r["name"], 10 ** 6))
     changed = any(r["action"] in ("create", "fix") or r.get("labels") for r in s.results) or getattr(s, "wrote", False)
-    module.exit_json(changed=changed, results=s.results, problems=s.problems)
+    module.exit_json(changed=changed, results=s.results, problems=s.problems, uses=s.uses, renamed=s.renamed, refused=s.refused)
 
 
 if __name__ == "__main__":

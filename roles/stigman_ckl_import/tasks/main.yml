@@ -15,6 +15,7 @@
       - stigman_ckl_import_mode | string | trim | lower in ['import', 'import and scorecard', 'scorecard']
       - stigman_ckl_import_mode | string | trim | lower == 'scorecard' or stigman_ckl_import_src | length > 0
       - stigman_ckl_import_mode | string | trim | lower == 'scorecard' or stigman_ckl_import_collection | length > 0
+        or stigman_ckl_import_routes | default([]) | length > 0 or stigman_ckl_import_collections | default([]) | length > 0
       - check_stig_stigman_api | default('') | length > 0
       - stigman_ckl_import_auto in ['none', 'existing', 'all']
       - stigman_ckl_import_collections is sequence and stigman_ckl_import_collections is not string
@@ -31,6 +32,7 @@
 
 - name: Import checklists | what this run does (stigman_ckl_import_mode)
   ansible.builtin.set_fact:
+    # (the STIG full and drift scans plan through tasks/plan.yml, which has no write: never through this file)
     _ci_mode: "{{ stigman_ckl_import_mode | string | trim | lower }}"
     # the scorecard alone never reads, moves or changes the drop folder, also with stigman_ckl_import_move
     _ci_move: "{{ stigman_ckl_import_move | bool and stigman_ckl_import_mode | string | trim | lower != 'scorecard' }}"
@@ -72,6 +74,11 @@
     max_mb: "{{ stigman_ckl_import_max_mb | int }}"
     collection: "{{ stigman_ckl_import_collection }}"
     collections: "{{ stigman_ckl_import_collections }}"
+    # 1.83.0: never searched (the STIG full and drift scans: check_stig_stigman_collections_exclude), and the asset names of
+    # the files (the inventory's, not the computer name in the checklist)
+    collections_exclude: "{{ stigman_ckl_import_collections_exclude | default([]) }}"
+    targets: "{{ stigman_ckl_import_targets | default({}) }}"
+    targets_only: "{{ stigman_ckl_import_targets_only | default(false) | bool }}"
     auto: "{{ stigman_ckl_import_auto }}"
     move_to: "{{ stigman_ckl_import_move_to }}"
     create_assets: "{{ stigman_ckl_import_create_assets | bool }}"
@@ -129,7 +136,7 @@
     _stig_att: {}
     _stig_att_split: {}
     _su: {"items": [], "error": ""}
-    site_report_sections: []
+    site_report_sections: "{{ stigman_ckl_import_sections_before | default([]) }}"     # 1.83.0: the full scan's hosts not scanned
 
 # a review with attachments in STIG Manager (evidence a person attached) is never handed to the approval, nor written at once
 - name: Import checklists | leave out the reviews that have attachments (check_stig_update_skip_attachments)
@@ -147,7 +154,9 @@
 - name: Import checklists | what is written at once (stigman_ckl_import_auto), what waits for the approval
   ansible.builtin.set_fact:
     _ci_auto: "{{ _stig_update_plan | selectattr('auto', 'defined') | selectattr('auto') | list if not _ci.error else [] }}"
-    _ci_wait: "{{ _stig_update_plan | rejectattr('auto') | list }}"
+    # 1.83.0: a plan an earlier step of the workflow handed on (the STIG scans' Linux check, before the Windows one) waits
+    # for the same approval: it goes first
+    _ci_wait: "{{ stigman_ckl_import_plan_before | default([]) + (_stig_update_plan | rejectattr('auto') | list) }}"
 
 - name: Import checklists | the reviews to write
   ansible.builtin.debug:
@@ -232,7 +241,8 @@
                                stigman_ckl_import_auto, _ci_auto, _su, ansible_check_mode,
                                (_ci_mv.moved | default([]) + ([{'name': '-', 'state': 'error', 'why': _ci_mv.error}] if _ci_mv.error | default('') else []))
                                if _ci_move | bool else none,
-                               _ci_settled | default([]) if _ci_move | bool else none, stigman_ckl_import_move_to) }}
+                               _ci_settled | default([]) if _ci_move | bool else none, stigman_ckl_import_move_to,
+                               stigman_ckl_import_title | default('Checklist import')) }}
   when: _ci_mode != 'import'
 
 - name: Import checklists | the report (with the scorecard - the web page with its trend lines, the workbook always)
@@ -263,7 +273,8 @@
                                stigman_ckl_import_auto, _ci_auto, _su, ansible_check_mode,
                                (_ci_mv.moved | default([]) + ([{'name': '-', 'state': 'error', 'why': _ci_mv.error}] if _ci_mv.error | default('') else []))
                                if _ci_move | bool else none,
-                               _ci_settled | default([]) if _ci_move | bool else none, stigman_ckl_import_move_to) }}
+                               _ci_settled | default([]) if _ci_move | bool else none, stigman_ckl_import_move_to,
+                               stigman_ckl_import_title | default('Checklist import')) }}
 
 - name: Import checklists | hand the plan to the approval step and the job after it (set_stats stigman_update_plan)
   ansible.builtin.set_stats:
@@ -271,7 +282,20 @@
       stigman_update_plan: "{{ _ci_wait }}"
     per_host: false
     aggregate: false
-  when: stigman_ckl_import_workflow | bool and _ci_wait | length > 0 and not _ci.error
+  when: >-
+    stigman_ckl_import_workflow | bool and _ci_wait | length > 0 and not _ci.error
+    and stigman_ckl_import_plan_var | default('stigman_update_plan') == 'stigman_update_plan'
+
+# 1.83.0: the STIG workflows' Windows checks hand theirs on under another name (stigman_update_plan_windows): two checks
+# side by side, each with its own gate, one approval
+- name: Import checklists | hand the plan on under its own name (stigman_ckl_import_plan_var)
+  ansible.builtin.set_stats:
+    data: "{{ {stigman_ckl_import_plan_var: _ci_wait} }}"
+    per_host: false
+    aggregate: false
+  when: >-
+    stigman_ckl_import_workflow | bool and _ci_wait | length > 0 and not _ci.error
+    and stigman_ckl_import_plan_var | default('stigman_update_plan') != 'stigman_update_plan'
 
 - name: Import checklists | not read
   ansible.builtin.fail:

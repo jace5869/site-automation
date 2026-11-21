@@ -1,0 +1,156 @@
+---
+# THE STIG FULL AND DRIFT SCANS' PLAN (1.83.0, Codex P1 final pass): the checklist import's planner as a plan-only entry
+# point - roles/check_stig/tasks/full_plan.yml includes this file (tasks_from: plan.yml), never main.yml. The checklists
+# the scan took from the hosts are read and planned (library/site_ckl_import.py, GET only to STIG Manager), the reviews
+# that have attachments left out, the report; on a workflow's check (stigman_ckl_import_workflow) the plan is handed on
+# (set_stats) and the job fails on purpose (NEEDS APPROVAL). There is no write and no move in this file: no setting -
+# stigman_ckl_import_auto, _move, _mode in the job's extra vars - can make it write. The approval's STIG Manager -
+# update writes the plan.
+- name: STIG scan plan | STIG Manager is set, the routes are a list of rules
+  ansible.builtin.assert:
+    that:
+      - check_stig_stigman_api | default('') | length > 0
+      - stigman_ckl_import_src | length > 0
+      - stigman_ckl_import_routes is not mapping and stigman_ckl_import_routes is not string
+      - stigman_ckl_import_routes is sequence
+      - stigman_ckl_import_routes | reject('mapping') | list | length == 0
+    fail_msg: >-
+      Set check_stig_stigman_api (all.yml, as for the STIG drift report) and attach the "STIG Manager API" credential;
+      check_stig_stigman_collection_routes is a list of routes. docs/STIG_JOBS.md. Nothing read.
+    quiet: true
+
+- name: STIG scan plan | read the checklists, match them to STIG Manager, plan the reviews (reads only)
+  site_ckl_import:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url | default('') or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id | default('') or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret | default('') or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope | default('') }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | default(true) | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path | default('') }}"
+    timeout: "{{ check_stig_stigman_timeout | default(60) | int }}"
+    src: "{{ stigman_ckl_import_src }}"
+    base: "{{ playbook_dir }}"
+    patterns: "{{ stigman_ckl_import_patterns }}"
+    recurse: "{{ stigman_ckl_import_recurse | bool }}"
+    max_files: "{{ stigman_ckl_import_max_files | int }}"
+    max_mb: "{{ stigman_ckl_import_max_mb | int }}"
+    collection: "{{ stigman_ckl_import_collection }}"
+    collections: "{{ stigman_ckl_import_collections }}"
+    collections_exclude: "{{ stigman_ckl_import_collections_exclude | default([]) }}"
+    targets: "{{ stigman_ckl_import_targets | default({}) }}"
+    targets_only: "{{ stigman_ckl_import_targets_only | default(false) | bool }}"
+    new_only: "{{ _ci_new_only | default(false) | bool }}"          # the drift scan - hosts with no asset only
+    auto: none                       # literal: this file only plans
+    create_assets: "{{ stigman_ckl_import_create_assets | bool }}"
+    routes: "{{ stigman_ckl_import_routes }}"
+    route_move: none                 # literal: a move is the approval's
+    assign_stigs: "{{ stigman_ckl_import_assign_stigs | bool }}"
+    benchmarks: "{{ stigman_ckl_import_benchmarks }}"
+    min_match: "{{ stigman_ckl_import_min_match | float }}"
+    candidates: "{{ stigman_ckl_import_candidates | int }}"
+    search_all: "{{ stigman_ckl_import_search_all | bool }}"
+    other_revision: "{{ stigman_ckl_import_other_revision | bool }}"
+    overwrite_accepted: "{{ stigman_ckl_import_overwrite_accepted | bool }}"
+    protect_words: "{{ stigman_protect_words | default(omit) }}"
+    status: "{{ stigman_ckl_import_status }}"
+    detail_max: "{{ stigman_ckl_import_detail_max | int }}"
+    day: "{{ now(utc=true).strftime('%Y-%m-%d') }}"
+  register: _ci
+  check_mode: false             # only reads
+
+- name: STIG scan plan | the files
+  ansible.builtin.debug:
+    msg: "{{ _ci | stig_ckl_file_lines }}"
+
+- name: STIG scan plan | each checklist
+  ansible.builtin.debug:
+    msg: "{{ _ci.checklists | stig_ckl_lines(_ci.collections | default([]) | length > 1) or 'no checklist read' }}"
+
+- name: STIG scan plan | the plan
+  ansible.builtin.set_fact:
+    _stig_update_plan: "{{ _ci.plan | stig_ckl_for_attachments }}"
+    _stig_att: {}
+    _stig_att_split: {}
+    site_report_sections: "{{ stigman_ckl_import_sections_before | default([]) }}"     # the full scan's hosts not scanned
+
+# a review with attachments in STIG Manager (evidence a person attached) is never handed to the approval
+- name: STIG scan plan | leave out the reviews that have attachments (check_stig_update_skip_attachments)
+  ansible.builtin.include_role:
+    name: check_stig
+    tasks_from: update_attachments.yml
+  when: >-
+    _stig_update_plan | rejectattr('new_asset', 'defined') | rejectattr('kind', 'eq', 'create') | list | length > 0
+    and check_stig_update_skip_attachments | default(true) | bool
+
+- name: STIG scan plan | the moves and assignments first, then the reviews; a plan an earlier step handed on goes first
+  ansible.builtin.set_fact:
+    _ci_wait: "{{ stigman_ckl_import_plan_before | default([]) + (_stig_update_plan | stig_ckl_after_attachments(_ci.plan, _stig_att.error | default(''))) }}"
+
+- name: STIG scan plan | the reviews to write, after the approval
+  ansible.builtin.debug:
+    msg: "{{ _ci_wait | stig_update_lines or 'nothing to write to STIG Manager' }}"
+
+- name: STIG scan plan | the findings for the site portal (the job artifact site_findings)
+  ansible.builtin.set_fact:
+    _ci_sf: >-
+      {{ (_ci.plan | default([]) | selectattr('kind', 'equalto', 'create')
+          | map('combine', {'why': 'its asset waits for the approval of this import'}) | list)
+         | ckl_findings_artifact([], site_findings_max_per_kind | default(50) | int) }}
+  when: site_findings_artifact | default(true) | bool
+
+- name: STIG scan plan | publish them (set_stats site_findings, site_findings_capped)
+  ansible.builtin.set_stats:
+    data:
+      site_findings: "{{ _ci_sf.hosts }}"
+      site_findings_capped: "{{ _ci_sf.capped }}"
+    per_host: false
+    aggregate: true
+  when: site_findings_artifact | default(true) | bool and _ci_sf.hosts | length > 0
+
+- name: STIG scan plan | the report
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: >-
+      {{ _ci | stig_ckl_report(_ci_wait, site_report_sections, stigman_ckl_import_workflow | bool, stigman_ckl_import_list_max | int,
+                               'none', [], {'items': [], 'error': ''}, ansible_check_mode, none, none, stigman_ckl_import_move_to,
+                               stigman_ckl_import_title | default('Checklist import')) }}
+
+- name: STIG scan plan | hand the plan to the approval step and the job after it (set_stats stigman_update_plan)
+  ansible.builtin.set_stats:
+    data:
+      stigman_update_plan: "{{ _ci_wait }}"
+    per_host: false
+    aggregate: false
+  when: >-
+    stigman_ckl_import_workflow | bool and _ci_wait | length > 0 and not _ci.error
+    and stigman_ckl_import_plan_var | default('stigman_update_plan') == 'stigman_update_plan'
+
+# the Windows checks hand theirs on under another name (stigman_update_plan_windows): two checks side by side, each with
+# its own gate, one approval
+- name: STIG scan plan | hand the plan on under its own name (stigman_ckl_import_plan_var)
+  ansible.builtin.set_stats:
+    data: "{{ {stigman_ckl_import_plan_var: _ci_wait} }}"
+    per_host: false
+    aggregate: false
+  when: >-
+    stigman_ckl_import_workflow | bool and _ci_wait | length > 0 and not _ci.error
+    and stigman_ckl_import_plan_var | default('stigman_update_plan') != 'stigman_update_plan'
+
+- name: STIG scan plan | not read
+  ansible.builtin.fail:
+    msg: "Nothing planned: {{ _ci.error }}"
+  when: _ci.error | length > 0
+
+- name: STIG scan plan | NEEDS APPROVAL
+  ansible.builtin.fail:
+    msg: >-
+      NEEDS APPROVAL - {{ _reviews | length }} review(s) of {{ _reviews | map(attribute='asset') | unique | list | length }}
+      asset(s) to write to STIG Manager{{ (', and ' ~ _new | length ~ ' new asset(s) to create') if _new else '' }}, in the
+      report ("Approve writes these reviews to STIG Manager"). Approve the workflow's step to write them; deny it to write
+      none. {{ _ci_wait | stig_update_lines | join(' || ') }}
+  when: stigman_ckl_import_workflow | bool and _ci_wait | length > 0
+  vars:
+    _new: "{{ _ci_wait | selectattr('kind', 'eq', 'create') | list }}"
+    _reviews: "{{ _ci_wait | rejectattr('kind', 'eq', 'create') | list }}"

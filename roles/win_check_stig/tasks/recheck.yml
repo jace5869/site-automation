@@ -38,6 +38,12 @@
     _win_check: stig
   when: _stig_recheck_vulns | length > 0
 
+# 1.83.0 (the STIG drift scan, check_stig_update_new_by_import): a server with no asset scanned in full, its checklists
+# taken to the AAP side for the checklist import's planner (playbooks/win_stig_recheck.yml's last play)
+- name: Windows STIG recheck | a server with no asset - scanned in full for the new assets' plan
+  ansible.builtin.include_tasks: full_scan.yml
+  when: _stig_new_by_import | default(false) | bool
+
 - name: Windows STIG recheck | compare with STIG Manager
   ansible.builtin.include_role:
     name: check_stig

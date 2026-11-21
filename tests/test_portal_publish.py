@@ -16,6 +16,9 @@ import ansible.module_utils  # noqa: E402
 import site_aap  # noqa: E402
 sys.modules.setdefault("ansible.module_utils.site_aap", site_aap)
 ansible.module_utils.site_aap = site_aap
+import site_aap_workflows  # noqa: E402 - 1.83.0: the workflow parts both setup jobs share
+sys.modules.setdefault("ansible.module_utils.site_aap_workflows", site_aap_workflows)
+ansible.module_utils.site_aap_workflows = site_aap_workflows
 import site_aap_portal_setup as S  # noqa: E402
 import site_portal_filters as rules  # noqa: E402
 
