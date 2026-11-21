@@ -158,7 +158,7 @@ def match(dcs, nodes):
                 out.append(r)
         return out
     out, claimed = {}, {}
-    for d in dcs:
+    for i, d in enumerate(dcs):                          # by position: two domains' DC01 are two DCs
         fq, sn, ip = _full(d.get("fqdn")), _short(d.get("dc")), str(d.get("ip") or "").strip()
         node, how, why = None, "", ""
         c = uniq(full.get(fq, [])) if fq else []
@@ -183,16 +183,16 @@ def match(dcs, nodes):
         if node is not None and node.get("node_id") in claimed:
             node, how, why = None, "", "the same SolarWinds node as %s - set its caption or DNS name in SolarWinds" % claimed[node.get("node_id")]
         if node is not None:
-            claimed[node.get("node_id")] = d["dc"]
-        out[d["dc"]] = (node, how, why)
+            claimed[node.get("node_id")] = d.get("fqdn") or d["dc"]
+        out[i] = (node, how, why)
     return out
 
 
 def _dc_rows(dcs, found, apps, alerts, downs, sam, ifaces=None):
     res = []
-    for d in dcs:
-        node, how, why = found.get(d["dc"], (None, "", ""))
-        rec = {"dc": d["dc"], "ip": d.get("ip") or "", "matched": how, "unmatched_why": why, "status": "", "status_text": "", "last_poll": "",
+    for i, d in enumerate(dcs):
+        node, how, why = found.get(i, (None, "", ""))
+        rec = {"dc": d["dc"], "domain": d.get("domain") or "", "fqdn": d.get("fqdn") or "", "ip": d.get("ip") or "", "matched": how, "unmatched_why": why, "status": "", "status_text": "", "last_poll": "",
                "cpu": None, "mem": None, "apps": None, "alerts": [], "last_down": None, "node_id": None, "ifaces": None}
         if node:
             nid = node.get("node_id")
@@ -260,7 +260,8 @@ def from_db(dcs, opts, conn, swdb):
 def _db_read(dcs, opts, conn, swdb, snap, age, now):
     sid = snap.get("snap_id")
     keys = sorted(set([_short(d["dc"]) for d in dcs] + [str(d.get("ip") or "") for d in dcs if d.get("ip")]))
-    got = swdb.nodes_for(conn, sid, keys) or {}           # by the short name or the primary IP: one row each
+    reader = swdb.nodes_for_all if hasattr(swdb, "nodes_for_all") else swdb.nodes_for     # 1.96.1: every node of a name
+    got = reader(conn, sid, keys) or {}                   # by the short name or the primary IP
     rows = []
     for v in got.values():
         for r in (v if isinstance(v, list) else [v]):     # a reader that gives every node of a name: all of them

@@ -55,7 +55,8 @@ def main():
             client = site_swis.Client(url, user, password, verify=verify, ca_path=ca if ca and os.path.isfile(ca) else "", timeout=p["timeout"])
         except site_swis.SwisError as e:
             why.append("the SolarWinds credential's address: %s" % e)
-    res = ad.read([{"dc": str(d.get("dc") or ""), "ip": str(d.get("ip") or ""), "fqdn": str(d.get("fqdn") or "")} for d in p["dcs"]], opts, conn=conn,
+    res = ad.read([{"dc": str(d.get("dc") or ""), "ip": str(d.get("ip") or ""), "fqdn": str(d.get("fqdn") or ""),
+                    "domain": str(d.get("domain") or "")} for d in p["dcs"]], opts, conn=conn,
                   swdb=site_swis_db, client=client)
     res["why"] = why + res["why"]
     res["asked"] = bool(conn is not None or client is not None or why)

@@ -48,11 +48,20 @@ def _ad_problems(ad):
     out = {}
     for p in (ad or {}).get("problems") or []:
         k = str(p.get("object") or "").strip().lower()
-        if k:
-            out.setdefault(k, []).append((str(p.get("severity") or ""), str(p.get("text") or "")))
+        if k:                                            # (domain, DC): two domains' DC01 are two DCs
+            out.setdefault((str(p.get("domain") or "").strip().lower(), k), []).append((str(p.get("severity") or ""), str(p.get("text") or "")))
     for v in out.values():
         v.sort(key=lambda x: RANK.get(x[0], 3))
     return out
+
+
+def _probs_of(probs, d):
+    """A DC's AD problems: by its domain and name; a DC whose domain is not known, by its name only when one domain has it."""
+    dom, name = str(d.get("domain") or "").strip().lower(), str(d.get("dc") or "").strip().lower()
+    if dom:
+        return probs.get((dom, name), [])
+    hits = [k for k in probs if k[1] == name]
+    return probs[hits[0]] if len(hits) == 1 else []
 
 
 def _meaning(d, probs, cpu_warn, mem_warn, now):
@@ -105,7 +114,12 @@ def _num(x):
 
 
 def _plain(v):
-    return isinstance(v, int) and not isinstance(v, bool) or (isinstance(v, str) and v.strip().isdigit())
+    """A tile's value that is a plain number - 3, 2.5, "1,200" - as report_headline's _plain_number reads it."""
+    if isinstance(v, bool) or v is None:
+        return False
+    if isinstance(v, (int, float)):
+        return True
+    return re.match(r"^-?\d+(\.\d+)?$", str(v).strip().replace(",", "")) is not None
 
 
 def _view(res, ad, opts=None):
@@ -115,7 +129,8 @@ def _view(res, ad, opts=None):
     cpu_warn, mem_warn, days = float(o.get("cpu_warn", 90)), float(o.get("mem_warn", 90)), int(o.get("days", 30))
     now = _utc(o.get("now")) or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     nr = []
-    if r.get("failed"):                                  # the module stopped (failed_when: false kept the job going)
+    crashed = not r.get("asked") and not r.get("skipped") and any(r.get(k) for k in ("failed", "exception", "module_stderr", "msg"))
+    if crashed:                                          # the module stopped (failed_when: false kept the job going)
         return {"section": None, "tile": None, "flat": None, "lines": ["From SolarWinds: the reader failed"],
                 "not_read": ["SolarWinds: not read - the reader stopped with an error (the job's output has it; the report is complete apart from this)"]}
     if not r.get("asked"):
@@ -164,7 +179,7 @@ def _view(res, ad, opts=None):
                 stc["Last down (%d days)" % days] = "warning"
         row = {"": "", "DC": d["dc"], "SolarWinds": sw_cell, "AD monitors (SAM)": apps.get("text") or ("-" if not found else "no AD template"),
                "CPU / memory (%)": cm if found else "-", "Alerts": al_cell if found else "-", "Last down (%d days)" % days: ld_cell,
-               "What it means": _meaning(d, probs.get(str(d["dc"]).strip().lower(), []), cpu_warn, mem_warn, now)}
+               "What it means": _meaning(d, _probs_of(probs, d), cpu_warn, mem_warn, now)}
         cs = [stc.get(c, "") for c in cols]
         worst = min([w for w in cs if w in RANK and w not in ("ok", "")] or [""], key=lambda w: RANK.get(w, 4))
         det = []
@@ -289,7 +304,7 @@ def ad_swis_dcs(dcs, hostvars=None):
         except Exception:  # noqa: BLE001 - a host var that does not template: no IP, the name still matches
             ip = ""
         if name:
-            out.append({"dc": name, "ip": ip, "fqdn": fqdn})
+            out.append({"dc": name, "ip": ip, "fqdn": fqdn, "domain": str(d.get("domain") or "")})
     return out
 
 

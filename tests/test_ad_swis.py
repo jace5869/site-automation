@@ -295,8 +295,8 @@ class View1940(unittest.TestCase):
     def test_6_dcs_and_their_ips(self):
         hv = {"dc01.corp.test": {"ansible_host": "192.0.2.11"}, "dc02.corp.test": {"ansible_host": "dc02.corp.test"}}
         self.assertEqual(af.ad_swis_dcs([{"dc": "DC01", "host": "dc01.corp.test"}, {"dc": "DC02", "host": "dc02.corp.test"}, {"dc": "DC03", "host": "x"}], hv),
-                         [{"dc": "DC01", "ip": "192.0.2.11", "fqdn": "dc01.corp.test"}, {"dc": "DC02", "ip": "", "fqdn": "dc02.corp.test"},
-                          {"dc": "DC03", "ip": "", "fqdn": ""}])
+                         [{"dc": "DC01", "ip": "192.0.2.11", "fqdn": "dc01.corp.test", "domain": ""}, {"dc": "DC02", "ip": "", "fqdn": "dc02.corp.test", "domain": ""},
+                          {"dc": "DC03", "ip": "", "fqdn": "", "domain": ""}])
 
 
 class Review1940(unittest.TestCase):
@@ -310,8 +310,9 @@ class Review1940(unittest.TestCase):
          {"node_id": 5, "name": "dc05", "dns": "", "ip": "", "status": "Up"},
          {"node_id": 6, "name": "dc05", "dns": "", "ip": "192.0.2.15", "status": "Warning"}]
 
-    def m(self, dcs):
-        return dict((k, (v[0] and v[0]["node_id"], v[1], v[2])) for k, v in ad.match(dcs, self.N).items())
+    def m(self, dcs):                                    # by the DC's name, for reading (match() gives them by position)
+        got = ad.match(dcs, self.N)
+        return dict((d["dc"], (got[i][0] and got[i][0]["node_id"], got[i][1], got[i][2])) for i, d in enumerate(dcs))
 
     def test_1_two_domains_one_short_name(self):
         r = self.m([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": "192.0.2.11"}])
@@ -319,12 +320,12 @@ class Review1940(unittest.TestCase):
         r = self.m([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}])
         self.assertEqual(r["DC01"][:2], (2, "name"))
         nodes = [dict(n) for n in self.N if n["node_id"] != 2]                      # its own node gone: the other domain's never stands in
-        self.assertIsNone(ad.match([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}], nodes)["DC01"][0])
+        self.assertIsNone(ad.match([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}], nodes)[0][0])
 
     def test_2_a_shared_ip_is_not_a_match(self):
         r = self.m([{"dc": "DC02", "fqdn": "", "ip": "192.0.2.12"}])
         self.assertEqual(r["DC02"][:2], (3, "name"))                                 # the name is unique: matched by it
-        r = ad.match([{"dc": "DCX", "fqdn": "", "ip": "192.0.2.12"}], self.N)["DCX"]
+        r = ad.match([{"dc": "DCX", "fqdn": "", "ip": "192.0.2.12"}], self.N)[0]
         self.assertIsNone(r[0])
         self.assertIn("2 SolarWinds nodes have its IP", r[2])
         r = self.m([{"dc": "DC05", "fqdn": "", "ip": "192.0.2.15"}])
@@ -332,11 +333,11 @@ class Review1940(unittest.TestCase):
 
     def test_3_one_node_never_two_dcs(self):
         r = ad.match([{"dc": "DC02", "fqdn": "", "ip": ""}, {"dc": "dc02", "fqdn": "", "ip": "192.0.2.12"}], self.N)
-        self.assertEqual(r["DC02"][0]["node_id"], 3)
-        self.assertIsNone(r["dc02"][0])
-        self.assertIn("the same SolarWinds node as DC02", r["dc02"][2])
+        self.assertEqual(r[0][0]["node_id"], 3)
+        self.assertIsNone(r[1][0])
+        self.assertIn("the same SolarWinds node as DC02", r[1][2])
         v = af.ad_swis_view({"asked": True, "ok": True, "source": "swis-live", "read_at": "2026-10-15 06:53", "sam": False,
-                             "dcs": [{"dc": "dc02", "matched": "", "unmatched_why": r["dc02"][2]}]}, {}, {"now": NOW})
+                             "dcs": [{"dc": "dc02", "matched": "", "unmatched_why": r[1][2]}]}, {}, {"now": NOW})
         row = v["section"]["rows"][0]
         self.assertEqual((row[2], v["section"]["cell_status"][0][2]), ("Not matched", "warning"))
         self.assertIn("the same SolarWinds node as DC02", row[-1])
@@ -349,12 +350,12 @@ class Review1940(unittest.TestCase):
             self.assertEqual(sf.report_headline(af.ad_swis_insert(doc, v)), sf.report_headline(doc), name)
 
     def test_5_problems_by_the_whole_dc_name(self):
-        d = [{"dc": "DC01.a.test", "matched": "name", "status": "Down"}, {"dc": "DC01.b.test", "matched": "name", "status": "Down"}]
+        d = [{"dc": "DC01", "domain": "a.test", "matched": "name", "status": "Down"}, {"dc": "DC01", "domain": "b.test", "matched": "name", "status": "Up"}]
         v = af.ad_swis_view({"asked": True, "ok": True, "source": "swis-live", "read_at": "2026-10-15 06:53", "sam": False, "dcs": d},
-                            {"problems": [{"object": "DC01.a.test", "severity": "critical", "text": "LDAP not in sync"}]}, {"now": NOW})
-        r = dict((x[1], x[-1]) for x in v["section"]["rows"])
-        self.assertIn("LDAP not in sync", r["DC01.a.test"])
-        self.assertNotIn("LDAP not in sync", r["DC01.b.test"])
+                            {"problems": [{"domain": "a.test", "object": "DC01", "severity": "critical", "text": "LDAP not in sync"}]}, {"now": NOW})
+        r = [x[-1] for x in v["section"]["rows"]]
+        self.assertEqual(sum("LDAP not in sync" in x for x in r), 1)                # only a.test's DC01 has a.test's problem
+        self.assertIn("LDAP not in sync", r[0])
 
     def test_6_no_exception_text(self):
         class Err(Exception):
@@ -383,7 +384,7 @@ class Review1940(unittest.TestCase):
         v = af.ad_swis_view(bad, {}, {"now": NOW})                                    # the view never raises: one Not read line
         self.assertIsNone(v["section"])
         self.assertTrue(v["not_read"])
-        v = af.ad_swis_view({"failed": True, "msg": "Traceback ... password=x"}, {}, {})
+        v = af.ad_swis_view({"failed": False, "module_stderr": "Traceback ... password=x", "msg": "MODULE FAILURE"}, {}, {})   # failed_when: false
         self.assertIn("the reader stopped", v["not_read"][0])
         self.assertNotIn("password", json.dumps(v))
 
@@ -403,6 +404,30 @@ class Review1940(unittest.TestCase):
         self.assertTrue(r["ok"])                                                     # the nodes kept without SAM or alerts
         self.assertIn("cut", r["dcs"][0]["unmatched_why"])
         self.assertIn("not read", r["sam_why"])
+
+
+    def test_9_two_dc01s_in_two_domains(self):
+        """The final review's case: admin mode names both "DC01"; each gets its own node and its own problems."""
+        dcs = [{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": "192.0.2.11", "domain": "corp.test"},
+               {"dc": "DC01", "fqdn": "dc01.child.test", "ip": "192.0.2.50", "domain": "child.test"}]
+
+        class Two(object):
+            def paged(self, *a, **k):
+                return [{"NodeID": 1, "Caption": "DC01.child.test", "IPAddress": "192.0.2.50", "Status": 2},
+                        {"NodeID": 2, "Caption": "dc01.corp.test", "IPAddress": "192.0.2.11", "Status": 1}], False
+
+            def query(self, *a, **k):
+                return []
+        r = ad.read(dcs, {"now": NOW}, client=Two())
+        self.assertEqual([(x["fqdn"], x["node_id"], x["status"]) for x in r["dcs"]],
+                         [("dc01.corp.test", 2, "Up"), ("dc01.child.test", 1, "Down")])
+        v = af.ad_swis_view(dict(r, asked=True), {"problems": [{"domain": "child.test", "object": "DC01", "severity": "critical",
+                                                                "text": "LDAP not in sync"}]}, {"now": NOW})
+        rows = v["section"]["rows"]                                                  # worst first: child.test's (Down) first
+        self.assertEqual([x[2] for x in rows], ["Down", "Up"])
+        self.assertIn("Down in SolarWinds and in AD (LDAP not in sync)", rows[0][-1])
+        self.assertNotIn("LDAP", rows[1][-1])
+        self.assertTrue(af._plain("1,200") and af._plain(2.5) and not af._plain("98%"))
 
 
 if __name__ == "__main__":
