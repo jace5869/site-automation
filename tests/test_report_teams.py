@@ -268,8 +268,8 @@ class Review1860(unittest.TestCase):
 
     def test_the_fold_row_is_no_data_row(self):
         sr = open(os.path.join(TPL, "site_report.js"), encoding="utf-8").read()
-        self.assertIn("return !r.hidden&&!r.classList.contains('xr')&&!r.classList.contains('pt-fold')}", sr)      # Copy and CSV
-        self.assertIn("rows=[].slice.call(body.rows).filter(function(r){return !r.classList.contains('xr')&&!r.classList.contains('pt-fold')});", sr)
+        self.assertIn("return (!r.hidden||r._c)&&!r.classList.contains('xr')&&!r.classList.contains('pt-fold')}", sr)      # Copy and CSV
+        self.assertIn("if(r.classList.contains('xr')||r.classList.contains('pt-fold'))continue;", sr)     # the rows a table registers (1.100.0's register())
         self.assertIn("', '+others+' more in other teams'", sr)
         for look in ("atlas", "brief", "ops"):
             self.assertIn("tr:not(.xr):not(.pt-fold)>:is(th,td):nth-child(", open(os.path.join(TPL, "report_%s.html.j2" % look), encoding="utf-8").read())
