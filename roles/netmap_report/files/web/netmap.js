@@ -46,15 +46,15 @@
     D.nodes.forEach(function (n) {
       n.role = ROLE_OLD[n.role] || n.role || 'other';
       byId[n.id] = n;
-      var s = sites[n.site] || (sites[n.site] = { name: n.site, nodes: [], b: dict(), bo: [], down: 0, warning: 0, chg: 0, links: dict(), none: n.site === none || n.site === 'No site' });
+      var s = sites[n.site] || (sites[n.site] = { name: n.site, nodes: [], b: dict(), bo: [], down: 0, warning: 0, unknown: 0, chg: 0, links: dict(), none: n.site === none || n.site === 'No site' });
       s.nodes.push(n);
-      if (n.status === 'Down') s.down++; else if (n.status === 'Warning') s.warning++;
+      if (n.status === 'Down') s.down++; else if (n.status === 'Warning') s.warning++; else if (n.status === 'Unknown') s.unknown++;
       if (n.new || n.gone || n.was) s.chg++;
       var bn = n.building || '';
-      var b = s.b[bn] || (s.b[bn] = { name: bn, nodes: [], down: 0, warning: 0, closets: dict() });
+      var b = s.b[bn] || (s.b[bn] = { name: bn, nodes: [], down: 0, warning: 0, unknown: 0, closets: dict() });
       if (!b.nodes.length) s.bo.push(bn);
       b.nodes.push(n);
-      if (n.status === 'Down') b.down++; else if (n.status === 'Warning') b.warning++;
+      if (n.status === 'Down') b.down++; else if (n.status === 'Warning') b.warning++; else if (n.status === 'Unknown') b.unknown++;
       if (n.closet) b.closets[n.closet] = 1;
     });
     D.links.forEach(function (l) {
@@ -70,8 +70,10 @@
       return (a.none - b.none) || (b.down - a.down) || (b.warning - a.warning) || (a.name < b.name ? -1 : 1); });
     order.forEach(function (s) { s.bo.sort(); });
   }
-  function worst(x) { return x.down ? 'Down' : x.warning ? 'Warning' : 'Up'; }
-  function words(x) { return x.down ? GL.Down + ' ' + x.down + ' down' : x.warning ? GL.Warning + ' ' + x.warning + ' warning' : GL.Up + ' all up'; }
+  function worst(x) { return x.down ? 'Down' : x.warning ? 'Warning' : x.unknown && x.unknown === (x.nodes || []).length ? 'Unknown' : 'Up'; }
+  function words(x) { return x.down ? GL.Down + ' ' + x.down + ' down' : x.warning ? GL.Warning + ' ' + x.warning + ' warning' :
+    x.unknown && x.unknown === (x.nodes || []).length ? GL.Unknown + ' not known' : GL.Up + ' all up'; }   // 1.95.1: all Unknown is not "all up"
+  function own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k) && Array.isArray(o[k]); }   // geo: never "constructor"
   function keep(n) {                                   // the Filters: role, vendor
     if (Object.keys(S.roles).length && !S.roles[n.role]) return false;
     if (S.vendor && n.vendor !== S.vendor) return false;
@@ -112,7 +114,7 @@
 
   /* ---- World: the site tiles, worst first; the links between sites (counted) ------------------------------------------ */
   function world() {
-    var real = order.filter(function (s) { return !s.none; }), placed = real.filter(function (s) { return D.geo && D.geo[s.name]; }).length;
+    var real = order.filter(function (s) { return !s.none; }), placed = real.filter(function (s) { return own(D.geo, s.name); }).length;
     if (S.world === 'globe') { say(''); body.replaceChildren(); return; }
     var m = el('span', '', [placed === 0 ? 'None of the ' + real.length + ' sites has a place on the globe yet, so they show as tiles. ' : (real.length - placed) + ' of ' + real.length + ' sites have no place on the globe yet. ',
       'Place them with ', el('code', '', ['netmap_sites']), ' (a name, or a pattern such as ', el('code', '', ['ABCD*']), '), SolarWinds’ Worldwide Map, or ', el('code', '', ['netmap_lat_property']), '.']);
@@ -194,8 +196,8 @@
     });
     var be = dict();                                   // the links between buildings, counted; the WAN ones, per building
     s.nodes.forEach(function (n) { (nb[n.id] || []).forEach(function (l) {
-      if (l.a !== n.id) return;
-      var o = byId[l.b]; if (!o) return;
+      var o = byId[l.a === n.id ? l.b : l.a]; if (!o) return;     // either end may be this site's (a WAN link stored remote -> local too)
+      if (o.site === s.name && l.a !== n.id) return;               // a link inside the site: counted once, from its a end
       var nB = n.building || '', oB = o.building || '', k, e;
       if (o.site !== s.name || n.site !== s.name) {
         var other = o.site !== s.name ? o.site : n.site, mine = o.site !== s.name ? nB : oB;
@@ -386,7 +388,7 @@
   function pick(i) {
     var h = hits[i]; if (!h) return;
     sugg.hidden = true; q.setAttribute('aria-expanded', 'false'); q.value = '';
-    if (h.go[0] === 'site' && S.world === 'globe' && S.level === 'world' && window.ngFly && D.geo && D.geo[h.go[1]] && window.ngFly(h.go[1])) return;   // a placed site: the globe flies there
+    if (h.go[0] === 'site' && S.world === 'globe' && S.level === 'world' && window.ngFly && own(D.geo, h.go[1]) && window.ngFly(h.go[1])) return;   // a placed site: the globe flies there
     go.apply(null, h.go);
   }
   q.addEventListener('input', function () { cur = -1; find(q.value); drawSugg(); });
@@ -461,7 +463,7 @@
     }
     D = data; index();
     if (!old) {                                          // the first: the globe when most sites are placed, else the tiles
-      var real = order.filter(function (s) { return !s.none; }), placed = real.filter(function (s) { return D.geo && D.geo[s.name]; }).length, kept = '';
+      var real = order.filter(function (s) { return !s.none; }), placed = real.filter(function (s) { return own(D.geo, s.name); }).length, kept = '';
       try { kept = localStorage.getItem(KEY) || ''; } catch (e) { /* the default */ }
       S.world = kept === 'tiles' || kept === 'globe' ? kept : (real.length && placed * 2 >= real.length ? 'globe' : 'tiles');
       if (!placed) S.world = 'tiles';

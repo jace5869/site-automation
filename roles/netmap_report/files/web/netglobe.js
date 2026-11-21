@@ -464,11 +464,13 @@
 
   /* ---- the world view, or another level (netmap.js) ------------------------------------------------------------------------------------------------- */
   var vb = [].slice.call(box.querySelectorAll('.nm-v'));
+  var shown = '';
   function view(v) {
     box.setAttribute('data-view', v);
     vb.forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-v') === v)); });
-    if (v === 'world') { if (G.flat) G.fitPending = true; else G.k = Math.min(G.k, 1.2); G.idle = performance.now() + 1500; resize(); start(); }
-    else { stop(); tip.hidden = true; }
+    if (v === 'world' && shown !== 'world') { if (G.flat) G.fitPending = true; else G.k = Math.min(G.k, 1.2); G.idle = performance.now() + 1500; resize(); start(); }
+    else if (v !== 'world') { stop(); tip.hidden = true; }
+    shown = v;                                           // 1.95.1: a live refresh (the same view again) keeps where the viewer turned it
   }
   window.nmView = function (v) { view(v); };            // 1.95.0: world (this globe), tiles, site, building, device (netmap.js draws those)
   vb.forEach(function (b) {

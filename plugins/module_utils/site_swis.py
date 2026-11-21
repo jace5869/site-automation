@@ -516,8 +516,12 @@ def short_name(n):
 
 
 def name_parts(n):
-    """The name's parts: split at - _ . / and spaces, then where a digit is followed by a letter."""
-    return [q for p in SEP.split(short_name(n)) if p for q in DIGIT_LETTER.split(p) if q]
+    """The name's parts: split at - _ . / and spaces, then where a digit is followed by a letter. An IP address has none
+    (1.95.1: a node known only by its IP is no site "198")."""
+    nm = short_name(n)
+    if IPV4.match(nm):
+        return []
+    return [q for p in SEP.split(nm) if p for q in DIGIT_LETTER.split(p) if q]
 
 
 def _subnet(ip, bits):
@@ -741,6 +745,7 @@ def discover(raw_nodes, pairs, o):
     split = o.get("site_split", ",")
     split = "" if split is None else str(split)
     by_id = dict((n["id"], n) for n in raw_nodes)
+    named = set(n["id"] for n in raw_nodes if short_name(n) and not IPV4.match(short_name(n)))   # 1.95.1: an IP is no name
     linked = set(x for p in pairs for x in p)
     link_share = min(1.0, len(linked) / float(N))
     props = [p for p in o.get("discover_props") or [] if IDENT.match(str(p))]
@@ -765,6 +770,11 @@ def discover(raw_nodes, pairs, o):
     result = {}
     for lv in LEVELS:
         prev = result.get(LEVELS[LEVELS.index(lv) - 1]) if lv != "site" else None
+        if lv == "closet" and prev is not None:          # no building for a node: its closet is the site's (as the auto reading)
+            prev = dict(prev)
+            for i, sv in (result.get("site") or {}).items():
+                if not prev.get(i) and sv:
+                    prev[i] = sv + SCOPE
 
         def scoped(fn, prev=prev):
             fn = _safe(fn)
@@ -773,12 +783,18 @@ def discover(raw_nodes, pairs, o):
             return lambda n: (lambda a, b: (a + SCOPE + b) if a and b else None)(prev.get(n["id"]), fn(n))
         rows = []
         if lv == "closet":
-            role0 = dict((n["id"], _role(n, {}, o.get("roles"))[0]) for n in raw_nodes)
+            deg0 = {}                                    # 1.95.1: the links count for a role read from them, here too
+            for a, b in pairs:
+                deg0[a] = deg0.get(a, 0) + 1
+                deg0[b] = deg0.get(b, 0) + 1
+            role0 = dict((n["id"], _role(n, deg0, o.get("roles"))[0]) for n in raw_nodes)
         for label, f, v, fn in cands if lv != "closet" else []:
             if lv == "building" and over.get("site") is None and out["levels"] and label == out["levels"][0]["rule"]:
                 continue
             vals = dict((n["id"], scoped(fn)(n)) for n in raw_nodes)
             m = _measure(vals, pairs, linked)
+            if f in ("part", "pattern") and named and len(named) < N:   # a name reading: of the nodes that have a name to read
+                m["coverage"] = sum(1 for i in named if vals.get(i)) / float(len(named))
             if lv == "site":
                 lo, hi = 2, max(3, N // 5)                     # soft: a reading over hi is marked down, never ruled out
             else:

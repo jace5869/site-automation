@@ -12,6 +12,21 @@ reads other history from the log file. Portal nginx compresses static assets onl
 The report website supports gzip and static file ETags. The portal image requires Python 3.8 or later.
 
 To set up: run Site portal - deploy.
+## 1.95.1 — 2026-11-21
+
+**Nothing to set up.** A hotfix of the network map (1.95.0):
+- **Site view:** a WAN link SolarWinds stores the other way round (the remote end first) is drawn and counted - it was
+  left out.
+- **netmap_hierarchy** naming a closet with no building level: the closets are the site's (as the read rule) - they were
+  all empty.
+- A node known only by its IP address is no site ("198"); the name readings count only the nodes that have a name.
+- The closets: a switch's role read from its links is used there too.
+- A site called "constructor" (or any word a browser object has) is never taken as placed.
+- A site whose devices are all Unknown says "not known", not "all up".
+- A live refresh keeps the globe where the viewer turned it.
+- The portal: the kept map from disk has its own ETag, so the first fresh read of the same map is sent; its state is read
+  under the lock.
+- Tests: `tests/test_netmap.py` Hotfix1951 and Hotfix1951Page (each fails on 1.95.0), Portal.test_b.
 
 ## 1.95.0 — 2026-11-21
 

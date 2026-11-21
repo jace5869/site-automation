@@ -3317,14 +3317,17 @@ class NetLive(object):
         now = time.time()
         with self.lock:
             m, etag, read_at, stale, nxt = self.map_json, self.etag, self.read_at, self.stale, self.next_at
+            kind, from_disk = self.kind, self.from_disk
         head = {"ok": bool(m), "age": int(now - read_at) if read_at else None, "next": max(0, int(nxt - now)) if nxt else self.cfg.netmap_seconds,
-                "poll": self.cfg.netmap_seconds, "stale": stale, "kind": self.kind, "from_disk": self.from_disk,
+                "poll": self.cfg.netmap_seconds, "stale": stale, "kind": kind, "from_disk": from_disk,
                 "as_of": shown(self.cfg, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(read_at))) if read_at else "", "source": self.source.kind}
         if not m:
             head["why"] = ("SolarWinds could not be read: " + stale) if stale else ""
             return 200, json.dumps(head), ""
         if stale:                       # the same map, now stale: another tag, so a viewer who has the map hears that too
             etag = '%s-%s"' % (etag[:-1], hashlib.sha1(stale.encode("utf-8")).hexdigest()[:8])
+        if from_disk and etag:          # the kept map: its own tag, so the first fresh read of the same map is still sent
+            etag = '%s-d"' % etag[:-1]
         if etag and etag_matches(etag_in, etag):
             return 304, "", etag
         return 200, json.dumps(head)[:-1] + ',"map":' + m + "}", etag

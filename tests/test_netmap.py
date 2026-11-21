@@ -859,6 +859,25 @@ class Portal(unittest.TestCase):
         self.assertIn("netmap_site_pattern", str(e.exception))
         self.assertIn("netmap_roles", str(e.exception))
 
+    def test_b_a_kept_map_has_its_own_tag(self):
+        """1.95.1: the map from disk and the same map read fresh are not one ETag (the viewer hears it is fresh)."""
+        sp = self.sp
+        data_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, data_dir, True)
+        cfg = sp.Config(dict(self.env, PORTAL_DATA=data_dir))
+        live = sp.NetLive(cfg, self.portal.log)
+        live.map_json, live.read_at, live.kind = '{"nodes":[]}', time.time(), "full"
+        live.etag = '"abc"'
+        live._save(live.map_json, {"nodes": []})
+        kept = sp.NetLive(cfg, self.portal.log)
+        code, _b, tag_disk = kept.answer()
+        self.assertTrue(kept.from_disk)
+        kept.from_disk = False
+        code2, body, tag_fresh = kept.answer(tag_disk)
+        self.assertNotEqual(tag_disk, tag_fresh)
+        self.assertEqual(code2, 200)                                                 # not a 304: the viewer gets from_disk: false
+        self.assertFalse(json.loads(body)["from_disk"])
+
     def test_5_who_may_see_it(self):
         r = urllib.request.Request(self.base + "/api/netmap", headers={"X-SSL-Client-Verify": "NONE"})
         with self.assertRaises(urllib.error.HTTPError) as e:
@@ -1151,6 +1170,70 @@ r.paths=n;r.bad=bad.slice(0,5);r.rows=cl.length?(cl[cl.length-1][1]>cl[0][1]):fa
         self.assertTrue(r["rows"], "the fixture should wrap the closets into two rows")
         self.assertGreater(r["paths"], 100)
         self.assertEqual(r["bad"], [])
+
+@unittest.skipUnless(_browser(), "no google-chrome or chromium")
+class Hotfix1951Page(unittest.TestCase):
+    """1.95.1: a WAN link stored remote -> local is drawn in the Site view; a site called "constructor" is not placed; a site
+    whose devices are all Unknown is not "all up"."""
+
+    def page(self, data, js):
+        with open(os.path.join(WEB, "netmap-map.html")) as fh:
+            markup = fh.read()
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        for n in ("netmap.js", "netmap.css"):
+            shutil.copy(os.path.join(WEB, n), d)
+        with open(os.path.join(d, "t.js"), "w") as fh:
+            fh.write("window.addEventListener('load',function(){setTimeout(function(){var r={};try{%s}catch(e){r.err=String(e)}"
+                     "document.getElementById('res').textContent=JSON.stringify(r)},300)});" % js)
+        with open(os.path.join(d, "p.html"), "w") as fh:
+            fh.write('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="netmap.css"></head><body>%s'
+                     '<script type="application/json" id="netmap-data">%s</script><pre id="res"></pre>'
+                     '<script src="netmap.js"></script><script src="t.js"></script></body></html>' % (markup, json.dumps(data).replace("</", "<\\/")))
+        out = subprocess.run([_browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1280,900", "--virtual-time-budget=5000",
+                              "--dump-dom", "file://" + os.path.join(d, "p.html")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             universal_newlines=True, timeout=120).stdout
+        return json.loads(re.search(r'<pre id="res">(.*?)</pre>', out, re.S).group(1).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+
+    def test_1_a_wan_link_stored_remote_to_local(self):
+        nodes = [{"id": 1, "name": "SITA0101-B01-CR01", "site": "SITA0101", "building": "B01", "role": "core", "status": "Up"},
+                 {"id": 2, "name": "SITA0101-B01-AS01", "site": "SITA0101", "building": "B01", "role": "access", "status": "Up"},
+                 {"id": 3, "name": "SITB0201-B01-CR01", "site": "SITB0201", "building": "B01", "role": "core", "status": "Up"}]
+        links = [{"a": 1, "b": 2, "status": "Up"}, {"a": 3, "b": 1, "status": "Up", "wan": True}]          # remote (a) -> local (b)
+        r = self.page({"run": "t", "sites": ["SITA0101", "SITB0201"], "geo": {}, "nodes": nodes, "links": links},
+                      "nmTest.go('site','SITA0101');r.paths=document.querySelectorAll('.nm-draw path.nm-agg').length;")
+        self.assertNotIn("err", r)
+        self.assertEqual(r["paths"], 1)
+
+    def test_2_constructor_is_no_place_and_unknown_is_not_up(self):
+        nodes = [{"id": 1, "name": "x1", "site": "constructor", "status": "Up"},
+                 {"id": 2, "name": "u1", "site": "SITC0301", "status": "Unknown"}, {"id": 3, "name": "u2", "site": "SITC0301", "status": "Unknown"}]
+        r = self.page({"run": "t", "sites": ["constructor", "SITC0301"], "geo": {}, "nodes": nodes, "links": []},
+                      "var b=document.querySelector('.nm-wv[data-w=globe]');r.mapOff=!!(b&&b.disabled);"
+                      "r.tiles=[].map.call(document.querySelectorAll('.nm-tile'),function(t){return t.textContent}).join(' | ');")
+        self.assertNotIn("err", r)
+        self.assertTrue(r["mapOff"], r)                                              # no site is placed: the Map stays off
+        self.assertIn("not known", r["tiles"])
+        self.assertNotIn("SITC0301" + "all up", r["tiles"].replace(" ", ""))
+
+
+class Hotfix1951(unittest.TestCase):
+    def test_1_a_closet_named_in_all_yml_with_no_building(self):
+        m = sw.model(hostile(), {"hierarchy": [{"level": "building", "from": "none"}, {"level": "closet", "from": "pattern", "value": r"-(DS\d+)"}]})
+        self.assertIn("DS01", set(n["closet"] for n in m["nodes"]))
+
+    def test_2_a_node_known_by_its_ip_is_no_site(self):
+        self.assertEqual(sw.name_parts({"name": "198.51.100.40"}), [])
+        m = sw.model(hostile(), {})
+        self.assertFalse([s for s in m["sites"] if s["name"] in ("198", "51", "100")])
+
+    def test_3_roles_from_the_links_for_the_closets(self):
+        raw = hostile()
+        for n in raw["nodes"]:                                               # names that say no role: the links decide
+            n["name"] = n["name"].replace("-DS01", "-XX01")
+        m = sw.model(raw, {})
+        self.assertTrue([n for n in m["nodes"] if n["closet"]], "the closets come from the distribution switches the links show")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
