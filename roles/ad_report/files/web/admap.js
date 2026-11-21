@@ -27,131 +27,213 @@
   note.textContent = placedN ? '' : (D.placed_by ? 'No AD site has a place on the network map (netmap_sites): the sites in a ring.' :
     'Not placed (no network-map sites read): the sites in a ring around the one with the most DCs.');
 
+  /* 1.101.1: co-located AD sites - the same network-map site, or within 30 px - are ONE location bubble
+     "<site> · N AD sites" (the worst colour); it opens in place into its AD sites and the lines between them; an AD site with
+     several DCs opens again from there. Lines from elsewhere go to the bubble, one a pair while it is closed. Everything in
+     one place: no geography, the ring. Labels: the worst and the bubbles first, the rest only where they fit - every dot names
+     itself on hover and focus. */
+  var openLoc = '', openSite = '', RANKC = { critical: 0, warning: 1, low: 2, ok: 3 };
+  function worstOf(cs) { return cs.reduce(function (w, c) { return RANKC[c] < RANKC[w] ? c : w; }, 'ok'); }
   function draw() {
     [].slice.call(wrap.querySelectorAll('svg')).forEach(function (x) { x.remove(); });
     tip.hidden = true;
-    var W = Math.max(560, Math.round(wrap.clientWidth || 1000)), H = Math.round(Math.max(360, W * 0.52));
-    var svg = sv('svg', { 'class': 'am-svg', viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Replication map: ' + sites.length + ' AD sites, ' + links.length + ' connections between them' });
+    var W = Math.max(560, Math.round(wrap.clientWidth || 1000)), H = Math.round(Math.max(380, W * 0.55));
+    var svg = sv('svg', { 'class': 'am-svg', viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Replication map' });
     wrap.insertBefore(svg, tip);
-    var pos = {}, placed = sites.filter(function (s) { return s.p; }), un = sites.filter(function (s) { return !s.p; });
+    var placed = sites.filter(function (s) { return s.p; }), un = sites.filter(function (s) { return !s.p; }), pos = {}, pj = null;
     if (placed.length) {
       var la = placed.map(function (s) { return s.p[0]; }), lo = placed.map(function (s) { return s.p[1]; });
-      var pad = placed.length > 1 ? 4 : 10, lat0 = Math.min.apply(0, la) - pad, lat1 = Math.max.apply(0, la) + pad, lon0 = Math.min.apply(0, lo) - pad * 1.5, lon1 = Math.max.apply(0, lo) + pad * 1.5;
-      var kx = Math.cos((lat0 + lat1) / 2 * Math.PI / 180), mapW = W - (un.length ? 180 : 20), sc = Math.min(mapW / ((lon1 - lon0) * kx), (H - 40) / (lat1 - lat0));
+      var lat0 = Math.min.apply(0, la) - 3, lat1 = Math.max.apply(0, la) + 3, lon0 = Math.min.apply(0, lo) - 4, lon1 = Math.max.apply(0, lo) + 4;
+      var kx = Math.cos((lat0 + lat1) / 2 * Math.PI / 180), mapW = W - (un.length ? 180 : 20), sc = Math.min(mapW / Math.max(1e-6, (lon1 - lon0) * kx), (H - 40) / Math.max(1e-6, lat1 - lat0));
       var ox = 10 + (mapW - (lon1 - lon0) * kx * sc) / 2, oy = 20 + (H - 40 - (lat1 - lat0) * sc) / 2;
-      var pj = function (lat, lon) { return [ox + (lon - lon0) * kx * sc, oy + (lat1 - lat) * sc]; };
-      var gl = sv('g'); svg.appendChild(gl);
-      (window.NM_LAND || []).forEach(function (r) { var d = '', near = false;
-        for (var i = 0; i < r.length; i += 2) { var q = pj(r[i + 1], r[i]); d += (i ? 'L' : 'M') + q[0].toFixed(1) + ',' + q[1].toFixed(1);
-          if (r[i] > lon0 - 40 && r[i] < lon1 + 40 && r[i + 1] > lat0 - 30 && r[i + 1] < lat1 + 30) near = true; }
-        if (near) gl.appendChild(sv('path', { d: d + 'Z', 'class': 'am-land' })); });
-      var at = {};                                        // AD sites on one network-map site: side by side
-      placed.forEach(function (s) { var q = pj(s.p[0], s.p[1]), k = Math.round(q[0]) + ',' + Math.round(q[1]), i = at[k] = (at[k] || 0) + 1;
-        pos[s.n] = i === 1 ? q : [q[0] + 26 * Math.cos(i * 2.1), q[1] + 26 * Math.sin(i * 2.1)]; });
-      if (un.length) svg.appendChild(sv('text', { x: W - 165, y: 34, 'class': 'am-unpl' }, ['NO MAP POSITION']));
-      un.forEach(function (s, k) { pos[s.n] = [W - 150, 66 + k * 54]; });
-    } else {
-      var hub = sites.slice().sort(function (a, b) { return b.dcs.length - a.dcs.length; })[0], rest = sites.filter(function (s) { return s !== hub; });
-      if (hub) pos[hub.n] = [W / 2, H / 2];
-      rest.forEach(function (s, k) { var a = -Math.PI / 2 + k * 2 * Math.PI / Math.max(1, rest.length); pos[s.n] = [W / 2 + W * 0.36 * Math.cos(a), H / 2 + H * 0.38 * Math.sin(a)]; });
+      pj = function (lat, lon) { return [ox + (lon - lon0) * kx * sc, oy + (lat1 - lat) * sc]; };
+      placed.forEach(function (s) { pos[s.n] = pj(s.p[0], s.p[1]); });
     }
+    /* the locations: AD sites on one network-map site, or within 30 px */
+    var loc = {}, locs = [];
+    placed.forEach(function (s) {
+      var hit = locs.filter(function (L) { return L.nm === s.nm || Math.hypot(L.x - pos[s.n][0], L.y - pos[s.n][1]) < 30; })[0];
+      if (!hit) { hit = { id: 'L' + locs.length, nm: s.nm, x: pos[s.n][0], y: pos[s.n][1], m: [] }; locs.push(hit); }
+      hit.m.push(s); loc[s.n] = hit;
+    });
+    var rad = function (L) { return L.m.length > 1 ? 17 : 11; }, merged = true;
+    while (merged) {                                     // locations whose discs would touch: one (the east end of a busy map)
+      merged = false;
+      for (var i = 0; i < locs.length && !merged; i++) for (var j = i + 1; j < locs.length && !merged; j++) {
+        var A = locs[i], B = locs[j];
+        if (Math.hypot(A.x - B.x, A.y - B.y) < rad(A) + rad(B) + 10) {
+          var n = A.m.length + B.m.length, big = A.m.length >= B.m.length ? A : B;
+          A.x = (A.x * A.m.length + B.x * B.m.length) / n; A.y = (A.y * A.m.length + B.y * B.m.length) / n;
+          A.nm = big.nm; A.places = (A.places || [A.nm]).concat(B.places || [B.nm]).filter(function (x, k, a) { return x && a.indexOf(x) === k; });
+          A.m = A.m.concat(B.m); B.m.forEach(function (s) { loc[s.n] = A; });
+          locs.splice(j, 1); merged = true;
+        }
+      }
+    }
+    var oneSpot = locs.length === 1 && placed.length > 1;
+    if (oneSpot || !placed.length) {                     // everything in one place (or nowhere): no geography - the ring
+      var hub = sites.slice().sort(function (a, b) { return b.dcs.length - a.dcs.length; })[0], rest = sites.filter(function (s) { return s !== hub; });
+      pos = {}; pos[hub.n] = [W / 2, H / 2]; loc = {}; locs = [];
+      rest.forEach(function (s, k) { var a = -Math.PI / 2 + k * 2 * Math.PI / Math.max(1, rest.length); pos[s.n] = [W / 2 + W * 0.36 * Math.cos(a), H / 2 + H * 0.38 * Math.sin(a)]; });
+      sites.forEach(function (s) { var L = { id: 'S' + s.n, nm: s.nm, x: pos[s.n][0], y: pos[s.n][1], m: [s] }; locs.push(L); loc[s.n] = L; });
+      note.textContent = oneSpot ? 'Every AD site is at ' + (placed[0].nm || 'one place') + ': no map, the sites in a ring.' : note.textContent;
+    } else {
+      var gl = sv('g'); svg.appendChild(gl);
+      (window.NM_LAND || []).forEach(function (r) { var d = '';
+        for (var i = 0; i < r.length; i += 2) { var q = pj(r[i + 1], r[i]); d += (i ? 'L' : 'M') + q[0].toFixed(1) + ',' + q[1].toFixed(1); }
+        gl.appendChild(sv('path', { d: d + 'Z', 'class': 'am-land' })); });
+      if (un.length) svg.appendChild(sv('text', { x: W - 165, y: 34, 'class': 'am-unpl' }, ['NO MAP POSITION']));
+      un.forEach(function (s, k) { var L = { id: 'U' + k, nm: '', x: W - 150, y: 66 + k * 54, m: [s] }; locs.push(L); loc[s.n] = L; pos[s.n] = [L.x, L.y]; });
+    }
+    var linksAt = {};                                    // each location's links' worst colour
+    links.forEach(function (l) { [l.a, l.b].forEach(function (n) { if (loc[n]) (linksAt[loc[n].id] = linksAt[loc[n].id] || []).push(l.cls); }); });
+    /* where a link's end is drawn: the AD site when its location is the open one, else its location */
+    var O = openLoc && locs.filter(function (L) { return L.id === openLoc; })[0], R = 0, mpos = {};
+    if (O) {                                             // the opened place stays inside the drawing (its labels too)
+      R = Math.min(130, Math.max(60, 26 * O.m.length), W * 0.14);
+      O = { id: O.id, nm: O.nm, m: O.m, x: Math.max(R + 110, Math.min(O.x, W - R - 110)), y: Math.max(R + 50, Math.min(O.y, H - R - 36)) };
+      locs.forEach(function (L) {
+        if (L.id === O.id) { L.open = true; return; }
+        var dx = L.x - O.x, dy = L.y - O.y, dd = Math.hypot(dx, dy), ux = dd ? dx / dd : 1, uy = dd ? dy / dd : 0;
+        var lim = R + 30 + rad(L) + 8 + (uy < -0.4 ? 30 : 0);          // above it: clear of its "close" label too
+        if (dd < lim) { L.x = O.x + ux * lim; L.y = O.y + uy * lim; }    // nudged out, with its lines
+      });
+      O.m.forEach(function (s, k) { var a = -Math.PI / 2 + k * 2 * Math.PI / O.m.length; mpos[s.n] = [O.x + R * Math.cos(a), O.y + R * Math.sin(a)]; });
+    }
+    function endOf(n) { var L = loc[n]; if (!L) return null; return O && L.open ? { key: 'S:' + n, p: mpos[n], open: true } : { key: L.id, p: [L.x, L.y] }; }
+    var agg = {};
+    links.forEach(function (l) {
+      var a = endOf(l.a), b = endOf(l.b); if (!a || !b || a.key === b.key) return;
+      var inner = a.open && b.open, k = [a.key, b.key].sort().join('|'), g = agg[k] || (agg[k] = { a: a, b: b, ls: [], inner: inner });
+      g.ls.push(l);
+    });
     var gL = sv('g'), gS = sv('g'), gI = sv('g'); svg.appendChild(gL); svg.appendChild(gS); svg.appendChild(gI);
     var maxB = Math.max.apply(0, links.map(function (l) { return l.wan && l.wan.bps || 0; }).concat([1]));
     function place(ev, cx, cy) {
       var r = wrap.getBoundingClientRect(), x = (ev && ev.clientX ? ev.clientX - r.left : cx / W * r.width) + 14, y = (ev && ev.clientY ? ev.clientY - r.top : cy / H * r.height) + 14;
-      tip.hidden = false; tip.style.left = Math.max(4, Math.min(x, r.width - 350)) + 'px'; tip.style.top = Math.max(4, Math.min(y, r.height - 170)) + 'px';
+      tip.hidden = false; tip.style.left = Math.max(4, Math.min(x, r.width - 350)) + 'px'; tip.style.top = Math.max(4, Math.min(y, r.height - 190)) + 'px';
     }
-    function hit(d, kids, cx, cy, label) {
+    function hit(d, kids, cx, cy, label, g) {
       var h = sv('path', { d: d, 'class': 'am-hit', tabindex: '0', role: 'button', 'aria-label': label });
-      var show = function (ev) { tip.replaceChildren.apply(tip, kids().filter(Boolean)); place(ev, cx, cy); };   // no null shown as text
+      var show = function (ev) { tip.replaceChildren.apply(tip, kids().filter(Boolean)); place(ev, cx, cy); };
       h.addEventListener('mousemove', show); h.addEventListener('focus', function () { show(null); });
       h.addEventListener('mouseleave', function () { tip.hidden = true; }); h.addEventListener('blur', function () { tip.hidden = true; });
-      return h;
+      (g || gL).appendChild(h);
     }
-    function lineCard(l) {
-      var w = l.wan;
-      return [el('b', '', ['Between sites: ' + l.a + ' - ' + l.b]),
-        el('div', '', ['Last success ' + ago(l.h) + (l.fail ? '; failing' + (l.err ? ': ' + l.err : '') : '')]),
-        el('div', 'm', ['Partitions: ' + (l.parts || []).join(', ')]),
-        el('div', '', [w ? 'WAN: ' + (w.bps ? bpsText(w.bps) : 'speed not known') + (w.util != null ? ', busiest ' + w.util + '%' : '') + (w.n > 1 ? ' (' + w.n + ' links)' : '') + (w.status && w.status !== 'Up' ? ' - ' + w.status : '')
-          : D.wan_read ? 'WAN: no link between these sites in SolarWinds' : 'WAN: not read']),
-        w && w.ifs && w.ifs.length ? el('div', 'm', [w.ifs[0]]) : null,
-        el('div', 'm', [(l.nma || l.nmb) ? 'Network map: ' + (l.nma || '-') + ' - ' + (l.nmb || '-') : 'Not on the network map'])];
-    }
-    links.forEach(function (l) {
-      var a = pos[l.a], b = pos[l.b]; if (!a || !b) return;
-      var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, dx = b[0] - a[0], dy = b[1] - a[1], cx = mx - dy * 0.12, cy = my + dx * 0.12;
-      var d = 'M' + a[0] + ',' + a[1] + ' Q' + cx + ',' + cy + ' ' + b[0] + ',' + b[1];
-      var bps = l.wan && l.wan.bps, w = bps ? 2.5 + 6 * Math.log(1 + bps) / Math.log(1 + maxB) : 2;
-      gL.appendChild(sv('path', { d: d, 'class': 'am-l k-' + l.cls + (l.wan ? '' : ' k-none'), 'stroke-width': w.toFixed(1) }));
-      if (l.wan && l.wan.util != null) {
-        var f = sv('path', { d: d, 'class': 'am-flow', 'stroke-width': Math.max(1.2, w * 0.45).toFixed(1) });
-        f.style.animationDuration = (5 / (0.25 + l.wan.util / 50)).toFixed(2) + 's'; gL.appendChild(f);
-      }
-      gL.appendChild(hit(d, function () { return lineCard(l); }, cx, cy, l.a + ' to ' + l.b + ', last success ' + ago(l.h)));
-      gL.appendChild(sv('path', { d: d, 'class': 'am-hi', 'stroke-width': (w + 6).toFixed(1) }));
+    Object.keys(agg).forEach(function (k) {
+      var g = agg[k], a = g.a.p, b = g.b.p, ls = g.ls, cls = worstOf(ls.map(function (l) { return l.cls; }));
+      var w0 = ls.map(function (l) { return l.wan && l.wan.bps || 0; }), bps = Math.max.apply(0, w0), util = Math.max.apply(0, ls.map(function (l) { return l.wan && l.wan.util != null ? l.wan.util : -1; }));
+      var straight = g.inner || oneSpot, mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, dx = b[0] - a[0], dy = b[1] - a[1];
+      var cx = straight ? mx : mx - dy * 0.12, cy = straight ? my : my + dx * 0.12;
+      var d = straight ? 'M' + a[0] + ',' + a[1] + ' L' + b[0] + ',' + b[1] : 'M' + a[0] + ',' + a[1] + ' Q' + cx + ',' + cy + ' ' + b[0] + ',' + b[1];
+      var w = straight ? 2.4 : bps ? 2.5 + 6 * Math.log(1 + bps) / Math.log(1 + maxB) : 2;
+      var layer = straight ? gI : gL;
+      layer.appendChild(sv('path', { d: d, 'class': (straight ? 'am-i' : 'am-l') + ' k-' + cls + (!straight && !bps ? ' k-none' : ''), 'stroke-width': w.toFixed(1) }));
+      if (!straight && util >= 0) { var f = sv('path', { d: d, 'class': 'am-flow', 'stroke-width': Math.max(1.2, w * .45).toFixed(1) }); f.style.animationDuration = (5 / (0.25 + util / 50)).toFixed(2) + 's'; gL.appendChild(f); }
+      hit(d, function () {
+        var worst = ls.slice().sort(function (x, y) { return RANKC[x.cls] - RANKC[y.cls] || (y.h || 1e9) - (x.h || 1e9); });
+        return [el('b', '', [ls.length > 1 ? ls.length + ' AD connections here' : (straight ? 'Same place: ' : 'Between sites: ') + ls[0].a + ' - ' + ls[0].b])]
+          .concat(worst.slice(0, 4).map(function (l) { return el('div', l === worst[0] ? '' : 'm', [l.a + ' - ' + l.b + ': ' + ago(l.h) + (l.fail ? ', failing' + (l.err ? ' ' + l.err.split(' ')[0] : '') : '')]); }))
+          .concat([ls.length > 4 ? el('div', 'm', ['+' + (ls.length - 4) + ' more (open the location)']) : null,
+            straight ? el('div', 'm', ['No WAN: the same location']) : el('div', '', [bps ? 'WAN: ' + bpsText(bps) + (util >= 0 ? ', busiest ' + util + '%' : '') : 'WAN: no link in SolarWinds'])]);
+      }, cx, cy, ls.length + ' connection(s)', straight ? gI : gL);
     });
+    /* labels: the worst and the bubbles first, the rest where they fit (all names on hover and focus) */
     var taken = [];
-    function label(g, x, y, lines, force, anchorEnd) {
-      var w = Math.max.apply(0, lines.map(function (t) { return t.length; })) * 6.6;
-      if (anchorEnd) x -= w;
-      x = Math.max(4, Math.min(x, W - w - 4)); y = Math.max(14, Math.min(y, H - 6 - 13 * (lines.length - 1)));   // never cut off
-      var b = [x, y - 12, x + w, y + 4 + 13 * (lines.length - 1)];
-      if (!force && taken.some(function (t) { return b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]; })) return;
-      taken.push(b); lines.forEach(function (t, i) { g.appendChild(sv('text', { x: x, y: y + i * 13, 'class': i ? 'sub' : null }, [t])); });
+    if (O) taken.push([O.x - R - 40, O.y - R - 50, O.x + R + 40, O.y + R + 40]);
+    function label(g, x, y, lines, force, end, r) {    // right of the dot, else left, below, above: the first place that is free
+      var w = Math.max.apply(0, lines.map(function (t) { return t.length; })) * 6.6, h = 13 * lines.length, rr = r || 0, cx = x - rr - 6;
+      var tries = end ? [[x - w, y]] : [[x, y], [cx - rr - 6 - w, y], [cx - w / 2, y + rr + 16], [cx - w / 2, y - rr - 6 - h],
+        [x, y + rr + 14], [x, y - rr - 10], [cx - rr - 6 - w, y + rr + 14], [cx - rr - 6 - w, y - rr - 10], [x + 24, y + 26], [x + 24, y - 26]]
+        .concat([0, 1, 2, 3, 4, 5, 6, 7].map(function (k) {             // further out, all round the dot (a busy hub's label)
+          var a = k * Math.PI / 4, dx = Math.cos(a), dy = Math.sin(a), d = rr + 40;
+          return [cx + dx * d - (dx < -0.3 ? w : Math.abs(dx) <= 0.3 ? w / 2 : 0), y + dy * d]; }));
+      var hits = function (q, list) { var b = [q[0] - 2, q[1] - 12, q[0] + w + 2, q[1] + h - 9];
+        return list.filter(function (t) { return b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]; }).length; };
+      var fit = tries.map(function (q) { return [Math.max(4, Math.min(q[0], W - w - 4)), Math.max(14, Math.min(q[1], H - h))]; });
+      var pick = fit.filter(function (q) { return !hits(q, taken); })[0];
+      if (!pick && force) pick = fit.filter(function (q) { return !hits(q, dotsAt); }).sort(function (p, q) { return hits(p, taken) - hits(q, taken); })[0];
+      // a label is never on a dot: none fits even for the worst - left off (its name on hover and keyboard focus)
+      if (!pick) return false;
+      taken.push([pick[0] - 2, pick[1] - 12, pick[0] + w + 2, pick[1] + h - 9]);
+      lines.forEach(function (t, i) { g.appendChild(sv('text', { x: pick[0], y: pick[1] + i * 13, 'class': i ? 'sub' : null }, [t])); }); return true;
     }
-    var disc = null;
-    if (open && pos[open]) { var R0 = Math.min(84, W * 0.08); disc = { x: pos[open][0], y: pos[open][1], r: R0 + 24 }; taken.push([disc.x - disc.r, disc.y - disc.r - 40, disc.x + disc.r, disc.y + disc.r]); }
-    var bad = {}; links.forEach(function (l) { if (l.cls === 'critical' || l.cls === 'warning') { bad[l.a] = 1; bad[l.b] = 1; } });
-    sites.slice().sort(function (a, b) { return (bad[b.n] ? 1 : 0) - (bad[a.n] ? 1 : 0) || b.dcs.length - a.dcs.length; }).forEach(function (s) {
-      var q = pos[s.n]; if (!q) return;
-      if (open === s.n) return;
-      var many = s.dcs.length > 1, r = many ? 12 : 8, g = sv('g', { 'class': 'am-s' + (many ? ' many' : ''), tabindex: many ? '0' : null, role: many ? 'button' : null,
-        'aria-label': many ? s.n + ', ' + s.dcs.length + ' DCs: open' : null });
-      g.appendChild(sv('circle', { cx: q[0], cy: q[1], r: r }));
-      if (many) g.appendChild(sv('text', { x: q[0], y: q[1] + 4, 'text-anchor': 'middle', 'class': 'cnt' }, [String(s.dcs.length)]));
-      var lines = [s.n, s.nm && s.nm !== s.n ? s.nm : (!s.nm ? 'no network-map site' : '')].filter(Boolean);
-      var dx = disc ? q[0] - disc.x : 0, dy = disc ? q[1] - disc.y : 0, dd = Math.sqrt(dx * dx + dy * dy);
-      if (disc && dd < disc.r + 70) {                    // under (or by) the opened site's disc: the label just outside it
-        var ux = dd ? dx / dd : 1, uy = dd ? dy / dd : 0, lx = disc.x + ux * (disc.r + 10), ly = disc.y + uy * (disc.r + 14) + 4;
-        label(g, lx, ly, lines, true, ux < 0);
-      } else {
-        label(g, q[0] + r + 6, q[1] - 1, lines, !!bad[s.n] || many);
-      }
-      if (many) { var go = function () { open = s.n; draw(); }; g.addEventListener('click', go);
-        g.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } }); }
+    function nameTip(g, lines, x, y) {
+      var show = function (ev) { tip.replaceChildren.apply(tip, [el('b', '', [lines[0]])].concat(lines.slice(1).map(function (t) { return el('div', 'm', [t]); }))); place(ev, x, y); };
+      g.addEventListener('mousemove', show); g.addEventListener('focus', function () { show(null); });
+      g.addEventListener('mouseleave', function () { tip.hidden = true; }); g.addEventListener('blur', function () { tip.hidden = true; });
+    }
+    var order = locs.slice().sort(function (a, b) {
+      var wa = worstOf(linksAt[a.id] || []), wb = worstOf(linksAt[b.id] || []);
+      return (b.m.length > 1) - (a.m.length > 1) || RANKC[wa] - RANKC[wb] || b.m.length - a.m.length;
+    });
+    var dotsAt = [];
+    order.forEach(function (L) { if (!L.open) { var rr = L.m.length > 1 ? 17 : 11, bx = [L.x - rr - 2, L.y - rr - 2, L.x + rr + 2, L.y + rr + 2]; taken.push(bx); dotsAt.push(bx); } });   // no label on any dot
+    order.forEach(function (L) {
+      if (L.open) return;
+      var bub = L.m.length > 1, s = L.m[0], wst = worstOf(linksAt[L.id] || []), dcsN = L.m.reduce(function (n, x) { return n + x.dcs.length; }, 0);
+      var g = sv('g', { 'class': 'am-s' + (bub ? ' bub k-' + wst : ' many'), tabindex: '0', role: 'button',
+        'aria-label': bub ? (L.nm || 'a place') + ': ' + L.m.length + ' AD sites, ' + dcsN + ' DCs - open' : s.n + ', ' + s.dcs.length + ' DCs - open' });
+      var r = bub ? 17 : 11;
+      g.appendChild(sv('circle', { cx: L.x, cy: L.y, r: r }));
+      g.appendChild(sv('text', { x: L.x, y: L.y + 4, 'text-anchor': 'middle', 'class': 'cnt' }, [String(bub ? L.m.length : s.dcs.length)]));
+      var where = (L.nm || 'here') + ((L.places || []).length > 1 ? ' +' + (L.places.length - 1) : '');
+      var lines = bub ? [where + ' · ' + L.m.length + ' AD sites', dcsN + ' DCs'] : [s.n, s.dcs.length + (s.dcs.length === 1 ? ' DC' : ' DCs') + (s.nm && s.nm !== s.n ? ' · ' + s.nm : (!s.nm ? ' · no network-map site' : ''))];
+      label(g, L.x + r + 6, L.y - 1, lines, wst === 'critical', false, r);
+      nameTip(g, lines, L.x, L.y);
+      var go = bub ? function () { openLoc = L.id; openSite = ''; draw(); } : function () { open = s.n; openLoc = ''; draw(); };
+      g.addEventListener('click', go); g.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
       gS.appendChild(g);
     });
-    if (open && pos[open]) {                              // a site opened in place: its DCs, the connections inside it
-      var s = byName[open], hp = pos[open], R = Math.min(84, W * 0.08), dp = {};
-      s.dcs.forEach(function (d, k) { var a = -Math.PI / 2 + k * 2 * Math.PI / s.dcs.length; dp[d.toLowerCase()] = [hp[0] + R * Math.cos(a), hp[1] + R * Math.sin(a)]; });
-      gI.appendChild(sv('circle', { cx: hp[0], cy: hp[1], r: R + 24, 'class': 'am-ring' }));
-      (inside[open] || []).forEach(function (t) {
-        var a = dp[t.a.toLowerCase()], b = dp[t.b.toLowerCase()]; if (!a || !b) return;
-        var d = 'M' + a[0] + ',' + a[1] + ' L' + b[0] + ',' + b[1];
-        gI.appendChild(sv('path', { d: d, 'class': 'am-i k-' + t.cls }));
-        gI.appendChild(hit(d, function () { return [el('b', '', ['Inside ' + open + ': ' + t.a + ' - ' + t.b]),
-          el('div', '', ['Last success ' + ago(t.h) + (t.fail ? '; failing' + (t.err ? ': ' + t.err : '') : '')]),
-          el('div', 'm', ['Partitions: ' + (t.parts || []).join(', ')]), el('div', 'm', ['No WAN: the same site'])]; },
-          (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, t.a + ' to ' + t.b + ' inside ' + open));
-        gI.appendChild(sv('path', { d: d, 'class': 'am-hi', 'stroke-width': 8 }));
+    if (O) {                                             // the location opened in place: its AD sites, the lines between them
+      gI.insertBefore(sv('circle', { cx: O.x, cy: O.y, r: R + 30, 'class': 'am-ring' }), gI.firstChild);
+      O.m.forEach(function (s) {
+        var q = mpos[s.n], right = q[0] >= O.x, g = sv('g', { 'class': 'am-s many', tabindex: '0', role: 'button', 'aria-label': s.n + ', ' + s.dcs.length + ' DCs - open' });
+        g.appendChild(sv('circle', { cx: q[0], cy: q[1], r: 10 }));
+        g.appendChild(sv('text', { x: q[0], y: q[1] + 4, 'text-anchor': 'middle', 'class': 'cnt' }, [String(s.dcs.length)]));
+        g.appendChild(sv('text', { x: q[0] + (right ? 14 : -14), y: q[1] + 4, 'text-anchor': right ? 'start' : 'end' }, [s.n]));   // inside the disc: nothing else there
+        nameTip(g, [s.n, s.dcs.join(', ')], q[0], q[1]);
+        var go = function () { openSite = s.n; draw(); };
+        g.addEventListener('click', go); g.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
+        gI.appendChild(g);
       });
-      s.dcs.forEach(function (d) { var q = dp[d.toLowerCase()], g = sv('g', { 'class': 'am-s dc' }), right = q[0] >= hp[0];
-        g.appendChild(sv('circle', { cx: q[0], cy: q[1], r: 6 }));
-        g.appendChild(sv('text', { x: q[0] + (right ? 9 : -9), y: q[1] + 4, 'text-anchor': right ? 'start' : 'end' }, [d])); gI.appendChild(g); });
-      var c = sv('g', { 'class': 'am-close', tabindex: '0', role: 'button', 'aria-label': 'Close ' + open });
-      c.appendChild(sv('text', { x: hp[0], y: hp[1] - R - 32, 'text-anchor': 'middle' }, [open + ' - ' + s.dcs.length + ' DCs - close']));
-      var shut = function () { open = ''; draw(); };
+      var c = sv('g', { 'class': 'am-close', tabindex: '0', role: 'button' });
+      c.appendChild(sv('text', { x: O.x, y: O.y - R - 38, 'text-anchor': 'middle' }, [(O.nm || 'here') + ' · ' + O.m.length + ' AD sites · close']));
+      var shut = function () { openLoc = ''; openSite = ''; draw(); };
       c.addEventListener('click', shut); c.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Escape') { ev.preventDefault(); shut(); } });
       gI.appendChild(c);
     }
+    var which = openSite || open, S0 = which && byName[which];
+    if (S0) {                                            // an AD site's DCs (from the map, or from an opened location)
+      var cp = O && openSite ? [O.x, O.y] : pos[which] || [W / 2, H / 2], R2 = Math.min(84, W * 0.08), dp = {};
+      if (O && openSite) [].slice.call(gI.childNodes).forEach(function (n) { n.remove(); });
+      S0.dcs.forEach(function (d, k) { var a = -Math.PI / 2 + k * 2 * Math.PI / S0.dcs.length; dp[d.toLowerCase()] = [cp[0] + R2 * Math.cos(a), cp[1] + R2 * Math.sin(a)]; });
+      gI.appendChild(sv('circle', { cx: cp[0], cy: cp[1], r: R2 + 30, 'class': 'am-ring' }));
+      (inside[which] || []).forEach(function (t) {
+        var a = dp[t.a.toLowerCase()], b = dp[t.b.toLowerCase()]; if (!a || !b) return;
+        var d = 'M' + a[0] + ',' + a[1] + ' L' + b[0] + ',' + b[1];
+        gI.appendChild(sv('path', { d: d, 'class': 'am-i k-' + t.cls }));
+        hit(d, function () { return [el('b', '', ['Inside ' + which + ': ' + t.a + ' - ' + t.b]), el('div', '', ['Last success ' + ago(t.h)]), el('div', 'm', ['No WAN: the same site'])]; }, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, t.a + ' to ' + t.b, gI);
+      });
+      S0.dcs.forEach(function (d) { var q = dp[d.toLowerCase()], right = q[0] >= cp[0], g = sv('g', { 'class': 'am-s dc' });
+        g.appendChild(sv('circle', { cx: q[0], cy: q[1], r: 6 }));
+        g.appendChild(sv('text', { x: q[0] + (right ? 9 : -9), y: q[1] + 4, 'text-anchor': right ? 'start' : 'end' }, [d])); gI.appendChild(g); });
+      var c2 = sv('g', { 'class': 'am-close', tabindex: '0', role: 'button' });
+      c2.appendChild(sv('text', { x: cp[0], y: cp[1] - R2 - 38, 'text-anchor': 'middle' }, [which + ' · ' + S0.dcs.length + ' DCs · ' + (O && openSite ? 'back to ' + (O.nm || 'the place') : 'close')]));
+      var back = function () { if (O && openSite) openSite = ''; else open = ''; draw(); };
+      c2.addEventListener('click', back); c2.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Escape') { ev.preventDefault(); back(); } });
+      gI.appendChild(c2);
+    }
+    window.amTest.openLoc = function () { var L = locs.filter(function (x) { return x.m.length > 1; }).sort(function (a, b) { return b.m.length - a.m.length; })[0]; if (!L) return false; openLoc = L.id; openSite = ''; draw(); return true; };
+    window.amTest.openMember = function (n) { var L = O || locs.filter(function (x) { return x.id === openLoc; })[0]; if (!L) return false; var m = L.m.filter(function (s) { return s.dcs.length > 1; }); var pick = m.filter(function (s) { return s.n === n; })[0] || m[0]; if (!pick) return false; openSite = pick.n; draw(); return true; };
   }
   leg.replaceChildren.apply(leg, [el('span', '', [el('i', 'ok'), 'under ' + (D.scale.low || D.scale.warn) + ' h']),
     D.scale.low ? el('span', '', [el('i', 'low'), D.scale.low + '-' + D.scale.warn + ' h (Low)']) : null,
     el('span', '', [el('i', 'warning'), D.scale.warn + '-' + D.scale.crit + ' h']), el('span', '', [el('i', 'critical'), D.scale.crit + ' h or failing']),
     el('span', '', [el('i', 'none'), 'no WAN link in SolarWinds']), el('span', '', [el('i', 'thick'), 'between sites: as wide as the WAN traffic']),
     el('span', '', [el('i', 'thin'), 'inside a site: thin, straight'])].filter(Boolean));
+  window.amTest = {};
   draw();
   var t = 0; window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(draw, 150); });
-  window.amTest = { open: function (n) { open = n || ''; draw(); }, data: D };
+  window.amTest = window.amTest || {}; window.amTest.open = function (n) { open = n || ''; openLoc = ''; draw(); }; window.amTest.data = D;
 })();

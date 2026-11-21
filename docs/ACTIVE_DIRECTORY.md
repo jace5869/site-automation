@@ -105,7 +105,11 @@ places their sites.
    last success and failure, the WAN link's speed and %.
 4. **A site with several DCs** (its number on the dot) opens in place into its DCs and the connections inside it (thin,
    straight - no WAN); its label closes it.
-5. Shown, never counted: the report's counts, status, headline and run history stay AD's.
+5. **AD sites in one place** (1.101.1: one network-map site, within 30 px, or a busy main location) are one bubble -
+   "SITA0101 · 5 AD sites", its DC total, the worst colour of its lines - that opens in place into its AD sites; one of them
+   with several DCs opens again from there. Every AD site in one place: a ring, no map. Labels never sit on a dot or another
+   label; one that fits nowhere is left off, and every dot names itself on hover and keyboard focus.
+6. Shown, never counted: the report's counts, status, headline and run history stay AD's.
 
 | Setting | Default | What |
 |---|---|---|

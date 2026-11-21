@@ -187,5 +187,78 @@ class Place1101(unittest.TestCase):
         self.assertIn("netmap settings", bad["why"])
 
 
+def _browser():
+    for b in ("google-chrome", "chromium", "chromium-browser"):
+        if shutil.which(b):
+            return shutil.which(b)
+    return None
+
+
+@unittest.skipUnless(_browser(), "no google-chrome or chromium")
+class Places1011(unittest.TestCase):
+    """1.101.1, in Chromium: co-located AD sites are one location bubble; dots never overlap; a label is never on a dot or
+    another label and never out of the drawing; an opened location has nothing else under its disc; one place: the ring."""
+
+    GEOM = r"""
+var svg=document.querySelector('.am-svg'),vb=svg.viewBox.baseVal,dots=[].map.call(svg.querySelectorAll('.am-s:not(.dc) > circle'),function(c){
+ return [+c.getAttribute('cx'),+c.getAttribute('cy'),+c.getAttribute('r')]});
+var gs=[].slice.call(svg.querySelectorAll('.am-s'));var lab=[].map.call(svg.querySelectorAll('.am-s > text:not(.cnt)'),function(t){var b=t.getBBox();return [b.x,b.y,b.x+b.width,b.y+b.height,gs.indexOf(t.parentNode)]});
+var over=0,ondot=0,out=0,dd=0;
+for(var i=0;i<dots.length;i++)for(var j=i+1;j<dots.length;j++){var a=dots[i],b=dots[j];if(Math.hypot(a[0]-b[0],a[1]-b[1])<a[2]+b[2]-0.5)dd++;}
+lab.forEach(function(a,i){if(a[0]<-1||a[2]>vb.width+1||a[1]<-1||a[3]>vb.height+1)out++;
+ dots.forEach(function(d){if(a[0]<d[0]+d[2]-1&&a[2]>d[0]-d[2]+1&&a[1]<d[1]+d[2]-1&&a[3]>d[1]-d[2]+1)ondot++;});
+ lab.forEach(function(b,j){if(j>i&&b[4]!==a[4]&&a[0]<b[2]-1&&a[2]>b[0]+1&&a[1]<b[3]-1&&a[3]>b[1]+1)over++;});});
+r.bubbles=svg.querySelectorAll('.am-s.bub').length;r.dots=dots.length;r.dotsOverlap=dd;r.labelsOnDots=ondot;r.labelsOverlap=over;r.labelsOut=out;
+"""
+
+    def page(self, repl, sw_, js, width=1280):
+        v = am.ad_repl_map(repl, sw_, O)
+        p = rp.report_page_piece(v["extra"], ROOT)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        with open(os.path.join(d, "a.js"), "w") as fh:
+            fh.write(p["script"])
+        with open(os.path.join(d, "t.js"), "w") as fh:
+            fh.write("window.addEventListener('load',function(){setTimeout(function(){var r={};try{%s}catch(e){r.err=String(e)}"
+                     "document.getElementById('res').textContent=JSON.stringify(r)},300)});" % js)
+        with open(os.path.join(d, "p.html"), "w") as fh:
+            fh.write('<!doctype html><html><head><meta charset="utf-8"><style>%s</style></head><body style="margin:0">%s<pre id="res"></pre>'
+                     '<script src="a.js"></script><script src="t.js"></script></body></html>' % (p["css"], p["html"]))
+        out = subprocess.run([_browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=%d,900" % width, "--virtual-time-budget=5000",
+                              "--dump-dom", "file://" + os.path.join(d, "p.html")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             universal_newlines=True, timeout=120).stdout
+        import re
+        return json.loads(re.search(r'<pre id="res">(.*?)</pre>', out, re.S).group(1).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+
+    def test_1_a_busy_forest_closed(self):
+        sys.path.insert(0, os.path.join(ROOT, "tests", "ad"))
+        import admap_fixture as fx
+        for w in (1280, 800):
+            r = self.page(*fx.realistic(), js=self.GEOM, width=w)
+            self.assertNotIn("err", r)
+            self.assertGreaterEqual(r["bubbles"], 4, r)                      # the 5 shared locations (or fewer, merged)
+            self.assertEqual((r["dotsOverlap"], r["labelsOnDots"], r["labelsOverlap"], r["labelsOut"]), (0, 0, 0, 0), (w, r))
+
+    def test_2_an_opened_location_has_nothing_under_its_disc(self):
+        import admap_fixture as fx
+        js = ("amTest.openLoc();var ring=document.querySelector('.am-ring'),cx=+ring.getAttribute('cx'),cy=+ring.getAttribute('cy'),R=+ring.getAttribute('r');"
+              "r.under=[].filter.call(document.querySelectorAll('.am-svg > g:nth-of-type(2) .am-s > circle'),function(c){"
+              "return Math.hypot(+c.getAttribute('cx')-cx,+c.getAttribute('cy')-cy)<R+(+c.getAttribute('r'))-1}).length;"
+              "r.members=document.querySelectorAll('.am-svg > g:nth-of-type(3) .am-s.many').length;")
+        for w in (1280, 800):
+            r = self.page(*fx.realistic(), js=js, width=w)
+            self.assertNotIn("err", r)
+            self.assertEqual(r["under"], 0, (w, r))
+            self.assertGreaterEqual(r["members"], 2)
+
+    def test_3_one_place_is_the_ring(self):
+        import admap_fixture as fx
+        r = self.page(*fx.one_place(), js="r.note=document.querySelector('.am-note').textContent;r.land=document.querySelectorAll('.am-land').length;" + self.GEOM)
+        self.assertNotIn("err", r)
+        self.assertIn("Every AD site is at HUBA0001", r["note"])
+        self.assertEqual(r["land"], 0)                                           # no geography
+        self.assertEqual((r["bubbles"], r["dots"], r["dotsOverlap"], r["labelsOverlap"]), (0, 8, 0, 0))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

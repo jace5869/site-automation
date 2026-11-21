@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.101.1 — 2026-11-21
+
+**Nothing to set up.** The replication map (1.101.0) for a forest with many locations and several DCs at each
+(user-approved mockup):
+- **AD sites in one place are one location bubble** - "SITA0101 · 5 AD sites", the DC total under it, its ring in the worst
+  colour of its lines: AD sites on one network-map site or within 30 px, and locations whose discs would touch (a busy main
+  location); lines from elsewhere go to the bubble, one a pair while it is closed (its card: the worst four, "+N more");
+- a bubble **opens in place** (kept inside the drawing): its AD sites with their DC counts and the lines between them
+  (straight: the same place, no WAN); the lines from elsewhere land on each AD site; the sites around it move just outside
+  its disc; an AD site with several DCs opens again from there ("back to" the location);
+- **every AD site in one place:** no map - the sites in a ring ("Every AD site is at ...");
+- **labels:** the bubbles and the worst first, then the first free place of eighteen round the dot; never on a dot, never on
+  another label, never out of the drawing; a label that fits nowhere is left off - every dot and bubble names itself on hover
+  and keyboard focus.
+- Tests: `tests/test_ad_map.py` Places1011 in Chromium on a 25-location, 40-AD-site forest (`tests/ad/admap_fixture.py`):
+  no dots on dots, no label on a dot or another label or out of the drawing at 1280 and 800; an opened location with nothing
+  under its disc; one place = the ring.
+
 ## 1.101.0 — 2026-11-21
 
 **Nothing to set up.** With the netmap_* settings in all.yml (as the Network map template has them) and a SolarWinds or

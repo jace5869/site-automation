@@ -37,3 +37,8 @@
 @media (prefers-reduced-motion:reduce){.am-move .am-flow{animation:none}}
 html.motion-off .am-move .am-flow{animation:none}
 @media print{.am-flow{display:none}}
+/* 1.101.1: the location bubble (co-located AD sites) - its ring in the worst colour of its lines */
+.am-s.bub circle{stroke-width:3.2;fill:var(--card-solid,var(--card))}
+.am-s.bub.k-ok circle{stroke:var(--ok)}.am-s.bub.k-low circle{stroke:var(--am-low)}.am-s.bub.k-warning circle{stroke:var(--warning)}.am-s.bub.k-critical circle{stroke:var(--critical)}
+.am-s.bub .cnt{font-size:12.5px}
+.am-s.many circle{stroke-width:2}
