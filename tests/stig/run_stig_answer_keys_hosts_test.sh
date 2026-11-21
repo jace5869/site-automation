@@ -270,7 +270,7 @@ d["reviews"]["13"] = [dict(d["reviews"]["13"][0], resultEngine=eng, ts="2026-10-
 json.dump(d, open(sys.argv[1], "w"))
 PY
 xc='{"answer_keys_rules": ["V-258999"]}'
-printf '%s' '{"summary": "NF\nroot owns /etc/hostname, as the check text wants."}' > "$work/act/act.json"; rm -f "$work/act/fake-act-calls.log"
+printf '%s' '{"summary": "NF\nroot owns /etc/hostname, as the check text wants.\nroot /etc/hostname"}' > "$work/act/act.json"; rm -f "$work/act/fake-act-calls.log"
 run "the cross-check: code NF and ACT NF on h9a, a person's Open in STIG Manager and ACT NF on h9b - need a look" ok \
     -e target=h9a,h9b -e "$xc" -e answer_keys_cross_check=true -- \
     "STIG answer keys: 1 ready to copy, 1 need a look in the cross-check, 0 not drafted - 1 STIG, 2 hosts" \
@@ -288,6 +288,17 @@ for want in "Cross-check by STIG" "Cross-check — RHEL 9 V2R10 (1 rule, 1 need 
     case "$t" in *"$want"*) true ;; *) echo "FAIL - the cross-check page: missing '$want'"; xmiss=1 ;; esac
 done
 [ $xmiss -eq 0 ] && echo "ok   - ... the website: the cross-check sections, the disagreement, every command and the host it ran on" || fails=$((fails + 1))
+# 1.88.0: the opened rule, host by host - each verdict line, the code's read line, ACT's evidence as state and counts with
+# the line it named marked, Evaluate-STIG and STIG Manager
+p="$(lastpage)"; t="$(pagetext "$p")"; xmiss=0
+for want in "Agree: the code and ACT say Not a Finding" "A person's review differs: STIG Manager says Open, ACT says Not a Finding" \
+            "/usr/bin/stat -c '%U %n' /etc/hostname (exit 0, 1 line)" "(trial on h9a)" "returned True" "the trial ran on h9a" \
+            "a person, " "· counted" "shown, not counted"; do
+    case "$t" in *"$want"*) true ;; *) echo "FAIL - the opened rule: missing '$want'"; xmiss=1 ;; esac
+done
+grep -qF 'class="wdl" title="The line ACT named as deciding it">→ root /etc/hostname</span>' "$p" || { echo "FAIL - the deciding line not marked"; xmiss=1; }
+case "$t" in *"What ACT was given"*) echo "FAIL - the opened rule still shows the evidence's text"; xmiss=1 ;; esac
+[ $xmiss -eq 0 ] && echo "ok   - ... the opened rule: each host's verdict, the four sources, the deciding line marked (state and counts only)" || fails=$((fails + 1))
 rm -f "$work/act/fake-act-calls.log"
 run "the cross-check, answer_keys_cross_check_act_max 0: ACT not asked, said with the setting" ok \
     -e target=h9a,h9b -e "$xc" -e answer_keys_cross_check=true -e answer_keys_cross_check_act_max=0 -- \

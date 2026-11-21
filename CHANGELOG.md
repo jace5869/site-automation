@@ -115,6 +115,37 @@ report_hover.css.j2). A reader's run had two red alarms on a host and still said
   a lead-up too), nothing critical, the page in each look, the title, what triggered it, an alarm back to green that no longer stands,
   and *Now:* on the verdict in each look. test_the_headline: a warning before the critical event no longer leads.
 
+## 1.88.0 — 2026-11-21
+
+**To set up: nothing.** No new setting.
+
+**STIG answer keys: who is right** (the cross-check, docs/STIG_ANSWER_KEYS.md "An opened rule"). Open a rule in a
+*Cross-check* section on the report website. Each host with something to compare is a card:
+
+- **One verdict line,** with an icon: *Agree: the code and ACT say Not a Finding*, *The code and ACT disagree: the
+  code says ..., ACT says ... ACT's reason: ...*, *A person's review differs: STIG Manager says ...*, or *Too little to
+  compare here*. *The evidence shows* only when the line ACT named was found.
+- **Four columns:** the code (its `read:` line in the trial and its result, or *not tried* and where the trial ran),
+  ACT on its own (its evidence and the line that decides it, then its answer and why), Evaluate-STIG (shown, not
+  counted) and STIG Manager (who wrote the review, its age, counted or not).
+- **The evidence as state and counts:** each command, its exit code and how many lines it returned. Only the one line
+  ACT named is shown, redacted and marked. A line it names that is not in the evidence is never marked. The page no
+  longer shows *What ACT was given* (the evidence's text).
+- **ACT names its line:** a third line in its answer, the evidence line that decides it.
+- The hosts with Evaluate-STIG only: one line under the cards, also when no host has a card. A host with any review
+  in STIG Manager gets its card.
+- The line ACT names is matched as a complete line, cut to 200 characters only once found. Output the host cut says
+  *lines kept*. With the trial off, the code's column says so. `answer_keys_evidence: none` keeps the `read:` line out
+  of the verdict line too.
+- All three website looks (atlas, brief, ops), light and dark. The email and the workbook are unchanged.
+- The review's who and age stay on this page. The answer keys job never writes to STIG Manager (a test says so).
+
+Tests: `tests/test_stig_answer_cross.py` (each verdict line, the four columns, the marked line, the card in each
+look, nothing of it to STIG Manager, and the Codex review's cases: evidence none, a complete line only, a
+disagreement without the line, the trial off, lines kept, a review that is not a verdict, the more-hosts line alone), `tests/test_stig_answer_evidence.py` (state and counts only, a secret never
+shown), `tests/test_site_redact.py` (the named line redacted), `tests/stig/run_stig_answer_keys_hosts_test.sh` (the
+opened rule on the page). ansible-core 2.22 and 2.16.
+
 ## 1.87.2 — 2026-11-21
 
 **Nothing to set up.** The next run of a report writes its page with the new link.

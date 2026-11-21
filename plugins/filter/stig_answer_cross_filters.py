@@ -42,6 +42,7 @@ SM_SHORT = {"pass": "NF", "fail": "Open", "notapplicable": "NA"}
 AGREE, LOOK, THIN = "✓ Agree", "⚠ Need a look", "— Too little to compare"
 ORDER = {LOOK: 0, THIN: 1, AGREE: 2}
 ACT_MAX_DEFAULT = 50
+EV_MAX = 4000                    # 1.88.0b: the most of one command's output ACT is given (and the named line is looked for in)
 CAP = "not asked (the cap, answer_keys_cross_check_act_max)"
 
 
@@ -95,7 +96,7 @@ def stig_answer_cross_review(review, scan_time="", now=""):
     rv = review if isinstance(review, dict) else {}
     res = _s(rv.get("result"))
     if not res:
-        return {"word": "none", "counted": False, "short": ""}
+        return {"word": "none", "counted": False, "short": "", "note": ""}
     short = SM_SHORT.get(res, "")
     # 1.77.0i (Codex P1): a result STIG Manager does not define is shown as a fixed word, never its text
     word = short or {"notchecked": "Not Reviewed", "informational": "Informational", "error": "Error", "fixed": "Fixed",
@@ -103,7 +104,8 @@ def stig_answer_cross_review(review, scan_time="", now=""):
     ts, scan, at = _when(rv.get("ts")), _when(scan_time), _when(now) or datetime.datetime.now(datetime.timezone.utc)
     age = (" %d d" % _days(ts, at)) if ts else ""
     if rv.get("engine"):
-        return {"word": "%s (from the scan,%s)" % (word, age or " age unknown"), "counted": False, "short": short}
+        note = "from the scan,%s" % (age or " age unknown")
+        return {"word": "%s (%s)" % (word, note), "counted": False, "short": short, "note": note}
     # 1.77.0b (Codex P2): counted only when both times are known and the review is strictly newer than the scan
     if ts is None:
         why = ""
@@ -117,7 +119,8 @@ def stig_answer_cross_review(review, scan_time="", now=""):
         why = None
     counted = bool(short) and why is None
     note = "a person,%s%s" % (age or " age unknown", why or "")
-    return {"word": "%s (%s)" % (word, note), "counted": counted, "short": short}
+    # 1.88.0: note - the review's who and age, for the cross-check's page only (never written to STIG Manager)
+    return {"word": "%s (%s)" % (word, note), "counted": counted, "short": short, "note": note}
 
 
 def stig_answer_cross_act_task(rule, evidence, values=None):
@@ -126,28 +129,32 @@ def stig_answer_cross_act_task(rule, evidence, values=None):
     r = rule if isinstance(rule, dict) else {}
     ev = []
     for e in evidence or []:
-        ev.append("$ %s   (exit %s)\n%s" % (redact(_s(e.get("cmd")), backstop=False), _s(e.get("rc")), (redact(_s(e.get("out"))) or "(nothing)")[:4000]))
+        ev.append("$ %s   (exit %s)\n%s" % (redact(_s(e.get("cmd")), backstop=False), _s(e.get("rc")), (redact(_s(e.get("out"))) or "(nothing)")[:EV_MAX]))
     vals = "\n".join("%s = %s" % (k, ", ".join(v) if isinstance(v, list) else v) for k, v in sorted((values or {}).items()))
     return ("You check one DISA STIG rule on one RHEL host, from evidence only. You run nothing.\n"
             "Rule %s: %s\n\nDISA's check text:\n%s\n\nWhat the host returned for these read-only commands:\n%s\n\n%s"
             "Answer on the first line with exactly one of NF (not a finding), Open, NA (not applicable) or unsure. "
-            "On the second line, one short sentence: why, naming what in the evidence decides it."
+            "On the second line, one short sentence: why, naming what in the evidence decides it. "
+            "On the third line, copy the one line of the evidence that decides it, exactly as the host returned it."
             % (_s(r.get("v")), redact(_s(r.get("title")), backstop=False),
                redact(_s(r.get("check_text")), backstop=False).strip() or "(none)",
                "\n\n".join(ev) or "(none)", ("The site's values:\n" + vals + "\n\n") if vals else ""))
 
 
 def stig_answer_cross_act_answer(text):
-    """ACT's answer -> {verdict: NF / Open / NA / '' (unsure, or no answer), why}."""
+    """ACT's answer -> {verdict: NF / Open / NA / '' (unsure, or no answer), why, decides: the evidence line it named
+    (1.88.0; '' when none)}."""
     # 1.77.0d: ACT's answer may quote the evidence - redacted whole, then cut
     lines = [x.strip() for x in redact(_s(text)).strip().splitlines() if x.strip()]
     if not lines:
-        return {"verdict": "", "why": "no answer"}
+        return {"verdict": "", "why": "no answer", "decides": ""}
     first = re.sub(r"[^A-Za-z ]", " ", lines[0]).split()
     word = first[0].lower() if first else ""
     verdict = {"nf": "NF", "notafinding": "NF", "open": "Open", "na": "NA", "notapplicable": "NA"}.get(word, "")
     why = (lines[1] if len(lines) > 1 else "")[:300]
-    return {"verdict": verdict, "why": why or ("unsure" if not verdict else "")}
+    # 1.88.0b (Codex P1): the named line whole - it is matched as a complete line, and cut only when shown
+    decides = (lines[2] if len(lines) > 2 else "")[:EV_MAX]
+    return {"verdict": verdict, "why": why or ("unsure" if not verdict else ""), "decides": decides}
 
 
 def _fold(vals):
@@ -292,21 +299,149 @@ def _n(n, word):
     return "%d %s%s" % (n, word, "" if n == 1 else "s")
 
 
+WORD = {"NF": "Not a Finding", "Open": "Open", "NA": "Not Applicable"}
+TONE = {"NF": "ok", "Open": "critical", "NA": "muted"}
+WHO_NOTE = "4 columns for each host: the code, ACT on its own, Evaluate-STIG, STIG Manager"
+
+
+def _word(v):
+    return WORD.get(v, v)
+
+
+def _short(h):
+    return _s(h).split(".")[0]
+
+
+def _norm(t):
+    return " ".join(_s(t).split()).lower()
+
+
+def _line_key(t):
+    """1.88.0b (Codex P1): a line as compared with the one ACT named - the complete line, its runs of spaces made one and
+    a pair of quotes or backticks ACT put around it taken off. The case counts and a part of a line never matches."""
+    t = " ".join(_s(t).split())
+    while len(t) > 1 and t[0] == t[-1] and t[0] in "`'\"":
+        t = t[1:-1].strip()
+    return t
+
+
+CUT_MARK = re.compile(r"\n\.\.\. \(cut at (\d+) bytes\)$")
+
+
+def _kept(out):
+    """1.88.0b (Codex P2): (the lines the host sent back, cut at N bytes or None). The output was cut on the host
+    (answer_keys_read_max): the count is of the lines kept."""
+    out = _s(out)
+    m = CUT_MARK.search(out)
+    body = out[:m.start()] if m else out
+    return len([y for y in body.splitlines() if y.strip()]), (int(m.group(1)) if m else None)
+
+
+def _act_lines(h):
+    """1.88.0: ACT's evidence as the page shows it - state and counts only (each command, its exit code, how many lines
+    it returned), and the one line ACT named as deciding it, marked under its command. Never the rest of the output.
+    -> ([{t, mark}], found: the named line is in the evidence)."""
+    want = _line_key((h.get("act") or {}).get("decides"))
+    out, found = [], ""
+    for e in h.get("ran") or []:
+        n, cut = int(e.get("lines") or 0), e.get("cut")
+        count = ("%s kept, cut at %s bytes" % (_n(n, "line"), cut)) if cut else _n(n, "line")
+        out.append({"t": "$ %s  (exit %s, %s)" % (e.get("cmd"), _s(e.get("rc")) or "?", count), "mark": False})
+        if want and not found:
+            # 1.88.0b (Codex P1): the output as ACT was given it (stig_answer_cross_act_task: its first EV_MAX characters),
+            # a complete line equal to the one ACT named; cut to 200 only when shown
+            for ln in (_s(e.get("out")) or "(nothing)")[:EV_MAX].splitlines():
+                if _line_key(ln) == want:
+                    found = " ".join(ln.split())[:200]
+                    out.append({"t": "\u2192 " + found, "mark": True})
+                    break
+    return out, found
+
+
+def _who_line(h, shown=True, found=""):
+    """1.88.0: one host's verdict in one line -> (look / agree / thin, the line). shown: answer_keys_evidence is not
+    none (1.88.0b, Codex P1: then no read line here either); found: the line ACT named, found in the evidence."""
+    code, act = h.get("code") if h.get("code") in VERDICTS else "", h.get("act") or {}
+    av = act.get("verdict") if act.get("verdict") in VERDICTS else ""
+    sm = h.get("sm") or {}
+    smv = sm.get("short") if sm.get("counted") else ""
+    read = _s(h.get("code_read")) if shown else ""
+    rd = (" (the code read %s)" % read) if read and len(read) <= 80 else ""
+    if code and av and code != av:
+        # 1.88.0b (Codex P1): both verdicts, ACT's reason as ACT's; "the evidence shows" only with the line it named found
+        why = _s(act.get("why")).strip().rstrip(".")
+        line = "The code and ACT disagree: the code says %s, ACT says %s." % (_word(code), _word(av))
+        if why:
+            line += " ACT's reason: %s." % why
+        if found and shown:
+            line += " The evidence shows: %s" % found
+        return "look", line
+    if smv and ((code and smv != code) or (av and smv != av)):
+        others = [x for x, y in (("the code", code), ("ACT", av)) if y and y != smv]
+        said = code or av
+        return "look", "A person's review differs: STIG Manager says %s, %s say%s %s%s" % (
+            _word(smv), " and ".join(others), "" if len(others) > 1 else "s", _word(said), rd)
+    names = [x for x, y in (("the code", code), ("ACT", av), ("the person's review in STIG Manager", smv)) if y]
+    if len(names) >= 2:
+        said = code or av or smv
+        tail = "" if code or h.get("trial_off") else (" (the code was tried on %s)" % _short(h.get("rep")) if h.get("rep") and h.get("rep") != h.get("host") else "")
+        return "agree", "Agree: %s say %s%s%s" % (" and ".join([", ".join(names[:-1]), names[-1]]) if len(names) > 2 else " and ".join(names),
+                                                 _word(said), rd if code else "", tail)
+    if names:
+        return "thin", "Too little to compare here: %s only" % names[0]
+    return "thin", "Too little to compare here: no source gave an answer"
+
+
+def _who(h, evidence="web"):
+    """1.88.0: one host of an opened rule - its verdict line, then four columns: the code (its read line in the trial and
+    its result), ACT on its own (its evidence as state and counts, the deciding line marked; its answer and why),
+    Evaluate-STIG, STIG Manager."""
+    host, rep = _s(h.get("host")), _s(h.get("rep"))
+    code, act, sm, es = h.get("code") or "", h.get("act") or {}, h.get("sm") or {}, _s(h.get("es"))
+    shown = evidence != "none"
+    pre, found = _act_lines(h) if shown and act else ([], "")
+    kind, line = _who_line(h, shown, found)
+    if code:
+        c = {"title": "The code", "sub": "trial on %s" % _short(host),
+             "pre": [{"t": "read: " + _s(h.get("code_read")), "mark": False}] if shown and h.get("code_read") else [],
+             "word": _word(code), "tone": TONE.get(code, "muted"), "note": "returned %s" % ("True" if code == "NF" else "False")}
+    elif h.get("trial_off"):            # 1.88.0b (Codex P2): no trial ran anywhere
+        c = {"title": "The code", "word": "not tried", "tone": "muted", "note": "the trial is off (answer_keys_trial)"}
+    elif rep and rep != host:
+        c = {"title": "The code", "word": "not tried", "tone": "muted", "note": "the trial ran on %s" % _short(rep)}
+    else:
+        c = {"title": "The code", "word": "not tried", "tone": "muted", "note": _s(h.get("code_why")) or "no result in the trial"}
+    if act:
+        note = _s(act.get("why"))
+        if shown and act.get("decides") and not found:
+            note += (" " if note else "") + "(the line it named is not in the evidence)"
+        a = {"title": "ACT, on its own", "pre": pre, "word": _word(act.get("verdict")) or "unsure",
+             "tone": TONE.get(act.get("verdict"), "muted"), "note": note}
+    else:
+        a = {"title": "ACT, on its own", "word": "not asked", "tone": "muted", "note": _s(h.get("act_note"))}
+    e = {"title": "Evaluate-STIG", "word": es or "-", "tone": "critical" if es == "Open" else "muted",
+         "note": "its own check, no answer file \u00b7 shown, not counted" if es == "Open" else
+         "its own check left it here \u00b7 shown, not counted" if es else "no result read"}
+    if sm.get("short"):
+        m = {"title": "STIG Manager", "word": _word(sm["short"]), "tone": TONE.get(sm["short"], "muted"),
+             "note": "%s \u00b7 %s" % (_s(sm.get("note")), "counted" if sm.get("counted") else "shown, not counted")}
+    else:
+        w = _s(sm.get("word")) or "none"
+        m = {"title": "STIG Manager", "word": "no review" if w == "none" else w.split(" (")[0], "tone": "muted",
+             "note": "no review of this rule" if w == "none" else (_s(sm.get("note")) or "shown, not counted")}
+    return {"host": host, "kind": kind, "line": line, "cols": [c, a, e, m]}
+
+
 def _detail(r, evidence="web"):
+    """An opened rule: what it checks, then (1.88.0) each host where there is something to compare - its verdict line
+    and the four sources side by side; the hosts with Evaluate-STIG only, counted in one line."""
+    # 1.88.0b (Codex P2): a review of any kind (Not Reviewed, Informational, Error too) shows its host
+    shown = [h for h in r["hosts"] if _compared(h) or (h.get("sm") or {}).get("short")
+             or _s((h.get("sm") or {}).get("word")) not in ("", "none", "not read")]
+    rest = len(r["hosts"]) - len(shown)
     d = [{"columns": ["What it checks", ""], "kinds": ["wrap", "wrap"], "rows": [[r["title"], r["stig"]]]},
-         {"columns": ["Host", "Evaluate-STIG", "STIG Manager", "The code", "ACT, on its own", "ACT's why"],
-          "kinds": ["wrap"] * 6,
-          "rows": [[h["host"], _s(h.get("es")), (h.get("sm") or {}).get("word", "none"), h.get("code") or "not tried",
-                    (h.get("act") or {}).get("verdict") or ("unsure" if h.get("act") else _s(h.get("act_note")) or "not asked"),
-                    (h.get("act") or {}).get("why", "")] for h in r["hosts"] if _compared(h)]}]
-    rest = [h for h in r["hosts"] if not _compared(h)]
-    if rest:
-        d[1]["rows"].append(["%s more" % _n(len(rest), "host"), _fold([_s(h.get("es")) for h in rest]), "nothing newer than the scan",
-                             "tried on one host only", "not asked", "nothing to compare it with there"])
-    ev = "\n".join("%s - %s" % (h["host"], _s(h.get("evidence"))) for h in r["hosts"] if h.get("evidence"))
-    if ev and evidence != "none":             # 1.77.0h: at most 20 lines and 2000 characters a rule; none: not shown
-        d.append({"texts": [{"label": "What ACT was given (read-only, collected by the job; ACT never saw the code)", "text": cap(ev),
-                             "note": "DISA's check text was given too. Evidence from: %s." % _fold([_s(h.get("evidence_from")) for h in r["hosts"]])}]})
+         {"who": [_who(h, evidence) for h in shown],
+          "who_more": ("%s: Evaluate-STIG only, nothing else to compare there." % _n(rest, "more host")) if rest else ""}]
     return d
 
 # ---- the job's side: which host reads what, the ACT calls, the rows ----------------------------------------------------
@@ -345,7 +480,7 @@ def stig_answer_cross_plan(groups, info, now="", act_on=True):
 
 
 def _ev_text(ran):
-    return "\n\n".join("$ %s   (exit %s)\n%s" % (redact(_s(e.get("cmd")), backstop=False), _s(e.get("rc")), (redact(_s(e.get("out"))).rstrip() or "(nothing)")[:4000])
+    return "\n\n".join("$ %s   (exit %s)\n%s" % (redact(_s(e.get("cmd")), backstop=False), _s(e.get("rc")), (redact(_s(e.get("out"))).rstrip() or "(nothing)")[:EV_MAX])
                        for e in ran or [])
 
 
@@ -411,6 +546,8 @@ def stig_answer_cross_join(groups, info, reads, asks, answers, now=""):
                     code, code_why = "NF", ""
                 elif h == rep and tr.get("valid") is False:
                     code, code_why = "Open", ""
+                elif r.get("untried"):
+                    code, code_why = "", "the trial is off (answer_keys_trial)"
                 else:
                     code, code_why = "", ("tried on %s only" % rep.split(".")[0]) if h != rep else "not tried"
                 k, act, note = "%s|%s|%s" % (label, r["v"], h), None, ""
@@ -422,7 +559,13 @@ def stig_answer_cross_join(groups, info, reads, asks, answers, now=""):
                 hr = ((reads or {}).get(h) or {}).get("reads") or {}
                 x = hr.get(r["v"]) or {}
                 rows.append({"v": r["v"], "sv": _s(r.get("sv")), "cat": _s(r.get("cat")), "title": _s(r.get("title")), "stig": label,
-                             "host": h, "es": _s((hi.get("es") or {}).get(r["v"])),
+                             "host": h, "rep": rep, "es": _s((hi.get("es") or {}).get(r["v"])),
+                             # 1.88.0: what the code read in the trial (its read: line), where it ran
+                             "code_read": redact(_s(tr.get("read")))[:300] if code else "",
+                             "ran": [{"cmd": redact(_s(e.get("cmd")), backstop=False)[:300], "rc": _s(e.get("rc")),
+                                      "lines": _kept(e.get("out"))[0], "cut": _kept(e.get("out"))[1],
+                                      "out": redact(_s(e.get("out")))} for e in x.get("ran") or []] if act else [],
+                             "trial_off": bool(r.get("untried")),
                              "sm": stig_answer_cross_review(rv, stig_answer_cross_scan_time(sm), now) if sm else
                              {"word": "not read", "counted": False, "short": ""},
                              "code": code, "code_why": code_why, "act": act, "act_note": note,

@@ -444,7 +444,10 @@ class Round3(unittest.TestCase):
         import stig_answer_cross_filters as C
         import stig_answer_filters as A
         a = C.stig_answer_cross_act_answer("Open\nThe file has token=Kq7w Zx3v in it")
-        self.assertEqual(a, {"verdict": "Open", "why": "The file has token=<removed>"})
+        self.assertEqual(a, {"verdict": "Open", "why": "The file has token=<removed>", "decides": ""})
+        # 1.88.0: the deciding line ACT names is redacted the same way
+        a = C.stig_answer_cross_act_answer("Open\nwhy\ntoken=Kq7w Zx3v")
+        self.assertEqual(a["decides"], "token=<removed>")
         task = C.stig_answer_cross_act_task({"v": "V-1"}, [{"cmd": "grep -r password=Kq7w /etc", "rc": 1, "out": ""}])
         self.assertNotIn("Kq7w", task)
         asks = C.stig_answer_cross_asks([{"label": "L", "rep": "h1", "rules": [{"v": "V-1", "hosts": ["h1"]}]}],

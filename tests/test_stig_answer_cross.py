@@ -1,9 +1,11 @@
 """1.77.0: the cross-check of the STIG answer keys (plugins/filter/stig_answer_cross_filters.py)."""
+import json
 import os
 import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "plugins", "filter"))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "roles", "check_stig", "library"))
 import ansible.module_utils  # noqa: E402 - the repository's module_utils as Ansible gives them (ansible.cfg)
@@ -108,10 +110,16 @@ class Act(unittest.TestCase):
             self.assertNotIn(w, t)
 
     def test_answers(self):
-        self.assertEqual(C.stig_answer_cross_act_answer("NF\nroot owns it."), {"verdict": "NF", "why": "root owns it."})
+        self.assertEqual(C.stig_answer_cross_act_answer("NF\nroot owns it."), {"verdict": "NF", "why": "root owns it.", "decides": ""})
+        # 1.88.0: the third line - the evidence line that decides it
+        self.assertEqual(C.stig_answer_cross_act_answer("Open\nIt is 0.\nkernel.x = 0")["decides"], "kernel.x = 0")
         self.assertEqual(C.stig_answer_cross_act_answer("**Open**\n/srv/drop is not approved")["verdict"], "Open")
         self.assertEqual(C.stig_answer_cross_act_answer("unsure\nno output")["verdict"], "")
-        self.assertEqual(C.stig_answer_cross_act_answer(""), {"verdict": "", "why": "no answer"})
+        self.assertEqual(C.stig_answer_cross_act_answer(""), {"verdict": "", "why": "no answer", "decides": ""})
+
+    def test_act_is_asked_for_the_deciding_line(self):
+        t = C.stig_answer_cross_act_task({"v": "V-1", "title": "t", "check_text": "c"}, [{"cmd": "/usr/bin/true", "rc": 0, "out": ""}])
+        self.assertIn("On the third line, copy the one line of the evidence that decides it", t)
 
 
 class Rules(unittest.TestCase):
@@ -174,15 +182,206 @@ class Report(unittest.TestCase):
         self.assertIn("answer_keys_cross_check_act_max", how)
         self.assertIn("never the code", how)
 
-    def test_the_detail_shows_what_act_was_given(self):
-        d = self.r["sections"][2]["details"][0]
-        self.assertEqual(d[2]["texts"][0]["text"], "r8 - root")
+    def test_the_detail_is_host_by_host(self):
+        # 1.88.0: what it checks, then each host's verdict line and the four sources
+        d = self.r["sections"][1]["details"][0]
+        self.assertEqual(d[0]["columns"], ["What it checks", ""])
+        who = d[1]["who"]
+        self.assertEqual([c["title"] for c in who[0]["cols"]], ["The code", "ACT, on its own", "Evaluate-STIG", "STIG Manager"])
+        self.assertEqual(who[0]["kind"], "look")
+        self.assertFalse(any("texts" in x for x in d))           # never the evidence's text as a block (state and counts only)
 
     def test_reader_text_short(self):
         for s in self.r["sections"]:
             self.assertNotIn(";", s.get("text") or "")
         for line in self.r["how"]:
             self.assertNotIn(";", line)
+
+
+class WhoIsRight(unittest.TestCase):
+    """1.88.0: an opened rule, host by host - a verdict line, then the code, ACT on its own, Evaluate-STIG, STIG Manager."""
+
+    def test_the_code_and_act_disagree(self):
+        x = row("h1", code="NF", rep="h1", code_read="kernel.x = 1",
+                ran=[{"cmd": "/usr/sbin/sysctl kernel.x", "rc": "0", "lines": 1, "out": "kernel.x = 0"}])
+        x["act"] = {"verdict": "Open", "why": "It is 0, not 1.", "decides": "kernel.x = 0"}
+        w = C._who(x)
+        # 1.88.0b (Codex P1): both verdicts, ACT's reason as ACT's, the evidence only as the line ACT named and that was found
+        self.assertEqual((w["kind"], w["line"]), ("look", "The code and ACT disagree: the code says Not a Finding, ACT says Open. "
+                                                          "ACT's reason: It is 0, not 1. The evidence shows: kernel.x = 0"))
+        code, act, es, smc = w["cols"]
+        self.assertEqual((code["word"], code["note"], code["pre"][0]["t"]), ("Not a Finding", "returned True", "read: kernel.x = 1"))
+        self.assertEqual([(l["t"], l["mark"]) for l in act["pre"]],
+                         [("$ /usr/sbin/sysctl kernel.x  (exit 0, 1 line)", False), ("\u2192 kernel.x = 0", True)])
+        self.assertEqual((act["word"], act["tone"]), ("Open", "critical"))
+        self.assertEqual(es["note"], "its own check, no answer file \u00b7 shown, not counted")
+        self.assertEqual((smc["word"], smc["note"]), ("no review", "no review of this rule"))
+
+    def test_a_persons_review_differs(self):
+        x = row("h1", code="Open", act="Open", review=sm("pass"), rep="h1", code_read="x = 2")
+        w = C._who(x)
+        self.assertEqual((w["kind"], w["line"]),
+                         ("look", "A person's review differs: STIG Manager says Not a Finding, the code and ACT say Open (the code read x = 2)"))
+        self.assertEqual((w["cols"][3]["word"], w["cols"][3]["note"]), ("Not a Finding", "a person, 1 d \u00b7 counted"))
+
+    def test_agree_without_the_code_names_the_trial_host(self):
+        w = C._who(row("h2.example.mil", code="", act="NF", review=sm("pass"), rep="h1.example.mil"))
+        self.assertEqual((w["kind"], w["line"]), ("agree", "Agree: ACT and the person's review in STIG Manager say Not a Finding (the code was tried on h1)"))
+        self.assertEqual((w["cols"][0]["word"], w["cols"][0]["note"]), ("not tried", "the trial ran on h1"))
+
+    def test_three_agree(self):
+        w = C._who(row("h1", code="NF", act="NF", review=sm("pass"), rep="h1"))
+        self.assertEqual(w["line"], "Agree: the code, ACT and the person's review in STIG Manager say Not a Finding")
+
+    def test_too_little(self):
+        w = C._who(row("h1", code="NF", act=None, act_note=C.CAP, rep="h1"))
+        self.assertEqual((w["kind"], w["line"]), ("thin", "Too little to compare here: the code only"))
+        self.assertEqual((w["cols"][1]["word"], w["cols"][1]["note"]), ("not asked", C.CAP))
+
+    def test_a_named_line_not_in_the_evidence_is_never_marked(self):
+        x = row("h1", rep="h1", ran=[{"cmd": "/usr/bin/true", "rc": "0", "lines": 0, "out": ""}])
+        x["act"] = {"verdict": "NF", "why": "w", "decides": "something else"}
+        act = C._who(x)["cols"][1]
+        self.assertFalse(any(l["mark"] for l in act["pre"]))
+        self.assertIn("(the line it named is not in the evidence)", act["note"])
+
+    def test_the_hosts_with_evaluate_stig_only_are_one_line(self):
+        r = C.stig_answer_cross_rules([row("h1", rep="h1"), row("h2", code="", act=None, rep="h1"), row("h3", code="", act=None, rep="h1")])[0]
+        d = C._detail(r)
+        self.assertEqual([c["host"] for c in d[1]["who"]], ["h1"])
+        self.assertEqual(d[1]["who_more"], "2 more hosts: Evaluate-STIG only, nothing else to compare there.")
+
+    def test_the_rendered_card_in_every_look(self):
+        import jinja2
+        x = row("h1", code="NF", rep="h1", code_read="kernel.x = 1", ran=[{"cmd": "/usr/sbin/sysctl kernel.x", "rc": "0", "lines": 1, "out": "kernel.x = 0"}])
+        x["act"] = {"verdict": "Open", "why": "It is 0.", "decides": "kernel.x = 0"}
+        det = C._detail(C.stig_answer_cross_rules([x])[0])
+        for look in ("atlas", "brief", "ops"):
+            with open(os.path.join(REPO, "roles", "site_email", "templates", "report_%s.html.j2" % look)) as f:
+                src = f.read()
+            a = src.index("{#- 1.88.0: the cross-check's opened rule")
+            b = src.index("{% endif %}\n", src.index("t.who_more", a)) + len("{% endif %}")
+            html = jinja2.Environment(autoescape=False).from_string(src[a:b]).render(t=det[1])
+            with self.subTest(look=look):
+                self.assertIn('<p class="wv w-look">', html)
+                self.assertIn('<span class="wdl" title="The line ACT named as deciding it">\u2192 kernel.x = 0</span>', html)
+                self.assertEqual(html.count('<div class="wc">'), 4)
+                self.assertIn(".wg{display:grid", src)
+
+
+class CodexRound1880b(unittest.TestCase):
+    """1.88.0b: the Codex review of 1.88.0."""
+
+    def test_evidence_none_keeps_the_read_line_out_of_the_verdict_too(self):
+        # ACT absent, a counted review that differs; and the agreeing path
+        cases = [row("h1", code="Open", act=None, review=sm("pass"), rep="h1", code_read="x = 2"),
+                 row("h1", code="NF", act=None, review=sm("pass"), rep="h1", code_read="x = 2")]
+        for x in cases:
+            web, none = C._who(x), C._who(x, "none")
+            with self.subTest(code=x["code"]):
+                self.assertIn("(the code read x = 2)", web["line"])
+                self.assertNotIn("x = 2", none["line"])
+                self.assertFalse(any("x = 2" in json.dumps(c) for c in none["cols"]))
+        self.assertEqual(C._who(cases[0], "none")["line"], "A person's review differs: STIG Manager says Not a Finding, the code says Open")
+
+    def test_evidence_none_never_shows_the_named_line(self):
+        x = row("h1", code="NF", rep="h1", ran=[{"cmd": "/usr/sbin/sysctl kernel.x", "rc": "0", "lines": 1, "out": "kernel.x = 0"}])
+        x["act"] = {"verdict": "Open", "why": "It is 0.", "decides": "kernel.x = 0"}
+        w = C._who(x, "none")
+        self.assertEqual(w["line"], "The code and ACT disagree: the code says Not a Finding, ACT says Open. ACT's reason: It is 0.")
+        self.assertEqual(w["cols"][1]["pre"], [])
+
+    def test_the_named_line_is_a_complete_line(self):
+        ran = [{"cmd": "/usr/bin/grep enabled /etc/a.conf", "rc": "0", "lines": 1, "out": "enabled = 10"},
+               {"cmd": "/usr/bin/grep enabled /etc/b.conf", "rc": "0", "lines": 2, "out": "# enabled = 1 here\nenabled = 1"}]
+        x = row("h1", code="Open", rep="h1", ran=ran)
+        x["act"] = {"verdict": "NF", "why": "It is on.", "decides": "`enabled  = 1`"}
+        pre = C._who(x)["cols"][1]["pre"]
+        self.assertEqual([(l["t"], l["mark"]) for l in pre],
+                         [("$ /usr/bin/grep enabled /etc/a.conf  (exit 0, 1 line)", False),
+                          ("$ /usr/bin/grep enabled /etc/b.conf  (exit 0, 2 lines)", False), ("\u2192 enabled = 1", True)])
+        x["act"]["decides"] = "Enabled = 1"            # the case counts
+        self.assertFalse(any(l["mark"] for l in C._who(x)["cols"][1]["pre"]))
+
+    def test_a_long_named_line_is_matched_whole_then_cut(self):
+        long = "x" * 250 + " = 1"
+        self.assertEqual(len(C.stig_answer_cross_act_answer("NF\nwhy\n" + long)["decides"]), len(long))
+        x = row("h1", code="Open", rep="h1", ran=[{"cmd": "/usr/bin/cat f", "rc": "0", "lines": 2, "out": long[:-1] + "2\n" + long}])
+        x["act"] = {"verdict": "NF", "why": "w", "decides": long}
+        marked = [l["t"] for l in C._who(x)["cols"][1]["pre"] if l["mark"]]
+        self.assertEqual(marked, ["\u2192 " + long[:200]])
+
+    def test_a_disagreement_without_the_line_says_no_evidence(self):
+        for decides in ("", "not there"):
+            x = row("h1", code="NF", rep="h1", ran=[{"cmd": "/usr/bin/true", "rc": "0", "lines": 0, "out": ""}])
+            x["act"] = {"verdict": "Open", "why": "It looks off.", "decides": decides}
+            with self.subTest(decides=decides):
+                self.assertEqual(C._who(x)["line"], "The code and ACT disagree: the code says Not a Finding, ACT says Open. ACT's reason: It looks off.")
+        x["act"] = {"verdict": "Open", "why": "", "decides": ""}
+        self.assertEqual(C._who(x)["line"], "The code and ACT disagree: the code says Not a Finding, ACT says Open.")
+
+    def test_no_trial_ran(self):
+        for host in ("h1", "h2"):
+            x = row(host, code="", act="NF", review=sm("pass"), rep="h1", trial_off=True)
+            w = C._who(x)
+            with self.subTest(host=host):
+                self.assertEqual(w["cols"][0]["note"], "the trial is off (answer_keys_trial)")
+                self.assertNotIn("tried on", w["line"])
+                self.assertNotIn("the trial ran", json.dumps(w))
+
+    def test_the_lines_kept_when_the_host_cut_the_output(self):
+        self.assertEqual(C._kept("a\nb\n\nc\n... (cut at 4096 bytes)"), (3, 4096))
+        self.assertEqual(C._kept("a\nb"), (2, None))
+        x = row("h1", code="Open", rep="h1", ran=[{"cmd": "/usr/bin/cat f", "rc": "0", "lines": 3, "cut": 4096, "out": "a\nb\nc"}])
+        x["act"] = {"verdict": "NF", "why": "w", "decides": ""}
+        self.assertEqual(C._who(x)["cols"][1]["pre"][0]["t"], "$ /usr/bin/cat f  (exit 0, 3 lines kept, cut at 4096 bytes)")
+
+    def test_a_review_that_is_not_a_verdict_shows_its_host(self):
+        for res in ("notchecked", "informational", "error"):
+            r = C.stig_answer_cross_rules([row("h1", rep="h1"), row("h2", code="", act=None, rep="h1", review=sm(res))])[0]
+            d = C._detail(r)
+            with self.subTest(result=res):
+                self.assertEqual([c["host"] for c in d[1]["who"]], ["h1", "h2"])
+                self.assertEqual(d[1]["who_more"], "")
+                self.assertNotIn(d[1]["who"][1]["cols"][3]["word"], ("no review", "none"))
+
+    def test_the_more_hosts_line_without_cards(self):
+        import jinja2
+        t = {"who": [], "who_more": "2 more hosts: Evaluate-STIG only, nothing else to compare there."}
+        for look in ("atlas", "brief", "ops"):
+            with open(os.path.join(REPO, "roles", "site_email", "templates", "report_%s.html.j2" % look)) as f:
+                src = f.read()
+            a = src.index("{#- 1.88.0: the cross-check's opened rule")
+            b = src.index("{% endif %}\n", src.index("t.who_more", a)) + len("{% endif %}")
+            with self.subTest(look=look):
+                self.assertIn('<p class="wmore">2 more hosts:', jinja2.Environment(autoescape=False).from_string(src[a:b]).render(t=t))
+
+
+class NeverToStigManager(unittest.TestCase):
+    """1.88.0 (the director): the review's note is the cross-check page's only - the answer keys job never writes to STIG
+    Manager, and nothing else reads the note."""
+
+    def test_the_answer_keys_job_has_no_stig_manager_write(self):
+        files = [os.path.join(REPO, "playbooks", "stig_answer_keys.yml")] + [
+            os.path.join(REPO, "roles", "check_stig", "tasks", f) for f in os.listdir(os.path.join(REPO, "roles", "check_stig", "tasks"))
+            if f.startswith(("answer_keys", "answers"))]
+        for f in files:
+            with open(f) as fh:
+                t = fh.read()
+            with self.subTest(f=os.path.basename(f)):
+                for w in ("stigman_update", "site_stigman_update", "stigman_ckl_import", "method: POST", "method: PUT", "method: PATCH"):
+                    self.assertNotIn(w, t)
+
+    def test_the_note_is_read_only_by_the_cross_check(self):
+        out = []
+        for top in ("plugins", "roles", "playbooks"):
+            for d, _dirs, fs in os.walk(os.path.join(REPO, top)):
+                for f in fs:
+                    if f.endswith((".py", ".yml", ".j2")):
+                        with open(os.path.join(d, f), encoding="utf-8", errors="replace") as fh:
+                            if 'sm.get("note")' in fh.read():
+                                out.append(os.path.relpath(os.path.join(d, f), REPO))
+        self.assertEqual(out, [os.path.join("plugins", "filter", "stig_answer_cross_filters.py")])
 
 
 def group(rows, hosts=("r9a.example.mil", "r9b.example.mil"), label="RHEL 9 V2R10"):
@@ -252,6 +451,7 @@ class Job(unittest.TestCase):
 
     def test_join_rules_and_into_the_report(self):
         g = group([ready()])
+        g["rows"][0]["trial"]["read"] = "root"
         info = {"r9a.example.mil": {"sm": sm_rec({}), "es": {"V-1": "Not Reviewed"}},
                 "r9b.example.mil": {"sm": sm_rec({"SV-1": {"result": "fail", "ts": "2026-11-17T10:00:00Z", "engine": None},
                                                   # the scan's import (a result engine): the asset's last scan, before the person's review
@@ -263,6 +463,9 @@ class Job(unittest.TestCase):
         self.assertEqual([(x["host"], x["code"], x["act"]["verdict"], x["sm"]["counted"]) for x in rows],
                          [("r9a.example.mil", "NF", "NF", False), ("r9b.example.mil", "", "Open", True)])
         self.assertEqual(rows[1]["code_why"], "tried on r9a only")
+        # 1.88.0: the trial host, the code's read line where it ran, each command's state for the page
+        self.assertEqual([(x["rep"], x["code_read"]) for x in rows], [("r9a.example.mil", "root"), ("r9a.example.mil", "")])
+        self.assertEqual([(e["cmd"], e["rc"], e["lines"]) for e in rows[1]["ran"]], [("/usr/bin/stat -c %U /etc/group-", "0", 1)])
         rs = C.stig_answer_cross_rules(rows)
         self.assertEqual(rs[0]["verdict"], C.AGREE)        # r9a: code NF = ACT NF; r9b: STIG Manager Open = ACT Open
         rep = C.stig_answer_cross_report(rs, 50, C.stig_answer_cross_ran(reads))

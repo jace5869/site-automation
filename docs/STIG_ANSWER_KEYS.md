@@ -533,6 +533,37 @@ second, in UTC. Otherwise it is shown and not counted:
 - *no scan time to compare*: STIG Manager holds no review a result engine wrote for that asset;
 - *age unknown*: the review has no time.
 
+### An opened rule: who is right (1.88.0)
+
+Open a rule in a *Cross-check* section. Each host with something to compare gets a card:
+
+- **One line first:** *Agree*, *The code and ACT disagree*, *A person's review differs* or *Too little to compare
+  here*, with an icon. Example: *The code and ACT disagree: the code says Not a Finding, ACT says Open. ACT's reason:
+  the file sets it to 0. The evidence shows: kernel.x = 0*.
+  - Both verdicts are said. ACT's reason is called ACT's.
+  - *The evidence shows* comes only when the line ACT named is in the evidence.
+- **The code:** its `read:` line in the trial and its result (*returned True* is Not a Finding). On another host:
+  *not tried*, and where the trial ran. With `answer_keys_trial: false`: *the trial is off*.
+- **ACT, on its own:** each command it was given, its exit code and how many lines it returned. Output the host cut
+  (it keeps 4,000 bytes of each command) says *N lines kept, cut at N bytes*. Then the one line ACT named as deciding it, marked.
+  Then its answer and why.
+- **Evaluate-STIG:** its own status. Shown, not counted.
+- **STIG Manager:** the review, who wrote it and its age, and whether it is counted.
+
+The hosts with Evaluate-STIG only are one line under the cards: *2 more hosts: Evaluate-STIG only*. A host with any
+review in STIG Manager (Not Reviewed, Informational, Error too) gets its card.
+
+The page shows state and counts, never a command's whole output. The one marked line is redacted and cut to 200
+characters. A line ACT names that is not in the evidence is never marked: the card says so.
+
+- The named line must be a complete line of the evidence as ACT was given it. The case counts. Runs of spaces count
+  as one, and quotes ACT put around it are taken off. `enabled = 1` never marks `enabled = 10`.
+- It is cut to 200 characters only after it is found.
+
+With `answer_keys_evidence: none` the card has no command, no `read:` line and no marked line, its first line included.
+
+The review's who and age are for this page only. The answer keys job never writes to STIG Manager.
+
 ### What ACT gets
 
 ACT never sees the code, its result or Evaluate-STIG's status. It gets three things:
@@ -541,7 +572,8 @@ ACT never sees the code, its result or Evaluate-STIG's status. It gets three thi
 - the host's read-only evidence for the rule;
 - the site values the block used.
 
-It answers NF, Open, NA or unsure, with one line of why. Unsure counts as no answer.
+It answers NF, Open, NA or unsure, with one line of why. Unsure counts as no answer. A third line copies the line of
+the evidence that decides it (1.88.0).
 
 ### The evidence
 
@@ -771,7 +803,7 @@ A host's text is what the trial or the code read, Evaluate-STIG's comment, and t
 | Where | `web` (the default) | `none` |
 |---|---|---|
 | The email and its workbook | never: statuses, counts, rule ids | never |
-| The report website | redacted, at most 20 lines and 2000 characters a rule | not shown |
+| The report website | redacted, at most 20 lines and 2000 characters a rule. The cross-check: each command, its exit code and line count, and the one line ACT named (1.88.0) | not shown |
 | ACT (the cross-check) | the redacted evidence, as above | not asked |
 | The AAP job's output | the modules' results, redacted | the same |
 

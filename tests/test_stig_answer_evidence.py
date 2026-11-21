@@ -51,11 +51,13 @@ def _try_rows():
                                    {"host": "h2", "without": {"scanned": False, "why": "hostline-error from Evaluate-STIG"}, "with": {}}])
 
 
-def _cross_rules():
+def _cross_rules(decides="hostline07 read from the host"):
     row = {"v": "V-1", "sv": "SV-1", "cat": "CAT II", "title": "t", "stig": "RHEL 9", "host": "h1", "es": "Open",
            "sm": {"counted": False, "word": "none", "short": ""}, "code": "NF", "code_why": "", "act": {"verdict": "Open", "why": "hostline why"},
-           "act_note": "", "evidence_from": "DISA's",
-           "evidence": C._ev_text([{"cmd": "/usr/bin/cat /etc/x", "rc": 0, "out": HOST_TEXT}])}   # as stig_answer_cross_join makes it
+           "act_note": "", "evidence_from": "DISA's", "rep": "h1", "code_read": "hostline-read",
+           "evidence": C._ev_text([{"cmd": "/usr/bin/cat /etc/x", "rc": 0, "out": HOST_TEXT}]),   # as stig_answer_cross_join makes it
+           "ran": [{"cmd": "/usr/bin/cat /etc/x", "rc": "0", "lines": 41, "out": X.redact(HOST_TEXT)}]}
+    row["act"]["decides"] = decides
     return C.stig_answer_cross_rules([row])
 
 
@@ -137,8 +139,25 @@ class Web(unittest.TestCase):
         self.assertNotIn("hostline", t)
 
     def test_the_cross_check(self):
-        self.capped(self.texts(C.stig_answer_cross_report(_cross_rules(), 50, [])["sections"]))
-        self.assertNotIn("hostline0", self.texts(C.stig_answer_cross_report(_cross_rules(), 50, [], "none")["sections"]))
+        # 1.88.0 (the director: state and counts only): each command, its exit code and how many lines - and the one line
+        # ACT named, redacted; never the rest of the output
+        t = self.texts(C.stig_answer_cross_report(_cross_rules(), 50, [])["sections"])
+        self.assertIn("/usr/bin/cat /etc/x  (exit 0, 41 lines)", t)
+        self.assertIn("hostline07 read from the host", t)
+        for i in (0, 6, 8, 39):
+            self.assertNotIn("hostline%02d" % i, t)
+        self.assertNotIn(SECRET, t)
+        self.assertIn("hostline-read", t)                 # the code's own read line in the trial
+        # ACT names the secret's line (its answer is redacted, as stig_answer_cross_act_answer does): shown redacted only
+        t = self.texts(C.stig_answer_cross_report(_cross_rules(C.stig_answer_cross_act_answer("Open\nw\ntoken=" + SECRET)["decides"]), 50, [])["sections"])
+        self.assertNotIn(SECRET, t)
+        self.assertIn("token=<removed>", t)
+        # a line it names raw never brings the secret either
+        self.assertNotIn(SECRET, self.texts(C.stig_answer_cross_report(_cross_rules("token=" + SECRET), 50, [])["sections"]))
+        # none: no command, no line, no read (ACT is not asked then; its why in this made-up row is the only host word left)
+        t = self.texts(C.stig_answer_cross_report(_cross_rules(), 50, [], "none")["sections"])
+        for w in ("hostline0", "/usr/bin/cat", "hostline-read"):
+            self.assertNotIn(w, t)
 
     def test_cap(self):
         self.assertEqual(X.cap("a\nb"), "a\nb")
