@@ -29,6 +29,8 @@ To set up: run Site portal - deploy.
   a cut read says so in the live line. A whole read that places sites (or takes them away) turns the Map on (or off).
 - The portal: the kept map from disk has its own ETag, so the first fresh read of the same map is sent; its state is read
   under the lock.
+- **The ops look at 800-1000 px:** the section links take a row of their own, as wide as the page, instead of two links
+  squeezed beside *All reports* (1.87.2).
 - Tests: `tests/test_netmap.py` Hotfix1951 and Hotfix1951Page (each fails on 1.95.0), Portal.test_b.
 
 ## 1.95.0 — 2026-11-21

@@ -477,7 +477,10 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 /* narrower than the rail: the bar's list of sections keeps room beside the search */
 @media (max-width:1199.98px){.nav{flex:1 1 180px}.find{flex:0 1 220px;min-width:140px}
   .seg label span,.tools .btn span{display:none}.seg label{padding:6px 8px}}
-@media (max-width:1000px){.brand{max-width:none}.brand b{display:none}}
+@media (max-width:1000px){.brand{max-width:none}.brand b{display:none}
+  /* 1.95.1: the section links on a row of their own, as wide as the page (one line that scrolls, as before) - never
+     squeezed to two links beside All reports (1.87.2) */
+  .appbar-in{flex-wrap:wrap;row-gap:0}.nav{order:3;flex:1 1 100%;padding:0 0 8px}}
 @media (max-width:640px){
   :root{--appbar:0px}
   .appbar{position:static}.appbar-in{flex-wrap:wrap;gap:8px;padding:8px 16px}.nav{order:3;flex-basis:100%;padding:0 0 4px}
