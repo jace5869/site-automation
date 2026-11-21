@@ -132,7 +132,11 @@ run() {  # run NAME ok|fail [args...] -- TEXT...  (a TEXT starting with ! must n
     done
     if [ $miss -eq 0 ]; then echo "ok   - $tname"; else grep -n "STIG answer keys:\|NOT DRAFTED\|ready\|DID NOT\|HOST \|fatal\|ERROR\|msg" "$work/out.txt" | cut -c1-300 | head -40; fails=$((fails + 1)); fi
 }
-pagetext() { "$py" -c 'import html, re, sys; print(html.unescape(re.sub(r"<[^>]+>", " ", open(sys.argv[1]).read())))' "$1" | tr -s ' \n' ' '; }
+# 1.100.0: rows past the first 100 and each rule's opened detail are deferred blocks built when the reader opens them
+unpacked() {  # unpacked FILE: the page with its deferred blocks built as site-report.js does (tests/email/unpack_deferred.py), its path
+    "$py" "$repo/tests/email/unpack_deferred.py" "$1" > "$work/unpacked.html" && echo "$work/unpacked.html"
+}
+pagetext() { "$py" -c 'import html, re, sys; print(html.unescape(re.sub(r"<[^>]+>", " ", open(sys.argv[1]).read())))' "$(unpacked "$1")" | tr -s ' \n' ' '; }
 leftovers() { (cd "$work" && find tmp rtmp ltmp -mindepth 1 -maxdepth 1 2>/dev/null) | sort; }
 before_left="$(leftovers)"
 
@@ -154,7 +158,7 @@ for want in "RHEL 9 V2R10 - answer keys to copy (2)" "RHEL 8 V2R9 - answer keys 
             "Found on (2) h9a, h9b" "Hosts that did not work (1)" "In none of the hosts' STIGs (1)"; do
     case "$t" in *"$want"*) true ;; *) echo "FAIL - the website: missing '$want'"; fails=$((fails + 1)) ;; esac
 done
-if "$py" - "$page" <<'PY'
+if "$py" - "$(unpacked "$page")" <<'PY'
 import html, re, sys
 t = open(sys.argv[1]).read()
 import xml.etree.ElementTree as ET
@@ -177,11 +181,12 @@ sys.exit(0 if all(n in t for n in ("answer-keys-RHEL_8_STIG-V2R9.xml", "answer-k
 PY
 then echo "ok   - the job's output names the four answer files"; else echo "FAIL - the job's output: the answer files"; fails=$((fails + 1)); fi
 # 1.79.8: the website hosts the four answer files (and the workbook) beside the page: each parses, its Download link
-if "$py" - "$(lastpage)" <<'PY'
+lp="$(lastpage)"
+if "$py" - "$lp" "$(unpacked "$lp")" <<'PY'
 import os, re, sys
 import xml.etree.ElementTree as ET
 page = sys.argv[1]                                  # the run's page or its latest.html: both link the run's folder
-t = open(page).read()
+t = open(sys.argv[2]).read()                        # its rows as people see them (each block's link built from Files)
 want = ("answer-keys-RHEL_8_STIG-V2R9.xml", "answer-keys-RHEL_9_STIG-V2R7.xml", "answer-keys-RHEL_9_STIG-V2R10.xml", "answer-keys-RHEL_10_STIG-V1R3.xml")
 links = re.findall(r'<a class="dl" href="([^"]+)" download="([^"]+)">Download ', t)
 folders = set(os.path.dirname(h) for h, _ in links)
@@ -257,7 +262,7 @@ sys.exit(0 if x and x[0].get("Name") == "RHEL9-site" and [v.get("ID") for v in x
 PY
 then echo "ok   - ... the attached file: Name RHEL9-site, the two new blocks (not the one already answered)"; else echo "FAIL - the Name from the site's file"; fails=$((fails + 1)); fi
 
-# 4. 1.77.0, the cross-check: h9b's review of SV-258999 is a person's (no result engine), newer than its last scan import
+# 4. 1.77.0, the cross-check (1.82.0: its need a look counted in the head, the subject): h9b's review of SV-258999 is a person's (no result engine), newer than its last scan import
 # (SV-257777's, by Evaluate-STIG); the code is tried on h9a (the trial host). Both hosts are this box: the same evidence.
 cp "$work/sm.json" "$work/sm.json.keep"
 "$py" - "$work/sm.json" <<'PY'
@@ -273,7 +278,7 @@ xc='{"answer_keys_rules": ["V-258999"]}'
 printf '%s' '{"summary": "NF\nroot owns /etc/hostname, as the check text wants.\nroot /etc/hostname"}' > "$work/act/act.json"; rm -f "$work/act/fake-act-calls.log"
 run "the cross-check: code NF and ACT NF on h9a, a person's Open in STIG Manager and ACT NF on h9b - need a look" ok \
     -e target=h9a,h9b -e "$xc" -e answer_keys_cross_check=true -- \
-    "STIG answer keys: 1 ready to copy, 1 need a look in the cross-check, 0 not drafted - 1 STIG, 2 hosts" \
+    "STIG answer keys: 1 ready to copy, 0 not drafted - 1 STIG, 2 hosts" 'emailed "[AAP] STIG answer keys: 1 need a look, 1 ready to copy"' \
     "Cross-check: 0 agree, 1 need a look, 0 too little to compare" "V-258999 CROSS-CHECK: STIG Manager Open, ACT NF on h9b"
 [ "$(grep -c call "$work/act/fake-act-calls.log" 2>/dev/null)" = 1 ] && echo "ok   - ... one ACT call: the two hosts returned the same evidence" \
     || { echo "FAIL - cross-check ACT calls: $(cat "$work/act/fake-act-calls.log" 2>/dev/null | wc -l)"; fails=$((fails + 1)); }
@@ -296,7 +301,7 @@ for want in "Agree: the code and ACT say Not a Finding" "A person's review diffe
             "a person, " "· counted" "shown, not counted"; do
     case "$t" in *"$want"*) true ;; *) echo "FAIL - the opened rule: missing '$want'"; xmiss=1 ;; esac
 done
-grep -qF 'class="wdl" title="The line ACT named as deciding it">→ root /etc/hostname</span>' "$p" || { echo "FAIL - the deciding line not marked"; xmiss=1; }
+grep -qF 'class="wdl" title="The line ACT named as deciding it">→ root /etc/hostname</span>' "$(unpacked "$p")" || { echo "FAIL - the deciding line not marked"; xmiss=1; }
 case "$t" in *"What ACT was given"*) echo "FAIL - the opened rule still shows the evidence's text"; xmiss=1 ;; esac
 [ $xmiss -eq 0 ] && echo "ok   - ... the opened rule: each host's verdict, the four sources, the deciding line marked (state and counts only)" || fails=$((fails + 1))
 rm -f "$work/act/fake-act-calls.log"

@@ -123,8 +123,9 @@ got="$(st '[json.loads(j["extra_vars"]) for j in s["job_templates"] if j["name"]
 [ "$got" = "[{'report_email_to': 'team@example.invalid', 'stigman_ckl_import_mode': 'scorecard', 'stigman_scorecard_collections': ['RHEL Servers']}]" ] \
     && pass "the person's check template copied: their Variables kept, mode scorecard, no workflow flag" || fail "copied Variables" "$got
 $(grep -E "scorecard|fatal" "$work/out.txt" | head -6)"
+# the Variables in the person's own order: the template is never rewritten (a rewrite would sort them)
 got="$(st '[(j["description"], json.loads(j["extra_vars"])) for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"]')"
-[ "$got" = "[('made by a person', {'report_email_to': 'team@example.invalid', 'stigman_ckl_import_mode': 'import and scorecard', 'stigman_ckl_import_workflow': True, 'stigman_scorecard_collections': ['RHEL Servers']})]" ] \
+[ "$got" = "[('made by a person', {'stigman_ckl_import_workflow': True, 'stigman_scorecard_collections': ['RHEL Servers'], 'stigman_ckl_import_mode': 'import and scorecard', 'report_email_to': 'team@example.invalid'})]" ] \
     && grep -q "template 'STIG Manager - import checklists - check': NOT MADE BY THIS JOB" "$work/out.txt" \
     && pass "their check template: ownership unverified, all Variables kept" || fail "their check template" "$got"
 n="$(writes)"

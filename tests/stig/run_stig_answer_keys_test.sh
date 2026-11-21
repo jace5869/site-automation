@@ -136,8 +136,12 @@ run() {  # run NAME ok|fail [args...] -- TEXT...  (a TEXT starting with ! must n
     done
     if [ $miss -eq 0 ]; then echo "ok   - $tname"; else grep -n "STIG answer keys:\|NOT DRAFTED\|ready\|ACT draft\|fatal\|ERROR\|msg" "$work/out.txt" | cut -c1-300 | head -30; fails=$((fails + 1)); fi
 }
-pagetext() {  # pagetext FILE: the page's words, its tags left out
-    "$py" -c 'import html, re, sys; print(html.unescape(re.sub(r"<[^>]+>", "", open(sys.argv[1]).read())))' "$1" | tr -s ' \n' ' '
+# 1.100.0: a rule's block is a defer-detail block built when its row opens - the page unpacked as site-report.js does
+unpacked() {  # unpacked FILE: the page with its deferred blocks built (tests/email/unpack_deferred.py), its path
+    "$py" "$repo/tests/email/unpack_deferred.py" "$1" > "$work/unpacked.html" && echo "$work/unpacked.html"
+}
+pagetext() {  # pagetext FILE: the page's words as people see them (its deferred blocks built), its tags left out
+    "$py" -c 'import html, re, sys; print(html.unescape(re.sub(r"<[^>]+>", "", open(sys.argv[1]).read())))' "$(unpacked "$1")" | tr -s ' \n' ' '
 }
 # the job's temporary folders in its own places (other jobs on this box use /tmp too): what is left there is the job's
 mkdir -p "$work/tmp" "$work/rtmp" "$work/ltmp"
@@ -180,6 +184,7 @@ grep -q "DISA's check text:" "$work/act/fake-act-task.txt" && grep -q "Put the c
     && grep -q "DISA check text of V-25" "$work/act/fake-act-stdin.txt" \
     && echo "ok   - ACT was given DISA's check text and the rules of the code - evidence mode on the AAP side (it runs no command)" || { echo "FAIL - ACT's task"; fails=$((fails + 1)); }
 page="$(command grep -rl 'Copy block' "$work/web" --include='*.html' | head -1)"
+[ -n "$page" ] && grep -q 'class="defer-detail"' "$page" && page="$(unpacked "$page")"
 if [ -n "$page" ] && grep -q 'data-copy="&lt;AnswerKey Name=&#34;SITEA&#34;&gt;\|data-copy="&lt;AnswerKey Name=&quot;SITEA&quot;&gt;' "$page" \
    && grep -q "drafted by ACT - read it before you use it" "$page" && grep -q "Evaluate-STIG compares an answer&#39;s ExpectedStatus\|Evaluate-STIG compares an answer's ExpectedStatus" "$page" \
    && grep -q "the template&#39;s element names\|the template's element names" "$page"

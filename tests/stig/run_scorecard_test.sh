@@ -187,9 +187,14 @@ n="$(grep -o '<svg class="spark"' "${page:-/dev/null}" | wc -l)"
 if [ -n "$page" ] && [ "$n" = 3 ] && grep -q 'aria-label="SITEA - RHEL 9, open findings: 20 in the week to ' "$page" && grep -q "Open, 9 weeks" "$page"; then
     ok "  ...the website (atlas look): a trend line per collection, its values as the label"
 else bad "  ...the website page: $n trend lines (${page:-no page})"; fi
+# 1.100.0: rows past the first 100 and each rule's check and fix text are deferred blocks built when the reader
+# opens them: the page unpacked as site-report.js does (tests/email/unpack_deferred.py), the same greps on it
+up="$work/unpacked.html"
+[ -n "$page" ] && "$py" "$repo/tests/email/unpack_deferred.py" "$page" > "$up"
 # 1.67.0: a line per platform in its hue, the filter buttons, each collection that opens, the rows tagged
 if [ -n "$page" ] && [ "$(grep -o '<svg class="spark hu[0-9]"' "$page" | wc -l)" = 4 ] && grep -q '<div class="facets" hidden' "$page" \
-   && [ "$(grep -o '<tr class="xr" hidden>' "$page" | wc -l)" -gt 20 ] && grep -q 'data-pf="pf1 pf5" data-col="c2" id="col-2"' "$page" \
+   && grep -q 'class="defer-' "$page" && ! grep -q 'class="defer-' "$up" \
+   && [ "$(grep -o '<tr class="xr" hidden>' "$up" | wc -l)" -gt 20 ] && grep -q 'data-pf="pf1 pf5" data-col="c2" id="col-2"' "$page" \
    && grep -q '<h2>Findings (10)' "$page" && grep -q '<h2>Hosts (13)' "$page" \
    && grep -q 'data-fv="pf2"' "$page" && grep -q '<option value="c3">SITEA - Windows Server</option>' "$page"; then
     ok "  ...by platform: a line per platform, the Platform and Collection buttons, each collection opens"
@@ -199,9 +204,9 @@ else bad "  ...the website page's platforms"; fi
 # only the line No command in this text); each rule's text read once (9 have one)
 if [ -n "$page" ] && grep -qF "href=\"http://127.0.0.1:$port/\" target=\"_blank\" rel=\"noopener\" title=\"Opens STIG Manager in a new tab. Then: SITEA - RHEL 9 &gt; RHEL_9_STIG &gt; SV-257985\"" "$page" \
    && grep -qF 'title="Opens STIG Manager in a new tab. Then: SITEA - Windows Server &gt; win03">' "$page" \
-   && grep -qF 'data-copy="SV-257985">' "$page" && grep -qF '<h3 class="rth">Check text</h3>' "$page" \
-   && grep -qF 'data-copy="sudo dnf install usbguard">Copy fix</button>' "$page" \
-   && grep -qF '<p class="rtn">No command in this text</p>' "$page" && ! grep -qF 'Copies the whole text' "$page" \
+   && grep -qF 'data-copy="SV-257985">' "$page" && grep -qF '<h3 class="rth">Check text</h3>' "$up" \
+   && grep -qF 'data-copy="sudo dnf install usbguard">Copy fix</button>' "$up" \
+   && grep -qF '<p class="rtn">No command in this text</p>' "$up" && ! grep -qF 'Copies the whole text' "$up" \
    && ! grep -qE "href=\"http://127.0.0.1:$port/(api/?)?[#?]" "$page" && grep -qF "Check and fix text: 9 of 10 rules in" "$work/out.txt" \
    && [ "$(grep -c '^GET /api/stigs/rules/' "$work/sm.log")" = 10 ] && [ "$(grep '^GET /api/stigs/rules/' "$work/sm.log" | sort -u | wc -l)" = 10 ] \
    && grep -q '^GET /api/stigs/rules/SV-257985r1069364_rule?projection=check&projection=fix$' "$work/sm.log"; then

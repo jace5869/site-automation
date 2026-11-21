@@ -161,9 +161,19 @@
     });
     /* labels: the worst and the bubbles first, the rest where they fit (all names on hover and focus) */
     var taken = [];
+    // a label's width as this browser draws it (its own fonts: a wider sans than ours must not overlap); an unseen map
+    // (no layout yet) falls back to a width wide enough for a wide bold sans
+    var probe = sv('g', { 'class': 'am-s', visibility: 'hidden', 'aria-hidden': 'true' }); svg.appendChild(probe);
+    function textW(lines) {
+      return Math.max.apply(0, lines.map(function (t, i) {
+        var e = sv('text', { 'class': i ? 'sub' : null }, [t]), n; probe.appendChild(e);
+        try { n = e.getComputedTextLength(); } catch (err) { n = 0; }
+        e.remove(); return n > 0 ? Math.ceil(n) + 1 : t.length * 7.4;
+      }));
+    }
     if (O) taken.push([O.x - R - 40, O.y - R - 50, O.x + R + 40, O.y + R + 40]);
     function label(g, x, y, lines, force, end, r) {    // right of the dot, else left, below, above: the first place that is free
-      var w = Math.max.apply(0, lines.map(function (t) { return t.length; })) * 6.6, h = 13 * lines.length, rr = r || 0, cx = x - rr - 6;
+      var w = textW(lines), h = 13 * lines.length, rr = r || 0, cx = x - rr - 6;
       var tries = end ? [[x - w, y]] : [[x, y], [cx - rr - 6 - w, y], [cx - w / 2, y + rr + 16], [cx - w / 2, y - rr - 6 - h],
         [x, y + rr + 14], [x, y - rr - 10], [cx - rr - 6 - w, y + rr + 14], [cx - rr - 6 - w, y - rr - 10], [x + 24, y + 26], [x + 24, y - 26]]
         .concat([0, 1, 2, 3, 4, 5, 6, 7].map(function (k) {             // further out, all round the dot (a busy hub's label)
@@ -215,6 +225,7 @@
       g.addEventListener('click', go); g.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
       gS.appendChild(g);
     });
+    probe.remove();
     if (O) {                                             // the location opened in place: its AD sites, the lines between them
       gI.insertBefore(sv('circle', { cx: O.x, cy: O.y, r: R + 30, 'class': 'am-ring' }), gI.firstChild);
       O.m.forEach(function (s) {
