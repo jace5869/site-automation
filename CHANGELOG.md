@@ -214,17 +214,6 @@ working defaults. Without the job, nothing changes: *Network map* reads SolarWin
 - **The ops look at 800-1000 px:** the section links take a row of their own, as wide as the page, instead of two links
   squeezed beside *All reports* (1.87.2).
 - Tests: `tests/test_netmap.py` Hotfix1951 and Hotfix1951Page (each fails on 1.95.0), Portal.test_b.
-## 1.93.0 — 2026-11-22
-
-**To set up:** run **AAP - set up portal actions** and **AAP - set up job templates** once with Job type **Run**.
-The jobs remove the old fingerprint text from descriptions that still match what they wrote.
-
-Both jobs keep organization-scoped fingerprints in the AAP job artifact `aap_setup_fingerprints` and search all
-earlier successful Runs for the latest map. An unreadable history stops setup before writes and preserves the
-previous map. Existing objects without verified ownership are listed and left alone unless overwrite is enabled.
-Describe-only also leaves setup-managed descriptions to their owning job. Both gate creators use the same catalog
-description and Contact settings. Check previews marker migration and publishes no map.
-
 ## 1.95.0 — 2026-11-21
 
 **Nothing to set up.** The next *Network map* run reads where each node belongs; its report's *Discovery* section says how.
@@ -306,6 +295,17 @@ controllers' health* (user-approved mockup):
   down, an old snapshot, no snapshot table, no SAM, never raises; live against `tests/netmap/fake_swis.py` over HTTPS with
   SAM, alerts and interfaces; the section in every look and the workbook); `tests/ad/run_ad_test.sh` (no credential, read
   live through the role, the email's table, never fails the job, `ad_solarwinds: false`).
+
+## 1.93.0 — 2026-11-22
+
+**To set up:** run **AAP - set up portal actions** and **AAP - set up job templates** once with Job type **Run**.
+The jobs remove the old fingerprint text from descriptions that still match what they wrote.
+
+Both jobs keep organization-scoped fingerprints in the AAP job artifact `aap_setup_fingerprints` and search all
+earlier successful Runs for the latest map. An unreadable history stops setup before writes and preserves the
+previous map. Existing objects without verified ownership are listed and left alone unless overwrite is enabled.
+Describe-only also leaves setup-managed descriptions to their owning job. Both gate creators use the same catalog
+description and Contact settings. Check previews marker migration and publishes no map.
 
 ## 1.92.0 — 2026-11-21
 

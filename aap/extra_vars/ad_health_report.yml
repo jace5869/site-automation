@@ -295,11 +295,6 @@
 ## more node custom properties shown in a node's panel and the workbook, e.g. [Region, Building]
 # netmap_properties: []
 
-## report_motion: the network map's motion on the report website - auto (unless the viewer's system
-## asks for less motion), always (even then) or off (still: no turning globe, no moving traffic, no
-## pulse; the switch and the fly-in are jumps). The portal's page follows portal_motion.
-# report_motion: auto
-
 ## nodes read at most (more: the first ones, said in the report)
 # netmap_max_nodes: 5000
 
