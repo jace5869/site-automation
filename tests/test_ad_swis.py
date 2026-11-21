@@ -163,8 +163,7 @@ class Read1940(unittest.TestCase):
         self.assertIsNone(d["DC02"]["last_down"])                                    # outside the 30 days
         self.assertEqual([a["name"] for a in d["DC02"]["alerts"]], ["High CPU"])
         self.assertIsNone(d["DC02"]["ifaces"])                                       # no interfaces_for: not read (said so)
-        self.assertEqual(swdb.calls[1], ("nodes_for", ("dc01", "dc02", "dc03", "dc04")))
-        self.assertEqual(swdb.calls[2], ("nodes_for", ("192.0.2.13",)))           # the misses again, by IP
+        self.assertEqual(swdb.calls[1], ("nodes_for", ("192.0.2.13", "dc01", "dc02", "dc03", "dc04")))   # the names and the IPs, one call
 
     def test_2_no_snapshot_table_then_live(self):
         r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap(latest="1146"), client=self.live.client)
@@ -214,7 +213,8 @@ class Read1940(unittest.TestCase):
     def test_6_never_raises(self):
         r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap(fail="nodes_for"))
         self.assertFalse(r["ok"])
-        self.assertIn("boom", " ".join(r["why"]))
+        self.assertIn("a RuntimeError", " ".join(r["why"]))
+        self.assertNotIn("boom", " ".join(r["why"]))                                 # 1.94.0 review: fixed words, never the text
 
         class Dead(object):
             def query(self, *a, **k):
@@ -256,7 +256,8 @@ class View1940(unittest.TestCase):
         out = af.ad_swis_insert(doc, self.v)
         titles = [s["title"] for s in out["sections"]]
         self.assertEqual(titles.index("From SolarWinds"), titles.index("Domain controllers' health") + 1)
-        self.assertEqual(out["summary"][1]["label"], "SolarWinds: down or warning")
+        self.assertEqual(out["summary"][2]["label"], "SolarWinds: down or warning")   # after the first plain-number tile
+        self.assertEqual(sf.report_headline(out), sf.report_headline(doc))
         self.assertEqual((out["status"], out["title"], len(out["sections"]) - 1), before)    # SolarWinds never changes AD's counts
 
     def test_3_no_credential_one_line(self):
@@ -294,7 +295,114 @@ class View1940(unittest.TestCase):
     def test_6_dcs_and_their_ips(self):
         hv = {"dc01.corp.test": {"ansible_host": "192.0.2.11"}, "dc02.corp.test": {"ansible_host": "dc02.corp.test"}}
         self.assertEqual(af.ad_swis_dcs([{"dc": "DC01", "host": "dc01.corp.test"}, {"dc": "DC02", "host": "dc02.corp.test"}, {"dc": "DC03", "host": "x"}], hv),
-                         [{"dc": "DC01", "ip": "192.0.2.11"}, {"dc": "DC02", "ip": ""}, {"dc": "DC03", "ip": ""}])
+                         [{"dc": "DC01", "ip": "192.0.2.11", "fqdn": "dc01.corp.test"}, {"dc": "DC02", "ip": "", "fqdn": "dc02.corp.test"},
+                          {"dc": "DC03", "ip": "", "fqdn": ""}])
+
+
+class Review1940(unittest.TestCase):
+    """1.94.0 review round: the full name first, a short name only when one node has it, an IP only when one node has it,
+    never one node for two DCs; the headline stays AD's; problems by the whole DC name; no exception text; never raises."""
+
+    N = [{"node_id": 1, "name": "DC01.child.test", "dns": "", "ip": "192.0.2.91", "status": "Down"},
+         {"node_id": 2, "name": "dc01.corp.test", "dns": "dc01.corp.test", "ip": "192.0.2.11", "status": "Up"},
+         {"node_id": 3, "name": "dc02", "dns": "", "ip": "192.0.2.12", "status": "Up"},
+         {"node_id": 4, "name": "sql-vip", "dns": "", "ip": "192.0.2.12", "status": "Up"},
+         {"node_id": 5, "name": "dc05", "dns": "", "ip": "", "status": "Up"},
+         {"node_id": 6, "name": "dc05", "dns": "", "ip": "192.0.2.15", "status": "Warning"}]
+
+    def m(self, dcs):
+        return dict((k, (v[0] and v[0]["node_id"], v[1], v[2])) for k, v in ad.match(dcs, self.N).items())
+
+    def test_1_two_domains_one_short_name(self):
+        r = self.m([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": "192.0.2.11"}])
+        self.assertEqual(r["DC01"][:2], (2, "name"))                                 # its own FQDN, not DC01.child.test
+        r = self.m([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}])
+        self.assertEqual(r["DC01"][:2], (2, "name"))
+        nodes = [dict(n) for n in self.N if n["node_id"] != 2]                      # its own node gone: the other domain's never stands in
+        self.assertIsNone(ad.match([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}], nodes)["DC01"][0])
+
+    def test_2_a_shared_ip_is_not_a_match(self):
+        r = self.m([{"dc": "DC02", "fqdn": "", "ip": "192.0.2.12"}])
+        self.assertEqual(r["DC02"][:2], (3, "name"))                                 # the name is unique: matched by it
+        r = ad.match([{"dc": "DCX", "fqdn": "", "ip": "192.0.2.12"}], self.N)["DCX"]
+        self.assertIsNone(r[0])
+        self.assertIn("2 SolarWinds nodes have its IP", r[2])
+        r = self.m([{"dc": "DC05", "fqdn": "", "ip": "192.0.2.15"}])
+        self.assertEqual(r["DC05"][:2], (6, "ip"))                                   # two nodes named dc05: its IP decides
+
+    def test_3_one_node_never_two_dcs(self):
+        r = ad.match([{"dc": "DC02", "fqdn": "", "ip": ""}, {"dc": "dc02", "fqdn": "", "ip": "192.0.2.12"}], self.N)
+        self.assertEqual(r["DC02"][0]["node_id"], 3)
+        self.assertIsNone(r["dc02"][0])
+        self.assertIn("the same SolarWinds node as DC02", r["dc02"][2])
+        v = af.ad_swis_view({"asked": True, "ok": True, "source": "swis-live", "read_at": "2026-10-15 06:53", "sam": False,
+                             "dcs": [{"dc": "dc02", "matched": "", "unmatched_why": r["dc02"][2]}]}, {}, {"now": NOW})
+        row = v["section"]["rows"][0]
+        self.assertEqual((row[2], v["section"]["cell_status"][0][2]), ("Not matched", "warning"))
+        self.assertIn("the same SolarWinds node as DC02", row[-1])
+
+    def test_4_the_headline_stays_ads(self):
+        r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap())
+        v = af.ad_swis_view(dict(r, asked=True), {}, {"now": NOW})
+        for name in ("ad_report", "ad_reader_report"):
+            doc = json.load(open(os.path.join(ROOT, "tests", "fixtures", "report_fit", name + ".json")))
+            self.assertEqual(sf.report_headline(af.ad_swis_insert(doc, v)), sf.report_headline(doc), name)
+
+    def test_5_problems_by_the_whole_dc_name(self):
+        d = [{"dc": "DC01.a.test", "matched": "name", "status": "Down"}, {"dc": "DC01.b.test", "matched": "name", "status": "Down"}]
+        v = af.ad_swis_view({"asked": True, "ok": True, "source": "swis-live", "read_at": "2026-10-15 06:53", "sam": False, "dcs": d},
+                            {"problems": [{"object": "DC01.a.test", "severity": "critical", "text": "LDAP not in sync"}]}, {"now": NOW})
+        r = dict((x[1], x[-1]) for x in v["section"]["rows"])
+        self.assertIn("LDAP not in sync", r["DC01.a.test"])
+        self.assertNotIn("LDAP not in sync", r["DC01.b.test"])
+
+    def test_6_no_exception_text(self):
+        class Err(Exception):
+            pass
+        snap = Snap()
+
+        def latest(conn):
+            raise Err(1045, "Access denied for user 'svc_report_x'@'198.51.100.7' (using password: YES)")
+        snap.latest = latest
+        r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=snap)
+        w = " ".join(r["why"])
+        self.assertIn("the login was refused", w)
+        for bad in ("svc_report_x", "198.51.100.7", "Access denied"):
+            self.assertNotIn(bad, w)
+
+    def test_7_never_raises(self):
+        class Odd(object):
+            def paged(self, *a, **k):
+                raise ValueError("the internal secret text")
+            query = paged
+        r = ad.read(DCS, {"now": NOW}, client=Odd())
+        self.assertFalse(r["ok"])
+        self.assertNotIn("secret", " ".join(r["why"]))
+        bad = {"asked": True, "ok": True, "source": "swis-live", "read_at": "x", "sam": True,
+               "dcs": [{"dc": "DC01", "matched": "name", "status": "Up", "cpu": "n/a", "mem": [], "apps": "not a dict"}]}
+        v = af.ad_swis_view(bad, {}, {"now": NOW})                                    # the view never raises: one Not read line
+        self.assertIsNone(v["section"])
+        self.assertTrue(v["not_read"])
+        v = af.ad_swis_view({"failed": True, "msg": "Traceback ... password=x"}, {}, {})
+        self.assertIn("the reader stopped", v["not_read"][0])
+        self.assertNotIn("password", json.dumps(v))
+
+    def test_8_the_rest(self):
+        self.assertIsNone(ad._pct(-2))                                               # no data, not "-2 %"
+        s = Snap()
+        s.latest = lambda conn: {"snap_id": 7, "read_at": t("2026-10-15 03:00"), "nodes": 3}      # no age_seconds: from its time
+        r = ad.read(DCS, {"now": NOW, "max_age": 60}, conn=Conn([]), swdb=s)
+        self.assertTrue(r["stale"])
+
+        class Cut(object):
+            def paged(self, *a, **k):
+                return [{"NodeID": 9, "Caption": "other", "IPAddress": "192.0.2.99", "Status": 1}], True
+            def query(self, *a, **k):
+                raise sw.SwisError("Metadata.Entity: not allowed")
+        r = ad.read([{"dc": "DC01", "ip": "", "fqdn": ""}], {"now": NOW}, client=Cut())
+        self.assertTrue(r["ok"])                                                     # the nodes kept without SAM or alerts
+        self.assertIn("cut", r["dcs"][0]["unmatched_why"])
+        self.assertIn("not read", r["sam_why"])
 
 
 if __name__ == "__main__":

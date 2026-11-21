@@ -42,7 +42,7 @@ def main():
             try:
                 conn, _tls = db.connect(p)
             except Exception as e:  # noqa: BLE001 - unreachable, refused: said, SolarWinds itself next
-                why.append("the report database %s:%s: %s" % (p["host"], p["port"], db.explain(e, p)))
+                why.append("the report database: %s" % ad._say(e))     # fixed words: never its host, user or message
     env = os.environ
     user, password = env.get("SOLARWINDS_USERNAME", ""), env.get("SOLARWINDS_PASSWORD", "")
     url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
@@ -55,7 +55,7 @@ def main():
             client = site_swis.Client(url, user, password, verify=verify, ca_path=ca if ca and os.path.isfile(ca) else "", timeout=p["timeout"])
         except site_swis.SwisError as e:
             why.append("the SolarWinds credential's address: %s" % e)
-    res = ad.read([{"dc": str(d.get("dc") or ""), "ip": str(d.get("ip") or "")} for d in p["dcs"]], opts, conn=conn,
+    res = ad.read([{"dc": str(d.get("dc") or ""), "ip": str(d.get("ip") or ""), "fqdn": str(d.get("fqdn") or "")} for d in p["dcs"]], opts, conn=conn,
                   swdb=site_swis_db, client=client)
     res["why"] = why + res["why"]
     res["asked"] = bool(conn is not None or client is not None or why)

@@ -96,15 +96,18 @@ warning*. Read only, on the AAP side - nothing is written to SolarWinds or to th
    SolarWinds itself, the DCs only (attach the **SolarWinds (read-only)** credential). Neither: no section, and one line
    under *Not read* says so. The section's text says which it read, when, and how old it is; an old snapshot that is
    all there is shows, said as older than `ad_solarwinds_max_age`.
-2. **Matched** by the DC's name (the caption or the DNS name, any case), then by the inventory's IP. Not found: *Not in
-   SolarWinds* (blue) - add the DC to SolarWinds' polling.
+2. **Matched** by the DC's full name first (its FQDN against a node's caption or DNS name), then by the short name when
+   only one node has it (a node with another domain's name is never taken), then by the inventory's IP when only one node
+   has it (a cluster address is not). One node is never shown for two DCs. Not found: *Not in SolarWinds* (blue) - add
+   the DC to SolarWinds' polling; two nodes could be it: *Not matched* (amber), with why.
 3. **The AD monitors (SAM):** SolarWinds' AD application templates on the DC; a component that is not up is named, with its
    status, value and message (on the website: open the row; in the email and the workbook: the table *From SolarWinds: AD
    monitors not up*). An Orion without SAM: the column is left out and the text says so.
 4. **Last down:** SolarWinds' node-down events of `ad_solarwinds_days` (from the snapshot only - read live, it says *not
    read live*).
-5. **Never the job's result:** the section does not change the report's critical and warning counts, its status or
-   `ad_report_fail`.
+5. **Never the job's result:** the section does not change the report's critical and warning counts, its status, its
+   headline (the first number tile stays AD's) or `ad_report_fail`; a read that fails is one line under *Not read*, in
+   fixed words (never a database's user or host).
 
 | Setting | Default | What |
 |---|---|---|

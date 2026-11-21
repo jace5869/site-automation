@@ -26,10 +26,6 @@ SEV = {2: "critical", 3: "critical", 1: "warning"}        # Orion's alert severi
 RANK = {"critical": 0, "warning": 1, "info": 2, "ok": 3, "": 4}
 
 
-def _short(x):
-    return str(x or "").strip().lower().split(".")[0]
-
-
 def _utc(text):
     m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)", str(text or ""))
     return datetime.datetime(*[int(g) for g in m.groups()]) if m else None
@@ -48,10 +44,10 @@ def _dur(minutes):
 
 
 def _ad_problems(ad):
-    """_ad.problems by DC (short, lower case) -> [(severity, text)], worst first."""
+    """_ad.problems by DC (its whole name, lower case: dc01 of two domains are two DCs) -> [(severity, text)], worst first."""
     out = {}
     for p in (ad or {}).get("problems") or []:
-        k = _short(p.get("object"))
+        k = str(p.get("object") or "").strip().lower()
         if k:
             out.setdefault(k, []).append((str(p.get("severity") or ""), str(p.get("text") or "")))
     for v in out.values():
@@ -64,6 +60,8 @@ def _meaning(d, probs, cpu_warn, mem_warn, now):
     adp = [t for s, t in probs if s == "critical"]
     ad_bad = ("AD says: %s" % adp[0][:70]) if adp else ""
     if not d.get("matched"):
+        if d.get("unmatched_why"):
+            return "Not matched: %s" % d["unmatched_why"]
         return "Not found by name%s: add it to SolarWinds' polling" % ((" or by its IP " + d["ip"]) if d.get("ip") else "")
     out = []
     if d.get("status") == "Down":
@@ -76,7 +74,7 @@ def _meaning(d, probs, cpu_warn, mem_warn, now):
             out.append(ad_bad)
     elif apps.get("warning") and d.get("status") != "Down":
         out.append("AD monitors warning: %s" % ", ".join([c.get("name") or "" for c in apps.get("not_up") or [] if c.get("status") == "Warning"][:2]))
-    busy = [w for w, v, lim in (("CPU", d.get("cpu"), cpu_warn), ("memory", d.get("mem"), mem_warn)) if v is not None and float(v) >= lim]
+    busy = [w for w, v, lim in (("CPU", _num(d.get("cpu")), cpu_warn), ("memory", _num(d.get("mem")), mem_warn)) if v is not None and v >= lim]
     if busy:
         out.append("Busy: %s near full" % " and ".join(busy))
     ld = d.get("last_down")
@@ -90,21 +88,45 @@ def _meaning(d, probs, cpu_warn, mem_warn, now):
 
 
 def ad_swis_view(res, ad, opts=None):
+    """Never raises: a read the view cannot make into a section is one Not read line (the job goes on)."""
+    try:
+        return _view(res, ad, opts)
+    except Exception as e:  # noqa: BLE001
+        return {"section": None, "tile": None, "flat": None, "lines": ["From SolarWinds: not shown (%s)" % e.__class__.__name__],
+                "not_read": ["SolarWinds: read, but not shown - the report could not make a table of it (%s)" % e.__class__.__name__]}
+
+
+def _num(x):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return None if v < 0 else v
+
+
+def _plain(v):
+    return isinstance(v, int) and not isinstance(v, bool) or (isinstance(v, str) and v.strip().isdigit())
+
+
+def _view(res, ad, opts=None):
     o = opts or {}
     r = res or {}
     tz, _note = _tm.zone(o.get("time_zone"))
     cpu_warn, mem_warn, days = float(o.get("cpu_warn", 90)), float(o.get("mem_warn", 90)), int(o.get("days", 30))
     now = _utc(o.get("now")) or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     nr = []
+    if r.get("failed"):                                  # the module stopped (failed_when: false kept the job going)
+        return {"section": None, "tile": None, "flat": None, "lines": ["From SolarWinds: the reader failed"],
+                "not_read": ["SolarWinds: not read - the reader stopped with an error (the job's output has it; the report is complete apart from this)"]}
     if not r.get("asked"):
         if o.get("explain_off"):
             nr.append("SolarWinds: not read - %s" % o["explain_off"])
-        return {"section": None, "tile": None, "not_read": nr, "lines": ["From SolarWinds: not read (no credential)"]}
+        return {"section": None, "tile": None, "flat": None, "not_read": nr, "lines": ["From SolarWinds: not read (no credential)"]}
     for w in r.get("why") or []:
         nr.append("SolarWinds: %s" % w)
     if not r.get("ok") or not r.get("dcs"):
         nr.append("SolarWinds: the domain controllers were not read (the report is complete apart from this)")
-        return {"section": None, "tile": None, "not_read": nr, "lines": ["From SolarWinds: not read"]}
+        return {"section": None, "tile": None, "flat": None, "not_read": nr, "lines": ["From SolarWinds: not read"]}
     probs = _ad_problems(ad)
     sam, events = bool(r.get("sam")), bool(r.get("events"))
     cols = ["", "DC", "SolarWinds"] + (["AD monitors (SAM)"] if sam else []) + ["CPU / memory (%)", "Alerts", "Last down (%d days)" % days, "What it means"]
@@ -114,12 +136,12 @@ def ad_swis_view(res, ad, opts=None):
         cells, stc = [], {}
         st = d.get("status") or ""
         found = bool(d.get("matched"))
-        sw_cell = st if found else "Not in SolarWinds"
-        stc["SolarWinds"] = WORD.get(st, "") if found else "info"
+        sw_cell = st if found else ("Not matched" if d.get("unmatched_why") else "Not in SolarWinds")
+        stc["SolarWinds"] = WORD.get(st, "") if found else ("warning" if d.get("unmatched_why") else "info")
         apps = d.get("apps") or {}
         if sam:
             stc["AD monitors (SAM)"] = {"Down": "critical", "Warning": "warning", "Unknown": "warning" if st != "Down" else "critical"}.get(apps.get("status"), "")
-        cpu, mem = d.get("cpu"), d.get("mem")
+        cpu, mem = _num(d.get("cpu")), _num(d.get("mem"))
         cm = "-" if cpu is None and mem is None else "%s / %s" % ("-" if cpu is None else int(round(float(cpu))), "-" if mem is None else int(round(float(mem))))
         if (cpu is not None and float(cpu) >= cpu_warn) or (mem is not None and float(mem) >= mem_warn):
             stc["CPU / memory (%)"] = "warning"
@@ -142,7 +164,7 @@ def ad_swis_view(res, ad, opts=None):
                 stc["Last down (%d days)" % days] = "warning"
         row = {"": "", "DC": d["dc"], "SolarWinds": sw_cell, "AD monitors (SAM)": apps.get("text") or ("-" if not found else "no AD template"),
                "CPU / memory (%)": cm if found else "-", "Alerts": al_cell if found else "-", "Last down (%d days)" % days: ld_cell,
-               "What it means": _meaning(d, probs.get(_short(d["dc"]), []), cpu_warn, mem_warn, now)}
+               "What it means": _meaning(d, probs.get(str(d["dc"]).strip().lower(), []), cpu_warn, mem_warn, now)}
         cs = [stc.get(c, "") for c in cols]
         worst = min([w for w in cs if w in RANK and w not in ("ok", "")] or [""], key=lambda w: RANK.get(w, 4))
         det = []
@@ -247,8 +269,8 @@ def ad_swis_insert(report, view, flat=False):
             secs[k] = s
     rep["sections"] = secs
     if v.get("tile"):
-        summ = list(rep.get("summary") or [])
-        k = next((i + 1 for i, t in enumerate(summ) if isinstance(t, dict) and t.get("label") == "DCs read"), 0)
+        summ = list(rep.get("summary") or [])            # after the first plain-number tile: the report's headline (its run
+        k = next((i + 1 for i, t in enumerate(summ) if isinstance(t, dict) and _plain(t.get("value"))), len(summ))   # history) stays AD's
         rep["summary"] = summ[:k] + [v["tile"]] + summ[k:]
     return rep
 
@@ -259,6 +281,7 @@ def ad_swis_dcs(dcs, hostvars=None):
     out = []
     for d in dcs or []:
         name, host, ip = str(d.get("dc") or ""), str(d.get("host") or ""), ""
+        fqdn = host if "." in host and not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host) else ""
         try:
             hv = hostvars[host] if hostvars is not None and host in hostvars else {}
             a = str(hv.get("ansible_host") or "") if hasattr(hv, "get") else ""
@@ -266,7 +289,7 @@ def ad_swis_dcs(dcs, hostvars=None):
         except Exception:  # noqa: BLE001 - a host var that does not template: no IP, the name still matches
             ip = ""
         if name:
-            out.append({"dc": name, "ip": ip})
+            out.append({"dc": name, "ip": ip, "fqdn": fqdn})
     return out
 
 

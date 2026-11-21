@@ -70,8 +70,10 @@ controllers' health* (user-approved mockup):
 - from the SolarWinds snapshot in the report database (1.96.0's reader, when it is in the tree) not older than
   `ad_solarwinds_max_age` (60 min), else SolarWinds itself (the DCs only); the text says which, when and how old; an old
   snapshot that is all there is is said as old;
-- matched by name, then by the inventory's IP; *Not in SolarWinds* in blue;
-- read only, never fails the job, never changes the report's counts, status or `ad_report_fail`.
+- matched by the full name, then a short name only one node has, then an IP only one node has; never one node for two
+  DCs; *Not in SolarWinds* in blue, *Not matched* (with why) in amber;
+- read only, never fails the job, never changes the report's counts, status, headline or `ad_report_fail`; what could not
+  be read is said in fixed words (never a database's user or host).
 - Settings: `ad_solarwinds`, `ad_solarwinds_max_age`, `ad_solarwinds_days`, `ad_solarwinds_cpu_warn` / `_mem_warn`,
   `ad_solarwinds_timeout`.
 - Tests: `tests/test_ad_swis.py` (the snapshot through a stand-in with 1.96.0's shapes: name then IP, the interval, the last

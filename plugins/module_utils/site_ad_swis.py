@@ -29,6 +29,27 @@ UP_CODES = (1, 22)                                       # SAM: Up, and "Up" as 
 EVENT_DOWN, EVENT_UP = 1, 5                              # Orion's EventTypes: Node Down, Node Up
 
 
+def _pct(x):
+    """CPU / memory %: a number, None when SolarWinds has none (-1, -2: not polled)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return None if v < 0 else v
+
+
+def _say(e):
+    """What failed, in words the report may show: SolarWinds' own answer (site_swis never puts the login in one); for
+    anything else (a database error names its user and host) fixed words by its class or code."""
+    if isinstance(e, sw.SwisError):
+        return _clean(str(e), 200)
+    code = e.args[0] if getattr(e, "args", None) and isinstance(e.args[0], int) else None
+    words = {1045: "the login was refused (the Report database credential)", 1044: "the account may not read that database",
+             1049: "no such database (the Report database credential's database name)", 2003: "the database server did not answer",
+             2005: "the database server's name is not known", 2013: "the connection was lost", 1146: "a table is missing"}
+    return words.get(code) or ("a %s" % e.__class__.__name__)
+
+
 def _clean(text, n):
     """An error said in one line, never longer than n (SWIS's own message; site_swis never puts the login in one)."""
     return re.sub(r"\s+", " ", str(text or "")).strip()[:n]
@@ -111,30 +132,72 @@ def last_down(events, now, days):
     return {"at": _hm(at), "minutes": max(0, int((end - at).total_seconds() // 60)), "ongoing": not ups}
 
 
-def _match(dcs, rows_by_name, rows_by_ip):
-    out = {}
+def _full(x):
+    """A host name as written (lower case) when it has a domain, else ''."""
+    n = str(x or "").strip().lower().rstrip(".")
+    return n if "." in n and not sw.IPV4.match(n) else ""
+
+
+def match(dcs, nodes):
+    """Each DC -> (its node or None, how, why). The full name first (the DC's FQDN against a node's caption or DNS name);
+    a short name only when one node has it and that node's own full name (if any) is not another domain's; then an IP
+    that one node has. Never one node for two DCs (the second is said, not shown)."""
+    full, short, ips = {}, {}, {}
+    for n in nodes:
+        for k in set(x for x in (_full(n.get("name")), _full(n.get("dns"))) if x):
+            full.setdefault(k, []).append(n)
+        for k in set(x for x in (_short(n.get("name")), _short(n.get("dns"))) if x and not sw.IPV4.match(x)):
+            short.setdefault(k, []).append(n)
+        if n.get("ip"):
+            ips.setdefault(str(n["ip"]).strip(), []).append(n)
+
+    def uniq(rows):
+        out = []
+        for r in rows:
+            if all(r.get("node_id") != o.get("node_id") for o in out):
+                out.append(r)
+        return out
+    out, claimed = {}, {}
     for d in dcs:
-        n, ip = _short(d.get("dc")), str(d.get("ip") or "").strip()
-        r = rows_by_name.get(n)
-        if r:
-            out[d["dc"]] = (r, "name")
-        elif ip and rows_by_ip.get(ip):
-            out[d["dc"]] = (rows_by_ip[ip], "ip")
-        else:
-            out[d["dc"]] = (None, "")
+        fq, sn, ip = _full(d.get("fqdn")), _short(d.get("dc")), str(d.get("ip") or "").strip()
+        node, how, why = None, "", ""
+        c = uniq(full.get(fq, [])) if fq else []
+        if len(c) == 1:
+            node, how = c[0], "name"
+        elif len(c) > 1:
+            why = "%d SolarWinds nodes are named %s" % (len(c), fq)
+        if node is None and not c:
+            c = uniq(short.get(sn, []))
+            if fq:                                       # a node with another domain's full name is not this DC
+                c = [n for n in c if not ({_full(n.get("name")), _full(n.get("dns"))} - {""}) or fq in (_full(n.get("name")), _full(n.get("dns")))]
+            if len(c) == 1:
+                node, how = c[0], "name"
+            elif len(c) > 1:
+                why = "%d SolarWinds nodes are named %s" % (len(c), sn)
+        if node is None and ip:
+            c = uniq(ips.get(ip, []))
+            if len(c) == 1:
+                node, how, why = c[0], "ip", ""
+            elif len(c) > 1:
+                why = "%d SolarWinds nodes have its IP %s (a cluster address?)" % (len(c), ip)
+        if node is not None and node.get("node_id") in claimed:
+            node, how, why = None, "", "the same SolarWinds node as %s - set its caption or DNS name in SolarWinds" % claimed[node.get("node_id")]
+        if node is not None:
+            claimed[node.get("node_id")] = d["dc"]
+        out[d["dc"]] = (node, how, why)
     return out
 
 
 def _dc_rows(dcs, found, apps, alerts, downs, sam, ifaces=None):
     res = []
     for d in dcs:
-        node, how = found.get(d["dc"], (None, ""))
-        rec = {"dc": d["dc"], "ip": d.get("ip") or "", "matched": how, "status": "", "status_text": "", "last_poll": "",
+        node, how, why = found.get(d["dc"], (None, "", ""))
+        rec = {"dc": d["dc"], "ip": d.get("ip") or "", "matched": how, "unmatched_why": why, "status": "", "status_text": "", "last_poll": "",
                "cpu": None, "mem": None, "apps": None, "alerts": [], "last_down": None, "node_id": None, "ifaces": None}
         if node:
             nid = node.get("node_id")
             rec.update(node_id=nid, status=node.get("status") or sw.UNKNOWN, status_text=node.get("status_text") or "",
-                       last_poll=_hm(_utc(node.get("last_poll"))), cpu=node.get("cpu_pct"), mem=node.get("mem_pct"))
+                       last_poll=_hm(_utc(node.get("last_poll"))), cpu=_pct(node.get("cpu_pct")), mem=_pct(node.get("mem_pct")))
             if sam:
                 rec["apps"] = summarize_apps(apps.get(nid) or [])
             rec["alerts"] = list(alerts.get(nid) or [])
@@ -169,7 +232,7 @@ def from_db(dcs, opts, conn, swdb):
     except Exception as e:  # noqa: BLE001
         if "1146" in str(e) or "doesn't exist" in str(e):
             return None, "the SolarWinds snapshot is not in the report database yet (the job SolarWinds - snapshot has not run)"
-        return None, "the report database's SolarWinds snapshot could not be read: %s" % _clean(str(e), 200)
+        return None, "the report database's SolarWinds snapshot could not be read: %s" % _say(e)
     if not snap:
         f = None
         try:
@@ -177,7 +240,11 @@ def from_db(dcs, opts, conn, swdb):
         except Exception:  # noqa: BLE001
             pass
         return None, "no whole SolarWinds snapshot yet%s" % ((" (the last run: %s)" % _clean(str(f[1]), 160)) if f else "")
-    age = int(snap.get("age_seconds") or 0) // 60
+    if snap.get("age_seconds") is not None:
+        age = int(snap["age_seconds"]) // 60
+    else:                                                # no age given: from its time; no time at all = too old
+        ra = _utc(snap.get("read_at"))
+        age = int((now - ra).total_seconds() // 60) if ra else 10 ** 6
     if age > int(opts.get("max_age") or 60):
         why = "the SolarWinds snapshot is %d min old (ad_solarwinds_max_age: %d)" % (age, int(opts.get("max_age") or 60))
         try:
@@ -192,12 +259,15 @@ def from_db(dcs, opts, conn, swdb):
 
 def _db_read(dcs, opts, conn, swdb, snap, age, now):
     sid = snap.get("snap_id")
-    by_name = swdb.nodes_for(conn, sid, [_short(d["dc"]) for d in dcs]) or {}
-    rows_n = dict((_short(k), v) for k, v in by_name.items() if v)
-    miss = [str(d.get("ip") or "") for d in dcs if not rows_n.get(_short(d["dc"])) and d.get("ip")]
-    rows_i = dict((k, v) for k, v in (swdb.nodes_for(conn, sid, miss) or {}).items() if v) if miss else {}
-    found = _match(dcs, rows_n, rows_i)
-    ids = sorted(set(r["node_id"] for r, _ in found.values() if r))
+    keys = sorted(set([_short(d["dc"]) for d in dcs] + [str(d.get("ip") or "") for d in dcs if d.get("ip")]))
+    got = swdb.nodes_for(conn, sid, keys) or {}           # by the short name or the primary IP: one row each
+    rows = []
+    for v in got.values():
+        for r in (v if isinstance(v, list) else [v]):     # a reader that gives every node of a name: all of them
+            if r and all(r.get("node_id") != o.get("node_id") for o in rows):
+                rows.append(r)
+    found = match(dcs, rows)
+    ids = sorted(set(v[0]["node_id"] for v in found.values() if v[0]))
     note = {}
     try:
         note = swdb.part_note(snap, "app") or {}
@@ -242,42 +312,47 @@ def _cols(client, entity, want):
 def from_live(dcs, opts, client, swdb=None):
     """SolarWinds itself, the DCs only. Events (the last down) are not read live."""
     now = _now(opts)
-    nodes, _cut = client.paged("SELECT N.NodeID, N.Caption, N.DNS, N.IPAddress, N.Status, N.StatusDescription, N.UnManaged, N.CPULoad, "
+    nodes, cut = client.paged("SELECT N.NodeID, N.Caption, N.DNS, N.IPAddress, N.Status, N.StatusDescription, N.UnManaged, N.CPULoad, "
                                "N.PercentMemoryUsed, N.LastSync FROM Orion.Nodes N", "N.NodeID", page=int(opts.get("page") or 1000),
                                cap=int(opts.get("max_nodes") or 20000))
-    rows_n, rows_i = {}, {}
-    for n in nodes:
-        r = {"node_id": n.get("NodeID"), "status": sw.status_of(n.get("Status"), n.get("UnManaged")), "status_text": n.get("StatusDescription") or "",
-             "last_poll": n.get("LastSync"), "cpu_pct": n.get("CPULoad"), "mem_pct": n.get("PercentMemoryUsed")}
-        for k in (_short(n.get("Caption")), _short(n.get("DNS"))):
-            if k:
-                rows_n.setdefault(k, r)
-        if n.get("IPAddress"):
-            rows_i.setdefault(str(n["IPAddress"]), r)
-    found = _match(dcs, rows_n, rows_i)
-    ids = sorted(set(r["node_id"] for r, _ in found.values() if r))
-    why, ents = [], _has(client, (APPS, COMPS) + ALERTS)
+    rows = [{"node_id": n.get("NodeID"), "name": n.get("Caption") or "", "dns": n.get("DNS") or "", "ip": n.get("IPAddress") or "",
+             "status": sw.status_of(n.get("Status"), n.get("UnManaged")), "status_text": n.get("StatusDescription") or "",
+             "last_poll": n.get("LastSync"), "cpu_pct": n.get("CPULoad"), "mem_pct": n.get("PercentMemoryUsed")} for n in nodes]
+    found = match(dcs, rows)
+    why = []
+    if cut:                                              # past max_nodes: a DC not found may be one not read
+        why.append("SolarWinds has more nodes than were read (%d): a DC not found may be past them" % len(nodes))
+        for k, v in list(found.items()):
+            if v[0] is None and not v[2]:
+                found[k] = (None, "", "not read: SolarWinds' node list was cut at %d" % len(nodes))
+    ids = sorted(set(v[0]["node_id"] for v in found.values() if v[0]))
+    meta = True
+    try:
+        ents = _has(client, (APPS, COMPS) + ALERTS)
+    except Exception as e:  # noqa: BLE001 - the nodes stay; SAM and the alerts not read
+        ents, meta = set(), False
+        why.append("which SolarWinds modules there are was not read (%s): no AD monitors or alerts" % _say(e))
     sam = APPS in ents and COMPS in ents
     apps = {}
     if sam and ids:
         try:                                             # 1.96.1's one reader when it is there, else the same queries here
             apps = swdb.apps_live(client, ids, []) if hasattr(swdb, "apps_live") else _live_apps(client, ids)
         except Exception as e:  # noqa: BLE001
-            why.append("SAM's applications not read: %s" % _clean(str(e), 160))
+            why.append("SAM's applications not read: %s" % _say(e))
     alerts = {}
     if all(a in ents for a in ALERTS) and ids:
         try:
             alerts = swdb.alerts_live(client, ids, []) if hasattr(swdb, "alerts_live") else _live_alerts(client, ids)
         except Exception as e:  # noqa: BLE001
-            why.append("the active alerts not read: %s" % _clean(str(e), 160))
+            why.append("the active alerts not read: %s" % _say(e))
     ifaces = None
     if ids:
         try:
             ifaces = _live_ifaces(client, ids)
         except Exception as e:  # noqa: BLE001
-            why.append("the DCs' interfaces not read: %s" % _clean(str(e), 160))
+            why.append("the DCs' interfaces not read: %s" % _say(e))
     return {"ok": True, "source": "swis-live", "read_at": _hm(now), "age_min": 0, "interval_min": None, "stale": False, "why": why,
-            "sam": sam, "sam_why": "" if sam else "SAM's applications are not on this Orion (no %s)" % APPS,
+            "sam": sam, "sam_why": "" if sam else ("SAM's applications are not on this Orion (no %s)" % APPS if meta else "SAM's applications were not read"),
             "events": False, "dcs": _dc_rows(dcs, found, apps, alerts, {}, sam, ifaces)}
 
 
@@ -354,7 +429,7 @@ def read(dcs, opts, conn=None, swdb=None, client=None):
         try:
             r, w = from_db(dcs, opts, conn, swdb)
         except Exception as e:  # noqa: BLE001
-            r, w = None, "the SolarWinds snapshot could not be read: %s" % _clean(str(e), 200)
+            r, w = None, "the SolarWinds snapshot could not be read: %s" % _say(e)
         if r and "stale_snapshot" not in r:
             return r
         if w:
@@ -366,7 +441,7 @@ def read(dcs, opts, conn=None, swdb=None, client=None):
             r["why"] = why + r["why"]
             return r
         except Exception as e:  # noqa: BLE001
-            why.append("SolarWinds could not be read: %s" % _clean(str(e), 200))
+            why.append("SolarWinds could not be read: %s" % _say(e))
     if stale:                                            # the old snapshot is all there is: given, and said as old
         snap, age = stale
         try:
@@ -374,6 +449,6 @@ def read(dcs, opts, conn=None, swdb=None, client=None):
             r["stale"], r["why"] = True, why
             return r
         except Exception as e:  # noqa: BLE001
-            why.append("the old snapshot could not be read either: %s" % _clean(str(e), 160))
+            why.append("the old snapshot could not be read either: %s" % _say(e))
     return {"ok": False, "source": "", "read_at": "", "age_min": None, "interval_min": None, "stale": False, "why": why, "sam": False,
             "sam_why": "", "events": False, "dcs": []}

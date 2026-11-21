@@ -22,6 +22,7 @@
     tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
     ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
   register: _ad_swis_read
+  failed_when: false                     # never the job's result: a module that fails is a Not read line (ad_swis_view)
   when: _ad_swis_db | length > 0 or _ad_swis_sw | bool
 
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
