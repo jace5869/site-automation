@@ -12,10 +12,11 @@
   its disc; an AD site with several DCs opens again from there ("back to" the location);
 - **every AD site in one place:** no map - the sites in a ring ("Every AD site is at ...");
 - **labels:** the bubbles and the worst first, then the first free place of eighteen round the dot; never on a dot, never on
-  another label, never out of the drawing; a label that fits nowhere is left off - every dot and bubble names itself on hover
-  and keyboard focus.
+  another label, never out of the drawing; a label placed away from its dot gets a thin dotted leader to it; a label that fits
+  nowhere is left off - every dot and bubble names itself on hover and keyboard focus.
 - Tests: `tests/test_ad_map.py` Places1011 in Chromium on a 25-location, 40-AD-site forest (`tests/ad/admap_fixture.py`):
-  no dots on dots, no label on a dot or another label or out of the drawing at 1280 and 800; an opened location with nothing
+  no dots on dots, no label on a dot or another label or out of the drawing, every label next to its dot or joined to it,
+  at 1280 and 800; an opened location with nothing
   under its disc; one place = the ring.
 
 ## 1.101.0 — 2026-11-21

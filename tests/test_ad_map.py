@@ -208,6 +208,11 @@ for(var i=0;i<dots.length;i++)for(var j=i+1;j<dots.length;j++){var a=dots[i],b=d
 lab.forEach(function(a,i){if(a[0]<-1||a[2]>vb.width+1||a[1]<-1||a[3]>vb.height+1)out++;
  dots.forEach(function(d){if(a[0]<d[0]+d[2]-1&&a[2]>d[0]-d[2]+1&&a[1]<d[1]+d[2]-1&&a[3]>d[1]-d[2]+1)ondot++;});
  lab.forEach(function(b,j){if(j>i&&b[4]!==a[4]&&a[0]<b[2]-1&&a[2]>b[0]+1&&a[1]<b[3]-1&&a[3]>b[1]+1)over++;});});
+var far=0;gs.forEach(function(g){var c=g.querySelector(':scope > circle'),ts=g.querySelectorAll(':scope > text:not(.cnt)');if(!c||!ts.length)return;
+ var x=+c.getAttribute('cx'),y=+c.getAttribute('cy'),rr=+c.getAttribute('r'),b=ts[0].getBBox();
+ var nx=Math.max(b.x,Math.min(x,b.x+b.width)),ny=Math.max(b.y,Math.min(y,b.y+b.height));
+ if(Math.hypot(nx-x,ny-y)>rr+14&&!g.querySelector('.am-lead'))far++;});
+r.farUnjoined=far;
 r.bubbles=svg.querySelectorAll('.am-s.bub').length;r.dots=dots.length;r.dotsOverlap=dd;r.labelsOnDots=ondot;r.labelsOverlap=over;r.labelsOut=out;
 """
 
@@ -238,6 +243,7 @@ r.bubbles=svg.querySelectorAll('.am-s.bub').length;r.dots=dots.length;r.dotsOver
             self.assertNotIn("err", r)
             self.assertGreaterEqual(r["bubbles"], 4, r)                      # the 5 shared locations (or fewer, merged)
             self.assertEqual((r["dotsOverlap"], r["labelsOnDots"], r["labelsOverlap"], r["labelsOut"]), (0, 0, 0, 0), (w, r))
+            self.assertEqual(r["farUnjoined"], 0, (w, r))                     # a label is next to its dot, or joined to it
 
     def test_2_an_opened_location_has_nothing_under_its_disc(self):
         import admap_fixture as fx

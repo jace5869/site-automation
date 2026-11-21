@@ -42,3 +42,4 @@ html.motion-off .am-move .am-flow{animation:none}
 .am-s.bub.k-ok circle{stroke:var(--ok)}.am-s.bub.k-low circle{stroke:var(--am-low)}.am-s.bub.k-warning circle{stroke:var(--warning)}.am-s.bub.k-critical circle{stroke:var(--critical)}
 .am-s.bub .cnt{font-size:12.5px}
 .am-s.many circle{stroke-width:2}
+.am-lead{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 2;opacity:.8}

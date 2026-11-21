@@ -150,13 +150,22 @@
           return [cx + dx * d - (dx < -0.3 ? w : Math.abs(dx) <= 0.3 ? w / 2 : 0), y + dy * d]; }));
       var hits = function (q, list) { var b = [q[0] - 2, q[1] - 12, q[0] + w + 2, q[1] + h - 9];
         return list.filter(function (t) { return b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]; }).length; };
-      var fit = tries.map(function (q) { return [Math.max(4, Math.min(q[0], W - w - 4)), Math.max(14, Math.min(q[1], H - h))]; });
+      var al = end ? ['end'] : ['start', 'end', 'middle', 'middle', 'start', 'start', 'end', 'end', 'start', 'start']
+        .concat([0, 1, 2, 3, 4, 5, 6, 7].map(function (k) { var dx = Math.cos(k * Math.PI / 4); return dx < -0.3 ? 'end' : Math.abs(dx) <= 0.3 ? 'middle' : 'start'; }));
+      var fit = tries.map(function (q, k) { var f = [Math.max(4, Math.min(q[0], W - w - 4)), Math.max(14, Math.min(q[1], H - h))]; f.al = al[k]; return f; });
       var pick = fit.filter(function (q) { return !hits(q, taken); })[0];
       if (!pick && force) pick = fit.filter(function (q) { return !hits(q, dotsAt); }).sort(function (p, q) { return hits(p, taken) - hits(q, taken); })[0];
       // a label is never on a dot: none fits even for the worst - left off (its name on hover and keyboard focus)
       if (!pick) return false;
       taken.push([pick[0] - 2, pick[1] - 12, pick[0] + w + 2, pick[1] + h - 9]);
-      lines.forEach(function (t, i) { g.appendChild(sv('text', { x: pick[0], y: pick[1] + i * 13, 'class': i ? 'sub' : null }, [t])); }); return true;
+      var bx = [pick[0] - 2, pick[1] - 12, pick[0] + w + 2, pick[1] + h - 9], dy0 = y + 1;
+      var nx = Math.max(bx[0], Math.min(cx, bx[2])), ny = Math.max(bx[1], Math.min(dy0, bx[3])), dd = Math.hypot(nx - cx, ny - dy0) || 1;
+      if (!end && dd > rr + 10) {                         // not next to its dot (a far place, or pushed in from the edge): a thin leader to it
+        g.appendChild(sv('line', { x1: (cx + (nx - cx) / dd * (rr + 1)).toFixed(1), y1: (dy0 + (ny - dy0) / dd * (rr + 1)).toFixed(1), x2: nx.toFixed(1), y2: ny.toFixed(1), 'class': 'am-lead' }));
+      }
+      // anchored on the side that faces the dot: the gap to it is exact whatever the text's real width
+      var ax = pick.al === 'end' ? pick[0] + w : pick.al === 'middle' ? pick[0] + w / 2 : pick[0];
+      lines.forEach(function (t, i) { g.appendChild(sv('text', { x: ax, y: pick[1] + i * 13, 'text-anchor': pick.al, 'class': i ? 'sub' : null }, [t])); }); return true;
     }
     function nameTip(g, lines, x, y) {
       var show = function (ev) { tip.replaceChildren.apply(tip, [el('b', '', [lines[0]])].concat(lines.slice(1).map(function (t) { return el('div', 'm', [t]); }))); place(ev, x, y); };
