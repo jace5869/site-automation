@@ -6,6 +6,7 @@
     name: aap_setup_history
   vars:
     _setup_ca_path: "{{ aap_templates_ca_path }}"
+  when: not aap_templates_describe_only | bool
 
 - name: Job templates | the catalog
   ansible.builtin.set_fact:
@@ -225,10 +226,8 @@
         vendored: "{{ _at_doc.vendored | default([]) }}"
         renamed: "{{ (_atr.renamed | default({})) if ansible_check_mode else {} }}"
         managed:
-          job: "{{ (_at_portal_spec.templates | map(attribute='name') | list + [portal_setup_scorecard_template | default('STIG - weekly scorecard')])
-                    if aap_templates_organization == portal_setup_organization | default('Default') else [] }}"
-          workflow: "{{ _at_portal_spec.workflows | map(attribute='name') | list
-                         if aap_templates_organization == portal_setup_organization | default('Default') else [] }}"
+          job: "{{ (_at_portal_spec.templates | map(attribute='name') | list + [portal_setup_scorecard_template | default('STIG - weekly scorecard')]) | select | list }}"
+          workflow: "{{ _at_portal_spec.workflows | map(attribute='name') | list }}"
         ca_path: "{{ aap_templates_ca_path }}"
       register: _atd
 

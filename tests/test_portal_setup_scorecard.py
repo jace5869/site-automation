@@ -93,6 +93,15 @@ class Split(unittest.TestCase):
         self.assertEqual([r["action"] for r in setup.results], ["create", "update"])
         self.assertEqual(S.parse_vars(rows[0]["extra_vars"]), {S.MODE: "import"})
 
+        rows.append(dict(rows[0], id=8, organization=2))
+        setup = S.Setup(api, dict(setup.p, known=setup.out), False)
+        setup.org_id = 1
+        api.call.reset_mock()
+        oid, action = setup.template(setup.split_vars(spec, final=False), refs, with_action=True)
+        setup.apply_split(spec, action, refs, oid)
+        self.assertEqual([r["action"] for r in setup.results], ["unchanged"])
+        self.assertTrue(all(c.args[0] == "GET" for c in api.call.call_args_list))
+
 
 class CopyEE(unittest.TestCase):
     """Codex 1.68.1: the copied template keeps the check template's execution environment - none (null, inherited from

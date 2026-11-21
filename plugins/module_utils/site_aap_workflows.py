@@ -108,8 +108,6 @@ class Sync(object):
         if any(not r.get("organization") for r in rows):
             self.note(kind, name, "not ours", why="cannot verify the organization of a matching object: left as it is")
             return None, "not ours"
-        for other_org in sorted({r["organization"] for r in rows if r["organization"] != org}):
-            self.note(kind, name, "not ours", why="the namesake in organization %s is outside organization %s: left as it is" % (other_org, org))
         rows = [r for r in rows if r["organization"] == org]
         if len(rows) > 1:
             self.note(kind, name, "skipped", why="AAP has %d of that name: rename one" % len(rows))
@@ -129,10 +127,8 @@ class Sync(object):
             return oid, "create"
         obj = rows[0]
         oid = int(obj["id"])
-        now_desc, old = str(obj.get("description") or ""), ""
+        now_desc, old = self.split_desc(obj.get("description"))
         established = (self.known or {}) if self.check else self.out
-        if self.known is None and key not in established:
-            now_desc, old = self.split_desc(now_desc)
         now = dict((k, obj.get(k)) for k in want if k != "description")
         now["description"] = now_desc
         now_extra = extra_read(oid) if extra_read else None
@@ -144,7 +140,7 @@ class Sync(object):
             diff["(its parts)"] = [now_extra, want_extra]
         fp_now = fingerprint(dict(now, extra=now_extra))
         fp_want = fingerprint(dict(want, extra=want_extra))
-        recorded = established.get(key) or old
+        recorded = old or established.get(key)
         if old and _norm(now_desc) != now_desc and not self.p["overwrite"]:
             # A legacy hash of parsed JSON cannot verify the literal description (e.g. a whitespace edit).
             self.note(kind, name, "not ours", diff, "the old fingerprint cannot verify the exact description: left as it is")

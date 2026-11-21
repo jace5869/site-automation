@@ -161,9 +161,8 @@ class Setup(Sync):
             self.note("setting", "%s on %s" % (MODE, t["name"]), "create", {MODE: [None, "import"]})
             return
         self.cache.pop(("job_templates", t["name"], ""), None)
-        n = len(self.results)
-        self.template(t, refs, with_action=True)
-        if len(self.results) == n + 1 and self.results[-1]["action"] == "unchanged":
+        _, split_action = self.template(t, refs, with_action=True)
+        if split_action == "unchanged":
             self.results.pop()                          # the first pass said so already
 
     def scorecard(self, sc, src, refs, ids, src_oid, src_action=""):

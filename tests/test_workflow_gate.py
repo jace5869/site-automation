@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import yaml
+from jinja2.nativetypes import NativeEnvironment
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -155,6 +156,21 @@ class SyncFingerprints(unittest.TestCase):
         self.assertEqual(out, {self.key: self.fp(self.want["description"]), "2/workflow/Example": "0123456789ab"})
         self.assertEqual(known[self.key], previous)
 
+    def test_filtered_run_returns_the_whole_previous_map(self):
+        known = {self.key: self.fp(self.want["description"]), "2/workflow/Example": "0123456789ab"}
+        module = Mock(check_mode=False, params={
+            "organization": "Example org", "project": "Example project", "only": ["Example job"],
+            "workflows": [dict(self.want, nodes=[{"id": "step"}])], "templates": [], "uses": {},
+            "known": known, "ca_path": "", "timeout": 30,
+        })
+        with patch.object(W, "AnsibleModule", return_value=module), patch.object(W, "Api") as ctor, patch.object(W, "connection"):
+            api = ctor.return_value
+            api.probe.return_value = ""
+            api.call.side_effect = [(200, {"results": [{"id": 1, "name": "Example org"}]}),
+                                    (200, {"results": [{"id": 2, "name": "Example project", "organization": 1}]})]
+            W.main()
+        module.exit_json.assert_called_once_with(changed=False, results=[], problems=[], fingerprints=known)
+
     def test_hand_edit_keeps_the_recorded_fingerprint_until_overwrite(self):
         known = {self.key: self.fp("Previous description")}
         action, out, writes, _ = self.reconcile("Edited by hand", known)
@@ -180,7 +196,7 @@ class SyncFingerprints(unittest.TestCase):
         sync.org_id = 2
         other = dict(self.want, description="Second organization")
         self.assertEqual(sync.reconcile("workflow", "workflow_job_templates", "Example", other), (8, "create"))
-        self.assertEqual(sync.results[0]["action"], "not ours")
+        self.assertEqual([r["action"] for r in sync.results], ["create"])
         self.assertEqual(sync.out, {self.key: first[self.key], "2/workflow/Example": self.fp(other["description"])})
         # Switching back to the first organization compares against its own baseline.
         sync = site_aap_workflows.Sync(api, {"known": sync.out, "overwrite": False}, False, S.MARK, "portal_setup_overwrite")
@@ -188,6 +204,7 @@ class SyncFingerprints(unittest.TestCase):
         api.call.side_effect = [(200, {"results": [live, dict(other, organization=2, id=8)]}), (200, {})]
         updated = dict(self.want, description="Updated first organization")
         self.assertEqual(sync.reconcile("workflow", "workflow_job_templates", "Example", updated), (7, "update"))
+        self.assertEqual([r["action"] for r in sync.results], ["update"])
         self.assertEqual(sync.out, {self.key: self.fp(updated["description"]), "2/workflow/Example": self.fp(other["description"])})
 
     def test_literal_edit_to_json_description_is_kept(self):
@@ -223,12 +240,16 @@ class SyncFingerprints(unittest.TestCase):
         desc = self.want["description"]
         fp = self.fp(desc)
         marker = " [set up by AAP - set up portal actions, fingerprint %s]" % fp
-        self.assertEqual(self.reconcile(desc + marker, check=True),
-                         ("update", {self.key: fp}, [], "would remove the old fingerprint text"))
-        self.assertEqual(self.reconcile(desc + marker),
-                         ("update", {self.key: fp}, [("PATCH", "workflow_job_templates/7/", {"description": desc})],
-                          "removed the old fingerprint text"))
-        self.assertEqual(self.reconcile("Edited by hand" + marker)[:3], ("hand-edited", {}, []))
+        for known in (None, {}, {"2/workflow/Example": fp}, {self.key: self.fp("Previous description")}):
+            with self.subTest(known=known):
+                migrated = dict(known or {})
+                migrated[self.key] = fp
+                self.assertEqual(self.reconcile(desc + marker, known, check=True),
+                                 ("update", migrated, [], "would remove the old fingerprint text"))
+                self.assertEqual(self.reconcile(desc + marker, known),
+                                 ("update", migrated, [("PATCH", "workflow_job_templates/7/", {"description": desc})],
+                                  "removed the old fingerprint text"))
+                self.assertEqual(self.reconcile("Edited by hand" + marker, known)[:3], ("hand-edited", known or {}, []))
 
 
 class SetupHistory(unittest.TestCase):
@@ -301,7 +322,10 @@ class SetupHistory(unittest.TestCase):
             first = tasks(role)[0]
             self.assertEqual(first["ansible.builtin.include_role"]["name"], "aap_setup_history")
             self.assertEqual(first["vars"]["_setup_ca_path"], "{{ %s }}" % ca)
-            self.assertNotIn("when", first)
+            if role == "aap_templates":
+                self.assertEqual(first["when"], "not aap_templates_describe_only | bool")
+            else:
+                self.assertNotIn("when", first)
         history = tasks("aap_setup_history")
         self.assertEqual(history[0]["site_aap_setup_history"]["ca_path"], "{{ _setup_ca_path }}")
         self.assertNotIn("when", history[0])
@@ -316,6 +340,26 @@ class SetupHistory(unittest.TestCase):
 
 
 class DescribeOwnership(unittest.TestCase):
+    def test_empty_portal_descriptions_in_a_nondefault_organization(self):
+        with open(os.path.join(REPO, "roles", "aap_templates", "tasks", "main.yml")) as f:
+            tasks = yaml.safe_load(f)
+        args = next(t["site_aap_describe"] for block in tasks for t in block.get("block", []) if "site_aap_describe" in t)
+        spec = {"templates": [{"name": "Example job"}], "workflows": [{"name": "Example workflow"}]}
+        env = NativeEnvironment()
+        for scorecard in ("", "Example scorecard"):
+            managed = {kind: env.from_string(expr).render(_at_portal_spec=spec, aap_templates_organization="Example org",
+                                                          portal_setup_scorecard_template=scorecard)
+                       for kind, expr in args["managed"].items()}
+            self.assertEqual(managed, {"job": ["Example job"] + ([scorecard] if scorecard else []), "workflow": ["Example workflow"]})
+            for overwrite in (False, True):
+                api = Mock()
+                d = D.Describe(api, {"managed": managed, "workflows": [], "ours": [], "overwrite": overwrite}, False)
+                for kind, names in managed.items():
+                    for name in names:
+                        d.put(kind, {"id": 7, "name": name, "description": ""}, name, "Example description")
+                        self.assertEqual(d.results[-1]["action"], "left")
+                api.call.assert_not_called()
+
     def test_contact_line_edits_stay_on_sync_managed_objects(self):
         name = "STIG - full scan and upload"
         text = "** Does: Scan\n** Contact: Owner=Example"
