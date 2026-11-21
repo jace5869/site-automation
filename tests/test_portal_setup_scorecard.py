@@ -62,11 +62,43 @@ class Source(unittest.TestCase):
         self.assertEqual(S.source_template({"workflows": [{"number": 41, "nodes": []}]}), "")
 
 
+class Split(unittest.TestCase):
+    def test_two_kinds_resolving_to_one_credential_match_aap(self):
+        setup = S.Setup(None, {"credentials": {"example": "Example", "other": "Example"}}, False)
+        setup.by_name = lambda kind, name: [{"id": 7}]
+        self.assertEqual(setup.cred_ids(["example", "other"]), ([7], ""))
+
+
+    def test_new_check_template_split_after_scorecard_creation(self):
+        from unittest.mock import Mock
+        rows = []
+        def call(method, path, body=None):
+            if method == "GET":
+                return 200, {"results": [] if "credentials/" in path else rows}
+            if method == "POST" and path == "job_templates/":
+                rows.append(dict(body, id=7, organization=1))
+                return 201, {"id": 7}
+            if method == "PATCH" and path == "job_templates/7/":
+                rows[0].update(body)
+                return 200, rows[0]
+            self.fail((method, path))
+        api = Mock()
+        api.call.side_effect = call
+        setup = S.Setup(api, {"overwrite": False, "credentials": {}}, False)
+        setup.org_id = 1
+        spec = {"name": "Example check", "playbook": "example.yml"}
+        refs = {"project": 2, "inventories": {"default": 3}}
+        oid, action = setup.template(spec, refs, with_action=True)
+        setup.apply_split(spec, action, refs, oid)
+        self.assertEqual([r["action"] for r in setup.results], ["create", "update"])
+        self.assertEqual(S.parse_vars(rows[0]["extra_vars"]), {S.MODE: "import"})
+
+
 class CopyEE(unittest.TestCase):
     """Codex 1.68.1: the copied template keeps the check template's execution environment - none (null, inherited from
     the project or organization) stays none; the setup job's own is used only when AAP did not say."""
     def want(self, copy):
-        st = object.__new__(S.Setup)
+        st = S.Setup(None, {}, False)
         st.all = lambda path: []
         got = {}
         st.reconcile = lambda kind, api, name, want, read, write: (got.update(want), (5, "create"))[1]

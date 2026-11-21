@@ -26,6 +26,7 @@ options:
   workflows: {description: "The workflows: names, ids or patterns (* and ?, any case); [] = every workflow.", type: list, elements: raw, default: []}
   checks: {description: "More checks, {playbook file name: its plan's variable} - added to the built-in table (or replacing an entry).", type: dict, default: {}}
   gate: {description: "The gate template's spec from workflows.yml: {name, playbook, description, prompts}.", type: dict, required: true}
+  describe: {description: The catalog descriptions and Contact settings used by portal setup., type: dict, default: {}}
   project: {description: "The project the gate template runs from, when it must be made (its name).", type: str, default: ''}
   inventory: {description: "The inventory of the gate template, when it must be made (its name).", type: str, default: ''}
   execution_environment: {description: "Its execution environment ('' = the project's default).", type: str, default: ''}
@@ -45,7 +46,7 @@ import fnmatch
 import os
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_aap import Api, connection, error_text
+from ansible.module_utils.site_aap import Api, connection, error_text, setup_description
 
 # The checks of this repository whose approval goes behind the gate, by playbook - docs/WORKFLOWS_AND_SCHEDULES.md, "The gate"
 CHECKS = {
@@ -67,8 +68,6 @@ NO_GATE = {
     "troubleshoot.yml": "ACT's fix: its check hands on an analysis for every host; the apply step skips what was not approved",
 }
 GATE_PLAYBOOK = "workflow_gate.yml"
-# 1.93.0: the gate template is made with its description as it is - no fingerprint text (AAP - set up portal actions keeps
-# its fingerprints in a job artifact; one that finds a template it has none for compares it with the text it would write)
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user that may change the workflows: Admin on them, and Use on the project and inventory if the gate '
                  'template must be made)')
@@ -159,7 +158,7 @@ class Gates(object):
         if not proj or not inv or (self.p["execution_environment"] and not ee):
             return None
         prompts = g.get("prompts") or {}
-        want = {"name": g["name"], "description": str(g.get("description") or ""), "job_type": "run", "project": int(proj["id"]),
+        want = {"name": g["name"], "description": setup_description(self.p.get("describe"), "job", g), "job_type": "run", "project": int(proj["id"]),
                 "playbook": g.get("playbook") or "playbooks/" + GATE_PLAYBOOK, "inventory": int(inv["id"]),
                 "ask_variables_on_launch": bool(prompts.get("variables", True)), "ask_limit_on_launch": bool(prompts.get("limit")),
                 "become_enabled": False, "extra_vars": ""}
@@ -280,7 +279,7 @@ def _q(name):
 def main():
     module = AnsibleModule(
         argument_spec=dict(workflows=dict(type="list", elements="raw", default=[]), checks=dict(type="dict", default={}),
-                           gate=dict(type="dict", required=True), project=dict(type="str", default=""),
+                           gate=dict(type="dict", required=True), describe=dict(type="dict", default={}), project=dict(type="str", default=""),
                            inventory=dict(type="str", default=""), execution_environment=dict(type="str", default=""),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)

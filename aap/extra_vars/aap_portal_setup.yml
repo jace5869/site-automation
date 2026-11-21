@@ -63,8 +63,8 @@ portal_setup_portal_user: svc_site_portal
 # portal_setup_scorecard_schedule_name: "Weekly - STIG scorecard"
 
 ## true: workflow 40's check template gets stigman_ckl_import_mode: import (it only imports; the
-## scorecard has its own template) when its mode is not set or is "import and scorecard"; any other
-## value there stays as it is, said
+## scorecard has its own template) when setup owns it and its mode is unset or "import and scorecard".
+## A hand-edited or unowned source keeps its Variables.
 # portal_setup_split_scorecard: true
 
 ## 1.75.3: your own templates and workflows, added to workflows.yml's lists (same shape; a name or a

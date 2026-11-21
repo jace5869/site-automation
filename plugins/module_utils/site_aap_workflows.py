@@ -13,7 +13,7 @@ __metaclass__ = type
 import hashlib
 import json
 
-from ansible.module_utils.site_aap import error_text, described_text
+from ansible.module_utils.site_aap import error_text, setup_description
 
 
 def _q(name):
@@ -36,7 +36,8 @@ def _norm(v):
 
 def fingerprint(fields):
     """The fingerprint of what this module wrote: its fields as AAP gives them back alike (JSON text as its value, None as '')."""
-    norm = dict((k, _norm(v)) for k, v in fields.items())
+    # Descriptions are literal text even when they happen to contain valid JSON.
+    norm = {k: v if k == "description" else _norm(v) for k, v in fields.items()}
     return hashlib.sha256(json.dumps(norm, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
@@ -46,10 +47,7 @@ class Sync(object):
     def __init__(self, api, p, check, mark_re, overwrite_name):
         self.api, self.p, self.check = api, p, check
         self.mark_re, self.overwrite_name = mark_re, overwrite_name
-        # 1.93.0: known = {"kind/name": fingerprint} from the last successful run's artifact (None: no such run); out = what
-        # this run hands on (set_stats aap_setup_fingerprints)
-        k = p.get("known")
-        self.known = dict(k) if isinstance(k, dict) else None        # anything else (none, "", "None"): no earlier run
+        self.known = p.get("known")
         self.out = dict(self.known or {})
         self.results, self.problems = [], []
         self.cache = {}
@@ -106,76 +104,85 @@ class Sync(object):
         """want: the fields this module sets (description without the mark). extra_read(obj) -> the rest of what it owns
         as AAP has it now (credentials, nodes); extra_write(id, created) writes that rest. -> (id, action)."""
         rows = self.by_name(api_kind, name)
-        if "organization" in want:      # 1.83.0 (Codex P1): this organization's only - never another's of that name
-            rows = [r for r in rows if r.get("organization") == want["organization"]]
+        org = self.org_id
+        if any(not r.get("organization") for r in rows):
+            self.note(kind, name, "not ours", why="cannot verify the organization of a matching object: left as it is")
+            return None, "not ours"
+        for other_org in sorted({r["organization"] for r in rows if r["organization"] != org}):
+            self.note(kind, name, "not ours", why="the namesake in organization %s is outside organization %s: left as it is" % (other_org, org))
+        rows = [r for r in rows if r["organization"] == org]
         if len(rows) > 1:
             self.note(kind, name, "skipped", why="AAP has %d of that name: rename one" % len(rows))
             return None, "skipped"
         desc = want.get("description", "")
-        key = "%s/%s" % (kind, name)
+        key = "%d/%s/%s" % (org, kind, name)
         if not rows:
             code, d = self.write("POST", "%s/" % api_kind, dict(want))
             oid = int(d.get("id")) if d.get("id") else (-1 if self.check else None)      # check mode: one that would be made
-            if extra_write and oid and oid > 0:
+            if oid is None:
+                raise RuntimeError("AAP did not return an ID after creating %s %r" % (kind, name))
+            if extra_write and oid > 0:
                 extra_write(oid, True)
+            self.cache.pop((api_kind, name, ""), None)
             self.out[key] = fingerprint(dict(want, extra=extra_write("wanted", True) if extra_write else None))
             self.note(kind, name, "create", dict((k, [None, v]) for k, v in want.items()))
             return oid, "create"
         obj = rows[0]
         oid = int(obj["id"])
-        now_desc, old = self.split_desc(obj.get("description"))
+        now_desc, old = str(obj.get("description") or ""), ""
+        established = (self.known or {}) if self.check else self.out
+        if self.known is None and key not in established:
+            now_desc, old = self.split_desc(now_desc)
         now = dict((k, obj.get(k)) for k in want if k != "description")
         now["description"] = now_desc
         now_extra = extra_read(oid) if extra_read else None
         want_extra = extra_write("wanted", False) if extra_write else None
-        diff = dict((k, [now.get(k), v]) for k, v in want.items() if _norm(now.get(k)) != _norm(v))
+        diff = dict((k, [now.get(k), v]) for k, v in want.items() if k != "description" and _norm(now.get(k)) != _norm(v))
+        if now_desc != desc:
+            diff["description"] = [now_desc, desc]
         if extra_read and _norm(now_extra) != _norm(want_extra):
             diff["(its parts)"] = [now_extra, want_extra]
         fp_now = fingerprint(dict(now, extra=now_extra))
         fp_want = fingerprint(dict(want, extra=want_extra))
-        # 1.93.0: what this job wrote is judged against the fingerprints its last successful run handed on (self.known, a job
-        # artifact), or an old description mark (migration); with neither, against the text this job would write now
-        recorded = (self.known or {}).get(key) or old
-        matches = fp_now == fp_want
-        if not recorded and not matches and not self.p["overwrite"]:
-            if self.known is None:
-                self.note(kind, name, "hand-edited", diff, "differs from what this job writes, and there is no earlier run to compare with "
-                          "(changed by hand, or made by someone else): left as it is (%s: true writes it again)" % self.overwrite_name)
-                return oid, "hand-edited"
-            self.note(kind, name, "not ours", diff, "AAP has one of that name this job did not make: left as it is (%s: true takes it over)" % self.overwrite_name)
+        recorded = established.get(key) or old
+        if old and _norm(now_desc) != now_desc and not self.p["overwrite"]:
+            # A legacy hash of parsed JSON cannot verify the literal description (e.g. a whitespace edit).
+            self.note(kind, name, "not ours", diff, "the old fingerprint cannot verify the exact description: left as it is")
+            return oid, "not ours"
+        if not recorded and not self.p["overwrite"]:
+            self.note(kind, name, "not ours", diff, "no fingerprint for this object in this organization: "
+                      "left as it is (%s: true takes it over)" % self.overwrite_name)
             return oid, "not ours"
         if recorded and recorded != fp_now and not self.p["overwrite"]:
-            self.out[key] = recorded
             self.note(kind, name, "hand-edited", diff, "changed by hand since this job wrote it: left as it is (%s: true writes it again)" % self.overwrite_name)
             return oid, "hand-edited"
         if not diff:
-            self.out[key] = fp_want
             if old:                                    # the old fingerprint text at the end of the description: taken off
                 self.write("PATCH", "%s/%d/" % (api_kind, oid), {"description": desc})
+                self.cache.pop((api_kind, name, ""), None)
+                self.out[key] = fp_want
                 self.note(kind, name, "update", {"description": [str(obj.get("description") or ""), desc]},
                           "would remove the old fingerprint text" if self.check else "removed the old fingerprint text")
                 return oid, "update"
+            self.out[key] = fp_want
             self.note(kind, name, "unchanged")
             return oid, "unchanged"
-        body = dict((k, want[k]) for k in want)
-        self.write("PATCH", "%s/%d/" % (api_kind, oid), body)
+        body = {k: want[k] for k in want if k in diff}
+        if old:
+            body["description"] = desc
+        if body:
+            self.write("PATCH", "%s/%d/" % (api_kind, oid), body)
         if extra_write and "(its parts)" in diff:
             extra_write(oid, False)
+        self.cache.pop((api_kind, name, ""), None)
         self.out[key] = fp_want
         self.note(kind, name, "update", diff)
         return oid, "update"
 
-    def described(self, kind, x):
-        """1.79.11: the catalog's five lines for this template or workflow (describe: aap/job_templates.yml's, by name), else
-        its workflows.yml description (1.93.0: nothing is added to it)."""
-        d = (getattr(self, "p", None) or {}).get("describe") or {}
-        text = described_text(((d.get(kind) or {}).get(x.get("name")) or {}), d.get("owner") or "", d.get("contact") or "")
-        return text or str(x.get("description") or "")
-
     # ---- workflows
     def workflow(self, w, tpl_ids, refs):
         prompts = w.get("prompts") or {}
-        want = {"name": w["name"], "description": self.described("workflow", w), "organization": refs["org"],
+        want = {"name": w["name"], "description": setup_description(self.p.get("describe"), "workflow", w), "organization": refs["org"],
                 "ask_variables_on_launch": bool(prompts.get("variables")), "ask_limit_on_launch": bool(prompts.get("limit")),
                 "extra_vars": json.dumps(w.get("extra_vars") or {}, sort_keys=True) if w.get("extra_vars") else ""}
         nodes = w.get("nodes") or []

@@ -214,7 +214,7 @@ setst "s.pop('project_playbooks')"
 setst "s['job_templates'].append(dict(s['job_templates'][1], id=120, name='STIG answer keys', playbook='playbooks/stig_answer_keys.yml'));
 s['workflow_job_templates'].append({'id': 121, 'name': 'STIG Manager updated, with an approval', 'organization': 1, 'description': '', 'labels': []})"
 cat > "$work/stig.json" <<'EOF2'
-{"aap_templates_only": ["STIG - *", "Workflow gate - has a plan", "STIG Manager - update"],
+{"aap_templates_description_owner": "Example setup", "aap_templates_only": ["STIG - *", "Workflow gate - has a plan", "STIG Manager - update"],
  "aap_templates_credentials": {"machine": "Linux machine", "machine_windows": "Windows machine", "stigman_api": "STIG Manager API",
                                "stigman_api_writer": "STIG Manager API", "act_model_key": "ACT model key"}}
 EOF2
@@ -319,9 +319,9 @@ for scan in ("full", "drift"):
     name = "STIG - %s scan and upload" % scan
     desc = next(w["description"] for w in s["workflow_job_templates"] if w["name"] == name)
     assert desc.startswith("** Does: ") and "[set up by" not in desc, name
-    assert re.fullmatch("[0-9a-f]{12}", fps["workflow/" + name]), name
+    assert re.fullmatch("[0-9a-f]{12}", fps["1/workflow/" + name]), name
 # Older success, baseline, failed Run, successful Check. Only the baseline should be used.
-s["jobs"] = [{"id": i, "job_template": 7, "status": status, "artifacts": artifacts}
+s["jobs"] = [{"id": i, "job_template": 7, "status": status, "job_type": "check" if i == 92 else "run", "artifacts": artifacts}
              for i, status, artifacts in [(89, "successful", {"aap_setup_fingerprints": {}}),
                                           (90, "successful", {"aap_setup_fingerprints": fps}),
                                           (91, "failed", {"aap_setup_fingerprints": {}}),
@@ -335,17 +335,27 @@ ev="$(tpl 'STIG - drift scan - Windows check' "['extra_vars']")"
 case "$ev" in *"check_stig_update_new_by_import: \"true\""*"check_stig_update_plan_var: \"stigman_update_plan_windows\""*) pass "... the Windows drift check hands its plan on as stigman_update_plan_windows and makes new assets by the import's planner" ;;
     *) fail "the drift check's fixed Variables" "$ev" ;; esac
 before="$(writes)"
-run -e "@$work/stig.json"; rc=$?
+run -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7}'; rc=$?
 [ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "already right - workflow 'STIG - full scan and upload'" && has "already right - workflow 'STIG - drift scan and upload'" \
     && pass "STIG jobs, a second run: already right, nothing written" || fail "STIG jobs, second run" "rc $rc; $(writes) vs $before; $(grep -E "workflow|fatal" "$work/out.txt" | head -6)"
 [ "$(st "len([w for w in s['workflow_job_templates'] if w['name'] == 'STIG Manager updated, with an approval'])")" = 1 ] \
     && pass "... the old workflow is still there (named, never deleted)" || fail "the old workflow was deleted"
 # A changed catalog description is safe to apply when AAP still matches the previous Run.
 before="$(writes)"
-run --check -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_description_owner": "Example team"}'; rc=$?
+run --check -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_description_owner": "Example team", "report_history": false}'; rc=$?
 [ $rc = 0 ] && [ "$(writes)" = "$before" ] && has "WOULD UPDATE - workflow 'STIG - full scan and upload'" \
     && has "WOULD UPDATE - workflow 'STIG - drift scan and upload'" && pass "Check reads the previous Run's workflow fingerprints" \
     || fail "workflow history lookup" "$(grep -E 'workflow|fatal' "$work/out.txt" | tail -12)"
+# Edit just the Contact line after migration. Neither a full setup nor describe-only may undo it.
+setst "w = next(w for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload'); w['description'] = w['description'].replace('** Contact: Owner=Example setup', '** Contact: Owner=Example editor')"
+for only in false true; do
+    run -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_describe": true, "aap_templates_only": ["STIG - full scan and upload"]}' -e "aap_templates_describe_only=$only"
+    if [ "$?" = 0 ] && [ "$(writes)" = "$before" ] && has "left to its own job - workflow 'STIG - full scan and upload'" \
+        && st "next(w for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload')['description']" | grep -q 'Owner=Example editor'; then
+        pass "Contact edit survives describe (describe-only $only)"
+    else fail "Contact edit (describe-only $only)" "$(grep -E 'STIG - full scan and upload|fatal' "$work/out.txt" | tail -8)"; fi
+done
+setst "w = next(w for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload'); w['description'] = w['description'].replace('** Contact: Owner=Example editor', '** Contact: Owner=Example setup')"
 # 1.83.1 (P2-1): a step whose fixed Variables lack the plan var differs - never "already right"; overwrite sets
 # only those keys, a person's own settings kept
 setst "[j.update(extra_vars=j['extra_vars'].replace('check_stig_update_plan_var: \"stigman_update_plan_windows\"\\n', '') + 'site_note: mine\\n') for j in s['job_templates'] if j['name'] == 'STIG - drift scan - Windows check' and j['organization'] == 1]"
@@ -370,13 +380,13 @@ setst "s['job_templates'].append(dict(s['job_templates'][1], id=124, name='STIG 
 run --check -e "@$work/stig.json"; rc=$?
 [ $rc = 0 ] && has "SKIPPED - 'STIG Manager - update' - several templates run playbooks/stigman_update.yml: 'STIG update', 'STIG update 2' - name the one for the update step in aap_templates_step_names" \
     && pass "STIG jobs: two of the site's update templates - not guessed, said with the setting" || fail "two update templates" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
-run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+run --check -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
 [ $rc = 0 ] && has "USES - 'STIG Manager - update' - uses 'STIG update' (playbooks/stigman_update.yml) for the update step" \
     && has "already right - workflow 'STIG - full scan and upload'" && pass "... aap_templates_step_names: that one used, the workflows already right" \
     || fail "step_names" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
 # Codex (1.83.0): a workflow of that name in another organization is never this one's
 setst "s['workflow_job_templates'].append(dict([w for w in s['workflow_job_templates'] if w['name'] == 'STIG - full scan and upload'][0], id=977, organization=9))"
-run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+run --check -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
 [ $rc = 0 ] && has "already right - workflow 'STIG - full scan and upload'" && ! has "of that name: rename one" \
     && pass "... a workflow of that name in another organization: never this one's" || fail "another organization's workflow" "$(grep -E "SKIPPED|workflow|fatal" "$work/out.txt" | head -8)"
 # Codex (1.83.0): the step named must run its playbook; a reused step that asks for a Limit would do nothing under the workflow's
@@ -385,7 +395,7 @@ run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manage
     && ! has "WOULD CREATE - workflow 'STIG - full scan and upload'" && pass "... a step named that runs another playbook: refused, said" \
     || fail "step_names to another playbook" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
 setst "[j.update(ask_limit_on_launch=True) for j in s['job_templates'] if j['name'] == 'STIG update']"
-run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+run --check -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
 [ $rc = 0 ] && has "SKIPPED - 'STIG Manager - update' - 'STIG update' runs playbooks/stigman_update.yml but asks for a Limit on launch" \
     && pass "... a reused update that asks for a Limit: refused, said (the workflow's Limit would reach it)" \
     || fail "reused update with a Limit prompt" "$(grep -E "SKIPPED|USES|workflow|fatal" "$work/out.txt" | head -8)"
@@ -394,7 +404,7 @@ run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manage
 setst "[j.update(ask_limit_on_launch=False) for j in s['job_templates'] if j['name'] == 'STIG update'];
 s['job_templates'].append(dict(s['job_templates'][1], id=125, name='Workflow gate - has a plan', playbook='playbooks/stigman_update.yml', credentials=[13], ask_variables_on_launch=True, ask_limit_on_launch=False))"
 before="$(writes)"
-run --check -e "@$work/stig.json" -e '{"aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
+run --check -e "@$work/stig.json" -e '{"awx_job_id": 93, "awx_job_template_id": 7, "aap_templates_step_names": {"STIG Manager - update": "STIG update"}}'; rc=$?
 [ $rc = 0 ] && [ "$(writes)" = "$before" ] \
     && has "SKIPPED - 'Workflow gate - has a plan' - 'Workflow gate - has a plan' runs playbooks/stigman_update.yml - the step must run playbooks/workflow_gate.yml from this project; the workflows that need it are not made" \
     && has "SKIPPED - workflow 'STIG - full scan and upload' - its step(s) 'Workflow gate - has a plan' refused above - not made or changed" \

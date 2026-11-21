@@ -102,7 +102,7 @@ if [ "$(writes)" = "$n" ] && grep -q "template 'STIG recheck': would be changed"
 else fail "Check shows the hand edit" "$(grep -A3 "STIG recheck" "$work/out.txt" | head)"; fi
 setup
 if [ "$(st '[j["playbook"] for j in s["job_templates"] if j["name"] == "STIG recheck"][0]')" = "playbooks/by_hand.yml" ] \
-    && grep -q "template 'STIG recheck': CHANGED BY HAND - left as it is" "$work/out.txt"; then
+    && grep -q "template 'STIG recheck': NOT MADE BY THIS JOB - left as it is" "$work/out.txt"; then
     pass "a template changed by hand: listed, left as it is"
 else fail "hand edit left alone" "$(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
 setup -e '{"portal_setup_overwrite": true}'
@@ -131,14 +131,21 @@ EOPY
 }
 run_as() { setup -e "{\"awx_job_id\": $1, \"awx_job_template_id\": 7}" "${@:2}"; }
 desc_of() { st '[j["description"] for j in s["job_templates"] if j["name"] == "STIG recheck"][0]'; }
-run_as 100
-fp="$(stats | "$py" -c 'import json,sys; m=json.load(sys.stdin); print(m.get("template/STIG recheck", ""))')"
+# A first AAP Run can see its own job. These objects already exist, so explicitly take them over.
+"$py" - "$work/state.json" <<'EOPY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+s["jobs"] = [{"id": 100, "job_template": 7, "status": "running", "job_type": "run", "artifacts": {}}]
+json.dump(s, open(sys.argv[1], "w"))
+EOPY
+run_as 100 -e portal_setup_overwrite=true
+fp="$(stats | "$py" -c 'import json,sys; m=json.load(sys.stdin); print(m.get("1/template/STIG recheck", ""))')"
 if [ "${#fp}" = 12 ] && [ "$(stats | "$py" -c 'import json,sys; print(len(json.load(sys.stdin)))')" -ge 20 ] && ! desc_of | grep -q fingerprint; then
-    pass "a first run (no earlier run in AAP): compared with the text it would write, all ours; the map goes on as the job artifact (a 12-character fingerprint each), the description has none"
+    pass "a first run with explicit overwrite takes over existing objects; the map goes on as the job artifact (a 12-character fingerprint each), the description has none"
 else fail "first run's artifact" "fp=$fp; $(grep -n "CUSTOM STATS" -A4 "$work/out.txt" | head -8)"; fi
 seed_job 90
 n="$(writes)"
-run_as 101
+run_as 101 -e report_history=false
 if [ "$(writes)" = "$n" ] && grep -q "template 'STIG recheck': as it should be" "$work/out.txt" && ! grep -qE "would be|: made|: changed|BY HAND|NOT MADE" "$work/out.txt"; then
     pass "a second run, with the last run's artifact: already right, nothing written"
 else fail "second run with an artifact" "$(($(writes) - n)) writes; $(grep -E "STIG recheck|BY HAND" "$work/out.txt" | head -4)"; fi
@@ -169,7 +176,7 @@ else fail "spec changed, artifact" "$(grep -E "STIG recheck|BY HAND" "$work/out.
 setup -e '{"portal_setup_describe": true}' -e '{"portal_setup_overwrite": true}'      # back to the catalog's five lines (no artifact read)
 # an old description mark is this job's: Check says it would take it off, the next Run does, the fingerprint stays in the map
 setup --check
-"$py" - "$work/state.json" "$(setup >/dev/null; stats | "$py" -c 'import json,sys; print(json.load(sys.stdin)["template/STIG recheck"])')" <<'EOPY'
+"$py" - "$work/state.json" "$(setup -e portal_setup_overwrite=true >/dev/null; stats | "$py" -c 'import json,sys; print(json.load(sys.stdin)["1/template/STIG recheck"])')" <<'EOPY'
 import json, sys
 s = json.load(open(sys.argv[1]))
 for j in s["job_templates"]:
@@ -184,7 +191,7 @@ if [ "$(writes)" = "$n" ] && grep -q "template 'STIG recheck': would be changed 
 else fail "migration check" "$(($(writes) - n)) writes; $(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
 setup
 if [ "$(desc_of | grep -c fingerprint)" = 0 ] && grep -q "template 'STIG recheck': changed - removed the old fingerprint text" "$work/out.txt" \
-    && [ "$(stats | "$py" -c 'import json,sys; print(len(json.load(sys.stdin)["template/STIG recheck"]))')" = 12 ]; then
+    && [ "$(stats | "$py" -c 'import json,sys; print(len(json.load(sys.stdin)["1/template/STIG recheck"]))')" = 12 ]; then
     pass "an old fingerprint mark, Run: taken off, the rest of the description kept, the fingerprint in the new map"
 else fail "migration run" "$(desc_of | tail -2); $(grep "STIG recheck" "$work/out.txt" | head -3)"; fi
 # an old mark whose fingerprint does not match what is there: changed by hand since - never touched
@@ -210,7 +217,7 @@ unset ANSIBLE_SHOW_CUSTOM_STATS
 import json, sys
 s = json.load(open(sys.argv[1]))
 s["next"] += 1
-s["job_templates"].append({"id": s["next"], "name": "STIG Manager - import checklists - check", "description": "made by a person",
+s["job_templates"].append({"id": s["next"], "name": "STIG Manager - import checklists - check", "description": "made by a person", "organization": 1,
                            "playbook": "playbooks/stigman_ckl_import.yml", "credentials": []})
 for w in s["workflow_job_templates"]:
     if w["name"] == "STIG - recheck one host":
@@ -222,8 +229,8 @@ EOPY
 setup -e '{"portal_setup_credentials": {"machine": "Linux machine", "machine_windows": "Windows machine", "aap": "AAP reader",
             "act_model_key": "ACT model key", "stigman_api": "STIG Manager API", "stigman_api_writer": "STIG Manager API",
             "windows_share": "STIG Manager API"}}'
-if grep -q "template 'STIG Manager - import checklists - check': CHANGED BY HAND - left as it is - differs from what this job writes, and there is no earlier run to compare with" "$work/out.txt" \
-    && grep -q "workflow 'STIG - recheck one host': CHANGED BY HAND - left as it is" "$work/out.txt" \
+if grep -q "template 'STIG Manager - import checklists - check': NOT MADE BY THIS JOB - left as it is - no fingerprint" "$work/out.txt" \
+    && grep -q "workflow 'STIG - recheck one host': NOT MADE BY THIS JOB - left as it is" "$work/out.txt" \
     && [ "$(st '[j["description"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"][0]')" = "made by a person" ]; then
     pass "one the job did not make (no earlier run to compare with: said so), and a workflow whose node was changed by hand: listed, left as they are"
 else fail "not ours / node changed" "$(grep -E "import checklists - check|recheck one host" "$work/out.txt" | head)"; fi

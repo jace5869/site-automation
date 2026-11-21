@@ -1,0 +1,9 @@
+---
+- name: Portal setup | catalog descriptions and Contact settings
+  ansible.builtin.set_fact:
+    _portal_describe: >-
+      {%- set c = lookup('ansible.builtin.file', role_path ~ '/../../aap/job_templates.yml') | from_yaml -%}
+      {{ {'job': c.job_templates | selectattr('description', 'defined') | items2dict(key_name='name', value_name='description'),
+          'workflow': c.workflows | default([]) | items2dict(key_name='name', value_name='description'),
+          'owner': aap_templates_description_owner | default('') | string,
+          'contact': aap_templates_description_contact | default('') | string} if portal_setup_describe | default(true) | bool else {} }}

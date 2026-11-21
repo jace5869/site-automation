@@ -165,6 +165,13 @@ def described_text(desc, owner="", contact=""):
     return "\n".join(lines)
 
 
+def setup_description(describe, kind, spec):
+    """The catalog description when enabled and available, otherwise the workflow spec's exact text."""
+    settings = describe or {}
+    entry = (settings.get(kind) or {}).get(spec["name"])
+    return described_text(entry, settings.get("owner"), settings.get("contact")) or str(spec.get("description") or "")
+
+
 # 1.79.19: the catalog matcher - what AAP - set up job templates' descriptions (site_aap_describe, 1.79.11) and its renames
 # (site_aap_rename) both go by: a job template of the project by its playbook, a workflow by its name, else by the
 # playbooks of its steps

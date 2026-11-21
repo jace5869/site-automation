@@ -4,14 +4,22 @@
 - name: Gates | the gate template's spec (workflows.yml)
   ansible.builtin.set_fact:
     _wg_gate: >-
-      {{ (lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml).templates
+      {%- set builtin = lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml -%}
+      {%- set spec = portal_setup_workflows | default({}) or builtin -%}
+      {{ (spec.templates | default([]) + (portal_setup_templates_extra | default([])) + builtin.templates)
          | selectattr('playbook', 'equalto', 'playbooks/workflow_gate.yml') | first }}
+
+- name: Gates | use the portal setup description settings
+  ansible.builtin.include_role:
+    name: aap_portal_setup
+    tasks_from: descriptions.yml
 
 - name: Gates | the workflows, read and gated
   site_aap_workflow_gates:
     workflows: "{{ aap_gates_workflows }}"
     checks: "{{ aap_gates_checks }}"
     gate: "{{ _wg_gate }}"
+    describe: "{{ _portal_describe }}"
     project: "{{ aap_gates_project }}"
     inventory: "{{ aap_gates_inventory }}"
     execution_environment: "{{ aap_gates_execution_environment }}"

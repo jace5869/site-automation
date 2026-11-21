@@ -26,7 +26,7 @@ options:
   overwrite: {description: "Bring a workflow made by hand, or changed since, to the catalog's (its nodes made again).", type: bool, default: false}
   labels: {description: "The labels each workflow gets (the portal's label and its area's).", type: list, elements: str, default: []}
   describe: {description: "{workflow: {name: {does, targets, produces, supports}}, owner, contact} - the description written.", type: dict, default: {}}
-  known: {description: "1.93.0: {\"workflow/<name>\": fingerprint} - what the last successful run handed on (its job artifact aap_setup_fingerprints); none: no such run, a description is compared with the text this job would write.", type: raw, default: null}
+  known: {description: Fingerprints keyed by organization ID/kind/name from the latest setup Run with a map., type: dict}
   only: {description: "Only the workflows whose name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
   ca_path: {description: A CA file for AAP's HTTPS certificate., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
@@ -46,7 +46,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, connection
 from ansible.module_utils.site_aap_workflows import Sync, _q
 
-MARK = re.compile(r"\s*\[set up by AAP - set up job templates, fingerprint ([0-9a-f]{12})\]\s*$")
+MARK = re.compile(r" \[set up by AAP - set up job templates, fingerprint ([0-9a-f]{12})\]\Z")
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user with Admin on the organization - it makes job templates and workflows)')
 
@@ -184,7 +184,7 @@ def main():
                            uses=dict(type="dict", default={}), renamed=dict(type="list", elements="str", default=[]),
                            refused=dict(type="list", elements="str", default=[]), project=dict(type="str", required=True),
                            overwrite=dict(type="bool", default=False), labels=dict(type="list", elements="str", default=[]),
-                           describe=dict(type="dict", default={}), known=dict(type="raw", default=None), only=dict(type="list", elements="str", default=[]),
+                           describe=dict(type="dict", default={}), known=dict(type="dict", default=None), only=dict(type="list", elements="str", default=[]),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params

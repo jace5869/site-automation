@@ -19,9 +19,7 @@ description:
     brought up to date field by field. The fingerprint of what this module wrote goes on in the job's artifact
     (aap_setup_fingerprints, 1.93.0 - no longer in the description), and known is the last successful run's, so a later change
     by hand is seen; such a template or workflow, or one of that name this module did not make, is listed and left as it is
-    unless overwrite. Without known (a first run, or the history purged) a description is compared with the text this module
-    would write. A description that still ends with the old mark is this module's: the next Run takes the mark off.
-  - known is {"template/<name>": fingerprint, ...} (null: no earlier run).
+    unless overwrite. On upgrade a matching legacy marker can establish ownership when there is no map.
   - A workflow's nodes (job templates and approval nodes, their success, failure and always links) are made again when
     they differ from the spec.
   - The portal's account (portal_user) gets Execute on the template or workflow of each action, and Approve on each such
@@ -43,6 +41,7 @@ options:
   credentials: {description: "The credentials by kind: {machine: name, aap: name, ...}; a list of names for several.", type: dict, default: {}}
   portal_user: {description: "The portal's AAP account (its user name); '' = no grants.", type: str, default: ''}
   portal_auditor: {description: "Also give portal_user the Auditor role of the organization (1.75.3: to read the report jobs' findings). Never a write role.", type: bool, default: false}
+  known: {description: Fingerprints keyed by organization ID/kind/name from the latest setup Run with a map., type: dict}
   overwrite: {description: Also bring up to date what was made or changed by hand., type: bool, default: false}
   schedules: {description: "[{name, target (a template or workflow of the spec), every_minutes, extra_data}].", type: list, elements: dict, default: []}
   scorecard: {description: "{name, schedule ('weekly Mon 06:00', 'daily 06:00' or ''), schedule_name, time_zone, split}; {} = none.", type: dict, default: {}}
@@ -68,10 +67,10 @@ import json
 import re
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.site_aap import Api, connection
+from ansible.module_utils.site_aap import Api, setup_description, connection
 from ansible.module_utils.site_aap_workflows import Sync, _q, _norm, fingerprint  # noqa: F401 - fingerprint: as before, for its callers
 
-MARK = re.compile(r"\s*\[set up by AAP - set up portal actions, fingerprint ([0-9a-f]{12})\]\s*$")
+MARK = re.compile(r" \[set up by AAP - set up portal actions, fingerprint ([0-9a-f]{12})\]\Z")
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user that may make job templates and workflows in the organization, and give roles on them)')
 
@@ -98,7 +97,7 @@ class Setup(Sync):
             self.note("template", t["name"], "skipped", why=why or "no inventory %r (portal_setup_inventories)" % (t.get("inventory") or "default"))
             return (None, "skipped") if with_action else None
         prompts = t.get("prompts") or {}
-        want = {"name": t["name"], "description": self.described("job", t), "job_type": "run", "project": refs["project"],
+        want = {"name": t["name"], "description": setup_description(self.p.get("describe"), "job", t), "job_type": "run", "project": refs["project"],
                 "playbook": t["playbook"], "inventory": inv, "ask_variables_on_launch": bool(prompts.get("variables")),
                 "ask_limit_on_launch": bool(prompts.get("limit")), "become_enabled": bool(t.get("become")),
                 "extra_vars": json.dumps(t.get("extra_vars") or {}, sort_keys=True) if t.get("extra_vars") else ""}
@@ -131,14 +130,18 @@ class Setup(Sync):
                 if len(rows) != 1:
                     return [], "credential %r %s" % (n, "is not there" if not rows else "is there %d times" % len(rows))
                 out.append(int(rows[0]["id"]))
-        return out, ""
+        return sorted(set(out)), ""  # AAP associates each credential ID once, even across spec kinds.
 
     # ---- 1.68.1: the scorecard's own template and schedule; workflow 40's check on import
+    def scorecard_rows(self, name):
+        """Read the current template, including any writes from the first reconciliation."""
+        return [r for r in self.all("job_templates/?name=%s" % _q(name))
+                if r.get("name") == name and r.get("organization") == self.org_id]
+
     def split_vars(self, t, final=True):
         """Workflow 40's check template with stigman_ckl_import_mode import - unless the mode there is another one.
         final=False (the first pass, before the scorecard is in place): the mode as it is now, never a new one."""
-        rows = self.all("job_templates/?name=%s" % _q(t["name"]))
-        rows = [r for r in rows if r.get("name") == t["name"]]
+        rows = self.scorecard_rows(t["name"])
         want = dict(t.get("extra_vars") or {})
         if len(rows) == 1:
             live = parse_vars(rows[0].get("extra_vars"))
@@ -151,45 +154,24 @@ class Setup(Sync):
 
     def apply_split(self, src_spec, action, refs, oid):
         """After the scorecard's template and schedule are in place: workflow 40's check imports only."""
+        if action not in ("create", "update", "unchanged"):
+            return
         t = self.split_vars(src_spec)
-        if action in ("hand-edited", "not ours"):
-            self.split_by_hand(t["name"])
-        elif action in ("create", "update", "unchanged"):
-            if oid and oid < 0:                             # Check: made by this run, so the mode would be set then
-                self.note("setting", "%s on %s" % (MODE, t["name"]), "create", {MODE: [None, "import"]})
-                return
-            self.cache.pop(("job_templates", t["name"], ""), None)
-            n = len(self.results)
-            self.template(t, refs, with_action=True)
-            if len(self.results) == n + 1 and self.results[-1]["action"] == "unchanged":
-                self.results.pop()                          # the first pass said so already
-
-    def split_by_hand(self, name):
-        """The check template was changed by hand (or not made by this job): only its mode is set, nothing else."""
-        rows = [r for r in self.all("job_templates/?name=%s" % _q(name)) if r.get("name") == name]
-        if len(rows) != 1:
+        if oid and oid < 0:                             # Check: made by this run, so the mode would be set then
+            self.note("setting", "%s on %s" % (MODE, t["name"]), "create", {MODE: [None, "import"]})
             return
-        live = parse_vars(rows[0].get("extra_vars"))
-        what = "%s on %s" % (MODE, name)
-        if live is None:
-            self.note("setting", what, "skipped", why="its Variables could not be read: set %s: import there" % MODE)
-            return
-        now = live.get(MODE)
-        if now in ("import",):
-            self.note("setting", what, "unchanged")
-        elif now in (None, "", "import and scorecard"):
-            live[MODE] = "import"
-            self.write("PATCH", "job_templates/%d/" % int(rows[0]["id"]), {"extra_vars": json.dumps(live, sort_keys=True)})
-            self.note("setting", what, "update", {MODE: [now or "(not set)", "import"]})
-        else:
-            self.note("setting", what, "unchanged", why="it is %r: left as it is (the scorecard has its own template)" % now)
+        self.cache.pop(("job_templates", t["name"], ""), None)
+        n = len(self.results)
+        self.template(t, refs, with_action=True)
+        if len(self.results) == n + 1 and self.results[-1]["action"] == "unchanged":
+            self.results.pop()                          # the first pass said so already
 
     def scorecard(self, sc, src, refs, ids, src_oid, src_action=""):
         """-> True when the scorecard's template and (if wanted) its schedule are in place."""
         name = sc.get("name") or ""
         if not name:
             return False
-        live = [r for r in self.all("job_templates/?name=%s" % _q(src["name"])) if r.get("name") == src["name"]]
+        live = self.scorecard_rows(src["name"])
         if len(live) == 1:
             vars_ = parse_vars(live[0].get("extra_vars"))
             if vars_ is None:
@@ -210,7 +192,7 @@ class Setup(Sync):
             return False
         sname = sc.get("schedule_name") or "Weekly - %s" % name
         if action in ("not ours", "hand-edited"):        # one that was there: only when it is the scorecard, by what it runs
-            row = next((r for r in self.all("job_templates/?name=%s" % _q(name)) if r.get("name") == name), {})
+            row = next(iter(self.scorecard_rows(name)), {})
             mode = (parse_vars(row.get("extra_vars")) or {}).get(MODE)
             if row.get("playbook") != src["playbook"] or mode != "scorecard":
                 self.note("schedule", sname, "skipped", why="'%s' is there and is not the scorecard (its playbook or %s differs): no schedule, nothing else changed" % (name, MODE))
@@ -424,7 +406,12 @@ class Setup(Sync):
         if plan is None:
             return
         org = self.one_id("organizations", p["organization"], "Organization")
-        proj = self.one_id("projects", p["project"], "Project")
+        self.org_id = org
+        projects = [r for r in self.by_name("projects", p["project"]) if org and r.get("organization") == org]
+        if len(projects) != 1:
+            self.problems.append("cannot verify project %r in organization %r: objects left as not ours" % (p["project"], p["organization"]))
+            return
+        proj = int(projects[0]["id"])
         ee = self.one_id("execution_environments", p["execution_environment"], "Execution environment") if p["execution_environment"] else None
         invs = {}
         for key, name in (p["inventories"] or {}).items():
@@ -473,7 +460,7 @@ class Setup(Sync):
                 if target.get("type") == "workflow":
                     oid, appr = wf_ids.get(tn, (None, False))
                     if oid is None:
-                        rows = self.by_name("workflow_job_templates", tn)
+                        rows = [r for r in self.by_name("workflow_job_templates", tn) if r.get("organization") == org]
                         oid = int(rows[0]["id"]) if len(rows) == 1 else None
                         appr = bool((a or {}).get("approval"))
                     if uid and oid:
@@ -483,7 +470,7 @@ class Setup(Sync):
                 elif target.get("type") == "job":
                     oid = tpl_ids.get(tn)
                     if oid is None:
-                        rows = self.by_name("job_templates", tn)
+                        rows = [r for r in self.by_name("job_templates", tn) if r.get("organization") == org]
                         oid = int(rows[0]["id"]) if len(rows) == 1 else None
                     if uid and oid:
                         self.grant("job_templates", oid, tn, ["Execute"], uid)
@@ -596,7 +583,7 @@ def main():
                            publish=dict(type="list", elements="str", default=[]), publish_area=dict(type="dict", default={}), publish_organization=dict(type="str", default=""),
                            unpublish=dict(type="list", elements="str", default=[]), publish_label=dict(type="str", default="portal"),
                            area_label=dict(type="str", default="portal-area:"), publish_max=dict(type="int", default=50),
-                           describe=dict(type="dict", default={}), known=dict(type="raw", default=None),
+                           describe=dict(type="dict", default={}), known=dict(type="dict", default=None),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params

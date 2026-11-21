@@ -49,17 +49,17 @@ SEED = json.loads(json.dumps(__import__("fake_aap_crud").SEED))
 SEED["credentials"].append({"id": 15, "name": "Share account"})
 if sys.argv[2] == "hand":
     SEED["next"] += 1
-    SEED["job_templates"].append({"id": SEED["next"], "name": "STIG Manager - import checklists - check", "description": "made by a person",
+    SEED["job_templates"].append({"id": SEED["next"], "name": "STIG Manager - import checklists - check", "description": "made by a person", "organization": 1,
         "job_type": "run", "project": 2, "playbook": "playbooks/stigman_ckl_import.yml", "inventory": 4, "execution_environment": 5,
         "ask_variables_on_launch": True, "ask_limit_on_launch": False, "become_enabled": False, "credentials": [14],
         "extra_vars": json.dumps({"stigman_ckl_import_workflow": True, "stigman_scorecard_collections": ["RHEL Servers"],
                                   "stigman_ckl_import_mode": sys.argv[3] or "import and scorecard",
-                                  "report_email_to": "team@example.mil"})})
+                                  "report_email_to": "team@example.invalid"})})
 if len(sys.argv) > 4 and sys.argv[4] == "reject":
     SEED["reject_schedules"] = True
 if len(sys.argv) > 4 and sys.argv[4] == "theirs":       # a template of theirs that has the scorecard's name and imports
     SEED["next"] += 1
-    SEED["job_templates"].append({"id": SEED["next"], "name": "STIG - weekly scorecard", "description": "made by a person",
+    SEED["job_templates"].append({"id": SEED["next"], "name": "STIG - weekly scorecard", "description": "made by a person", "organization": 1,
         "job_type": "run", "project": 2, "playbook": "playbooks/stigman_ckl_import.yml", "inventory": 4, "credentials": [14],
         "extra_vars": json.dumps({"stigman_ckl_import_mode": "import"})})
 json.dump(SEED, open(sys.argv[1], "w"))
@@ -112,21 +112,21 @@ EOPY
 n="$(writes)"
 setup
 if [ "$(writes)" = "$n" ] && [ "$(st 'len(s["schedules"])')" = 1 ] && grep -q "its time is not the setting: left as it is" "$work/out.txt" \
-    && grep -q "template 'STIG - weekly scorecard': CHANGED BY HAND - left as it is" "$work/out.txt"; then
+    && grep -q "template 'STIG - weekly scorecard': NOT MADE BY THIS JOB - left as it is" "$work/out.txt"; then
     pass "a schedule at another time and a template with Variables added by hand: left as they are, one schedule"
 else fail "left alone" "$(($(writes) - n)) writes; $(st 'len(s["schedules"])') schedules; $(grep -E "scorecard|Weekly" "$work/out.txt" | head -5)"; fi
 
-# ---- a check template a person made, with their Variables: copied; its mode "import and scorecard" becomes import
+# ---- a check template a person made, with their Variables: copied; its own mode is preserved
 fresh hand
 setup
 got="$(st '[json.loads(j["extra_vars"]) for j in s["job_templates"] if j["name"] == "STIG - weekly scorecard"]')"
-[ "$got" = "[{'report_email_to': 'team@example.mil', 'stigman_ckl_import_mode': 'scorecard', 'stigman_scorecard_collections': ['RHEL Servers']}]" ] \
+[ "$got" = "[{'report_email_to': 'team@example.invalid', 'stigman_ckl_import_mode': 'scorecard', 'stigman_scorecard_collections': ['RHEL Servers']}]" ] \
     && pass "the person's check template copied: their Variables kept, mode scorecard, no workflow flag" || fail "copied Variables" "$got
 $(grep -E "scorecard|fatal" "$work/out.txt" | head -6)"
 got="$(st '[(j["description"], json.loads(j["extra_vars"])) for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"]')"
-[ "$got" = "[('made by a person', {'report_email_to': 'team@example.mil', 'stigman_ckl_import_mode': 'import', 'stigman_ckl_import_workflow': True, 'stigman_scorecard_collections': ['RHEL Servers']})]" ] \
-    && grep -q "setting 'stigman_ckl_import_mode on STIG Manager - import checklists - check': changed" "$work/out.txt" \
-    && pass "their check template: only the mode set to import, everything else as it was" || fail "their check template" "$got"
+[ "$got" = "[('made by a person', {'report_email_to': 'team@example.invalid', 'stigman_ckl_import_mode': 'import and scorecard', 'stigman_ckl_import_workflow': True, 'stigman_scorecard_collections': ['RHEL Servers']})]" ] \
+    && grep -q "template 'STIG Manager - import checklists - check': NOT MADE BY THIS JOB" "$work/out.txt" \
+    && pass "their check template: ownership unverified, all Variables kept" || fail "their check template" "$got"
 n="$(writes)"
 setup
 [ "$(writes)" = "$n" ] && pass "and a second run changes nothing" || fail "second run on theirs" "$(($(writes) - n)) writes; $(grep -E ": made|: changed" "$work/out.txt" | head)"
@@ -135,7 +135,7 @@ setup
 fresh hand scorecard
 setup
 got="$(st '[json.loads(j["extra_vars"])["stigman_ckl_import_mode"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"]')"
-[ "$got" = "['scorecard']" ] && grep -q "is 'scorecard': left as it is" "$work/out.txt" \
+[ "$got" = "['scorecard']" ] && grep -q "template 'STIG Manager - import checklists - check': NOT MADE BY THIS JOB" "$work/out.txt" \
     && pass "a check template whose mode is scorecard: left as it is, said" || fail "other mode" "$got; $(grep -E "stigman_ckl_import_mode" "$work/out.txt" | head -3)"
 
 # ---- portal_setup_split_scorecard false, and no schedule
@@ -199,7 +199,7 @@ if [ "$got" = "[]" ] && [ "$mode" = "import and scorecard" ] && grep -q "'STIG -
     pass "a template of theirs with that name that imports: left, not scheduled, workflow 40's check keeps its mode"
 else fail "their template" "schedules $got, mode $mode; $(grep -E "scorecard" "$work/out.txt" | head -4)"; fi
 
-# ---- the schedule cannot be made: the check template keeps its mode (no scorecard is lost); once it can, it is switched
+# ---- the schedule cannot be made: the check template keeps its mode (no scorecard is lost); once it can, the hand-made source still keeps its mode
 fresh hand "" reject
 setup
 mode="$(st '[json.loads(j["extra_vars"])["stigman_ckl_import_mode"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"][0]')"
@@ -212,7 +212,7 @@ s = json.load(open(sys.argv[1])); s["reject_schedules"] = False; json.dump(s, op
 EOPY
 setup
 mode="$(st '[json.loads(j["extra_vars"])["stigman_ckl_import_mode"] for j in s["job_templates"] if j["name"] == "STIG Manager - import checklists - check"][0]')"
-[ "$mode" = "import" ] && [ "$(st 'len(s["schedules"])')" = 1 ] && pass "run again once it works: the schedule made, then the check switched to import" || fail "after the fix" "mode $mode"
+[ "$mode" = "import and scorecard" ] && [ "$(st 'len(s["schedules"])')" = 1 ] && pass "run again once it works: the schedule made and the unowned check left alone" || fail "after the fix" "mode $mode"
 
 if ! grep -q '"method": "DELETE", "path": "\(job_templates\|workflow_job_templates\|schedules\)' "$work/writes.jsonl"; then
     pass "never a template, workflow or schedule deleted"

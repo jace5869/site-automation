@@ -32,7 +32,7 @@ BASE = "/api/controller/v2/"
 LOCK = threading.Lock()
 SEED = {"next": 1000,
         "organizations": [{"id": 1, "name": "Default"}],
-        "projects": [{"id": 2, "name": "Site automation"}],
+        "projects": [{"id": 2, "name": "Site automation", "organization": 1}],
         "inventories": [{"id": 3, "name": "Site hosts"}, {"id": 4, "name": "Windows hosts"}],
         "execution_environments": [{"id": 5, "name": "Site EE"}],
         "credentials": [{"id": 10, "name": "Linux machine"}, {"id": 11, "name": "Windows machine"}, {"id": 12, "name": "AAP reader"},
@@ -171,9 +171,12 @@ class H(BaseHTTPRequestHandler):
                 rows = [dict((k, v) for k, v in j.items() if k != "artifacts") for j in s.get("jobs", [])
                         if str(j.get("job_template")) == q.get("job_template", str(j.get("job_template")))
                         and j["id"] < int(q.get("id__lt", "999999999"))
+                        and j.get("status") == q.get("status", j.get("status"))
+                        and j.get("job_type", "run") == q.get("job_type", j.get("job_type", "run"))
                         and j.get("status") in q.get("status__in", j.get("status")).split(",")]
                 rows.sort(key=lambda j: -j["id"])
-                return self.send(200, {"count": len(rows), "results": rows[:int(q.get("page_size", "25"))], "next": None})
+                size = int(q.get("page_size", "25"))
+                return self.send(200, {"count": len(rows), "results": rows[:size], "next": self.path if len(rows) > size else None})
             m = re.match(r"^jobs/(\d+)/$", p)
             if m:
                 j = next((j for j in s.get("jobs", []) if j["id"] == int(m.group(1))), None)
@@ -244,10 +247,12 @@ class H(BaseHTTPRequestHandler):
             try:
                 m = re.match(r"^(job_templates|workflow_job_templates)/$", p)
                 if m:
-                    if any(r["name"] == b.get("name") for r in s[m.group(1)]):
-                        return self.send(400, {"name": ["already exists"]})
                     fields = TPL_FIELDS if m.group(1) == "job_templates" else WF_FIELDS
                     r = dict((k, b.get(k)) for k in fields)
+                    if m.group(1) == "job_templates" and not r["organization"]:
+                        r["organization"] = next((p.get("organization") for p in s["projects"] if p["id"] == r["project"]), None)
+                    if any(x["name"] == r["name"] and x.get("organization") == r["organization"] for x in s[m.group(1)]):
+                        return self.send(400, {"name": ["already exists"]})
                     r["id"] = new_id(s)
                     if m.group(1) == "job_templates":
                         r["credentials"] = []

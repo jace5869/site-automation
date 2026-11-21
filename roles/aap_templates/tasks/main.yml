@@ -1,21 +1,25 @@
 ---
 # AAP - set up job templates (library/site_aap_templates.py). Runs on localhost with the "Red Hat Ansible Automation
 # Platform" credential's variables. A Check run only reads.
+- name: Job templates | verify ownership history
+  ansible.builtin.include_role:
+    name: aap_setup_history
+  vars:
+    _setup_ca_path: "{{ aap_templates_ca_path }}"
+
 - name: Job templates | the catalog
   ansible.builtin.set_fact:
     _at_doc: >-
       {{ lookup('ansible.builtin.file', aap_templates_catalog if aap_templates_catalog | length > 0
                 else role_path ~ '/../../aap/job_templates.yml') | from_yaml }}
 
-- name: Job templates | its templates and workflows; the descriptions this repository wrote before (replaced as ours)
+- name: Job templates | catalog and portal-managed objects
   ansible.builtin.set_fact:
     _at_catalog: "{{ _at_doc.job_templates }}"
     _at_workflows: "{{ _at_doc.workflows | default([]) }}"
-    _at_ours: >-
-      {%- set pw = lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml -%}
-      {{ (['Made by AAP - set up job templates (aap/job_templates.yml)']
-          + (pw.templates | default([]) + pw.workflows | default([])) | selectattr('description', 'defined') | map(attribute='description') | list)
-         | map('string') | map('trim') | select | unique | list }}
+    _at_portal_spec: >-
+      {%- set base = portal_setup_workflows | default({}) or lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml -%}
+      {{ (base | site_portal_spec_merge(portal_setup_templates_extra | default([]), portal_setup_workflows_extra | default([]))).spec }}
 
 # 1.79.19: your templates and workflows renamed to the catalog's names first (aap_templates_rename, aap_templates_rename_map) -
 # so the templates below are found by those names (a Check run: read as renamed)
@@ -39,10 +43,7 @@
       vars:
         # what AAP - set up portal actions makes: its spec (portal_setup_workflows or the repository's) and your extras
         _at_made_elsewhere: >-
-          {%- set base = portal_setup_workflows if portal_setup_workflows | default({}) | length > 0
-                         else lookup('ansible.builtin.file', role_path ~ '/../site_portal_stack/files/workflows.yml') | from_yaml -%}
-          {%- set pw = (base | site_portal_spec_merge(portal_setup_templates_extra | default([]), portal_setup_workflows_extra | default([]))).spec -%}
-          {{ (pw.templates | default([]) + pw.workflows | default([])) | map(attribute='name') | map('string') | list }}
+          {{ (_at_portal_spec.templates | default([]) + _at_portal_spec.workflows | default([])) | map(attribute='name') | list }}
         # (Codex) every template or workflow a site portal action runs, as the portal merges them, and the setting that names it
         _at_portal_targets: >-
           {%- set base = portal_actions if portal_actions | default({}) | length > 0
@@ -156,23 +157,6 @@
 # 1.83.0: the catalog's workflows that have nodes (STIG - full scan and upload, STIG - drift scan and upload): made with
 # every node and link, the portal's label on the workflow (never on its steps), after the templates; the old templates and
 # workflows they replace named - never deleted. A Check run only reads.
-- name: Job templates | the fingerprints the last run handed on (this template's job artifact aap_setup_fingerprints, from AAP)
-  ansible.builtin.include_role:
-    name: site_email
-    tasks_from: history_artifacts.yml
-  vars:
-    _hist_artifacts: [aap_setup_fingerprints]
-    _hist_runs: 10
-
-# 1.93.0: the newest successful run that handed a map on (a Check run does not). None: a first run, or its history purged -
-# a description is then compared with the text this job would write.
-- name: Job templates | the newest of them
-  ansible.builtin.set_fact:
-    _at_known: >-
-      {{ (_site_hist_runs | default([]) | selectattr('status', 'equalto', 'successful') | selectattr('artifacts', 'defined')
-          | selectattr('artifacts.aap_setup_fingerprints', 'defined') | list | last | default({'artifacts': {}})).artifacts.aap_setup_fingerprints
-         | default(none) }}
-
 - name: Job templates | the catalog's workflows (every node and link), and the old ones they replace
   when: not aap_templates_describe_only | bool
   site_aap_template_workflows:
@@ -192,7 +176,7 @@
       owner: "{{ aap_templates_description_owner | default('') }}"
       contact: "{{ aap_templates_description_contact | default('') }}"
     only: "{{ aap_templates_only }}"
-    known: "{{ _at_known }}"
+    known: "{{ _setup_history.fingerprints if _setup_history.fingerprints is not none else omit }}"
     ca_path: "{{ aap_templates_ca_path }}"
   register: _atw
 
@@ -200,8 +184,8 @@
 - name: Job templates | the fingerprints, for the next run (job artifact aap_setup_fingerprints)
   ansible.builtin.set_stats:
     data:
-      aap_setup_fingerprints: "{{ _atw.fingerprints | default({}) }}"
-  when: not ansible_check_mode and not aap_templates_describe_only | bool
+      aap_setup_fingerprints: "{{ _atw.fingerprints }}"
+  when: not ansible_check_mode and not aap_templates_describe_only | bool and _atw.fingerprints is defined and _atw.problems | length == 0
 
 - name: Job templates | the workflows - what was done
   when: not aap_templates_describe_only | bool
@@ -240,7 +224,11 @@
         only: "{{ aap_templates_only }}"
         vendored: "{{ _at_doc.vendored | default([]) }}"
         renamed: "{{ (_atr.renamed | default({})) if ansible_check_mode else {} }}"
-        ours: "{{ _at_ours }}"
+        managed:
+          job: "{{ (_at_portal_spec.templates | map(attribute='name') | list + [portal_setup_scorecard_template | default('STIG - weekly scorecard')])
+                    if aap_templates_organization == portal_setup_organization | default('Default') else [] }}"
+          workflow: "{{ _at_portal_spec.workflows | map(attribute='name') | list
+                         if aap_templates_organization == portal_setup_organization | default('Default') else [] }}"
         ca_path: "{{ aap_templates_ca_path }}"
       register: _atd
 

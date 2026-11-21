@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -28,6 +28,12 @@ ansible.module_utils.site_aap_workflows = site_aap_workflows
 import site_aap_portal_setup as S  # noqa: E402
 sys.path.insert(0, os.path.join(REPO, "roles", "aap_workflow_gates", "library"))
 import site_aap_workflow_gates as G  # noqa: E402
+
+sys.path.insert(0, os.path.join(REPO, "roles", "aap_templates", "library"))
+import site_aap_describe as D
+import site_aap_template_workflows as W
+sys.path.insert(0, os.path.join(REPO, "roles", "aap_setup_history", "library"))
+import site_aap_setup_history as H
 
 NOT_A_PLAN = "The check failed for another reason - open the check job; nothing to approve."
 
@@ -112,12 +118,13 @@ class Spec(unittest.TestCase):
 
 class SyncFingerprints(unittest.TestCase):
     want = {"name": "Example", "description": "Catalog description"}
-    key = "workflow/Example"
+    key = "1/workflow/Example"
 
-    def reconcile(self, have, known=None, check=False, overwrite=False):
+    def reconcile(self, have, known=None, check=False, overwrite=False, mark=S.MARK):
         api = Mock()
-        api.call.return_value = (200, {"results": [dict(self.want, id=7, description=have)]})
-        sync = site_aap_workflows.Sync(api, {"known": known, "overwrite": overwrite}, check, S.MARK, "portal_setup_overwrite")
+        api.call.return_value = (200, {"results": [dict(self.want, id=7, organization=1, description=have)]})
+        sync = site_aap_workflows.Sync(api, {"known": known, "overwrite": overwrite}, check, mark, "portal_setup_overwrite")
+        sync.org_id = 1
         oid, action = sync.reconcile("workflow", "workflow_job_templates", "Example", self.want)
         self.assertEqual(oid, 7)
         writes = [c.args for c in api.call.call_args_list if c.args[0] != "GET"]
@@ -130,6 +137,7 @@ class SyncFingerprints(unittest.TestCase):
         api = Mock()
         api.call.side_effect = [(200, {"results": []}), (201, {"id": 7})]
         sync = site_aap_workflows.Sync(api, {"overwrite": False}, False, S.MARK, "portal_setup_overwrite")
+        sync.org_id = 1
         parts = [{"id": "example-step"}]
         write_parts = Mock(return_value=parts)
         result = sync.reconcile("workflow", "workflow_job_templates", "Example", self.want, extra_write=write_parts)
@@ -140,11 +148,11 @@ class SyncFingerprints(unittest.TestCase):
 
     def test_known_map_allows_catalog_update_and_preserves_other_entries(self):
         previous = self.fp("Previous description")
-        known = {self.key: previous, "workflow/Other": "0123456789ab"}
+        known = {self.key: previous, "2/workflow/Example": "0123456789ab"}
         action, out, writes, _ = self.reconcile("Previous description", known)
         self.assertEqual(action, "update")
-        self.assertEqual(writes, [("PATCH", "workflow_job_templates/7/", self.want)])
-        self.assertEqual(out, {self.key: self.fp(self.want["description"]), "workflow/Other": "0123456789ab"})
+        self.assertEqual(writes, [("PATCH", "workflow_job_templates/7/", {"description": self.want["description"]})])
+        self.assertEqual(out, {self.key: self.fp(self.want["description"]), "2/workflow/Example": "0123456789ab"})
         self.assertEqual(known[self.key], previous)
 
     def test_hand_edit_keeps_the_recorded_fingerprint_until_overwrite(self):
@@ -153,13 +161,63 @@ class SyncFingerprints(unittest.TestCase):
         self.assertEqual((action, out, writes), ("hand-edited", known, []))
         action, out, writes, _ = self.reconcile("Edited by hand", out, overwrite=True)
         self.assertEqual((action, out), ("update", {self.key: self.fp(self.want["description"])}))
-        self.assertEqual(writes, [("PATCH", "workflow_job_templates/7/", self.want)])
+        self.assertEqual(writes, [("PATCH", "workflow_job_templates/7/", {"description": self.want["description"]})])
 
-    def test_without_history_only_an_exact_match_is_adopted(self):
+    def test_unproven_ownership_even_when_fields_match(self):
         desc = self.want["description"]
-        self.assertEqual(self.reconcile(desc)[:3], ("unchanged", {self.key: self.fp(desc)}, []))
-        self.assertEqual(self.reconcile("Edited by hand")[:3], ("hand-edited", {}, []))
-        self.assertEqual(self.reconcile("Edited by hand", known={})[:3], ("not ours", {}, []))
+        for known in (None, {}, {"2/workflow/Example": self.fp(desc)}, {"workflow/Example": self.fp(desc)}):
+            for have in (desc, "Edited by hand"):
+                action, out, writes, why = self.reconcile(have, known)
+                self.assertEqual((action, out, writes), ("not ours", known or {}, []))
+                self.assertIn("no fingerprint", why)
+
+    def test_same_name_in_two_organizations(self):
+        live = dict(self.want, organization=1, id=7)
+        api = Mock()
+        api.call.side_effect = [(200, {"results": [live]}), (201, {"id": 8})]
+        first = {self.key: self.fp(self.want["description"])}
+        sync = site_aap_workflows.Sync(api, {"known": first, "overwrite": False}, False, S.MARK, "portal_setup_overwrite")
+        sync.org_id = 2
+        other = dict(self.want, description="Second organization")
+        self.assertEqual(sync.reconcile("workflow", "workflow_job_templates", "Example", other), (8, "create"))
+        self.assertEqual(sync.results[0]["action"], "not ours")
+        self.assertEqual(sync.out, {self.key: first[self.key], "2/workflow/Example": self.fp(other["description"])})
+        # Switching back to the first organization compares against its own baseline.
+        sync = site_aap_workflows.Sync(api, {"known": sync.out, "overwrite": False}, False, S.MARK, "portal_setup_overwrite")
+        sync.org_id = 1
+        api.call.side_effect = [(200, {"results": [live, dict(other, organization=2, id=8)]}), (200, {})]
+        updated = dict(self.want, description="Updated first organization")
+        self.assertEqual(sync.reconcile("workflow", "workflow_job_templates", "Example", updated), (7, "update"))
+        self.assertEqual(sync.out, {self.key: self.fp(updated["description"]), "2/workflow/Example": self.fp(other["description"])})
+
+    def test_literal_edit_to_json_description_is_kept(self):
+        original = '{"example": 1}'
+        self.assertEqual(self.reconcile('{"example":1}', {self.key: self.fp(original)})[0], "hand-edited")
+
+    def test_second_reconcile_uses_this_runs_fingerprint(self):
+        api = Mock()
+        api.call.side_effect = [(200, {"results": []}), (201, {"id": 7}),
+                                (200, {"results": [dict(self.want, organization=1, id=7)]}), (200, {})]
+        sync = site_aap_workflows.Sync(api, {"overwrite": False}, False, S.MARK, "portal_setup_overwrite")
+        sync.org_id = 1
+        sync.reconcile("workflow", "workflow_job_templates", "Example", self.want)
+        updated = dict(self.want, description="Second pass")
+        self.assertEqual(sync.reconcile("workflow", "workflow_job_templates", "Example", updated), (7, "update"))
+        self.assertEqual(sync.out, {self.key: self.fp("Second pass")})
+
+    def test_legacy_literal_block_hashes_its_final_newline(self):
+        self.want = yaml.safe_load("name: Example\ndescription: |\n  First line\n  Second line\n")
+        desc = self.want["description"]
+        self.assertTrue(desc.endswith("\n"))
+        # Use the old writer's serialization, independently of the current fingerprint function.
+        import hashlib
+        fp = hashlib.sha256(json.dumps(dict(self.want, extra=""), sort_keys=True).encode()).hexdigest()[:12]
+        for job, mark in (("portal actions", S.MARK), ("job templates", W.MARK)):
+            suffix = " [set up by AAP - set up %s, fingerprint %s]" % (job, fp)
+            action, out, writes, _ = self.reconcile(desc + suffix, mark=mark)
+            self.assertEqual((action, out, writes), ("update", {self.key: fp},
+                             [("PATCH", "workflow_job_templates/7/", {"description": desc})]))
+            self.assertEqual(self.reconcile(desc.rstrip() + suffix, mark=mark)[:3], ("hand-edited", {}, []))
 
     def test_old_marker_migration_on_check_and_run(self):
         desc = self.want["description"]
@@ -170,18 +228,133 @@ class SyncFingerprints(unittest.TestCase):
         self.assertEqual(self.reconcile(desc + marker),
                          ("update", {self.key: fp}, [("PATCH", "workflow_job_templates/7/", {"description": desc})],
                           "removed the old fingerprint text"))
-        self.assertEqual(self.reconcile("Edited by hand" + marker)[:3], ("hand-edited", {self.key: fp}, []))
+        self.assertEqual(self.reconcile("Edited by hand" + marker)[:3], ("hand-edited", {}, []))
+
+
+class SetupHistory(unittest.TestCase):
+    def test_pages_successful_runs_until_a_map_even_an_empty_one(self):
+        api = Mock()
+        rows = [{"id": i} for i in range(98, 84, -1)]
+        api.call.side_effect = ([(200, {"results": rows, "next": "next"})] +
+                                [(200, {"artifacts": {}})] * len(rows) +
+                                [(200, {"results": [{"id": 84}], "next": None}),
+                                 (200, {"artifacts": {"aap_setup_fingerprints": {}}})])
+        self.assertEqual(H.latest_map(api, 99, 7, []), {})
+        lists = [c.args[1] for c in api.call.call_args_list if c.args[1].startswith("jobs/?")]
+        self.assertEqual(len(lists), 2)
+        self.assertIn("id__lt=85", lists[1])
+        for url in lists:
+            for field in ("job_template=7", "job_type=run", "status=successful", "order_by=-id"):
+                self.assertIn(field, url)
+
+    def test_checks_and_failed_jobs_with_artifacts_are_never_baselines(self):
+        api = Mock()
+        rows = [{"id": i, "status": "successful", "job_type": "check"} for i in range(98, 82, -1)]
+        rows += [{"id": 82, "status": "failed", "job_type": "run"}, {"id": 81, "status": "successful", "job_type": "run"}]
+        saved = {"1/template/Example": "0123456789ab"}
+        api.call.side_effect = [(200, {"results": rows, "next": None}), (200, {"artifacts": {"aap_setup_fingerprints": saved}})]
+        self.assertEqual(H.latest_map(api, 99, 7, []), saved)
+        api.call.assert_called_with("GET", "jobs/81/")
+
+    def test_history_exhausted_or_hidden(self):
+        api = Mock()
+        page = (200, {"results": [], "next": None})
+        api.call.side_effect = [page, (200, {"id": 8})]
+        self.assertIsNone(H.latest_map(api, 8, 3, []))
+        api.call.side_effect = [page, (403, {}), (403, {})]
+        with self.assertRaisesRegex(ValueError, "HTTP 403"):
+            H.latest_map(api, 8, 3, [])
+
+    def test_failed_read_never_selects_an_older_map(self):
+        page = (200, {"results": [{"id": 7}, {"id": 6}], "next": None})
+        saved = {"1/workflow/Example": "0123456789ab", "2/workflow/Other": "123456789abc"}
+        for prefix, response in (([], page), ([page], (200, {"artifacts": {"aap_setup_fingerprints": saved}}))):
+            for recover in (False, True):
+                api = Mock()
+                errors = []
+                replies = prefix + [(503, {}), response if recover else (503, {})]
+                if recover and not prefix:
+                    replies.append((200, {"artifacts": {"aap_setup_fingerprints": saved}}))
+                api.call.side_effect = replies
+                if recover:
+                    self.assertEqual(H.latest_map(api, 8, 3, errors), saved)
+                else:
+                    with self.assertRaisesRegex(ValueError, "HTTP 503"):
+                        H.latest_map(api, 8, 3, errors)
+                self.assertEqual(len(errors), 1)
+                self.assertNotIn(("GET", "jobs/6/"), [c.args for c in api.call.call_args_list])
+
+    def test_unreadable_detail_or_invalid_map_does_not_authorize_fallback(self):
+        for detail in ({}, {"artifacts": []}, {"artifacts": {"aap_setup_fingerprints": None}},
+                       {"artifacts": {"aap_setup_fingerprints": {"1/template/Example": {}}}}):
+            api = Mock()
+            api.call.side_effect = [(200, {"results": [{"id": 7}, {"id": 6}], "next": None}), (200, detail)]
+            with self.assertRaises(ValueError):
+                H.latest_map(api, 8, 3, [])
+            self.assertEqual(api.call.call_count, 2)
+
+    def test_roles_read_before_writes_with_their_own_tls_settings(self):
+        def tasks(role):
+            with open(os.path.join(REPO, "roles", role, "tasks", "main.yml")) as f:
+                return yaml.safe_load(f)
+        for role, ca in (("aap_templates", "aap_templates_ca_path"), ("aap_portal_setup", "portal_setup_aap_ca_path")):
+            first = tasks(role)[0]
+            self.assertEqual(first["ansible.builtin.include_role"]["name"], "aap_setup_history")
+            self.assertEqual(first["vars"]["_setup_ca_path"], "{{ %s }}" % ca)
+            self.assertNotIn("when", first)
+        history = tasks("aap_setup_history")
+        self.assertEqual(history[0]["site_aap_setup_history"]["ca_path"], "{{ _setup_ca_path }}")
+        self.assertNotIn("when", history[0])
+        self.assertEqual(history[1]["ansible.builtin.set_stats"]["data"]["aap_setup_fingerprints"], "{{ _setup_history.fingerprints }}")
+        self.assertIn("ansible.builtin.fail", history[2])
+        module = Mock(params={"job_id": 8, "template_id": 3, "ca_path": "example-ca.pem"})
+        with patch.object(H, "AnsibleModule", return_value=module), patch.object(H, "Api") as ctor, patch.object(H, "connection", return_value={"verify": False}):
+            ctor.return_value.probe.return_value = ""
+            ctor.return_value.call.side_effect = [(200, {"results": [], "next": None}), (200, {"id": 8})]
+            H.main()
+            ctor.assert_called_once_with({"verify": False}, "example-ca.pem")
+
+
+class DescribeOwnership(unittest.TestCase):
+    def test_contact_line_edits_stay_on_sync_managed_objects(self):
+        name = "STIG - full scan and upload"
+        text = "** Does: Scan\n** Contact: Owner=Example"
+        for overwrite in (False, True):
+            api = Mock()
+            d = D.Describe(api, {"managed": {"job": ["Portal example"]}, "workflows": [{"name": name, "nodes": [{}]}],
+                                 "ours": [], "overwrite": overwrite}, False)
+            for kind, obj in (("job", "Portal example"), ("workflow", name)):
+                d.put(kind, {"id": 7, "name": obj, "description": text + " edit"}, obj, text)
+                self.assertEqual(d.results[-1]["action"], "left")
+            api.call.assert_not_called()
+        d.p["overwrite"] = False
+        d.put("job", {"id": 9, "name": "Other", "description": text + " edit"}, "Other", text)
+        self.assertEqual(d.results[-1]["action"], "kept")
+        api.call.assert_not_called()
 
 
 class AddGates(unittest.TestCase):
     """AAP - add workflow gates (part I): its table of checks is the doc's, the gate template it makes is the setup job's."""
 
-    def test_the_gate_template_carries_no_fingerprint_text(self):
-        # 1.93.0: its description is written as it is; the setup job judges it by comparing, or by its artifact
-        self.assertFalse(hasattr(G, "MARK_TEXT"))
-        self.assertFalse(hasattr(G, "fingerprint"))
-        with open(os.path.join(REPO, "roles", "aap_workflow_gates", "library", "site_aap_workflow_gates.py")) as f:
-            self.assertNotIn("fingerprint %s", f.read())
+    def test_gate_and_portal_create_the_same_description(self):
+        gate = {"name": "Example gate", "playbook": "playbooks/workflow_gate.yml", "description": "Short line",
+                "prompts": {"variables": True}}
+        catalog = {"job": {gate["name"]: {"does": "Check the plan"}}, "owner": "Example team"}
+        for describe, expected in ((catalog, "** Does: Check the plan\n** Contact: Owner=Example team"), ({}, "Short line")):
+            api = Mock()
+            api.call.return_value = (201, {"id": 7})
+            gates = G.Gates(api, {"gate": gate, "checks": {}, "project": "Example", "inventory": "Example",
+                                  "execution_environment": "", "describe": describe}, False)
+            gates.all = Mock(return_value=[])
+            gates.one = Mock(return_value={"id": 2})
+            self.assertEqual(gates.gate_template(), 7)
+            gate_body = api.call.call_args.args[2]
+            setup = S.Setup(api, {"describe": describe, "credentials": {}, "overwrite": False}, False)
+            setup.org_id = 1
+            setup.by_name = Mock(return_value=[])
+            setup.template(gate, {"project": 2, "inventories": {"default": 2}})
+            self.assertEqual(api.call.call_args.args[2], gate_body)
+            self.assertEqual(gate_body["description"], expected)
 
     def test_the_checks_are_the_docs(self):
         with open(os.path.join(REPO, "docs", "WORKFLOWS_AND_SCHEDULES.md")) as f:

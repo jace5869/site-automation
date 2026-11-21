@@ -12,10 +12,9 @@ and writes, and who to ask - from the catalog (aap/job_templates.yml: descriptio
 
 A template is found by its playbook in the project (the site's own names match too), every template of that playbook; a
 playbook of several catalog templates (a second one with its own Variables) by name, then by those Variables. A
-workflow by its name, else by the playbooks of its steps. A description is written when it is empty, or ours (it starts
-with "** Does:", or is a text this repository wrote: the template's "Made by ..." line, the portal job's own); a
-hand-written one is kept unless overwrite; one that still ends with the old fingerprint text (1.93.0: the setup jobs no
-longer write it) is left to the setup job, whose next Run takes it off. Nothing found is never a failure: a catalog template not in AAP, a template or
+workflow by its name, else by the playbooks of its steps. The generic pass fills empty descriptions and replaces
+the template setup placeholder. Other text requires overwrite. The portal's templates and workflows and the
+catalog workflows with nodes are left to their setup job, even in describe-only mode. Nothing found is never a failure: a catalog template not in AAP, a template or
 workflow the catalog does not know - each listed. Only a write AAP refuses fails the job. Check mode only reads.
 Standard library only."""
 from __future__ import absolute_import, division, print_function
@@ -31,7 +30,8 @@ options:
   project: {description: The site-automation project (its name)., type: str, required: true}
   owner: {description: "The Contact line's Owner= (aap_templates_description_owner; '' = none).", type: str, default: ''}
   contact: {description: "The Contact line's Developer= (aap_templates_description_contact; '' = none).", type: str, default: ''}
-  ours: {description: "Descriptions this repository wrote before (replaced like one of ours).", type: list, elements: str, default: []}
+  ours: {description: "Descriptions this repository wrote before (replaced like one of ours).", type: list, elements: str, default: ["Made by AAP - set up job templates (aap/job_templates.yml)"]}
+  managed: {description: Names managed by portal setup per kind (job and workflow)., type: dict, default: {}}
   overwrite: {description: "Write over a hand-written description too (aap_templates_describe_overwrite).", type: bool, default: false}
   only: {description: "Only the templates whose AAP or catalog name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
   renamed: {description: "1.79.19 - {job: {old: new}, workflow: {old: new}}: a Check run of the renames - read as renamed.", type: dict, default: {}}
@@ -57,7 +57,6 @@ from ansible.module_utils.site_aap import (Api, catalog_entry, connection, descr
 
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user who may change the organization\'s templates)')
-MARK = "** Does:"
 PORTAL_MARK = "[set up by AAP - set up portal actions, fingerprint "     # 1.93.0: what older versions wrote; the setup job takes it off
 # 1.83.0: the STIG workflows this job makes (site_aap_template_workflows) carry their own mark - left to it, as the portal's
 TEMPLATES_MARK = "[set up by AAP - set up job templates, fingerprint "
@@ -92,6 +91,9 @@ class Describe(object):
     def __init__(self, api, p, check):
         self.api, self.p, self.check = api, p, check
         self.results, self.problems, self.notes, self.wrote = [], [], [], False
+        managed = p.get("managed") or {}
+        self.managed = {(kind, name) for kind, names in managed.items() for name in names}
+        self.managed.update(("workflow", w["name"]) for w in p["workflows"] if w.get("nodes"))
         self.twice = []                                   # 1.79.11d: "2 templates run <playbook>: 'A', 'B' - keep one"
 
     def all(self, path):
@@ -115,8 +117,7 @@ class Describe(object):
         return not pats or any(fnmatch.fnmatchcase(str(n or "").casefold(), x) for n in names for x in pats)
 
     def ours(self, have):
-        h = str(have or "").strip()
-        return not h or h.startswith(MARK) or h in set(str(x).strip() for x in self.p["ours"] or [] if str(x).strip())
+        return not have or have in self.p["ours"]
 
     def put(self, kind, t, catalog, text):
         """One template's or workflow's description: written (empty, ours, or overwrite), or said why not."""
@@ -131,15 +132,18 @@ class Describe(object):
             self.note(kind, name, catalog, "left", first(have), why="made by this job with the catalog's lines (its workflows); "
                       "its next Run takes the old fingerprint text off - a change here would make it leave the workflow as changed by hand")
             return
+        if (kind, name) in self.managed:
+            self.note(kind, name, catalog, "left", first(have), why="its setup job manages this object's description")
+            return
         if not text:
             self.note(kind, name, catalog, "no description known", first(have), why="the catalog has none for it")
             return
-        if have.strip() == text.strip():
+        if have == text:
             self.note(kind, name, catalog, "right")
             return
         if not self.ours(have) and not self.p["overwrite"]:
             self.note(kind, name, catalog, "kept", first(have), first(text),
-                      "hand-written - aap_templates_describe_overwrite: true writes over it")
+                      "cannot verify this job wrote the description: left as it is (aap_templates_describe_overwrite: true writes over it)")
             return
         if self.check:
             self.note(kind, name, catalog, "describe", first(have), first(text), "would write it")
@@ -184,6 +188,9 @@ class Describe(object):
             es = by_pb.get(pb) or []
             if not es:
                 if self.wanted(t.get("name")):
+                    if ("job", t.get("name")) in self.managed:
+                        self.put("job", t, "", "")
+                        continue
                     self.note("job", str(t.get("name") or ""), "", "no description known", first(t.get("description")),
                               why="its playbook %s is not in the catalog - left as it is" % (pb or "(none)"))
                 continue
@@ -212,6 +219,12 @@ class Describe(object):
         cat = [w for w in p["workflows"] or [] if isinstance(w, dict) and w.get("name")]
         done = set()
         for w in sorted(wfs, key=lambda x: str(x.get("name") or "").casefold()):
+            name = w.get("name")
+            if ("workflow", name) in self.managed:
+                done.add(name)
+                if self.wanted(name):
+                    self.put("workflow", w, name, "")
+                continue
             # its steps: the playbooks of its job templates (each as often as it runs, the gate aside), whether every one is
             # of the project, and whether it has an approval (1.79.19: site_aap.workflow_steps, the renames' too)
             steps, foreign, approval = workflow_steps(
@@ -250,7 +263,8 @@ def main():
         argument_spec=dict(catalog=dict(type="list", elements="dict", required=True), workflows=dict(type="list", elements="dict", default=[]),
                            organization=dict(type="str", required=True), project=dict(type="str", required=True),
                            owner=dict(type="str", default=""), contact=dict(type="str", default=""),
-                           ours=dict(type="list", elements="str", default=[]), overwrite=dict(type="bool", default=False),
+                           ours=dict(type="list", elements="str", default=["Made by AAP - set up job templates (aap/job_templates.yml)"]),
+                           managed=dict(type="dict", default={}), overwrite=dict(type="bool", default=False),
                            only=dict(type="list", elements="str", default=[]),
                            vendored=dict(type="list", elements="dict", default=[]), renamed=dict(type="dict", default={}),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),

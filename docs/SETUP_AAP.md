@@ -712,13 +712,21 @@ and upload*, after their templates ([STIG_JOBS.md](STIG_JOBS.md)):
   check), Prompt on launch for **Limit**;
 - the site portal's label on the workflow, never on its steps.
 
-On Run, **AAP - set up job templates** saves a fingerprint for each managed workflow under `workflow/<name>` in the
-AAP job artifact `aap_setup_fingerprints`. Check publishes no map. Through the AAP API the job reads this template's ten most recent
-completed jobs. It uses the newest successful run that supplied a map to check the current description, managed fields and
-nodes in AAP. If they still match, the job can apply catalog changes. A difference is a hand edit and is left alone
-unless you set `aap_templates_overwrite: true`. With no history or old marker, an exact match with what the job would
-write becomes the baseline. A difference is kept. On upgrade, Check reports *would remove the old fingerprint text*
-for a matching old marker. Run removes it from the description and saves the fingerprint in the artifact.
+On Run, **AAP - set up job templates** saves each managed workflow's fingerprint under
+`<organization ID>/workflow/<name>` in the AAP job artifact `aap_setup_fingerprints`. Both setup jobs keep entries
+for other organizations and objects outside the current run. They search this template's successful Run jobs from
+newest to oldest until they find a map or reach the end. Check publishes no map. The lookup uses the setup
+credential's TLS verification and the role's CA even when `report_history: false`.
+
+A matching fingerprint lets setup update the catalog fields and nodes. A difference is reported as *CHANGED BY HAND*.
+An existing object without an ownership record for its organization is reported as *NOT MADE BY THIS JOB*, even
+if its fields match. This also applies to old map keys without an organization. Set `aap_templates_overwrite: true`
+to take over the selected workflow. When there is no saved map, a matching legacy marker can prove ownership.
+Check previews removal of the marker and Run removes it, preserving the description's original whitespace.
+
+If a history page or job detail cannot be read, the job reports all objects as unverified and stops before changing
+AAP. It retries the failed read to recover the previous map. A Run republishes that map unchanged if recovered.
+If the map remains unreadable, the last successful artifact stays authoritative.
 
 A Check run lists each node of each workflow. It also names an old template or workflow it finds: *replaced by ...,
 delete it when ready*, or *rename ... when ready* (your *STIG answer keys*). It never deletes or renames one.
@@ -759,11 +767,11 @@ it is for. The same job writes them: **AAP - set up job templates** with `aap_te
 
 2. Launch it with Job type **Check**. It lists every template and workflow of the project, with the old and the new
    first line:
-   - *WOULD DESCRIBE* - an empty description, or one this job wrote before (it starts with `** Does:`);
+   - *WOULD DESCRIBE* - an empty description or the exact “Made by AAP - set up job templates” placeholder;
    - *KEPT (hand-written)* - a description someone wrote: left as it is. `aap_templates_describe_overwrite: true`
      writes over it too;
-   - *left to its own job* - a description carrying an old setup fingerprint. Run **AAP - set up portal actions** for its
-     templates and workflows, or **AAP - set up job templates** for its STIG workflows, to remove the old text;
+   - *left to its own job* - a portal setup template or workflow, a catalog workflow with nodes, or an object carrying an old
+     setup marker. Its setup job owns the description, including the Contact line, even during a describe-only run;
    - *no description known* - a template whose playbook is not in the catalog, or a workflow the catalog does not
      know: left as it is;
    - *not in AAP* - a catalog template or workflow your AAP does not have: counted in *in short* only.
@@ -772,8 +780,8 @@ it is for. The same job writes them: **AAP - set up job templates** with `aap_te
    playbooks/stigman_update.yml: 'STIG Manager - update', 'STIG Manager update' - keep one`. Both are described.
    When their Variables differ, it says so instead of *keep one*: they may be two different jobs.
    None of these fails the job. Only a description AAP refuses to save turns it red, and the others are still written.
-3. Launch it again with Job type **Run**. Run it again after each update of site-automation: the descriptions stay
-   current, and a hand-written one is still kept.
+3. Launch it again with Job type **Run**. Changes to an existing five-line description require
+   `aap_templates_describe_overwrite: true` when this pass cannot verify who wrote it.
 
 How it finds them:
 

@@ -54,10 +54,11 @@ To set up: run Site portal - deploy.
 **To set up:** run **AAP - set up portal actions** and **AAP - set up job templates** once with Job type **Run**.
 The jobs remove the old fingerprint text from descriptions that still match what they wrote.
 
-Both jobs now keep their fingerprints in the AAP job artifact `aap_setup_fingerprints`. Each compares the fields it
-manages with the newest successful run that supplied a map. With no history or old marker, it compares them with
-what it would write today. Hand edits are listed and kept unless overwrite is enabled. Check previews the migration
-and publishes no map.
+Both jobs keep organization-scoped fingerprints in the AAP job artifact `aap_setup_fingerprints` and search all
+earlier successful Runs for the latest map. An unreadable history stops setup before writes and preserves the
+previous map. Existing objects without verified ownership are listed and left alone unless overwrite is enabled.
+Describe-only also leaves setup-managed descriptions to their owning job. Both gate creators use the same catalog
+description and Contact settings. Check previews marker migration and publishes no map.
 
 ## 1.95.0 — 2026-11-21
 

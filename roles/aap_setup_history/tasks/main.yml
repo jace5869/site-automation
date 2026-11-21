@@ -1,0 +1,18 @@
+---
+- name: Setup history | read this template's latest ownership map before changing AAP
+  site_aap_setup_history:
+    job_id: "{{ awx_job_id | default(tower_job_id | default(0)) | int }}"
+    template_id: "{{ awx_job_template_id | default(tower_job_template_id | default(0)) | int }}"
+    ca_path: "{{ _setup_ca_path }}"
+  register: _setup_history
+
+- name: Setup history | carry the recovered map forward unchanged
+  ansible.builtin.set_stats:
+    data:
+      aap_setup_fingerprints: "{{ _setup_history.fingerprints }}"
+  when: not ansible_check_mode and _setup_history.errors | length > 0 and _setup_history.fingerprints is not none
+
+- name: Setup history | stop before changing any object after a read error
+  ansible.builtin.fail:
+    msg: "Setup history unreadable: {{ _setup_history.errors | join(', ') }}. Ownership unverified (not ours) for every object. All objects left as they are."
+  when: _setup_history.errors | length > 0

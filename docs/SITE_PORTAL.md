@@ -448,13 +448,13 @@ workflows the actions launch, from `roles/site_portal_stack/files/workflows.yml`
 **Execute** on them, and **Approve** on the workflows with an approval node. Nothing more.
 
 - **It never deletes** a template or a workflow.
-- **A hand edit is kept.** On Run, the job saves a fingerprint per template or workflow in its AAP job artifact
-  `aap_setup_fingerprints`, keyed by `template/<name>` or `workflow/<name>`. Check publishes no map. Through the AAP API the job reads the ten most recent
-  completed jobs of this setup template. It takes the newest successful run that supplied a map and checks the fields
-  it manages in AAP, including the description and workflow nodes. A difference is listed as *CHANGED BY HAND* and
-  left alone. With no history or old marker, the job compares AAP with what it would write. An exact match becomes
-  its baseline. A difference is kept, as is a differing object missing from a known map (*NOT MADE BY THIS JOB*).
-  `portal_setup_overwrite: true` lets the job write it again.
+- **A hand edit is kept.** Run saves `aap_setup_fingerprints` under keys of the form
+  `<organization ID>/template/<name>` and `<organization ID>/workflow/<name>`. Entries for other organizations
+  carry forward. Setup searches all earlier successful Run jobs of this template for the latest map, with its own
+  CA and credential settings. A changed fingerprint is listed as *CHANGED BY HAND*. An existing object without a
+  fingerprint in its organization is listed as *NOT MADE BY THIS JOB*. Set `portal_setup_overwrite: true` to take
+  it over. An unreadable history page or job detail stops setup before any writes. A recovered map carries forward
+  unchanged. Check publishes no map.
 - **Upgrading from an older release.** When the managed fields still match their old fingerprint, Check says
   *would remove the old fingerprint text* and Run takes it off the description. A hand-edited object is left alone.
 - **Check first.** With Job type **Check** it only reads, and lists field by field what it would change.
@@ -504,7 +504,7 @@ portal_setup_schedules:
 - **Its schedule** (`portal_setup_scorecard_schedule`): `weekly Mon 06:00` by default, in `report_time_zone`. Use
   `daily 06:00` for every day, `""` for none.
 - **Workflow 40's check template** gets `stigman_ckl_import_mode: import` (`portal_setup_split_scorecard: true`) when
-  its mode is not set or is `import and scorecard`. Another mode there stays, and the job says so.
+  setup owns the template and its mode is unset or `import and scorecard`. A hand-edited or unowned source keeps all its Variables.
 - **Check** lists what it would make. A template or a schedule that is there is left as it is, so a time you changed
   stays. [CKL_IMPORT.md](CKL_IMPORT.md#turning-it-on).
 

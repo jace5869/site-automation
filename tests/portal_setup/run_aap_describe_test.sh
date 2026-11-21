@@ -117,7 +117,7 @@ OWN='{"aap_templates_description_owner": "OPS-TEAM", "aap_templates_description_
 # 1. Check: nothing written, every change listed, green
 run --check -e "$OWN"
 if [ "$rc" -eq 0 ] && [ "$(writes)" -eq 0 ] && grep -q "WOULD DESCRIBE - job 'Health check'" "$work/out.txt" \
-   && grep -q "WOULD DESCRIBE - job 'My Linux look' (catalog: 'Troubleshoot')" "$work/out.txt" \
+   && grep -q "KEPT (hand-written) - job 'My Linux look' (catalog: 'Troubleshoot')" "$work/out.txt" \
    && grep -q "WOULD DESCRIBE - job 'Patching' (catalog: 'Patch hosts')" "$work/out.txt" \
    && grep -q "KEPT (hand-written) - job 'STIG - drift report'" "$work/out.txt" \
    && grep -q "left to its own job - job 'ACT - triage finding'.*takes the old fingerprint text off on its next Run" "$work/out.txt" \
@@ -140,7 +140,7 @@ else fail "Check" "$(cat "$work/out.txt")"; fi
 
 # 2. the run: written; the renamed one by its playbook; each of the two of one playbook; the Contact line from the settings
 run -e "$OWN"
-if [ "$rc" -eq 0 ] && [ "$(desc job_templates 100)" = "$(want hc)" ] && [ "$(desc job_templates 101)" = "$(want ts)" ] \
+if [ "$rc" -eq 0 ] && [ "$(desc job_templates 100)" = "$(want hc)" ] && [ "$(desc job_templates 101)" = "** Does: an older line of ours" ] \
    && [ "$(desc job_templates 103)" = "$(want sn)" ] && [ "$(desc job_templates 104)" = "$(want snv)" ] \
    && [ "$(desc job_templates 106)" = "$(want patch)" ] && [ "$(desc workflow_job_templates 200)" = "$(want sw)" ] \
    && [ "$(desc job_templates 102)" = "Written by our team: runs Mondays" ] && [ "$(desc job_templates 105)" = "Ours, not the repository's" ] \
