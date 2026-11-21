@@ -24,6 +24,47 @@ reads other history from the log file. Portal nginx compresses static assets onl
 The report website supports gzip and static file ETags. The portal image requires Python 3.8 or later.
 
 To set up: run Site portal - deploy.
+## 1.96.1 — 2026-11-21
+
+**Nothing to set up.**
+
+**The SolarWinds reader reads SolarWinds itself too, for a few nodes** (`plugins/module_utils/site_swis_db.py`).
+
+- `apps_live(client, node_ids)`: those nodes' SAM applications and their components that are not up, read from
+  SolarWinds.
+- `alerts_live(client, node_ids)`: those nodes' active alerts, read from SolarWinds.
+- They give exactly what `apps_for()` and `alerts_for()` give from the snapshot: the same keys, values and order. A
+  report that has no report database draws the same section.
+- Each column as this Orion has it (`Metadata.Property`). An Orion without SAM: none, and the reason in `not_read`.
+- `interfaces_for(conn, snap_id, node_ids)`: the interfaces the snapshot has on those nodes (status, speed, % in and
+  out, errors and discards in the last hour). Only the interfaces on NPM's links are in the snapshot.
+- `nodes_for_all(conn, snap_id, names)`: every node that matches a name or an IP, with how it matched (name, ip, other
+  ip). Two nodes with one short name, or a cluster's address on several nodes, are seen.
+- `alerts_for()` orders alerts of the same time by their ID, so both readers agree.
+- **1.96.0's review, fixed:**
+  - Events after an outage longer than `solarwinds_event_hours` are no longer lost. Later runs read every event after
+    the newest kept, and the last 10 minutes before it again. Only `solarwinds_db_event_days` bounds it; an older gap
+    is said.
+  - Two SolarWinds never mix: each event row carries its SolarWinds (`sw_event.orion`), each has its own newest
+    event, and `events_between()` reads the newest snapshot's only. A report given another address than the snapshot's
+    reads SolarWinds itself and says why (`answer(..., orion=)`).
+  - SolarWinds not saying its columns (`Metadata.Property`) is no longer a whole snapshot with every node "Not placed":
+    the job is red and the row has `ok = 0`. A snapshot without the site or point property a report names is not
+    served.
+  - Smaller: a time with an offset is turned into UTC; a snapshot's age is on the database's clock; a row read twice is
+    written once; the lock is per database; another run holding the lock while the snapshot is older than
+    `solarwinds_db_max_age` is red; a failed clean-up after the snapshot is kept is a warning; a long-lived session
+    sees the newest snapshot; no account or host in a report's reason.
+  - The second review (fixed too): `solarwinds_db_max_age: 0` served a snapshot of any age; now 0 is SolarWinds itself
+    every time. A snapshot cut at `solarwinds_snapshot_max_nodes`, or with more links than `netmap_max_nodes` x 20, is
+    not served (a read of SolarWinds would give another map). A node custom property named Location or Auto is never
+    read by either path. A report reads a snapshot in one read-only transaction, and a snapshot missing nodes is a
+    reason, never half a map. Alerts and components are paged by their id.
+  - The tables change (`sw_event.orion`, its key). 1.96.0 was not released, so its version stays 1.
+- Tests: `tests/test_solarwinds_snapshot.py` (Live: both readers equal for the same fake SolarWinds, only the nodes
+  asked, no SAM, not reached); `tests/solarwinds/run_snapshot_test.sh` compares them against MySQL 8.4 and MariaDB
+  10.11.
+
 ## 1.96.0 — 2026-11-21
 
 **To set up: the job template *SolarWinds - snapshot*, with the "SolarWinds (read-only)" and "Report database"

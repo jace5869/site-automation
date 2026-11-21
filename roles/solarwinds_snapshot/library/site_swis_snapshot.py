@@ -48,6 +48,7 @@ options:
   keep_days: {description: "Snapshot rows (the counts) kept this many days (0 = always).", type: int, default: 400}
   event_days: {description: "Events kept this many days (0 = always).", type: int, default: 400}
   job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
+  max_age: {description: "1.96.1: minutes the newest whole snapshot may be old (solarwinds_db_max_age) - another run holding the lock while it is older: red.", type: int, default: 20}
 author: site automation
 '''
 
@@ -90,7 +91,7 @@ def main():
                            chunk=dict(type="int", default=500), max_nodes=dict(type="int", default=20000),
                            max_rows=dict(type="int", default=50000), event_hours=dict(type="int", default=24),
                            keep_snapshots=dict(type="int", default=12), keep_days=dict(type="int", default=400),
-                           event_days=dict(type="int", default=400), job=dict(type="int", default=0)),
+                           event_days=dict(type="int", default=400), job=dict(type="int", default=0), max_age=dict(type="int", default=20)),
         supports_check_mode=True)
     p = module.params
     env = os.environ
@@ -128,43 +129,65 @@ def main():
         conn, res["tls"] = db.connect(p)
     except Exception as e:      # noqa: BLE001 - the one thing this job is for: red, with what to change
         module.fail_json(msg="The report database %s could not be reached: %s" % (where, db.explain(e, p)), **res)
+    def held(where_):
+        """Another run holds the lock: green while the newest whole snapshot is fresh, red when it is older than max_age
+        (1.96.1, review P2-9: a run stuck with the lock would otherwise be green for ever)."""
+        try:
+            s = swdb.latest(conn)
+        except Exception:        # noqa: BLE001
+            s = None
+        shut(conn)
+        res["skipped_lock"] = True
+        age = None if s is None else s["age_seconds"] // 60
+        if p["max_age"] > 0 and (age is None or age > p["max_age"]):
+            module.fail_json(msg="Another SolarWinds snapshot run holds the database lock (%s.sw_snapshot)%s, and the newest whole snapshot is %s "
+                                 "(solarwinds_db_max_age: %d min): is a run stuck? Look at the template's running jobs."
+                                 % (p["database"], where_, "missing" if age is None else "%d min old" % age, p["max_age"]), **res)
+        module.warn("Another SolarWinds snapshot run is writing (the database lock %s.sw_snapshot is held)%s: this run wrote nothing. "
+                    "Turn off Concurrent jobs on the template." % (p["database"], where_))
+        res["ok"] = True
+        module.exit_json(**res)
+
     try:
+        # 1.96.1 (review P2-9): a session left behind ends within half an hour, and its lock with it
+        conn.cursor().execute("SET SESSION wait_timeout = 1800")
         if not swdb.lock(conn):
-            shut(conn)
-            module.warn("Another SolarWinds snapshot run is writing (the database lock %s is held): this run wrote nothing. "
-                        "Turn off Concurrent jobs on the template." % swdb.LOCK)
-            res["ok"] = True
-            res["skipped_lock"] = True
-            module.exit_json(**res)
+            held("")
         there, res["created"] = swdb.schema(conn, p["create"] and not module.check_mode)
         if not there:
             shut(conn)
             module.fail_json(msg="The SolarWinds tables are not in %s%s - make them once, docs/REPORT_DATABASE.md (The SolarWinds "
                                  "snapshot, By hand)" % (where, " (check mode: nothing made)" if module.check_mode and p["create"]
                                                          else " (solarwinds_db_create: false)"), **res)
-        after = swdb.newest_event(conn)
+        orion = swdb.orion_key(client.url)
+        after, after_at = swdb.newest_event(conn, orion)
     except Exception as e:      # noqa: BLE001
         shut(conn)
         module.fail_json(msg="The report database %s: %s" % (where, db.explain(e, p)), **res)
     snap = swdb.read_swis(client, {"properties": props, "skip": p["skip_properties"], "parts": p["parts"], "page": p["page"],
                                    "chunk": p["chunk"], "max_nodes": p["max_nodes"], "max_rows": p["max_rows"],
-                                   "events_after": after, "event_hours": p["event_hours"]})
+                                   "events_after": after, "events_after_at": after_at, "event_hours": p["event_hours"],
+                                   "event_days": p["event_days"]})
     raw = snap["raw"]
     res.update(seconds=snap.get("seconds", 0), queries=snap.get("queries", 0), version=raw.get("version") or {},
                not_read=(raw.get("not_read") or []) + (snap.get("not_read") or []))
+    why_not = snap.get("failed") or raw.get("error") or ""
     if module.check_mode:
         shut(conn)
         rows = swdb.to_rows(snap, 0) if raw.get("reachable") else None
-        res["ok"] = bool(raw.get("reachable"))
+        res["ok"] = bool(raw.get("reachable")) and not snap.get("failed")
         res["counts"] = swdb.counts(rows, snap) if rows else {}
-        if not raw.get("reachable"):
-            module.fail_json(msg="SolarWinds could not be read: %s" % raw.get("error"), **res)
+        if not res["ok"]:
+            module.fail_json(msg="SolarWinds could not be read: %s" % why_not, **res)
         module.exit_json(**res)
     try:
+        # 1.96.1 (review P2-9): the read may take minutes - a session the server closed meanwhile is opened again, and the
+        # lock taken again (another run may have it now: then this one keeps nothing)
+        conn.ping(reconnect=True)
+        if not swdb.lock(conn):
+            held(" (taken while this run read SolarWinds)")
         w = swdb.write(conn, snap, p["job"])
         res.update(snap_id=w["snap_id"], ok=w["ok"], counts=w["counts"], changed=True)
-        if w["ok"]:
-            res["pruned"] = swdb.prune(conn, p["keep_snapshots"], p["keep_days"], p["event_days"])
     except Exception as e:      # noqa: BLE001 - a read-only account, a full disk: nothing of this run is kept
         try:
             conn.rollback()
@@ -173,11 +196,20 @@ def main():
         swdb.unlock(conn)
         shut(conn)
         module.fail_json(msg="The report database %s: this snapshot was not kept: %s" % (where, db.explain(e, p)), **res)
+    if res["ok"]:
+        try:                    # 1.96.1 (review P2-10): the snapshot is kept - a failed clean-up says so, never "not kept"
+            res["pruned"] = swdb.prune(conn, p["keep_snapshots"], p["keep_days"], p["event_days"])
+        except Exception as e:  # noqa: BLE001
+            try:
+                conn.rollback()
+            except Exception:   # noqa: BLE001
+                pass
+            module.warn("The snapshot was kept, but deleting the older rows failed: %s. The next run tries again." % db.explain(e, p))
     swdb.unlock(conn)
     shut(conn)
     if not res["ok"]:
         module.fail_json(msg="SolarWinds could not be read: %s. The report database has a row saying so (sw_snapshot, ok 0); "
-                             "the reports go on with the last whole snapshot until solarwinds_db_max_age." % raw.get("error"), **res)
+                             "the reports go on with the last whole snapshot until solarwinds_db_max_age." % why_not, **res)
     module.exit_json(**res)
 
 

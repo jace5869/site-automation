@@ -85,3 +85,7 @@
 ## the CA file (PEM) SolarWinds' certificate is checked with; "" = the execution environment's own
 ## trust
 # netmap_ca_path: ""
+
+## minutes a snapshot may be old for a report (all.yml: every report reads it); 0 = never the
+## snapshot
+# solarwinds_db_max_age: 20

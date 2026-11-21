@@ -1123,11 +1123,17 @@ sees one whole read, never half of one.
 
 - The state tables keep the last `solarwinds_db_keep_snapshots` (12, one hour at a run every 5 minutes).
 - The rows of `sw_snapshot` itself are kept `solarwinds_db_keep_days` (400). They are a cheap trend of the counts.
-- `sw_event` is one row per SolarWinds event. The first run reads the last `solarwinds_event_hours` (24). Later runs
-  read only the events after the newest kept. Events are kept `solarwinds_db_event_days` (400), so ticket insights can ask whether SolarWinds saw an
-  incident coming. 3,000 events a day for 400 days take under 1 GB.
+- `sw_event` is one row per SolarWinds event, with the SolarWinds it came from (`orion`, its address's host and port).
+  - The first run reads the last `solarwinds_event_hours` (24).
+  - Later runs read every event after the newest kept, however long the job was away (1.96.1). The last 10 minutes
+    before it are read again, for an event SolarWinds wrote late.
+  - Each SolarWinds has its own newest event. A new address, or a rebuilt Orion that counts its events from 1 again,
+    loses nothing.
+  - Events are kept `solarwinds_db_event_days` (400), so ticket insights can ask whether SolarWinds saw an incident
+    coming. A gap older than that is said in the job output. 3,000 events a day for 400 days take under 1 GB.
 - Two runs never write at once: a run takes a database lock first. Another run holding it: this one keeps nothing,
-  says so, and stays green.
+  says so, and stays green. It is red when the newest whole snapshot is older than `solarwinds_db_max_age`: a run may
+  be stuck.
 
 Why not deltas: a report would then have to rebuild the state. A snapshot is about 10,000 rows for 1,000 nodes, which
 the database writes in a second.
@@ -1137,9 +1143,12 @@ the database writes in a second.
 | | |
 |---|---|
 | SolarWinds not reached | the job is red. A row in `sw_snapshot` says so (`ok = 0`, the reason). The reports go on with the last whole snapshot |
+| SolarWinds does not say which columns it has (`Metadata.Property`) | the same: red, a row with `ok = 0`. Without them the sites and points would be lost |
 | The database not reached | the job is red, with what to change |
 | A part not read (alerts, SAM) | said in the job output, the rest is kept, green |
 | A snapshot older than `solarwinds_db_max_age` (20 min) | a report reads SolarWinds itself and says why |
+| A snapshot of another SolarWinds address than the report's | the same |
+| Deleting the older rows fails | the snapshot is kept, a warning says so, the next run tries again |
 | A dry run (Check) | reads SolarWinds and the database, writes nothing |
 
 Is it writing? As `report_reader`:
@@ -1159,6 +1168,15 @@ The reader is `plugins/module_utils/site_swis_db.py`.
   its short name, its DNS name or its IP.
 - `apps_for()` gives each node's SAM applications with their components that are not up, and how many each has ("2 of
   9 down"). On an Orion without SAM it gives none, and `part_note(snapshot, "app")` says so.
+- 1.96.1: `apps_live(client, node_ids)` and `alerts_live(client, node_ids)` read the same from SolarWinds itself, for
+  those nodes only. A report uses them when there is no report database. They give exactly what `apps_for()` and
+  `alerts_for()` give (a test checks it), so a report has one shape to draw.
+- 1.96.1: `interfaces_for(conn, snap_id, node_ids)` gives the interfaces the snapshot has on those nodes: status, speed,
+  % in and out, errors and discards in the last hour. The snapshot keeps only the interfaces on NPM's links, so a
+  server's network card is often not there.
+- 1.96.1: `nodes_for_all(conn, snap_id, names)` gives every node that matches a name or an IP, not only the first. A
+  report can then see two nodes with the same short name (in two domains), or one address on several nodes (a
+  cluster's). Each row says how it matched: `name`, `ip`, or `other ip` (one of the node's other addresses).
 
 The indexes are for those reads: a node by name or IP, a node's interfaces, alerts, applications and volumes, and the
 events of a time window or a node.
@@ -1308,6 +1326,7 @@ CREATE TABLE IF NOT EXISTS sw_alert_active (
 
 ```sql
 CREATE TABLE IF NOT EXISTS sw_event (
+  orion VARCHAR(255) NOT NULL,
   event_id BIGINT NOT NULL,
   event_time DATETIME NOT NULL,
   node_id BIGINT NULL,
@@ -1318,9 +1337,9 @@ CREATE TABLE IF NOT EXISTS sw_event (
   message VARCHAR(1000) NULL,
   acknowledged TINYINT NULL,
   snap_id BIGINT NOT NULL,
-  PRIMARY KEY (event_id),
-  KEY sw_event_time (event_time),
-  KEY sw_event_node (node_id, event_time)
+  PRIMARY KEY (orion, event_id),
+  KEY sw_event_time (orion, event_time),
+  KEY sw_event_node (orion, node_id, event_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
@@ -1431,7 +1450,7 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('solarwinds'
 | `solarwinds_db_keep_snapshots` | `12` | Whole snapshots kept |
 | `solarwinds_db_keep_days` | `400` | Days the snapshot rows (the counts) are kept. `0`: always |
 | `solarwinds_db_event_days` | `400` | Days events are kept. `0`: always |
-| `solarwinds_db_max_age` | `20` | Minutes a snapshot may be old for a report. In all.yml: every report reads it |
+| `solarwinds_db_max_age` | `20` | Minutes a snapshot may be old for a report. In all.yml: every report reads it. `0`: never the snapshot |
 
 ## TLS (optional)
 

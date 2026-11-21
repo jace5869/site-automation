@@ -80,10 +80,11 @@ CREATE = [
     "name VARCHAR(512) NULL, severity INT NULL, triggered_at DATETIME NULL, message VARCHAR(1000) NULL, acknowledged TINYINT NULL, "
     "entity_type VARCHAR(255) NULL, entity_caption VARCHAR(512) NULL, node_id BIGINT NULL, node_caption VARCHAR(512) NULL, "
     "PRIMARY KEY (snap_id, alert_active_id), KEY sw_alert_node (snap_id, node_id)) " + TABLE_OPTS,
-    "CREATE TABLE IF NOT EXISTS sw_event (event_id BIGINT NOT NULL, event_time DATETIME NOT NULL, node_id BIGINT NULL, "
-    "net_object_type VARCHAR(32) NULL, net_object_id BIGINT NULL, event_type INT NULL, type_name VARCHAR(255) NULL, "
-    "message VARCHAR(1000) NULL, acknowledged TINYINT NULL, snap_id BIGINT NOT NULL, "
-    "PRIMARY KEY (event_id), KEY sw_event_time (event_time), KEY sw_event_node (node_id, event_time)) " + TABLE_OPTS,
+    "CREATE TABLE IF NOT EXISTS sw_event (orion VARCHAR(255) NOT NULL, event_id BIGINT NOT NULL, event_time DATETIME NOT NULL, "
+    "node_id BIGINT NULL, net_object_type VARCHAR(32) NULL, net_object_id BIGINT NULL, event_type INT NULL, "
+    "type_name VARCHAR(255) NULL, message VARCHAR(1000) NULL, acknowledged TINYINT NULL, snap_id BIGINT NOT NULL, "
+    "PRIMARY KEY (orion, event_id), KEY sw_event_time (orion, event_time), KEY sw_event_node (orion, node_id, event_time)) "
+    + TABLE_OPTS,
     "CREATE TABLE IF NOT EXISTS sw_app (snap_id BIGINT NOT NULL, app_id BIGINT NOT NULL, node_id BIGINT NULL, name VARCHAR(512) NULL, "
     "status INT NULL, status_text VARCHAR(512) NULL, unmanaged TINYINT NULL, components INT NULL, components_not_up INT NULL, "
     "PRIMARY KEY (snap_id, app_id), KEY sw_app_node (snap_id, node_id), KEY sw_app_status (snap_id, status)) " + TABLE_OPTS,
@@ -120,7 +121,7 @@ COLS = {
                      "out_discards_hour", "in_errors_today", "out_errors_today"],
     "sw_alert_active": ["snap_id", "alert_active_id", "alert_id", "name", "severity", "triggered_at", "message", "acknowledged",
                         "entity_type", "entity_caption", "node_id", "node_caption"],
-    "sw_event": ["event_id", "event_time", "node_id", "net_object_type", "net_object_id", "event_type", "type_name", "message",
+    "sw_event": ["orion", "event_id", "event_time", "node_id", "net_object_type", "net_object_id", "event_type", "type_name", "message",
                  "acknowledged", "snap_id"],
     "sw_app": ["snap_id", "app_id", "node_id", "name", "status", "status_text", "unmanaged", "components", "components_not_up"],
     "sw_component": ["snap_id", "component_id", "app_id", "name", "kind", "status", "status_text", "value", "message"],
@@ -182,7 +183,14 @@ WANT = {
 }
 CUSTOM = "Orion.NodesCustomProperties"
 PARTS = ["node", "ip", "iface", "alert", "event", "app", "component", "volume", "vim"]
-UP_CODES = (1, 22)                       # Up, and "Up" for an external node (site_swis.STATUS)
+# each table's primary key (CREATE), for to_rows' one row per key
+PKEY = {"sw_node": ("snap_id", "node_id"), "sw_link": ("snap_id", "seq"), "sw_interface": ("snap_id", "interface_id"),
+        "sw_alert_active": ("snap_id", "alert_active_id"), "sw_event": ("orion", "event_id"), "sw_app": ("snap_id", "app_id"),
+        "sw_component": ("snap_id", "component_id"), "sw_volume": ("snap_id", "volume_id"), "sw_vim_host": ("snap_id", "host_id"),
+        "sw_vim_vm": ("snap_id", "vm_id")}
+UP_CODES = (1, 22)
+EVENT_OVERLAP = 200                      # EventIDs read again below the newest kept (an event committed late) ...
+EVENT_OVERLAP_MINUTES = 10               # ... of the last 10 minutes before it                       # Up, and "Up" for an external node (site_swis.STATUS)
 DOWN_CODES = (2, 12)
 
 
@@ -196,11 +204,40 @@ def iso(dt):
 
 
 def stamp(text):
-    """SWIS's '2026-11-21T09:00:05.1230000Z' (or a datetime) -> a naive UTC datetime, or None."""
+    """SWIS's '2026-11-21T09:00:05.1230000Z', '...+01:00' (or a datetime) -> a naive UTC datetime, or None. An offset is
+    turned into UTC (1.96.1, review P2-4: it was dropped)."""
     if isinstance(text, datetime.datetime):
-        return text.replace(tzinfo=None, microsecond=0)
-    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)", str(text or ""))
-    return datetime.datetime(*[int(x) for x in m.groups()]) if m else None
+        off = text.utcoffset()
+        return (text - off if off else text).replace(tzinfo=None, microsecond=0)
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)(?:\.\d+)?\s*(Z|[+-]\d\d:?\d\d)?", str(text or ""))
+    if not m:
+        return None
+    dt = datetime.datetime(*[int(x) for x in m.groups()[:6]])
+    z = m.group(7)
+    if z and z != "Z":
+        sign = -1 if z[0] == "-" else 1
+        dt -= sign * datetime.timedelta(hours=int(z[1:3]), minutes=int(z[-2:]))
+    return dt
+
+
+def orion_key(url):
+    """Which SolarWinds a snapshot is of: its address's host and port, lower case ('orion.example.mil:17774'). Two
+    spellings of one address are one Orion; another host or port is another (1.96.1, review P1-2)."""
+    t = str(url or "").strip().lower()
+    t = re.sub(r"^[a-z]+://", "", t).split("/", 1)[0].split("@")[-1]
+    if not t:
+        return ""
+    m = re.match(r"^(\[[^\]]+\]|[^:]+)(?::(\d+))?$", t)
+    if not m:
+        return t[:255]
+    return ("%s:%s" % (m.group(1), m.group(2) or site_swis.PORT))[:255]
+
+
+def short_error(e):
+    """A database error for a report's line: no account or host in it (1.96.1, review P2-12)."""
+    t = str(e).strip() or e.__class__.__name__
+    t = re.sub(r"'[^']*'@'[^']*'", "the account", t)
+    return re.sub(r"\s+", " ", t)[:300]
 
 
 def name_key(*names):
@@ -314,7 +351,9 @@ def read_swis(client, opts=None):
         props = sorted(p for p in (have or {}).get(CUSTOM, set()) if p not in CP_SYSTEM)
     else:
         props = [str(p).strip() for p in (want or []) if str(p).strip()]
-    props = [p for p in props if p not in skip and site_swis.IDENT.match(p)]
+    # never one named Location or Auto: collect() takes those for netmap_site_by's words (review b: the snapshot then
+    # listed a property it had not read)
+    props = [p for p in props if p not in skip and site_swis.IDENT.match(p) and p.lower() not in ("location", "auto")]
     before, client.calls = client.calls, 0      # collect()'s own count of queries, as the network map's read has it
     # discover off: collect() reads exactly these (1.95.0's discovery would add the ones in skip)
     raw = site_swis.collect(client, {"site_by": "Location", "properties": props, "discover": False, "page": page, "chunk": chunk,
@@ -322,6 +361,10 @@ def read_swis(client, opts=None):
     client.calls += before
     out = {"raw": raw, "props": [p for p in props if not any(x.get("what") == "custom property %s" % p for x in raw.get("not_read") or [])],
            "worldmap": any(n.get("wm") is not None for n in raw.get("nodes") or []), "extra": extra, "not_read": not_read}
+    if raw.get("reachable") and have is None:
+        # 1.96.1 (review P1-3): without the columns this Orion has, the custom properties (the sites, the points) and the
+        # other tables are not read: never a whole snapshot - written with ok 0, the reports keep the last whole one
+        out["failed"] = "which columns this Orion has could not be read (Metadata.Property): %s" % not_read[0]["why"].split(" - ")[0]
     if not raw.get("reachable") or have is None:
         out.update(seconds=round(time.time() - started, 1), queries=client.calls)
         return out
@@ -348,6 +391,28 @@ def read_swis(client, opts=None):
             not_read.append({"what": "%s past %d rows" % (PART_WORDS.get(p, p), max_rows), "why": "only the first were kept (solarwinds_snapshot_max_rows)"})
         return _rows(rows, cols)
 
+    def keyset(p, where="", params=None):
+        """1.96.1 (review d): page by the id (WHERE id > @last ORDER BY id), never by row numbers - a row that moves
+        mid-read is neither read twice nor skipped."""
+        entity, cols = _pick(have, p)
+        key, got, last = cols[0][1], [], None
+        while True:
+            w, prm = ([where] if where else []), dict(params or {})
+            if last is not None:
+                w.append("%s > @last" % key)
+                prm["last"] = last
+            rows = client.query("SELECT TOP %d %s FROM %s%s ORDER BY %s" % (page, _select(cols), entity,
+                                                                         (" WHERE " + " AND ".join(w)) if w else "", key), prm)
+            got.extend(rows)
+            if len(got) >= max_rows:
+                if len(got) > max_rows or len(rows) == page:
+                    not_read.append({"what": "%s past %d rows" % (PART_WORDS.get(p, p), max_rows),
+                                     "why": "only the first were kept (solarwinds_snapshot_max_rows)"})
+                return _rows(got[:max_rows], cols)
+            if len(rows) < page or rows[-1].get(key) is None:
+                return _rows(got, cols)
+            last = rows[-1].get(key)
+
     def by_ids(p, ids):
         entity, cols = _pick(have, p)
         got, ids = [], sorted(set(i for i in ids if i is not None))
@@ -366,7 +431,7 @@ def read_swis(client, opts=None):
         extra["iface"] = by_ids("iface", ids) if ids else []
 
     def alerts():
-        act = paged("alert")
+        act = keyset("alert")
         objs = dict((r["object_id"], r) for r in by_ids("alert_object", [a["object_id"] for a in act])) if act else {}
         confs = {}
         try:
@@ -387,12 +452,29 @@ def read_swis(client, opts=None):
             names = dict((r["event_type"], r["name"]) for r in paged("event_type"))
         except _swis_errors() as e:
             not_read.append({"what": "the events' kinds (Orion.EventTypes)", "why": str(e)})
-        since = now_utc() - datetime.timedelta(hours=max(1, float(o.get("event_hours") or 24)))
         after = _int(o.get("events_after"))
-        where, params = "EventTime >= @since", {"since": iso(since)}
+        days = _int(o.get("event_days")) or 0
         if after:
-            where, params["after"] = where + " AND EventID > @after", after
+            # 1.96.1 (review P1-1): from the newest kept on, whatever its age - an outage of the job or of Orion longer
+            # than event_hours lost the gap's events. P2-5: EventIDs need not commit in order - the ones of the last
+            # EVENT_OVERLAP_MINUTES before the newest kept are read again (the upsert keeps one of each). Only
+            # solarwinds_db_event_days (what the database keeps) bounds it, and a gap older than that is said.
+            last = stamp(o.get("events_after_at"))
+            floor = now_utc() - datetime.timedelta(days=days) if days > 0 else None
+            since = last - datetime.timedelta(minutes=EVENT_OVERLAP_MINUTES) if last is not None else None
+            if floor is not None and (since is None or since < floor):
+                since = floor
+            where, params = "EventID > @after", {"after": max(0, after - EVENT_OVERLAP)}
+            if since is not None:
+                where, params["since"] = where + " AND EventTime >= @since", iso(since)
+            if last is not None and floor is not None and last < floor:
+                not_read.append({"what": "the events between %s and %s" % (iso(last), iso(floor)),
+                                 "why": "older than solarwinds_db_event_days (%d): the database would not keep them" % days})
+        else:
+            since = now_utc() - datetime.timedelta(hours=max(1, float(o.get("event_hours") or 24)))
+            where, params = "EventTime >= @since", {"since": iso(since)}
         rows = paged("event", where, params)
+        out["events_after"] = after or 0
         for r in rows:
             r["type_name"] = names.get(r.get("event_type"))
         extra["event"] = rows
@@ -401,7 +483,7 @@ def read_swis(client, opts=None):
         extra["app"] = paged("app")
 
     def components():
-        rows = [c for c in paged("component", "Status <> 1") if _int(c.get("status")) not in UP_CODES]
+        rows = [c for c in keyset("component", "Status <> 1") if _int(c.get("status")) not in UP_CODES]
         extra["component"] = rows
         # every application's count of components ("2 of 9 down"): one query, grouped by SolarWinds
         total = {}
@@ -467,6 +549,7 @@ def core_meta(snap):
 def to_rows(snap, snap_id):
     """{table: [tuple in COLS order]} for a read that reached SolarWinds."""
     raw, ex = snap["raw"], snap.get("extra") or {}
+    orion = orion_key(raw.get("url"))
     more = dict((r.get("node_id"), r) for r in ex.get("node") or [])
     ips = {}
     for r in ex.get("ip") or []:
@@ -507,7 +590,7 @@ def to_rows(snap, snap_id):
         t = stamp(e.get("event_time"))
         if t is None or _int(e.get("event_id")) is None:
             continue
-        out["sw_event"].append((_int(e["event_id"]), t, _int(e.get("node_id")), _cut(e.get("net_object_type"), 32),
+        out["sw_event"].append((orion, _int(e["event_id"]), t, _int(e.get("node_id")), _cut(e.get("net_object_type"), 32),
                                 _int(e.get("net_object_id")), _int(e.get("event_type")), _cut(e.get("type_name"), 255),
                                 _cut(e.get("message"), 1000), _flag(e.get("acknowledged")), snap_id))
     for a in ex.get("app") or []:
@@ -532,7 +615,15 @@ def to_rows(snap, snap_id):
                                  name_key(v.get("name")), _cut(v.get("power_state"), 64), _int(v.get("status")), _float(v.get("cpu_pct")),
                                  _float(v.get("mem_pct")), _cut(v.get("ip"), 64), _cut(v.get("guest_state"), 64)))
     for t in out:                        # a row without its key (SolarWinds gave none) is never written
-        out[t] = [r for r in out[t] if r[1] is not None]
+        ix = [COLS[t].index(c) for c in PKEY[t]]
+        seen, keep = set(), []
+        for r in out[t]:
+            k = tuple(r[i] for i in ix)
+            if any(x is None for x in k) or k in seen:
+                continue                 # 1.96.1 (review P2-7): a row read twice (paged while it moved) once - never a PK error
+            seen.add(k)
+            keep.append(r)
+        out[t] = keep
     return out
 
 
@@ -545,7 +636,8 @@ def counts(rows, snap):
     return {"nodes": len(nodes), "nodes_down": sum(1 for r in nodes if word(r) == site_swis.DOWN),
             "nodes_warning": sum(1 for r in nodes if word(r) == site_swis.WARNING), "links": len(rows["sw_link"]),
             "interfaces": len(rows["sw_interface"]), "alerts": len(rows["sw_alert_active"]) if "alert" in snap.get("extra", {}) else None,
-            "events": len(rows["sw_event"]) if "event" in snap.get("extra", {}) else None,
+            # the new ones: an event read again (the overlap, review P2-5) is not counted twice
+            "events": sum(1 for r in rows["sw_event"] if r[1] > (snap.get("events_after") or 0)) if "event" in snap.get("extra", {}) else None,
             "apps": len(rows["sw_app"]) if "app" in snap.get("extra", {}) else None,
             "apps_down": sum(1 for r in rows["sw_app"] if r[app_st] in DOWN_CODES) if "app" in snap.get("extra", {}) else None,
             "components": len(rows["sw_component"]) if "component" in snap.get("extra", {}) else None,
@@ -606,23 +698,25 @@ def schema(conn, create):
 def lock(conn):
     """True when this session holds the writers' lock (GET_LOCK, at once or not at all): two runs never write together."""
     cur = conn.cursor()
-    cur.execute("SELECT GET_LOCK(%s, 0)", (LOCK,))
+    cur.execute("SELECT GET_LOCK(CONCAT(DATABASE(), '.sw_snapshot'), 0)")     # 1.96.1 (P2-8): per database
     r = cur.fetchone()
     return bool(r and r[0] == 1)
 
 
 def unlock(conn):
     try:
-        conn.cursor().execute("SELECT RELEASE_LOCK(%s)", (LOCK,))
+        conn.cursor().execute("SELECT RELEASE_LOCK(CONCAT(DATABASE(), '.sw_snapshot'))")
     except Exception:            # noqa: BLE001 - the session's end frees it too
         pass
 
 
-def newest_event(conn):
+def newest_event(conn, orion=""):
+    """(EventID, its time) of the newest event kept of this Orion (orion_key), or (0, None) - each Orion its own cursor
+    (1.96.1, review P1-2: a new Orion's EventIDs start again)."""
     cur = conn.cursor()
-    cur.execute("SELECT MAX(event_id) FROM sw_event")
+    cur.execute("SELECT event_id, event_time FROM sw_event WHERE orion = %s ORDER BY event_id DESC LIMIT 1", (orion,))
     r = cur.fetchone()
-    return int(r[0]) if r and r[0] is not None else 0
+    return (int(r[0]), r[1]) if r and r[0] is not None else (0, None)
 
 
 def _insert(cur, table, rows):
@@ -639,13 +733,20 @@ def _insert(cur, table, rows):
 def write(conn, snap, job=0, now=None, error=""):
     """One snapshot in one transaction -> {snap_id, ok, counts, rows}. A read that did not reach SolarWinds is a row of
     sw_snapshot with ok = 0 and the reason, nothing else."""
-    now = now or now_utc()
     raw = snap.get("raw") or {}
+    error = error or snap.get("failed") or ""
     ok = bool(raw.get("reachable")) and not error
-    read_at = stamp(raw.get("read_at")) or now
     cur = conn.cursor()
-    cur.execute("INSERT INTO sw_snapshot (read_at, job, ok, orion, error) VALUES (%s, %s, 0, %s, %s)",
-                (read_at, int(job or 0), _cut(raw.get("url") or "", 255), _cut(error or raw.get("error") or "", 1000) or None))
+    started = stamp(raw.get("read_at"))
+    if now is None and started is not None:
+        # 1.96.1 (review P2-6): read_at on the database's clock (now there less the read's own time), so a report's age
+        # (TIMESTAMPDIFF against UTC_TIMESTAMP()) never mixes this host's clock with the database's
+        took = max(0, int((now_utc() - started).total_seconds()))
+        cur.execute("INSERT INTO sw_snapshot (read_at, job, ok, orion, error) VALUES (DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s SECOND), %s, 0, %s, %s)",
+                    (took, int(job or 0), orion_key(raw.get("url")), _cut(error or raw.get("error") or "", 1000) or None))
+    else:
+        cur.execute("INSERT INTO sw_snapshot (read_at, job, ok, orion, error) VALUES (%s, %s, 0, %s, %s)",
+                    (started or now or now_utc(), int(job or 0), orion_key(raw.get("url")), _cut(error or raw.get("error") or "", 1000) or None))
     sid = int(cur.lastrowid)
     c, n = {}, 0
     if ok:
@@ -654,7 +755,7 @@ def write(conn, snap, job=0, now=None, error=""):
             _insert(cur, t, rows[t])
         n = sum(len(v) for v in rows.values())
         c = counts(rows, snap)
-    sets = dict(c, ok=1 if ok else 0, finished_at=now_utc(), seconds=snap.get("seconds"), queries=snap.get("queries"),
+    sets = dict(c, ok=1 if ok else 0, finished_at=now or now_utc(), seconds=snap.get("seconds"), queries=snap.get("queries"),
                 core=json.dumps(core_meta(snap), sort_keys=True) if ok else None,
                 not_read=json.dumps(snap.get("not_read") or []) if ok else None)
     keys = sorted(sets)
@@ -686,11 +787,17 @@ def prune(conn, keep_snapshots=12, keep_days=400, event_days=400, now=None):
 
 
 # ------------------------------------------------------------------------------------------------- reading it back
-def latest(conn, now=None):
-    """The newest whole snapshot: {snap_id, read_at, core, not_read, age_seconds, counts...}, or None."""
-    now = now or now_utc()
+def latest(conn, now=None, fresh=True):
+    """The newest whole snapshot: {snap_id, read_at, orion, core, not_read, age_seconds, counts...}, or None. age_seconds
+    on the database's clock (1.96.1, review P2-6), or against now when given."""
+    if fresh:
+        try:
+            conn.rollback()          # 1.96.1 (review P2-11): a long-lived session (the portal) sees the newest snapshot
+        except Exception:        # noqa: BLE001
+            pass
     cur = conn.cursor()
-    cur.execute("SELECT snap_id, read_at, core, not_read, nodes, alerts, events FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1")
+    cur.execute("SELECT snap_id, read_at, core, not_read, nodes, alerts, events, orion, TIMESTAMPDIFF(SECOND, read_at, UTC_TIMESTAMP()), links "
+                "FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1")
     r = cur.fetchone()
     if not r:
         return None
@@ -702,8 +809,9 @@ def latest(conn, now=None):
         nr = json.loads(r[3] or "[]")
     except ValueError:
         nr = []
+    age = (now - r[1]).total_seconds() if now is not None else (r[8] or 0)
     return {"snap_id": int(r[0]), "read_at": r[1], "core": core, "not_read": nr, "nodes": r[4], "alerts": r[5], "events": r[6],
-            "age_seconds": max(0, int((now - r[1]).total_seconds()))}
+            "orion": r[7] or "", "age_seconds": max(0, int(age)), "links": r[9]}
 
 
 def last_failure(conn):
@@ -788,6 +896,9 @@ def raw_from_db(conn, snap, opts=None):
     cur.execute("SELECT node_id, name, dns, ip, status_code, status_text, unmanaged, vendor, model, location, resp, loss, wm_lat, "
                 "wm_lon, props FROM sw_node WHERE snap_id = %s ORDER BY seq", (sid,))
     nodes = _dicts(cur)
+    if snap.get("nodes") is not None and len(nodes) != int(snap["nodes"]):
+        # 1.96.1 (review c): its rows deleted while it was read - never half a map that says it is whole
+        raise RuntimeError("snapshot %d has %d of its %d nodes (deleted while it was read)" % (sid, len(nodes), int(snap["nodes"])))
     cur.execute("SELECT src_node, src_if, dst_node, dst_if FROM sw_link WHERE snap_id = %s ORDER BY seq", (sid,))
     links = _dicts(cur)
     cur.execute("SELECT %s FROM sw_interface WHERE snap_id = %%s ORDER BY seq" % ", ".join(c for _, c in IF_RAW), (sid,))
@@ -795,30 +906,73 @@ def raw_from_db(conn, snap, opts=None):
     return raw_from_rows(snap["core"], nodes, links, ifaces, opts, iso(snap["read_at"]), snap["age_seconds"])
 
 
-def answer(opts=None, conn=None, client=None, max_age=1200, why=None, now=None):
-    """The network map's read: collect()'s dict, from the newest snapshot when it is at most max_age seconds old, else
+def begin_read(conn):
+    """A read-only transaction: every query after it sees one moment of the database (REPEATABLE READ), and a long-lived
+    session (the portal) sees the newest snapshot (1.96.1, review c and P2-11)."""
+    try:
+        conn.rollback()
+    except Exception:            # noqa: BLE001
+        pass
+    conn.cursor().execute("START TRANSACTION READ ONLY")
+
+
+def end_read(conn):
+    try:
+        conn.commit()
+    except Exception:            # noqa: BLE001
+        pass
+
+
+def answer(opts=None, conn=None, client=None, max_age=1200, why=None, now=None, orion=""):
+    """The network map's read: collect()'s dict, from the newest snapshot when it is at most max_age seconds old (None =
+    any age; 0 = never: SolarWinds itself every time), else
     from SolarWinds itself (client: a site_swis.Client, or a function that makes one; None = no live read). Always
     adds snapshot_at, age_seconds and source (db-snapshot or swis-live). why (a list): the reason it was not the
-    snapshot is appended. Raises nothing for the database's sake: a database that fails is a reason in why."""
+    snapshot is appended. Raises nothing for the database's sake: a database that fails is a reason in why.
+    orion (1.96.1, review P1-2): the SolarWinds address the caller would read - a snapshot of another is not served.
+    A snapshot without the custom property site_by, lat_property or lon_property names is not served either (P1-3)."""
     why = why if why is not None else []
+    o = dict(opts or {})
     if conn is not None:
         try:
-            s = latest(conn, now)
+            # 1.96.1 (review c): one read-only transaction - a snapshot pruned between latest() and its rows is never half read
+            begin_read(conn)
+            s = latest(conn, now, fresh=False)
+            cap = max(1, int(o.get("max_nodes") or 5000))
+            need = [str(o.get(k) or "").strip() for k in ("site_by", "lat_property", "lon_property")]
+            need = [x for x in need if x and x.lower() not in ("location", "auto")]
+            lacks = [x for x in need if s is not None and x not in ((s.get("core") or {}).get("props") or [])]
             if s is None:
                 why.append("the report database has no SolarWinds snapshot yet (the job SolarWinds - snapshot)")
-            elif max_age and s["age_seconds"] > max_age:
+            elif orion and orion_key(orion) and s.get("orion") and orion_key(orion) != s["orion"]:
+                why.append("the newest SolarWinds snapshot is of %s, not %s (the address of this template's credential or "
+                           "netmap_solarwinds_url)" % (s["orion"], orion_key(orion)))
+            elif lacks:
+                why.append("the newest SolarWinds snapshot has no node custom property %s (solarwinds_snapshot_properties or "
+                           "solarwinds_snapshot_skip_properties)" % ", ".join(lacks))
+            elif max_age is not None and max_age <= 0:
+                why.append("solarwinds_db_max_age is 0: SolarWinds itself every time")      # review a: 0 never serves the snapshot
+            elif max_age is not None and s["age_seconds"] > max_age:
                 why.append("the newest SolarWinds snapshot is %d min old (solarwinds_db_max_age: %d min)" % (s["age_seconds"] // 60, max_age // 60))
                 f = last_failure(conn)
                 if f:
                     why[-1] += "; the last snapshot run failed: %s" % (f[1] or "no reason kept")[:300]
+            elif (s.get("core") or {}).get("cut"):
+                # review b: the snapshot's own read stopped at solarwinds_snapshot_max_nodes - not what collect() reads
+                why.append("the newest SolarWinds snapshot was cut at solarwinds_snapshot_max_nodes")
+            elif (s.get("links") or 0) > cap * 20:
+                why.append("the newest SolarWinds snapshot has more links (%d) than netmap_max_nodes x 20 (%d)" % (s["links"], cap * 20))
             else:
-                return raw_from_db(conn, s, opts)
+                raw = raw_from_db(conn, s, opts)
+                end_read(conn)
+                return raw
+            end_read(conn)
         except Exception as e:  # noqa: BLE001 - no table, no grant, gone: said, then SolarWinds itself
-            why.append("the report database's SolarWinds snapshot could not be read: %s" % (str(e).strip() or e.__class__.__name__)[:300])
+            end_read(conn)
+            why.append("the report database's SolarWinds snapshot could not be read: %s" % short_error(e))
     if client is None:
         return None
     c = client() if callable(client) else client
-    o = dict(opts or {})
     raw = site_swis.collect(c, o)
     raw.update(snapshot_at=raw.get("read_at") or "", age_seconds=0, source=SWIS_LIVE)
     return raw
@@ -865,6 +1019,38 @@ def nodes_for(conn, snap_id, names):
     return out
 
 
+def nodes_for_all(conn, snap_id, names):
+    """Each host name or IP -> every node in the snapshot that matches it, so a caller can see two nodes with the same
+    short name (dc01 in two domains) or one IP on several nodes (a cluster's address). One query.
+    {name: [row, ...]} by node_id, [] when none; a row is nodes_for()'s plus matched_by: "name", "ip" (the node's
+    address) or "other ip" (one of its other addresses, Orion.NodeIPAddresses)."""
+    keys = dict((n, name_key(n)) for n in names or [] if name_key(n))
+    out = dict((n, []) for n in names or [])
+    if not keys:
+        return out
+    ks = sorted(set(keys.values()))
+    ipk = [k for k in ks if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", k) or ":" in k]
+    like = "".join(" OR ips LIKE %s" for _ in ipk)
+    cur = conn.cursor()
+    cur.execute("SELECT node_id, name, name_key, dns, ip, ips, status_code, status_text, unmanaged, last_poll, cpu_pct, mem_pct "
+                "FROM sw_node WHERE snap_id = %%s AND (name_key IN (%s) OR ip IN (%s)%s) ORDER BY node_id"
+                % (_ph(len(ks)), _ph(len(ks)), like), [snap_id] + ks + ks + ['%%"%s"%%' % k for k in ipk])
+    rows = _dicts(cur)
+    for n, k in keys.items():
+        for r in rows:
+            try:
+                other = [str(x).lower() for x in json.loads(r.get("ips") or "[]")]
+            except ValueError:
+                other = []
+            how = ("name" if r["name_key"] == k else "ip" if str(r["ip"] or "").lower() == k else
+                   "other ip" if k in other else "")
+            if how:
+                row = dict((c, r[c]) for c in r if c != "ips")
+                row.update(status=site_swis.status_of(r["status_code"], r["unmanaged"]), matched_by=how)
+                out[n].append(row)
+    return out
+
+
 def alerts_for(conn, snap_id, node_ids):
     """The active alerts on these nodes, newest first: {node_id: [{name, severity, triggered_at, message, entity_caption}]}."""
     ids = sorted(set(int(i) for i in node_ids or [] if i is not None))
@@ -873,7 +1059,7 @@ def alerts_for(conn, snap_id, node_ids):
         return out
     cur = conn.cursor()
     cur.execute("SELECT node_id, name, severity, triggered_at, message, entity_type, entity_caption, acknowledged FROM sw_alert_active "
-                "WHERE snap_id = %%s AND node_id IN (%s) ORDER BY triggered_at DESC" % _ph(len(ids)), [snap_id] + ids)
+                "WHERE snap_id = %%s AND node_id IN (%s) ORDER BY triggered_at DESC, alert_active_id DESC" % _ph(len(ids)), [snap_id] + ids)
     for r in _dicts(cur):
         out.setdefault(int(r["node_id"]), []).append(r)
     return out
@@ -888,28 +1074,187 @@ def apps_for(conn, snap_id, node_ids):
     out = dict((i, []) for i in ids)
     if not ids:
         return out
-    cur = conn.cursor()
-    cur.execute("SELECT app_id, node_id, name, status, status_text, unmanaged, components, components_not_up FROM sw_app "
-                "WHERE snap_id = %%s AND node_id IN (%s) ORDER BY name, app_id" % _ph(len(ids)), [snap_id] + ids)
-    apps = _dicts(cur)
+    begin_read(conn)                 # review c: the applications and their components of one moment
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT app_id, node_id, name, status, status_text, unmanaged, components, components_not_up FROM sw_app "
+                    "WHERE snap_id = %%s AND node_id IN (%s) ORDER BY name, app_id" % _ph(len(ids)), [snap_id] + ids)
+        apps = _dicts(cur)
+        comps = []
+        if apps:
+            aids = sorted(set(int(a["app_id"]) for a in apps))
+            cur.execute("SELECT component_id, app_id, name, kind, status, status_text, value, message FROM sw_component "
+                        "WHERE snap_id = %%s AND app_id IN (%s) ORDER BY name, component_id" % _ph(len(aids)), [snap_id] + aids)
+            comps = _dicts(cur)
+    finally:
+        end_read(conn)
+    return _apps_out(out, apps, comps)
+
+
+def _apps_out(out, apps, comps):
+    """apps_for()'s and apps_live()'s answer from rows as the database holds them (one shape for both)."""
     by = {}
-    for a in apps:
+    for a in sorted(apps, key=lambda a: (a["name"] or "", int(a["app_id"]))):
         app = {"app_id": int(a["app_id"]), "app": a["name"] or "", "status": site_swis.status_of(a["status"], a["unmanaged"]),
                "status_code": a["status"], "status_text": a["status_text"] or "", "unmanaged": bool(a["unmanaged"]),
                "components": a["components"], "components_not_up": []}
         by[app["app_id"]] = app
         out.setdefault(int(a["node_id"]), []).append(app)
-    if by:
-        aids = sorted(by)
-        cur.execute("SELECT component_id, app_id, name, kind, status, status_text, value, message FROM sw_component "
-                    "WHERE snap_id = %%s AND app_id IN (%s) ORDER BY name, component_id" % _ph(len(aids)), [snap_id] + aids)
-        for c in _dicts(cur):
+    for c in sorted(comps, key=lambda c: (c["name"] or "", int(c["component_id"]))):
+        if int(c["app_id"]) in by:
             by[int(c["app_id"])]["components_not_up"].append(
                 {"component_id": int(c["component_id"]), "name": c["name"] or "", "kind": c["kind"] or "",
                  "status": site_swis.status_of(c["status"]), "status_code": c["status"], "status_text": c["status_text"] or "",
                  "value": _num_back(c["value"]), "message": c["message"] or ""})
-        for a in by.values():
-            a["components_not_up"].sort(key=lambda c: site_swis.RANK.get(c["status"], 9))
+    for a in by.values():
+        a["components_not_up"].sort(key=lambda c: site_swis.RANK.get(c["status"], 9))
+    return out
+
+
+def _ids_of(node_ids):
+    return sorted(set(int(i) for i in node_ids or [] if i is not None))
+
+
+def _live_pick(client, parts, not_read):
+    """{part: (entity, cols)} for the parts this Orion has (Metadata.Property, one query); a part it lacks is left out
+    and said in not_read (absent). Raises SwisError when SolarWinds cannot be read."""
+    have = _have(client, [WANT[p][0] for p in parts])
+    got = {}
+    for p in parts:
+        try:
+            got[p] = _pick(have, p)
+        except _swis_errors() as e:
+            if getattr(e, "kind", "") != "absent":
+                raise
+            if not_read is not None and p in PART_WORDS:
+                not_read.append({"what": PART_WORDS[p], "why": str(e), "absent": True})
+    return got
+
+
+def _by_ids(client, entity, cols, key, ids, chunk=500, where=""):
+    """Rows of entity whose column key (a SWIS name) is in ids, in chunks: [{our key: value}]."""
+    got = []
+    for i in range(0, len(ids), chunk):
+        got.extend(client.query("SELECT %s FROM %s WHERE %s IN @ids%s" % (_select(cols), entity, key, where), {"ids": ids[i:i + chunk]}))
+    return _rows(got, cols)
+
+
+def apps_live(client, node_ids, not_read=None):
+    """apps_for()'s answer read from SolarWinds itself (a site_swis.Client), for these nodes only: the same keys, values
+    and order. Each column as this Orion has it (Metadata.Property). An Orion without SAM: [] for each node, said in
+    not_read (a list) as the snapshot says it. Raises site_swis.SwisError when SolarWinds cannot be read."""
+    ids = _ids_of(node_ids)
+    out = dict((i, []) for i in ids)
+    if not ids:
+        return out
+    got = _live_pick(client, ["app", "component"], not_read)
+    if "app" not in got:
+        return out
+    entity, cols = got["app"]
+    col = dict(cols)
+    if "node_id" not in col:
+        if not_read is not None:
+            not_read.append({"what": PART_WORDS["app"], "why": "not on this Orion (%s has no NodeID)" % entity, "absent": True})
+        return out
+    apps = [a for a in _by_ids(client, entity, cols, col["node_id"], ids) if _int(a.get("app_id")) is not None]
+    rows, comps, aids = [], [], sorted(set(_int(a["app_id"]) for a in apps))
+    total = None
+    if aids and "component" in got:
+        centity, ccols = got["component"]
+        ccol = dict(ccols)
+        if "app_id" in ccol:
+            raw = _by_ids(client, centity, ccols, ccol["app_id"], aids, where=" AND %s <> 1" % ccol["status"])
+            comps = [c for c in raw if _int(c.get("status")) not in UP_CODES and _int(c.get("component_id")) is not None]
+            total = {}
+            for i in range(0, len(aids), 500):
+                for r in client.query("SELECT %s, COUNT(%s) AS Components FROM %s WHERE %s IN @ids GROUP BY %s"
+                                      % (ccol["app_id"], ccol["component_id"], centity, ccol["app_id"], ccol["app_id"]),
+                                      {"ids": aids[i:i + 500]}):
+                    total[_int(r.get(ccol["app_id"]))] = _int(r.get("Components"))
+    down = {}
+    for c in comps:
+        down[_int(c.get("app_id"))] = down.get(_int(c.get("app_id")), 0) + 1
+    for a in apps:                     # as the snapshot writes them (to_rows), so both paths give the same values
+        aid = _int(a["app_id"])
+        rows.append({"app_id": aid, "node_id": _int(a.get("node_id")), "name": _cut(a.get("name"), 512), "status": _int(a.get("status")),
+                     "status_text": _cut(a.get("status_text"), 512), "unmanaged": _flag(a.get("unmanaged")),
+                     "components": None if total is None else total.get(aid, 0), "components_not_up": down.get(aid, 0)})
+    crow = [{"component_id": _int(c["component_id"]), "app_id": _int(c.get("app_id")), "name": _cut(c.get("name"), 512),
+             "kind": _cut(c.get("kind"), 255), "status": _int(c.get("status")), "status_text": _cut(c.get("status_text"), 512),
+             "value": _float(c.get("value")), "message": _cut(c.get("message"), 1000)} for c in comps]
+    return _apps_out(out, [r for r in rows if r["node_id"] in out], crow)
+
+
+def alerts_live(client, node_ids, not_read=None):
+    """alerts_for()'s answer read from SolarWinds itself (a site_swis.Client), for these nodes only: the same keys, values
+    and order (newest first). Never who acknowledged it. Raises site_swis.SwisError when SolarWinds cannot be read."""
+    ids = _ids_of(node_ids)
+    out = dict((i, []) for i in ids)
+    if not ids:
+        return out
+    got = _live_pick(client, ["alert", "alert_object", "alert_config"], not_read)
+    if "alert" not in got or "alert_object" not in got:
+        return out
+    oent, ocols = got["alert_object"]
+    ocol = dict(ocols)
+    if "node_id" not in ocol:
+        return out
+    objs = dict((o["object_id"], o) for o in _by_ids(client, oent, ocols, ocol["node_id"], ids) if o.get("object_id") is not None)
+    if not objs:
+        return out
+    aent, acols = got["alert"]
+    act = _by_ids(client, aent, acols, dict(acols)["object_id"], sorted(objs))
+    confs = {}
+    if "alert_config" in got:
+        cent, ccols = got["alert_config"]
+        try:
+            aids = sorted(set(o["alert_id"] for o in objs.values() if o.get("alert_id") is not None))
+            confs = dict((r["alert_id"], r) for r in _by_ids(client, cent, ccols, dict(ccols)["alert_id"], aids)) if aids else {}
+        except _swis_errors() as e:
+            if not_read is not None:
+                not_read.append({"what": "the alerts' names (Orion.AlertConfigurations)", "why": str(e)})
+    rows = []
+    for a in act:
+        ob = objs.get(a.get("object_id")) or {}
+        cf = confs.get(ob.get("alert_id")) or {}
+        node = _int(ob.get("node_id"))
+        if node not in out or _int(a.get("alert_active_id")) is None:
+            continue
+        rows.append((stamp(a.get("triggered_at")), _int(a.get("alert_active_id")),
+                     {"node_id": node, "name": _cut(cf.get("name"), 512), "severity": _int(cf.get("severity")),
+                      "triggered_at": stamp(a.get("triggered_at")), "message": _cut(a.get("message"), 1000),
+                      "entity_type": _cut(ob.get("entity_type"), 255), "entity_caption": _cut(ob.get("entity_caption"), 512),
+                      "acknowledged": _flag(a.get("acknowledged"))}))
+    old = datetime.datetime(1, 1, 1)
+    for _t, _i, r in sorted(rows, key=lambda x: (x[0] or old, x[1]), reverse=True):
+        out[r["node_id"]].append(r)
+    return out
+
+
+def interfaces_for(conn, snap_id, node_ids):
+    """The interfaces the snapshot has on these nodes: {node_id: [{interface_id, name, caption, status, status_code, speed,
+    in_pct, out_pct, errors, discards}]} by name. errors and discards: in + out in the last hour (None when not read).
+    The snapshot keeps only the interfaces on NPM's links (the network map's), so a server's network card is often not
+    there: []. One query."""
+    ids = _ids_of(node_ids)
+    out = dict((i, []) for i in ids)
+    if not ids:
+        return out
+    cur = conn.cursor()
+    cur.execute("SELECT interface_id, node_id, name, caption, status, speed, in_pct, out_pct, in_errors_hour, out_errors_hour, "
+                "in_discards_hour, out_discards_hour FROM sw_interface WHERE snap_id = %%s AND node_id IN (%s) "
+                "ORDER BY name, interface_id" % _ph(len(ids)), [snap_id] + ids)
+
+    def both(a, b):
+        return None if a is None and b is None else int(a or 0) + int(b or 0)
+    for r in _dicts(cur):
+        out.setdefault(int(r["node_id"]), []).append(
+            {"interface_id": int(r["interface_id"]), "name": r["name"] or "", "caption": r["caption"] or "",
+             "status": site_swis.status_of(r["status"]), "status_code": r["status"], "speed": _num_back(r["speed"]),
+             "in_pct": _num_back(r["in_pct"]), "out_pct": _num_back(r["out_pct"]),
+             "errors": both(r["in_errors_hour"], r["out_errors_hour"]), "discards": both(r["in_discards_hour"], r["out_discards_hour"])})
+    for v in out.values():
+        v.sort(key=lambda f: (f["name"], f["interface_id"]))
     return out
 
 
@@ -923,12 +1268,18 @@ def part_note(snap, part):
     return None
 
 
-def events_between(conn, start, end, node_ids=None, limit=2000):
-    """SolarWinds' events in [start, end] (naive UTC datetimes), oldest first, of these nodes (None = all)."""
+def events_between(conn, start, end, node_ids=None, limit=2000, orion=None):
+    """SolarWinds' events in [start, end] (naive UTC datetimes), oldest first, of these nodes (None = all) - of one Orion:
+    orion (orion_key), else the newest whole snapshot's (1.96.1, review P1-2: never two Orions' events mixed)."""
     cur = conn.cursor()
     sql = ("SELECT event_id, event_time, node_id, net_object_type, net_object_id, event_type, type_name, message FROM sw_event "
            "WHERE event_time >= %s AND event_time <= %s")
     args = [start, end]
+    if orion is None:
+        sql += " AND orion = (SELECT orion FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1)"
+    else:
+        sql += " AND orion = %s"
+        args.append(orion)
     ids = sorted(set(int(i) for i in node_ids or [] if i is not None)) if node_ids is not None else None
     if ids is not None:
         if not ids:

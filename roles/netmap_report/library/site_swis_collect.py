@@ -111,6 +111,7 @@ def main():
             "properties": p["properties"] + [h.get("value") for h in p["hierarchy"] if isinstance(h, dict) and h.get("from") == "property"],
             "page": p["page"], "chunk": p["chunk"], "max_nodes": p["max_nodes"]}
     why, raw = [], None
+    url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
     if p["db_host"].strip():               # 1.96.0: the report database's snapshot first
         if not site_report_db.HAS_PYMYSQL:
             why.append("the report database: " + site_report_db.NO_PYMYSQL)
@@ -120,9 +121,10 @@ def main():
             conn = None
             try:
                 conn, _tls = site_report_db.connect(dbp)
-                raw = site_swis_db.answer(opts, conn=conn, client=None, max_age=max(0, p["db_max_age"]) * 60, why=why)
+                # 1.96.1 (review P1-2): only a snapshot of the SolarWinds this template reads (its address, when it has one)
+                raw = site_swis_db.answer(opts, conn=conn, client=None, max_age=max(0, p["db_max_age"]) * 60, why=why, orion=url)
             except Exception as e:  # noqa: BLE001 - not reached, a login refused: said, then SolarWinds itself
-                why.append("the report database could not be reached: %s" % site_report_db.explain(e, dbp))
+                why.append("the report database could not be reached: %s" % site_swis_db.short_error(site_report_db.explain(e, dbp)))
             finally:
                 try:
                     if conn is not None:
@@ -132,7 +134,6 @@ def main():
     else:
         why.append("the report database is not used (no \"Report database\" credential on this template, or netmap_from_db: false)")
     user, password = env.get("SOLARWINDS_USERNAME", ""), env.get("SOLARWINDS_PASSWORD", "")
-    url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
     if raw is not None:
         client_url = url
     elif not user or not password:

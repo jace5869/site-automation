@@ -54,7 +54,8 @@ FAKE_SWIS_HIDE=Orion.APM.Application,Orion.APM.Component,Orion.VIM.Hosts,Orion.V
     "$py" "$repo/tests/netmap/fake_swis.py" $((port + 1)) "$work/fx.json" "$work/swis2.log" "$work/srv.pem" "$work/srv.key" & pids+=($!)
 echo '[]' > "$work/jobs.json"
 "$py" "$repo/tests/email/fake_aap.py" $((port + 3)) "$work/jobs.json" 2>"$work/aap.err" & pids+=($!)
-wait_port "$port"; wait_port $((port + 1)); wait_port $((port + 3))
+FAKE_SWIS_HIDE=Metadata.Property "$py" "$repo/tests/netmap/fake_swis.py" $((port + 4)) "$work/fx.json" "$work/swis4.log" "$work/srv.pem" "$work/srv.key" & pids+=($!)
+wait_port "$port"; wait_port $((port + 1)); wait_port $((port + 3)); wait_port $((port + 4))
 SW="SOLARWINDS_URL=https://127.0.0.1:$port SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_CA_PATH=$work/ca.pem"
 AAP="CONTROLLER_HOST=http://127.0.0.1:$((port + 3)) CONTROLLER_USERNAME=audit CONTROLLER_PASSWORD=pw"
 
@@ -209,7 +210,7 @@ EOPY
     [ "$(qr "SELECT COUNT(DISTINCT snap_id) FROM sw_node")" = 2 ] && [ "$(qr "SELECT MIN(snap_id) FROM sw_interface")" = 2 ] \
         && [ "$(qr "SELECT COUNT(*) FROM sw_snapshot")" = 3 ] && ok "  ...snapshots 2 and 3 have rows, the three snapshot rows stay" \
         || bad "  ...snapshots with rows: $(qr "SELECT COUNT(DISTINCT snap_id) FROM sw_node")"
-    "$py" - "$repo" "$dbport" "$rpw" <<'EOPY' && ok "  ...apps_for(): an application's components not up with value and message, \"2 of 9\"" || bad "  ...apps_for()"
+    "$py" - "$repo" "$dbport" "$rpw" <<'EOPY' && ok "  ...apps_for(): an application's components not up with value and message, \"2 of 9\"; nodes_for_all() by name, ip and other ip" || bad "  ...apps_for()"
 import sys, pymysql
 repo, dbport, rpw = sys.argv[1:4]
 sys.path.insert(0, repo + "/plugins/module_utils")
@@ -227,6 +228,40 @@ want = ("Down", 9, [("Component 1", "Down", 0, "Port 443 refused the connection"
 if got != want:
     print("    %r" % (got,))
     sys.exit(1)
+cur.execute("SELECT name, ip FROM sw_node WHERE snap_id = %s AND ips LIKE '%%,%%' ORDER BY node_id LIMIT 1", (snap["snap_id"],))
+name, ip = cur.fetchone()
+cur.execute("SELECT ips FROM sw_node WHERE snap_id = %s AND name = %s", (snap["snap_id"], name))
+other = [x for x in __import__("json").loads(cur.fetchone()[0]) if x != ip][0]
+every = site_swis_db.nodes_for_all(conn, snap["snap_id"], [name, ip, other, "nobody-here"])
+one = site_swis_db.nodes_for(conn, snap["snap_id"], [name])[name]
+seen = ([r["matched_by"] for r in every[name]], [r["matched_by"] for r in every[ip]], [r["matched_by"] for r in every[other]],
+        every["nobody-here"], every[name][0]["node_id"] == one["node_id"])
+if seen != (["name"], ["ip"], ["other ip"], [], True):
+    print("    nodes_for_all: %r" % (seen,))
+    sys.exit(1)
+EOPY
+    "$py" - "$repo" "$dbport" "$rpw" "$port" "$pw" "$work/ca.pem" <<'EOPY' && ok "  ...1.96.1: apps_live() and alerts_live() (SolarWinds itself) give exactly what apps_for() and alerts_for() give" || bad "  ...the live readers differ"
+import sys, pymysql
+repo, dbport, rpw, port, pw, ca = sys.argv[1:7]
+sys.path.insert(0, repo + "/plugins/module_utils")
+import site_swis_db
+sw = site_swis_db.site_swis
+conn = pymysql.connect(host="127.0.0.1", port=int(dbport), user="report_reader", password=rpw, database="site_reports", ssl_disabled=True)
+snap = site_swis_db.latest(conn)
+cur = conn.cursor()
+cur.execute("SELECT node_id FROM sw_node WHERE snap_id = %s", (snap["snap_id"],))
+ids = [r[0] for r in cur.fetchall()]
+c = sw.Client("https://127.0.0.1:%s" % port, "svc_swis_ro", pw, ca_path=ca)
+bad = 0
+for name, db, live in (("apps", site_swis_db.apps_for(conn, snap["snap_id"], ids), site_swis_db.apps_live(c, ids)),
+                       ("alerts", site_swis_db.alerts_for(conn, snap["snap_id"], ids), site_swis_db.alerts_live(c, ids))):
+    if db != live or not any(db.values()):
+        bad += 1
+        for k in sorted(set(db) | set(live)):
+            if db.get(k) != live.get(k):
+                print("    %s differs, node %s: %s | %s" % (name, k, str(db.get(k))[:200], str(live.get(k))[:200]))
+                break
+sys.exit(1 if bad else 0)
 EOPY
 
     # ---- a module this Orion does not have; skipped properties
@@ -252,6 +287,20 @@ if snap["snap_id"] != 4 or site_swis_db.apps_for(conn, 4, [node]) != {node: []} 
     print("    %r %r" % (snap["snap_id"], note))
     sys.exit(1)
 EOPY
+    # 1.96.1 (review P1-2): another Orion (port + 1) whose EventIDs are the first one's - its own cursor: all read, kept apart
+    one="127.0.0.1:$port"; two="127.0.0.1:$((port + 1))"
+    n1="$(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$one'")"; n2="$(qr "SELECT COUNT(*) FROM sw_event WHERE orion = '$two'")"
+    nb="$("$py" - "$repo" "$dbport" "$rpw" <<'EOPY'
+import sys, datetime, pymysql
+sys.path.insert(0, sys.argv[1] + "/plugins/module_utils")
+import site_swis_db
+conn = pymysql.connect(host="127.0.0.1", port=int(sys.argv[2]), user="report_reader", password=sys.argv[3], database="site_reports", ssl_disabled=True)
+print(len(site_swis_db.events_between(conn, datetime.datetime(2000, 1, 1), datetime.datetime(2100, 1, 1), limit=100000)))
+EOPY
+)"
+    [ "$n2" -gt 0 ] && [ "$n2" -ge "$((n1 - 5))" ] && [ "$nb" = "$n2" ] \
+        && ok "  ...1.96.1: another Orion's events with the same EventIDs: all read ($n2), kept apart from the first's ($n1); events_between gives the newest snapshot's Orion's only" \
+        || bad "  ...events of two Orions: $n1 / $n2, events_between $nb"
 
     # ---- red: SolarWinds not reached; the reports keep the last whole snapshot
     SW_ENV="${SW/:$port /:$((port + 2)) }" DB_ENV="$DBW" run "SolarWinds not reached: red, a row says so, the password never printed" fail solarwinds_snapshot \
@@ -276,19 +325,32 @@ EOPY
     sleep 2
     DB_ENV="$DBW" run "another run holds the lock: nothing written, said, green" ok solarwinds_snapshot \
         -- "Another SolarWinds snapshot run is writing (the database lock site_reports.sw_snapshot is held)" "this run kept nothing"
+    # 1.96.1 (review P2-9): the lock held and the newest whole snapshot older than solarwinds_db_max_age - a run may be stuck: red
+    q report_writer "$wpw" "UPDATE sw_snapshot SET read_at = read_at - INTERVAL 2 HOUR WHERE snap_id = 4" >/dev/null
+    DB_ENV="$DBW" run "the lock held and the newest snapshot 2 hours old: red" fail solarwinds_snapshot \
+        -- "Another SolarWinds snapshot run holds the database lock (site_reports.sw_snapshot)" "the newest whole snapshot is 12" "is a run stuck?"
+    q report_writer "$wpw" "UPDATE sw_snapshot SET read_at = read_at + INTERVAL 2 HOUR WHERE snap_id = 4" >/dev/null
     kill $holder 2>/dev/null; wait $holder 2>/dev/null; holder=""
     DB_ENV="$DBW" run "a dry run (Check): SolarWinds read, nothing written" ok solarwinds_snapshot --check -- "Check: SolarWinds read, nothing written." "nodes ("
     [ "$(qr "SELECT MAX(snap_id) FROM sw_snapshot")" = 5 ] && ok "  ...no snapshot row added by either" || bad "  ...rows added"
 
     # ---- the network map reads the snapshot
-    DB_ENV="$DBW" run "a whole snapshot again" ok solarwinds_snapshot -- "Snapshot 6 kept."
+    # 1.96.1 (review P1-3): Metadata.Property refused - not a whole snapshot (the sites and points would be lost): red, ok 0
+    SW_ENV="${SW/:$port /:$((port + 4)) }" DB_ENV="$DBW" run "Metadata.Property refused: red, a row with ok 0, the reports keep the last whole one" fail \
+        solarwinds_snapshot -- "SolarWinds could not be read: which columns this Orion has could not be read (Metadata.Property)"
+    [ "$(qr "SELECT CONCAT(ok, '/', error LIKE '%Metadata.Property%') FROM sw_snapshot WHERE snap_id = 6")" = "0/1" ] \
+        && [ "$(qr "SELECT COUNT(*) FROM sw_node WHERE snap_id = 6")" = 0 ] && ok "  ...snapshot 6: ok 0, its reason, no rows" || bad "  ...snapshot 6"
+    DB_ENV="$DBW" run "a whole snapshot again" ok solarwinds_snapshot -- "Snapshot 7 kept."
     : > "$work/swis.log"
     SW_ENV= DB_ENV="$DBR" run "the network map from the snapshot, with no SolarWinds login at all" ok netmap_report \
         -e '{"netmap_lat_property": "Lat", "netmap_lon_property": "Lon", "netmap_properties": ["Region"], "netmap_site_by": "Location"}' \
         -- "From the report database: the SolarWinds snapshot of" " UTC (" "min old)." "SolarWinds 2025.4.1 at https://127.0.0.1:$port:" \
            "Site A:" "!From SolarWinds itself" "!Z ("
     [ ! -s "$work/swis.log" ] && ok "  ...SolarWinds not asked" || bad "  ...SolarWinds was asked $(wc -l < "$work/swis.log") times"
-    q report_writer "$wpw" "UPDATE sw_snapshot SET read_at = read_at - INTERVAL 2 HOUR WHERE snap_id = 6" >/dev/null
+    # 1.96.1 (review P1-2): a template reading another SolarWinds is never given this one's snapshot
+    SW_ENV="${SW/:$port /:$((port + 1)) }" DB_ENV="$DBR" run "a template of another SolarWinds: SolarWinds itself, said" ok netmap_report \
+        -e "{\"netmap_ca_path\": \"$work/ca.pem\"}" -- "From SolarWinds itself: the newest SolarWinds snapshot is of 127.0.0.1:$port, not 127.0.0.1:$((port + 1))"
+    q report_writer "$wpw" "UPDATE sw_snapshot SET read_at = read_at - INTERVAL 2 HOUR WHERE snap_id = 7" >/dev/null
     DB_ENV="$DBR" run "a snapshot older than solarwinds_db_max_age: SolarWinds itself, said" ok netmap_report \
         -e "{\"netmap_ca_path\": \"$work/ca.pem\"}" -- "From SolarWinds itself: the newest SolarWinds snapshot is 12" "(solarwinds_db_max_age: 20 min)" \
            "SolarWinds 2025.4.1 at https://127.0.0.1:$port:"

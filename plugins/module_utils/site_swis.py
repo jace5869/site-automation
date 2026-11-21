@@ -280,7 +280,9 @@ def collect(client, opts=None):
         try:
             for r in client.query("SELECT Name, Type FROM Metadata.Property WHERE EntityName = @e", {"e": "Orion.NodesCustomProperties"}):
                 nm, ty = str(r.get("Name") or ""), str(r.get("Type") or "")
-                if IDENT.match(nm) and ty.startswith("System.") and nm not in CP_SYSTEM and nm not in props and nm not in found_props:
+                # 1.96.1: never one named Location or Auto - the words of site_by, left out when named too (the snapshot's reader agrees)
+                if (IDENT.match(nm) and ty.startswith("System.") and nm not in CP_SYSTEM and nm not in props and nm not in found_props
+                        and nm.lower() not in ("location", "auto")):
                     found_props.append(nm)
         except SwisError as e:
             res["not_read"].append({"what": "the node custom properties' names (Metadata.Property), for the discovery", "why": str(e)})

@@ -158,6 +158,11 @@ asked at all.
 It reads SolarWinds itself when:
 
 - the newest snapshot is older than `solarwinds_db_max_age` (20 minutes), or there is none
+- the snapshot is of another SolarWinds address than this template's (1.96.1)
+- the snapshot's own read was cut at `solarwinds_snapshot_max_nodes`, or it has more links than `netmap_max_nodes` x 20
+  (1.96.1): a read of SolarWinds would give another map
+- the snapshot lacks the custom property `netmap_site_by`, `netmap_lat_property` or `netmap_lon_property` names
+  (1.96.1): left out by `solarwinds_snapshot_skip_properties`, or not in `solarwinds_snapshot_properties`
 - the database cannot be reached
 - `netmap_from_db` is `false`
 
@@ -263,7 +268,7 @@ left out, and the job says so: raise it. 1,500 nodes add about 45 KB to the defa
 | `netmap_fail` | `false` | mark the job failed when SolarWinds could not be read |
 | `netmap_raw` | `false` | print the first nodes and links as read |
 | `netmap_from_db` | `true` | read the report database's SolarWinds snapshot first (1.96.0) |
-| `solarwinds_db_max_age` | `20` | minutes the snapshot may be old; older: SolarWinds itself |
+| `solarwinds_db_max_age` | `20` | minutes the snapshot may be old; older: SolarWinds itself. `0`: always SolarWinds itself |
 | `portal_netmap` | `auto` | the portal's live page: auto (with a SolarWinds credential), true, false |
 | `netmap_live_seconds` | `60` | how often the portal reads the status (30 at least) |
 | `netmap_full_seconds` | `1800` | how often the portal reads the whole map (300 at least) |

@@ -96,7 +96,8 @@
 ## always SolarWinds itself.
 # netmap_from_db: true
 
-## minutes a snapshot may be old for a report (all.yml: every report reads it)
+## minutes a snapshot may be old for a report (all.yml: every report reads it); 0 = never the
+## snapshot
 # solarwinds_db_max_age: 20
 
 ## What changed since the last run: this template's last successful run kept a copy (job artifact

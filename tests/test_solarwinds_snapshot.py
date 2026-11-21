@@ -169,6 +169,44 @@ class Snapshot(unittest.TestCase):
         self.assertEqual((c["apps"], c["apps_down"], c["vim_hosts"], c["vim_vms"], c["alerts"]), (20, 2, 3, 36, 7))
         self.assertEqual(c["nodes"], n)
 
+    def test_alerts_and_components_read_by_id(self):
+        # review d: keyset paging (WHERE id > @last ORDER BY id) - never row numbers that shift while rows move
+        q = [l for l in self.fake.queries() if " Orion.AlertActive " in l or " Orion.APM.Component " in l]
+        self.assertTrue(q)
+        self.assertFalse(any("WITH ROWS" in l for l in q), q)
+
+    def test_a_property_named_auto_or_location(self):
+        # review b: collect() takes Location and Auto for site_by's words - neither path reads such a property
+        with open(self.more) as fh:
+            fx = json.load(fh)
+        fx["properties"] = fx["properties"] + ["Auto"]
+        for n in fx["nodes"]:
+            n["cp"]["Auto"] = "x"
+        odd = os.path.join(TMP, "fx-auto.json")
+        with open(odd, "w") as fh:
+            json.dump(fx, fh)
+        f = Fake(odd)
+        try:
+            snap = sd.read_swis(f.client(), {"parts": []})
+            live = sw.collect(f.client(), {})
+        finally:
+            f.stop()
+        self.assertNotIn("Auto", snap["props"])
+        self.assertNotIn("Auto", live["custom_properties"])
+        a, b = same(live, back(snap, {}))
+        self.assertEqual(b, a)
+
+    def test_a_row_read_twice_is_written_once(self):
+        # 1.96.1 (review P2-7): a component paged twice while it moved - one row, never a PK error that loses the snapshot
+        snap = dict(self.snap, extra=dict(self.snap["extra"]))
+        comp = snap["extra"]["component"]
+        snap["extra"]["component"] = comp + [dict(comp[0], name="seen again")]
+        snap["extra"]["event"] = snap["extra"]["event"] + snap["extra"]["event"][:3]
+        rows = sd.to_rows(snap, 7)
+        self.assertEqual(len(rows["sw_component"]), len(comp))
+        self.assertEqual(len(rows["sw_event"]), len(self.snap["extra"]["event"]))
+        self.assertEqual(set(r[0] for r in rows["sw_event"]), {sd.orion_key(self.snap["raw"]["url"])})   # each event: its Orion
+
     def test_the_reader_gives_back_what_collect_gives(self):
         for o in ({}, {"site_by": "Site", "lat_property": "Lat", "lon_property": "Lon", "properties": ["Region"]},
                   {"properties": ["Nope", "bad name"], "max_nodes": 100}, {"properties": ["Region", "Site"], "page": 200}):
@@ -220,6 +258,8 @@ class Parts(unittest.TestCase):
         self.assertEqual((s["extra"], s["props"]), ({}, []))
         self.assertEqual(len(s["not_read"]), 1)
         self.assertIn("Metadata.Property", s["not_read"][0]["what"])
+        # 1.96.1 (review P1-3): never a whole snapshot - the sites and points would be lost; written with ok 0
+        self.assertTrue(s["failed"].startswith("which columns this Orion has could not be read (Metadata.Property): "), s["failed"])
 
     def test_not_reached(self):
         c = sw.Client("https://127.0.0.1:%d" % free_port(), "svc_swis_ro", PW, timeout=2)
@@ -236,10 +276,39 @@ class Parts(unittest.TestCase):
             q = [l for l in f.queries() if " Orion.Events " in l]
         finally:
             f.stop()
-        self.assertEqual([e["event_id"] for e in s["extra"]["event"]], [e["EventID"] for e in ev[-5:]])
-        self.assertEqual(s["extra"]["event"][0]["type_name"], dict((t["EventType"], t["Name"]) for t in
-                                                                   json.load(open(self.more))["tables"]["Orion.EventTypes"])[ev[-5]["EventType"]])
+        # the newest kept on, and EVENT_OVERLAP before it again (review P2-5: an event committed late; the upsert keeps one)
+        self.assertEqual([e["event_id"] for e in s["extra"]["event"]], [e["EventID"] for e in ev[-5 - sd.EVENT_OVERLAP:]])
+        names = dict((t["EventType"], t["Name"]) for t in json.load(open(self.more))["tables"]["Orion.EventTypes"])
+        self.assertEqual([e["type_name"] for e in s["extra"]["event"]][-5], names[ev[-5]["EventType"]])
         self.assertEqual(len(q), 1)
+
+    def test_an_outage_longer_than_event_hours_loses_nothing(self):
+        # 1.96.1 (review P1-1): the job (or Orion) away 40 hours, event_hours 1 - every event since the newest kept is read
+        f = Fake(self.more)
+        try:
+            ev = json.load(open(self.more))["tables"]["Orion.Events"]
+            s = sd.read_swis(f.client(), {"parts": ["event"], "events_after": ev[39]["EventID"], "event_hours": 1, "event_days": 400})
+            q = [l for l in f.queries() if " Orion.Events " in l]
+        finally:
+            f.stop()
+        got = set(e["event_id"] for e in s["extra"]["event"])
+        self.assertTrue(set(e["EventID"] for e in ev[40:]) <= got)                 # 200 events over 40 hours, none lost
+        self.assertEqual(s["not_read"], [])
+        self.assertEqual(len(q), 1)
+
+    def test_a_gap_older_than_event_days_is_said(self):
+        f = Fake(self.more)
+        try:
+            ev = json.load(open(self.more))["tables"]["Orion.Events"]
+            three = sd.iso(sd.now_utc() - datetime.timedelta(days=3))
+            s = sd.read_swis(f.client(), {"parts": ["event"], "events_after": ev[0]["EventID"], "events_after_at": three, "event_days": 1})
+        finally:
+            f.stop()
+        self.assertEqual(len(s["not_read"]), 1)
+        self.assertTrue(s["not_read"][0]["what"].startswith("the events between %s and " % three), s["not_read"])
+        self.assertIn("older than solarwinds_db_event_days (1)", s["not_read"][0]["why"])
+        day = sd.now_utc() - datetime.timedelta(days=1, minutes=1)
+        self.assertTrue(all(sd.stamp(e["event_time"]) >= day for e in s["extra"]["event"]))
 
     def test_the_properties_named_and_skipped(self):
         f = Fake(self.more)
@@ -260,6 +329,9 @@ class FakeCur(object):
         self.conn.sql.append((sql, args))
         if isinstance(self.conn.answer, Exception):
             raise self.conn.answer
+        if sql.startswith("START TRANSACTION"):
+            self.description, self.rows = [], []
+            return 0
         self.description, self.rows = self.conn.answer(sql, args)
         return len(self.rows)
 
@@ -277,18 +349,26 @@ class FakeConn(object):
     def cursor(self):
         return FakeCur(self)
 
+    def rollback(self):
+        self.sql.append(("ROLLBACK", None))
+
+    def commit(self):
+        self.sql.append(("COMMIT", None))
+
 
 class Answer(unittest.TestCase):
     NOW = datetime.datetime(2026, 11, 21, 9, 0, 0)
 
-    def snaps(self, age_min, failed=None):
+    def snaps(self, age_min, failed=None, core=None, links=0):
+        core = core or {}
         def ans(sql, args):
             if "WHERE ok = 0" in sql:
                 return [("read_at",), ("error",)], ([(self.NOW, failed)] if failed else [])
             if "FROM sw_snapshot WHERE ok = 1" in sql:
                 if age_min is None:
                     return [], []
-                return [("snap_id",)] * 7, [(5, self.NOW - datetime.timedelta(minutes=age_min), json.dumps({"props": []}), "[]", 10, 0, 0)]
+                return [("snap_id",)] * 10, [(5, self.NOW - datetime.timedelta(minutes=age_min), json.dumps(dict({"props": ["Site"]}, **core)), "[]",
+                                              0, 0, 0, "orion.example.mil:17774", age_min * 60 + 7, links)]
             return [("x",)], []
         return FakeConn(ans)
 
@@ -307,10 +387,69 @@ class Answer(unittest.TestCase):
         self.assertEqual((r["source"], r["age_seconds"], r["snapshot_at"], r["nodes"]), ("db-snapshot", 240, "2026-11-21T08:56:00Z", []))
         self.assertEqual(sd.source_text(r, "2026.1"), "SolarWinds 2026.1 (the report database's snapshot of 08:56 UTC, 4 min old)")
 
+    def test_another_orion_is_not_served(self):
+        # 1.96.1 (review P1-2): the snapshot of orion.example.mil is never another SolarWinds' map
+        self.assertEqual(sd.answer({}, conn=self.snaps(4), now=self.NOW, orion="https://ORION.example.mil/")["source"], "db-snapshot")
+        why = []
+        self.assertIsNone(sd.answer({}, conn=self.snaps(4), now=self.NOW, orion="https://orion2.example.mil:17774", why=why))
+        self.assertEqual(why, ["the newest SolarWinds snapshot is of orion.example.mil:17774, not orion2.example.mil:17774 (the address "
+                               "of this template's credential or netmap_solarwinds_url)"])
+        self.assertEqual(sd.answer({}, conn=self.snaps(4), now=self.NOW, orion="")["source"], "db-snapshot")     # no address: any
+
+    def test_a_snapshot_without_the_site_property_is_not_served(self):
+        # 1.96.1 (review P1-3): every node would be "Not placed"
+        why = []
+        self.assertIsNone(sd.answer({"site_by": "Region", "lat_property": "Lat"}, conn=self.snaps(4), now=self.NOW, why=why))
+        self.assertEqual(why, ["the newest SolarWinds snapshot has no node custom property Region, Lat (solarwinds_snapshot_properties or "
+                               "solarwinds_snapshot_skip_properties)"])
+        for o in ({"site_by": "Site"}, {"site_by": "auto"}, {"site_by": "Location"}, {}):
+            self.assertEqual(sd.answer(o, conn=self.snaps(4), now=self.NOW)["source"], "db-snapshot", o)
+
+    def test_max_age_zero_cut_and_too_many_links(self):
+        # review a: 0 never serves the snapshot (it served any age); b: a cut snapshot, or more links than collect() reads
+        for kw, max_age, o, want in (({}, 0, {}, "solarwinds_db_max_age is 0: SolarWinds itself every time"),
+                                     ({"core": {"cut": True}}, 1200, {}, "the newest SolarWinds snapshot was cut at solarwinds_snapshot_max_nodes"),
+                                     ({"links": 2001}, 1200, {"max_nodes": 100},
+                                      "the newest SolarWinds snapshot has more links (2001) than netmap_max_nodes x 20 (2000)")):
+            why = []
+            self.assertIsNone(sd.answer(o, conn=self.snaps(4, **kw), max_age=max_age, now=self.NOW, why=why), kw)
+            self.assertEqual(why, [want])
+        self.assertEqual(sd.answer({}, conn=self.snaps(400), max_age=None, now=self.NOW)["source"], "db-snapshot")   # None: any age
+        self.assertEqual(sd.answer({"max_nodes": 100}, conn=self.snaps(4, links=2000), now=self.NOW)["source"], "db-snapshot")
+
+    def test_one_read_only_transaction(self):
+        # review c: latest() and the rows in one read-only transaction; nodes deleted meanwhile are a reason, never half a map
+        conn = self.snaps(4)
+        sd.answer({}, conn=conn, now=self.NOW)
+        q = [x for x, _a in conn.sql]
+        self.assertEqual(q[:2], ["ROLLBACK", "START TRANSACTION READ ONLY"])
+        self.assertEqual(q[-1], "COMMIT")
+        def gone(sql, args):
+            if "FROM sw_snapshot WHERE ok = 1" in sql:
+                return [("x",)] * 10, [(5, self.NOW, json.dumps({"props": []}), "[]", 900, 0, 0, "o:17774", 60, 0)]
+            return [("x",)], []
+        why = []
+        self.assertIsNone(sd.answer({}, conn=FakeConn(gone), why=why, now=self.NOW))
+        self.assertEqual(why, ["the report database's SolarWinds snapshot could not be read: snapshot 5 has 0 of its 900 nodes "
+                               "(deleted while it was read)"])
+
+    def test_the_age_on_the_databases_clock(self):
+        # review P2-6: no now - the database's own TIMESTAMPDIFF, never this host's clock against the database's
+        conn = self.snaps(4)
+        s = sd.latest(conn)
+        self.assertEqual((s["age_seconds"], s["orion"]), (247, "orion.example.mil:17774"))
+        self.assertIn("TIMESTAMPDIFF(SECOND, read_at, UTC_TIMESTAMP())", conn.sql[-1][0])
+        self.assertEqual(sd.latest(self.snaps(4), now=self.NOW)["age_seconds"], 240)
+
     def test_a_database_that_fails_is_a_reason(self):
         why = []
         self.assertIsNone(sd.answer({}, conn=FakeConn(RuntimeError("SELECT command denied")), why=why))
         self.assertEqual(why, ["the report database's SolarWinds snapshot could not be read: SELECT command denied"])
+        why = []
+        sd.answer({}, conn=FakeConn(RuntimeError("(1142, \"SELECT command denied to user 'report_reader'@'192.0.2.9' for table "
+                                                 "'sw_snapshot'\")")), why=why)
+        self.assertNotIn("report_reader", why[0])                                 # review P2-12: no account or host
+        self.assertIn("denied to user the account for table", why[0])
 
     def test_live(self):
         plain, more = fixtures()
@@ -342,6 +481,24 @@ class Answer(unittest.TestCase):
         self.assertEqual(([a["name"] for a in al[11]], al[12]), (["Node is down"], []))
         self.assertEqual(sd.events_between(conn, self.NOW, self.NOW, []), [])
 
+    def test_nodes_for_all(self):
+        cols = ["node_id", "name", "name_key", "dns", "ip", "ips", "status_code", "status_text", "unmanaged", "last_poll", "cpu_pct", "mem_pct"]
+        rows = [(21, "dc01", "dc01", "dc01.a.example.mil", "192.0.2.21", '["192.0.2.21", "192.0.2.50"]', 1, "Up", 0, None, None, None),
+                (22, "dc01", "dc01", "dc01.b.example.mil", "192.0.2.22", '["192.0.2.22"]', 2, "Down", 0, None, None, None),
+                (23, "sql01", "sql01", "sql01.a.example.mil", "192.0.2.50", None, 1, "Up", 0, None, None, None)]
+        conn = FakeConn(lambda sql, args: ([(c,) for c in cols], rows))
+        got = sd.nodes_for_all(conn, 5, ["DC01.a.example.mil", "192.0.2.50", "web99", ""])
+        self.assertEqual([(r["node_id"], r["dns"], r["status"], r["matched_by"]) for r in got["DC01.a.example.mil"]],
+                         [(21, "dc01.a.example.mil", "Up", "name"), (22, "dc01.b.example.mil", "Down", "name")])     # two domains
+        self.assertEqual([(r["node_id"], r["matched_by"]) for r in got["192.0.2.50"]], [(21, "other ip"), (23, "ip")])   # a shared address
+        self.assertEqual((got["web99"], got[""]), ([], []))
+        self.assertNotIn("ips", got["192.0.2.50"][0])
+        sql, args = conn.sql[-1]
+        self.assertIn("OR ips LIKE %s", sql)
+        self.assertEqual(args[0], 5)
+        self.assertEqual(args[-1], '%"192.0.2.50"%')
+        self.assertEqual(sd.nodes_for_all(conn, 5, []), {})
+
     def test_apps_for(self):
         def ans(sql, args):
             if "FROM sw_app" in sql:
@@ -356,21 +513,134 @@ class Answer(unittest.TestCase):
         got = sd.apps_for(conn, 5, [11, 12, None])
         self.assertEqual(sorted(got), [11, 12])
         self.assertEqual(got[12], [])
-        web = got[11][0]
+        self.assertEqual([a["app"] for a in got[11]], ["Database", "Web server"])          # by name, as ORDER BY name gives
+        web = got[11][1]
         self.assertEqual((web["app"], web["status"], web["components"], len(web["components_not_up"])), ("Web server", "Down", 9, 2))
         self.assertEqual([(c["name"], c["status"], c["value"], c["message"]) for c in web["components_not_up"]],
                          [("Port 443", "Down", None, "Port 443 refused the connection"), ("HTTPS monitor", "Warning", 812, "Slow")])
-        self.assertEqual((got[11][1]["status"], got[11][1]["components_not_up"]), ("Up", []))
-        self.assertEqual(conn.sql[-1][1][:2], [5, 309])
+        self.assertEqual((got[11][0]["status"], got[11][0]["components_not_up"]), ("Up", []))
+        self.assertEqual([a for q, a in conn.sql if q.startswith("SELECT")][-1][:2], [5, 309])
+        self.assertEqual([q for q, _a in conn.sql][-1], "COMMIT")                  # review c: in one read-only transaction
         self.assertEqual(sd.apps_for(conn, 5, []), {})
         note = {"what": sd.PART_WORDS["app"], "why": "not on this Orion (no Orion.APM.Application)", "absent": True}
         self.assertEqual(sd.part_note({"not_read": [note]}, "app"), note)
         self.assertIsNone(sd.part_note({"not_read": []}, "app"))
 
+    def test_orion_key_stamp_and_events_of_one_orion(self):
+        self.assertEqual([sd.orion_key(u) for u in ("https://Orion.example.mil", "https://orion.example.mil:17774/SolarWinds",
+                                                   "orion.example.mil:17778", "https://192.0.2.5", "")],
+                         ["orion.example.mil:17774", "orion.example.mil:17774", "orion.example.mil:17778", "192.0.2.5:17774", ""])
+        # review P2-4: an offset is turned into UTC, never dropped
+        self.assertEqual(sd.stamp("2026-11-21T10:00:05.1230000+01:00"), datetime.datetime(2026, 11, 21, 9, 0, 5))
+        self.assertEqual(sd.stamp("2026-11-21T09:00:05-0130"), datetime.datetime(2026, 11, 21, 10, 30, 5))
+        self.assertEqual(sd.stamp("2026-11-21T09:00:05Z"), datetime.datetime(2026, 11, 21, 9, 0, 5))
+        self.assertEqual(sd.stamp(datetime.datetime(2026, 11, 21, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=1)))),
+                         datetime.datetime(2026, 11, 21, 9, 0))
+        conn = FakeConn(lambda sql, args: ([("x",)], []))
+        sd.events_between(conn, self.NOW, self.NOW)
+        self.assertIn("AND orion = (SELECT orion FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1)", conn.sql[-1][0])
+        sd.events_between(conn, self.NOW, self.NOW, orion="orion.example.mil:17774")
+        self.assertEqual(conn.sql[-1][1][-1], "orion.example.mil:17774")
+        sd.newest_event(conn, "orion.example.mil:17774")
+        self.assertEqual((conn.sql[-1][1], "WHERE orion = %s" in conn.sql[-1][0]), (("orion.example.mil:17774",), True))
+
     def test_name_key(self):
         self.assertEqual([sd.name_key(x) for x in ("ESX07.corp.example.mil", "db01", "192.0.2.7", "", None)],
                          ["esx07", "db01", "192.0.2.7", "", ""])
         self.assertEqual(sd.name_key("", "Core01"), "core01")
+
+
+def rows_conn(rows):
+    """A connection that answers apps_for()'s and alerts_for()'s queries from a snapshot's rows (to_rows), as MySQL would:
+    the columns asked for, filtered by the ids, in the ORDER BY's order."""
+    def ans(sql, args):
+        cols = [c.strip() for c in re.match(r"SELECT (.*?) FROM", sql).group(1).split(",")]
+        table = re.search(r"FROM (\w+)", sql).group(1)
+        key = re.search(r"AND (\w+) IN", sql).group(1)
+        names = sd.COLS[table]
+        want = set(args[1:])
+        got = [dict(zip(names, r)) for r in rows[table] if r[0] == args[0] and dict(zip(names, r))[key] in want]
+        if table == "sw_alert_active":
+            old = datetime.datetime(1, 1, 1)
+            got.sort(key=lambda r: (r["triggered_at"] or old, r["alert_active_id"]), reverse=True)
+        return [(c,) for c in cols], [tuple(r[c] for c in cols) for r in got]
+    return FakeConn(ans)
+
+
+class Live(unittest.TestCase):
+    """1.96.1: apps_live() and alerts_live() read SolarWinds itself and give what apps_for() and alerts_for() give."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plain, cls.more = fixtures()
+        cls.fake = Fake(cls.more)
+        cls.snap = sd.read_swis(cls.fake.client())
+        cls.rows = sd.to_rows(cls.snap, 3)
+        t = json.load(open(cls.more))["tables"]
+        cls.app_nodes = sorted(set(a["NodeID"] for a in t["Orion.APM.Application"]))
+        cls.alert_nodes = sorted(set(o["RelatedNodeId"] for o in t["Orion.AlertObjects"] if o.get("RelatedNodeId") is not None))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.fake.stop()
+
+    def test_apps_live_is_apps_for(self):
+        ids = self.app_nodes + [999999]
+        why = []
+        live = sd.apps_live(self.fake.client(), ids, why)
+        self.assertEqual(live, sd.apps_for(rows_conn(self.rows), 3, ids))
+        self.assertEqual(why, [])
+        two = [a for n in live.values() for a in n if a["app_id"] == 309][0]          # 2 of 9 down
+        self.assertEqual((two["components"], len(two["components_not_up"])), (9, 2))
+        self.assertEqual(live[999999], [])
+
+    def test_alerts_live_is_alerts_for(self):
+        ids = self.alert_nodes + [999999]
+        live = sd.alerts_live(self.fake.client(), ids)
+        self.assertEqual(live, sd.alerts_for(rows_conn(self.rows), 3, ids))
+        self.assertGreater(sum(len(v) for v in live.values()), 0)
+        q = "\n".join(self.fake.queries())
+        self.assertNotIn("AcknowledgedBy", q)
+
+    def test_only_the_nodes_asked(self):
+        before = len(self.fake.queries())
+        sd.apps_live(self.fake.client(), self.app_nodes[:2])
+        q = self.fake.queries()[before:]
+        self.assertEqual([l.split(" ")[2] for l in q], ["Metadata.Property", "Orion.APM.Application", "Orion.APM.Component",
+                                                        "Orion.APM.Component"])           # the apps, the components, the count
+        self.assertFalse(any("Orion.AlertActive" in l or "Orion.Nodes " in l for l in q))
+        self.assertEqual(sd.apps_live(self.fake.client(), []), {})
+
+    def test_an_orion_without_sam(self):
+        f = Fake(self.more, {"FAKE_SWIS_HIDE": "Orion.APM.Application,Orion.APM.Component"})
+        try:
+            why = []
+            got = sd.apps_live(f.client(), self.app_nodes[:3], why)
+        finally:
+            f.stop()
+        self.assertEqual(got, dict((n, []) for n in self.app_nodes[:3]))
+        self.assertEqual(why[0], {"what": sd.PART_WORDS["app"], "why": "not on this Orion (no Orion.APM.Application)", "absent": True})
+
+    def test_interfaces_for(self):
+        cols = sd.COLS["sw_interface"]
+        rows = [dict(zip(cols, r)) for r in self.rows["sw_interface"]]
+        node = rows[0]["node_id"]
+        mine = sorted((r for r in rows if r["node_id"] == node), key=lambda r: (r["name"] or "", r["interface_id"]))
+        got = sd.interfaces_for(rows_conn(self.rows), 3, [node, 999999])
+        self.assertEqual(got[999999], [])                                         # not on a link: not in the snapshot
+        self.assertEqual([f["interface_id"] for f in got[node]], [r["interface_id"] for r in mine])
+        f, r = got[node][0], mine[0]
+        self.assertEqual(sorted(f), ["caption", "discards", "errors", "in_pct", "interface_id", "name", "out_pct", "speed", "status",
+                                     "status_code"])
+        self.assertEqual(f["status"], sw.status_of(r["status"]))
+        want = None if r["in_errors_hour"] is None and r["out_errors_hour"] is None else int(r["in_errors_hour"] or 0) + int(r["out_errors_hour"] or 0)
+        self.assertEqual(f["errors"], want)
+        self.assertEqual(sd.interfaces_for(rows_conn(self.rows), 3, []), {})
+
+    def test_not_reached_raises(self):
+        c = sw.Client("https://127.0.0.1:%d" % free_port(), "svc_swis_ro", PW, timeout=2)
+        with self.assertRaises(sd._swis_errors()):
+            sd.alerts_live(c, [1])
 
 
 class Lines(unittest.TestCase):
