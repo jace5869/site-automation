@@ -4115,15 +4115,26 @@ class Motion1870(unittest.TestCase):
     def test_4_the_run_time_comes_from_the_utc_start(self):
         class P(object):
             GROUPS = sp.Portal.GROUPS
-        items = [{"id": 7, "title": "Recheck", "status": "running", "group": "running", "started": "2026-11-20T15:01:30.5Z", "elapsed": 12, "by": "DOE.JANE"},
-                 {"id": 6, "title": "Clean", "status": "successful", "group": "succeeded", "started": "2026-11-20T14:01:00Z", "elapsed": 600, "by": "DOE.JANE"},
-                 {"id": 5, "title": "Odd", "status": "running", "group": "running", "started": "", "elapsed": None, "by": "DOE.JANE"}]
+        items = [{"id": 7, "title": "Recheck", "status": "running", "group": "running", "started": "2026-11-20T15:01:30.5Z", "aap_started": "2026-11-20T15:01:30.5Z", "elapsed": 12, "by": "DOE.JANE"},
+                 {"id": 6, "title": "Clean", "status": "successful", "group": "succeeded", "started": "2026-11-20T14:01:00Z", "aap_started": "2026-11-20T14:01:00Z", "elapsed": 600, "by": "DOE.JANE"},
+                 {"id": 5, "title": "Odd", "status": "running", "group": "running", "started": "2026-11-20T15:00:00Z", "aap_started": "", "elapsed": None, "by": "DOE.JANE"},
+                 {"id": 4, "title": "Queued", "status": "pending", "group": "running", "started": "2026-11-20T15:00:00Z", "aap_started": "", "elapsed": None, "by": "DOE.JANE"},
+                 {"id": 3, "title": "Waits", "status": "waiting", "group": "running", "started": "2026-11-20T15:00:00Z", "aap_started": "2026-11-20T15:00:00Z", "elapsed": None, "by": "DOE.JANE"}]
         h = sp.job_list_html(self.cfg(PORTAL_TIME_ZONE="Europe/Berlin"), P(), "DOE.JANE", items, None, "mine")
         self.assertIn('data-st="running" data-status="running" data-q="recheck 7 doe.jane" data-t0="1795186890">', h)      # 15:01:30 UTC, whatever the zone shown
-        self.assertEqual(h.count("data-t0="), 1)                                                                 # not for a finished job, nor one without a start
+        self.assertEqual(h.count("data-t0="), 1)                     # not a finished job, not one AAP gave no start for (the launch record's time is not a start), not a queued one
+        self.assertEqual(h.count("<small>queued</small>"), 2)        # Codex P1: pending and waiting say queued, no clock
+        self.assertEqual(h.count("<small>running</small>"), 2)
+        with open(os.path.join(FILES, "site_portal.py")) as fh:
+            self.assertIn('"aap_started": u.get("started") or ""', fh.read())                                   # job_list keeps AAP's own start apart
         js = self.read("static", "portal.js")
         self.assertIn('document.querySelectorAll("#jrows li[data-t0]")', js)
-        self.assertIn("runTimes();\n", js[js.index("rows.replaceChildren(...out);"):][:60])                       # rows swapped in count too
+        self.assertIn("clock();\n", js[js.index("rows.replaceChildren(...out);"):][:60])                          # rows swapped in count too
+        # Codex P2: the 1 s clock only while a timed row is there and the page in view
+        self.assertIn('const want = !document.hidden && !!document.querySelector("#jrows li[data-t0]");', js)
+        self.assertIn("clearInterval(clockTimer)", js)
+        self.assertIn('document.addEventListener("visibilitychange", clock);', js)
+        self.assertNotIn("setInterval(runTimes", js)
 
     def test_5_the_ring_is_drawn_from_what_is_known(self):
         self.assertEqual(sp.ring_html({"steps_n": 3, "steps_done": 1}, True, False), "")                       # over: no ring
@@ -4149,6 +4160,16 @@ class Motion1870(unittest.TestCase):
         self.assertIn('for (const n of document.querySelectorAll("#ftiles .v, #agrid .grp > h2 .count, #jchips button")) countUp(n);', js)
         self.assertIn('document.documentElement.classList.add("settled")', js)
         self.assertIn("if (ev.persisted) return;".replace("if (ev.persisted)", "if (!ev.persisted)"), js)        # Back: the content, not the skeleton
+        # Codex P2: reduced motion mid-count -> the number; a skeleton whose page does not come goes again (8 s) and the list asks again;
+        # the open job keeps on and aria-current until the next page is there
+        self.assertIn("if (!moves()) { tn.nodeValue = m[1] + to + m[3]; return; }", js)
+        self.assertIn("const SKEL_MS = 8000;", js)
+        self.assertIn("setTimeout(() => unskel(box), SKEL_MS);", js)
+        self.assertIn('() => { li.classList.remove("picked"); tick(); }', js)
+        click = js[js.index("another job picked"):]
+        click = click[:click.index("\n  });")]
+        self.assertNotIn('classList.toggle("on"', click)
+        self.assertNotIn('Attribute("aria-current"', click)
 
     @unittest.skipUnless(shutil.which("chromium-browser") or shutil.which("google-chrome") or shutil.which("chromium"), "no browser")
     def test_7_in_a_browser(self):

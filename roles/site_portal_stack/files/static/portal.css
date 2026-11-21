@@ -450,6 +450,7 @@ html.moves progress.pb:not([value])::-moz-progress-bar{background:transparent}
 /* skeletons: the shape of the next job's pane, or of the cards on Refresh, while the next page loads */
 @keyframes shim{to{background-position:-300% 0}}
 .skel{display:grid;gap:12px;padding:4px 0}
+.jrows li.picked{background:var(--accent-soft)}.jrows:has(li.picked) li.on:not(.picked){background:none}      /* the job picked, while its page loads */
 .skel i{display:block;height:14px;border-radius:7px;background:var(--line)}
 .skel i.h{height:26px;width:55%}.skel i.s{width:35%}.skel i.b{height:60px}
 html.moves .skel i{background:linear-gradient(90deg,var(--line) 0,color-mix(in srgb,var(--line) 40%,var(--card)) 40%,var(--line) 80%) 0 0/300% 100%;animation:shim 1.2s linear infinite}

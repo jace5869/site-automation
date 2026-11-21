@@ -19,6 +19,12 @@
 - **Toasts** slide in; one that closes by itself (12 s) shows its time left as a line. A count on *Jobs* or *Approvals* bumps when it changes.
 - **The Run dialog and the Details panel** open smoothly; so does a *details* box, where the browser can.
 - **Fixed:** a nav count with nothing to count showed as an empty dot; it is gone now.
+- **Review fixes:**
+  - a queued job (pending, waiting) says *queued* and has no clock; the clock counts only from AAP's own start, never the portal's launch time;
+  - the 1 s clock runs only while a row has a start and the page is in view;
+  - reduced motion switched on mid-count shows the number at once;
+  - a skeleton whose page does not come (Stop, Esc, a slow load: 8 s) goes again and the page asks for updates again; the open job keeps its
+    highlight until the next page is there (the picked one is marked meanwhile).
 - **`portal_motion`:**
   - `auto` moves unless the system asks for reduced motion (and follows that setting when it changes), `always` moves anyway, `off` never;
   - the choice is made in `portal-theme.js`, before the page is drawn, so nothing shows and then jumps;

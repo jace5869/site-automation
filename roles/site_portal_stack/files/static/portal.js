@@ -147,6 +147,7 @@ function countUp(node) {                      // "All 12" -> All 0 ... All 12; w
   tn.nodeValue = m[1] + "0" + m[3];
   const step = (t) => {
     if (!tn.isConnected) return;              // the page put a new count in meanwhile: that one is final
+    if (!moves()) { tn.nodeValue = m[1] + to + m[3]; return; }       // the system asked for less motion meanwhile: the number, at once
     const p = Math.min(1, Math.max(0, (t - t0) / 700));
     tn.nodeValue = m[1] + Math.round(to * (1 - Math.pow(1 - p, 3))) + m[3];
     if (p < 1) requestAnimationFrame(step); else bump(node);
@@ -161,6 +162,13 @@ function runTimes() {                         // the rows of running jobs: "runn
     sm.classList.add("mv-el");
     sm.textContent = "running \u00b7 " + took(Math.max(0, now - Number(li.dataset.t0)));
   }
+}
+let clockTimer = 0;
+function clock() {                            // the 1 s clock: only while a row has a start to count from and the page is in view (again after each list swap)
+  const want = !document.hidden && !!document.querySelector("#jrows li[data-t0]");
+  if (want) runTimes();
+  if (want && !clockTimer) clockTimer = setInterval(clock, 1000);
+  else if (!want && clockTimer) { clearInterval(clockTimer); clockTimer = 0; }
 }
 function ringFrom(pane) {                     // the fill the ring shows now (its stroke-dashoffset), or null
   const a = pane && pane.querySelector(".ring .a");
@@ -178,8 +186,17 @@ function ringIn(pane, from) {                 // the service drew the ring at it
   a.classList.remove("mv-hold");
   requestAnimationFrame(() => requestAnimationFrame(() => a.setAttribute("stroke-dashoffset", to)));
 }
-function skeleton(box, rows) {                // the shape of what comes, while the next page loads; Back (the page from the cache) puts the old content back
+const SKEL_MS = 8000;
+function unskel(box) {                        // the content back, as it was
+  if (!box.dataset.skel) return;
+  box.replaceChildren(...(box._kept || []));
+  delete box.dataset.skel;
+  if (box._back) { const f = box._back; box._back = null; f(); }
+}
+function skeleton(box, rows, back) {          // the shape of what comes, while the next page loads; it goes again (back() is called) when the page stays
   if (!box || box.dataset.skel) return;
+  box._back = back || null;
+  setTimeout(() => unskel(box), SKEL_MS);
   const k = el("div", "skel");
   k.setAttribute("aria-busy", "true");
   k.setAttribute("aria-label", "Loading");
@@ -190,7 +207,7 @@ function skeleton(box, rows) {                // the shape of what comes, while 
 }
 window.addEventListener("pageshow", (ev) => {
   if (!ev.persisted) return;
-  for (const b of document.querySelectorAll("[data-skel]")) { b.replaceChildren(...(b._kept || [])); delete b.dataset.skel; }
+  for (const b of document.querySelectorAll("[data-skel]")) unskel(b);
 });
 
 // ---- the Jobs page (1.78.0): a list on the left (My jobs | All jobs, search, status chips), the job on the right. The server renders both
@@ -226,14 +243,15 @@ function jobsPage() {
   let pane = $("jd"), wait = 3000, timer = 0, busy = false, last = 0;
   if (!pane) return;
   ringIn(pane);
-  runTimes();
-  setInterval(runTimes, 1000);
+  clock();
+  document.addEventListener("visibilitychange", clock);
   $("jrows").addEventListener("click", (ev) => {              // 1.87.0: another job picked - its pane's shape while its page loads
     const a = ev.target.closest && ev.target.closest("a");
     if (!a || ev.defaultPrevented || ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
     if (a.getAttribute("href").split("?")[0].endsWith("/jobs/" + pane.dataset.job)) return;
-    for (const li of $("jrows").children) li.classList.toggle("on", li === a.parentNode);
-    skeleton(pane, ["h", "s", "b", "", "", "s", "b"]);
+    const li = a.parentNode;
+    li.classList.add("picked");                                  // marked as coming; the open job keeps on and aria-current until the next page is there
+    skeleton(pane, ["h", "s", "b", "", "", "s", "b"], () => { li.classList.remove("picked"); tick(); });
   });
   const paneLive = () => !!(pane && pane.dataset.done === "0" && pane.dataset.job);
   const listLive = () => !!document.querySelector("#jrows li[data-st=running]");
@@ -256,7 +274,7 @@ function jobsPage() {
       out.push(n);
     }
     rows.replaceChildren(...out);
-    runTimes();
+    clock();
     if (chips && nc) {                          // the counts; the pressed chip is set again by apply
       const pressed = Array.from(chips.children).find((b) => b.getAttribute("aria-pressed") === "true");
       chips.replaceChildren(...Array.from(nc.children).map((b) => document.importNode(b, true)));

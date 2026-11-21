@@ -1763,7 +1763,7 @@ class Portal(object):
             u = rows.get(int(r["job_id"])) or {}
             st = u.get("status") or "unknown"
             out.append({"id": int(r["job_id"]), "title": self.actions.get(r.get("action"), {}).get("title", r.get("action", "")), "status": st, "group": self.status_group(st),
-                        "started": u.get("started") or r.get("at") or "", "elapsed": u.get("elapsed"), "by": r.get("user", "")})
+                        "started": u.get("started") or r.get("at") or "", "aap_started": u.get("started") or "", "elapsed": u.get("elapsed"), "by": r.get("user", "")})
         return out
 
     @staticmethod
@@ -2696,8 +2696,10 @@ def status_chip(st, approval=False, live=True):
 
 
 def started_attr(x):
-    """1.87.0: a running row's start as UTC seconds (data-t0) - portal.js counts its run time from it, never from the shown text (that is in report_time_zone)."""
-    t = _aap_dt(x.get("started")) if x.get("group") == "running" else None
+    """1.87.0: a running row's start as UTC seconds (data-t0) - portal.js counts its run time from it, never from the shown text (that is in report_time_zone).
+    Only AAP's own start of a job AAP says is running: a queued one (pending, waiting) or one AAP gave no start for has no clock (the portal's launch
+    time is not when it began to run)."""
+    t = _aap_dt(x.get("aap_started")) if x.get("status") == "running" else None
     return ' data-t0="%d"' % int(t.timestamp()) if t else ""
 
 
@@ -2735,7 +2737,7 @@ def job_list_html(cfg, portal, cn, items, sel, scope):
                    '<span class="r">%s<small>%s</small></span></a></li>'
                    % (x["group"], esc(x["status"]), esc(("%s %d %s" % (x["title"], x["id"], x["by"])).lower()), ' class="on" aria-current="true"' if x["id"] == sel else "", started_attr(x), cfg.path, x["id"],
                       "all" if scope == "all" else "mine", GROUP_DOT[x["group"]], esc(x["title"]), x["id"],
-                      (" \u00b7 " + esc(x["by"])) if scope == "all" else "", esc(shown(cfg, x["started"])), esc(dur_text(x["elapsed"]) if x["group"] != "running" else "running"))
+                      (" \u00b7 " + esc(x["by"])) if scope == "all" else "", esc(shown(cfg, x["started"])), esc(dur_text(x["elapsed"]) if x["group"] != "running" else "running" if x["status"] == "running" else "queued"))
                    for x in items)
     return ('<aside class="card jl" id="jl" data-scope="%s">%s<div class="find"><input type="search" id="jq" placeholder="Search job, job id or who started it" aria-label="Search the jobs" autocomplete="off">'
             '</div><div class="chips" id="jchips" role="group" aria-label="Status">%s</div><ul class="jrows" id="jrows">%s</ul>%s</aside>'
