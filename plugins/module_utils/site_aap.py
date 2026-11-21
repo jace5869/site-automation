@@ -74,9 +74,9 @@ class Api(object):
         else:
             self.ctx = ssl.create_default_context()
 
-    def call(self, method, path, body=None):
+    def call(self, method, path, body=None, base=None):
         """(HTTP status, JSON answer); status -1 = no answer (the address, a firewall, the certificate)."""
-        req = Request(self.conn["host"] + "/" + self.base + path, data=json.dumps(body).encode() if body is not None else None)
+        req = Request(self.conn["host"] + "/" + (self.base if base is None else base) + path, data=json.dumps(body).encode() if body is not None else None)
         req.get_method = lambda: method
         req.add_header("Accept", "application/json")
         if body is not None:
@@ -117,18 +117,21 @@ class Api(object):
     def probe(self):
         """Find the API path (api/controller/v2/ first) and check the login: '' or why not."""
         if not self.conn["host"] or not self.conn["login"]:
+            self.base = ""
             return self.no_credential
         if self.ca_error:
+            self.base = ""
             return self.ca_error
         for base in ("api/controller/v2/", "api/v2/"):
-            self.base = base
-            code, data = self.call("GET", "me/")
+            code, data = self.call("GET", "me/", base=base)
             if code != 404:
                 break
         if code == 200:
             me = (data.get("results") or [{}])[0] if isinstance(data.get("results"), list) else data
             self.user = str((me if isinstance(me, dict) else {}).get("username") or "")
+            self.base = base
             return ""
+        self.base = ""
         if code < 0:
             return ("AAP did not answer at %s: %s (the address, a firewall, or its certificate - %s)"
                     % (self.conn["host"], error_text(data), self.ca_setting))

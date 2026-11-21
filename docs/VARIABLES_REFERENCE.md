@@ -2102,7 +2102,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `portal_scope` | `system` | system = rootful (/etc/containers/systemd, systemctl) <- production user = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts |
-| `portal_image` | `aap.example.mil/site-ee-all:1` | the service's image: any image with Python 3.6 or later (it uses the standard library only). The site's execution environment has it already: pull it from your automation hub |
+| `portal_image` | `aap.example.mil/site-ee-all:1` | the service's image: any image with Python 3.8 or later (it uses the standard library only). The site's execution environment has it already: pull it from your automation hub |
 | `portal_pull_images` | `false` | true = a missing image is pulled (a host that reaches a registry); false (the default) = the job stops first, naming it, and nothing is changed |
 | `portal_config_dir` | `/etc/site-portal` | the service's files, and nginx-portal.conf (the nginx lines to add) |
 | `portal_network` | (empty) | behind STIG Manager's nginx: the podman network of that nginx container (required then): `sudo podman ps --format "{{.Names}} {{.Networks}}"` shows it. It must exist with DNS on (not podman's default "podman"); the role never creates or changes it |

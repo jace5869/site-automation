@@ -271,13 +271,14 @@ def who(headers):
 class Log(object):
     """Every launch, refusal and decision: a JSON line in PORTAL_DATA/portal-log.jsonl and on stdout (the journal)."""
 
+    LAUNCH_LIMIT = 5000
+
     def __init__(self, path):
         self.path = path
         self.lock = threading.Lock()
 
         self.stamp = None
-        self.records = []
-        self.launches = []
+        self.launches = collections.deque(maxlen=self.LAUNCH_LIMIT)
         self.terminated = True
 
     @staticmethod
@@ -296,12 +297,11 @@ class Log(object):
                     fh.flush()
                     after = os.fstat(fh.fileno())
                 if before.st_size == 0:
-                    self.records, self.launches, self.terminated = [], [], True
+                    self.launches.clear()
+                    self.terminated = True
                 if (before.st_size == 0 or self._stamp(before) == self.stamp) and self.terminated and after.st_size == before.st_size + len(data):
-                    record = json.loads(line)
-                    self.records.append(record)
-                    if record.get("event") == "launch":
-                        self.launches.append(record)
+                    if rec.get("event") == "launch":
+                        self.launches.append(json.loads(line))
                     self.stamp = self._stamp(after)
                 else:
                     self.stamp = None                   # a writer outside the portal changed the file
@@ -313,32 +313,32 @@ class Log(object):
         if not self.path:
             return []
         with self.lock:
+            cached = event == "launch" and 0 < limit <= self.LAUNCH_LIMIT
             try:
-                if self._stamp(os.stat(self.path)) != self.stamp:
-                    records = []
-                    with open(self.path, "rb") as fh:
-                        stamp = self._stamp(os.fstat(fh.fileno()))
-                        terminated = True
-                        for line in fh:
-                            terminated = line.endswith(b"\n")
-                            try:
-                                record = json.loads(line)
-                            except ValueError:
-                                continue
-                            if isinstance(record, dict):
-                                records.append(record)
-                    self.records = records
-                    self.launches = [r for r in records if r.get("event") == "launch"]
-                    self.stamp, self.terminated = stamp, terminated
+                if cached and self._stamp(os.stat(self.path)) == self.stamp:
+                    return list(self.launches)[-limit:]
+                launches = collections.deque(maxlen=self.LAUNCH_LIMIT)
+                rows = collections.deque(maxlen=limit if limit > 0 else None)
+                with open(self.path, "rb") as fh:
+                    stamp = self._stamp(os.fstat(fh.fileno()))
+                    terminated = True
+                    for line in fh:
+                        terminated = line.endswith(b"\n")
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(record, dict):
+                            if record.get("event") == "launch":
+                                launches.append(record)
+                            if not cached and (event is None or record.get("event") == event):
+                                rows.append(record)
+                self.launches, self.stamp, self.terminated = launches, stamp, terminated
+                return list(launches if cached else rows)[-limit:]
             except FileNotFoundError:
-                self.records, self.launches, self.stamp = [], [], None
+                self.launches.clear()
+                self.stamp = None
                 return []
-            rows = self.records
-            if event == "launch":
-                rows = self.launches
-            elif event is not None:
-                rows = [r for r in rows if r.get("event") == event]
-            return rows[-limit:]
 
 
 # ---- AAP --------------------------------------------------------------------------------------------------------------
@@ -365,6 +365,11 @@ class TemplateRead:
 class Aap(object):
     """AAP's API with the portal's account. Names resolved once (and again when AAP says 404)."""
 
+    # a template's details are kept this long (its modified time and labels unchanged); each entry's age is staggered by its
+    # id over the first minute, so the re-reads spread out instead of all coming in one refresh. A workflow's steps or launch
+    # requirements changed without touching the workflow show within this time (AAP still checks them at launch).
+    TEMPLATE_TTL = 600
+
     def __init__(self, cfg, api=None):
         self.cfg = cfg
         conn = {"host": cfg.aap_url if cfg.aap_url.startswith("http") else ("https://" + cfg.aap_url if cfg.aap_url else ""),
@@ -383,13 +388,13 @@ class Aap(object):
         self.listing_locks = {}
         self.estimates = {}             # template id -> (tasks of its last good run, when asked)
         self.listing_lock = threading.Lock()
-        self.template_reads = {}        # (kind, id) -> (list revision, TemplateRead)
+        self.template_reads = {}        # (kind, id) -> (list revision, TemplateRead, monotonic read time)
         self.changed_templates = set()
         self.inv_names = {}             # 1.78.4: inventory id -> its name (the picker's words), or None when the account cannot read it
 
     def connect(self):
         with self.lock:
-            why = self.api.probe()
+            why = "" if self.api.base else self.api.probe()
             self.ready, self.user = why, self.api.user
             return why
 
@@ -540,6 +545,7 @@ class Aap(object):
         have = dict(((a["aap"]["type"], a["aap"]["name"]), n) for n, a in builtin.items())
         out["account"] = str(self.user or getattr(self.api, "user", "") or "")[:80]
         found = self._known_templates(out)
+        unified = found is not None
         if found is None:
             found = []
             for typ, kind in (("job", "job_templates"), ("workflow", "workflow_job_templates")):
@@ -560,6 +566,7 @@ class Aap(object):
             for key in self.changed_templates:
                 previous.pop(key, None)
             self.changed_templates.clear()
+        read_at = time.monotonic()
         kept = {}
         reads = []
         with ThreadPoolExecutor(max_workers=8) as pool:
@@ -569,16 +576,16 @@ class Aap(object):
                 complete = labels.get("count", 0) == len(labels.get("results") or [])
                 revision = (row.get("modified") if complete else None, labels, have.get((typ, row.get("name"))))
                 hit = previous.get(key)
-                if revision[0] and hit and hit[0] == revision:
+                if revision[0] and hit and hit[0] == revision and read_at - hit[2] < self.TEMPLATE_TTL - (key[1] % 60):
                     reads.append((row, key, revision, hit[1], None))
                 else:
-                    reads.append((row, key, revision, None, pool.submit(self._read_template, typ, kind, row, have)))
+                    reads.append((row, key, revision, None, pool.submit(self._read_template, typ, kind, row, have, unified)))
         for row, key, revision, result, future in reads:
             if future is not None:
                 result = future.result()
             tname = str(row.get("name") or "")
             if revision[0] and not result.retry:
-                kept[key] = (revision, result)
+                kept[key] = (revision, result, read_at) if future is not None else previous[key]
             out["labelled"] += int(result.labelled)
             if result.clash:
                 out["clashes"].append((tname, result.clash))
@@ -605,8 +612,13 @@ class Aap(object):
         self.inv_names = {iid: self.inv_names[iid] for iid in seen_inv}
         return out
 
-    def _read_template(self, typ, kind, r, have):
+    def _read_template(self, typ, kind, r, have, unified):
         cfg = self.cfg
+        if unified:
+            code, r = self.call("GET", "%s/%d/" % (kind, r["id"]))
+            if code != 200:
+                return TemplateRead(skipped="its details could not be read: %s" % site_aap.error_text(r),
+                                    transient=self._unsure(code), retry=True)
         tname = str(r.get("name") or "")
         labels, tr = self.labels_t(kind, r)
         if labels is None:
@@ -1502,6 +1514,7 @@ class Portal(object):
             res = self.aap.resolve(self.builtin)
             self.log.add({"event": "start", "aap": "ok", "account": self.aap.user,
                           "actions": {k: (v[1] or "ok") for k, v in sorted(res.items())}})
+            self.restored = False
 
     def _key(self):
         """The pages' token key, kept in the data volume (a restart does not void open pages)."""
@@ -1589,7 +1602,6 @@ class Portal(object):
             self._save_catalog()
             return True
         finally:
-            self.restored = False
             self.found_ready = True
             self.found_lock.release()
 
@@ -2452,7 +2464,7 @@ def home_page(cfg, portal, cn, query=None):
              % (('<span class="chip s-ok">%s Connected</span>' % icon("ok")) if ok else ('<span class="chip s-critical">%s Not connected</span>' % icon("bad")),
                 ("AAP: <b>%d job%s found</b>" % (len(cards), "" if len(cards) == 1 else "s")) if ok else esc(err or portal.aap.ready or "AAP could not be asked"),
                 ("Refreshed %d s ago, wait a minute between refreshes. Last refreshed" % int(wait)) if wait else "Last refreshed",
-                clock(cfg, getattr(portal, "last_at", None) or portal.found_at or None), cfg.path, esc(portal.token(cn)), icon("refresh")))
+                clock(cfg, getattr(portal, "last_at", None) or portal.whole_at or portal.found_at or None), cfg.path, esc(portal.token(cn)), icon("refresh")))
     def tile(key, word, n, extra=""):
         return '<a class="ft%s" href="%s%s" data-show="%s" aria-current="%s"><span class="k">%s</span><span class="v">%d</span></a>' % (
             extra, cfg.path, ("?show=" + key) if key else "", key, "true" if show == key else "false", word, n)
@@ -3125,6 +3137,10 @@ class SwisSource(object):
         return site_swis.status(self._client(), raw, {"page": o.get("page") or 1000, "max_nodes": o.get("max_nodes") or 5000})
 
 
+def etag_matches(header, tag):
+    return any(item.strip() in (tag, "W/" + tag, "*") for item in header.split(","))
+
+
 class NetLive(object):
     """SolarWinds, read by this server alone (plugins/module_utils/site_swis.py: SWQL queries only) while someone has the
     Network map open - one cache every viewer shares, never a read per viewer. 1.95.0: the last good map is kept on disk
@@ -3276,7 +3292,7 @@ class NetLive(object):
             return 200, json.dumps(head), ""
         if stale:                       # the same map, now stale: another tag, so a viewer who has the map hears that too
             etag = '%s-%s"' % (etag[:-1], hashlib.sha1(stale.encode("utf-8")).hexdigest()[:8])
-        if etag and etag_in == etag:
+        if etag and etag_matches(etag_in, etag):
             return 304, "", etag
         return 200, json.dumps(head)[:-1] + ',"map":' + m + "}", etag
 
@@ -3377,7 +3393,7 @@ def make_handler(cfg, portal, static_dir):
             self.do_GET()
 
         def _unchanged(self, tag):
-            return any(item.strip() in (tag, "W/" + tag, "*") for item in self.headers.get("If-None-Match", "").split(","))
+            return etag_matches(self.headers.get("If-None-Match", ""), tag)
 
         def _static(self, data, ctype, cache="no-cache"):
             tag = '"%s"' % hashlib.sha256(data).hexdigest()
@@ -3414,6 +3430,8 @@ def make_handler(cfg, portal, static_dir):
             if path.startswith("/static/") and path[8:] in statics:          # 1.85.0: the network map's files
                 with open(os.path.join(static_dir, path[8:]), "rb") as fh:
                     return self._static(fh.read(), TYPES[os.path.splitext(path)[1]])
+            if path.startswith("/static/"):
+                return self._send(404, b"", "text/plain")
             api = path.startswith("/api/")
             cn = self._who(api)
             if not cn:

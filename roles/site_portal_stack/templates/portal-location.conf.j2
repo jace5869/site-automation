@@ -2,11 +2,17 @@ location = {{ portal_path | regex_replace('/$', '') }} {
     absolute_redirect off;
     return 301 {{ portal_path }};
 }
-location {{ portal_path }} {
+{% for static in [false, true] %}
+location {{ portal_path }}{{ "static/" if static else "" }} {
+{% if static %}
+    limit_except GET { deny all; }
     gzip on;
-    gzip_types text/css text/javascript application/javascript application/json;
+    gzip_types text/css text/javascript application/javascript;
     gzip_vary on;
     etag on;
+{% else %}
+    gzip off;
+{% endif %}
     resolver {{ _portal_resolvers | join(' ') }} valid=30s ipv6=off;   # the podman network {{ _portal_net_name }}'s DNS
     set $site_portal_app http://site-portal-app:8080;
     rewrite ^{{ portal_path }}(.*)$ /$1 break;
@@ -20,3 +26,4 @@ location {{ portal_path }} {
     proxy_read_timeout 60s;
     client_max_body_size 64k;
 }
+{% endfor %}

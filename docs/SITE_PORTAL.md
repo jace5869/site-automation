@@ -857,7 +857,8 @@ there is one card, and the deploy says so.
 (a page without its rows, fewer rows than AAP counted), is never taken as "the template is gone". The portal keeps the cards and the host list it
 had from the last whole read, says so on the page, and asks again in a few seconds. A refusal (403, 404) is an answer: the template is left out. The last whole read is kept for 10 times `portal_discover_seconds` at most.
 
-Discovery checks the template list on each refresh, reuses forms with an unchanged revision and labels, and reads up to eight changed templates at once.
+Discovery checks the template list on each refresh, reads up to eight templates at once, and reuses forms with an unchanged revision and labels for up to 10 minutes, each entry staggered so the re-reads spread out. A workflow step or launch requirement changed without touching the workflow shows within that time; AAP still checks everything at launch.
+The first refresh after expiry reads the workflow steps and launch requirements again.
 A restart can show the last whole catalog from `PORTAL_DATA/catalog-cache.json` while AAP refreshes in the background. An expired catalog, or one from
 another controller, credential or catalog configuration, is not used. The saved forms do not replace the checks made at launch.
 
@@ -1169,7 +1170,7 @@ and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md). The ones you are likely to
 | Setting | Default | What it does |
 |---|---|---|
 | `portal_network` | | the podman network of STIG Manager's nginx container (required behind it; it must exist, with DNS) |
-| `portal_image` | | your execution environment image (any image with Python 3) |
+| `portal_image` | | your execution environment image (any image with Python 3.8 or later) |
 | `portal_pull_images` | false | true = a missing image is pulled; false = the job stops first and names it (an air-gapped host loads it: [ENCLAVES.md](ENCLAVES.md), section 5) |
 | `portal_reports_dir` | `/srv/reports` | the folder the report jobs write to, on this server |
 | `portal_inventory` | | the AAP inventory an action's host must be in |

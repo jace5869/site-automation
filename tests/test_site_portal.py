@@ -2533,7 +2533,10 @@ class Speed1990(unittest.TestCase):
 
     def route(self, method, path, body):
         if path.startswith("unified_job_templates/?"):
-            return page(self.rows)
+            return page([{k: row[k] for k in ("type", "id", "name", "modified", "summary_fields")} for row in self.rows])
+        for row in self.rows:
+            if path == "%ss/%d/" % (row["type"], row["id"]):
+                return 200, row
         if "?role_level=" in path or "?labels__name=" in path:
             return page([row for row in self.rows if path.startswith(row["type"] + "s/") and
                          ("?labels__name=" in path or row["summary_fields"]["user_capabilities"]["start"])])
@@ -2563,12 +2566,90 @@ class Speed1990(unittest.TestCase):
         self.rows[-1].update(name="Renamed workflow", modified="2026-11-21T01:00:00Z")
         self.api.paths.clear()
         self.assertEqual(self.aap.discover({})["actions"]["wf_17"]["title"], "Renamed workflow")
-        self.assertEqual(len(self.api.paths), 4, self.api.paths)
+        self.assertEqual(len(self.api.paths), 5, self.api.paths)
         self.assertTrue(all(path.startswith("workflow_job_templates/17/") for _, path in self.api.paths[1:]))
         self.rows[0]["summary_fields"]["user_capabilities"]["start"] = False
         updated = self.aap.discover({})
         self.assertNotIn("jt_1", updated["actions"])
         self.assertEqual(updated["no_execute"], ["Example 01"])
+
+    def test_unified_miss_rebuilds_a_launchable_form(self):
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        self.aap.discover({})
+        self.api.paths.clear()
+        self.rows[0].update(modified="new revision", playbook="example.yml")
+        action = self.aap.discover({})["actions"]["jt_1"]
+        self.assertIn(("GET", "job_templates/1/survey_spec/"), self.api.paths)
+        self.assertEqual(portal.same_template(action), "")
+
+    def test_template_ttl_rechecks_workflow_steps_and_launch_requirements(self):
+        from unittest import mock
+        workflow = self.rows[-1]
+        workflow["ask_limit_on_launch"] = True
+        step = {"inventory": 31, "ask_limit_on_launch": True}
+        node = {"id": 101, "unified_job_template": 88, "summary_fields": {"unified_job_template": {"unified_job_type": "job"}}}
+        launch = {}
+
+        def route(method, path, body):
+            if "/workflow_nodes/" in path:
+                return page([node])
+            if path == "job_templates/88/":
+                return 200, step
+            if path == "job_templates/1/launch/":
+                return 200, launch
+            if path.startswith("inventories/"):
+                return 200, {"name": "Example inventory"}
+            return self.route(method, path, body)
+
+        self.api.route = route
+        with mock.patch.object(sp.time, "monotonic", return_value=100) as clock:
+            first = self.aap.discover({})["actions"]
+            self.assertEqual(first["wf_17"]["limit_inv"], 31)
+            clock.return_value += self.aap.TEMPLATE_TTL - 61      # still kept (each entry's age is staggered by up to 59 s)
+            self.aap.discover({})
+            launch["passwords_needed_to_start"] = ["password"]
+            node["always_nodes"] = [102]
+            clock.return_value += 61                              # past every entry's time: read again
+            changed = self.aap.discover({})["actions"]
+            self.assertNotIn("jt_1", changed)
+            self.assertNotEqual(first["wf_17"]["sig"], changed["wf_17"]["sig"])
+            step["inventory"] = 32
+            launch.clear()
+            clock.return_value += self.aap.TEMPLATE_TTL
+            changed = self.aap.discover({})["actions"]
+            self.assertEqual(changed["wf_17"]["limit_inv"], 32)
+            self.assertIn("jt_1", changed)
+
+    def test_concurrent_calls_share_one_confirmed_probe(self):
+        from unittest import mock
+        self.cfg.aap_token = "placeholder"
+        aap = sp.Aap(self.cfg)
+        entered, release = threading.Event(), threading.Event()
+        probes = []
+
+        def call(method, path, body=None, base=None):
+            if path == "me/":
+                probes.append(base)
+                if base == "api/controller/v2/":
+                    entered.set()
+                    if not release.wait(5):
+                        raise AssertionError("probe stalled")
+                    return 404, {}
+                return 200, {"username": "example"}
+            return 200, aap.api.base
+
+        with mock.patch.object(aap.api, "call", side_effect=call), sp.ThreadPoolExecutor(max_workers=2) as pool:
+            startup = pool.submit(aap.connect)
+            try:
+                self.assertTrue(entered.wait(5))
+                self.assertEqual(aap.api.base, "")
+                request = pool.submit(aap.call, "GET", "jobs/")
+            finally:
+                release.set()
+            self.assertEqual(startup.result(), "")
+            self.assertEqual(request.result(), (200, "api/v2/"))
+            self.assertEqual(aap.connect(), "")
+            self.assertEqual(probes, ["api/controller/v2/", "api/v2/"])
 
     def test_restart_serves_catalog_during_refresh(self):
         portal = sp.Portal(self.cfg, aap=self.aap)
@@ -2599,6 +2680,32 @@ class Speed1990(unittest.TestCase):
         self.assertNotIn("jt_1", restarted.actions)
         self.cfg.aap_token = "another-placeholder"
         self.assertFalse(sp.Portal(self.cfg, aap=self.aap).restored)
+
+    def test_restored_catalog_survives_failed_start(self):
+        from unittest import mock
+        portal = sp.Portal(self.cfg, aap=self.aap)
+        portal.refresh()
+        portal.whole_at -= 120
+        portal._save_catalog()
+        restarted = sp.Portal(self.cfg, aap=self.aap)
+        self.assertIn("Last refreshed " + sp.clock(self.cfg, restarted.whole_at),
+                      sp.home_page(self.cfg, restarted, "Example user"))
+        self.api.base = ""
+        with mock.patch.object(self.api, "probe", return_value="Unavailable"):
+            restarted.refresh(force=True)
+            self.assertTrue(restarted.restored)
+            self.assertIn("jt_1", restarted.actions)
+        self.api.base = StubApi.base
+        restarted.refresh(force=True)
+        self.assertFalse(restarted.restored)
+        self.assertEqual(self.aap.ready, "")
+
+    def test_netmap_weak_etag_in_list(self):
+        from unittest import mock
+        live = sp.NetLive(self.cfg, sp.Log(None), source=mock.Mock(kind="example"))
+        live.map_json, live.etag = "{}", '"example"'
+        self.assertEqual(live.answer('"older", W/"example"'), (304, "", live.etag))
+        self.assertEqual(live.answer('W/"older"')[0], 200)
 
     def test_cached_forms_still_check_inventory_access(self):
         inventories = {31: "First inventory", 32: "Second inventory"}
@@ -2632,7 +2739,6 @@ class Speed1990(unittest.TestCase):
             log.add({"event": "launch", "job_id": 2})
             log.add({"event": "note"})
             self.assertEqual(log.read("launch", limit=1)[0]["job_id"], 2)
-            self.assertEqual(len(log.read()), 3)
             reads = lambda: sum("r" in call.args[1] for call in opened.call_args_list)
             self.assertEqual(reads(), 1)
             with open(path, "w") as fh:
@@ -2641,14 +2747,27 @@ class Speed1990(unittest.TestCase):
             self.assertEqual([row["job_id"] for row in log.read("launch")], [3, 4])
             self.assertEqual(reads(), 2)
             self.assertEqual(len(log.read()), 2)
-            self.assertEqual(reads(), 2)
+            self.assertEqual(reads(), 3)
             stamp = os.stat(path)
             with open(path, "r+b") as fh:
                 fh.seek(len('{"event":"launch","job_id":'))
                 fh.write(b"5")
             os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 1000000000))
             self.assertEqual([row["job_id"] for row in log.read("launch")], [5, 4])
-            self.assertEqual(reads(), 3)
+            self.assertEqual(reads(), 4)
+
+    def test_log_keeps_only_recent_launches_and_reads_older_history(self):
+        from unittest import mock
+        path = os.path.join(self.cfg.data, "portal-log.jsonl")
+        with mock.patch.object(sp.Log, "LAUNCH_LIMIT", 2):
+            log = sp.Log(path)
+            for i in range(5):
+                log.add({"event": "launch", "id": i})
+                log.add({"event": "refused", "id": i})
+            self.assertEqual([row["id"] for row in log.read("launch", 2)], [3, 4])
+            self.assertEqual([row["id"] for row in log.read("launch", 4)], [1, 2, 3, 4])
+            self.assertEqual([row["id"] for row in log.read("refused", 3)], [2, 3, 4])
+            self.assertEqual([row["id"] for row in log.launches], [3, 4])
 
     def test_proxied_static_etag(self):
         from unittest import mock
@@ -3395,13 +3514,16 @@ class Own(unittest.TestCase):
 
 
 class RoleFiles(unittest.TestCase):
-    def test_nginx_lines(self):
+    def portal_templates(self):
         import jinja2
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROOT, "roles", "site_portal_stack", "templates")),
                                  keep_trailing_newline=True)
-        import re
         env.filters["regex_replace"] = lambda s, a, b: re.sub(a, b, s)
         env.filters["bool"] = bool
+        return env
+
+    def test_nginx_lines(self):
+        env = self.portal_templates()
         t = env.get_template("nginx-portal.conf.j2").render(portal_path="/portal/", _portal_resolvers=["192.0.2.1"],
                                                             _portal_net_name="stigman-net")
         for line in ("location /portal/ {", "proxy_set_header X-SSL-Client-Verify $ssl_client_verify;",
@@ -3414,9 +3536,18 @@ class RoleFiles(unittest.TestCase):
         for line in ("ssl_verify_client       on;", "ssl_crl                 /etc/site-portal-tls/crl.pem;",
                      "    location /portal/ {", "        proxy_pass $site_portal_app;"):
             self.assertIn(line, s)
-        for config in (s, t):
-            for line in ("gzip on;", "gzip_types text/css text/javascript application/javascript application/json;", "gzip_vary on;", "etag on;"):
-                self.assertIn(line, config)
+
+    def test_only_static_portal_location_enables_gzip(self):
+        env = self.portal_templates()
+        for template in ("nginx-portal.conf.j2", "nginx-portal-server.conf.j2"):
+            config = env.get_template(template).render(portal_path="/example/", _portal_resolvers=["192.0.2.1"])
+            dynamic = config.split("location /example/ {", 1)[1].split("}", 1)[0]
+            self.assertIn("gzip off;", dynamic)
+            static = config.split("location /example/static/ {", 1)[1].split("client_max_body_size", 1)[0]
+            for line in ("gzip on;", "limit_except GET { deny all; }", "gzip_types text/css text/javascript application/javascript;",
+                         "gzip_vary on;", "etag on;", "proxy_pass $site_portal_app;"):
+                self.assertIn(line, static)
+            self.assertEqual(config.count("gzip on;"), 1)
 
     def test_nginx_stigman_links(self):
         """1.68.1: the optional lines - STIG Manager's page (/ and /index.html only) with the portal's script added, the page

@@ -2,10 +2,11 @@
 
 ## 1.99.0 — 2026-11-21
 
-**Site portal - speed.** Template and workflow discovery reads up to eight templates at once and reuses unchanged
-forms. After a restart the portal serves its saved catalog while checking AAP in the background. Launch checks still
-use live data. The portal keeps its launch log in memory and reloads it if the file changes externally. The portal
-and report website nginx configurations enable gzip for HTML, CSS, JavaScript and JSON, and ETags for static files.
+**Site portal - speed.** Discovery reads up to eight templates at once and reuses unchanged forms for up to 10 minutes (staggered; a template whose modified time or labels change is read again at once).
+The next refresh after expiry checks workflow steps and launch requirements again. After a restart the portal shows its
+saved catalog and refresh time while reconnecting to AAP in the background. Launch checks use live data. The portal keeps
+the latest 5,000 launches in memory and reads other history from the log file. Portal nginx compresses static assets only.
+The report website supports gzip and static file ETags. The portal image requires Python 3.8 or later.
 
 To set up: run Site portal - deploy.
 
