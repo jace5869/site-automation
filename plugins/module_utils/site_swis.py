@@ -366,7 +366,7 @@ def status(client, raw, opts=None):
     page, chunk = max(50, int(o.get("page") or 1000)), max(10, int(o.get("chunk") or 500))
     started, calls0 = time.time(), client.calls
     try:
-        rows, _cut = client.paged("SELECT N.NodeID, N.Status, N.StatusDescription, N.ResponseTime, N.PercentLoss, N.UnManaged FROM Orion.Nodes N",
+        rows, cut = client.paged("SELECT N.NodeID, N.Status, N.StatusDescription, N.ResponseTime, N.PercentLoss, N.UnManaged FROM Orion.Nodes N",
                                   "N.NodeID", None, page, max(1, int(o.get("max_nodes") or 5000)))
     except SwisError as e:
         raise SwisError("Orion.Nodes: %s" % e, getattr(e, "kind", "other"))
@@ -377,8 +377,11 @@ def status(client, raw, opts=None):
         r = by.get(n["id"])
         if r is not None:
             n = dict(n, status_code=r.get("Status"), status_text=str(r.get("StatusDescription") or ""), resp=r.get("ResponseTime"),
-                     loss=r.get("PercentLoss"), unmanaged=bool(r.get("UnManaged")))
+                     loss=r.get("PercentLoss"), unmanaged=bool(r.get("UnManaged")), stale=False)
+        else:                                            # 1.95.1: not in this read (removed, not visible, past the cut): not known
+            n = dict(n, status_code=None, status_text="not in the last status read", resp=None, loss=None, stale=True)
         new["nodes"].append(n)
+    new["status_cut"] = bool(cut)
     ids = sorted(set(i.get("InterfaceID") for i in raw.get("interfaces") or [] if isinstance(i.get("InterfaceID"), int)))
     if ids:
         fresh = {}
@@ -386,7 +389,9 @@ def status(client, raw, opts=None):
             for r in client.query("SELECT InterfaceID, InPercentUtil, OutPercentUtil, Inbps, Outbps, Status, OperStatus "
                                   "FROM Orion.NPM.Interfaces WHERE InterfaceID IN @ids", {"ids": ids[i:i + chunk]}):
                 fresh[r.get("InterfaceID")] = r
-        new["interfaces"] = [dict(i, **fresh[i.get("InterfaceID")]) if i.get("InterfaceID") in fresh else i for i in raw.get("interfaces") or []]
+        gone = {"InPercentUtil": None, "OutPercentUtil": None, "Inbps": None, "Outbps": None, "Status": None, "OperStatus": None, "stale": True}
+        new["interfaces"] = [dict(i, stale=False, **fresh[i.get("InterfaceID")]) if i.get("InterfaceID") in fresh else dict(i, **gone)
+                             for i in raw.get("interfaces") or []]
     new["read_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started))
     new["seconds"], new["queries"] = round(time.time() - started, 1), client.calls - calls0
     return new
@@ -993,6 +998,8 @@ def model(raw, opts=None):
              "why": (r.get("status_text") or "") if st != UP else "", "resp": ("%d ms" % r["resp"]) if isinstance(r.get("resp"), (int, float)) and r["resp"] >= 0 and st != DOWN else ""}
         if r.get("unmanaged"):
             n["why"] = "unmanaged in SolarWinds"
+        if r.get("stale"):
+            n["stale"] = True
         extra = dict((k, v) for k, v in (r.get("props") or {}).items()
                      if k in (o.get("properties") or []) and v not in (None, ""))
         if extra:
@@ -1055,7 +1062,9 @@ def model(raw, opts=None):
         if pin is not None or pout is not None:
             l["in"], l["out"] = int(round(max(0, min(100, pin or 0)))), int(round(max(0, min(100, pout or 0))))
         down = [x for x, f in ((ids[a]["name"], fa), (ids[b]["name"], fb)) if f and (f.get("OperStatus") == 2 or f.get("Status") == 2)]
-        if down:
+        if (fa or fb) and all((not f) or f.get("stale") for f in (fa, fb)):     # 1.95.1: no end in the last status read
+            l["status"], l["why"], l["stale"] = UNKNOWN, "not in the last status read", True
+        elif down:
             l["status"], l["why"] = DOWN, "interface down on " + " and ".join(down)
         elif DOWN in (ids[a]["status"], ids[b]["status"]):
             l["status"], l["why"] = DOWN, "%s is down" % (ids[a]["name"] if ids[a]["status"] == DOWN else ids[b]["name"])

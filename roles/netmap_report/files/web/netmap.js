@@ -469,6 +469,11 @@
       if (!placed) S.world = 'tiles';
       [].forEach.call(box.querySelectorAll('.nm-wv'), function (x) { x.setAttribute('aria-pressed', String(x.getAttribute('data-w') === S.world)); x.disabled = !placed && x.getAttribute('data-w') === 'globe'; });
     }
+    if (old) {                                           // 1.95.1: a whole read may place sites or take them away: the Map rechecked
+      var placed2 = order.filter(function (s) { return !s.none && own(D.geo, s.name); }).length;
+      [].forEach.call(box.querySelectorAll('.nm-wv[data-w=globe]'), function (x) { x.disabled = !placed2; });
+      if (!placed2 && S.world === 'globe') { S.world = 'tiles'; [].forEach.call(box.querySelectorAll('.nm-wv'), function (x) { x.setAttribute('aria-pressed', String(x.getAttribute('data-w') === 'tiles')); }); }
+    }
     if (S.level !== 'world' && !sites[S.site]) S.level = 'world';
     filterLists();
     hooks.forEach(function (f) { f(D, changes); });

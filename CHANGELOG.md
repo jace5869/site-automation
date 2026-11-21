@@ -24,6 +24,9 @@ To set up: run Site portal - deploy.
 - A site called "constructor" (or any word a browser object has) is never taken as placed.
 - A site whose devices are all Unknown says "not known", not "all up".
 - A live refresh keeps the globe where the viewer turned it.
+- **The live status read:** a node or interface not in the last status read (removed from Orion, not visible, past
+  `netmap_max_nodes`) shows *not known* - Unknown, "not in the last status read" - never its old state under the new time;
+  a cut read says so in the live line. A whole read that places sites (or takes them away) turns the Map on (or off).
 - The portal: the kept map from disk has its own ETag, so the first fresh read of the same map is sent; its state is read
   under the lock.
 - Tests: `tests/test_netmap.py` Hotfix1951 and Hotfix1951Page (each fails on 1.95.0), Portal.test_b.

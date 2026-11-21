@@ -3317,9 +3317,9 @@ class NetLive(object):
         now = time.time()
         with self.lock:
             m, etag, read_at, stale, nxt = self.map_json, self.etag, self.read_at, self.stale, self.next_at
-            kind, from_disk = self.kind, self.from_disk
+            kind, from_disk, cut = self.kind, self.from_disk, bool((self.raw or {}).get("status_cut"))
         head = {"ok": bool(m), "age": int(now - read_at) if read_at else None, "next": max(0, int(nxt - now)) if nxt else self.cfg.netmap_seconds,
-                "poll": self.cfg.netmap_seconds, "stale": stale, "kind": kind, "from_disk": from_disk,
+                "poll": self.cfg.netmap_seconds, "stale": stale, "kind": kind, "from_disk": from_disk, "cut": cut,
                 "as_of": shown(self.cfg, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(read_at))) if read_at else "", "source": self.source.kind}
         if not m:
             head["why"] = ("SolarWinds could not be read: " + stale) if stale else ""

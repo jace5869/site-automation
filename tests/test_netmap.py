@@ -1235,5 +1235,30 @@ class Hotfix1951(unittest.TestCase):
         self.assertTrue([n for n in m["nodes"] if n["closet"]], "the closets come from the distribution switches the links show")
 
 
+    def test_4_a_node_not_in_the_status_read_is_not_known(self):
+        """1.95.1: removed, not visible or past the cut: Unknown and stale - never its old Up under the new time."""
+        raw = hostile()
+        n0 = raw["nodes"][0]
+        raw["interfaces"] = [{"InterfaceID": 7, "NodeID": n0["id"], "Name": "Gi0/1", "Status": 1, "OperStatus": 1, "InPercentUtil": 40, "OutPercentUtil": 10}]
+
+        class C(object):
+            calls = 0
+
+            def paged(self, *a, **k):                    # every node but the first; the read was cut
+                return [{"NodeID": n["id"], "Status": 1} for n in raw["nodes"][1:]], True
+
+            def query(self, *a, **k):
+                return []                                # the interface is not in the read either
+        new = sw.status(C(), raw, {})
+        first = [n for n in new["nodes"] if n["id"] == n0["id"]][0]
+        self.assertEqual((first["status_code"], first["stale"]), (None, True))
+        self.assertTrue(new["status_cut"])
+        self.assertTrue(new["interfaces"][0]["stale"])
+        self.assertIsNone(new["interfaces"][0]["InPercentUtil"])
+        m = sw.model(new, {})
+        node = [n for n in m["nodes"] if n["id"] == n0["id"]][0]
+        self.assertEqual((node["status"], node.get("stale"), node["why"]), ("Unknown", True, "not in the last status read"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
