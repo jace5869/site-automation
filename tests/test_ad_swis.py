@@ -471,5 +471,24 @@ class Counts1940(unittest.TestCase):
         self.assertIn("its end not in SolarWinds' events", r["DC02"][5])
 
 
+class Orion1101(unittest.TestCase):
+    """1.101.0: a snapshot of another SolarWinds is not this one's - SolarWinds itself is read (orion_key compared, never the URL)."""
+
+    def test_1_another_orion(self):
+        s = Snap()
+        base = s.latest
+
+        def latest(conn):
+            r = base(conn)
+            r["orion"] = "orion-b.corp.example.mil:17774"
+            return r
+        s.latest = latest
+        r = ad.read(DCS, {"now": NOW, "orion": "https://orion-a.corp.example.mil"}, conn=Conn([]), swdb=s)
+        self.assertFalse(r["ok"])
+        self.assertIn("another SolarWinds", " ".join(r["why"]))
+        r = ad.read(DCS, {"now": NOW, "orion": "https://orion-b.corp.example.mil/"}, conn=Conn([]), swdb=s)
+        self.assertEqual(r["source"], "db-snapshot")                                # the same Orion: host:port, not the URL
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

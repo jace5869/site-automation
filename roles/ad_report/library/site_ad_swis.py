@@ -31,7 +31,8 @@ def main():
                            url=dict(type="str", default=""), validate_certs=dict(type="bool", default=True), ca_path=dict(type="str", default="")),
         supports_check_mode=True)
     p = module.params
-    opts = {"max_age": p["max_age"], "days": p["days"], "now": p["now"]}
+    opts = {"max_age": p["max_age"], "days": p["days"], "now": p["now"],
+            "orion": (os.environ.get("SOLARWINDS_URL") or p["url"] or "").strip()}   # 1.101.0: another Orion's snapshot is not this one's
     why, conn, client = [], None, None
     if p["host"]:
         if site_swis_db is None:

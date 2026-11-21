@@ -19,13 +19,14 @@ import re
 
 try:
     from ansible.module_utils import site_swis as sw
+    from ansible.module_utils import site_swis_db as sdb
 except ImportError:                                      # the tests: plugins/module_utils on sys.path
     import site_swis as sw
+    import site_swis_db as sdb
 
 APPS = "Orion.APM.Application"
 COMPS = "Orion.APM.Component"
 ALERTS = ("Orion.AlertActive", "Orion.AlertObjects", "Orion.AlertConfigurations")
-UP_CODES = (1, 22)                                       # SAM: Up, and "Up" as some versions say it
 EVENT_DOWN, EVENT_UP = 1, 5                              # Orion's EventTypes: Node Down, Node Up
 
 
@@ -239,6 +240,8 @@ def from_db(dcs, opts, conn, swdb):
     """The snapshot: -> (result, why) - result None when it cannot be used (why says why)."""
     now = _now(opts)
     try:
+        if hasattr(swdb, "begin_read"):                  # 1.101.0: one moment of the database for the whole read
+            swdb.begin_read(conn)
         snap = swdb.latest(conn)
     except Exception as e:  # noqa: BLE001
         if "1146" in str(e) or "doesn't exist" in str(e):
@@ -251,6 +254,9 @@ def from_db(dcs, opts, conn, swdb):
         except Exception:  # noqa: BLE001
             pass
         return None, "no whole SolarWinds snapshot yet%s" % ((" (the last run: %s)" % _clean(str(f[1]), 160)) if f else "")
+    want = sdb.orion_key(opts.get("orion")) if opts.get("orion") else ""
+    if want and snap.get("orion") and snap["orion"] != want:    # another Orion's snapshot: SolarWinds itself
+        return None, "the SolarWinds snapshot is of another SolarWinds (%s, not %s)" % (snap["orion"], want)
     if snap.get("age_seconds") is not None:
         age = int(snap["age_seconds"]) // 60
     else:                                                # no age given: from its time; no time at all = too old
@@ -291,7 +297,8 @@ def _db_read(dcs, opts, conn, swdb, snap, age, now):
     days = float(opts.get("days") or 30)
     downs, events = {}, True
     try:
-        evs = swdb.events_between(conn, now - datetime.timedelta(days=days), now, ids) if ids else []
+        kw = {"orion": snap["orion"]} if snap.get("orion") else {}
+        evs = swdb.events_between(conn, now - datetime.timedelta(days=days), now, ids, **kw) if ids else []
         per = {}
         for e in evs or []:
             per.setdefault(e.get("node_id"), []).append(e)
@@ -316,8 +323,8 @@ def _has(client, names):
 
 
 def _cols(client, entity, want):
-    """The first of each [choice, ...] this Orion's entity has (None: none of them)."""
-    have = set(r.get("Name") for r in client.query("SELECT Name, Type FROM Metadata.Property WHERE EntityName = @e", {"e": entity}))
+    """The first of each [choice, ...] this Orion's entity has (None: none of them) - as the snapshot asks (EntityName IN)."""
+    have = sdb._have(client, [entity]).get(entity) or set()
     return [next((c for c in ch if c in have), None) for ch in want]
 
 
@@ -347,14 +354,16 @@ def from_live(dcs, opts, client, swdb=None):
     sam = APPS in ents and COMPS in ents
     apps = {}
     if sam and ids:
-        try:                                             # 1.96.1's one reader when it is there, else the same queries here
-            apps = swdb.apps_live(client, ids, []) if hasattr(swdb, "apps_live") else _live_apps(client, ids)
+        nr = []
+        try:                                             # 1.101.0: the snapshot's own live reader (one reader in one place)
+            apps = sdb.apps_live(client, ids, nr)
+            sam = not any(x.get("absent") for x in nr)
         except Exception as e:  # noqa: BLE001
             why.append("SAM's applications not read: %s" % _say(e))
     alerts = {}
     if all(a in ents for a in ALERTS) and ids:
         try:
-            alerts = swdb.alerts_live(client, ids, []) if hasattr(swdb, "alerts_live") else _live_alerts(client, ids)
+            alerts = sdb.alerts_live(client, ids, [])
         except Exception as e:  # noqa: BLE001
             why.append("the active alerts not read: %s" % _say(e))
     ifaces = None
@@ -382,64 +391,6 @@ def _live_ifaces(client, ids):
     return out
 
 
-def _live_apps(client, ids):
-    apps = client.query("SELECT ApplicationID, NodeID, Name, Status, StatusDescription, Unmanaged FROM Orion.APM.Application WHERE NodeID IN @ids",
-                        {"ids": ids})
-    aids = [a.get("ApplicationID") for a in apps]
-    val, msg = _cols(client, COMPS, [("StatisticData", "ComponentStatisticData", "Statistic"),
-                                     ("ComponentMessage", "StatusMessage", "ErrorMessage", "Message")])
-    extra = "".join(", " + c for c in (val, msg) if c)
-    comps = client.query("SELECT ComponentID, ApplicationID, Name, ComponentType, Status, StatusDescription%s FROM Orion.APM.Component "
-                         "WHERE ApplicationID IN @apps" % extra, {"apps": aids}) if aids else []
-    per = {}
-    for c in comps:
-        per.setdefault(c.get("ApplicationID"), []).append(c)
-    out = {}
-    for a in apps:
-        cs = per.get(a.get("ApplicationID"), [])
-        bad = [c for c in cs if int(c.get("Status") or 0) not in UP_CODES]
-        nu = [{"component_id": c.get("ComponentID"), "name": c.get("Name") or "", "kind": c.get("ComponentType"),
-               "status": sw.status_of(c.get("Status")), "status_code": c.get("Status"), "status_text": c.get("StatusDescription") or "",
-               "value": c.get(val) if val else None, "message": c.get(msg) if msg else ""} for c in bad]
-        nu.sort(key=lambda c: sw.RANK.get(c["status"], 2))
-        out.setdefault(a.get("NodeID"), []).append({"app_id": a.get("ApplicationID"), "app": a.get("Name") or "",
-                                                    "status": sw.status_of(a.get("Status"), a.get("Unmanaged")),
-                                                    "status_code": a.get("Status"), "status_text": a.get("StatusDescription") or "",
-                                                    "unmanaged": bool(a.get("Unmanaged")), "components": len(cs), "components_not_up": nu})
-    return out
-
-
-def _live_alerts(client, ids):
-    node_col = _cols(client, "Orion.AlertObjects", [("RelatedNodeId", "RelatedNodeID")])[0] or "RelatedNodeId"
-    def chunked(sql, keys):                              # IN @ids in chunks of 500 (a long list is one query too many)
-        out = []
-        for i in range(0, len(keys), 500):
-            out += client.query(sql, {"ids": keys[i:i + 500]})
-        return out
-    objs = chunked("SELECT AlertObjectID, AlertID, EntityType, EntityCaption, %s FROM Orion.AlertObjects WHERE %s IN @ids" % (node_col, node_col), list(ids))
-    if not objs:
-        return {}
-    act = chunked("SELECT AlertActiveID, AlertObjectID, TriggeredDateTime, TriggeredMessage, Acknowledged FROM Orion.AlertActive "
-                  "WHERE AlertObjectID IN @ids", [o.get("AlertObjectID") for o in objs])
-    if not act:
-        return {}
-    conf = dict((c.get("AlertID"), c) for c in chunked("SELECT AlertID, Name, Severity FROM Orion.AlertConfigurations WHERE AlertID IN @ids",
-                                                       sorted(set(o.get("AlertID") for o in objs if o.get("AlertObjectID") in
-                                                                  set(a.get("AlertObjectID") for a in act)))))
-    by_obj = dict((o.get("AlertObjectID"), o) for o in objs)
-    out = {}
-    for a in act:
-        o = by_obj.get(a.get("AlertObjectID")) or {}
-        c = conf.get(o.get("AlertID")) or {}
-        out.setdefault(o.get(node_col), []).append({"name": c.get("Name") or "", "severity": c.get("Severity"),
-                                                    "triggered_at": a.get("TriggeredDateTime"), "message": a.get("TriggeredMessage") or "",
-                                                    "entity_type": o.get("EntityType") or "", "entity_caption": o.get("EntityCaption") or "",
-                                                    "acknowledged": bool(a.get("Acknowledged"))})
-    for v in out.values():
-        v.sort(key=lambda x: str(x.get("triggered_at") or ""), reverse=True)
-    return out
-
-
 def read(dcs, opts, conn=None, swdb=None, client=None):
     """The snapshot when it is there and fresh enough; else SolarWinds live; else the old snapshot, said as old; else nothing."""
     dcs = [d for d in (dcs or []) if d.get("dc")]
@@ -449,6 +400,9 @@ def read(dcs, opts, conn=None, swdb=None, client=None):
             r, w = from_db(dcs, opts, conn, swdb)
         except Exception as e:  # noqa: BLE001
             r, w = None, "the SolarWinds snapshot could not be read: %s" % _say(e)
+        finally:
+            if hasattr(swdb, "end_read"):
+                swdb.end_read(conn)
         if r and "stale_snapshot" not in r:
             return r
         if w:

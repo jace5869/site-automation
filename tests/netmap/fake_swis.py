@@ -95,13 +95,13 @@ def node_rows(cols, alias):
 def iface_rows(cols, where, params):
     st = state()
     ifd = set(st.get("ifdown") or [])
-    m = re.match(r"^InterfaceID IN @(\w+)$", where or "")
+    m = re.match(r"^(InterfaceID|NodeID) IN @(\w+)$", where or "")     # 1.101.0: a node's interfaces too (the AD report)
     if not m:
-        raise Bad("this fake knows only WHERE InterfaceID IN @ids")
-    ids = set(params.get(m.group(1)) or [])
+        raise Bad("this fake knows only WHERE InterfaceID IN @ids or NodeID IN @ids")
+    col, ids = m.group(1), set(params.get(m.group(2)) or [])
     out = []
     for i in fx["interfaces"]:
-        if i["InterfaceID"] in ids:
+        if i.get(col) in ids:
             r = dict((c, i.get(c)) for c in cols)
             if i["InterfaceID"] in ifd:
                 r.update(OperStatus=2, Status=2, InPercentUtil=0, OutPercentUtil=0)
