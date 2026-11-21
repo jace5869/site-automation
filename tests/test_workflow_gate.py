@@ -161,7 +161,7 @@ class SyncFingerprints(unittest.TestCase):
         module = Mock(check_mode=False, params={
             "organization": "Example org", "project": "Example project", "only": ["Example job"],
             "workflows": [dict(self.want, nodes=[{"id": "step"}])], "templates": [], "uses": {},
-            "known": known, "ca_path": "", "timeout": 30,
+            "known": known, "labels": [], "ca_path": "", "timeout": 30,
         })
         with patch.object(W, "AnsibleModule", return_value=module), patch.object(W, "Api") as ctor, patch.object(W, "connection"):
             api = ctor.return_value

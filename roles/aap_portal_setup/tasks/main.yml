@@ -110,6 +110,8 @@
   ansible.builtin.debug:
     msg: >-
       {{ _ps.results | selectattr('action', 'in', ['hand-edited', 'not ours', 'skipped', 'failed', 'attention']) | map(attribute='name') | list }}:
-      see what was done, above. portal_setup_overwrite: true writes over what was changed by hand; a step label
-      (TO DO BY HAND) is never removed by this job.
+      see what was done, above. portal_setup_overwrite: true writes over what was changed by hand.
+      {% if _ps.results | selectattr('action', 'equalto', 'attention') | list %}
+      A step label (TO DO BY HAND) is never removed by this job.
+      {% endif %}
   when: _ps.results | selectattr('action', 'in', ['hand-edited', 'not ours', 'skipped', 'failed', 'attention']) | list | length > 0

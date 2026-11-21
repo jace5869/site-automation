@@ -194,7 +194,7 @@ class SetupCheck(unittest.TestCase):
            {"id": 5, "name": "Gate", "labels": ["portal"], "playbook": "playbooks/workflow_gate.yml"}]
 
     def sync(self):
-        return W.Sync(StubApi(self.WFS, self.JTS), {}, True, None, "", "overwrite")
+        return W.Sync(StubApi(self.WFS, self.JTS), {}, True, S.MARK, "overwrite")
 
     def test_the_steps_of_the_labelled_workflows(self):
         self.assertEqual(self.sync().portal_steps("portal"), {1: ["Linux - fapolicyd - daily"], 2: ["Linux - fapolicyd - daily"], 3: ["Linux - fapolicyd - daily"]})
