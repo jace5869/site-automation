@@ -69,7 +69,7 @@ ad_repl_db_timeout: 10                   # seconds to wait for the report databa
 ad_repl_db_keep_days: 400                # delete the database's points older than this many days (0 = never)
 # ---- Replication map (1.101.0): the AD sites where the network map places their sites, on the report website -----
 # Each AD site is matched to a network-map site: ad_site_map first, then the DCs' own SolarWinds nodes (From SolarWinds),
-# then the same name, then the same code. The places and the WAN traffic come from the network map's own read with the
+# then the same site code, then the same name. The places and the WAN traffic come from the network map's own read with the
 # netmap_* settings - keep them in all.yml (as the Network map template has them), so the two maps agree.
 ad_repl_map_web: true                    # false = no replication map and no "How AD sites were matched"
 ad_site_map: {}                          # an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301}

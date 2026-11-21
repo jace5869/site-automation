@@ -63,7 +63,7 @@
     }
     function hit(d, kids, cx, cy, label) {
       var h = sv('path', { d: d, 'class': 'am-hit', tabindex: '0', role: 'button', 'aria-label': label });
-      var show = function (ev) { tip.replaceChildren.apply(tip, kids()); place(ev, cx, cy); };
+      var show = function (ev) { tip.replaceChildren.apply(tip, kids().filter(Boolean)); place(ev, cx, cy); };   // no null shown as text
       h.addEventListener('mousemove', show); h.addEventListener('focus', function () { show(null); });
       h.addEventListener('mouseleave', function () { tip.hidden = true; }); h.addEventListener('blur', function () { tip.hidden = true; });
       return h;
@@ -146,11 +146,11 @@
       gI.appendChild(c);
     }
   }
-  leg.replaceChildren(el('span', '', [el('i', 'ok'), 'under ' + (D.scale.low || D.scale.warn) + ' h']),
+  leg.replaceChildren.apply(leg, [el('span', '', [el('i', 'ok'), 'under ' + (D.scale.low || D.scale.warn) + ' h']),
     D.scale.low ? el('span', '', [el('i', 'low'), D.scale.low + '-' + D.scale.warn + ' h (Low)']) : null,
     el('span', '', [el('i', 'warning'), D.scale.warn + '-' + D.scale.crit + ' h']), el('span', '', [el('i', 'critical'), D.scale.crit + ' h or failing']),
     el('span', '', [el('i', 'none'), 'no WAN link in SolarWinds']), el('span', '', [el('i', 'thick'), 'between sites: as wide as the WAN traffic']),
-    el('span', '', [el('i', 'thin'), 'inside a site: thin, straight']));
+    el('span', '', [el('i', 'thin'), 'inside a site: thin, straight'])].filter(Boolean));
   draw();
   var t = 0; window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(draw, 150); });
   window.amTest = { open: function (n) { open = n || ''; draw(); }, data: D };

@@ -242,7 +242,9 @@ def from_db(dcs, opts, conn, swdb):
     try:
         if hasattr(swdb, "begin_read"):                  # 1.101.0: one moment of the database for the whole read
             swdb.begin_read(conn)
-        snap = swdb.latest(conn)
+            snap = swdb.latest(conn, fresh=False)        # inside the read: no rollback of it (as answer() does)
+        else:
+            snap = swdb.latest(conn)
     except Exception as e:  # noqa: BLE001
         if "1146" in str(e) or "doesn't exist" in str(e):
             return None, "the SolarWinds snapshot is not in the report database yet (the job SolarWinds - snapshot has not run)"

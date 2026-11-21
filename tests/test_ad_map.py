@@ -44,7 +44,7 @@ def repl():
 
 def swis(ok=True):
     return {"dcs": [{"dc": "DC01", "node_id": 1}, {"dc": "DC02", "node_id": 2}, {"dc": "BR1-DC1", "node_id": 3}, {"dc": "S5-DC1", "node_id": 9}],
-            "netmap": {"ok": ok, "source": "db-snapshot", "names": ["HUBA0001", "SITB0201", "SITC0301", "SITE0501", "Not placed"],
+            "netmap": {"ok": ok, "source": "db-snapshot", "names": ["HUBA0001", "SITB0201", "SITC0301", "SITE0501", "SITE-0501", "Not placed"],
                        "places": {"HUBA0001": [38.9, -77.0], "SITB0201": [40.7, -74.0], "SITC0301": [41.9, -87.6]},
                        "node_site": {"1": "HUBA0001", "2": "HUBA0001", "3": "SITB0201", "9": "Not placed"}, "no_site": "Not placed",
                        "wan": [{"a": "HUBA0001", "b": "SITB0201", "n": 2, "bps": 2e8, "util": 77, "status": "Up", "ifs": ["x"]}]}}
@@ -64,7 +64,7 @@ class Map1101(unittest.TestCase):
         self.assertIn("2 of 3 DCs are SolarWinds nodes in HUBA0001", self.s["HQ"]["why"])
         self.assertEqual((self.s["Branch-East"]["nm"], self.s["Branch-East"]["by"]), ("SITB0201", "the DCs' nodes"))
         self.assertEqual((self.s["SITC-0301"]["nm"], self.s["SITC-0301"]["by"]), ("SITC0301", "code"))
-        self.assertEqual((self.s["site0501"]["nm"], self.s["site0501"]["by"]), ("SITE0501", "name"))   # its DC's node is not placed
+        self.assertEqual((self.s["site0501"]["nm"], self.s["site0501"]["by"]), ("SITE0501", "name"))   # two sites share its code: the name
         self.assertEqual((self.s["Lab-Annex"]["nm"], self.s["Lab-Annex"]["by"]), ("", "none"))
         self.assertIn("set ad_site_map", self.s["Lab-Annex"]["why"])
         self.assertEqual(self.s["HQ"]["p"], [38.9, -77.0])
@@ -130,6 +130,23 @@ class Map1101(unittest.TestCase):
             self.assertNotIn(bad, js)
         if shutil.which("node"):
             subprocess.check_call(["node", "--check", os.path.join(web, "admap.js")])
+
+
+    def test_8_code_before_name_and_two_domains_dc01(self):
+        sw2 = swis()
+        sw2["netmap"]["names"] = ["SITC0301", "SITD0401"]
+        v = am.ad_repl_map({"dcs": [{"name": "X1", "site": "SITC0301"}, {"name": "X2", "site": "sitd-0401"}], "links": [], "now": "2026-10-15T09:30:00Z"}, sw2, O)
+        s = dict((x["n"], x) for x in v["extra"]["data"]["sites"])
+        self.assertEqual((s["SITC0301"]["nm"], s["SITC0301"]["by"]), ("SITC0301", "code"))   # the site code first ("we use site codes")
+        self.assertEqual((s["sitd-0401"]["nm"], s["sitd-0401"]["by"]), ("SITD0401", "code"))
+        # the review's case: two domains' DC01 - SolarWinds has both, the replication data one DC01 (short names only)
+        sw3 = {"dcs": [{"dc": "DC01", "domain": "alpha.test", "node_id": 1}, {"dc": "DC01", "domain": "beta.test", "node_id": 2}],
+               "netmap": {"ok": True, "names": ["SITA0101", "SITB0201"], "places": {}, "node_site": {"1": "SITA0101", "2": "SITB0201"}, "wan": []}}
+        v = am.ad_repl_map({"dcs": [{"name": "DC01", "site": "Alpha"}], "links": [], "now": "2026-10-15T09:30:00Z"}, sw3, O)
+        s = v["extra"]["data"]["sites"][0]
+        self.assertNotEqual(s["by"], "the DCs' nodes")                              # never "1 of 1 DC is a node in SITB0201"
+        self.assertNotIn("SITB0201", s["why"])
+        self.assertEqual((s["nm"], s["by"]), ("", "none"))
 
 
 def free_port():

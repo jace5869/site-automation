@@ -7,8 +7,8 @@ ad_repl_map(repl, swis, opts) -> {sections: [...], extra: {kind: admap, data, mo
   opts: ad_site_map, low_hours, warn_hours, crit_hours, motion, time_zone.
 
 Each AD site is matched to a network-map site, in this order: ad_site_map (set by hand); the DCs' own nodes (each DC found in
-SolarWinds, all of the site's in one network-map site - no naming luck needed); the same name in any case; the same code
-without separators. The rest: not matched (said, "set ad_site_map"). Shown, never counted (counted: false)."""
+SolarWinds, all of the site's in one network-map site - no naming luck needed); the same site code without separators; the
+same name in any case. The rest: not matched (said, "set ad_site_map"). Shown, never counted (counted: false)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -62,12 +62,12 @@ def _match(sites, dcs_of, node_of, nm, site_map):
                 len(placed), len(dcs), "" if len(dcs) == 1 else "s", "is a" if len(placed) == 1 else "are", "" if len(placed) == 1 else "s", placed[0]))
             continue
         split = "; its DCs' nodes are in %d network-map sites" % len(set(placed)) if len(set(placed)) > 1 else ""
+        c = by_code.get(_code(s)) or []
+        if len(c) == 1:                                  # the site codes first (the user: "we use site codes"), then the name
+            out[s] = (c[0], "code", ("the same code (%s)" % c[0] if c[0] == s else "the same code without separators (%s)" % c[0]) + split)
+            continue
         if s.lower() in by_lower:
             out[s] = (by_lower[s.lower()], "name", "the same name" + split)
-            continue
-        c = by_code.get(_code(s)) or []
-        if len(c) == 1:
-            out[s] = (c[0], "code", "the same code without separators (%s)%s" % (c[0], split))
             continue
         out[s] = ("", "none", ("no DC of it is in SolarWinds" if not placed else "its DCs are in several network-map sites")
                   + " and no name or code matches - set ad_site_map")
@@ -124,7 +124,12 @@ def ad_repl_map(repl, swis=None, opts=None):
         for d in dcs:
             if d.get("site"):
                 dcs_of.setdefault(str(d["site"]), []).append(str(d["name"]))
-        node_of = dict((str(x.get("dc") or "").lower(), x.get("node_id")) for x in sw_.get("dcs") or [] if x.get("node_id") is not None)
+        seen = {}                                        # the DC's node by its short name - the replication data has no domain:
+        for x in sw_.get("dcs") or []:                   # a name two domains' DCs share is left out (matching falls through)
+            k = str(x.get("dc") or "").lower()
+            if k:
+                seen.setdefault(k, []).append(x.get("node_id"))
+        node_of = dict((k, v[0]) for k, v in seen.items() if len(v) == 1 and v[0] is not None)
         nm = sw_.get("netmap") or {}
         sites = sorted(dcs_of, key=str.lower)
         match = _match(sites, dcs_of, node_of, nm if nm.get("ok") else {}, o0.get("ad_site_map") or {})
@@ -154,9 +159,9 @@ def ad_repl_map(repl, swis=None, opts=None):
                    "text": MARK, "web_only": True, "note": how}
         rows = [[x["n"], x["nm"] or "-", x["by"] if x["by"] != "none" else "none", str(len(x["dcs"])), x["why"]] for x in data["sites"]]
         sec_match = {"title": "How AD sites were matched", "counted": False, "status": "info",
-                     "text": ("Each AD site to a network-map site (its place, its WAN links): ad_site_map first, then the DCs' own nodes in "
-                              "SolarWinds (all of a site's DCs in one network-map site - no naming luck needed), then the same name in any "
-                              "case, then the same code without separators. %s" % how),
+                     "text": ("Each AD site to a network-map site (its place, its WAN links): ad_site_map first (set by hand), then the DCs' own "
+                              "nodes in SolarWinds (all of a site's DCs in one network-map site - no naming luck needed), then the same site "
+                              "code without separators, then the same name in any case. %s" % how),
                      "columns": ["AD site", "Network map site", "Matched by", "DCs", "Why"], "kinds": ["", "", "nw", "num", "wrap"],
                      "rows": rows, "cell_status": [["", "", "critical" if x[2] == "none" else "", "", ""] for x in rows]}
         n_none = sum(1 for x in data["sites"] if x["by"] == "none")

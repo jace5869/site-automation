@@ -4,7 +4,7 @@
 
 **Nothing to set up.** With the netmap_* settings in all.yml (as the Network map template has them) and a SolarWinds or
 Report database credential on *Active Directory health report* (1.94.0), the map places the sites; without them, a ring.
-`ad_site_map` names an AD site's network-map site by hand when nothing else matches it.
+`ad_site_map` names an AD site's network-map site by hand (it comes first: it beats every rule below).
 
 **The AD health report: the replication map** (the report website; user-approved mockup B + B+):
 - the AD sites where the network map places their sites (its own read and model, so the two maps agree), the replication
@@ -13,7 +13,7 @@ Report database credential on *Active Directory health report* (1.94.0), the map
   into its DCs and the connections inside it; hover or keyboard focus gives each line's partitions, last success and
   failure, and the WAN link;
 - **How AD sites were matched** (website, email, workbook): `ad_site_map`, then the DCs' own SolarWinds nodes, then the
-  name, then the code; the rest "set ad_site_map";
+  site code, then the name; the rest "set ad_site_map";
 - shown, never counted; the email keeps the matrix and the links table.
 - **From SolarWinds** reads through 1.96.1's own readers (apps_live, alerts_live; one read-only transaction; another
   Orion's snapshot is not this one's - orion_key); the copied SAM and alert queries are gone.

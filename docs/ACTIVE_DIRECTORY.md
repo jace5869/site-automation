@@ -96,8 +96,9 @@ places their sites.
    agree. No place: the sites in a ring around the one with the most DCs.
 2. **Each AD site is matched to a network-map site** - the section *How AD sites were matched* (website, email, workbook)
    says how for each: `ad_site_map` (set by hand), then **the DCs' own nodes** (each DC found in SolarWinds by From
-   SolarWinds, all of the site's in one network-map site - no naming luck needed), then the same name in any case, then
-   the same code without separators. The rest: *none*, "set ad_site_map".
+   SolarWinds, all of the site's in one network-map site - no naming luck needed), then the same site code without
+   separators, then the same name in any case. The rest: *none*, "set ad_site_map". A DC name two domains share is not
+   used for its node (the replication data has no domain).
 3. **The lines:** colour = time since the last success (the matrix's scale: `ad_repl_low_hours`, `ad_repl_warn_hours`,
    `ad_repl_crit_hours`); between sites curved and as wide as the WAN traffic between their network-map sites, the dashes
    moving with it (`report_motion`); no WAN link in SolarWinds: dotted. Point at a line or tab to it: the partitions, the
