@@ -81,13 +81,13 @@ class Site(object):
 
 SQLITE = ("CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY AUTOINCREMENT, read_at TEXT NOT NULL, job INTEGER NOT NULL DEFAULT 0, "
           "template_id INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', critical INTEGER NOT NULL DEFAULT 0, "
-          "warning INTEGER NOT NULL DEFAULT 0, dcs INTEGER NOT NULL DEFAULT 0, dcs_read INTEGER NOT NULL DEFAULT 0, live TEXT, why TEXT NOT NULL DEFAULT '')",
+          "warning INTEGER NOT NULL DEFAULT 0, dcs INTEGER NOT NULL DEFAULT 0, dcs_read INTEGER NOT NULL DEFAULT 0, live TEXT, why TEXT NOT NULL DEFAULT '', repl_dcs INTEGER NOT NULL DEFAULT 0, repl_read INTEGER NOT NULL DEFAULT 0)",
           "CREATE TABLE ad_dc (run_id INTEGER NOT NULL, dc TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', site TEXT NOT NULL DEFAULT '', "
           "is_read INTEGER NOT NULL DEFAULT 0, repl_read INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', problems INTEGER NOT NULL DEFAULT 0, worst TEXT NOT NULL DEFAULT '', "
           "PRIMARY KEY (run_id, domain, dc))",
-          "CREATE TABLE ad_link (run_id INTEGER NOT NULL, domain TEXT NOT NULL DEFAULT '', frm TEXT NOT NULL, to_dc TEXT NOT NULL, nc TEXT NOT NULL DEFAULT '', last_success TEXT, "
+          "CREATE TABLE ad_link (run_id INTEGER NOT NULL, link_key TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', frm TEXT NOT NULL, src TEXT NOT NULL DEFAULT '', to_dc TEXT NOT NULL, nc TEXT NOT NULL DEFAULT '', last_success TEXT, "
           "failures INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', last_failure TEXT, status TEXT NOT NULL DEFAULT '', "
-          "PRIMARY KEY (run_id, domain, frm, to_dc, nc))")
+          "PRIMARY KEY (run_id, link_key))")
 
 
 class Lite(object):
@@ -1050,7 +1050,7 @@ class CodexBBrowser1012(unittest.TestCase):
             ad["repl"]["dcs"] = [dict(d, read=False) for d in ad["repl"]["dcs"]]
             ad["repl"]["links"] = []
         r = self.page([self.answer_of(one_run(mut))], self.READ)
-        self.assertTrue(any(n.startswith("Replication was not read in this run: 0 of 3") for n in r["notes"]), r["notes"])
+        self.assertTrue(any(n.startswith("Replication was not read in full in this run: 0 of 3") for n in r["notes"]), r["notes"])
         self.assertFalse(any("every replication link succeeded" in n for n in r["notes"] + r["tnotes"]))
         self.assertEqual(r["tv"][r["tiles"].index("Replication failing")], "not read")
 
@@ -1076,6 +1076,114 @@ class CodexBBrowser1012(unittest.TestCase):
         a.read_db()
         r = self.page([json.loads(a.answer()[1])], self.READ + "r.badge=(document.querySelector('#ad section:nth-of-type(4) tbody tr td:nth-child(2)')||{}).textContent;")
         self.assertEqual(r["badge"], "Critical")                         # 0 DCs critical, but the run itself failed
+
+
+class CodexC1012(unittest.TestCase):
+    """Codex's third pass on 1.101.2 (9 P1): each finding's case."""
+
+    def test_1_the_exact_domain_not_a_suffix(self):
+        import site_ad_swis as asw
+        child = [{"node_id": 1, "name": "dc01.east.corp.test", "dns": ""}]
+        self.assertIsNone(asw.match([{"dc": "DC01", "domain": "corp.test"}], child)[0][0])
+        self.assertEqual(asw.match([{"dc": "DC01", "domain": "east.corp.test"}], child)[0][0]["node_id"], 1)
+
+    def test_2_a_short_name_two_ad_dcs_share_matches_neither(self):
+        import site_ad_swis as asw
+        m = asw.match([{"dc": "DC01", "domain": "east.test"}, {"dc": "DC01", "domain": "west.test"}], [{"node_id": 1, "name": "DC01", "dns": ""}])
+        self.assertEqual((m[0][0], m[1][0]), (None, None))
+        m = asw.match([{"dc": "DC01", "domain": "east.test"}, {"dc": "DC01", "domain": "west.test"}],
+                      [{"node_id": 1, "name": "dc01.west.test", "dns": ""}])
+        self.assertEqual((m[0][0], m[1][0]["node_id"]), (None, 1))       # a full name still says which
+
+    def test_3_a_dc_with_a_partition_not_read_is_not_a_full_read(self):
+        _now, ad = ad_run(0)
+        ad["repl"]["dcs"][0]["partial"] = ["Configuration"]
+        p = dbf.ad_db_payload(ad, {}, {})
+        self.assertEqual(dict((d["dc"], d["repl_read"]) for d in p["dcs"]), {"DC01": False, "DC02": True, "DC03": True})
+        self.assertEqual((p["repl_dcs"], p["repl_read"]), (3, 2))
+        import ad_filters
+        r = ad_filters._repl_reader([{"in_ad": True, "name": "DC01", "bind": {"ok": True},
+                                      "repl": {"links": [], "not_granted": ["CN=Configuration,DC=corp,DC=test"]}}], __import__("datetime").datetime(2026, 11, 22), 60, "corp.test")
+        self.assertEqual(r["dcs"][0]["partial"], ["Configuration"])
+
+    def test_4_5_admin_coverage_by_domain_and_dc_and_unpolled_dcs(self):
+        import ad_filters
+        import datetime as dt
+        now = dt.datetime(2026, 11, 22, 10, 0, tzinfo=dt.timezone.utc)
+        doms = [{"data": {"dns": "east.test", "dcs": [{"name": "dc01.east.test", "site": "A"}, {"name": "dc02.east.test", "site": "A"}]}},
+                {"data": {"dns": "west.test", "dcs": [{"name": "dc01.west.test", "site": "B"}]}}]
+        dcs = [{"_name": "DC01", "_domain": "east.test", "_ok": True, "data": {"errors": ["repadmin /showrepl: access denied"], "repl": []}},
+               {"_name": "DC01", "_domain": "west.test", "_ok": True, "data": {"repl": []}}]
+        r = ad_filters._repl_admin(dcs, doms, now)
+        st = sorted((d["domain"], d["name"], d["read"]) for d in r["dcs"])
+        self.assertEqual(st, [("east.test", "DC01", False), ("east.test", "DC02", False), ("west.test", "DC01", True)])
+        ad = {"report": {"status": "ok"}, "dcs": [{"dc": "DC01", "domain": "east.test", "read": True}, {"dc": "DC01", "domain": "west.test", "read": True}],
+              "problems": [], "repl": r}
+        p = dbf.ad_db_payload(ad, {}, {})
+        self.assertEqual(sorted((d["domain"], d["repl_read"]) for d in p["dcs"]), [("east.test", False), ("west.test", True)])
+        self.assertEqual((p["repl_dcs"], p["repl_read"]), (3, 1))       # DC02 (in AD, not polled) counts as not read
+
+    def test_6_two_sources_of_one_short_name_are_two_links(self):
+        def mut(ad):
+            ad["repl"]["links"] = [dict(frm="DC01", src="SITEB\\DC01", to="DC02", nc="Configuration", last_success="2026-01-01T00:00:00Z", failures=4, domain="east.test"),
+                                   dict(frm="DC01", src="SITEA\\DC01", to="DC02", nc="Configuration", last_success=ad["repl"]["now"], failures=0, domain="east.test")]
+        db = one_run(mut)
+        self.assertEqual(sorted(db.db.execute("SELECT src, status FROM ad_link").fetchall()), [("SITEA\\DC01", "ok"), ("SITEB\\DC01", "critical")])
+        links = sp.AdDb(None, connect=lambda: db, mark="?").read()["links"]
+        self.assertEqual([(x["frm"], x["now"]) for x in links], [("DC01", "critical")])
+
+    def test_8_a_run_whose_rows_failed_is_not_ok_in_the_history(self):
+        def mut(ad):
+            ad["repl"]["links"][0]["failures"] = "unknown"
+        db = one_run(mut)
+        self.assertEqual(db.db.execute("SELECT status FROM ad_run").fetchone()[0], "unknown")
+        h = sp.AdDb(None, connect=lambda: db, mark="?").read()["hist"][-1]
+        self.assertEqual(h["status"], "unknown")
+        self.assertIn("could not make", h["why"])
+
+
+@unittest.skipUnless(_browser(), "no google-chrome or chromium")
+class CodexCBrowser1012(unittest.TestCase):
+    """Codex's third pass on 1.101.2: the page's findings, in the browser."""
+    answer = Browser1012.answer
+    page = Browser1012.page
+    READ = Browser1012.READ + "r.sent=window.__sent;"
+
+    def test_7_failing_links_seen_are_shown_with_partial_coverage(self):
+        db = one_run(payload_mut=lambda p: p.update(repl_dcs=3, repl_read=0))     # the one link failing seen, coverage 0
+        a = live(db, Site(self))
+        a.read_db()
+        r = self.page([json.loads(a.answer()[1])], self.READ)
+        self.assertTrue(any(n.startswith("Replication was not read in full in this run: 0 of 3") and "The links below were seen" in n
+                            for n in r["notes"]), r["notes"])
+        self.assertEqual(len(r["links"]), 1)
+        self.assertIn("DC01", r["links"][0])
+        i = r["tiles"].index("Replication failing")
+        self.assertEqual(r["tv"][i], "1 link")
+        self.assertIn("and only 0 of 3", r["tnotes"][i])
+
+    def test_8_the_history_badge_of_a_run_whose_rows_failed(self):
+        def mut(ad):
+            ad["repl"]["links"][0]["failures"] = "unknown"
+        db = one_run(mut, minutes_ago=30)
+        one_run(db=db, job=9001)                                       # a good run after it
+        a = live(db, Site(self))
+        a.read_db()
+        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badges=q('#ad section:nth-of-type(4) tbody tr td:nth-child(2)');")
+        self.assertEqual(r["badges"][:2], ["OK", "Rows not kept"])         # newest first: the good run, then the failed one
+
+    def test_9_an_answer_that_cannot_be_drawn_is_a_failed_poll(self):
+        a = self.answer(["ok"] * 3)
+        a["poll"] = 15
+        bad = {"db": {"on": True, "model": {"run": {}}}, "sw": {}}
+        r = self.page([a, bad], self.READ, wait=20000)
+        self.assertIn("Not live", r["live"])
+        self.assertTrue(any("could not be read" in n for n in r["notes"]), r["notes"])
+        self.assertEqual(len(r["dcs"]), 3)                             # the last good answer, kept
+        r = self.page([a, bad, a], self.READ, wait=34000)               # asked again after it: Live again
+        self.assertIn("Live", r["live"])
+        self.assertNotIn("Not live", r["live"])
+        self.assertEqual(r["sent"][:3], ["", "e1", "e1"])                 # the bad answer's tag never kept
 
 
 if __name__ == "__main__":

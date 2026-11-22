@@ -1452,21 +1452,23 @@ def _repl_admin(dcs, doms, now):
     """Admin mode: each DC's repadmin /showrepl rows -> {dcs: [{name, site, read, why, domain}], links: [{to, frm, nc, domain,
     last_success, last_attempt, last_failure, failures, error}], source, now, tombstone_days} (domain: the receiving DC's). A DC AD knows but the job did not read is
     in dcs (read false): its column has no data, never a guess."""
-    seen = {}
+    seen = {}                                            # (domain, name) -> the DC: two domains' DC01 are two DCs
     for d in doms:
         for x in d["data"].get("dcs") or []:
             n = short(x.get("name")).upper()
-            if n and n not in seen:
-                seen[n] = {"name": n, "site": str(x.get("site") or ""), "read": False, "why": "not in the inventory: not read",
-                           "domain": str(d["data"].get("dns") or "").lower()}
+            k = (str(d["data"].get("dns") or "").lower(), n)
+            if n and k not in seen:
+                seen[k] = {"name": n, "site": str(x.get("site") or ""), "read": False, "why": "not in the inventory: not read", "domain": k[0]}
     links = []
     for x in dcs:
         n = x["_name"]
         data = x.get("data") or {}
-        rec = seen.setdefault(n, {"name": n, "site": str(data.get("site") or ""), "read": False, "why": ""})
+        dom = "" if x.get("_domain") == "?" else str(x.get("_domain") or "").lower()
+        if not dom:                                      # its domain not known: AD's DC of that name, when there is one only
+            same = [k for k in seen if k[1] == n]
+            dom = same[0][0] if len(same) == 1 else ""
+        rec = seen.setdefault((dom, n), {"name": n, "site": str(data.get("site") or ""), "read": False, "why": "", "domain": dom})
         rec["site"] = rec["site"] or str(data.get("site") or "")
-        dom = "" if x.get("_domain") == "?" else str(x.get("_domain") or "")
-        rec["domain"] = rec.get("domain") or dom
         errs = [e for e in data.get("errors") or [] if str(e).startswith("repadmin /showrepl")]
         if not x["_ok"]:
             rec.update(read=False, why="not reached: %s" % (x.get("error") or "no answer"))
@@ -1476,9 +1478,12 @@ def _repl_admin(dcs, doms, now):
             frm = short(r.get("source")).upper()
             if not frm:
                 continue
-            if frm not in seen:
-                seen[frm] = {"name": frm, "site": str(r.get("source_site") or ""), "read": False, "why": "not in the inventory: not read"}
+            if not any(k[1] == frm for k in seen):
+                seen[("", frm)] = {"name": frm, "site": str(r.get("source_site") or ""), "read": False, "why": "not in the inventory: not read", "domain": ""}
             links.append({"to": n, "frm": frm, "nc": nc_name(r.get("nc")), "last_success": r.get("last_success") or "", "domain": dom,
+                          # the source as AD names it (site\server: unique in the forest), not only its short name
+                          "src": (("%s\\%s" % (r.get("source_site"), r.get("source"))) if r.get("source_site") and "\\" not in str(r.get("source"))
+                                  else str(r.get("source") or ""))[:255],
                           "last_attempt": "", "last_failure": r.get("last_failure") or "", "failures": int(r.get("failures") or 0),
                           "error": str(r.get("status") or "").strip() if int(r.get("failures") or 0) else ""})
     tsl = min([d["data"].get("tombstone_days") or 60 for d in doms] or [60])
@@ -1504,6 +1509,7 @@ def _repl_reader(dcs, now, tsl, dom=""):
             rec["why"] = 'not read: needs "%s"' % REPL_RIGHT
             continue
         rec["read"] = True
+        rec["partial"] = sorted(nc_name(x) for x in rp.get("not_granted") or [])   # partitions not readable on this DC
         if rp.get("source"):
             sources.add(rp["source"])
         got = rp.get("links") or []
@@ -1516,7 +1522,7 @@ def _repl_reader(dcs, now, tsl, dom=""):
                 continue
             fails = int(ln.get("failures") or 0)
             links.append({"to": name, "frm": frm, "nc": nc_name(ln.get("nc")), "last_success": ln.get("last_success") or "",
-                          "domain": str(dom or "").lower(), "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
+                          "domain": str(dom or "").lower(), "src": str(ln.get("partner") or "")[:255], "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
                           "failures": fails, "error": str(ln.get("result") or "") if fails else ""})
     return {"dcs": out, "links": links, "source": ", ".join(sorted(sources)), "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tombstone_days": tsl or 60}

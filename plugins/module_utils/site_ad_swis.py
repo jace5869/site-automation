@@ -167,6 +167,9 @@ def match(dcs, nodes):
                 out.append(r)
         return out
     out, claimed = {}, {}
+    ad_short = {}                                        # the AD domains each short name is in (two domains' DC01: ambiguous)
+    for d in dcs:
+        ad_short.setdefault(_short(d.get("dc")), set()).add(str(d.get("domain") or "").strip().lower().rstrip("."))
     for i, d in enumerate(dcs):                          # by position: two domains' DC01 are two DCs
         fq, sn, ip = _full(d.get("fqdn")), _short(d.get("dc")), str(d.get("ip") or "").strip()
         node, how, why = None, "", ""
@@ -180,9 +183,11 @@ def match(dcs, nodes):
             dom = str(d.get("domain") or "").strip().lower().rstrip(".")
             if fq:                                       # a node with another domain's full name is not this DC
                 c = [n for n in c if not ({_full(n.get("name")), _full(n.get("dns"))} - {""}) or fq in (_full(n.get("name")), _full(n.get("dns")))]
-            elif dom:                                    # no FQDN (a short inventory name): the AD domain says which node's it is
+            elif dom:                                    # no FQDN (a short inventory name): the DC's full name is short.domain, exactly
                 c = [n for n in c if not ({_full(n.get("name")), _full(n.get("dns"))} - {""})
-                     or any(f.endswith("." + dom) for f in (_full(n.get("name")), _full(n.get("dns"))) if f)]
+                     or (sn + "." + dom) in (_full(n.get("name")), _full(n.get("dns")))]
+            if len(ad_short.get(sn) or ()) > 1:          # DCs of this short name in two domains: a node with no full name is neither's
+                c = [n for n in c if {_full(n.get("name")), _full(n.get("dns"))} - {""}]
             if len(c) == 1:
                 node, how = c[0], "name"
             elif len(c) > 1:

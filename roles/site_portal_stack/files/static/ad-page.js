@@ -112,11 +112,12 @@
            !sw.on ? "not read here" : swFirst ? nameOf(m, swFirst[0]) + " " + swFirst[1][0]
              : !sw.section ? "reading…" : swUp === dcs.length ? "every DC up"
              : swNot + " DC" + (swNot === 1 ? "" : "s") + " not in SolarWinds or not matched, " + swUp + " up"),
-      !replRead(run) ? tile("Replication failing", num("not read", "warning"), replWhy(run))
+      !replRead(run) && !failing.length ? tile("Replication failing", num("not read", "warning"), replWhy(run))
         : tile("Replication failing", num(failing.length + (failing.length === 1 ? " link" : " links"), failing.length ? "critical" : ""),
-               failing.length ? "no success since " + hhmm(failing.map(x => x.last_success_shown).filter(Boolean).sort()[0] || "-")
+               failing.length ? "no success since " + hhmm(failing.map(x => x.last_success_shown).filter(Boolean).sort()[0] || "-") +
+                                (replAll(run) ? "" : " - and only " + replWhy(run))
                               : replAll(run) ? "none" : "none of those read - " + replWhy(run)),
-      !replRead(run) ? tile("Replication late", num("not read", "warning"), replWhy(run))
+      !replRead(run) && !late.length ? tile("Replication late", num("not read", "warning"), replWhy(run))
         : tile("Replication late", num(late.length + (late.length === 1 ? " link" : " links"), late.length ? "warning" : ""),
                late.length ? "past the matrix's hours since the last success" : replAll(run) ? "none" : "none of those read"),
       tile("AD job runs, 24 h", String(day), run.next ? "next " + hhmm(run.next) : "the schedule was not read"),
@@ -150,13 +151,17 @@
                [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg]);
   }
   // the newest run's replication coverage: repl_read of dcs DCs read (an older answer without it: all)
+  // the whole population the replication read knows (also DCs AD lists that were not polled); read: in full
+  const replOf = run => run.repl_dcs || run.dcs || 0;
   const replRead = run => run.repl_read == null || run.repl_read > 0;
-  const replAll = run => run.repl_read == null || run.repl_read >= run.dcs;
-  const replWhy = run => (run.repl_read || 0) + " of " + run.dcs + " DCs' replication read (no rights, or not reached: the full report says which)";
+  const replAll = run => run.repl_read == null || run.repl_read >= replOf(run);
+  const replWhy = run => (run.repl_read || 0) + " of " + replOf(run) + " DCs' replication read in full (no rights on a partition, not reached, or not polled: the full report says which)";
   function linkTable(m) {
-    if (!replRead(m.run)) return sec("Replication links that need a look", null, "as of " + hhmm(m.run.as_of),
-                                     [note("warn", "Replication was not read in this run: " + replWhy(m.run) + ". No link is known - not \"all fine\".")]);
-    const part = replAll(m.run) ? null : note("warn", "Only " + replWhy(m.run) + ": the others' links are not known.");
+    // what was seen is shown whatever the coverage; the coverage is said beside it
+    const part = !replRead(m.run) ? note("warn", "Replication was not read in full in this run: " + replWhy(m.run) + ". " +
+                                            (m.links.length ? "The links below were seen; the others are not known." : "No link is known - not \"all fine\"."))
+               : replAll(m.run) ? null : note("warn", "Only " + replWhy(m.run) + ": the others' links are not known.");
+    if (!replRead(m.run) && !m.links.length) return sec("Replication links that need a look", null, "as of " + hhmm(m.run.as_of), [part]);
     if (!m.links.length) return sec("Replication links that need a look", 0, "as of " + hhmm(m.run.as_of),
                                     [part, el("p", "muted", part ? "None among the DCs whose replication was read." : "None: every replication link succeeded within the matrix's hours.")]);
     const rows = m.links.map(x => el("tr", RANK[x.now] < 2 ? "r-" + x.now : "", [
@@ -220,7 +225,7 @@
       box.append(s);
     };
     chart.redraw = draw;                       // drawn once the page is in place (its width known): draw() below
-    const runs = m.hist.slice(-8).reverse().map(h => el("tr", "", [el("td", "nw", h.at_shown), el("td", "nw", chip(WORD[h.status] ? h.status : h.c ? "critical" : h.w ? "warning" : h.status ? "unknown" : "ok")),
+    const runs = m.hist.slice(-8).reverse().map(h => el("tr", "", [el("td", "nw", h.at_shown), el("td", "nw", h.why ? chip("unknown", "Rows not kept") : chip(WORD[h.status] ? h.status : h.c ? "critical" : h.w ? "warning" : h.status ? "unknown" : "ok")),
       el("td", "num", h.c), el("td", "num", h.w), el("td", "num", h.read + " of " + h.dcs), el("td", "nw", h.job ? "job " + h.job : "-")]));
     const leg = el("p", "adp-leg", [el("span", "", [el("i", "k-critical"), "Critical"]), el("span", "", [el("i", "k-warning"), "Warning"])]);
     return sec("DCs with a problem, last 7 days", null, "the worst run of each 2 hours; the numbers: the runs below",
@@ -306,6 +311,17 @@
     return a2;
   }
 
+  // an answer the page can draw: its parts there and of the right kind (anything else is a failed poll)
+  const arr = x => Array.isArray(x);
+  function usable(a) {
+    if (!a || typeof a !== "object" || !a.db || typeof a.db !== "object" || (a.sw != null && typeof a.sw !== "object")) return false;
+    const m = a.db.model;
+    if (m == null) return true;
+    if (typeof m !== "object") return false;
+    if (m.run == null) return true;
+    return typeof m.run === "object" && arr(m.dcs) && arr(m.links) && arr(m.hist) && arr(m.times) &&
+           m.dcs.every(d => d && typeof d.dc === "string" && arr(d.trend));
+  }
   const ASK_SECONDS = 20;                     // a poll, its body too, gets this long - then it is a failed poll (Not live)
   let etag = "", shown = null, got = Date.now(), timer = null, poll = 60, down = "", seq = 0;
   function ask() {
@@ -324,11 +340,15 @@
       down = "";                                // an answer (200 or 304): the portal is there again
       if (got2) {
         const a = got2.a;
-        if (!a || typeof a !== "object") throw new Error("the portal's answer could not be read");
+        if (!usable(a)) throw new Error("the portal's answer could not be read");
+        try {
+          draw(a);                              // drawn first: only an answer that can be shown replaces the last good one
+        } catch (e) {
+          throw new Error("the portal's answer could not be shown");
+        }
         shown = a; etag = got2.tag; got = Date.now();
         // the first read not there yet, or an answer from before a quiet spell: asked again soon, not in a minute
         poll = a.db && a.db.on && (!a.db.model || a.db.refreshing) && !a.db.stale ? 3 : Math.max(15, Math.min(300, a.poll || 60));
-        draw(a);
       }
       else if (shown) {                         // the same answer: its ages move on
         last = null;                           // the same DCs: nothing to say
@@ -339,14 +359,15 @@
       down = e.message || "no answer";
       if (shown) {                              // the last answer, said as not now: not Live, its ages still growing
         last = null;
-        draw(aged(shown, down));
+        try { draw(aged(shown, down)); } catch (_) { /* the last good one could not be drawn again: the next poll tries */ }
         return;
       }
       const n = document.getElementById("ad-off") || el("p", "note bad");
       n.id = "ad-off";
       n.textContent = "The portal did not answer (" + down + "): tried again in " + poll + " s.";
       if (!n.parentNode) root.prepend(n);
-    }).then(() => { clearTimeout(late); clearTimeout(timer); timer = setTimeout(ask, poll * 1000); });
+    }).then(again, again);                      // asked again whatever happened above
+    function again() { clearTimeout(late); clearTimeout(timer); timer = setTimeout(ask, poll * 1000); }
   }
   window.adPage = {draw: d => { shown = d; draw(d); }};       // the tests
   ask();

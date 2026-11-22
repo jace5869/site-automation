@@ -1027,7 +1027,7 @@ from here: each DC now, since when, its last runs, the replication links that ne
 
 | | |
 |---|---|
-| What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds, why its rows could not be made when so), a row per DC in `ad_dc` (its domain, site, whether it and its replication were read, status, problems, the worst one's text) and a row per replication link in `ad_link` (its domain, from, to, partition, last success, failures, error, status) |
+| What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds, why its rows could not be made when so, how many DCs the replication read knew and read in full), a row per DC in `ad_dc` (its domain, site, whether it and its replication were read, status, problems, the worst one's text) and a row per replication link in `ad_link` (its domain, from and the source as AD names it, to, partition, last success, failures, error, status; keyed by all of those) |
 | Schema version | 2 (`schema_version` component `ad_run`). Version 1 was only in builds before 1.101.2 shipped: drop the three tables and its row, the next run makes them again |
 | How much | 10 DCs and 40 links every 30 minutes: about 2,400 rows a day, under 200 bytes each |
 | What a run deletes | its own template's runs older than `ad_db_keep_days`, with their rows (another forest's job keeps its own) |
@@ -1065,6 +1065,8 @@ CREATE TABLE IF NOT EXISTS ad_run (
   dcs_read INT NOT NULL DEFAULT 0,
   live MEDIUMTEXT NULL,
   why VARCHAR(300) NOT NULL DEFAULT '',
+  repl_dcs INT NOT NULL DEFAULT 0,
+  repl_read INT NOT NULL DEFAULT 0,
   PRIMARY KEY (run_id),
   KEY ad_run_read_at (read_at),
   KEY ad_run_template (template_id, read_at)
@@ -1089,8 +1091,10 @@ CREATE TABLE IF NOT EXISTS ad_dc (
 ```sql
 CREATE TABLE IF NOT EXISTS ad_link (
   run_id BIGINT NOT NULL,
+  link_key CHAR(40) NOT NULL,
   domain VARCHAR(191) NOT NULL DEFAULT '',
   frm VARCHAR(191) NOT NULL,
+  src VARCHAR(255) NOT NULL DEFAULT '',
   to_dc VARCHAR(191) NOT NULL,
   nc VARCHAR(191) NOT NULL DEFAULT '',
   last_success DATETIME NULL,
@@ -1098,7 +1102,7 @@ CREATE TABLE IF NOT EXISTS ad_link (
   error VARCHAR(255) NOT NULL DEFAULT '',
   last_failure DATETIME NULL,
   status VARCHAR(16) NOT NULL DEFAULT '',
-  PRIMARY KEY (run_id, domain, frm, to_dc, nc)
+  PRIMARY KEY (run_id, link_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 

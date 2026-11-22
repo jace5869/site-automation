@@ -3806,7 +3806,7 @@ class AdDb(object):
                 if not top:
                     return {"run": None}
                 tid = int(top[0][0] or 0)
-            runs = self._q(cur, "SELECT run_id, read_at, job, template_id, status, critical, warning, dcs, dcs_read, live, why FROM ad_run "
+            runs = self._q(cur, "SELECT run_id, read_at, job, template_id, status, critical, warning, dcs, dcs_read, live, why, repl_dcs, repl_read FROM ad_run "
                                 "WHERE template_id = %%s ORDER BY read_at DESC, run_id DESC LIMIT %d" % AD_TREND_MAX, [tid])
             if not runs:
                 return {"run": None}
@@ -3816,14 +3816,12 @@ class AdDb(object):
             ids = [int(r[0]) for r in runs]
             marks = ",".join(["%s"] * len(ids))
             dcrows = self._q(cur, "SELECT run_id, dc, domain, site, is_read, status, problems, worst FROM ad_dc WHERE run_id IN (%s)" % marks, ids)
-            # the newest run's replication coverage: how many DCs' replication was read (none: no link is known, never "all fine")
-            rr = self._q(cur, "SELECT COUNT(*), SUM(CASE WHEN repl_read = 1 THEN 1 ELSE 0 END) FROM ad_dc WHERE run_id = %s", [ids[0]])
             links = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status, domain FROM ad_link WHERE run_id = %s "
                                  "AND status NOT IN ('ok', '')", [ids[0]])
             hist = self._q(cur, "SELECT r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, "
-                                "SUM(CASE WHEN d.status = 'critical' THEN 1 ELSE 0 END), SUM(CASE WHEN d.status = 'warning' THEN 1 ELSE 0 END), r.status "
+                                "SUM(CASE WHEN d.status = 'critical' THEN 1 ELSE 0 END), SUM(CASE WHEN d.status = 'warning' THEN 1 ELSE 0 END), r.status, r.why "
                                 "FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND r.read_at >= %s "
-                                "GROUP BY r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, r.status ORDER BY r.read_at", [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
+                                "GROUP BY r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, r.status, r.why ORDER BY r.read_at", [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
             # a DC by its domain and name: two domains' DC01 are two DCs
             top7 = self._q(cur, "SELECT d.dc, d.domain, COUNT(*) FROM ad_run r JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND "
                                  "r.read_at >= %s AND d.status = 'critical' GROUP BY d.domain, d.dc ORDER BY COUNT(*) DESC, d.dc, d.domain LIMIT 1",
@@ -3873,10 +3871,11 @@ class AdDb(object):
             return {"run": {"run_id": int(top[0]), "read_at": self._iso(top[1]), "job": int(top[2] or 0), "template_id": tid,
                             "status": top[4] or "", "critical": int(top[5] or 0), "warning": int(top[6] or 0), "dcs": int(top[7] or 0),
                             "dcs_read": int(top[8] or 0), "why": str(top[10] or ""),
-                            "repl_read": int((rr[0][1] if rr and rr[0] else 0) or 0)},
+                            # replication coverage: every DC the replication read knows (also unpolled ones), how many read in full
+                            "repl_dcs": int(top[11] or 0), "repl_read": int(top[12] or 0)},
                     "times": [self._iso(at[rid]) for rid in reversed(ids)], "dcs": dcs, "links": out_links, "live": live,
                     "hist": [{"at": self._iso(h[1]), "job": int(h[2] or 0), "dcs": int(h[3] or 0), "read": int(h[4] or 0),
-                              "c": int(h[5] or 0), "w": int(h[6] or 0), "status": str(h[7] or "")} for h in hist],
+                              "c": int(h[5] or 0), "w": int(h[6] or 0), "status": str(h[7] or ""), "why": str(h[8] or "")} for h in hist],
                     "worst7": {"dc": str(top7[0][0]), "domain": str(top7[0][1] or ""), "critical": int(top7[0][2])} if top7 else None}
         finally:
             try:

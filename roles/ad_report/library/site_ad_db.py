@@ -46,35 +46,44 @@ created: {description: The tables were made this run., type: bool}
 '''
 
 import datetime
+import hashlib
 import json
 import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_report_db as db
 
-SCHEMA_VERSION = 2                      # 2 (1.101.2 review, before it shipped): ad_run.why, ad_dc.repl_read, ad_link.domain in its key
+SCHEMA_VERSION = 2                      # 2 (1.101.2 reviews, before it shipped): ad_run why/repl_dcs/repl_read, ad_dc.repl_read, ad_link domain/src/link_key
 COMPONENT = "ad_run"
 TABLES = ("ad_run", "ad_dc", "ad_link")
 CREATE = (
     "CREATE TABLE IF NOT EXISTS ad_run (run_id BIGINT NOT NULL AUTO_INCREMENT, read_at DATETIME NOT NULL, "
     "job BIGINT NOT NULL DEFAULT 0, template_id BIGINT NOT NULL DEFAULT 0, status VARCHAR(16) NOT NULL DEFAULT '', "
     "critical INT NOT NULL DEFAULT 0, warning INT NOT NULL DEFAULT 0, dcs INT NOT NULL DEFAULT 0, dcs_read INT NOT NULL DEFAULT 0, "
-    "live MEDIUMTEXT NULL, why VARCHAR(300) NOT NULL DEFAULT '', PRIMARY KEY (run_id), KEY ad_run_read_at (read_at), KEY ad_run_template (template_id, read_at)) " + db.TABLE_OPTS,
+    "live MEDIUMTEXT NULL, why VARCHAR(300) NOT NULL DEFAULT '', repl_dcs INT NOT NULL DEFAULT 0, repl_read INT NOT NULL DEFAULT 0, "
+    "PRIMARY KEY (run_id), KEY ad_run_read_at (read_at), KEY ad_run_template (template_id, read_at)) " + db.TABLE_OPTS,
     "CREATE TABLE IF NOT EXISTS ad_dc (run_id BIGINT NOT NULL, dc VARCHAR(191) NOT NULL, domain VARCHAR(191) NOT NULL DEFAULT '', "
     "site VARCHAR(191) NOT NULL DEFAULT '', is_read TINYINT NOT NULL DEFAULT 0, repl_read TINYINT NOT NULL DEFAULT 0, "
     "status VARCHAR(16) NOT NULL DEFAULT '', "
     "problems INT NOT NULL DEFAULT 0, worst VARCHAR(300) NOT NULL DEFAULT '', PRIMARY KEY (run_id, domain, dc)) " + db.TABLE_OPTS,
-    "CREATE TABLE IF NOT EXISTS ad_link (run_id BIGINT NOT NULL, domain VARCHAR(191) NOT NULL DEFAULT '', frm VARCHAR(191) NOT NULL, "
-    "to_dc VARCHAR(191) NOT NULL, "
+    "CREATE TABLE IF NOT EXISTS ad_link (run_id BIGINT NOT NULL, link_key CHAR(40) NOT NULL, domain VARCHAR(191) NOT NULL DEFAULT '', "
+    "frm VARCHAR(191) NOT NULL, src VARCHAR(255) NOT NULL DEFAULT '', to_dc VARCHAR(191) NOT NULL, "
     "nc VARCHAR(191) NOT NULL DEFAULT '', last_success DATETIME NULL, failures INT NOT NULL DEFAULT 0, "
     "error VARCHAR(255) NOT NULL DEFAULT '', last_failure DATETIME NULL, status VARCHAR(16) NOT NULL DEFAULT '', "
-    "PRIMARY KEY (run_id, domain, frm, to_dc, nc)) " + db.TABLE_OPTS)
-INSERT_RUN = ("INSERT INTO ad_run (read_at, job, template_id, status, critical, warning, dcs, dcs_read, live, why) "
-              "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
+    "PRIMARY KEY (run_id, link_key)) " + db.TABLE_OPTS)
+INSERT_RUN = ("INSERT INTO ad_run (read_at, job, template_id, status, critical, warning, dcs, dcs_read, live, why, repl_dcs, repl_read) "
+              "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
 INSERT_DC = ("INSERT INTO ad_dc (run_id, dc, domain, site, is_read, repl_read, status, problems, worst) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
              "ON DUPLICATE KEY UPDATE status = VALUES(status)")
-INSERT_LINK = ("INSERT INTO ad_link (run_id, domain, frm, to_dc, nc, last_success, failures, error, last_failure, status) "
-               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE failures = VALUES(failures), status = VALUES(status)")
+INSERT_LINK = ("INSERT INTO ad_link (run_id, link_key, domain, frm, src, to_dc, nc, last_success, failures, error, last_failure, status) "
+               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE failures = VALUES(failures), status = VALUES(status)")
+
+
+def link_key(x):
+    """A link's identity: the receiving DC's domain, the source as AD names it (else its short name), the receiving DC and
+    the partition - two sources of one short name (two domains' DC01) are two links, never one row."""
+    ident = "\x1f".join(str(v or "").lower() for v in (x.get("domain"), x.get("src") or x.get("frm"), x.get("to"), x.get("nc")))
+    return hashlib.sha1(ident.encode("utf-8")).hexdigest()
 
 
 def pretty(sql):
@@ -141,14 +150,14 @@ def write(conn, now, job, template_id, run):
     cur = conn.cursor()
     cur.execute(INSERT_RUN, (now, job, template_id, str(r.get("status") or "")[:16], int(r.get("critical") or 0), int(r.get("warning") or 0),
                              len(dcs), sum(1 for d in dcs if d.get("read")), json.dumps(r.get("live") or {}, separators=(",", ":")),
-                             str(r.get("why") or "")[:300]))
+                             str(r.get("why") or "")[:300], int(r.get("repl_dcs") or 0), int(r.get("repl_read") or 0)))
     rid = cur.lastrowid
     if dcs:
         cur.executemany(INSERT_DC, [(rid, str(d["dc"])[:191], str(d.get("domain") or "")[:191], str(d.get("site") or "")[:191],
                                      1 if d.get("read") else 0, 1 if d.get("repl_read") else 0, str(d.get("status") or "")[:16], int(d.get("problems") or 0),
                                      str(d.get("worst") or "")[:300]) for d in dcs])
     if links:
-        cur.executemany(INSERT_LINK, [(rid, str(x.get("domain") or "")[:191], str(x["frm"])[:191], str(x["to"])[:191], str(x.get("nc") or "")[:191], stamp(x.get("last_success")),
+        cur.executemany(INSERT_LINK, [(rid, link_key(x), str(x.get("domain") or "")[:191], str(x["frm"])[:191], str(x.get("src") or "")[:255], str(x["to"])[:191], str(x.get("nc") or "")[:191], stamp(x.get("last_success")),
                                        int(x.get("failures") or 0), str(x.get("error") or "")[:255], stamp(x.get("last_failure")),
                                        str(x.get("status") or "")[:16]) for x in links])
     return int(rid or 0), len(dcs), len(links)
