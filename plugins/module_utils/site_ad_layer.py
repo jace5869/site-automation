@@ -286,9 +286,10 @@ def layer(c, page, site_map=None, no_site="Not placed", why="", source="", now=N
 
 
 def from_rows(read_at, dc_rows, link_rows, opts=None):
-    """The report database's newest AD run (ad_run.read_at, ad_dc rows (dc, site), ad_link rows (frm, to_dc, nc,
+    """The report database's newest AD run (ad_run.read_at, ad_dc rows (dc, site[, repl_read]), ad_link rows (frm, to_dc, nc,
     last_success, failures, error, last_failure)) -> compact(). The ages as of the AD run's read."""
-    dcs = [{"name": str(r[0]), "site": str(r[1] or "")} for r in dc_rows or [] if r and r[0] and r[1]]
+    dcs = [dict({"name": str(r[0]), "site": str(r[1] or "")}, **({"read": bool(r[2])} if len(r) > 2 and r[2] is not None else {}))
+           for r in dc_rows or [] if r and r[0] and r[1]]           # (dc, site[, repl_read]): no DC's replication read is no layer
     links = [{"frm": r[0], "to": r[1], "nc": r[2], "last_success": r[3], "failures": r[4], "error": r[5], "last_failure": r[6]}
              for r in link_rows or [] if r and r[0] and r[1]]
     t = utc(read_at)

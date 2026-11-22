@@ -141,6 +141,65 @@ grep -q "^HIST 8 1 0$" "$work/read.txt" && ok "the week: 8 runs" || bad "hist: $
 grep -q "^LIVE ad$" "$work/read.txt" && ok "the run's live part (the DCs for SolarWinds)" || bad "live: $(grep LIVE "$work/read.txt")"
 grep -q "^READER_WRITES no 1142$" "$work/read.txt" && ok "report_reader cannot write (1142)" || bad "the reader: $(grep READER "$work/read.txt")"
 
+# 3b. 1.102.0: the network map's AD layer reads the same rows as report_reader (ad_db_connect, one READ ONLY transaction)
+"$py" - "$repo" "$dbport" "$rpw" "$work" "$wpw" <<'EOPY' > "$work/layer.txt" 2>&1
+import json, os, sys
+repo, port, rpw, work = sys.argv[1:5]
+sys.path[:0] = [os.path.join(repo, "roles", "site_portal_stack", "files"), os.path.join(repo, "plugins", "filter"), os.path.join(repo, "plugins", "module_utils")]
+import site_portal as sp, site_ad_layer as al
+def cfg(pw):
+    class C(object):
+        data = work
+        report_db = {"host": "127.0.0.1", "port": int(port), "database": "site_reports", "user": "report_reader", "password": pw, "tls": False}
+    return C()
+connect, why = sp.ad_db_connect(cfg(rpw))
+logs = []
+c, why = sp.ad_repl_from_db(connect, log=logs.append)
+print("COMPACT", why == "", sorted(c["dcs"]) if c else None, [(x["a"], x["b"], x["cls"], x["fail"]) for x in (c or {}).get("pairs", [])])
+lay = al.layer(c, {"sites": ["SITA0101", "SITB0201"], "nodes": []}, source="db")
+print("LAYER", lay["why"] == "", [(x["nma"], x["nmb"], x["cls"]) for x in lay.get("links", [])], lay.get("stale"))
+conn = connect()
+cur = conn.cursor()
+cur.execute("SELECT COUNT(*) FROM ad_run")
+print("AFTER", cur.fetchall()[0][0])
+conn.close()
+connect2, _ = sp.ad_db_connect(cfg("wrong-pw-1102"))
+c2, why2 = sp.ad_repl_from_db(connect2, log=logs.append)
+print("WRONG", c2 is None, why2 == sp.AD_NOT_READ, "wrong-pw-1102" not in why2 + json.dumps(logs))
+class N(object):
+    data = work
+    report_db = None
+print("NOLOGIN", sp.ad_db_connect(N())[0] is None)
+# a newer run of another AD template (another forest), where no DC was read: portal_ad_template keeps the map on its own
+import site_report_db as db
+w, _ = db.connect({"host": "127.0.0.1", "port": int(port), "user": "report_writer", "password": sys.argv[5], "database": "site_reports", "tls": False, "ca_file": "", "connect_timeout": 10})
+wc = w.cursor()
+wc.execute("INSERT INTO ad_run (read_at, job, template_id, status, critical, warning, dcs, dcs_read, live) VALUES (UTC_TIMESTAMP(), 9999, 14, 'critical', 1, 0, 1, 0, '{}')")
+wc.execute("INSERT INTO ad_dc (run_id, dc, domain, site, is_read, status, problems, worst) VALUES (LAST_INSERT_ID(), 'DC09', 'other.test', 'SITC0301', 0, 'critical', 0, 'not read')")
+w.commit()
+w.close()
+c12, _ = sp.ad_repl_from_db(connect, template_id=12)
+c14, why14 = sp.ad_repl_from_db(connect, template_id=14)
+cnew, _ = sp.ad_repl_from_db(connect)
+print("PINNED", sorted(c12["dcs"]), sorted(cnew["dcs"]), al.layer(c14, {"sites": ["SITC0301"]}, why=why14)["why"].startswith("no DC's replication could be read"))
+w, _ = db.connect({"host": "127.0.0.1", "port": int(port), "user": "report_writer", "password": sys.argv[5], "database": "site_reports", "tls": False, "ca_file": "", "connect_timeout": 10})
+wc = w.cursor()
+wc.execute("DELETE FROM ad_dc WHERE run_id IN (SELECT run_id FROM ad_run WHERE template_id = 14)")
+wc.execute("DELETE FROM ad_run WHERE template_id = 14")
+w.commit()
+w.close()
+EOPY
+grep -q "^COMPACT True \['SITA0101', 'SITB0201'\] \[('SITA0101', 'SITB0201', 'critical', True)\]$" "$work/layer.txt" \
+    && ok "the map's AD layer (report_reader, READ ONLY): the newest run's sites and the failing pair" || bad "the AD layer: $(cat "$work/layer.txt")"
+grep -q "^LAYER True \[('SITA0101', 'SITB0201', 'critical')\] False$" "$work/layer.txt" \
+    && ok "the AD layer matched to the map's sites, not stale" || bad "the layer: $(grep LAYER "$work/layer.txt")"
+grep -q "^AFTER 8$" "$work/layer.txt" && ok "the AD layer's read leaves the rows as they were" || bad "after: $(grep AFTER "$work/layer.txt")"
+grep -q "^WRONG True True True$" "$work/layer.txt" && ok "the AD layer with a wrong password: off, said, the password nowhere" || bad "wrong: $(grep WRONG "$work/layer.txt")"
+grep -q "^NOLOGIN True$" "$work/layer.txt" && ok "the AD layer without the portal's database login: off" || bad "no login: $(grep NOLOGIN "$work/layer.txt")"
+grep -q "^PINNED \['SITA0101', 'SITB0201'\] \['SITC0301'\] True$" "$work/layer.txt" \
+    && ok "the AD layer: portal_ad_template's run, not another forest's newer one; a run with no DC read draws nothing, said" \
+    || bad "pinned: $(grep -A5 PINNED "$work/layer.txt"; tail -5 "$work/layer.txt")"
+
 cat > "$work/check.yml" <<'EOYML'
 - hosts: localhost
   gather_facts: false

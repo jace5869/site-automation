@@ -80,7 +80,7 @@ strict Content-Security-Policy (no inline script, no outside font or script).
 - **Where the AD data comes from:** the report job reads the AD job's last run (its job artifact `ad_repl`, kept from
   1.102.0 on) from AAP, with the same "Red Hat Ansible Automation Platform" credential as *what changed*
   (`netmap_ad_template` names the AD job template). The portal's live map reads the AD job's newest run from the report
-  database (the AD job's tables, 1.101.2). Without that data the AD layer is off and the legend says why - for example
+  database (the AD job's tables, 1.101.2), of `portal_ad_template` when it is set - the same forest as */portal/ad*. Without that data the AD layer is off and the legend says why - for example
   *AD replication not in the report database yet*.
 - **Always the newest AD run, never fresher than it is:** the newest finished AD run is shown even when it failed (the
   legend and the cards say so); when it failed before it kept its replication, the layer is off - an older run is never

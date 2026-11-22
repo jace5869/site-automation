@@ -178,7 +178,7 @@ class History(unittest.TestCase):
 class PortalReader(unittest.TestCase):
     """The portal's reader against 1.101.2's tables (the columns site_ad_db.py makes), on SQLite."""
     DDL = ["CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY, read_at TEXT NOT NULL, job INT, template_id INT, status TEXT, critical INT, warning INT, dcs INT, dcs_read INT, live TEXT)",
-           "CREATE TABLE ad_dc (run_id INT NOT NULL, dc TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', site TEXT NOT NULL DEFAULT '', is_read INT, status TEXT, problems INT, worst TEXT)",
+           "CREATE TABLE ad_dc (run_id INT NOT NULL, dc TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', site TEXT NOT NULL DEFAULT '', is_read INT, repl_read INT NOT NULL DEFAULT 1, status TEXT, problems INT, worst TEXT)",   # rows here: read
            "CREATE TABLE ad_link (run_id INT NOT NULL, frm TEXT NOT NULL, to_dc TEXT NOT NULL, nc TEXT NOT NULL DEFAULT '', last_success TEXT NULL, failures INT NOT NULL DEFAULT 0, "
            "error TEXT NOT NULL DEFAULT '', last_failure TEXT NULL, status TEXT NOT NULL DEFAULT '')"]
 

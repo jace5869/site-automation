@@ -887,10 +887,10 @@ class Portal(unittest.TestCase):
         db = os.path.join(cfg.data, "r.db")
         con = sqlite3.connect(db)
         con.executescript("CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY, read_at TEXT, template_id INT);"
-                          "CREATE TABLE ad_dc (run_id INT, dc TEXT, domain TEXT DEFAULT '', site TEXT);"
+                          "CREATE TABLE ad_dc (run_id INT, dc TEXT, domain TEXT DEFAULT '', site TEXT, repl_read INT NOT NULL DEFAULT 0);"   # as site_ad_db makes it
                           "CREATE TABLE ad_link (run_id INT, frm TEXT, to_dc TEXT, nc TEXT, last_success TEXT, failures INT, error TEXT, last_failure TEXT, status TEXT);"
                           "INSERT INTO ad_run VALUES (1, '%s', 5);"
-                          "INSERT INTO ad_dc VALUES (1, 'DC01', '', 'HQ'), (1, 'DC09', '', 'Branch-East');"
+                          "INSERT INTO ad_dc VALUES (1, 'DC01', '', 'HQ', 1), (1, 'DC09', '', 'Branch-East', 1);"
                           "INSERT INTO ad_link VALUES (1, 'DC01', 'DC09', 'corp.example.mil', '%s', 0, '', NULL, 'warning');" % (
                               time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - 3600)), time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - 8 * 3600))))
         con.commit()

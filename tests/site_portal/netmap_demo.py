@@ -51,10 +51,10 @@ if os.environ.get("PORTAL_DEMO_AD"):          # 1.102.0: the AD layer from a sta
     adb = os.path.join(tmp, "ad.db")
     con = sqlite3.connect(adb)
     con.executescript("CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY, read_at TEXT, template_id INT);"
-                      "CREATE TABLE ad_dc (run_id INT, dc TEXT, domain TEXT DEFAULT '', site TEXT);"
+                      "CREATE TABLE ad_dc (run_id INT, dc TEXT, domain TEXT DEFAULT '', site TEXT, repl_read INT NOT NULL DEFAULT 0);"
                       "CREATE TABLE ad_link (run_id INT, frm TEXT, to_dc TEXT, nc TEXT, last_success TEXT, failures INT, error TEXT, last_failure TEXT, status TEXT);"
                       "INSERT INTO ad_run VALUES (1, '2026-11-21 08:00:00', 5);"
-                      "INSERT INTO ad_dc VALUES (1, 'DC01', '', 'HQ'), (1, 'DC02', '', 'Branch-East'), (1, 'DC03', '', 'SITE-C'), (1, 'DC04', '', 'Lab-Annex');"
+                      "INSERT INTO ad_dc VALUES (1, 'DC01', '', 'HQ', 1), (1, 'DC02', '', 'Branch-East', 1), (1, 'DC03', '', 'SITE-C', 1), (1, 'DC04', '', 'Lab-Annex', 1);"
                       "INSERT INTO ad_link VALUES (1, 'DC01', 'DC02', 'corp.example.mil', '2026-11-21 07:30:00', 0, '', NULL, 'ok'),"
                       " (1, 'DC01', 'DC03', 'corp.example.mil', '2026-11-20 06:00:00', 2, '8524', '2026-11-21 07:00:00', 'critical'),"
                       " (1, 'DC02', 'DC03', 'corp.example.mil', '2026-11-21 03:00:00', 0, '', NULL, 'low');")

@@ -3603,14 +3603,15 @@ def _missing_table(e):
     return (getattr(e, "args", None) or [None])[0] == 1146 or "no such table" in t or "doesn't exist" in t
 
 
-def ad_repl_from_db(connect, mark="%s", opts=None, log=None):
+def ad_repl_from_db(connect, mark="%s", opts=None, log=None, template_id=None):
     """1.102.0: the network map's AD layer from the report database - 1.101.2's tables as roles/ad_report/library/site_ad_db.py
-    makes them (its schema_version 1): ad_run (run_id, read_at), ad_dc (run_id, dc, site), ad_link (run_id, frm, to_dc, nc,
-    last_success, failures, error, last_failure). The newest run (so the newest run's template, as /portal/ad picks it) with
+    makes them (its schema_version 3): ad_run (run_id, read_at, template_id), ad_dc (run_id, dc, site, repl_read), ad_link (run_id,
+    frm, to_dc, nc, last_success, failures, error, last_failure). The newest run (of template_id when given) with
     every one of its links, in one read-only transaction (MySQL: START TRANSACTION READ ONLY - one moment of the database).
     -> (compact (site_ad_layer.compact), why). Never raises; why is fixed text (it goes to the browser): a database's own
     error goes to log only. A change of those tables is fixed here, and only here. connect: a function giving a DB-API
-    session; mark: its parameter mark ("%s": MySQL; "?": the tests' SQLite)."""
+    session; mark: its parameter mark ("%s": MySQL; "?": the tests' SQLite); template_id: portal_ad_template's (the AD job
+    of one forest, as /portal/ad reads it), else the newest run's."""
     conn = None
     try:
         if site_ad_layer is None:
@@ -3627,11 +3628,13 @@ def ad_repl_from_db(connect, mark="%s", opts=None, log=None):
         def q(sql, args=()):
             cur.execute(sql.replace("%s", mark), tuple(args))
             return cur.fetchall()
-        top = q("SELECT run_id, read_at FROM ad_run ORDER BY read_at DESC, run_id DESC LIMIT 1")
+        tid = int(template_id) if str(template_id or "").isdigit() else 0
+        top = (q("SELECT run_id, read_at FROM ad_run WHERE template_id = %s ORDER BY read_at DESC, run_id DESC LIMIT 1", [tid]) if tid
+               else q("SELECT run_id, read_at FROM ad_run ORDER BY read_at DESC, run_id DESC LIMIT 1"))
         if not top:
             return None, AD_NOT_YET + " (no AD run kept there)"
         rid, at = top[0][0], top[0][1]
-        dcs = q("SELECT dc, site FROM ad_dc WHERE run_id = %s", [rid])
+        dcs = q("SELECT dc, site, repl_read FROM ad_dc WHERE run_id = %s", [rid])      # repl_read: the DC's replication was read
         links = q("SELECT frm, to_dc, nc, last_success, failures, error, last_failure FROM ad_link WHERE run_id = %s", [rid])
         return site_ad_layer.from_rows(at, dcs, links, opts), ""
     except Exception as e:  # pylint: disable=broad-except
@@ -3700,7 +3703,8 @@ class NetLive(object):
                 self.log.add({"event": "netmap", "ad": "no connection", "error": e.__class__.__name__, "detail": clean(str(e), 300)})
                 conn, why = None, AD_NOT_READ
             try:
-                c, why = ad_repl_from_db(conn, mark=self.ad_mark, opts=o.get("ad_scale") or {}, log=self.log.add) if conn else (None, why)
+                c, why = (ad_repl_from_db(conn, mark=self.ad_mark, opts=o.get("ad_scale") or {}, log=self.log.add,
+                                          template_id=getattr(self.cfg, "ad_template", None)) if conn else (None, why))
             except Exception as e:  # pylint: disable=broad-except   never half a read: off, said, read again next time
                 self.log.add({"event": "netmap", "ad": "failed", "error": e.__class__.__name__, "detail": clean(str(e), 300)})
                 c, why = None, AD_NOT_READ
