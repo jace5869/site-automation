@@ -1082,6 +1082,9 @@ per run instead of once per report.
 *Network map* reads it first ([NETWORK_MAP.md](NETWORK_MAP.md#from-the-report-database-1960)). The other reports follow,
 one section at a time, each with a mockup first.
 
+In 1.97.0 the health checks and troubleshoot show what SolarWinds sees of their hosts
+([SOLARWINDS_REPORTS.md](SOLARWINDS_REPORTS.md)). They read with the reader account, `report_reader`.
+
 ### Set it up
 
 1. Make the job template *SolarWinds - snapshot* (`playbooks/solarwinds_snapshot.yml`). *AAP - set up job templates*
@@ -1186,6 +1189,9 @@ The reader is `plugins/module_utils/site_swis_db.py`.
 - 1.96.1: `nodes_for_all(conn, snap_id, names)` gives every node that matches a name or an IP, not only the first. A
   report can then see two nodes with the same short name (in two domains), or one address on several nodes (a
   cluster's). Each row says how it matched: `name`, `ip`, or `other ip` (one of the node's other addresses).
+
+- 1.97.0: `volumes_for()`, `ports_for()`, `vim_for()` and `node_details()` read snapshot details. `ports_for()` gives the switch port at the other end of each of a node's links. `vim_for()` gives
+  VIM's own status of a host or VM by its name.
 
 The indexes are for those reads: a node by name or IP, a node's interfaces, alerts, applications and volumes, and the
 events of a time window or a node.

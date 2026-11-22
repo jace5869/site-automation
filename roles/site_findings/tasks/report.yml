@@ -141,6 +141,20 @@
   ansible.builtin.include_tasks: console_section.yml
   when: ansible_play_hosts | map('extract', hostvars) | selectattr('site_console', 'defined') | list | length > 0
 
+- name: Report | SolarWinds, in the health checks and troubleshoot (sections of the report; 1.97.0)
+  ansible.builtin.include_tasks: solarwinds.yml
+  when: _swr_mode | default('') | length > 0
+  vars:
+    # the hosts it reads: the play's less the other OS's and the ones left out on purpose (as start.yml counts them)
+    _swr_targets: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set win = (hostvars[h].ansible_connection | default('ssh')) in site_windows_connections
+                      or (hostvars[h].ansible_shell_type | default('sh')) in ['powershell', 'cmd'] -%}
+      {%-   if win == (site_os == 'windows') and not hostvars[h].site_host_skipped | default(false) | bool -%}{%- set _ = out.append(h) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
 - name: Report | the certificate timeline, in a certificate report (a section of the report; 1.64.0)
   ansible.builtin.include_tasks: cert_timeline.yml
   when: site_cert_timeline is defined and cert_timeline | bool
@@ -195,8 +209,8 @@
          | findings_report(site_report_title | default(ansible_play_name),
                            ansible_play_hosts_all | difference(ansible_play_hosts),
                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
-                           _cert_timeline.sections | default([]) + site_report_sections | default([]) + _patch_age.sections | default([])
-                           + _console.sections | default([])) }}
+                           _swr_view.sections | default([]) + _cert_timeline.sections | default([]) + site_report_sections | default([])
+                           + _patch_age.sections | default([]) + _console.sections | default([])) }}
     # the website's copy (atlas, brief): patch age's squares too, the certificate timeline, a job's own web sections (1.73.0:
     # the STIG rules' rows that open to their check and fix text), and (1.67.0, report_portal_url)
     # the site portal's "Ask ACT" links; the workbook (report_email_xlsx): every host's patch age, the by-group sheet with
@@ -206,7 +220,8 @@
           | findings_report(site_report_title | default(ansible_play_name),
                             ansible_play_hosts_all | difference(ansible_play_hosts),
                             ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
-                            _cert_timeline.web_sections | default(_cert_timeline.sections | default([]))
+                            _swr_view.web_sections | default([])
+                            + _cert_timeline.web_sections | default(_cert_timeline.sections | default([]))
                             + site_report_web_sections | default(site_report_sections | default([]))
                             + _patch_age.web_sections | default(_patch_age.sections | default([]))
                             + _console.sections | default([])
@@ -217,6 +232,7 @@
                             _sf_teams | default(none)))
          if _patch_age.web_sections is defined or _cert_timeline.web_sections is defined or report_portal_url | default('') | length > 0
             or site_report_web_sections is defined or _console.sections is defined or _sf_teams is defined
+            or _swr_view.web_sections | default([]) | length > 0
          else {} }}
     # findings of their own kinds that are no row of the findings table (a STIG rule, a fapolicyd denial): their buttons in
     # one section of their own (plugins/filter/finding_filters.py)
@@ -233,7 +249,9 @@
                                         + ([_patch_age.sheet] if _patch_age.sheet is defined else [])
                                         + ([_cert_timeline.sheet] if _cert_timeline.sheet is defined else [])
                                         + (site_report_sheets | default([]))
-         if (_patch_age.sheet is defined or _cert_timeline.sheet is defined or site_report_sheets | default([]) | length > 0)
+                                        + (_swr_view.sheets | default([]))
+         if (_patch_age.sheet is defined or _cert_timeline.sheet is defined or site_report_sheets | default([]) | length > 0
+             or _swr_view.sheets | default([]) | length > 0)
             and report_email_xlsx | default(false) | bool else [] }}
   run_once: true
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0

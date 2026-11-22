@@ -20,6 +20,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import ipaddress
 import json
 import re
 import sys
@@ -262,6 +263,13 @@ def short_error(e):
     # 1.96.2 (review P2-10): PyMySQL's 2003/2005 name the host ("Can't connect to MySQL server on 'db01' (...)")
     t = re.sub(r"((?:server|host) (?:on |at )?)'[^']*'", r"\1the database's host", t, flags=re.I)
     return re.sub(r"\s+", " ", t)[:300]
+
+
+def normalized_ip(value):
+    try:
+        return str(ipaddress.ip_address(str(value or "").strip().lower()))
+    except ValueError:
+        return ""
 
 
 def name_key(*names):
@@ -1126,9 +1134,71 @@ def nodes_for_all(conn, snap_id, names):
                    "other ip" if k in other else "")
             if how:
                 row = dict((c, r[c]) for c in r if c != "ips")
-                row.update(status=site_swis.status_of(r["status_code"], r["unmanaged"]), matched_by=how)
+                # 1.97.0 (review P2-6): the node's other addresses, so a host by one of them is matched
+                row.update(status=site_swis.status_of(r["status_code"], r["unmanaged"]), matched_by=how, other_ips=other)
                 out[n].append(row)
     return out
+
+
+_NODE_COLUMNS = "node_id, name, name_key, dns, ip, ips, status_code, status_text, unmanaged, last_poll, cpu_pct, mem_pct"
+
+
+def _host_node(row):
+    try:
+        other = json.loads(row.pop("ips") or "[]")
+    except ValueError:
+        other = []
+    row.update(other_ips=other, status=site_swis.status_of(row["status_code"], row["unmanaged"]))
+    return row
+
+
+def nodes_for_hosts(conn, snap_id, fulls, shorts, ips):
+    """Candidate node rows for one job. Include both the caption and DNS identity."""
+    clauses, args = [], [snap_id]
+    for column, values in (("LOWER(TRIM(TRAILING '.' FROM TRIM(name)))", fulls),
+                           ("LOWER(TRIM(TRAILING '.' FROM TRIM(dns)))", fulls), ("name_key", shorts),
+                           ("LOWER(SUBSTRING_INDEX(TRIM(name), '.', 1))", shorts), ("LOWER(ip)", ips)):
+        if values:
+            clauses.append("%s IN (%s)" % (column, _ph(len(values))))
+            args.extend(values)
+    for ip in ips:
+        clauses.append("ips LIKE %s")
+        args.append('%%"%s"%%' % ip)
+    # Older snapshots can spell the same IPv6 address with different zero compression.
+    v6 = [ip for ip in ips if ":" in ip]
+    if v6:
+        packed = ", ".join(["INET6_ATON(%s)"] * len(v6))
+        clauses.extend(["INET6_ATON(ip) IN (%s)" % packed,
+                        "EXISTS (SELECT 1 FROM JSON_TABLE(ips, '$[*]' COLUMNS(addr VARCHAR(64) PATH '$')) AS j "
+                        "WHERE INET6_ATON(j.addr) IN (%s))" % packed])
+        args.extend(v6 + v6)
+    if not clauses:
+        return []
+    cur = conn.cursor()
+    cur.execute("SELECT " + _NODE_COLUMNS + " FROM sw_node WHERE snap_id = %s AND (" + " OR ".join(clauses) + ") ORDER BY node_id", args)
+    rows = [_host_node(r) for r in _dicts(cur)]
+    for r in rows:
+        names = [str(r.get(k) or "").strip().lower().rstrip(".") for k in ("name", "dns")]
+        if any(n in fulls or name_key(n) in shorts for n in names):
+            r["matched_by"] = "name"
+        else:
+            r["matched_by"] = "ip" if normalized_ip(r["ip"]) in ips else "other ip"
+    return rows
+
+
+def vim_nodes(conn, snap_id, ids):
+    """The node row and owning kind for every VIM link to these node IDs, including links under unrelated names."""
+    if not ids:
+        return []
+    cur = conn.cursor()
+    queries, args = [], []
+    for kind in ("host", "vm"):
+        queries.append("SELECT n." + _NODE_COLUMNS.replace(", ", ", n.") + ", '" + kind + "' AS kind FROM sw_vim_" + kind +
+                       " v JOIN sw_node n ON n.snap_id = v.snap_id AND n.node_id = v.node_id "
+                       "WHERE v.snap_id = %%s AND v.node_id IN (%s)" % _ph(len(ids)))
+        args.extend([snap_id] + sorted(ids))
+    cur.execute(" UNION ALL ".join(queries), args)
+    return [_host_node(r) for r in _dicts(cur)]
 
 
 def alerts_for(conn, snap_id, node_ids):
@@ -1145,7 +1215,7 @@ def alerts_for(conn, snap_id, node_ids):
     return out
 
 
-def apps_for(conn, snap_id, node_ids):
+def apps_for(conn, snap_id, node_ids, own_tx=True):
     """SAM's applications on these nodes, by name: {node_id: [{app_id, app, status, status_code, status_text, unmanaged,
     components (how many it has; None when not counted), components_not_up: [{component_id, name, kind, status,
     status_code, status_text, value, message}] (worst first)}]}. Two queries. A node without one, or an Orion without SAM
@@ -1154,7 +1224,8 @@ def apps_for(conn, snap_id, node_ids):
     out = dict((i, []) for i in ids)
     if not ids:
         return out
-    begin_read(conn)                 # review c: the applications and their components of one moment
+    if own_tx:                       # 1.97.0 (review P2-1): a caller's read-only transaction is never ended here
+        begin_read(conn)             # review c: the applications and their components of one moment
     try:
         cur = conn.cursor()
         cur.execute("SELECT app_id, node_id, name, status, status_text, unmanaged, components, components_not_up FROM sw_app "
@@ -1167,7 +1238,8 @@ def apps_for(conn, snap_id, node_ids):
                         "WHERE snap_id = %%s AND app_id IN (%s) ORDER BY name, component_id" % _ph(len(aids)), [snap_id] + aids)
             comps = _dicts(cur)
     finally:
-        end_read(conn)
+        if own_tx:
+            end_read(conn)
     return _apps_out(out, apps, comps)
 
 
@@ -1376,3 +1448,152 @@ def events_between(conn, start, end, node_ids=None, limit=2000, orion=None):
         args += ids
     cur.execute(sql + " ORDER BY event_time, event_id LIMIT %d" % max(1, int(limit)), args)
     return _dicts(cur)
+
+
+# ------------------------------------------------- 1.97.0: the health checks', troubleshoot's and the alarms' readers
+def node_details(conn, snap_id, node_ids):
+    """What a page says of a node besides nodes_for(): {node_id: {vendor, model, os_version, kind, location, last_boot}}.
+    One query."""
+    ids = _ids_of(node_ids)
+    out = {}
+    if not ids:
+        return out
+    cur = conn.cursor()
+    cur.execute("SELECT node_id, vendor, model, os_version, kind, location, last_boot FROM sw_node WHERE snap_id = %%s AND node_id IN (%s)"
+                % _ph(len(ids)), [snap_id] + ids)
+    for r in _dicts(cur):
+        out[int(r["node_id"])] = dict((k, r[k]) for k in ("vendor", "model", "os_version", "kind", "location", "last_boot"))
+    return out
+
+
+def volumes_for(conn, snap_id, node_ids):
+    """The volumes on these nodes, fullest first: {node_id: [{volume_id, caption, kind, size_bytes, used_bytes, used_pct,
+    status}]}. A node without one, or an Orion that does not read volumes (part_note(snap, "volume")): []. One query."""
+    ids = _ids_of(node_ids)
+    out = dict((i, []) for i in ids)
+    if not ids:
+        return out
+    cur = conn.cursor()
+    cur.execute("SELECT volume_id, node_id, caption, kind, size_bytes, used_bytes, used_pct, status FROM sw_volume "
+                "WHERE snap_id = %%s AND node_id IN (%s) ORDER BY used_pct DESC, volume_id" % _ph(len(ids)), [snap_id] + ids)
+    for r in _dicts(cur):
+        out.setdefault(int(r["node_id"]), []).append(
+            {"volume_id": int(r["volume_id"]), "caption": r["caption"] or "", "kind": r["kind"] or "",
+             "size_bytes": _num_back(r["size_bytes"]), "used_bytes": _num_back(r["used_bytes"]),
+             "used_pct": _num_back(r["used_pct"]), "status": site_swis.status_of(r["status"]) if r["status"] is not None else ""})
+    return out
+
+
+def ports_for(conn, snap_id, node_ids):
+    """The switch ports SolarWinds' topology links to these nodes (the other end of each link): {node_id: [{switch,
+    switch_id, interface_id, port, status, status_code, speed, in_pct, out_pct, errors, discards}]}, by switch and port.
+    errors and discards: in + out in the last hour (None when not read). A node no link reaches: []. Three queries."""
+    ids = _ids_of(node_ids)
+    out = dict((i, []) for i in ids)
+    if not ids:
+        return out
+    cur = conn.cursor()
+    cur.execute("SELECT src_node, src_if, dst_node, dst_if FROM sw_link WHERE snap_id = %%s AND (src_node IN (%s) OR dst_node IN (%s))"
+                % (_ph(len(ids)), _ph(len(ids))), [snap_id] + ids + ids)
+    ends = {}
+    for r in _dicts(cur):
+        for me, other, oif in ((r["src_node"], r["dst_node"], r["dst_if"]), (r["dst_node"], r["src_node"], r["src_if"])):
+            # 1.97.0 (review P2-4): a link between two of the nodes asked is kept (each sees the other's end)
+            if me is not None and int(me) in out and other is not None and int(other) != int(me) and oif is not None:
+                ends.setdefault(int(me), set()).add((int(other), int(oif)))
+    if not ends:
+        return out
+    ifs = sorted(set(i for v in ends.values() for _, i in v))
+    sws = sorted(set(n for v in ends.values() for n, _ in v))
+    cur.execute("SELECT interface_id, node_id, name, caption, status, speed, in_pct, out_pct, in_errors_hour, out_errors_hour, "
+                "in_discards_hour, out_discards_hour FROM sw_interface WHERE snap_id = %%s AND interface_id IN (%s)" % _ph(len(ifs)),
+                [snap_id] + ifs)
+    by_if = dict((int(r["interface_id"]), r) for r in _dicts(cur))
+    cur.execute("SELECT node_id, name FROM sw_node WHERE snap_id = %%s AND node_id IN (%s)" % _ph(len(sws)), [snap_id] + sws)
+    names = dict((int(r["node_id"]), r["name"] or "") for r in _dicts(cur))
+
+    def both(a, b):
+        return None if a is None and b is None else int(a or 0) + int(b or 0)
+    for me, v in ends.items():
+        for sw_id, iid in v:
+            f = by_if.get(iid) or {}
+            out[me].append({"switch": names.get(sw_id, ""), "switch_id": sw_id, "interface_id": iid,
+                            "port": f.get("caption") or f.get("name") or "", "status": site_swis.status_of(f.get("status")) if f else "",
+                            "status_code": f.get("status"), "speed": _num_back(f.get("speed")), "in_pct": _num_back(f.get("in_pct")),
+                            "out_pct": _num_back(f.get("out_pct")), "errors": both(f.get("in_errors_hour"), f.get("out_errors_hour")),
+                            "discards": both(f.get("in_discards_hour"), f.get("out_discards_hour"))})
+        out[me].sort(key=lambda p: (p["switch"], p["port"], p["interface_id"]))
+    return out
+
+
+def vim_for(conn, snap_id, names):
+    """VIM's hosts and VMs: {name: {kind (host | vm), name, status, status_code, connection_state, power_state, cluster,
+    node_id}} or None. names: a list of names, or of {name, kind} (1.97.0 review P1-2: a host is looked up among VIM's
+    hosts only, a VM among its VMs; the answer is then keyed "kind|name"). The full name first (case aside); a short name only when it names one object of
+    that kind - two hosts esx01.a and esx01.b, or a short name that fits several: None, never a guess. Two queries."""
+    objs = []
+    for n in names or []:
+        if isinstance(n, dict):
+            objs.append((str(n.get("name") or ""), str(n.get("kind") or "")))
+        else:
+            objs.append((str(n or ""), ""))
+    key = lambda n, k: ("%s|%s" % (k, n)) if k else n         # noqa: E731 - by kind and name: host esx01 and VM esx01 are two
+    out = dict((key(n, k), None) for n, k in objs)
+    keys = sorted(set(name_key(n) for n, _k in objs if name_key(n)))
+    if not keys:
+        return out
+    cur = conn.cursor()
+    rows = []
+    cur.execute("SELECT name, name_key, status, connection_state, power_state, cluster, node_id FROM sw_vim_host "
+                "WHERE snap_id = %%s AND name_key IN (%s) ORDER BY host_id" % _ph(len(keys)), [snap_id] + keys)
+    rows += [dict(r, kind="host") for r in _dicts(cur)]
+    cur.execute("SELECT name, name_key, status, NULL AS connection_state, power_state, NULL AS cluster, node_id FROM sw_vim_vm "
+                "WHERE snap_id = %%s AND name_key IN (%s) ORDER BY vm_id" % _ph(len(keys)), [snap_id] + keys)
+    rows += [dict(r, kind="vm") for r in _dicts(cur)]
+    for n, kind in objs:
+        mine = [r for r in rows if not kind or r["kind"] == kind]
+        full = [r for r in mine if str(r["name"] or "").strip().lower().rstrip(".") == n.strip().lower().rstrip(".")]
+        short = [r for r in mine if r["name_key"] == name_key(n)
+                 and ("." not in n.strip().rstrip(".") or "." not in str(r["name"] or "").strip().rstrip("."))]
+        pick = full if full and "." in n.strip().rstrip(".") else short
+        if len(pick) != 1:
+            continue
+        r = pick[0]
+        out[key(n, kind)] = {"kind": r["kind"], "name": r["name"] or "", "status": site_swis.status_of(r["status"]) if r["status"] is not None else "",
+                  "status_code": r["status"], "connection_state": r["connection_state"] or "", "power_state": r["power_state"] or "",
+                  "cluster": r["cluster"] or "", "node_id": _int(r["node_id"])}
+    return out
+
+
+def events_for(conn, start, end, node_ids, ports=(), limit=2000, orion=None):
+    """1.97.0 (review P2-3, P2-4): SolarWinds' events in [start, end], NEWEST first: the nodes' own, and of ports
+    ((switch node_id, interface_id), ...) only that interface's events of that switch - chosen in SQL, so another
+    port's events never use up the limit. Of one Orion (as events_between). Each row has port: [switch, iface] or None."""
+    cur = conn.cursor()
+    if orion is None:
+        cur.execute("SELECT orion FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1")
+        r = cur.fetchone()
+        if not r or not r[0]:
+            return []
+        orion = str(r[0])
+    ids = sorted(set(int(i) for i in node_ids or [] if i is not None))
+    ps = sorted(set((int(a), int(b)) for a, b in ports or () if a is not None and b is not None))
+    if not ids and not ps:
+        return []
+    cond, args = [], [start, end, orion, _epoch_like(orion)]
+    if ids:
+        cond.append("node_id IN (%s)" % _ph(len(ids)))
+        args += ids
+    for a, b in ps:
+        cond.append("(node_id = %s AND net_object_type = 'I' AND net_object_id = %s)")
+        args += [a, b]
+    cur.execute("SELECT event_id, event_time, node_id, net_object_type, net_object_id, event_type, type_name, message FROM sw_event "
+                "WHERE event_time >= %%s AND event_time <= %%s AND (orion = %%s OR orion LIKE %%s) AND (%s) "
+                "ORDER BY event_time DESC, event_id DESC LIMIT %d" % (" OR ".join(cond), max(1, int(limit))), args)
+    out = []
+    for r in _dicts(cur):
+        n = _int(r.get("node_id"))
+        on_port = str(r.get("net_object_type") or "").upper() == "I" and (n, _int(r.get("net_object_id"))) in ps
+        r["port"] = [n, _int(r.get("net_object_id"))] if on_port and n not in ids else None
+        out.append(r)
+    return out

@@ -1,0 +1,506 @@
+{
+"footer": "Checks run: disk",
+"head_counts": [
+[
+1,
+"critical",
+"critical"
+],
+[
+2,
+"warnings",
+"warning"
+],
+[
+1,
+"did not report",
+"warning"
+]
+],
+"head_scope": [
+"2 of 6 hosts with findings"
+],
+"sections": [
+{
+"cards": [
+{
+"code": "du -xh --max-depth=2 /var | sort -h | tail",
+"meta": "Storage",
+"next": "Look further:",
+"status": "critical",
+"subject": "web01.example.mil",
+"title": "/var is 96 % full (2.1 GB free), full in about 3 days at this rate"
+},
+{
+"code": "iostat -x 5 3",
+"meta": "Performance",
+"next": "Look further:",
+"status": "warning",
+"subject": "db01.example.mil",
+"title": "I/O wait 31 % (over 20 %) for the last 15 minutes"
+},
+{
+"code": "journalctl -u httpd --since -1h",
+"meta": "Service",
+"next": "Look further:",
+"status": "warning",
+"subject": "web01.example.mil",
+"title": "httpd restarted 4 times in the last hour"
+},
+{
+"chip": "Not checked",
+"meta": "Coverage",
+"next": "See why in the job output (unreachable, or failed before the checks ran), then run the job again for them.",
+"status": "warning",
+"subject": "gone01.example.mil",
+"title": "1 host(s) did not report: their health is unknown"
+}
+],
+"status": "critical",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Host",
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"web01.example.mil",
+"CRITICAL",
+"disk",
+"/var is 96 % full (2.1 GB free), full in about 3 days at this rate",
+"du -xh --max-depth=2 /var | sort -h | tail"
+],
+[
+"db01.example.mil",
+"WARNING",
+"performance",
+"I/O wait 31 % (over 20 %) for the last 15 minutes",
+"iostat -x 5 3"
+],
+[
+"web01.example.mil",
+"WARNING",
+"services",
+"httpd restarted 4 times in the last hour",
+"journalctl -u httpd --since -1h"
+]
+],
+"status": "critical",
+"title": "Findings"
+},
+{
+"boxes": [
+{
+"counted": false,
+"label": "SolarWinds alerts",
+"note": "on 2 hosts",
+"status": "critical",
+"value": 3
+}
+],
+"cell_status": [
+[
+"",
+"",
+"ok",
+"critical",
+"critical",
+"critical",
+"warning",
+"critical"
+],
+[
+"",
+"",
+"warning",
+"warning",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"",
+"",
+"warning",
+"warning"
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"warning",
+"",
+"",
+"",
+"",
+""
+],
+[
+"",
+"",
+"ok",
+"",
+"",
+"",
+"",
+""
+]
+],
+"columns": [
+"",
+"Host",
+"Node",
+"Alerts",
+"Apps down",
+"Volumes over 90 %",
+"Syslog errors (24 h)",
+"Our checks"
+],
+"counted": false,
+"details": [
+[
+{
+"columns": [
+"Severity",
+"SolarWinds alert",
+"On",
+"Since (UTC)"
+],
+"kinds": [
+"wrap",
+"wrap",
+"wrap",
+"wrap"
+],
+"rows": [
+[
+"Critical",
+"Volume /var over 95 %",
+"web01 /var",
+"10:02"
+],
+[
+"Warning",
+"Application down: Apache HTTP Server",
+"web01",
+"09:58"
+]
+]
+},
+{
+"columns": [
+"SAM application",
+"Status",
+"Components not up"
+],
+"kinds": [
+"wrap",
+"wrap",
+"wrap"
+],
+"rows": [
+[
+"Apache HTTP Server",
+"Down",
+"httpd process, HTTPS port 443"
+]
+]
+},
+{
+"columns": [
+"Volume",
+"Used",
+"Free"
+],
+"kinds": [
+"wrap",
+"wrap",
+"wrap"
+],
+"rows": [
+[
+"/var",
+"96 %",
+"2.0 GB"
+]
+]
+},
+{
+"columns": [
+"Syslog errors (24 h)",
+"Count",
+"Last (UTC)"
+],
+"kinds": [
+"wrap",
+"wrap",
+"wrap"
+],
+"rows": [
+[
+"httpd[4121]: AH00052: child pid 4121 exit signal Segmentation fault (11)",
+"28",
+"10:31"
+],
+[
+"kernel: EXT4-fs warning (device dm-3): ext4_dx_add_entry: Directory index full",
+"9",
+"10:12"
+],
+[
+"systemd[1]: httpd.service: Main process exited, code=killed, status=11/SEGV",
+"4",
+"09:58"
+]
+]
+}
+],
+[
+{
+"columns": [
+"Severity",
+"SolarWinds alert",
+"On",
+"Since (UTC)"
+],
+"kinds": [
+"wrap",
+"wrap",
+"wrap",
+"wrap"
+],
+"rows": [
+[
+"Warning",
+"High response time: HTTPS 443 over 2 s",
+"app02",
+"07:15"
+]
+]
+}
+],
+[
+{
+"columns": [
+"Syslog errors (24 h)",
+"Count",
+"Last (UTC)"
+],
+"kinds": [
+"wrap",
+"wrap",
+"wrap"
+],
+"rows": [
+[
+"mariadbd[811]: [Warning] Aborted connection 812 to db: 'reports' (Got timeout reading communication packets)",
+"3",
+"08:44"
+]
+]
+}
+],
+[],
+[],
+[]
+],
+"kinds": [
+"x",
+"",
+"",
+"",
+"",
+"",
+"",
+""
+],
+"row_status": [
+"critical",
+"warning",
+"warning",
+"warning",
+"warning",
+""
+],
+"rows": [
+[
+"",
+"web01",
+"Up",
+"2",
+"1 of 3",
+"/var 96 %",
+"41",
+"2 findings"
+],
+[
+"",
+"app02",
+"Warning",
+"1",
+"0 of 2",
+"-",
+"0",
+"green"
+],
+[
+"",
+"db01",
+"Up",
+"0",
+"0 of 2",
+"-",
+"3",
+"1 finding"
+],
+[
+"",
+"lab07",
+"Missing",
+"-",
+"-",
+"-",
+"-",
+"green"
+],
+[
+"",
+"mon01",
+"Missing",
+"-",
+"-",
+"-",
+"-",
+"green"
+],
+[
+"",
+"app03",
+"Up",
+"0",
+"0 of 2",
+"-",
+"0",
+"green"
+]
+],
+"status": "critical",
+"text": "One row per host: open it for its alerts, applications, volumes and top syslog messages. From the SolarWinds snapshot of 2026-11-21 10:40 UTC (6 min old).",
+"title": "SolarWinds says (6 hosts)",
+"under_findings": true
+},
+{
+"counted": false,
+"glance": [
+{
+"label": "Warning",
+"name": "app02",
+"status": "warning",
+"text": "High response time: HTTPS 443 over 2 s, since 07:15. Our checks found nothing. Worth a look."
+}
+],
+"status": "warning",
+"text": "The two disagree. Look at the host, or at the alert in SolarWinds.",
+"title": "SolarWinds alerts, our checks are green (1)",
+"under_findings": true
+},
+{
+"counted": false,
+"lines": [
+"lab07.example.mil",
+"mon01.example.mil"
+],
+"status": "warning",
+"text": "AAP checks these hosts, but SolarWinds does not monitor them. Add them in SolarWinds, or list them in solarwinds_report_skip_hosts.",
+"title": "Not in SolarWinds (2)",
+"under_findings": true
+},
+{
+"lines": [
+"gone01.example.mil"
+],
+"status": "warning",
+"text": "Unreachable, or the job failed on them before the checks ran: their health is unknown.",
+"title": "Did not report"
+},
+{
+"passed": [
+"app02.example.mil",
+"app03.example.mil",
+"lab07.example.mil",
+"mon01.example.mil"
+],
+"passed_checks": [
+"disk"
+],
+"text": "app02.example.mil, app03.example.mil, lab07.example.mil, mon01.example.mil",
+"title": "Healthy (4)"
+}
+],
+"status": "critical",
+"summary": [
+{
+"label": "Hosts checked",
+"note": "reported this run",
+"value": 6
+},
+{
+"label": "Healthy",
+"note": "no findings",
+"status": "ok",
+"value": 4
+},
+{
+"label": "With findings",
+"note": "hosts to look at",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Critical",
+"note": "act now",
+"status": "critical",
+"value": 1
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 2
+},
+{
+"label": "Did not report",
+"note": "health unknown",
+"status": "warning",
+"value": 1
+},
+{
+"counted": false,
+"label": "SolarWinds alerts",
+"note": "on 2 hosts",
+"status": "critical",
+"value": 3
+}
+],
+"title": "Health check: 3 finding(s) on 2 of 6 host(s), 1 host(s) did not report"
+}

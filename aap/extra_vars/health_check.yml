@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Health check"
 #   playbook:    playbooks/health_check.yml
-#   credentials: Machine (ACT model key with use_act)
+#   credentials: Machine (ACT model key with use_act; optional: Report database and SolarWinds (read-only) for SolarWinds says, docs/SOLARWINDS_REPORTS.md)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -1033,6 +1033,40 @@
 ## seconds for each search and each command (keytool, node, podman exec)
 # check_trust_timeout: 60
 
+# ---- solarwinds_report ---------------------------------------------------------------------------
+## auto = when the job has the Report database credential; false = never
+# solarwinds_report: auto
+
+## Hosts that are never in SolarWinds on purpose (a lab): left out of "Not in SolarWinds". Names or
+## patterns (* and ?), a list or text with commas. A pattern with a dot is held against the full
+## name only. e.g. [lab*, "*.test.example.mil"]
+# solarwinds_report_skip_hosts: []
+
+## a volume this full or more: warning (Volumes over 90 %)
+# solarwinds_report_volume_pct: 90
+
+## this full or more: critical
+# solarwinds_report_volume_critical_pct: 95
+
+## Troubleshoot: SolarWinds' events of the host and of its switch port, this many hours back
+# solarwinds_report_event_hours: 24
+
+## auto = read it; without the "SolarWinds (read-only)" credential or Log Analyzer, the column says
+## why. false = never
+# solarwinds_report_syslog: auto
+
+## the syslog of the last this many hours
+# solarwinds_report_syslog_hours: 24
+
+## errors and worse
+# solarwinds_report_syslog_levels: [Emergency, Alert, Critical, Error]
+
+## the newest this many entries at most (more: the counts are shown as at least)
+# solarwinds_report_syslog_max_rows: 5000
+
+## seconds for the syslog query
+# solarwinds_report_timeout: 60
+
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
 ## -----------------------
@@ -1062,6 +1096,11 @@
 ## ESXi hosts named here (and keep their own lists). Set them in all.yml. names: whole, or short
 ## either way (web01 = web01.example.mil); * and ?; any case
 # site_exclude_hosts: []
+
+# ---- netmap_report -------------------------------------------------------------------------------
+## minutes a snapshot may be old for a report (all.yml: every report reads it); 0 = never the
+## snapshot
+# solarwinds_db_max_age: 20
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

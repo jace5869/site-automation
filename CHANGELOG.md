@@ -114,6 +114,48 @@ reads other history from the log file. Portal nginx compresses static assets onl
 The report website supports gzip and static file ETags. The portal image requires Python 3.8 or later.
 
 To set up: run Site portal - deploy.
+## 1.97.0 — 2026-11-22
+
+**To set up (optional):** attach the **Report database** credential (the reader is enough) to Health check, Windows
+health check, Troubleshoot and Windows troubleshoot. For the syslog
+column, attach **SolarWinds (read-only)** to the health check templates too. Without them nothing changes
+(docs/SOLARWINDS_REPORTS.md).
+
+**SolarWinds in the health checks and troubleshoot (user-approved mockups).**
+
+- Read only, from the report database's SolarWinds snapshot (1.96.0). Never a finding: the job's counts, status and
+  failed hosts stay its own. A snapshot older than `solarwinds_db_max_age`, or none: one line under Not read says why.
+- Health check and Windows health check, right under Findings:
+  - **SolarWinds says (N hosts)**: Node, Alerts, Apps down, Volumes over 90 %, Syslog errors (24 h), Our checks. A row
+    opens to its alerts, SAM applications not up, full volumes and top 3 syslog messages.
+  - **SolarWinds alerts, our checks are green (N)** and **Not in SolarWinds (N)** (a warning).
+    `solarwinds_report_skip_hosts` leaves out hosts that are never in SolarWinds on purpose.
+  - A tile **SolarWinds alerts**. The email has one line per section.
+  - The syslog comes from Log Analyzer: one capped SWQL query a run, one per 500 hosts (`Orion.OLM.LogEntry`, checked first), errors and
+    worse, messages that differ only in numbers counted as one.
+- Troubleshoot and Windows troubleshoot: **What SolarWinds sees** first on the page, above Start here. Then **Its
+  switch port** (the port SolarWinds' topology links to the host) and **Its events, last 24 h** (the switch's: its
+  port's only). Over 20, the older ones fold under them.
+- The VMware alarms reports and their ACT analysis get SolarWinds in the next release (switched off here).
+- The alarms report's Host connection table fits at 800 px: State now says "in maintenance" (one column fewer), and
+  vCenter's states are words ("not responding").
+- The matcher checks the full name first. It compares the inventory name or `ansible_host` with the caption and DNS name.
+  It then checks the node's IPv4 and IPv6 addresses. A short name must fit just one host and one node.
+- The website's counts, index and ops look exclude SolarWinds. The reports skip hosts of the other OS.
+  `solarwinds_report_skip_hosts` also matches full names and accepts text.
+- The reader checks the snapshot age in seconds. It reads in one read-only transaction.
+  SQL selects the newest events for each switch port. The workbook includes the SolarWinds sheets.
+  Missing snapshot data and read failures appear under Not read.
+- New: roles/solarwinds_report (site_host_swis), plugins/module_utils/site_host_swis.py,
+  plugins/filter/solarwinds_report_filters.py and site_swis_db's `volumes_for`, `ports_for`, `vim_for` and `node_details`.
+  `findings_report`: an extra section with `first: true` goes above Start here, one with `under_findings: true` right
+  under Findings. site_swis_db: `events_for` (newest first), `apps_for(own_tx=False)`, `nodes_for_hosts` (caption and DNS), `vim_nodes`. The ops look skips a tile or
+  section with `counted: false`.
+- Docs: SOLARWINDS_REPORTS.md (new, in the Ops Runbooks guide), REPORT_DATABASE.md, VMWARE.md, the role defaults,
+  VARIABLES_REFERENCE, aap/extra_vars and aap/job_templates.yml (the optional credentials).
+- Tests: test_solarwinds_reports.py and tests/solarwinds/run_swreport_test.sh (a real report database, MySQL 8.4 and
+  MariaDB 10.11, the snapshot job, health checks and troubleshoot). test_filters.py and test_report_time.py cover Host connection.
+
 ## 1.96.2 — 2026-11-21
 
 **Nothing to set up.**

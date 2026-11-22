@@ -62,6 +62,7 @@
   gather_facts: false
   vars:
     health_checks: [daily]
+    _swr_mode: health           # 1.97.0: SolarWinds says, under Findings (roles/solarwinds_report)
     _health_alias: {mysql: mariadb, database: mariadb}
     _health_sets:
       daily: [disk, mounts, services, performance, time, network, logging, mariadb, containers, sso]

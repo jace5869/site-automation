@@ -234,6 +234,15 @@ def _table(rows, status_col=0):
     return out, rs, cs
 
 
+STATE = {"notResponding": "not responding", "disconnected": "disconnected", "connected": "connected"}
+
+
+def _state(s):
+    """vCenter's connection state in words: notResponding -> not responding."""
+    s = str(s or "")
+    return STATE.get(s) or re.sub(r"(?<=[a-z])(?=[A-Z])", " ", s).lower() or "?"
+
+
 def _section(title, columns, rows, text="", status="", status_col=0, max_rows=0):
     rows = list(rows)
     more = len(rows) - max_rows if max_rows and len(rows) > max_rows else 0
@@ -341,10 +350,10 @@ def vm_alarm_report(data, opts=None):
                 if d.get("alarm_changes_capped") else ""))
             if fired else "No alarm fired in the last %s h." % hours,
             _worst([x["severity"] for x in fired if x["severity"] not in ("info", "low")]), max_rows=max_rows))
+    # 1.97.0: State now says maintenance too (one column fewer), in words: the table fits at 800 px
     sections.append(_section(
-        "Host connection", ["Severity", "Host", "State now", "Maintenance", "Connection events", _col("Last event", tz), "Last message",
-                            "Cluster", "Datacenter"],
-        [(c["severity"], [_sev(c["severity"]), c["host"], c["state"], "yes" if c["maintenance"] else "no", c["events"],
+        "Host connection", ["Severity", "Host", "State now", "Events", _col("Last event", tz), "Last message", "Cluster", "Datacenter"],
+        [(c["severity"], [_sev(c["severity"]), c["host"], _state(c["state"]) + (", in maintenance" if c["maintenance"] else ""), c["events"],
                           _tt(c["last"], tz), c["message"], c["cluster"], _dc(c, multi)]) for c in g["connection"]],
         ("Hosts not connected to vCenter now (critical), and hosts that lost the connection in the last %s h but are back (warning)." % hours)
         if g["connection"] else "Every host is connected%s." % (", and none lost its connection in the last %s h" % hours if events_on else ""),
@@ -536,6 +545,10 @@ def vm_alarm_act_task(problems, opts=None):
         "50-79 = likely, other causes possible; under 50 = a guess (then say in the fix what to check to be sure).",
         "Several problems may share one cause (e.g. a host that lost its network shows several alarms): say so in each of them.",
         "Failed logins from one address with one account usually mean a service or scanner with an old password: name the account and the source.",
+    ] + ([
+        "The evidence also has SolarWinds' view of the same hosts and VMs: its lines start with \"SolarWinds:\". In each evidence "
+        "field, start each line you quote with the tool it came from: \"vCenter:\" or \"SolarWinds:\". When both tools see the same "
+        "cause, say so in the cause."] if o.get("solarwinds") else []) + [
         "",
         "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
         MARK_BEGIN,

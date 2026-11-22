@@ -21,7 +21,7 @@ that no secret column (Community, RWCommunity, LicenseKey) or SELECT * was ever 
 1.96.0 (the SolarWinds snapshot, tests/solarwinds/fixture_more.py): a fixture with "tables" ({entity: rows}) answers those
 entities too - named columns only (another: 400), WHERE <col> IN @p, <col> <> n, <col> >= @p, <col> > @p, (a OR b) of those,
 joined by AND; SELECT <key>, COUNT(<col>) AS <name> FROM <entity> [WHERE ...] GROUP BY <key>; SELECT MAX(<col>) AS <name>
-FROM <entity>;
+FROM <entity>; 1.97.0: ORDER BY <col> DESC (Log Analyzer's Orion.OLM.LogEntry, newest first, with TOP n);
 Metadata.Property (EntityName IN @names) lists each entity's columns, a navigation property among them, and
 Orion.NodesCustomProperties' system columns and the fixture's properties. Orion.Nodes' columns may come without the alias."""
 import base64
@@ -215,9 +215,12 @@ def run(q, params):
                 raise Bad("Cannot resolve property %s" % c)
         ok = where_ok(where, params)
         src = [r for r in MORE[ent] if ok(r)]
-        key = (order or "").split(",")[0].strip().split(" ")[0]
-        if key:                                 # 1.96.1: ORDER BY its first column (the snapshot's keyset paging)
+        first = (order or "").split(",")[0].strip().split(" ")
+        key = first[0]
+        if key:                                 # 1.96.1: ORDER BY its first column (the snapshot's keyset paging); 1.97.0: DESC
             src = sorted(src, key=lambda r: (r.get(key) is None, r.get(key)))
+            if len(first) > 1 and first[1].upper() == "DESC":
+                src = [r for r in src if r.get(key) is not None][::-1] + [r for r in src if r.get(key) is None]
         rows = [dict((c, r.get(c)) for c in cols) for r in src]
     else:
         rows = []

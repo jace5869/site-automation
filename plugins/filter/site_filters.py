@@ -2592,9 +2592,13 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
     website's copy only): {map: {host: [teams]}, names: [teams in order, Unassigned last], other, setting} - the report's
     teams (plugins/filter/team_filters.py): each findings row says its host's teams and its severity (row_tags), and the
     team view (a section "Your team", team_view) takes the place of Start here and of the findings' own tiles. Without
-    it, or with no names, the report is as before."""
+    it, or with no names, the report is as before. 1.97.0 (SolarWinds): an extra section with first: true goes above Start
+    here (the very first on the page), one with under_findings: true right under the findings table."""
     by_host = by_host or {}
     ask = _portal_buttons(portal)
+    first = [s for s in extra or [] if s.get("first")]
+    under = [s for s in extra or [] if s.get("under_findings") and not s.get("first")]
+    extra = [s for s in extra or [] if s not in first and s not in under]
     tv = teams if isinstance(teams, dict) and (teams.get("names") or []) else None
     tmap = (tv.get("map") or {}) if tv else {}
     hosts = sorted(by_host)
@@ -2648,7 +2652,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
         status = min(status, head.get("headline_status") or status, key=lambda x: order.get(x, 2))
         if head.get("summary_only"):
             summary = [box("Did not report", len(missing), "warning", "health unknown")] if missing else []
-    for s in extra or []:                     # a top section's boxes, and a lower one's (1.61.0: patch age)
+    for s in first + list(extra or []) + under:   # a top section's boxes, and a lower one's (1.61.0: patch age)
         summary += list(s.get("boxes") or [])
     sections = list(top)
     own = [s for s in top if "start_here" in s]
@@ -2677,6 +2681,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
         if tags:
             sections[-1]["row_tags"] = tags
             sections[-1]["team_fold"] = True
+    sections += under
     if missing:
         sections.append({"title": "Did not report", "status": "warning",
                          "text": "Unreachable, or the job failed on them before the checks ran: their health is unknown.",
@@ -2687,6 +2692,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
         # passed / passed_checks: the web look (report_web_theme: atlas) shows them with check marks; the emails, the text
         sections.append({"title": "Healthy (%d)" % len(healthy), "text": ", ".join(healthy), "passed": healthy,
                          "passed_checks": list(dict.fromkeys(str(c) for c in checks or []))})
+    sections[:0] = first
     if not sections:
         sections.append({"title": "Result", "lines": ["No findings."]})
     # 1.82.0: the head - the counts by severity, the hosts as the scope
@@ -2700,7 +2706,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None, porta
            "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
     if tv and not own:
         # the findings' own tiles make way for the team's (the extra sections' boxes stay: patch age, the Console)
-        block["tiles_kept"] = [b for s in extra or [] for b in list(s.get("boxes") or [])]
+        block["tiles_kept"] = [b for s in first + list(extra or []) + under for b in list(s.get("boxes") or [])]
         out["teams"] = block
     return out
 

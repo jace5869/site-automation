@@ -1238,7 +1238,7 @@ class VmwareAlarms(unittest.TestCase):
         self.assertEqual(al["row_status"], ["critical", "warning"])
         self.assertEqual([c[0] for c in al["cell_status"]], ["critical", "warning"])
         self.assertTrue(al["rows"][1][5].startswith("yes - CORP\\op"))
-        self.assertEqual(sec["Host connection"]["rows"][0][:3], ["CRITICAL", "esx02", "notResponding"])
+        self.assertEqual(sec["Host connection"]["rows"][0][:3], ["CRITICAL", "esx02", "not responding"])
         self.assertEqual(sec["Virtual machine events"]["row_status"], ["warning", "info"])
         hosts = sec["All hosts"]
         self.assertEqual(hosts["row_status"], ["critical", "critical", "low"])       # critical alarm, not connected, maintenance (1.56.0: Low)

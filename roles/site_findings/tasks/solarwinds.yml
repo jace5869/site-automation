@@ -1,0 +1,40 @@
+---
+# SOLARWINDS (1.97.0, docs/SOLARWINDS_REPORTS.md): the health checks' and troubleshoot's SolarWinds sections. A playbook
+# asks for them with _swr_mode in its play's vars (health or troubleshoot). Read only, never a finding: the job's counts,
+# status and failed hosts stay its own (plugins/filter/solarwinds_report_filters.py).
+# The hosts: the play's, less the other OS's (os_guard.yml left them out) and the ones a playbook leaves out on purpose
+# (site_host_skipped) - as start.yml counts them (review P1-4). Each with its full name: the inventory name, else
+# ansible_host when that is a name (review P1-1), and ansible_host's IP.
+- name: Report | SolarWinds - the job's hosts as SolarWinds sees them
+  ansible.builtin.include_role:
+    name: solarwinds_report
+    tasks_from: hosts.yml
+    public: true                         # its settings' defaults, for the sections after it
+  vars:
+    _swr_hosts: >-
+      {%- set out = [] -%}
+      {%- for h in _swr_targets -%}
+      {%-   set ah = hostvars[h].ansible_host | default('', true) | string | trim -%}
+      {%-   set _ = out.append({'host': h, 'ip': ah, 'fqdn': (ah if '.' in ah and not (ah | regex_search('^[0-9.]+$')) else '')}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: Report | SolarWinds - its sections
+  ansible.builtin.set_fact:
+    _swr_view: >-
+      {{ (_swr_read | swr_troubleshoot({'events_shown': solarwinds_report_events_shown | int,
+                                         'event_hours': solarwinds_report_event_hours | int,
+                                         'skip_hosts': solarwinds_report_skip_hosts | default([], true)})) if _swr_mode == 'troubleshoot' else
+         (_swr_read | swr_health(dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars) | map(attribute='site_findings', default=[]))),
+                                 {'missing': _swr_targets | difference(ansible_play_hosts),
+                                  'skip_hosts': solarwinds_report_skip_hosts | default([], true),
+                                  'volume_pct': solarwinds_report_volume_pct | float,
+                                  'volume_critical_pct': solarwinds_report_volume_critical_pct | float})) }}
+  run_once: true
+
+- name: Report | SolarWinds
+  ansible.builtin.debug:
+    msg: "{{ _swr_view.lines }}"
+  run_once: true
+  when: _swr_view.lines | length > 0

@@ -158,7 +158,7 @@ class AlarmsReport(unittest.TestCase):
         self.assertEqual(t["columns"][4], "Since (UTC)")
         self.assertEqual(t["rows"][0][4:6], ["2026-10-07 03:52:47", "yes - CORP\\op, 2026-10-07 04:00:00"])
         c = self.sec(r, "Host connection")
-        self.assertEqual((c["columns"][5], c["rows"][0][5]), ("Last event (UTC)", "2026-10-07 03:52:40"))
+        self.assertEqual((c["columns"][4], c["rows"][0][4]), ("Last event (UTC)", "2026-10-07 03:52:40"))     # 1.97.0: no Maintenance column
 
     def test_zone(self):
         r = va.vm_alarm_report(self.D, {"time_zone": NY})
@@ -168,7 +168,7 @@ class AlarmsReport(unittest.TestCase):
         self.assertEqual(t["rows"][0][4:6], ["2026-10-06 23:52:47 EDT (03:52 UTC on 10-07)",
                                              "yes - CORP\\op, 2026-10-07 00:00:00 EDT (04:00 UTC)"])
         c = self.sec(r, "Host connection")
-        self.assertEqual((c["columns"][5], c["rows"][0][5]), ("Last event", "2026-10-06 23:52:40 EDT (03:52 UTC on 10-07)"))
+        self.assertEqual((c["columns"][4], c["rows"][0][4]), ("Last event", "2026-10-06 23:52:40 EDT (03:52 UTC on 10-07)"))
         self.assertFalse([col for s in r["sections"] for col in s.get("columns", []) if "(UTC)" in col])
 
     def test_act_evidence_stays_utc(self):
