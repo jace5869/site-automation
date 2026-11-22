@@ -35,7 +35,7 @@
   }
   function chip(st, text) {
     const k = WORD[st] ? st : "unknown";
-    return el("span", "chip s-" + (k === "unknown" ? "info" : k), [mark(KIND[k]), text || WORD[k]]);
+    return el("span", "chip s-" + k, [mark(KIND[k]), text || WORD[k]]);
   }
   const ago = s => s == null ? "" : s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : (Math.round(s / 360) / 10) + " h ago";
   const hrs = m => m < 60 ? m + " min" : (Math.round(m / 6) / 10) + " h";
@@ -64,7 +64,7 @@
     if (run) l.append(el("span", run.old ? "c-warning" : "", run.old ? "AD checks: as of " + run.as_of + " - " + hrs(run.age_min) + " old: the AD job has not run since"
                                                                       : "AD checks: as of " + hhmm(run.as_of) + " (the AD job" + (run.next ? "; next " + hhmm(run.next) : "") + ")"));
     l.append(el("span", "adp-sep", "·"));
-    l.append(el("span", sw.stale ? "c-warning" : "", !sw.on ? "SolarWinds: not read (" + sw.why + ")" : sw.stale ? "SolarWinds: not read now - " + sw.stale
+    l.append(el("span", sw.stale ? "c-warning" : "", !sw.on ? "SolarWinds: not read (" + sw.why + ")" : sw.stale ? "SolarWinds: last known (" + ago(sw.age) + ") - " + sw.stale
                                                     : sw.section ? "SolarWinds: updated " + ago(sw.age) : "SolarWinds: reading…"));
     const r = el("div", "r");
     if (a.report) { const x = el("a", "", "The full report of " + hhmm(a.report.when) + " →"); x.href = a.report.url; r.append(x); }
@@ -72,28 +72,23 @@
   }
   function note(kind, text) { return el("div", "note" + (kind ? " " + kind : ""), el("p", "", text)); }
 
-  // the newest run's DCs as SolarWinds sees them: {dc_id: [text, status]}. status: critical, warning, ok (a positive Up only) or "" (not in SolarWinds, not matched, not known)
-  const idOf = d => d.dc_id || (String(d.domain || "").replace(/\.$/, "") + "|" + String(d.dc || "")).toLowerCase();
+  // SolarWinds rows use the NodeID saved with this AD run.
+  const idOf = d => String(d.dc).toLowerCase();
   function swOf(sw) {
     const out = {}, s = sw && sw.section;
     if (!s) return out;
-    const i = s.columns.indexOf("DC"), j = s.columns.indexOf("SolarWinds"), keys = s.keys || [];
+    const j = s.columns.indexOf("SolarWinds"), keys = s.keys || [];
     s.rows.forEach((r, k) => {
       const c = (s.cell_status[k] || [])[j] || "", st = c === "critical" || c === "warning" ? c : c === "ok" && r[j] === "Up" ? "ok" : "";
-      if (keys.length === s.rows.length && (!/^\|/.test(keys[k]) || keys[k].includes("\\"))) { out[keys[k]] = [r[j], st]; return; }
-      const key = "?|" + String(r[i]).toLowerCase();        // no domain with the row: by name, a name twice not known
-      out[key] = key in out ? ["two DCs of this name", ""] : [r[j], st];
+      if (keys[k]) out[String(keys[k])] = [r[j], st];
     });
     return out;
   }
-  // a row without a domain: only for the one DC of that name on the page - never one Up for two domains' DC01
-  const swFor = (sws, d, m) => sws[idOf(d)] || ((m.live && m.live.known || m.dcs || []).filter(x => String(x.dc || x.name).toLowerCase() === String(d.dc).toLowerCase()).length === 1
-                                                ? sws["?|" + String(d.dc).toLowerCase()] : undefined);
-  // a DC's name, with its domain when another DC on the page has the same name
-  const nameOf = (m, d) => (m.dcs || []).filter(x => x.dc.toLowerCase() === String(d.dc).toLowerCase()).length > 1 && d.domain ? d.dc + " (" + d.domain + ")" : d.dc;
+  const swFor = (sws, d) => d.node_id == null ? [d.match_why || "not matched", ""] : sws[String(d.node_id)];
+  const nameOf = (m, d) => d.dc;
   function glance(a, m) {
     const run = m.run, dcs = m.dcs, sw = a.sw || {}, links = m.links;
-    const bad = dcs.filter(d => d.now !== "ok"), crit = dcs.filter(d => d.now === "critical"), warn = dcs.filter(d => d.now === "warning");
+    const bad = dcs.filter(d => ["critical", "warning", "low"].includes(d.now)), crit = dcs.filter(d => d.now === "critical"), warn = dcs.filter(d => d.now === "warning");
     const failing = links.filter(x => x.failures > 0), late = links.filter(x => !(x.failures > 0));
     const first = bad[0];
     const swDown = sw.tile ? sw.tile.value : null;
@@ -103,13 +98,13 @@
     const day = m.hist.filter(h => Date.parse(h.at) >= Date.now() - 864e5).length;
     const t = [
       tile("Status now", chip(run.status || "ok"), crit.length + " DC" + (crit.length === 1 ? "" : "s") + " critical, " + (warn.length || "none") + " warning"),
-      run.dcs ? tile("DCs read", run.dcs_read + " of " + run.dcs, run.dcs_read === run.dcs ? "every DC answered" : (run.dcs - run.dcs_read) + " did not answer")
-              : tile("DCs read", num("none", "critical"), "the AD job found no DC (its read of the domain failed)"),
+      replOf(run) > 0 && run.coverage !== "DC list not read - coverage unknown" ? tile("DCs read", run.dcs_read + " of " + run.dcs, run.dcs_read === run.dcs ? "every DC answered" : (run.dcs - run.dcs_read) + " did not answer")
+              : tile("DCs read", num("none", "critical"), "DC list not read - coverage unknown"),
       tile("DCs with a problem", num(bad.length, bad.length ? (crit.length ? "critical" : "warning") : ""),
            first ? first.dc + " " + WORD[first.now].toLowerCase() + (first.since_shown ? " since " + hhmm(first.since_shown) : "") : "none"),
       tile("SolarWinds: down or warning", swDown == null ? "-" : num(swDown, swDown ? sw.tile.status : ""),
            !sw.on ? "not read here" : swFirst ? nameOf(m, swFirst[0]) + " " + swFirst[1][0]
-             : !sw.section ? "reading…" : swUp === dcs.length ? "every DC up"
+             : !sw.section ? "reading…" : dcs.length && swUp === dcs.length ? "every DC up"
              : swNot + " DC" + (swNot === 1 ? "" : "s") + " not in SolarWinds or not matched, " + swUp + " up"),
       !replRead(run) && !failing.length ? tile("Replication failing", num("not read", "warning"), replWhy(run))
         : tile("Replication failing", num(failing.length + (failing.length === 1 ? " link" : " links"), failing.length ? "critical" : ""),
@@ -130,7 +125,9 @@
     const dcs = m.dcs.slice().sort((x, y) => (RANK[x.now] - RANK[y.now]) || (swRank(x) - swRank(y)) || x.dc.localeCompare(y.dc));
     const rows = dcs.map(d => {
       const s = swFor(sws, d, m);
-      const why = d.worst || (s && s[1] === "critical" ? "SolarWinds: " + s[0] + ", AD answers" : "");
+      const why = [d.worst, d.stale_dsa ? "Two NTDS objects for " + d.dc.toUpperCase() + " - stale DSA, metadata cleanup" : ""].filter((x, i, xs) => x && xs.indexOf(x) === i).join("; ") ||
+                  (s && s[1] === "critical" ? "SolarWinds: " + s[0] + ", AD answers" : "");
+      const sample = s && d.node_id != null && a.sw.age != null ? el("div", "muted", (a.sw.stale ? "last known · " : "") + ago(a.sw.age)) : null;
       const tr = el("tr", d.now !== "ok" ? "r-" + d.now : "");
       tr.dataset.dc = idOf(d);
       const strip = el("span", "adp-trend");
@@ -139,9 +136,9 @@
       d.trend.forEach((x, k) => { const i = el("i", "k-" + (x || "none")); i.title = (m.times[k] || "") + ": " + (WORD[x] || "no run"); strip.append(i); });
       const since = d.now !== "ok" ? "since " + hhmm(d.since_shown) + " · " + d.runs_since + (d.longer ? "+" : "") + (d.runs_since === 1 && !d.longer ? " run" : " runs")
                                     : d.runs_since >= n ? "OK all " + n + " runs" : "OK since " + hhmm(d.since_shown);
-      tr.append(el("td", "adp-dc", [el("b", "", nameOf(m, d)), why ? el("div", "adp-why", why) : null]), el("td", "nw adp-wide", d.site || "-"),
-                el("td", "nw", chip(d.now)), el("td", "nw", since), el("td", "", strip),
-                el("td", "nw", s ? chip(s[1] || "unknown", s[0]) : el("span", "muted", a.sw.on ? "-" : "not read")),
+      tr.append(el("td", "adp-dc", [el("b", "", nameOf(m, d)), why ? el("div", "adp-why", why) : null]), el("td", "nw adp-wide", d.site || "Site unknown"),
+                el("td", "nw", chip(d.now, d.worst === "not polled" ? "not polled" : undefined)), el("td", "nw", since), el("td", "", strip),
+                el("td", "nw", [s ? chip(s[1] || "unknown", s[0]) : el("span", "muted", a.sw.on ? "not matched" : "not read"), sample]),
                 el("td", "adp-wide", why || el("span", "muted", "-")));
       return tr;
     });
@@ -149,20 +146,19 @@
     return sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left",
                [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg]);
   }
-  // the newest run's replication coverage: repl_read of dcs DCs read (an older answer without it: all)
   // the whole population the replication read knows (also DCs AD lists that were not polled); read: in full
-  const replOf = run => run.repl_dcs || run.dcs || 0;
-  const replRead = run => run.repl_read == null || run.repl_read > 0;
-  const replAll = run => run.repl_read == null || run.repl_read >= replOf(run);
-  const replWhy = run => (run.repl_read || 0) + " of " + replOf(run) + " DCs' replication read in full (no rights on a partition, not reached, or not polled: the full report says which)";
+  const replOf = run => run.repl_dcs || 0;
+  const replRead = run => run.repl_read > 0;
+  const replAll = run => replOf(run) > 0 && run.coverage !== "DC list not read - coverage unknown" && run.repl_read >= replOf(run);
+  const replWhy = run => run.coverage || (replOf(run) ? "Replication read in full on " + (run.repl_read || 0) + " of " + replOf(run) + " DCs" : "DC list not read - coverage unknown");
   function linkTable(m) {
     // what was seen is shown whatever the coverage; the coverage is said beside it
     const part = !replRead(m.run) ? note("warn", "Replication was not read in full in this run: " + replWhy(m.run) + ". " +
                                             (m.links.length ? "The links below were seen; the others are not known." : "No link is known - not \"all fine\"."))
-               : replAll(m.run) ? null : note("warn", "Only " + replWhy(m.run) + ": the others' links are not known.");
+               : replAll(m.run) ? el("p", "muted", replWhy(m.run) + ".") : note("warn", "Only " + replWhy(m.run) + ": the others' links are not known.");
     if (!replRead(m.run) && !m.links.length) return sec("Replication links that need a look", null, "as of " + hhmm(m.run.as_of), [part]);
     if (!m.links.length) return sec("Replication links that need a look", 0, "as of " + hhmm(m.run.as_of),
-                                    [part, el("p", "muted", part ? "None among the DCs whose replication was read." : "None: every replication link succeeded within the matrix's hours.")]);
+                                    [part, el("p", "muted", replAll(m.run) ? "None: every replication link succeeded within the matrix's hours." : "None among the DCs whose replication was read.")]);
     const rows = m.links.map(x => el("tr", RANK[x.now] < 2 ? "r-" + x.now : "", [
       el("td", "adp-dc", [el("b", "", x.frm), " → ", el("b", "", x.to), el("div", "adp-why", x.nc + (x.error ? " · " + x.error : ""))]),
       el("td", "nw adp-wide", x.nc), el("td", "nw", chip(x.now)), el("td", "nw adp-wide", x.last_success_shown || "never"),
@@ -224,12 +220,12 @@
       box.append(s);
     };
     chart.redraw = draw;                       // drawn once the page is in place (its width known): draw() below
-    const runs = m.hist.slice(-8).reverse().map(h => el("tr", "", [el("td", "nw", h.at_shown), el("td", "nw", h.why ? chip("unknown", "Rows not kept") : chip(WORD[h.status] ? h.status : h.c ? "critical" : h.w ? "warning" : h.status ? "unknown" : "ok")),
-      el("td", "num", h.c), el("td", "num", h.w), el("td", "num", h.read + " of " + h.dcs), el("td", "nw", h.job ? "job " + h.job : "-")]));
+    const runs = m.hist.slice(-8).reverse().map(h => el("tr", "", [el("td", "nw", h.at_shown), el("td", "nw", chip(WORD[h.status] ? h.status : "unknown")),
+      el("td", "num", h.c), el("td", "num", h.w), el("td", "num", h.dcs ? h.read + " of " + h.dcs : "unknown"), el("td", "nw", h.job ? "job " + h.job : "-"), el("td", "", h.why ? (h.why.startsWith("More than one AD domain") ? h.why : "Rows not kept: " + h.why) : "")]));
     const leg = el("p", "adp-leg", [el("span", "", [el("i", "k-critical"), "Critical"]), el("span", "", [el("i", "k-warning"), "Warning"])]);
     return sec("DCs with a problem, last 7 days", null, "the worst run of each 2 hours; the numbers: the runs below",
                [m.hist.length ? box : el("p", "muted", "No run in the last 7 days."), leg,
-                table([["Run"], ["Status"], ["DCs critical", "num"], ["DCs warning", "num"], ["DCs read", "num"], ["Job"]], runs)]);
+                table([["Run"], ["Status"], ["DCs critical", "num"], ["DCs warning", "num"], ["DCs read", "num"], ["Job"], ["Reason"]], runs)]);
   }
   window.addEventListener("resize", () => { if (chart.redraw) chart.redraw(); });
 
@@ -279,7 +275,7 @@
                                        "\"Report database\" credential (the template setup job attaches it). The next run is the first."));
     } else {
       parts.push(live(a, m));
-      if (m.run.why) parts.push(note("bad", "This run's DCs and links could not be kept: " + m.run.why + ". Its counts below are not the AD state."));
+      if (m.run.why) parts.push(note("bad", m.run.why.startsWith("More than one AD domain") ? m.run.why + ". " + (m.run.unsupported || "") : "Rows not kept: " + m.run.why));
       if (db.stale) parts.push(note("warn", "The report database was not read just now (" + db.stale + "): this is its answer of " + ago(db.age) + ", as of its run " + m.run.as_of + "."));
       else if (db.refreshing) parts.push(note("", "Reading the report database again: this is its answer of " + ago(db.age) + " (nobody had the page open)."));
       if (m.run.old) parts.push(note("warn", "The newest AD run is " + hrs(m.run.age_min) + " old (more than " + a.old_after + " min): the AD job has not run since. " +
@@ -299,6 +295,8 @@
   function aged(a, down) {
     const gone = Math.round((Date.now() - got) / 1000), a2 = JSON.parse(JSON.stringify(a));
     if (a2.sw && a2.sw.age != null) a2.sw.age += gone;
+    if (a2.sw && a2.sw.section && !a2.sw.stale && a2.sw.age > (a2.sw.every || 600) + 120)
+      a2.sw.stale = "its last read is overdue: being read again";
     if (a2.db && a2.db.age != null) a2.db.age += gone;
     const run = a2.db && a2.db.model && a2.db.model.run;
     if (run && run.age_min != null) {

@@ -11,11 +11,14 @@ html.moves .adp-dot:not(.off){animation:adppulse 2.4s ease-in-out infinite}
 .adp-trend{display:inline-flex;gap:1px;vertical-align:middle;padding:2px 0;width:239px}
 .adp-trend i{flex:1 1 0;min-width:1px}
 .adp-trend i,.adp-leg i{display:inline-block;width:4px;height:16px;border-radius:1px;background:var(--ok);opacity:.55}
-.adp-trend i.k-warning,.adp-leg i.k-warning,.adp-trend i.k-low,.adp-trend i.k-unknown{background:var(--warning);opacity:1}
+.adp-trend i.k-warning,.adp-leg i.k-warning,.adp-trend i.k-low{background:var(--warning);opacity:1}
 .adp-trend i.k-critical,.adp-leg i.k-critical{background:var(--critical);opacity:1}
 .adp-trend i.k-none,.adp-leg i.k-none{background:transparent;outline:1px dashed var(--muted);outline-offset:-1px;opacity:1}
 .adp-leg{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 2px 0;font-size:12.5px;color:var(--muted);align-items:center}
 .adp-leg i{width:10px;height:10px;margin-right:6px;vertical-align:-1px}
+.chip.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
+.adp-dcs tr.r-unknown>td{color:var(--muted);background:var(--unknown-bg)}
+.adp-trend i.k-unknown{background:var(--unknown);opacity:1}
 tr.r-critical>td:first-child{box-shadow:inset 3px 0 0 var(--critical)}
 tr.r-warning>td:first-child,tr.r-low>td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
 .adp-dc{white-space:nowrap}

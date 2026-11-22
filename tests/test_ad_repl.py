@@ -318,7 +318,7 @@ class FromTheReaders(unittest.TestCase):
         r = af._repl_admin(dcs, doms, now)
         self.assertEqual(r["links"], [{"to": "DC01", "frm": "DC02", "nc": "corp.example.mil", "nc_dn": "DC=corp,DC=example,DC=mil", "last_success": ago(30), "last_attempt": "",
                                        "last_failure": ago(5), "failures": 2, "error": "1722", "domain": "corp.example.mil",   # the receiving DC's (1.101.2)
-                                       "src": "SITEB\\DC02", "src_id": "corp.example.mil|dc02", "dst_id": "corp.example.mil|dc01", "source_site": "SITEB"}])                                         # the source as AD names it
+                                       "src": "SITEB\\DC02", "src_id": "dc02", "dst_id": "dc01", "source_site": "SITEB"}])                                         # the source as AD names it
         self.assertEqual(set(d["domain"] for d in r["dcs"]), {"corp.example.mil"})
         self.assertEqual(sorted((d["name"], d["site"], d["read"]) for d in r["dcs"]),
                          [("DC01", "SITEA", True), ("DC02", "SITEB", False), ("DC09", "SITEB", False)])

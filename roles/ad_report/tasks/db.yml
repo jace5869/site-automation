@@ -19,7 +19,7 @@
     run: >-
       {{ _ad | ad_db_payload(_ad | ad_live_block(_ad.dcs | ad_swis_dcs(hostvars), {
            'cpu_warn': ad_solarwinds_cpu_warn | float, 'mem_warn': ad_solarwinds_mem_warn | float, 'days': ad_solarwinds_days | int}), {
-           'low_hours': ad_repl_low_hours | float, 'warn_hours': ad_repl_warn_hours | float, 'crit_hours': ad_repl_crit_hours | float}) }}
+           'solarwinds': _ad_swis_read | default({}), 'low_hours': ad_repl_low_hours | float, 'warn_hours': ad_repl_warn_hours | float, 'crit_hours': ad_repl_crit_hours | float}) }}
     keep_days: "{{ ad_db_keep_days | int }}"
   register: _ad_db
   failed_when: false                     # never the job's result: the module says why (a warning)

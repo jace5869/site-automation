@@ -334,6 +334,8 @@ def ad_repl_view(repl, runs=None, opts=None):
     if unread:
         nums += " Not read: %s." % ", ".join("%s (%s)" % (d["name"], ("partitions not read: " + ", ".join(d["partial"])) if d.get("partial") else d["why"] or "no data") for d in unread[:10])
 
+    nums += " " + ident.coverage(r) + "."
+
     # the links that need a look (web and email)
     cols = ["From", "To", "Partition", "Last success", "Last error", "Status"]
     rows, rst = [], []
@@ -350,7 +352,7 @@ def ad_repl_view(repl, runs=None, opts=None):
     if rows:
         links_sec.update(columns=cols, rows=rows, row_status=rst, cell_status=[[""] * 5 + [s] for s in rst])
     elif pairs:
-        links_sec["text"] = ("The observed links replicate on time; coverage is incomplete. %s" if unread else "Every link replicates on time. %s") % nums
+        links_sec["text"] = ("The observed links replicate on time; coverage is incomplete. %s" if unread or not r.get("discovered", bool(dcs)) else "Every link replicates on time. %s") % nums
     else:
         links_sec["text"] = "No replication link was read. %s" % nums
     if status in ("critical", "warning"):

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""The shared AD identity rules and the five review rounds, through the portal API."""
+"""One-domain identity examples, from AD discovery through the report and portal DB."""
 import datetime
 import json
+import re
 import os
 import sys
+import shutil
+import subprocess
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, 'plugins', 'module_utils'), os.path.join(ROOT, 'plugins', 'filter'),
@@ -18,215 +21,497 @@ import ad_repl_filters as matrix
 import ad_swis_filters as swfilters
 import test_portal_ad as portal
 
-NC = 'CN=Configuration,DC=corp,DC=test'
+DOMAIN = 'ad.example.mil'
+NC = 'CN=Configuration,DC=ad,DC=example,DC=mil'
 NOW = datetime.datetime(2026, 11, 22, 12)
 STAMP = '2026-11-22T12:00:00Z'
+GUID1 = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+GUID2 = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
 
 
-def dc(name='DC01', domain='east.test', site='SITEA0101'):
+def dc(name='DC01', site='SITEA0101', guid=GUID1):
     server = 'CN=%s,CN=Servers,CN=%s,CN=Sites,%s' % (name, site, NC)
-    return dict(name=name, dc=name, domain=domain, fqdn=name.lower() + '.' + domain, site=site,
-                server_dn=server, dsa_dn='CN=NTDS Settings,' + server, in_ad=True, bind={'ok': True})
+    return dict(name=name, dc=name, domain=DOMAIN, fqdn=name.lower() + '.example.mil', site=site,
+                server_dn=server, dsa_dn='CN=NTDS Settings,' + server, dsa_guid=guid,
+                in_ad=True, bind={'ok': True}, repl={'links': [], 'source': 'repsFrom'})
 
 
-class Rules(unittest.TestCase):
-    def test_guid_before_dn_before_qualified_name(self):
-        rec = dict(dc(), objectGUID='AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
-        self.assertEqual(ident.dc_id(rec), rec['objectGUID'].lower())
-        rec.pop('objectGUID')
-        self.assertEqual(ident.dc_id(dict(rec, dsa_guid="BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")), "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-        self.assertEqual(ident.dc_id(rec), rec['dsa_dn'].lower())
-        self.assertEqual(ident.dc_id({'dc': 'DC01', 'domain': 'EAST.TEST.'}), 'east.test|dc01')
-        self.assertEqual(ident.dc_id({'dc': 'DC01'}), '|dc01')
-
-    def test_dn_alias_resolves_to_guid_without_short_name_join(self):
-        known = dict(dc(), dsa_guid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
-        alias = ident.source({'partner': 'DC01', 'partner_dn': known['dsa_dn']})
-        self.assertEqual(ident.dc_id(ident.resolve(alias, [known])), known['dsa_guid'])
-        replacement = dict(known, dsa_guid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
-        self.assertIsNone(ident.resolve(replacement, [known]))
-
-    def test_sites_are_exact(self):
-        self.assertEqual(ident.site_id({'site': 'SITEA0101'}), ident.site_id({'site': 'sitea0101'}))
-        self.assertNotEqual(ident.site_id({'site': 'SITEA0101'}), ident.site_id({'site': 'SITEA01010'}))
-        self.assertEqual(ident.site_id({'site_guid': 'ABC', 'site_dn': 'CN=X', 'site': 'Y'}), 'abc')
-        self.assertEqual(ident.site_id({'site_dn': 'CN=X', 'site': 'Y'}), 'cn=x')
-        self.assertEqual(ident.site_id({"objectGUID": "ABC", "site": "Y"}), "abc")
-        self.assertEqual(ident.dc_site({"objectGUID": "DC-GUID", "site": "Y"}), "y")
-
-    def test_domains_are_exact(self):
-        self.assertEqual(ident.domain_id('CORP.TEST.'), 'corp.test')
-        self.assertNotEqual(ident.domain_id('east.corp.test'), ident.domain_id('corp.test'))
-
-    def test_same_dc_uses_identity(self):
-        a, b = dc(), dc(domain='west.test', site='SITEB0201')
-        self.assertFalse(ident.same_dc(a, b))
-        self.assertTrue(ident.same_dc(a, dict(a, name='RENAMED')))
-
-    def test_links_keep_both_endpoints_and_partition(self):
-        a = dict(to='DC02', domain='east.test', partner_dn=dc()['dsa_dn'], nc=NC)
-        for b in [dict(a, domain='west.test'), dict(a, partner_dn=dc(site='SITEB0201')['dsa_dn']), dict(a, nc=NC + ',DC=other')]:
-            self.assertNotEqual(ident.link_id(a), ident.link_id(b))
-        self.assertEqual(ident.link_id(a)[1], dc()['dsa_dn'].lower())
-
-    def test_short_names_require_the_whole_population(self):
-        a, b = dc(), dc(domain='west.test', site='SITEB0201')
-        self.assertIsNone(ident.resolve({'dc': 'DC01'}, [a, b]))
-        self.assertEqual(ident.resolve({'dc': 'DC01'}, [a]), a)
-        self.assertIsNone(swis.match([a], [{'node_id': 1, 'name': 'DC01', 'status': 'Up'}], [b])[0][0])
-
-    def test_invocation_id_is_not_a_dc_guid(self):
-        inv = '11111111-1111-1111-1111-111111111111'
-        self.assertEqual(ident.dc_id({'dc': 'DC01', 'domain': 'east.test', 'invocation_id': inv}), 'east.test|dc01')
-        self.assertFalse(ident.source({'partner': 'dc01.east.test', 'partner_id': inv, 'invocation_id': inv})['dsa_guid'])
-
-
-class ReviewE(unittest.TestCase):
-    def make_reader(self):
-        r = reader.Reader({})
-        r.dsa_name = {}
-        self.addCleanup(r.close)
-        return r
-
-    def link(self, r, src, fails=3):
-        return r._link(NC, dict(partner_dn=src['dsa_dn'], partner_guid=src.get('dsa_guid', ''),
-                               last_success='2026-10-01T00:00:00Z' if fails else STAMP,
-                               last_attempt=STAMP, failures=fails, result=8524 if fails else 0))
-
-    def api(self, repl, observations):
-        ad = dict(report={'status': 'warning'}, dcs=[dict(d, read=True) for d in observations], repl=repl)
-        live = swfilters.ad_live_block(ad, swfilters.ad_swis_dcs(ad['dcs']))
-        payload = portal.dbf.ad_db_payload(ad, live)
-        self.assertEqual(payload['why'], '')
+class OneDomain(unittest.TestCase):
+    def db(self):
         db = portal.Lite()
         self.addCleanup(db.db.close)
+        return db
+
+    def api(self, report, sw=None):
+        live = swfilters.ad_live_block(report, swfilters.ad_swis_dcs(report.get('dcs')))
+        payload = portal.dbf.ad_db_payload(report, live, {'solarwinds': sw or {}})
+        db = self.db()
         portal.adb.write(db, NOW, 77, 12, payload)
-        model = portal.sp.AdDb(portal.Site(self).cfg(), connect=lambda: db).read(now=NOW)
-        app = portal.sp.AdLive(portal.Site(self).cfg(), lambda *_: None, db=Mock(read=lambda *args, **kwargs: model))
+        model = portal.sp.AdDb(None, connect=lambda: db).read(now=NOW)
+        app = portal.sp.AdLive(portal.Site(self).cfg(), lambda *_: None, db=Mock(read=lambda **kw: model))
         app.read_db()
-        answer = json.loads(app.answer()[1])['db']['model']
-        return payload, model, answer
+        return payload, model, json.loads(app.answer()[1])['db']['model']
 
-    def test_e1_same_short_partner_is_not_self(self):
-        r, target, src = self.make_reader(), dc(), dc(domain='west.test', site='SITEB0201')
-        target['repl'] = {'links': [self.link(r, src)]}
-        repl = filters._repl_reader([target], NOW, 60, 'east.test')
-        self.assertEqual(len(repl['links']), 1)
-        payload, model, answer = self.api(repl, [target])
-        self.assertEqual(len(answer['links']), 1)
-        self.assertNotEqual(answer['links'][0]['src_id'], answer['links'][0]['dst_id'])
-        self.assertLess(answer['run']['repl_read'], answer['run']['repl_dcs'])
+    def report(self, dcs, known=None, **kwargs):
+        return filters.ad_reader_report(dict(ok=True, domain=DOMAIN, read_at=STAMP, dcs=dcs,
+                                             known_dcs=known if known is not None else dcs, discovered=True, **kwargs))
 
-    def test_e2_forest_discovery_precedes_domain_filter(self):
-        r = self.make_reader()
-        r.domain = 'corp.test'
-        servers = [dc(domain=d, site=s) for d, s in [('corp.test', 'SITEA0101'), ('east.corp.test', 'SITEB0201'), ('west.test', 'SITEC0301')]]
+    def test_host_label_not_guid_dn_domain_or_site(self):
+        a = dc()
+        for rec in [a, dict(a, dsa_guid=GUID2, site='SITEB0201'), {'dc': 'DC01', 'domain': DOMAIN},
+                    {'fqdn': 'dc01.example.mil', 'name': 'old'}]:
+            self.assertEqual(ident.dc_id(rec), 'dc01')
+        self.assertEqual(ident.domain({'fqdn': a['fqdn']}), '')
+        self.assertEqual(ident.dc_site({'site': 'SITEA0101', 'site_guid': GUID1}), 'sitea0101')
+        self.assertEqual(ident.dc_site({'site_dn': 'CN=SITEA0101'}), '')
+        self.assertNotEqual(ident.dc_site({'site': 'SITEA0101'}), ident.dc_site({'site': 'SITEA01010'}))
+
+    def test_disjoint_namespace_matched_stored_displayed(self):
+        a = dc()
+        node = {'node_id': 101, 'name': a['fqdn'], 'dns': '', 'status': 'Up'}
+        matched = swis.match([a], [node])
+        self.assertEqual(matched[0][0], node)
+        sw = {'dcs': swis._dc_rows([a], matched, {}, {}, {}, False)}
+        payload, model, answer = self.api(self.report([a]), sw)
+        self.assertFalse(payload['why'])
+        self.assertEqual([(d['dc'], d['dns_host'], d['node_id']) for d in answer['dcs']], [('dc01', a['fqdn'], 101)])
+        self.assertEqual(answer['run']['repl_read'], 1)
+        self.assertEqual(model['live']['dcs'][0]['node_id'], 101)
+
+    def test_reader_domain_from_ntds_not_dns_suffix(self):
+        r = reader.Reader({})
+        self.addCleanup(r.close)
+        r.domain = DOMAIN
+        a, b = dc(), dc('DC02', 'SITEB0201', GUID2)
         def base(_c, dn, attrs):
-            if not dn:
-                return {'attributes': {'defaultNamingContext': ['DC=corp,DC=test'], 'configurationNamingContext': [NC]}}
-            return {'attributes': {}}
-        def search(_c, _dn, query, _attrs):
+            return {'attributes': {'defaultNamingContext': ['DC=ad,DC=example,DC=mil'],
+                                    'configurationNamingContext': [NC]}} if not dn else {'attributes': {}}
+        def search(_c, _dn, query, attrs):
             if query == '(objectClass=server)':
-                return [{'dn': d['server_dn'], 'attributes': {'dNSHostName': [d['fqdn']]}} for d in servers]
+                return [{'dn': d['server_dn'], 'attributes': {'dNSHostName': [d['fqdn']]}} for d in [a, b]]
             if query == '(objectClass=nTDSDSA)':
-                return [{'dn': d['dsa_dn'], 'attributes': {}} for d in servers]
+                return [{'dn': d['dsa_dn'], 'attributes': {'objectGUID': [d['dsa_guid']],
+                         'msDS-HasDomainNCs': ['DC=ad,DC=example,DC=mil']}} for d in [a, b]]
             return []
         r.base, r.search = base, search
         out = {}
         r.read_domain(None, out)
-        self.assertEqual(len(out['known_dcs']), 3)
-        self.assertEqual([d['domain'] for d in out['dcs_ad']], ['corp.test'])
-        target = dict(out['dcs_ad'][0], in_ad=True, bind={'ok': True}, repl={'links': []})
-        repl = filters._repl_reader([target], NOW, 60, 'corp.test', out['known_dcs'])
-        payload, model, answer = self.api(repl, [dict(target, dc='DC01')])
-        self.assertEqual(len(answer['dcs']), 1)
-        self.assertEqual((answer['run']['repl_read'], answer['run']['repl_dcs']), (1, 3))
-        known = payload['live']['known']
-        self.assertIsNone(swis.match(payload['live']['dcs'], [{'node_id': 1, 'name': 'DC01', 'status': 'Up'}], known)[0][0])
+        self.assertEqual([d['domain'] for d in out['dcs_ad']], [DOMAIN, DOMAIN])
+        self.assertEqual([d['dc_id'] for d in out['dcs_ad']], ['dc01', 'dc02'])
+        self.assertFalse(ident.unsupported(out))
 
-    def admin(self, site='', failing=False):
-        rows = [dict(source='DC01', source_site=s, nc=NC, last_success=STAMP if i else '2026-10-01T00:00:00Z',
-                     failures=3 if failing and i == 0 else 0) for i, s in enumerate(['SITEA0101', 'SITEB0201'])]
-        dcs = [dict(_name='DC01', _domain='east.test', _ok=True, data={'site': site, 'repl': []}),
-               dict(_name='DC02', _domain='east.test', _ok=True, data={'site': 'SITEA0101', 'repl': rows})]
-        return filters._repl_admin(dcs, [], NOW)
+    def test_second_domain_and_forest_refused_everywhere(self):
+        for extra in [dict(dc('DC02'), domain='other.example.mil'), dict(dc('DC02'), forest='other.example.mil')]:
+            with self.subTest(extra=extra):
+                report = self.report([dict(dc(), forest=DOMAIN)], [dict(dc(), forest=DOMAIN), extra])
+                payload, model, answer = self.api(report)
+                self.assertEqual(report['report']['sections'][0]['text'], ident.REFUSAL)
+                self.assertEqual((payload['status'], payload['why']), ('unknown', ident.REFUSAL))
+                self.assertEqual(answer['run']['why'], ident.REFUSAL)
+                self.assertEqual((answer['dcs'], answer['links']), ([], []))
+                self.assertTrue(model['live']['unsupported'])
 
-    def test_e3_unknown_site_cannot_cover_two_sources(self):
-        repl = self.admin()
-        self.assertEqual(sum(d['read'] for d in repl['dcs']), 2)
-        self.assertGreaterEqual(len(repl['dcs']), 3)
-        self.assertEqual(len({ident.link_id(x) for x in repl['links']}), 2)
-        _, _, answer = self.api(repl, [dict(dc=n, domain='east.test') for n in ['DC01', 'DC02']])
-        self.assertLess(answer['run']['repl_read'], answer['run']['repl_dcs'])
+    def test_partner_domain_nc_is_evidence_but_node_name_is_not(self):
+        a = dc()
+        a['repl']['links'] = [{'partner': 'DC02', 'nc': 'DC=other,DC=example,DC=mil'}]
+        self.assertEqual(self.report([a])['why'], ident.REFUSAL)
+        nodes = [{'node_id': 101, 'name': 'dc01.other.example.mil'}]
+        self.assertEqual(swis.match([dc()], nodes)[0][0], nodes[0])
+        self.assertFalse(ident.unsupported({'domain': DOMAIN, 'live': {'dcs': nodes}}))
 
-    def test_e4_source_site_survives_report_and_database(self):
-        repl = self.admin('SITEA0101', True)
-        view = matrix.ad_repl_view(repl)
-        self.assertEqual(view['counts']['links'], 2)
-        self.assertEqual(view['sections'][0]['rows'][0][0], 'DC01 (SITEA0101)')
-        payload, _, answer = self.api(repl, [dict(dc=n, domain='east.test') for n in ['DC01', 'DC02']])
-        self.assertEqual(next(d for d in payload['dcs'] if d['dc_id'] == 'east.test|dc01')['site'], 'SITEA0101')
-        self.assertEqual(len(answer['links']), 1)
+    def test_writer_refuses_mixed_domain_rows(self):
+        db = self.db()
+        portal.adb.write(db, NOW, 77, 12, {'status': 'ok', 'dcs': [dc(), dict(dc('DC02'), domain='other.example.mil')]})
+        self.assertEqual(db.db.execute('SELECT status, why FROM ad_run').fetchone(), ('unknown', ident.REFUSAL))
+        self.assertEqual(db.db.execute('SELECT COUNT(*) FROM ad_dc').fetchone()[0], 0)
 
-    def test_e5_failed_partition_named_in_both_reports(self):
-        r, target, src = self.make_reader(), dc(), dc('DC02')
-        def base(_c, nc, _attrs):
-            if nc == NC:
-                raise LookupError('insufficientAccessRights')
-            return {'attributes': {}, 'raw_attributes': {}}
-        r.base = base
-        repl_read = r.read_repl(None, {'naming_contexts': ['DC=east,DC=test', NC], 'dcs_ad': [target, src]})
-        repl_read.update(links=[self.link(r, src, 0)], why='')
-        target['repl'] = repl_read
-        report = filters.ad_reader_report(dict(ok=True, domain='east.test', read_at=STAMP, dcs=[target], known_dcs=[src]))
-        section = next(s for s in report['report']['sections'] if s['title'] == 'Inbound replication')
-        self.assertIn('Partition queries failed: Configuration', ' '.join(section['lines']))
-        view = matrix.ad_repl_view(report['repl'])
-        self.assertNotIn('Every link replicates on time', view['sections'][0]['text'])
-        self.assertIn('Configuration', view['sections'][0]['text'])
-        _, _, answer = self.api(report['repl'], [target])
-        self.assertEqual(answer['run']['repl_read'], 0)
+    def test_page_refuses_mixed_domain_database_rows(self):
+        db = self.db()
+        portal.adb.write(db, NOW, 77, 12, {'status': 'ok', 'dcs': [dict(dc(), status='ok'), dict(dc('DC02'), status='ok')]})
+        db.db.execute("UPDATE ad_dc SET domain='other.example.mil' WHERE dc='dc02'")
+        model = portal.sp.AdDb(None, connect=lambda: db).read(now=NOW)
+        self.assertEqual((model['run']['status'], model['run']['why']), ('unknown', ident.REFUSAL))
+        self.assertEqual(model['dcs'], [])
 
-    def test_guid_sites_and_dc_rename_keep_their_identity(self):
-        a = dict(dc(), dsa_guid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', site_guid='11111111-1111-1111-1111-111111111111')
-        b = dict(dc('DC02'), dsa_guid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', site_guid='22222222-2222-2222-2222-222222222222')
-        repl = filters._repl_reader([a, b], NOW, 60, 'east.test')
-        view = matrix.ad_repl_view(repl)
-        self.assertEqual(len(view['web_sections'][0]['matrix']['groups']), 2)
-        self.assertEqual(len(view['artifact']['sites']), 2)
-        db = portal.Lite()
-        self.addCleanup(db.db.close)
-        for i, name in enumerate(['DC01', 'DC03']):
-            rec = dict(a, dc=name, name=name, status='critical', read=True)
-            portal.adb.write(db, NOW + datetime.timedelta(minutes=i), 77 + i, 12, {'dcs': [rec], 'links': []})
-        model = portal.sp.AdDb(portal.Site(self).cfg(), connect=lambda: db).read(now=NOW + datetime.timedelta(minutes=1))
+    def test_stale_dsa_is_one_dc_and_failure_survives(self):
+        a = dc()
+        old = dict(dc(guid=GUID2), site='SITEB0201')
+        a['repl']['links'] = [{'partner': 'dc01.example.mil', 'partner_guid': GUID2, 'nc': NC,
+                              'last_success': '2026-10-01T00:00:00Z', 'failures': 3, 'result': 8524},
+                             {'partner': 'dc01.example.mil', 'partner_guid': GUID1, 'nc': NC,
+                              'last_success': STAMP, 'failures': 0}]
+        report = self.report([a], [old, a])
+        self.assertEqual(len(report['repl']['dcs']), 1)
+        self.assertTrue(report['repl']['dcs'][0]['stale_dsa'])
+        self.assertIn('Two NTDS objects for DC01 - stale DSA, metadata cleanup', json.dumps(report))
+        payload, model, answer = self.api(report)
+        self.assertEqual(len(payload['links']), 1)
+        self.assertEqual((answer['links'][0]['frm'], answer['links'][0]['to'], answer['links'][0]['now']), ('dc01', 'dc01', 'critical'))
+        self.assertTrue(answer['dcs'][0]['stale_dsa'])
+
+    def test_moved_dc_has_continuous_history(self):
+        db = self.db()
+        for i, site in enumerate(['SITEA0101', 'SITEB0201']):
+            portal.adb.write(db, NOW + datetime.timedelta(minutes=i), 77 + i, 12,
+                             {'dcs': [dict(dc(site=site), status='critical', read=True)]})
+        model = portal.sp.AdDb(None, connect=lambda: db).read(now=NOW + datetime.timedelta(minutes=1))
         self.assertEqual(len(model['dcs']), 1)
-        self.assertEqual(model['dcs'][0]['dc'], 'DC03')
-        self.assertEqual(model['dcs'][0]['runs_since'], 2)
+        self.assertEqual((model['dcs'][0]['dc'], model['dcs'][0]['site'], model['dcs'][0]['runs_since']), ('dc01', 'SITEB0201', 2))
         self.assertEqual(model['worst7']['critical'], 2)
 
-    def test_all_reviews_reader_to_api(self):
-        # A/B: two domains' DC01; C: two qualified sources; D: two DSA DNs;
-        # E: same-named receiver and source. Failure first, then a healthy link.
-        cases = [('a', 'DC02', 'east.test', 'west.test'), ('b', 'DC02', 'corp.test', 'east.corp.test'),
-                 ('c', 'DC02', 'east.test', 'west.test'), ('d', 'DC02', 'east.test', 'east.test'),
-                 ('e', 'DC01', 'east.test', 'west.test')]
-        for review, receiver, east, west in cases:
-            with self.subTest(review=review):
-                r = self.make_reader()
-                target = dc(receiver, east, 'SITEC0301')
-                sources = [dc(domain=east), dc(domain=west, site='SITEB0201')]
-                r.dsa_name = {d['dsa_dn'].lower(): d['fqdn'] for d in sources}
-                target['repl'] = {'links': [self.link(r, sources[0]), self.link(r, sources[1], 0)]}
-                report = filters.ad_reader_report(dict(ok=True, domain=east, read_at=STAMP, dcs=[target], known_dcs=sources))
-                payload, model, answer = self.api(report['repl'], [target])
-                self.assertEqual(len(payload['links']), 2)
-                self.assertEqual(len({portal.adb.link_key(x) for x in payload['links']}), 2)
-                self.assertEqual(len(answer['links']), 1)
-                self.assertEqual(answer['links'][0]['now'], 'critical')
-                self.assertEqual([d['dc_id'] for d in answer['dcs']], [ident.dc_id(target)])
-                self.assertEqual((answer['run']['repl_read'], answer['run']['repl_dcs']), (1, 3))
-                self.assertIsNone(swis.match([sources[0]], [{'node_id': 1, 'name': 'DC01', 'status': 'Up'}], sources)[0][0])
+    def test_site_lag_does_not_add_a_dc_or_hide_the_worst_link(self):
+        dcs = [{'_name': name, '_domain': DOMAIN, '_ok': True, 'data': {'site': 'SITEA0101', 'repl': []}}
+               for name in ['DC01', 'DC02']]
+        dcs[1]['data']['repl'] = [{'source': 'DC01', 'source_site': site, 'nc': NC,
+                                  'last_success': STAMP if i else '2026-10-01T00:00:00Z', 'failures': 0 if i else 3}
+                                 for i, site in enumerate(['SITEA0101', 'SITEB0201'])]
+        repl = filters._repl_admin(dcs, [{'data': {'dns': DOMAIN, 'dcs': [dc(), dc('DC02')]}}], NOW)
+        self.assertEqual(len(repl['dcs']), 2)
+        self.assertEqual(len({ident.link_id(x) for x in repl['links']}), 1)
+        view = matrix.ad_repl_view(repl)
+        self.assertEqual(view['counts']['links'], 1)
+        self.assertIn('SITEA0101', view['sections'][0]['rows'][0][0])
+
+    def test_unknown_dsa_not_in_coverage(self):
+        r = reader.Reader({})
+        self.addCleanup(r.close)
+        r.dsa_name = {}
+        link = r._link(NC, {'partner_guid': GUID2, 'last_success': '', 'last_attempt': STAMP, 'failures': 3, 'result': 8524})
+        a = dc()
+        a['repl']['links'] = [link]
+        report = self.report([a])
+        self.assertEqual(len(report['repl']['dcs']), 1)
+        self.assertEqual(report['repl']['links'][0]['src_id'], 'dsa:' + GUID2)
+        self.assertIn('unknown DSA', json.dumps(report))
+        payload, model, answer = self.api(report)
+        self.assertEqual((payload['repl_read'], payload['repl_dcs']), (1, 1))
+        self.assertEqual(answer['links'][0]['frm'], 'unknown DSA')
+        admin = filters._repl_admin([{'_name': 'DC01', '_domain': DOMAIN, '_ok': True, 'data': {'repl': [dict(link, source='')]}}], [], NOW)
+        self.assertEqual(admin['links'][0]['frm'], 'unknown DSA')
+        self.assertEqual(len(admin['dcs']), 1)
+
+    def test_unpolled_dc_is_visible_and_in_denominator(self):
+        report = self.report([dc()], [dc(), dc('DC02', 'SITEB0201', GUID2)])
+        payload, model, answer = self.api(report)
+        self.assertEqual((payload['repl_read'], payload['repl_dcs']), (1, 2))
+        row = next(d for d in answer['dcs'] if d['dc'] == 'dc02')
+        self.assertEqual((row['now'], row['worst']), ('unknown', 'not polled'))
+        self.assertIn('DC02 (not polled)', answer['run']['coverage'])
+        self.assertIn(['DC02', 'SITEB0201', 'not polled'], report['report']['sections'][-1]['rows'])
+        self.assertEqual(report['report']['sections'][-1]['row_status'], ['unknown'])
+        self.assertFalse(any(p.get('object') == 'DC02' for p in report['problems']))
+
+    def test_coverage_words_include_each_unread_reason(self):
+        a, b, c = dc(), dc('DC03'), dc('DC05')
+        c['repl']['not_granted'] = [NC]
+        report = self.report([a, c], [a, b, c])
+        expected = 'Replication read in full on 1 of 3 DCs; not read: DC03 (not polled), DC05 (Configuration: no right)'
+        self.assertEqual(report['report']['sections'][-1]['text'], expected)
+        self.assertEqual(self.api(report)[2]['run']['coverage'], expected)
+
+    def test_unpolled_stale_dsa_keeps_both_facts(self):
+        report = self.report([dc()], [dc(), dc('DC02'), dc('DC02', guid=GUID2)])
+        row = next(d for d in self.api(report)[2]['dcs'] if d['dc'] == 'dc02')
+        self.assertEqual((row['now'], row['worst'], row['stale_dsa']), ('unknown', 'not polled', True))
+
+    def test_solarwinds_age_is_the_samples_not_the_portal_reads(self):
+        app = portal.live(portal.fill(['ok']), portal.Site(self))
+        app.read_db()
+        sample = portal.sw_answer()
+        sample['read_at'] = portal.utc(30)
+        app.source = lambda _: sample
+        app.sw = app.read_sw(app.sw_source())
+        sw = json.loads(app.answer()[1])['sw']
+        self.assertTrue(1800 <= sw['age'] < 1860, sw)
+        self.assertTrue(sw['stale'])
+
+    def test_discovery_failure_is_unknown_coverage(self):
+        report = filters.ad_reader_report({'ok': False, 'domain': DOMAIN, 'why': 'LDAP refused'})
+        payload, model, answer = self.api(report)
+        self.assertIn(ident.COVERAGE_UNKNOWN, json.dumps(report))
+        self.assertEqual(answer['run']['coverage'], ident.COVERAGE_UNKNOWN)
+        self.assertNotIn('0 of 0', json.dumps(answer))
+        self.assertNotEqual(answer['hist'][0]['status'], 'ok')
+
+    def test_partial_partition_names_in_report_matrix_and_page(self):
+        a = dc()
+        a['repl'].update(failed=[NC], links=[{'partner': 'DC02', 'nc': 'DC=ad,DC=example,DC=mil', 'last_success': STAMP}])
+        report = self.report([a], [a, dc('DC02', guid=GUID2)])
+        self.assertIn('Partition queries failed: Configuration', json.dumps(report))
+        self.assertNotIn('Every link replicates on time', json.dumps(matrix.ad_repl_view(report['repl'])))
+        payload, model, answer = self.api(report)
+        self.assertEqual(answer['run']['repl_read'], 0)
+        self.assertIn('Configuration', answer['run']['coverage'])
+
+    def test_row_conversion_failure_is_unknown_in_history(self):
+        report = self.report([dc()])
+        report['repl']['links'] = [{'frm': 'DC02', 'to': 'DC01', 'failures': 'unknown'}]
+        payload, model, answer = self.api(report)
+        self.assertEqual(payload['status'], 'unknown')
+        self.assertEqual(answer['hist'][0]['status'], 'unknown')
+        self.assertIn('could not make', answer['hist'][0]['why'])
+
+    def test_match_priority_ambiguity_and_two_claimants(self):
+        a, b = dict(dc(), ip='192.0.2.10'), dict(dc('DC02'), ip='192.0.2.10')
+        nodes = [{'node_id': 1, 'name': a['fqdn']}, {'node_id': 2, 'name': 'dc01.other.example.mil'}]
+        self.assertEqual(swis.match([a], nodes)[0][0]['node_id'], 1)
+        nodes = [{'node_id': 1, 'name': 'dc01'}, {'node_id': 2, 'name': 'dc01'}]
+        self.assertIsNone(swis.match([a], nodes)[0][0])
+        self.assertIn('2', swis.match([a], nodes)[0][2])
+        nodes = [{'node_id': 3, 'name': 'dc01', 'ip': '192.0.2.10'}]
+        both = swis.match([a, b], nodes)
+        self.assertEqual([both[i][0] for i in range(2)], [None, None])
+        self.assertTrue(all('claimed by dc01, dc02' in both[i][2] for i in range(2)))
+
+    def test_portal_reads_saved_node_id_after_node_rename(self):
+        client = Mock()
+        client.paged.return_value = ([{'NodeID': 101, 'Caption': 'renamed', 'Status': 2},
+                                     {'NodeID': 102, 'Caption': 'dc01.example.mil', 'Status': 1}], False)
+        with patch.object(swis, '_has', return_value=set()), patch.object(swis, '_live_ifaces', return_value={}):
+            result = swis.from_live([dict(dc(), node_id=101)], {'by_node_id': True}, client)
+        self.assertEqual(result['dcs'][0]['node_id'], 101)
+        self.assertEqual(result['dcs'][0]['status'], 'Down')
+        self.assertIn('WHERE N.NodeID IN (101)', client.paged.call_args[0][0])
+        client.paged.return_value = ([], False)
+        missing = swis.from_live([dict(dc(), node_id=101)], {'by_node_id': True}, client)
+        self.assertFalse(missing['dcs'][0]['matched'])
+        self.assertEqual(missing['dcs'][0]['node_id'], 101)
+        self.assertEqual(missing['dcs'][0]['unmatched_why'], 'not in SolarWinds')
+
+    def test_writer_date_conversion_failure_keeps_unknown_run(self):
+        db = self.db()
+        portal.adb.write(db, NOW, 77, 12, {'status': 'ok', 'dcs': [dc()],
+                         'links': [{'frm': 'dc02', 'to': 'dc01', 'last_success': '2026-99-01T00:00:00Z'}]})
+        model = portal.sp.AdDb(None, connect=lambda: db).read(now=NOW)
+        self.assertEqual(model['run']['status'], 'unknown')
+        self.assertIn('rows not kept', model['hist'][0]['why'])
+        self.assertEqual((model['dcs'], model['links']), ([], []))
+
+    def test_admin_disjoint_namespace_and_forest_domain_list(self):
+        a = dc()
+        report = filters.ad_report([{'host': a['fqdn'], 'data': dict(a, repl=[]), 'reachable': True}],
+                                   [{'data': {'dns': DOMAIN, 'dcs': [a], 'forest': {'name': DOMAIN, 'domains': [DOMAIN]}}}])
+        self.assertNotEqual(report.get('why'), ident.REFUSAL)
+        self.assertEqual(report['dcs'][0]['dc_id'], 'dc01')
+        refused = filters.ad_report([], [{'data': {'dns': DOMAIN, 'forest': {'name': DOMAIN, 'domains': [DOMAIN, 'other.example.mil']}}}])
+        self.assertEqual(refused['why'], ident.REFUSAL)
+
+    def test_missing_partition_list_is_not_a_full_read(self):
+        r = reader.Reader({})
+        self.addCleanup(r.close)
+        a = dc()
+        a['repl'] = r.read_repl(None, {'dcs_ad': [a]})
+        repl = filters._repl_reader([a], NOW, 60, DOMAIN, [a])
+        self.assertFalse(repl['dcs'][0]['read'])
+        self.assertIn('partition list not read', ident.coverage(repl))
+
+    def test_each_dc_supplies_its_own_partition_list_and_domain(self):
+        r = reader.Reader({})
+        self.addCleanup(r.close)
+        r.endpoint = Mock(return_value={'address': '192.0.2.10', 'nat': False})
+        r.connect = Mock(return_value=(Mock(), 1, ''))
+        r.a = Mock(return_value=(['192.0.2.10'], ''))
+        r.cert, r.kerberos = Mock(return_value={}), Mock(return_value={})
+        extra = 'DC=DomainDnsZones,DC=ad,DC=example,DC=mil'
+        r.base = Mock(return_value={'attributes': {'namingContexts': [NC, extra],
+                                                  'defaultNamingContext': ['DC=ad,DC=example,DC=mil']}})
+        r.read_repl = Mock(return_value={'links': []})
+        got = r.read_dc('dc01.example.mil', dc(), None, {'naming_contexts': [NC]})
+        self.assertEqual(r.read_repl.call_args[0][1]['naming_contexts'], [NC, extra])
+        self.assertEqual(got['domain'], DOMAIN)
+        r.base.return_value = {'attributes': {}}
+        r.read_dc('dc01.example.mil', dc(), None, {'naming_contexts': [NC]})
+        self.assertEqual(r.read_repl.call_args[0][1]['naming_contexts'], [])
+
+    def test_healthy_extra_domain_db_link_still_refuses(self):
+        db = self.db()
+        portal.adb.write(db, NOW, 77, 12, {'status': 'ok', 'dcs': [dc()],
+                         'links': [{'frm': 'dc02', 'to': 'dc01', 'nc_dn': NC, 'domain': DOMAIN, 'status': 'ok'}]})
+        db.db.execute("UPDATE ad_link SET domain='other.example.mil'")
+        model = portal.sp.AdDb(None, connect=lambda: db).read(now=NOW)
+        self.assertEqual(model['run']['why'], ident.REFUSAL)
+        self.assertEqual(model['dcs'], [])
+
+    @unittest.skipUnless(shutil.which('node'), 'node not installed')
+    def test_page_words_and_node_id_join_without_browser(self):
+        # A DOM tree checks the page's text; Chromium tests cover layout and polling.
+        js = r"""
+const fs = require('fs'), vm = require('vm');
+class Element {
+  constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.classList = {contains: () => false}; }
+  append(...xs) { this.children.push(...xs); }
+  prepend(...xs) { this.children.unshift(...xs); }
+  replaceChildren(...xs) { this.children = xs; }
+  setAttribute(k, v) { this[k] = v; }
+  getAttribute() { return ''; }
+  addEventListener() {}
+  querySelectorAll() { return []; }
+  get textContent() { return this.children.map(x => typeof x === 'object' ? x.textContent : x).join(' '); }
+}
+const root = new Element('main'), toasts = new Element('aside');
+const document = {getElementById: id => id === 'ad' ? root : toasts, documentElement: new Element('html'),
+  createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag), querySelector: () => null};
+const fetch = () => new Promise(() => {}), window = {fetch, addEventListener() {}};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {document, window, fetch, setTimeout() {}, clearTimeout() {}, Date});
+window.adPage.draw(JSON.parse(fs.readFileSync(0, 'utf8')));
+console.log(root.textContent);
+"""
+        def page(model, sw=None):
+            answer = {'db': {'on': True, 'model': model}, 'sw': sw or {'on': False}, 'old_after': 90}
+            return subprocess.check_output(['node', '-e', js, os.path.join(ROOT, 'roles/site_portal_stack/files/static/ad-page.js')],
+                                           input=json.dumps(answer), text=True)
+        _, _, failed = self.api(filters.ad_reader_report({'ok': False, 'why': 'LDAP refused'}))
+        text = page(failed)
+        self.assertIn(ident.COVERAGE_UNKNOWN, text)
+        self.assertNotIn('0 of 0', text)
+        self.assertNotIn('every DC answered', text)
+        _, _, refused = self.api(self.report([dc()], [dc(), dict(dc('DC02'), domain='other.example.mil')]))
+        text = page(refused)
+        self.assertIn(ident.REFUSAL, text)
+        self.assertIn('DC domain attribute (dc02): domain=other.example.mil', text)
+        a = dc(site='')
+        a['stale_dsa'] = True
+        a['repl']['links'] = [{'partner_guid': 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'nc': NC, 'failures': 3}]
+        _, _, model = self.api(self.report([a], [a, dc('DC02', guid=GUID2)]),
+                              {'dcs': [{'dc': 'dc01', 'node_id': 101, 'matched': 'name'}]})
+        # A caption cannot redirect the saved NodeID to the Up row.
+        sw = {'on': True, 'age': 900, 'stale': 'older than its interval',
+              'section': {'columns': ['DC', 'SolarWinds'], 'rows': [['dc01', 'Up'], ['renamed', 'Down']],
+                          'keys': ['102', '101'], 'cell_status': [['', 'ok'], ['', 'critical']]}}
+        text = page(model, sw)
+        self.assertIn('unknown DSA', text)
+        self.assertIn('stale DSA, metadata cleanup', text)
+        self.assertIn('not polled', text)
+        self.assertIn('Site unknown', text)
+        self.assertIn('dc01 Down', text)
+        self.assertNotIn('every DC up', text)
+        self.assertIn('last known', text)
+        self.assertIn('15 min ago', text)
+        self.assertRegex(text, r'DCs with a problem 1 dc01 critical')
+        self.assertRegex(text, r'unknown DSA\s+→\s+dc01')
+        a, b, c = dc(), dc('DC03'), dc('DC05')
+        c['repl']['not_granted'] = [NC]
+        _, _, partial = self.api(self.report([a, c], [a, b, c]))
+        self.assertIn('Replication read in full on 1 of 3 DCs; not read: DC03 (not polled), DC05 (Configuration: no right)', page(partial))
+        for why in ('not in SolarWinds', 'not matched', 'ambiguous (2 nodes named dc01)'):
+            _, _, unmatched = self.api(self.report([dc()]), {'dcs': [{'dc': 'dc01', 'unmatched_why': why}]})
+            self.assertIn(why, page(unmatched))
+        bad = self.report([dc()])
+        bad['repl']['links'] = [{'frm': 'dc02', 'to': 'dc01', 'failures': 'invalid'}]
+        _, _, model = self.api(bad)
+        text = page(model)
+        self.assertIn('Rows not kept:', text)
+        self.assertIn('Unknown', text)
+
+
+@unittest.skipUnless(portal._browser(), 'no google-chrome or chromium')
+class FableBrowser(unittest.TestCase):
+    db = OneDomain.db
+    api = OneDomain.api
+    report = OneDomain.report
+    page = portal.Browser1012.page
+    READ = portal.Browser1012.READ + "r.text=document.getElementById('ad').textContent;"
+
+    def answer(self, report, sw=None):
+        return {'db': {'on': True, 'model': self.api(report, sw)[2]}, 'sw': {'on': False}, 'old_after': 90}
+
+    def test_1_unpolled_grey_in_page_and_full_report_not_a_problem(self):
+        report = self.report([dc()], [dc(), dc('DC02', 'SITEB0201', GUID2)])
+        a = self.answer(report)
+        import test_report_fit as fit
+        for look in ('atlas', 'brief', 'ops'):
+            # the full report, as rendered: DC02's row grey (r-unknown) and "not polled" (an iframe write of the whole
+            # report does not render in the headless check, so the rendered HTML itself is read)
+            full = fit.render(look, report['report'])
+            rows = re.findall(r'<tr class="r-unknown"[^>]*>(.*?)</tr>', full, re.S)
+            self.assertTrue(any('DC02' in x and 'not polled' in x for x in rows), look)
+            r = self.page([a], self.READ, look=look)
+            row = next(d for d in r['dcs'] if d[0] == 'dc02')
+            self.assertEqual(row[1:3], ['r-unknown', 'not polled'])
+            self.assertEqual(r['tv'][r['tiles'].index('DCs with a problem')], '1')  # DC01's missing health probes
+
+    def test_2_coverage_reasons_and_failed_discovery(self):
+        a, b, c = dc(), dc('DC03'), dc('DC05')
+        c['repl']['not_granted'] = [NC]
+        answer = self.answer(self.report([a, c], [a, b, c]))
+        r = self.page([answer], self.READ)
+        self.assertIn('Replication read in full on 1 of 3 DCs; not read: DC03 (not polled), DC05 (Configuration: no right)', r['text'])
+        r = self.page([self.answer(filters.ad_reader_report({'ok': False, 'why': 'LDAP refused'}))], self.READ)
+        self.assertIn(ident.COVERAGE_UNKNOWN, r['text'])
+        self.assertNotIn('0 of 0', r['text'])
+        self.assertNotIn('every DC answered', r['text'])
+
+    def test_3_second_domain_evidence_reaches_browser(self):
+        for evidence in ('partner NC', 'DC domain attribute'):
+            a = dc()
+            known = [a]
+            if evidence == 'partner NC':
+                a['repl']['links'] = [{'partner': 'DC02', 'nc': 'DC=other,DC=example,DC=mil'}]
+            else:
+                known.append(dict(dc('DC02'), domain='other.example.mil'))
+            r = self.page([self.answer(self.report([a], known))], self.READ)
+            self.assertTrue(any(ident.REFUSAL in n and evidence in n for n in r['notes']), r['notes'])
+            self.assertEqual((r['dcs'], r['links']), ([], []))
+        a = self.answer(self.report([dc()]))
+        a['sw'] = {'on': True, 'age': 0, 'section': {'columns': ['DC', 'SolarWinds'],
+                   'rows': [['dc01.other.example.mil', 'Up']], 'cell_status': [['', 'ok']], 'keys': ['101']}}
+        self.assertNotIn(ident.REFUSAL, self.page([a], self.READ)['text'])
+
+    def test_4_stale_dsa_text(self):
+        a = dc()
+        a['stale_dsa'] = True
+        r = self.page([self.answer(self.report([a]))], self.READ)
+        self.assertIn('Two NTDS objects for DC01 - stale DSA, metadata cleanup', r['text'])
+
+    def test_5_unknown_source_direction_and_denominator(self):
+        a = dc()
+        a['repl']['links'] = [{'partner_guid': GUID2, 'nc': NC, 'failures': 3}]
+        answer = self.answer(self.report([a]))
+        self.assertEqual(answer['db']['model']['run']['repl_dcs'], 1)
+        r = self.page([answer], self.READ)
+        self.assertTrue(any('unknown DSA → dc01' in row for row in r['links']), r['links'])
+
+    def test_6_empty_site_cell(self):
+        r = self.page([self.answer(self.report([dc(site='')]))], self.READ + "r.site=document.querySelector('.adp-dcs tbody tr').cells[1].textContent;")
+        self.assertEqual(r['site'], 'Site unknown')
+
+    def test_7_solarwinds_age_last_known_and_match_reasons(self):
+        dcs = [dc('DC%02d' % i) for i in range(1, 5)]
+        nodes = [{'node_id': 101, 'name': 'dc01'}, {'node_id': 102, 'name': 'dc01'}, {'node_id': 104, 'name': 'dc04'}]
+        sw = {'dcs': swis._dc_rows(dcs, swis.match(dcs, nodes), {}, {}, {}, False)}
+        sw['dcs'][2]['unmatched_why'] = 'not matched: the same SolarWinds node claimed by dc03, dc05'
+        a = self.answer(self.report(dcs), sw)
+        a['sw'] = {'on': True, 'age': 900, 'every': 600, 'stale': 'older than its interval',
+                   'section': {'columns': ['DC', 'SolarWinds'], 'rows': [['dc04.example.mil', 'Up']],
+                               'cell_status': [['', 'ok']], 'keys': ['104']}}
+        r = self.page([a], self.READ)
+        rows = {d[0]: d[6] for d in r['dcs']}
+        self.assertEqual(rows['dc01'], 'ambiguous (2 nodes named dc01)')
+        self.assertEqual(rows['dc02'], 'not in SolarWinds')
+        self.assertTrue(rows['dc03'].startswith('not matched:'))
+        self.assertIn('last known · 15 min ago', rows['dc04'])
+        self.assertIn('Not live', r['live'])
+
+    def test_8_history_uses_stored_status_and_rows_not_kept(self):
+        report = self.report([dc()])
+        report['repl']['links'] = [{'frm': 'DC02', 'to': 'DC01', 'failures': 'unknown'}]
+        a = self.answer(report)
+        r = self.page([a], self.READ + "r.history=q('#ad section:nth-of-type(4) tbody tr');")
+        self.assertIn('Rows not kept:', r['text'])
+        self.assertTrue(any('Unknown' in row and 'Rows not kept:' in row for row in r['history']))
+        a['db']['model']['hist'][0].update(status='warning', c=0, w=0, why='')
+        r = self.page([a], self.READ + "r.badges=q('#ad section:nth-of-type(4) tbody tr td:nth-child(2)');")
+        self.assertEqual(r['badges'], ['Warning'])
+
+    def test_9_overdue_sample_on_304_is_not_live(self):
+        a = self.answer(self.report([dc()]), {'dcs': [{'dc': 'dc01', 'node_id': 101, 'matched': 'name'}]})
+        a.update(poll=15)
+        a['sw'] = {'on': True, 'age': 715, 'every': 600, 'stale': '',
+                   'section': {'columns': ['DC', 'SolarWinds'], 'rows': [['dc01.example.mil', 'Up']],
+                               'cell_status': [['', 'ok']], 'keys': ['101']}}
+        r = self.page([a, '304'], self.READ, wait=20000)
+        self.assertIn('Not live', r['live'])
+        self.assertIn('last known', r['dcs'][0][6])
 
 
 if __name__ == '__main__':

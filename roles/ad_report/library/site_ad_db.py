@@ -58,7 +58,7 @@ import re
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_report_db as db
 
-SCHEMA_VERSION = 4                      # 4: exact DC and link identities; older layouts were unshipped pre-releases
+SCHEMA_VERSION = 4                      # 4: one-domain host labels and NodeIDs; older layouts were unshipped pre-releases
 COMPONENT = "ad_run"
 TABLES = ("ad_run", "ad_dc", "ad_link")
 CREATE = (
@@ -67,21 +67,22 @@ CREATE = (
     "critical INT NOT NULL DEFAULT 0, warning INT NOT NULL DEFAULT 0, dcs INT NOT NULL DEFAULT 0, dcs_read INT NOT NULL DEFAULT 0, "
     "live MEDIUMTEXT NULL, why VARCHAR(300) NOT NULL DEFAULT '', repl_dcs INT NOT NULL DEFAULT 0, repl_read INT NOT NULL DEFAULT 0, "
     "PRIMARY KEY (run_id), KEY ad_run_read_at (read_at), KEY ad_run_template (template_id, read_at)) " + db.TABLE_OPTS,
-    "CREATE TABLE IF NOT EXISTS ad_dc (run_id BIGINT NOT NULL, dc_key CHAR(64) NOT NULL, dc_id TEXT NOT NULL, dc VARCHAR(191) NOT NULL, domain VARCHAR(191) NOT NULL DEFAULT '', "
-    "site_id TEXT NOT NULL, site VARCHAR(191) NOT NULL DEFAULT '', is_read TINYINT NOT NULL DEFAULT 0, repl_read TINYINT NOT NULL DEFAULT 0, "
+    "CREATE TABLE IF NOT EXISTS ad_dc (run_id BIGINT NOT NULL, dc VARCHAR(191) NOT NULL, domain VARCHAR(191) NOT NULL DEFAULT '', "
+    "dns_host VARCHAR(255) NOT NULL DEFAULT '', dsa_guid VARCHAR(36) NOT NULL DEFAULT '', node_id BIGINT NULL, stale_dsa TINYINT NOT NULL DEFAULT 0, "
+    "site VARCHAR(191) NOT NULL DEFAULT '', is_read TINYINT NOT NULL DEFAULT 0, repl_read TINYINT NOT NULL DEFAULT 0, "
     "status VARCHAR(16) NOT NULL DEFAULT '', "
-    "problems INT NOT NULL DEFAULT 0, worst VARCHAR(300) NOT NULL DEFAULT '', PRIMARY KEY (run_id, dc_key)) " + db.TABLE_OPTS,
+    "problems INT NOT NULL DEFAULT 0, worst VARCHAR(300) NOT NULL DEFAULT '', PRIMARY KEY (run_id, dc)) " + db.TABLE_OPTS,
     "CREATE TABLE IF NOT EXISTS ad_link (run_id BIGINT NOT NULL, link_key CHAR(40) NOT NULL, domain VARCHAR(191) NOT NULL DEFAULT '', "
-    "src_id TEXT NOT NULL, dst_id TEXT NOT NULL, nc_dn TEXT NOT NULL, frm VARCHAR(191) NOT NULL, src VARCHAR(255) NOT NULL DEFAULT '', to_dc VARCHAR(191) NOT NULL, "
+    "dst VARCHAR(191) NOT NULL, nc_dn TEXT NOT NULL, frm VARCHAR(191) NOT NULL, src VARCHAR(255) NOT NULL DEFAULT '', to_dc VARCHAR(191) NOT NULL, "
     "nc VARCHAR(191) NOT NULL DEFAULT '', last_success DATETIME NULL, failures INT NOT NULL DEFAULT 0, "
     "error VARCHAR(255) NOT NULL DEFAULT '', last_failure DATETIME NULL, status VARCHAR(16) NOT NULL DEFAULT '', "
     "PRIMARY KEY (run_id, link_key)) " + db.TABLE_OPTS)
 INSERT_RUN = ("INSERT INTO ad_run (read_at, job, template_id, status, critical, warning, dcs, dcs_read, live, why, repl_dcs, repl_read) "
               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
-INSERT_DC = ("INSERT INTO ad_dc (run_id, dc_key, dc_id, dc, domain, site_id, site, is_read, repl_read, status, problems, worst) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+INSERT_DC = ("INSERT INTO ad_dc (run_id, dc, domain, dns_host, dsa_guid, node_id, stale_dsa, site, is_read, repl_read, status, problems, worst) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
              "ON DUPLICATE KEY UPDATE status = VALUES(status)")
-INSERT_LINK = ("INSERT INTO ad_link (run_id, link_key, src_id, dst_id, nc_dn, domain, frm, src, to_dc, nc, last_success, failures, error, last_failure, status) "
-               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE failures = VALUES(failures), status = VALUES(status)")
+INSERT_LINK = ("INSERT INTO ad_link (run_id, link_key, src, dst, nc_dn, domain, frm, to_dc, nc, last_success, failures, error, last_failure, status) "
+               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE failures = VALUES(failures), status = VALUES(status)")
 
 
 def link_key(x):
@@ -149,22 +150,32 @@ def schema(conn, create):
 def write(conn, now, job, template_id, run):
     """(run_id, dcs, links): the run and its rows, in the caller's transaction."""
     r = run or {}
-    dcs = [d for d in r.get("dcs") or [] if isinstance(d, dict) and d.get("dc")]
-    links = [x for x in r.get("links") or [] if isinstance(x, dict) and x.get("frm") and x.get("to")]
+    if ident.unsupported(r):
+        r = {"status": "unknown", "why": ident.REFUSAL, "live": {"unsupported": ident.unsupported(r)}}
+    try:
+        dcs = list(ident.merge([d for d in r.get("dcs") or [] if isinstance(d, dict) and d.get("dc")]).values())
+        links = ident.links([x for x in r.get("links") or [] if isinstance(x, dict) and x.get("frm") and x.get("to")])
+        dcrows = [(ident.dc_id(d), ident.domain(d), d.get("dns_host") or d.get("fqdn") or "", d.get("dsa_guid") or "",
+                   int(d["node_id"]) if d.get("node_id") is not None else None, 1 if d.get("stale_dsa") else 0, str(d.get("site") or "")[:191],
+                   1 if d.get("read") else 0, 1 if d.get("repl_read") else 0, str(d.get("status") or "")[:16], int(d.get("problems") or 0),
+                   str(d.get("worst") or "")[:300]) for d in dcs]
+        linkrows = [(link_key(x), ident.link_id(x)[1], ident.link_id(x)[0], ident.link_id(x)[2], ident.domain(x),
+                     ident.link_id(x)[1], ident.link_id(x)[0], str(x.get("nc") or "")[:191], stamp(x.get("last_success")),
+                     int(x.get("failures") or 0), str(x.get("error") or "")[:255], stamp(x.get("last_failure")),
+                     str(x.get("status") or "")[:16]) for x in links]
+    except (ValueError, TypeError, OverflowError) as e:
+        r = {"status": "unknown", "why": "rows not kept (%s: %s)" % (e.__class__.__name__, str(e)[:120])}
+        dcs, dcrows, linkrows = [], [], []
     cur = conn.cursor()
     cur.execute(INSERT_RUN, (now, job, template_id, str(r.get("status") or "")[:16], int(r.get("critical") or 0), int(r.get("warning") or 0),
-                             len(dcs), sum(1 for d in dcs if d.get("read")), json.dumps(r.get("live") or {}, separators=(",", ":")),
+                             len(dcrows), sum(1 for d in dcs if d.get("read")), json.dumps(r.get("live") or {}, separators=(",", ":")),
                              str(r.get("why") or "")[:300], int(r.get("repl_dcs") or 0), int(r.get("repl_read") or 0)))
     rid = cur.lastrowid
-    if dcs:
-        cur.executemany(INSERT_DC, [(rid, hashlib.sha256(ident.dc_id(d).encode("utf-8")).hexdigest(), ident.dc_id(d), str(d["dc"])[:191], str(d.get("domain") or "")[:191], d.get("site_id") or ident.dc_site(d), str(d.get("site") or "")[:191],
-                                     1 if d.get("read") else 0, 1 if d.get("repl_read") else 0, str(d.get("status") or "")[:16], int(d.get("problems") or 0),
-                                     str(d.get("worst") or "")[:300]) for d in dcs])
-    if links:
-        cur.executemany(INSERT_LINK, [(rid, link_key(x), ident.link_id(x)[1], ident.link_id(x)[0], ident.link_id(x)[2], str(x.get("domain") or "")[:191], str(x["frm"])[:191], str(x.get("src") or "")[:255], str(x["to"])[:191], str(x.get("nc") or "")[:191], stamp(x.get("last_success")),
-                                       int(x.get("failures") or 0), str(x.get("error") or "")[:255], stamp(x.get("last_failure")),
-                                       str(x.get("status") or "")[:16]) for x in links])
-    return int(rid or 0), len(dcs), len(links)
+    if dcrows:
+        cur.executemany(INSERT_DC, [(rid,) + row for row in dcrows])
+    if linkrows:
+        cur.executemany(INSERT_LINK, [(rid,) + row for row in linkrows])
+    return int(rid or 0), len(dcrows), len(linkrows)
 
 
 def prune(conn, now, keep_days, template_id=0):

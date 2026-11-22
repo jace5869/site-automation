@@ -55,24 +55,20 @@ def _dur(minutes):
 
 
 def _ad_problems(ad):
-    """_ad.problems by DC (its whole name, lower case: dc01 of two domains are two DCs) -> [(severity, text)], worst first."""
+    """AD problems by host label, worst first; an inbound failure belongs to the receiver."""
     out = {}
     for p in (ad or {}).get("problems") or []:
-        k = str(p.get("object") or "").strip().lower()
-        if k:                                            # (domain, DC): two domains' DC01 are two DCs
-            out.setdefault((str(p.get("domain") or "").strip().lower(), k), []).append((str(p.get("severity") or ""), str(p.get("text") or "")))
+        name = p.get("dc") or re.sub(r"^\s*(\S+)\s+<-\s.*$", r"\1", str(p.get("object") or ""), flags=re.S)
+        key = ident.short_name({"dc": name})
+        if key:
+            out.setdefault(key, []).append((str(p.get("severity") or ""), str(p.get("text") or "")))
     for v in out.values():
         v.sort(key=lambda x: RANK.get(x[0], 3))
     return out
 
 
 def _probs_of(probs, d):
-    """A DC's AD problems: by its domain and name; a DC whose domain is not known, by its name only when one domain has it."""
-    dom, name = str(d.get("domain") or "").strip().lower(), str(d.get("dc") or "").strip().lower()
-    if dom:
-        return probs.get((dom, name), [])
-    hits = [k for k in probs if k[1] == name]
-    return probs[hits[0]] if len(hits) == 1 else []
+    return probs.get(ident.short_name(d), [])
 
 
 def _meaning(d, probs, cpu_warn, mem_warn, now):
@@ -162,8 +158,8 @@ def _view(res, ad, opts=None):
         cells, stc = [], {}
         st = d.get("status") or ""
         found = bool(d.get("matched"))
-        sw_cell = st if found else ("Not matched" if d.get("unmatched_why") else "Not in SolarWinds")
-        stc["SolarWinds"] = WORD.get(st, "") if found else ("warning" if d.get("unmatched_why") else "info")
+        sw_cell = st if found else (d.get("unmatched_why") or "not in SolarWinds")
+        stc["SolarWinds"] = WORD.get(st, "") if found else ("warning" if d.get("unmatched_why") and sw_cell != "not in SolarWinds" else "info")
         apps = d.get("apps") or {}
         if sam:
             stc["AD monitors (SAM)"] = {"Down": "critical", "Warning": "warning", "Unknown": "warning" if st != "Down" else "critical"}.get(apps.get("status"), "")
@@ -218,7 +214,7 @@ def _view(res, ad, opts=None):
                 det.append({"title": "Active alerts", "columns": ["Alert", "Since", "Message"], "kinds": ["wrap", "nw", "wrap"],
                             "rows": [[a.get("name") or "-", _when(a.get("triggered_at"), tz), a.get("message") or "-"] for a in al[:10]]})
         rows.append((RANK.get(worst, 4), d["dc"].lower(), [row[c] for c in cols], cs, worst, det,
-                     ident.dc_id(d)))
+                     str(d.get("node_id")) if d.get("node_id") is not None else ""))
     rows.sort(key=lambda x: (x[0], x[1]))
     when = (_tm.local(r["read_at"] + " UTC", tz) if tz else r["read_at"] + " UTC") if r.get("read_at") else ""
     if r.get("source") == "db-snapshot":
@@ -236,7 +232,7 @@ def _view(res, ad, opts=None):
     sec = {"title": TITLE, "counted": False, "status": "critical" if any(x[4] == "critical" for x in rows) else ("warning" if bad else "ok"),
            "columns": cols, "kinds": kinds, "rows": [x[2] for x in rows], "cell_status": [x[3] for x in rows],
            "row_status": [x[4] for x in rows], "details": [x[5] for x in rows], "text": text,
-           "keys": [x[6] for x in rows]}                       # 1.101.2 review: each row's DC by domain and name (the portal's AD page)
+           "keys": [x[6] for x in rows]}                       # NodeIDs in row order for the portal
     n_dn = sum(1 for x in rows if x[2][2] == "Down")
     tile = {"label": "SolarWinds: down or warning", "status": "critical" if any(x[4] == "critical" for x in rows) else ("warning" if bad else "ok"),
             "value": len(bad)}
@@ -310,12 +306,12 @@ def ad_swis_dcs(dcs, hostvars=None):
     inventory's name; reader mode: the DC's own name - no IP, the name only)."""
     out = []
     for d in dcs or []:
-        name, host, ip = str(d.get("dc") or ""), str(d.get("host") or ""), ""
-        fqdn = host if "." in host and not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host) else ""
+        name, host, ip = str(d.get("dc") or d.get("name") or ""), str(d.get("host") or ""), ""
+        fqdn = d.get("dns_host") or d.get("fqdn") or ""
         try:
             hv = hostvars[host] if hostvars is not None and host in hostvars else {}
             a = str(hv.get("ansible_host") or "") if hasattr(hv, "get") else ""
-            ip = a if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", a) else ""
+            ip = a if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", a) else str(d.get("ip") or "")
         except Exception:  # noqa: BLE001 - a host var that does not template: no IP, the name still matches
             ip = ""
         if name:
@@ -333,9 +329,8 @@ def ad_live_block(ad, dcs, opts=None):
               "text": str(p.get("text") or "")[:300],
               "dc": str(p.get("dc") or re.sub(r"^\s*(\S+)\s+<-\s.*$", r"\1", str(p.get("object") or ""), flags=re.S))}
              for p in (ad or {}).get("problems") or [] if isinstance(p, dict) and p.get("object")]
-    return {"v": 1, "kind": "ad", "dcs": [dict(d, dc_id=ident.dc_id(ident.resolve(d, ((ad or {}).get("repl") or {}).get("dcs") or []) or d)) for d in dcs or [] if d.get("dc")], "problems": probs[:500],
-            "known": [dict(ident.fields(d), dc=d.get("name"), domain=ident.domain(d), dc_id=ident.dc_id(d))
-                      for d in ((ad or {}).get("repl") or {}).get("dcs") or [] if d.get("name")],
+    population = ident.merge(list(((ad or {}).get("repl") or {}).get("dcs") or []) + list(dcs or []))
+    return {"v": 1, "kind": "ad", "dcs": [dict(d, dc=key, dc_id=key) for key, d in population.items()], "problems": probs[:500],
             "opts": {"cpu_warn": float(o.get("cpu_warn", 90)), "mem_warn": float(o.get("mem_warn", 90)), "days": int(o.get("days", 30))}}
 
 

@@ -42,7 +42,7 @@ try {
     $os = @(Get-CimInstance -ClassName Win32_OperatingSystem)[0]
     $dc.name = [string]$cs.Name
     $dc.domain = [string]$cs.Domain
-    $dc.fqdn = ('{0}.{1}' -f $cs.DNSHostName, $cs.Domain).ToLower()
+    $dc.fqdn = ('{0}.{1}' -f $cs.DNSHostName, $cs.Domain).ToLower()   # until Get-ADDomainController's dNSHostName (disjoint namespace)
     $dc.role = $(if ([int]$cs.DomainRole -eq 5) { 'pdc' } elseif ([int]$cs.DomainRole -eq 4) { 'dc' } else { 'member' })
     $dc.os = [string]$os.Caption
     $dc.boot = Iso $os.LastBootUpTime
@@ -59,6 +59,7 @@ $dc.ldap = @{ ok = $false; synchronized = $null; gc_ready = $null; error = '' }
 if ($adModule) {
     try {
         $me = Get-ADDomainController -Server localhost
+        $dc.domain = [string]$me.Domain
         $dc.site = [string]$me.Site
         $dc.server_dn = [string]$me.ServerObjectDN
         $dc.dsa_dn = [string]$me.NTDSSettingsObjectDN
@@ -69,6 +70,8 @@ if ($adModule) {
         if ($me.HostName) { $dc.fqdn = ([string]$me.HostName).ToLower() }
     }
     catch { Note 'Get-ADDomainController' $_ }
+    try { if ($dc.dsa_dn) { $dc.dsa_guid = [string](Get-ADObject -Identity $dc.dsa_dn -Server localhost).ObjectGUID } }
+    catch { Note 'the DSA objectGUID' $_ }       # its own try: a failure here never loses the fields above
     try {
         $rd = Get-ADRootDSE -Server localhost
         $dc.ldap.ok = $true

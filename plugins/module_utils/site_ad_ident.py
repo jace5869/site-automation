@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""DCs use an object/DSA GUID, else their exact server/NTDS DN, else domain|short name.
-Sites use a GUID, exact DN, or exact case-insensitive name. Domains are exact lower-case
-DNS names without a trailing dot. Links use receiver, source and exact partition.
-Short names match only one identity in the whole polled and discovered population.
-"""
+"""One forest, one domain. DC host labels are keys; AD supplies their attributes."""
 import re
+
+REFUSAL = "More than one AD domain found - not supported in this version"
+COVERAGE_UNKNOWN = "DC list not read - coverage unknown"
 
 
 def domain_id(name):
@@ -12,36 +11,26 @@ def domain_id(name):
 
 
 def short_name(rec):
-    return str(rec.get("dc") or rec.get("name") or rec.get("fqdn") or "").split("\\")[-1].split(".")[0].lower()
+    name = str(rec.get("dns_host") or rec.get("dNSHostName") or rec.get("fqdn") or rec.get("dc") or rec.get("sAMAccountName") or rec.get("name") or "")
+    if name.startswith("dsa:"):
+        return name.lower()
+    return name.split("\\")[-1].split(".")[0].rstrip("$").lower()
 
 
 def domain(rec):
-    fq = domain_id(rec.get("fqdn") or rec.get("host") or rec.get("name") or rec.get("dc"))
-    return domain_id(rec.get("domain")) or (fq.split(".", 1)[1] if "." in fq and not re.fullmatch(r"\d+(?:\.\d+){3}", fq) else "")
+    return domain_id(rec.get("domain"))
 
 
 def dc_id(rec):
-    for key in ("objectGUID", "object_guid", "dsa_guid"):
-        if rec.get(key):
-            return str(rec[key]).lower().strip("{}")
-    for key in ("dsa_dn", "server_dn", "dn"):
-        if rec.get(key):
-            return str(rec[key]).lower()
-    if rec.get("dc_id"):
-        return str(rec["dc_id"])
-    return domain(rec) + "|" + short_name(rec)
+    return short_name(rec)
 
 
 def site_id(rec):
-    for key in ("site_guid", "objectGUID", "object_guid", "site_dn", "dn", "site", "name"):
-        if rec.get(key):
-            value = str(rec[key]).lower()
-            return value.strip("{}") if key in ("site_guid", "objectGUID", "object_guid") else value
-    return ""
+    return str(rec.get("site") or rec.get("name") or "").lower()
 
 
 def dc_site(rec):
-    return site_id({k: rec.get(k) for k in ("site_guid", "site_dn", "site")})
+    return str(rec.get("site") or "").lower()
 
 
 def same_dc(a, b):
@@ -49,66 +38,121 @@ def same_dc(a, b):
 
 
 def resolve(rec, population):
-    """Resolve an alias only with compatible evidence, never across a known domain/site."""
-    by = {dc_id(d): d for d in population}
-    if dc_id(rec) in by:
-        return by[dc_id(rec)]
-    matches = []
-    authority = ("objectGUID", "object_guid", "dsa_guid", "dsa_dn", "server_dn")
-    for d in by.values():
-        if any(rec.get(k) and d.get(k) and str(rec[k]).lower() != str(d[k]).lower()
-               for k in ("objectGUID", "object_guid", "dsa_guid")):
-            continue
-        if any(rec.get(k) and str(rec[k]).lower() == str(d.get(k) or "").lower() for k in authority):
-            matches.append(d)
-            continue
-        if any(rec.get(k) for k in authority) or (rec.get("dc_id") and "|" not in rec["dc_id"]):
-            continue
-        if short_name(d) != short_name(rec):
-            continue
-        if domain(rec) and domain(d) != domain(rec):
-            continue
-        if dc_site(rec) and dc_site(d) != dc_site(rec):
-            continue
-        matches.append(d)
-    if len(matches) != 1:
-        return None
-    if domain(rec) or dc_site(rec) or any(rec.get(k) for k in authority):
-        return matches[0]
-    return matches[0] if len({dc_id(d) for d in by.values() if short_name(d) == short_name(rec)}) == 1 else None
+    for d in population:
+        if any(rec.get(k) and str(rec[k]).lower() == str(d.get(k) or "").lower()
+               for k in ("dsa_guid", "dsa_dn", "server_dn")):
+            return d
+    return next((d for d in population if dc_id(rec) and same_dc(rec, d)), None)
 
 
 def source(link):
-    """The partner's evidence, separate from its display name and invocation ID."""
-    name = str(link.get("partner") or link.get("source") or link.get("src") or link.get("frm") or "")
-    rec = {"name": name, "domain": link.get("source_domain") or "", "site": link.get("source_site") or "",
-           "dsa_guid": link.get("partner_guid") or "", "dsa_dn": link.get("partner_dn") or ""}
-    old = str(link.get("partner_id") or link.get("src") or "")
-    if not rec["dsa_dn"] and old.lower().startswith("cn="):
-        rec["dsa_dn"] = old
-    elif not rec["dsa_guid"] and old != str(link.get("invocation_id") or "") and re.fullmatch(r"[0-9a-fA-F-]{36}", old):
-        rec["dsa_guid"] = old
-    dn = rec["dsa_dn"]
-    site = re.search(r",CN=Servers,(CN=((?:\\,|[^,])+),CN=Sites,.*)$", dn, re.I)
-    if site:
-        rec["site_dn"] = site.group(1)
-        rec["site"] = rec["site"] or site.group(2)
-    if not rec["site"] and "\\" in name:
-        rec["site"] = name.split("\\", 1)[0]
-    # Older repadmin output has only a site/server reference. Keep it unresolved,
-    # distinct from every domain-qualified controller until discovery resolves it.
-    if rec["site"] and not domain(rec):
-        rec["dc_id"] = "|" + site_id(rec) + "\\" + short_name(rec)
-    return rec
+    name = str(link.get("partner") or link.get("source") or link.get("frm") or "")
+    guid = str(link.get("partner_guid") or "").lower().strip("{}")
+    dn = str(link.get("partner_dn") or "")
+    old = str(link.get("partner_id") or "")
+    if not dn and old.lower().startswith("cn="):
+        dn = old
+    if not guid and old != str(link.get("invocation_id") or "") and re.fullmatch(r"[0-9a-fA-F-]{36}", old):
+        guid = old.lower()
+    hidden = re.search(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", name)
+    if name.startswith("dsa:") or hidden or name.startswith("("):
+        guid = guid or (hidden.group(0).lower() if hidden else "")
+        name = ""
+    return {"name": name, "domain": link.get("source_domain") or "", "site": link.get("source_site") or "",
+            "dsa_guid": guid, "dsa_dn": dn}
+
+
+def partner(link, population):
+    rec = source(link)
+    found = resolve(rec, population)
+    if found:
+        if rec.get("dsa_guid") and found.get("dsa_guid") and rec["dsa_guid"].lower() != found["dsa_guid"].lower():
+            found["stale_dsa"] = True
+        return found
+    # A named repadmin partner is AD evidence; an unresolved DSA is not a DC.
+    if rec["name"] and not link.get("unresolved") and (link.get("unresolved") is False or (not rec["dsa_guid"] and not rec["dsa_dn"])):
+        return dict(rec, name=short_name(rec).upper(), read=False, why="not polled")
+    return dict(rec, name="dsa:" + (rec["dsa_guid"] or rec["dsa_dn"].lower() or "unknown"))
 
 
 def link_id(link):
-    dst = link.get("dst_id") or dc_id({"dc": link.get("to") or link.get("to_dc"), "domain": link.get("domain")})
-    src = link.get("src_id") or dc_id(source(link))
-    return (dst, src, str(link.get("nc_dn") or link.get("nc") or "").lower())
+    return (str(link.get("dst_id") or link.get("dst") or link.get("to") or link.get("to_dc") or "").lower(),
+            str(link.get("src_id") or link.get("frm") or dc_id(source(link))).lower(),
+            str(link.get("nc_dn") or link.get("nc") or "").lower())
 
 
 def fields(rec):
-    """Identity evidence to carry across report boundaries."""
-    return {k: rec[k] for k in ("dc_id", "objectGUID", "object_guid", "dsa_guid", "dsa_dn", "server_dn",
-                                "site_dn", "site_guid", "site", "fqdn", "invocation_id") if rec.get(k)}
+    return {k: rec[k] for k in ("dsa_guid", "dsa_dn", "server_dn", "site", "fqdn", "dns_host", "invocation_id",
+                                "stale_dsa", "node_id", "ip", "forest") if rec.get(k)}
+
+
+def merge(population):
+    out = {}
+    for d in population:
+        key = dc_id(d)
+        if not key or key.startswith("dsa:"):
+            continue
+        old = out.get(key, {})
+        stale = old.get("stale_dsa") or d.get("stale_dsa") or (old.get("dsa_guid") and d.get("dsa_guid") and
+                old["dsa_guid"].lower() != d["dsa_guid"].lower())
+        out[key] = dict(old, **d)
+        if stale:
+            out[key]["stale_dsa"] = True
+    return out
+
+
+def unsupported(data):
+    """Only AD evidence: never a host's DNS suffix or a SolarWinds caption."""
+    domains, forests, where = set(), set(), []
+
+    def walk(value, path="AD"):
+        if isinstance(value, list):
+            for v in value:
+                walk(v, path)
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                if k in ("live", "sw", "solarwinds"):
+                    continue
+                if k in ("domain", "source_domain", "_domain", "dns") and isinstance(v, str) and v and v != "?" and not path.endswith(".forest"):
+                    domains.add(domain_id(v))
+                    where.append(("DC domain attribute (%s): " % short_name(value) if short_name(value) and k == "domain" else path + ": ") + k + "=" + v)
+                elif (k == "forest" or (k in ("name", "dns") and path.endswith(".forest"))) and isinstance(v, str) and v:
+                    forests.add(domain_id(v))
+                    where.append(path + ": forest=" + v)
+                elif k == "domains" and isinstance(v, list) and all(isinstance(x, str) for x in v):
+                    domains.update(domain_id(x) for x in v if x)
+                    where.append(path + ": domains=" + ", ".join(v))
+                elif k in ("nc", "nc_dn") and isinstance(v, str):
+                    nc = re.sub(r"^DC=(?:DomainDnsZones|ForestDnsZones),", "", v, flags=re.I)
+                    if re.fullmatch(r"DC=[^,]+(?:,DC=[^,]+)*", nc, re.I):
+                        domains.add(domain_id(".".join(x[3:] for x in nc.split(","))))
+                        where.append("partner NC: " + v)
+                elif isinstance(v, (dict, list)):
+                    walk(v, path + "." + k)
+    walk(data)
+    return "; ".join(where) if len(domains) > 1 or len(forests) > 1 else ""
+
+
+def coverage(repl):
+    if not repl.get("dcs") or not repl.get("discovered", True):
+        return COVERAGE_UNKNOWN
+    dcs = repl.get("dcs") or []
+    read = [d for d in dcs if d.get("read") and not d.get("partial")]
+    unread = [d for d in dcs if d not in read]
+    text = "Replication read in full on %d of %d DCs" % (len(read), len(dcs))
+    if unread:
+        text += "; not read: " + ", ".join("%s (%s)" % (d["name"], ", ".join(d.get("partial") or []) or d.get("why") or "not polled") for d in unread)
+    return text
+
+
+def links(rows):
+    """One inbound edge per partition; keep the worst observation during metadata lag."""
+    rank = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "ok": 4}
+    out = {}
+    def order(x):
+        return (rank.get(x.get("status"), 5), -int(x.get("failures") or 0), str(x.get("last_success") or ""))
+    for row in rows:
+        key = link_id(row)
+        if key not in out or order(row) < order(out[key]):
+            out[key] = row
+    return list(out.values())

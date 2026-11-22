@@ -57,10 +57,11 @@ class Healthy(unittest.TestCase):
         self.assertEqual(self.r["report"]["status"], "ok")
         self.assertIn("all 1 domain controller(s) healthy (corp.test)", self.r["report"]["title"])
 
-    def test_dc_not_in_inventory_is_listed_blue(self):
+    def test_dc_not_in_inventory_is_not_polled_and_grey(self):
         s = section(self.r, "Domain controllers")
         rows = dict(zip([x[0] for x in s["rows"]], s["row_status"]))
-        self.assertEqual(rows.get("DC02"), "info")
+        self.assertEqual(rows.get("DC02"), "unknown")
+        self.assertEqual(next(r for r in s["rows"] if r[0] == "DC02")[-1], "not polled")
         self.assertEqual(rows.get("DC01"), "")
 
     def test_retired_and_own_utdv_entries_left_out(self):
@@ -208,8 +209,10 @@ class NotRead(unittest.TestCase):
 
     def test_empty(self):
         r = report([], [])
-        self.assertEqual(r["report"]["status"], "ok")
-        self.assertEqual(r["report"]["summary"][0]["value"], "0 of 0")
+        self.assertEqual(r["report"]["status"], "unknown")
+        self.assertIn("DC list not read - coverage unknown", str(r["report"]))
+        self.assertNotIn("0 of 0", str(r["report"]))
+        self.assertEqual(r["report"]["summary"][0]["value"], "unknown")
 
 
 class Helpers(unittest.TestCase):

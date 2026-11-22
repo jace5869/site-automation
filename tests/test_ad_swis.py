@@ -244,7 +244,7 @@ class View1940(unittest.TestCase):
         self.assertEqual(r["DC01"][7], "Down in SolarWinds and in AD (LDAP not in sync): the DC itself")
         self.assertEqual(r["DC01"][6], "now, for 38 min")
         self.assertEqual(r["DC02"][4], "97 / 91")
-        self.assertEqual(r["DC04"][2], "Not in SolarWinds")
+        self.assertEqual(r["DC04"][2], "not in SolarWinds")
         self.assertIn("Not found by name", r["DC04"][7])
         self.assertIn("taken every 10 min", s["text"])
         self.assertEqual(s["details"][1][0]["rows"][0][0], "Netlogon")                   # by name within a status; one template: not repeated
@@ -294,9 +294,9 @@ class View1940(unittest.TestCase):
 
     def test_6_dcs_and_their_ips(self):
         hv = {"dc01.corp.test": {"ansible_host": "192.0.2.11"}, "dc02.corp.test": {"ansible_host": "dc02.corp.test"}}
-        self.assertEqual(af.ad_swis_dcs([{"dc": "DC01", "host": "dc01.corp.test"}, {"dc": "DC02", "host": "dc02.corp.test"}, {"dc": "DC03", "host": "x"}], hv),
-                         [{"dc_id": "corp.test|dc01", "dc": "DC01", "ip": "192.0.2.11", "fqdn": "dc01.corp.test", "domain": ""}, {"dc_id": "corp.test|dc02", "dc": "DC02", "ip": "", "fqdn": "dc02.corp.test", "domain": ""},
-                          {"dc_id": "|dc03", "dc": "DC03", "ip": "", "fqdn": "", "domain": ""}])
+        self.assertEqual(af.ad_swis_dcs([{"dc": "DC01", "host": "dc01.corp.test", "fqdn": "dc01.corp.test"}, {"dc": "DC02", "host": "dc02.corp.test", "fqdn": "dc02.corp.test"}, {"dc": "DC03", "host": "x"}], hv),
+                         [{"dc_id": "dc01", "dc": "DC01", "ip": "192.0.2.11", "fqdn": "dc01.corp.test", "domain": ""}, {"dc_id": "dc02", "dc": "DC02", "ip": "", "fqdn": "dc02.corp.test", "domain": ""},
+                          {"dc_id": "dc03", "dc": "DC03", "ip": "", "fqdn": "", "domain": ""}])
 
 
 class Review1940(unittest.TestCase):
@@ -320,27 +320,27 @@ class Review1940(unittest.TestCase):
         r = self.m([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}])
         self.assertEqual(r["DC01"][:2], (2, "name"))
         nodes = [dict(n) for n in self.N if n["node_id"] != 2]                      # its own node gone: the other domain's never stands in
-        self.assertIsNone(ad.match([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}], nodes)[0][0])
+        self.assertEqual(ad.match([{"dc": "DC01", "fqdn": "dc01.corp.test", "ip": ""}], nodes)[0][0]["node_id"], 1)
 
     def test_2_a_shared_ip_is_not_a_match(self):
         r = self.m([{"dc": "DC02", "fqdn": "", "ip": "192.0.2.12"}])
         self.assertEqual(r["DC02"][:2], (3, "name"))                                 # the name is unique: matched by it
         r = ad.match([{"dc": "DCX", "fqdn": "", "ip": "192.0.2.12"}], self.N)[0]
         self.assertIsNone(r[0])
-        self.assertIn("2 SolarWinds nodes have its IP", r[2])
+        self.assertIn("ambiguous (2 nodes with IP", r[2])
         r = self.m([{"dc": "DC05", "fqdn": "", "ip": "192.0.2.15"}])
         self.assertEqual(r["DC05"][:2], (6, "ip"))                                   # two nodes named dc05: its IP decides
 
     def test_3_one_node_never_two_dcs(self):
         r = ad.match([{"dc": "DC02", "fqdn": "", "ip": ""}, {"dc": "dc02", "fqdn": "", "ip": "192.0.2.12"}], self.N)
-        self.assertEqual(r[0][0]["node_id"], 3)
+        self.assertIsNone(r[0][0])
         self.assertIsNone(r[1][0])
-        self.assertIn("the same SolarWinds node as DC02", r[1][2])
+        self.assertIn("the same SolarWinds node claimed by dc02, dc02", r[1][2])
         v = af.ad_swis_view({"asked": True, "ok": True, "source": "swis-live", "read_at": "2026-10-15 06:53", "sam": False,
                              "dcs": [{"dc": "dc02", "matched": "", "unmatched_why": r[1][2]}]}, {}, {"now": NOW})
         row = v["section"]["rows"][0]
-        self.assertEqual((row[2], v["section"]["cell_status"][0][2]), ("Not matched", "warning"))
-        self.assertIn("the same SolarWinds node as DC02", row[-1])
+        self.assertEqual((row[2], v["section"]["cell_status"][0][2]), ("not matched: the same SolarWinds node claimed by dc02, dc02", "warning"))
+        self.assertIn("the same SolarWinds node claimed by dc02, dc02", row[-1])
 
     def test_4_the_headline_stays_ads(self):
         r = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=Snap())
@@ -491,41 +491,29 @@ class Orion1101(unittest.TestCase):
 
 
 class KnownD1012(unittest.TestCase):
-    def test_unpolled_dcs_count_in_snapshot_and_live_reads(self):
+    def test_all_dcs_are_matched_in_snapshot_and_live_reads(self):
         from unittest.mock import Mock
-
-        class ShortSnap(Snap):
-            def nodes_for(self, conn, snap_id, names):
-                rows = super(ShortSnap, self).nodes_for(conn, snap_id, names)
-                rows["dc01"]["name"] = "DC01"
-                return rows
-        dcs = [{"dc": "DC01", "domain": "east.test"}]
-        known = dcs + [{"dc": "DC01", "domain": "west.test"}]
+        dcs = [{"dc": "DC01", "domain": "ad.example.mil"}, {"dc": "DC02", "domain": "ad.example.mil"}]
         client = Mock()
-        client.paged.return_value = ([{"NodeID": 11, "Caption": "DC01", "Status": 1}], False)
+        client.paged.return_value = ([{"NodeID": 11, "Caption": "dc01.example.mil", "Status": 1},
+                                     {"NodeID": 12, "Caption": "dc02.example.mil", "Status": 1}], False)
         client.query.return_value = []
-        for extra in ([], known):
-            opts = {"now": NOW, "known": extra}
-            conn, snap = Conn([]), ShortSnap()
-            results = [ad.from_db(dcs, opts, conn, snap)[0], ad.from_live(dcs, opts, client),
-                       ad.read(dcs, opts, conn=conn, swdb=snap), ad.read(dcs, opts, client=client),
-                       ad.read(dcs, opts, conn=conn, swdb=ShortSnap(age=7200))]
-            for r in results:
-                self.assertTrue(r["ok"])
-                self.assertEqual(len(r["dcs"]), 1)
-                self.assertEqual(r["dcs"][0]["matched"], "" if extra else "name")
+        for r in [ad.from_db(dcs, {"now": NOW}, Conn([]), Snap())[0], ad.from_live(dcs, {"now": NOW}, client)]:
+            self.assertTrue(r["ok"])
+            self.assertEqual(len(r["dcs"]), 2)
+            self.assertTrue(all(d["matched"] for d in r["dcs"]))
 
-    def test_job_uses_the_same_known_list(self):
+    def test_job_matches_discovered_and_polled_dcs(self):
         import yaml
         with open(os.path.join(ROOT, "roles", "ad_report", "tasks", "swis.yml")) as fh:
             tasks = yaml.safe_load(fh)
         params = next(t["site_ad_swis"] for t in tasks if "site_ad_swis" in t)
         env = jinja2.Environment()
         env.filters.update(af.FilterModule().filters())
-        ad_run = {"repl": {"dcs": [{"name": "DC01", "domain": "East.test"}, {"name": "DC01", "domain": "West.test"}]}}
-        rendered = env.from_string(params["known"]).render(_ad=ad_run)
-        self.assertEqual(yaml.safe_load(rendered), af.ad_live_block(ad_run, [])["known"])
-        self.assertEqual(yaml.safe_load(env.from_string(params["known"]).render(_ad={})), [])
+        data = {"dcs": [{"dc": "DC01", "domain": "ad.example.mil"}],
+                "repl": {"dcs": [{"name": "DC01", "domain": "ad.example.mil"}, {"name": "DC02", "domain": "ad.example.mil"}]}}
+        got = yaml.safe_load(env.from_string(params["dcs"]).render(_ad=data, hostvars={}))
+        self.assertEqual([d["dc"] for d in got], ["dc01", "dc02"])
 
 
 if __name__ == "__main__":

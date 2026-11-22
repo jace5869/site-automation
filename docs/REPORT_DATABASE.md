@@ -1027,7 +1027,7 @@ from here: each DC now, since when, its last runs, the replication links that ne
 
 | | |
 |---|---|
-| What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds, why its rows could not be made when so, how many DCs the replication read knew and read in full), a row per DC in `ad_dc` (its `dc_id`, domain, site and `site_id`, whether it and its replication were read, status, problems, the worst one's text) and a row per replication link in `ad_link` (its domain, display endpoints, `src_id`, `dst_id`, exact partition, last success, failures, error, status; `link_key` hashes the receiving ID, source ID and partition) |
+| What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds, why its rows could not be made when so, how many DCs the replication read knew and read in full), a row per DC in `ad_dc` (its host-label `dc`, AD domain, `dns_host`, `dsa_guid`, site name, matched `node_id`, `stale_dsa`, whether it and its replication were read, status, problems, the worst one's text) and a row per replication link in `ad_link` (its AD domain, host-label `src`, `dst`, readable `frm` and `to_dc`, exact `nc_dn` partition, last success, failures, error, status; `link_key` hashes the receiving host label, source host label (or `dsa:<guid>`) and lower-case partition DN) |
 | Schema version | 4 (`schema_version` component `ad_run`). Versions 1, 2 and 3 were only in builds before 1.101.2 shipped: drop the three tables and its row, the next run makes them again |
 | How much | 10 DCs and 40 links every 30 minutes: about 2,400 rows a day, size depends on the stored names and DNs |
 | What a run deletes | its own template's runs older than `ad_db_keep_days`, with their rows (another forest's job keeps its own) |
@@ -1042,6 +1042,13 @@ or event detail.
 
 **By hand.** If the writer may not create tables, set `ad_db_create: false` and make them once as root, in `site_reports`.
 The writer then needs SELECT, INSERT, UPDATE and DELETE.
+
+A run supports one forest and one AD domain. A DC's key is its lower-case host label, even after a site move or an
+NTDS object replacement. The domain comes from AD, never the host's DNS suffix: `dc01.example.mil` can belong to
+`ad.example.mil`. A second domain or forest in AD data refuses the run with status `unknown`; no DCs or links are kept.
+Unpolled DCs remain visible as `not polled`. Without discovery the coverage is unknown. An unresolved source is
+`dsa:<guid>` (shown as `unknown DSA`) and does not count as a DC. A second NTDS object for one name is flagged
+`stale DSA, metadata cleanup`. The portal reads SolarWinds by the `node_id` saved with the run.
 
 <!-- the statements: site_ad_db.ddl(), word for word (tests/test_portal_ad.py checks it) -->
 ```sql
@@ -1076,18 +1083,19 @@ CREATE TABLE IF NOT EXISTS ad_run (
 ```sql
 CREATE TABLE IF NOT EXISTS ad_dc (
   run_id BIGINT NOT NULL,
-  dc_key CHAR(64) NOT NULL,
-  dc_id TEXT NOT NULL,
   dc VARCHAR(191) NOT NULL,
   domain VARCHAR(191) NOT NULL DEFAULT '',
-  site_id TEXT NOT NULL,
+  dns_host VARCHAR(255) NOT NULL DEFAULT '',
+  dsa_guid VARCHAR(36) NOT NULL DEFAULT '',
+  node_id BIGINT NULL,
+  stale_dsa TINYINT NOT NULL DEFAULT 0,
   site VARCHAR(191) NOT NULL DEFAULT '',
   is_read TINYINT NOT NULL DEFAULT 0,
   repl_read TINYINT NOT NULL DEFAULT 0,
   status VARCHAR(16) NOT NULL DEFAULT '',
   problems INT NOT NULL DEFAULT 0,
   worst VARCHAR(300) NOT NULL DEFAULT '',
-  PRIMARY KEY (run_id, dc_key)
+  PRIMARY KEY (run_id, dc)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
@@ -1096,8 +1104,7 @@ CREATE TABLE IF NOT EXISTS ad_link (
   run_id BIGINT NOT NULL,
   link_key CHAR(40) NOT NULL,
   domain VARCHAR(191) NOT NULL DEFAULT '',
-  src_id TEXT NOT NULL,
-  dst_id TEXT NOT NULL,
+  dst VARCHAR(191) NOT NULL,
   nc_dn TEXT NOT NULL,
   frm VARCHAR(191) NOT NULL,
   src VARCHAR(255) NOT NULL DEFAULT '',

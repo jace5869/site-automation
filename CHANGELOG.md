@@ -57,9 +57,15 @@ read-only account `report_reader`) and `report_db`, run it, then run *Site porta
   an ETag; a DC that changes gets a toast (motion settings apply).
 - Never old data as current: the database off, not read now, no run yet, a run older than `portal_ad_old_minutes` (90),
   SolarWinds not read or overdue, the portal not answering (20 s), replication not read, no DC found, a run whose rows
-  could not be made - each said on the page; a DC is up only when SolarWinds says Up for that DC (its own domain).
+  could not be made - each said on the page; a DC is up only when SolarWinds says Up for that DC's saved NodeID.
+- Seen but unpolled DCs are grey, marked "not polled" in the page and full report, and excluded from "DCs with a
+  problem". Coverage names each unread DC and partition; failed discovery says "coverage unknown". A second domain
+  names its AD evidence. Missing sites, unknown DSAs and stale NTDS objects are said explicitly. The SolarWinds
+  column gives the sample's age, "last known" when overdue, and the matching reason; history uses the stored run
+  status and says "Rows not kept" when conversion failed.
 - **The AD job keeps each run** in the report database (`ad_db`, new tables `ad_run`, `ad_dc`, `ad_link`, made by the
-  job, schema version 4; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job
+  job, schema version 4: one-domain host-label DC keys, DNS host/DSA/site attributes, NodeID and stale-DSA flag;
+  versions 1–3 refused; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job
   stays green. The website page is as before.
 - **Site portal - deploy**: the read-only login as the podman secret `site-portal-reportdb` (from the attached Report
   database credential); a login that can write is a warning; never a failed deploy. The portal starts a Python of its

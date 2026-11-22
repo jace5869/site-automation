@@ -9,8 +9,7 @@
 
 - name: AD | SolarWinds - each DC (read only)
   site_ad_swis:
-    dcs: "{{ _ad.dcs | ad_swis_dcs(hostvars) }}"
-    known: "{{ (_ad | ad_live_block([])).known }}"
+    dcs: "{{ (_ad | ad_live_block(_ad.dcs)).dcs | ad_swis_dcs(hostvars) }}"
     max_age: "{{ ad_solarwinds_max_age | int }}"
     days: "{{ ad_solarwinds_days | int }}"
     now: "{{ ad_report_now | default('') }}"
