@@ -140,9 +140,9 @@ column, attach **SolarWinds (read-only)** to the health check templates too. Wit
 - A part the snapshot did not read is never shown as zero, green or OK. Alerts, events, volumes, the topology, a port's
   status or errors and the last poll then say "not read". A snapshot cut at its node limit never matches by a short
   name or an address, and one without the nodes' other addresses never matches by an address. A host left unmatched
-  that way is "Match not certain", never "Not in SolarWinds": its cells say `?` and the alerts tile `N+`. Without the
-  topology the events count is `N+`, as the switch port's events were not read. SolarWinds' messages are redacted, a
-  syslog message before it is cut. Every Unicode space around a caption is trimmed before the names are compared.
+  that way is "Match not certain", never "Not in SolarWinds". Its cells say `?`, and the alerts, applications and
+  volumes totals say `N+`. Without the topology the events count is `N+`, as the switch port's events were not read.
+  SolarWinds' messages are redacted, a syslog message before it is cut. Every Unicode space around a caption is trimmed before the names are compared.
 - The alarms report's Host connection table fits at 800 px: State now says "in maintenance" (one column fewer), and
   vCenter's states are words ("not responding").
 - The matcher checks the full name first. It compares the inventory name or `ansible_host` with the caption and DNS name.

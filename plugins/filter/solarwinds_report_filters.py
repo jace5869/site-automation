@@ -279,6 +279,8 @@ def swr_health(read, findings_by_host=None, opts=None):
             notes.append("Syslog: only the newest %s entries were read (solarwinds_report_syslog_max_rows)." % _n(sl.get("max_rows")))
         if r.get("sam") is False:
             notes.append("No SAM on this SolarWinds: no applications.")
+        if unsure:
+            notes.append("The counts are of the matched hosts only (%s not certain)." % _p(len(unsure), "host"))
         if notes:
             says["note"] = " ".join(notes)
         if alerts_read and unsure:
@@ -299,7 +301,8 @@ def swr_health(read, findings_by_host=None, opts=None):
     if unsure:
         web.append({"title": "Match not certain (%d)" % len(unsure), "status": "info", "under_findings": True,
                     "lines": ["%s: %s" % (a, w) if w else a for a, w in unsure],
-                    "text": "The snapshot could not tell which SolarWinds node these hosts are. Their alerts are not counted."})
+                    "text": "The snapshot could not tell which SolarWinds node these hosts are. Their alerts, applications and volumes "
+                            "are not counted."})
     if absent:
         web.append({"title": "Not in SolarWinds (%d)" % len(absent), "status": "warning", "under_findings": True,
                     "lines": ["%s: %s" % (a, w) if w else a for a, w in absent],
@@ -312,12 +315,13 @@ def swr_health(read, findings_by_host=None, opts=None):
             bits = [_p(alerts_n, "alert") + (" on %s" % _p(alert_hosts, "host") if alerts_n else "")]
             if unsure:
                 bits = ["%s+ alerts (%s not certain)" % (_n(alerts_n), _p(len(unsure), "host"))]
+        # review 1970f: the uncertain hosts' applications and volumes are not counted either: a floor, "N+"
         if r.get("sam"):
-            bits.append(_p(apps_bad, "application") + " not up")
+            bits.append(("%s+ applications" % _n(apps_bad) if unsure else _p(apps_bad, "application")) + " not up")
         if r.get("volumes") is None:
             bits.append("volumes not read")
         elif r["volumes"] is True:
-            bits.append(_p(vols_bad, "volume") + " over %d %%" % int(warn))
+            bits.append(("%s+ volumes" % _n(vols_bad) if unsure else _p(vols_bad, "volume")) + " over %d %%" % int(warn))
         lines.append("SolarWinds says (%s): %s." % (_p(n, "host"), ", ".join(bits)))
     if disagree:
         lines.append("SolarWinds alerts, our checks are green: %s." % ", ".join(d["name"] for d in disagree))

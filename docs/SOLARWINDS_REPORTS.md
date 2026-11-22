@@ -21,8 +21,8 @@ Three sections sit right under Findings.
    - A row opens to its alerts, its SAM applications not up, its full volumes and its top 3 syslog messages.
 - **SolarWinds alerts, our checks are green (N)**: hosts where SolarWinds sees a problem and the job found none. The
   two disagree, so look at the host or at the alert.
-- **Match not certain (N)**: hosts the snapshot could not place, as a part of it was not read. Their cells say `?`,
-  and the alerts tile says `N+`. Not a warning.
+- **Match not certain (N)**: hosts the snapshot could not place, as a part of it was not read. Their cells say `?`.
+  The alerts tile and the email's totals say `N+`, as they count the matched hosts only. Not a warning.
 - **Not in SolarWinds (N)**: hosts AAP checks but SolarWinds does not monitor. A warning.
    - Hosts that are never in SolarWinds on purpose (a lab) go in `solarwinds_report_skip_hosts`.
    - The other OS's hosts (a Windows server in a Linux health check) are left out, as the job leaves them out.

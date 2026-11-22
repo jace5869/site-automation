@@ -1112,6 +1112,7 @@ class Review1970e(unittest.TestCase):
         tile = says["boxes"][0]
         self.assertEqual((tile["value"], tile["note"], tile["status"]), ("1+", "1 host not certain", "critical"))
         self.assertIn("(1 host not certain)", view["lines"][0])
+        self.assertIn("The counts are of the matched hosts only (1 host not certain).", says["note"])
         self.assertNotIn("Not in SolarWinds", " ".join(view["lines"]))
         t = swr.swr_troubleshoot(self.read([HOSTS[2]]))
         g = t["web_sections"][0]["glance"][0]
@@ -1129,6 +1130,32 @@ class Review1970e(unittest.TestCase):
         self.assertTrue(g["label"].endswith("+"), g)
         self.assertIn("Switch port events not read.", g["text"])
         self.assertIn("(switch port events not read)", t["lines"][0])
+
+
+class Review1970f(unittest.TestCase):
+    """The director's read of Codex's check of 2923b32a: the other totals of a job with uncertain hosts are floors too."""
+
+    def test_application_and_volume_totals_with_uncertain_hosts(self):
+        db = Snap()
+        db.notes["ip"] = {"what": "ip", "why": "timeout", "absent": False}
+        db.nodes_for_hosts = lambda *args: [N(101, "web01.example.mil"), N(2, "other", ip="192.0.2.22")]
+        r = hs.read([HOSTS[0], HOSTS[2]], {"mode": "health", "now": NOW}, object(), db)
+        r["sam"] = True
+        r["hosts"][0].update(apps=[], volumes=[])
+        view = swr.swr_health(r)
+        line = view["lines"][0]
+        self.assertIn("0+ applications not up", line)
+        self.assertIn("0+ volumes over 90 %", line)
+        self.assertNotIn("0 applications", line)
+        self.assertNotIn("0 volumes", line)
+        self.assertEqual(view["sections"][0]["lines"][0], line)          # the email says the same
+        says = view["web_sections"][0]
+        self.assertIn("matched hosts only", says["note"])
+        sec = next(s for s in view["web_sections"] if s["title"].startswith("Match not certain"))
+        self.assertIn("applications and volumes", sec["text"])
+        r["hosts"][1] = dict(r["hosts"][0], host="web02.example.mil")     # every host matched: plain counts
+        r["hosts"][1]["node"] = dict(r["hosts"][0]["node"], node_id=103)
+        self.assertIn("0 applications not up", swr.swr_health(r)["lines"][0])
 
 
 if __name__ == "__main__":
