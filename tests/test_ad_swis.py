@@ -299,6 +299,28 @@ class View1940(unittest.TestCase):
                           {"dc": "DC03", "ip": "", "fqdn": "", "domain": ""}])
 
 
+class AppsReader(unittest.TestCase):
+    def test_apps_reader_with_and_without_fresh(self):
+        class Older(Snap):
+            def begin_read(self, conn):
+                self.calls.append("begin_read")
+
+            def latest(self, conn, fresh=True):
+                return super().latest(conn)
+
+        class Newer(Older):
+            def apps_for(self, conn, snap_id, ids, fresh=True):
+                self.calls.append(("fresh", fresh))
+                return super().apps_for(conn, snap_id, ids)
+
+        newer = Newer()
+        for reader in (Older(), newer):
+            result = ad.read(DCS, {"now": NOW}, conn=Conn([]), swdb=reader)
+            self.assertEqual(result["source"], "db-snapshot")
+            self.assertIn(("apps_for", (11, 12, 13)), reader.calls)
+        self.assertIn(("fresh", False), newer.calls)
+
+
 class Review1940(unittest.TestCase):
     """1.94.0 review round: the full name first, a short name only when one node has it, an IP only when one node has it,
     never one node for two DCs; the headline stays AD's; problems by the whole DC name; no exception text; never raises."""

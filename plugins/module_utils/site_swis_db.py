@@ -977,6 +977,8 @@ def raw_from_db(conn, snap, opts=None):
         raise RuntimeError("snapshot %d has %d of its %d nodes (deleted while it was read)" % (sid, len(nodes), int(snap["nodes"])))
     cur.execute("SELECT src_node, src_if, dst_node, dst_if FROM sw_link WHERE snap_id = %s ORDER BY seq", (sid,))
     links = _dicts(cur)
+    if snap.get("links") is not None and len(links) != int(snap["links"]):
+        raise RuntimeError("snapshot %d is incomplete: read %d of %d links" % (sid, len(links), int(snap["links"])))
     cur.execute("SELECT %s FROM sw_interface WHERE snap_id = %%s ORDER BY seq" % ", ".join(c for _, c in IF_RAW), (sid,))
     ifaces = _dicts(cur)
     return raw_from_rows(snap["core"], nodes, links, ifaces, opts, iso(snap["read_at"]), snap["age_seconds"])
@@ -985,16 +987,15 @@ def raw_from_db(conn, snap, opts=None):
 def begin_read(conn):
     """A read-only transaction: every query after it sees one moment of the database (REPEATABLE READ), and a long-lived
     session (the portal) sees the newest snapshot (1.96.1, review c and P2-11)."""
-    try:
-        conn.rollback()
-    except Exception:            # noqa: BLE001
-        pass
-    conn.cursor().execute("START TRANSACTION READ ONLY")
+    cur = conn.cursor()
+    cur.execute("ROLLBACK AND NO CHAIN")
+    cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+    cur.execute("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY")
 
 
 def end_read(conn):
     try:
-        conn.commit()
+        conn.cursor().execute("COMMIT AND NO CHAIN")
     except Exception:            # noqa: BLE001
         pass
 
@@ -1145,16 +1146,17 @@ def alerts_for(conn, snap_id, node_ids):
     return out
 
 
-def apps_for(conn, snap_id, node_ids):
+def apps_for(conn, snap_id, node_ids, fresh=True):
     """SAM's applications on these nodes, by name: {node_id: [{app_id, app, status, status_code, status_text, unmanaged,
     components (how many it has; None when not counted), components_not_up: [{component_id, name, kind, status,
     status_code, status_text, value, message}] (worst first)}]}. Two queries. A node without one, or an Orion without SAM
-    (part_note(snap, "app") then says so): []."""
+    (part_note(snap, "app") then says so): []. Pass fresh=False inside a caller-owned read transaction."""
     ids = sorted(set(int(i) for i in node_ids or [] if i is not None))
     out = dict((i, []) for i in ids)
     if not ids:
         return out
-    begin_read(conn)                 # review c: the applications and their components of one moment
+    if fresh:
+        begin_read(conn)             # review c: the applications and their components of one moment
     try:
         cur = conn.cursor()
         cur.execute("SELECT app_id, node_id, name, status, status_text, unmanaged, components, components_not_up FROM sw_app "
@@ -1167,7 +1169,8 @@ def apps_for(conn, snap_id, node_ids):
                         "WHERE snap_id = %%s AND app_id IN (%s) ORDER BY name, component_id" % _ph(len(aids)), [snap_id] + aids)
             comps = _dicts(cur)
     finally:
-        end_read(conn)
+        if fresh:
+            end_read(conn)
     return _apps_out(out, apps, comps)
 
 

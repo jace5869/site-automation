@@ -77,16 +77,30 @@ def short_error(e):
 
 def explain(e, p):
     """An exception of connect() or a statement, as one line: what failed and what to change."""
-    msg = short_error(e)
+    host = p["host"]
+    server = host.rsplit("@", 1)[1].split("/", 1)[0] if "@" in host else host
+
+    def redact(text):
+        if server != host:  # a login pasted into the host field can also appear in a driver error
+            text = text.replace(host, server)
+        return text.replace(p["password"], "[redacted]") if p.get("password") else text
+
     if isinstance(e, ssl.SSLError):
-        return "TLS: %s - the server's certificate must be signed by the CA and name %s" % (msg, p["host"])
+        # SSLError can quote and escape its arguments when converted to text.
+        args = tuple(redact(arg) if isinstance(arg, str) else arg for arg in e.args)
+        if args != e.args:
+            e = ssl.SSLError(*args)
+    msg = redact(short_error(e))
+    host = redact(server)
+    if isinstance(e, ssl.SSLError):
+        return "TLS: %s - the server's certificate must be signed by the CA and name %s" % (msg, host)
     if "cryptography" in msg:
         return ("the login needs the cryptography library: without TLS, caching_sha2_password sends the password RSA-encrypted "
                 "(the all-in-one EE has it; docs/REPORT_DATABASE.md, The EE)")
     if "secure transport" in msg.lower() and not p["tls"]:
         return msg + " - the server wants TLS: set Use TLS on the Report database credential"
-    if p["tls"] and "support" in msg:
-        return msg + " - the server does not offer TLS: clear Use TLS on the Report database credential, or give the server a certificate"
+    if p["tls"] and ("support" in msg or "the session is not encrypted" in msg):
+        return msg + " - the server on '%s' does not offer TLS: clear Use TLS on the Report database credential, or give the server a certificate" % host
     if p["tls"] and ("SSL" in msg or "certificate" in msg.lower()):
-        return msg + " - the server's certificate must be signed by the CA and name %s" % p["host"]
+        return msg + " - the server's certificate must be signed by the CA and name %s" % host
     return msg
