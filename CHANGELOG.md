@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.108.0 — 2026-11-22
+
+**VMware alarms: the email subject leads with the hosts not connected**
+
+- The VMware alarms report now gives its report head the exact counts and severity levels shown in its tables, so critical items (such as hosts not connected) come first in the report head and email subject instead of being rated as warnings and pushed behind hosts that lost the connection or failed logins.
 ## 1.106.0 — 2026-11-22
 
 **Hardening: four small fixes from earlier reviews**
