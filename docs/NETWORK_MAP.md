@@ -207,6 +207,18 @@ It reads SolarWinds itself when:
 The map is the same either way: the snapshot gives back exactly what a read of SolarWinds gives. Its time is the
 snapshot's. With the snapshot, the SolarWinds credential is only needed for that fallback.
 
+## The history (1.111.0)
+
+With a **Report database** credential on the template *Network map*, each run keeps what it read - the sites, the WAN links, their status and
+their utilization - in the report database ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The network map's history*). The portal's *Network map*
+draws its history from there (the portal side comes with the next step of this release).
+
+- **Every read is kept 90 days** (`netmap_db_keep_reads_days`), then **one row a site and a link a day for 400 days** (`netmap_db_keep_days`).
+  The job does the roll-up and the pruning; nothing is set up by hand (the tables are made on the first run).
+- **An outage** is a link or a site down for **two reads in a row**, also across midnight. A missed read, or reads far apart, never make one (the gap rule: REPORT_DATABASE.md). A link busy over `netmap_link_warn_percent` for three reads is a warning.
+- The job never fails for it: a database that cannot be reached is one warning in the output, and the report goes on.
+- `netmap_db: false` turns it off; without the credential nothing is written.
+
 ## Where a node belongs: site, building, closet (1.95.0)
 
 **Read, not guessed - and said.** The job reads where each node belongs from what should agree (`netmap_site_by: auto`,
@@ -309,6 +321,11 @@ left out, and the job says so: raise it. 1,500 nodes add about 45 KB to the defa
 | `netmap_fail` | `false` | mark the job failed when SolarWinds could not be read |
 | `netmap_raw` | `false` | print the first nodes and links as read |
 | `netmap_from_db` | `true` | read the report database's SolarWinds snapshot first (1.96.0) |
+| `netmap_db` | `true` | keep each run's read in the report database (1.111.0, the history) |
+| `netmap_db_create` | `true` | make the tables on the first run; `false`: by hand once |
+| `netmap_db_timeout` | `10` | seconds to connect to the report database |
+| `netmap_db_keep_reads_days` | `90` | every read kept this many days, then one row a day |
+| `netmap_db_keep_days` | `400` | the day rows kept this many days; `0`: never deleted |
 | `solarwinds_db_max_age` | `20` | minutes the snapshot may be old; older: SolarWinds itself. `0`: always SolarWinds itself |
 | `portal_netmap` | `auto` | the portal's live page: auto (with a SolarWinds credential), true, false |
 | `netmap_live_seconds` | `60` | how often the portal reads the status (30 at least) |

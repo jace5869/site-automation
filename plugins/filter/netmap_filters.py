@@ -356,8 +356,25 @@ def netmap_summary_counts(res):
             "changes": len(r.get("changes") or []), "version": (r.get("version") or {}).get("platform", ""), "read_at": r.get("read_at", "")}
 
 
+def netmap_db_rows(res):
+    """1.111.0: what a run read -> what site_netmap_db keeps: {ok, links_total, sites: [{site, nodes, down, warning, unknown, status}], links: [{key, site_a, site_b, node_a,
+    node_b, status, in, out, speed}]} - every site, and the WAN links (between two sites; a link that is gone is not one). SolarWinds not read: ok false and
+    nothing else (a missed read is one row)."""
+    r = res or {}
+    m = r.get("map") or {}
+    if not r.get("reachable") or not m:
+        return {"ok": False, "sites": [], "links": [], "links_total": 0}
+    sites = [{"site": s["name"], "nodes": s.get("nodes", 0), "down": s.get("down", 0), "warning": s.get("warning", 0), "unknown": s.get("unknown", 0),
+              "status": s.get("worst") or "Unknown"} for s in m.get("sites") or []]
+    links = [{"key": _sw.link_key(l), "site_a": a["site"], "site_b": b["site"], "node_a": a["name"], "node_b": b["name"], "status": l["status"],
+              "in": l.get("in"), "out": l.get("out"), "speed": l.get("speed") or ""} for l, a, b in _wan(m)]
+    total = len([l for l in m.get("links") or [] if not l.get("gone")])
+    return {"ok": True, "sites": sites, "links": links, "links_total": total}
+
+
 class FilterModule(object):
     def filters(self):
         return {"netmap_doc": netmap_doc, "netmap_xlsx": netmap_xlsx, "netmap_lines": netmap_lines,
                 "netmap_page_extra": netmap_page_extra, "netmap_summary_counts": netmap_summary_counts,
-                "netmap_check_opts": netmap_check_opts, "netmap_ad_layer": netmap_ad_layer, "netmap_ad_lines": netmap_ad_lines}
+                "netmap_check_opts": netmap_check_opts, "netmap_ad_layer": netmap_ad_layer, "netmap_ad_lines": netmap_ad_lines,
+                "netmap_db_rows": netmap_db_rows}

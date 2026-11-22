@@ -282,6 +282,153 @@ A month with no value is a gap in the line, never a 0. The tooltip says why:
 The month so far is drawn dashed. The pages are static. They never ask the database anything: the job reads it and
 draws the lines into each page.
 
+## The network map's history (1.111.0)
+
+The portal's *Network map* ([NETWORK_MAP.md](NETWORK_MAP.md)) shows, above the map, how the sites and the WAN links have been:
+since when each is down, the outages of the week, each link's last 24 hours and its 7 days. The data is the netmap job's own reads,
+kept here: the portal draws the page from them, not from a snapshot.
+
+1. Add the **Report database** credential (the writer's) to the template *Network map*.
+2. Launch it. The first run makes the tables `netmap_read`, `netmap_site`, `netmap_link`, `netmap_site_day` and `netmap_link_day`
+   and writes the run's read.
+3. The job output says `Report database: read kept (... sites, ... WAN links)`.
+
+| | |
+|---|---|
+| What a run writes | one row in `netmap_read` (also when SolarWinds could not be read: `ok` 0, a missed read shows), a row for each site in `netmap_site` (its nodes by status) and for each WAN link in `netmap_link` (status, in and out utilization) |
+| How much | a site row is under 100 bytes, a link row under 400. 10 sites and 20 WAN links read every 30 minutes: about 11,000 rows a day, 1 million for the 90 days |
+| What a run rolls up | the reads older than `netmap_db_keep_reads_days` (90): one row for each site and each link a day, in `netmap_site_day` and `netmap_link_day` (reads, reads down and warning, the busiest in and out, the averages, outages, minutes down); their reads are deleted, a day at a time, in one transaction, with one job at a time rolling (`GET_LOCK`). A late read for a day rolled up already is added to its row (its streak stays with the day's last read). The usual gap of a day is kept in the day row (`gap_min`), so pruned neighbours never change it. The rows deleted are exactly the ones aggregated. At most 40 days a run |
+| What a run deletes | the day rows older than `netmap_db_keep_days` (400) |
+| An outage | a link or a site down for two reads in a row, also across midnight (the day row keeps the streak it ended with: `tail_down`, `tail_at`, and the time of its last read, `last_at`) - counted once, also when a late read makes a day roll up again |
+| The gap rule | reads more than twice the usual gap apart (the median gap of the reads that worked; a daily schedule: a day), a read SolarWinds did not give (`ok` 0) and a read without the link are not "in a row": no outage is made across them. A read down counts the time to the next read that worked when that is at most twice the usual gap later, else one usual gap - never past the next read that worked, missed reads between or not; never past midnight (at most 1,440 minutes a day) |
+| What is never written | a read older than `netmap_db_keep_reads_days`, or more than a day ahead of the database's clock (a wrong clock on the AAP node): one warning, nothing kept. The keeping and the pruning count from the database's own clock. The database must answer within 120 seconds a statement, else the history is skipped with one warning |
+| When the database is down | one warning in the job output. The report goes on. The job stays green |
+| A dry run (Check) | writes nothing |
+| Turning it off | `netmap_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE netmap_link;`, `DROP TABLE netmap_site;`, `DROP TABLE netmap_read;`, `DROP TABLE netmap_link_day;`, `DROP TABLE netmap_site_day;` and `DELETE FROM schema_version WHERE component = 'netmap';` |
+
+The keys are the link's identity (its two nodes and their interfaces' ids) or the site's name, with the time. The tables hold site and node
+names and figures only: no address, account or error text.
+
+**By hand.** If the writer may not create tables, set `netmap_db_create: false` and make the tables once as root, in `site_reports`. The writer
+then needs SELECT, INSERT, UPDATE and DELETE; the portal's reader needs SELECT. The statements may run again.
+
+<!-- the statements: site_netmap_db.ddl(), word for word (tests/test_netmap_db.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS netmap_read (
+  read_at DATETIME NOT NULL PRIMARY KEY,
+  job BIGINT NOT NULL DEFAULT 0,
+  ok TINYINT NOT NULL DEFAULT 1,
+  nodes INT NOT NULL DEFAULT 0,
+  sites INT NOT NULL DEFAULT 0,
+  links INT NOT NULL DEFAULT 0,
+  wan_links INT NOT NULL DEFAULT 0,
+  nodes_down INT NOT NULL DEFAULT 0,
+  nodes_warning INT NOT NULL DEFAULT 0,
+  nodes_unknown INT NOT NULL DEFAULT 0,
+  wan_down INT NOT NULL DEFAULT 0,
+  wan_warning INT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS netmap_site (
+  read_at DATETIME NOT NULL,
+  site VARCHAR(255) NOT NULL,
+  nodes INT NOT NULL DEFAULT 0,
+  down INT NOT NULL DEFAULT 0,
+  warning INT NOT NULL DEFAULT 0,
+  unknown INT NOT NULL DEFAULT 0,
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  PRIMARY KEY (site, read_at),
+  KEY netmap_site_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS netmap_link (
+  read_at DATETIME NOT NULL,
+  link_key VARCHAR(255) NOT NULL,
+  site_a VARCHAR(255) NOT NULL DEFAULT '',
+  site_b VARCHAR(255) NOT NULL DEFAULT '',
+  node_a VARCHAR(255) NOT NULL DEFAULT '',
+  node_b VARCHAR(255) NOT NULL DEFAULT '',
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  in_pct SMALLINT NULL,
+  out_pct SMALLINT NULL,
+  speed VARCHAR(32) NOT NULL DEFAULT '',
+  PRIMARY KEY (link_key, read_at),
+  KEY netmap_link_read_at (read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS netmap_site_day (
+  day DATE NOT NULL,
+  site VARCHAR(255) NOT NULL,
+  n_reads INT NOT NULL DEFAULT 0,
+  down_reads INT NOT NULL DEFAULT 0,
+  warn_reads INT NOT NULL DEFAULT 0,
+  max_down INT NOT NULL DEFAULT 0,
+  max_warn INT NOT NULL DEFAULT 0,
+  outages INT NOT NULL DEFAULT 0,
+  down_min INT NOT NULL DEFAULT 0,
+  tail_down TINYINT NOT NULL DEFAULT 0,
+  tail_at DATETIME NULL,
+  last_at DATETIME NULL,
+  gap_min DECIMAL(8,1) NULL,
+  PRIMARY KEY (site, day),
+  KEY netmap_site_day_day (day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS netmap_link_day (
+  day DATE NOT NULL,
+  link_key VARCHAR(255) NOT NULL,
+  site_a VARCHAR(255) NOT NULL DEFAULT '',
+  site_b VARCHAR(255) NOT NULL DEFAULT '',
+  node_a VARCHAR(255) NOT NULL DEFAULT '',
+  node_b VARCHAR(255) NOT NULL DEFAULT '',
+  n_reads INT NOT NULL DEFAULT 0,
+  down_reads INT NOT NULL DEFAULT 0,
+  warn_reads INT NOT NULL DEFAULT 0,
+  in_max SMALLINT NULL,
+  out_max SMALLINT NULL,
+  in_avg DECIMAL(5,1) NULL,
+  out_avg DECIMAL(5,1) NULL,
+  outages INT NOT NULL DEFAULT 0,
+  down_min INT NOT NULL DEFAULT 0,
+  tail_down TINYINT NOT NULL DEFAULT 0,
+  tail_at DATETIME NULL,
+  last_at DATETIME NULL,
+  gap_min DECIMAL(8,1) NULL,
+  PRIMARY KEY (link_key, day),
+  KEY netmap_link_day_day (day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT IGNORE INTO schema_version (component, version, applied_at) VALUES ('netmap', 1, UTC_TIMESTAMP());
+```
+<!-- end of the network map statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `netmap_db` | `true` | Keep the reads here when the template has the credential |
+| `netmap_db_create` | `true` | Make the tables on the first run |
+| `netmap_db_timeout` | `10` | Seconds to connect |
+| `netmap_db_keep_reads_days` | `90` | Keep every read this many days, then one row a day. `0`: never roll up |
+| `netmap_db_keep_days` | `400` | Delete the day rows older than this. `0`: never |
+
 ## The tables and views
 
 | Name | What it holds |
@@ -292,11 +439,12 @@ draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4; 1.111.0 `netmap`: 1) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
 | `stig_scorecard_platform` | 1.67.0: one row per run, collection and platform - its assets and open findings (*The STIG scorecard's points*) |
 | `stig_scorecard_host` | 1.68.0: one row per run, collection, host and platform - its CAT I, II and III open (*The STIG scorecard's points*) |
+| `netmap_read`, `netmap_site`, `netmap_link`, `netmap_site_day`, `netmap_link_day` | 1.111.0: the network map's reads and their day rows (*The network map's history*) |
 | `ad_repl_point` | 1.63.0: one row per run and AD site - its worst replication age (*The replication trend's points*) |
 | `ad_run`, `ad_dc`, `ad_link` | 1.101.2: each AD run, its DCs and its replication links, for the portal's live AD page (*The AD runs for the portal*) |
 | `vm_heat_point` | 1.65.0: one row per run and cluster - its CPU and memory used; the hosts not OK (*The heat grid's points*) |

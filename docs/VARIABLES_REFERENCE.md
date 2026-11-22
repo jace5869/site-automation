@@ -1416,6 +1416,11 @@ File: `roles/netmap_report/defaults/main.yml`
 | `netmap_page_size` | `1000` | ---- Reading ------------------------------------------------------------------------------------------------------------- rows a request (the nodes and links are read page by page) |
 | `netmap_max_nodes` | `5000` | nodes read at most (more: the first ones, said in the report) |
 | `netmap_from_db` | `true` | 1.96.0: read the report database's SolarWinds snapshot (the job "SolarWinds - snapshot") instead of SolarWinds, when the template has a "Report database" credential. A snapshot older than solarwinds_db_max_age minutes, or none: SolarWinds itself, and the job output says why. false = always SolarWinds itself. |
+| `netmap_db` | `true` | 1.111.0: keep each run's read (the sites, the WAN links, their status and utilization) in the report database, for the portal's Network map history (a "Report database" credential: the writer account makes the tables, docs/REPORT_DATABASE.md). false = not kept. Never fails the job. |
+| `netmap_db_create` | `true` | make the tables when they are not there (false: make them by hand once, docs/REPORT_DATABASE.md) |
+| `netmap_db_timeout` | `10` | seconds to wait for the database |
+| `netmap_db_keep_reads_days` | `90` | every read kept this many days, then one row a site and a link a day |
+| `netmap_db_keep_days` | `400` | the day rows kept this many days (0 = never deleted) |
 | `solarwinds_db_max_age` | `20` | minutes a snapshot may be old for a report (all.yml: every report reads it); 0 = never the snapshot |
 | `netmap_compare` | `true` | What changed since the last run: this template's last successful run kept a copy (job artifact netmap_snapshot), read back from AAP with the report's "Red Hat Ansible Automation Platform" credential (as report_history). Without it: "not compared", the rest as usual. |
 | `netmap_snapshot_links` | `true` | The kept copy names each link's interfaces, for "Missing link" (about 140 KB for 1,500 nodes). false = the ids only (about 90 KB; a missing link then shows its interfaces' ids) - for a workflow: there each job's artifacts become the next step's extra variables, so do not put Network map in a workflow, or set this fals… (all of it: the role file) |

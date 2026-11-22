@@ -1,0 +1,48 @@
+---
+# 1.111.0: this run's read of the network map in the report database (site_netmap_db): one row a read, a row for each site and each WAN
+# link; the reads older than netmap_db_keep_reads_days rolled up to one row a day, those older than netmap_db_keep_days deleted. Only with a
+# "Report database" credential (REPORT_DB_HOST). Never fails the job: a database that cannot be reached, or anything that goes wrong
+# here, is one warning (the block's rescue).
+- name: Network map | the report database (never fails the job)
+  block:
+    - name: Network map | the report database
+      ansible.builtin.set_fact:
+        _nm_db_host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+        _nm_db_rows: "{{ _nm | netmap_db_rows }}"
+
+    - name: Network map | this run's read, kept in the report database (netmap_db)
+      site_netmap_db:
+        host: "{{ _nm_db_host }}"
+        port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+        database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+        user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+        ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+        connect_timeout: "{{ netmap_db_timeout | int }}"
+        create: "{{ netmap_db_create | bool }}"
+        read_at: "{{ _nm.read_at | default('', true) or now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+        job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+        ok: "{{ _nm_db_rows.ok }}"
+        sites: "{{ _nm_db_rows.sites }}"
+        links: "{{ _nm_db_rows.links }}"
+        links_total: "{{ _nm_db_rows.links_total }}"
+        keep_reads_days: "{{ netmap_db_keep_reads_days | int }}"
+        keep_days: "{{ netmap_db_keep_days | int }}"
+      register: _nm_db
+      when: _nm_db_host | length > 0
+
+    - name: Network map | the report database - what was kept
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Report database: check mode, nothing written.' if ansible_check_mode else
+             ('Report database: read kept (' ~ _nm_db.written.sites ~ ' sites, ' ~ _nm_db.written.links ~ ' WAN links)'
+              ~ (', ' ~ _nm_db.rolled ~ ' day(s) rolled up' if _nm_db.rolled | default(0) | int > 0 else '')
+              ~ (', tables made: ' ~ (_nm_db.created | join(', ')) if _nm_db.created | default([]) | length > 0 else '') ~ '.'
+              if _nm_db.ok | default(false) and not _nm_db.error | default('') else
+              'Report database: not kept (' ~ (_nm_db.error | default('no answer')) ~ ').') }}
+      when: _nm_db is defined and _nm_db is not skipped
+  rescue:
+    - name: Network map | the report database - not kept
+      ansible.builtin.debug:
+        msg: "Report database: not kept ({{ ansible_failed_result.msg | default('an error') | truncate(300) }}). The report goes on."

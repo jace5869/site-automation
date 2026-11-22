@@ -100,6 +100,11 @@
     msg: "{{ _nm_ad | netmap_ad_lines }}"
   when: _nm.reachable
 
+# 1.111.0: this run's read in the report database (the portal's Network map history): the only thing this writes; never fails the job
+- name: Network map | the report database - this run's read kept (netmap_db)
+  ansible.builtin.include_tasks: db.yml
+  when: netmap_db | bool
+
 - name: Network map | the report
   ansible.builtin.set_fact:
     _nm_opts:

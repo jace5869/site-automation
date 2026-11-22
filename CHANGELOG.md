@@ -69,6 +69,24 @@ VARIABLES_REFERENCE, the template variables.
 (AarFromReview, ReviewReader, SurveyRelax; the survey's first question), test_report_web.py (the head's file: hosted, refused,
 files off, removed), tests/incident/run_incident_test.sh (the AAR from job 4714, from latest, a run without a review, an unknown
 job, a bad answer, no credential).
+## 1.111.0 — 2026-11-22
+
+**To set up:** nothing by hand. Add the **Report database** credential (the writer's) to the template *Network map* if it has none; the setup job attaches it. The first run makes the tables.
+
+**Network map history: the job keeps what it reads (the writer side; the portal page comes after).**
+
+- Each *Network map* run keeps its read in the report database: a row for the read (also when SolarWinds could not be read: `ok` 0), a row for each site (its nodes by status) and for each WAN link (status, in and out utilization). New module `site_netmap_db` (`roles/netmap_report/library`), tasks `roles/netmap_report/tasks/db.yml`, filter `netmap_db_rows`.
+- Every read is kept 90 days (`netmap_db_keep_reads_days`). Older days become one row for each site and link a day (`netmap_site_day`, `netmap_link_day`: reads, reads down and warning, the busiest in and out, the averages, outages, minutes down) and their reads are deleted. The day rows are kept 400 days (`netmap_db_keep_days`). The job does both; at most 40 days a run.
+- An outage is two reads down in a row, also across midnight (a day row keeps the streak it ended with), counted once. One read down shows in the history but is not counted.
+- The gap rule: a missed read, a read without the link, and reads more than twice the usual gap apart never make an outage. A read down counts the time to the next read that worked (at most twice the usual gap later), else one usual gap; never past midnight, so a day is at most 1,440 minutes down.
+- A day that rolls up again (a late read) never reuses or loses its streak across midnight: the day row keeps the time of its last read (`last_at`), and the streak stays with it. The usual gap is kept in the day row (`gap_min`), so a pruned neighbour never turns a daily schedule into 30 minutes. A missed read never makes a down read count past the next read that worked. The rows deleted by a roll-up are exactly the ones aggregated (never a range).
+- Rolling up is safe to repeat and to run twice at once: one job rolls at a time (`GET_LOCK`), each day is one transaction with its reads locked, and a late read for a day already rolled up is added to its row, never over it.
+- A read with a wrong clock is never written: older than `netmap_db_keep_reads_days` or more than a day ahead of the database's clock is one warning. Keeping and pruning count from the database's own clock. A database that takes the connection and never answers is given up after 120 seconds (a warning). Two writers of one read time wait for each other, and a day is rolled up by the next read that worked, even across midnight.
+- A time with an offset is stored as UTC; a bad time is one warning, and any error in the history tasks is one warning (the job stays green). The tables can be made when `schema_version` is missing, and the statements may run again.
+- The job never fails for it: a database that is down, a wrong password, a read-only account or a missing table is one warning, and the report goes on. `netmap_db: false` turns it off; no credential, nothing written. A dry run (Check) writes nothing.
+- Settings: `netmap_db`, `netmap_db_create`, `netmap_db_timeout`, `netmap_db_keep_reads_days`, `netmap_db_keep_days`. Docs: REPORT_DATABASE.md (*The network map's history*, the statements for making the tables by hand), NETWORK_MAP.md.
+- Tests: `tests/test_netmap_db.py` (31: writing, outages across midnight, the gap rule, down minutes, merging, the lock, pruning, the statements in the doc), `tests/netmap/run_netmap_db_test.sh` (a real MySQL 8.4: tables, the read, roll-up of three old days, pruning, dry run, wrong password, read-only account, server down, no table; ansible-core 2.22 and 2.16).
+
 ## 1.110.0 — 2026-11-22
 
 **Nothing to set up.**

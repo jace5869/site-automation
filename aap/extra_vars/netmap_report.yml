@@ -107,6 +107,23 @@
 ## always SolarWinds itself.
 # netmap_from_db: true
 
+## 1.111.0: keep each run's read (the sites, the WAN links, their status and utilization) in the
+## report database, for the portal's Network map history (a "Report database" credential: the writer
+## account makes the tables, docs/REPORT_DATABASE.md). false = not kept. Never fails the job.
+# netmap_db: true
+
+## make the tables when they are not there (false: make them by hand once, docs/REPORT_DATABASE.md)
+# netmap_db_create: true
+
+## seconds to wait for the database
+# netmap_db_timeout: 10
+
+## every read kept this many days, then one row a site and a link a day
+# netmap_db_keep_reads_days: 90
+
+## the day rows kept this many days (0 = never deleted)
+# netmap_db_keep_days: 400
+
 ## minutes a snapshot may be old for a report (all.yml: every report reads it); 0 = never the
 ## snapshot
 # solarwinds_db_max_age: 20
