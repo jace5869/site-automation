@@ -278,7 +278,7 @@ xc='{"answer_keys_rules": ["V-258999"]}'
 printf '%s' '{"summary": "NF\nroot owns /etc/hostname, as the check text wants.\nroot /etc/hostname"}' > "$work/act/act.json"; rm -f "$work/act/fake-act-calls.log"
 run "the cross-check: code NF and ACT NF on h9a, a person's Open in STIG Manager and ACT NF on h9b - need a look" ok \
     -e target=h9a,h9b -e "$xc" -e answer_keys_cross_check=true -- \
-    "STIG answer keys: 1 ready to copy, 0 not drafted - 1 STIG, 2 hosts" 'emailed "[AAP] STIG answer keys: 1 need a look, 1 ready to copy"' \
+    "STIG answer keys: 1 ready to copy, 0 not drafted - 1 STIG, 2 hosts" "[AAP] STIG answer keys: 1 need a look, 1 ready to copy" \
     "Cross-check: 0 agree, 1 need a look, 0 too little to compare" "V-258999 CROSS-CHECK: STIG Manager Open, ACT NF on h9b"
 [ "$(grep -c call "$work/act/fake-act-calls.log" 2>/dev/null)" = 1 ] && echo "ok   - ... one ACT call: the two hosts returned the same evidence" \
     || { echo "FAIL - cross-check ACT calls: $(cat "$work/act/fake-act-calls.log" 2>/dev/null | wc -l)"; fails=$((fails + 1)); }

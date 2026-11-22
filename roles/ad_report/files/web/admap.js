@@ -189,7 +189,9 @@
       // a label is never on a dot: none fits even for the worst - left off (its name on hover and keyboard focus)
       if (!pick) return false;
       taken.push([pick[0] - 2, pick[1] - 12, pick[0] + w + 2, pick[1] + h - 9]);
-      var bx = [pick[0] - 2, pick[1] - 12, pick[0] + w + 2, pick[1] + h - 9], dy0 = y + 1;
+      // the leader is decided by the name (the first line): a second line beside the dot does not make the name near it
+      var w0 = lines.length > 1 ? textW(lines.slice(0, 1)) : w, x0 = pick.al === 'end' ? pick[0] + w - w0 : pick.al === 'middle' ? pick[0] + (w - w0) / 2 : pick[0];
+      var bx = [x0 - 2, pick[1] - 12, x0 + w0 + 2, pick[1] + 4], dy0 = y + 1;
       var nx = Math.max(bx[0], Math.min(cx, bx[2])), ny = Math.max(bx[1], Math.min(dy0, bx[3])), dd = Math.hypot(nx - cx, ny - dy0) || 1;
       if (!end && dd > rr + 10) {                         // not next to its dot (a far place, or pushed in from the edge): a thin leader to it
         g.appendChild(sv('line', { x1: (cx + (nx - cx) / dd * (rr + 1)).toFixed(1), y1: (dy0 + (ny - dy0) / dd * (rr + 1)).toFixed(1), x2: nx.toFixed(1), y2: ny.toFixed(1), 'class': 'am-lead' }));
