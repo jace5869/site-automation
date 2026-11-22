@@ -72,7 +72,7 @@ class EveryPlaybook(unittest.TestCase):
         missing, plays_on_hosts, files = [], 0, 0
         for path in sorted(glob.glob(os.path.join(REPO, "playbooks", "*.yml"))):
             name = os.path.basename(path)
-            if name == "site_exclude.yml":
+            if name in ("site_exclude.yml", "workflow_dry_run.yml"):    # workflow_dry_run.yml: an imported guard, one assert, no host task
                 continue
             with open(path) as f:
                 text = f.read()
