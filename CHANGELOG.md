@@ -425,6 +425,41 @@ that site_exclude is not honoured there - so the two never drift.
   default. The restart: the flag already in the file, the old container running without it - removed by id, recreated, MITIGATED.
   It runs against a stand-in podman and podman-compose (`tests/java4shell/fake`), which act like the old podman-compose.
 
+## 1.90.2 — 2026-11-22
+
+**To set up: nothing.**
+
+**VM - outage watch: the review of 1.90.1** (outage_timeline_filters.py, site_report.js, report_hover.css.j2). The
+host / vCenter / VM row now matches by each event's own identity, and The events never hides the row a mark shows.
+
+- **VM:** the outage's own VM, when its alarms name it only as their entity (no vm field), is found by the VM box.
+  Before, typing it showed no event, and it hid the critical mark and its lead-up.
+- **VM:** a grouped row (*HA restarted 14 VMs*, or the same event again on several VMs within a minute) is found by any
+  of its VMs, not only the first. Its opened facts say *VMs*: the first six and how many more. The row, its count, the
+  email and the workbook are unchanged.
+- **Repeats** fold only when the host and the VMs are the same too. Before, two VMs' events on one host folded into
+  one row, and filtering for the second VM hid both rows while its mark still showed.
+- **vCenter:** the full name is what the list matches. It shows the short name unless two vCenters share it. Before,
+  vc01.east and vc01.west were one choice.
+- **Host:** an event's own host, never the place it happened. A ServiceNow ticket's host and an alarm's host entity
+  count. Before, a VM's alarm on esx01 with its host esx02 counted under both.
+- **Tab order:** a mark the filters leave out is out of the Tab order at once, and back when it matches again. Before,
+  with motion it could still be reached for 250 ms while it faded.
+- **Print:** printed before the time line came into view, the marks sit on their times and the lead-up's tab sits
+  above the plot. An opened mark prints all its events, with no 300 px scroll box.
+- **Grouped rows** keep each event's host and VM. Host and VM must match the same restart: *HA restarted 2 VMs* (db
+  on esx03, web on esx07) shows for esx07 and web, not for esx03 and web. The row counts once.
+- **VM names** stay whole (*db.prod*); only the Where label is short. **An alarm's entity** is what vCenter says it
+  is: the events module now reads entity_type (host, vm, cluster, ...). Without it, the names known on that vCenter
+  decide, then the alarm's name. A host alarm or a cluster alarm is never a VM, and a VM found once counts for every
+  alarm on it.
+- **A ticket** keeps its host when a VM has the same name. **A vCenter by its address** shows the address whole.
+- docs/VM_OUTAGE_WATCH.md: what Host, vCenter and VM match.
+- Tests: tests/test_outage_timeline.py Review1901 (the VM by its entity, the grouped VMs, the fold, the vCenter, the
+  ticket's and the alarm's host) and Codex1902 (one per finding of the final pass); tests/test_vmware_modules.py
+  OutageEntityType; tests/test_report_hover.py in Chromium: RealChromeOutageVmAlarm, RealChromeOutageRestarts,
+  RealChromeOutageCodex1902, RealChromeOutageWhere test_b (Tab order), test_c and test_d (print).
+
 ## 1.90.1 — 2026-11-21
 
 **To set up: nothing.**

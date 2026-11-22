@@ -34,7 +34,7 @@ events:
   returned: success
   sample: [{key: 4711, time: "2026-11-12T01:19:04Z", type: HostConnectionLostEvent, message: Host esx03 is not responding,
             host: esx03.example.mil, vm: "", cluster: cluster1, datacenter: DC1, vcenter: vc01.example.mil, args: {},
-            alarm: "", entity: "", from: "", to: ""}]
+            alarm: "", entity: "", entity_type: "", from: "", to: ""}]
 capped:
   description: The vCenters that had more events than max_events (the oldest were left out).
   type: list
@@ -93,6 +93,20 @@ def _name(arg):
     return str(getattr(arg, "name", "") or "") if arg is not None else ""
 
 
+ENTITY_TYPES = {"HostSystem": "host", "ComputeResource": "host", "VirtualMachine": "vm", "ClusterComputeResource": "cluster",
+                "Datastore": "datastore", "StoragePod": "datastore", "Network": "network", "DistributedVirtualPortgroup": "network",
+                "OpaqueNetwork": "network", "Datacenter": "datacenter", "Folder": "folder", "ResourcePool": "other",
+                "VirtualApp": "other"}
+
+
+def _entity_type(arg):
+    """1.90.2: what an event's entity is (an alarm's: host, vm, cluster, ...), from its managed object's type; no call to vCenter."""
+    ent = getattr(arg, "entity", None) if arg is not None else None
+    if ent is None:
+        return ""
+    return ENTITY_TYPES.get(str(getattr(ent, "_wsdlName", "") or ""), "other")
+
+
 def record(e):
     """One event as the time line reads it."""
     args = {}
@@ -103,6 +117,7 @@ def record(e):
             "host": _name(getattr(e, "host", None)), "vm": _name(getattr(e, "vm", None)),
             "cluster": _name(getattr(e, "computeResource", None)), "datacenter": _name(getattr(e, "datacenter", None)),
             "alarm": _name(getattr(e, "alarm", None)), "entity": _name(getattr(e, "entity", None)),
+            "entity_type": _entity_type(getattr(e, "entity", None)),
             "from": str(getattr(e, "from", "") or ""), "to": str(getattr(e, "to", "") or "")}
 
 

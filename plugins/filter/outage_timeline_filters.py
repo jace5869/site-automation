@@ -174,13 +174,14 @@ def _vcenter_events(events):
             alarm, to = str(e.get("alarm") or "an alarm"), str(e.get("to") or "").lower()
             level, role = ALARM.get(to, ("info", ""))
             label = "Alarm %s: %s" % ({"red": "red", "yellow": "yellow", "green": "back to green", "gray": "gray"}.get(to, to or "changed"), alarm)
-            where = _short(e.get("entity")) or where
+            where = _short(e.get("entity")) or where           # the Where label: short (1.90.2: the VM's identity keeps the raw entity)
             kind = "alarm:" + alarm
         elif not label:
             label = message[:120] or typ
         out.append({"t": t, "lane": lane, "level": level, "label": label, "where": where, "kind": kind, "role": role,
                     "type": typ, "message": message, "vcenter": str(e.get("vcenter") or ""), "vm": vm, "cluster": cluster,
-                    "host": host, "entity": _short(e.get("entity")), "n": 1, "names": []})
+                    "host": host, "entity": str(e.get("entity") or "").strip(), "entity_type": str(e.get("entity_type") or "").lower(),
+                    "n": 1, "names": []})
     out.sort(key=lambda x: x["t"])
     return out
 
@@ -198,9 +199,11 @@ def _restarts(evs):
             g["last"] = e["t"]
             if e["vm"] and e["vm"] not in g["names"]:
                 g["names"].append(e["vm"])
+            if (e["host"], e["vm"]) not in g["members"]:
+                g["members"].append((e["host"], e["vm"]))      # 1.90.2: each restart's own host and VM, for the page's filters
             g["n"] += 1
             continue
-        g = dict(e, last=e["t"], names=[e["vm"]] if e["vm"] else [], where=e["cluster"] or e["where"])
+        g = dict(e, last=e["t"], names=[e["vm"]] if e["vm"] else [], where=e["cluster"] or e["where"], members=[(e["host"], e["vm"])])
         open_[(e["vcenter"], e["cluster"])] = g
         out.append(g)
     for e in out:
@@ -251,6 +254,11 @@ def _same(evs):
         if p is not None and (e["t"] - p["seen"]).total_seconds() <= SAME_S and not e.get("count"):
             p["n"] += 1
             p["seen"] = e["t"]
+            if e.get("vm") and e["vm"] != p.get("vm") and e["vm"] not in p.setdefault("vms", []):
+                p["vms"].append(e["vm"])                # 1.90.2: the page's VM filter matches each VM a merged row stands for
+            m, first = (e.get("host") or "", e.get("vm") or ""), (p.get("host") or "", p.get("vm") or "")
+            if m != first and m not in p.get("members", [first]):
+                p.setdefault("members", [first]).append(m)     # and each host and VM pair (only when there are several)
             continue
         e["seen"] = e["t"]
         last[k] = e
@@ -462,6 +470,57 @@ def _about(e):
     return set(_key(e, x) for x in [e.get("where"), e.get("vm")] + list(e.get("names") or []) if x)
 
 
+VM_ALARM = re.compile(r"\bvirtual machine\b|^vm\b", re.I)
+HOST_ALARM = re.compile(r"\bhost\b|^esxi?\b", re.I)
+
+
+def _entity_words(e):
+    """1.90.2: what an alarm's entity is by the alarm's own name, when vCenter did not say (no entity_type) -> "vm", "host" or ""
+    ("Virtual machine CPU usage", "vSphere HA virtual machine failover failed": a VM; "Host connection and power state", "vSphere HA
+    host status": a host; "vSphere HA failover in progress", "Datastore usage on disk", "License inventory monitoring": neither)."""
+    kind = str(e.get("kind") or "")
+    if not kind.startswith("alarm:"):
+        return ""
+    name = kind[6:]
+    return "vm" if VM_ALARM.search(name) else "host" if HOST_ALARM.search(name) else ""
+
+
+def _idents(evs):
+    """1.90.2: the hosts and VMs of the review, each as its vCenter knows it (_key), and what each alarm's entity is: vCenter's own
+    entity_type first; else a name the review knows as a VM or as a host (not both) on that vCenter; else the alarm's name. A VM or host
+    found so is known to the next alarm on the same entity too. -> (hosts, VMs, {id(event): "vm" | "host"})."""
+    hosts = set(_key(e, _short(e["host"])) for e in evs if e.get("host"))
+    vms = set(_key(e, x) for e in evs for x in [e.get("vm")] + list(e.get("names") or []) + list(e.get("vms") or []) if x)
+    for e in evs:
+        for h, v in e.get("members") or ():
+            if h:
+                hosts.add(_key(e, _short(h)))
+            if v:
+                vms.add(_key(e, v))
+
+    def what(e):
+        ent, t = str(e.get("entity") or ""), str(e.get("entity_type") or "")
+        if not ent or not str(e.get("kind") or "").startswith("alarm:"):
+            return ""
+        if t:
+            return t if t in ("vm", "host") else ""
+        is_vm, is_host = _key(e, ent) in vms, _key(e, _short(ent)) in hosts
+        if is_vm != is_host:
+            return "vm" if is_vm else "host"
+        return _entity_words(e)
+    kinds = {}
+    for e in evs:                                           # first: what vCenter or the alarm's name says
+        kinds[id(e)] = what(e)
+        if kinds[id(e)] == "vm":
+            vms.add(_key(e, e["entity"]))
+        elif kinds[id(e)] == "host":
+            hosts.add(_key(e, _short(e["entity"])))
+    for e in evs:                                           # then: an entity an earlier or later alarm showed to be a VM or a host
+        if not kinds[id(e)]:
+            kinds[id(e)] = what(e)
+    return hosts, vms, kinds
+
+
 def _relate(evs, downs, fallback=None, cleared=None):
     """The outage's subject, worked out from the events themselves, and which events are about it -> {names, text, note}; each event gets
     "cls" (its kind) and "related". The subject: the hosts that went down and the VMs with a critical event of their own; related: the
@@ -481,7 +540,7 @@ def _relate(evs, downs, fallback=None, cleared=None):
         for e in evs:                                       # (a host's red alarm, a VM's red alarm known by its entity only)
             if e["lane"] in ("vcenter", "host") and e["level"] == "critical" and e["role"] not in ("restart", "clear") and e.get("where") \
                     and _alarm_key(e) not in (cleared or ()):
-                (hosts if e["where"] == e.get("host") else vms).add(_key(e, e["where"]))
+                (hosts if e["where"] == e.get("host") or (e.get("entity_type") or _entity_words(e)) == "host" else vms).add(_key(e, e["where"]))
     if not hosts and not vms and fallback:                  # an outage that had cleared by the review: the VMs of the alarms that cleared
         vms = set(fallback)
     if not hosts and not vms:
@@ -498,7 +557,7 @@ def _relate(evs, downs, fallback=None, cleared=None):
             related.add(_key(e, e["cluster"]))
     for e in evs:                                           # datastores and port groups named by events of a related host
         if e["cls"] in ("storage", "network") and (_has(related, e, e.get("host")) or _has(related, e, e.get("where"))):
-            ent = e.get("entity")
+            ent = _short(e.get("entity"))
             if ent and ent != e.get("host"):
                 related.add(_key(e, ent))
     for e in evs:
@@ -556,11 +615,14 @@ def _alarm_runs(evs):
 
 
 def _fold(evs):
-    """Identical events one after another (the same lane, what, where, level, vCenter, kind and related status) -> [(first index, [indexes])] for the runs of two or more."""
+    """Identical events one after another (the same lane, what, where, level, vCenter, kind and related status - and, 1.90.2, the same host
+    and VMs, so the page's host / VM filter never keeps a folded row while hiding its head) -> [(first index, [indexes])] for the runs of two or more."""
     runs, i = [], 0
     while i < len(evs):
         j = i
-        k = lambda e: (e["lane"], e["label"], e["where"], e["level"], e.get("vcenter", ""), e.get("kind", ""), e.get("cls", ""), bool(e.get("related")))          # noqa: E731
+        k = lambda e: (e["lane"], e["label"], e["where"], e["level"], e.get("vcenter", ""), e.get("kind", ""), e.get("cls", ""), bool(e.get("related")),          # noqa: E731
+                       e.get("host") or "", e.get("vm") or "", tuple(e.get("names") or ()), tuple(e.get("vms") or ()),
+                       tuple(e["members"]) if len(e.get("members") or ()) > 1 else ())                     # 1.90.2: as the page filters
         while j + 1 < len(evs) and k(evs[j + 1]) == k(evs[i]):
             j += 1
         if j > i:
@@ -805,19 +867,40 @@ def outage_timeline(events, tickets=None, opts=None):
         if days and (i == 0 or t.date() != tks[i - 1].date()):
             text = t.strftime("%d %b %H:%M")
         ticks.append({"at": _pct(t, z0, z1), "text": text, "wide": len(tks) > 5 and i % 2 == 1})
+    k_hosts, k_vms, ent_kind = _idents(evs)                                    # 1.90.2: what the page's host and VM filters know
+    host_names, vm_names = set(k[1] for k in k_hosts), set(k[1] for k in k_vms)
+
     def evd(e):
         """One event as a mark's list line (the page's script reads it): n, time, minute, level, what, where, related, kind - and, for an incident
         of ServiceNow, its number and link. 1.90.1: what the page filters by and an opened mark shows - its host, VM, vCenter (short names),
-        cluster and alarm, each when known - and its place in the lead-up (in: 1, the critical event that ends it: 2)."""
+        cluster and alarm, each when known - and its place in the lead-up (in: 1, the critical event that ends it: 2).
+        1.90.2: the host also from a ticket or an alarm's entity, the VM also from a VM alarm's entity, the other VMs of a grouped row (vms),
+        and the vCenter's full name (the page shows the short one when that is not ambiguous)."""
         d = {"n": e["num"], "t": loc(e["t"]).strftime("%H:%M:%S"), "m": loc(e["t"]).strftime("%H:%M"), "l": e["level"], "w": e["what"], "p": e["where"],
              "r": 1 if e["related"] else 0, "c": e["cls"]}
         if e.get("url"):
             d.update(k=e["ticket"], u=e["url"])
         kind = str(e.get("kind") or "")
-        for k, v in (("h", _short(e.get("host"))), ("vm", str(e.get("vm") or "")), ("v", _short(e.get("vcenter"))),
+        host, vm, ent = _short(e.get("host")), str(e.get("vm") or ""), str(e.get("entity") or "")
+        if e["lane"] in ("servicenow", "act") and e["where"]:  # 1.90.2: a ticket's host, as its short description names it - or its VM,
+            if e["where"] in vm_names and e["where"] not in host_names:  # when the review knows that name as a VM only
+                vm = e["where"]
+            else:
+                host = e["where"]
+        elif not host and ent_kind.get(id(e)) == "host":
+            host = _short(ent)                                  # an alarm on a host known only by its entity
+        if not vm and ent_kind.get(id(e)) == "vm":
+            vm = ent                                            # 1.90.2: a VM's alarm known by its entity only (no vm field), its full name
+        vms = [x for x in list(e.get("names") or []) + list(e.get("vms") or []) if x and x != vm]
+        mem = sorted(set((_short(h) or host, v) for h, v in e.get("members") or ()))
+        for k, v in (("h", host), ("vm", vm or (vms.pop(0) if vms else "")), ("v", str(e.get("vcenter") or "").strip()),
                      ("cl", str(e.get("cluster") or "")), ("a", kind[6:] if kind.startswith("alarm:") else "")):
             if v:
                 d[k] = v
+        if vms:
+            d["vms"] = sorted(set(vms), key=lambda x: (len(x), x))  # 1.90.2: the other VMs of a grouped row (HA's restarts, the same event again)
+        if len(mem) > 1:
+            d["mem"] = [list(m) for m in mem]                   # and its host and VM pairs: the filters match one pair, the row counts once
         if lead_up is not None and lead_up[0] <= e["t"] <= lead_up[1]["t"]:
             d["lu"] = 2 if e is lead_up[1] else 1
         return d

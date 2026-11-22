@@ -714,7 +714,18 @@
      their lists, The events, the lanes' and the kinds' counts with the controls above. Kept nowhere: nothing in the address, nothing stored */
   var OTF={h:'',v:'',vm:''},otByN={},otEvs=[],otEl=document.querySelector('.ot'),otHook={},otShown=null,otClear=null;
   otMarks.forEach(function(m){(m._ev||[]).forEach(function(e){otByN[e.n]=e;otEvs.push(e)})});
-  var otPass=function(e){return !(OTF.h&&e.h!==OTF.h&&e.p!==OTF.h)&&!(OTF.v&&e.v!==OTF.v)&&!(OTF.vm&&String(e.vm||'').toLowerCase().indexOf(OTF.vm.toLowerCase())<0)};
+  /* 1.90.2: a host by the event's own host (h: also a ticket's host or a host alarm's entity), never by where it happened; a vCenter by its
+     full name (v), shown short when that is not ambiguous (otVn); a VM: any VM the event stands for (vm and, for a grouped row, vms).
+     A grouped row with several hosts or VMs (mem: [host, VM] pairs) matches when one pair matches both. */
+  var otVms=function(e){return (e.vm?[e.vm]:[]).concat(e.vms||[])};
+  var otHs=function(e){var o=e.h?[e.h]:[];(e.mem||[]).forEach(function(m){if(m[0]&&o.indexOf(m[0])<0)o.push(m[0])});return o};
+  var otPass=function(e){var q=OTF.vm.toLowerCase(),has=function(x){return String(x||'').toLowerCase().indexOf(q)>=0};
+    if(OTF.v&&e.v!==OTF.v)return false;
+    if(e.mem)return e.mem.some(function(m){return !(OTF.h&&m[0]!==OTF.h)&&!(q&&!has(m[1]))});    /* a grouped row: one restart's own host and VM */
+    return !(OTF.h&&e.h!==OTF.h)&&!(q&&!otVms(e).some(has))};
+  var otVn={};otEvs.forEach(function(e){if(e.v)otVn[e.v]=/^[\d.]+$|:/.test(e.v)?e.v:e.v.split('.')[0]});    /* an address stays whole */
+  (function(){var c={};Object.keys(otVn).forEach(function(k){c[otVn[k]]=(c[otVn[k]]||0)+1});Object.keys(otVn).forEach(function(k){if(c[otVn[k]]>1)otVn[k]=k})})();
+  var otV=function(v){return v?otVn[v]||v:''};
   var otVisible=function(list){return list.filter(function(e){return !(OT.show==='rel'&&!e.r)&&!OT.off[e.c]&&otPass(e)})};
   /* the counts: a lane "4 of 29 events" while something narrows it, the kinds' counts within the host / vCenter / VM, "5 of 32 events" */
   var otCount=function(){if(!otEl)return;var on=!!(OTF.h||OTF.v||OTF.vm),kinds={},n=0;
@@ -748,7 +759,8 @@
     var tables=all('.tw table').filter(function(tb){return tb.querySelector('tr[data-cls]')});
     tables.forEach(function(tb){if(tb._expand&&(changed||filtered||!OT.rep))tb._expand();
       tb._otFree=filtered||(!OT.rep&&!!tb.querySelector('tr[data-rep]'))});
-    otMarks.forEach(function(m){if(!m._ev)return;var v=otVisible(m._ev);m.classList.toggle('ot-off',!v.length);if(v.length)otMark(m,v)});
+    otMarks.forEach(function(m){if(!m._ev)return;var v=otVisible(m._ev);m.classList.toggle('ot-off',!v.length);m.tabIndex=v.length?0:-1;      /* 1.90.2: out of the Tab order at once */
+      if(v.length)otMark(m,v);else if(document.activeElement===m)m.blur()});
     otRows=all('tr[data-cls]');var wi=-1;otRows.forEach(function(tr){var t=tr.closest('table');if(t&&wi<0){var h=all('thead th',t).map(function(x){return x.textContent.trim()});wi=h.findIndex(function(x){return x.indexOf('What happened')===0})}
       var ev=otByN[tr.getAttribute('data-num')]||{r:tr.getAttribute('data-rel')==='1'?1:0,c:tr.getAttribute('data-cls')};
       var hide=!otVisible([ev]).length||(tr.hasAttribute('data-rep')&&!OT.rep);if(!!tr._ot!==hide){tr._ot=hide;vis(tr)}      /* one more input to vis(), beside the table's filter and the search */
@@ -765,11 +777,12 @@
   var otSave=function(){try{localStorage.setItem(OTK,JSON.stringify({show:OT.show,off:OT.off,rep:OT.rep}))}catch(e){}};
   if(otEl&&otEvs.length){
     var otU=function(f){var o=[];otEvs.forEach(function(e){var x=f(e);if(x&&o.indexOf(x)<0)o.push(x)});return o.sort()};
-    var oh=otU(function(e){return e.h}),ov=otU(function(e){return e.v}),om=otU(function(e){return e.vm});
+    var oh=[],ov=otU(function(e){return e.v}),om=[];otEvs.forEach(function(e){otHs(e).forEach(function(x){if(oh.indexOf(x)<0)oh.push(x)})});oh.sort();
+    otEvs.forEach(function(e){otVms(e).forEach(function(x){if(om.indexOf(x)<0)om.push(x)})});om.sort();
     if(oh.length>1||ov.length>1||om.length>1){      /* one host, one vCenter, one VM: nothing to choose - no row */
       var fr=document.createElement('div');fr.className='otf';fr.setAttribute('role','group');fr.setAttribute('aria-label','Filter the time line by host, vCenter or VM');
       var otSel=function(cls,name,list,word,key){if(list.length<2)return null;var l=document.createElement('label');l.className=cls;l.appendChild(document.createTextNode(name));
-        var x=document.createElement('select');x.appendChild(new Option(word+' ('+list.length+')',''));list.forEach(function(v){x.appendChild(new Option(v,v))});
+        var x=document.createElement('select');x.appendChild(new Option(word+' ('+list.length+')',''));list.forEach(function(v){x.appendChild(new Option(key==='v'?otV(v):v,v))});
         x.addEventListener('change',function(){OTF[key]=x.value;otApply()});l.appendChild(x);fr.appendChild(l);return x};
       var fh=otSel('f-h','Host',oh,'All hosts','h'),fv=otSel('f-v','vCenter',ov,'All vCenters','v'),fm=null;
       if(om.length>1){var lm=document.createElement('label');lm.className='f-vm';lm.appendChild(document.createTextNode('VM'));
@@ -874,7 +887,8 @@
       var add=function(k,v,wide,node){if(!v&&!node)return;var g=document.createElement('div');if(wide)g.className='wide';var t=document.createElement('dt');t.textContent=k;
         var d=document.createElement('dd');if(node)d.appendChild(node);else d.textContent=v;g.appendChild(t);g.appendChild(d);dl.appendChild(g)};
       var o=function(x){return x&&x!==e.p?x:''};
-      add('Where',e.p);add('Host',o(e.h));add('VM',o(e.vm));add('Cluster',o(e.cl));add('vCenter',o(e.v));add('Alarm',e.a||'',String(e.a||'').length>22);add('Kind',otKn[e.c]||'');
+      var vs=otVms(e);add('Where',e.p);var hs=otHs(e);add(hs.length>1?'Hosts':'Host',hs.length>1?hs.join(', '):o(e.h));add(vs.length>1?'VMs':'VM',vs.length>1?vs.slice(0,6).join(', ')+(vs.length>6?' and '+(vs.length-6)+' more':''):o(e.vm),vs.length>2);
+      add('Cluster',o(e.cl));add('vCenter',o(otV(e.v)));add('Alarm',e.a||'',String(e.a||'').length>22);add('Kind',otKn[e.c]||'');
       if(otSubj)add('About the outage',e.r?'Yes: about '+otSubj+' or its host, cluster, datastores':'No',true);
       if(e.lu)add('Lead-up',e.lu===2?'Ends here: the first critical event':'Yes: in the '+(otLs?otLs+' ':'')+'before #'+otLn,true);
       if(e.k&&e.u&&okUrl(e.u)){var inc=document.createElement('a');inc.className='tt-inc';inc.href=e.u;inc.target='_blank';inc.rel='noopener noreferrer';
@@ -903,7 +917,7 @@
           ev.forEach(function(e){var li=document.createElement('li');if(otSubj&&!e.r)li.className='dim';li.tabIndex=0;li.setAttribute('data-n',String(e.n));li.setAttribute('aria-label',e.t+', '+OTWD[e.l]+', '+e.w);
             var ic=document.createElement('span'),sv=document.querySelector('.ot-legend .ot-'+e.l+' svg');ic.className='ic ot-'+e.l;ic.setAttribute('aria-hidden','true');if(sv)ic.appendChild(sv.cloneNode(true));li.appendChild(ic);
             var t=document.createElement('span');t.className='t';t.textContent=e.t;li.appendChild(t);
-            var w=otWhat(e,'w'),sm=document.createElement('small');sm.textContent=[e.p,e.h&&e.h!==e.p?e.h:'',e.v].filter(function(q){return q}).join(' \u00b7 ');w.appendChild(sm);li.appendChild(w);
+            var w=otWhat(e,'w'),sm=document.createElement('small');sm.textContent=[e.p,e.h&&e.h!==e.p?e.h:'',otV(e.v)].filter(function(q){return q}).join(' \u00b7 ');w.appendChild(sm);li.appendChild(w);
             var pk=function(){all('li',ul).forEach(function(q){q.removeAttribute('aria-current')});li.setAttribute('aria-current','true');otFacts(dl,e)};
             li.addEventListener('click',function(k){if(k.target.closest&&k.target.closest('a'))return;pk()});
             li.addEventListener('keydown',function(k){if(k.target===li&&(k.key==='Enter'||k.key===' ')){k.preventDefault();pk()}});

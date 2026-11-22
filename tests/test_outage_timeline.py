@@ -1517,9 +1517,9 @@ class PopLook(unittest.TestCase):
     def test_each_event_says_where_it_was(self):
         ev = self.events(self.chart(run_1900()))
         self.assertEqual(ev[27], {"n": 27, "t": "10:58:20", "m": "10:58", "l": "critical", "w": "Alarm red: Host hardware system board status", "p": "esx07",
-                                  "r": 1, "c": "host", "h": "esx07", "v": "vc01", "cl": "cluster1", "a": "Host hardware system board status", "lu": 2})
+                                  "r": 1, "c": "host", "h": "esx07", "v": "vc01.example.mil", "cl": "cluster1", "a": "Host hardware system board status", "lu": 2})
         vm = next(e for e in ev.values() if e.get("vm") == "vm-web03")
-        self.assertEqual((vm["p"], vm["h"], vm["v"]), ("vm-web03", "esx03", "vc01"))                 # a VM's alarm: its host too (short names)
+        self.assertEqual((vm["p"], vm["h"], vm["v"]), ("vm-web03", "esx03", "vc01.example.mil"))     # a VM's alarm: its host too (1.90.2: the vCenter in full)
         self.assertNotIn("vm", ev[27])                                                                 # only what is known
         boot = next(e for e in ev.values() if e["w"].startswith("Host booted") or "boot" in e["w"].lower())
         self.assertNotIn("a", boot)                                                                    # an event, not an alarm
@@ -1548,6 +1548,140 @@ class PopLook(unittest.TestCase):
             self.assertIn('data-subject="esx07"', h, look)
             self.assertIn("A click (or <b>Enter</b> on a Tab stop, or a tap) opens its events below the lane", h, look)
             self.assertNotIn("keeps the list open", h, look)
+
+
+class Review1901(unittest.TestCase):
+    """1.90.2, the review of 1.90.1: what the page filters by names each event's own host, every VM it stands for and its vCenter in full,
+    and The events folds only rows those filters cannot tell apart."""
+
+    def chart(self, evs, tks=None, **kw):
+        r = ot.outage_timeline(evs, tks or [], dict(OPTS, **dict(LeadUp.O, **kw)))
+        return r, next(s for s in r["web_sections"] if s.get("outage"))["outage"]
+
+    def events(self, c):
+        return dict((e["n"], e) for g in c["lanes"] for m in g["marks"] for e in m["ev"])
+
+    def test_a_vm_alarm_known_by_its_entity_only_is_the_vms(self):
+        _r, c = self.chart(run_1900(vm_reds=True))
+        ev = self.events(c)
+        self.assertEqual(c["subject"], "vm-db01")
+        self.assertEqual([(n, ev[n].get("vm"), ev[n].get("h")) for n in (26, 27, 28)],
+                         [(26, "vm-db01", "esx02"), (27, "vm-db01", "esx02"), (28, "vm-db01", "esx02")])   # the outage's own alarms, its lead-up
+        self.assertNotIn("vm", ev[30])                                                                   # esx07's fan: a host's alarm
+        self.assertFalse(any(e.get("vm") in ("cluster1", "vc01") for e in ev.values()))                  # a cluster's, a vCenter's: no VM
+
+    def test_a_grouped_row_names_every_vm_it_stands_for(self):
+        e = [ev("01:21:%02d" % i, "com.vmware.vc.ha.VmRestartedByHAEvent", vm="app%02d" % i) for i in range(3)]
+        e += [ev("01:21:30", "VmRestartedOnAlternateHostEvent", vm="app00")]
+        r, c = self.chart(e, begin="2026-11-11T20:45:00Z", end=DAY + "02:45:00Z")
+        g = next(x for x in self.events(c).values() if x["w"] == "HA restarted 3 VMs")
+        self.assertEqual((g["vm"], g["vms"]), ("app00", ["app01", "app02"]))
+        self.assertEqual(whats(r), ["HA restarted 3 VMs"])                                               # the row, the email, the workbook: as before
+        same = [ev("01:00:%02d" % (i * 10), "VmGuestRebootEvent", H, vm="web%02d" % i, msg="Guest OS reboot") for i in range(3)]
+        r, c = self.chart(same, begin="2026-11-11T20:45:00Z", end=DAY + "02:45:00Z")
+        x = list(self.events(c).values())
+        self.assertEqual(len(x), 1)
+        self.assertEqual((x[0]["vm"], x[0]["vms"]), ("web00", ["web01", "web02"]))
+        self.assertEqual(len(whats(r)), 1)                                                               # one row, as before
+
+    def test_repeats_fold_only_for_the_same_vm(self):
+        def tags(evs):
+            r = ot.outage_timeline(evs, [], dict(OPTS, begin="2026-11-11T20:45:00Z", end=DAY + "02:45:00Z"))
+            t = next(s for s in r["web_sections"] if s.get("title") == "The events")
+            return [(x["data"]["num"], x["data"].get("rep"), x["data"].get("fold", "").split("|")[0]) for x in t["row_tags"]]
+        two = [ev("01:00:00", "VmGuestRebootEvent", H, vm="web01", msg="Heartbeat reset"),
+               ev("01:05:00", "VmGuestRebootEvent", H, vm="web02", msg="Heartbeat reset")]
+        self.assertEqual(tags(two), [("1", None, ""), ("2", None, "")])                                 # two VMs: two rows, nothing folded
+        again = [dict(x, vm="web01") for x in two]
+        self.assertEqual(tags(again), [("1", None, "2"), ("2", "1", "")])                               # the same VM again: folded
+
+    def test_the_vcenter_is_its_full_name_and_the_host_its_own(self):
+        e = [ev("01:00:00", "VmGuestRebootEvent", H, vm="web01", msg="Guest OS reboot", vcenter="vc01.east.example.mil"),
+             ev("01:10:00", "VmGuestRebootEvent", H, vm="web02", msg="Guest OS reboot", vcenter="vc01.west.example.mil"),
+             ev("01:20:00", "AlarmStatusChangedEvent", "", alarm="Host connection and power state", entity=H, to="red", **{"from": "green"})]
+        _r, c = self.chart(e, tickets(), begin="2026-11-11T20:45:00Z", end=DAY + "02:45:00Z")
+        ev_ = self.events(c)
+        self.assertEqual(sorted(set(x.get("v") for x in ev_.values() if x.get("vm"))), ["vc01.east.example.mil", "vc01.west.example.mil"])
+        alarm_ = next(x for x in ev_.values() if x.get("a") == "Host connection and power state")
+        self.assertEqual(alarm_["h"], "esx03")                                                          # a host alarm with no host field: its entity
+        tk = [x for x in ev_.values() if x.get("k") == "INC0012345" or "INC0012345" in x["w"]]
+        self.assertTrue(tk)
+        self.assertTrue(all(x.get("h") == "esx03" for x in tk))                                         # a ticket's host, from its short description
+
+
+class Codex1902(unittest.TestCase):
+    """1.90.2, Codex's final pass: a grouped row keeps each restart's host and VM, a VM keeps its full name, an alarm's entity is what
+    vCenter (or the alarm's name) says it is, names are told apart by their vCenter, a VM found once is known to every alarm on it,
+    and a ticket keeps its host. (The vCenter's address label: test_report_hover RealChromeOutageCodex1902.)"""
+    W = dict(begin="2026-11-11T20:45:00Z", end=DAY + "02:45:00Z")
+
+    def chart(self, evs, tks=None):
+        r = ot.outage_timeline(evs, tks or [], dict(OPTS, **dict(LeadUp.O, **self.W)))
+        return r, dict((e["n"], e) for g in next(s for s in r["web_sections"] if s.get("outage"))["outage"]["lanes"]
+                       for m in g["marks"] for e in m["ev"])
+
+    def a(self, t, name, entity, host="", to="yellow", **kw):
+        return ev(t, "AlarmStatusChangedEvent", host, alarm=name, entity=entity, to=to, **dict({"from": "green"}, **kw))
+
+    def test_1_a_grouped_restart_keeps_each_host_and_vm(self):
+        e = [ev("01:21:00", "com.vmware.vc.ha.VmRestartedByHAEvent", "esx03.example.mil", vm="db"),
+             ev("01:22:00", "com.vmware.vc.ha.VmRestartedByHAEvent", "esx07.example.mil", vm="web")]
+        r, x = self.chart(e)
+        g = next(v for v in x.values() if v["w"] == "HA restarted 2 VMs")
+        self.assertEqual(g["mem"], [["esx03", "db"], ["esx07", "web"]])                      # the page matches one pair (host and VM)
+        self.assertEqual(whats(r), ["HA restarted 2 VMs"])                                    # one row, counted once
+        one = [ev("01:21:%02d" % i, "com.vmware.vc.ha.VmRestartedByHAEvent", "esx03.example.mil", vm="db") for i in range(2)]
+        self.assertNotIn("mem", list(self.chart(one)[1].values())[0])                         # one pair: the row's own h and vm say it
+
+    def test_2_a_vm_keeps_its_full_name(self):
+        e = [self.a("01:00:00", "Virtual machine CPU usage", "db.prod", "esx02.example.mil"),
+             ev("01:10:00", "VmGuestRebootEvent", "esx02.example.mil", vm="db.prod", msg="Guest OS reboot")]
+        _r, x = self.chart(e)
+        self.assertEqual(sorted((v.get("vm"), v["p"]) for v in x.values()), [("db.prod", "db"), ("db.prod", "esx02")])
+
+    def test_3_the_entity_is_what_it_is(self):
+        e = [self.a("01:00:00", "Host connection and power state", "esx03", to="red"),
+             ev("01:05:00", "VmGuestRebootEvent", "esx07.example.mil", vm="web01", msg="Guest OS reboot"),
+             self.a("01:06:00", "vSphere HA failover in progress", "cluster1", to="red"),
+             self.a("01:07:00", "Guest heartbeat status", "app09", "esx07.example.mil", entity_type="vm"),
+             self.a("01:08:00", "Virtual machine error", "cluster2", entity_type="cluster")]
+        _r, x = self.chart(e, tickets())
+        by = dict((v.get("a") or v["w"], v) for v in x.values())
+        self.assertEqual((by["Host connection and power state"].get("h"), by["Host connection and power state"].get("vm")), ("esx03", None))
+        self.assertNotIn("vm", by["vSphere HA failover in progress"])                        # a cluster's alarm: no VM
+        self.assertEqual(by["Guest heartbeat status"].get("vm"), "app09")                     # vCenter says: a VM
+        self.assertNotIn("vm", by["Virtual machine error"])                                   # vCenter says: a cluster, whatever the name
+        self.assertEqual(sorted(set(v.get("h") for v in x.values() if v.get("h"))), ["esx03", "esx07"])
+
+    def test_4_a_name_is_told_apart_by_its_vcenter(self):
+        e = [ev("01:00:00", "VmGuestRebootEvent", "esx01.example.mil", vm="esx07", msg="Guest OS reboot", vcenter="vc01.example.mil"),
+             ev("01:01:00", "esx.audit.host.boot", "esx07.example.mil", msg="The host has booted", vcenter="vc02.example.mil"),
+             self.a("01:02:00", "Guest heartbeat status", "esx07", "esx01.example.mil", vcenter="vc01.example.mil"),
+             self.a("01:03:00", "Guest heartbeat status", "esx07", vcenter="vc02.example.mil")]
+        _r, x = self.chart(e)
+        al = sorted((v["v"], v.get("vm"), v.get("h")) for v in x.values() if v.get("a"))
+        self.assertEqual(al, [("vc01.example.mil", "esx07", "esx01"), ("vc02.example.mil", None, "esx07")])
+
+    def test_5_a_vm_found_once_is_known_to_every_alarm_on_it(self):
+        e = [self.a("01:00:00", "Virtual machine CPU usage", "web", "esx02.example.mil"),
+             self.a("01:01:00", "Guest heartbeat status", "web", "esx02.example.mil"),
+             ev("01:05:00", "VmGuestRebootEvent", "esx02.example.mil", vm="app01", msg="Guest OS reboot")]
+        _r, x = self.chart(e)
+        self.assertEqual(sorted((v.get("a", ""), v.get("vm")) for v in x.values()),
+                         [("", "app01"), ("Guest heartbeat status", "web"), ("Virtual machine CPU usage", "web")])
+        later = list(reversed(e[:2]))                                                        # the name-only alarm first: the same
+        later = [dict(later[0], time=DAY + "01:00:00Z"), dict(later[1], time=DAY + "01:01:00Z")]
+        self.assertEqual(sorted(v.get("vm") for v in self.chart(later)[1].values()), ["web", "web"])
+
+    def test_6_a_ticket_keeps_its_host_when_a_vm_shares_the_name(self):
+        e = [ev("02:00:00", "VmGuestRebootEvent", "esx01.example.mil", vm="esx03", msg="Guest OS reboot"),
+             ev("02:01:00", "esx.audit.host.boot", H, msg="The host has booted")]
+        _r, x = self.chart(e, tickets())
+        tk = [v for v in x.values() if "INC0012345" in v["w"]]
+        self.assertTrue(tk)
+        self.assertEqual(set(v.get("h") for v in tk), {"esx03"})
+        _r, x = self.chart(e[:1], tickets())                                                 # known only as a VM: the ticket is the VM's
+        self.assertEqual(set((v.get("h"), v.get("vm")) for v in x.values() if "INC0012345" in v["w"]), {(None, "esx03")})
 
 
 if __name__ == "__main__":

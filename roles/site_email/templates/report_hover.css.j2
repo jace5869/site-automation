@@ -243,7 +243,14 @@ tr.ot-flash td{background:var(--line) !important;transition:background .6s}
 {#- a mark the controls leave out shrinks away (still: it is simply gone); hidden, it is out of the Tab order too -#}
 .pop-move .ot-go .ot-track .ot-m.ot-off,.pop-move .ot-track .ot-m.ot-off{display:inline-flex;opacity:0;visibility:hidden;transform:translate(-50%,0) scale(.6);
   pointer-events:none;transition:opacity .25s,transform .25s,visibility 0s .25s}
-@media print{.otf,.otx-x{display:none !important}.ot-wait .ot-m,.ot-wait .ot-lead,.ot-wait .ot-lead-t{opacity:1 !important;transform:none !important}}
+@media print{.otf,.otx-x{display:none !important}
+  /* 1.90.2: printed before the time line came into view - each piece back to its own static place (a mark centred on its time, the lead-up's
+     tab above the plot), the entrance only taken off; an opened mark's events all printed, no scroll box */
+  .ot-wait .ot-m,.ot-wait .ot-lead,.ot-wait .ot-lead-t{opacity:1 !important;transition:none !important}
+  .ot-wait .ot-track .ot-m{transform:translate(-50%,0) !important}
+  .ot-wait .ot-lead{transform:none !important}
+  .ot-wait .ot-lead .ot-lead-t{transform:translateY(-100%) !important}
+  .otx-ev{max-height:none !important;overflow:visible !important}}
 @media (max-width:1000px){
   .ot{--ot-name:118px}
   .ot-axis .w,.ot-tk.w{display:none}

@@ -788,6 +788,25 @@ class RealChromeOutageFilters(RealChromeOutage):
         self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
 
 
+class RealChromeOutageRestarts(RealChromeOutage):
+    """1.90.2 (review 3): the default outage (tests/test_outage_timeline.py events): HA restarted 14 VMs, one row."""
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_enter_or_space_opens_it_under_its_lane = None
+
+    def test_9_the_vm_box_finds_every_vm_of_a_grouped_row(self):
+        """1.90.2 (review 3): "HA restarted 14 VMs" is found by any of its VMs, not only the first; its facts name them."""
+        typed = "(() => {const i = document.querySelector('.otf .f-vm input'); i.value = %s; i.dispatchEvent(new Event('input', {bubbles: true}))})()"
+        rows = "[...document.querySelectorAll('tr[data-cls]')].filter(r => !r.hidden).map(r => +r.getAttribute('data-num'))"
+        self.assertEqual(self.c.js("document.querySelectorAll('#otf-vms option').length"), 14)
+        for vm in ("app10", "app17", "app23"):
+            self.c.js(typed % json.dumps(vm))
+            self.assertEqual(self.c.js(rows), [8], vm)
+        self.c.js("[...document.querySelectorAll('.ot-track .ot-m')].find(m => m._ev.some(e => e.n === 8)).click()")
+        self.assertEqual(self.c.js("[...document.querySelectorAll('#otx-open .otx-f > div')].find(d => d.querySelector('dt').textContent === 'VMs').querySelector('dd').textContent"),
+                         "app10, app11, app12, app13, app14, app15 and 8 more")
+        self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        self.c.js("document.querySelector('.otf .f-out button').click()")
+
+
 class RealChromeOutageGroups(RealChromeOutage):
     """Codex 6: a mark that stands for several events shows what is left of them."""
     test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_enter_or_space_opens_it_under_its_lane = None
@@ -878,7 +897,7 @@ class RealChromeOutageWhere(RealChromeOutage):
         self.assertEqual(r["lanes"][:2], ["4 of 29 events", "1 of 3 events"])
         self.assertEqual(r["kinds"], ["4", "1", "0", "0", "0"])                                         # Host, HA, usage, snapshots, other: esx07's
         evs = self.c.js("[...document.querySelectorAll('.ot-track .ot-m[data-ev]')].flatMap(m => JSON.parse(m.getAttribute('data-ev')))")
-        mine = sorted(e["n"] for e in evs if e.get("h") == "esx07" or e["p"] == "esx07")
+        mine = sorted(e["n"] for e in evs if e.get("h") == "esx07")                                     # 1.90.2: by the event's own host
         self.assertEqual(len(mine), 5)
         self.assertEqual(sorted(r["rows"]), [n for n in mine if n in r["rows"]])                       # The events: esx07's rows only
         self.assertTrue(set(r["rows"]) <= set(mine))
@@ -890,10 +909,10 @@ class RealChromeOutageWhere(RealChromeOutage):
         self.c.js("document.querySelector('.otf .f-out button').click()")
         r = self.c.js(self.ROW)
         self.assertEqual((r["shown"], r["clear"], r["lanes"][:2], r["kinds"][0]), ("32 of 32 events", False, ["29 events", "3 events"], "6"))
-        self.pick("f-v", "vc02")
+        self.pick("f-v", "vc02.example.mil")                                                            # 1.90.2: the value in full, the label short
         r = self.c.js(self.ROW)
-        self.assertTrue(all(e.get("v") == "vc02" for e in evs if e["n"] in r["rows"]))
-        self.assertEqual(r["shown"], "%d of 32 events" % len([e for e in evs if e.get("v") == "vc02"]))
+        self.assertTrue(all(e.get("v") == "vc02.example.mil" for e in evs if e["n"] in r["rows"]))
+        self.assertEqual(r["shown"], "%d of 32 events" % len([e for e in evs if e.get("v") == "vc02.example.mil"]))
         self.c.js("document.querySelector('.otf .f-out button').click()")
         self.c.js("(() => {const i = document.querySelector('.otf .f-vm input'); i.value = 'vm-web0'; i.dispatchEvent(new Event('input', {bubbles: true}))})()")
         self.assertEqual(self.c.js(self.ROW)["shown"], "%d of 32 events" % len([e for e in evs if "vm-web0" in e.get("vm", "")]))
@@ -933,6 +952,120 @@ class RealChromeOutageWhere(RealChromeOutage):
         self.pick("f-h", "esx07")
         self.assertFalse(self.c.js("!!document.getElementById('otx-open')"))
         self.c.js("document.querySelector('.otf .f-out button').click()")
+
+    TABS = "[...document.querySelectorAll('.ot-track .ot-m[data-ev]')].map(m => [m.classList.contains('ot-off'), m.tabIndex])"
+
+    def test_b_a_filtered_out_mark_leaves_the_tab_order_at_once(self):
+        """1.90.2 (review 6): with motion a mark filtered out is still shown for 250 ms while it fades - it is out of the Tab order at once."""
+        self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        self.c.js("document.documentElement.classList.add('pop-move')")
+        try:
+            self.pick("f-h", "esx07")
+            got = self.c.js(self.TABS)                                            # read in the same turn as the change: no fade has ended
+            self.assertTrue(any(off for off, _t in got))
+            self.assertEqual([t for off, t in got], [-1 if off else 0 for off, _t in got])
+            self.c.js("document.querySelector('.otf .f-out button').click()")
+            self.assertEqual(set(t for _off, t in self.c.js(self.TABS)), {0})       # back in when it matches again
+        finally:
+            self.c.js("document.documentElement.classList.remove('pop-move')")
+
+    CENTRES = ("[...document.querySelectorAll('.ot-track .ot-m[data-ev]:not(.ot-off)')].map(m => {const r = m.getBoundingClientRect(); "
+               "return Math.round(r.left + r.width / 2)})")
+
+    def printed(self, on):
+        self.c.call("Emulation.setEmulatedMedia", media="print" if on else "", features=[{"name": "prefers-reduced-motion", "value": "reduce"}])
+
+    def test_c_printed_before_the_time_line_came_into_view(self):
+        """1.90.2 (review 7): printed while the entrance still waits, each mark is centred on its time and the lead-up's tab sits above it."""
+        self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+        self.printed(True)
+        try:
+            still = self.c.js(self.CENTRES)
+            self.c.js("document.documentElement.classList.add('pop-move'); document.querySelector('.ot').classList.add('ot-wait')")
+            self.assertEqual(self.c.js(self.CENTRES), still)
+            tab, lead = self.c.js("[document.querySelector('.ot-lead-t').getBoundingClientRect().bottom, document.querySelector('.ot-lead').getBoundingClientRect().top]")
+            self.assertLessEqual(tab, lead + 1)                                     # the tab above the band, not inside the plot
+        finally:
+            self.c.js("document.documentElement.classList.remove('pop-move'); document.querySelector('.ot').classList.remove('ot-wait')")
+            self.printed(False)
+
+    def test_d_an_opened_group_prints_every_event(self):
+        """1.90.2 (review 8): an opened group's list has no scroll box on paper - all 12 lines show."""
+        self.c.js("[...document.querySelectorAll('.ot-track .ot-m')].find(m => m._ev.length === 12).click()")
+        self.printed(True)
+        try:
+            got = self.c.js("(() => {const l = document.querySelector('#otx-open .otx-ev'), r = l.getBoundingClientRect(); "
+                            "return [l.scrollHeight - l.clientHeight, [...l.querySelectorAll('li')].filter(x => {const b = x.getBoundingClientRect(); "
+                            "return b.top >= r.top - 1 && b.bottom <= r.bottom + 1}).length]})()")
+            self.assertEqual(got, [0, 12])
+        finally:
+            self.printed(False)
+            self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+
+
+class RealChromeOutageVmAlarm(RealChromeOutageWhere):
+    """1.90.2 (review 2): the outage's own VM known only by its alarms' entity (run_1900 vm_reds) - the VM box finds its events, the
+    critical mark and the lead-up stay."""
+    test_9_the_row_its_choices_and_its_counts = test_a_the_facts_of_the_critical_event_that_ends_the_lead_up = None
+    test_b_a_filtered_out_mark_leaves_the_tab_order_at_once = test_c_printed_before_the_time_line_came_into_view = None
+    test_d_an_opened_group_prints_every_event = None
+
+    @classmethod
+    def web(cls):
+        r = tot.ot.outage_timeline(tot.run_1900(vm_reds=True), [], dict(tot.OPTS, **tot.LeadUp.O))
+        return tot.ot.outage_timeline_doc(copy.deepcopy(tot.WATCH), r, True, True)
+
+    def test_9_the_outage_vm_by_its_entity(self):
+        self.c.js("(() => {const i = document.querySelector('.otf .f-vm input'); i.value = 'vm-db01'; i.dispatchEvent(new Event('input', {bubbles: true}))})()")
+        r = self.c.js(self.ROW)
+        self.assertEqual(r["shown"], "3 of 32 events")
+        self.assertEqual(sorted(r["rows"]), [26, 27, 28])
+        self.assertTrue(self.c.js("[...document.querySelectorAll('.ot-track .ot-m:not(.ot-off)')].some(m => m.classList.contains('lead-end'))"))
+        self.assertTrue(self.c.js("getComputedStyle(document.querySelector('.ot-lead')).display !== 'none'"))
+        self.assertIn("vm-db01", self.c.js("[...document.querySelectorAll('#otf-vms option')].map(o => o.value)"))
+        self.c.js("document.querySelector('.otf .f-out button').click()")
+
+
+class RealChromeOutageCodex1902(RealChromeOutageWhere):
+    """1.90.2, Codex's final pass: HA restarted db on esx03 and web on esx07 (one row) - the host and VM filters match one restart's own
+    pair, the row counts once; a vCenter by its address keeps its label whole."""
+    test_9_the_row_its_choices_and_its_counts = test_a_the_facts_of_the_critical_event_that_ends_the_lead_up = None
+    test_b_a_filtered_out_mark_leaves_the_tab_order_at_once = test_c_printed_before_the_time_line_came_into_view = None
+    test_d_an_opened_group_prints_every_event = None
+
+    @classmethod
+    def web(cls):
+        evs = [tot.ev("01:21:00", "com.vmware.vc.ha.VmRestartedByHAEvent", "esx03.example.mil", vm="db", vcenter="192.0.2.14"),
+               tot.ev("01:22:00", "com.vmware.vc.ha.VmRestartedByHAEvent", "esx07.example.mil", vm="web", vcenter="192.0.2.14"),
+               tot.ev("01:40:00", "VmGuestRebootEvent", "esx01.example.mil", vm="app01", msg="Guest OS reboot", vcenter="vc01.example.mil")]
+        return tot.ot.outage_timeline_doc(copy.deepcopy(tot.WATCH), tot.made(evs, []), True, True)
+
+    def vm(self, v):
+        self.c.js("(() => {const i = document.querySelector('.otf .f-vm input'); i.value = %s; i.dispatchEvent(new Event('input', {bubbles: true}))})()" % json.dumps(v))
+
+    def test_9_a_grouped_restart_matches_one_pair_and_counts_once(self):
+        r = self.c.js(self.ROW)
+        self.assertEqual(r["hosts"], ["All hosts (3)", "esx01", "esx03", "esx07"])                    # each restart's own host
+        self.assertEqual(r["shown"], "2 of 2 events")
+        for h, v, shown in (("esx03", "web", "0 of 2 events"), ("esx07", "web", "1 of 2 events"), ("esx03", "db", "1 of 2 events"),
+                            ("esx07", "", "1 of 2 events"), ("", "db", "1 of 2 events"), ("esx01", "db", "0 of 2 events")):
+            self.c.js("document.querySelector('.otf .f-out button').click()")
+            if h:
+                self.pick("f-h", h)
+            if v:
+                self.vm(v)
+            r = self.c.js(self.ROW)
+            self.assertEqual(r["shown"], shown, (h, v))
+            self.assertEqual(len(r["rows"]), int(shown[0]), (h, v))                                  # The events: the one row, or none
+        self.c.js("document.querySelector('.otf .f-out button').click()")
+        self.c.js("[...document.querySelectorAll('.ot-track .ot-m')].find(m => m._ev.some(e => e.mem)).click()")
+        facts = self.c.js("Object.fromEntries([...document.querySelectorAll('#otx-open .otx-f > div')].map(d => [d.querySelector('dt').textContent, d.querySelector('dd').textContent]))")
+        self.assertEqual((facts.get("Hosts"), facts.get("VMs"), facts.get("vCenter")), ("esx03, esx07", "db, web", "192.0.2.14"))
+        self.c.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+
+    def test_a_a_vcenter_by_its_address_keeps_its_label_whole(self):
+        self.assertEqual(self.c.js(self.ROW)["vcs"], ["All vCenters (2)", "192.0.2.14", "vc01"])
+        self.assertEqual(self.c.js("[...document.querySelectorAll('.otf .f-v option')].map(o => o.value)"), ["", "192.0.2.14", "vc01.example.mil"])
 
 
 class RealChromeOutageFiltersBrief(RealChromeOutageFilters):

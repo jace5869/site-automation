@@ -24,6 +24,7 @@ import site_vmware_watch as wt  # noqa: E402
 import site_vcsa_access as va  # noqa: E402
 import site_vmware_cert_install as vci  # noqa: E402
 import site_vmware_vms as vms  # noqa: E402
+import site_vmware_outage_events as oev  # noqa: E402
 
 G = 1024 ** 3
 
@@ -1343,6 +1344,28 @@ class VmSecurity(unittest.TestCase):
         self.assertEqual(vms._api(_Obj(about=_Obj(apiVersion="8.0.3"))), (8, 0, 3))
         self.assertLess(vms._api(_Obj(about=_Obj(apiVersion="6.5"))), (6, 7))           # tpmPresent not asked of 6.5
         self.assertEqual(vms._api(_Obj()), ())
+
+
+class OutageEntityType(unittest.TestCase):
+    """1.90.2: an alarm's entity says what it is (host, VM, cluster), from its managed object's type - no call to vCenter."""
+
+    def test_the_entity_type_of_an_alarm(self):
+        try:
+            from pyVmomi import vim
+        except ImportError:
+            self.skipTest("pyVmomi is not installed")
+        A = vim.event.ManagedEntityEventArgument
+        for obj, want in ((vim.HostSystem("host-12"), "host"), (vim.VirtualMachine("vm-40"), "vm"),
+                          (vim.ClusterComputeResource("domain-c7"), "cluster"), (vim.Datastore("datastore-3"), "datastore"),
+                          (vim.Datacenter("datacenter-1"), "datacenter")):
+            self.assertEqual(oev._entity_type(A(name="x", entity=obj)), want)
+        self.assertEqual(oev._entity_type(None), "")
+        e = vim.event.AlarmStatusChangedEvent(key=1, chainId=1, createdTime=__import__("datetime").datetime(2026, 11, 12, 1, 0),
+                                              userName="", fullFormattedMessage="Alarm changed", to="red",
+                                              entity=A(name="db.prod", entity=vim.VirtualMachine("vm-40")))
+        setattr(e, "from", "green")
+        r = oev.record(e)
+        self.assertEqual((r["entity"], r["entity_type"], r["to"]), ("db.prod", "vm", "red"))
 
 
 if __name__ == "__main__":

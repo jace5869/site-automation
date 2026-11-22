@@ -255,7 +255,23 @@ The controls filter the chart and *The events* together:
 - Show, Kinds and Show every repeat are kept in this browser. The host, vCenter and VM are not kept, and none of it goes into the page's address.
 - A list with only one choice is left out. With one host, one vCenter and one VM, there is no row.
 
-**Repeats.** Identical events one after another (the same lane, what, where and level) fold into one row, for example *×4, 17:21-17:40*; the times
+**What host, vCenter and VM match (1.90.2).**
+
+- **Host:** the event's own host. That is its ESXi host, or the host a ServiceNow ticket names, or the host an alarm
+  is on. A VM's alarm counts under its host, never under the place it happened.
+- **vCenter:** its full name. The list shows the short name (*vc01*) unless two vCenters share it. An address
+  (*192.0.2.14*) always shows whole.
+- **VM:** every VM the event is about, by its full name. That includes a VM's alarm known only by the alarm's entity,
+  and each VM of a grouped row (*HA restarted 14 VMs*, or the same event again on several VMs).
+- **A grouped row** matches when one of its events matches both boxes: *HA restarted 2 VMs* (db on esx03, web on
+  esx07) shows for esx07 and web, not for esx03 and web. It counts once.
+- **An alarm's entity** is a host, a VM or neither (a cluster, a datastore) as vCenter says. When vCenter does not
+  say, the review goes by the names it knows on that vCenter, then by the alarm's name (*Virtual machine ...*,
+  *Host ...*). A VM found so counts for every alarm on it.
+- **A ticket** counts under the host it names. Only a name the review knows as a VM, and not as a host, counts as
+  that VM.
+
+**Repeats.** Identical events one after another (the same lane, what, where and level, and since 1.90.2 the same host and VMs) fold into one row, for example *×4, 17:21-17:40*; the times
 are in the row's title. *Show every repeat* lists them all. Without the script every row shows. The email and the workbook are unchanged.
 
 **Incidents are links.** With the ServiceNow credential attached, every incident number opens the incident in ServiceNow (a new tab, read only): in the list's lines
