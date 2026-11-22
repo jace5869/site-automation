@@ -3605,7 +3605,7 @@ def _missing_table(e):
 
 def ad_repl_from_db(connect, mark="%s", opts=None, log=None, template_id=None):
     """1.102.0: the network map's AD layer from the report database - 1.101.2's tables as roles/ad_report/library/site_ad_db.py
-    makes them (its schema_version 3): ad_run (run_id, read_at, template_id), ad_dc (run_id, dc, site, repl_read), ad_link (run_id,
+    makes them (its schema_version 4): ad_run (run_id, read_at, template_id), ad_dc (run_id, dc, site, repl_read), ad_link (run_id,
     frm, to_dc, nc, last_success, failures, error, last_failure). The newest run (of template_id when given) with
     every one of its links, in one read-only transaction (MySQL: START TRANSACTION READ ONLY - one moment of the database).
     -> (compact (site_ad_layer.compact), why). Never raises; why is fixed text (it goes to the browser): a database's own

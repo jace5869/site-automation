@@ -1229,5 +1229,35 @@ class CodexD1012(unittest.TestCase):
                 conn.commit.assert_not_called()
 
 
+class Joint11012(unittest.TestCase):
+    """1.101.2 + 1.102.0: the network map's AD layer (ad_repl_from_db) read from 1.101.2's tables (schema 4)."""
+
+    def test_1_the_layer_reads_portal_ad_templates_run(self):
+        def other_forest(ad):
+            ad["repl"]["dcs"] = [dict(d, site="SITC0301") for d in ad["repl"]["dcs"]]
+        db = one_run(template_id=12, minutes_ago=30)
+        one_run(other_forest, template_id=34, db=db, job=9001)          # newer, another AD template
+        c12, why12 = sp.ad_repl_from_db(lambda: db, mark="?", template_id=12)
+        cnew, _ = sp.ad_repl_from_db(lambda: db, mark="?")
+        self.assertEqual(why12, "")
+        self.assertEqual(sorted(c12["dcs"]), ["SITEA0101", "SITEB0201"])  # portal_ad_template's run, as /portal/ad reads it
+        self.assertEqual(sorted(cnew["dcs"]), ["SITC0301"])             # none named: the newest run (any template)
+
+    def test_2_no_dc_replication_read_draws_no_layer(self):
+        import site_ad_layer as al
+
+        def unread(ad):
+            ad["repl"]["dcs"] = [dict(d, read=False) for d in ad["repl"]["dcs"]]
+            ad["repl"]["links"] = []
+        db = one_run(unread)
+        c, why = sp.ad_repl_from_db(lambda: db, mark="?", template_id=12)
+        self.assertEqual((why, c["read"]), ("", 0))
+        lay = al.layer(c, {"sites": ["SITEA0101", "SITEB0201"], "nodes": []}, source="db")
+        self.assertTrue(lay["why"].startswith("no DC's replication could be read"), lay)
+        self.assertNotIn("links", lay)                                  # nothing drawn as "good" when nothing was read
+        ok, _ = sp.ad_repl_from_db(lambda: one_run(), mark="?", template_id=12)
+        self.assertEqual(ok["read"], 3)                                 # read: the layer as before
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
