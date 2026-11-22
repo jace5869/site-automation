@@ -40,6 +40,8 @@ def connect(p):
         ctx.verify_mode = ssl.CERT_REQUIRED
     kw = dict(host=p["host"], port=p["port"], user=p["user"], password=p["password"], database=p["database"],
               connect_timeout=p["connect_timeout"], autocommit=False, charset="utf8mb4")
+    if p.get("read_timeout"):                            # a server that takes the connection but never answers: given up
+        kw.update(read_timeout=int(p["read_timeout"]), write_timeout=int(p["read_timeout"]))
     conn = pymysql.connect(ssl=ctx, **kw) if ctx is not None else connect_plain(kw)
     cur = conn.cursor()
     cur.execute("SHOW SESSION STATUS WHERE Variable_name IN ('Ssl_version', 'Ssl_cipher')")

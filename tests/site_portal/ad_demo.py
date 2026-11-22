@@ -69,7 +69,7 @@ def fill(lite, back=0):
 def swis(live):
     def d(name):
         down = name == "DC04"
-        return {"dc": name, "ip": "", "matched": "name", "status": "Down" if down else "Up", "status_text": "", "cpu": None if down else 14,
+        return {"dc": name, "domain": "corp.test", "ip": "", "matched": "name", "status": "Down" if down else "Up", "status_text": "", "cpu": None if down else 14,
                 "mem": None if down else 41, "alerts": [], "apps": {}, "last_down": None}
     return {"ok": True, "source": "swis-live", "read_at": NOW.strftime("%Y-%m-%d %H:%M"), "age_min": 0, "why": [], "sam": False,
             "sam_why": "SAM's applications are not on this Orion", "events": False, "dcs": [d(x["dc"]) for x in live["dcs"]]}
@@ -84,8 +84,8 @@ tmp = tempfile.mkdtemp()
 reports = os.path.join(tmp, "reports")
 os.makedirs(os.path.join(reports, "ad-health"))
 with open(os.path.join(reports, "index.json"), "w") as fh:
-    json.dump({"reports": [{"key": "ad-health/latest.html", "latest": "ad-health/latest.html", "when": NOW.strftime("%Y-%m-%d %H:%M UTC"),
-                            "job": "9735", "live": "ad"}]}, fh)
+    json.dump({"reports": [{"key": "ad-health/latest.html", "latest": "ad-health/latest.html", "page": "ad-health/9735.html",
+                            "when": NOW.strftime("%Y-%m-%d %H:%M UTC"), "job": "9735", "live": "ad"}]}, fh)
 with open(os.path.join(tmp, "actions.json"), "w") as fh:
     json.dump({"actions": {}}, fh)
 cfg = sp.Config({"PORTAL_DATA": tmp, "PORTAL_REPORTS": reports, "PORTAL_ACTIONS": os.path.join(tmp, "actions.json"), "PORTAL_AAP_URL": "http://127.0.0.1:9",
@@ -106,8 +106,7 @@ real = sp.AdLive.__init__
 
 def init(self, c, log, aap=None, source=None, db=None):
     real(self, c, log, aap, source=swis, db=None if state == "nodb" else sp.AdDb(c, connect=connect, mark="?"))
-    self.sched = {"next": (NOW + datetime.timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    self.sched_at = 1e12
+    self.sched = {"12": (1e12, {"next": (NOW + datetime.timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")})}
 
 
 sp.AdLive.__init__ = init

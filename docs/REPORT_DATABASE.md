@@ -1029,7 +1029,7 @@ from here: each DC now, since when, its last runs, the replication links that ne
 |---|---|
 | What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds), a row per DC in `ad_dc` (its domain, site, status, problems, the worst one's text) and a row per replication link in `ad_link` (from, to, partition, last success, failures, error, status) |
 | How much | 10 DCs and 40 links every 30 minutes: about 2,400 rows a day, under 200 bytes each |
-| What a run deletes | the runs older than `ad_db_keep_days`, with their rows |
+| What a run deletes | its own template's runs older than `ad_db_keep_days`, with their rows (another forest's job keeps its own) |
 | When the database is down | one warning in the job output. The report goes on, the job stays green. The portal's page shows the run before |
 | A dry run (Check) | logs in and looks at the tables, writes nothing |
 | Who reads it | the portal, as `report_reader` (SELECT only). A writer's login works too: the portal's deploy says so in a warning |
@@ -1107,7 +1107,7 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 1,
 |---|---|---|
 | `ad_db` | `true` | Keep each run here when the template has the credential |
 | `ad_db_create` | `true` | Make the tables on the first run |
-| `ad_db_keep_days` | `400` | Delete older runs. `0`: never |
+| `ad_db_keep_days` | `400` | Delete this template's older runs. `0`: never |
 
 ## The heat grid's points (1.65.0)
 

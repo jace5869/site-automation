@@ -14,7 +14,7 @@ module: site_ad_db
 short_description: Keep each AD health run (its DCs and replication links) in the report database
 description:
   - Writes the run (ad_run), its DCs (ad_dc) and its replication links (ad_link) in one transaction - not in check mode.
-  - Deletes the runs older than keep_days, with their rows (0 = never).
+  - Deletes this template's runs older than keep_days, with their rows (0 = never); other templates' runs are left.
   - The tables are made on the first run (create); with create false and no tables, nothing is written and error says so.
     docs/REPORT_DATABASE.md has the statements for making them by hand.
 options:
@@ -31,7 +31,7 @@ options:
   job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
   template_id: {description: This job's template's ID (0 outside AAP) - two AD templates (two forests) are two lines., type: int, default: 0}
   run: {description: "The run (plugins/filter/ad_db_filters.py ad_db_payload): status, critical, warning, dcs, links, live.", type: dict, required: true}
-  keep_days: {description: Delete runs older than this many days (0 = never)., type: int, default: 400}
+  keep_days: {description: Delete this template's runs older than this many days (0 = never)., type: int, default: 400}
 author: site automation
 '''
 
@@ -148,15 +148,17 @@ def write(conn, now, job, template_id, run):
     return int(rid or 0), len(dcs), len(links)
 
 
-def prune(conn, now, keep_days):
-    """Runs older than keep_days, with their DC and link rows."""
+def prune(conn, now, keep_days, template_id=0):
+    """This template's runs older than keep_days, with their DC and link rows - another AD template's runs keep their own
+    keep_days (each forest's job prunes its own)."""
     if keep_days <= 0:
         return 0
     cut = now - datetime.timedelta(days=keep_days)
     cur = conn.cursor()
-    cur.execute("DELETE FROM ad_link WHERE run_id IN (SELECT run_id FROM ad_run WHERE read_at < %s)", (cut,))
-    cur.execute("DELETE FROM ad_dc WHERE run_id IN (SELECT run_id FROM ad_run WHERE read_at < %s)", (cut,))
-    return int(cur.execute("DELETE FROM ad_run WHERE read_at < %s", (cut,)) or 0)
+    old = "SELECT run_id FROM ad_run WHERE read_at < %s AND template_id = %s"
+    cur.execute("DELETE FROM ad_link WHERE run_id IN (%s)" % old, (cut, template_id))
+    cur.execute("DELETE FROM ad_dc WHERE run_id IN (%s)" % old, (cut, template_id))
+    return int(cur.execute("DELETE FROM ad_run WHERE read_at < %s AND template_id = %s", (cut, template_id)) or 0)
 
 
 def shut(conn):
@@ -201,7 +203,7 @@ def main():
             shut(conn)
             module.exit_json(**res)
         res["run_id"], res["dcs"], res["links"] = write(conn, now, p["job"], p["template_id"], p["run"])
-        res["pruned"] = prune(conn, now, p["keep_days"])
+        res["pruned"] = prune(conn, now, p["keep_days"], p["template_id"])
         conn.commit()
         res["ok"], res["changed"] = True, True
     except Exception as e:      # noqa: BLE001 - unreachable, refused, a grant missing: one line, the job goes on

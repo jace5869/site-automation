@@ -209,7 +209,8 @@ def _view(res, ad, opts=None):
             if al:
                 det.append({"title": "Active alerts", "columns": ["Alert", "Since", "Message"], "kinds": ["wrap", "nw", "wrap"],
                             "rows": [[a.get("name") or "-", _when(a.get("triggered_at"), tz), a.get("message") or "-"] for a in al[:10]]})
-        rows.append((RANK.get(worst, 4), d["dc"].lower(), [row[c] for c in cols], cs, worst, det))
+        rows.append((RANK.get(worst, 4), d["dc"].lower(), [row[c] for c in cols], cs, worst, det,
+                     ("%s|%s" % (d.get("domain") or "", d["dc"])).lower()))
     rows.sort(key=lambda x: (x[0], x[1]))
     when = (_tm.local(r["read_at"] + " UTC", tz) if tz else r["read_at"] + " UTC") if r.get("read_at") else ""
     if r.get("source") == "db-snapshot":
@@ -226,7 +227,8 @@ def _view(res, ad, opts=None):
     bad = [x for x in rows if x[4] in ("critical", "warning")]
     sec = {"title": TITLE, "counted": False, "status": "critical" if any(x[4] == "critical" for x in rows) else ("warning" if bad else "ok"),
            "columns": cols, "kinds": kinds, "rows": [x[2] for x in rows], "cell_status": [x[3] for x in rows],
-           "row_status": [x[4] for x in rows], "details": [x[5] for x in rows], "text": text}
+           "row_status": [x[4] for x in rows], "details": [x[5] for x in rows], "text": text,
+           "keys": [x[6] for x in rows]}                       # 1.101.2 review: each row's DC by domain and name (the portal's AD page)
     n_dn = sum(1 for x in rows if x[2][2] == "Down")
     tile = {"label": "SolarWinds: down or warning", "status": "critical" if any(x[4] == "critical" for x in rows) else ("warning" if bad else "ok"),
             "value": len(bad)}
@@ -318,8 +320,10 @@ def ad_live_block(ad, dcs, opts=None):
     the report database (ad_run.live): the DCs to find in SolarWinds, the AD problems by DC (What it means) and the From
     SolarWinds settings. No secret, no SolarWinds data: the portal reads SolarWinds itself."""
     o = opts or {}
+    # dc: the DC the problem is of - an inbound replication problem ("DC02 <- DC01 (Configuration)") is the receiving DC's
     probs = [{"domain": str(p.get("domain") or ""), "object": str(p.get("object") or ""), "severity": str(p.get("severity") or ""),
-              "text": str(p.get("text") or "")[:300]}
+              "text": str(p.get("text") or "")[:300],
+              "dc": str(p.get("dc") or re.sub(r"^\s*(\S+)\s+<-\s.*$", r"\1", str(p.get("object") or ""), flags=re.S))}
              for p in (ad or {}).get("problems") or [] if isinstance(p, dict) and p.get("object")]
     return {"v": 1, "kind": "ad", "dcs": [dict(d) for d in dcs or [] if d.get("dc")], "problems": probs[:500],
             "opts": {"cpu_warn": float(o.get("cpu_warn", 90)), "mem_warn": float(o.get("mem_warn", 90)), "days": int(o.get("days", 30))}}

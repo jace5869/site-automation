@@ -3739,7 +3739,9 @@ def ad_when(text):
 
 
 # ---- 1.101.2: the AD job's runs in the report database (read only) --------------------------------------------------------
-AD_TREND = 48                   # a DC's last runs on the page (every 30 min: 24 h)
+AD_TREND_HOURS = 24             # a DC's runs of the last 24 h on the page (by read_at: every 30 min is 48 squares)
+AD_TREND_MAX = 144              # at most this many of them (every 10 min); a faster schedule shows its newest 144
+AD_DB_READ_TIMEOUT = 30         # seconds a database read may take (a server that never answers would hold the page's one reader)
 AD_HISTORY_DAYS = 7
 
 
@@ -3777,7 +3779,8 @@ class AdDb(object):
                 os.replace(tmp, ca)
         conn, _tls = site_report_db.connect({"host": p.get("host"), "port": int(p.get("port") or 3309), "user": p.get("user"),
                                              "password": p.get("password"), "database": p.get("database") or "site_reports",
-                                             "tls": bool(p.get("tls")), "ca_file": ca, "connect_timeout": 10})
+                                             "tls": bool(p.get("tls")), "ca_file": ca, "connect_timeout": 10,
+                                             "read_timeout": AD_DB_READ_TIMEOUT})
         return conn
 
     def _q(self, cur, sql, args=()):
@@ -3804,10 +3807,12 @@ class AdDb(object):
                     return {"run": None}
                 tid = int(top[0][0] or 0)
             runs = self._q(cur, "SELECT run_id, read_at, job, template_id, status, critical, warning, dcs, dcs_read, live FROM ad_run "
-                                "WHERE template_id = %%s ORDER BY read_at DESC, run_id DESC LIMIT %d" % AD_TREND, [tid])
+                                "WHERE template_id = %%s ORDER BY read_at DESC, run_id DESC LIMIT %d" % AD_TREND_MAX, [tid])
             if not runs:
                 return {"run": None}
             top = runs[0]
+            day0 = (self._dt(top[1]) or now) - datetime.timedelta(hours=AD_TREND_HOURS)
+            runs = [r for r in runs if (self._dt(r[1]) or now) > day0] or runs[:1]      # the last 24 h by read_at, whatever the schedule
             ids = [int(r[0]) for r in runs]
             marks = ",".join(["%s"] * len(ids))
             dcrows = self._q(cur, "SELECT run_id, dc, domain, site, is_read, status, problems, worst FROM ad_dc WHERE run_id IN (%s)" % marks, ids)
@@ -3817,8 +3822,9 @@ class AdDb(object):
                                 "SUM(CASE WHEN d.status = 'critical' THEN 1 ELSE 0 END), SUM(CASE WHEN d.status = 'warning' THEN 1 ELSE 0 END) "
                                 "FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND r.read_at >= %s "
                                 "GROUP BY r.run_id, r.read_at, r.job, r.dcs, r.dcs_read ORDER BY r.read_at", [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
-            top7 = self._q(cur, "SELECT d.dc, COUNT(*) FROM ad_run r JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND "
-                                 "r.read_at >= %s AND d.status = 'critical' GROUP BY d.dc ORDER BY COUNT(*) DESC, d.dc LIMIT 1",
+            # a DC by its domain and name: two domains' DC01 are two DCs
+            top7 = self._q(cur, "SELECT d.dc, d.domain, COUNT(*) FROM ad_run r JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND "
+                                 "r.read_at >= %s AND d.status = 'critical' GROUP BY d.domain, d.dc ORDER BY COUNT(*) DESC, d.dc, d.domain LIMIT 1",
                             [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
             order = dict((rid, k) for k, rid in enumerate(reversed(ids)))       # oldest first
             at = dict((int(r[0]), self._dt(r[1])) for r in runs)
@@ -3839,14 +3845,18 @@ class AdDb(object):
                         since, n = at[rid], n + 1
                     else:
                         break
-                longer = n == len(ids) and len(ids) == AD_TREND
-                if longer and st not in ("ok", ""):            # the same state all the runs shown: when it began, further back
-                    r = self._q(cur, "SELECT MAX(r.read_at) FROM ad_run r JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s "
-                                     "AND d.domain = %s AND d.dc = %s AND d.status <> %s", [tid, dom, dc, st])
+                longer = False                                 # 1.101.2 review: the streak's start is always found (kept for older pages)
+                if n == len(ids) and st not in ("ok", ""):     # the same state all the runs shown: when it began, further back
+                    # the last run of this template before them that is not this state - another state, or the DC not in it
+                    r = self._q(cur, "SELECT MAX(r.read_at) FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id AND d.domain = %s AND d.dc = %s "
+                                     "WHERE r.template_id = %s AND r.read_at < %s AND (d.run_id IS NULL OR d.status <> %s)",
+                                [dom, dc, tid, at[ids[-1]], st])
                     before = self._dt(r[0][0]) if r and r[0] else None
-                    if before is not None:
-                        nxt = self._q(cur, "SELECT MIN(read_at) FROM ad_run WHERE template_id = %s AND read_at > %s", [tid, before])
-                        since = self._dt(nxt[0][0]) if nxt and nxt[0] else since
+                    # the streak: the runs after it (none before: the template's first kept run) up to the newest
+                    nxt = self._q(cur, "SELECT MIN(read_at), COUNT(*) FROM ad_run WHERE template_id = %s AND read_at <= %s" +
+                                       (" AND read_at > %s" if before is not None else ""), [tid, at[ids[0]]] + ([before] if before is not None else []))
+                    if nxt and nxt[0] and nxt[0][0] is not None:
+                        since, n = self._dt(nxt[0][0]) or since, max(n, int(nxt[0][1] or 0))   # its whole length: no "+"
                 dcs.append({"dc": dc, "domain": dom, "site": site, "read": is_read, "now": st or "ok", "problems": probs, "worst": worst,
                             "since": since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else "", "runs_since": n, "longer": longer, "trend": trend})
             rank = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "ok": 4}
@@ -3864,7 +3874,7 @@ class AdDb(object):
                     "times": [self._iso(at[rid]) for rid in reversed(ids)], "dcs": dcs, "links": out_links, "live": live,
                     "hist": [{"at": self._iso(h[1]), "job": int(h[2] or 0), "dcs": int(h[3] or 0), "read": int(h[4] or 0),
                               "c": int(h[5] or 0), "w": int(h[6] or 0)} for h in hist],
-                    "worst7": {"dc": str(top7[0][0]), "critical": int(top7[0][1])} if top7 else None}
+                    "worst7": {"dc": str(top7[0][0]), "domain": str(top7[0][1] or ""), "critical": int(top7[0][2])} if top7 else None}
         finally:
             try:
                 conn.close()
@@ -3888,7 +3898,7 @@ class AdLive(object):
         self.wake = threading.Event()
         self.seen, self.thread, self.client = 0.0, None, None
         self.sw, self.sw_stale, self.sw_fails, self.sw_next = None, "", 0, 0.0
-        self.sched_at, self.sched = 0.0, {}
+        self.sched = {}                                      # template id -> (when asked, {next}): each template its own
         self.source = source or self._swis
         # the AD job's runs in the report database (AdDb): read every AD_POLL s while the page is open; None: no login
         self.db = db if db is not None else (AdDb(cfg) if cfg.report_db else None)
@@ -3897,8 +3907,9 @@ class AdLive(object):
         self.sw_tried = ""                                   # the run SolarWinds was last asked for (its backoff kept for it)
 
     def report_link(self, job=None):
-        """The shown run's page on the report website -> {url, when} or None: index.json's line marked live: ad of that job
-        (two forests: the right one), else the newest such line; read again only when the file changed."""
+        """The shown run's own page on the report website -> {url, when} or None: in index.json's lines marked live: ad, the
+        run of that job (a line's runs each keep their page); no such run: no link (never another run's page). Read again
+        only when the file changed."""
         idx = os.path.join(os.path.realpath(self.cfg.reports), "index.json")
         try:
             st = os.stat(idx)
@@ -3912,11 +3923,15 @@ class AdLive(object):
             with open(idx, encoding="utf-8") as fh:
                 doc = json.load(fh)
             for r in (doc.get("reports") or []) if isinstance(doc, dict) else []:
-                rel = str(r.get("latest") or r.get("page") or "") if isinstance(r, dict) and r.get("live") == "ad" else ""
-                if rel.endswith(".html") and not rel.startswith("/") and ".." not in rel.split("/") and "\\" not in rel:
-                    lines.append({"url": "%sreports/%s" % (self.cfg.path, urllib.parse.quote(rel)), "when": shown(self.cfg, r.get("when")),
-                                  "at": str(r.get("when") or ""), "jobs": [str(r.get("job") or "")] + [str(x.get("job") or "") for x in r.get("runs") or []
-                                                                                                         if isinstance(x, dict)]})
+                if not isinstance(r, dict) or r.get("live") != "ad":
+                    continue
+                # the line's own run (its page, else latest.html) and each run it keeps with its own page
+                runs = [dict(r, page=r.get("page") or r.get("latest"))] + [x for x in r.get("runs") or [] if isinstance(x, dict)]
+                for x in runs:
+                    rel = str(x.get("page") or "")
+                    if x.get("job") and rel.endswith(".html") and not rel.startswith("/") and ".." not in rel.split("/") and "\\" not in rel:
+                        lines.append({"url": "%sreports/%s" % (self.cfg.path, urllib.parse.quote(rel)), "when": shown(self.cfg, x.get("when")),
+                                      "job": str(x.get("job"))})
         except (OSError, ValueError):
             return self._pick(self.link_lines, job)       # being written: the last one, read again next time
         self.idx_sig, self.link_lines = sig, lines
@@ -3924,11 +3939,8 @@ class AdLive(object):
 
     @staticmethod
     def _pick(lines, job):
-        if not lines:
-            return None
-        mine = [x for x in lines if job and str(job) in x["jobs"]]
-        x = max(mine or lines, key=lambda r: r["at"])
-        return {"url": x["url"], "when": x["when"]}
+        mine = [x for x in lines or [] if job and str(job) != "0" and x["job"] == str(job)]
+        return {"url": mine[0]["url"], "when": mine[0]["when"]} if mine else None
 
     # -- SolarWinds -----------------------------------------------------------------------------------------------------------
     def _swis(self, live):
@@ -3971,22 +3983,31 @@ class AdLive(object):
         sec = v.get("section")
         if not sec:
             raise ValueError("; ".join(v.get("not_read") or []) or "SolarWinds' answer could not be made into the section")
-        keep = dict((k, sec.get(k)) for k in ("columns", "rows", "cell_status", "row_status", "status", "text"))
+        # keys: each row's DC by domain and name (the section's own, in its order): two domains' DC01 are never one
+        keep = dict((k, sec.get(k)) for k in ("columns", "rows", "cell_status", "row_status", "status", "text", "keys"))
         return {"at": time.time(), "key": key, "job": job, "section": keep, "tile": v.get("tile")}
 
     def _schedule(self, tid):
-        """The AD template's next scheduled run (AAP), at most every AD_SCHEDULE_EVERY s; {} when there is none or AAP is not asked."""
+        """The AD template's next scheduled run (AAP), asked at most every AD_SCHEDULE_EVERY s per template (each template its
+        own: another forest's newest run never shows this one's); {} when there is none or AAP is not asked."""
         tid = str(tid or "")
-        if self.aap is None or not tid.isdigit() or time.time() - self.sched_at < AD_SCHEDULE_EVERY:
+        if self.aap is None or not tid.isdigit() or time.time() - self.sched.get(tid, (0.0, {}))[0] < AD_SCHEDULE_EVERY:
             return
-        self.sched_at = time.time()
+        got = {}
         try:
             code, data = self.aap.call("GET", "job_templates/%d/schedules/?enabled=true&order_by=next_run&page_size=5" % int(tid))
             nxt = sorted(str(r.get("next_run")) for r in (data or {}).get("results") or [] if r.get("next_run")) if code == 200 else []
-            self.sched = {"next": nxt[0]} if nxt else {}
+            got = {"next": nxt[0]} if nxt else {}
         except Exception as e:  # pylint: disable=broad-except
-            self.sched = {}
             self.log.add({"event": "ad", "schedule": "not read", "why": clean(str(e), 200)})
+        with self.lock:
+            self.sched[tid] = (time.time(), got)
+
+    def _tid(self):
+        """The shown run's template (the database's newest run, or portal_ad_template's)."""
+        with self.lock:
+            m = self.dbm
+        return str(m["run"].get("template_id") or "") if m and m.get("run") else ""
 
     def viewed(self):
         now = time.time()
@@ -4019,9 +4040,8 @@ class AdLive(object):
                     if first:
                         self.log.add({"event": "ad", "database": "not read", "why": why})
                     self.db_due = time.time() + backoff(self.db_fails, AD_POLL * 4)
+            self._schedule(self._tid())                            # the shown run's template, SolarWinds DCs or not
             src = self.sw_source()
-            if src is not None:
-                self._schedule(src[2])
             new_run = src is not None and src[0] != self.sw_tried          # once per run: a read that fails keeps its backoff
             if src is not None and not self.cfg.ad_swis_why and (time.time() >= self.sw_due or new_run):
                 self.sw_tried = src[0]
@@ -4052,8 +4072,10 @@ class AdLive(object):
         time; a read that failed is said (stale) beside the last answer."""
         now = time.time()
         with self.lock:
-            sw, stale, nxt, sched = self.sw, self.sw_stale, self.sw_next, dict(self.sched)
+            sw, stale, nxt = self.sw, self.sw_stale, self.sw_next
             dbm, db_at, db_stale = self.dbm, self.db_at, self.db_stale
+            tid = str(dbm["run"].get("template_id") or "") if dbm and dbm.get("run") else ""
+            sched = dict(self.sched.get(tid, (0.0, {}))[1])
         src = self.sw_source()
         if src is not None and src[0] != self.sw_tried:
             self.wake.set()                                          # a new run (its DCs): SolarWinds read for it now

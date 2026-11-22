@@ -803,7 +803,7 @@ no static page behind it.
   link to that run's full report on the report website.
 - **At a glance**: the status now, DCs read, DCs with a problem (since when), SolarWinds down or warning, replication
   failing (since when), replication late, the AD job's runs in 24 h, the worst DC of 7 days.
-- **Domain controllers**, worst first: now, since when, the last 48 runs (one square each), SolarWinds now, what is wrong.
+- **Domain controllers**, worst first: now, since when, its runs of the last 24 h (one square each; every 30 min: 48), SolarWinds now (by domain and name), what is wrong.
 - **Replication links that need a look**: now, the last success, failures, the error.
 - **DCs with a problem, last 7 days**: a chart (the worst run of each 2 hours) and the last runs as a table.
 

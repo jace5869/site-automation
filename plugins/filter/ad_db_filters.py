@@ -8,7 +8,15 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import importlib.util
+import os
 import re
+
+# the AD matrix's own link classifier (ad_repl_filters.link_status): the job's report and the portal say the same of a link
+_spec = importlib.util.spec_from_file_location("ad_repl_for_db", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ad_repl_filters.py"))
+_rp = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_rp)
+INBOUND = re.compile(r"^\s*(\S+)\s+<-\s")             # ad_filters' replication problem: "DC02 <- DC01 (Configuration)"
 
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "info": 4, "ok": 5, "": 6}
 
@@ -20,18 +28,28 @@ def _utc(text):
     return datetime.datetime(*[int(x or 0) for x in m.groups()])
 
 
-def link_status(link, now, opts):
-    """A replication link's state on the matrix's scale: failing or no success in crit_hours critical, warn_hours warning,
-    low_hours low, else ok; '' when its last success is not known and it is not failing."""
-    if int(link.get("failures") or 0) > 0:
-        return "critical"
-    t = _utc(link.get("last_success"))
-    if t is None or now is None:
-        return ""
-    h = (now - t).total_seconds() / 3600.0
+def link_status(link, now, opts, tombstone_days=0):
+    """A replication link's state as the AD report's matrix says it (ad_repl_filters.link_status, one rule): never
+    replicated a warning, failing a warning until crit_hours without a success, low_hours 0 no Low, the tombstone
+    lifetime critical. now: the run's read (naive UTC or aware)."""
     o = opts or {}
-    return ("critical" if h >= float(o.get("crit_hours", 24)) else "warning" if h >= float(o.get("warn_hours", 6))
-            else "low" if h >= float(o.get("low_hours", 4)) else "ok")
+    oo = {"low": float(o.get("low_hours", 4) or 0), "warn": float(o.get("warn_hours", 6)), "crit": float(o.get("crit_hours", 24)),
+          "tsl": float(tombstone_days or 0)}
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=datetime.timezone.utc)
+    return _rp.link_status(_rp._ad.age_hours(link.get("last_success"), now), int(link.get("failures") or 0), oo)[0]
+
+
+def problem_dc(p):
+    """The DC a problem is of (lower case): its structured dc, else the receiving DC of an inbound replication problem
+    ("DC02 <- DC01 (Configuration)": DC02), else its object."""
+    if p.get("dc"):
+        return str(p["dc"]).lower()
+    obj = str(p.get("object") or "")
+    m = INBOUND.match(obj)
+    return (m.group(1) if m else obj).lower()
 
 
 def ad_db_payload(ad, live=None, opts=None):
@@ -47,7 +65,7 @@ def _payload(ad, live, opts):
     probs, by_name = {}, {}
     for p in a.get("problems") or []:
         if isinstance(p, dict) and p.get("object"):
-            dom, obj = str(p.get("domain") or "").lower(), str(p.get("object")).lower()
+            dom, obj = str(p.get("domain") or "").lower(), problem_dc(p)
             item = (str(p.get("severity") or ""), str(p.get("text") or ""))
             if dom:
                 probs.setdefault((dom, obj), []).append(item)
@@ -70,6 +88,7 @@ def _payload(ad, live, opts):
         dcs.append({"dc": name[:255], "domain": str(d.get("domain") or "")[:255], "site": site.get(name.lower(), "")[:255],
                     "read": bool(d.get("read")), "status": st[:16], "problems": len(ps), "worst": worst[:300]})
     now = _utc(repl.get("now"))
+    tsl = repl.get("tombstone_days") or 0
     links = []
     for x in repl.get("links") or []:
         if not isinstance(x, dict) or not x.get("frm") or not x.get("to"):
@@ -77,7 +96,7 @@ def _payload(ad, live, opts):
         links.append({"frm": str(x["frm"])[:255], "to": str(x["to"])[:255], "nc": str(x.get("nc") or "")[:255],
                       "last_success": x.get("last_success") or "", "failures": int(x.get("failures") or 0),
                       "error": str(x.get("error") or "")[:255], "last_failure": x.get("last_failure") or "",
-                      "status": link_status(x, now, opts)})
+                      "status": link_status(x, now, opts, tsl)})
     return {"status": str((a.get("report") or {}).get("status") or ""), "critical": int(a.get("critical") or 0),
             "warning": int(a.get("warning") or 0), "dcs": dcs, "links": links, "live": live or {}, "why": ""}
 

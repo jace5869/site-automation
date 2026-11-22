@@ -50,15 +50,15 @@
 read-only account `report_reader`) and `report_db`, run it, then run *Site portal - deploy* once.
 
 **The portal's Active Directory page (`/portal/ad`), drawn from the report database** (user-approved mockup B):
-- **At a glance** (8 tiles), the **domain controllers** worst first: now, **since when**, the **last 48 runs** (a square
-  each), SolarWinds now, what is wrong; **replication links that need a look** (failing or late, since the last success);
-  **DCs with a problem over 7 days** (a chart and the runs table); a link to the newest run's full report.
+- **At a glance** (8 tiles), the **domain controllers** worst first: now, **since when**, its **runs of the last 24 h** (a
+  square each), SolarWinds now, what is wrong; **replication links that need a look** (failing or late, since the last success);
+  **DCs with a problem over 7 days** (a chart and the runs table); a link to the shown run's own report page.
 - Live while open: the database every minute, SolarWinds every `portal_ad_seconds` (600), one read every viewer shares,
   an ETag; a DC that changes gets a toast (motion settings apply).
 - Never old data as current: the database off, not read now, no run yet, a run older than `portal_ad_old_minutes` (90),
-  SolarWinds not read - each said on the page.
+  SolarWinds not read, the portal not answering - each said on the page; a DC is up only when SolarWinds says Up.
 - **The AD job keeps each run** in the report database (`ad_db`, new tables `ad_run`, `ad_dc`, `ad_link`, made by the
-  job; `ad_db_keep_days` 400). A database that is down is a warning; the job stays green. The website page is as before.
+  job; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job stays green. The website page is as before.
 - **Site portal - deploy**: the read-only login as the podman secret `site-portal-reportdb` (from the attached Report
   database credential); a login that can write is a warning; never a failed deploy. The portal starts a Python of its
   image that has PyMySQL (the all-in-one EE).

@@ -8,7 +8,8 @@ html.moves .adp-dot:not(.off){animation:adppulse 2.4s ease-in-out infinite}
 .adp-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
 .adp-tiles .tile:nth-child(n+5){border-top:1px solid var(--line)}
 .adp-tiles .tile:nth-child(5){border-left:0}
-.adp-trend{display:inline-flex;gap:1px;vertical-align:middle;padding:2px 0}
+.adp-trend{display:inline-flex;gap:1px;vertical-align:middle;padding:2px 0;width:239px}
+.adp-trend i{flex:1 1 0;min-width:1px}
 .adp-trend i,.adp-leg i{display:inline-block;width:4px;height:16px;border-radius:1px;background:var(--ok);opacity:.55}
 .adp-trend i.k-warning,.adp-leg i.k-warning,.adp-trend i.k-low,.adp-trend i.k-unknown{background:var(--warning);opacity:1}
 .adp-trend i.k-critical,.adp-leg i.k-critical{background:var(--critical);opacity:1}
@@ -26,9 +27,9 @@ tr.r-warning>td:first-child,tr.r-low>td:first-child{box-shadow:inset 3px 0 0 var
 .adp-chart .gl{stroke:var(--line);stroke-width:1}
 .adp-chart .bc{fill:var(--critical)}.adp-chart .bw{fill:var(--warning)}
 .adp-chart .hit{fill:transparent}.adp-chart .hit:hover{fill:var(--hover)}
-.adp-tip{position:absolute;z-index:3;padding:8px 10px;border-radius:10px;background:var(--card-solid);border:1px solid var(--edge);box-shadow:var(--shadow);
-  font-size:12.5px;line-height:1.45;pointer-events:none;white-space:nowrap}
-.adp-tip b{display:block}
+.adp-chart .tipg{pointer-events:none}
+.adp-chart .tipg rect{fill:var(--card-solid);stroke:var(--edge);stroke-width:1}
+.adp-chart .tipg .tb{font:600 12px var(--sans);fill:var(--ink)}.adp-chart .tipg .tt{font:400 12px var(--sans);fill:var(--muted)}
 .adp-foot{margin:28px 0 8px;font-size:12.5px;color:var(--muted);max-width:90ch}
 .adp-toast{display:flex;gap:10px;align-items:flex-start}
 .adp-toast.bad{border-color:var(--critical)}.adp-toast.bad b{color:var(--critical)}
@@ -36,5 +37,5 @@ tr.r-warning>td:first-child,tr.r-low>td:first-child{box-shadow:inset 3px 0 0 var
 html.moves tr.adp-flash>td{animation:adpflash 1.6s ease-out 1}
 @keyframes adpflash{0%{background:var(--warning-bg)}100%{background:transparent}}
 @media (max-width:900px){.adp-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.adp-tiles .tile:nth-child(odd){border-left:0}
-  .adp-tiles .tile:nth-child(n+3){border-top:1px solid var(--line)}.adp-wide{display:none}.adp-why{display:block}.adp-trend i{width:3px}}
+  .adp-tiles .tile:nth-child(n+3){border-top:1px solid var(--line)}.adp-wide{display:none}.adp-why{display:block}.adp-trend{width:143px}}
 @media print{.adp-toasts,.adp-chart .hit{display:none}}

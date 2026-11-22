@@ -358,7 +358,7 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_repl_db_keep_days` | `400` | delete the database's points older than this many days (0 = never) |
 | `ad_db` | `true` | 1.101.2: each run (its DCs and replication links) in the report database, for the portal's live AD page (/portal/ad), when the job template has a "Report database" credential (no credential = not used; the job never fails on it) |
 | `ad_db_create` | `true` | make the tables ad_run, ad_dc, ad_link on the first run; false = an admin makes them (docs/REPORT_DATABASE.md) |
-| `ad_db_keep_days` | `400` | delete runs older than this many days (0 = never) |
+| `ad_db_keep_days` | `400` | delete this template's runs older than this many days (0 = never) |
 | `ad_repl_map_web` | `true` | ---- Replication map (1.101.0): the AD sites where the network map places their sites, on the report website ----- Each AD site is matched to a network-map site: ad_site_map first, then the DCs' own SolarWinds nodes (From SolarWinds), then the same site code, then the same name. The places and the WAN traffic come fro… (all of it: the role file) |
 | `ad_site_map` | `{}` | an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301} |
 | `ad_time_warn_seconds` | `5` | a DC's clock against the PDC emulator (the PDC: against its NTP source) |

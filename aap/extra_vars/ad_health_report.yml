@@ -174,7 +174,7 @@
 ## (docs/REPORT_DATABASE.md)
 # ad_db_create: true
 
-## delete runs older than this many days (0 = never)
+## delete this template's runs older than this many days (0 = never)
 # ad_db_keep_days: 400
 
 ## ---- Replication map (1.101.0): the AD sites where the network map places their sites, on the

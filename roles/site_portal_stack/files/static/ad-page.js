@@ -59,8 +59,8 @@
   // ---- the parts --------------------------------------------------------------------------------------------------------------
   function live(a, m) {
     const run = m && m.run, sw = a.sw || {};
-    const ok = run && !run.old && !a.db.stale && !a.db.refreshing && (!sw.on || !sw.stale);
-    const l = el("div", "l", [el("span", "adp-dot" + (ok ? "" : " off"), ""), el("b", "", ok ? "Live" : a.db.refreshing ? "Refreshing…" : "Not live")]);
+    const ok = run && !a.down && !run.old && !a.db.stale && !a.db.refreshing && (!sw.on || !sw.stale);
+    const l = el("div", "l", [el("span", "adp-dot" + (ok ? "" : " off"), ""), el("b", "", ok ? "Live" : a.db.refreshing && !a.down ? "Refreshing…" : "Not live")]);
     if (run) l.append(el("span", run.old ? "c-warning" : "", run.old ? "AD checks: as of " + run.as_of + " - " + hrs(run.age_min) + " old: the AD job has not run since"
                                                                       : "AD checks: as of " + hhmm(run.as_of) + " (the AD job" + (run.next ? "; next " + hhmm(run.next) : "") + ")"));
     l.append(el("span", "adp-sep", "·"));
@@ -72,20 +72,33 @@
   }
   function note(kind, text) { return el("div", "note" + (kind ? " " + kind : ""), el("p", "", text)); }
 
-  function swOf(sw) {          // the newest run's DCs as SolarWinds sees them: {dc: [text, status]}
+  // the newest run's DCs as SolarWinds sees them: {"domain|dc": [text, status]} - a DC by its domain and name (two domains'
+  // DC01 are two DCs). status: critical, warning, ok (a positive Up only) or "" (not in SolarWinds, not matched, not known)
+  const idOf = d => (String(d.domain || "") + "|" + String(d.dc || "")).toLowerCase();
+  function swOf(sw) {
     const out = {}, s = sw && sw.section;
     if (!s) return out;
-    const i = s.columns.indexOf("DC"), j = s.columns.indexOf("SolarWinds");
-    s.rows.forEach((r, k) => { out[String(r[i]).toLowerCase()] = [r[j], (s.cell_status[k] || [])[j] || ""]; });
+    const i = s.columns.indexOf("DC"), j = s.columns.indexOf("SolarWinds"), keys = s.keys || [];
+    s.rows.forEach((r, k) => {
+      const c = (s.cell_status[k] || [])[j] || "", st = c === "critical" || c === "warning" ? c : c === "ok" && r[j] === "Up" ? "ok" : "";
+      if (keys.length === s.rows.length && !/^\|/.test(keys[k])) { out[keys[k]] = [r[j], st]; return; }
+      const key = "?|" + String(r[i]).toLowerCase();        // no domain with the row: by name, a name twice not known
+      out[key] = key in out ? ["two DCs of this name", ""] : [r[j], st];
+    });
     return out;
   }
+  const swFor = (sws, d) => sws[idOf(d)] || sws["?|" + String(d.dc).toLowerCase()];
+  // a DC's name, with its domain when another DC on the page has the same name
+  const nameOf = (m, d) => (m.dcs || []).filter(x => x.dc.toLowerCase() === String(d.dc).toLowerCase()).length > 1 && d.domain ? d.dc + " (" + d.domain + ")" : d.dc;
   function glance(a, m) {
     const run = m.run, dcs = m.dcs, sw = a.sw || {}, links = m.links;
     const bad = dcs.filter(d => d.now !== "ok"), crit = dcs.filter(d => d.now === "critical"), warn = dcs.filter(d => d.now === "warning");
     const failing = links.filter(x => x.failures > 0), late = links.filter(x => !(x.failures > 0));
     const first = bad[0];
     const swDown = sw.tile ? sw.tile.value : null;
-    const swFirst = Object.entries(swOf(sw)).filter(([, v]) => /critical|warning/.test(v[1]))[0];
+    const sws = swOf(sw), seen = dcs.map(d => [d, swFor(sws, d)]);
+    const swFirst = seen.filter(([, v]) => v && /critical|warning/.test(v[1])).sort((x, y) => RANK[x[1][1]] - RANK[y[1][1]])[0];
+    const swUp = seen.filter(([, v]) => v && v[1] === "ok").length, swNot = dcs.length - swUp - seen.filter(([, v]) => v && /critical|warning/.test(v[1])).length;
     const day = m.hist.filter(h => Date.parse(h.at) >= Date.now() - 864e5).length;
     const t = [
       tile("Status now", chip(run.status || "ok"), crit.length + " DC" + (crit.length === 1 ? "" : "s") + " critical, " + (warn.length || "none") + " warning"),
@@ -93,39 +106,41 @@
       tile("DCs with a problem", num(bad.length, bad.length ? (crit.length ? "critical" : "warning") : ""),
            first ? first.dc + " " + WORD[first.now].toLowerCase() + (first.since_shown ? " since " + hhmm(first.since_shown) : "") : "none"),
       tile("SolarWinds: down or warning", swDown == null ? "-" : num(swDown, swDown ? sw.tile.status : ""),
-           !sw.on ? "not read here" : swFirst ? swFirst[0].toUpperCase() + " " + swFirst[1][0] : sw.section ? "every DC up" : "reading…"),
+           !sw.on ? "not read here" : swFirst ? nameOf(m, swFirst[0]) + " " + swFirst[1][0]
+             : !sw.section ? "reading…" : swUp === dcs.length ? "every DC up"
+             : swNot + " DC" + (swNot === 1 ? "" : "s") + " not in SolarWinds or not matched, " + swUp + " up"),
       tile("Replication failing", num(failing.length + (failing.length === 1 ? " link" : " links"), failing.length ? "critical" : ""),
            failing.length ? "no success since " + hhmm(failing.map(x => x.last_success_shown).filter(Boolean).sort()[0] || "-") : "none"),
       tile("Replication late", num(late.length + (late.length === 1 ? " link" : " links"), late.length ? "warning" : ""), late.length ? "past the matrix's hours since the last success" : "none"),
       tile("AD job runs, 24 h", String(day), run.next ? "next " + hhmm(run.next) : "the schedule was not read"),
-      tile("Worst DC, 7 days", m.worst7 ? m.worst7.dc : "none", m.worst7 ? "critical in " + m.worst7.critical + " of " + m.hist.length + " runs" : "no DC critical"),
+      tile("Worst DC, 7 days", m.worst7 ? nameOf(m, m.worst7) : "none", m.worst7 ? "critical in " + m.worst7.critical + " of " + m.hist.length + " runs" : "no DC critical"),
     ];
     return sec("At a glance", null, null, [el("div", "tiles adp-tiles", t)]);
   }
   function dcTable(a, m) {
     const sws = swOf(a.sw), n = m.times.length;
-    const swRank = d => { const s = sws[d.dc.toLowerCase()]; return s && s[1] === "critical" ? 0 : s && s[1] === "warning" ? 1 : 2; };
+    const swRank = d => { const s = swFor(sws, d); return s && s[1] === "critical" ? 0 : s && s[1] === "warning" ? 1 : 2; };
     const dcs = m.dcs.slice().sort((x, y) => (RANK[x.now] - RANK[y.now]) || (swRank(x) - swRank(y)) || x.dc.localeCompare(y.dc));
     const rows = dcs.map(d => {
-      const s = sws[d.dc.toLowerCase()];
+      const s = swFor(sws, d);
       const why = d.worst || (s && s[1] === "critical" ? "SolarWinds: " + s[0] + ", AD answers" : "");
       const tr = el("tr", d.now !== "ok" ? "r-" + d.now : "");
-      tr.dataset.dc = d.dc;
+      tr.dataset.dc = idOf(d);
       const strip = el("span", "adp-trend");
       strip.setAttribute("role", "img");
       strip.setAttribute("aria-label", d.dc + ": the last " + n + " runs, " + d.trend.filter(x => x && x !== "ok").length + " not OK");
       d.trend.forEach((x, k) => { const i = el("i", "k-" + (x || "none")); i.title = (m.times[k] || "") + ": " + (WORD[x] || "no run"); strip.append(i); });
       const since = d.now !== "ok" ? "since " + hhmm(d.since_shown) + " · " + d.runs_since + (d.longer ? "+" : "") + (d.runs_since === 1 && !d.longer ? " run" : " runs")
                                     : d.runs_since >= n ? "OK all " + n + " runs" : "OK since " + hhmm(d.since_shown);
-      tr.append(el("td", "adp-dc", [el("b", "", d.dc), why ? el("div", "adp-why", why) : null]), el("td", "nw adp-wide", d.site || "-"),
+      tr.append(el("td", "adp-dc", [el("b", "", nameOf(m, d)), why ? el("div", "adp-why", why) : null]), el("td", "nw adp-wide", d.site || "-"),
                 el("td", "nw", chip(d.now)), el("td", "nw", since), el("td", "", strip),
-                el("td", "nw", s ? chip(s[1] === "critical" ? "critical" : s[1] === "warning" ? "warning" : "ok", s[0]) : el("span", "muted", a.sw.on ? "-" : "not read")),
+                el("td", "nw", s ? chip(s[1] || "unknown", s[0]) : el("span", "muted", a.sw.on ? "-" : "not read")),
                 el("td", "adp-wide", why || el("span", "muted", "-")));
       return tr;
     });
     const leg = el("p", "adp-leg", [["ok", "OK"], ["warning", "Warning"], ["critical", "Critical"], ["none", "No run"]].map(([k, t]) => el("span", "", [el("i", "k-" + k), t])));
     return sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left",
-               [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last " + n + " runs"], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg]);
+               [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg]);
   }
   function linkTable(m) {
     if (!m.links.length) return sec("Replication links that need a look", 0, "as of " + hhmm(m.run.as_of), [el("p", "muted", "None: every replication link succeeded within the matrix's hours.")]);
@@ -148,9 +163,7 @@
     return out;
   }
   function chart(m) {
-    const box = el("div", "card adp-chart"), tip = el("div", "adp-tip");
-    tip.hidden = true;
-    box.append(tip);
+    const box = el("div", "card adp-chart");
     const draw = () => {
       box.querySelectorAll("svg").forEach(x => x.remove());
       const ws = windows(m.hist);
@@ -170,16 +183,26 @@
         const d = String(h.at).slice(0, 10);
         if (d !== day) { day = d; add("text", {x, y: H - 6, class: "ax"}, d.slice(5)); }
         const hit = add("rect", {x: L + i * bw, y: 0, width: bw, height: H - B, class: "hit"});
-        hit.addEventListener("mousemove", e => {
-          tip.replaceChildren(el("b", "", h.at), h.c + " DC" + (h.c === 1 ? "" : "s") + " critical · " + h.w + " warning");
-          tip.hidden = false;
-          const r = box.getBoundingClientRect();
-          tip.style.left = Math.max(4, Math.min(e.clientX - r.left + 12, r.width - tip.offsetWidth - 8)) + "px";
-          tip.style.top = Math.max(4, e.clientY - r.top - tip.offsetHeight - 10) + "px";
-        });
-        hit.addEventListener("mouseleave", () => { tip.hidden = true; });
+        hit.addEventListener("mousemove", e => show(h, e));
+        hit.addEventListener("mouseleave", () => tip.setAttribute("visibility", "hidden"));
       });
-      box.insertBefore(s, tip);
+      // the card: in the SVG, placed with its own attributes - no inline style (the CSP)
+      const tip = add("g", {class: "tipg", visibility: "hidden"}), bg = document.createElementNS(SVG, "rect");
+      const t1 = document.createElementNS(SVG, "text"), t2 = document.createElementNS(SVG, "text");
+      bg.setAttribute("rx", 8); t1.setAttribute("class", "tb"); t2.setAttribute("class", "tt");
+      t1.setAttribute("x", 10); t1.setAttribute("y", 19); t2.setAttribute("x", 10); t2.setAttribute("y", 37);
+      tip.append(bg, t1, t2);
+      function show(h, e) {
+        t1.textContent = h.at;
+        t2.textContent = h.c + " DC" + (h.c === 1 ? "" : "s") + " critical · " + h.w + " warning";
+        const w = Math.ceil(Math.max(t1.getComputedTextLength(), t2.getComputedTextLength())) + 20, hh = 46;
+        bg.setAttribute("width", w); bg.setAttribute("height", hh);
+        const r = s.getBoundingClientRect(), k = W / Math.max(1, r.width);
+        const px = (e.clientX - r.left) * k, py = (e.clientY - r.top) * k;
+        tip.setAttribute("transform", "translate(" + Math.max(4, Math.min(px + 12, W - w - 4)) + "," + Math.max(4, Math.min(py - hh - 10, H - hh - 4)) + ")");
+        tip.setAttribute("visibility", "visible");
+      }
+      box.append(s);
     };
     requestAnimationFrame(draw);
     chart.redraw = draw;
@@ -196,16 +219,16 @@
   let last = null;
   function said(a, m) {
     const now = {}, sws = swOf(a.sw);
-    (m && m.dcs || []).forEach(d => { now[d.dc] = [d.now, (sws[d.dc.toLowerCase()] || [])[0]]; });
+    (m && m.dcs || []).forEach(d => { now[idOf(d)] = [d.now, (swFor(sws, d) || [])[0], nameOf(m, d)]; });
     if (last) {
       const out = [];
-      Object.keys(now).forEach(dc => {
-        const w = last[dc];
+      Object.keys(now).forEach(id => {
+        const w = last[id], v = now[id];
         if (!w) return;
-        if (w[0] !== now[dc][0]) out.push([dc + ": AD " + WORD[now[dc][0]], "was " + WORD[w[0]], RANK[now[dc][0]] < 2]);
-        if (w[1] && now[dc][1] && w[1] !== now[dc][1]) out.push([dc + ": SolarWinds " + now[dc][1], "was " + w[1], now[dc][1] !== "Up"]);
+        if (w[0] !== v[0]) out.push([v[2] + ": AD " + WORD[v[0]], "was " + WORD[w[0]], RANK[v[0]] < 2, id]);
+        if (w[1] && v[1] && w[1] !== v[1]) out.push([v[2] + ": SolarWinds " + v[1], "was " + w[1], v[1] !== "Up", id]);
       });
-      out.slice(0, 3).forEach(([t, was, bad]) => {
+      out.slice(0, 3).forEach(([t, was, bad, id]) => {
         const x = el("button", "x", "×");
         x.type = "button"; x.setAttribute("aria-label", "Close");
         const box = el("div", "toast adp-toast" + (bad ? " bad" : ""), [el("div", "", [el("b", "", t), el("div", "muted", was)]), x]);
@@ -213,8 +236,7 @@
         while (toasts.children.length >= 3) toasts.firstChild.remove();
         toasts.append(box);
         setTimeout(() => box.remove(), 15000);
-        const dc = t.split(":")[0];
-        const row = [...root.querySelectorAll("tr[data-dc]")].find(r => r.dataset.dc === dc);
+        const row = [...root.querySelectorAll("tr[data-dc]")].find(r => r.dataset.dc === id);
         if (row && moves()) row.classList.add("adp-flash");
       });
     }
@@ -231,6 +253,9 @@
     } else if (!m) {
       parts.push(db.stale ? note("bad", "The report database could not be read: " + db.stale + ". Tried again every minute.")
                           : note("", "Reading the report database…"));
+    } else if (!m.run && db.stale) {           // the last good read found none; this one failed: a run may be there now
+      parts.push(note("bad", "The report database could not be read: " + db.stale + ". Its last answer (" + ago(db.age) + ") had no AD run; " +
+                             "whether there is one now is not known. Tried again every minute."));
     } else if (!m.run) {
       parts.push(live(a, m), note("", "No AD run in the report database yet: the AD job keeps each run there from 1.101.2 on, when its template has the " +
                                        "\"Report database\" credential (the template setup job attaches it). The next run is the first."));
@@ -244,11 +269,28 @@
                  el("p", "adp-foot", "From the report database: the AD job's runs (ad_run, ad_dc, ad_link), read every minute while this page is open. " +
                                      "SolarWinds: read by this server every " + Math.round((a.sw.every || 600) / 60) + " min. Read only - nothing here changes AD."));
     }
+    if (a.down) parts.unshift(note("bad", "The portal did not answer (" + a.down + "): this is its answer of " + ago(a.since) +
+                                          ", not now. Tried again in " + poll + " s."));
     root.replaceChildren(...parts);
     said(a, m);
   }
 
-  let etag = "", shown = null, got = Date.now(), timer = null, poll = 60;
+  // the last answer as of now: its ages moved on (a run grows old past portal_ad_old_minutes), down: the portal not answering
+  function aged(a, down) {
+    const gone = Math.round((Date.now() - got) / 1000), a2 = JSON.parse(JSON.stringify(a));
+    if (a2.sw && a2.sw.age != null) a2.sw.age += gone;
+    if (a2.db && a2.db.age != null) a2.db.age += gone;
+    const run = a2.db && a2.db.model && a2.db.model.run;
+    if (run && run.age_min != null) {
+      run.age_min += Math.floor(gone / 60);
+      run.old = run.old || run.age_min > (a2.old_after || 90);
+    }
+    a2.down = down || "";
+    a2.since = gone;
+    return a2;
+  }
+
+  let etag = "", shown = null, got = Date.now(), timer = null, poll = 60, down = "";
   function ask() {
     fetch(API, {headers: etag ? {"If-None-Match": etag} : {}, credentials: "same-origin", cache: "no-store"}).then(r => {
       if (r.status === 304) return null;
@@ -257,6 +299,7 @@
       got = Date.now();
       return r.json();
     }).then(a => {
+      down = "";                                // an answer (200 or 304): the portal is there again
       if (a) {
         shown = a;
         // the first read not there yet, or an answer from before a quiet spell: asked again soon, not in a minute
@@ -264,17 +307,19 @@
         draw(a);
       }
       else if (shown) {                         // the same answer: its ages move on
-        const gone = Math.round((Date.now() - got) / 1000);
-        const a2 = JSON.parse(JSON.stringify(shown));
-        if (a2.sw && a2.sw.age != null) a2.sw.age += gone;
-        if (a2.db && a2.db.age != null) a2.db.age += gone;
         last = null;                           // the same DCs: nothing to say
-        draw(a2);
+        draw(aged(shown));
       }
     }).catch(e => {
+      down = e.message || "no answer";
+      if (shown) {                              // the last answer, said as not now: not Live, its ages still growing
+        last = null;
+        draw(aged(shown, down));
+        return;
+      }
       const n = document.getElementById("ad-off") || el("p", "note bad");
       n.id = "ad-off";
-      n.textContent = "The portal did not answer (" + e.message + "): the page stays as it is, tried again in " + poll + " s.";
+      n.textContent = "The portal did not answer (" + down + "): tried again in " + poll + " s.";
       if (!n.parentNode) root.prepend(n);
     }).then(() => { clearTimeout(timer); timer = setTimeout(ask, poll * 1000); });
   }
