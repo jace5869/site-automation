@@ -27,12 +27,14 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Health check | `playbooks/health_check.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#step-6-the-first-job-template-health-check), the checks: [RUNBOOKS.md](RUNBOOKS.md#health-check-playbookshealth_checkyml), workflows 1-5: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#linux-workflows) |
 | Troubleshoot | `playbooks/troubleshoot.yml` | On demand | [SETUP_AAP.md](SETUP_AAP.md#troubleshoot), workflow 9: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#9-investigate-a-host-on-demand) |
 | Patch hosts | `playbooks/patch_hosts.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#patch-hosts), workflows 3 and 4: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#3-patch-with-checks) |
+| Patch hosts (dry run) | `playbooks/patch_hosts.yml` (`site_dry_run_only: true`: refused unless Check) | Workflow step: always Check (Job type on the template), the dry run before workflow 4's approval | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#4-patch-with-a-dry-run-first) |
 | Linux - disk space report | `playbooks/disk_report.yml` | Report | [DISK_SPACE.md](DISK_SPACE.md#set-it-up), workflow 42: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#42-disk-space-and-the-tmp-cleanup-with-an-approval) |
 | Linux - tmp cleanup | `playbooks/tmp_cleanup.yml` | After an approval (on its own: Check, then `tmp_cleanup_confirm`) | [DISK_SPACE.md](DISK_SPACE.md#what-the-cleanup-deletes) |
 | ACT - find and replace old copies | `playbooks/act_old_copies.yml` | Change (Check first); every job that can run ACT on a host does it too | [ADDING_ACT.md](ADDING_ACT.md#old-copies-of-act) |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | After an approval | [SETUP_AAP.md](SETUP_AAP.md#apply-approved-act-fix), workflow 5: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#5-fix-with-approval-act) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | Watch | [MARIADB.md](MARIADB.md#the-short-version), workflow 8: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#8-database-watch-mariadb-and-mysql-hourly) |
 | Service watch - check | `playbooks/service_watch.yml` | Workflow step | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-5-aap-setup), the workflow: [Part 6](SERVICE_WATCH_DEMO.md#part-6-the-workflow) |
+| Service watch - check (approval only) | `playbooks/service_watch.yml` (`watch_mode: approval`; workflow 10's look after the deploy - it never fixes) | Workflow step | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | After an approval | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-7-approving-a-fix) |
 | POA&M status | `playbooks/poam_status.yml` | Report | [SETUP_AAP.md](SETUP_AAP.md#poam-status), [RUNBOOKS.md](RUNBOOKS.md#poam-status-playbookspoam_statusyml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#setting-it-up), workflow 33: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#33-stig-drift-weekly) |
@@ -63,12 +65,15 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | STIG Manager - health | `playbooks/stigman_health.yml` | Watch (daily, or after a change) | [STIGMAN_HEALTH.md](STIGMAN_HEALTH.md#set-it-up) |
 | STIG Manager - availability | `playbooks/stigman_availability.yml` | Watch (every 5 to 15 minutes) | [STIGMAN_HEALTH.md](STIGMAN_HEALTH.md#set-it-up), [AVAILABILITY.md](AVAILABILITY.md) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | Setup or test | workflow 10: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |
+| STIG Manager - deploy (dry run) | `playbooks/stigman_deploy.yml` (`site_dry_run_only: true`: refused unless Check) | Workflow step: always Check, with Show changes, before workflow 10's approval | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |
 | Network performance report | `playbooks/net_perf_report.yml` | Report | [NETWORK_PERF.md](NETWORK_PERF.md#set-it-up), workflow 34: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#34-network-performance-hourly) |
 | Log analysis | `playbooks/log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | Report | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-denials-playbooksfapolicyd_denialsyml) |
 | Linux - auditd tuning | `playbooks/auditd_tuning.yml` | Report; with approved changes, a change (the audit configuration; never a reboot) | [RUNBOOKS.md](RUNBOOKS.md#auditd-tuning-playbooksauditd_tuningyml) |
 | Linux - auditd tuning - check | `playbooks/auditd_tuning.yml` (`auditd_tuning_workflow: true`; the workflow's first step) | Workflow step | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#52-auditd-tuning-with-an-approval) |
 | fapolicyd | `playbooks/fapolicyd.yml` | Report; with approved changes, a change; workflow 36 (as *fapolicyd - check* and *fapolicyd - approved*) | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-playbooksfapolicydyml), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-with-an-approval-daily) |
+| fapolicyd - check | `playbooks/fapolicyd.yml` (`fapolicyd_workflow: true`, `fapolicyd_since: yesterday`; workflow 36's first step) | Workflow step | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-with-an-approval-daily) |
+| fapolicyd - approved | `playbooks/fapolicyd.yml` (`fapolicyd_since: yesterday`: the window the check read) | After an approval (workflow 36: the check's plan) | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-with-an-approval-daily) |
 | Security - Java4Shell check (Keycloak) | `playbooks/java4shell.yml` | Report (reads only; preview the fix as Check first); with `j4s_fix`, a change (the compose file; Keycloak recreated only with `j4s_restart`) | [JAVA4SHELL.md](JAVA4SHELL.md) |
 
 ## Windows servers
@@ -79,7 +84,9 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Windows health check | `playbooks/win_health_check.yml` | Workflow step | [WINDOWS.md](WINDOWS.md#windows-health-check), workflows 12 and 13: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#windows-workflows) |
 | Windows troubleshoot | `playbooks/win_troubleshoot.yml` | On demand | [WINDOWS.md](WINDOWS.md#windows-troubleshoot) |
 | Windows patch | `playbooks/win_patch.yml` | Workflow step | [WINDOWS.md](WINDOWS.md#patching-through-software-center), workflow 14: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#14-windows-patch-with-a-dry-run-first) |
+| Windows patch (dry run) | `playbooks/win_patch.yml` (`site_dry_run_only: true`: refused unless Check) | Workflow step: always Check, before workflow 14's approval | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#14-windows-patch-with-a-dry-run-first) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | Setup or test | [WINDOWS.md](WINDOWS.md#act-on-the-servers-cprogramdataact), workflow 15: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#15-act-for-windows-rollout) |
+| ACT for Windows - install (dry run) | `playbooks/win_act_install.yml` (`site_dry_run_only: true`: refused unless Check) | Workflow step: always Check, before workflow 15's approval | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#15-act-for-windows-rollout) |
 | Active Directory health report | `playbooks/ad_health_report.yml` | Report | [ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md#set-it-up) |
 | Active Directory - account lockout | `playbooks/ad_lockout.yml` | On demand | [ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md#set-it-up-for-the-service-desk) |
 
@@ -173,7 +180,7 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | Horizon - host maintenance plan | `playbooks/horizon_host_maintenance_plan.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance) |
 | Horizon - host maintenance start | `playbooks/horizon_host_maintenance_start.yml` | After an approval | [HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance) |
 | Horizon - host maintenance end | `playbooks/horizon_host_maintenance_end.yml` | On demand | [HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance) |
-| Horizon - desktops check | `playbooks/horizon_desktops_check.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-fix-broken-desktops-with-an-approval) |
+| Horizon - desktops check | `playbooks/horizon_desktops_check.yml` (`horizon_desktops_mode: approval`; workflow 30's first step) | Workflow step | [HORIZON.md](HORIZON.md#workflow-fix-broken-desktops-with-an-approval) |
 | Horizon - fix the approved desktops | `playbooks/horizon_desktops_fix_approved.yml` | After an approval | [HORIZON.md](HORIZON.md#workflow-fix-broken-desktops-with-an-approval) |
 | Horizon - golden image check | `playbooks/horizon_image_check.yml` | Report | [HORIZON.md](HORIZON.md#golden-image-check) |
 | Horizon - image push plan | `playbooks/horizon_image_push_plan.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-push-a-new-golden-image-with-an-approval) |
@@ -187,6 +194,7 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 |---|---|---|---|
 | Network config backup | `playbooks/net_config_backup.yml` | Watch | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#templates) |
 | Network config load | `playbooks/net_config_load.yml` | Workflow step | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#a-load-with-an-approval) |
+| Network config load (dry run) | `playbooks/net_config_load.yml` (`site_dry_run_only: true`: refused unless Check) | Workflow step: always Check, before the load workflow's approval | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#a-load-with-an-approval) |
 | Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-an-smtp-relay-whitelist-address-with-an-approval) |
 | Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | After an approval | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once) |
 | Mail relay - unused addresses plan | `playbooks/mail_relay_unused.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#remove-the-addresses-that-sent-no-mail), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-an-smtp-relay-whitelist-address-with-an-approval) |
@@ -222,6 +230,7 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | AAP - report email question | `playbooks/aap_email_question.yml` | Setup or test | [EMAIL_REPORTS.md](EMAIL_REPORTS.md#also-email-the-report-to-asked-at-launch) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | Setup or test | [SETUP_AAP.md](SETUP_AAP.md#aap---set-execution-environment), [EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md#step-3-use-it) |
 | AAP jobs - leave hosts out (site_exclude_hosts) | `playbooks/site_exclude.yml` | Not a job template: the first play every playbook on hosts imports (README, "Leave hosts out of every job") | [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#site_exclude) |
+| Workflow dry run - the guard (1.107.0) | `playbooks/workflow_dry_run.yml` | Not a job template. The imported guard ensures a dry-run template runs as Check only and refuses Run. Every step after an approval must use a Run template. *AAP - set up job templates* checks this when it builds or checks the workflow. | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-job-makes-them-11070) |
 | AAP - add workflow gates | `playbooks/aap_workflow_gates.yml` | Setup (Check first): the gate into your own workflows | [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-gate-the-approval-only-when-the-check-has-a-plan-1670), step 103 |
 | AAP - set up portal actions | `playbooks/aap_portal_setup.yml` | Setup or test (Check first) | [SITE_PORTAL.md](SITE_PORTAL.md#setting-it-up-in-aap), step 102 |
 | AAP - set up job templates | `playbooks/aap_templates_setup.yml` | Setup (Check first): make the job templates from aap/job_templates.yml | [SETUP_AAP.md](SETUP_AAP.md#create-the-job-templates-from-the-catalog) |
@@ -253,6 +262,7 @@ snapshot cleanup finds its own candidates, and a pick-list template's first run 
 | Health check, Windows health check, Troubleshoot, Windows troubleshoot, Database health, Certificate report, Windows certificate report, Trust store report, Windows - trust store report, POA&M status, VM - outage watch, STIG drift report, Network performance report | `site_health`, `site_health_targets` (the findings, per host) | ServiceNow tickets | 1, 2, 6, 7, 8, 12, 13, 17, 28, 33, 34 |
 | Health check or Troubleshoot with ACT (`use_act`, `site_act_level: diagnose`) | `act_triage` (ACT's proposed fix), `site_health` | Apply approved ACT fix | 5 |
 | Service watch - check | `service_watch_fix` | Service watch - apply approved fix | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-6-the-workflow), Part 6 |
+| fapolicyd - check | `fapolicyd_workflow_plan` | fapolicyd - approved | 36 |
 | Certificate install - check, Windows certificate install - check | `cert_install_plan` | Certificate install - approved, Windows certificate install - approved | 29 |
 | Linux - disk space report | `disk_cleanup_plan`, `disk_cleanup_plan_workflow` (only for the cleanup in the same workflow) | Linux - tmp cleanup | 42 |
 | Linux - auditd tuning - check | `auditd_tuning_workflow_plan` | Linux - auditd tuning | [52. Auditd tuning, with an approval](WORKFLOWS_AND_SCHEDULES.md#52-auditd-tuning-with-an-approval) |

@@ -168,6 +168,14 @@ rc=$?
 grep -q 'ntp server 192.0.2.124' "$work/ios.log" && bad "the dry run sent the lines" || ok "...nothing sent to rtr01"
 grep -q '"action": "set"' "$work/pan.log" && bad "the dry run set on fw01" || ok "...nothing set on fw01"
 lacks "...no secret in the output" l-dry.txt n3wc0mm
+# 1.107.0: the lines as text, one per row (the load workflow's survey box), the devices as text too
+text='{"net_config_lines": "ntp server 192.0.2.124\n\n  snmp-server community n3wc0mm RO\n", "net_config_only": "rtr01*"}'
+run l-text.txt playbooks/net_config_load.yml --check -e "$text"
+rc=$?
+[ $rc -eq 0 ] && has "...the lines as text (the workflow survey's box): one per row, the same dry run" l-text.txt \
+    "Network config load: 1 would change, 0 unchanged, 0 failed (dry run)" "ntp server 192.0.2.124" "snmp-server community <hidden> RO" \
+    || { bad "lines as text: exit $rc"; tail -20 l-text.txt | sed 's/^/       /'; }
+lacks "...no secret in the output" l-text.txt n3wc0mm
 
 # ---- 6. a real load needs a change request in Implement ----
 run l-nochg.txt playbooks/net_config_load.yml -e "$lines"

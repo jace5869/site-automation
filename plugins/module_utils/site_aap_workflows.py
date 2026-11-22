@@ -12,6 +12,7 @@ __metaclass__ = type
 
 import hashlib
 import json
+import re
 
 from ansible.module_utils.site_aap import error_text, setup_description
 
@@ -56,6 +57,7 @@ class Sync(object):
         self.out = dict(self.known or {})
         self.results, self.problems = [], []
         self.cache = {}
+        self.wrote_survey = False
 
     def split_desc(self, desc):
         """(the description without an old mark, the fingerprint in it or '')."""
@@ -171,7 +173,16 @@ class Sync(object):
             if oid is None:
                 raise RuntimeError("AAP did not return an ID after creating %s %r" % (kind, name))
             if extra_write and oid > 0:
-                extra_write(oid, True)
+                try:
+                    extra_write(oid, True)
+                except RuntimeError:
+                    # 1.107.0 (review): made by this run, half wired - its fingerprint is what AAP has now, so the next Run
+                    # finds it ours and makes its nodes again (never "not made by this job", never left half made)
+                    try:
+                        self.out[key] = fingerprint(dict(want, extra=extra_read(oid) if extra_read else None))
+                    except RuntimeError:
+                        pass
+                    raise
             self.cache.pop((api_kind, name, ""), None)
             self.out[key] = fingerprint(dict(want, extra=extra_write("wanted", True) if extra_write else None))
             self.note(kind, name, "create", dict((k, [None, v]) for k, v in want.items()))
@@ -244,6 +255,15 @@ class Sync(object):
             self.note("workflow", w["name"], "skipped", why="its template(s) %s are not in AAP" % ", ".join(sorted(set(missing))))
             return None
 
+        def launch(d, n):
+            """1.107.0: a node's Job type (check / run) and Show changes - in the shape only when set, so a workflow made
+            before keeps its fingerprint."""
+            if n.get("job_type"):
+                d["job_type"] = str(n["job_type"])
+            if n.get("diff_mode"):
+                d["diff_mode"] = True
+            return d
+
         def shape(nodes_spec):
             out = []
             for n in nodes_spec:
@@ -254,6 +274,7 @@ class Sync(object):
                             "success": sorted(n.get("success") or []), "failure": sorted(n.get("failure") or []),
                             "always": sorted(n.get("always") or []), "converge": bool(n.get("all_parents_must_converge")),
                             "extra_data": dict(n.get("extra_data") or {})})       # 1.67.0: e.g. the gate's workflow_gate_var
+                launch(out[-1], n)
             return sorted(out, key=lambda x: x["id"])
 
         def read(oid):
@@ -272,6 +293,8 @@ class Sync(object):
                             "always": sorted(ident.get(int(x), str(x)) for x in g.get("always_nodes") or []),
                             "converge": bool(g.get("all_parents_must_converge")),
                             "extra_data": dict(_norm(g.get("extra_data")) or {}) if not appr else {}})
+                if not appr:
+                    launch(out[-1], g)
             return sorted(out, key=lambda x: x["id"])
 
         # 1.83.0 (Codex P1, final pass): a step that runs after another (the update after the approval) is never a root node
@@ -305,6 +328,7 @@ class Sync(object):
                     body["unified_job_template"] = tpl_ids[n["template"]]
                     if n.get("extra_data"):          # the template must ask for Variables on launch (prompts: variables)
                         body["extra_data"] = dict(n["extra_data"])
+                    launch(body, n)                  # 1.107.0: its Job type / Show changes (the template prompts for them)
                 code, d = self.write("POST", "workflow_job_templates/%d/workflow_nodes/" % oid, body)
                 nid = int(d.get("id") or 0)
                 made[n["id"]] = nid
@@ -328,7 +352,162 @@ class Sync(object):
                     body = {"unified_job_template": tpl_ids[n["template"]]}
                     if n.get("extra_data"):
                         body["extra_data"] = dict(n["extra_data"])
+                    launch(body, n)
                     self.write("PATCH", "workflow_job_template_nodes/%d/" % made[n["id"]], body)
             return None
-        oid, _ = self.reconcile("workflow", "workflow_job_templates", w["name"], want, read, write)
+        oid, action = self.reconcile("workflow", "workflow_job_templates", w["name"], want, read, write)
+        if w.get("survey") and action in ("create", "update", "unchanged"):
+            # made now, or made again with overwrite: written when AAP has none; else only said (a survey taken off by
+            # hand is a person's change - never put back without overwrite)
+            self.survey(oid, w, action == "create" or bool(self.p.get("overwrite")))
         return oid
+
+    # ---- 1.107.0: a workflow's survey - written when the job makes the workflow (or brings it right with overwrite) and
+    # AAP has none on it, never changed after (like a template's Variables file): a person's edit, or a job that keeps
+    # its choices (VM - refresh the pick lists), stays. A survey that cannot be read or written is said for this workflow,
+    # never the end of the run (the workflow itself is made).
+    def survey(self, oid, w, write=True):
+        qs = [survey_question(q) for q in w.get("survey") or []]
+        names = ", ".join(q["variable"] for q in qs)
+        last = self.results[-1]
+        if oid is None or oid < 0:
+            last["survey"] = "would add its survey: %s" % names
+            return
+        path = "workflow_job_templates/%d/" % oid
+        # a survey this job could not write before (said then) is written now, without overwrite
+        pending = "%d/survey/%s" % (self.org_id, w["name"])
+        write = write or pending in self.out
+        try:
+            code, have = self.api.call("GET", path + "survey_spec/")
+            if code != 200:
+                raise RuntimeError("its survey could not be read (HTTP %d): %s" % (code, error_text(have)))
+            enabled = bool(((self.by_name("workflow_job_templates", w["name"]) or [{}])[0]).get("survey_enabled"))
+            if (have or {}).get("spec"):
+                got = sorted(str(q.get("variable")) for q in have.get("spec") or [])
+                miss = [q["variable"] for q in qs if q["variable"] not in got]
+                said = []
+                if miss:
+                    said.append("its survey is yours, left as it is: it has no question %s (docs/WORKFLOWS_AND_SCHEDULES.md)" % ", ".join(miss))
+                if not enabled:
+                    if write:
+                        self.write("PATCH", path, {"survey_enabled": True})
+                        self.wrote_survey = not self.check
+                        said.append(("would turn its survey on" if self.check else "its survey turned on"))
+                    else:
+                        said.append("its survey is off: turn it on (the workflow > Survey), or %s: true turns it on" % self.overwrite_name)
+                if said:
+                    last["survey"] = "; ".join(said)
+                return
+            if not write:
+                last["survey"] = ("it has no survey (taken off by hand?): left as it is - %s: true writes it (%s)"
+                                  % (self.overwrite_name, names))
+                return
+            self.write("POST", path + "survey_spec/", {"name": "", "description": "", "spec": qs})
+            self.write("PATCH", path, {"survey_enabled": True})
+            self.wrote_survey = not self.check
+            if not self.check:
+                self.out.pop(pending, None)
+            last["survey"] = ("would add its survey: %s" if self.check else "survey added: %s") % names
+        except RuntimeError as ex:
+            if not self.check:
+                self.out[pending] = "0" * 12               # the next Run writes it (in the map it hands on)
+            self.results.append({"kind": "survey", "name": w["name"], "action": "failed", "diff": {},
+                                 "why": "the workflow is there, its survey NOT written (the next Run writes it): %s" % str(ex)[:300]})
+            self.problems.append("workflow %r: its survey was not written: %s" % (w["name"], str(ex)[:300]))
+
+
+def survey_question(q):
+    """1.107.0: a survey question as AAP (2.4 and later) takes it: question_name, question_description, variable, type,
+    required, default, choices (a list for a choice question, '' for the others), min / max when given; a multiple
+    select's default as text, one per line."""
+    t = str(q.get("type") or "text")
+    out = {"question_name": str(q.get("question_name") or q.get("variable")), "question_description": str(q.get("question_description") or ""),
+           "variable": str(q["variable"]), "type": t, "required": bool(q.get("required"))}
+    d = q.get("default", "")
+    if t == "multiselect" and isinstance(d, (list, tuple)):
+        d = "\n".join(str(x) for x in d)
+    out["default"] = "" if d is None else d
+    out["choices"] = [str(c) for c in q.get("choices") or []] if t in ("multiplechoice", "multiselect") else ""
+    for k in ("min", "max"):
+        if q.get(k) is not None:
+            out[k] = int(q[k])
+    return out
+
+
+# ---- 1.107.0: a workflow that differs, said node by node (the nodes of a workflow made by hand have AAP's own ids: they are
+# compared by what they run and where they lead, never by id)
+def _head(n):
+    """A node as a person reads it, its links aside: the step it runs (and how), or the approval."""
+    if n.get("approval"):
+        a = n["approval"]
+        head = "approval %r (timeout %s%s)" % (a.get("name", ""), ("%d s" % a["timeout"]) if a.get("timeout") else "none",
+                                                ("; description: %s" % a["description"]) if a.get("description") else "")
+    else:
+        head = repr(n.get("template") or "nothing")
+        if n.get("job_type"):
+            head += " as %s" % ("Check" if n["job_type"] == "check" else "Run")
+        if n.get("diff_mode"):
+            head += ", Show changes"
+        if n.get("extra_data"):
+            head += " (its Variables: %s)" % ", ".join("%s: %s" % (k, _plain(v)) for k, v in sorted(n["extra_data"].items()))
+    return head
+
+
+def _node_text(n, label):
+    head = _head(n)
+    for link, word in (("success", "on success"), ("failure", "on failure"), ("always", "always")):
+        kids = sorted(label.get(c, str(c)) for c in n.get(link) or [])
+        if kids:
+            head += "; %s -> %s" % (word, ", ".join(kids))
+    if n.get("converge"):
+        head += "; waits for all its parents"
+    return head
+
+
+def _plain(v):
+    """A value as a person reads it: a list as [a, b], text as it is."""
+    if isinstance(v, (list, tuple)):
+        return "[%s]" % ", ".join(_plain(x) for x in v)
+    return v if isinstance(v, str) else json.dumps(v)
+
+
+FIELD_WORDS = {"ask_limit_on_launch": "prompt for Limit", "ask_variables_on_launch": "prompt for Variables",
+               "extra_vars": "Variables", "organization": "organization", "description": "description"}
+
+
+def node_texts(nodes):
+    """A workflow's nodes (as shape/read give them) -> one line each, its links named by the step they lead to."""
+    nodes = nodes or []
+    # a link names the step it leads to as that step reads (its Job type and Variables too): one template twice in a
+    # workflow (Patch hosts as Check, then as Run) is never one name
+    label = dict((n["id"], ("approval %r" % (n.get("approval") or {}).get("name", "")) if n.get("approval") else _head(n)) for n in nodes)
+    return sorted(_node_text(n, label) for n in nodes)
+
+
+def diff_lines(diff):
+    """The differences of a workflow (reconcile's diff), one line each: a field, or a node AAP lacks or has besides."""
+    out = []
+    for k, v in sorted((diff or {}).items()):
+        if k == "(its parts)":
+            have, want = node_texts(v[0]), node_texts(v[1])
+            rest = list(have)
+            for t in want:
+                if t in rest:
+                    rest.remove(t)
+                else:
+                    out.append("node missing in AAP: %s" % t)
+            for t in rest:
+                out.append("node in AAP, not the catalog's: %s" % t)
+        else:
+            out.append("%s: has %s, should be %s" % (FIELD_WORDS.get(k, k), _plain(v[0]) if v[0] not in (None, "") else "none",
+                                                     _plain(v[1]) if v[1] not in (None, "") else "none"))
+    return out
+
+
+def limit_misses_localhost(limit):
+    """Only an empty Limit or a comma-separated list of plain names including localhost keeps localhost in scope."""
+    text = str(limit or "").strip(" ")
+    if not text:
+        return False
+    items = [item.strip(" ") for item in text.split(",")]
+    return "localhost" not in items or any(not re.fullmatch(r"[A-Za-z0-9_.-]+", item) for item in items)

@@ -20,6 +20,13 @@ There are five places. Pick the one that fits:
 | **4. A schedule** | (needs 2) Template or workflow → **Schedules** → the schedule → **Prompts** → **Job type** `Check` | a regular preview, e.g. "what would patch night install" a week before |
 | **5. Command line** | `ansible-playbook ... --check` (add `--diff` to see file changes) | testing from a shell |
 
+A step set to `Check` this way in a workflow that *AAP - set up job templates* made (1.107.0) is then *CHANGED BY HAND*
+for that job: it is listed, never set back. Set it back yourself when the rehearsal is done, or run that job with
+`aap_templates_overwrite: true`.
+In workflows 4, 10, 14, 15 and the network load, the dry-run template runs as Check only. A launch as Run is refused.
+Every step after an approval must use a Run template. *AAP - set up job templates* checks this when it builds or
+checks the workflow.
+
 **Show changes.** Tick **Show changes** on the template (or `--diff`) and a dry run also shows the
 line-by-line changes it would make to files, for example in STIG Manager's configuration.
 

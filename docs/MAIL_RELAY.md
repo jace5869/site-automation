@@ -245,7 +245,11 @@ this: it is inside 198.51.100.0/24`), and which listed addresses sit inside a su
    default): the apply step reads the whole file, changes it and writes it back, so an add and a remove
    approved at the same moment then run one after the other instead of overwriting each other.
 
-5. **Two workflows** (Create template > Create workflow job template), see
+5. **AAP - set up job templates makes both workflows and the third below (1.107.0)**, each with its Variables
+   (`mail_relay_action`) and its survey. Put `report_email_to` (and `mail_relay_group`) in the Variables of the job
+   templates instead (*Mail relay - whitelist plan*, *Mail relay - unused addresses plan* and *Mail relay - apply the
+   approved whitelist change*): the job never changes a template's Variables, and a workflow you change is listed as
+   changed by hand. By hand: **Two workflows** (Create template > Create workflow job template), see
    [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-an-smtp-relay-whitelist-address-with-an-approval)
    for the editor:
 

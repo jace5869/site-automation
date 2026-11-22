@@ -64,7 +64,10 @@ class Catalog(unittest.TestCase):
                  "Machine and VMware vCenter (read-only), both": (["machine", "vmware"], []),
                  "Machine (and VMware vCenter with patch_snapshot)": (["machine"], ["vmware"]),
                  "STIG Manager API (read-only is enough; with stigman_ckl_import_auto the client that writes), Windows file share":
-                     (["stigman_api", "windows_share"], [])}
+                     (["stigman_api", "windows_share"], []),
+                 # 1.107.0 (review): how it logs in, not a condition - the Machine credential is needed
+                 "Machine (with sudo)": (["machine"], []),
+                 "Machine (with sudo); ACT model key with fapolicyd_act": (["machine"], ["act_model_key"])}
         for text, (req, opt) in cases.items():
             got = g.kinds_of(text)
             self.assertEqual((sorted(got[0]), sorted(got[1])), (sorted(req), sorted(opt)), text)

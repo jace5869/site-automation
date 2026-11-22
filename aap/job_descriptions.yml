@@ -22,6 +22,11 @@ templates:
     targets: "Linux hosts of target (default group patch_hosts) within the Limit (Machine credential); vCenter API only with patch_snapshot"
     produces: "A patch report of every host by email, report website and workbook when set (Check: a DRY RUN report); fails if a host could not patch"
     supports: "Run constraint=Changes target hosts (packages; reboots with automatic_restarts); writes vCenter snapshots with patch_snapshot, report email/website"
+  "Patch hosts (dry run)":
+    does: "Workflow 4's dry run before the approval: lists every update each host would install; Job type Check on the template itself."
+    targets: "Linux hosts of target (default group patch_hosts) within the Limit (Machine credential)"
+    produces: "A DRY RUN patch report of every host by email, report website and workbook when set"
+    supports: "Run constraint=Read-only on target hosts (always Check: installs nothing, never reboots); writes report email/website"
   "Linux - disk space report":
     does: "Lists local filesystems, LVM thin pools and snapshots near full (85/90%) and the old data in /tmp and /var/tmp, for capacity follow-up."
     targets: "Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential)"
@@ -57,6 +62,11 @@ templates:
     targets: "Linux hosts of target (default group stigman) within the Limit, over SSH with sudo (Machine; ACT model key optional)"
     produces: "Incidents in the job output and on the host; a fix plan (service_watch_fix) for the approval, failing on purpose when a fix waits"
     supports: "Run constraint=Read-only on target hosts in approval mode (incident log, syslog, ACT in /opt/act); self-heal restarts containers; no other writes"
+  "Service watch - check (approval only)":
+    does: "Workflow 10's look after the deploy: the same watch, in approval mode only - it says what is down and never fixes it."
+    targets: "Linux hosts of target (default group stigman) within the Limit, over SSH with sudo (Machine; ACT model key optional)"
+    produces: "Incidents in the job output and on the host; a fix plan (service_watch_fix), failing on purpose when a fix waits"
+    supports: "Run constraint=Read-only on target hosts (watch_mode: approval fixed - never self-heal; incident log, syslog); no other writes"
   "Service watch - apply approved fix":
     does: "After a workflow approval, runs exactly the approved container fix commands on each host, with no model, then checks the containers again."
     targets: "Linux hosts the service watch check flagged (service_watch_fix artifact), over SSH with sudo (Machine credential)"
@@ -210,6 +220,11 @@ templates:
     targets: "Hosts of target (default group stigman) within the Limit, over SSH with sudo (Machine, STIG Manager database, TLS certificate)"
     produces: "Deployed or updated containers and a verify summary (database healthy, STIG Manager answers through nginx) in the job output"
     supports: "Run constraint=Changes target hosts (files, TLS cert/key, podman secrets, Quadlet units; restarts what changed); writes nothing else"
+  "STIG Manager - deploy (dry run)":
+    does: "Workflow 10's dry run before the approval: what deploying the STIG Manager stack would change, file by file (Check, Show changes)."
+    targets: "Hosts of target (default group stigman) within the Limit, over SSH with sudo (Machine, STIG Manager database, TLS certificate)"
+    produces: "The changes it would make, with their diff, in the job output"
+    supports: "Run constraint=Read-only on target hosts (always Check with Show changes: changes nothing); writes nothing"
   "Network performance report":
     does: "Measures latency, jitter, loss, TCP connect and OCSP answers from each Linux host to its targets, against the host's own usual."
     targets: "Linux hosts of target (default all) within the Limit, over SSH with sudo (Machine credential); iperf3 only for net_perf_iperf_pairs"
@@ -240,6 +255,16 @@ templates:
     targets: "Linux hosts of the target or the Limit (Machine credential with sudo)"
     produces: "One report of every host, emailed (report_email_to) and on the report website; with fapolicyd_workflow, the plan as job artifacts"
     supports: "Run constraint=Read-only on target hosts by default; changes them only with fapolicyd_approved (trust, rules, mode, service, package)"
+  "fapolicyd - check":
+    does: "Workflow 36's first step: reads each host's fapolicyd since yesterday and hands each host's changes to the approval."
+    targets: "Linux hosts of the target or the Limit (Machine credential with sudo)"
+    produces: "The changes to approve (artifact fapolicyd_workflow_plan), NEEDS APPROVAL; the report emailed and on the report website"
+    supports: "Run constraint=Read-only on target hosts (fapolicyd_workflow: true); writes report email/website; Check = dry run"
+  "fapolicyd - approved":
+    does: "Workflow 36's step after the approval: makes each host's approved fapolicyd lines (the check's plan), nothing else."
+    targets: "Linux hosts of the check's plan within the target or the Limit (Machine credential with sudo)"
+    produces: "What was changed on each host, and what is held back for a person; report email and website"
+    supports: "Run constraint=Changes fapolicyd (trust, rules, mode, service) after an approval only; writes report email/website"
   "Windows connection test":
     does: "Proves AAP can reach the Windows servers over WinRM before any other Windows template: EE libraries, PowerShell, account, admin rights."
     targets: "Windows hosts of the target or the Limit over WinRM (Windows Machine credential); the execution environment itself"
@@ -260,11 +285,21 @@ templates:
     targets: "Windows hosts in win_patch_hosts (or target), picked by the Limit, over WinRM (Windows Machine credential)"
     produces: "Nothing but the job output (what was installed, which servers still need a restart)"
     supports: "Run constraint=Changes target hosts (installs updates; restarts only with automatic_restarts: true); writes nothing else; Check = dry run"
+  "Windows patch (dry run)":
+    does: "Workflow 14's dry run before the approval: lists the updates Software Center offers each server; Job type Check on the template."
+    targets: "Windows hosts in win_patch_hosts (or target), picked by the Limit, over WinRM (Windows Machine credential)"
+    produces: "Nothing but the job output (what would be installed)"
+    supports: "Run constraint=Read-only on target hosts (always Check: installs nothing, never restarts); writes nothing"
   "ACT for Windows - install":
     does: "Installs or updates ACT (act.ps1) in C:\\ProgramData\\act on the Windows servers, locked to Administrators and SYSTEM; win_act_state: absent removes it."
     targets: "Windows hosts of the target or the Limit over WinRM (Windows Machine credential)"
     produces: "Nothing but the job output"
     supports: "Run constraint=Changes target hosts (the ACT folder, its file and permissions); writes nothing else; Check = dry run"
+  "ACT for Windows - install (dry run)":
+    does: "Workflow 15's dry run before the approval: whether ACT would be installed, updated or is current on each server (Check)."
+    targets: "Windows hosts of the target or the Limit over WinRM (Windows Machine credential)"
+    produces: "Nothing but the job output"
+    supports: "Run constraint=Read-only on target hosts (always Check: changes nothing); writes nothing"
   "Active Directory health report":
     does: "Reads the health of every domain controller and domain (replication, DNS, FSMO, time, certificates, recent changes) into one report."
     targets: "Domain controllers over WinRM (Windows Machine credential); reader mode: LDAP, DNS, Kerberos; SolarWinds read-only (optional)"
@@ -655,6 +690,11 @@ templates:
     targets: "Cisco IOS/IOS-XE devices of net_config_devices over CLI (Machine credential) and PAN-OS via its XML API; at most net_config_max_devices."
     produces: "A per-device result report (emailed, report website when set), a work note on the change, a before-change copy to restore from."
     supports: "Run constraint=Changes target hosts (device config; IOS write memory, PAN-OS commit); writes devices, git/share, ServiceNow change, email/web"
+  "Network config load (dry run)":
+    does: "The load workflow's dry run before the approval: reads each device and shows the lines or the diff it would send (Check)."
+    targets: "Cisco IOS/IOS-XE devices of net_config_devices over CLI (Machine credential) and PAN-OS via its XML API; at most net_config_max_devices."
+    produces: "A per-device DRY RUN report (emailed, report website when set): exactly what the load would send."
+    supports: "Run constraint=Read-only on target hosts (always Check: sends nothing, commits nothing); writes report email/website"
   "Mail relay - whitelist plan":
     does: "Step 1 of the mail relay add/remove workflows: checks the requested IP(s) and shows the exact whitelist lines to add or remove."
     targets: "Postfix relay servers of the group mail_relays over SSH (Machine credential, sudo): reads the list (mynetworks in main.cf)."
@@ -852,6 +892,14 @@ workflows:
   - name: "Auditd tuning, with an approval"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 52. Auditd tuning, with an approval"
     playbooks: [playbooks/auditd_tuning.yml, playbooks/workflow_gate.yml, playbooks/auditd_tuning.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: check, template: "Linux - auditd tuning - check", failure: [gate]}
+      - {id: gate, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: auditd_tuning_workflow_plan}, success: [approve]}
+      - id: approve
+        approval: {name: "Make the audit changes the check listed? (No reboot.)", timeout: 28800, description: ""}
+        success: [tune]
+      - {id: tune, template: "Linux - auditd tuning"}
     does: "Reads the audit backlog, queue and kernel argument of container hosts; makes the listed changes once a person approves."
     targets: "Linux container hosts (the Limit), over SSH with sudo (Machine credential)."
     produces: "The changes to approve, the approval, what was changed and what waits for the next reboot (report email/website)."
@@ -922,6 +970,20 @@ workflows:
   - name: "Service watch - approve or self-heal"
     source: "docs/SERVICE_WATCH_DEMO.md Part 6; docs/WORKFLOWS_AND_SCHEDULES.md 11"
     playbooks: [playbooks/service_watch.yml, playbooks/workflow_gate.yml, playbooks/service_fix_approved.yml]
+    prompts: {limit: true}
+    survey:
+      - {question_name: "When a container is down, what should happen?", variable: watch_mode, type: multiplechoice,
+         choices: [approval, self-heal], default: approval, required: false}
+    nodes:
+      - {id: check, template: "Service watch - check", failure: [gate]}
+      - {id: gate, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: service_watch_fix}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Approve the fix ACT proposed?"
+          timeout: 1800
+          description: "Read ACT's report and the red NEEDS APPROVAL line in the check job first."
+        success: [fix]
+      - {id: fix, template: "Service watch - apply approved fix"}
     does: "Watches podman containers that should run; when one is down ACT (GenAI) finds why and its fix is applied after approval, or at once."
     targets: "Linux container hosts (Limit prompted on launch)."
     produces: "ACT's root cause and proposed fix in the job, the approval, an incident record on the host (log file, syslog)."
@@ -929,6 +991,16 @@ workflows:
   - name: "Horizon - fix broken desktops (workflow)"
     source: "docs/HORIZON.md Workflow: fix broken desktops; docs/WORKFLOWS_AND_SCHEDULES.md 30"
     playbooks: [playbooks/horizon_desktops_check.yml, playbooks/workflow_gate.yml, playbooks/horizon_desktops_fix_approved.yml]
+    nodes:
+      - {id: check, template: "Horizon - desktops check", failure: [gate]}
+      - {id: gate, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: horizon_desktops_fix}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Fix these desktops?"
+          timeout: 3600
+          description: "Open the desktops check job: the NEEDS APPROVAL line lists each desktop and its fix."
+        success: [fix]
+      - {id: fix, template: "Horizon - fix the approved desktops"}
     does: "Finds Horizon desktops in a broken state and, once a person approves the list, recovers or removes the ones still broken."
     targets: "The Horizon Connection Server API, from the AAP side. No servers are logged into."
     produces: "The broken-desktop list (NEEDS APPROVAL line), the approval, and the fix job's report of each desktop."
@@ -936,6 +1008,24 @@ workflows:
   - name: "Horizon - image push (workflow)"
     source: "docs/HORIZON.md Workflow: push a new golden image; docs/WORKFLOWS_AND_SCHEDULES.md 31"
     playbooks: [playbooks/horizon_image_push_plan.yml, playbooks/horizon_image_push_approved.yml]
+    survey:
+      - {question_name: "The pools, one per line", variable: horizon_push_pools, type: textarea, required: true}
+      - {question_name: "The golden image VM, as vCenter names it", variable: horizon_push_base_vm, type: text, required: true}
+      - {question_name: "The snapshot's name, or its path when two snapshots have that name", variable: horizon_push_snapshot,
+         type: text, required: true}
+      - {question_name: "Start (empty = once approved; or e.g. 2026-11-01 22:00, UTC)", variable: horizon_push_start, type: text,
+         required: false}
+      - {question_name: "Log-off policy", variable: horizon_push_logoff_policy, type: multiplechoice,
+         choices: [WAIT_FOR_LOGOFF, FORCE_LOGOFF], default: WAIT_FOR_LOGOFF, required: false}
+    nodes:
+      - {id: plan, template: "Horizon - image push plan", success: [approve]}
+      - id: approve
+        approval:
+          name: "Push this image?"
+          timeout: 28800
+          description: "Open the image push plan job: the READY FOR APPROVAL line says what, where and when."
+        success: [push]
+      - {id: push, template: "Horizon - push the approved image"}
     does: "Checks a golden image push plan (pools, image VM, snapshot, start, log-off policy) and schedules the push once a person approves."
     targets: "The Horizon Connection Server API, from the AAP side, for the instant-clone pools picked in the survey."
     produces: "The push plan (READY FOR APPROVAL line), the approval, and the scheduled push in Horizon."
@@ -943,6 +1033,20 @@ workflows:
   - name: "Horizon - host maintenance (workflow)"
     source: "docs/HORIZON.md Workflow: ESXi host maintenance; docs/WORKFLOWS_AND_SCHEDULES.md 41"
     playbooks: [playbooks/horizon_host_maintenance_plan.yml, playbooks/horizon_host_maintenance_start.yml, playbooks/horizon_host_maintenance_end.yml]
+    survey:
+      - {question_name: "The ESXi host, as vCenter names it", variable: horizon_maint_host, type: text, required: true}
+      - {question_name: "What the users on its desktops read (empty = no message)", variable: horizon_maint_message,
+         type: textarea, required: false}
+    nodes:
+      - {id: plan, template: "Horizon - host maintenance plan", success: [approve]}
+      - id: approve
+        approval: {name: "Start the host maintenance?", timeout: 28800, description: ""}
+        success: [start]
+      - {id: start, template: "Horizon - host maintenance start", success: [back]}
+      - id: back
+        approval: {name: "Is the host back?", timeout: 0, description: ""}
+        success: [end]
+      - {id: end, template: "Horizon - host maintenance end"}
     does: "Before ESXi host work: its free desktops into Horizon maintenance mode and users messaged; a second approval brings them back."
     targets: "The Horizon Connection Server API, for the desktops on one ESXi host named in the survey."
     produces: "The plan of desktops and sessions, two approvals, a message to users, and each step's job output."
@@ -950,6 +1054,16 @@ workflows:
   - name: "VM snapshot cleanup (with approval)"
     source: "docs/VMWARE.md Snapshots, step 4; docs/WORKFLOWS_AND_SCHEDULES.md 19"
     playbooks: [playbooks/vm_snapshot_report.yml, playbooks/vm_snapshot_cleanup.yml]
+    survey:
+      - {question_name: "Delete snapshots older than how many days?", variable: vm_snapshot_max_age_days, type: integer,
+         min: 1, default: 5, required: true}
+      - {question_name: "Email the reports to", variable: report_email_to, type: text, required: false}
+    nodes:
+      - {id: report, template: "VM - snapshot report", success: [approve]}
+      - id: approve
+        approval: {name: "Delete the snapshots listed in the report?", timeout: 86400, description: ""}
+        success: [cleanup]
+      - {id: cleanup, template: "VM - snapshot cleanup"}
     does: "Lists every VM snapshot and deletes the ones older than the survey's days once a person approves the report's list."
     targets: "vCenter, from the AAP side. Never keep-named snapshots, excluded or protected VMs, or the AAP server."
     produces: "Snapshot report email, the approval, and the cleanup's email of what it deleted."
@@ -957,6 +1071,15 @@ workflows:
   - name: "VM - delete picked snapshots (workflow)"
     source: "docs/VMWARE.md Pick lists, step 2; docs/WORKFLOWS_AND_SCHEDULES.md 26"
     playbooks: [playbooks/vm_snapshot_delete_picked.yml, playbooks/vm_snapshot_delete_picked.yml]
+    survey:
+      - {question_name: "Snapshots to delete", variable: vm_snapshot_picks, type: multiselect,
+         choices: ["(nothing to pick yet)"], required: true}
+    nodes:
+      - {id: plan, template: "VM - delete picked snapshots", success: [approve]}
+      - id: approve
+        approval: {name: "Do exactly this plan?", timeout: 14400, description: ""}
+        success: [delete]
+      - {id: delete, template: "VM - delete picked snapshots"}
     does: "Service desk tool: the snapshots ticked in the survey are planned, then deleted exactly as planned once a person approves."
     targets: "vCenter, from the AAP side; only snapshots offered by the pick list and still allowed."
     produces: "The plan, the approval, and the delete job's output."
@@ -964,6 +1087,17 @@ workflows:
   - name: "VM - restart picked VMs (workflow)"
     source: "docs/VMWARE.md Pick lists, step 2; docs/WORKFLOWS_AND_SCHEDULES.md 27"
     playbooks: [playbooks/vm_reboot_picked.yml, playbooks/vm_reboot_picked.yml]
+    survey:
+      - {question_name: "VMs to restart", variable: vm_reboot_picks, type: multiselect, choices: ["(nothing to pick yet)"],
+         required: true}
+      - {question_name: "How", variable: vm_power_mode, type: multiplechoice, choices: [guest, hard], default: guest,
+         required: true}
+    nodes:
+      - {id: plan, template: "VM - restart picked VMs", success: [approve]}
+      - id: approve
+        approval: {name: "Do exactly this plan?", timeout: 14400, description: ""}
+        success: [restart]
+      - {id: restart, template: "VM - restart picked VMs"}
     does: "Service desk tool: the VMs ticked in the survey are planned, then restarted (guest restart or hard reset) once a person approves."
     targets: "vCenter, from the AAP side; never the AAP server or a protected VM."
     produces: "The plan, the approval, and the restart job's output."
@@ -971,6 +1105,9 @@ workflows:
   - name: "VM - outage watch (workflow)"
     source: "docs/VM_OUTAGE_WATCH.md Set it up, step 3; docs/WORKFLOWS_AND_SCHEDULES.md 28"
     playbooks: [playbooks/vm_outage_watch.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: watch, template: "VM - outage watch", always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Every 5 to 15 minutes: is a host, datastore or VM down or hung in vCenter now; opens, notes and clears ServiceNow incidents."
     targets: "vCenter, from the AAP side; the tickets step runs on the controller."
     produces: "Quiet when clean; a report email when something is down; ServiceNow incidents and work notes."
@@ -978,6 +1115,7 @@ workflows:
   - name: "VM - deploy from ServiceNow ticket (workflow)"
     source: "docs/VM_DEPLOY_GUIDE.md 8. The approval workflow"
     playbooks: [playbooks/vm_deploy_from_ticket.yml, playbooks/vm_deploy_from_ticket.yml]
+    deferred: "left by hand for now: the build's binding to what was approved is being reviewed"
     does: "Builds the VMs a ServiceNow ticket asks for: the first run checks and places them, a person approves, the second run builds them."
     targets: "vCenter and the ServiceNow ticket, from the AAP side."
     produces: "The plan on the ticket and in an email, the approval, the new VMs, and the result (IP included) on the ticket."
@@ -985,6 +1123,25 @@ workflows:
   - name: "Network config load (workflow)"
     source: "docs/NETWORK_CONFIG.md A load, with an approval"
     playbooks: [playbooks/net_config_load.yml, playbooks/net_config_load.yml]
+    # 1.107.0 (review): a survey, never Prompt on launch for Variables (a launcher could switch the guardrails off)
+    survey:
+      - {question_name: "Change request (CHG...) - a Run needs it in Implement", variable: net_config_change, type: text, required: true}
+      - {question_name: "What to load", variable: net_config_load_mode, type: multiplechoice, choices: [lines, restore], default: lines,
+         required: true}
+      - {question_name: "The devices: names or patterns, one per line or separated by commas", variable: net_config_only,
+         type: textarea, required: false}
+      - {question_name: "IOS: the configuration lines, one per line", variable: net_config_lines, type: textarea, required: false}
+      - {question_name: "Restore: which backup (a commit, tag or dated copy; empty = the newest)", variable: net_config_restore_ref,
+         type: text, required: false}
+    nodes:
+      - {id: dry_run, template: "Network config load (dry run)", success: [approve]}
+      - id: approve
+        approval:
+          name: "Send these changes?"
+          timeout: 14400
+          description: "Open the Check job: its report lists each device and the lines or the diff."
+        success: [load]
+      - {id: load, template: "Network config load"}
     does: "Loads an approved change onto network devices: a dry run shows what would be sent, a person approves, the real run sends it."
     targets: "Network devices (Cisco IOS, PAN-OS firewalls) of the change, over SSH or the API."
     produces: "The dry run's report, the approval, the run's report and email, a note on the change request."
@@ -992,6 +1149,19 @@ workflows:
   - name: "Mail relay - add an IP"
     source: "docs/MAIL_RELAY.md step 5; docs/WORKFLOWS_AND_SCHEDULES.md 38"
     playbooks: [playbooks/mail_relay_plan.yml, playbooks/mail_relay_approved.yml]
+    extra_vars: {mail_relay_action: add}
+    survey:
+      - {question_name: "IP address(es) - one, a subnet, or several separated by commas", variable: mail_relay_ip,
+         type: textarea, max: 400, required: true}
+      - {question_name: "Name and/or service they are for", variable: mail_relay_comment, type: text, min: 3, max: 200,
+         required: true}
+      - {question_name: "Requested by (optional)", variable: mail_relay_requested_by, type: text, required: false}
+    nodes:
+      - {id: plan, template: "Mail relay - whitelist plan", success: [approve]}
+      - id: approve
+        approval: {name: "Add this address to the mail relay whitelist?", timeout: 86400, description: ""}
+        success: [apply]
+      - {id: apply, template: "Mail relay - apply the approved whitelist change"}
     does: "Adds the IP addresses in the survey to the SMTP relay whitelist: the plan is emailed, a person approves, the lines are written."
     targets: "The mail relay servers (group mail_relays): Postfix main.cf mynetworks."
     produces: "Plan email (waiting for approval), the approval, and a result email."
@@ -999,6 +1169,16 @@ workflows:
   - name: "Mail relay - remove an IP"
     source: "docs/MAIL_RELAY.md step 5; docs/WORKFLOWS_AND_SCHEDULES.md 38"
     playbooks: [playbooks/mail_relay_plan.yml, playbooks/mail_relay_approved.yml]
+    extra_vars: {mail_relay_action: remove}
+    survey:
+      - {question_name: "IP address(es) - one, a subnet, or several separated by commas", variable: mail_relay_ip,
+         type: textarea, max: 400, required: true}
+    nodes:
+      - {id: plan, template: "Mail relay - whitelist plan", success: [approve]}
+      - id: approve
+        approval: {name: "Remove this address from the mail relay whitelist?", timeout: 86400, description: ""}
+        success: [apply]
+      - {id: apply, template: "Mail relay - apply the approved whitelist change"}
     does: "Removes the IP addresses in the survey from the SMTP relay whitelist: the plan is emailed, a person approves, they are removed."
     targets: "The mail relay servers (group mail_relays): Postfix main.cf mynetworks."
     produces: "Plan email (waiting for approval), the approval, and a result email."
@@ -1006,6 +1186,12 @@ workflows:
   - name: "Mail relay - remove unused addresses"
     source: "docs/MAIL_RELAY.md Remove the addresses that sent no mail; docs/WORKFLOWS_AND_SCHEDULES.md 38"
     playbooks: [playbooks/mail_relay_unused.yml, playbooks/mail_relay_approved.yml]
+    nodes:
+      - {id: plan, template: "Mail relay - unused addresses plan", success: [approve]}
+      - id: approve
+        approval: {name: "Remove these unused addresses from the mail relay whitelist?", timeout: 86400, description: ""}
+        success: [apply]
+      - {id: apply, template: "Mail relay - apply the approved whitelist change"}
     does: "Finds whitelist addresses that sent no mail through any relay in six months and removes them once a person approves."
     targets: "The mail relay servers (group mail_relays): their whitelist and mail logs."
     produces: "Plan email with the unused-address tables, the approval, and a result email."
@@ -1013,6 +1199,9 @@ workflows:
   - name: "Daily health"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 1. Daily health"
     playbooks: [playbooks/health_check.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: check, template: "Health check", extra_data: {health_checks: [daily]}, always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Every morning: the daily health checks on Linux hosts, and a ServiceNow incident for each problem (noted again when it clears)."
     targets: "Linux hosts of the health check's inventory; the tickets step runs on the controller."
     produces: "Health report (emailed, on the report website), ServiceNow incidents and work notes."
@@ -1020,6 +1209,13 @@ workflows:
   - name: "Weekly compliance"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 2. Weekly compliance"
     playbooks: [playbooks/health_check.yml, playbooks/servicenow_tickets.yml, playbooks/cert_report.yml, playbooks/servicenow_tickets.yml, playbooks/poam_status.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: health, template: "Health check", extra_data: {health_checks: [weekly]}, always: [health_tickets]}
+      - {id: health_tickets, template: "ServiceNow tickets"}
+      - {id: certs, template: "Certificate report", always: [cert_tickets]}
+      - {id: cert_tickets, template: "ServiceNow tickets"}
+      - {id: poam, template: "POA&M status", always: [poam_tickets]}
+      - {id: poam_tickets, template: "ServiceNow tickets"}
     does: "Weekly: the security health checks, the certificate report and the POA&M status, each followed by its ServiceNow tickets."
     targets: "Linux hosts (health, certificates); POA&M list and optional STIG Manager read on the controller."
     produces: "Health, certificate and POA&M reports (emailed, on the report website); ServiceNow incidents."
@@ -1027,6 +1223,17 @@ workflows:
   - name: "Patch with checks"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 3. Patch with checks"
     playbooks: [playbooks/health_check.yml, playbooks/patch_hosts.yml, playbooks/health_check.yml, playbooks/servicenow_tickets.yml, playbooks/servicenow_tickets.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: pre, template: "Health check", extra_data: {health_checks: [disk, mounts, services], use_act: "no"}, success: [approve],
+         failure: [pre_tickets]}
+      - {id: pre_tickets, template: "ServiceNow tickets"}
+      - id: approve
+        approval: {name: "Patch these hosts now?", timeout: 28800, description: ""}
+        success: [patch]
+      - {id: patch, template: "Patch hosts", always: [post]}
+      - {id: post, template: "Health check", extra_data: {health_checks: [daily], use_act: "no"}, always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Monthly patching: a health pre-check, a person approves, the hosts are patched, a post-check, and tickets for what is wrong."
     targets: "Linux hosts in the Limit (e.g. patch_hosts); never AAP hosts or no_patch groups."
     produces: "Pre and post health reports, the patch report (emailed, on the report website), ServiceNow incidents."
@@ -1034,6 +1241,19 @@ workflows:
   - name: "Patch with a dry run first"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 4. Patch with a dry run first"
     playbooks: [playbooks/health_check.yml, playbooks/patch_hosts.yml, playbooks/patch_hosts.yml, playbooks/health_check.yml, playbooks/servicenow_tickets.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: pre, template: "Health check", extra_data: {health_checks: [disk, mounts, services], use_act: "no"}, success: [dry_run]}
+      - {id: dry_run, template: "Patch hosts (dry run)", success: [approve]}
+      - id: approve
+        approval:
+          name: "Install what the dry run listed?"
+          timeout: 28800
+          description: "Open the \"Patch hosts\" dry-run job: it lists every package per host."
+        success: [patch]
+      - {id: patch, template: "Patch hosts", always: [post]}
+      - {id: post, template: "Health check", extra_data: {health_checks: [daily], use_act: "no"}, always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "As Patch with checks, but a dry run lists every package first so the approver sees exactly what will be installed."
     targets: "Linux hosts in the Limit; never AAP hosts or no_patch groups."
     produces: "Pre-check, DRY RUN patch report, the approval, the patch report, post-check, ServiceNow incidents."
@@ -1041,6 +1261,18 @@ workflows:
   - name: "Fix with approval (ACT)"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 5. Fix with approval (ACT); docs/ADDING_ACT.md 5"
     playbooks: [playbooks/health_check.yml, playbooks/servicenow_tickets.yml, playbooks/act_fix_approved.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: check, template: "Health check", extra_data: {use_act: "yes", site_act_level: diagnose}, always: [tickets],
+         failure: [approve]}
+      - {id: tickets, template: "ServiceNow tickets"}
+      - id: approve
+        approval:
+          name: "Apply the fix ACT proposed?"
+          timeout: 1800
+          description: "Read ACT's report and the NEEDS APPROVAL line in the health check job first."
+        success: [fix]
+      - {id: fix, template: "Apply approved ACT fix", always: [fix_tickets]}
+      - {id: fix_tickets, template: "ServiceNow tickets"}
     does: "A health check where ACT (GenAI) proposes a fix for problems; a person approves, and exactly those commands run, then the checks again."
     targets: "Linux hosts of the health check (Limit as launched); ACT reads on the hosts."
     produces: "Health report with ACT's analysis, the approval, the fix job's re-check, ServiceNow incidents."
@@ -1048,6 +1280,12 @@ workflows:
   - name: "Security posture"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 6. Security posture (weekly)"
     playbooks: [playbooks/health_check.yml, playbooks/servicenow_tickets.yml, playbooks/poam_status.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: health, template: "Health check", extra_data: {health_checks: [selinux, fapolicyd, auditd, accounts]},
+         always: [health_tickets]}
+      - {id: health_tickets, template: "ServiceNow tickets"}
+      - {id: poam, template: "POA&M status", always: [poam_tickets]}
+      - {id: poam_tickets, template: "ServiceNow tickets"}
     does: "Weekly STIG-related checks (SELinux, fapolicyd, auditd, accounts) and the POA&M status, with ServiceNow tickets."
     targets: "Linux hosts (health checks); POA&M list and optional STIG Manager read on the controller."
     produces: "Health and POA&M reports (emailed, on the report website), ServiceNow incidents."
@@ -1055,6 +1293,13 @@ workflows:
   - name: "Certificate watch"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 7. Certificate watch (daily)"
     playbooks: [playbooks/cert_report.yml, playbooks/servicenow_tickets.yml, playbooks/cert_renew_csr.yml]
+    survey:
+      - {question_name: "Warn this many days before expiry", variable: check_certs_warn_days, type: integer, default: 30,
+         required: false}
+    nodes:
+      - {id: report, template: "Certificate report", always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets", always: [csrs]}
+      - {id: csrs, template: "Certificate renewal - CSRs"}
     does: "Daily: every certificate that expires soon on Linux hosts, an incident for each, and a new key and CSR on its ticket."
     targets: "Linux hosts (not cert_skip_hosts or Satellite); the tickets step runs on the controller."
     produces: "Certificate report (emailed, on the report website), ServiceNow incidents, CSRs attached to them."
@@ -1062,6 +1307,19 @@ workflows:
   - name: "Certificate install, with an approval"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 29; docs/CERT_INSTALL.md set it up, step 4"
     playbooks: [playbooks/cert_install_check.yml, playbooks/workflow_gate.yml, playbooks/cert_install_approved.yml]
+    survey:
+      - {question_name: "Request (RITM) with the issued certificate - empty: every renewal's own request",
+         variable: cert_install_ritm, type: text, required: false}
+    nodes:
+      - {id: check, template: "Certificate install - check", failure: [gate]}
+      - {id: gate, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: cert_install_plan}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Install the certificates the check listed?"
+          timeout: 28800
+          description: "Open the check job: its READY lines say what each one changes."
+        success: [install]
+      - {id: install, template: "Certificate install - approved"}
     does: "Daily: finds issued certificates waiting on their ServiceNow requests and installs them on Linux hosts once a person approves."
     targets: "Linux hosts with a pending renewal; their ServiceNow requests (read)."
     produces: "Check output (READY lines), the approval, install results, a work note on each request."
@@ -1069,6 +1327,19 @@ workflows:
   - name: "Windows certificate install, with an approval"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 29 (the Windows twin); docs/CERT_INSTALL.md step 4"
     playbooks: [playbooks/win_cert_install_check.yml, playbooks/workflow_gate.yml, playbooks/win_cert_install_approved.yml]
+    survey:
+      - {question_name: "Request (RITM) with the issued certificate - empty: every renewal's own request",
+         variable: cert_install_ritm, type: text, required: false}
+    nodes:
+      - {id: check, template: "Windows certificate install - check", failure: [gate]}
+      - {id: gate, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: cert_install_plan}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Install the certificates the check listed?"
+          timeout: 28800
+          description: "Open the check job: its READY lines say what each one changes."
+        success: [install]
+      - {id: install, template: "Windows certificate install - approved"}
     does: "Finds issued certificates waiting on their ServiceNow requests and installs them on Windows servers once a person approves."
     targets: "Windows servers with a pending renewal (WinRM); their ServiceNow requests (read)."
     produces: "Check output (READY lines), the approval, install results, a work note on each request."
@@ -1076,6 +1347,17 @@ workflows:
   - name: "fapolicyd, with an approval"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 36; docs/RUNBOOKS.md fapolicyd"
     playbooks: [playbooks/fapolicyd.yml, playbooks/workflow_gate.yml, playbooks/fapolicyd.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: check, template: "fapolicyd - check", failure: [gate]}
+      - {id: gate, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: fapolicyd_workflow_plan}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Make the fapolicyd changes the check listed?"
+          timeout: 28800
+          description: "Open the check job or its report: Changes to approve, and why."
+        success: [approved]
+      - {id: approved, template: "fapolicyd - approved"}
     does: "Daily: what keeps fapolicyd down or what it blocked, and each host's fix lines; once a person approves, those lines are made."
     targets: "Linux hosts in the Limit (the hosts that must run fapolicyd)."
     produces: "fapolicyd report (emailed, on the report website), the approval, the approved job's output."
@@ -1083,6 +1365,7 @@ workflows:
   - name: "STIG - full scan and upload"
     source: "docs/STIG_JOBS.md (1.83.0); made by AAP - set up job templates"
     playbooks: [playbooks/stig_full_scan.yml, playbooks/win_stig_full_scan.yml, playbooks/workflow_gate.yml, playbooks/stigman_update.yml]
+    portal: true                   # 1.107.0: the site portal shows it (its label), never its steps
     prompts: {limit: true}
     nodes:
       - {id: linux, template: "STIG - full scan - Linux check", failure: [gate_linux]}
@@ -1103,6 +1386,7 @@ workflows:
   - name: "STIG - drift scan and upload"
     source: "docs/STIG_JOBS.md (1.83.0, workflow 37 renamed); made by AAP - set up job templates"
     playbooks: [playbooks/stig_recheck.yml, playbooks/win_stig_recheck.yml, playbooks/workflow_gate.yml, playbooks/stigman_update.yml]
+    portal: true                   # 1.107.0: the site portal shows it (its label), never its steps
     prompts: {limit: true}
     replaces: ["STIG Manager updated, with an approval", "STIG Manager updated, with an approval (Windows)",
                "STIG Manager updated (Linux and Windows)"]
@@ -1139,6 +1423,9 @@ workflows:
   - name: "STIG drift"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 33. STIG drift (weekly)"
     playbooks: [playbooks/stig_drift_report.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: drift, template: "STIG drift report", always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Weekly STIG scan of Linux hosts compared with STIG Manager and earlier scans; an incident per host that drifted."
     targets: "Linux hosts of the target group; STIG Manager read; the tickets step on the controller."
     produces: "STIG drift report (emailed, on the report website), scan results kept on the host, ServiceNow incidents."
@@ -1146,6 +1433,9 @@ workflows:
   - name: "Network performance"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 34. Network performance (hourly)"
     playbooks: [playbooks/net_perf_report.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: perf, template: "Network performance report", always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Hourly: latency, loss, refused ports, interface drops and OCSP from Linux hosts against their usual; incidents for problems."
     targets: "Linux hosts of the target group (measuring from them); the tickets step on the controller."
     produces: "Network performance report (emailed, on the report website), ServiceNow incidents."
@@ -1153,6 +1443,9 @@ workflows:
   - name: "Database watch: MariaDB and MySQL"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 8. Database watch"
     playbooks: [playbooks/database_health.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: database, template: "Database health - MariaDB / MySQL", always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Hourly MariaDB and MySQL health (running, connections, replication, errors) with a ServiceNow incident for each problem."
     targets: "Database hosts (mariadb_hosts, mysql_hosts, database_hosts groups) and their podman containers."
     produces: "Database health report (emailed, on the report website), ServiceNow incidents."
@@ -1160,6 +1453,11 @@ workflows:
   - name: "Investigate a host"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 9. Investigate a host (on demand)"
     playbooks: [playbooks/troubleshoot.yml, playbooks/health_check.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: troubleshoot, template: "Troubleshoot", extra_data: {ts_area: overview, use_act: "yes", site_act_level: explain},
+         always: [health]}
+      - {id: health, template: "Health check", extra_data: {health_checks: [all]}}
     does: "On demand for one host: the troubleshooting commands, ACT's (GenAI) explanation, then every health check."
     targets: "One Linux host (the Limit)."
     produces: "Troubleshooting output with ACT's explanation, and a full health report (emailed, on the report website)."
@@ -1167,6 +1465,14 @@ workflows:
   - name: "STIG Manager deploy with checks"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 10. STIG Manager deploy with checks"
     playbooks: [playbooks/stigman_deploy.yml, playbooks/stigman_deploy.yml, playbooks/service_watch.yml, playbooks/health_check.yml]
+    nodes:
+      - {id: dry_run, template: "STIG Manager - deploy (dry run)", success: [approve]}
+      - id: approve
+        approval: {name: "Apply the changes the dry run listed?", timeout: 28800, description: ""}
+        success: [deploy]
+      - {id: deploy, template: "STIG Manager - deploy", always: [watch]}
+      - {id: watch, template: "Service watch - check (approval only)", always: [health]}
+      - {id: health, template: "Health check", extra_data: {health_checks: [certs, services], use_act: "no"}}
     does: "Deploys or updates the STIG Manager stack: a dry run first, a person approves, the real run, then container and health checks."
     targets: "The STIG Manager servers (group stigman): podman MySQL, STIG Manager and nginx."
     produces: "Dry run diff, the approval, the deploy output, service watch and health reports."
@@ -1174,6 +1480,13 @@ workflows:
   - name: "Disk space and the tmp cleanup, with an approval"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 42; docs/DISK_SPACE.md Set it up"
     playbooks: [playbooks/disk_report.yml, playbooks/tmp_cleanup.yml, playbooks/disk_report.yml]
+    nodes:
+      - {id: report, template: "Linux - disk space report", success: [approve]}
+      - id: approve
+        approval: {name: "Clean the old tmp files the report listed?", timeout: 28800, description: ""}
+        success: [cleanup]
+      - {id: cleanup, template: "Linux - tmp cleanup", success: [after]}
+      - {id: after, template: "Linux - disk space report"}
     does: "Daily disk and thin pool report; once a person approves, old /tmp and /var/tmp files on full filesystems are deleted, then a report."
     targets: "Linux hosts of the inventory (Limit as launched)."
     produces: "Disk space report email and web page (before and after), the approval, the cleanup's list of deletions."
@@ -1181,6 +1494,9 @@ workflows:
   - name: "STIG Manager availability, with tickets"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 43; docs/STIGMAN_HEALTH.md Set it up"
     playbooks: [playbooks/stigman_availability.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: availability, template: "STIG Manager - availability", always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Every 5 to 15 minutes: is STIG Manager (API, database, Keycloak) answering; an incident while it is down, a note when it is back."
     targets: "STIG Manager's web address and nodes, asked over HTTPS from the AAP side (no login)."
     produces: "One quiet line when up; ServiceNow incidents and notes; the report email/website when down or back again, when set."
@@ -1188,6 +1504,9 @@ workflows:
   - name: "Windows daily health"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 12. Windows daily health"
     playbooks: [playbooks/win_health_check.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: check, template: "Windows health check", extra_data: {health_checks: [daily]}, always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Every morning: the daily health checks on Windows servers, and a ServiceNow incident for each problem."
     targets: "Windows servers over WinRM; the tickets step runs on the controller."
     produces: "Health report (emailed, on the report website), an event log entry per finding, ServiceNow incidents."
@@ -1195,6 +1514,12 @@ workflows:
   - name: "Windows weekly compliance"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 13. Windows weekly compliance"
     playbooks: [playbooks/win_health_check.yml, playbooks/servicenow_tickets.yml, playbooks/win_cert_report.yml, playbooks/servicenow_tickets.yml, playbooks/win_cert_renew_csr.yml]
+    nodes:
+      - {id: health, template: "Windows health check", extra_data: {health_checks: [weekly]}, always: [health_tickets]}
+      - {id: health_tickets, template: "ServiceNow tickets"}
+      - {id: certs, template: "Windows certificate report", always: [cert_tickets]}
+      - {id: cert_tickets, template: "ServiceNow tickets", always: [csrs]}
+      - {id: csrs, template: "Windows certificate renewal - CSRs"}
     does: "Weekly Windows security checks and certificate report with tickets, and a new key and CSR on the ticket of each expiring certificate."
     targets: "Windows servers over WinRM; the tickets step runs on the controller."
     produces: "Health and certificate reports (emailed, on the report website), ServiceNow incidents with CSRs attached."
@@ -1202,6 +1527,16 @@ workflows:
   - name: "Windows patch with a dry run first"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 14. Windows patch with a dry run first"
     playbooks: [playbooks/win_health_check.yml, playbooks/win_patch.yml, playbooks/win_patch.yml, playbooks/win_health_check.yml, playbooks/servicenow_tickets.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: pre, template: "Windows health check", extra_data: {health_checks: [disk, services]}, success: [dry_run]}
+      - {id: dry_run, template: "Windows patch (dry run)", success: [approve]}
+      - id: approve
+        approval: {name: "Install what Software Center offers (listed in the dry run)?", timeout: 28800, description: ""}
+        success: [patch]
+      - {id: patch, template: "Windows patch", always: [post]}
+      - {id: post, template: "Windows health check", extra_data: {health_checks: [daily]}, always: [tickets]}
+      - {id: tickets, template: "ServiceNow tickets"}
     does: "Windows patching: pre-check, a dry run of what Software Center offers, a person approves, install, post-check and tickets."
     targets: "Windows servers in the Limit (win_patch_hosts), inside their ConfigMgr maintenance window."
     produces: "Pre and post health reports, the dry run list, the approval, patch output, ServiceNow incidents."
@@ -1209,6 +1544,13 @@ workflows:
   - name: "ACT for Windows rollout"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 15. ACT for Windows rollout"
     playbooks: [playbooks/win_act_install.yml, playbooks/win_act_install.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: dry_run, template: "ACT for Windows - install (dry run)", success: [approve]}
+      - id: approve
+        approval: {name: "Install or update ACT on these servers?", timeout: 28800, description: ""}
+        success: [install]
+      - {id: install, template: "ACT for Windows - install"}
     does: "Installs or updates the ACT tool on Windows servers: a dry run says what would change, a person approves, then the real run."
     targets: "Windows servers in the Limit (a group at a time), over WinRM."
     produces: "Dry run list per server (install, update, current), the approval, the install output."
@@ -1216,6 +1558,10 @@ workflows:
   - name: "Windows: investigate a server"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 16. Windows: investigate a server (on demand)"
     playbooks: [playbooks/win_troubleshoot.yml, playbooks/win_health_check.yml]
+    prompts: {limit: true}
+    nodes:
+      - {id: troubleshoot, template: "Windows troubleshoot", always: [health]}
+      - {id: health, template: "Windows health check", extra_data: {health_checks: [all]}}
     does: "On demand for one Windows server: the troubleshooting commands for an area, then every health check."
     targets: "One Windows server (the Limit), over WinRM."
     produces: "Troubleshooting output and a full health report (emailed, on the report website)."
@@ -1223,6 +1569,13 @@ workflows:
   - name: "Everything, every morning"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 17. Everything, every morning"
     playbooks: [playbooks/health_check.yml, playbooks/servicenow_tickets.yml, playbooks/win_health_check.yml, playbooks/servicenow_tickets.yml, playbooks/cert_report.yml, playbooks/servicenow_tickets.yml]
+    nodes:
+      - {id: linux, template: "Health check", extra_data: {health_checks: [daily]}, always: [linux_tickets]}
+      - {id: linux_tickets, template: "ServiceNow tickets"}
+      - {id: windows, template: "Windows health check", extra_data: {health_checks: [daily]}, always: [windows_tickets]}
+      - {id: windows_tickets, template: "ServiceNow tickets"}
+      - {id: certs, template: "Certificate report", always: [cert_tickets]}
+      - {id: cert_tickets, template: "ServiceNow tickets"}
     does: "Every morning in one workflow: Linux and Windows daily health and the certificate report, each with its ServiceNow tickets."
     targets: "Linux hosts and Windows servers, each step on its own template's inventory."
     produces: "Linux, Windows and certificate reports (emailed, on the report website), ServiceNow incidents."
@@ -1230,6 +1583,10 @@ workflows:
   - name: "VMware daily checks: health, alarms, then ACT's analysis"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 18. VMware daily checks"
     playbooks: [playbooks/vm_health_report.yml, playbooks/vm_alarm_report.yml, playbooks/vm_alarm_act_analysis.yml]
+    nodes:
+      - {id: health, template: "VM - health report", always: [alarms]}
+      - {id: alarms, template: "VM - alarms report", always: [analysis]}
+      - {id: analysis, template: "VM - alarms ACT analysis"}
     does: "Daily vSphere look: cluster and host health, alarms and the day's events, then ACT's (GenAI) likely cause and fix for each problem."
     targets: "vCenter, from the AAP side. No ESXi host or VM is logged into."
     produces: "Three emails: the health report, the alarms report and ACT's analysis."
@@ -1237,6 +1594,19 @@ workflows:
   - name: "vCenter and ESXi certificate install, with an approval"
     source: "docs/WORKFLOWS_AND_SCHEDULES.md 39; docs/VMWARE.md Installing the issued certificates"
     playbooks: [playbooks/vmware_cert_install_check.yml, playbooks/workflow_gate.yml, playbooks/vmware_cert_install_approved.yml]
+    survey:
+      - {question_name: "Request (RITM) with the issued certificate", variable: vmware_cert_install_ritm, type: text,
+         required: true}
+    nodes:
+      - {id: check, template: "VMware - certificate install - check", failure: [gate]}
+      - {id: gate, template: "Workflow gate - has a plan", extra_data: {workflow_gate_var: vmware_cert_install_plan}, success: [approve]}
+      - id: approve
+        approval:
+          name: "Install the VMware certificates the check listed?"
+          timeout: 28800
+          description: "Open the check job: its READY lines say what each one changes - vCenter's own may restart its services."
+        success: [install]
+      - {id: install, template: "VMware - certificate install - approved"}
     does: "Finds issued certificates for vCenter and ESXi hosts on their ServiceNow requests and installs them once a person approves."
     targets: "vCenter and its ESXi hosts, from the AAP side; their ServiceNow requests (read)."
     produces: "Check output (READY lines), the approval, install results, a work note on each request."

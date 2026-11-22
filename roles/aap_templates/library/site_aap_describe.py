@@ -32,6 +32,7 @@ options:
   contact: {description: "The Contact line's Developer= (aap_templates_description_contact; '' = none).", type: str, default: ''}
   ours: {description: "Descriptions this repository wrote before (replaced like one of ours).", type: list, elements: str, default: ["Made by AAP - set up job templates (aap/job_templates.yml)"]}
   managed: {description: Names managed by portal setup per kind (job and workflow)., type: dict, default: {}}
+  built: {description: "1.107.0: the catalog workflows AAP - set up job templates owns in this run (its fingerprints) - left to it; the others with nodes described here. Not given: every one with nodes left.", type: list, elements: str}
   overwrite: {description: "Write over a hand-written description too (aap_templates_describe_overwrite).", type: bool, default: false}
   only: {description: "Only the templates whose AAP or catalog name matches one of these patterns (* and ?, any case); [] = all.", type: list, elements: str, default: []}
   renamed: {description: "1.79.19 - {job: {old: new}, workflow: {old: new}}: a Check run of the renames - read as renamed.", type: dict, default: {}}
@@ -93,7 +94,13 @@ class Describe(object):
         self.results, self.problems, self.notes, self.wrote = [], [], [], False
         managed = p.get("managed") or {}
         self.managed = {(kind, name) for kind, names in managed.items() for name in names}
-        self.managed.update(("workflow", w["name"]) for w in p["workflows"] if w.get("nodes"))
+        # 1.107.0: the catalog's workflows AAP - set up job templates owns (its fingerprints: made or taken over by it) - one
+        # made by hand under that name is described here; not known (describe only): every one with nodes, as before
+        built = p.get("built")
+        # (review: given, the map alone decides - a STIG job made by hand is described too)
+        self.built = set(w["name"] for w in p["workflows"] if w.get("nodes")
+                         and (built is None or w["name"] in built)) - set(managed.get("workflow") or [])
+        self.managed.update(("workflow", n) for n in self.built)
         self.twice = []                                   # 1.79.11d: "2 templates run <playbook>: 'A', 'B' - keep one"
 
     def all(self, path):
@@ -131,6 +138,10 @@ class Describe(object):
         if TEMPLATES_MARK in have:                       # 1.83.0 (Codex): a STIG workflow this job made - it wrote the lines too
             self.note(kind, name, catalog, "left", first(have), why="made by this job with the catalog's lines (its workflows); "
                       "its next Run takes the old fingerprint text off - a change here would make it leave the workflow as changed by hand")
+            return
+        if kind == "workflow" and name in self.built and self.p.get("built") is None:
+            self.note(kind, name, catalog, "left", first(have), why="AAP - set up job templates makes this workflow and writes its "
+                      "description; one of yours under this name is described by that job's run with aap_templates_describe: true")
             return
         if (kind, name) in self.managed:
             self.note(kind, name, catalog, "left", first(have), why="its setup job manages this object's description")
@@ -265,6 +276,7 @@ def main():
                            owner=dict(type="str", default=""), contact=dict(type="str", default=""),
                            ours=dict(type="list", elements="str", default=["Made by AAP - set up job templates (aap/job_templates.yml)"]),
                            managed=dict(type="dict", default={}), overwrite=dict(type="bool", default=False),
+                           built=dict(type="list", elements="str", default=None),
                            only=dict(type="list", elements="str", default=[]),
                            vendored=dict(type="list", elements="dict", default=[]), renamed=dict(type="dict", default={}),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),

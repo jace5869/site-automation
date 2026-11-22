@@ -159,6 +159,11 @@ The Variables of each: `aap/extra_vars/net_config_backup.yml`, `net_config_load.
 
 ### A load, with an approval
 
+**AAP - set up job templates makes this workflow (1.107.0)**, with the survey below (never Prompt on launch for
+Variables: a launcher could then switch the checks off - `net_config_require_change`, `net_config_max_devices`), and
+makes its dry run *Network config load (dry run)* (Job type Check on the template itself), and ticks Prompt on launch
+for Job type on *Network config load*. The steps below are the manual way.
+
 The approver sees the dry run's report - exactly what will be sent - before anything is.
 
 ```workflow
@@ -172,22 +177,23 @@ The approver sees the dry run's report - exactly what will be sent - before anyt
 ```
 
 1. On the template *Network config load*, tick **Prompt on launch** for **Job type**.
-2. **Create workflow job template** `Network config load (workflow)`. Tick **Prompt on launch** for its
-   **Variables**: each launch, paste the change there - every step gets the workflow's Variables:
+2. **Create workflow job template** `Network config load (workflow)`, with this **survey** - every step gets its answers:
 
-   ```yaml
-   net_config_change: CHG0012345
-   net_config_load_mode: lines
-   net_config_only: [rtr-lab01*]
-   net_config_lines:
-     - ntp server 192.0.2.123
-   ```
+   | Question | Variable | Type | Required |
+   |---|---|---|---|
+   | Change request (CHG...) - a Run needs it in Implement | `net_config_change` | Text | yes |
+   | What to load | `net_config_load_mode` | Multiple choice `lines`, `restore` (default `lines`) | yes |
+   | The devices: names or patterns, one per line or separated by commas | `net_config_only` | Textarea | no |
+   | IOS: the configuration lines, one per line | `net_config_lines` | Textarea | no |
+   | Restore: which backup (a commit, tag or dated copy; empty = the newest) | `net_config_restore_ref` | Text | no |
 
-   (A survey cannot carry the lines: they are a list.)
-3. **Add step** *Network config load*, Job type **Check**. On it, **+** → **Run on success** →
+   The lines are read one per row (1.107.0), as a list is. PAN-OS changes (`net_config_panos_entries`, a list of
+   xpaths) cannot go in a survey: put them in the template's Variables for that change.
+3. **Add step** *Network config load (dry run)*: a copy of *Network config load* with Job type **Check** on the template
+   itself (1.107.0: a node's Job type is not enough - with the prompt unticked AAP would send before the approval). On it, **+** → **Run on success** →
    **Approval**: name `Send these changes?`, timeout e.g. 4 hours, description `Open the Check job: its
    report lists each device and the lines or the diff.`
-4. On the approval, **+** → **Run on success** → *Network config load*, Job type **Run**. **Save**.
+4. On the approval, **+** → **Run on success** → *Network config load*. **Save**.
 
 The Check step needs no change request in state Implement; the Run step does, and stops if the change
 moved on meanwhile.

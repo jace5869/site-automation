@@ -335,6 +335,11 @@ template: it runs the commands it is handed.
 
 ## Part 6. The workflow
 
+**AAP - set up job templates makes this workflow (1.107.0)**, with the gate between the check and the approval (*Workflow gate - has a plan*,
+`workflow_gate_var: service_watch_fix`: an error of the check never reaches the approval) and the `watch_mode` survey.
+Run it with Check, then without ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-job-makes-them-11070)). The
+steps below are the manual way. The workflow's Inventory stays empty: each step uses its template's.
+
 1. **Automation Execution → Templates → Create template → Create workflow job template**.
 2. **Name** `Service watch - approve or self-heal`; **Inventory** `Linux servers`; **Limit**
    empty with **Prompt on launch** ticked. Leave **Variables** empty.

@@ -10,8 +10,52 @@ The checks *fail on purpose* when they find something. So "Run on fail" means "a
 found", and "Run always" means "whatever happened". A step also receives what the steps before it
 published (**artifacts**). That is how the tickets step learns what the health check found.
 
-This chapter first shows how to build any workflow, then a catalog of ready-made workflows for
-Linux, for Windows, and for both, and how to schedule them.
+This chapter first says which job makes the workflows, then how to build one by hand, then a catalog of ready-made
+workflows for Linux, for Windows, and for both, and how to schedule them.
+
+## The job makes them (1.107.0)
+
+**AAP - set up job templates** makes 40 workflows with their templates: each step, each link, each approval
+(name, timeout, description), each gate and its
+`workflow_gate_var`, each step's answers, the dry runs before an approval (Check templates of their own), Prompt on
+launch for Limit, the workflow's Variables and its survey ([SETUP_AAP.md](SETUP_AAP.md#create-the-job-templates-from-the-catalog)).
+
+1. Launch **AAP - set up job templates** with Job type **Check**. It writes nothing. Each workflow says *WOULD CREATE*
+   with every node and link, *already right*, *SKIPPED* with the reason, or one of the lines below.
+2. Read the survey lines. A step's answers (`health_checks = daily`, `use_act`, `site_act_level`, `ts_area`) come from its
+   template's survey. The job adds the questions that are missing to *Health check*
+   ([SETUP_AAP.md](SETUP_AAP.md#step-6-the-first-job-template-health-check), and the ACT ones of
+   [ADDING_ACT.md](ADDING_ACT.md#3-survey-questions)), *Troubleshoot* and *Windows health check*
+   ([WINDOWS.md](WINDOWS.md#windows-health-check)): *would add survey
+   question(s): use_act, site_act_level*. It never changes or takes off a question that is there. Read the *SKIPPED*
+   lines too: each says what to add or tick.
+3. Launch it again with Job type **Run**. It makes what Check said.
+4. Then by hand, as before: who may approve (**Approve** on the workflow), the schedules (the table at the end), the
+   notifications, and **Concurrent jobs** off where a section says so.
+
+| What the job says | What it means |
+|---|---|
+| *left to another job* | the site portal's workflows (40, 44 to 51): **AAP - set up portal actions** makes them |
+| *NOT MADE BY THIS JOB* | a workflow of yours has that name. Each field and node that differs is listed. It is left as it is; `aap_templates_overwrite: true` takes it over |
+| *CHANGED BY HAND* | the job made it, and someone changed it since (a step set to Check to rehearse, a link moved). Listed node by node, left as it is; `aap_templates_overwrite: true` makes it again |
+| *same steps, other name* | a workflow of yours runs the same steps under another name. It is not made twice. Rename yours (`aap_templates_rename_map`), or `aap_templates_create_alias: true` makes the catalog's beside it |
+| *SKIPPED* | a step is not in AAP, runs another playbook, lacks the fixed Variables its node relies on (*Horizon - desktops check* without `horizon_desktops_mode: approval`), or does not take what its node gives (Prompt on launch for Job type). The reason is on the line |
+| *FAILED* | AAP refused a read or a write for that workflow. The others go on; the job ends red. A survey AAP refused is written by the next Run |
+
+- **Left by hand for now:** *VM - deploy from ServiceNow ticket (workflow)* - the build's binding to what was approved is being reviewed.
+- **Never made:** workflow 37 and its Windows twin. *STIG - drift scan and upload* replaces them ([STIG_JOBS.md](STIG_JOBS.md)).
+- **The survey** is written when the job makes the workflow, and never changed after. Your edits stay, and so do the
+  choices that *VM - refresh the pick lists* writes.
+- **The site portal's label** goes only on the two STIG jobs, never on a step. To show another workflow on the portal,
+  publish it with **AAP - set up portal actions** ([SITE_PORTAL.md](SITE_PORTAL.md)).
+- **A dry-run template runs as Check only.** If launched as Run, `playbooks/workflow_dry_run.yml` stops it before it acts.
+  Every step after an approval must use a Run template. *AAP - set up job templates* checks this when it builds or
+  checks the workflow. The health checks of these workflows report only (`use_act` = `no`), and the
+  container look after a deploy never fixes (*Service watch - check (approval only)*).
+- **Never deleted:** a workflow, a template or a schedule. The job only makes a workflow's own nodes again, when it
+  brings that workflow right.
+
+The steps below are the manual way, kept for a workflow of your own.
 
 ## How to build any workflow, click by click
 
@@ -281,10 +325,10 @@ own report, *VMware - trust store report*, which does not feed tickets ([TRUST_S
 
 | Step | Template | Answers | Link |
 |---|---|---|---|
-| 1 | Health check | `health_checks` = `disk`, `mounts`, `services` | (start) |
+| 1 | Health check | `health_checks` = `disk`, `mounts`, `services`, `use_act` = `no` | (start) |
 | 2 | *Approval* | Name `Patch these hosts now?`, **Timeout** 8 hours | **Run on success**, from 1 |
 | 3 | Patch hosts | `patch_security_only` as you like; `automatic_restarts` (see below); `patch_serial` (hosts at a time) and `patch_snapshot` (a VMware snapshot before each host: [RUNBOOKS.md](RUNBOOKS.md#snapshot-before-patching)) as you like | **Run on success**, from 2 |
-| 4 | Health check | `health_checks` = `daily` | **Run always**, from 3 |
+| 4 | Health check | `health_checks` = `daily`, `use_act` = `no` | **Run always**, from 3 |
 | 5 | ServiceNow tickets | | **Run always**, from 4 |
 | 6 | ServiceNow tickets | | **Run on fail**, from 1 (tickets for what the pre-check found) |
 
@@ -325,7 +369,7 @@ It stays green, so the approval follows it:
 ```workflow
 [Health check: pre]             health_checks = disk, mounts, services
     |  Run on success
-[Patch hosts]                   Job type = Check: lists what it would install
+[Patch hosts (dry run)]         Job type = Check (the template): what it would install
     |  Run on success
 [Approval]                      "Install what the dry run listed?"
     |  Run on success
@@ -338,14 +382,16 @@ It stays green, so the approval follows it:
 
 | Step | Template | Answers | Link |
 |---|---|---|---|
-| 1 | Health check | `health_checks` = `disk`, `mounts`, `services` | (start) |
-| 2 | Patch hosts | **Job type** `Check` | **Run on success**, from 1 |
+| 1 | Health check | `health_checks` = `disk`, `mounts`, `services`, `use_act` = `no` | (start) |
+| 2 | Patch hosts (dry run) | (Job type `Check` on the template itself) | **Run on success**, from 1 |
 | 3 | *Approval* | Name `Install what the dry run listed?`. Description: `Open the "Patch hosts" dry-run job: it lists every package per host.` | **Run on success**, from 2 |
 | 4 | Patch hosts | **Job type** `Run`; `automatic_restarts` as you decide | **Run on success**, from 3 |
-| 5 | Health check | `health_checks` = `daily` | **Run always**, from 4 |
+| 5 | Health check | `health_checks` = `daily`, `use_act` = `no` | **Run always**, from 4 |
 | 6 | ServiceNow tickets | | **Run always**, from 5 |
 
-Needs **Prompt on launch** for **Job type** on the Patch hosts template (steps 2 and 4 set it).
+The dry run is its own template, *Patch hosts (dry run)*, Job type **Check** on the template itself (1.107.0). A node's
+Job type is not enough: once the template stops prompting for it, AAP runs the node as the template says - it would
+patch before the approval. *AAP - set up job templates* makes it; by hand: a copy of *Patch hosts* with Job type Check.
 
 ### 5. Fix with approval (ACT)
 
@@ -470,7 +516,7 @@ certificate it read ([CERT_INVENTORY.md](CERT_INVENTORY.md)).
 **Network configurations:** *Network config backup* on a daily schedule - a commit in the backups' repository
 when a device changed, optionally an incident for it. A **load** as a workflow: *[Network config load]* as
 **Check** → **Approval** → *[Network config load]* as **Run**, the change and its lines in the workflow's
-Variables: the approver sees the dry run's report - exactly what will be sent - before anything is. Click by
+survey: the approver sees the dry run's report - exactly what will be sent - before anything is. Click by
 click: [NETWORK_CONFIG.md](NETWORK_CONFIG.md), "A load, with an approval".
 
 ### 29. Certificate install, with an approval (daily)
@@ -770,30 +816,31 @@ are already looking. Add `[ServiceNow tickets]` after step 2 (**Run always**) if
 **The template** *STIG Manager - deploy*: playbook `playbooks/stigman_deploy.yml`; the inventory with the
 group `stigman`; credentials Machine (ssh + sudo), *STIG Manager database*, *TLS certificate* (and
 *Container registry login (hosts)* when you pull with an account); **Prompt on launch** ticked for **Job
-type** and **Show changes**, so the workflow can run it as Check, then as Run. Its Variables:
-`aap/extra_vars/stigman_deploy.yml`.
+type** and **Show changes**, to try it as Check by hand. Its Variables: `aap/extra_vars/stigman_deploy.yml`. The
+workflow's dry run is its own template, *STIG Manager - deploy (dry run)*, Job type Check and Show changes on the
+template itself (1.107.0); the look after the deploy is *Service watch - check (approval only)*.
 
 The images are checked first. On an air-gapped host they are loaded by hand: [ENCLAVES.md](ENCLAVES.md), section 5.
 
 ```workflow
-[STIG Manager - deploy]         Job type = Check (+ Show changes): what would change
+[STIG Manager - deploy (dry run)]  Job type = Check (+ Show changes), on the template
     |  Run on success
 [Approval]                      "Apply the changes the dry run listed?"
     |  Run on success
-[STIG Manager - deploy]         Job type = Run
+[STIG Manager - deploy]
     |  Run always
-[Service watch - check]
+[Service watch - check (approval only)]  watch_mode: approval - it never fixes
     |  Run always
 [Health check]                  health_checks = certs, services
 ```
 
 | Step | Template | Answers | Link |
 |---|---|---|---|
-| 1 | STIG Manager - deploy | **Job type** `Check` (and **Show changes**) | (start) |
+| 1 | STIG Manager - deploy (dry run) | (Job type `Check` and **Show changes** on the template itself) | (start) |
 | 2 | *Approval* | `Apply the changes the dry run listed?`, **Timeout** 8 hours | **Run on success**, from 1 |
-| 3 | STIG Manager - deploy | **Job type** `Run` | **Run on success**, from 2 |
-| 4 | Service watch - check | | **Run always**, from 3 |
-| 5 | Health check | `health_checks` = `certs`, `services` | **Run always**, from 4 |
+| 3 | STIG Manager - deploy | | **Run on success**, from 2 |
+| 4 | Service watch - check (approval only): `watch_mode: approval` in its Variables, so a failed deploy is reported, never fixed | | **Run always**, from 3 |
+| 5 | Health check | `health_checks` = `certs`, `services`, `use_act` = `no` | **Run always**, from 4 |
 
 The dry run shows which files and units would change, and how. The approver approves only
 changes they expected. (This dry run has not been tried on a real server yet: run step 1 on its
@@ -802,6 +849,22 @@ own once, on the test server, before you build the workflow.)
 ### 11. Service watch
 
 The approval or self-heal workflow for containers: [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md), Part 6.
+
+```workflow
+[Service watch - check]
+   |  Run on fail
+   v
+[Workflow gate - has a plan]  workflow_gate_var: service_watch_fix
+   |  Run on success
+   v
+[Approval]  "Approve the fix ACT proposed?", 30 minutes
+   |  Run on success
+   v
+[Service watch - apply approved fix]
+```
+
+The job makes it with the gate (Part 6 shows the older shape, without it), the survey `watch_mode` and Prompt on
+launch for Limit.
 
 If you schedule it every 15 minutes, turn **off** "Enable concurrent jobs" on the workflow (edit the
 workflow), because its approval waits up to 30 minutes: without that, a new run starts every 15
@@ -887,7 +950,7 @@ The last step is optional: a CSR for each of the server's own certificates that 
 ```workflow
 [Windows health check: pre]     health_checks = disk, services
     |  Run on success
-[Windows patch]                 Job type = Check: lists the updates Software Center has
+[Windows patch (dry run)]       Job type = Check (the template): Software Center's updates
     |  Run on success
 [Approval]                      "Install what the dry run listed?"
     |  Run on success
@@ -901,7 +964,7 @@ The last step is optional: a CSR for each of the server's own certificates that 
 | Step | Template | Answers | Link |
 |---|---|---|---|
 | 1 | Windows health check | `health_checks` = `disk`, `services` | (start) |
-| 2 | Windows patch | **Job type** `Check` | **Run on success**, from 1 |
+| 2 | Windows patch (dry run) | (Job type `Check` on the template itself) | **Run on success**, from 1 |
 | 3 | *Approval* | `Install what Software Center offers (listed in the dry run)?`, **Timeout** 8 hours | **Run on success**, from 2 |
 | 4 | Windows patch | **Job type** `Run`; `automatic_restarts` as you decide | **Run on success**, from 3 |
 | 5 | Windows health check | `health_checks` = `daily` | **Run always**, from 4 |
@@ -920,7 +983,7 @@ inventory and its **Machine (Windows)** credential; the execution environment yo
 servers").
 
 ```workflow
-[ACT for Windows - install]     Job type = Check: would install / update / already current
+[ACT for Windows - install (dry run)]  Job type = Check (the template)
     |  Run on success
 [Approval]
     |  Run on success
@@ -929,7 +992,7 @@ servers").
 
 | Step | Template | Answers | Link |
 |---|---|---|---|
-| 1 | ACT for Windows - install | **Job type** `Check` | (start) |
+| 1 | ACT for Windows - install (dry run) | (Job type `Check` on the template itself) | (start) |
 | 2 | *Approval* | `Install or update ACT on these servers?`, **Timeout** 8 hours | **Run on success**, from 1 |
 | 3 | ACT for Windows - install | **Job type** `Run` | **Run on success**, from 2 |
 
@@ -1434,10 +1497,17 @@ policy). A plan with a problem fails and never reaches the approval ([HORIZON.md
    |  Run on success
    v
 [Horizon - host maintenance start]
+   |  Run on success
+   v
+[Approval]  "Is the host back?" (no timeout)
+   |  Run on success
+   v
+[Horizon - host maintenance end]
 ```
 
-A survey on the workflow (the host, the message). Then the host into maintenance in vCenter; after
-it, *Horizon - host maintenance end* with the host ([HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance)).
+A survey on the workflow (the host, the message). After the start, put the host into maintenance in vCenter; when it
+is back, approve *Is the host back?*, and *Horizon - host maintenance end* brings out the desktops the start job put
+in maintenance mode ([HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance)).
 
 ### 32. Horizon reports and the session cleanup
 
@@ -1449,7 +1519,8 @@ night 02:00, after a first run as Check).
 
 ## Schedules
 
-**What.** A schedule launches a template or workflow at set times.
+**What.** A schedule launches a template or workflow at set times. *AAP - set up job templates* makes the workflows,
+never their schedules: add them as below.
 
 **How.** Open the workflow (or template) → **Schedules** tab → **Create schedule**:
 
@@ -1513,6 +1584,9 @@ if ServiceNow is down, it cannot take a ticket about itself.
 - **Red is not broken.** A check job with findings is red by design. Read `Report | result for
   this host`: findings mean the playbook worked.
 - **Save the visualizer.** Closing without **Save** loses the graph.
+- **A workflow the job made, changed in the visualizer** (a step set to Check to rehearse it) is listed as *CHANGED BY
+  HAND* by *AAP - set up job templates*, and left as it is. Set it back, or run the job with
+  `aap_templates_overwrite: true` to make it as the catalog has it.
 - **One tickets box per check box.** Artifacts from two parents overwrite each other.
 - **A step can only be set to Check** (or given a Limit, or survey answers) if its template has
   **Prompt on launch** for it, or a survey.

@@ -184,7 +184,8 @@ says`**. With ACT on, the host's ServiceNow ticket includes this analysis too.
 
 ### 5. `diagnose` with the approval workflow
 
-Build *Fix with approval (ACT)* ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#5-fix-with-approval-act)).
+*AAP - set up job templates* makes *Fix with approval (ACT)* (1.107.0), and adds the survey questions of step 3
+(`use_act`, `site_act_level`) to *Health check* and *Troubleshoot* when they are missing ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#5-fix-with-approval-act)).
 What happens:
 
 1. The health check finds, for example, `required service chronyd.service is inactive`.

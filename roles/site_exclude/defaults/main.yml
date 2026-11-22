@@ -6,3 +6,6 @@
 # also leave out the VMs and ESXi hosts named here (and keep their own lists). Set them in all.yml.
 site_exclude_hosts: []                 # names: whole, or short either way (web01 = web01.example.mil); * and ?; any case
 site_exclude_groups: []                # inventory groups: every host in them (* and ?; never all or ungrouped)
+# 1.107.0: true on a workflow's dry-run template (AAP - set up job templates puts it there, beside Job type Check): the
+# job then refuses to run as Run (playbooks/workflow_dry_run.yml, imported by the playbooks a workflow previews)
+site_dry_run_only: false

@@ -23,7 +23,7 @@
                     ~ '). Make that store reachable, or set net_config_keep_before: false to load without the copy.')
                    if net_config_keep_before | bool and not ansible_check_mode and inventory_hostname not in hostvars['localhost']._ncl_kept | default({}) else
                    ('no backup of this device to restore (' ~ hostvars['localhost']._ncl_from | default('') ~ ')') if net_config_load_mode == 'restore' and not _ncl_backup else
-                   ('no lines for IOS: net_config_lines') if _ncf_platform == 'ios' and net_config_load_mode == 'lines' and not net_config_lines | default([], true) else
+                   ('no lines for IOS: net_config_lines') if _ncf_platform == 'ios' and net_config_load_mode == 'lines' and not _ncl_lines else
                    ('no entries for PAN-OS: net_config_panos_entries') if _ncf_platform == 'panos' and net_config_load_mode == 'lines' and not net_config_panos_entries | default([], true)
                    else ''} }}
 
@@ -32,8 +32,8 @@
   block:
     - name: Network config | {{ inventory_hostname }} - the lines (IOS)
       cisco.ios.ios_config:
-        lines: "{{ net_config_lines }}"
-        parents: "{{ net_config_parents | default(omit, true) }}"
+        lines: "{{ _ncl_lines }}"
+        parents: "{{ _ncl_parents or omit }}"
         save_when: never
       register: _ncl_ios
       ignore_errors: true

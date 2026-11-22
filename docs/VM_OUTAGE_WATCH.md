@@ -113,7 +113,7 @@ Job artifacts, for the next step of a workflow:
 1. **The job template** "VM - outage watch": playbook `playbooks/vm_outage_watch.yml`, the VMware vCenter
    credential, the inventory that has your `aap` group (the AAP server is found by it), no Limit.
 2. **Try it** once by hand. A clean estate is one green line; a red run shows the report.
-3. **The workflow** "VM - outage watch (workflow)":
+3. **The workflow** "VM - outage watch (workflow)" - AAP - set up job templates makes it (1.107.0); by hand:
 
    ```workflow
    [VM - outage watch]

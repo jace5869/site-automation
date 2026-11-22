@@ -1,0 +1,18 @@
+---
+# A dry-run template (site_dry_run_only, or a name ending in (dry run)) runs as Check only.
+- name: Workflow dry run - a dry-run template runs as Check only
+  hosts: all,localhost
+  gather_facts: false
+  run_once: true
+  tasks:
+    - name: Workflow dry run | a dry-run template runs as Check only
+      ansible.builtin.assert:
+        that: >-
+          ansible_check_mode or not (
+            site_dry_run_only | default(false) | bool
+            or (awx_job_template_name | default(tower_job_template_name | default(''))) is search('[(]dry run[)]\s*$')
+          )
+        fail_msg: >-
+          Nothing was done: this is the dry run before an approval (site_dry_run_only, or a template named "(dry run)"),
+          and it ran as Run. Set its Job type back to Check.
+        quiet: true

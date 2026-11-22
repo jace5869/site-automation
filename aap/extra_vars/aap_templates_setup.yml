@@ -93,8 +93,8 @@ aap_templates_credentials:
 ## portal's)
 # aap_templates_match: []
 
-## false = a catalog template your AAP does not have is not made, only counted (true: made, as
-## before 1.79.19)
+## false = a catalog template (1.107.0: or workflow) your AAP does not have is not made, only
+## counted (true: made, as before 1.79.19)
 # aap_templates_create_missing: true
 
 ## the areas left out of the renames and the match (the catalog's area; Network = also every

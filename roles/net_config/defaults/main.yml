@@ -65,12 +65,17 @@ net_config_ticket_failures: true        # an incident for a failed backup
 # lines (send configuration lines) or restore (put a device back to a backup).
 net_config_load_mode: lines
 # IOS: the lines, as typed in configuration mode, e.g. ["ntp server 192.0.2.123", "banner motd ^Authorized use only^"];
-# under net_config_parents (e.g. ["interface GigabitEthernet1"]) when they belong to one.
+# under net_config_parents (e.g. ["interface GigabitEthernet1"]) when they belong to one. 1.107.0: also text, one line
+# per row (the load workflow's survey box).
 net_config_lines: []
 net_config_parents: []                  # IOS: the parent lines the lines go under (e.g. ["interface GigabitEthernet1"]); [] = global configuration
 # PAN-OS: the changes - each {xpath, element, action}: action set (adds or replaces the element's children),
 # edit (replaces the element at the xpath), delete (no element).
 net_config_panos_entries: []
+# 1.107.0: the lines and parents as the jobs read them - a list, or text with one line per row (a survey's box: the
+# load workflow's survey); blank rows dropped. Not a setting.
+_ncl_lines: "{{ (net_config_lines.splitlines() | map('trim') | select | list) if net_config_lines is string else (net_config_lines | default([], true)) }}"
+_ncl_parents: "{{ (net_config_parents.splitlines() | map('trim') | select | list) if net_config_parents is string else (net_config_parents | default([], true)) }}"
 # restore: which backup - git: a commit, tag or branch ('' = the newest); share: a dated copy's file name
 # ('' = the latest).
 net_config_restore_ref: ''

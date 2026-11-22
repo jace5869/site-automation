@@ -625,6 +625,9 @@ vm_snapshot_cleanup_exclude_vms: [DC*, VCSA*, AAP*]
 - Tick **Prompt on launch** next to **Job type** (this lets you do a dry run - below).
 - No survey. Save.
 
+**AAP - set up job templates makes this workflow (1.107.0)**, with its survey (the team's address left empty: type it as the
+question's default). Steps 4.1 to 4.4 are the manual way.
+
 **Step 4 - the workflow.** Templates > Create template > **Create workflow job template**:
 - Name: `VM snapshot cleanup (with approval)`, your organization. Save.
 - **Survey** tab > Create survey question - two questions, then switch the survey **on**:
@@ -787,6 +790,9 @@ which the pick jobs ignore. The question's description ends with when the list w
 Inventory: your inventory with the `aap` group. Execution environment: the one with
 `vmware.vmware`. Leave Limit empty. **Do not tick Prompt on launch for Variables** (the step after
 the approval must get its plan from the step before, not from whoever launches). No survey.
+
+**AAP - set up job templates makes both workflows (1.107.0)**, each with its survey and the placeholder choice. The
+refresh then writes the choices; the job never changes a survey that is there. The steps below are the manual way.
 
 **Step 2 - the workflows**, one per list. Templates > Create template > Create workflow job template:
 
@@ -1941,7 +1947,8 @@ It refuses to run on its own: *Nothing to install: no approved plan* - outside t
 
    The settings: [aap/extra_vars/vmware_cert_install_check.yml](../aap/extra_vars/vmware_cert_install_check.yml),
    [aap/extra_vars/vmware_cert_install_approved.yml](../aap/extra_vars/vmware_cert_install_approved.yml).
-5. **The workflow** (workflow 39 in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#39-vcenter-and-esxi-certificate-install-with-an-approval)),
+5. **AAP - set up job templates makes this workflow (1.107.0)**, with the gate between the check and the approval
+   (`workflow_gate_var: vmware_cert_install_plan`) and the survey below. By hand: **The workflow** (workflow 39 in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#39-vcenter-and-esxi-certificate-install-with-an-approval)),
    with a **Survey** (the workflow's Survey tab > Create question, then switch the survey on): question `Request
    (RITM) with the issued certificate`, answer variable name `vmware_cert_install_ritm`, Text, required (not
    required once the search is on: empty = every request). The answer reaches the check; the approved job ignores it.

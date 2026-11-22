@@ -84,6 +84,39 @@ LAUNCH_DOCS = {
     "Security - Java4Shell check (Keycloak)": {"ask_variables": True},  # docs/JAVA4SHELL.md: j4s_fix / j4s_restart at launch (1.91.0)
     # 1.83.0: a workflow's gate takes its node's Variables (workflow_gate_var) - docs/WORKFLOWS_AND_SCHEDULES.md, the gate
     "Workflow gate - has a plan": {"ask_variables": True},
+    # 1.107.0: the workflow steps whose node sets their Job type (Check, then Run), as each guide says to tick it
+    "Windows patch": {"ask_job_type": True},                          # docs/WINDOWS.md, the job template: Job type prompted
+    "ACT for Windows - install": {"ask_job_type": True},              # docs/WINDOWS.md, ACT on the servers: Limit and Job type
+    "STIG Manager - deploy": {"ask_job_type": True, "ask_diff_mode": True},   # WORKFLOWS_AND_SCHEDULES.md 10: Job type, Show changes
+    "Network config load": {"ask_job_type": True},                    # docs/NETWORK_CONFIG.md, A load, with an approval, step 1
+    # docs/VM_DEPLOY_GUIDE.md, 6: Job type for the dry run
+    "VM - deploy from ServiceNow ticket": {"ask_job_type": True},
+}
+# 1.107.0: the survey questions "AAP - set up job templates" adds to a template when they are missing (never one changed
+# or taken off): the answers the catalog's workflows give its steps, as each guide names the question
+_ACT_QUESTIONS = [   # docs/ADDING_ACT.md, 3. Survey questions
+    {"question_name": "Ask ACT (GenAI) about the findings?", "variable": "use_act", "type": "multiplechoice",
+     "choices": ["no", "yes"], "default": "no", "required": False},
+    {"question_name": "What may ACT do?", "variable": "site_act_level", "type": "multiplechoice",
+     "choices": ["explain", "diagnose", "self-heal"], "default": "explain", "required": False}]
+SURVEYS = {
+    "Health check": [   # docs/SETUP_AAP.md, Step 6
+        {"question_name": "Which checks?", "variable": "health_checks", "type": "multiselect",
+         "choices": ["daily", "weekly", "all", "disk", "mounts", "services", "performance", "time", "network", "logging", "selinux",
+                     "fapolicyd", "auditd", "accounts", "certs", "patching", "mariadb", "mysql", "database", "containers", "stig", "sso"],
+         "default": "daily", "required": True}] + _ACT_QUESTIONS,
+    "Troubleshoot": [   # docs/SETUP_AAP.md, Troubleshoot
+        {"question_name": "What kind of problem?", "variable": "ts_area", "type": "multiplechoice",
+         "choices": ["overview", "disk", "performance", "service", "network", "selinux", "fapolicyd", "login", "time", "logs",
+                     "mariadb", "mysql"], "default": "overview", "required": False},
+        {"question_name": "Service name (for area = service), e.g. nginx", "variable": "ts_service", "type": "text", "required": False},
+        {"question_name": "host:port it cannot reach (for area = network)", "variable": "ts_target", "type": "text", "required": False},
+        {"question_name": "How far back to read logs", "variable": "ts_since", "type": "text", "default": "-2h", "required": False}]
+        + _ACT_QUESTIONS,
+    "Windows health check": [   # docs/WINDOWS.md, Windows health check
+        {"question_name": "Which checks?", "variable": "health_checks", "type": "multiselect",
+         "choices": ["daily", "weekly", "all", "disk", "services", "performance", "time", "network", "eventlog", "security", "audit",
+                     "accounts", "certs", "patching"], "default": "daily", "required": False}],
 }
 # 1.83.0: the credential kind a template needs whatever its Variables file says - STIG Manager - update writes, so its
 # client is the writer (the same kind as portal_setup_credentials')
@@ -131,7 +164,8 @@ def kinds_of(text, windows=False):
         return [], list(dict.fromkeys(found(text)))
     # brackets, innermost first: one that names credentials makes them optional; one that names none qualifies the
     # credential just before it
-    qual = re.compile(r"^\s*(optional\b|with\b|only\b)|\boptional\b", re.I)
+    # (1.107.0, review: "(with sudo)" says how it logs in - the credential stays needed)
+    qual = re.compile(r"^\s*(optional\b|with\b(?!\s+sudo\b)|only\b)|\boptional\b", re.I)
     while True:
         m = re.search(r"\(([^()]*)\)", text)
         if not m:
@@ -215,7 +249,9 @@ def build():
     pbooks = set(os.path.basename(t.get("playbook") or "") for t in ptpl.values())
     # 1.83.0: the steps of the workflows "AAP - set up job templates" makes - never the portal's own (the workflow carries
     # the portal's label, not its steps)
-    steps = set(n.get("template") for w in descriptions()["workflows"] for n in w.get("nodes") or [] if n.get("template"))
+    # (1.107.0: of the workflows the portal shows, portal: true - a step of another catalog workflow keeps its portal mark)
+    steps = set(n.get("template") for w in descriptions()["workflows"] if w.get("portal")
+                for n in w.get("nodes") or [] if n.get("template"))
     rows = setup_rows()
     out = []
     for name, playbook, fixed, what in doc_rows():
@@ -243,6 +279,15 @@ def build():
         if single.get(name):
             e["portal_actions"] = single[name]                     # portal_aap_names may point these at a name of yours
         d = descriptions()["templates"].get(name)
+        if name.endswith("(dry run)"):
+            # 1.107.0 (review): the dry run before an approval is Check on the template itself - a node's Job type is ignored
+            # by AAP once the template stops prompting for it, and the load would go out before the approval
+            e["job_type"] = "check"
+            e["copy_of"] = name[:-len(" (dry run)")]     # made from that template's own Variables and inventory
+            if name == "STIG Manager - deploy (dry run)":
+                e["diff_mode"] = True                     # WORKFLOWS_AND_SCHEDULES.md 10: Check with Show changes
+        if SURVEYS.get(name):
+            e["survey"] = SURVEYS[name]                    # 1.107.0: the missing questions are added, none changed
         if d:
             e["description"] = dict((k, " ".join(str(d.get(k) or "").split())) for k in DESC_KEYS)
             if d.get("replaces"):
@@ -275,14 +320,19 @@ def vendored():
 def workflows():
     """The catalog's workflows: the ones aap/job_descriptions.yml describes - matched in AAP by name, else by the playbooks
     of their steps."""
+    import yaml
+    portal = set(x.get("name") for x in (yaml.safe_load(open(PORTAL, encoding="utf-8")) or {}).get("workflows") or [])
     out = []
     for w in descriptions()["workflows"]:
         e = {"name": w["name"], "playbooks": list(w.get("playbooks") or []),
              "description": dict((k, " ".join(str(w.get(k) or "").split())) for k in DESC_KEYS)}
-        # 1.83.0: a workflow "AAP - set up job templates" makes (its nodes), its prompts, the old names it replaces
-        for k in ("prompts", "nodes", "replaces"):
+        # 1.83.0: a workflow "AAP - set up job templates" makes (its nodes), its prompts, the old names it replaces;
+        # 1.107.0: its Variables, its survey, portal (the site portal shows it: its label)
+        for k in ("prompts", "extra_vars", "survey", "portal", "deferred", "nodes", "replaces"):
             if w.get(k):
                 e[k] = w[k]
+        if w["name"] in portal:
+            e["made_by"] = "AAP - set up portal actions"      # 1.107.0: the portal's own workflow - that job makes it
         out.append(e)
     return out
 
@@ -301,11 +351,17 @@ HEAD = """# GENERATED by scripts/gen_job_catalog.py from docs/JOB_TEMPLATES.md a
 #   portal                the site portal launches this playbook (aap_templates_label_portal: portal-actions labels these)
 #   area                  the site portal's group: its label portal-area:<area> (with aap_templates_label_portal)
 #   portal_actions        the portal actions that run this one template (portal_aap_names may name yours instead)
+#   survey                1.107.0: the survey questions its workflows' nodes answer - each added when missing, never one
+#                         changed or taken off
 #   description           {does, targets, produces, supports} from aap/job_descriptions.yml (1.79.11): the lines
 #                         aap_templates_describe writes on the template ("** Does: ...")
 # workflows: [{name, playbooks (its steps' playbooks), description}] - the workflows aap_templates_describe describes,
 #   found by name, else by the playbooks of their steps; 1.83.0, with nodes: made by "AAP - set up job templates" too
-#   (prompts, nodes as roles/site_portal_stack/files/workflows.yml writes them); replaces: the old names to delete
+#   (prompts, nodes as roles/site_portal_stack/files/workflows.yml writes them); replaces: the old names to delete;
+#   1.107.0: every workflow of docs/WORKFLOWS_AND_SCHEDULES.md has nodes (a node's job_type / diff_mode: its Job type and
+#   Show changes), but made_by (the site portal's own: AAP - set up portal actions makes it) and the two the drift scan
+#   replaces; extra_vars: the workflow's Variables; survey: its questions as AAP keeps them, written when it
+#   makes the workflow; portal: the site portal shows it (the portal's label on it, never on its steps)
 # vendored: [{name, playbook, description}] - ACT's own playbooks (vendor/act/ansible/playbooks): a template of the site's
 #   that runs one is described by its playbook; never made, never "not in AAP" (1.79.11d)
 """
@@ -326,9 +382,21 @@ def render(entries):
         pass
     Indented.add_representer(Block, lambda d, x: d.represent_mapping(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, x.items(), flow_style=False))
     Indented.add_representer(BlockList, lambda d, x: d.represent_sequence(yaml.resolver.BaseResolver.DEFAULT_SEQUENCE_TAG, x, flow_style=False))
+    def qblock(q):
+        """A survey question in block style, its choices a line each (a long list never wraps)."""
+        return Block(dict(q, choices=BlockList(q["choices"])) if q.get("choices") else q)
     entries = [dict(e, description=Block(e["description"])) if e.get("description") else e for e in entries]
     entries = [dict(e, extra_vars=Block(e["extra_vars"])) if e.get("extra_vars") else e for e in entries]
-    wfs = [dict(w, playbooks=BlockList(w["playbooks"]), description=Block(w["description"])) for w in workflows()]
+    entries = [dict(e, survey=[qblock(q) for q in e["survey"]]) if e.get("survey") else e for e in entries]
+    def blocks(w):
+        """1.107.0: an approval and a survey question in block style (a long one never wraps inside a flow mapping)."""
+        w = dict(w, playbooks=BlockList(w["playbooks"]), description=Block(w["description"]))
+        if w.get("nodes"):
+            w["nodes"] = [dict(n, approval=Block(n["approval"])) if n.get("approval") else n for n in w["nodes"]]
+        if w.get("survey"):
+            w["survey"] = [qblock(q) for q in w["survey"]]
+        return w
+    wfs = [blocks(w) for w in workflows()]
     ven = [dict(v, description=Block(v["description"])) for v in vendored()]
     body = yaml.dump({"job_templates": entries, "workflows": wfs, "vendored": ven}, Dumper=Indented, sort_keys=False, width=120, default_flow_style=None,
                      allow_unicode=True)

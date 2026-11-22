@@ -12,11 +12,17 @@
 #   portal                the site portal launches this playbook (aap_templates_label_portal: portal-actions labels these)
 #   area                  the site portal's group: its label portal-area:<area> (with aap_templates_label_portal)
 #   portal_actions        the portal actions that run this one template (portal_aap_names may name yours instead)
+#   survey                1.107.0: the survey questions its workflows' nodes answer - each added when missing, never one
+#                         changed or taken off
 #   description           {does, targets, produces, supports} from aap/job_descriptions.yml (1.79.11): the lines
 #                         aap_templates_describe writes on the template ("** Does: ...")
 # workflows: [{name, playbooks (its steps' playbooks), description}] - the workflows aap_templates_describe describes,
 #   found by name, else by the playbooks of their steps; 1.83.0, with nodes: made by "AAP - set up job templates" too
-#   (prompts, nodes as roles/site_portal_stack/files/workflows.yml writes them); replaces: the old names to delete
+#   (prompts, nodes as roles/site_portal_stack/files/workflows.yml writes them); replaces: the old names to delete;
+#   1.107.0: every workflow of docs/WORKFLOWS_AND_SCHEDULES.md has nodes (a node's job_type / diff_mode: its Job type and
+#   Show changes), but made_by (the site portal's own: AAP - set up portal actions makes it) and the two the drift scan
+#   replaces; extra_vars: the workflow's Variables; survey: its questions as AAP keeps them, written when it
+#   makes the workflow; portal: the site portal shows it (the portal's label on it, never on its steps)
 # vendored: [{name, playbook, description}] - ACT's own playbooks (vendor/act/ansible/playbooks): a template of the site's
 #   that runs one is described by its playbook; never made, never "not in AAP" (1.79.11d)
 ---
@@ -31,6 +37,52 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/health_check.yml
     area: Linux
+    survey:
+      - question_name: Which checks?
+        variable: health_checks
+        type: multiselect
+        choices:
+          - daily
+          - weekly
+          - all
+          - disk
+          - mounts
+          - services
+          - performance
+          - time
+          - network
+          - logging
+          - selinux
+          - fapolicyd
+          - auditd
+          - accounts
+          - certs
+          - patching
+          - mariadb
+          - mysql
+          - database
+          - containers
+          - stig
+          - sso
+        default: daily
+        required: true
+      - question_name: Ask ACT (GenAI) about the findings?
+        variable: use_act
+        type: multiplechoice
+        choices:
+          - 'no'
+          - 'yes'
+        default: 'no'
+        required: false
+      - question_name: What may ACT do?
+        variable: site_act_level
+        type: multiplechoice
+        choices:
+          - explain
+          - diagnose
+          - self-heal
+        default: explain
+        required: false
     description:
       does: Runs read-only Linux checks (disk, services, time, SELinux, containers ...), fails hosts with findings; adds NetApp
         Console checks on ds_* hosts
@@ -50,6 +102,55 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/troubleshoot.yml
     area: Linux
+    survey:
+      - question_name: What kind of problem?
+        variable: ts_area
+        type: multiplechoice
+        choices:
+          - overview
+          - disk
+          - performance
+          - service
+          - network
+          - selinux
+          - fapolicyd
+          - login
+          - time
+          - logs
+          - mariadb
+          - mysql
+        default: overview
+        required: false
+      - question_name: Service name (for area = service), e.g. nginx
+        variable: ts_service
+        type: text
+        required: false
+      - question_name: host:port it cannot reach (for area = network)
+        variable: ts_target
+        type: text
+        required: false
+      - question_name: How far back to read logs
+        variable: ts_since
+        type: text
+        default: -2h
+        required: false
+      - question_name: Ask ACT (GenAI) about the findings?
+        variable: use_act
+        type: multiplechoice
+        choices:
+          - 'no'
+          - 'yes'
+        default: 'no'
+        required: false
+      - question_name: What may ACT do?
+        variable: site_act_level
+        type: multiplechoice
+        choices:
+          - explain
+          - diagnose
+          - self-heal
+        default: explain
+        required: false
     description:
       does: 'On demand: runs the first-look admin commands and health checks for one problem area (ts_area) on a host someone
         reported.'
@@ -78,6 +179,26 @@ job_templates:
         if a host could not patch'
       supports: Run constraint=Changes target hosts (packages; reboots with automatic_restarts); writes vCenter snapshots
         with patch_snapshot, report email/website
+  - name: Patch hosts (dry run)
+    playbook: playbooks/patch_hosts.yml
+    credentials: [machine]
+    optional_credentials: [vmware]
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/patch_hosts.yml
+    area: Linux
+    extra_vars:
+      site_dry_run_only: 'true'
+    job_type: check
+    copy_of: Patch hosts
+    description:
+      does: 'Workflow 4''s dry run before the approval: lists every update each host would install; Job type Check on the
+        template itself.'
+      targets: Linux hosts of target (default group patch_hosts) within the Limit (Machine credential)
+      produces: A DRY RUN patch report of every host by email, report website and workbook when set
+      supports: 'Run constraint=Read-only on target hosts (always Check: installs nothing, never reboots); writes report email/website'
   - name: Linux - disk space report
     playbook: playbooks/disk_report.yml
     credentials: [machine]
@@ -193,6 +314,27 @@ job_templates:
         when a fix waits
       supports: Run constraint=Read-only on target hosts in approval mode (incident log, syslog, ACT in /opt/act); self-heal
         restarts containers; no other writes
+  - name: Service watch - check (approval only)
+    playbook: playbooks/service_watch.yml
+    credentials: [machine]
+    optional_credentials: [act_model_key]
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/service_watch.yml
+    area: Disk & services
+    extra_vars:
+      watch_mode: approval
+    description:
+      does: 'Workflow 10''s look after the deploy: the same watch, in approval mode only - it says what is down and never
+        fixes it.'
+      targets: Linux hosts of target (default group stigman) within the Limit, over SSH with sudo (Machine; ACT model key
+        optional)
+      produces: Incidents in the job output and on the host; a fix plan (service_watch_fix), failing on purpose when a fix
+        waits
+      supports: 'Run constraint=Read-only on target hosts (watch_mode: approval fixed - never self-heal; incident log, syslog);
+        no other writes'
   - name: Service watch - apply approved fix
     playbook: playbooks/service_fix_approved.yml
     credentials: [machine]
@@ -657,8 +799,8 @@ job_templates:
         else; Check = lists the commands
   - name: Evaluate-STIG - update
     playbook: playbooks/evaluate_stig_update.yml
-    credentials: []
-    optional_credentials: [machine]
+    credentials: [machine]
+    optional_credentials: []
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -775,6 +917,8 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/stigman_deploy.yml
     area: STIG
+    ask_job_type: true
+    ask_diff_mode: true
     description:
       does: Deploys or reconciles the STIG Manager stack (MySQL 8.4, STIG Manager, nginx TLS) on podman with Quadlet units;
         Keycloak untouched.
@@ -784,6 +928,28 @@ job_templates:
         in the job output
       supports: Run constraint=Changes target hosts (files, TLS cert/key, podman secrets, Quadlet units; restarts what changed);
         writes nothing else
+  - name: STIG Manager - deploy (dry run)
+    playbook: playbooks/stigman_deploy.yml
+    credentials: [machine, stigman_db, tls_certificate]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/stigman_deploy.yml
+    area: STIG
+    extra_vars:
+      site_dry_run_only: 'true'
+    job_type: check
+    copy_of: STIG Manager - deploy
+    diff_mode: true
+    description:
+      does: 'Workflow 10''s dry run before the approval: what deploying the STIG Manager stack would change, file by file
+        (Check, Show changes).'
+      targets: Hosts of target (default group stigman) within the Limit, over SSH with sudo (Machine, STIG Manager database,
+        TLS certificate)
+      produces: The changes it would make, with their diff, in the job output
+      supports: 'Run constraint=Read-only on target hosts (always Check with Show changes: changes nothing); writes nothing'
   - name: Network performance report
     playbook: playbooks/net_perf_report.yml
     credentials: [machine]
@@ -840,8 +1006,8 @@ job_templates:
         email/website, Teams card
   - name: Linux - auditd tuning
     playbook: playbooks/auditd_tuning.yml
-    credentials: []
-    optional_credentials: [machine]
+    credentials: [machine]
+    optional_credentials: []
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -858,8 +1024,8 @@ job_templates:
         auditd; no reboot
   - name: Linux - auditd tuning - check
     playbook: playbooks/auditd_tuning.yml
-    credentials: []
-    optional_credentials: [machine]
+    credentials: [machine]
+    optional_credentials: []
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -877,8 +1043,8 @@ job_templates:
         = dry run'
   - name: fapolicyd
     playbook: playbooks/fapolicyd.yml
-    credentials: []
-    optional_credentials: [machine, act_model_key]
+    credentials: [machine]
+    optional_credentials: [act_model_key]
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -893,6 +1059,45 @@ job_templates:
         plan as job artifacts
       supports: Run constraint=Read-only on target hosts by default; changes them only with fapolicyd_approved (trust, rules,
         mode, service, package)
+  - name: fapolicyd - check
+    playbook: playbooks/fapolicyd.yml
+    credentials: [machine]
+    optional_credentials: [act_model_key]
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/fapolicyd.yml
+    area: fapolicyd
+    extra_vars:
+      fapolicyd_workflow: 'true'
+      fapolicyd_since: yesterday
+    description:
+      does: 'Workflow 36''s first step: reads each host''s fapolicyd since yesterday and hands each host''s changes to the
+        approval.'
+      targets: Linux hosts of the target or the Limit (Machine credential with sudo)
+      produces: The changes to approve (artifact fapolicyd_workflow_plan), NEEDS APPROVAL; the report emailed and on the report
+        website
+      supports: 'Run constraint=Read-only on target hosts (fapolicyd_workflow: true); writes report email/website; Check =
+        dry run'
+  - name: fapolicyd - approved
+    playbook: playbooks/fapolicyd.yml
+    credentials: [machine]
+    optional_credentials: [act_model_key]
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/fapolicyd.yml
+    area: fapolicyd
+    extra_vars:
+      fapolicyd_since: yesterday
+    description:
+      does: 'Workflow 36''s step after the approval: makes each host''s approved fapolicyd lines (the check''s plan), nothing
+        else.'
+      targets: Linux hosts of the check's plan within the target or the Limit (Machine credential with sudo)
+      produces: What was changed on each host, and what is held back for a person; report email and website
+      supports: Run constraint=Changes fapolicyd (trust, rules, mode, service) after an approval only; writes report email/website
   - name: Security - Java4Shell check (Keycloak)
     playbook: playbooks/java4shell.yml
     credentials: [machine]
@@ -940,6 +1145,27 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_health_check.yml
     area: Windows
+    survey:
+      - question_name: Which checks?
+        variable: health_checks
+        type: multiselect
+        choices:
+          - daily
+          - weekly
+          - all
+          - disk
+          - services
+          - performance
+          - time
+          - network
+          - eventlog
+          - security
+          - audit
+          - accounts
+          - certs
+          - patching
+        default: daily
+        required: false
     description:
       does: 'Runs the read-only Windows checks (daily set by default: disk, services, performance, time, network, event log)
         and fails hosts with findings.'
@@ -976,6 +1202,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_patch.yml
     area: Windows
+    ask_job_type: true
     description:
       does: Installs the updates Software Center (ConfigMgr) offers each server, one server at a time, and checks its automatic
         services run again.
@@ -983,6 +1210,26 @@ job_templates:
       produces: Nothing but the job output (what was installed, which servers still need a restart)
       supports: 'Run constraint=Changes target hosts (installs updates; restarts only with automatic_restarts: true); writes
         nothing else; Check = dry run'
+  - name: Windows patch (dry run)
+    playbook: playbooks/win_patch.yml
+    credentials: [machine_windows]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: windows
+    variables_file: aap/extra_vars/win_patch.yml
+    area: Windows
+    extra_vars:
+      site_dry_run_only: 'true'
+    job_type: check
+    copy_of: Windows patch
+    description:
+      does: 'Workflow 14''s dry run before the approval: lists the updates Software Center offers each server; Job type Check
+        on the template.'
+      targets: Windows hosts in win_patch_hosts (or target), picked by the Limit, over WinRM (Windows Machine credential)
+      produces: Nothing but the job output (what would be installed)
+      supports: 'Run constraint=Read-only on target hosts (always Check: installs nothing, never restarts); writes nothing'
   - name: ACT for Windows - install
     playbook: playbooks/win_act_install.yml
     credentials: [machine_windows]
@@ -993,6 +1240,7 @@ job_templates:
     ee: windows
     variables_file: aap/extra_vars/win_act_install.yml
     area: ACT
+    ask_job_type: true
     description:
       does: 'Installs or updates ACT (act.ps1) in C:\ProgramData\act on the Windows servers, locked to Administrators and
         SYSTEM; win_act_state: absent removes it.'
@@ -1000,6 +1248,26 @@ job_templates:
       produces: Nothing but the job output
       supports: Run constraint=Changes target hosts (the ACT folder, its file and permissions); writes nothing else; Check
         = dry run
+  - name: ACT for Windows - install (dry run)
+    playbook: playbooks/win_act_install.yml
+    credentials: [machine_windows]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: windows
+    variables_file: aap/extra_vars/win_act_install.yml
+    area: ACT
+    extra_vars:
+      site_dry_run_only: 'true'
+    job_type: check
+    copy_of: ACT for Windows - install
+    description:
+      does: 'Workflow 15''s dry run before the approval: whether ACT would be installed, updated or is current on each server
+        (Check).'
+      targets: Windows hosts of the target or the Limit over WinRM (Windows Machine credential)
+      produces: Nothing but the job output
+      supports: 'Run constraint=Read-only on target hosts (always Check: changes nothing); writes nothing'
   - name: Active Directory health report
     playbook: playbooks/ad_health_report.yml
     credentials: [machine_windows]
@@ -1958,6 +2226,7 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/vm_deploy_from_ticket.yml
     area: VMware
+    ask_job_type: true
     description:
       does: Reads a ServiceNow ticket (vm_deploy_ticket), checks the VM request against the rules, clones the template, and
         notes the result on it.
@@ -2226,6 +2495,8 @@ job_templates:
     ee: all
     variables_file: aap/extra_vars/horizon_desktops_check.yml
     area: VMware
+    extra_vars:
+      horizon_desktops_mode: approval
     description:
       does: Lists every desktop in a broken state and its fix (or why held back); step 1 of the broken desktops workflow (30)
         or a report.
@@ -2375,6 +2646,7 @@ job_templates:
     ee: network
     variables_file: aap/extra_vars/net_config_load.yml
     area: Linux
+    ask_job_type: true
     description:
       does: Sends configuration lines to network devices, or restores a backup, for a ServiceNow change request in state Implement;
         run Check first.
@@ -2384,6 +2656,27 @@ job_templates:
         copy to restore from.
       supports: Run constraint=Changes target hosts (device config; IOS write memory, PAN-OS commit); writes devices, git/share,
         ServiceNow change, email/web
+  - name: Network config load (dry run)
+    playbook: playbooks/net_config_load.yml
+    credentials: [machine, panos, servicenow]
+    optional_credentials: [net_git]
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: network
+    variables_file: aap/extra_vars/net_config_load.yml
+    area: Linux
+    extra_vars:
+      site_dry_run_only: 'true'
+    job_type: check
+    copy_of: Network config load
+    description:
+      does: 'The load workflow''s dry run before the approval: reads each device and shows the lines or the diff it would
+        send (Check).'
+      targets: Cisco IOS/IOS-XE devices of net_config_devices over CLI (Machine credential) and PAN-OS via its XML API; at
+        most net_config_max_devices.
+      produces: 'A per-device DRY RUN report (emailed, report website when set): exactly what the load would send.'
+      supports: 'Run constraint=Read-only on target hosts (always Check: sends nothing, commits nothing); writes report email/website'
   - name: Mail relay - whitelist plan
     playbook: playbooks/mail_relay_plan.yml
     credentials: [machine]
@@ -3014,6 +3307,22 @@ workflows:
       produces: The changes to approve, the approval, what was changed and what waits for the next reboot (report email/website).
       supports: Run constraint=Changes the audit config (backed up; auditd restarted) after an approval; never reboots; writes
         email/website.
+    prompts: {limit: true}
+    nodes:
+      - id: check
+        template: Linux - auditd tuning - check
+        failure: [gate]
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: auditd_tuning_workflow_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Make the audit changes the check listed? (No reboot.)
+          timeout: 28800
+          description: ''
+        success: [tune]
+      - {id: tune, template: Linux - auditd tuning}
   - name: Checklists imported into STIG Manager
     playbooks:
       - playbooks/stigman_ckl_import.yml
@@ -3027,6 +3336,7 @@ workflows:
         of what was written.
       supports: Run constraint=Writes STIG Manager (reviews, new assets) after an approval; writes email, report website.
         Watcher setup also moves share files.
+    made_by: AAP - set up portal actions
   - name: ACT - triage finding
     playbooks:
       - playbooks/act_triage_finding.yml
@@ -3037,6 +3347,7 @@ workflows:
       targets: One Linux or Windows host (the Limit); each step skips hosts of the other OS. ACT runs on the AAP side.
       produces: ACT's explanation in the job, its report (emailed, on the report website) and the portal's job page.
       supports: Run constraint=Read-only on hosts; applies no fix; writes email, report website.
+    made_by: AAP - set up portal actions
   - name: STIG - recheck one host
     playbooks:
       - playbooks/stig_recheck.yml
@@ -3047,6 +3358,7 @@ workflows:
       targets: One Linux or Windows host (the Limit); each step passes over hosts of the other kind.
       produces: Recheck report (emailed, on the report website); the recheck checklist kept on the host.
       supports: Run constraint=Read-only (STIG Manager only read); writes a checklist file on the host, email, report website.
+    made_by: AAP - set up portal actions
   - name: STIG - recheck and update STIG Manager
     playbooks:
       - playbooks/stig_finding_recheck.yml
@@ -3060,6 +3372,7 @@ workflows:
       targets: One Linux or Windows host (the Limit) for the recheck; the STIG Manager API for the update.
       produces: Recheck result on the portal's job page, the approval, and the update's report of the review written.
       supports: Run constraint=Writes STIG Manager (one review) after an approval; the hosts are only read; writes email.
+    made_by: AAP - set up portal actions
   - name: STIG - fix one rule
     playbooks:
       - playbooks/stig_fix_rule.yml
@@ -3076,6 +3389,7 @@ workflows:
       produces: ACT's proposal, the approval, the fix job's output, the recheck result and the STIG Manager review.
       supports: Run constraint=Changes the host (the approved commands) after an approval; then writes STIG Manager (its review)
         with no second approval.
+    made_by: AAP - set up portal actions
   - name: STIG - create the asset in STIG Manager
     playbooks:
       - playbooks/stig_finding_recheck.yml
@@ -3088,6 +3402,7 @@ workflows:
       produces: Scan result and plan, the approval, and the update's report of the asset and reviews made.
       supports: Run constraint=Writes STIG Manager (new asset, its reviews) after an approval; the host is only scanned; writes
         email.
+    made_by: AAP - set up portal actions
   - name: Disk - clean up (approved)
     playbooks:
       - playbooks/disk_cleanup_plan.yml
@@ -3100,6 +3415,7 @@ workflows:
       produces: The cleanup plan, the approval, what was deleted and the space after, on the portal's job page.
       supports: Run constraint=Changes the target host (old files in the approved tmp folders, rules at run time) after an
         approval; writes report email/website.
+    made_by: AAP - set up portal actions
   - name: Service - restart
     playbooks:
       - playbooks/service_restart.yml
@@ -3113,6 +3429,7 @@ workflows:
       targets: One Linux or Windows host (the Limit); each step passes over hosts of the other OS.
       produces: Status and last log lines, the approval, and the result (fixed or not) on the portal's job page.
       supports: Run constraint=Changes the target host (restarts one service) after an approval; never one on portal_restart_never.
+    made_by: AAP - set up portal actions
   - name: fapolicyd - allow this
     playbooks:
       - playbooks/fapolicyd_allow.yml
@@ -3125,6 +3442,7 @@ workflows:
       produces: The one proposed line, the approval, and the result (fixed or not) on the portal's job page.
       supports: Run constraint=Changes the host's fapolicyd trust or rules (a security control) after an approval; never permissive
         mode.
+    made_by: AAP - set up portal actions
   - name: Service watch - approve or self-heal
     playbooks:
       - playbooks/service_watch.yml
@@ -3137,6 +3455,31 @@ workflows:
       produces: ACT's root cause and proposed fix in the job, the approval, an incident record on the host (log file, syslog).
       supports: Run constraint=Changes hosts (starts or restarts containers) after an approval; with watch_mode self-heal
         at once, no approval.
+    prompts: {limit: true}
+    survey:
+      - question_name: When a container is down, what should happen?
+        variable: watch_mode
+        type: multiplechoice
+        choices:
+          - approval
+          - self-heal
+        default: approval
+        required: false
+    nodes:
+      - id: check
+        template: Service watch - check
+        failure: [gate]
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: service_watch_fix}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Approve the fix ACT proposed?
+          timeout: 1800
+          description: Read ACT's report and the red NEEDS APPROVAL line in the check job first.
+        success: [fix]
+      - {id: fix, template: Service watch - apply approved fix}
   - name: Horizon - fix broken desktops (workflow)
     playbooks:
       - playbooks/horizon_desktops_check.yml
@@ -3149,6 +3492,21 @@ workflows:
       produces: The broken-desktop list (NEEDS APPROVAL line), the approval, and the fix job's report of each desktop.
       supports: Run constraint=Writes Horizon (recovers or removes desktops) after an approval; never one with a session or
         in a protected pool.
+    nodes:
+      - id: check
+        template: Horizon - desktops check
+        failure: [gate]
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: horizon_desktops_fix}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Fix these desktops?
+          timeout: 3600
+          description: 'Open the desktops check job: the NEEDS APPROVAL line lists each desktop and its fix.'
+        success: [fix]
+      - {id: fix, template: Horizon - fix the approved desktops}
   - name: Horizon - image push (workflow)
     playbooks:
       - playbooks/horizon_image_push_plan.yml
@@ -3160,6 +3518,42 @@ workflows:
       produces: The push plan (READY FOR APPROVAL line), the approval, and the scheduled push in Horizon.
       supports: Run constraint=Writes Horizon (schedules an image push; users logged off per policy) after an approval; the
         plan step is read-only.
+    survey:
+      - question_name: The pools, one per line
+        variable: horizon_push_pools
+        type: textarea
+        required: true
+      - question_name: The golden image VM, as vCenter names it
+        variable: horizon_push_base_vm
+        type: text
+        required: true
+      - question_name: The snapshot's name, or its path when two snapshots have that name
+        variable: horizon_push_snapshot
+        type: text
+        required: true
+      - question_name: Start (empty = once approved; or e.g. 2026-11-01 22:00, UTC)
+        variable: horizon_push_start
+        type: text
+        required: false
+      - question_name: Log-off policy
+        variable: horizon_push_logoff_policy
+        type: multiplechoice
+        choices:
+          - WAIT_FOR_LOGOFF
+          - FORCE_LOGOFF
+        default: WAIT_FOR_LOGOFF
+        required: false
+    nodes:
+      - id: plan
+        template: Horizon - image push plan
+        success: [approve]
+      - id: approve
+        approval:
+          name: Push this image?
+          timeout: 28800
+          description: 'Open the image push plan job: the READY FOR APPROVAL line says what, where and when.'
+        success: [push]
+      - {id: push, template: Horizon - push the approved image}
   - name: Horizon - host maintenance (workflow)
     playbooks:
       - playbooks/horizon_host_maintenance_plan.yml
@@ -3172,6 +3566,35 @@ workflows:
       produces: The plan of desktops and sessions, two approvals, a message to users, and each step's job output.
       supports: Run constraint=Writes Horizon (maintenance mode, user messages) after each approval; vCenter is not changed
         by it.
+    survey:
+      - question_name: The ESXi host, as vCenter names it
+        variable: horizon_maint_host
+        type: text
+        required: true
+      - question_name: What the users on its desktops read (empty = no message)
+        variable: horizon_maint_message
+        type: textarea
+        required: false
+    nodes:
+      - id: plan
+        template: Horizon - host maintenance plan
+        success: [approve]
+      - id: approve
+        approval:
+          name: Start the host maintenance?
+          timeout: 28800
+          description: ''
+        success: [start]
+      - id: start
+        template: Horizon - host maintenance start
+        success: [back]
+      - id: back
+        approval:
+          name: Is the host back?
+          timeout: 0
+          description: ''
+        success: [end]
+      - {id: end, template: Horizon - host maintenance end}
   - name: VM snapshot cleanup (with approval)
     playbooks:
       - playbooks/vm_snapshot_report.yml
@@ -3182,6 +3605,28 @@ workflows:
       targets: vCenter, from the AAP side. Never keep-named snapshots, excluded or protected VMs, or the AAP server.
       produces: Snapshot report email, the approval, and the cleanup's email of what it deleted.
       supports: Run constraint=Writes vCenter (deletes old VM snapshots) after an approval; writes email.
+    survey:
+      - question_name: Delete snapshots older than how many days?
+        variable: vm_snapshot_max_age_days
+        type: integer
+        min: 1
+        default: 5
+        required: true
+      - question_name: Email the reports to
+        variable: report_email_to
+        type: text
+        required: false
+    nodes:
+      - id: report
+        template: VM - snapshot report
+        success: [approve]
+      - id: approve
+        approval:
+          name: Delete the snapshots listed in the report?
+          timeout: 86400
+          description: ''
+        success: [cleanup]
+      - {id: cleanup, template: VM - snapshot cleanup}
   - name: VM - delete picked snapshots (workflow)
     playbooks:
       - playbooks/vm_snapshot_delete_picked.yml
@@ -3192,6 +3637,24 @@ workflows:
       targets: vCenter, from the AAP side; only snapshots offered by the pick list and still allowed.
       produces: The plan, the approval, and the delete job's output.
       supports: Run constraint=Writes vCenter (deletes the picked snapshots) after an approval.
+    survey:
+      - question_name: Snapshots to delete
+        variable: vm_snapshot_picks
+        type: multiselect
+        choices:
+          - (nothing to pick yet)
+        required: true
+    nodes:
+      - id: plan
+        template: VM - delete picked snapshots
+        success: [approve]
+      - id: approve
+        approval:
+          name: Do exactly this plan?
+          timeout: 14400
+          description: ''
+        success: [delete]
+      - {id: delete, template: VM - delete picked snapshots}
   - name: VM - restart picked VMs (workflow)
     playbooks:
       - playbooks/vm_reboot_picked.yml
@@ -3202,6 +3665,32 @@ workflows:
       targets: vCenter, from the AAP side; never the AAP server or a protected VM.
       produces: The plan, the approval, and the restart job's output.
       supports: Run constraint=Writes vCenter (restarts or resets the picked VMs) after an approval.
+    survey:
+      - question_name: VMs to restart
+        variable: vm_reboot_picks
+        type: multiselect
+        choices:
+          - (nothing to pick yet)
+        required: true
+      - question_name: How
+        variable: vm_power_mode
+        type: multiplechoice
+        choices:
+          - guest
+          - hard
+        default: guest
+        required: true
+    nodes:
+      - id: plan
+        template: VM - restart picked VMs
+        success: [approve]
+      - id: approve
+        approval:
+          name: Do exactly this plan?
+          timeout: 14400
+          description: ''
+        success: [restart]
+      - {id: restart, template: VM - restart picked VMs}
   - name: VM - outage watch (workflow)
     playbooks:
       - playbooks/vm_outage_watch.yml
@@ -3212,6 +3701,11 @@ workflows:
       targets: vCenter, from the AAP side; the tickets step runs on the controller.
       produces: Quiet when clean; a report email when something is down; ServiceNow incidents and work notes.
       supports: Run constraint=Read-only on vCenter, restarts nothing; writes ServiceNow incidents, email.
+    nodes:
+      - id: watch
+        template: VM - outage watch
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: VM - deploy from ServiceNow ticket (workflow)
     playbooks:
       - playbooks/vm_deploy_from_ticket.yml
@@ -3223,6 +3717,7 @@ workflows:
       produces: The plan on the ticket and in an email, the approval, the new VMs, and the result (IP included) on the ticket.
       supports: Run constraint=Writes vCenter (new VMs) after an approval; writes ServiceNow ticket notes (before and after),
         email.
+    deferred: 'left by hand for now: the build''s binding to what was approved is being reviewed'
   - name: Network config load (workflow)
     playbooks:
       - playbooks/net_config_load.yml
@@ -3234,6 +3729,42 @@ workflows:
       produces: The dry run's report, the approval, the run's report and email, a note on the change request.
       supports: Run constraint=Changes device configs (save or commit) after an approval; writes ServiceNow change, config
         backup, email.
+    survey:
+      - question_name: Change request (CHG...) - a Run needs it in Implement
+        variable: net_config_change
+        type: text
+        required: true
+      - question_name: What to load
+        variable: net_config_load_mode
+        type: multiplechoice
+        choices:
+          - lines
+          - restore
+        default: lines
+        required: true
+      - question_name: 'The devices: names or patterns, one per line or separated by commas'
+        variable: net_config_only
+        type: textarea
+        required: false
+      - question_name: 'IOS: the configuration lines, one per line'
+        variable: net_config_lines
+        type: textarea
+        required: false
+      - question_name: 'Restore: which backup (a commit, tag or dated copy; empty = the newest)'
+        variable: net_config_restore_ref
+        type: text
+        required: false
+    nodes:
+      - id: dry_run
+        template: Network config load (dry run)
+        success: [approve]
+      - id: approve
+        approval:
+          name: Send these changes?
+          timeout: 14400
+          description: 'Open the Check job: its report lists each device and the lines or the diff.'
+        success: [load]
+      - {id: load, template: Network config load}
   - name: Mail relay - add an IP
     playbooks:
       - playbooks/mail_relay_plan.yml
@@ -3244,6 +3775,34 @@ workflows:
       targets: 'The mail relay servers (group mail_relays): Postfix main.cf mynetworks.'
       produces: Plan email (waiting for approval), the approval, and a result email.
       supports: Run constraint=Changes relay hosts (main.cf, Postfix reload; backed up first) after an approval; writes email.
+    extra_vars: {mail_relay_action: add}
+    survey:
+      - question_name: IP address(es) - one, a subnet, or several separated by commas
+        variable: mail_relay_ip
+        type: textarea
+        max: 400
+        required: true
+      - question_name: Name and/or service they are for
+        variable: mail_relay_comment
+        type: text
+        min: 3
+        max: 200
+        required: true
+      - question_name: Requested by (optional)
+        variable: mail_relay_requested_by
+        type: text
+        required: false
+    nodes:
+      - id: plan
+        template: Mail relay - whitelist plan
+        success: [approve]
+      - id: approve
+        approval:
+          name: Add this address to the mail relay whitelist?
+          timeout: 86400
+          description: ''
+        success: [apply]
+      - {id: apply, template: Mail relay - apply the approved whitelist change}
   - name: Mail relay - remove an IP
     playbooks:
       - playbooks/mail_relay_plan.yml
@@ -3254,6 +3813,24 @@ workflows:
       targets: 'The mail relay servers (group mail_relays): Postfix main.cf mynetworks.'
       produces: Plan email (waiting for approval), the approval, and a result email.
       supports: Run constraint=Changes relay hosts (main.cf, Postfix reload; backed up first) after an approval; writes email.
+    extra_vars: {mail_relay_action: remove}
+    survey:
+      - question_name: IP address(es) - one, a subnet, or several separated by commas
+        variable: mail_relay_ip
+        type: textarea
+        max: 400
+        required: true
+    nodes:
+      - id: plan
+        template: Mail relay - whitelist plan
+        success: [approve]
+      - id: approve
+        approval:
+          name: Remove this address from the mail relay whitelist?
+          timeout: 86400
+          description: ''
+        success: [apply]
+      - {id: apply, template: Mail relay - apply the approved whitelist change}
   - name: Mail relay - remove unused addresses
     playbooks:
       - playbooks/mail_relay_unused.yml
@@ -3264,6 +3841,17 @@ workflows:
       produces: Plan email with the unused-address tables, the approval, and a result email.
       supports: Run constraint=Changes relay hosts (removes addresses, Postfix reload) after an approval; subnets never removed;
         writes email.
+    nodes:
+      - id: plan
+        template: Mail relay - unused addresses plan
+        success: [approve]
+      - id: approve
+        approval:
+          name: Remove these unused addresses from the mail relay whitelist?
+          timeout: 86400
+          description: ''
+        success: [apply]
+      - {id: apply, template: Mail relay - apply the approved whitelist change}
   - name: Daily health
     playbooks:
       - playbooks/health_check.yml
@@ -3275,6 +3863,13 @@ workflows:
       produces: Health report (emailed, on the report website), ServiceNow incidents and work notes.
       supports: Run constraint=Read-only on hosts (a small disk-history file only); writes ServiceNow incidents, email, report
         website.
+    nodes:
+      - id: check
+        template: Health check
+        extra_data:
+          health_checks: [daily]
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: Weekly compliance
     playbooks:
       - playbooks/health_check.yml
@@ -3289,6 +3884,21 @@ workflows:
       targets: Linux hosts (health, certificates); POA&M list and optional STIG Manager read on the controller.
       produces: Health, certificate and POA&M reports (emailed, on the report website); ServiceNow incidents.
       supports: Run constraint=Read-only on hosts and STIG Manager; writes ServiceNow incidents, email, report website.
+    nodes:
+      - id: health
+        template: Health check
+        extra_data:
+          health_checks: [weekly]
+        always: [health_tickets]
+      - {id: health_tickets, template: ServiceNow tickets}
+      - id: certs
+        template: Certificate report
+        always: [cert_tickets]
+      - {id: cert_tickets, template: ServiceNow tickets}
+      - id: poam
+        template: POA&M status
+        always: [poam_tickets]
+      - {id: poam_tickets, template: ServiceNow tickets}
   - name: Patch with checks
     playbooks:
       - playbooks/health_check.yml
@@ -3303,6 +3913,32 @@ workflows:
       produces: Pre and post health reports, the patch report (emailed, on the report website), ServiceNow incidents.
       supports: Run constraint=Changes hosts (installs updates; reboots only if asked; optional vCenter snapshot) after an
         approval; writes ServiceNow, email.
+    prompts: {limit: true}
+    nodes:
+      - id: pre
+        template: Health check
+        extra_data:
+          health_checks: [disk, mounts, services]
+          use_act: 'no'
+        success: [approve]
+        failure: [pre_tickets]
+      - {id: pre_tickets, template: ServiceNow tickets}
+      - id: approve
+        approval:
+          name: Patch these hosts now?
+          timeout: 28800
+          description: ''
+        success: [patch]
+      - id: patch
+        template: Patch hosts
+        always: [post]
+      - id: post
+        template: Health check
+        extra_data:
+          health_checks: [daily]
+          use_act: 'no'
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: Patch with a dry run first
     playbooks:
       - playbooks/health_check.yml
@@ -3316,6 +3952,33 @@ workflows:
       produces: Pre-check, DRY RUN patch report, the approval, the patch report, post-check, ServiceNow incidents.
       supports: Run constraint=Changes hosts (installs updates; reboots only if asked; optional vCenter snapshot) after an
         approval; writes ServiceNow, email.
+    prompts: {limit: true}
+    nodes:
+      - id: pre
+        template: Health check
+        extra_data:
+          health_checks: [disk, mounts, services]
+          use_act: 'no'
+        success: [dry_run]
+      - id: dry_run
+        template: Patch hosts (dry run)
+        success: [approve]
+      - id: approve
+        approval:
+          name: Install what the dry run listed?
+          timeout: 28800
+          description: 'Open the "Patch hosts" dry-run job: it lists every package per host.'
+        success: [patch]
+      - id: patch
+        template: Patch hosts
+        always: [post]
+      - id: post
+        template: Health check
+        extra_data:
+          health_checks: [daily]
+          use_act: 'no'
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: Fix with approval (ACT)
     playbooks:
       - playbooks/health_check.yml
@@ -3329,6 +3992,23 @@ workflows:
       produces: Health report with ACT's analysis, the approval, the fix job's re-check, ServiceNow incidents.
       supports: Run constraint=Changes hosts (ACT's proposed commands) after an approval; writes ServiceNow incidents, email,
         report website.
+    nodes:
+      - id: check
+        template: Health check
+        extra_data: {use_act: 'yes', site_act_level: diagnose}
+        always: [tickets]
+        failure: [approve]
+      - {id: tickets, template: ServiceNow tickets}
+      - id: approve
+        approval:
+          name: Apply the fix ACT proposed?
+          timeout: 1800
+          description: Read ACT's report and the NEEDS APPROVAL line in the health check job first.
+        success: [fix]
+      - id: fix
+        template: Apply approved ACT fix
+        always: [fix_tickets]
+      - {id: fix_tickets, template: ServiceNow tickets}
   - name: Security posture
     playbooks:
       - playbooks/health_check.yml
@@ -3340,6 +4020,17 @@ workflows:
       targets: Linux hosts (health checks); POA&M list and optional STIG Manager read on the controller.
       produces: Health and POA&M reports (emailed, on the report website), ServiceNow incidents.
       supports: Run constraint=Read-only on hosts and STIG Manager; writes ServiceNow incidents, email, report website.
+    nodes:
+      - id: health
+        template: Health check
+        extra_data:
+          health_checks: [selinux, fapolicyd, auditd, accounts]
+        always: [health_tickets]
+      - {id: health_tickets, template: ServiceNow tickets}
+      - id: poam
+        template: POA&M status
+        always: [poam_tickets]
+      - {id: poam_tickets, template: ServiceNow tickets}
   - name: Certificate watch
     playbooks:
       - playbooks/cert_report.yml
@@ -3352,6 +4043,20 @@ workflows:
       produces: Certificate report (emailed, on the report website), ServiceNow incidents, CSRs attached to them.
       supports: Run constraint=No approval; writes new key and CSR files on hosts (nothing in use changed), ServiceNow incidents
         and CSRs, email.
+    survey:
+      - question_name: Warn this many days before expiry
+        variable: check_certs_warn_days
+        type: integer
+        default: 30
+        required: false
+    nodes:
+      - id: report
+        template: Certificate report
+        always: [tickets]
+      - id: tickets
+        template: ServiceNow tickets
+        always: [csrs]
+      - {id: csrs, template: Certificate renewal - CSRs}
   - name: Certificate install, with an approval
     playbooks:
       - playbooks/cert_install_check.yml
@@ -3364,6 +4069,26 @@ workflows:
       produces: Check output (READY lines), the approval, install results, a work note on each request.
       supports: Run constraint=Changes hosts (cert files, service reload; old files kept, restored on error) after an approval;
         writes ServiceNow notes.
+    survey:
+      - question_name: 'Request (RITM) with the issued certificate - empty: every renewal''s own request'
+        variable: cert_install_ritm
+        type: text
+        required: false
+    nodes:
+      - id: check
+        template: Certificate install - check
+        failure: [gate]
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: cert_install_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Install the certificates the check listed?
+          timeout: 28800
+          description: 'Open the check job: its READY lines say what each one changes.'
+        success: [install]
+      - {id: install, template: Certificate install - approved}
   - name: Windows certificate install, with an approval
     playbooks:
       - playbooks/win_cert_install_check.yml
@@ -3376,6 +4101,26 @@ workflows:
       produces: Check output (READY lines), the approval, install results, a work note on each request.
       supports: Run constraint=Changes servers (cert store, IIS/RDP/WinRM bindings; old cert kept) after an approval; writes
         ServiceNow notes.
+    survey:
+      - question_name: 'Request (RITM) with the issued certificate - empty: every renewal''s own request'
+        variable: cert_install_ritm
+        type: text
+        required: false
+    nodes:
+      - id: check
+        template: Windows certificate install - check
+        failure: [gate]
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: cert_install_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Install the certificates the check listed?
+          timeout: 28800
+          description: 'Open the check job: its READY lines say what each one changes.'
+        success: [install]
+      - {id: install, template: Windows certificate install - approved}
   - name: fapolicyd, with an approval
     playbooks:
       - playbooks/fapolicyd.yml
@@ -3388,6 +4133,22 @@ workflows:
       produces: fapolicyd report (emailed, on the report website), the approval, the approved job's output.
       supports: Run constraint=Changes hosts' fapolicyd (start, trust, rules, mode) after an approval; a security control;
         writes email, website.
+    prompts: {limit: true}
+    nodes:
+      - id: check
+        template: fapolicyd - check
+        failure: [gate]
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: fapolicyd_workflow_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Make the fapolicyd changes the check listed?
+          timeout: 28800
+          description: 'Open the check job or its report: Changes to approve, and why.'
+        success: [approved]
+      - {id: approved, template: fapolicyd - approved}
   - name: STIG - full scan and upload
     playbooks:
       - playbooks/stig_full_scan.yml
@@ -3403,6 +4164,7 @@ workflows:
       supports: Run constraint=Writes STIG Manager (reviews, new assets) after an approval; hosts only read (checklists taken,
         folders removed).
     prompts: {limit: true}
+    portal: true
     nodes:
       - id: linux
         template: STIG - full scan - Linux check
@@ -3419,8 +4181,10 @@ workflows:
         extra_data: {workflow_gate_var: stigman_update_plan_windows}
         success: [approve]
       - id: approve
-        approval: {name: 'Write the full scan''s reviews (and the new assets) to STIG Manager?', timeout: 28800, description: 'Open
-            the checks'' reports: Approve writes these reviews and creates these assets in STIG Manager.'}
+        approval:
+          name: Write the full scan's reviews (and the new assets) to STIG Manager?
+          timeout: 28800
+          description: 'Open the checks'' reports: Approve writes these reviews and creates these assets in STIG Manager.'
         success: [update]
       - {id: update, template: STIG Manager - update}
   - name: STIG - drift scan and upload
@@ -3438,6 +4202,7 @@ workflows:
       supports: Run constraint=Writes STIG Manager (reviews, new assets) after an approval; hosts only read (a checklist file
         kept).
     prompts: {limit: true}
+    portal: true
     nodes:
       - id: linux
         template: STIG - drift scan - Linux check
@@ -3454,8 +4219,10 @@ workflows:
         extra_data: {workflow_gate_var: stigman_update_plan_windows}
         success: [approve]
       - id: approve
-        approval: {name: 'Write the drift scan''s reviews (and the new assets) to STIG Manager?', timeout: 28800, description: 'Open
-            the checks'' reports: Approve writes these reviews and creates these assets in STIG Manager.'}
+        approval:
+          name: Write the drift scan's reviews (and the new assets) to STIG Manager?
+          timeout: 28800
+          description: 'Open the checks'' reports: Approve writes these reviews and creates these assets in STIG Manager.'
         success: [update]
       - {id: update, template: STIG Manager - update}
     replaces: ['STIG Manager updated, with an approval', 'STIG Manager updated, with an approval (Windows)', STIG Manager
@@ -3493,6 +4260,11 @@ workflows:
       produces: STIG drift report (emailed, on the report website), scan results kept on the host, ServiceNow incidents.
       supports: Run constraint=Read-only (STIG Manager only read); writes scan files on hosts, ServiceNow incidents, email,
         report website.
+    nodes:
+      - id: drift
+        template: STIG drift report
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: Network performance
     playbooks:
       - playbooks/net_perf_report.yml
@@ -3504,6 +4276,11 @@ workflows:
       produces: Network performance report (emailed, on the report website), ServiceNow incidents.
       supports: Run constraint=Read-only (keeps its own history file on each host); writes ServiceNow incidents, email, report
         website.
+    nodes:
+      - id: perf
+        template: Network performance report
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: 'Database watch: MariaDB and MySQL'
     playbooks:
       - playbooks/database_health.yml
@@ -3514,6 +4291,11 @@ workflows:
       targets: Database hosts (mariadb_hosts, mysql_hosts, database_hosts groups) and their podman containers.
       produces: Database health report (emailed, on the report website), ServiceNow incidents.
       supports: Run constraint=Read-only (status queries only); writes ServiceNow incidents, email, report website.
+    nodes:
+      - id: database
+        template: Database health - MariaDB / MySQL
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: Investigate a host
     playbooks:
       - playbooks/troubleshoot.yml
@@ -3523,6 +4305,16 @@ workflows:
       targets: One Linux host (the Limit).
       produces: Troubleshooting output with ACT's explanation, and a full health report (emailed, on the report website).
       supports: Run constraint=Read-only on the host (ACT explains only); no tickets; writes email, report website.
+    prompts: {limit: true}
+    nodes:
+      - id: troubleshoot
+        template: Troubleshoot
+        extra_data: {ts_area: overview, use_act: 'yes', site_act_level: explain}
+        always: [health]
+      - id: health
+        template: Health check
+        extra_data:
+          health_checks: [all]
   - name: STIG Manager deploy with checks
     playbooks:
       - playbooks/stigman_deploy.yml
@@ -3536,6 +4328,27 @@ workflows:
       produces: Dry run diff, the approval, the deploy output, service watch and health reports.
       supports: Run constraint=Changes STIG Manager servers (containers, files, units, TLS) after an approval; Keycloak untouched;
         writes email.
+    nodes:
+      - id: dry_run
+        template: STIG Manager - deploy (dry run)
+        success: [approve]
+      - id: approve
+        approval:
+          name: Apply the changes the dry run listed?
+          timeout: 28800
+          description: ''
+        success: [deploy]
+      - id: deploy
+        template: STIG Manager - deploy
+        always: [watch]
+      - id: watch
+        template: Service watch - check (approval only)
+        always: [health]
+      - id: health
+        template: Health check
+        extra_data:
+          health_checks: [certs, services]
+          use_act: 'no'
   - name: Disk space and the tmp cleanup, with an approval
     playbooks:
       - playbooks/disk_report.yml
@@ -3548,6 +4361,20 @@ workflows:
       produces: Disk space report email and web page (before and after), the approval, the cleanup's list of deletions.
       supports: Run constraint=Changes hosts (deletes old tmp files on full filesystems) after an approval; writes email,
         report website.
+    nodes:
+      - id: report
+        template: Linux - disk space report
+        success: [approve]
+      - id: approve
+        approval:
+          name: Clean the old tmp files the report listed?
+          timeout: 28800
+          description: ''
+        success: [cleanup]
+      - id: cleanup
+        template: Linux - tmp cleanup
+        success: [after]
+      - {id: after, template: Linux - disk space report}
   - name: STIG Manager availability, with tickets
     playbooks:
       - playbooks/stigman_availability.yml
@@ -3560,6 +4387,11 @@ workflows:
         when set.
       supports: Run constraint=Read-only; writes ServiceNow incidents and notes (resolves only with servicenow_resolve_cleared),
         report email/website.
+    nodes:
+      - id: availability
+        template: STIG Manager - availability
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: Windows daily health
     playbooks:
       - playbooks/win_health_check.yml
@@ -3570,6 +4402,13 @@ workflows:
       produces: Health report (emailed, on the report website), an event log entry per finding, ServiceNow incidents.
       supports: Run constraint=Read-only on servers (one Application event log entry per finding); writes ServiceNow incidents,
         email.
+    nodes:
+      - id: check
+        template: Windows health check
+        extra_data:
+          health_checks: [daily]
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: Windows weekly compliance
     playbooks:
       - playbooks/win_health_check.yml
@@ -3584,6 +4423,20 @@ workflows:
       produces: Health and certificate reports (emailed, on the report website), ServiceNow incidents with CSRs attached.
       supports: Run constraint=No approval; writes pending cert requests on servers (nothing in use changed), event log entries,
         ServiceNow, email.
+    nodes:
+      - id: health
+        template: Windows health check
+        extra_data:
+          health_checks: [weekly]
+        always: [health_tickets]
+      - {id: health_tickets, template: ServiceNow tickets}
+      - id: certs
+        template: Windows certificate report
+        always: [cert_tickets]
+      - id: cert_tickets
+        template: ServiceNow tickets
+        always: [csrs]
+      - {id: csrs, template: Windows certificate renewal - CSRs}
   - name: Windows patch with a dry run first
     playbooks:
       - playbooks/win_health_check.yml
@@ -3598,6 +4451,31 @@ workflows:
       produces: Pre and post health reports, the dry run list, the approval, patch output, ServiceNow incidents.
       supports: Run constraint=Changes servers (installs ConfigMgr updates; restarts only if asked) after an approval; writes
         ServiceNow, email.
+    prompts: {limit: true}
+    nodes:
+      - id: pre
+        template: Windows health check
+        extra_data:
+          health_checks: [disk, services]
+        success: [dry_run]
+      - id: dry_run
+        template: Windows patch (dry run)
+        success: [approve]
+      - id: approve
+        approval:
+          name: Install what Software Center offers (listed in the dry run)?
+          timeout: 28800
+          description: ''
+        success: [patch]
+      - id: patch
+        template: Windows patch
+        always: [post]
+      - id: post
+        template: Windows health check
+        extra_data:
+          health_checks: [daily]
+        always: [tickets]
+      - {id: tickets, template: ServiceNow tickets}
   - name: ACT for Windows rollout
     playbooks:
       - playbooks/win_act_install.yml
@@ -3608,6 +4486,18 @@ workflows:
       targets: Windows servers in the Limit (a group at a time), over WinRM.
       produces: Dry run list per server (install, update, current), the approval, the install output.
       supports: Run constraint=Changes servers (ACT files in C:\ProgramData\act, folder rights) after an approval.
+    prompts: {limit: true}
+    nodes:
+      - id: dry_run
+        template: ACT for Windows - install (dry run)
+        success: [approve]
+      - id: approve
+        approval:
+          name: Install or update ACT on these servers?
+          timeout: 28800
+          description: ''
+        success: [install]
+      - {id: install, template: ACT for Windows - install}
   - name: 'Windows: investigate a server'
     playbooks:
       - playbooks/win_troubleshoot.yml
@@ -3617,6 +4507,15 @@ workflows:
       targets: One Windows server (the Limit), over WinRM.
       produces: Troubleshooting output and a full health report (emailed, on the report website).
       supports: Run constraint=Read-only (the health check adds one event log entry per finding); no tickets; writes email.
+    prompts: {limit: true}
+    nodes:
+      - id: troubleshoot
+        template: Windows troubleshoot
+        always: [health]
+      - id: health
+        template: Windows health check
+        extra_data:
+          health_checks: [all]
   - name: Everything, every morning
     playbooks:
       - playbooks/health_check.yml
@@ -3632,6 +4531,23 @@ workflows:
       produces: Linux, Windows and certificate reports (emailed, on the report website), ServiceNow incidents.
       supports: Run constraint=Read-only on hosts (history file, event log entries only); writes ServiceNow incidents, email,
         report website.
+    nodes:
+      - id: linux
+        template: Health check
+        extra_data:
+          health_checks: [daily]
+        always: [linux_tickets]
+      - {id: linux_tickets, template: ServiceNow tickets}
+      - id: windows
+        template: Windows health check
+        extra_data:
+          health_checks: [daily]
+        always: [windows_tickets]
+      - {id: windows_tickets, template: ServiceNow tickets}
+      - id: certs
+        template: Certificate report
+        always: [cert_tickets]
+      - {id: cert_tickets, template: ServiceNow tickets}
   - name: 'VMware daily checks: health, alarms, then ACT''s analysis'
     playbooks:
       - playbooks/vm_health_report.yml
@@ -3643,6 +4559,14 @@ workflows:
       targets: vCenter, from the AAP side. No ESXi host or VM is logged into.
       produces: 'Three emails: the health report, the alarms report and ACT''s analysis.'
       supports: Run constraint=Read-only on vCenter; writes email.
+    nodes:
+      - id: health
+        template: VM - health report
+        always: [alarms]
+      - id: alarms
+        template: VM - alarms report
+        always: [analysis]
+      - {id: analysis, template: VM - alarms ACT analysis}
   - name: vCenter and ESXi certificate install, with an approval
     playbooks:
       - playbooks/vmware_cert_install_check.yml
@@ -3655,6 +4579,26 @@ workflows:
       produces: Check output (READY lines), the approval, install results, a work note on each request.
       supports: Run constraint=Writes vCenter/ESXi certs and trusted roots after an approval (vCenter may restart); writes
         ServiceNow notes.
+    survey:
+      - question_name: Request (RITM) with the issued certificate
+        variable: vmware_cert_install_ritm
+        type: text
+        required: true
+    nodes:
+      - id: check
+        template: VMware - certificate install - check
+        failure: [gate]
+      - id: gate
+        template: Workflow gate - has a plan
+        extra_data: {workflow_gate_var: vmware_cert_install_plan}
+        success: [approve]
+      - id: approve
+        approval:
+          name: Install the VMware certificates the check listed?
+          timeout: 28800
+          description: 'Open the check job: its READY lines say what each one changes - vCenter''s own may restart its services.'
+        success: [install]
+      - {id: install, template: VMware - certificate install - approved}
 vendored:
   - name: ACT - apply approved (vendored)
     playbook: vendor/act/ansible/playbooks/act_apply_approved.yml

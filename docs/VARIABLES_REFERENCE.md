@@ -242,7 +242,7 @@ File: `roles/aap_template_audit/defaults/main.yml`
 
 File: `roles/aap_templates/defaults/main.yml`
 
-> ---- AAP - set up job templates (playbooks/aap_templates_setup.yml; docs/SETUP_AAP.md "Create the job templates from the catalog") Makes the job templates of aap/job_templates.yml (one per template of docs/JOB_TEMPLATES.md) in AAP, or checks the ones there. A missing one is made; one that differs is listed field by field and brought right only with aap_templates_overwrite. Never deletes, and never touches a template's schedules, survey or Variables after it is made, nor a credential of a type the catalog does not name. Run it with Check first: it then only reads and says what it would make or change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization. 1.79.19: it can also rename your templates and workflows to the catalog's names, and match their fields (below).
+> ---- AAP - set up job templates (playbooks/aap_templates_setup.yml; docs/SETUP_AAP.md "Create the job templates from the catalog") Makes the job templates of aap/job_templates.yml (one per template of docs/JOB_TEMPLATES.md) in AAP, or checks the ones there. A missing one is made; one that differs is listed field by field and brought right only with aap_templates_overwrite. Never deletes, and never touches a template's schedules, survey or Variables after it is made, nor a credential of a type the catalog does not name. Run it with Check first: it then only reads and says what it would make or change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization. 1.79.19: it can also rename your templates and workflows to the catalog's names, and match their fields (below). 1.107.0: it makes every workflow of the catalog too (docs/WORKFLOWS_AND_SCHEDULES.md, "The job makes them"): each node and link, its survey when AAP has none - never its schedules.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -254,7 +254,7 @@ File: `roles/aap_templates/defaults/main.yml`
 | `aap_templates_credentials` | `{}` | your credential of each kind the catalog names (machine, machine_windows, aap, stigman_api, servicenow, vmware, horizon, act_model_key, windows_share, ...); a template that needs a kind not here is skipped, said. A list for several. {machine: "Linux machine", aap: "AAP reader", stigman_api: "STIG Manager API"} |
 | `aap_templates_only` | `[]` | only the templates whose name matches one of these (* and ?, any case); [] = every template of the catalog ["STIG*", "Health check", "Troubleshoot"] |
 | `aap_templates_overwrite` | `false` | true = bring a template that differs right (only the fields this job sets) |
-| `aap_templates_create_alias` | `false` | true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions) |
+| `aap_templates_create_alias` | `false` | true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions); 1.107.0: and the catalog's workflow even when a workflow of yours has its steps under anothe… (all of it: the role file) |
 | `aap_templates_step_names` | `{}` | 1.83.0: the STIG workflows' steps made by another job (the gate, STIG Manager - update): when AAP has none under the catalog's name, your template that runs its playbook is used (Check says "uses ..."). Several run it: name the one here {"STIG Manager - update": "STIG update", "Workflow gate - has a plan": "Has a plan… (all of it: the role file) |
 | `aap_templates_label_portal` | `none` | the site portal's labels (its own label and portal-area:<area>, so the portal finds the templates and groups them): none (the default), portal-actions (the templates the site portal launches) or all (every template made or matched) |
 | `aap_templates_portal_label` | `"{{ portal_label \| default('portal') }}"` | the site portal's label (as written, case too) |
@@ -270,7 +270,7 @@ File: `roles/aap_templates/defaults/main.yml`
 | `aap_templates_rename` | `false` | 1.79.19 (docs/SETUP_AAP.md, "Rename and match your templates"; run Check first): true = your job templates (found by playbook) and workflows (by name or steps) get the catalog's names |
 | `aap_templates_rename_map` | `{}` | {"Your name": "New name"}: first, for any template or workflow (one the catalog does not know too) |
 | `aap_templates_match` | `[]` | the fields brought to the catalog's on your templates, without aap_templates_overwrite: any of inventory, credentials (only the missing kinds added - none taken off), prompts, ee, labels (the portal's) |
-| `aap_templates_create_missing` | `true` | false = a catalog template your AAP does not have is not made, only counted (true: made, as before 1.79.19) |
+| `aap_templates_create_missing` | `true` | false = a catalog template (1.107.0: or workflow) your AAP does not have is not made, only counted (true: made, as before 1.79.19) |
 | `aap_templates_rename_skip_areas` | `[Network]` | the areas left out of the renames and the match (the catalog's area; Network = also every template of the Network EE) |
 
 ## aap_workflow_gates
@@ -1335,7 +1335,7 @@ File: `roles/net_config/defaults/main.yml`
 | `net_config_ticket_changes` | `true` | an incident for a change |
 | `net_config_ticket_failures` | `true` | an incident for a failed backup |
 | `net_config_load_mode` | `lines` | lines (send configuration lines) or restore (put a device back to a backup). |
-| `net_config_lines` | `[]` | IOS: the lines, as typed in configuration mode, e.g. ["ntp server 192.0.2.123", "banner motd ^Authorized use only^"]; under net_config_parents (e.g. ["interface GigabitEthernet1"]) when they belong to one. |
+| `net_config_lines` | `[]` | IOS: the lines, as typed in configuration mode, e.g. ["ntp server 192.0.2.123", "banner motd ^Authorized use only^"]; under net_config_parents (e.g. ["interface GigabitEthernet1"]) when they belong to one. 1.107.0: also text, one line per row (the load workflow's survey box). |
 | `net_config_parents` | `[]` | IOS: the parent lines the lines go under (e.g. ["interface GigabitEthernet1"]); [] = global configuration |
 | `net_config_panos_entries` | `[]` | PAN-OS: the changes - each {xpath, element, action}: action set (adds or replaces the element's children), edit (replaces the element at the xpath), delete (no element). |
 | `net_config_restore_ref` | (empty) | restore: which backup - git: a commit, tag or branch ('' = the newest); share: a dated copy's file name ('' = the latest). |
@@ -2071,6 +2071,7 @@ File: `roles/site_exclude/defaults/main.yml`
 |---|---|---|
 | `site_exclude_hosts` | `[]` | ---- Leave hosts out of every job (1.67.0; playbooks/site_exclude.yml, README "Leave hosts out of every job") Hosts no job runs on or connects to, whatever its template, Limit or target: the first play of every playbook that runs on hosts takes them out before the first connection. Each report says so in one line at i… (all of it: the role file) |
 | `site_exclude_groups` | `[]` | inventory groups: every host in them (* and ?; never all or ungrouped) |
+| `site_dry_run_only` | `false` | 1.107.0: true on a workflow's dry-run template (AAP - set up job templates puts it there, beside Job type Check): the job then refuses to run as Run (playbooks/workflow_dry_run.yml, imported by the playbooks a workflow previews) |
 
 ## site_findings
 

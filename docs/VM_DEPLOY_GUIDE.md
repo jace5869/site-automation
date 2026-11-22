@@ -332,6 +332,8 @@ Run a dry run first for every new kind of request - a new template, a new site, 
 
 ## 8. The approval workflow: propose, approve, build
 
+**AAP - set up job templates does not make this workflow yet (1.107.0)**: it is left by hand for now, while the build's binding to what was approved is reviewed. The steps below are the way.
+
 One launch: the deploy job checks and places (*propose*) and writes the plan on the ticket, a person
 approves it in AAP, then the deploy job builds (*build*) - *Report first, then build* in the next chapter
 says what each step does.

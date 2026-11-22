@@ -43,6 +43,10 @@
 - name: Leave out the hosts of site_exclude_hosts (1.67.0)
   ansible.builtin.import_playbook: site_exclude.yml
 
+# 1.107.0: a dry-run template (site_dry_run_only, or a name ending in (dry run)) runs as Check only
+- name: Workflow dry run - a dry-run template runs as Check only
+  ansible.builtin.import_playbook: workflow_dry_run.yml
+
 - name: Target check (stops with a clear message when target matches no host)
   hosts: "all{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false

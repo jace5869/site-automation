@@ -35,6 +35,12 @@ TEMPLATES = {
 # site_exclude_hosts: [web02, "*.lab.example.mil"]
 # site_exclude_groups: [retired]
 """),
+    "workflow_dry_run.yml": ("Workflow dry run - the guard (1.107.0)", "none", "", """\
+## A dry-run template runs as Check only. The imported guard refuses Run.
+## Every step after an approval must use a Run template. AAP - set up job templates checks this when it builds or
+## checks the workflow. It sets this variable on the dry-run template:
+# site_dry_run_only: true
+"""),
     "act_triage_finding.yml": ("ACT - triage finding", "Machine (Machine (Windows) on the Windows template), ACT model key, Red Hat Ansible Automation Platform", "", """\
 ## Workflow 44 (the site portal's "Ask ACT"): two templates of this playbook. Prompt on launch: Variables and Limit.
 ## The portal sends target, report_job, finding_id and portal_requested_by; the playbook checks them again.

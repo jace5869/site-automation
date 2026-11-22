@@ -8,12 +8,12 @@
   ansible.builtin.assert:
     that:
       - net_config_load_mode in ['lines', 'restore']
-      - net_config_load_mode == 'restore' or (net_config_lines | default([], true) | length > 0) or (net_config_panos_entries | default([], true) | length > 0)
-      - net_config_lines is not string and net_config_parents is not string and net_config_panos_entries is not string
+      - net_config_load_mode == 'restore' or (_ncl_lines | length > 0) or (net_config_panos_entries | default([], true) | length > 0)
+      - net_config_panos_entries is not string
     fail_msg: >-
       {{ ("net_config_load_mode is lines or restore, not '" ~ net_config_load_mode ~ "'.") if net_config_load_mode not in ['lines', 'restore'] else
-         'net_config_lines, net_config_parents and net_config_panos_entries are lists (one line per item, each starting with "- ").'
-         if (net_config_lines is string or net_config_parents is string or net_config_panos_entries is string) else
+         'net_config_panos_entries is a list (one entry per item, each starting with "- ").'
+         if net_config_panos_entries is string else
          'Nothing to load: give net_config_lines (IOS) and / or net_config_panos_entries (PAN-OS) - or net_config_load_mode: restore.' }}
     quiet: true
 

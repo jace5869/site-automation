@@ -207,6 +207,12 @@ jobs:
         run: python tests/test_template_vars.py
       - name: aap/job_templates.yml (the catalog AAP - set up job templates makes) is generated and the same as docs/JOB_TEMPLATES.md
         run: python tests/test_job_catalog.py
+      - name: 1.107.0 - every catalog workflow has its nodes (or a reason), each step a catalog template, links, gates, approvals
+        run: python tests/test_catalog_workflows.py
+      - name: 1.107.0 - the workflow dry-run guard (Check only before the approval, the same hosts and settings after it), on both ansible-core versions
+        run: |
+          python tests/test_workflow_dry_run.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_workflow_dry_run.py
       - name: No two-character '\n' inside {{ }} in roles/ and playbooks/ (1.79.17), on both ansible-core versions
         run: |
           python tests/test_template_newlines.py
@@ -403,6 +409,8 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_credentials_test.sh
           bash tests/portal_setup/run_aap_templates_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_templates_test.sh
+          bash tests/portal_setup/run_aap_catalog_workflows_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_catalog_workflows_test.sh
           bash tests/portal_setup/run_aap_inventory_move_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/portal_setup/run_aap_inventory_move_test.sh
       - name: Tenable.sc scan job against a fake Tenable.sc (tests/tenable/scmock.py; current ansible-core and 2.16)

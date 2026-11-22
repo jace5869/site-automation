@@ -30,6 +30,7 @@ options:
     the portal's label (portal_label) and portal-area:<area>, so the site portal finds them.", type: str, default: none}
   portal_label: {description: "The site portal's own label for the templates it reads (matched as written, case too).", type: str, default: portal}
   portal_label_area: {description: "The prefix of the site portal's group label (portal-area:<area>).", type: str, default: "portal-area:"}
+  portal_needed: {description: "1.107.0: the steps of the catalog workflows the portal shows (portal: true) - never labelled portal. Not given: needed.", type: list, elements: str}
   needed: {description: "1.83.0: the templates the catalog's workflows need (their nodes). One another job makes (made_by) that AAP has not under its name: a template of the site that runs its playbook is used for the step (said: uses ...), else it is made here.", type: list, elements: str, default: []}
   step_names: {description: "1.83.0: {a step's catalog name: the site's template to use for it} - when several of the site's templates run its playbook.", type: dict, default: {}}
   variables_dir: {description: "The folder of the catalog's Variables files (the repository's root).", type: str, default: ''}
@@ -59,7 +60,7 @@ import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, connection
-from ansible.module_utils.site_aap_workflows import NEVER_ALONE
+from ansible.module_utils.site_aap_workflows import NEVER_ALONE, limit_misses_localhost, survey_question
 
 NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
                  '(an AAP user with Admin on the organization - it makes job templates)')
@@ -67,11 +68,12 @@ DESC = "Made by AAP - set up job templates (aap/job_templates.yml)"
 SHOW = {"playbook": "playbook", "project": "project", "execution_environment": "execution environment",
         "ask_limit_on_launch": "prompt for Limit", "ask_variables_on_launch": "prompt for Variables",
         "ask_inventory_on_launch": "prompt for Inventory", "ask_job_type_on_launch": "prompt for Job Type", "inventory": "inventory",
+        "ask_diff_mode_on_launch": "prompt for Show changes", "job_type": "Job type", "diff_mode": "Show changes",
         "extra_vars": "Variables"}
 # 1.79.19: aap_templates_match's words -> the fields (credentials and labels apart); playbook and project never: they are
 # what a template is found by
 MATCH = {"inventory": ("inventory",), "prompts": ("ask_limit_on_launch", "ask_variables_on_launch", "ask_inventory_on_launch",
-                                                  "ask_job_type_on_launch"),
+                                                  "ask_job_type_on_launch", "ask_diff_mode_on_launch"),
          "ee": ("execution_environment",), "credentials": (), "labels": ()}
 
 
@@ -205,7 +207,9 @@ class Templates(object):
 
     def workflow_steps(self):
         """1.92.0 review: {template name: [the workflows it is a step of]} - the portal's own workflows
-        (roles/site_portal_stack/files/workflows.yml) and the catalog's (aap/job_templates.yml), as the repository has them."""
+        (roles/site_portal_stack/files/workflows.yml) and the catalog's the portal shows (aap/job_templates.yml, portal: true -
+        1.107.0: a step of the catalog's other workflows, Health check in Daily health, is labelled as before), as the
+        repository has them."""
         out = {}
         root = self.p.get("variables_dir") or ""
         try:
@@ -219,6 +223,8 @@ class Templates(object):
             with open(path) as fh:
                 doc = yaml.safe_load(fh) or {}
             for w in doc.get(key) or []:
+                if rel.startswith("aap/") and not (w or {}).get("portal"):
+                    continue
                 for n in (w or {}).get("nodes") or []:
                     t = (n or {}).get("template")
                     if t:
@@ -226,6 +232,11 @@ class Templates(object):
                         if w.get("name") not in names:
                             names.append(w.get("name"))
         return out
+
+    def portal_needed(self):
+        """1.107.0: the steps of the catalog workflows the portal shows - never labelled (the older runs: every step)."""
+        pn = self.p.get("portal_needed")
+        return pn if pn is not None else (self.p.get("needed") or [])
 
     def write(self, method, path, body=None):
         code, d = self.api.call(method, path, body)
@@ -314,6 +325,7 @@ class Templates(object):
             if t.get("organization") == self.org_id:
                 self.tid.setdefault(t.get("name"), int(t["id"]))
         to_label = []                          # the catalog entries to label (label_portal)
+        self.ours_row = {}                     # 1.107.0: name -> the template of that name in the organization
         steps_of = self.workflow_steps()       # 1.92.0 review: the steps of every workflow we make - never labelled
         self.step_skip = {}
         for e in self.p["catalog"]:
@@ -321,13 +333,15 @@ class Templates(object):
                 continue
             name = e["name"]
             ours = [t for t in by_name.get(name) or [] if t.get("organization") == self.org_id]
+            if len(ours) == 1:
+                self.ours_row[name] = ours[0]
             if len(ours) > 1:                  # Codex: a problem before any write - never one of them picked
                 self.problems.append("AAP has %d job templates named %r in the organization: rename one" % (len(ours), name))
                 continue
             # 1.83.0 (Codex): never a step of the catalog's workflows (the checks, the gate, the update) - the workflow carries
             # the portal's label, its steps are not jobs to launch alone
             if (self.p["label_portal"] == "all" or (self.p["label_portal"] == "portal-actions" and e.get("portal"))
-                    or (ours and "labels" in self.matched(e))) and name not in (self.p.get("needed") or []):
+                    or (ours and "labels" in self.matched(e))) and name not in self.portal_needed():
                 # 1.92.0 review: a step of a workflow (the portal's own, the catalog's) or a playbook that only runs a workflow's
                 # plan is never labelled - the portal shows the workflow, not its parts
                 if name in steps_of or str(e.get("playbook") or "") in NEVER_ALONE:
@@ -392,6 +406,13 @@ class Templates(object):
             fields = {"playbook": e["playbook"], "project": self.project, "ask_limit_on_launch": bool(e.get("ask_limit")),
                       "ask_variables_on_launch": bool(e.get("ask_variables")), "ask_inventory_on_launch": bool(e.get("ask_inventory")),
                       "ask_job_type_on_launch": bool(e.get("ask_job_type"))}
+            if e.get("ask_diff_mode"):          # 1.107.0: Show changes (STIG Manager - deploy's dry run) - set only where the catalog asks
+                fields["ask_diff_mode_on_launch"] = True
+            # 1.107.0 (review): its Job type - a dry-run template is Check itself (never a node's prompt), every other one Run
+            # (a workflow's step after its approval sets none: the template's own is what runs)
+            fields["job_type"] = e.get("job_type") or "run"
+            if e.get("diff_mode"):
+                fields["diff_mode"] = True
             # an EE kind not mapped: the project's (none set on the template) - one set is said, cleared only with overwrite
             fields["execution_environment"] = ee[0] if ee else None
             same = by_name.get(name) or []
@@ -425,6 +446,14 @@ class Templates(object):
                 if why:
                     self.problems.append("%r: %s" % (name, why))
                     continue
+                # 1.107.0 (review): a dry run is made from the template it previews - its Variables (with the catalog's fixed
+                # settings set) and its inventory - so it shows what that one will do (each run checks it again)
+                base = [t for t in by_name.get(e.get("copy_of")) or [] if t.get("organization") == self.org_id
+                        and t.get("playbook") == e["playbook"] and t.get("project") == self.project] if e.get("copy_of") else []
+                if len(base) == 1:
+                    text = set_vars(base[0].get("extra_vars"), e.get("extra_vars") or {})
+                    if base[0].get("inventory"):
+                        fields = dict(fields, inventory=int(base[0]["inventory"]))
                 steps.append(("create", e, fields, want_creds, kinds, text))
                 continue
             t = ours[0]
@@ -433,7 +462,8 @@ class Templates(object):
             m = self.matched(e)
             diff, mdiff = {}, {}                  # mdiff: what aap_templates_match brings right without overwrite
             for k, v in fields.items():
-                if t.get(k) != v and (k != "inventory" or "inventory" in m):
+                have_v = (t.get(k) or "run") if k == "job_type" else t.get(k)
+                if have_v != v and (k != "inventory" or "inventory" in m):
                     diff[SHOW[k]] = [self.show(k, t.get(k)), self.show(k, v)]
                     if any(k in MATCH[w] for w in m):
                         mdiff[SHOW[k]] = diff[SHOW[k]]
@@ -524,6 +554,9 @@ class Templates(object):
         if t.get("ask_limit_on_launch") and not e.get("ask_limit"):
             return ("%r asks for a Limit on launch: the workflow's Limit would reach it and it would do nothing - untick Prompt "
                     "on launch for Limit on it" % t["name"])
+        if not e.get("ask_limit") and limit_misses_localhost(t.get("limit")):
+            return ("%r has its own Limit %r, which leaves out localhost: it would run nothing and end green - empty its Limit"
+                    % (t["name"], t.get("limit")))
         if e.get("ask_variables") and not t.get("ask_variables_on_launch"):
             return ("%r does not ask for Variables on launch, and its workflow node gives it Variables - tick Prompt on launch "
                     "for Variables on it" % t["name"])
@@ -562,6 +595,11 @@ class Templates(object):
                           % (e["playbook"], ", ".join(repr(t["name"]) for t in sorted(cands, key=lambda t: t["name"])), step, name))
                 return True
         t = cands[0]
+        if not e.get("ask_limit") and limit_misses_localhost(t.get("limit")):
+            # 1.107.0 (review): its own Limit leaves out localhost - it would run nothing and end green
+            self.note(name, "skipped", why="%r runs %s but its own Limit %r leaves out localhost: it would run nothing and end green - "
+                      "empty its Limit, then run this again" % (t["name"], e["playbook"], t.get("limit")))
+            return True
         if t.get("ask_limit_on_launch"):
             # 1.83.0 (Codex P1): the workflow's Limit would reach it - its play of localhost would match nothing and end green
             # with nothing done (the gate never asked, the approved plan never written)
@@ -579,8 +617,8 @@ class Templates(object):
     def same_playbook(self, tpls, e):
         """The site's own templates (the organization, the project) that run the catalog template's playbook under another name -
         never another template of the catalog (a second template of one playbook: "ServiceNow health - nodes")."""
-        if e.get("extra_vars"):
-            return []                # 1.83.0: a template with fixed Variables is a job of its own (a workflow's step), never an alias
+        if e.get("extra_vars") or e.get("job_type"):
+            return []                # 1.83.0: a template with fixed Variables (1.107.0: or a fixed Job type: a dry run) is a job of its own
         return [t for t in tpls if t.get("playbook") == e["playbook"] and t.get("project") == self.project
                 and t.get("organization") == self.org_id and t.get("name") != e["name"] and t.get("name") not in self.catalog_names]
 
@@ -657,6 +695,76 @@ class Templates(object):
                 self.write("POST", "job_templates/%d/labels/" % tid, {"id": self.label_id[n]})
                 r["labels"].append(n)
 
+    def surveys(self, steps):
+        """1.107.0: the survey questions the catalog's workflows give their steps (Health check's health_checks ...): the
+        missing ones added - never one changed or taken off - and the survey turned on. Check says which it would add."""
+        made = set(st[1]["name"] for st in steps if st[0] == "create")
+        self.survey_adds = {}
+        for e in self.p["catalog"]:
+            if not e.get("survey") or not self.wanted(e):
+                continue
+            name = e["name"]
+            qs = [survey_question(q) for q in e["survey"]]
+            tid = self.tid.get(name)
+            if tid is None:
+                if self.check and name in made:          # made in this run: it gets them all
+                    self.survey_adds[name] = [q["variable"] for q in qs]
+                    self.row_of(name)["survey"] = "would add its survey questions: %s" % ", ".join(self.survey_adds[name])
+                continue
+            row0 = (getattr(self, "ours_row", {}) or {}).get(name)
+            # 1.107.0 (review): the template as it is after this run - only a fix that writes its playbook or project changes
+            # what it is (a partial match of its prompts never makes another project's template the catalog's)
+            eff = dict(row0 or {})
+            for st in steps:
+                if st[0] == "fix" and st[1]["name"] == name and (self.p["overwrite"] or (len(st) > 6 and st[6])):
+                    eff.update(dict((k, v) for k, v in (st[2] or {}).items() if k in ("playbook", "project")))
+            if name not in made and (row0 is None or eff.get("playbook") != e["playbook"] or eff.get("project") != self.project
+                                     or name in self.refused):
+                # 1.107.0 (review): never the catalog's questions on a template of that name that is not the catalog's job
+                self.row_of(name)["survey"] = ("no survey questions written: it runs %s%s, not %s from this project" % (
+                    eff.get("playbook") or "another playbook",
+                    "" if eff.get("project") == self.project else " from another project", e["playbook"]))
+                continue
+            try:
+                path = "job_templates/%d/" % tid
+                code, have = self.api.call("GET", path + "survey_spec/")
+                if code != 200:
+                    raise RuntimeError("the survey of %r could not be read (HTTP %d): %s" % (name, code, _why(code, have)))
+                have = dict(have or {})
+                got = [str(q.get("variable")) for q in have.get("spec") or []]
+                add = [q for q in qs if q["variable"] not in got]
+                code, row = self.api.call("GET", path)
+                enabled = bool((row or {}).get("survey_enabled")) if code == 200 else False
+                # 1.107.0 (review): a survey there that its owner switched off stays off without overwrite (said); a new one
+                # (none there before) is turned on with the questions it gets
+                turn_on = not enabled and (not have.get("spec") or self.p["overwrite"])
+                left_off = not enabled and not turn_on
+                if not add and (enabled or left_off):
+                    if left_off:
+                        self.row_of(name)["survey"] = ("its survey is off: left off - the workflows that give its steps answers are "
+                                                       "skipped until it is on (aap_templates_overwrite: true turns it on)")
+                    continue
+                r = self.row_of(name)
+                words = ", ".join(q["variable"] for q in add)
+                tail = ("; would turn its survey on" if self.check else "; its survey turned on") if turn_on else (
+                    "; its survey is off: left off (aap_templates_overwrite: true turns it on)" if left_off else "")
+                if self.check:                  # its questions as they will be: there (on) and added
+                    if not left_off:
+                        self.survey_adds[name] = got + [q["variable"] for q in add]
+                    r["survey"] = ("would add survey question(s): %s" % words if add else "") + tail
+                    continue
+                if add:
+                    self.write("POST", path + "survey_spec/", {"name": have.get("name") or "", "description": have.get("description") or "",
+                                                               "spec": list(have.get("spec") or []) + add})
+                if turn_on:
+                    self.write("PATCH", path, {"survey_enabled": True})
+                self.wrote = True
+                self.survey_adds[name] = [q["variable"] for q in add] if not left_off else []
+                r["survey"] = ("survey question(s) added: %s" % words if add else "") + tail
+            except RuntimeError as ex:      # 1.107.0 (review): said for this template; the others go on
+                self.row_of(name)["survey"] = "FAILED - its survey questions: %s" % str(ex)[:300]
+                self.problems.append("%r: its survey questions were not added: %s" % (name, str(ex)[:300]))
+
     def run(self):
         try:
             self.run_all()
@@ -671,6 +779,12 @@ class Templates(object):
         if self.problems:
             return
         self.steps(steps)
+        if self.problems:
+            return
+        try:
+            self.surveys(steps)
+        except RuntimeError as ex:
+            self.problems.append("the survey questions: %s (the ones added before it are listed)" % ex)
         if self.problems or not getattr(self, "label_plan", None):
             return
         try:
@@ -697,7 +811,8 @@ class Templates(object):
             done = []                            # Codex: each write said as it is done - a failure says what was done before it
             try:
                 if kind == "create":
-                    body = dict(st[2], name=name, organization=self.org_id, inventory=self.inventory, job_type="run", description=DESC,
+                    body = dict(dict(job_type="run"), **st[2])
+                    body.update(name=name, organization=self.org_id, inventory=st[2].get("inventory") or self.inventory, description=DESC,
                                 extra_vars=st[5])
                     tid = int(self.write("POST", "job_templates/", body)["id"])
                     self.tid[name] = tid
@@ -738,6 +853,7 @@ def main():
                            match=dict(type="list", elements="str", default=[]), match_skip_areas=dict(type="list", elements="str", default=[]),
                            renamed=dict(type="dict", default={}), create_missing=dict(type="bool", default=True),
                            needed=dict(type="list", elements="str", default=[]), step_names=dict(type="dict", default={}),
+                           portal_needed=dict(type="list", elements="str", default=None),
                            ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)),
         supports_check_mode=True)
     p = module.params
@@ -757,7 +873,8 @@ def main():
         why = (getattr(s, "step_skip", {}) or {}).get(r.get("name"))
         if why:
             r["also"] = (r["also"] + "; " + why) if r.get("also") else why
-    module.exit_json(changed=changed, results=s.results, problems=s.problems, uses=s.uses, renamed=s.renamed, refused=s.refused)
+    module.exit_json(changed=changed, results=s.results, problems=s.problems, uses=s.uses, renamed=s.renamed, refused=s.refused,
+                     survey_adds=getattr(s, "survey_adds", {}))
 
 
 if __name__ == "__main__":

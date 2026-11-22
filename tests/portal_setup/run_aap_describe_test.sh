@@ -125,7 +125,7 @@ if [ "$rc" -eq 0 ] && [ "$(writes)" -eq 0 ] && grep -q "WOULD DESCRIBE - job 'He
    && grep -q "no description known - job 'Our own job' - its playbook playbooks/our_own.yml is not in the catalog" "$work/out.txt" \
    && grep -q "no description known - workflow 'Our own flow'" "$work/out.txt" \
    && grep -q "no description known - workflow 'Watch, no approval'" "$work/out.txt" \
-   && grep -q "no description known - workflow 'Daily health' - its steps run templates of another project" "$work/out.txt" \
+   && grep -q "left to its own job - workflow 'Daily health' - AAP - set up job templates makes this workflow and writes its description" "$work/out.txt" \
    && grep -q "WOULD DESCRIBE - workflow 'Our container watch' (catalog: '$(want sw_name)') - would write it; matched by the playbooks of its steps" "$work/out.txt" \
    && ! grep -q "not in AAP - job " "$work/out.txt" && ! grep -q "not in AAP - workflow " "$work/out.txt" \
    && grep -Eq "job not in AAP: [0-9]+" "$work/out.txt" && grep -q "aap_templates_describe_list_missing: true lists each" "$work/out.txt" \

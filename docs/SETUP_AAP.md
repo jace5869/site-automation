@@ -704,13 +704,26 @@ and checks the ones already there. It never deletes a template.
    set `aap_templates_overwrite: true` to bring it right. If a write fails, the job stops there and lists what it did
    before it, down to each credential attached.
 
-**The STIG workflows (1.83.0).** The same job makes the workflows *STIG - full scan and upload* and *STIG - drift scan
-and upload*, after their templates ([STIG_JOBS.md](STIG_JOBS.md)):
-- every node and link: the Linux check and the Windows check side by side, each to its own gate (on failure), both
-  gates to one approval (on success), then the update (on success);
-- each gate's Variables (`workflow_gate_var: stigman_update_plan`, and `stigman_update_plan_windows` for the Windows
-  check), Prompt on launch for **Limit**;
-- the site portal's label on the workflow, never on its steps.
+**The workflows (1.107.0).** The same job makes 40 workflows from
+[WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-job-makes-them-11070), after their templates,
+including the STIG jobs of 1.83.0 ([STIG_JOBS.md](STIG_JOBS.md)):
+- every node and link, as the chapter draws it: each check, gate, approval (name, timeout, description) and step;
+- each node's answers (`health_checks = daily`, the gate's `workflow_gate_var` - in the STIG jobs `stigman_update_plan`,
+  and `stigman_update_plan_windows` for the Windows check); Prompt on launch for **Limit**; the workflow's Variables
+  (`mail_relay_action`);
+- the templates its steps need: a dry run before an approval is a template of its own with Job type **Check** on the
+  template (*Patch hosts (dry run)* ...), and *Service watch - check (approval only)*;
+- its survey, when the job makes it - never changed after;
+- the site portal's label on the two STIG jobs, never on a step.
+
+A step's answers come from its template's survey: *Health check*, *Troubleshoot* and *Windows health check* need the
+questions their sections name (`health_checks`, `ts_area`, `use_act`, `site_act_level`). The job adds the missing ones and turns the
+survey on - never one changed or taken off (Check:
+*would add survey question(s)*). A step without the fixed Variables its node relies on is *SKIPPED*, said. The site portal's own workflows (40, 44 to 51) are left to *AAP -
+set up portal actions*. A workflow of yours that has the same steps under another name is not made twice (*same steps,
+other name*): rename it to the catalog's name (`aap_templates_rename_map`), or set `aap_templates_create_alias: true`.
+A workflow of yours under the catalog's name is *NOT MADE BY THIS JOB*: each field and node that differs is listed,
+and only `aap_templates_overwrite: true` takes it over. Schedules, approvers and notifications stay yours to add.
 
 On Run, **AAP - set up job templates** saves each managed workflow's fingerprint under
 `<organization ID>/workflow/<name>` in the AAP job artifact `aap_setup_fingerprints`. Both setup jobs keep entries
@@ -770,8 +783,10 @@ it is for. The same job writes them: **AAP - set up job templates** with `aap_te
    - *WOULD DESCRIBE* - an empty description or the exact “Made by AAP - set up job templates” placeholder;
    - *KEPT (hand-written)* - a description someone wrote: left as it is. `aap_templates_describe_overwrite: true`
      writes over it too;
-   - *left to its own job* - a portal setup template or workflow, a catalog workflow with nodes, or an object carrying an old
-     setup marker. Its setup job owns the description, including the Contact line, even during a describe-only run;
+   - *left to its own job* - a portal setup template or workflow, a catalog workflow this job made (1.107.0: in a
+     describe-only run, every catalog workflow - a workflow of yours under that name is described by the full job), or an
+     object carrying an old setup marker. Its setup job owns the description, including the Contact line, even during a
+     describe-only run;
    - *no description known* - a template whose playbook is not in the catalog, or a workflow the catalog does not
      know: left as it is;
    - *not in AAP* - a catalog template or workflow your AAP does not have: counted in *in short* only.
@@ -1033,7 +1048,8 @@ ticket in ServiceNow. In short:
 5. Launch **ServiceNow health** once: `API answers in N s`, then the MID Servers and their status. With the
    Windows inventory (a group `servicenow_mid_hosts`) and its Machine (Windows) credential, it checks the MID
    Server hosts too ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#mid-servers)).
-6. Build the *Daily health* workflow ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
+6. Run **AAP - set up job templates** (Check, then Run): it makes the *Daily health* workflow, and adds the
+   `health_checks` survey question to *Health check* when it is missing - [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#the-job-makes-them-11070).
    Its tickets step then runs after every check.
 
 Try it safely first: launch the workflow **without** the ServiceNow API credential on the

@@ -169,4 +169,5 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | [win_stig_drift_report.yml](win_stig_drift_report.yml) |
 | Windows STIG recheck | `playbooks/win_stig_recheck.yml` | [win_stig_recheck.yml](win_stig_recheck.yml) |
 | Windows troubleshoot | `playbooks/win_troubleshoot.yml` | [win_troubleshoot.yml](win_troubleshoot.yml) |
+| Workflow dry run - the guard (1.107.0) | `playbooks/workflow_dry_run.yml` | [workflow_dry_run.yml](workflow_dry_run.yml) |
 | Workflow gate - has a plan | `playbooks/workflow_gate.yml` | [workflow_gate.yml](workflow_gate.yml) |

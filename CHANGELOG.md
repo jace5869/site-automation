@@ -134,6 +134,92 @@ restricted session: writes, redirection, Add-Type, indirect calls and wrong prox
 `test_stig_answer_win_host.py` (the host, the scan, the report, the cross-check; every pattern code passes the session's check),
 `tests/stig/run_stig_answer_keys_win_test.sh` (a stand-in Windows host: PowerShell 7, the stand-in Evaluate-STIG, STIG Manager and auditpol).
 Not tested here: the Windows-only commands and the registry on a real Windows Server.
+## 1.107.0 — 2026-11-22
+
+**To set up:**
+
+1. Run **AAP - set up job templates** with Job type **Check**. Read each workflow's line: *WOULD CREATE* with its nodes,
+   *already right*, *SKIPPED* (the reason is on the line), *NOT MADE BY THIS JOB* or *same steps, other name*; and on
+   *Health check*, *Troubleshoot* and *Windows health check*: *would add survey
+   question(s)* (a survey you switched off stays off: *its survey is off* - turn it on, or run with overwrite).
+2. *DIFFERS* on *Windows patch*, *ACT for Windows - install*, *Network config load*, *STIG Manager - deploy*,
+   *Horizon - desktops check*, *fapolicyd* or *Linux - auditd tuning*: tick the prompt
+   it names (or set the Variable) by hand, or run with `aap_templates_overwrite: true`.
+   A template the job now checks for Job type Run (a step after an approval) that is Check: set it to Run.
+3. Run it again with Job type **Run**.
+4. Add what stays yours: the schedules, who may approve, the notifications.
+
+**AAP - set up job templates builds the catalog workflows.**
+
+- 40 workflows are made, each as docs/WORKFLOWS_AND_SCHEDULES.md and its guide draw it. Before, only the two STIG jobs
+  were. The job makes each step, link, approval (its name, timeout and description) and gate (`workflow_gate_var`). It
+  sets each step's answers, Prompt on launch for Limit, the workflow's Variables and its survey.
+- Not made here: the site portal's 9 workflows (40, 44 to 51). *AAP - set up portal actions* makes them. Workflow 37
+  and its Windows twin are not made either: *STIG - drift scan and upload* replaces them.
+- **The survey questions the steps need** are added to *Health check*, *Troubleshoot* and *Windows health check*,
+  as their guides name them (`health_checks`, `use_act`, `site_act_level`, `ts_area` ...). Only the missing ones; a question there is
+  never changed or taken off. A new survey is turned on; one its owner switched off stays off without overwrite. Only on the catalog's own template
+  (its playbook and project, after what this run brings right). Check lists them first. Each answer a node gives must
+  fit the template's question there - its type, its choices, its bounds - whatever Prompt on launch for Variables says,
+  or the workflow is skipped before any write.
+- **A dry run before an approval is a Check template itself**: *Patch hosts (dry run)*, *Windows patch (dry run)*,
+  *ACT for Windows - install (dry run)*, *Network config load (dry run)*, *STIG Manager - deploy (dry run)* (with Show
+  changes), each made from the template it previews (its Variables and inventory) with `site_dry_run_only: true`. A
+  node's Job type was not enough: with the prompt unticked AAP runs the template's own Job type, and the load would go
+  out before the approval.
+- **A dry-run template runs as Check only.** The five playbooks import `playbooks/workflow_dry_run.yml` to refuse Run
+  before any host is changed. Every step after an approval must use a Run template. *AAP - set up job templates*
+  checks this when it builds or checks the workflow.
+- The VM deploy workflow is left by hand for now: the build's binding to what was approved is being reviewed (docs/VM_DEPLOY_GUIDE.md, step 8).
+- **Never Prompt on launch for Variables** for a workflow's answers: anyone who may launch could then change any
+  setting. *Network config load (workflow)* has a survey (the change, the mode, the devices, the lines one per row, the
+  backup). *Network config load* now reads lines (and parents) given as text, one per row. A workflow there whose
+  survey would override what its steps fix (the phase, the plan var, the workflow's own Variables) is not wired, even
+  with overwrite.
+- *STIG Manager deploy with checks* looks at the containers after the deploy with *Service watch - check (approval
+  only)* (`watch_mode: approval`), and the health checks of the workflows with an approval (3, 4, 10) answer
+  `use_act: no`: a failure path the approval did not cover is reported, never fixed.
+- A step that runs on the controller (the gate, the update, the tickets) with a Limit of its own is refused unless
+  that Limit names localhost in a plain list (`all` does not hold the implicit localhost): it would run nothing and
+  end green.
+- A step must take what its node gives: its survey question, Prompt on launch for Job type, and the fixed Variables its
+  node relies on (*Horizon - desktops check* in `approval` mode, the checks' workflow and plan settings). When it
+  lacks one, the workflow is *SKIPPED*, and the line names what to add.
+- An error of one workflow (a read AAP refuses, a survey it rejects) is said for that workflow; the others go on, and
+  the fingerprints of those written are handed on. A workflow made part way stays this job's: the next Run makes its
+  nodes again. A survey AAP refused is written by the next Run. Every survey question carries the fields AAP needs.
+- A workflow of yours under the catalog's name is *NOT MADE BY THIS JOB*. One the job made and someone changed since
+  is *CHANGED BY HAND*. Both are listed field by field and node by node (an approval's description too; one template
+  twice told apart by its Job type and answers), and left as they are. `aap_templates_overwrite: true` brings them right.
+- A workflow of yours with the same steps (and the catalog's Variables, so the mail relay add and remove stay apart)
+  under another name: *same steps, other name*. It is not made twice. `aap_templates_create_alias: true` makes the
+  catalog's beside it. `aap_templates_create_missing: false` makes none.
+- A workflow's survey is written when the job makes it, and never changed after: the pick lists' choices stay. One taken
+  off by hand, or switched off, is said, and put back only with `aap_templates_overwrite: true`.
+- The site portal's label goes on the two STIG jobs only, never on a step. A step of another workflow keeps its own
+  label, as before.
+- New catalog templates: *fapolicyd - check* and *fapolicyd - approved* (workflow 36; both read `fapolicyd_since:
+  yesterday`, the approved one the window the check read); the five dry runs; *Service watch - check (approval only)*.
+- Changed catalog templates:
+  - *Horizon - desktops check*: `horizon_desktops_mode: approval`.
+  - Prompt on launch for Job type (to try them by hand): *Windows patch*, *ACT for Windows - install*, *Network config
+    load*, *VM - deploy from ServiceNow ticket*; *STIG Manager - deploy* also for Show changes.
+  - *fapolicyd*, *Linux - auditd tuning* (and its check), *Evaluate-STIG - update*: the Machine credential is needed
+    ("with sudo" had made it optional).
+  - Every catalog template's Job type is checked (Run; Check for the dry runs).
+  - A template already in AAP is not changed: the Check says *DIFFERS*. `aap_templates_overwrite: true` brings it
+    right, or change it by hand. Until then the workflow that needs it is *SKIPPED*, said.
+- Describe: a workflow of yours under a catalog workflow's name is described in the full run. A describe-only run
+  leaves every catalog workflow to this job.
+- Docs: WORKFLOWS_AND_SCHEDULES.md ("The job makes them"; the dry-run templates in 4, 10, 14, 15), SETUP_AAP.md,
+  DRY_RUNS.md, VM_DEPLOY_GUIDE.md (manual workflow setup),
+  NETWORK_CONFIG.md (the workflow's survey, its dry-run template), MAIL_RELAY.md
+  (`report_email_to` in the templates' Variables), and the guides of each workflow (the click-by-click steps stay, as
+  the manual way).
+- Tests: test_catalog_workflows.py (every workflow's nodes, steps, links, gates, approvals, surveys; the builder's
+  parts; each finding of the review), tests/portal_setup/run_aap_catalog_workflows_test.sh (all 40 against the
+  stand-in AAP, the reviews' findings), test_workflow_dry_run.py (the guard), run_net_config_test.sh (the lines as text),
+  the fake AAP (surveys as AAP checks them, a node's Job type and Show changes, a read that fails).
 
 ## 1.103.1 — 2026-11-21
 

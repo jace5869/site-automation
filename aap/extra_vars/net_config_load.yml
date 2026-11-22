@@ -88,12 +88,8 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 
 ## IOS: the lines, as typed in configuration mode, e.g. ["ntp server 192.0.2.123", "banner motd
 ## ^Authorized use only^"]; under net_config_parents (e.g. ["interface GigabitEthernet1"]) when they
-## belong to one.
+## belong to one. 1.107.0: also text, one line per row (the load workflow's survey box).
 # net_config_lines: []
-
-## IOS: the parent lines the lines go under (e.g. ["interface GigabitEthernet1"]); [] = global
-## configuration
-# net_config_parents: []
 
 ## PAN-OS: the changes - each {xpath, element, action}: action set (adds or replaces the element's
 ## children), edit (replaces the element at the xpath), delete (no element).

@@ -322,8 +322,9 @@ account? A plain domain user reads the domain from the AAP side instead (reader 
 
 ## Step 7. Workflows and schedules
 
-These are the same as for Linux, with the Windows templates. The full list, with every step and
-link, is in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md) (workflows 12 to 17):
+These are the same as for Linux, with the Windows templates. *AAP - set up job templates* makes them (1.107.0), and adds the
+`health_checks` survey question to *Windows health check* when it is missing. The full list, with every step and link, is
+in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md) (workflows 12 to 17):
 
 | Workflow | Steps | Schedule |
 |---|---|---|

@@ -6,6 +6,8 @@
 # nor a credential of a type the catalog does not name. Run it with Check first: it then only reads and says what it would
 # make or change. The "Red Hat Ansible Automation Platform" credential's user needs Admin on the organization.
 # 1.79.19: it can also rename your templates and workflows to the catalog's names, and match their fields (below).
+# 1.107.0: it makes every workflow of the catalog too (docs/WORKFLOWS_AND_SCHEDULES.md, "The job makes them"): each node
+# and link, its survey when AAP has none - never its schedules.
 
 aap_templates_organization: Default            # the organization the templates are made in
 aap_templates_project: site-automation         # your site-automation project in AAP (its name)
@@ -23,7 +25,9 @@ aap_templates_credentials: {}
 aap_templates_only: []
 aap_templates_overwrite: false                 # true = bring a template that differs right (only the fields this job sets)
 # true = make the catalog's template even when its playbook already runs under a name of yours ("same playbook, other
-# name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions)
+# name"), for a workflow of yours that names the catalog's (the site portal's own: AAP - set up portal actions);
+# 1.107.0: and the catalog's workflow even when a workflow of yours has its steps under another name ("same steps,
+# other name")
 aap_templates_create_alias: false
 # 1.83.0: the STIG workflows' steps made by another job (the gate, STIG Manager - update): when AAP has none under the
 # catalog's name, your template that runs its playbook is used (Check says "uses ..."). Several run it: name the one here
@@ -51,7 +55,8 @@ aap_templates_rename_map: {}
 # the fields brought to the catalog's on your templates, without aap_templates_overwrite: any of
 #   inventory, credentials (only the missing kinds added - none taken off), prompts, ee, labels (the portal's)
 aap_templates_match: []
-# false = a catalog template your AAP does not have is not made, only counted (true: made, as before 1.79.19)
+# false = a catalog template (1.107.0: or workflow) your AAP does not have is not made, only counted (true: made, as
+# before 1.79.19)
 aap_templates_create_missing: true
 # the areas left out of the renames and the match (the catalog's area; Network = also every template of the Network EE)
 aap_templates_rename_skip_areas: [Network]

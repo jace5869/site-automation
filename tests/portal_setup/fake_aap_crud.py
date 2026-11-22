@@ -15,7 +15,10 @@ one by hand. Under api/controller/v2/, Bearer FAKE_AAP_TOKEN. Not AAP: just enou
   credentials/<id>/                         PATCH (a rename: 400 when the organization has that name - AAP Credentials setup)
   a list GET filters on any other field too (?inventory=3);  schedules/ GET;  workflow_job_template_nodes/<id>/ PATCH;
   inventories/<id>/groups/, inventories/<id>/hosts/   GET ?name= (the state's groups and hosts, each with its inventory)
-A write to a path in the state's "fail_paths" answers 500 (a failure mid-run); a link from a node whose identifier is in
+  <kind>/<id>/survey_spec/                  GET, POST (1.107.0: the state's "surveys" {"<kind>/<id>": spec}); a node's job_type and
+                                            diff_mode (POST, PATCH) only on a template that prompts for them, its extra_data only on
+                                            one that prompts for Variables or has those questions in its survey (on), as AAP
+A read of a path in "fail_get_paths" answers 404 (1.107.0). A write to a path in the state's "fail_paths" answers 500 (a failure mid-run); a link from a node whose identifier is in
 "fail_links_from" too. Every write is a line in FAKE_AAP_LOG.  fake_aap_crud.py PORT"""
 import json
 import os
@@ -96,6 +99,7 @@ def node_view(s, n):
     return {"id": n["id"], "identifier": n["identifier"], "workflow_job_template": n["wf"], "all_parents_must_converge": n["converge"],
             "success_nodes": n["success"], "failure_nodes": n["failure"], "always_nodes": n["always"],
             "extra_data": n.get("extra_data") or {}, "summary_fields": {"unified_job_template": ujt},
+            "job_type": n.get("job_type"), "diff_mode": n.get("diff_mode"),
             "inventory": n.get("inventory"), "limit": n.get("limit") or ""}
 
 
@@ -115,8 +119,25 @@ def by_fields(rows, q):
 
 TPL_FIELDS = ("name", "description", "job_type", "project", "playbook", "inventory", "ask_variables_on_launch", "ask_limit_on_launch",
               "become_enabled", "extra_vars", "execution_environment", "organization", "ask_inventory_on_launch",
-              "ask_job_type_on_launch")
-WF_FIELDS = ("name", "description", "organization", "ask_variables_on_launch", "ask_limit_on_launch", "extra_vars")
+              "ask_job_type_on_launch", "ask_diff_mode_on_launch", "survey_enabled", "diff_mode", "limit")
+WF_FIELDS = ("name", "description", "organization", "ask_variables_on_launch", "ask_limit_on_launch", "extra_vars", "survey_enabled")
+
+
+def node_refused(s, jt, b):
+    """As AAP: what a node may give its template - Variables only when it prompts for them or its survey (on) has the
+    question, Job type / Show changes only when it prompts for them. -> the 400 answer, or None."""
+    if jt is None:
+        return None
+    if b.get("extra_data") and not jt.get("ask_variables_on_launch"):
+        qs = [q.get("variable") for q in ((s.get("surveys") or {}).get("job_templates/%d" % jt["id"]) or {}).get("spec") or []] \
+            if jt.get("survey_enabled") else []
+        if any(k not in qs for k in b["extra_data"]):
+            return {"extra_data": ["Variables are not allowed on launch for this template."]}
+    if b.get("job_type") and not jt.get("ask_job_type_on_launch"):
+        return {"job_type": ["Field is not configured to prompt on launch."]}
+    if b.get("diff_mode") is not None and not jt.get("ask_diff_mode_on_launch"):
+        return {"diff_mode": ["Field is not configured to prompt on launch."]}
+    return None
 
 
 def rrule_problem(rr):
@@ -158,6 +179,8 @@ class H(BaseHTTPRequestHandler):
         p, q = u.path[len(BASE):], dict((k, v[0]) for k, v in parse_qs(u.query).items())
         with LOCK:
             s = load()
+            if p in (s.get("fail_get_paths") or []):          # 1.107.0: a read that fails (the test's fail_get_paths)
+                return self.send(404, {"detail": "Not found."})
             if p == "me/":
                 return self.send(200, {"results": [{"username": "setup-admin"}]})
             m = re.match(r"^(organizations|projects|inventories|credentials|execution_environments|users|job_templates|workflow_job_templates|labels)/$", p)
@@ -193,6 +216,9 @@ class H(BaseHTTPRequestHandler):
                 ids = set(r.get("label_ids", [])) | set(x for x in r.get("labels", []) if isinstance(x, int))
                 rows = [x for x in s.get("labels", []) if x["id"] in ids]
                 return self.send(200, {"count": len(rows), "results": rows, "next": None})
+            m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/survey_spec/$", p)
+            if m:                                            # 1.107.0: {} when it has none, as AAP
+                return self.send(200, (s.get("surveys") or {}).get("%s/%s" % (m.group(1), m.group(2))) or {})
             m = re.match(r"^job_templates/(\d+)/credentials/$", p)
             if m:
                 jt = next(r for r in s["job_templates"] if r["id"] == int(m.group(1)))
@@ -301,12 +327,28 @@ class H(BaseHTTPRequestHandler):
                 if m:
                     n = {"id": new_id(s), "wf": int(m.group(1)), "identifier": b.get("identifier") or "", "converge": bool(b.get("all_parents_must_converge")),
                          "unified_job_template": b.get("unified_job_template"), "approval": None, "success": [], "failure": [], "always": [],
-                         "extra_data": b.get("extra_data") or {}}
+                         "extra_data": b.get("extra_data") or {}, "job_type": b.get("job_type"), "diff_mode": b.get("diff_mode")}
                     jt = next((j for j in s["job_templates"] if j["id"] == n["unified_job_template"]), None)
-                    if n["extra_data"] and jt and not jt.get("ask_variables_on_launch"):     # as AAP: only a prompted field
-                        return self.send(400, {"extra_data": ["Variables are not allowed on launch for this template."]})
+                    bad = node_refused(s, jt, b)                 # as AAP: only a prompted field
+                    if bad:
+                        return self.send(400, bad)
                     s["nodes"].append(n)
                     return self.send(201, {"id": n["id"]})
+                m = re.match(r"^(job_templates|workflow_job_templates)/(\d+)/survey_spec/$", p)
+                if m:
+                    # 1.107.0 (review): what AAP's survey validation asks of every question - its name, variable, type,
+                    # required, default and description keys; a choice question's choices (a list, or text one per line)
+                    if "name" not in b or "description" not in b or not isinstance(b.get("spec"), list):
+                        return self.send(400, {"error": "'name', 'description' and 'spec' are required"})
+                    for q in b["spec"]:
+                        miss = [k for k in ("question_name", "question_description", "variable", "type", "required", "default") if k not in q]
+                        if miss:
+                            return self.send(400, {"error": "'%s' missing from survey question %s." % (miss[0], q.get("variable"))})
+                        if q["type"] in ("multiplechoice", "multiselect") and not (
+                                (isinstance(q.get("choices"), list) and q["choices"]) or (isinstance(q.get("choices"), str) and q["choices"].strip())):
+                            return self.send(400, {"error": "Survey question %s needs choices." % q["variable"]})
+                    s.setdefault("surveys", {})["%s/%s" % (m.group(1), m.group(2))] = b
+                    return self.send(200, b)
                 m = re.match(r"^workflow_job_template_nodes/(\d+)/create_approval_template/$", p)
                 if m:
                     n = next(x for x in s["nodes"] if x["id"] == int(m.group(1)))
@@ -375,11 +417,11 @@ class H(BaseHTTPRequestHandler):
                 n = next((x for x in s["nodes"] if x["id"] == int(m.group(1))), None)
                 if n is None:
                     return self.send(404, {"detail": "Not found."})
-                if b.get("extra_data"):              # as AAP: Variables only for a template that asks for them on launch
-                    jt = next((j for j in s["job_templates"] if j["id"] == b.get("unified_job_template", n.get("unified_job_template"))), None)
-                    if jt and not jt.get("ask_variables_on_launch"):
-                        return self.send(400, {"extra_data": ["Variables are not allowed on launch for this template."]})
-                n.update(dict((k, v) for k, v in b.items() if k in ("inventory", "limit", "unified_job_template", "extra_data")))
+                jt = next((j for j in s["job_templates"] if j["id"] == b.get("unified_job_template", n.get("unified_job_template"))), None)
+                bad = node_refused(s, jt, b)             # as AAP: Variables, Job type only for a template that asks for them
+                if bad:
+                    return self.send(400, bad)
+                n.update(dict((k, v) for k, v in b.items() if k in ("inventory", "limit", "unified_job_template", "extra_data", "job_type", "diff_mode")))
                 save(s)
                 return self.send(200, node_view(s, n))
         return self.send(404, {"detail": "Not found."})

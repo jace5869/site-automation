@@ -169,7 +169,7 @@ class SyncFingerprints(unittest.TestCase):
             api.call.side_effect = [(200, {"results": [{"id": 1, "name": "Example org"}]}),
                                     (200, {"results": [{"id": 2, "name": "Example project", "organization": 1}]})]
             W.main()
-        module.exit_json.assert_called_once_with(changed=False, results=[], problems=[], fingerprints=known)
+        module.exit_json.assert_called_once_with(changed=False, results=[], problems=[], fingerprints=known, org_id=1)
 
     def test_hand_edit_keeps_the_recorded_fingerprint_until_overwrite(self):
         known = {self.key: self.fp("Previous description")}
