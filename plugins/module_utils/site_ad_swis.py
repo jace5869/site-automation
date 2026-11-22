@@ -148,7 +148,8 @@ def _full(x):
 
 def match(dcs, nodes):
     """Each DC -> (its node or None, how, why). The full name first (the DC's FQDN against a node's caption or DNS name);
-    a short name only when one node has it and that node's own full name (if any) is not another domain's; then an IP
+    a short name only when one node has it and that node's own full name (if any) is not another domain's (the DC's FQDN,
+    else its AD domain); then an IP
     that one node has. Never one node for two DCs (the second is said, not shown)."""
     full, short, ips = {}, {}, {}
     for n in nodes:
@@ -176,8 +177,12 @@ def match(dcs, nodes):
             why = "%d SolarWinds nodes are named %s" % (len(c), fq)
         if node is None and not c:
             c = uniq(short.get(sn, []))
+            dom = str(d.get("domain") or "").strip().lower().rstrip(".")
             if fq:                                       # a node with another domain's full name is not this DC
                 c = [n for n in c if not ({_full(n.get("name")), _full(n.get("dns"))} - {""}) or fq in (_full(n.get("name")), _full(n.get("dns")))]
+            elif dom:                                    # no FQDN (a short inventory name): the AD domain says which node's it is
+                c = [n for n in c if not ({_full(n.get("name")), _full(n.get("dns"))} - {""})
+                     or any(f.endswith("." + dom) for f in (_full(n.get("name")), _full(n.get("dns"))) if f)]
             if len(c) == 1:
                 node, how = c[0], "name"
             elif len(c) > 1:

@@ -87,7 +87,9 @@
     });
     return out;
   }
-  const swFor = (sws, d) => sws[idOf(d)] || sws["?|" + String(d.dc).toLowerCase()];
+  // a row without a domain: only for the one DC of that name on the page - never one Up for two domains' DC01
+  const swFor = (sws, d, m) => sws[idOf(d)] || ((m.dcs || []).filter(x => x.dc.toLowerCase() === String(d.dc).toLowerCase()).length === 1
+                                                ? sws["?|" + String(d.dc).toLowerCase()] : undefined);
   // a DC's name, with its domain when another DC on the page has the same name
   const nameOf = (m, d) => (m.dcs || []).filter(x => x.dc.toLowerCase() === String(d.dc).toLowerCase()).length > 1 && d.domain ? d.dc + " (" + d.domain + ")" : d.dc;
   function glance(a, m) {
@@ -96,22 +98,27 @@
     const failing = links.filter(x => x.failures > 0), late = links.filter(x => !(x.failures > 0));
     const first = bad[0];
     const swDown = sw.tile ? sw.tile.value : null;
-    const sws = swOf(sw), seen = dcs.map(d => [d, swFor(sws, d)]);
+    const sws = swOf(sw), seen = dcs.map(d => [d, swFor(sws, d, m)]);
     const swFirst = seen.filter(([, v]) => v && /critical|warning/.test(v[1])).sort((x, y) => RANK[x[1][1]] - RANK[y[1][1]])[0];
     const swUp = seen.filter(([, v]) => v && v[1] === "ok").length, swNot = dcs.length - swUp - seen.filter(([, v]) => v && /critical|warning/.test(v[1])).length;
     const day = m.hist.filter(h => Date.parse(h.at) >= Date.now() - 864e5).length;
     const t = [
       tile("Status now", chip(run.status || "ok"), crit.length + " DC" + (crit.length === 1 ? "" : "s") + " critical, " + (warn.length || "none") + " warning"),
-      tile("DCs read", run.dcs_read + " of " + run.dcs, run.dcs_read === run.dcs ? "every DC answered" : (run.dcs - run.dcs_read) + " did not answer"),
+      run.dcs ? tile("DCs read", run.dcs_read + " of " + run.dcs, run.dcs_read === run.dcs ? "every DC answered" : (run.dcs - run.dcs_read) + " did not answer")
+              : tile("DCs read", num("none", "critical"), "the AD job found no DC (its read of the domain failed)"),
       tile("DCs with a problem", num(bad.length, bad.length ? (crit.length ? "critical" : "warning") : ""),
            first ? first.dc + " " + WORD[first.now].toLowerCase() + (first.since_shown ? " since " + hhmm(first.since_shown) : "") : "none"),
       tile("SolarWinds: down or warning", swDown == null ? "-" : num(swDown, swDown ? sw.tile.status : ""),
            !sw.on ? "not read here" : swFirst ? nameOf(m, swFirst[0]) + " " + swFirst[1][0]
              : !sw.section ? "reading…" : swUp === dcs.length ? "every DC up"
              : swNot + " DC" + (swNot === 1 ? "" : "s") + " not in SolarWinds or not matched, " + swUp + " up"),
-      tile("Replication failing", num(failing.length + (failing.length === 1 ? " link" : " links"), failing.length ? "critical" : ""),
-           failing.length ? "no success since " + hhmm(failing.map(x => x.last_success_shown).filter(Boolean).sort()[0] || "-") : "none"),
-      tile("Replication late", num(late.length + (late.length === 1 ? " link" : " links"), late.length ? "warning" : ""), late.length ? "past the matrix's hours since the last success" : "none"),
+      !replRead(run) ? tile("Replication failing", num("not read", "warning"), replWhy(run))
+        : tile("Replication failing", num(failing.length + (failing.length === 1 ? " link" : " links"), failing.length ? "critical" : ""),
+               failing.length ? "no success since " + hhmm(failing.map(x => x.last_success_shown).filter(Boolean).sort()[0] || "-")
+                              : replAll(run) ? "none" : "none of those read - " + replWhy(run)),
+      !replRead(run) ? tile("Replication late", num("not read", "warning"), replWhy(run))
+        : tile("Replication late", num(late.length + (late.length === 1 ? " link" : " links"), late.length ? "warning" : ""),
+               late.length ? "past the matrix's hours since the last success" : replAll(run) ? "none" : "none of those read"),
       tile("AD job runs, 24 h", String(day), run.next ? "next " + hhmm(run.next) : "the schedule was not read"),
       tile("Worst DC, 7 days", m.worst7 ? nameOf(m, m.worst7) : "none", m.worst7 ? "critical in " + m.worst7.critical + " of " + m.hist.length + " runs" : "no DC critical"),
     ];
@@ -119,10 +126,10 @@
   }
   function dcTable(a, m) {
     const sws = swOf(a.sw), n = m.times.length;
-    const swRank = d => { const s = swFor(sws, d); return s && s[1] === "critical" ? 0 : s && s[1] === "warning" ? 1 : 2; };
+    const swRank = d => { const s = swFor(sws, d, m); return s && s[1] === "critical" ? 0 : s && s[1] === "warning" ? 1 : 2; };
     const dcs = m.dcs.slice().sort((x, y) => (RANK[x.now] - RANK[y.now]) || (swRank(x) - swRank(y)) || x.dc.localeCompare(y.dc));
     const rows = dcs.map(d => {
-      const s = swFor(sws, d);
+      const s = swFor(sws, d, m);
       const why = d.worst || (s && s[1] === "critical" ? "SolarWinds: " + s[0] + ", AD answers" : "");
       const tr = el("tr", d.now !== "ok" ? "r-" + d.now : "");
       tr.dataset.dc = idOf(d);
@@ -142,15 +149,23 @@
     return sec("Domain controllers", m.dcs.length, "worst first · a square is one run, oldest left",
                [table([["DC"], ["Site", "adp-wide"], ["Now"], ["Since"], ["Last 24 h (" + n + (n === 1 ? " run)" : " runs)")], ["SolarWinds"], ["What is wrong", "adp-wide"]], rows, "adp-dcs"), leg]);
   }
+  // the newest run's replication coverage: repl_read of dcs DCs read (an older answer without it: all)
+  const replRead = run => run.repl_read == null || run.repl_read > 0;
+  const replAll = run => run.repl_read == null || run.repl_read >= run.dcs;
+  const replWhy = run => (run.repl_read || 0) + " of " + run.dcs + " DCs' replication read (no rights, or not reached: the full report says which)";
   function linkTable(m) {
-    if (!m.links.length) return sec("Replication links that need a look", 0, "as of " + hhmm(m.run.as_of), [el("p", "muted", "None: every replication link succeeded within the matrix's hours.")]);
+    if (!replRead(m.run)) return sec("Replication links that need a look", null, "as of " + hhmm(m.run.as_of),
+                                     [note("warn", "Replication was not read in this run: " + replWhy(m.run) + ". No link is known - not \"all fine\".")]);
+    const part = replAll(m.run) ? null : note("warn", "Only " + replWhy(m.run) + ": the others' links are not known.");
+    if (!m.links.length) return sec("Replication links that need a look", 0, "as of " + hhmm(m.run.as_of),
+                                    [part, el("p", "muted", part ? "None among the DCs whose replication was read." : "None: every replication link succeeded within the matrix's hours.")]);
     const rows = m.links.map(x => el("tr", RANK[x.now] < 2 ? "r-" + x.now : "", [
       el("td", "adp-dc", [el("b", "", x.frm), " → ", el("b", "", x.to), el("div", "adp-why", x.nc + (x.error ? " · " + x.error : ""))]),
       el("td", "nw adp-wide", x.nc), el("td", "nw", chip(x.now)), el("td", "nw adp-wide", x.last_success_shown || "never"),
       el("td", "nw", (x.failures > 0 ? "failing, no success since " : "late, no success since ") + (hhmm(x.last_success_shown) || "-")),
       el("td", "num", x.failures || "-"), el("td", "adp-wide", x.error || el("span", "muted", "-"))]));
     return sec("Replication links that need a look", m.links.length, "as of " + hhmm(m.run.as_of),
-               [table([["From → to"], ["Partition", "adp-wide"], ["Now"], ["Last success", "adp-wide"], ["Since"], ["Failures", "num"], ["Error", "adp-wide"]], rows)]);
+               [part, table([["From → to"], ["Partition", "adp-wide"], ["Now"], ["Last success", "adp-wide"], ["Since"], ["Failures", "num"], ["Error", "adp-wide"]], rows)]);
   }
   function windows(hist) {     // the worst run of each 2 hours (the week has ~336 runs: too many columns)
     const out = [], by = {};
@@ -204,9 +219,8 @@
       }
       box.append(s);
     };
-    requestAnimationFrame(draw);
-    chart.redraw = draw;
-    const runs = m.hist.slice(-8).reverse().map(h => el("tr", "", [el("td", "nw", h.at_shown), el("td", "nw", chip(h.c ? "critical" : h.w ? "warning" : "ok")),
+    chart.redraw = draw;                       // drawn once the page is in place (its width known): draw() below
+    const runs = m.hist.slice(-8).reverse().map(h => el("tr", "", [el("td", "nw", h.at_shown), el("td", "nw", chip(WORD[h.status] ? h.status : h.c ? "critical" : h.w ? "warning" : h.status ? "unknown" : "ok")),
       el("td", "num", h.c), el("td", "num", h.w), el("td", "num", h.read + " of " + h.dcs), el("td", "nw", h.job ? "job " + h.job : "-")]));
     const leg = el("p", "adp-leg", [el("span", "", [el("i", "k-critical"), "Critical"]), el("span", "", [el("i", "k-warning"), "Warning"])]);
     return sec("DCs with a problem, last 7 days", null, "the worst run of each 2 hours; the numbers: the runs below",
@@ -219,7 +233,7 @@
   let last = null;
   function said(a, m) {
     const now = {}, sws = swOf(a.sw);
-    (m && m.dcs || []).forEach(d => { now[idOf(d)] = [d.now, (swFor(sws, d) || [])[0], nameOf(m, d)]; });
+    (m && m.dcs || []).forEach(d => { now[idOf(d)] = [d.now, (swFor(sws, d, m) || [])[0], nameOf(m, d)]; });
     if (last) {
       const out = [];
       Object.keys(now).forEach(id => {
@@ -261,6 +275,7 @@
                                        "\"Report database\" credential (the template setup job attaches it). The next run is the first."));
     } else {
       parts.push(live(a, m));
+      if (m.run.why) parts.push(note("bad", "This run's DCs and links could not be kept: " + m.run.why + ". Its counts below are not the AD state."));
       if (db.stale) parts.push(note("warn", "The report database was not read just now (" + db.stale + "): this is its answer of " + ago(db.age) + ", as of its run " + m.run.as_of + "."));
       else if (db.refreshing) parts.push(note("", "Reading the report database again: this is its answer of " + ago(db.age) + " (nobody had the page open)."));
       if (m.run.old) parts.push(note("warn", "The newest AD run is " + hrs(m.run.age_min) + " old (more than " + a.old_after + " min): the AD job has not run since. " +
@@ -272,6 +287,7 @@
     if (a.down) parts.unshift(note("bad", "The portal did not answer (" + a.down + "): this is its answer of " + ago(a.since) +
                                           ", not now. Tried again in " + poll + " s."));
     root.replaceChildren(...parts);
+    if (m && m.run && chart.redraw && document.querySelector(".adp-chart")) chart.redraw();   // now: no frame to wait for (a background tab has none)
     said(a, m);
   }
 
@@ -290,18 +306,26 @@
     return a2;
   }
 
-  let etag = "", shown = null, got = Date.now(), timer = null, poll = 60, down = "";
+  const ASK_SECONDS = 20;                     // a poll, its body too, gets this long - then it is a failed poll (Not live)
+  let etag = "", shown = null, got = Date.now(), timer = null, poll = 60, down = "", seq = 0;
   function ask() {
-    fetch(API, {headers: etag ? {"If-None-Match": etag} : {}, credentials: "same-origin", cache: "no-store"}).then(r => {
-      if (r.status === 304) return null;
-      if (!r.ok) throw new Error("the portal answered " + r.status);
-      etag = r.headers.get("ETag") || "";
-      got = Date.now();
-      return r.json();
-    }).then(a => {
+    const n0 = ++seq, ctl = window.AbortController ? new AbortController() : null;
+    let late;
+    const deadline = new Promise((_, no) => { late = setTimeout(() => { if (ctl) ctl.abort(); no(new Error("no answer in " + ASK_SECONDS + " s")); }, ASK_SECONDS * 1000); });
+    const asked = fetch(API, {headers: etag ? {"If-None-Match": etag} : {}, credentials: "same-origin", cache: "no-store", signal: ctl ? ctl.signal : undefined})
+      .then(r => {
+        if (r.status === 304) return null;
+        if (!r.ok) throw new Error("the portal answered " + r.status);
+        // the body first: its tag and time are kept only with a body read whole (a cut body never leaves its tag behind)
+        return r.json().then(a => ({a, tag: r.headers.get("ETag") || ""}));
+      });
+    Promise.race([asked, deadline]).then(got2 => {
+      if (n0 !== seq) return;                   // an older poll that answered late: not this one's
       down = "";                                // an answer (200 or 304): the portal is there again
-      if (a) {
-        shown = a;
+      if (got2) {
+        const a = got2.a;
+        if (!a || typeof a !== "object") throw new Error("the portal's answer could not be read");
+        shown = a; etag = got2.tag; got = Date.now();
         // the first read not there yet, or an answer from before a quiet spell: asked again soon, not in a minute
         poll = a.db && a.db.on && (!a.db.model || a.db.refreshing) && !a.db.stale ? 3 : Math.max(15, Math.min(300, a.poll || 60));
         draw(a);
@@ -311,6 +335,7 @@
         draw(aged(shown));
       }
     }).catch(e => {
+      if (n0 !== seq) return;
       down = e.message || "no answer";
       if (shown) {                              // the last answer, said as not now: not Live, its ages still growing
         last = null;
@@ -321,7 +346,7 @@
       n.id = "ad-off";
       n.textContent = "The portal did not answer (" + down + "): tried again in " + poll + " s.";
       if (!n.parentNode) root.prepend(n);
-    }).then(() => { clearTimeout(timer); timer = setTimeout(ask, poll * 1000); });
+    }).then(() => { clearTimeout(late); clearTimeout(timer); timer = setTimeout(ask, poll * 1000); });
   }
   window.adPage = {draw: d => { shown = d; draw(d); }};       // the tests
   ask();

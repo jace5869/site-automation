@@ -1444,26 +1444,29 @@ def ad_reader_report(reader, opts=None):
                "error": (d.get("bind") or {}).get("error", "")} for d in dcs if d.get("in_ad")]
     return {"report": report, "problems": R.problems, "dcs": dc_sum,
             "domains": [{"domain": dom, "forest": r.get("forest", ""), "dcs": len(in_ad), "dcs_read": n_ans, "collector": r.get("read_from")}],
-            "critical": len(crit), "warning": len(warn), "repl": _repl_reader(dcs, now, tsl)}
+            "critical": len(crit), "warning": len(warn), "repl": _repl_reader(dcs, now, tsl, dom)}
 
 
 # ---- 1.63.0: every replication link, for the replication matrix (plugins/filter/ad_repl_filters.py) ----------------------
 def _repl_admin(dcs, doms, now):
-    """Admin mode: each DC's repadmin /showrepl rows -> {dcs: [{name, site, read, why}], links: [{to, frm, nc, last_success,
-    last_attempt, last_failure, failures, error}], source, now, tombstone_days}. A DC AD knows but the job did not read is
+    """Admin mode: each DC's repadmin /showrepl rows -> {dcs: [{name, site, read, why, domain}], links: [{to, frm, nc, domain,
+    last_success, last_attempt, last_failure, failures, error}], source, now, tombstone_days} (domain: the receiving DC's). A DC AD knows but the job did not read is
     in dcs (read false): its column has no data, never a guess."""
     seen = {}
     for d in doms:
         for x in d["data"].get("dcs") or []:
             n = short(x.get("name")).upper()
             if n and n not in seen:
-                seen[n] = {"name": n, "site": str(x.get("site") or ""), "read": False, "why": "not in the inventory: not read"}
+                seen[n] = {"name": n, "site": str(x.get("site") or ""), "read": False, "why": "not in the inventory: not read",
+                           "domain": str(d["data"].get("dns") or "").lower()}
     links = []
     for x in dcs:
         n = x["_name"]
         data = x.get("data") or {}
         rec = seen.setdefault(n, {"name": n, "site": str(data.get("site") or ""), "read": False, "why": ""})
         rec["site"] = rec["site"] or str(data.get("site") or "")
+        dom = "" if x.get("_domain") == "?" else str(x.get("_domain") or "")
+        rec["domain"] = rec.get("domain") or dom
         errs = [e for e in data.get("errors") or [] if str(e).startswith("repadmin /showrepl")]
         if not x["_ok"]:
             rec.update(read=False, why="not reached: %s" % (x.get("error") or "no answer"))
@@ -1475,7 +1478,7 @@ def _repl_admin(dcs, doms, now):
                 continue
             if frm not in seen:
                 seen[frm] = {"name": frm, "site": str(r.get("source_site") or ""), "read": False, "why": "not in the inventory: not read"}
-            links.append({"to": n, "frm": frm, "nc": nc_name(r.get("nc")), "last_success": r.get("last_success") or "",
+            links.append({"to": n, "frm": frm, "nc": nc_name(r.get("nc")), "last_success": r.get("last_success") or "", "domain": dom,
                           "last_attempt": "", "last_failure": r.get("last_failure") or "", "failures": int(r.get("failures") or 0),
                           "error": str(r.get("status") or "").strip() if int(r.get("failures") or 0) else ""})
     tsl = min([d["data"].get("tombstone_days") or 60 for d in doms] or [60])
@@ -1483,7 +1486,7 @@ def _repl_admin(dcs, doms, now):
             "tombstone_days": tsl}
 
 
-def _repl_reader(dcs, now, tsl):
+def _repl_reader(dcs, now, tsl, dom=""):
     """Reader mode: each DC's own partition heads (site_ad_reader's repl) -> as _repl_admin. With no link readable, the
     up-to-dateness cursors stand in (when each DC's changes last arrived), the DC itself left out."""
     out, links, sources = [], [], set()
@@ -1492,7 +1495,7 @@ def _repl_reader(dcs, now, tsl):
             continue
         name = d.get("name") or _dc_short(d.get("fqdn"))
         rp = d.get("repl") or {}
-        rec = {"name": name, "site": str(d.get("site") or ""), "read": False, "why": ""}
+        rec = {"name": name, "site": str(d.get("site") or ""), "read": False, "why": "", "domain": str(dom or "").lower()}
         out.append(rec)
         if not (d.get("bind") or {}).get("ok"):
             rec["why"] = "not reached: %s" % ((d.get("bind") or {}).get("error") or "no answer")
@@ -1513,7 +1516,7 @@ def _repl_reader(dcs, now, tsl):
                 continue
             fails = int(ln.get("failures") or 0)
             links.append({"to": name, "frm": frm, "nc": nc_name(ln.get("nc")), "last_success": ln.get("last_success") or "",
-                          "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
+                          "domain": str(dom or "").lower(), "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
                           "failures": fails, "error": str(ln.get("result") or "") if fails else ""})
     return {"dcs": out, "links": links, "source": ", ".join(sorted(sources)), "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tombstone_days": tsl or 60}

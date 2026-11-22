@@ -57,7 +57,8 @@ def main():
         module.exit_json(**res)
     conn = None
     try:
-        conn, _tls = db.connect(p)
+        # a read deadline too: a server that takes the connection but never answers is said, never a deploy that hangs
+        conn, _tls = db.connect(dict(p, read_timeout=max(5, int(p.get("connect_timeout") or 10) * 2)))
         cur = conn.cursor()
         cur.execute("SHOW GRANTS FOR CURRENT_USER()")
         res["privileges"] = privileges([r[0] for r in cur.fetchall()])

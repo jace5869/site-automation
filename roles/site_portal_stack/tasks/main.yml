@@ -622,6 +622,7 @@
     ((_portal_rdb_state.stdout | trim) != (_portal_rdb_login | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
   changed_when: true
   no_log: true
+  register: _portal_rdb_gone
 
 - name: Report database | create or replace
   ansible.builtin.command:
@@ -911,6 +912,7 @@
     and ('site-portal-app.container' in _changed or _portal_app_files is changed or _portal_settings_file is changed
          or _portal_actions_file is changed or _portal_logo_file is changed or _portal_secret_set is changed or _portal_trust is changed
          or _portal_swis_set is changed or _portal_swis_gone is changed
+         or _portal_rdb_set is changed or _portal_rdb_gone is changed
          or _portal_trust_gone is changed)
 
 - name: Units | restart its nginx (its server or certificates changed)

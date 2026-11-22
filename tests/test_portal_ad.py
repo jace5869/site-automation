@@ -81,13 +81,13 @@ class Site(object):
 
 SQLITE = ("CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY AUTOINCREMENT, read_at TEXT NOT NULL, job INTEGER NOT NULL DEFAULT 0, "
           "template_id INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', critical INTEGER NOT NULL DEFAULT 0, "
-          "warning INTEGER NOT NULL DEFAULT 0, dcs INTEGER NOT NULL DEFAULT 0, dcs_read INTEGER NOT NULL DEFAULT 0, live TEXT)",
+          "warning INTEGER NOT NULL DEFAULT 0, dcs INTEGER NOT NULL DEFAULT 0, dcs_read INTEGER NOT NULL DEFAULT 0, live TEXT, why TEXT NOT NULL DEFAULT '')",
           "CREATE TABLE ad_dc (run_id INTEGER NOT NULL, dc TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', site TEXT NOT NULL DEFAULT '', "
-          "is_read INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', problems INTEGER NOT NULL DEFAULT 0, worst TEXT NOT NULL DEFAULT '', "
+          "is_read INTEGER NOT NULL DEFAULT 0, repl_read INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', problems INTEGER NOT NULL DEFAULT 0, worst TEXT NOT NULL DEFAULT '', "
           "PRIMARY KEY (run_id, domain, dc))",
-          "CREATE TABLE ad_link (run_id INTEGER NOT NULL, frm TEXT NOT NULL, to_dc TEXT NOT NULL, nc TEXT NOT NULL DEFAULT '', last_success TEXT, "
+          "CREATE TABLE ad_link (run_id INTEGER NOT NULL, domain TEXT NOT NULL DEFAULT '', frm TEXT NOT NULL, to_dc TEXT NOT NULL, nc TEXT NOT NULL DEFAULT '', last_success TEXT, "
           "failures INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', last_failure TEXT, status TEXT NOT NULL DEFAULT '', "
-          "PRIMARY KEY (run_id, frm, to_dc, nc))")
+          "PRIMARY KEY (run_id, domain, frm, to_dc, nc))")
 
 
 class Lite(object):
@@ -196,7 +196,7 @@ class Db1012(unittest.TestCase):
         self.assertEqual(n, 3)
         self.assertEqual(db.db.execute("SELECT COUNT(*) FROM ad_dc").fetchone()[0], 0)
         ddl = adb.ddl()
-        for t in ("CREATE TABLE IF NOT EXISTS ad_run", "CREATE TABLE IF NOT EXISTS ad_dc", "CREATE TABLE IF NOT EXISTS ad_link", "'ad_run', 1"):
+        for t in ("CREATE TABLE IF NOT EXISTS ad_run", "CREATE TABLE IF NOT EXISTS ad_dc", "CREATE TABLE IF NOT EXISTS ad_link", "'ad_run', 2"):
             self.assertIn(t, ddl)
 
     def test_6_the_statements_in_the_doc_are_the_modules(self):
@@ -205,7 +205,7 @@ class Db1012(unittest.TestCase):
             self.assertIn(part, doc, "docs/REPORT_DATABASE.md: the statement differs from site_ad_db.ddl()")
 
     def test_5_payload_never_raises(self):
-        self.assertIn("were not made into rows", dbf.ad_db_payload({"dcs": "not a list"}, {}, {})["why"])
+        self.assertIn("could not make this run's DCs and links into rows", dbf.ad_db_payload({"dcs": "not a list"}, {}, {})["why"])
         p = dbf.ad_db_payload(ad_run(0, "warning")[1], {}, {"crit_hours": 24})
         self.assertEqual([(d["dc"], d["status"]) for d in p["dcs"]], [("DC01", "ok"), ("DC02", "ok"), ("DC03", "warning")])
         self.assertEqual([x["status"] for x in p["links"]], ["critical", "ok"])
@@ -585,8 +585,13 @@ class Browser1012(unittest.TestCase):
         with open(os.path.join(d, "banner.css"), "w") as fh:
             fh.write("")
         with open(os.path.join(d, "stub.js"), "w") as fh:
-            fh.write("(function(){var A=%s,i=0;window.fetch=function(){var a=A[Math.min(i++,A.length-1)];"
-                     "if(a==='FAIL')return Promise.reject(new Error('offline'));return Promise.resolve({status:200,ok:true,"
+            fh.write("(function(){var A=%s,i=0;window.__sent=[];window.fetch=function(u,o){var a=A[Math.min(i++,A.length-1)];"
+                     "window.__sent.push(((o||{}).headers||{})['If-None-Match']||'');"
+                     "if(a==='FAIL')return Promise.reject(new Error('offline'));if(a==='HANG')return new Promise(function(){});"
+                     "if(a==='304')return Promise.resolve({status:304,ok:false,headers:{get:function(){return ''}}});"
+                     "if(a==='CUT'||a==='HANGBODY')return Promise.resolve({status:200,ok:true,headers:{get:function(){return 'e'+i}},json:function(){"
+                     "return a==='CUT'?Promise.reject(new Error('the body was cut')):new Promise(function(){})}});"
+                     "return Promise.resolve({status:200,ok:true,"
                      "headers:{get:function(){return 'e'+i}},json:function(){return Promise.resolve(a)}})}})();" % json.dumps(answers))
         with open(os.path.join(d, "t.js"), "w") as fh:
             fh.write("setTimeout(function(){var r={};try{%s}catch(e){r.err=String(e)}document.getElementById('res').textContent=JSON.stringify(r)},%d);"
@@ -894,6 +899,183 @@ class CodexBrowser1012(unittest.TestCase):
         self.assertTrue(0 <= r["tx"] < r["W"], r)                        # kept inside the chart
         with open(os.path.join(FILES, "static", "ad-page.js")) as fh:
             self.assertNotRegex(fh.read(), r"\.style\b|setAttribute\(\"style\"")
+
+
+def one_run(ad_mut=None, payload_mut=None, template_id=12, db=None, job=9000, minutes_ago=0):
+    """A database with one AD run (ad_run's DC01-DC03, changed by ad_mut / payload_mut)."""
+    db = db or Lite()
+    now, ad = ad_run(minutes_ago)
+    if ad_mut:
+        ad_mut(ad)
+    p = dbf.ad_db_payload(ad, {"kind": "ad", "dcs": [{"dc": "DC01"}]}, {})
+    if payload_mut:
+        payload_mut(p)
+    adb.write(db, now, job, template_id, p)
+    db.commit()
+    return db
+
+
+class CodexB1012(unittest.TestCase):
+    """Codex's second pass on 1.101.2 (12 P1): each finding's case."""
+
+    def test_1_a_short_named_dc_matches_only_its_own_domains_node(self):
+        import site_ad_swis as asw
+        west = [{"node_id": 1, "name": "dc01.west.test", "dns": ""}]
+        self.assertIsNone(asw.match([{"dc": "DC01", "domain": "east.test", "fqdn": "", "ip": ""}], west)[0][0])
+        self.assertEqual(asw.match([{"dc": "DC01", "domain": "west.test", "fqdn": "", "ip": ""}], west)[0][0]["node_id"], 1)
+        self.assertEqual(asw.match([{"dc": "DC01", "domain": "east.test"}], [{"node_id": 2, "name": "DC01", "dns": ""}])[0][0]["node_id"], 2)
+
+    def test_5_overdue_solarwinds_is_said_as_stale(self):
+        a = live(fill(["ok"] * 2), Site(self))
+        a.read_db()
+        a.sw = a.read_sw(a.sw_source())
+        self.assertEqual(json.loads(a.answer()[1])["sw"]["stale"], "")
+        a.sw["at"] -= a.cfg.ad_seconds + 3 * sp.AD_POLL                  # nobody looked for a while; the new read not back yet
+        a.wake.clear()
+        out = json.loads(a.answer()[1])["sw"]
+        self.assertIn("older than its 10 min interval", out["stale"])
+        self.assertIn("section", out)                                  # the last known, said as such
+        self.assertTrue(a.wake.is_set())
+
+    def test_6_unread_replication_is_kept_as_unread(self):
+        def mut(ad):
+            ad["repl"]["dcs"] = [dict(d, read=False) for d in ad["repl"]["dcs"]]
+            ad["repl"]["links"] = []
+        db = one_run(mut)
+        self.assertEqual(db.db.execute("SELECT SUM(repl_read) FROM ad_dc").fetchone()[0], 0)
+        self.assertEqual(sp.AdDb(None, connect=lambda: db, mark="?").read()["run"]["repl_read"], 0)
+        p = dbf.ad_db_payload(ad_run(0)[1], {}, {})
+        self.assertTrue(all(d["repl_read"] for d in p["dcs"]))         # read: kept as read
+
+    def test_7_a_failed_ad_read_keeps_its_own_status_in_the_history(self):
+        def mut(p):
+            p["dcs"], p["links"], p["status"] = [], [], "critical"     # a NOT READ run: no DC rows
+        db = one_run(payload_mut=mut)
+        h = sp.AdDb(None, connect=lambda: db, mark="?").read()["hist"][-1]
+        self.assertEqual((h["status"], h["c"], h["w"]), ("critical", 0, 0))
+
+    def test_9_links_of_two_domains_are_two_rows(self):
+        def mut(ad):
+            ad["repl"]["links"] = [dict(frm="DC01", to="DC02", nc="Configuration", last_success=ad["repl"]["now"], failures=0, domain="east.test"),
+                                   dict(frm="DC01", to="DC02", nc="Configuration", last_success="2026-01-01T00:00:00Z", failures=4, error="8524",
+                                        domain="west.test")]
+        db = one_run(mut)
+        self.assertEqual(db.db.execute("SELECT domain, status FROM ad_link ORDER BY domain").fetchall(), [("east.test", "ok"), ("west.test", "critical")])
+        links = sp.AdDb(None, connect=lambda: db, mark="?").read()["links"]
+        self.assertEqual([(x["domain"], x["frm"], x["to"], x["now"]) for x in links], [("west.test", "DC01", "DC02", "critical")])
+        # the AD report's readers carry the domain: admin mode (repadmin) and reader mode
+        import ad_filters
+        r = ad_filters._repl_reader([{"in_ad": True, "name": "DC02", "bind": {"ok": True}, "repl": {"links": [{"partner": "DC01", "nc": "CN=Configuration,DC=west,DC=test"}]}}],
+                                    __import__("datetime").datetime(2026, 11, 22), 60, "West.test")
+        self.assertEqual((r["dcs"][0]["domain"], r["links"][0]["domain"]), ("west.test", "west.test"))
+
+    def test_10_a_run_whose_rows_failed_says_so(self):
+        def mut(ad):
+            ad["repl"]["links"][0]["failures"] = "unknown"
+        db = one_run(mut)
+        why = db.db.execute("SELECT why FROM ad_run").fetchone()[0]
+        self.assertIn("could not make this run's DCs and links into rows (ValueError", why)
+        self.assertIn("ValueError", sp.AdDb(None, connect=lambda: db, mark="?").read()["run"]["why"])
+
+    def test_11_a_new_database_secret_restarts_the_portal(self):
+        t = open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")).read()
+        when = t[t.index("- name: Units | restart"):]
+        when = when[:when.index("\n\n")]
+        self.assertIn("_portal_rdb_set is changed", when)
+        self.assertIn("_portal_rdb_gone is changed", when)
+        self.assertIn("register: _portal_rdb_gone", t)
+
+    def test_12_the_deploys_probe_has_a_read_deadline(self):
+        src = open(os.path.join(FILES, "..", "library", "site_portal_db_check.py")).read()
+        self.assertRegex(src, r"db\.connect\(dict\(p, read_timeout=")
+        kw = []
+
+        class Fake(object):
+            @staticmethod
+            def connect(**k):
+                kw.append(k)
+                raise RuntimeError("stop")
+        real = getattr(site_report_db, "pymysql", None)
+        try:
+            site_report_db.pymysql = Fake
+            with self.assertRaises(Exception):
+                site_report_db.connect({"host": "h", "port": 1, "user": "u", "password": "p", "database": "d", "tls": False, "ca_file": "",
+                                        "connect_timeout": 10, "read_timeout": 20})
+        finally:
+            site_report_db.pymysql = real
+        self.assertEqual(kw[0]["read_timeout"], 20)
+
+
+@unittest.skipUnless(_browser(), "no google-chrome or chromium")
+class CodexBBrowser1012(unittest.TestCase):
+    """Codex's second pass on 1.101.2: the page's findings, in the browser."""
+    answer = Browser1012.answer
+    page = Browser1012.page
+    READ = Browser1012.READ + "r.sent=window.__sent;"
+
+    def answer_of(self, db, source=None):
+        a = live(db, Site(self))
+        if source:
+            a.source = source
+        a.read_db()
+        a.sw = a.read_sw(a.sw_source())
+        return json.loads(a.answer()[1])
+
+    def test_2_a_domainless_row_is_never_two_dcs_up(self):
+        def mut(ad):
+            ad["dcs"] = [{"dc": "DC01", "domain": "east.test", "read": True}, {"dc": "DC01", "domain": "west.test", "read": True}]
+            ad["problems"] = []
+        out = self.answer_of(one_run(mut), source=lambda lv: dict(sw_answer(down=(), domain=""), dcs=sw_answer(down=(), domain="")["dcs"][:1]))
+        r = self.page([out], self.READ + "r.sw=[].map.call(document.querySelectorAll('.adp-dcs tbody tr'),function(tr){return tr.cells[5].textContent});")
+        self.assertEqual(r["sw"], ["-", "-"])                            # one Up row with no domain: neither DC01 gets it
+        self.assertFalse(any("every DC up" in n for n in r["tnotes"]), r["tnotes"])
+
+    def test_3_the_tag_is_kept_only_with_its_body(self):
+        a = self.answer(["ok"] * 3)
+        a["poll"] = 15
+        r = self.page([a, "CUT", "304"], self.READ, wait=40000)
+        self.assertEqual(r["sent"][:3], ["", "e1", "e1"])                # the cut answer's tag (e2) never asked with
+        self.assertIn("Live", r["live"])
+
+    def test_4_a_poll_that_hangs_is_a_failed_poll(self):
+        a = self.answer(["ok"] * 3)
+        a["poll"] = 15
+        for hang in ("HANG", "HANGBODY"):
+            r = self.page([a, hang], self.READ, wait=40000)             # asked at 15 s; no answer by 35 s
+            self.assertIn("Not live", r["live"], hang)
+            self.assertTrue(any("no answer in 20 s" in n for n in r["notes"]), (hang, r["notes"]))
+
+    def test_6_8_unread_replication_and_no_dc_found(self):
+        def mut(ad):
+            ad["repl"]["dcs"] = [dict(d, read=False) for d in ad["repl"]["dcs"]]
+            ad["repl"]["links"] = []
+        r = self.page([self.answer_of(one_run(mut))], self.READ)
+        self.assertTrue(any(n.startswith("Replication was not read in this run: 0 of 3") for n in r["notes"]), r["notes"])
+        self.assertFalse(any("every replication link succeeded" in n for n in r["notes"] + r["tnotes"]))
+        self.assertEqual(r["tv"][r["tiles"].index("Replication failing")], "not read")
+
+        def nodc(p):
+            p["dcs"], p["links"], p["status"] = [], [], "critical"
+        db = one_run(payload_mut=nodc)
+        a = live(db, Site(self))
+        a.read_db()
+        r = self.page([json.loads(a.answer()[1])], self.READ)
+        i = r["tiles"].index("DCs read")
+        self.assertEqual((r["tv"][i], r["tnotes"][i]), ("none", "the AD job found no DC (its read of the domain failed)"))
+
+    def test_7_10_the_failed_run_in_the_history_and_its_why(self):
+        def mut(ad):
+            ad["repl"]["links"][0]["failures"] = "unknown"
+        db = one_run(mut)
+        a = live(db, Site(self))
+        a.read_db()
+        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badge=(document.querySelector('#ad section:nth-of-type(4) tbody tr td:nth-child(2)')||{}).textContent;")
+        self.assertTrue(any(n.startswith("This run's DCs and links could not be kept: the AD job could not make") for n in r["notes"]), r["notes"])
+        nodc = one_run(payload_mut=lambda p: p.update(dcs=[], links=[], status="critical"))
+        a = live(nodc, Site(self))
+        a.read_db()
+        r = self.page([json.loads(a.answer()[1])], self.READ + "r.badge=(document.querySelector('#ad section:nth-of-type(4) tbody tr td:nth-child(2)')||{}).textContent;")
+        self.assertEqual(r["badge"], "Critical")                         # 0 DCs critical, but the run itself failed
 
 
 if __name__ == "__main__":

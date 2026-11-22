@@ -55,9 +55,9 @@ def problem_dc(p):
 def ad_db_payload(ad, live=None, opts=None):
     try:
         return _payload(ad, live, opts)
-    except Exception as e:  # noqa: BLE001 - the run is still kept, without its rows
-        return {"status": str((ad or {}).get("report", {}).get("status") or ""), "critical": 0, "warning": 0, "dcs": [], "links": [],
-                "live": live or {}, "why": "the DCs and links were not made into rows (%s)" % e.__class__.__name__}
+    except Exception as e:  # noqa: BLE001 - the run is still kept, without its rows, and says so (ad_run.why: the portal shows it)
+        return {"status": str(((ad or {}).get("report") or {}).get("status") or ""), "critical": 0, "warning": 0, "dcs": [], "links": [],
+                "live": live or {}, "why": "the AD job could not make this run's DCs and links into rows (%s: %s)" % (e.__class__.__name__, str(e)[:120])}
 
 
 def _payload(ad, live, opts):
@@ -73,6 +73,12 @@ def _payload(ad, live, opts):
                 by_name.setdefault(obj, []).append(item)
     repl = a.get("repl") or {}
     site = dict((str(d.get("name") or "").lower(), str(d.get("site") or "")) for d in repl.get("dcs") or [] if isinstance(d, dict))
+    # whether each DC's replication was read (the matrix's dcs: read false - no rights, not reached): by domain and name, else name
+    rread = {}
+    for d in repl.get("dcs") or []:
+        if isinstance(d, dict) and d.get("name"):
+            rread[(str(d.get("domain") or "").lower(), str(d["name"]).lower())] = bool(d.get("read", True))
+            rread.setdefault(("", str(d["name"]).lower()), bool(d.get("read", True)))
     dcs = []
     for d in a.get("dcs") or []:
         name = str(d.get("dc") or "")
@@ -85,15 +91,16 @@ def _payload(ad, live, opts):
         else:                                            # info and the like: OK (the page's states are critical, warning, low, ok)
             st = ps[0][0] if ps and ps[0][0] in ("critical", "warning", "low") else "ok"
             worst = ps[0][1] if st != "ok" else ""
+        rr = rread.get((str(d.get("domain") or "").lower(), name.lower()), rread.get(("", name.lower()), False))
         dcs.append({"dc": name[:255], "domain": str(d.get("domain") or "")[:255], "site": site.get(name.lower(), "")[:255],
-                    "read": bool(d.get("read")), "status": st[:16], "problems": len(ps), "worst": worst[:300]})
+                    "read": bool(d.get("read")), "repl_read": bool(d.get("read")) and rr, "status": st[:16], "problems": len(ps), "worst": worst[:300]})
     now = _utc(repl.get("now"))
     tsl = repl.get("tombstone_days") or 0
     links = []
     for x in repl.get("links") or []:
         if not isinstance(x, dict) or not x.get("frm") or not x.get("to"):
             continue
-        links.append({"frm": str(x["frm"])[:255], "to": str(x["to"])[:255], "nc": str(x.get("nc") or "")[:255],
+        links.append({"domain": str(x.get("domain") or "").lower()[:255], "frm": str(x["frm"])[:255], "to": str(x["to"])[:255], "nc": str(x.get("nc") or "")[:255],
                       "last_success": x.get("last_success") or "", "failures": int(x.get("failures") or 0),
                       "error": str(x.get("error") or "")[:255], "last_failure": x.get("last_failure") or "",
                       "status": link_status(x, now, opts, tsl)})

@@ -3806,7 +3806,7 @@ class AdDb(object):
                 if not top:
                     return {"run": None}
                 tid = int(top[0][0] or 0)
-            runs = self._q(cur, "SELECT run_id, read_at, job, template_id, status, critical, warning, dcs, dcs_read, live FROM ad_run "
+            runs = self._q(cur, "SELECT run_id, read_at, job, template_id, status, critical, warning, dcs, dcs_read, live, why FROM ad_run "
                                 "WHERE template_id = %%s ORDER BY read_at DESC, run_id DESC LIMIT %d" % AD_TREND_MAX, [tid])
             if not runs:
                 return {"run": None}
@@ -3816,12 +3816,14 @@ class AdDb(object):
             ids = [int(r[0]) for r in runs]
             marks = ",".join(["%s"] * len(ids))
             dcrows = self._q(cur, "SELECT run_id, dc, domain, site, is_read, status, problems, worst FROM ad_dc WHERE run_id IN (%s)" % marks, ids)
-            links = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status FROM ad_link WHERE run_id = %s "
+            # the newest run's replication coverage: how many DCs' replication was read (none: no link is known, never "all fine")
+            rr = self._q(cur, "SELECT COUNT(*), SUM(CASE WHEN repl_read = 1 THEN 1 ELSE 0 END) FROM ad_dc WHERE run_id = %s", [ids[0]])
+            links = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status, domain FROM ad_link WHERE run_id = %s "
                                  "AND status NOT IN ('ok', '')", [ids[0]])
             hist = self._q(cur, "SELECT r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, "
-                                "SUM(CASE WHEN d.status = 'critical' THEN 1 ELSE 0 END), SUM(CASE WHEN d.status = 'warning' THEN 1 ELSE 0 END) "
+                                "SUM(CASE WHEN d.status = 'critical' THEN 1 ELSE 0 END), SUM(CASE WHEN d.status = 'warning' THEN 1 ELSE 0 END), r.status "
                                 "FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND r.read_at >= %s "
-                                "GROUP BY r.run_id, r.read_at, r.job, r.dcs, r.dcs_read ORDER BY r.read_at", [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
+                                "GROUP BY r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, r.status ORDER BY r.read_at", [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
             # a DC by its domain and name: two domains' DC01 are two DCs
             top7 = self._q(cur, "SELECT d.dc, d.domain, COUNT(*) FROM ad_run r JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND "
                                  "r.read_at >= %s AND d.status = 'critical' GROUP BY d.domain, d.dc ORDER BY COUNT(*) DESC, d.dc, d.domain LIMIT 1",
@@ -3861,8 +3863,8 @@ class AdDb(object):
                             "since": since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else "", "runs_since": n, "longer": longer, "trend": trend})
             rank = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "ok": 4}
             dcs.sort(key=lambda d: (rank.get(d["now"], 5), d["dc"].lower()))
-            out_links = [{"frm": f, "to": t, "nc": nc, "last_success": self._iso(ls), "failures": int(fl or 0), "error": err or "",
-                          "last_failure": self._iso(lf), "now": st or ""} for f, t, nc, ls, fl, err, lf, st in links]
+            out_links = [{"frm": f, "to": t, "nc": nc, "domain": dm or "", "last_success": self._iso(ls), "failures": int(fl or 0), "error": err or "",
+                          "last_failure": self._iso(lf), "now": st or ""} for f, t, nc, ls, fl, err, lf, st, dm in links]
             out_links.sort(key=lambda x: (rank.get(x["now"], 5), x["frm"].lower(), x["to"].lower()))
             try:
                 live = json.loads(top[9] or "{}")
@@ -3870,10 +3872,11 @@ class AdDb(object):
                 live = {}
             return {"run": {"run_id": int(top[0]), "read_at": self._iso(top[1]), "job": int(top[2] or 0), "template_id": tid,
                             "status": top[4] or "", "critical": int(top[5] or 0), "warning": int(top[6] or 0), "dcs": int(top[7] or 0),
-                            "dcs_read": int(top[8] or 0)},
+                            "dcs_read": int(top[8] or 0), "why": str(top[10] or ""),
+                            "repl_read": int((rr[0][1] if rr and rr[0] else 0) or 0)},
                     "times": [self._iso(at[rid]) for rid in reversed(ids)], "dcs": dcs, "links": out_links, "live": live,
                     "hist": [{"at": self._iso(h[1]), "job": int(h[2] or 0), "dcs": int(h[3] or 0), "read": int(h[4] or 0),
-                              "c": int(h[5] or 0), "w": int(h[6] or 0)} for h in hist],
+                              "c": int(h[5] or 0), "w": int(h[6] or 0), "status": str(h[7] or "")} for h in hist],
                     "worst7": {"dc": str(top7[0][0]), "domain": str(top7[0][1] or ""), "critical": int(top7[0][2])} if top7 else None}
         finally:
             try:
@@ -4094,6 +4097,10 @@ class AdLive(object):
         if sw is not None and src is not None and sw["key"] == src[0]:
             out["sw"].update({"age": int(now - sw["at"]), "as_of": shown(self.cfg, now_iso(sw["at"])), "job": sw["job"],
                               "section": sw["section"], "tile": sw["tile"]})
+            # overdue (nobody looked for a while; its read not back yet): the last known, said as such - never Live
+            if not stale and now - sw["at"] > self.cfg.ad_seconds + 2 * AD_POLL:
+                out["sw"]["stale"] = "its last read is older than its %d min interval: being read again" % (self.cfg.ad_seconds // 60)
+                self.wake.set()
         body = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
         # the ages are in minutes and seconds: the tag is of what the page shows, so a 304 is the common answer
         tag_of = dict(out, sw=dict(out["sw"], age=None, next=None), db=dict(out["db"], age=None))

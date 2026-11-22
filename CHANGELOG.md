@@ -56,9 +56,11 @@ read-only account `report_reader`) and `report_db`, run it, then run *Site porta
 - Live while open: the database every minute, SolarWinds every `portal_ad_seconds` (600), one read every viewer shares,
   an ETag; a DC that changes gets a toast (motion settings apply).
 - Never old data as current: the database off, not read now, no run yet, a run older than `portal_ad_old_minutes` (90),
-  SolarWinds not read, the portal not answering - each said on the page; a DC is up only when SolarWinds says Up.
+  SolarWinds not read or overdue, the portal not answering (20 s), replication not read, no DC found, a run whose rows
+  could not be made - each said on the page; a DC is up only when SolarWinds says Up for that DC (its own domain).
 - **The AD job keeps each run** in the report database (`ad_db`, new tables `ad_run`, `ad_dc`, `ad_link`, made by the
-  job; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job stays green. The website page is as before.
+  job, schema version 2; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job
+  stays green. The website page is as before.
 - **Site portal - deploy**: the read-only login as the podman secret `site-portal-reportdb` (from the attached Report
   database credential); a login that can write is a warning; never a failed deploy. The portal starts a Python of its
   image that has PyMySQL (the all-in-one EE).

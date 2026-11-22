@@ -820,6 +820,11 @@ Each state is said, never shown as current:
 | No AD run kept yet | "No AD run in the report database yet" |
 | The newest run is older than `portal_ad_old_minutes` (90) | "N h old: the AD job has not run since" |
 | No SolarWinds login (the Network map's) | the SolarWinds column says "not read" |
+| SolarWinds' last read is older than its interval (nobody looked for a while) | the last known, "not read now", read again at once |
+| The portal does not answer, or not within 20 s | "Not live", the last answer said as not now, its ages growing |
+| Replication was not read (no rights, not reached) | "Replication was not read", never "all links fine"; only some DCs: said |
+| The AD job found no DC (its read of the domain failed) | "DCs read: none", the run critical in the history |
+| A DC not in SolarWinds, not matched, or another domain's node | not "up": the SolarWinds column says which |
 
 **Set it up.** No hand steps:
 
