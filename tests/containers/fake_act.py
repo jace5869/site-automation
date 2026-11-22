@@ -34,6 +34,30 @@ if m:
 with open(os.path.join(out, "fake-act-env.json"), "w") as fh:
     json.dump({k: os.environ.get(k) for k in ("ACT_STREAM", "GENAI_TIMEOUT", "ACT_PROVIDER", "GENAI_MODEL",
                                               "ASKSAGE_MODEL", "ACT_TOOLS", "ACT_JSON_MODE", "ACT_PREFILL")}, fh)
+with open(os.path.join(out, "fake-act-masking.json"), "w") as fh:     # 1.104.0: the role's masking settings as ACT got them
+    json.dump({k: os.environ.get(k) for k in ("ACT_PSEUDONYMIZE", "ACT_PSEUDO_NAMES", "XDG_RUNTIME_DIR")}, fh)
+with open(os.path.join(out, "fake-act-env-names.json"), "w") as fh:    # 1.104.0: the names ACT got (never the values)
+    json.dump(sorted(os.environ), fh)
+cmdlines = {}
+for process, pid in (("self", "self"), ("parent", os.getppid())):
+    try:
+        with open("/proc/%s/cmdline" % pid, "rb") as fh:
+            cmdlines[process] = [os.fsdecode(arg) for arg in fh.read().split(b"\0")[:-1]]
+    except OSError:
+        cmdlines[process] = []
+with open(os.path.join(out, "fake-act-cmdlines.json"), "w") as fh:
+    json.dump(cmdlines, fh)
+if os.environ.get("FAKE_ACT_SOURCE"):        # 1.104.0: each provider's key pool as ACT's own code reads it (_KEY_ENV ...)
+    import ast
+    src = open(os.environ["FAKE_ACT_SOURCE"]).read()
+    tree = ast.parse(src)
+    want = {"_KEY_ENV", "split_keys", "_unique_keys", "env_key_entries"}
+    part = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in want)
+            or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in want for t in n.targets))]
+    ns = {"os": os, "re": re}
+    exec(compile(ast.Module(body=part, type_ignores=[]), "act", "exec"), ns)
+    with open(os.path.join(out, "fake-act-pools.json"), "w") as fh:
+        json.dump({p: [k for k, _label in ns["env_key_entries"](p)] for p in ns["_KEY_ENV"]}, fh)
 if "--allow-piped-upload" in args:
     with open(os.path.join(out, "fake-act-stdin.txt"), "w") as fh:
         fh.write(sys.stdin.read())

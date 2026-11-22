@@ -1,11 +1,13 @@
 {#- Cause cards (report_cause_cards in plugins/filter/site_filters.py): included by the website's looks for a section with
     cause_first (What to do first: the top card's first step) or causes (one card per cause - its items, hosts,
     confidence, numbered steps with their commands and a Copy button, its evidence lines). The Copy buttons are
-    site_report.js's (.code .copy): no script of its own. -#}
-{%- macro cz_step(st) %}
-<li><span class="cz-sn" aria-hidden="true">{{ st.n }}</span><div class="cz-sb">
+    site_report.js's (.code .copy): no script of its own.
+    1.104.0, act_suggest (ACT's suggestions on the outage review): each card folds (details) - its summary says the cause,
+    its level, events and confidence; opened, why, What to check, Possible fix and the events as links to their rows. -#}
+{%- macro cz_step(st, n=none, what='step') %}
+<li><span class="cz-sn" aria-hidden="true">{{ n if n is not none else st.n }}</span><div class="cz-sb">
 {%- if st.do | default('') %}<p class="cz-sw">{{ st.do | e }}</p>{% endif %}
-{%- if st.cmd | default('') %}<div class="code cz-cmd"><pre>{{ st.cmd | e }}</pre><button class="copy" type="button" hidden aria-label="Copy the command of step {{ st.n }}">Copy</button></div>{% endif %}
+{%- if st.cmd | default('') %}<div class="code cz-cmd"><pre>{{ st.cmd | e }}</pre><button class="copy" type="button" hidden aria-label="Copy the command of {{ what }} {{ n if n is not none else st.n }}">Copy</button></div>{% endif %}
 {%- if st.why | default('') %}<p class="cz-sy">{{ st.why | e }}</p>{% endif %}
 </div></li>
 {%- endmacro %}
@@ -19,13 +21,53 @@
 <ol>{{ cz_step(f.step) }}</ol>
 </div>
 {%- endif %}
+{%- set act = s.act_suggest | default(false) %}
 {%- if s.causes is defined and s.causes %}
+{%- if s.act_note | default('') %}<p class="cz-act-note">{{ s.act_note | e }}</p>{% endif %}
 {%- if s.cause_note | default('') %}
 <p class="cz-appr" role="note"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg><span>{{ s.cause_note | e }}</span></p>
 {%- endif %}
 <p class="cz-count">{{ s.count_text | default('') | e }}</p>
 <div class="causes">
 {%- for k in s.causes %}
+{%- if act %}
+<details class="cz cz-act c-{{ k.status | e }}" id="{{ k.id | e }}">
+<summary class="cz-sum">
+<div class="cz-k">Cause {{ k.n }}<span class="cz-sug">Suggestion - check before acting</span></div>
+<div class="cz-row"><span class="chip s-{{ k.status | e }}">{{ k.level_word | e }}</span>
+<span class="cz-pats">{{ 'Event' if k.patterns | length == 1 else 'Events' }}{% for p in k.patterns[:8] %} <span class="pp">{{ p | e }}</span>{% endfor %}{% if k.patterns | length > 8 %} <span class="pp">+{{ k.patterns | length - 8 }}</span>{% endif %}</span>
+{%- if k.conf_text %}<span class="chip s-{{ k.conf_status | default('info', true) | e }}">{{ k.conf_text | e }}</span>{% endif %}
+{%- if k.hosts %}<span class="cz-hosts">{{ k.hosts[:4] | join(' · ') | e }}{% if k.hosts | length > 4 %} · {{ k.hosts | length - 4 }} more{% endif %}</span>{% endif %}</div>
+<h3>{{ k.title | e }}</h3>
+<span class="cz-open" aria-hidden="true"></span>
+</summary>
+<div class="cz-body">
+{%- if k.why | default('') %}<p class="cz-why">{{ k.why | e }}</p>{% endif %}
+<div class="cz-grid">
+{#- 1.104.0 (Neon): a step with no kind (or one ACT made up) is neither a check nor a fix: Other steps, after them #}
+{%- set chk = k.steps | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'check') | list %}
+{%- set fix = k.steps | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'fix') | list %}
+{%- set oth = k.steps | reject('in', chk + fix) | list %}
+<div class="cz-fix">
+<h4>What to check</h4>
+{%- if chk %}<ol>{% for st in chk %}{{ cz_step(st, loop.index, 'check') }}{% endfor %}</ol>{% else %}<p class="cz-none">Nothing to check was given.</p>{% endif %}
+<h4 class="cz-h-fix">Possible fix</h4>
+{%- if fix %}<ol>{% for st in fix %}{{ cz_step(st, loop.index, 'fix') }}{% endfor %}</ol>{% else %}<p class="cz-none">No fix was given.</p>{% endif %}
+{%- if oth %}
+<h4 class="cz-h-fix">Other steps</h4>
+<ol>{% for st in oth %}{{ cz_step(st, loop.index, 'other step') }}{% endfor %}</ol>
+{%- endif %}
+</div>
+<div class="cz-ev"><h4>The events it read</h4>
+{%- if k.evidence %}<ul>
+{%- for e in k.evidence %}<li>{% if e.n %}<a class="n" href="#ot-row-{{ e.n | e }}" data-ot="{{ e.n | e }}" title="Its row in The events">#{{ e.n | e }}</a>{% endif %}{% if e.t %}<span class="t">{{ e.t | e }}</span>{% endif %}{% if e.h %}<span class="h">{{ e.h | e }}</span>{% endif %}<span class="m">{{ e.m | e }}</span></li>{% endfor %}
+</ul>{% if k.more %}<p class="more">+{{ k.more }} more event{{ '' if k.more == 1 else 's' }}: {% for p in k.patterns[k.evidence | length:] %}<a class="pp" href="#ot-row-{{ p | replace('#', '') | e }}" data-ot="{{ p | replace('#', '') | e }}">{{ p | e }}</a>{{ ' ' if not loop.last else '' }}{% endfor %}</p>{% endif %}
+{%- else %}<p class="cz-none">No event was named.</p>{% endif %}
+<button class="cz-show" type="button" hidden data-ots="{{ k.patterns | map('replace', '#', '') | join(' ') | e }}" aria-pressed="false">Show {{ 'it' if k.patterns | length == 1 else 'these ' ~ k.patterns | length }} on the time line</button></div>
+</div>
+</div>
+</details>
+{%- else %}
 <article class="cz c-{{ k.status | e }}{{ ' small' if k.small else '' }}" id="{{ k.id | e }}">
 <div class="cz-k">Cause {{ k.n }}</div>
 <div class="cz-row"><span class="chip s-{{ k.status | e }}">{{ k.level_word | e }}</span>
@@ -46,6 +88,7 @@
 {%- endif %}
 </div>
 </article>
+{%- endif %}
 {%- endfor %}
 </div>
 {%- endif %}

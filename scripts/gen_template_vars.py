@@ -748,7 +748,7 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
     "vm_deploy_inventory.yml": ("VM - deploy settings finder", "VMware vCenter", "", ""),
     "vm_health_report.yml": ("VM - health report", "VMware vCenter", "", ""),
     "vm_log_analysis.yml": ("VM - vCenter log analysis", "VMware vCenter (read-only + Global > Diagnostics), ACT model key", "", ""),
-    "vm_outage_watch.yml": ("VM - outage watch", "VMware vCenter", "", """\
+    "vm_outage_watch.yml": ("VM - outage watch", "VMware vCenter (and ACT model key for vm_outage_act)", "", """\
 ## Every 5 to 15 minutes, in a workflow: [VM - outage watch] --Always--> [ServiceNow tickets]; Concurrent jobs off
 # vm_watch_window_minutes: 15                    # the schedule's interval
 # vm_watch_probe_port: 0                         # e.g. 22 or 3389: also a TCP connect (needed when ICMP is blocked)
@@ -759,6 +759,8 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 # vm_watch_review_to: "2026-11-12 05:00"         # ... and ends here
 # vm_watch_review_tickets: [INC0012345]          # a ticket opened by hand, shown too
 # vm_watch_timeline: false                       # the report of a normal run without the time line
+## ACT's possible causes and fixes on the review (attach the ACT model key credential) - docs/VM_OUTAGE_WATCH.md
+# vm_outage_act: true                            # a review only; ACT reads the time line and runs nothing
 """),
     "vm_deploy_poll.yml": ("VM - pick up deploy tickets", "ServiceNow API, Red Hat Ansible Automation Platform", "", """\
 vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's tickets are picked up

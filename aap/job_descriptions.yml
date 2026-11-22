@@ -537,9 +537,9 @@ templates:
     supports: "Run constraint=Changes target hosts (/etc/site-portal, site-portal-* units, secret, containers); not AAP or STIG Manager; Check = dry run"
   "VM - outage watch":
     does: "Every 5-15 minutes, checks for hosts not responding, datastores lost, HA failures, hung VMs; with vm_watch_review: true, an outage time line."
-    targets: "vCenter via its API (VMware vCenter credential); probes suspect VMs on the network; ServiceNow read for the review; no Limit."
-    produces: "Nothing when clean; else a report (email, website) and artifacts site_health / site_health_targets for the ServiceNow tickets step."
-    supports: "Run constraint=Reads only (no hosts); restarts nothing; writes the report email and website only when it finds a problem or reviews"
+    targets: "vCenter via its API (VMware vCenter credential); probes suspect VMs; ServiceNow read for the review; ACT model key only with vm_outage_act"
+    produces: "Nothing when clean; else a report (email, website; ACT's causes with vm_outage_act) and artifacts site_health / site_health_targets."
+    supports: "Run constraint=Reads only (no hosts); restarts nothing; reports only on a problem or a review; vm_outage_act sends the time line to ACT"
   "VM - vCenter log analysis":
     does: "Reads warning and error lines of vCenter and ESXi logs through vCenter's API, groups them, and has ACT name likely causes and fixes."
     targets: "vCenter via its API (vCenter credential with Diagnostics) and the ACT model (ACT model key); no SSH to hosts; no Limit."

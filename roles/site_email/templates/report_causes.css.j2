@@ -39,6 +39,34 @@
 .cz-to:hover{border-bottom-color:var(--accent)}
 .cz-noise{margin:14px 0 0;color:var(--muted);font-size:.86rem}
 a.al{color:var(--accent);font-weight:600;text-decoration:none;border-bottom:1px solid currentColor;white-space:nowrap}
+/* 1.104.0: ACT's suggestions on the outage review (act_suggest) - cards that fold, marked as suggestions, the events as links */
+.cz-act-note{margin:0 0 12px;color:var(--muted);font-size:.9rem;line-height:1.5;max-width:72ch}
+.cz-act{padding:0}
+.cz-act>summary{list-style:none;cursor:pointer;padding:16px 52px 16px 22px;border-radius:14px;position:relative}
+.cz-act>summary::-webkit-details-marker{display:none}
+.cz-act>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cz-act>summary h3{margin:10px 0 0}
+.cz-act .cz-k{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.cz-sug{font-size:.7rem;font-weight:700;letter-spacing:.04em;text-transform:none;color:var(--ink);padding:2px 9px;border-radius:999px;
+  border:1px dashed var(--muted);background:var(--bg2);white-space:nowrap}
+.cz-open{position:absolute;right:20px;top:20px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line)}
+.cz-open::before{content:"";position:absolute;left:7px;top:5px;width:6px;height:6px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg)}
+.cz-act[open] .cz-open::before{top:8px;transform:rotate(225deg)}
+.cz-act>summary:hover .cz-open{border-color:var(--accent)}
+.cz-body{padding:0 22px 20px}
+.cz-why{margin:0 0 16px;color:var(--ink);line-height:1.5;max-width:72ch}
+.cz-h-fix{margin-top:20px!important}
+.cz-ev a.pp{font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);color:var(--accent);text-decoration:none}
+.cz-ev li:has(> a.n){grid-template-columns:auto auto auto minmax(0,1fr)}
+.cz-ev a.n{color:var(--accent);font-weight:700;text-decoration:none;white-space:nowrap}
+.cz-ev a.n:hover,.cz-ev a.n:focus-visible,.cz-ev a.pp:hover,.cz-ev a.pp:focus-visible{text-decoration:underline}
+.cz-show{margin-top:10px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink);font:inherit;font-size:.8rem;
+  font-weight:600;padding:5px 12px;cursor:pointer}
+.cz-show:hover,.cz-show[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.ot.ot-acting .ot-m:not(.ot-act){opacity:.28}
+.ot-m.ot-act{outline:2px solid var(--accent);outline-offset:3px;z-index:3}
+.cz-act-off{margin:6px 0 0;color:var(--muted);font-size:.84rem}
 @media (max-width:820px){.cz-grid{grid-template-columns:minmax(0,1fr)}}
 @container (max-width:680px){.cz-grid{grid-template-columns:minmax(0,1fr)}}
-@media print{.cz-cmd .copy{display:none}.cz{break-inside:avoid}}
+@media print{.cz-cmd .copy,.cz-show,.cz-open{display:none}.cz{break-inside:avoid}.cz-sug{border-style:solid}
+  .cz-act::details-content{content-visibility:visible;height:auto}}

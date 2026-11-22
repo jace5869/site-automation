@@ -416,6 +416,14 @@ vm_watch_review_max_events: 2000         # at most this many events per vCenter 
 # AAR job's (incident_docs_banner, report_logo_file ...). The job artifact vm_outage_review.aar keeps the same draft for the
 # AAR job (incident_review). false = no Word document (the artifact keeps the draft).
 vm_watch_review_docx: true
+# 1.104.0, ACT on the outage review: ACT reads the review's time line and suggests possible causes, read-only checks and
+# a possible fix - cards that fold at the bottom of the review page, marked as suggestions. Only for a review
+# (vm_watch_review), never on the watch's own runs. Needs the "ACT model key" credential on the template; ACT runs no command.
+vm_outage_act: false
+vm_outage_act_max_events: 120            # the events ACT reads at most: the lead-up, the first critical event, then the nearest in time
+# seconds the model may take for its answer; the whole ACT run is held to twice that and a minute (site_act_timeout at most):
+# the review's report waits for it, so a stalled model costs minutes, not site_act_timeout (1200 s)
+vm_outage_act_model_timeout: 180
 
 # ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml) and the watch ----
 # vCenter's SSO services, the STS signing certificate (health report only), the identity providers, a login by a test

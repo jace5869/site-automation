@@ -2094,7 +2094,7 @@ job_templates:
   - name: VM - outage watch
     playbook: playbooks/vm_outage_watch.yml
     credentials: [vmware]
-    optional_credentials: []
+    optional_credentials: [act_model_key]
     ask_limit: false
     ask_variables: false
     ask_inventory: false
@@ -2104,12 +2104,12 @@ job_templates:
     description:
       does: 'Every 5-15 minutes, checks for hosts not responding, datastores lost, HA failures, hung VMs; with vm_watch_review:
         true, an outage time line.'
-      targets: vCenter via its API (VMware vCenter credential); probes suspect VMs on the network; ServiceNow read for the
-        review; no Limit.
-      produces: Nothing when clean; else a report (email, website) and artifacts site_health / site_health_targets for the
-        ServiceNow tickets step.
-      supports: Run constraint=Reads only (no hosts); restarts nothing; writes the report email and website only when it finds
-        a problem or reviews
+      targets: vCenter via its API (VMware vCenter credential); probes suspect VMs; ServiceNow read for the review; ACT model
+        key only with vm_outage_act
+      produces: Nothing when clean; else a report (email, website; ACT's causes with vm_outage_act) and artifacts site_health
+        / site_health_targets.
+      supports: Run constraint=Reads only (no hosts); restarts nothing; reports only on a problem or a review; vm_outage_act
+        sends the time line to ACT
   - name: VM - vCenter log analysis
     playbook: playbooks/vm_log_analysis.yml
     credentials: [vmware, act_model_key]
