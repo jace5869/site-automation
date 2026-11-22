@@ -99,7 +99,9 @@ check "that folder removed after" "$( [ -n "$afdir" ] && [ ! -e "$afdir" ]; echo
 check "nothing kept in the job's temporary places" "$( [ -z "$(leftovers)" ]; echo $?)"
 page="$work/web/stig-answer-keys-try-my-answer-file/latest.html"
 if [ -f "$page" ]; then
-    txt="$("$py" -c 'import html, re, sys; print(html.unescape(re.sub(r"<[^>]+>", " ", open(sys.argv[1]).read())))' "$page" | tr -s ' \n' ' ')"
+    # 1.100.0: each rule's opened detail is a deferred block; read the page as site-report.js builds it
+    "$py" "$repo/tests/email/unpack_deferred.py" "$page" > "$work/unpacked.html"
+    txt="$("$py" -c 'import html, re, sys; print(html.unescape(re.sub(r"<[^>]+>", " ", open(sys.argv[1]).read())))' "$work/unpacked.html" | tr -s ' \n' ' ')"
     # 1.77.1: the Answer files sections in place of the list of your files (which file answered which rule), the note last
     for x in "Need a look 2" "Changed by your answer file 1" "No key needed 1" "Answer files - what Evaluate-STIG was given" \
              "How the answer files are read" "SITEA_RHEL9.xml" \
@@ -129,8 +131,8 @@ run "a code that prints a shadow line and a GRUB hash: removed before it leaves 
     -e "report_email_smtp_port=$port_smtp" -- \
     "localhost V-257835: Not Reviewed -> Not a Finding, " "!LEAKHASH" "!LEAKDES" "!5EED5EED" "!DEADBEEF" "!grub.pbkdf2.sha512"
 cp "$work/with.keep" "$work/with.json"
-"$py" - "$work/web/stig-answer-keys-try-my-answer-file" "$work/mail" <<'PYEOF' > "$work/leak.txt" 2>&1
-import email, html, io, os, re, sys, zipfile
+"$py" - "$work/web/stig-answer-keys-try-my-answer-file" "$work/mail" "$repo/tests/email/unpack_deferred.py" <<'PYEOF' > "$work/leak.txt" 2>&1
+import email, html, io, os, re, subprocess, sys, zipfile
 bad = ("LEAKHASH", "LEAKDES", "5EED5EED", "DEADBEEF", "grub.pbkdf2.sha512")
 texts = {}
 def add(name, data):
@@ -142,7 +144,9 @@ def add(name, data):
         texts[name] = html.unescape(data.decode("utf-8", "replace"))
 for root, _, files in os.walk(sys.argv[1]):
     for f in files:
-        add(os.path.join(root, f), open(os.path.join(root, f), "rb").read())
+        path = os.path.join(root, f)
+        # 1.100.0: a page's deferred blocks read as site-report.js builds them
+        add(path, subprocess.check_output([sys.executable, sys.argv[3], path]) if f.endswith(".html") else open(path, "rb").read())
 mails = sorted(os.listdir(sys.argv[2]))
 for f in mails:
     for i, part in enumerate(email.message_from_binary_file(open(os.path.join(sys.argv[2], f), "rb")).walk()):
