@@ -308,9 +308,10 @@ def _lower_first(text):
 
 
 def _ticket_events(tickets, begin, end, instance="", table=""):
-    """-> (events, tickets opened before the stretch and still open in it, the first root-cause text found). Each event of a ticket carries
+    """-> (events, tickets opened before the stretch and still open in it, {ticket: its root-cause text} - an ACT analysis
+    first, else its close notes; only for tickets of the stretch (1.112.0: the outage's own is picked later)). Each event of a ticket carries
     its link ("url", when the instance is known)."""
-    out, before, cause = [], [], ""
+    out, before, causes = [], [], {}
     for k in tickets or []:
         if not isinstance(k, dict):
             continue
@@ -328,7 +329,7 @@ def _ticket_events(tickets, begin, end, instance="", table=""):
             if act:
                 out.append(dict(base, t=opened, lane="act", level="info", label="ACT analysis in %s: %s" % (num, _cut(act)), message=act))
                 # 1.112.0 (Neon P1): only a ticket of this window - never an older ticket's analysis of another outage
-                cause = cause or "ACT in %s: %s" % (num, _cut(act, 300))
+                causes.setdefault(num, "ACT in %s: %s" % (num, _cut(act, 300)))
         elif opened is not None and opened < begin:
             before.append(num)
         for note in k.get("notes") or []:
@@ -341,7 +342,8 @@ def _ticket_events(tickets, begin, end, instance="", table=""):
                 out.append(dict(base, t=t, lane="servicenow", level="ok", label="%s: the check passes again" % num, message=text))
             elif re.match(r"^ACT\b", text):
                 out.append(dict(base, t=t, lane="act", level="info", label="ACT note in %s: %s" % (num, _cut(text)), message=text))
-                cause = cause or "ACT in %s: %s" % (num, _cut(text, 300))
+                if not str(causes.get(num, "")).startswith("ACT"):
+                    causes[num] = "ACT in %s: %s" % (num, _cut(text, 300))
             else:
                 out.append(dict(base, t=t, lane="servicenow", level="info", label="Work note in %s: %s" % (num, _cut(text, 120)), message=text))
         done, how = _time(k.get("resolved")), "resolved"
@@ -351,9 +353,9 @@ def _ticket_events(tickets, begin, end, instance="", table=""):
             notes = str(k.get("close_notes") or "").strip()
             out.append(dict(base, t=done, lane="servicenow", level="ok", role="resolved",
                             label="Ticket %s %s%s" % (num, how, (": " + _cut(notes, 120)) if notes else ""), message=notes or short))
-            if notes and not cause.startswith("ACT"):
-                cause = cause or "Close notes of %s: %s" % (num, _cut(notes, 300))
-    return out, before, cause
+            if notes:
+                causes.setdefault(num, "Close notes of %s: %s" % (num, _cut(notes, 300)))
+    return out, before, causes
 
 
 # ---- the chart --------------------------------------------------------------------------------------------
@@ -685,7 +687,7 @@ def outage_timeline(events, tickets=None, opts=None):
     vc, restarted = _restarts(vc)
     vc, downs = _pairs(vc, low_seconds)
     instance = o.get("instance") or ""
-    tk, before, cause = _ticket_events(tickets, begin_asked, end, instance, o.get("table") or "")
+    tk, before, causes = _ticket_events(tickets, begin_asked, end, instance, o.get("table") or "")
     evs = _same(sorted(vc + tk, key=lambda e: (e["t"], [x[0] for x in LANES].index(e["lane"]))))
     for i, e in enumerate(evs):
         e["num"] = i + 1
@@ -701,6 +703,12 @@ def outage_timeline(events, tickets=None, opts=None):
     opened = next((e for e in tickets_opened if first and e["t"] >= first["t"]), tickets_opened[0] if tickets_opened else None)
     resolved = [e for e in evs if e["role"] == "resolved"]
     to_ticket = (opened["t"] - first["t"]).total_seconds() if first and opened and opened["t"] >= first["t"] else None
+    # 1.112.0 (Codex P1): the root-cause text of the outage's own ticket - the one measured, else one about a host of the outage's
+    # signals; another ticket of the window (another host's disk) never gives it
+    own_hosts = set(e["where"] for e in signals if e["where"])
+    own_tickets = [e["ticket"] for e in ([opened] if opened else []) + tickets_opened if e["where"] in own_hosts or
+                   (e is opened and not e["where"])]          # a ticket that names no host: only the measured one
+    cause = next((causes[n] for n in own_tickets if n in causes), "")
     still = [d for d in downs if d[2] is None]
     cleared_runs = [r for r in runs if r["cleared"] is not None]
     open_alarms = [r for r in runs if r["cleared"] is None]
@@ -1123,6 +1131,15 @@ def outage_timeline(events, tickets=None, opts=None):
             op, rs = _time(k.get("opened")), _time(k.get("resolved")) or _time(k.get("closed"))
             tk_rows.append([num, stamp(op) if op else "", stamp(rs) if rs else "not yet",
                             _cut(k.get("short"), 120), _cut(k.get("close_notes"), 200)])
+        # 1.112.0 (Codex P1): "still down" only for the stretch whose minutes are shown; another one still open is said apart
+        time_down = "no host lost in the window"
+        if longest:
+            time_down = "%s down %s (%s to %s)" % (longest[0], _span(down_s), stamp(longest[1]),
+                                                  "still down at the end of the window" if longest[3] else stamp(longest[2]))
+            for h, a_, _b, open_ in spans:
+                if open_ and (h, a_) != (longest[0], longest[1]):
+                    time_down += "; %s down%s since %s, still down at the end of the window (%s)" % (
+                        h, " again" if h == longest[0] else "", stamp(a_), _span((end - a_).total_seconds()))
         follow = [a for a in aar if a.startswith("Follow-up: ")]
         draft = {"v": 1, "title": title, "window": window_text, "time_column": tcol,
                  "name": ("%s %s" % (where_name, loc(start["t"]).strftime("%Y-%m-%d"))).strip(),
@@ -1135,8 +1152,7 @@ def outage_timeline(events, tickets=None, opts=None):
                                  first["what"], (" on " + first["where"]) if first["where"] else "", LANE[first["lane"]])],
                              ["First signal to ticket", _span(to_ticket) if to_ticket is not None else "-",
                               ("%s opened %s" % (opened["ticket"], stamp(opened["t"]))) if to_ticket is not None else "no ticket measured"],
-                             ["Time down", (_span(down_s) + (", still down" if still else "")) if spans else "0",
-                              ((down_word + (" - still down at the end of the window" if still else "")) if spans else "no host lost in the window")]],
+                             ["Time down", (_span(down_s) + (", still down" if longest and longest[3] else "")) if spans else "0", time_down]],
                  "key": [row(e) for e in key], "events": [row(e) for e in evs[:DRAFT_EVENTS]], "events_total": len(evs),
                  "tickets": tk_rows, "ticket_hint": cause, "follow_up": follow[0][len("Follow-up: "):] if follow else ""}
     return _unsafe({"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,

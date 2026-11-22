@@ -59,6 +59,16 @@ def _project(job):
     return str((((job or {}).get("summary_fields") or {}).get("project") or {}).get("name") or "")
 
 
+def _not_this_project(job, project):
+    """'' when the job is of project (or none is set); else why not - also when AAP does not say its project."""
+    if not project:
+        return ""
+    have = _project(job)
+    if not have:
+        return "names no project, so it cannot be checked against %s (incident_docs_survey_project)" % project
+    return "" if have == project else "is of project %s, not %s (incident_docs_survey_project)" % (have, project)
+
+
 def _get(api, path):
     """GET, once more after no answer or a 5xx (a large artifact cut off on its way, a busy AAP)."""
     code, data = api.call("GET", path)
@@ -80,8 +90,13 @@ def read(api, review, playbook="vm_outage_watch.yml", look_back=25, project=""):
             out["error"] = "job %s could not be read (HTTP %d): %s" % (want, code, error_text(job))
             return out
         out["job"], out["job_name"] = want, str(job.get("name") or "")
-        if project and _project(job) and _project(job) != project:
-            out["error"] = "job %s is of project %s, not %s (incident_docs_survey_project)" % (want, _project(job), project)
+        # 1.112.0 (Codex P1): only the outage watch's own job, of this project when one is set - never a look-alike artifact
+        if _base(job.get("playbook")) != playbook:
+            out["error"] = "job %s (%s) is not a VM - outage watch run (playbooks/%s)" % (want, out["job_name"] or "?", playbook)
+            return out
+        why = _not_this_project(job, project)
+        if why:
+            out["error"] = "job %s %s" % (want, why)
             return out
         d = draft_of(job)
         if not d:
@@ -111,6 +126,13 @@ def read(api, review, playbook="vm_outage_watch.yml", look_back=25, project=""):
         if code != 200:                        # never an older outage's review instead (Neon P1): say which run could not be read
             out["error"] = ("outage watch job %s could not be read (HTTP %d): %s. latest stops there rather than take an older "
                             "review: try again, or give a job number" % (j.get("id"), code, error_text(job)))
+            out["job"] = str(j.get("id"))
+            return out
+        why = _not_this_project(job, project)
+        if why and _project(job):
+            continue                           # another project's outage watch: not ours, the next one
+        if why:                                # no project said: never taken as a match - stop, said
+            out["error"] = "outage watch job %s %s" % (j.get("id"), why)
             out["job"] = str(j.get("id"))
             return out
         dr = draft_of(job)

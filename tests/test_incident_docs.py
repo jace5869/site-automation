@@ -790,6 +790,34 @@ class ReviewReader(unittest.TestCase):
         doc = f.incident_aar_docx(r, {}, [], False, f.incident_review_draft(d))
         self.assertTrue(all(isinstance(x, AnsibleUnsafeText) for b in doc["blocks"] for x in b.get("lines") or []))
 
+    def test_codex_p1_project_verified(self):
+        """With a project set, a draft is used only from a job AAP says is of that project - never one that names none."""
+        jobs = self.jobs()
+        jobs[11] = {"id": 11, "name": "VM - outage watch", "playbook": "playbooks/vm_outage_watch.yml",
+                    "summary_fields": {"project": {"name": "Test"}},
+                    "artifacts": {"vm_outage_review": {"aar": {"v": 1, "title": "Test's outage"}}}}
+        jobs[10]["summary_fields"] = {"project": {"name": "Prod"}}
+        jobs[12]["summary_fields"] = {"project": {"name": "Prod"}}
+
+        class Bare(self.Api):                         # the list names no project; the detail does
+            def call(s, method, path, body=None, base=None):
+                code, d = ReviewReader.Api.call(s, method, path, body, base)
+                if path.startswith("jobs/?"):
+                    for j in d["results"]:
+                        j.pop("summary_fields", None)
+                return code, d
+        got = rr.read(Bare(jobs), "latest", project="Prod")
+        self.assertEqual((got["ok"], got["job"], got["draft"]["title"]), (True, "10", "Outage review: esx03"))     # Test's 11 skipped
+        del jobs[12]["summary_fields"]
+        got = rr.read(Bare(jobs), "latest", project="Prod")
+        self.assertFalse(got["ok"])
+        self.assertIn("outage watch job 12 names no project, so it cannot be checked against Prod", got["error"])
+        self.assertIn("names no project", rr.read(self.Api(jobs), "12", project="Prod")["error"])
+        self.assertIn("is of project Test, not Prod", rr.read(self.Api(jobs), "11", project="Prod")["error"])
+        self.assertIn("job 13 (Patch) is not a VM - outage watch run", rr.read(self.Api(jobs), "13")["error"])
+        jobs[13]["artifacts"] = {"vm_outage_review": {"aar": {"v": 1}}}                  # a look-alike artifact
+        self.assertFalse(rr.read(self.Api(jobs), "13")["ok"])
+
 
 class SurveyRelax(unittest.TestCase):
     def test_start_no_longer_required(self):

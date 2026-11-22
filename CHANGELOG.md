@@ -45,6 +45,10 @@
 - Every time in the draft has its day and time zone. A host still down says *still down*, also in the numbers and the end.
 - The key events always keep the ticket, HA's restarts, the host back and the ticket resolved.
 - The job output names only the boxes really taken from the review. The AAR's temporary folder is always deleted.
+- (Codex) ACT's line comes from the outage's own ticket (the one measured, or one about a host of the outage), never from
+  another host's ticket of the same window. With a project set, a review is read only from an outage watch job AAP says is of
+  that project; a job that names none is said, not taken. *Still down* belongs to the stretch whose minutes are shown: a
+  host back after 2 h and down again for 5 min says both.
 
 **Docs:** VM_OUTAGE_WATCH.md (*The AAR draft (Word)*), INCIDENT_DOCS.md (*The AAR from an outage review*), the role defaults,
 VARIABLES_REFERENCE, the template variables.

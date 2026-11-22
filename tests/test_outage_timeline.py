@@ -1695,7 +1695,7 @@ class AarDraft1120(unittest.TestCase):
                                             "esx03 (Host events)")
         self.assertEqual(d["actions"], ["12 Nov 02:21 CET - HA restarted 14 VMs (cluster1)",
                                         "12 Nov 03:25 CET - Work note in INC0012345: On site, checking the cabling of esx03."])
-        self.assertEqual(d["numbers"][2], ["Time down", "46 min", "esx03 down: 46 min"])
+        self.assertEqual(d["numbers"][2], ["Time down", "46 min", "esx03 down 46 min (12 Nov 02:19 CET to 12 Nov 03:05 CET)"])
         self.assertTrue(d["follow_up"].startswith("the ticket came 93 min after the first signal"))
         self.assertEqual(d["ticket_hint"], "ACT in INC0012345: " + ACT)
         self.assertNotIn("root_cause", d)
@@ -1786,6 +1786,29 @@ class AarDraft1120(unittest.TestCase):
         self.assertTrue(any("lookup(" in a for a in r["draft"]["actions"]))
         self.assertTrue(all(isinstance(a, AnsibleUnsafeText) for a in r["draft"]["actions"]))
         self.assertIsInstance(r["title"], AnsibleUnsafeText)
+
+    def test_codex_p1_the_outage_tickets_act_only(self):
+        """Another host's ticket of the same window, opened before the first signal, never gives the outage its ACT line."""
+        other = {"sys_id": "q1", "number": "INC0010001", "short": "[site-health] sql02.example.mil: disk full",
+                 "description": "Severity: warning\n\nACT (GenAI) analysis - level 2, status ok:\nThe log volume of sql02 is full.\n",
+                 "opened": DAY + "00:11:00Z", "resolved": "", "closed": "", "close_notes": "", "state": "2", "active": True,
+                 "correlation_id": "site-health:9:disk", "notes": []}
+        r = made(None, [other] + tickets())
+        self.assertEqual(r["numbers"]["ticket"], "INC0012345")
+        self.assertEqual(r["draft"]["ticket_hint"], "ACT in INC0012345: " + ACT)
+        self.assertIn("ACT in INC0012345", r["aar"][3])
+        self.assertEqual(made(None, [other])["draft"]["ticket_hint"], "")                   # no ticket of the outage: none
+
+    def test_codex_p1_still_down_belongs_to_its_stretch(self):
+        """Down 2 h and back, then down again 5 min before the end: the 2 h are over, the 5 min are still going on."""
+        e = [ev("00:00:00", "HostConnectionLostEvent", H, msg="lost"), ev("02:00:00", "HostConnectedEvent", H, msg="back"),
+             ev("02:40:00", "HostConnectionLostEvent", H, msg="lost again")]
+        d = made(e, [])["draft"]
+        self.assertEqual(d["numbers"][2][1], "2 h")
+        self.assertEqual(d["numbers"][2][2], "esx03 down 2 h (12 Nov 01:00 CET to 12 Nov 03:00 CET); esx03 down again since "
+                                             "12 Nov 03:40 CET, still down at the end of the window (5 min)")
+        d = made([ev("02:40:00", "HostConnectionLostEvent", H, msg="lost")], [])["draft"]
+        self.assertEqual(d["numbers"][2][1], "5 min, still down")
 
 
 if __name__ == "__main__":
