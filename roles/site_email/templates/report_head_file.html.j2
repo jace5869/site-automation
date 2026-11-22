@@ -1,0 +1,14 @@
+{#- 1.112.0: a file the head offers (r.head_file: {file, label, note, error}) - the outage review's "Download AAR (Word)". A plain link
+    (download): no script, any Content-Security-Policy. site_report_web makes it the run's link with its size, or a dashed
+    "not on the website" with why (plugins/module_utils/site_report_files.py, HEAD_RE); error: the file was not made. -#}
+{%- set hf = r.head_file | default({}) %}
+{%- if hf and (hf.file | default('') or hf.error | default('')) %}
+<div class="hfile" role="group" aria-label="{{ hf.label | default('Download') | e }}">
+{%- set icon = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.2L12.5 4.8V14.5H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 1.7V5h3.3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.6 7.6l.9 4 1.5-3.2 1.5 3.2.9-4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>' %}
+{%- if hf.error | default('') %}
+<span class="hf-a off">{{ icon }}<span class="hf-l">{{ (hf.label | default('') | replace('Download ', '')) | e }}</span></span><span class="hf-m"><span class="hf-why">{{ hf.error | e }}</span>{{ hf.note | default('') | e }}</span>
+{%- else %}
+<a class="hf-a" href="site-report-file:{{ hf.file | urlencode }}" download>{{ icon }}<span class="hf-l">{{ hf.label | default('Download') | e }}</span></a><span class="hf-m">{{ hf.note | default('') | e }}</span>
+{%- endif %}
+</div>
+{%- endif %}

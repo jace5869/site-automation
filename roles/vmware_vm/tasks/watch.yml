@@ -149,12 +149,54 @@
     msg: "{{ _vm_w_tl.title }} - not sent (vm_watch_review_skip_blips)."
   when: _vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool
 
+# 1.112.0, the AAR draft of a review: the review's facts in the after action report's layout (roles/incident_docs,
+# review_draft.yml) - "Download AAR (Word)" on the page, attached to the email; the same draft in the job artifact for the
+# AAR job (incident_review). It never stops the watch: not made, the page says why.
+- name: VMware | the AAR draft of the review
+  ansible.builtin.set_fact:
+    _vm_w_aar: >-
+      {{ (_vm_w_tl.draft | default({})) | incident_review_draft(_vm_w_tl.act | default(none),
+           {'job': awx_job_id | default('') | string, 'made': now(utc=true, fmt='%Y-%m-%d %H:%M UTC')})
+         if _vm_w_review | bool and _vm_w_tl | default({}) | length > 0 else {} }}
+    _vm_w_aar_file: {}
+    _vm_w_aar_error: ""
+
+- name: VMware | the AAR draft as a Word document (vm_watch_review_docx)
+  when: _vm_w_aar | length > 0 and vm_watch_review_docx | bool and not _vm_w_tl.skip | default(false) | bool
+  block:
+    - name: VMware | a temporary folder for the AAR draft
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .aar
+      register: _vm_w_aar_dir
+      check_mode: false
+
+    - name: VMware | write the AAR draft (the AAR job's look)
+      ansible.builtin.include_role:
+        name: incident_docs
+        tasks_from: review_draft.yml
+      vars:
+        _rd_draft: "{{ _vm_w_aar }}"
+        _rd_dir: "{{ _vm_w_aar_dir.path }}"
+
+    - name: "VMware | the AAR draft - {{ _rd_file.filename | default('not made') }}"
+      ansible.builtin.set_fact:
+        _vm_w_aar_file: "{{ _rd_file | default({}) }}"
+        _vm_w_aar_error: "{{ _rd_error | default('') }}"
+  rescue:
+    - name: VMware | the AAR draft was not made (the review goes on without it)
+      ansible.builtin.set_fact:
+        _vm_w_aar_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | truncate(200) }}"
+
 - name: VMware | the outage report
   when: (_vm_w_report_it | bool or _vm_w_review | bool) and not (_vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool)
   block:
     - name: VMware | the report
       ansible.builtin.set_fact:
         _vm_w_doc: "{{ _vm_w | vm_watch_report(_vm_w_cond, _vm_w_actions, {'time_zone': report_time_zone | default('', true) | string}) }}"
+        _vm_w_aar_info: >-
+          {{ {'file': _vm_w_aar_file.filename | default(''), 'error': _vm_w_aar_error, 'job': awx_job_id | default('') | string,
+              'asked': _vm_w_aar | length > 0 and vm_watch_review_docx | bool, 'draft': _vm_w_aar | length > 0} }}
 
     - name: VMware | outage report
       ansible.builtin.include_tasks: report.yml
@@ -162,16 +204,28 @@
         _vm_vcenters: "{{ _vm_w.vcenters }}"
         _vm_report_subject: "{{ _vm_w_tl.title if _vm_w_review | bool and _vm_w_tl else _vm_w_doc.title }}"
         _vm_report_lines: "{{ ((_vm_w_tl.lines + ['']) if _vm_w_tl else []) + (_vm_w_doc | report_text).splitlines() }}"
-        _vm_report_doc: "{{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) }}"
-        _vm_report_web_doc: "{{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, true, _vm_w_review | bool) if _vm_w_tl else {} }}"
+        _vm_report_doc: "{{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, false) }}"
+        _vm_report_web_doc: >-
+          {{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, true, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, true) if _vm_w_tl else {} }}
+        _vm_report_attachments: "{{ [_vm_w_aar_file] if _vm_w_aar_file.path | default('') else [] }}"
         _vm_report_xlsx: >-
           {{ (_vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | report_xlsx_sheets) + [_vm_w_tl.sheet]
              if _vm_w_tl and report_email_xlsx | default(false) | bool else [] }}
 
+- name: VMware | the AAR draft's temporary folder, deleted
+  ansible.builtin.file:
+    path: "{{ _vm_w_aar_dir.path }}"
+    state: absent
+  check_mode: false
+  when: _vm_w_aar_dir.path is defined
+
+# 1.112.0: a review also keeps its AAR draft (aar) - the AAR job reads it back by this job's number (incident_review)
 - name: VMware | the review's numbers as a job artifact (vm_outage_review)
   ansible.builtin.set_stats:
     data:
-      vm_outage_review: "{{ _vm_w_tl.numbers | combine({'window': _vm_w_tl.window, 'title': _vm_w_tl.title}) }}"
+      vm_outage_review: >-
+        {{ _vm_w_tl.numbers | combine({'window': _vm_w_tl.window, 'title': _vm_w_tl.title, 'review': _vm_w_review | bool},
+                                      {'aar': _vm_w_aar} if _vm_w_aar | default({}) | length > 0 else {}) }}
   when: _vm_w_tl | length > 0
 
 # always (clean or not): the tickets job after this one in a workflow opens, updates and clears the tickets

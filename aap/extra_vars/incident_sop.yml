@@ -81,11 +81,14 @@
 # incident_sop_draft_clear: true
 
 ## What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless
-## answered. The AAR's boxes and the SOP's steps take a line or several. the outage's name or number
-## (in the file name and the email)
+## answered. The AAR's boxes and the SOP's steps take a line or several. 1.112.0: an outage review
+## to fill the AAR from - its AAP job number, or latest; "" = none
+# incident_review: ""
+
+## the outage's name or number (in the file name and the email)
 # incident_name: ""
 
-## the AAR: its start date and time (required)
+## the AAR: its start date and time (required, unless incident_review fills it)
 # incident_start: ""
 
 ## its end date and time (optional)
@@ -168,6 +171,12 @@
 
 ## a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)
 # incident_docs_survey_ca_path: ""
+
+## 1.112.0, the AAR from an outage review (incident_review): the AAR job reads the review from the
+## outage watch's job, through the same AAP credential - its user needs to see the VM - outage watch
+## jobs (the Read role on that template is enough). latest: the newest outage watch jobs read at
+## most to find the last review
+# incident_review_look_back: 25
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

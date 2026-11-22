@@ -2067,6 +2067,26 @@ class Files1798(unittest.TestCase):
         self.assertIn("together are over", refused[0]["why"])
         self.assertEqual((rfs.human(812), rfs.human(14000), rfs.human(3 * rfs.MB + rfs.MB // 5)), ("812 bytes", "14 KB", "3.2 MB"))
 
+    def test_a2_the_heads_file(self):
+        """1.112.0: the head's file (the outage review's "Download AAR (Word)", report_head_file.html.j2): the run's link with
+        its size and the label kept; not hosted: dashed, with why; no files on the website: said; removed later: struck."""
+        head = ('<div class="hfile"><a class="hf-a" href="site-report-file:AAR-esx03.docx" download><svg></svg><span class="hf-l">'
+                'Download AAR (Word)</span></a><span class="hf-m">A draft to finish.</span></div>')
+        ok, _ = rfs.prepare([self.file("AAR-esx03.docx", b"PK" * 600)], 20)
+        h = rfs.put_files(head, ok, [], "vm/2026-11-12_0345_job-4714.html", "vm/2026-11-12_0345_job-4714-files")
+        self.assertIn('<a class="hf-a" href="2026-11-12_0345_job-4714-files/AAR-esx03.docx" download="AAR-esx03.docx"><svg></svg>'
+                      '<span class="hf-l">Download AAR (Word)</span></a><span class="hf-m">AAR-esx03.docx &middot; 2 KB &middot; '
+                      'A draft to finish.</span>', h)
+        self.assertNotIn("site-report-file:", h)
+        h2 = rfs.put_files(head, [], [{"name": "AAR-esx03.docx", "why": "23.4 MB, over report_web_files_max_mb (20 MB)"}], "p.html", "p-files")
+        self.assertIn('<span class="hf-a off"><svg></svg><span class="hf-l">AAR (Word)</span></span>', h2)
+        self.assertIn("AAR-esx03.docx is not on the website: 23.4 MB, over report_web_files_max_mb (20 MB).", h2)
+        h3 = rfs.put_files(head, [], [], "p.html", "p-files")
+        self.assertIn("Not on the website (report_web_files is off): attached to the email.", h3)
+        gone = rfs.strike(h, "vm/2026-11-12_0345_job-4714-files", ["AAR-esx03.docx"], "removed after 30 days (report_web_files_keep_days)")
+        self.assertIn("AAR-esx03.docx: removed after 30 days", gone)
+        self.assertNotIn('class="hf-a" href', gone)
+
     def test_b_the_page_its_files_line_and_download_links(self):
         ok, _ = rfs.prepare([self.file("answer-keys-RHEL_9_STIG-V2R10.xml", XML)], 20)
         html = _files_args(1, 1, [])["html"]

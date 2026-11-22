@@ -1684,5 +1684,58 @@ class Codex1902(unittest.TestCase):
         self.assertEqual(set((v.get("h"), v.get("vm")) for v in x.values() if "INC0012345" in v["w"]), {(None, "esx03")})
 
 
+class AarDraft1120(unittest.TestCase):
+    """1.112.0: the review's AAR draft (outage_timeline's "draft") and the page / email with it (outage_review_aar)."""
+
+    def test_the_draft(self):
+        d = made()["draft"]
+        self.assertEqual((d["v"], d["name"], d["time_column"]), (1, "esx03 2026-11-12", "Time (CET)"))
+        self.assertEqual(d["detection"][0], "First signal 12 Nov 01:41:10 CET: Storage path redundancy degraded, back after 40 s on "
+                                            "esx03 (Host events)")
+        self.assertEqual(d["actions"], ["12 Nov 02:21 CET - HA restarted 14 VMs (cluster1)",
+                                        "12 Nov 03:25 CET - Work note in INC0012345: On site, checking the cabling of esx03."])
+        self.assertEqual(d["numbers"][2], ["Time down", "46 min", "esx03 down: 46 min"])
+        self.assertTrue(d["follow_up"].startswith("the ticket came 93 min after the first signal"))
+        self.assertEqual(d["ticket_hint"], "ACT in INC0012345: " + ACT)
+        self.assertNotIn("root_cause", d)
+        self.assertEqual(made([], [])["draft"], {})                                   # nothing to draft from
+        many = [ev("01:%02d:%02d" % (i // 60, i % 60), "VmFailoverFailed", vm="app%03d" % i) for i in range(400)]
+        d = made(many, [])["draft"]
+        self.assertEqual((len(d["events"]), d["events_total"]), (ot.DRAFT_EVENTS, 400))
+        self.assertEqual(len(d["key"]), 15)
+        self.assertLess(len(json.dumps(d)), 100000)                                   # a job artifact stays small
+
+    def test_still_down(self):
+        e = [x for x in events() if x["type"] != "HostConnectedEvent"]
+        d = made(e, [])["draft"]
+        self.assertIn("esx03 down", d["impact"])
+        self.assertIn("still down", d["impact"])
+        self.assertEqual(d["end"], "")
+
+    def test_the_page_and_the_email(self):
+        r = made()
+        web = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, True, True)
+        info = {"file": "AAR-esx03-2026-11-12.docx", "error": "", "job": "4714", "asked": True, "draft": True}
+        w = ot.outage_review_aar(web, info, True)
+        self.assertEqual(w["head_file"], {"file": "AAR-esx03-2026-11-12.docx", "label": "Download AAR (Word)",
+                                          "note": "A draft to finish: check each line, write the red ones."})
+        sec = [x for x in w["sections"] if x["title"] == "For the after-action report"][0]
+        self.assertTrue(sec["lines"][0].startswith("The AAR draft, AAR-esx03-2026-11-12.docx: Download AAR (Word) at the top"))
+        self.assertIn("incident_review): 4714 - or latest", sec["lines"][1])
+        self.assertEqual(sec["lines"][2], "Without the AAP credential on the AAR job, paste these into its survey instead:")
+        self.assertTrue(sec["lines"][3].startswith("Start (incident_start): "))
+        m = ot.outage_review_aar(ot.outage_timeline_doc(copy.deepcopy(WATCH), r, False, True), info, False)
+        self.assertNotIn("head_file", m)                                              # the email stays plain: the file is attached
+        self.assertTrue([x for x in m["sections"] if x["title"] == "For the after-action report"][0]["lines"][0]
+                        .startswith("The AAR draft is attached: AAR-esx03-2026-11-12.docx."))
+        bad = ot.outage_review_aar(web, dict(info, file="", error="disk full"), True)
+        self.assertEqual(bad["head_file"]["error"], "The AAR (Word) was not made: disk full. The page and the email are complete.")
+        off = ot.outage_review_aar(web, dict(info, file="", asked=False), True)          # vm_watch_review_docx: false
+        self.assertNotIn("head_file", off)
+        self.assertIn("incident_review): 4714", [x for x in off["sections"] if x["title"] == "For the after-action report"][0]["lines"][0])
+        self.assertEqual(ot.outage_review_aar(web, {"draft": False}, True), web)       # a normal watch run: as it is
+        self.assertEqual(ot.outage_review_aar({}, info, True), {})
+
+
 if __name__ == "__main__":
     unittest.main()

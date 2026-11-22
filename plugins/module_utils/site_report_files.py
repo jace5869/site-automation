@@ -27,6 +27,9 @@ MARK = '<!--site-report-files-->'       # where a look puts the Files line (atla
 START, END = '<!--site-report-files:start-->', '<!--site-report-files:end-->'
 # a Download link a report puts in its page (a text's file: the answer file) - made into the run's link here
 LINK_RE = re.compile(r'<a class="dl" href="site-report-file:([^"]*)" download>.*?</a>', re.S)
+# 1.112.0: a head's file (the outage review's "Download AAR (Word)", report_head_file.html.j2): its label and the line beside it
+# kept - made into the run's link with the file's size, or a dashed "not here" with why
+HEAD_RE = re.compile(r'<a class="hf-a" href="site-report-file:([^"]*)" download>(.*?)</a><span class="hf-m">(.*?)</span>', re.S)
 MB = 1024 * 1024
 
 
@@ -183,7 +186,19 @@ def put_files(html, files, refused, page, folder, web_look=True):
         if name in why:
             return '<span class="dl off">%s is not on the website: %s</span>' % (e(name), e(why[name]))
         return ''
-    return LINK_RE.sub(link, html)
+    def head(m):
+        name, inner, note = safe_file_name(unquote(m.group(1))), m.group(2), m.group(3).strip()
+        off = inner.replace('<span class="hf-l">Download ', '<span class="hf-l">', 1)
+        tail = (' &middot; ' + note) if note else ''
+        if name in have:
+            return _item(mark_id(folder, name), '<a class="hf-a" href="%s" download="%s">%s</a><span class="hf-m">%s &middot; %s%s</span>' % (
+                _href(page, folder + '/' + name), e(name), inner, e(name), e(human(have[name]['size'])), tail))
+        if name in why:
+            return '<span class="hf-a off">%s</span><span class="hf-m"><span class="hf-why">%s is not on the website: %s.</span>%s</span>' % (
+                off, e(name), e(why[name].rstrip('.')), note)
+        return ('<span class="hf-a off">%s</span><span class="hf-m"><span class="hf-why">Not on the website (report_web_files is off): '
+                'attached to the email.</span>%s</span>' % (off, note))
+    return LINK_RE.sub(link, HEAD_RE.sub(head, html))
 
 
 def strike(html, folder, names, why):

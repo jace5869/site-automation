@@ -148,7 +148,28 @@ run "the SOP job launched from another outage: the draft stays" ok incident_sop.
 run "the SOP job launched from the draft: made, the draft emptied" ok incident_sop.yml -e @"$work/aar.yml" -- "default answer(s) written"
 [ -z "$(draft sop_troubleshoot)$(draft incident_name)" ] && echo "ok   -   the form is empty again" \
     || { echo "FAIL -   the form still has the draft"; fails=$((fails + 1)); }
+# 1.112.0: the AAR from an outage review (incident_review) - the boxes left empty from the review's draft (the job's artifact)
+review='{"incident_start": "", "incident_detection": "", "incident_actions": "", "incident_root_cause": "", "incident_successes": "", "incident_tasks": "", "incident_make_sop": "No"}'
+run "AAR from an outage review (its job number): the empty boxes from it" ok incident_aar.yml -e @"$work/aar.yml" -e "$review" \
+    -e incident_review=4714 -- "Filled from the outage review of AAP job 4714 (VM - outage watch)" "Made: AAR-Web-portal-outage.docx\""
+mail "the review's facts, ACT's line as a suggestion, red lines to write, Appendix A; typed boxes win" attach=AAR-Web-portal-outage.docx \
+    "AAR-Web-portal-outage.docx~Filled from the outage review, AAP job 4714" "AAR-Web-portal-outage.docx~Start: 2026-11-12 01:58 CET" \
+    "AAR-Web-portal-outage.docx~First signal 12 Nov 01:41:10 CET" "AAR-Web-portal-outage.docx~Key events (from the review" \
+    "AAR-Web-portal-outage.docx~HA restarted 14 VMs" "AAR-Web-portal-outage.docx~Suggested - confirm: ACT in INC0012345" \
+    "AAR-Web-portal-outage.docx~To write: the confirmed cause" "AAR-Web-portal-outage.docx~To write: what went well." \
+    "AAR-Web-portal-outage.docx~Appendix A - every event of the review" "AAR-Web-portal-outage.docx~Rolled teh package back." \
+    "AAR-Web-portal-outage.docx~it is affecting users enterprise-wide" "AAR-Web-portal-outage.docx~ACT was not asked" \
+    "body=Filled from the outage review of AAP job 4714"
+run "AAR from the latest review: the newest watch run with one (4714, not 4720)" ok incident_aar.yml -e @"$work/aar.yml" -e "$review" \
+    -e incident_review=latest -- "Filled from the outage review of AAP job 4714"
+run "AAR from a watch run without a review: refused, said" fail incident_aar.yml -e @"$work/aar.yml" -e "$review" \
+    -e incident_review=4720 -- "job 4720 (VM - outage watch) has no outage review to fill from"
+run "AAR from a job AAP does not have: refused" fail incident_aar.yml -e @"$work/aar.yml" -e incident_review=999 -- "AAP has no job 999"
+run "incident_review neither a number nor latest: refused" fail incident_aar.yml -e @"$work/aar.yml" -e incident_review=yesterday \
+    -- "give an AAP job number"
 unset CONTROLLER_HOST CONTROLLER_OAUTH_TOKEN
+run "AAR from a review, no AAP credential: refused, said" fail incident_aar.yml -e @"$work/aar.yml" -e incident_review=4714 \
+    -- "No AAP connection"
 
 run "ACT tidies and suggests" ok incident_aar.yml -e @"$work/aar.yml" -e incident_act_tidy=Yes -e incident_act_suggest=Yes -e "$(model $((port + 1)))" \
     -- "Wording tidied:" "2 suggestion(s) from ACT"
@@ -174,7 +195,7 @@ mail "only the SOP" attach=SOP-Web-portal-returns-503.docx "subject=SOP: Web por
 
 run "the SOP job with no steps: refused" fail incident_sop.yml -e @"$work/aar.yml" -e '{"sop_troubleshoot": "", "sop_fix": ""}' -- "the SOP has no steps"
 run "no address: refused" fail incident_aar.yml -e @"$work/aar.yml" -e report_email_also= -- "Email the documents to"
-run "no start: refused" fail incident_aar.yml -e @"$work/aar.yml" -e incident_start= -- "start date and time"
+run "no start: refused" fail incident_aar.yml -e @"$work/aar.yml" -e incident_start= -- "start date and time" "or name an outage review"
 run "a dry run (Check): made, not sent" ok incident_aar.yml -e @"$work/aar.yml" --check -- "(a dry run: not sent)"
 if ls "$work/mail/"*.eml >/dev/null 2>&1; then echo "FAIL -   a dry run sent an email"; fails=$((fails + 1)); else echo "ok   -   nothing sent"; fi
 run "no logo file: said, documents made" ok incident_aar.yml -e @"$work/aar.yml" -e report_logo_file=/nonexistent.png -- "is not there, or not a PNG"

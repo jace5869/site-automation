@@ -1,6 +1,9 @@
 ---
 # OUTAGE AAR / SOP (playbooks/incident_aar.yml, playbooks/incident_sop.yml; docs/INCIDENT_DOCS.md). _incident_kind: aar or sop.
 #   1. What was typed in the survey becomes one record (incident_record) - the only thing the documents are made from.
+#      1.112.0: incident_review (a job number, or latest) reads an outage review's AAR draft from its AAP job
+#      (library/site_outage_review_read.py, GET only) and fills the boxes left empty (incident_review_fill); the AAR then
+#      has the review's key events, tickets, ACT's causes as suggestions and every event (Appendix A).
 #   2. ACT (optional, incident_act_tidy / incident_act_suggest; evidence mode: it runs no command) tidies the wording
 #      and suggests what may be missing. Its answer is held to what was typed (incident_act_apply): a tidied text that
 #      drops a number or an address is not used, and suggestions only go in a "From ACT" section of their own. ACT not
@@ -34,6 +37,37 @@
     _inc_sop_write: "{{ incident_act_sop | default(false) | string | lower in ['yes', 'true', '1', 'on', 'y'] }}"
     _inc_to: >-
       {{ incident_docs_email_to | email_recipients(report_email_also | default([]), report_email_also_domains | default([])) }}
+
+# 1.112.0: the AAR from an outage review - the boxes left empty are filled from the review's draft; what was typed wins
+- name: Incident docs | the outage review to fill from (incident_review)
+  when: _inc.kind == 'aar' and incident_review | default('') | string | trim | length > 0
+  block:
+    - name: Incident docs | read the outage review's draft from its AAP job (GET only)
+      site_outage_review_read:
+        review: "{{ incident_review | string | trim }}"
+        look_back: "{{ incident_review_look_back | int }}"
+        ca_path: "{{ incident_docs_survey_ca_path }}"
+      register: _inc_rv
+
+    - name: Incident docs | the outage review was read
+      ansible.builtin.assert:
+        that: _inc_rv.ok | bool
+        fail_msg: "Not made: the outage review (incident_review: {{ incident_review }}) - {{ _inc_rv.error }}. docs/INCIDENT_DOCS.md"
+        quiet: true
+
+    - name: Incident docs | the boxes left empty, from the review
+      ansible.builtin.set_fact:
+        _inc: "{{ _inc | incident_review_fill(_inc_rv.draft) }}"
+        _inc_review: "{{ _inc_rv.draft }}"
+        _inc_review_line: >-
+          Filled from the outage review of AAP job {{ _inc_rv.job }}{{ (' (' ~ _inc_rv.job_name ~ ')') if _inc_rv.job_name else '' }}:
+          {{ _inc_rv.draft.title | default('') }}. Boxes taken from it: {{ ['start', 'end', 'impact', 'detection', 'actions', 'recovery']
+             | select('in', _inc_rv.draft.keys() | list) | list | join(', ') }} - where you typed nothing. The root cause is never
+          taken from it.
+
+    - name: Incident docs | {{ _inc_review_line }}
+      ansible.builtin.debug:
+        msg: "{{ _inc_review_line }}"
 
 - name: Incident docs | enough was typed
   ansible.builtin.assert:
@@ -109,29 +143,11 @@
       {%- endif -%}
       {{ out }}
 
-# incident_docs_banner auto: the reports' banner (report_banner, site_enclave) when it is on, else the CUI marking
-- name: Incident docs | the marking (incident_docs_banner)
-  ansible.builtin.set_fact:
-    _inc_banner: >-
-      {{ incident_docs_banner | default('auto') | incident_banner_auto(incident_docs_banner_color | default('', true),
-           {'banner': report_banner | default('auto'), 'text': report_banner_text | default('SECRET'), 'color': report_banner_color | default(''),
-            'enclave': site_enclave | default(''), 'domains': site_enclave_classified_domains | default([]),
-            'hosts': (ansible_play_hosts_all + (query('ansible.builtin.inventory_hostnames', ansible_limit)
-                      if ansible_limit | default('', true) | length > 0 else [])) | report_banner_hosts(hostvars)} | report_banner) }}
+- name: Incident docs | the documents' look (the marking, the logo, the font)
+  ansible.builtin.include_tasks: look.yml
 
-- name: Incident docs | the documents' look
+- name: Incident docs | an SOP with it
   ansible.builtin.set_fact:
-    _inc_opts:
-      banner: "{{ _inc_banner.banner }}"
-      banner_color: "{{ _inc_banner.banner_color | string }}"
-      logo: >-
-        {%- set f = (incident_docs_logo_file | default('', true) or report_logo_file | default('', true)) | string | trim -%}
-        {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
-      logo_height: "{{ incident_docs_logo_height | int }}"
-      font: "{{ incident_docs_font }}"
-      size: "{{ incident_docs_font_size | float }}"
-      heading_color: "{{ incident_docs_heading_color | string }}"
-    _inc_names: {aar: "{{ incident_docs_aar_file }}", sop: "{{ incident_docs_sop_file }}"}
     _inc_sop: "{{ _inc | incident_sop_on }}"
 
 - name: Incident docs | the files' names
@@ -157,7 +173,8 @@
         doc: >-
           {{ _inc_act.record | incident_aar_docx(_inc_opts | combine({'instructions': incident_aar_instructions,
                                                                      'sop_file': (_inc_files | selectattr('kind', 'eq', 'sop') | map(attribute='name') | first | default(''))}),
-                                                 _inc_act.suggestions, _inc_act.tidied | reject('match', '^sop_') | list | length > 0)
+                                                 _inc_act.suggestions, _inc_act.tidied | reject('match', '^sop_') | list | length > 0,
+                                                 _inc_review | default({}))
              if item.kind == 'aar' else
              _inc_act.record | incident_sop_docx(_inc_opts | combine({'instructions': incident_sop_instructions, 'status': incident_sop_status}),
                                                  _inc_act.suggestions, _inc_act.tidied) }}
@@ -216,6 +233,7 @@
         msg: >-
           {{ ['Made: ' ~ (_inc_files | map(attribute='name') | join(', ')),
               'To: ' ~ (_inc_to | join(', ')) ~ (' (a dry run: not sent)' if ansible_check_mode else '')]
+             + ([_inc_review_line] if _inc_review_line is defined else [])
              + _inc_act_lines + _inc_draft_lines + ([_inc | incident_sop_skipped] if _inc | incident_sop_skipped else []) }}
 
     - name: Incident docs | email them
@@ -224,7 +242,8 @@
       vars:
         _report: >-
           {{ _inc_act.record | incident_email({'files': _inc_files, 'act': _inc_act_lines, 'draft': _inc_draft_lines,
-                                               'notes': [_inc | incident_sop_skipped] | select | list}) }}
+                                               'notes': [_inc | incident_sop_skipped] | select | list,
+                                               'review': _inc_review_line | default('')}) }}
         _report_attachments: >-
           {%- set out = [] -%}
           {%- for f in _inc_files -%}{%- set _ = out.append({'path': _inc_dir.path ~ '/' ~ f.name, 'filename': f.name}) -%}{%- endfor -%}
@@ -262,7 +281,7 @@
         data:
           incident_docs: >-
             {{ {'kind': _inc.kind, 'outage': _inc.name, 'files': _inc_files | map(attribute='name') | list,
-                'tidied': _inc_act.tidied, 'sop_by_act': _inc_act.sop | default([]), 'suggestions': _inc_act.suggestions | length, 'act_error': _inc_act.error,
+                'review': _inc_rv.job | default(''), 'tidied': _inc_act.tidied, 'sop_by_act': _inc_act.sop | default([]), 'suggestions': _inc_act.suggestions | length, 'act_error': _inc_act.error,
                 'dry_run': ansible_check_mode} }}
   always:
     - name: Incident docs | the temporary folder, deleted

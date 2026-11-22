@@ -925,6 +925,7 @@ footer{margin-top:32px}
 </div>
 </details>
 {%- endif %}
+{%- include 'report_head_file.html.j2' %}
 </header>
 <!--site-report-files-->
 {%- if r.summary | default([]) and not r.dashboard | default({}) and r.teams is not defined %}

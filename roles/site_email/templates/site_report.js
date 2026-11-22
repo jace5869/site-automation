@@ -34,6 +34,12 @@
   function ready(f){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',f);else f()}
   ready(function(){
   function all(s,el){return [].slice.call((el||document).querySelectorAll(s))}
+  /* 1.112.0: a saved copy of the page (file:) has no folder of files beside it - the head's file (the AAR) says where it is */
+  if(location.protocol==='file:')all('.hfile a.hf-a').forEach(function(a){var s=document.createElement('span');s.className='hf-a off';
+    [].slice.call(a.childNodes).forEach(function(n){s.appendChild(n)});var l=s.querySelector('.hf-l');if(l)l.textContent=l.textContent.replace(/^Download /,'');
+    var m=a.nextElementSibling,w=document.createElement('span');w.className='hf-why';
+    w.textContent='A saved copy of the page: the file is on the report website, and attached to the email.';
+    a.parentNode.replaceChild(s,a);if(m&&m.classList.contains('hf-m')){m.textContent='';m.appendChild(w)}});
   // A block holds [element descriptors, nodes]. Strings are text, including strings that look like tags.
   function unpack(block){
     var data=JSON.parse(block.textContent),fragment=document.createDocumentFragment();

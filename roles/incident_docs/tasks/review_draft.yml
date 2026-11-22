@@ -1,0 +1,31 @@
+---
+# 1.112.0, the AAR draft of an outage review (roles/vmware_vm/tasks/watch.yml: vm_watch_review_docx): the review's facts
+# in the AAR's own layout (incident_aar_docx with the review), with the AAR job's look - the marking, the logo, the font,
+# the site's instructions. The boxes only a person can write are red "To write" lines.
+# Input: _rd_draft (incident_review_draft), _rd_dir (a folder). Output: _rd_file ({path, filename}) or _rd_error.
+- name: Incident docs | the documents' look (the marking, the logo, the font)
+  ansible.builtin.include_tasks: look.yml
+
+- name: Incident docs | the AAR draft's record (the review's facts; the root cause left to write)
+  ansible.builtin.set_fact:
+    _rd_record: "{{ {'kind': 'aar'} | incident_record | incident_review_fill(_rd_draft) }}"
+
+- name: Incident docs | write the AAR draft
+  block:
+    - name: Incident docs | write {{ _rd_record | incident_file_name('aar', _inc_names) }}
+      site_docx:
+        path: "{{ _rd_dir }}/{{ _rd_record | incident_file_name('aar', _inc_names) }}"
+        doc: >-
+          {{ _rd_record | incident_aar_docx(_inc_opts | combine({'instructions': incident_aar_instructions}), [], false, _rd_draft) }}
+      register: _rd_written
+      check_mode: false                # only a file in the run's own temporary folder
+
+    - name: Incident docs | the AAR draft
+      ansible.builtin.set_fact:
+        _rd_file: {path: "{{ _rd_written.path }}", filename: "{{ _rd_written.path | basename }}"}
+        _rd_error: ""
+  rescue:
+    - name: Incident docs | the AAR draft was not made (the review goes on without it)
+      ansible.builtin.set_fact:
+        _rd_file: {}
+        _rd_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | truncate(200) }}"

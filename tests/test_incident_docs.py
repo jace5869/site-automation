@@ -28,6 +28,7 @@ sys.modules["ansible.module_utils.site_aap"] = _aap
 _spec.loader.exec_module(_aap)
 import incident_doc_filters as f  # noqa: E402
 import site_aap_survey_add as sv  # noqa: E402
+import site_outage_review_read as rr  # noqa: E402
 import site_docx as d  # noqa: E402
 from test_email_question import FakeAap, _jt  # noqa: E402
 
@@ -332,13 +333,14 @@ class Survey(unittest.TestCase):
         aar = f.incident_survey("aar", {"levels": ["low", "high"], "most": 5000})
         names = [q["variable"] for q in aar]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual(names[:4], ["incident_name", "incident_start", "incident_end", "incident_impact_level"])
+        self.assertEqual(names[:5], ["incident_review", "incident_name", "incident_start", "incident_end", "incident_impact_level"])
         for v in ("report_email_also", "incident_make_sop", "sop_fix", "incident_act_tidy", "incident_act_suggest", "incident_act_sop"):
             self.assertIn(v, names)
         q = dict((x["variable"], x) for x in aar)
         self.assertEqual(q["incident_impact_level"]["choices"], ["LOW", "HIGH"])
         self.assertEqual((q["incident_detection"]["type"], q["incident_detection"]["max"]), ("textarea", 5000))
-        self.assertTrue(q["report_email_also"]["required"] and q["incident_start"]["required"])
+        self.assertTrue(q["report_email_also"]["required"])
+        self.assertFalse(q["incident_start"]["required"] or q["incident_review"]["required"])     # 1.112.0: a review can fill the start
         self.assertEqual(q["incident_make_sop"]["default"], "No")
         sop = dict((x["variable"], x) for x in f.incident_survey("sop"))
         self.assertTrue(sop["sop_title"]["required"])
@@ -565,6 +567,174 @@ class SurveyWriter(unittest.TestCase):
         self.assertEqual(q, {"variable": "a", "type": "textarea", "choices": "", "max": 9, "question_name": "a",
                              "question_description": "", "required": False, "default": ""})
         self.assertEqual(sv.remove_questions({"spec": [{"variable": "b"}]}, ["a"]), (None, []))
+
+
+def _doc_text(desc):
+    """All the text of a site_docx description, in order (tables' cells too)."""
+    out = []
+    for b in desc["blocks"]:
+        for k in ("text", "label"):
+            if b.get(k):
+                out.append(str(b[k]))
+        for x in b.get("lines") or []:
+            out.append(str(x))
+        for x in b.get("items") or []:
+            out.append(" ".join(str(v) for v in x.values()) if isinstance(x, dict) else str(x))
+        for row in b.get("rows") or []:
+            out.append(" | ".join(str(c) for c in row))
+    return "\n".join(out)
+
+
+def _review():
+    sys.path.insert(0, HERE)
+    import test_outage_timeline as T
+    return T.made()
+
+
+class AarFromReview(unittest.TestCase):
+    """1.112.0: the AAR draft of an outage review - the facts from the review, ACT's causes as suggestions, the root cause and
+    the lessons learned left to write (red), every event in Appendix A; the same draft for the AAR job (incident_review)."""
+    CARDS = {"web": {"causes": [{"title": "A fibre channel path went down", "confidence": 80, "conf_text": "80% high",
+                                 "evidence": [{"t": "01:58:02", "h": "esx03", "m": "Lost path redundancy"}],
+                                 "steps": [{"do": "Check the switch port.", "cmd": "esxcli storage core path list"}]},
+                                {"title": "", "confidence": 10}, {"title": "Unexplained", "unexplained": True}],
+                     "cause_overall": ["Check the path first."]}, "judged": ""}
+
+    def draft(self, act=None):
+        return f.incident_review_draft(_review()["draft"], act, {"job": "4714", "made": "2026-11-12 02:45 UTC"})
+
+    def test_the_draft(self):
+        d = self.draft()
+        self.assertEqual((d["job"], d["made"], d["name"]), ("4714", "2026-11-12 02:45 UTC", "esx03 2026-11-12"))
+        self.assertEqual(d["start"], "2026-11-12 01:58 CET - Storage path redundancy lost on esx03")
+        self.assertEqual(d["impact"], "esx03 down 46 min (12 Nov 02:19 to 12 Nov 03:05); vSphere HA restarted 14 VMs")
+        self.assertEqual(d["detection"][1], "Ticket INC0012345 opened 12 Nov 03:14 CET, 93 min after the first signal")
+        self.assertEqual([x[0] for x in d["numbers"]], ["First signal", "First signal to ticket", "Time down"])
+        self.assertEqual(d["recovery"][0], "12 Nov 03:05 CET - Host connected again (esx03)")
+        self.assertEqual(d["recovery"], sorted(d["recovery"]))                       # in time order
+        self.assertEqual(len(d["events"]), d["events_total"])
+        self.assertLessEqual(len(d["key"]), 15)
+        self.assertIn(["12 Nov 02:21:05", "vCenter alarms", "Warning", "HA restarted 14 VMs", "cluster1"], d["key"])
+        self.assertEqual(d["tickets"][0][0], "INC0012345")
+        self.assertNotIn("root_cause", d)                                             # never in the draft
+        self.assertNotIn("ticket_hint", d)
+        self.assertEqual(d["causes"]["note"], "ACT was not asked (vm_outage_act is off for this review).")
+        self.assertTrue(d["causes"]["hint"].startswith("ACT in INC0012345: The host lost every path"))
+        json.dumps(d)                                                                 # an artifact: plain JSON
+        self.assertEqual(f.incident_review_draft({}, None, {}), {})
+
+    def test_the_causes(self):
+        c = f.incident_review_causes(self.CARDS)
+        self.assertEqual(c["causes"], [{"title": "A fibre channel path went down", "conf": "80% high",
+                                        "evidence": ["01:58:02 esx03 Lost path redundancy"],
+                                        "checks": ["Check the switch port (esxcli storage core path list)"]}])
+        self.assertEqual((c["asked"], c["overall"], c["note"]), (True, "Check the path first.", ""))
+        own = f.incident_review_causes({"causes": [{"title": "T", "confidence": 45, "evidence": ["a line"], "steps": [{"do": "x"}]}]})
+        self.assertEqual(own["causes"][0]["conf"], "45% low")                        # act_causes' own shape
+        self.assertEqual(f.incident_review_causes({"web": None, "judged": "ACT (vm_outage_act): no key."})["note"], "ACT (vm_outage_act): no key.")
+        self.assertEqual(f.incident_review_causes(None)["asked"], False)
+        self.assertEqual(f.incident_review_causes("junk")["causes"], [])
+
+    def test_fill_typed_wins(self):
+        d = self.draft()
+        r = f.incident_review_fill(f.incident_record({"kind": "aar", "start": "typed start", "recovery": "typed fix", "name": ""}), d)
+        self.assertEqual((r["start"], r["recovery"], r["name"]), ("typed start", "typed fix", "esx03 2026-11-12"))
+        self.assertEqual(r["end"], "2026-11-12 03:06 CET - Alarm back to green: Host storage path redundancy")
+        self.assertEqual(r["detection"].splitlines(), d["detection"])
+        self.assertEqual(r["root_cause"], "")                                         # never from the review
+        self.assertEqual(f.incident_problems(r), [])
+        self.assertEqual(f.incident_review_fill({"start": ""}, {}), {"start": ""})
+        self.assertIn("incident_review", f.incident_problems(f.incident_record({"kind": "aar"}))[0])
+
+    def test_the_document(self):
+        d = self.draft(self.CARDS)
+        r = f.incident_review_fill(f.incident_record({"kind": "aar"}), d)
+        doc = f.incident_aar_docx(r, {"banner": "CUI", "instructions": ["Save it."]}, [], False, d)
+        t = _doc_text(doc)
+        heads = [b["text"] for b in doc["blocks"] if b.get("type") == "heading"]
+        self.assertEqual(heads, ["OVERVIEW", "Event Response", "Reason for Outage (RFO) & Recovery", "Lessons Learned & Action Plan",
+                                 "Appendix A - every event of the review"])
+        for want in ("Filled from the outage review, AAP job 4714, made 2026-11-12 02:45 UTC", "Key events (from the review",
+                     "Suggested - confirm: A fibre channel path went down (ACT, 80% high). Evidence: 01:58:02 esx03 Lost path redundancy. "
+                     "Check: Check the switch port (esxcli storage core path list).", "Suggested - confirm: ACT in INC0012345",
+                     "To write: the confirmed cause", "To write: what went well.", "To write: each task - owner - due date.",
+                     "The review saw: the ticket came 93 min", "To write: the impact level", "Save it.", "INC0012345 | 12 Nov 03:14 CET"):
+            self.assertIn(want, t)
+        red = [b for b in doc["blocks"] if b.get("color") == f.TO_WRITE]
+        self.assertTrue(red and all(str(x).startswith("To write:") for b in red for x in b["items"]))
+        self.assertEqual(sum(1 for b in doc["blocks"] if b.get("columns") == ["Task", "Owner", "Due"]), 1)
+        self.assertEqual(t.index("Appendix A") < t.index("Save it."), True)          # the site's instructions last
+        # typed boxes win, and are not red
+        r2 = dict(r, root_cause="A cable.", successes="Fast failover", tasks="Label the cables - ops", impact_level="MAJOR")
+        t2 = _doc_text(f.incident_aar_docx(r2, {}, [], False, d))
+        for gone in ("To write: the confirmed cause", "To write: what went well.", "To write: each task", "To write: the impact level"):
+            self.assertNotIn(gone, t2)
+        self.assertIn("Suggested - confirm", t2)                                      # the suggestions stay beside a typed cause
+        self.assertIn("A cable.", t2)
+        # the AAR without a review is as before
+        self.assertEqual(f.incident_aar_docx(r, {}, [], False), f.incident_aar_docx(r, {}, [], False, {}))
+        for word in t.lower().split():
+            self.assertNotIn(word.strip(".,:;()"), ("purchase", "buy", "cost"))
+
+    def test_written_as_word(self):
+        d = self.draft(self.CARDS)
+        doc = f.incident_aar_docx(f.incident_review_fill(f.incident_record({"kind": "aar"}), d), {"banner": "CUI"}, [], False, d)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "AAR.docx")
+            d_ = __import__("site_docx")
+            d_.write_docx(path, doc)
+            z = zipfile.ZipFile(path)
+            for n in z.namelist():
+                if n.endswith(".xml"):
+                    minidom.parseString(z.read(n))
+            body = z.read("word/document.xml").decode()
+            self.assertIn('w:val="C00000"', body)                                      # the red lines
+            self.assertIn("Appendix A", body)
+
+
+class ReviewReader(unittest.TestCase):
+    """roles/incident_docs/library/site_outage_review_read.py: a job number, latest, and what it says when it cannot."""
+    class Api(object):
+        def __init__(self, jobs):
+            self.jobs, self.calls = jobs, []
+
+        def call(self, method, path, body=None, base=None):
+            self.calls.append((method, path))
+            if path.startswith("jobs/?"):
+                return 200, {"results": [dict((k, v) for k, v in j.items() if k != "artifacts") for _, j in sorted(self.jobs.items(), reverse=True)]}
+            n = path.split("/")[1]
+            j = self.jobs.get(int(n)) if n.isdigit() else None
+            return (200, j) if j else (404, {"detail": "Not found."})
+
+    def jobs(self):
+        aar = {"v": 1, "title": "Outage review: esx03"}
+        return {10: {"id": 10, "name": "VM - outage watch", "playbook": "playbooks/vm_outage_watch.yml",
+                     "artifacts": {"vm_outage_review": {"review": True, "aar": aar}}},
+                12: {"id": 12, "name": "VM - outage watch", "playbook": "playbooks/vm_outage_watch.yml", "artifacts": {"vm_outage_review": {}}},
+                13: {"id": 13, "name": "Patch", "playbook": "playbooks/patch_hosts.yml", "artifacts": {}}}
+
+    def test_read(self):
+        api = self.Api(self.jobs())
+        self.assertEqual(rr.read(api, "10")["draft"]["title"], "Outage review: esx03")
+        got = rr.read(api, " Latest ")
+        self.assertEqual((got["ok"], got["job"]), (True, "10"))                     # 12 has no review: skipped
+        self.assertTrue(all(m == "GET" for m, _ in api.calls))                       # read only
+        self.assertIn("has no outage review to fill from", rr.read(api, "12")["error"])
+        self.assertIn("AAP has no job 99", rr.read(api, "99")["error"])
+        self.assertIn("give an AAP job number", rr.read(api, "yesterday")["error"])
+        self.assertIn("no VM - outage watch job", rr.read(self.Api({}), "latest")["error"])
+        none = self.jobs()
+        del none[10]
+        self.assertIn("no outage review among the newest 1", rr.read(self.Api(none), "latest")["error"])
+        self.assertEqual(rr.draft_of({"artifacts": {"vm_outage_review": {"aar": {"v": 0}}}}), {})
+
+
+class SurveyRelax(unittest.TestCase):
+    def test_start_no_longer_required(self):
+        spec = {"spec": [{"variable": "incident_start", "required": True}, {"variable": "x", "required": True}]}
+        new, done = sv.relax_questions(spec, ["incident_start", "nope"])
+        self.assertEqual((done, new["spec"][0]["required"], new["spec"][1]["required"]), (["incident_start"], False, True))
+        self.assertEqual(sv.relax_questions(new, ["incident_start"]), (None, []))     # run again: nothing to do
 
 
 if __name__ == "__main__":

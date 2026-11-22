@@ -17,8 +17,8 @@ end; it is not built yet.
 |---|---|---|
 | VM - outage watch | `playbooks/vm_outage_watch.yml` | VMware vCenter (read-only is enough); no Limit |
 
-The same job also makes the **outage review**, a time line of an outage for the after-action report:
-[Review an outage](#review-an-outage-the-time-line).
+The same job also makes the **outage review**, a time line of an outage, and its after action report as a Word draft
+(1.112.0): [Review an outage](#review-an-outage-the-time-line), [The AAR draft](#the-aar-draft-word).
 
 ## What it looks at
 
@@ -188,7 +188,8 @@ Leave `vm_watch_review` off on the schedule. A scheduled run that finds somethin
 | The outage in short | the first signal, the ticket, the time down, when it was back - one line each |
 | What happened, in order (website: atlas, brief) | the time line: four lanes, a mark per event, a band while a host was down |
 | The events | every event as a table row: time, lane, where, what, level. **This table is the source**; the chart only draws it |
-| For the after-action report | lines to paste into the AAR job's survey, each named by its variable |
+| Download AAR (Word) (1.112.0) | in the page's head: the after action report, filled from this review ([The AAR draft](#the-aar-draft-word)) |
+| For the after-action report | where the AAR draft is, the job number for the AAR job, and the lines to paste into its survey |
 | The watch's own sections | *Down or hung now* and the rest, below, as in every watch report |
 
 ### The list, the related events and the filters
@@ -310,20 +311,49 @@ The four lanes:
 - **A short usage blip.** If those alarms are only CPU or memory usage and each cleared within `vm_watch_review_min_seconds`
   (300), the title says so (*a short usage blip, Low*). It is still sent; `vm_watch_review_skip_blips: true` sends nothing
   and the job says so.
-- **The email** and the other looks have no chart: the boxes, the short list and the events table.
+- **The email** and the other looks have no chart: the boxes, the short list and the events table. A review's email has the
+  AAR draft attached (`AAR-<host>-<date>.docx`, 1.112.0), like the workbook.
 - **The workbook** (`report_email_xlsx: true`): a *Timeline* sheet with every event.
 - **The job artifact** `vm_outage_review`: the numbers (first signal, ticket, seconds from signal to ticket, seconds
-  down, hosts down, VMs restarted by HA), for a later workflow step.
+  down, hosts down, VMs restarted by HA), for a later workflow step. A review (1.112.0) also keeps `review: true` and its
+  AAR draft (`aar`), which the AAR job reads back by this job's number.
 
-### From the review to the AAR
+### The AAR draft (Word)
 
-The AAR stays a document a person writes ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)). The review gives it the facts:
+A review also writes the **after action report** as a Word document, filled from the review (1.112.0). It is a draft:
+someone opens it, checks it and writes the rest.
 
-1. Open the review's section *For the after-action report*.
-2. Launch *Outage AAR - Word document*.
-3. Copy each line into the survey question of the same name: `incident_start`, `incident_end`, `incident_detection`,
-   `incident_root_cause`.
-4. Check the root cause before you paste it. It is ACT's reading of the ticket, not a finding.
+- **Where:** *Download AAR (Word)* in the head of the review's web page, and attached to the review's email.
+  The file is `AAR-<host>-<date>.docx`, for example `AAR-esx03-2026-11-12.docx`.
+- **The layout** is the AAR job's own ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)): the marking banner, the logo, the font, the site's
+  instructions at the end.
+- **Filled from the review:** the start and end, the impact (the hosts down and for how long, the VMs HA restarted), the
+  detection (the first signal, the ticket and the time between), the actions (HA's restarts, the tickets' work notes), the
+  recovery (the host back, the ticket's close notes, all back to normal).
+- **Tables:** the three numbers, the key events (at most 15), the tickets. Every event is in *Appendix A* (at most 300).
+- **ACT's possible causes** (`vm_outage_act`, when it is on) are under the root cause as *Suggested - confirm*. So is what
+  a ticket's own ACT analysis said. They are suggestions, not findings. Without them the document says *ACT was not asked*.
+- **Left to write, in red:** the root cause (never filled from ACT), the impact level, the successes, the improvements, and
+  the tasks with an empty *Task / Owner / Due* table. Red is the paper template's "fill this in" colour.
+
+| The head shows | When |
+|---|---|
+| **Download AAR (Word)**, the file's name and size | the file is on the report website |
+| *... is not on the website: 23.4 MB, over report_web_files_max_mb (20 MB).* | too big, or a type the website does not host |
+| *Not on the website (report_web_files is off): attached to the email.* | `report_web_files: false` |
+| *... removed after 30 days (report_web_files_keep_days)* | the website's cleanup removed it; the AAR job can still read the review |
+| *A saved copy of the page: the file is on the report website, and attached to the email.* | the page was saved and opened from a disk |
+| *The AAR (Word) was not made: ...* | it could not be written; the page and the email are complete |
+
+`vm_watch_review_docx: false` writes no Word document. The job artifact keeps the draft.
+
+**The same draft from the AAR job.** Launch *Outage AAR - Word document* and answer *Fill from an outage review*
+(`incident_review`) with this job's number, or `latest`. The AAR job reads the review from this job's artifact. A box you
+type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-an-outage-review).
+
+**By hand.** The section *For the after-action report* still has the lines to paste into the AAR job's survey (`incident_start`,
+`incident_end`, `incident_detection`, `incident_root_cause`). Check the root cause before you paste it. It is ACT's reading of
+the ticket, not a finding.
 
 ### When a part is missing
 
@@ -370,6 +400,7 @@ The AAR stays a document a person writes ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)).
 | `vm_watch_review_tickets` | [] | more tickets to show, by number |
 | `vm_watch_review_event_types` | [] | vCenter event types to read; empty = the built-in list |
 | `vm_watch_review_max_events` | 2000 | the most events per vCenter (the newest are kept) |
+| `vm_watch_review_docx` | true | a review also writes the AAR draft as Word: on its page and attached to its email (1.112.0) |
 
 Also used: `vmware_vcenters`, `vmware_datacenter`, `vmware_validate_certs`, `vmware_protected_vms`,
 `vmware_protected_groups`, `report_email_to`, `report_web_dest`, and the `servicenow_*` settings of the

@@ -79,6 +79,7 @@ STEPS_MIN = (1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 10080)
 TRACK_PX = 580.0           # the narrowest track the marks must fit (the 800 px window)
 ROWS = 3
 LEAD_S = 1800              # 1.90.0: the lead-up looks back at most this far before the first critical event
+DRAFT_EVENTS = 300         # 1.112.0: the AAR draft holds at most this many events (its Appendix A; the artifact stays small)
 ATTACH = "Attach the ServiceNow API credential to the outage watch template to see and link its incidents (read only)."
 
 
@@ -1056,7 +1057,69 @@ def outage_timeline(events, tickets=None, opts=None):
     if not o.get("tickets_asked"):
         out.append("ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
     out += notes
-    return {"title": title, "head_counts": h_counts, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
+
+    # 1.112.0: the AAR draft - what the review knows, for the after action report (incident_doc_filters: incident_review_fill,
+    # incident_aar_docx). The review run writes it as "AAR (Word)", and the AAR job reads it back from the job's artifact
+    # (vm_outage_review.aar). Facts only: the root cause is never in it; ACT's causes go beside it as suggestions.
+    draft = {}
+    if first:
+        start = first_bad or first
+        where_name = (head or start)["where"] or (hosts_down[0] if hosts_down else "")
+        impact = []
+        for h, a_, b_ in [(shown(d), d[1], d[2]) for d in downs]:
+            impact.append("%s down %s (%s to %s)" % (h, _span(((b_ or end) - a_).total_seconds()), hm(a_), hm(b_) if b_ else "still down"))
+        if restarted:
+            impact.append("vSphere HA restarted %d VM%s" % (restarted, "" if restarted == 1 else "s"))
+        if not impact:
+            impact.append("no host was lost: %s%s" % (_lower_first(start["what"]), (" on " + start["where"]) if start["where"] else ""))
+        detection = ["First signal %s %s: %s%s (%s)" % (hm(first["t"], True), zname(first["t"]), first["what"],
+                                                       (" on " + first["where"]) if first["where"] else "", LANE[first["lane"]])]
+        if to_ticket is not None:
+            detection.append("Ticket %s opened %s %s, %s after the first signal" % (opened["ticket"], hm(opened["t"]), zname(opened["t"]),
+                                                                                    _span(to_ticket)))
+        elif o.get("tickets_asked") and not o.get("tickets_error"):
+            detection.append("No ticket of the health workflows in the window")
+        actions, recovery = [], []
+        for e in evs:
+            at = "%s %s - " % (hm(e["t"]), zname(e["t"]))
+            if e["role"] == "restart":
+                actions.append(at + e["label"] + ((" (" + e["where"] + ")") if e["where"] else ""))
+            elif e["lane"] == "servicenow" and e["level"] == "info":
+                actions.append(at + e["what"])
+            elif e["role"] == "resolved":
+                recovery.append((e["t"], at + e["what"]))
+            elif e["lane"] == "host" and e["role"] == "up":
+                recovery.append((e["t"], at + e["what"] + ((" (" + e["where"] + ")") if e["where"] else "")))
+        if back:
+            recovery.append((back["t"], "%s %s - all back to normal: %s" % (hm(back["t"]), zname(back["t"]), back["what"])))
+        recovery = [x[1] for x in sorted(recovery, key=lambda x: x[0])]
+        key_ids = set(id(x) for x in (first, start, back, opened) if x is not None)
+        key = [e for e in evs if id(e) in key_ids or e["level"] == "critical" or e["role"] in ("restart", "resolved", "up")][:15]
+
+        def row(e):
+            return [hm(e["t"], True) + ("" if len(zones) == 1 else " " + zname(e["t"])), LANE[e["lane"]], WORD[e["level"]], e["what"], e["where"]]
+        tk_rows = []
+        for k in tickets or []:
+            num = str((k or {}).get("number") or "") if isinstance(k, dict) else ""
+            if not num or not any(e.get("ticket") == num for e in evs):
+                continue
+            op, rs = _time(k.get("opened")), _time(k.get("resolved")) or _time(k.get("closed"))
+            tk_rows.append([num, (hm(op) + " " + zname(op)) if op else "", (hm(rs) + " " + zname(rs)) if rs else "not yet",
+                            _cut(k.get("short"), 120), _cut(k.get("close_notes"), 200)])
+        follow = [a for a in aar if a.startswith("Follow-up: ")]
+        draft = {"v": 1, "title": title, "window": window_text, "time_column": tcol,
+                 "name": ("%s %s" % (where_name, loc(start["t"]).strftime("%Y-%m-%d"))).strip(),
+                 "start": "%s - %s%s" % (full(start["t"]), start["what"], (" on " + start["where"]) if start["where"] else ""),
+                 "end": ("%s - %s" % (full(back["t"]), back["what"])) if back else "",
+                 "impact": "; ".join(impact), "detection": detection, "actions": actions[:30], "recovery": recovery[:30],
+                 "numbers": [["First signal", hm(first["t"], True) + " " + zname(first["t"]), "%s%s (%s)" % (
+                                 first["what"], (" on " + first["where"]) if first["where"] else "", LANE[first["lane"]])],
+                             ["First signal to ticket", _span(to_ticket) if to_ticket is not None else "-",
+                              ("%s opened %s" % (opened["ticket"], hm(opened["t"]))) if to_ticket is not None else "no ticket measured"],
+                             ["Time down", _span(down_s) if spans else "0", down_word or "no host lost in the window"]],
+                 "key": [row(e) for e in key], "events": [row(e) for e in evs[:DRAFT_EVENTS]], "events_total": len(evs),
+                 "tickets": tk_rows, "ticket_hint": cause, "follow_up": follow[0][len("Follow-up: "):] if follow else ""}
+    return {"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
             "lines": out, "aar": aar, "window": window_text, "events": len(evs),
             "skip": bool(blip and o.get("skip_blips")),
             "cleared_before_review": cleared_only, "blip": blip,
@@ -1091,6 +1154,43 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
     return out
 
 
+def outage_review_aar(doc, info=None, web=False):
+    """1.112.0: the review's page and email with its AAR draft. info: file (the Word file's name, '' = none), error (why it
+    was not made), job (this AAP job's number), asked (a review with a draft, vm_watch_review_docx on). The web page gets
+    head_file - "Download AAR (Word)" in its head (report_head_file.html.j2) -, and "For the after-action report" says
+    where the draft is and how the AAR job fills from it; the lines to paste stay, for an AAR job without its AAP credential."""
+    if not doc or not isinstance(info, dict):
+        return doc
+    out = dict(doc)
+    name, err, job = str(info.get("file") or ""), str(info.get("error") or ""), str(info.get("job") or "")
+    if web and info.get("asked") and (name or err):
+        out["head_file"] = ({"file": name, "label": "Download AAR (Word)", "note": "A draft to finish: check each line, write the red ones."}
+                            if name else {"error": "The AAR (Word) was not made: %s. The page and the email are complete." % err.rstrip("."),
+                                          "label": "AAR (Word)", "note": ""})
+    lines = []
+    if name:
+        lines.append(("The AAR draft, %s: Download AAR (Word) at the top of this page, and attached to the email. " if web else
+                      "The AAR draft is attached: %s. ") % name
+                     + "It is filled from this review: check each line, write the red ones (root cause, lessons learned, tasks).")
+    elif err and info.get("asked"):
+        lines.append("The AAR draft was not made: %s." % err.rstrip("."))
+    if job and info.get("draft"):
+        lines.append("Or launch Outage AAR - Word document with Fill from an outage review (incident_review): %s - or latest. "
+                     "It makes the same draft with what you type in its survey." % job)
+    if not lines:
+        return out
+    secs = []
+    for sec in out.get("sections") or []:
+        if sec.get("title") == "For the after-action report":
+            sec = dict(sec, lines=lines + (["Without the AAP credential on the AAR job, paste these into its survey instead:"] +
+                                           list(sec.get("lines") or []) if sec.get("lines") else []),
+                       text="The after action report, filled from this review. ACT's causes are in it as suggestions, never as the root cause.")
+        secs.append(sec)
+    out["sections"] = secs
+    return out
+
+
 class FilterModule(object):
     def filters(self):
-        return {"outage_timeline": outage_timeline, "outage_timeline_doc": outage_timeline_doc, "outage_window": outage_window}
+        return {"outage_timeline": outage_timeline, "outage_timeline_doc": outage_timeline_doc, "outage_window": outage_window,
+                "outage_review_aar": outage_review_aar}

@@ -140,16 +140,17 @@ The email itself names the attachments, says what ACT did, and holds none of the
    changes nothing. `incident_docs_survey_state: absent` takes the questions out again.
 4. **Launch** *Outage AAR - Word document*, fill in the survey, and check the email.
 
-**The facts for the survey** (1.66.0): after a VMware outage, launch *VM - outage watch* with `vm_watch_review: true`.
-Its section *For the after-action report* has the start, the end, the detection and ACT's reading of the root cause,
-each named by its survey variable: [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#from-the-review-to-the-aar).
+**The facts from an outage review** (1.112.0): after a VMware outage, launch *VM - outage watch* with `vm_watch_review: true`.
+The review already has the AAR as a Word draft (*Download AAR (Word)*). Or answer *Fill from an outage review* in this
+job: [The AAR from an outage review](#the-aar-from-an-outage-review).
 
 ### The AAR job's survey
 
 | Question | Variable | Type |
 |---|---|---|
+| Fill from an outage review (1.112.0) | `incident_review` | Text, optional: an AAP job number, or `latest` |
 | Outage (name or number) | `incident_name` | Text, optional |
-| Start date and time | `incident_start` | Text, required |
+| Start date and time | `incident_start` | Text, optional since 1.112.0 (the job still stops without one: type it, or fill from a review) |
 | End date and time | `incident_end` | Text, optional |
 | Impact level | `incident_impact_level` | Multiple choice, required: `incident_impact_levels` |
 | Impact - because | `incident_impact` | Textarea |
@@ -176,9 +177,51 @@ and the two ACT questions. A text box takes up to `incident_docs_survey_max` cha
 empty too, the AAR is still made and sent, without an SOP, and the email says why - launch again (*Relaunch* keeps
 the other answers) with them.
 
+Surveys set up before 1.112.0: run the setup job again. It adds *Fill from an outage review* (`incident_review`) at the end of
+the survey (drag it to the top in AAP if you like) and makes *Start date and time* not required. Nothing else of a question
+that is there changes.
+
 Surveys set up with 0.64.0: run the setup job again - it adds *ACT: write the SOP's steps from the AAR*. Questions
 already there keep their wording; to get the new descriptions of *Also make an SOP* and the two step boxes, delete
 those questions in the survey first. It also adds *SOP: fill in the SOP job's form to review* (`incident_sop_draft`).
+
+## The AAR from an outage review
+
+The VM outage watch's review (`vm_watch_review: true`) writes the AAR as a Word draft itself, on its page and in its email
+([VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md#the-aar-draft-word)). This job makes the same draft, with what you type (1.112.0):
+
+1. Launch *Outage AAR - Word document*.
+2. In **Fill from an outage review** (`incident_review`), type the review's AAP job number (for example `4714`), or `latest`.
+   *latest* is the newest *VM - outage watch* job that made a review. The job output names the job it picked.
+3. Leave empty what the review knows: start, end, impact, detection, actions, recovery, the outage's name. Type what it
+   cannot know: the impact level, the root cause, the lessons learned. **What you type wins.**
+4. Launch. The job output says *Filled from the outage review of AAP job 4714 ...* and which boxes came from it.
+
+What the AAR then has:
+
+- A line under OVERVIEW: *Filled from the outage review, AAP job 4714 ... Check each line before it is posted.*
+- The review's numbers under Detection; the key events and the tickets under Actions; every event in **Appendix A**.
+- **ACT's possible causes** (the review's `vm_outage_act`, and a ticket's own ACT analysis) under the root cause as
+  *Suggested - confirm*. The root cause itself is never filled from ACT.
+- **Red "To write" lines** for each box still empty: the root cause, the impact level, successes, improvements, tasks (with an
+  empty *Task / Owner / Due* table).
+- The email says where it came from, under *From the outage review*.
+
+**Who sees the review's own draft:** the review's readers - it is on the review's web page and in the review's email
+(`report_email_to`), like the review itself. The AAR this job makes keeps this job's rules: emailed only to the addresses
+typed in the survey.
+
+**What it needs:** the AAR template's AAP credential (`incident_docs_draft_credential`, the one the SOP draft uses; the setup
+job attaches it). Its user must see the *VM - outage watch* jobs: give it the **Read** role on that template. It reads only
+(GET). The review must come from 1.112.0 or later: an older run has no draft in its artifact.
+
+| You see | Why, and what to do |
+|---|---|
+| `job 4720 (VM - outage watch) has no outage review to fill from` | that run was not a review: use a run launched with `vm_watch_review: true` (1.112.0 or later) |
+| `no outage review among the newest 25 VM - outage watch job(s)` | *latest* found none: give the job number, or raise `incident_review_look_back` |
+| `AAP has no job 4714 (or this credential's user may not see it)` | the number, or the Read role on the outage watch template |
+| `No AAP connection` | attach the AAP credential to the AAR template (run *AAP - incident document surveys* with `incident_docs_draft_credential`) |
+| `the outage's start date and time (incident_start) is empty` | no review named and no start typed: one of the two |
 
 ## ACT - tidy and suggest
 
@@ -213,7 +256,7 @@ Every setting and its default: [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#i
 `incident_docs_banner`, `incident_docs_banner_color`, `incident_docs_logo_file` (empty: `report_logo_file`), `incident_docs_logo_height`,
 `incident_docs_font`, `incident_docs_font_size`, `incident_docs_heading_color`, `incident_aar_instructions`,
 `incident_sop_instructions`, `incident_sop_status`, `incident_docs_aar_file`, `incident_docs_sop_file`,
-`incident_docs_email_to`, `incident_impact_levels`.
+`incident_docs_email_to`, `incident_impact_levels`, `incident_review_look_back` (1.112.0).
 
 ## Troubleshooting
 

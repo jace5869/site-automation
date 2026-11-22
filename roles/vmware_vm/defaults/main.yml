@@ -411,6 +411,11 @@ vm_watch_review_skip_blips: false
 vm_watch_review_tickets: []              # more tickets to show by number (e.g. [INC0012345]: one opened by hand); the health workflows' tickets are found by themselves
 vm_watch_review_event_types: []          # vCenter event types to read; [] = the built-in list (hosts, HA, storage, uplinks, alarms)
 vm_watch_review_max_events: 2000         # at most this many events per vCenter (the newest are kept)
+# 1.112.0, the AAR draft: a review (vm_watch_review) also writes the after action report as a Word document, filled from the
+# review - "Download AAR (Word)" on its web page, attached to its email (like the workbook). The marking, logo and font are the
+# AAR job's (incident_docs_banner, report_logo_file ...). The job artifact vm_outage_review.aar keeps the same draft for the
+# AAR job (incident_review). false = no Word document (the artifact keeps the draft).
+vm_watch_review_docx: true
 
 # ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml) and the watch ----
 # vCenter's SSO services, the STS signing certificate (health report only), the identity providers, a login by a test

@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.112.0 — 2026-11-22
+
+**To set up:**
+- **The AAR draft on the outage review: nothing.** It is on by default (`vm_watch_review_docx: true`). It uses the AAR job's
+  marking, logo and font settings (`incident_docs_banner`, `report_logo_file` ...).
+- **The AAR job's new question (`incident_review`):** run **AAP - incident document surveys** again. It adds *Fill from an
+  outage review* and makes *Start date and time* not required. With `incident_docs_draft_credential` set, it also attaches the
+  AAP credential to the AAR template (as for the SOP draft).
+- **One role by hand:** that credential's AAP user needs the **Read** role on the *VM - outage watch* template, to read its jobs.
+
+**VM outage watch: the outage review writes the AAR (user-approved mockup).**
+
+- **Download AAR (Word)** in the head of the review's web page: the after action report, filled from the review. It is a
+  plain link (no script, any Content-Security-Policy). It is attached to the review's email too, like the workbook.
+- The AAR job's own layout: the marking banner, the logo, the font, the site's instructions.
+- Filled from the review: start, end, impact (hosts down, how long, VMs restarted by HA), detection (the first signal, the
+  ticket, the time between), actions (HA's restarts, the tickets' work notes), recovery (the host back, the close notes).
+- The three numbers, the key events (at most 15), the tickets; every event in *Appendix A* (at most 300).
+- ACT's possible causes (`vm_outage_act`, and a ticket's own ACT analysis) under the root cause as *Suggested - confirm*.
+  The root cause is never filled from ACT. Without ACT the document says *ACT was not asked*.
+- Red *To write* lines for what only a person can write: the root cause, the impact level, successes, improvements, tasks
+  (with an empty Task / Owner / Due table).
+- The head says why when the file is not there: too big, `report_web_files` off, removed by the cleanup, a saved copy of the
+  page, or not made (the page and the email are still complete).
+- *For the after-action report* says where the draft is and the job number for the AAR job. The lines to paste stay.
+- The job artifact `vm_outage_review` keeps `review: true` and the draft (`aar`).
+
+**Outage AAR - Word document: fill from an outage review.**
+
+- `incident_review`: an AAP job number, or `latest` (the newest outage watch job with a review; the output names it). The
+  boxes left empty are filled from that review; what you type wins. The same draft as the review's own.
+- It reads the job through AAP's API (GET only), with the AAR template's AAP credential.
+- Clear messages: a run without a review, a job AAP does not have, no credential, neither a number nor `latest`.
+- The setup job can now make a question that is there not required (`optional`), and changes nothing else of it.
+
+**Docs:** VM_OUTAGE_WATCH.md (*The AAR draft (Word)*), INCIDENT_DOCS.md (*The AAR from an outage review*), the role defaults,
+VARIABLES_REFERENCE, the template variables.
+
+**Tests:** test_outage_timeline.py (AarDraft1120: the draft, a host still down, the page and the email), test_incident_docs.py
+(AarFromReview, ReviewReader, SurveyRelax; the survey's first question), test_report_web.py (the head's file: hosted, refused,
+files off, removed), tests/incident/run_incident_test.sh (the AAR from job 4714, from latest, a run without a review, an unknown
+job, a bad answer, no credential).
 ## 1.110.0 — 2026-11-22
 
 **Nothing to set up.**

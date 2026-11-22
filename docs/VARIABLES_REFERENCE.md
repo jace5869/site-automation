@@ -1144,8 +1144,9 @@ File: `roles/incident_docs/defaults/main.yml`
 | `incident_docs_email_to` | `[]` | Who gets the documents: the addresses typed in the survey (report_email_also - held to report_email_also_domains when that is set), plus these. The reports' usual recipients (report_email_to) are NOT used here: an AAR goes only where it is sent. Nor is report_email_cc. |
 | `incident_docs_web` | `false` | 1.79.8: true = the documents also on the report website (report_web_dest), each a Download link on the run's page (report_web_files) - for every reader of the website. false (the default): never there, only emailed. |
 | `incident_sop_draft_clear` | `true` | The SOP job empties the draft the AAR job put in its form (incident_sop_draft) once it made the SOP from it - only when launched with that draft's outage. Needs the AAP credential on the SOP template (incident_docs_draft_credential). |
-| `incident_name` | (empty) | What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless answered. The AAR's boxes and the SOP's steps take a line or several. the outage's name or number (in the file name and the email) |
-| `incident_start` | (empty) | the AAR: its start date and time (required) |
+| `incident_review` | (empty) | What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless answered. The AAR's boxes and the SOP's steps take a line or several. 1.112.0: an outage review to fill the AAR from - its AAP job number, or latest; "" = none |
+| `incident_name` | (empty) | the outage's name or number (in the file name and the email) |
+| `incident_start` | (empty) | the AAR: its start date and time (required, unless incident_review fills it) |
 | `incident_end` | (empty) | its end date and time (optional) |
 | `incident_impact_level` | (empty) | one of incident_impact_levels |
 | `incident_impact` | (empty) | why: "it is affecting users enterprise-wide" |
@@ -1175,6 +1176,7 @@ File: `roles/incident_docs/defaults/main.yml`
 | `incident_docs_survey_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
 | `incident_docs_survey_max` | `8000` | characters a text box takes at most (AAP's own default is 1024) |
 | `incident_docs_draft_credential` | (empty) | The SOP draft (incident_sop_draft) is written through AAP's API by the AAR job: name a "Red Hat Ansible Automation Platform" credential here and the setup job attaches it to the AAR and SOP templates (its user: Admin on the SOP template). Empty = attach it by hand, or no draft. |
+| `incident_review_look_back` | `25` | 1.112.0, the AAR from an outage review (incident_review): the AAR job reads the review from the outage watch's job, through the same AAP credential - its user needs to see the VM - outage watch jobs (the Read role on that template is enough). latest: the newest outage watch jobs read at most to find the last review |
 
 ## log_analysis
 
@@ -2664,6 +2666,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_review_tickets` | `[]` | more tickets to show by number (e.g. [INC0012345]: one opened by hand); the health workflows' tickets are found by themselves |
 | `vm_watch_review_event_types` | `[]` | vCenter event types to read; [] = the built-in list (hosts, HA, storage, uplinks, alarms) |
 | `vm_watch_review_max_events` | `2000` | at most this many events per vCenter (the newest are kept) |
+| `vm_watch_review_docx` | `true` | 1.112.0, the AAR draft: a review (vm_watch_review) also writes the after action report as a Word document, filled from the review - "Download AAR (Word)" on its web page, attached to its email (like the workbook). The marking, logo and font are the AAR job's (incident_docs_banner, report_logo_file ...). The job artifa… (all of it: the role file) |
 | `vm_sso` | `true` | ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml) and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the identity providers, a login by a test domain account (the "vCenter SSO test account" credential), and the OCSP responders smart… (all of it: the role file) |
 | `vm_sso_services` | `[sts, lookupsvc, trustmanagement, vmdird, vmafdd]` | SSO services that must be started (as vCenter's and the appliance's service lists name them; one not listed is skipped) |
 | `vm_sso_sts_warn_days` | `60` | the STS signing certificate expires within this many days -> warning; within twice that -> Low |

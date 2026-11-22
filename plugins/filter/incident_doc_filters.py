@@ -88,7 +88,8 @@ def incident_problems(record):
     r = record or {}
     out = []
     if r.get("kind") == "aar" and not r.get("start"):
-        out.append("the outage's start date and time (incident_start) is empty")
+        out.append("the outage's start date and time (incident_start) is empty - type it, or name an outage review "
+                   "(incident_review) to take it from")
     if r.get("kind") == "sop" and not (_lines(r.get("sop_troubleshoot")) or _lines(r.get("sop_fix"))):
         out.append("the SOP has no steps: type the steps to troubleshoot (sop_troubleshoot) or to fix (sop_fix), one per line")
     return out
@@ -279,9 +280,14 @@ ACT_NOTE = ("Suggested by GenAI (ACT) from what was typed above - not checked by
 TIDY_NOTE = "The wording above was tidied by GenAI (ACT) from what was typed; nothing was added. Review it before posting."
 
 
-def incident_aar_docx(record, opts=None, suggestions=None, tidied=False):
+def incident_aar_docx(record, opts=None, suggestions=None, tidied=False, review=None):
     """The AAR as site_docx's description: OVERVIEW, Event Response, Reason for Outage (RFO) & Recovery, Lessons
-    Learned & Action Plan, then (optional) the suggestions from ACT and the site's instructions."""
+    Learned & Action Plan, then (optional) the suggestions from ACT and the site's instructions. review (1.112.0): the
+    outage review's draft (incident_review_draft) - the AAR then also has the review's line under OVERVIEW, its numbers,
+    key events and tickets, ACT's possible causes as "Suggested - confirm", red "To write" lines for what only a person
+    can write, an empty task table, and every event in Appendix A."""
+    if review:
+        return _aar_from_review(record, opts, suggestions, tidied, review)
     r, o = record or {}, opts or {}
     start = "Start: " + r.get("start", "") if r.get("start") else ""
     if r.get("end"):
@@ -314,6 +320,169 @@ def incident_aar_docx(record, opts=None, suggestions=None, tidied=False):
     d = _common(o)
     d["blocks"] = blocks
     return d
+
+
+# ---- 1.112.0: the AAR from an outage review ----
+TO_WRITE = "C00000"          # the paper template's red: what a person fills in (only these lines are red)
+REVIEW_FILLS = ("start", "end", "impact", "detection", "actions", "recovery")
+CAUSE_NOTE = ("Suggested by GenAI (ACT) from the review - not findings, not checked by anyone. Confirm one before it goes in the "
+              "root cause.")
+
+
+def _cause_text(c):
+    """One cause, in either shape: a cause card (site_filters.report_cause_cards, as the review's ACT section has it: 1.104.0)
+    or act_causes' own ({title, confidence, evidence: [text], steps: [{do}]}) -> {title, conf, evidence: [text], checks: [text]}."""
+    if not isinstance(c, dict) or not str(c.get("title") or "").strip() or c.get("unexplained"):
+        return None
+    conf = c.get("conf_text") or ""
+    if not conf and isinstance(c.get("confidence"), (int, float)) and not isinstance(c.get("confidence"), bool):
+        n = int(c["confidence"])
+        conf = "%d%% %s" % (n, "high" if n >= 80 else "medium" if n >= 50 else "low")
+    ev = []
+    for e in (c.get("evidence") or [])[:3]:
+        if isinstance(e, dict):
+            t = " ".join(x for x in (str(e.get("t") or ""), str(e.get("h") or ""), str(e.get("m") or "")) if x)
+        else:
+            t = str(e or "")
+        t = " ".join(t.split())
+        if t:
+            ev.append(t[:300])
+    checks = []
+    for st in (c.get("steps") or [])[:3]:
+        do = " ".join(str((st or {}).get("do") or "").split()) if isinstance(st, dict) else ""
+        if do:
+            checks.append(do[:300].rstrip(".") + ((" (" + str(st.get("cmd")).strip()[:200] + ")") if str(st.get("cmd") or "").strip() else ""))
+    return {"title": " ".join(str(c["title"]).split())[:200], "conf": conf, "evidence": ev, "checks": checks}
+
+
+def incident_review_causes(act, hint=""):
+    """ACT's possible causes for the AAR draft, from the review's ACT section (vm_outage_act, 1.104.0: {web: {causes,
+    cause_overall}, judged}) - tolerant: no section = ACT was not asked. hint: what a ticket's own ACT analysis or close
+    notes said (the review's older source). -> {asked, causes: [{title, conf, evidence, checks}], overall, note}."""
+    a = act if isinstance(act, dict) else {}
+    web = a.get("web") if isinstance(a.get("web"), dict) else {}
+    causes = [x for x in (_cause_text(c) for c in (web.get("causes") or a.get("causes") or [])) if x][:6]
+    overall = " ".join(str(x) for x in (web.get("cause_overall") or [a.get("overall") or ""]) if x).strip()
+    asked = bool(a)
+    if causes:
+        note = ""
+    elif asked:
+        note = str(a.get("judged") or "").strip() or "ACT (vm_outage_act) named no cause for this outage."
+    else:
+        note = "ACT was not asked (vm_outage_act is off for this review)."
+    out = {"asked": asked, "causes": causes, "overall": overall[:600], "note": note}
+    h = " ".join(str(hint or "").split())
+    if h:
+        out["hint"] = h[:400]
+    return out
+
+
+def incident_review_draft(draft, act=None, meta=None):
+    """The review's AAR draft (outage_timeline's "draft") with ACT's causes and where it came from - what the review run
+    writes as "AAR (Word)" and keeps in its artifact (vm_outage_review.aar) for the AAR job. meta: job (the AAP job id),
+    made (when, as text). {} when the review has nothing to draft from."""
+    d = dict(draft or {})
+    if not d.get("v"):
+        return {}
+    m = meta or {}
+    d["causes"] = incident_review_causes(act, d.pop("ticket_hint", ""))
+    d["job"] = str(m.get("job") or "").strip()
+    d["made"] = str(m.get("made") or "").strip()
+    return d
+
+
+def incident_review_fill(record, draft):
+    """The record with each box left empty taken from the review's draft (start, end, impact, detection, actions,
+    recovery; the outage's name). What was typed wins. The root cause is never taken from it."""
+    r = dict(record or {})
+    d = draft or {}
+    if not d.get("v"):
+        return r
+    for k in REVIEW_FILLS:
+        if not _text(r.get(k)) and d.get(k):
+            v = d[k]
+            r[k] = _text("\n".join(v) if isinstance(v, (list, tuple)) else v)
+    if not _text(r.get("name")) and d.get("name"):
+        r["name"] = _text(d["name"])
+    return r
+
+
+def _red(label, text):
+    return [{"type": "labelled", "items": [{"label": label, "text": ""}]},
+            {"type": "bullets", "level": 1, "color": TO_WRITE, "items": [text]}]
+
+
+def _aar_from_review(record, opts, suggestions, tidied, review):
+    r, o, d = record or {}, opts or {}, review or {}
+    base = incident_aar_docx(r, dict(o, instructions=[]), suggestions, tidied)
+    tcol = d.get("time_column") or "Time"
+    ev_cols, ev_w = [tcol, "Lane", "Level", "What", "Where"], [1.6, 1.25, 1.15, 4.0, 0.9]
+    src = "the outage review%s%s" % ((", AAP job " + d["job"]) if d.get("job") else "", (", made " + d["made"]) if d.get("made") else "")
+    cz = d.get("causes") or {}
+    out = []
+    for b in base["blocks"]:
+        lab = b.get("label", "")
+        if b.get("type") == "heading" and b.get("text") == "OVERVIEW":
+            out += [b, {"type": "note", "text": "Filled from %s. Check each line before it is posted. The red lines are yours to write." % src}]
+        elif lab == "Impact:":
+            out.append(b)
+            if not r.get("impact_level"):
+                out += [{"type": "bullets", "level": 1, "color": TO_WRITE,
+                         "items": ["To write: the impact level (MINOR, MODERATE, MAJOR or CRITICAL) and who was affected."]}]
+        elif lab == "Detection:":
+            out.append(b)
+            if d.get("numbers"):
+                out.append({"type": "table", "columns": ["", "Value", "Detail"], "rows": d["numbers"], "widths": [1.6, 1.0, 4.4], "bold_first": True})
+        elif lab == "Actions:":
+            out.append(b)
+            if d.get("key"):
+                out += [{"type": "para", "text": "Key events (from the review; every event: Appendix A):", "bold": True, "keep": True},
+                        {"type": "table", "columns": ev_cols, "rows": d["key"], "widths": ev_w}]
+            if d.get("tickets"):
+                out += [{"type": "para", "text": "Tickets:", "bold": True, "keep": True},
+                        {"type": "table", "columns": ["Number", "Opened", "Resolved", "What", "Close notes"], "rows": d["tickets"],
+                         "widths": [1.3, 1.1, 1.1, 2.4, 2.3]}]
+        elif lab == "Root Cause:":
+            if _lines(r.get("root_cause")):
+                out.append(b)
+            else:
+                out += _red("Root Cause:", "To write: the confirmed cause, in your words. ACT's suggestions are below - keep the one the fix showed.")
+            out.append({"type": "para", "text": "Contributing causes - suggested, confirm:", "bold": True, "keep": True})
+            items = []
+            for c in cz.get("causes") or []:
+                items.append("Suggested - confirm: %s%s.%s%s" % (
+                    c["title"], (" (ACT, " + c["conf"] + ")") if c.get("conf") else " (ACT)",
+                    (" Evidence: " + "; ".join(x.rstrip(".") for x in c["evidence"]) + ".") if c.get("evidence") else "",
+                    (" Check: " + "; ".join(x.rstrip(".") for x in c["checks"]) + ".") if c.get("checks") else ""))
+            if cz.get("hint"):
+                items.append("Suggested - confirm: %s" % cz["hint"])
+            if items:
+                out.append({"type": "bullets", "level": 1, "items": items})
+            if cz.get("note"):
+                out.append({"type": "note", "text": cz["note"]})
+            if cz.get("causes"):
+                out.append({"type": "note", "text": CAUSE_NOTE})
+        elif lab in ("Successes:", "Improvements:", "Tasks/Responsibility:") and not _lines(r.get({"Successes:": "successes",
+                "Improvements:": "improvements", "Tasks/Responsibility:": "tasks"}[lab])):
+            if lab == "Successes:":
+                out += _red(lab, "To write: what went well.")
+            elif lab == "Improvements:":
+                out += _red(lab, "To write: what to do better." + ((" The review saw: " + d["follow_up"]) if d.get("follow_up") else ""))
+            else:
+                out += _red(lab, "To write: each task - owner - due date.")
+                out.append({"type": "table", "columns": ["Task", "Owner", "Due"], "rows": [["", "", ""]] * 3, "widths": [4.6, 1.6, 1.0]})
+        else:
+            out.append(b)
+    if d.get("events"):
+        total = int(d.get("events_total") or len(d["events"]))
+        out += [{"type": "heading", "text": "Appendix A - every event of the review"},
+                {"type": "note", "text": "From %s: %d event%s%s. %s" % (src, total, "" if total == 1 else "s",
+                                                                        (" (the first %d here)" % len(d["events"])) if total > len(d["events"]) else "",
+                                                                        d.get("window") and "Window: " + d["window"] + "." or "")},
+                {"type": "table", "columns": ev_cols, "rows": d["events"], "widths": ev_w}]
+    out += _instructions(o.get("instructions"), o.get("instructions_color") or o.get("heading_color") or "1F2D86")
+    base["blocks"] = out
+    return base
 
 
 FROM_AAR_NOTE = ("Taken from the AAR's %s as written - what was done during the outage. Reword them as steps anyone can follow "
@@ -607,6 +776,9 @@ def incident_email(record, opts=None):
     what = r.get("name") or (r.get("sop_title") if r.get("kind") == "sop" else r.get("start")) or ""
     lines = ["%s - %s" % (f["name"], f["what"]) for f in files]
     secs = [{"title": "Attached", "lines": lines or ["Nothing: see the job's output."]}]
+    if o.get("review"):
+        secs.append({"title": "From the outage review", "lines": [" ".join(str(o["review"]).split()),
+                                                                 "Check each line, write the red ones, then send it on."]})
     act = [x for x in o.get("act") or [] if x]
     if act:
         secs.append({"title": "ACT (GenAI)", "lines": act})
@@ -664,8 +836,11 @@ def incident_survey(kind, opts=None):
                 + sop + [email] + act)
     levels = [str(x).strip().upper() for x in (o.get("levels") or ["MINOR", "MODERATE", "MAJOR", "CRITICAL"]) if str(x).strip()]
     return [
+        _q("incident_review", "Fill from an outage review", "Optional: the AAP job number of a VM - outage watch run that made a "
+           "review (vm_watch_review), or latest. The boxes left empty are filled from it; what you type wins. The root cause "
+           "is never filled: ACT's causes go under it as suggestions.", "text", most=40),
         _q("incident_name", "Outage (name or number)", "Optional: in the file name and the email.", "text", most=200),
-        _q("incident_start", "Start date and time", "e.g. 10/27/2026 10:28 AM", "text", required=True, most=100),
+        _q("incident_start", "Start date and time", "e.g. 10/27/2026 10:28 AM. Empty: from the outage review (above).", "text", most=100),
         _q("incident_end", "End date and time", "Optional.", "text", most=100),
         _q("incident_impact_level", "Impact level", "", "multiplechoice", required=True, default="", choices=levels),
         _q("incident_impact", "Impact - because", "Why, in a few words: \"it is affecting users enterprise-wide\".", most=most),
@@ -695,4 +870,5 @@ class FilterModule(object):
                 "incident_sop_draft_empty": incident_sop_draft_empty, "incident_file_name": incident_file_name, "incident_aar_docx": incident_aar_docx,
                 "incident_sop_docx": incident_sop_docx, "incident_act_evidence": incident_act_evidence,
                 "incident_act_task": incident_act_task, "incident_act_apply": incident_act_apply, "incident_email": incident_email,
-                "incident_survey": incident_survey}
+                "incident_survey": incident_survey, "incident_review_causes": incident_review_causes,
+                "incident_review_draft": incident_review_draft, "incident_review_fill": incident_review_fill}

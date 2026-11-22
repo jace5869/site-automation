@@ -21,6 +21,8 @@ description:
   - An entry's C(defaults) ({variable: text}) sets the default answer of those questions, already in the survey (a
     text longer than the question's maximum is cut, and said); C(match) ({variable: text}) writes them only when the
     question's default is that now (the SOP job clears the draft only when it is the one it was launched from).
+  - An entry's C(optional) ([variable]) makes those questions, already in the survey, not required (1.112.0: the AAR's
+    start, which an outage review can fill now). Nothing else of a question that is there is changed.
   - O(credential) attaches that credential (its name) to each template found, unless the template already has one
     of its type.
   - In check mode it only reads, and says what it would change.
@@ -29,7 +31,7 @@ description:
 options:
   surveys:
     description: "[{playbook: incident_aar.yml, questions: [AAP survey questions: variable, question_name, type ...],
-      defaults: {variable: text}, match: {variable: text}}]"
+      defaults: {variable: text}, match: {variable: text}, optional: [variable]}]"
     type: list
     elements: dict
     required: true
@@ -91,6 +93,18 @@ def add_questions(spec, questions):
     spec.setdefault("name", "")
     spec.setdefault("description", "")
     return spec, [q["variable"] for q in added]
+
+
+def relax_questions(spec, variables):
+    """(the new survey or None when nothing changes, [the variables no longer required]). Pure: no AAP."""
+    want = set(str(v) for v in variables or [])
+    spec = copy.deepcopy(spec or {})
+    done = []
+    for q in spec.get("spec") or []:
+        if str(q.get("variable")) in want and q.get("required"):
+            q["required"] = False
+            done.append(str(q.get("variable")))
+    return (spec if done else None), done
 
 
 def remove_questions(spec, variables):
@@ -165,9 +179,9 @@ def attach(api, rec, cred, check_mode):
     return "credential '%s' attached" % cred.get("name"), ""
 
 
-def one(api, rec, questions, state, check_mode, defaults=None, match=None, cred=None):
+def one(api, rec, questions, state, check_mode, defaults=None, match=None, cred=None, optional=None):
     r = {"template": rec.get("name") or "", "id": rec.get("id"), "playbook": rec.get("playbook") or "", "action": "",
-         "added": [], "removed": [], "defaults": [], "cut": [], "no_question": [], "changed": False, "ok": False, "error": ""}
+         "added": [], "removed": [], "relaxed": [], "defaults": [], "cut": [], "no_question": [], "changed": False, "ok": False, "error": ""}
     if ((rec.get("summary_fields") or {}).get("user_capabilities") or {}).get("edit") is False:
         r["error"] = "the AAP user may not change this job template: give it the Admin role on it"
         return r
@@ -186,6 +200,15 @@ def one(api, rec, questions, state, check_mode, defaults=None, match=None, cred=
             writes.append(("PATCH", path, {"survey_enabled": True}, "turning the survey on"))
         r["action"] = (("added %d question(s)" % len(r["added"])) if r["added"] else "all questions already there") + (
             ", survey turned on" if not enabled else "") if questions else ""
+        if optional:
+            rnew, r["relaxed"] = relax_questions(new if new is not None else spec, optional)
+            if rnew is not None:
+                if new is not None:
+                    writes[0] = ("POST", path + "survey_spec/", rnew, "the survey")
+                else:
+                    writes.insert(0, ("POST", path + "survey_spec/", rnew, "the survey"))     # first: as an added question's
+                new = rnew
+                r["action"] += ", no longer required: " + ", ".join(r["relaxed"])
         if defaults:
             base = new if new is not None else spec
             dnew, r["defaults"], r["cut"], r["no_question"], skip = set_defaults(base, defaults, match)
@@ -248,7 +271,8 @@ def run(api, p, check_mode):
             missing.append(pb)
         for j in sorted(found, key=lambda x: (str(x.get("name")).lower(), x.get("id"))):
             try:
-                results.append(one(api, j, s.get("questions") or [], p["state"], check_mode, s.get("defaults"), s.get("match"), cred))
+                results.append(one(api, j, s.get("questions") or [], p["state"], check_mode, s.get("defaults"), s.get("match"), cred,
+                                   s.get("optional")))
             except Exception as e:             # noqa: BLE001 - one template's surprise never stops the others
                 results.append({"template": j.get("name") or "", "id": j.get("id"), "playbook": j.get("playbook") or "",
                                 "action": "", "added": [], "removed": [], "defaults": [], "cut": [], "no_question": [],

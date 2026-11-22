@@ -691,6 +691,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- endif %}
 </div>
 {%- endif %}
+{%- include 'report_head_file.html.j2' %}
 </header>
 <!--site-report-files-->
 {%- if r.summary | default([]) and r.teams is not defined %}

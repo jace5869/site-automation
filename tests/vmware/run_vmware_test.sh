@@ -2773,6 +2773,32 @@ run "outage review with the ServiceNow API credential: the ticket, its ACT analy
        "Work note in INC0012345: On site, checking the cabling.  [Note]" "Ticket INC0012300 opened  [Warning]" '"ticket": "INC0012345"' "; ticket after "
 grep -qE "INC0012301|INC0011000" "$work/out.txt" && { echo "FAIL -   ...a ticket that is not the window's"; fails=$((fails + 1)); } \
     || echo "ok   -   ...the other tickets are left out"
+# 1.112.0: the review's AAR draft (Word) - attached to the email, "Download AAR (Word)" on the page beside its file, the draft in
+# the job artifact for the AAR job (incident_review); vm_watch_review_docx: false - no Word document, the artifact keeps the draft
+before=$(nmail)
+mkdir -p "$work/aarweb"
+run "outage review: the AAR draft (Word) - attached, on the page, in the artifact" ok vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 \
+    -e vm_watch_review=true -e "$mail" -e "{\"report_web_dest\": \"$work/aarweb\"}" \
+    -- "the AAR draft - AAR-DC0-C0-H0-" '"aar": {' '"review": true' '"job": "4711"' "!was not made"
+"$py" - "$(lastmail)" "$work/aarweb" <<'EOPY' && echo "ok   -   ...the email's .docx and the page's link to the same file" || { echo "FAIL -   ...the AAR draft's email or page"; fails=$((fails + 1)); }
+import email, glob, io, re, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"))
+docs = [p for p in m.walk() if (p.get_filename() or "").startswith("AAR-DC0-C0-H0-") and p.get_filename().endswith(".docx")]
+assert len(docs) == 1, [p.get_filename() for p in m.walk()]
+text = zipfile.ZipFile(io.BytesIO(docs[0].get_payload(decode=True))).read("word/document.xml").decode()
+for want in ("Filled from the outage review, AAP job 4711", "Appendix A - every event of the review", "To write: the confirmed cause",
+             "Suggested - confirm: ACT in INC0012345", "OVERVIEW"):
+    assert want in text, want
+pages = [p for p in glob.glob(sys.argv[2] + "/**/*.html", recursive=True) if "Download AAR (Word)" in open(p).read()]
+assert pages, "no page with the link"
+h = open(pages[0]).read()
+link = re.search(r'<a class="hf-a" href="([^"]+AAR-DC0-C0-H0-[^"]+\.docx)" download=', h)
+assert link and "site-report-file:" not in h, "the head's link"
+assert glob.glob(sys.argv[2] + "/**/" + link.group(1).rsplit("/", 1)[-1], recursive=True), "the file beside the page"
+EOPY
+[ "$(nmail)" -gt "$before" ] || { echo "FAIL -   ...no email"; fails=$((fails + 1)); }
+run "outage review with vm_watch_review_docx: false - no Word document, the artifact keeps the draft" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_docx=false -- '"aar": {' "!the AAR draft - AAR-"
 grep -vq '"method": "GET"' "$work/wsn.jsonl" && { echo "FAIL -   ...the review wrote to ServiceNow"; fails=$((fails + 1)); } \
     || echo "ok   -   ...ServiceNow was only read (GET)"
 kill "$wsn_pid" 2>/dev/null; wait "$wsn_pid" 2>/dev/null

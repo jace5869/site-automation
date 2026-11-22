@@ -8,6 +8,7 @@
     surveys:
       - playbook: incident_aar.yml
         questions: "{{ 'aar' | incident_survey({'levels': incident_impact_levels, 'most': incident_docs_survey_max | int}) }}"
+        optional: [incident_start]     # 1.112.0: an outage review (incident_review) can fill it
       - playbook: incident_sop.yml
         questions: "{{ 'sop' | incident_survey({'levels': incident_impact_levels, 'most': incident_docs_survey_max | int}) }}"
     project: "{{ incident_docs_survey_project }}"
