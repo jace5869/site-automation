@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.109.0 — 2026-11-22
+
+**SolarWinds snapshot: four small fixes from the 1.96 review**
+
+- Reading applications and their components keeps the AD report in the same snapshot.
+- Reports see one snapshot across all tables even when the database uses a different default isolation level.
+- The network map reports an incomplete snapshot if the link count differs from the recorded total.
+- Report database TLS errors name the affected host and hide the password.
 ## 1.108.0 — 2026-11-22
 
 **VMware alarms: the email subject leads with the hosts not connected**

@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import socket
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, "plugins", "module_utils"), os.path.join(ROOT, "plugins", "filter")]
+import site_report_db as report_db  # noqa: E402
 import site_swis_db as sd  # noqa: E402
 sw = sd.site_swis       # the site_swis the reader uses: another test may have loaded it as ansible.module_utils.site_swis
 import solarwinds_filters as sf  # noqa: E402
@@ -415,7 +417,14 @@ class FakeCur(object):
         self.conn.sql.append((sql, args))
         if isinstance(self.conn.answer, Exception):
             raise self.conn.answer
+        if sql.startswith(("COMMIT", "ROLLBACK")):
+            self.conn.in_transaction = self.conn.chain and "NO CHAIN" not in sql
+            return 0
+        if sql.startswith("SET TRANSACTION") and self.conn.in_transaction:
+            raise RuntimeError("cannot set isolation inside a transaction")
         if sql.startswith("START TRANSACTION"):
+            self.conn.in_transaction = True
+        if sql.startswith(("START TRANSACTION", "SET TRANSACTION")):
             self.description, self.rows = [], []
             return 0
         self.description, self.rows = self.conn.answer(sql, args)
@@ -431,23 +440,26 @@ class FakeCur(object):
 class FakeConn(object):
     def __init__(self, answer):
         self.answer, self.sql = answer, []
+        self.chain = self.in_transaction = False
 
     def cursor(self):
         return FakeCur(self)
 
     def rollback(self):
-        self.sql.append(("ROLLBACK", None))
+        self.cursor().execute("ROLLBACK")
 
     def commit(self):
-        self.sql.append(("COMMIT", None))
+        self.cursor().execute("COMMIT")
 
 
 class Answer(unittest.TestCase):
     NOW = datetime.datetime(2026, 11, 21, 9, 0, 0)
 
-    def snaps(self, age_min, failed=None, core=None, links=0):
+    def snaps(self, age_min, failed=None, core=None, links=0, missing_links=0):
         core = core or {}
         def ans(sql, args):
+            if "FROM sw_link" in sql:
+                return [(k,) for k in ("src_node", "src_if", "dst_node", "dst_if")], [(1, 2, 3, 4)] * (links - missing_links)
             if "WHERE ok = 0" in sql:
                 return [("read_at",), ("error",)], ([(self.NOW, failed)] if failed else [])
             if "FROM sw_snapshot WHERE ok = 1" in sql:
@@ -503,13 +515,53 @@ class Answer(unittest.TestCase):
         self.assertEqual(sd.answer({}, conn=self.snaps(400), max_age=None, now=self.NOW)["source"], "db-snapshot")   # None: any age
         self.assertEqual(sd.answer({"max_nodes": 100}, conn=self.snaps(4, links=2000), now=self.NOW)["source"], "db-snapshot")
 
+    def test_incomplete_links_are_not_served(self):
+        why = []
+        self.assertIsNone(sd.answer(conn=self.snaps(4, links=3, missing_links=1), why=why, now=self.NOW))
+        self.assertIn("snapshot 5 is incomplete: read 2 of 3 links", why[0])
+
+    def test_apps_for_keeps_the_callers_transaction(self):
+        conn = self.snaps(4)
+        self.assertEqual(sd.apps_for(conn, 5, [11], fresh=False), {11: []})
+        self.assertTrue(conn.sql)
+        self.assertTrue(all(sql.startswith("SELECT") for sql, _ in conn.sql))
+
+    def test_tls_error_names_host_without_password(self):
+        host = "db.example.test"
+        p = {"host": host, "tls": True, "password": PW}
+        for error in (ssl.SSLError("certificate failure " + PW), RuntimeError(2026, "SSL error " + PW),
+                      RuntimeError("server does not support TLS"),
+                      RuntimeError("the session is not encrypted - the server must offer TLS")):
+            message = report_db.explain(error, p)
+            self.assertIn(host, message)
+            self.assertNotIn(PW, message)
+        p["password"] = r"test\placeholder"
+        p["host"] = "user:" + p["password"] + "@" + host
+        detail = "certificate failure for " + p["host"] + " with password " + p["password"]
+        message = report_db.explain(ssl.SSLError(detail), p)
+        self.assertIn("certificate failure for " + host + " with password [redacted]", message)
+        self.assertNotIn("user:", message)
+        self.assertNotIn("placeholder", message)
+
+    def test_no_tls_report_reason_hides_host(self):
+        p = {"host": "db.example.test", "tls": True}
+        error = RuntimeError("the session is not encrypted - the server must offer TLS")
+        diagnostic = report_db.explain(error, p)
+        self.assertIn(p["host"], diagnostic)
+        reason = sd.short_error(diagnostic)
+        self.assertNotIn(p["host"], reason)
+        self.assertIn("does not offer TLS: clear Use TLS", reason)
+
     def test_one_read_only_transaction(self):
         # review c: latest() and the rows in one read-only transaction; nodes deleted meanwhile are a reason, never half a map
         conn = self.snaps(4)
-        sd.answer({}, conn=conn, now=self.NOW)
+        conn.chain = conn.in_transaction = True       # completion_type=CHAIN on an already active session
+        self.assertEqual(sd.answer({}, conn=conn, now=self.NOW)["source"], "db-snapshot")
+        self.assertFalse(conn.in_transaction)
         q = [x for x, _a in conn.sql]
-        self.assertEqual(q[:2], ["ROLLBACK", "START TRANSACTION READ ONLY"])
-        self.assertEqual(q[-1], "COMMIT")
+        self.assertEqual(q[:3], ["ROLLBACK AND NO CHAIN", "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+                                 "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY"])
+        self.assertEqual(q[-1], "COMMIT AND NO CHAIN")
         def gone(sql, args):
             if "FROM sw_snapshot WHERE ok = 1" in sql:
                 return [("x",)] * 10, [(5, self.NOW, json.dumps({"props": []}), "[]", 900, 0, 0, "o:17774", 60, 0)]
@@ -606,7 +658,7 @@ class Answer(unittest.TestCase):
                          [("Port 443", "Down", None, "Port 443 refused the connection"), ("HTTPS monitor", "Warning", 812, "Slow")])
         self.assertEqual((got[11][0]["status"], got[11][0]["components_not_up"]), ("Up", []))
         self.assertEqual([a for q, a in conn.sql if q.startswith("SELECT")][-1][:2], [5, 309])
-        self.assertEqual([q for q, _a in conn.sql][-1], "COMMIT")                  # review c: in one read-only transaction
+        self.assertEqual([q for q, _a in conn.sql][-1], "COMMIT AND NO CHAIN")                  # review c: in one read-only transaction
         self.assertEqual(sd.apps_for(conn, 5, []), {})
         note = {"what": sd.PART_WORDS["app"], "why": "not on this Orion (no Orion.APM.Application)", "absent": True}
         self.assertEqual(sd.part_note({"not_read": [note]}, "app"), note)

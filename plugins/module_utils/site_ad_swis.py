@@ -15,6 +15,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
+import inspect
 import re
 
 try:
@@ -294,7 +295,10 @@ def _db_read(dcs, opts, conn, swdb, snap, age, now):
     except Exception:  # noqa: BLE001 - an older 1.96.0 without part_note: SAM is there when apps_for answers
         note = {}
     sam = not note.get("absent")
-    apps = (swdb.apps_for(conn, sid, ids) or {}) if sam and ids else {}
+    apps = {}
+    if sam and ids:
+        kw = {"fresh": False} if "fresh" in inspect.signature(swdb.apps_for).parameters else {}
+        apps = swdb.apps_for(conn, sid, ids, **kw) or {}
     alerts = (swdb.alerts_for(conn, sid, ids) or {}) if ids else {}
     days = float(opts.get("days") or 30)
     downs, events = {}, True
@@ -420,11 +424,16 @@ def read(dcs, opts, conn=None, swdb=None, client=None):
     if stale:                                            # the old snapshot is all there is: given, and said as old
         snap, age = stale
         try:
+            if hasattr(swdb, "begin_read"):
+                swdb.begin_read(conn)
             r = _db_read(dcs, opts, conn, swdb, snap, age, _now(opts))
             r["stale"], r["why"] = True, why
             return r
         except Exception as e:  # noqa: BLE001
             why.append("the old snapshot could not be read either: %s" % _say(e))
+        finally:
+            if hasattr(swdb, "end_read"):
+                swdb.end_read(conn)
     return {"ok": False, "source": "", "read_at": "", "age_min": None, "interval_min": None, "stale": False, "why": why, "sam": False,
             "sam_why": "", "events": False, "dcs": []}
 
