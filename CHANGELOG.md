@@ -220,6 +220,50 @@ Not tested here: the Windows-only commands and the registry on a real Windows Se
   parts; each finding of the review), tests/portal_setup/run_aap_catalog_workflows_test.sh (all 40 against the
   stand-in AAP, the reviews' findings), test_workflow_dry_run.py (the guard), run_net_config_test.sh (the lines as text),
   the fake AAP (surveys as AAP checks them, a node's Job type and Show changes, a read that fails).
+## 1.103.1 — 2026-11-21
+
+**Nothing to set up.** A route that 1.103.0 read wrongly now stops the job, named. Fix it as the message says.
+
+**STIG scans and the checklist import: never the wrong collection (the review of 1.103.0).**
+
+- A route key given with no value (`match:` or `os:` left empty) stops the job. Before, the route then fit every host.
+- `match` takes a list, or text with commas or one per line, as `stigs`, `roles` and `tech_areas` do. Before,
+  `match: "*DC*, *AD*"` was one pattern holding a comma, and it never fit.
+- Only `*` and `?` are special in a route and in `check_stig_stigman_collections_exclude`. A `[` is a `[`. Before,
+  `[DC]*` took `d01`, and `[z-a]` stopped the job on Python 3.6.
+- Workflow 40: a rule whose collection a `!` in `stigman_ckl_import_collections` leaves out stops the plan. Before, that
+  collection was not searched, so a host whose asset was there looked new and was created again.
+- The report's Routes table and its held moves name a route as the plan does (`route 1`,
+  `check_stig_stigman_collection`). Two routes to one collection, by id and by name, are not a conflict.
+- `check_stig_stigman_collection_routes` that is not a list, or a route's collection that is not a name or an id,
+  stops the job, named.
+- Docs: STIG_JOBS.md, CKL_IMPORT.md, the role defaults.
+- Tests: test_stig_routes.py (Review11031), test_stig_ckl_import.py (Review11031), the report_fit fixture of the routes.
+
+## 1.103.0 — 2026-11-21
+
+**Nothing to set up.** To place new assets by their STIG, add `stigs` to your `check_stig_stigman_collection_routes`
+(docs/STIG_JOBS.md, "Where a new asset goes").
+
+**STIG full and drift scans: a new asset placed by the STIG it was scanned with.**
+
+- `check_stig_stigman_collection_routes` takes `stigs` (the installed STIG's id or title), `roles` and `tech_areas` (the
+  checklist's), beside `match` and `os`. Any combination: each key given must fit. So a route goes by STIG, by naming
+  convention, or both (`{match: "*DC*", stigs: ["*Active_Directory*"], collection: ...}`).
+- One collection per asset: a host scanned against several STIGs goes whole to the first route that fits any of them.
+  It is never split. The order matters: specific STIG rules first.
+- The plan names the route that placed each new asset, in the site's own numbering: `... in <Directory servers> by
+  route 1 (stigs *Active_Directory*; names *DC*)`. Before, a host's own collection shifted the numbers ("route 2" for
+  the site's route 1).
+- A host's own `check_stig_stigman_collection` still wins.
+- A route that is not one stops the job, named (a key that is not a route's, an empty list, a number).
+- The checklist import (workflow 40) names its rules the same way: `by route 1 (stigs *Windows_Server*)`.
+- Docs: STIG_JOBS.md ("Where a new asset goes"), the role defaults, VARIABLES_REFERENCE.
+- Tests: test_stig_routes.py (a DC with three STIGs by the AD rule first, the other order to Platforms, a stigs rule
+  that fits nothing falls to the next, by STIG and/or name, any combination of keys, a host's own collection, the
+  messages); run_stig_full_scan_test.sh (routes by STIG, a bad route); run_ckl_routes_test.sh and test_stig_ckl_import.py
+  (the plan's wording).
+
 ## 1.102.0 — 2026-11-22
 
 **Nothing to set up.** The map opens on the new Region view. Each viewer can still pick Globe or Flat, and the browser
@@ -278,50 +322,6 @@ in the report database (1.101.2).
 - **Tests:** test_netmap_region.py (the layer, the job's filter, history by template name, the portal's reader on
   SQLite, and Region in Chromium with label geometry at 1280 and 800 px, also in a wider font). Also
   test_netmap.py (the live AD layer) and the netmap e2e (the AD job's artifact read from the fake AAP).
-
-## 1.103.1 — 2026-11-21
-
-**Nothing to set up.** A route that 1.103.0 read wrongly now stops the job, named. Fix it as the message says.
-
-**STIG scans and the checklist import: never the wrong collection (the review of 1.103.0).**
-
-- A route key given with no value (`match:` or `os:` left empty) stops the job. Before, the route then fit every host.
-- `match` takes a list, or text with commas or one per line, as `stigs`, `roles` and `tech_areas` do. Before,
-  `match: "*DC*, *AD*"` was one pattern holding a comma, and it never fit.
-- Only `*` and `?` are special in a route and in `check_stig_stigman_collections_exclude`. A `[` is a `[`. Before,
-  `[DC]*` took `d01`, and `[z-a]` stopped the job on Python 3.6.
-- Workflow 40: a rule whose collection a `!` in `stigman_ckl_import_collections` leaves out stops the plan. Before, that
-  collection was not searched, so a host whose asset was there looked new and was created again.
-- The report's Routes table and its held moves name a route as the plan does (`route 1`,
-  `check_stig_stigman_collection`). Two routes to one collection, by id and by name, are not a conflict.
-- `check_stig_stigman_collection_routes` that is not a list, or a route's collection that is not a name or an id,
-  stops the job, named.
-- Docs: STIG_JOBS.md, CKL_IMPORT.md, the role defaults.
-- Tests: test_stig_routes.py (Review11031), test_stig_ckl_import.py (Review11031), the report_fit fixture of the routes.
-
-## 1.103.0 — 2026-11-21
-
-**Nothing to set up.** To place new assets by their STIG, add `stigs` to your `check_stig_stigman_collection_routes`
-(docs/STIG_JOBS.md, "Where a new asset goes").
-
-**STIG full and drift scans: a new asset placed by the STIG it was scanned with.**
-
-- `check_stig_stigman_collection_routes` takes `stigs` (the installed STIG's id or title), `roles` and `tech_areas` (the
-  checklist's), beside `match` and `os`. Any combination: each key given must fit. So a route goes by STIG, by naming
-  convention, or both (`{match: "*DC*", stigs: ["*Active_Directory*"], collection: ...}`).
-- One collection per asset: a host scanned against several STIGs goes whole to the first route that fits any of them.
-  It is never split. The order matters: specific STIG rules first.
-- The plan names the route that placed each new asset, in the site's own numbering: `... in <Directory servers> by
-  route 1 (stigs *Active_Directory*; names *DC*)`. Before, a host's own collection shifted the numbers ("route 2" for
-  the site's route 1).
-- A host's own `check_stig_stigman_collection` still wins.
-- A route that is not one stops the job, named (a key that is not a route's, an empty list, a number).
-- The checklist import (workflow 40) names its rules the same way: `by route 1 (stigs *Windows_Server*)`.
-- Docs: STIG_JOBS.md ("Where a new asset goes"), the role defaults, VARIABLES_REFERENCE.
-- Tests: test_stig_routes.py (a DC with three STIGs by the AD rule first, the other order to Platforms, a stigs rule
-  that fits nothing falls to the next, by STIG and/or name, any combination of keys, a host's own collection, the
-  messages); run_stig_full_scan_test.sh (routes by STIG, a bad route); run_ckl_routes_test.sh and test_stig_ckl_import.py
-  (the plan's wording).
 
 ## 1.101.1 — 2026-11-21
 
