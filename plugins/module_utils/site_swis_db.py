@@ -1152,12 +1152,18 @@ def _host_node(row):
     return row
 
 
+def canon(x):
+    return str(x or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").strip(" ").rstrip(".").lower()
+
+
 def nodes_for_hosts(conn, snap_id, fulls, shorts, ips):
     """Candidate node rows for one job. Include both the caption and DNS identity."""
     clauses, args = [], [snap_id]
-    for column, values in (("LOWER(TRIM(TRAILING '.' FROM TRIM(name)))", fulls),
-                           ("LOWER(TRIM(TRAILING '.' FROM TRIM(dns)))", fulls), ("name_key", shorts),
-                           ("LOWER(SUBSTRING_INDEX(TRIM(name), '.', 1))", shorts), ("LOWER(ip)", ips)):
+    canonical = "LOWER(TRIM(TRAILING '.' FROM TRIM(REPLACE(REPLACE(REPLACE(%s, CHAR(9), ' '), CHAR(13), ' '), CHAR(10), ' '))))"
+    name, dns = canonical % "name", canonical % "dns"
+    for column, values in ((name, fulls), (dns, fulls), ("name_key", shorts),
+                           ("SUBSTRING_INDEX(%s, '.', 1)" % name, shorts),
+                           ("SUBSTRING_INDEX(%s, '.', 1)" % dns, shorts), ("LOWER(ip)", ips)):
         if values:
             clauses.append("%s IN (%s)" % (column, _ph(len(values))))
             args.extend(values)
@@ -1178,8 +1184,8 @@ def nodes_for_hosts(conn, snap_id, fulls, shorts, ips):
     cur.execute("SELECT " + _NODE_COLUMNS + " FROM sw_node WHERE snap_id = %s AND (" + " OR ".join(clauses) + ") ORDER BY node_id", args)
     rows = [_host_node(r) for r in _dicts(cur)]
     for r in rows:
-        names = [str(r.get(k) or "").strip().lower().rstrip(".") for k in ("name", "dns")]
-        if any(n in fulls or name_key(n) in shorts for n in names):
+        names = [canon(r.get(k)) for k in ("name", "dns")]
+        if any(n in fulls or n.split(".", 1)[0] in shorts for n in names):
             r["matched_by"] = "name"
         else:
             r["matched_by"] = "ip" if normalized_ip(r["ip"]) in ips else "other ip"
@@ -1518,7 +1524,7 @@ def ports_for(conn, snap_id, node_ids):
         for sw_id, iid in v:
             f = by_if.get(iid) or {}
             out[me].append({"switch": names.get(sw_id, ""), "switch_id": sw_id, "interface_id": iid,
-                            "port": f.get("caption") or f.get("name") or "", "status": site_swis.status_of(f.get("status")) if f else "",
+                            "port": f.get("caption") or f.get("name") or "", "status": site_swis.status_of(f["status"]) if f.get("status") is not None else "",
                             "status_code": f.get("status"), "speed": _num_back(f.get("speed")), "in_pct": _num_back(f.get("in_pct")),
                             "out_pct": _num_back(f.get("out_pct")), "errors": both(f.get("in_errors_hour"), f.get("out_errors_hour")),
                             "discards": both(f.get("in_discards_hour"), f.get("out_discards_hour"))})

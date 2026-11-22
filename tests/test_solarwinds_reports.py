@@ -16,6 +16,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, "plugins", "module_utils"), os.path.join(ROOT, "plugins", "filter"), os.path.join(ROOT, "tests"),
                 os.path.join(ROOT, "tests", "solarwinds")]
+import site_redact
 import site_host_swis as hs  # noqa: E402
 import solarwinds_report_filters as swr  # noqa: E402
 import site_filters as sf  # noqa: E402
@@ -31,6 +32,8 @@ class Snap(object):
     domains, db01 by its IP, esx01 in VIM."""
 
     def __init__(self, age=360, orion="orion.example.mil:17774", latest="ok"):
+        self.counts = {"alerts": 1, "events": 4}
+        self.core, self.notes = {}, {}
         self.age, self.orion, self.kind, self.calls = age, orion, latest, []
 
     def begin_read(self, conn):
@@ -45,13 +48,14 @@ class Snap(object):
             raise Exception("(1146, \"Table 'site_reports.sw_snapshot' doesn't exist\")")
         if self.kind == "none":
             return None
-        return {"snap_id": 7, "read_at": T("2026-11-21 10:40"), "age_seconds": self.age, "orion": self.orion, "core": {}, "not_read": []}
+        return {"snap_id": 7, "read_at": T("2026-11-21 10:40"), "age_seconds": self.age, "orion": self.orion, "core": self.core,
+                "not_read": [], **self.counts}
 
     def last_failure(self, conn):
         return (T("2026-11-21 10:50"), "login refused")
 
     def part_note(self, snap, part):
-        return None
+        return self.notes.get(part)
 
     def nodes_for_hosts(self, conn, sid, fulls, shorts, ips):
         keys = shorts + ips
@@ -77,6 +81,7 @@ class Snap(object):
         return {101: [reads.sam_app("Apache HTTP Server", "Down", ["httpd process"])]}
 
     def alerts_for(self, conn, sid, ids):
+        self.calls.append(("alerts", tuple(ids)))
         return {101: [{"name": "Volume /var over 95 %", "severity": 2, "triggered_at": T("2026-11-21 10:02"), "message": "x",
                        "entity_type": "Orion.Volumes", "entity_caption": "web01 /var", "acknowledged": 0}]}
 
@@ -568,6 +573,11 @@ def H(*hosts):
     return hs._hosts([dict(host=h[0], **(h[1] if len(h) > 1 else {})) for h in hosts])
 
 
+CANON_SQL = "LOWER(TRIM(TRAILING '.' FROM TRIM(REPLACE(REPLACE(REPLACE(%s, CHAR(9), ' '), CHAR(13), ' '), CHAR(10), ' '))))"
+CAPTION_SQL = (CANON_SQL % "name", CANON_SQL % "dns", "name_key",
+               "SUBSTRING_INDEX(%s, '.', 1)" % (CANON_SQL % "name"), "SUBSTRING_INDEX(%s, '.', 1)" % (CANON_SQL % "dns"))
+
+
 class CaptionNorm1970(unittest.TestCase):
     def test_full_caption_wins_over_short_name(self):
         host, = H(("web01.example.mil",))
@@ -585,10 +595,9 @@ class CaptionNorm1970(unittest.TestCase):
         conn = FakeConn(lambda sql, args: ([], []))
         sd.nodes_for_hosts(conn, 7, ["web01.example.mil"], ["web01"], [])
         [(sql, args)] = conn.sql
-        for expr in ("LOWER(TRIM(TRAILING '.' FROM TRIM(name)))", "LOWER(TRIM(TRAILING '.' FROM TRIM(dns)))",
-                     "LOWER(SUBSTRING_INDEX(TRIM(name), '.', 1))"):
+        for expr in CAPTION_SQL:
             self.assertIn(expr + " IN (%s)", sql)
-        self.assertEqual(args, [7, "web01.example.mil", "web01.example.mil", "web01", "web01"])
+        self.assertEqual(args, [7, "web01.example.mil", "web01.example.mil", "web01", "web01", "web01"])
 
 
 class Review1970(unittest.TestCase):
@@ -885,8 +894,7 @@ class Review1970b(unittest.TestCase):
         self.assertTrue(r["ok"], r["why"])
         self.assertEqual(r["hosts"][0]["node"]["node_id"], 101)
         [(sql, args)] = c.sql
-        for expr in ("LOWER(TRIM(TRAILING '.' FROM TRIM(name)))", "LOWER(TRIM(TRAILING '.' FROM TRIM(dns)))",
-                     "name_key", "LOWER(SUBSTRING_INDEX(TRIM(name), '.', 1))", "LOWER(ip)"):
+        for expr in CAPTION_SQL + ("LOWER(ip)",):
             self.assertIn(expr + " IN", sql)
         self.assertIn("ips LIKE %s", sql)
         self.assertIn('%"192.0.2.20"%', args)
@@ -923,6 +931,134 @@ class SharedIp1970(unittest.TestCase):
         ok = hs.match(H(("app01.example.mil", {"ip": vip})), nodes)
         self.assertEqual(ok[0][:2], (nodes[0], "name"))                                # the full name first
         self.assertEqual(hs.match(H(("x", {"ip": "192.0.2.12"})), nodes)[0][1], "ip")   # one host, one node: the IP
+
+
+class Review1970d(unittest.TestCase):
+    def setUp(self):
+        self.db = Snap()
+
+    def read(self, hosts=None, mode="troubleshoot"):
+        r = hs.read(hosts or HOSTS[:1], {"mode": mode, "now": NOW}, object(), self.db)
+        self.assertTrue(r["ok"], r["why"])
+        return r
+
+    def glance(self, r, name):
+        return next(g for g in swr.swr_troubleshoot(r)["web_sections"][0]["glance"] if g["name"] == name)
+
+    def unread(self, part):
+        self.db.notes[part] = {"what": part, "why": "timeout", "absent": False}
+
+    def test_alerts_not_read(self):
+        for failed in (False, True):
+            self.db = Snap()
+            if failed:
+                self.unread("alert")
+            else:
+                self.db.counts["alerts"] = None
+            r = self.read()
+            self.assertFalse(r["alerts_read"])
+            self.assertFalse(any(c[0] == "alerts" for c in self.db.calls))
+            self.assertIn("the active alerts: not read by the last snapshot", r["not_read"])
+            r["hosts"][0].update(apps=[], alerts=[{"name": "stale"}])
+            view = swr.swr_health(r)
+            sec, nr = view["web_sections"]
+            self.assertEqual(nr["title"], "Not read")
+            self.assertEqual(sec["rows"][0][3], "?")
+            tile = sec["boxes"][0]
+            self.assertEqual((tile["value"], tile["note"], tile["status"]), ("?", "not read", "info"))
+            self.assertIn("alerts not read", view["lines"][0])
+            g = self.glance(r, "Active alerts")
+            self.assertEqual((g["label"], g["status"], g["text"]),
+                             ("Not read", "info", "The active alerts were not read by the last snapshot."))
+
+    def test_incomplete_identity(self):
+        self.db.core["cut"] = True
+        self.unread("ip")
+        hosts = HOSTS[:1] + [HOSTS[2], {"host": "short01"}]
+        self.db.nodes_for_hosts = lambda *args: [N(1, "WEB01.EXAMPLE.MIL"), N(2, "other", ip="192.0.2.22"), N(3, "short01")]
+        for mode in ("health", "vcenter"):
+            r = self.read(hosts, mode)
+            self.assertEqual([h["matched"] for h in r["hosts"]], ["name", "", ""])
+            self.assertTrue(any("short" in line and "max_nodes" in line for line in r["not_read"]))
+            self.assertTrue(any("IP" in line and "addresses" in line for line in r["not_read"]))
+        self.db.notes["ip"]["absent"] = True
+        self.assertEqual([h["matched"] for h in self.read(hosts)["hosts"]], ["name", "ip", ""])
+        self.db.core.clear()
+        self.unread("ip")
+        self.assertEqual([h["matched"] for h in self.read(hosts)["hosts"]], ["name", "", "name"])
+        self.db.notes["ip"]["absent"] = True
+        self.assertEqual([h["matched"] for h in self.read(hosts)["hosts"]], ["name", "ip", "name"])
+
+    def test_canonical_caption(self):
+        host = H(("tab host01.example.mil",))
+        node = N(91, "\tTAB\rHOST01.EXAMPLE.MIL...\n", dns="mgmt91.example.mil")
+        self.assertEqual(hs.match(host, [N(92, "tab host01"), node])[0][:2], (node, "name"))
+        self.assertEqual(hs._short(node["name"]), "tab host01")
+        self.assertEqual(hs._full("\vHOST.EXAMPLE.MIL."), "\vhost.example.mil")
+
+    def test_events_not_read(self):
+        for failed in (False, True):
+            self.db = Snap()
+            if failed:
+                self.unread("event")
+            else:
+                self.db.counts["events"] = None
+            r = self.read()
+            self.assertFalse(r["events"])
+            self.assertFalse(any(c[0] == "events" for c in self.db.calls))
+            self.assertTrue(any("events" in line for line in r["not_read"]))
+            g = self.glance(r, "Events (24 h)")
+            self.assertEqual((g["label"], g["status"]), ("Not read", "info"))
+            self.assertIn("events not read", swr.swr_troubleshoot(r)["lines"][0])
+
+    def test_topology_and_interface_not_read(self):
+        self.db.core["topology_ok"] = False
+        r = self.read()
+        self.assertFalse(r["ports_read"])
+        self.assertTrue(any("topology" in line for line in r["not_read"]))
+        self.assertFalse(any(c[0] == "ports" for c in self.db.calls))
+        g = self.glance(r, "Its switch port")
+        self.assertEqual((g["label"], g["text"]), ("Not read", "SolarWinds' topology was not read by the last snapshot."))
+        self.db.core.clear()
+        self.db.ports_for = lambda *args: {101: [dict(reads.port(), status="", errors=None)]}
+        r = self.read()
+        g = self.glance(r, "Its switch port")
+        self.assertEqual((g["label"], g["status"]), ("Not read", "info"))
+        self.assertIn("status not read", g["text"])
+        self.assertIn("errors not read", g["text"])
+        row = swr.swr_troubleshoot(r)["sheets"][0]["rows"][0]
+        self.assertEqual((row[2], row[6]), ("?", "?"))
+
+    def test_volume_summary(self):
+        self.unread("volume")
+        r = self.read()
+        self.assertIn("volumes not read", swr.swr_health(r)["lines"][0])
+        self.db.notes["volume"]["absent"] = True
+        self.assertNotIn("volume", swr.swr_health(self.read())["lines"][0])
+        self.db.notes.clear()
+        self.assertIn("1 volume over 90 %", swr.swr_health(self.read())["lines"][0])
+
+    def test_last_poll_not_read(self):
+        self.unread("node")
+        r = self.read()
+        self.assertFalse(r["poll_read"])
+        self.assertTrue(any("last poll" in line for line in r["not_read"]))
+        g = self.glance(r, "web01")
+        self.assertIn("Last poll not read.", g["text"])
+        self.assertNotIn("ago", g["text"])
+
+    def test_redact_read(self):
+        bearer = "Authorization: Bearer abc123secretvalue"
+        password = "password=hunter2x"
+        r = self.read()
+        host = r["hosts"][0]
+        host["alerts"][0].update(name=password, message=bearer)
+        host["events"][0]["message"] = password
+        r["syslog"] = {"by_node": {"101": {"top": [{"message": bearer}]}}}
+        result = hs.redact_read(r, site_redact.redact)
+        for secret in ("abc123secretvalue", "hunter2x"):
+            self.assertNotIn(secret, json.dumps(result))
+        self.assertEqual(result["syslog"]["by_node"]["101"]["top"][0]["message"], site_redact.redact(bearer))
 
 
 if __name__ == "__main__":

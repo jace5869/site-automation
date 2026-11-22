@@ -13,6 +13,7 @@ __metaclass__ = type
 
 import os
 
+from ansible.module_utils.site_redact import redact
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_host_swis as hs
 from ansible.module_utils import site_ad_swis as ad
@@ -86,7 +87,7 @@ def main():
         # the module's answer travels as JSON: node ids as text
         res["syslog"]["by_node"] = dict((str(k), v) for k, v in (res["syslog"].get("by_node") or {}).items())
         res["syslog"]["queried"] = [str(k) for k in res["syslog"].get("queried") or []]
-    module.exit_json(changed=False, **res)
+    module.exit_json(changed=False, **hs.redact_read(res, redact))
 
 
 if __name__ == "__main__":

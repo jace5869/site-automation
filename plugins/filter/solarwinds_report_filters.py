@@ -178,6 +178,7 @@ def swr_health(read, findings_by_host=None, opts=None):
     queried = set(str(x) for x in (sl or {}).get("queried") or []) if sl and "queried" in sl else None
     sl_ok = bool(sl and sl.get("ok"))
     rows, det, rs, cs = [], [], [], []
+    alerts_read = r.get("alerts_read", True)
     alerts_n, alert_hosts, alert_sts = 0, 0, []
     disagree, absent, left_out = [], [], []
     apps_bad = vols_bad = 0
@@ -193,12 +194,12 @@ def swr_health(read, findings_by_host=None, opts=None):
                 left_out.append(name)
                 continue
             absent.append((name, h.get("unmatched_why") or ""))
-            rows.append(["", short, "Missing", "-", "-", "-", "-", ours])
+            rows.append(["", short, "Missing", "-" if alerts_read else "?", "-", "-", "-", ours])
             det.append([])
             rs.append("warning")
             cs.append(["", "", "warning", "", "", "", "", ours_st if ours_st in ("critical", "warning") else ""])
             continue
-        al = h.get("alerts") or []
+        al = (h.get("alerts") or []) if alerts_read else []
         a_st = _worst([_sev(a) for a in al])
         if al:
             alerts_n += len(al)
@@ -217,7 +218,7 @@ def swr_health(read, findings_by_host=None, opts=None):
         vol_text = ", ".join("%s %s" % (v["caption"], _pct(v["used_pct"])) for v in vo[:2]) + (" +%d" % (len(vo) - 2) if len(vo) > 2 else "")
         # review P2-6: SAM or the volumes not read by the snapshot (not absent): "?", never "0 of 0" or "-"
         apps_text = ("%d of %d" % (down, total)) if r.get("sam") else ("?" if r.get("sam") is None else "-")
-        rows.append(["", short, node.get("status") or "Unknown", _n(len(al)), apps_text,
+        rows.append(["", short, node.get("status") or "Unknown", _n(len(al)) if alerts_read else "?", apps_text,
                      vol_text or ("?" if r.get("volumes") is None else "-"), sy_text, ours])
         cs.append(["", "", nst, a_st if al else "", ap_st, _worst([v["level"] for v in vo]), "warning" if sy_n else "",
                    ours_st if ours_st in ("critical", "warning") else ""])
@@ -273,8 +274,13 @@ def swr_health(read, findings_by_host=None, opts=None):
             notes.append("No SAM on this SolarWinds: no applications.")
         if notes:
             says["note"] = " ".join(notes)
-        says["boxes"] = [{"label": "SolarWinds alerts", "value": alerts_n, "status": _worst(alert_sts) if alerts_n else "ok",
-                          "note": ("on %s" % _p(alert_hosts, "host")) if alerts_n else "none on these hosts"}]
+        if alerts_read:
+            tile = {"value": alerts_n, "status": _worst(alert_sts) if alerts_n else "ok",
+                    "note": ("on %s" % _p(alert_hosts, "host")) if alerts_n else "none on these hosts"}
+        else:
+            tile = {"value": "?", "note": "not read", "status": "info"}
+            says["status"] = _worst(rs + ["info"])
+        says["boxes"] = [dict(tile, label="SolarWinds alerts")]
         web.append(says)
     if disagree:
         web.append({"title": "SolarWinds alerts, our checks are green (%d)" % len(disagree), "status": _worst(d["status"] for d in disagree),
@@ -287,10 +293,15 @@ def swr_health(read, findings_by_host=None, opts=None):
                             "solarwinds_report_skip_hosts."})
     lines = []
     if n:
-        bits = [_p(alerts_n, "alert") + (" on %s" % _p(alert_hosts, "host") if alerts_n else "")]
+        bits = ["alerts not read"]
+        if alerts_read:
+            bits = [_p(alerts_n, "alert") + (" on %s" % _p(alert_hosts, "host") if alerts_n else "")]
         if r.get("sam"):
             bits.append(_p(apps_bad, "application") + " not up")
-        bits.append(_p(vols_bad, "volume") + " over %d %%" % int(warn))
+        if r.get("volumes") is None:
+            bits.append("volumes not read")
+        elif r["volumes"] is True:
+            bits.append(_p(vols_bad, "volume") + " over %d %%" % int(warn))
         lines.append("SolarWinds says (%s): %s." % (_p(n, "host"), ", ".join(bits)))
     if disagree:
         lines.append("SolarWinds alerts, our checks are green: %s." % ", ".join(d["name"] for d in disagree))
@@ -325,14 +336,21 @@ def sheets_of(secs):
 # -------------------------------------------------------------------------------------------------------- 3. troubleshoot
 def _port_text(p):
     sp = _speed(p.get("speed"))
-    bits = ["%s %s" % (p.get("switch") or "?", p.get("port") or "?") + (", " + sp if sp else "")]
-    if p.get("status") and p["status"] != "Up":
-        return bits[0] + ": the port is %s." % p["status"].lower()
-    if p.get("errors"):
-        return bits[0] + ": %s this hour." % _p(p["errors"], "error")
-    if p.get("discards"):
-        return bits[0] + ": %s this hour." % _p(p["discards"], "discard")
-    return bits[0] + ": no errors this hour."
+    port = "%s %s" % (p.get("switch") or "?", p.get("port") or "?")
+    details = []
+    if not p.get("status"):
+        details.append("status not read")
+    elif p["status"] != "Up":
+        details.append("the port is %s" % p["status"].lower())
+    if p.get("errors") is None:
+        details.append("errors not read")
+    elif p["errors"]:
+        details.append("%s this hour" % _p(p["errors"], "error"))
+    elif p.get("discards"):
+        details.append("%s this hour" % _p(p["discards"], "discard"))
+    elif not details:
+        details.append("no errors this hour")
+    return port + (", " + sp if sp else "") + ": " + ", ".join(details) + "."
 
 
 def _speed(bps):
@@ -354,7 +372,7 @@ def _port_st(p):
         return "critical"
     if p.get("status") in ("Warning", "Unknown") or p.get("errors") or p.get("discards"):
         return "warning"
-    return "ok"
+    return "info" if not p.get("status") or p.get("errors") is None else "ok"
 
 
 EV_WARN = ("down", "alert triggered", "not responding", "failed", "critical", "warning")
@@ -377,6 +395,9 @@ def swr_troubleshoot(read, opts=None):
     shown = int(o.get("events_shown") or 20)
     hours = int(o.get("event_hours") or 24)
     hosts = r.get("hosts") or []
+    alerts_read = r.get("alerts_read", True)
+    ports_read = r.get("ports_read", True)
+    events_read = r.get("events")
     multi = len(hosts) > 1
     web, lines = [], []
     for h in hosts:
@@ -398,37 +419,47 @@ def swr_troubleshoot(read, opts=None):
         nst = NODE_ST.get(node.get("status"), "info")
         what = ", ".join(x for x in (node.get("ip"), " ".join(y for y in (node.get("vendor"), node.get("model")) if y), node.get("os_version")) if x)
         g = [{"status": nst, "label": node.get("status") or "Unknown", "name": short,
-              "text": ("Polled %s UTC (%s)." % (_when(node.get("last_poll"), ref), _ago(node.get("last_poll"), ref)) if node.get("last_poll")
+              "text": ("Last poll not read." if not r.get("poll_read", True) else
+                       "Polled %s UTC (%s)." % (_when(node.get("last_poll"), ref), _ago(node.get("last_poll"), ref)) if node.get("last_poll")
                        else "Not polled yet.") + ((" " + what + ".") if what else "")}]
-        al = h.get("alerts") or []
-        a_st = _worst([_sev(a) for a in al])
-        g.append({"status": a_st if al else "ok", "label": _p(len(al), "alert") if al else "None", "name": "Active alerts",
-                  "text": " ".join("%s (%s)." % (a.get("name") or a.get("message"), _when(a.get("since"), ref)) for a in al[:2])
-                  + (" %d more." % (len(al) - 2) if len(al) > 2 else "") if al else "No active alert in SolarWinds."})
-        ports = h.get("ports") or []
+        al = (h.get("alerts") or []) if alerts_read else []
+        if alerts_read:
+            g.append({"status": _worst([_sev(a) for a in al]) if al else "ok",
+                      "label": _p(len(al), "alert") if al else "None", "name": "Active alerts",
+                      "text": " ".join("%s (%s)." % (a.get("name") or a.get("message"), _when(a.get("since"), ref)) for a in al[:2])
+                      + (" %d more." % (len(al) - 2) if len(al) > 2 else "") if al else "No active alert in SolarWinds."})
+        else:
+            g.append({"status": "info", "label": "Not read", "name": "Active alerts",
+                      "text": "The active alerts were not read by the last snapshot."})
+        ports = (h.get("ports") or []) if ports_read else []
         if ports:
             p_st = _worst([_port_st(p) for p in ports])
-            g.append({"status": p_st, "label": "Errors" if any(p.get("errors") for p in ports) else (ports[0].get("status") or "Up"),
+            label = ports[0].get("status") if all(p.get("status") for p in ports) else "Not read"
+            g.append({"status": p_st, "label": "Errors" if any(p.get("errors") for p in ports) else label,
                       "name": "Its switch port" if len(ports) == 1 else "Its switch ports", "text": " ".join(_port_text(p) for p in ports[:2])})
+        elif not ports_read:
+            g.append({"status": "info", "label": "Not read", "name": "Its switch port",
+                      "text": "SolarWinds' topology was not read by the last snapshot."})
         else:
             g.append({"status": "info", "label": "None", "name": "Its switch port", "text": "SolarWinds' topology links no switch port to this host."})
-        ev = h.get("events") or []
+        ev = (h.get("events") or []) if events_read else []
         kinds = {}
         for e in ev:
             kinds[e.get("kind") or "Event"] = kinds.get(e.get("kind") or "Event", 0) + 1
         top = sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
-        g.append({"status": "info" if ev else "ok", "label": _n(len(ev)), "name": "Events (%d h)" % hours,
+        g.append({"status": "info" if ev or not events_read else "ok", "label": _n(len(ev)) if events_read else "Not read",
+                  "name": "Events (%d h)" % hours,
                   "text": (", ".join("%s %s" % (_n(c), k) for k, c in top) + "." if ev else "No event in the last %d h." % hours)
-                  if r.get("events") else "Not read."})
+                  if events_read else "Not read."})
         web.append({"title": "What SolarWinds sees" + sfx, "status": _worst([x["status"] for x in g if x["status"] != "ok"]) or "ok",
                     "first": True, "top": True, "glance": g, "text": _snap_text(r)})
         if ports:
             web.append({"title": ("Its switch port" if len(ports) == 1 else "Its switch ports") + sfx, "first": True, "top": True,
                         "status": _worst([_port_st(p) for p in ports if _port_st(p) != "ok"]) or "ok",
                         "columns": ["Switch", "Port", "Status", "Speed", "In %", "Out %", "Errors (1 h)", "Discards (1 h)"],
-                        "rows": [[p.get("switch") or "", p.get("port") or "", p.get("status") or "", _speed(p.get("speed")) or "-",
+                        "rows": [[p.get("switch") or "", p.get("port") or "", p.get("status") or "?", _speed(p.get("speed")) or "-",
                                   _pct(p.get("in_pct")).replace(" %", "") or "-", _pct(p.get("out_pct")).replace(" %", "") or "-",
-                                  "-" if p.get("errors") is None else _n(p["errors"]), "-" if p.get("discards") is None else _n(p["discards"])]
+                                  "?" if p.get("errors") is None else _n(p["errors"]), "-" if p.get("discards") is None else _n(p["discards"])]
                                  for p in ports],
                         "row_status": [_port_st(p) if _port_st(p) != "ok" else "" for p in ports],
                         "cell_status": [["", "", NODE_ST.get(p.get("status"), ""), "", "", "", "warning" if p.get("errors") else "",
@@ -446,9 +477,10 @@ def swr_troubleshoot(read, opts=None):
                 web.append({"title": "Older events (%s)" % _n(len(ev) - shown) + sfx, "first": True, "top": True, "collapsed": True,
                             "columns": ["Time (UTC)", "Kind", "Event", "On"], "rows": [evrow(e) for e in ev[shown:]],
                             "row_status": [_ev_st(e) for e in ev[shown:]]})
-        lines.append("%s: node %s, %s, %s, %s in %d h." % (
-            short, (node.get("status") or "unknown").lower(), _p(len(al), "alert"),
-            ("port " + _port_text(ports[0]).rstrip(".")) if ports else "no switch port known", _p(len(ev), "event"), hours))
+        lines.append("%s: node %s, %s, %s, %s." % (
+            short, (node.get("status") or "unknown").lower(), _p(len(al), "alert") if alerts_read else "alerts not read",
+            ("port " + _port_text(ports[0]).rstrip(".")) if ports else ("no switch port known" if ports_read else "topology not read"),
+            "%s in %d h" % (_p(len(ev), "event"), hours) if events_read else "events not read"))
     email = [{"title": "What SolarWinds sees", "first": True, "top": True, "status": _worst([s.get("status") for s in web if s.get("status")]),
               "lines": lines, "text": _snap_text(r) + " The report website has the tables."}] if lines else []
     if r.get("not_read"):
@@ -474,6 +506,8 @@ def swr_alarms(read, alarms_read=None, opts=None):
     """The alarms report's section "SolarWinds alerts on the same hosts (N)" and its tile; alerts: the rows ACT reads."""
     r, d, o = read or {}, alarms_read or {}, opts or {}
     off = _not_ok(r, "SolarWinds alerts on the same hosts", o.get("explain_off"))
+    if r.get("ok") and r.get("alerts_read") is False:
+        off = _not_read(r["not_read"])
     if off or not r or r.get("skipped"):
         return {"section": off, "email_section": off, "tile": None, "alerts": [], "lines": off["lines"] if off else [],
                 "ok": False, "sheets": []}
@@ -571,9 +605,9 @@ def swr_alarm_evidence(swr, problems=None, max_chars=8000):
             continue
         seen.add(tuple(a["key"]))
         for p in a.get("ports") or []:
-            lines.append("SolarWinds: %s is linked to %s %s (%s, %s errors this hour)." % (
-                a["object"], p.get("switch") or "?", p.get("port") or "?", (p.get("status") or "?").lower(),
-                "?" if p.get("errors") is None else _n(p["errors"])))
+            lines.append("SolarWinds: %s is linked to %s %s (%s, %s)." % (
+                a["object"], p.get("switch") or "?", p.get("port") or "?", (p.get("status") or "status not read").lower(),
+                "errors not read" if p.get("errors") is None else "%s errors this hour" % _n(p["errors"])))
         for e in [e for e in a.get("events") or [] if e.get("on") == "port"][:10]:
             lines.append("SolarWinds: %s UTC %s port event on %s: %s" % (e.get("time"), a["object"], e.get("switch") or "its switch",
                                                                         e.get("message") or e.get("kind")))

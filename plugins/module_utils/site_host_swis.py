@@ -40,8 +40,12 @@ def _now(opts):
     return ad._now(opts)
 
 
+canon = sdb.canon
+
+
 def _short(name):
-    return ad._short(str(name or "").strip().rstrip("."))
+    n = canon(name)
+    return n if _ip(n) else n.split(".", 1)[0]
 
 
 def _ip(x):
@@ -50,7 +54,7 @@ def _ip(x):
 
 def _full(x):
     """A name as written, lower case, when it has a domain (not an IP), else ''."""
-    x = str(x or "").strip().lower().rstrip(".")
+    x = canon(x)
     return x if "." in x and not _ip(x) else ""
 
 
@@ -70,18 +74,19 @@ def _hosts(hosts):
     return out
 
 
-def match(hs, nodes):
+def match(hs, nodes, allow_short=True, allow_ip=True):
     """Resolve full names, then addresses, then compatible short names across the whole job."""
     rows = {n["node_id"]: n for n in nodes or []}
     full, short, address = defaultdict(set), defaultdict(set), defaultdict(set)
     domains, ips = {}, {}
     for nid, node in rows.items():
-        names = [n for n in (node.get("name"), node.get("dns")) if n and not _ip(n)]
-        domains[nid] = set(filter(None, map(_full, names)))
+        names = [canon(node.get(key)) for key in ("name", "dns")]
+        names = [n for n in names if n and not _ip(n)]
+        domains[nid] = {n for n in names if "." in n}
         for n in domains[nid]:
             full[n].add(nid)
         for n in names:
-            short[_short(n)].add(nid)
+            short[n.split(".", 1)[0]].add(nid)
         addresses = [node.get("ip")] + list(node.get("other_ips") or [])
         ips[nid] = set(filter(None, map(_ip, addresses)))
         for ip in ips[nid]:
@@ -96,6 +101,8 @@ def match(hs, nodes):
         if _ip(h["ip"]):
             host_ips[_ip(h["ip"])] += 1
     for stage in ("full", "ip", "short"):
+        if (stage == "short" and not allow_short) or (stage == "ip" and not allow_ip):
+            continue
         candidates, owners = {}, defaultdict(list)
         for i, h in enumerate(hs):
             if i in found:
@@ -152,7 +159,7 @@ def match(hs, nodes):
     return {i: found.get(i, (None, "", reasons.get(i, ""))) for i in range(len(hs))}
 
 
-def _vcenter_matches(hs, rows, vim, linked):
+def _vcenter_matches(hs, rows, vim, linked, allow_short, allow_ip):
     by_id = {n["node_id"]: n for n in rows + linked}
     kinds = defaultdict(set)
     for n in linked:
@@ -176,7 +183,7 @@ def _vcenter_matches(hs, rows, vim, linked):
             for i in indices:
                 found.setdefault(i, (None, "", "several vCenter objects have this name"))
     pending = [i for i in range(len(hs)) if i not in found]
-    fallback = match([hs[i] for i in pending], [n for n in rows if n["node_id"] not in kinds])
+    fallback = match([hs[i] for i in pending], [n for n in rows if n["node_id"] not in kinds], allow_short, allow_ip)
     found.update((i, fallback[j]) for j, i in enumerate(pending))
     return found
 
@@ -275,26 +282,46 @@ def _read(hs, o, conn, swdb, snap):
     if mode == "vcenter":
         vim = swdb.vim_for(conn, sid, [{"name": h["host"], "kind": h["kind"]} for h in hs]) or {}
     fulls, shorts, ips = (sorted({h[key] for h in hs if h[key]}) for key in ("fqdn", "short", "ip"))
+    not_read = []
+    core = snap.get("core") or {}
+    allow_short = not core.get("cut")
+    allow_ip = _part(swdb, snap, "ip", "the other addresses")[0] is not None
+    if not allow_short:
+        not_read.append("short name matching is off. The snapshot reached solarwinds_snapshot_max_nodes")
+    if not allow_ip:
+        not_read.append("IP matching is off. The other node addresses were not read")
     rows = swdb.nodes_for_hosts(conn, sid, fulls, shorts, ips)
     if mode == "vcenter":
         ids = {n["node_id"] for n in rows}
         ids.update(v["node_id"] for v in vim.values() if v and v.get("node_id") is not None)
-        found = _vcenter_matches(hs, rows, vim, swdb.vim_nodes(conn, sid, ids))
+        found = _vcenter_matches(hs, rows, vim, swdb.vim_nodes(conn, sid, ids), allow_short, allow_ip)
     else:
-        found = match(hs, rows)
+        found = match(hs, rows, allow_short, allow_ip)
     ids = sorted(set(v[0]["node_id"] for v in found.values() if v[0]))
-    not_read = []
     sam, line = _part(swdb, snap, "app", "SAM's applications")
     not_read += [line] if line else []
     vols_on, line = _part(swdb, snap, "volume", "the volumes")
     not_read += [line] if line else []
     apps = (swdb.apps_for(conn, sid, ids, own_tx=False) or {}) if sam and ids else {}
-    alerts = (swdb.alerts_for(conn, sid, ids) or {}) if ids else {}
+    alerts_read = snap.get("alerts") is not None and _part(swdb, snap, "alert", "the active alerts")[0] is not None
+    if not alerts_read:
+        not_read.append("the active alerts: not read by the last snapshot")
+    poll_read, line = _part(swdb, snap, "node", "the last poll")
+    if line:
+        not_read.append(line)
+    alerts = (swdb.alerts_for(conn, sid, ids) or {}) if alerts_read and ids else {}
     vols = (swdb.volumes_for(conn, sid, ids) or {}) if vols_on and ids else {}
     more = (swdb.node_details(conn, sid, ids) or {}) if ids else {}
-    ports = (swdb.ports_for(conn, sid, ids) or {}) if ids and mode in ("troubleshoot", "vcenter") else {}
+    detail = mode in ("troubleshoot", "vcenter")
+    ports_read = core.get("topology_ok") is not False
+    events_read = snap.get("events") is not None and _part(swdb, snap, "event", "the events")[0] is not None
+    if detail and not ports_read:                     # only where the report shows them (troubleshoot, the alarms)
+        not_read.append("the topology: not read by the last snapshot")
+    if detail and not events_read:
+        not_read.append("the events: not read by the last snapshot")
+    ports = (swdb.ports_for(conn, sid, ids) or {}) if ids and detail and ports_read else {}
     events, ev_ok = {}, False
-    if ids and mode in ("troubleshoot", "vcenter"):
+    if ids and detail and events_read:
         now = _now(o)
         hours = float(o.get("event_hours") or 24)
         port_of = {}
@@ -318,6 +345,8 @@ def _read(hs, o, conn, swdb, snap):
                 events.setdefault(n, []).append(dict(e, on="node"))
         for v in events.values():
             v.sort(key=lambda e: (ad._utc(e.get("event_time")) or datetime.datetime(1, 1, 1), e.get("event_id") or 0), reverse=True)
+    if any(not p.get("status") or p.get("errors") is None for group in ports.values() for p in group):
+        not_read.append("some switch port status or error readings were not read")
     out = []
     for i, h in enumerate(hs):
         node, how, why = found.get(i, (None, "", ""))
@@ -335,9 +364,24 @@ def _read(hs, o, conn, swdb, snap):
                        volumes=list(vols.get(nid) or []), ports=list(ports.get(nid) or []),
                        events=[_event(e) for e in events.get(nid) or []])
         out.append(rec)
-    res = {"sam": sam, "volumes": vols_on, "events": ev_ok, "hosts": out, "not_read": not_read}
+    res = {"alerts_read": alerts_read, "ports_read": ports_read, "poll_read": poll_read is True,
+           "sam": sam, "volumes": vols_on, "events": ev_ok, "hosts": out, "not_read": not_read}
     if mode == "vcenter":
         res["vim"] = vim
+    return res
+
+
+def redact_read(res, redact_fn):
+    """Redact SolarWinds message text before the module returns it."""
+    for group in ((res.get("syslog") or {}).get("by_node") or {}).values():
+        for entry in group.get("top") or []:
+            entry["message"] = redact_fn(entry["message"])
+    for host in res.get("hosts") or []:
+        for alert in host.get("alerts") or []:
+            alert["name"] = redact_fn(alert["name"])
+            alert["message"] = redact_fn(alert["message"])
+        for event in host.get("events") or []:
+            event["message"] = redact_fn(event["message"])
     return res
 
 

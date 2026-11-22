@@ -137,6 +137,9 @@ column, attach **SolarWinds (read-only)** to the health check templates too. Wit
   switch port** (the port SolarWinds' topology links to the host) and **Its events, last 24 h** (the switch's: its
   port's only). Over 20, the older ones fold under them.
 - The VMware alarms reports and their ACT analysis get SolarWinds in the next release (switched off here).
+- A part the snapshot did not read is never shown as zero, green or OK. Alerts, events, volumes, the topology, a port's
+  status or errors and the last poll then say "not read". A snapshot cut at its node limit never matches by a short
+  name, and one without the nodes' other addresses never matches by an address. SolarWinds' messages are redacted.
 - The alarms report's Host connection table fits at 800 px: State now says "in maintenance" (one column fewer), and
   vCenter's states are words ("not responding").
 - The matcher checks the full name first. It compares the inventory name or `ansible_host` with the caption and DNS name.

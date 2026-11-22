@@ -26,10 +26,10 @@ rt=${SWREPORT_DB_TEST_RUNTIME:-$(command -v podman || command -v docker || true)
 "$py" -c "import pymysql, cryptography" 2>/dev/null || { echo "skip - PyMySQL and cryptography are not installed for $py (pip install PyMySQL cryptography)"; exit 0; }
 case "$rt" in *podman) rtc=("$rt" --cgroup-manager=cgroupfs) ;; *) rtc=("$rt") ;; esac
 work="$(mktemp -d)"
-root="Test-Only-root-$$"
-wpw="Test-Only-writer-$$"
-rpw="Test-Only-reader-$$"
-pw='ro&"<test>9'
+export MYSQL_ROOT_PASSWORD="Test-Only-root-$$"
+export SWREPORT_WRITER_PASSWORD="Test-Only-writer-$$"
+export SWREPORT_READER_PASSWORD="Test-Only-reader-$$"
+export SWIS_FIXTURE_PASSWORD='ro&"<test>9'
 pids=()
 cleanup() { for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done; "${rtc[@]}" rm -f "$name" >/dev/null 2>&1; rm -rf "$work"; }
 trap cleanup EXIT
@@ -51,7 +51,7 @@ cat > "$work/fs.json" <<'EOF'
                               {"id": "services:httpd", "check": "services", "severity": "warning", "summary": "httpd restarted 4 times", "hint": "journalctl -u httpd"}],
         "db01.example.mil": [{"id": "performance:iowait", "check": "performance", "severity": "warning", "summary": "I/O wait 31 %", "hint": "iostat -x 5 3"}]}}
 EOF
-{ "$py" "$repo/tests/netmap/fixture.py" "$work/fx0.json" 600 svc_swis_ro "$pw" > /dev/null \
+{ "$py" "$repo/tests/netmap/fixture.py" "$work/fx0.json" 600 > /dev/null \
     && "$py" "$here/fixture_more.py" "$work/fx0.json" "$work/fx1.json" > /dev/null \
     && "$py" "$here/fixture_hosts.py" "$work/fx1.json" "$work/fx.json" > /dev/null; } || { echo "ABORT - the fixture"; exit 1; }
 switch="$("$py" -c 'import json,sys; f=json.load(open(sys.argv[1])); print(next(n["Caption"] for n in f["nodes"] if n["NodeID"] == next(c["SrcNodeID"] for c in f["connections"] if c["SrcInterfaceID"] == 990001)))' "$work/fx.json")"
@@ -82,8 +82,11 @@ run() {
     local args=() texts=() seen=0
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
     rm -rf "$work/web"; mkdir -p "$work/web"
-    (cd "$repo" && env -u REPORT_DB_HOST -u SOLARWINDS_URL -u SOLARWINDS_USERNAME -u SOLARWINDS_PASSWORD SOLARWINDS_PASSWORD="$pw" \
-        ${SW_ENV-$SW} ${DB_ENV:-} ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
+    (cd "$repo" || exit 1
+     unset REPORT_DB_HOST SOLARWINDS_URL SOLARWINDS_USERNAME SOLARWINDS_PASSWORD
+     export SOLARWINDS_PASSWORD="$SWIS_FIXTURE_PASSWORD"
+     for setting in ${SW_ENV-$SW} ${DB_ENV:-}; do export "$setting"; done
+     ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
         ANSIBLE_STDOUT_CALLBACK=default "$ap" -i "$work/inv.yml" "$pb" "${args[@]}") > "$work/out.txt" 2>&1
     local rc=$? t
     [ -n "${SWREPORT_TEST_LOGS:-}" ] && cp "$work/out.txt" "$SWREPORT_TEST_LOGS/$(echo "$tname" | tr -c 'a-z0-9' '_' | cut -c1-40).txt"
@@ -139,13 +142,13 @@ one_db() {
     echo "---- $image"
     "${rtc[@]}" rm -f "$name" >/dev/null 2>&1
     for _ in $(seq 1 60); do (exec 3<>"/dev/tcp/127.0.0.1/$dbport") 2>/dev/null || break; sleep 0.5; done
-    "${rtc[@]}" run -d --name "$name" -e "MYSQL_ROOT_PASSWORD=$root" -e MYSQL_DATABASE=site_reports -p "127.0.0.1:$dbport:3306" "$image" \
+    "${rtc[@]}" run -d --name "$name" -e MYSQL_ROOT_PASSWORD -e MYSQL_DATABASE=site_reports -p "127.0.0.1:$dbport:3306" "$image" \
         "${extra[@]}" >/dev/null || { bad "$image did not start"; return 1; }
-    "$py" - "$dbport" "$root" "$wpw" "$rpw" <<'EOPY' || { bad "$image not ready"; "${rtc[@]}" logs "$name" 2>&1 | tail -5; return 1; }
-import sys, time, pymysql
+    "$py" - "$dbport" <<'EOPY' || { bad "$image not ready"; "${rtc[@]}" logs "$name" 2>&1 | tail -5; return 1; }
+import os, sys, time, pymysql
 for _ in range(180):
     try:
-        c = pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user="root", password=sys.argv[2], ssl_disabled=True, autocommit=True)
+        c = pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user="root", password=os.environ["MYSQL_ROOT_PASSWORD"], ssl_disabled=True, autocommit=True)
         c.cursor().execute("SELECT 1 FROM information_schema.schemata WHERE schema_name = 'site_reports'")
         break
     except Exception:
@@ -153,16 +156,45 @@ for _ in range(180):
 else:
     sys.exit(1)
 cur = c.cursor()
-for sql in ("CREATE USER 'report_writer'@'%%' IDENTIFIED BY '%s'" % sys.argv[3],
+for sql in ("CREATE USER 'report_writer'@'%%' IDENTIFIED BY '%s'" % os.environ["SWREPORT_WRITER_PASSWORD"],
             "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, CREATE VIEW, SHOW VIEW ON site_reports.* TO 'report_writer'@'%'",
-            "CREATE USER 'report_reader'@'%%' IDENTIFIED BY '%s'" % sys.argv[4],
+            "CREATE USER 'report_reader'@'%%' IDENTIFIED BY '%s'" % os.environ["SWREPORT_READER_PASSWORD"],
             "GRANT SELECT, SHOW VIEW ON site_reports.* TO 'report_reader'@'%'"):
     cur.execute(sql)
 EOPY
-    local DBW="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_writer REPORT_DB_PASSWORD=$wpw"
-    local DBR="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=$rpw"
+    local DBW="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_writer REPORT_DB_PASSWORD=$SWREPORT_WRITER_PASSWORD"
+    local DBR="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=$SWREPORT_READER_PASSWORD"
     local web="report_web_dest=$work/web"
     DB_ENV="$DBW" run "the snapshot job fills the database" ok playbooks/solarwinds_snapshot.yml -- "kept."
+
+    if PYTHONPATH="$repo/plugins/module_utils" "$py" - "$dbport" <<'EOPY'; then
+import os, sys, pymysql
+import site_host_swis as hs
+import site_swis_db as db
+
+options = dict(host="127.0.0.1", port=int(sys.argv[1]), database="site_reports", ssl_disabled=True)
+with pymysql.connect(user="root", password=os.environ["MYSQL_ROOT_PASSWORD"], **options) as root:
+    cur = root.cursor()
+    cur.execute("SELECT MAX(snap_id) FROM sw_snapshot WHERE ok = 1")
+    sid, = cur.fetchone()
+    cur.execute("INSERT INTO sw_node (snap_id, node_id, seq, name, name_key, dns, status_code) VALUES "
+                "(%s, 910001, 910001, CONCAT(CHAR(9), 'TABHOST01.EXAMPLE.MIL.'), 'mgmt91', 'mgmt91.example.mil', 2), "
+                "(%s, 910002, 910002, 'tabhost01', 'retired91', 'retired91', 1)", (sid, sid))
+    root.commit()
+    try:
+        with pymysql.connect(user="report_reader", password=os.environ["SWREPORT_READER_PASSWORD"], **options) as reader:
+            full = "tabhost01.example.mil"
+            candidates = db.nodes_for_hosts(reader, sid, [full], ["tabhost01"], [])
+            node, how, _ = hs.match(hs._hosts([{"host": full}]), candidates)[0]
+            assert (node["node_id"], how) == (910001, "name")
+    finally:
+        cur.execute("DELETE FROM sw_node WHERE snap_id = %s AND node_id IN (910001, 910002)", (sid,))
+        root.commit()
+EOPY
+        ok "reader matches the full caption with a leading tab"
+    else
+        bad "reader matches the full caption with a leading tab"
+    fi
 
     # ---- the health check
     : > "$work/swis.log"
@@ -207,8 +239,13 @@ assert r["status"] == "critical"'
         -e solarwinds_report=false -- "!SolarWinds says"
     DB_ENV="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=wrong" \
         run "health with a wrong password: one line under Not read, green, the password never printed" ok tests/solarwinds/swreport.yml \
-        -e "@$work/fs.json" -e "$web" -- "SolarWinds not read: the report database: the login was refused (the Report database credential)" \
-        "!$rpw" "!$pw"
+        -e "@$work/fs.json" -e "$web" -- "SolarWinds not read: the report database: the login was refused (the Report database credential)"
+    if "$py" - "$work/out.txt" <<'EOPY'; then ok "passwords hidden"; else bad "a password appeared in the report"; fi
+import os, sys
+with open(sys.argv[1]) as stream:
+    output = stream.read()
+sys.exit(any(os.environ[k] in output for k in ("SWREPORT_READER_PASSWORD", "SWIS_FIXTURE_PASSWORD")))
+EOPY
     page "one line under Not read, right under Findings, never counted" 's = sec["Not read"]
 assert s["lines"][0].startswith("SolarWinds: the report database: the login was refused") and "status" not in s, s
 assert s["counted"] is False and t.index("Not read") == t.index("Findings") + 1, t'
@@ -228,17 +265,17 @@ assert sec["Its switch port"]["rows"][0][1:] == ["Gi1/0/14", "Up", "1 Gb/s", "71
     [ "$n" = 0 ] && ok "  ...troubleshoot never asks Log Analyzer" || bad "  ...troubleshoot asked Log Analyzer $n times"
 
     # ---- an old snapshot (its time moved back): one line under Not read with its age, the job green
-    q root "$root" "UPDATE sw_snapshot SET read_at = DATE_SUB(read_at, INTERVAL 2 HOUR)" > /dev/null
+    q "UPDATE sw_snapshot SET read_at = DATE_SUB(read_at, INTERVAL 2 HOUR)" > /dev/null
     DB_ENV="$DBR" run "health with an old snapshot: one line under Not read with its age, green" ok tests/solarwinds/swreport.yml -e "@$work/fs.json" \
         -- "SolarWinds not read: the SolarWinds snapshot is 2 h " "older than solarwinds_db_max_age (20 min)" "!SolarWinds says ("
     "${rtc[@]}" rm -f "$name" >/dev/null 2>&1
 }
-# q USER PASSWORD SQL: the first row's first value
-q() { "$py" - "$dbport" "$1" "$2" "$3" <<'EOPY'
-import sys, pymysql
-c = pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user=sys.argv[2], password=sys.argv[3], database="site_reports",
+# q SQL (as root): the first row's first value
+q() { "$py" - "$dbport" "$1" <<'EOPY'
+import os, sys, pymysql
+c = pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user="root", password=os.environ["MYSQL_ROOT_PASSWORD"], database="site_reports",
                     ssl_disabled=True, autocommit=True)
-cur = c.cursor(); cur.execute(sys.argv[4])
+cur = c.cursor(); cur.execute(sys.argv[2])
 r = cur.fetchone()
 print("" if r is None else r[0])
 EOPY
