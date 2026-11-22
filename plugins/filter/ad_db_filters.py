@@ -44,11 +44,15 @@ def ad_db_payload(ad, live=None, opts=None):
 
 def _payload(ad, live, opts):
     a = ad or {}
-    probs = {}
+    probs, by_name = {}, {}
     for p in a.get("problems") or []:
         if isinstance(p, dict) and p.get("object"):
-            k = (str(p.get("domain") or "").lower(), str(p.get("object")).lower())
-            probs.setdefault(k, []).append((str(p.get("severity") or ""), str(p.get("text") or "")))
+            dom, obj = str(p.get("domain") or "").lower(), str(p.get("object")).lower()
+            item = (str(p.get("severity") or ""), str(p.get("text") or ""))
+            if dom:
+                probs.setdefault((dom, obj), []).append(item)
+            else:                                        # a problem with no domain (a security event): the DC of that name
+                by_name.setdefault(obj, []).append(item)
     repl = a.get("repl") or {}
     site = dict((str(d.get("name") or "").lower(), str(d.get("site") or "")) for d in repl.get("dcs") or [] if isinstance(d, dict))
     dcs = []
@@ -56,12 +60,13 @@ def _payload(ad, live, opts):
         name = str(d.get("dc") or "")
         if not name:
             continue
-        ps = sorted(probs.get((str(d.get("domain") or "").lower(), name.lower()), []), key=lambda x: RANK.get(x[0], 6))
+        ps = sorted(probs.get((str(d.get("domain") or "").lower(), name.lower()), []) + by_name.get(name.lower(), []),
+                    key=lambda x: RANK.get(x[0], 6))
         if not d.get("read"):
             st, worst = "critical", "not read: %s" % (d.get("error") or "no answer")
-        else:
-            st = ps[0][0] if ps else "ok"
-            worst = ps[0][1] if ps else ""
+        else:                                            # info and the like: OK (the page's states are critical, warning, low, ok)
+            st = ps[0][0] if ps and ps[0][0] in ("critical", "warning", "low") else "ok"
+            worst = ps[0][1] if st != "ok" else ""
         dcs.append({"dc": name[:255], "domain": str(d.get("domain") or "")[:255], "site": site.get(name.lower(), "")[:255],
                     "read": bool(d.get("read")), "status": st[:16], "problems": len(ps), "worst": worst[:300]})
     now = _utc(repl.get("now"))

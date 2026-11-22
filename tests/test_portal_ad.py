@@ -228,7 +228,7 @@ class Answer1012(unittest.TestCase):
         a = live(fill(["ok"] * 5 + ["critical"] * 2), Site(self))
         a.read_db()
         src = a.sw_source()
-        self.assertEqual(src[0], "9006")                              # the database's newest run
+        self.assertEqual((src[0], src[3]), ("run-7", "9006"))          # the database's newest run (its row, its job)
         a.sw = a.read_sw(src)
         out = json.loads(a.answer()[1])
         m = out["db"]["model"]
@@ -289,8 +289,8 @@ class Answer1012(unittest.TestCase):
         code, _b, etag = a.answer()
         self.assertEqual(a.answer(etag), (304, "", etag))
         real = time.time
-        try:                                                            # 5 min later, the same reads: the same tag (the ages are not in it)
-            sp.time.time = lambda: real() + 300
+        try:                                                            # 100 s later, the same reads: the same tag (the ages are not in it)
+            sp.time.time = lambda: real() + 100
             self.assertEqual(a.answer(etag)[0], 304)
         finally:
             sp.time.time = real
@@ -323,6 +323,85 @@ class Answer1012(unittest.TestCase):
         self.assertEqual((m["run"]["template_id"], len(m["times"])), (34, 1))     # the newest run's template only
         m = sp.AdDb(None, connect=lambda: lite, mark="?").read(template_id=12)
         self.assertEqual((m["run"]["template_id"], len(m["times"])), (12, 3))     # portal_ad_template
+
+
+class Review1012(unittest.TestCase):
+    """The review of 1.101.2: each finding's case."""
+
+    def test_1_a_new_runs_failing_solarwinds_keeps_its_backoff(self):
+        lite = fill(["ok"] * 2)
+        calls = []
+
+        def boom(lv):
+            calls.append(1)
+            raise RuntimeError("SolarWinds did not answer")
+        a = sp.AdLive(Site(self).cfg(), sp.Log(None), source=boom, db=sp.AdDb(None, connect=lambda: lite, mark="?"))
+        a.cfg.ad_swis_why = ""
+        a.seen = time.time()
+        a.db_due = 1e18                                                 # the database read once, by hand
+        a.read_db()
+        waits = []
+        a.wake.wait = lambda t: waits.append(t) or (len(waits) >= 3 and (_ for _ in ()).throw(SystemExit))
+        with self.assertRaises(SystemExit):
+            a._run()
+        self.assertEqual(len(calls), 1)                                 # tried once for the run, then its backoff - not every pass
+        self.assertGreaterEqual(min(waits), 5)
+        a.answer()
+        self.assertFalse(a.wake.is_set())                               # a viewer's ask does not start another try for that run
+
+    def test_2_an_answer_from_before_a_quiet_spell_is_said_as_refreshing(self):
+        a = live(fill(["ok"] * 2), Site(self))
+        a.read_db()
+        code, _b, etag = a.answer()
+        self.assertFalse(json.loads(_b)["db"]["refreshing"])
+        a.db_at -= 3 * sp.AD_POLL
+        code, b, etag2 = a.answer(etag)
+        self.assertEqual(code, 200)                                     # another tag: the page hears it
+        self.assertTrue(json.loads(b)["db"]["refreshing"])
+
+    def test_3_a_new_ca_is_written_again(self):
+        s = Site(self)
+        seen = []
+        cfg = s.cfg(PORTAL_REPORT_DB=json.dumps({"host": "db.example.mil", "user": "report_reader", "password": "x", "tls": True, "ca_pem": "OLD"}))
+        real = sp.site_report_db.connect if sp.site_report_db else None
+        try:
+            sp.site_report_db.connect = lambda p: (seen.append(open(p["ca_file"]).read()), (object(), "tls"))[1]
+            sp.site_report_db.HAS_PYMYSQL = True
+            sp.AdDb(cfg)._connect()
+            cfg.report_db["ca_pem"] = "NEW"
+            sp.AdDb(cfg)._connect()
+        finally:
+            sp.site_report_db.connect = real
+        self.assertEqual(seen, ["OLD", "NEW"])
+        self.assertEqual(oct(os.stat(os.path.join(s.tmp, "data", "report-db-ca.pem")).st_mode & 0o777), "0o600")
+
+    def test_4_a_problem_with_no_domain_counts_for_its_dc(self):
+        _now, ad = ad_run(0)
+        ad["problems"] = [{"domain": "", "object": "DC02", "severity": "critical", "text": "Security: the audit log was cleared"},
+                          {"domain": "corp.test", "object": "DC01", "severity": "info", "text": "for your information"}]
+        p = dbf.ad_db_payload(ad, {}, {})
+        st = dict((d["dc"], (d["status"], d["worst"])) for d in p["dcs"])
+        self.assertEqual(st["DC02"], ("critical", "Security: the audit log was cleared"))
+        self.assertEqual(st["DC01"], ("ok", ""))                         # info: OK on the page
+
+    def test_5_runs_told_apart_by_their_row_not_the_job(self):
+        lite = Lite()
+        for back in (60, 0):
+            now, ad = ad_run(back)
+            adb.write(lite, now, 0, 12, dbf.ad_db_payload(ad, {"kind": "ad", "dcs": [{"dc": "DC0%d" % (1 if back else 2)}]}, {}))
+        a = live(lite, Site(self))
+        a.read_db()
+        self.assertEqual(a.sw_source()[0], "run-2")
+        a.sw = a.read_sw(("run-1", {"dcs": [{"dc": "DC01"}]}, 12, "0"))     # the run before's read, job 0 as well
+        self.assertNotIn("section", json.loads(a.answer()[1])["sw"])      # not shown as this run's
+
+    def test_6_the_report_link_of_the_run_shown(self):
+        s = Site(self)
+        s.index(extra=[{"latest": "ad-forest2/latest.html", "when": utc(0), "job": "9500", "live": "ad"}])
+        a = sp.AdLive(s.cfg(), sp.Log(None))
+        self.assertEqual(a.report_link()["url"], "/portal/reports/ad-forest2/latest.html")            # none named: the newest
+        self.assertEqual(a.report_link("77")["url"], "/portal/reports/ad-health/latest.html")         # the forest shown
+        self.assertEqual(a.report_link("1")["url"], "/portal/reports/ad-forest2/latest.html")         # not on the index: the newest
 
 
 class Link1012(unittest.TestCase):

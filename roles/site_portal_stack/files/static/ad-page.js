@@ -59,8 +59,8 @@
   // ---- the parts --------------------------------------------------------------------------------------------------------------
   function live(a, m) {
     const run = m && m.run, sw = a.sw || {};
-    const ok = run && !run.old && !a.db.stale && (!sw.on || !sw.stale);
-    const l = el("div", "l", [el("span", "adp-dot" + (ok ? "" : " off"), ""), el("b", "", ok ? "Live" : "Not live")]);
+    const ok = run && !run.old && !a.db.stale && !a.db.refreshing && (!sw.on || !sw.stale);
+    const l = el("div", "l", [el("span", "adp-dot" + (ok ? "" : " off"), ""), el("b", "", ok ? "Live" : a.db.refreshing ? "Refreshing…" : "Not live")]);
     if (run) l.append(el("span", run.old ? "c-warning" : "", run.old ? "AD checks: as of " + run.as_of + " - " + hrs(run.age_min) + " old: the AD job has not run since"
                                                                       : "AD checks: as of " + hhmm(run.as_of) + " (the AD job" + (run.next ? "; next " + hhmm(run.next) : "") + ")"));
     l.append(el("span", "adp-sep", "·"));
@@ -213,7 +213,8 @@
         while (toasts.children.length >= 3) toasts.firstChild.remove();
         toasts.append(box);
         setTimeout(() => box.remove(), 15000);
-        const row = root.querySelector('tr[data-dc="' + t.split(":")[0] + '"]');
+        const dc = t.split(":")[0];
+        const row = [...root.querySelectorAll("tr[data-dc]")].find(r => r.dataset.dc === dc);
         if (row && moves()) row.classList.add("adp-flash");
       });
     }
@@ -236,6 +237,7 @@
     } else {
       parts.push(live(a, m));
       if (db.stale) parts.push(note("warn", "The report database was not read just now (" + db.stale + "): this is its answer of " + ago(db.age) + ", as of its run " + m.run.as_of + "."));
+      else if (db.refreshing) parts.push(note("", "Reading the report database again: this is its answer of " + ago(db.age) + " (nobody had the page open)."));
       if (m.run.old) parts.push(note("warn", "The newest AD run is " + hrs(m.run.age_min) + " old (more than " + a.old_after + " min): the AD job has not run since. " +
                                              "What follows is as of " + m.run.as_of + ", not now."));
       parts.push(glance(a, m), dcTable(a, m), linkTable(m), chart(m),
@@ -255,7 +257,12 @@
       got = Date.now();
       return r.json();
     }).then(a => {
-      if (a) { shown = a; poll = Math.max(15, Math.min(300, a.poll || 60)); draw(a); }
+      if (a) {
+        shown = a;
+        // the first read not there yet, or an answer from before a quiet spell: asked again soon, not in a minute
+        poll = a.db && a.db.on && (!a.db.model || a.db.refreshing) && !a.db.stale ? 3 : Math.max(15, Math.min(300, a.poll || 60));
+        draw(a);
+      }
       else if (shown) {                         // the same answer: its ages move on
         const gone = Math.round((Date.now() - got) / 1000);
         const a2 = JSON.parse(JSON.stringify(shown));

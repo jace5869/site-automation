@@ -236,7 +236,7 @@ class Config(object):
                            "the site_swis.py reader is not in the service's files - deploy again" if not site_swis else
                            "no SolarWinds address (a \"SolarWinds (read-only)\" credential on the deploy, or netmap_solarwinds_url)" if not self.swis_url else
                            "no SolarWinds login (a \"SolarWinds (read-only)\" credential on the deploy)")
-        # 1.101.2: the live AD page (/portal/ad) - the AD job's newest page on the report website, its SolarWinds parts read
+        # 1.101.2: the Active Directory page (/portal/ad) - the AD job's runs from the report database, each DC's SolarWinds status read
         # by this server every portal_ad_seconds while someone has it open (the network map's SolarWinds login)
         self.tz_name = str(g("PORTAL_TIME_ZONE") or "")
         # 1.101.2: the report database's read-only login (the secret site-portal-reportdb: JSON) - the live AD page's runs
@@ -3760,10 +3760,21 @@ class AdDb(object):
         ca = ""
         if p.get("tls") and p.get("ca_pem"):
             ca = os.path.join(self.cfg.data, "report-db-ca.pem")
-            if not os.path.isfile(ca):
-                fd = os.open(ca, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w") as fh:
+            try:
+                with open(ca, encoding="utf-8") as fh:
+                    same = fh.read() == p["ca_pem"]
+            except OSError:
+                same = False
+            if not same:                                       # a new CA on the credential (a deploy since): written again, whole
+                tmp = ca + ".tmp"
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
                     fh.write(p["ca_pem"])
+                os.replace(tmp, ca)
         conn, _tls = site_report_db.connect({"host": p.get("host"), "port": int(p.get("port") or 3309), "user": p.get("user"),
                                              "password": p.get("password"), "database": p.get("database") or "site_reports",
                                              "tls": bool(p.get("tls")), "ca_file": ca, "connect_timeout": 10})
@@ -3882,11 +3893,12 @@ class AdLive(object):
         # the AD job's runs in the report database (AdDb): read every AD_POLL s while the page is open; None: no login
         self.db = db if db is not None else (AdDb(cfg) if cfg.report_db else None)
         self.dbm, self.db_at, self.db_stale, self.db_fails, self.db_due, self.sw_due = None, 0.0, "", 0, 0.0, 0.0
-        self.idx_sig, self.link = None, None
+        self.idx_sig, self.link_lines = None, []
+        self.sw_tried = ""                                   # the run SolarWinds was last asked for (its backoff kept for it)
 
-    def report_link(self):
-        """The newest AD run's page on the report website -> {url, when} or None (index.json's line marked live: ad; read
-        again only when the file changed)."""
+    def report_link(self, job=None):
+        """The shown run's page on the report website -> {url, when} or None: index.json's line marked live: ad of that job
+        (two forests: the right one), else the newest such line; read again only when the file changed."""
         idx = os.path.join(os.path.realpath(self.cfg.reports), "index.json")
         try:
             st = os.stat(idx)
@@ -3894,21 +3906,29 @@ class AdLive(object):
         except OSError:
             return None
         if sig == self.idx_sig:
-            return self.link
-        link = None
+            return self._pick(self.link_lines, job)
+        lines = []
         try:
             with open(idx, encoding="utf-8") as fh:
                 doc = json.load(fh)
-            lines = [r for r in (doc.get("reports") or []) if isinstance(r, dict) and r.get("live") == "ad"] if isinstance(doc, dict) else []
-            if lines:
-                line = max(lines, key=lambda r: str(r.get("when") or ""))
-                rel = str(line.get("latest") or line.get("page") or "")
+            for r in (doc.get("reports") or []) if isinstance(doc, dict) else []:
+                rel = str(r.get("latest") or r.get("page") or "") if isinstance(r, dict) and r.get("live") == "ad" else ""
                 if rel.endswith(".html") and not rel.startswith("/") and ".." not in rel.split("/") and "\\" not in rel:
-                    link = {"url": "%sreports/%s" % (self.cfg.path, urllib.parse.quote(rel)), "when": shown(self.cfg, line.get("when"))}
+                    lines.append({"url": "%sreports/%s" % (self.cfg.path, urllib.parse.quote(rel)), "when": shown(self.cfg, r.get("when")),
+                                  "at": str(r.get("when") or ""), "jobs": [str(r.get("job") or "")] + [str(x.get("job") or "") for x in r.get("runs") or []
+                                                                                                         if isinstance(x, dict)]})
         except (OSError, ValueError):
-            return self.link                                 # being written: the last one, read again next time
-        self.idx_sig, self.link = sig, link
-        return link
+            return self._pick(self.link_lines, job)       # being written: the last one, read again next time
+        self.idx_sig, self.link_lines = sig, lines
+        return self._pick(lines, job)
+
+    @staticmethod
+    def _pick(lines, job):
+        if not lines:
+            return None
+        mine = [x for x in lines if job and str(job) in x["jobs"]]
+        x = max(mine or lines, key=lambda r: r["at"])
+        return {"url": x["url"], "when": x["when"]}
 
     # -- SolarWinds -----------------------------------------------------------------------------------------------------------
     def _swis(self, live):
@@ -3919,11 +3939,12 @@ class AdLive(object):
         return site_ad_swis.from_live(live.get("dcs") or [], {"page": 1000, "max_nodes": mx}, self.client)
 
     def sw_source(self):
-        """(job, live, template_id) SolarWinds is read for: the database's newest run; None: none read yet."""
+        """(key, live, template_id, job) SolarWinds is read for: the database's newest run (key: its run_id - a job ID can be
+        0 outside AAP); None: none read yet."""
         with self.lock:
             m = self.dbm
         if m and m.get("run") and isinstance(m.get("live"), dict) and m["live"].get("dcs"):
-            return str(m["run"]["job"]), m["live"], m["run"]["template_id"]
+            return "run-%d" % int(m["run"]["run_id"]), m["live"], m["run"]["template_id"], str(m["run"]["job"])
         return None
 
     def read_db(self):
@@ -3936,8 +3957,8 @@ class AdLive(object):
 
     def read_sw(self, run):
         """One read of the DCs in SolarWinds -> {at, job, section, tile} (the AD job's own section and tile, as of now).
-        run: (job, live, template_id) of sw_source."""
-        job, live, _tid = run
+        run: (key, live, template_id, job) of sw_source."""
+        key, live, _tid, job = run
         res = self.source(live)
         if not res.get("ok"):
             raise ValueError("; ".join(res.get("why") or []) or "SolarWinds was not read")
@@ -3951,7 +3972,7 @@ class AdLive(object):
         if not sec:
             raise ValueError("; ".join(v.get("not_read") or []) or "SolarWinds' answer could not be made into the section")
         keep = dict((k, sec.get(k)) for k in ("columns", "rows", "cell_status", "row_status", "status", "text"))
-        return {"at": time.time(), "job": job, "section": keep, "tile": v.get("tile")}
+        return {"at": time.time(), "key": key, "job": job, "section": keep, "tile": v.get("tile")}
 
     def _schedule(self, tid):
         """The AD template's next scheduled run (AAP), at most every AD_SCHEDULE_EVERY s; {} when there is none or AAP is not asked."""
@@ -4001,9 +4022,9 @@ class AdLive(object):
             src = self.sw_source()
             if src is not None:
                 self._schedule(src[2])
-            with self.lock:
-                new_run = src is not None and self.sw is not None and self.sw["job"] != src[0]
+            new_run = src is not None and src[0] != self.sw_tried          # once per run: a read that fails keeps its backoff
             if src is not None and not self.cfg.ad_swis_why and (time.time() >= self.sw_due or new_run):
+                self.sw_tried = src[0]
                 try:
                     sw = self.read_sw(src)
                     with self.lock:
@@ -4034,19 +4055,21 @@ class AdLive(object):
             sw, stale, nxt, sched = self.sw, self.sw_stale, self.sw_next, dict(self.sched)
             dbm, db_at, db_stale = self.dbm, self.db_at, self.db_stale
         src = self.sw_source()
-        if src is not None and sw is not None and sw["job"] != src[0]:
-            self.wake.set()                                          # a new run (its DCs): SolarWinds read again now
-        out = {"poll": AD_POLL, "old_after": self.cfg.ad_old_minutes, "report": self.report_link()}
+        if src is not None and src[0] != self.sw_tried:
+            self.wake.set()                                          # a new run (its DCs): SolarWinds read for it now
+        out = {"poll": AD_POLL, "old_after": self.cfg.ad_old_minutes, "report": self.report_link(dbm["run"]["job"] if dbm and dbm.get("run") else None)}
         out["db"] = {"on": self.db is not None, "stale": db_stale,
                      "why": "" if self.db is not None else ("the portal has no report database login: the template setup job attaches the "
                                                             "\"Report database\" credential (the read-only account report_reader) to "
                                                             "Site portal - deploy; run that once")}
         if dbm is not None:
             out["db"]["age"] = int(now - db_at)
+            # read before a quiet spell (nobody on the page): not the current answer - said, read again now, the page asks soon
+            out["db"]["refreshing"] = not db_stale and now - db_at > 2 * AD_POLL
             out["db"]["model"] = self._shown(dbm, now, sched)
         out["sw"] = {"on": not self.cfg.ad_swis_why, "why": self.cfg.ad_swis_why, "stale": stale, "every": self.cfg.ad_seconds,
                      "next": max(0, int(nxt - now)) if nxt else None}
-        if sw is not None and src is not None and sw["job"] == src[0]:
+        if sw is not None and src is not None and sw["key"] == src[0]:
             out["sw"].update({"age": int(now - sw["at"]), "as_of": shown(self.cfg, now_iso(sw["at"])), "job": sw["job"],
                               "section": sw["section"], "tile": sw["tile"]})
         body = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
@@ -4215,7 +4238,7 @@ def make_handler(cfg, portal, static_dir):
                                       "text/html; charset=utf-8")
                 live.viewed()
                 return self._send(200, netmap_page(cfg, cn, static_dir, statics), "text/html; charset=utf-8")
-            # 1.101.2: the live AD page - the AD job's newest page from the report folder, its SolarWinds parts read here
+            # 1.101.2: the Active Directory page - the AD job's runs from the report database, SolarWinds read here
             if path == "/ad":
                 if not adl:
                     return self._send(404, message_page(cfg, "Active Directory off", "The Active Directory page is off here (portal_ad: false).", cn),
