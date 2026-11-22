@@ -718,13 +718,14 @@ def outage_timeline(events, tickets=None, opts=None):
     # LEAD_S before its first critical event, to that event
     own = lambda e: bool(_about(e) & subject["keys"])      # noqa: E731
     crit = next((e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] == "critical" and own(e)), None)
-    lead_up, lead_note = None, ""
+    lead_up, lead_note, lead_ns = None, "", set()
     if crit is not None:
         ahead = [e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] in BAD and own(e)
                  and 0 < (crit["t"] - e["t"]).total_seconds() <= LEAD_S]
         word = "alarm" if str(crit.get("kind") or "").startswith("alarm:") else "event"
         if ahead:
             lead_up = (ahead[0]["t"], crit)
+            lead_ns = set(e["num"] for e in ahead)          # 1.104.0: the lead-up's own problems (what ACT reads first)
         else:
             lead_note = "No lead-up drawn: nothing about %s came in the %s before its first critical %s (#%d, %s)." % (
                 crit["where"] or subject["text"], _span(LEAD_S), word, crit["num"], loc(crit["t"]).strftime("%H:%M"))
@@ -923,6 +924,13 @@ def outage_timeline(events, tickets=None, opts=None):
         if lead_up is not None and lead_up[0] <= e["t"] <= lead_up[1]["t"]:
             d["lu"] = 2 if e is lead_up[1] else 1
         return d
+    # 1.104.0: what ACT reads when asked (vm_outage_act; plugins/filter/outage_act_filters.py): each event as the page knows it
+    # lead: one of the lead-up's own problems (the subject's, a warning or worse) - not every event in its time span (Neon)
+    act_in = {"events": [dict(evd(e), lane=LANE[e["lane"]], s=e["t"].timestamp(),
+                              at=loc(e["t"]).strftime("%Y-%m-%d %H:%M:%S ") + zname(e["t"]), msg=_cut(e.get("message") or "", 200),
+                              count=e.get("count") or e["n"], **({"lead": 1} if e["num"] in lead_ns else {})) for e in evs],
+              "first": lead_up[1]["num"] if lead_up is not None else (crit["num"] if crit is not None else 0),
+              "subject": subject["text"], "window": window_text}
     lanes = []
     for key, name in LANES:
         mine = [e for e in evs if e["lane"] == key]
@@ -1156,11 +1164,25 @@ def outage_timeline(events, tickets=None, opts=None):
                  "key": [row(e) for e in key], "events": [row(e) for e in evs[:DRAFT_EVENTS]], "events_total": len(evs),
                  "tickets": tk_rows, "ticket_hint": cause, "follow_up": follow[0][len("Follow-up: "):] if follow else ""}
     return _unsafe({"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
-            "lines": out, "aar": aar, "window": window_text, "events": len(evs),
+            "lines": out, "aar": aar, "window": window_text, "events": len(evs), "act_in": act_in,
             "skip": bool(blip and o.get("skip_blips")),
             "cleared_before_review": cleared_only, "blip": blip,
             "alarm_window": [r_from.strftime("%Y-%m-%dT%H:%M:%SZ"), r_to.strftime("%Y-%m-%dT%H:%M:%SZ")] if cleared_runs else [],
             "trigger": trig, "trigger_line": "Triggered by: " + trig[0] + ((" (and %d more)" % (len(trig) - 1)) if len(trig) > 1 else "")})
+
+
+def _with_act(sections, act, web):
+    """1.104.0: ACT's suggestions (timeline["act"], outage_act_section) just before How it judged - on the website the cards,
+    in the email one section; when ACT was asked and has nothing to show, one line in How it judged says why."""
+    add = ([act["web"]] if act.get("web") else []) if web else list(act.get("email") or [])
+    at = next((i for i, s in enumerate(sections) if s.get("title") == "How it judged"), len(sections))
+    out = sections[:at] + add + sections[at:]
+    if act.get("judged") and at < len(sections):
+        j = at + len(add)
+        out[j] = dict(out[j], lines=list(out[j].get("lines") or []) + [act["judged"]])
+    elif act.get("judged"):
+        out.append({"title": "How it judged", "lines": [act["judged"]]})
+    return out
 
 
 def outage_timeline_doc(doc, timeline, web=False, review=False):
@@ -1182,7 +1204,7 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
         out["subtitle"] = "%s Review of %s. Now: %s" % (timeline.get("trigger_line", "").rstrip(".") + "." if timeline.get("trigger_line") else "",
                                                        timeline.get("window", ""), doc.get("title", ""))
         out["subtitle"] = out["subtitle"].strip()
-        out["sections"] = mine + own
+        out["sections"] = _with_act(mine + own, timeline.get("act") or {}, web)
         out["status_prefix"] = "Now: "                      # 1.90.0: the verdict is the watch's state now, not the outage's
     else:
         mine = [s for s in mine if s.get("title") in ("What happened, in order", "The events")]

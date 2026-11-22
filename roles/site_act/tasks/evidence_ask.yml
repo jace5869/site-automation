@@ -11,6 +11,15 @@
                     'asksage': 'https://api.genai.army.mil/server/openai/v1/chat/completions',
                     'genai-beta': 'https://api-beta.genai.mil/v1/chat/completions'}[site_act_provider]) }}
     _ea_proxy: "{{ _site_act_env_all | dict2items | selectattr('key', 'match', '(?i)^(https?|no)_proxy$') | items2dict }}"
+  no_log: true                       # 1.104.0 (Codex): a proxy address can carry a user name and password
+
+# 1.104.0 (Codex): a proxy with a user name and password (http://user:pass@proxy...) is not used for this check:
+# Ansible's `environment:` would put it on the command line. ACT itself gets it on stdin (act_triage).
+- name: ACT | check the way to the model (not through a proxy with a password)
+  ansible.builtin.set_fact:
+    _ea_probe: >-
+      {{ _ea_check_url | default(true) | bool
+         and _ea_proxy | dict2items | map(attribute='value') | map('string') | select('search', '@') | list | length == 0 }}
 
 # Any HTTP answer (even 401 or 404) shows the way is open; no answer at all means a firewall, a
 # proxy or DNS is in the way. The key is not sent.
@@ -24,7 +33,7 @@
   register: _ea_reach
   failed_when: false
   check_mode: false
-  when: _site_act_key_ok | bool and _ea_check_url | default(true) | bool and (not ansible_check_mode or _ea_in_check | default(false) | bool)
+  when: _site_act_key_ok | bool and _ea_probe | bool and (not ansible_check_mode or _ea_in_check | default(false) | bool)
 
 - name: ACT | can ACT run?
   ansible.builtin.set_fact:
@@ -33,7 +42,7 @@
       A dry run (Check): ACT was not called. It would analyze the {{ _ea_items | length }} item(s) below.
       {%- elif not _site_act_key_ok | bool -%}
       This job has no API key for provider {{ site_act_provider }}: attach {{ _site_act_key_hint }} to the job template.
-      {%- elif _ea_check_url | default(true) | bool and (_ea_reach.status | default(-1) | int) <= 0 -%}
+      {%- elif _ea_probe | bool and (_ea_reach.status | default(-1) | int) <= 0 -%}
       This AAP node cannot reach the model at {{ _ea_url }} ({{ _ea_reach.msg | default('no answer') | regex_replace('^Status code was -1 and not \[200\]: ', '') }}).
       {{ ' Its certificate is not trusted: set site_act_ca to the CA file (docs/VMWARE.md, "ACT analysis").'
          if 'certificate verify failed' in (_ea_reach.msg | default('') | lower)
@@ -48,40 +57,46 @@
   check_mode: false                  # only ACT's own temporary folder; in Check only with _ea_in_check (_ea_why_not otherwise)
   when: not _ea_why_not
 
-- name: ACT | analyze the {{ _ea_items | length }} item(s) - evidence mode, ACT runs no command
-  ansible.builtin.include_role:
-    name: act_triage
-    apply:
-      check_mode: false                # it only reads the evidence and asks the model; in Check only with _ea_in_check
-  vars:
-    act_triage_builtin_checks: false            # those check the machine ACT runs on: here the execution environment
-    act_triage_always: true
-    act_triage_findings_extra: "{{ _ea_items | map(attribute='id') | list }}"
-    act_triage_mode: evidence
-    act_triage_evidence_commands: []
-    act_triage_evidence_text: "{{ _ea_evidence }}"
-    act_triage_task: "{{ _ea_task }}"
-    # this job's model time (vm_alarm_act_model_timeout ...) over site_act_model_timeout; a GENAI_TIMEOUT in site_act_env wins over both.
-    # A plain answer, not one of ACT's own steps: ACT 0.6.25 sends its action protocol in this mode too - its tools
-    # (plan, run, finish ...) with a call required, or else the action schema and a "{" to go on from - so the model
-    # could only answer as a step ({'action': 'plan'}, {'message': ...}). Off here (_site_act_plain_env); site_act_env wins.
-    act_triage_env: >-
-      {{ _site_act_env_all | combine(_site_act_plain_env)
-         | combine({'GENAI_TIMEOUT': (_ea_model_timeout | default(site_act_model_timeout, true) | int | string)})
-         | combine(site_act_env | default({})) }}
-    act_triage_timeout: "{{ site_act_timeout }}"
-    act_triage_fail_in_role: false
-    act_triage_write_report: false
-    act_triage_dest_dir: "{{ _ea_dir.path }}"
-    act_triage_pseudo_names: "{{ _ea_names | default([]) }}"     # ACT masks these before anything reaches the model
+# 1.104.0 (Neon): ACT's folder goes also when ACT fails (a caller's rescue goes on, the folder would stay in /tmp)
+- name: ACT | ask ACT, then remove its folder
   when: not _ea_why_not
-
-- name: ACT | remove ACT's folder
-  ansible.builtin.file:
-    path: "{{ _ea_dir.path }}"
-    state: absent
-  check_mode: false
-  when: _ea_dir.path is defined
+  block:
+    - name: ACT | analyze the {{ _ea_items | length }} item(s) - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: act_triage
+        apply:
+          check_mode: false                # it only reads the evidence and asks the model; in Check only with _ea_in_check
+      vars:
+        act_triage_builtin_checks: false            # those check the machine ACT runs on: here the execution environment
+        act_triage_always: true
+        act_triage_findings_extra: "{{ _ea_items | map(attribute='id') | list }}"
+        act_triage_mode: evidence
+        act_triage_evidence_commands: []
+        act_triage_evidence_text: "{{ _ea_evidence }}"
+        act_triage_task: "{{ _ea_task }}"
+        # this job's model time (vm_alarm_act_model_timeout ...) over site_act_model_timeout; a GENAI_TIMEOUT in site_act_env wins over both.
+        # A plain answer, not one of ACT's own steps: ACT 0.6.25 sends its action protocol in this mode too - its tools
+        # (plan, run, finish ...) with a call required, or else the action schema and a "{" to go on from - so the model
+        # could only answer as a step ({'action': 'plan'}, {'message': ...}). Off here (_site_act_plain_env); site_act_env wins.
+        act_triage_env: >-
+          {{ _site_act_env_all | combine(_site_act_plain_env)
+             | combine({'GENAI_TIMEOUT': (_ea_model_timeout | default(site_act_model_timeout, true) | int | string)})
+             | combine(site_act_env | default({})) }}
+        # 1.104.0 (Neon): with a model time of this job's, the whole run is held to twice it and a minute (site_act_timeout at most)
+        act_triage_timeout: >-
+          {{ [site_act_timeout | int, _ea_model_timeout | int * 2 + 60] | min if _ea_model_timeout | default('', true) | string | length > 0
+             and _ea_model_timeout | int > 0 else site_act_timeout }}
+        act_triage_fail_in_role: false
+        act_triage_write_report: false
+        act_triage_dest_dir: "{{ _ea_dir.path }}"
+        act_triage_pseudo_names: "{{ _ea_names | default([]) }}"     # ACT masks these before anything reaches the model
+  always:
+    - name: ACT | remove ACT's folder
+      ansible.builtin.file:
+        path: "{{ _ea_dir.path }}"
+        state: absent
+      check_mode: false
+      when: _ea_dir.path is defined
 
 - name: ACT | what ACT said
   ansible.builtin.set_fact:

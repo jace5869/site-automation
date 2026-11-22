@@ -31,6 +31,7 @@ MAX_STEPS = 6
 MAX_STEP = 600                       # a step's do / why (a cmd may be longer: a here-doc)
 MAX_CMD = 4000
 WORD_CONFIDENCE = {"high": 85, "medium": 65, "low": 35}
+STEP_KINDS = ("check", "fix")         # 1.104.0: a step's kind, kept only when it is one of these
 
 SCHEMA = {
     "overall": "two or three sentences: what to do first, and which items share a cause (optional)",
@@ -42,7 +43,8 @@ SCHEMA = {
         "confidence": "how sure, a whole number 0-100: 80+ the evidence shows it, 50-79 likely, under 50 a guess",
         "evidence": "at most %d short lines quoted from the evidence, each at most %d characters" % (MAX_EVIDENCE, MAX_LINE),
         "steps": "at most %d, in order: {do: the action in plain words, cmd: the exact command or '', why: one sentence or ''}"
-                 % MAX_STEPS}],
+                 % MAX_STEPS,
+        "why": "(optional, 1.104.0) why, in up to three sentences; a step may carry kind: check or fix"}],
     "noise": "the ids of the items that are harmless noise (in no cause)",
     "noise_why": "{id: one sentence} for the noise (optional)",
 }
@@ -168,6 +170,9 @@ def _steps(v, where, errors):
         if long_:
             errors.append("%s: a command over %d characters left out" % (where, MAX_CMD))
         st = {"do": _text(s.get("do"), MAX_STEP), "cmd": cmd, "why": _text(s.get("why"), MAX_STEP)}
+        kind = str(s.get("kind") or "").strip().lower()
+        if kind in STEP_KINDS:
+            st["kind"] = kind                           # 1.104.0: check (read only) or fix, when the prompt asks for it
         if st["do"] or st["cmd"]:
             out.append(st)
     if len(out) > MAX_STEPS:
@@ -200,8 +205,12 @@ def _cause(c, n, errors):
             ev.append(t)
     if len(_strs(c.get("evidence"))) > MAX_EVIDENCE:
         errors.append("%s: more than %d evidence lines, the first %d kept" % (where, MAX_EVIDENCE, MAX_EVIDENCE))
-    return {"key": key, "title": title, "patterns": [p.strip() for p in _strs(c.get("patterns"))], "hosts": _strs(c.get("hosts")),
-            "confidence": conf, "evidence": ev, "steps": steps}
+    out = {"key": key, "title": title, "patterns": [p.strip() for p in _strs(c.get("patterns"))], "hosts": _strs(c.get("hosts")),
+           "confidence": conf, "evidence": ev, "steps": steps}
+    why_ = _text(c.get("why"), MAX_STEP)
+    if why_:
+        out["why"] = why_                               # 1.104.0: why ACT thinks so, when the prompt asks for it
+    return out
 
 
 def _from_items(items, errors):

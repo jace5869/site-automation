@@ -1072,6 +1072,109 @@ class RealChromeOutageCodex1902(RealChromeOutageWhere):
         self.assertEqual(self.c.js("[...document.querySelectorAll('.otf .f-v option')].map(o => o.value)"), ["", "192.0.2.14", "vc01.example.mil"])
 
 
+class RealChromeOutageAct(RealChromeOutage):
+    """1.104.0: ACT's suggestions on the review (tests/test_outage_act.py's answer) - cards that open, the events as links to their
+    rows, Show these on the time line, and the cards printed open."""
+    test_6_hovering_a_mark_shows_the_event = test_7_the_keyboard_reaches_each_mark = test_8_a_click_enter_or_space_opens_it_under_its_lane = None
+
+    @classmethod
+    def web(cls):
+        import test_outage_act as toa
+        r = toa.review()
+        inp = toa.oa.outage_act_input(r)
+        act = toa.oa.outage_act_section(r, toa.parsed(inp), {"asked": True, "ran": True, "input": inp, "web": True})
+        return tot.ot.outage_timeline_doc(copy.deepcopy(tot.WATCH), dict(r, act=act), True, True)
+
+    # how much of the card shows below its summary (a closed card's body has a box but is not drawn)
+    BODY = ("(n => {const d = document.getElementById('cause-' + n); "
+            "return Math.round(d.getBoundingClientRect().height - d.querySelector('summary').getBoundingClientRect().height)})")
+
+    def test_9_a_card_opens_and_its_events_go_to_their_rows(self):
+        self.assertEqual(self.c.js("[...document.querySelectorAll('details.cz-act')].map(d => d.open)"), [False, False])
+        self.assertLess(self.c.js(self.BODY + "(1)"), 4)                                  # the summary only (and the border)
+        self.c.js("document.querySelector('#cause-1 > summary').click()")
+        self.assertTrue(self.c.js("document.getElementById('cause-1').open"))
+        self.assertGreater(self.c.js(self.BODY + "(1)"), 100)
+        self.assertFalse(self.c.js("document.querySelector('#cause-1 .cz-show').hidden"))
+        url, hist = self.c.js("[location.href, history.length]")
+        self.c.js("document.querySelector('#cause-1 a.n[data-ot=\"28\"]').click()")
+        top = self.c.js("document.getElementById('ot-row-28').getBoundingClientRect().top")
+        self.assertTrue(0 <= top < self.c.js("innerHeight"), top)                          # its row, in view
+        self.assertEqual(self.c.js("[location.href, history.length]"), [url, hist])         # nothing in the address
+
+    def test_a_show_these_on_the_time_line(self):
+        self.c.js("document.getElementById('cause-1').open = true")
+        b = "document.querySelector('#cause-1 .cz-show')"
+        self.assertEqual(self.c.js(b + ".textContent"), "Show these 4 on the time line")
+        self.c.js(b + ".click()")
+        want = self.c.js("[...document.querySelectorAll('.ot-track .ot-m[data-ev]')].filter(m => m._ev.some(e => [26, 27, 28, 30].includes(e.n))).length")
+        self.assertGreater(want, 0)
+        self.assertEqual(self.c.js("document.querySelectorAll('.ot-m.ot-act').length"), want)
+        self.assertTrue(self.c.js("document.querySelector('.ot').classList.contains('ot-acting')"))
+        self.assertEqual(self.c.js(b + ".getAttribute('aria-pressed')"), "true")
+        self.c.js(b + ".click()")
+        self.assertEqual(self.c.js("[document.querySelectorAll('.ot-m.ot-act').length, document.querySelectorAll('.ot.ot-acting').length]"), [0, 0])
+
+    def test_b_the_cards_print_open(self):
+        self.c.js("[...document.querySelectorAll('details.cz-act')].forEach(d => d.open = false)")
+        self.c.call("Emulation.setEmulatedMedia", media="print", features=[{"name": "prefers-reduced-motion", "value": "reduce"}])
+        try:
+            self.assertGreater(self.c.js(self.BODY + "(2)"), 40)                        # folded, and still on paper
+            self.assertEqual(self.c.js("getComputedStyle(document.querySelector('#cause-2 .cz-show')).display"), "none")
+        finally:
+            self.c.call("Emulation.setEmulatedMedia", media="", features=[])
+
+    def find(self, q):
+        self.c.js("(() => {const f = document.getElementById('find'); f.value = %s; f.dispatchEvent(new Event('search'))})()" % json.dumps(q))
+
+    def test_c_the_search_finds_text_inside_a_card(self):
+        # 1.104.0 (Neon P2): a word only in a folded card - its section stays, the card opens; cleared: folded again
+        self.c.js("[...document.querySelectorAll('details.cz-act')].forEach(d => d.open = false)")
+        sec = "document.getElementById('cause-2').closest('details.sec, section, .sec')"
+        try:
+            self.find("admission control")
+            self.assertFalse(self.c.js(sec + ".hidden"))                                    # before: the whole section hidden
+            self.assertEqual(self.c.js("[document.getElementById('cause-1').hidden, document.getElementById('cause-2').hidden, "
+                                       "document.getElementById('cause-2').open]"), [True, False, True])
+            self.assertRegex(self.c.js("document.querySelector('.find .found').textContent"), r"^[1-9]\d* found in 1 section$")
+        finally:
+            self.find("")
+        self.assertEqual(self.c.js("[...document.querySelectorAll('details.cz-act')].map(d => [d.hidden, d.open])"), [[False, False], [False, False]])
+
+    def test_d_a_card_says_in_its_body_why_a_row_cannot_be_shown(self):
+        self.c.js("document.getElementById('cause-1').open = true")
+        tr = "document.getElementById('ot-row-28')"
+        self.c.js(tr + ".hidden = true; " + tr + "._ot = 1")                                # as the time line's controls hide it
+        try:
+            self.c.js("document.querySelector('#cause-1 a.n[data-ot=\"28\"]').click()")
+            self.assertEqual(self.c.js("document.querySelector('#cause-1 .cz-act-off').parentNode.className"), "cz-body")
+            self.assertIn("Row 28 is hidden by the time line's controls", self.c.js("document.querySelector('#cause-1 .cz-act-off').textContent"))
+        finally:
+            self.c.js(tr + ".hidden = false; " + tr + "._ot = 0")
+        self.c.js("document.querySelector('#cause-1 a.n[data-ot=\"28\"]').click()")
+        self.assertFalse(self.c.js("!!document.querySelector('#cause-1 .cz-act-off')"))  # shown now: the note is gone
+
+    def test_e_show_these_rings_only_the_marks_the_time_line_shows(self):
+        self.c.js("document.getElementById('cause-1').open = true")
+        b = "document.querySelector('#cause-1 .cz-show')"
+        mine = "[...document.querySelectorAll('.ot-track .ot-m[data-ev]')].filter(m => m._ev.some(e => [26, 27, 28, 30].includes(e.n)))"
+        self.c.js(mine + ".forEach(m => m.classList.add('ot-off'))")
+        try:
+            self.c.js(b + ".click()")
+            self.assertEqual(self.c.js("[document.querySelectorAll('.ot-m.ot-act').length, document.querySelectorAll('.ot.ot-acting').length, "
+                                       + b + ".getAttribute('aria-pressed')]"), [0, 0, "false"])      # before: hidden marks ringed, the rest faded
+            self.assertIn("hidden by the time line's controls", self.c.js("document.querySelector('#cause-1 .cz-body .cz-act-off').textContent"))
+        finally:
+            self.c.js(mine + ".forEach(m => m.classList.remove('ot-off'))")
+        sec = "document.querySelector('.ot').closest('details')"
+        if self.c.js("!!" + sec):
+            self.c.js(sec + ".open = false")
+            self.c.js(b + ".click()")
+            self.assertTrue(self.c.js(sec + ".open"))                                       # its section folded: opened
+            self.assertFalse(self.c.js("!!document.querySelector('#cause-1 .cz-act-off')"))
+            self.c.js(b + ".click()")
+
+
 class RealChromeOutageFiltersBrief(RealChromeOutageFilters):
     TPL = "report_brief.html.j2"
 

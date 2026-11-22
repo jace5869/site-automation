@@ -2264,6 +2264,10 @@ def report_act_off(report, off=False):
     if not off:
         return report
     r = dict(report or {})
+    said = " ".join(str(s.get("text") or "") + " " + " ".join(str(x) for x in (s.get("lines") or []))
+                    for s in r.get("sections") or [] if isinstance(s, dict))
+    if ACT_OFF in said:                     # 1.104.0 (Neon): said already (the outage review's How it judged) - not twice
+        return r
     r["sections"] = list(r.get("sections") or []) + [{"title": "ACT", "status": "info", "text": ACT_OFF}]
     return r
 
@@ -2963,7 +2967,8 @@ def report_cause_cards(parsed, items, opts=None):
         lines = sum(int(its[p].get("count") or 0) for p in pats if p in its)
         ex = [e for p in pats if p in its for e in its[p].get("examples") or []]
         ex.sort(key=lambda e: str(e.get("sort") or e.get("time") or ""), reverse=True)
-        ev = [{"t": str(e.get("time") or ""), "h": str(e.get("host") or ""), "m": str(e.get("message") or "")} for e in ex[:nmax]]
+        ev = [dict({"t": str(e.get("time") or ""), "h": str(e.get("host") or ""), "m": str(e.get("message") or "")},
+                   **({"n": e["n"]} if e.get("n") else {})) for e in ex[:nmax]]   # 1.104.0: n, an outage event's number (a link to its row)
         own = [{"t": "", "h": "", "m": x} for x in (c.get("evidence") or [])[:nmax]]
         ev = (own + ev)[:nmax] if o.get("own_evidence") else (ev or own)
         conf = c.get("confidence")
@@ -2975,6 +2980,8 @@ def report_cause_cards(parsed, items, opts=None):
                       "evidence": ev, "more": max(0, (lines or len(ex)) - len(ev)) if ex else 0,
                       "steps": [dict(st, n=i + 1) for i, st in enumerate(c.get("steps") or [])],
                       "unexplained": bool(c.get("unexplained")), "small": len(pats) <= 1})
+        if c.get("why"):
+            cards[-1]["why"] = str(c["why"])           # 1.104.0: why ACT thinks so (the outage review's cards)
     cards.sort(key=lambda k: (CAUSE_LEVEL.get(k["level"], 9), k["unexplained"], -(k["confidence"] if k["confidence"] is not None else -1),
                               -len(k["patterns"]), act_causes.natural(k["patterns"][0] if k["patterns"] else "")))
     for n, k in enumerate(cards, 1):

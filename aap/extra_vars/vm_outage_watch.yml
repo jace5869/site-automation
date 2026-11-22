@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "VM - outage watch"
 #   playbook:    playbooks/vm_outage_watch.yml
-#   credentials: VMware vCenter
+#   credentials: VMware vCenter (and ACT model key for vm_outage_act)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -24,6 +24,8 @@
 # vm_watch_review_to: "2026-11-12 05:00"         # ... and ends here
 # vm_watch_review_tickets: [INC0012345]          # a ticket opened by hand, shown too
 # vm_watch_timeline: false                       # the report of a normal run without the time line
+## ACT's possible causes and fixes on the review (attach the ACT model key credential) - docs/VM_OUTAGE_WATCH.md
+# vm_outage_act: true                            # a review only; ACT reads the time line and runs nothing
 
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and
@@ -158,6 +160,14 @@
 ## report_logo_file ...). The job artifact vm_outage_review.aar keeps the same draft for the AAR job
 ## (incident_review). false = no Word document (the artifact keeps the draft).
 # vm_watch_review_docx: true
+
+## the events ACT reads at most: the lead-up, the first critical event, then the nearest in time
+# vm_outage_act_max_events: 120
+
+## seconds the model may take for its answer; the whole ACT run is held to twice that and a minute
+## (site_act_timeout at most): the review's report waits for it, so a stalled model costs minutes,
+## not site_act_timeout (1200 s)
+# vm_outage_act_model_timeout: 180
 
 ## ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml)
 ## and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the
@@ -612,6 +622,53 @@
 ## error; each report says "ACT is off (site_act_enabled false)" in one line and the job stays green
 ## (an enclave without a model). Usually in all.yml (docs/ENCLAVES.md).
 # site_act_enabled: true
+
+## ---- Which model ACT talks to -----------------------------------------------------------------
+## site_act_provider genai GenAI.mil (the default) asksage Ask Sage - RETIRED FOR NOW: do not pick
+## it (kept for when it returns) genai-beta the GenAI.mil beta proxy (preview models)
+## site_act_models the model to use FOR EACH provider, e.g. {genai: gemini-4-argon-withtools,
+## asksage: gpt-5.6-sol-gov} so the model follows whichever provider is picked. A provider not
+## listed uses ACT's own default model. site_act_urls the API URL for each provider, e.g. {asksage:
+## https://<host>/server/openai/v1/chat/completions}; a provider not listed uses ACT's default URL
+## site_act_model one model for this run, whatever the provider (e.g. a survey answer); empty =
+## site_act_models site_act_url one URL for this run; empty = site_act_urls site_act_ca a CA bundle
+## file ON THE HOSTS for the provider's TLS certificate (internal/DoD CA); empty = the host's system
+## trust store The API KEY never goes here: it comes from an AAP credential - "ACT model key" (GenAI
+## and Ask Sage keys) or "ACT GenAI beta key". ACT runs ON EACH HOST, so the hosts must be able to
+## reach the provider's URL (a proxy or firewall rule may be needed).
+# site_act_provider: genai
+
+## the model for each provider (see above): the model follows the provider picked
+# site_act_models: {genai: gemini-4-argon-withtools, asksage: gpt-5.6-sol-gov}
+
+## the API URL for each provider; a provider not listed uses ACT's default
+# site_act_urls: {}
+
+## one model for this run, whatever the provider (e.g. a survey answer); empty = site_act_models
+# site_act_model: ""
+
+## one URL for this run; empty = site_act_urls
+# site_act_url: ""
+
+## a CA bundle file ON THE HOSTS for the provider's certificate; empty = the host's trust store
+# site_act_ca: ""
+
+## Any other ACT environment settings (advanced; these win over the ones above), e.g. {HTTPS_PROXY:
+## "http://proxy.yoursite.mil:8080"}. See the top of vendor/act/act for the list. Every ACT job
+## streams the model's answer (ACT_STREAM=1), so a firewall or proxy idle timeout does not cut a
+## long answer ("connection reset by peer"); {ACT_STREAM: "0"} here turns that off.
+# site_act_env: {}
+
+## Seconds the model may take for ONE answer, retries after a provider hiccup included (ACT's
+## GENAI_TIMEOUT; ACT's own default, 90, is too short for a long analysis or a busy provider). Every
+## ACT job uses it: the runbooks' use_act, the VMware alarms and capacity analyses, service watch.
+# site_act_model_timeout: 600
+
+## seconds for one whole ACT run (several answers): keep it above site_act_model_timeout
+# site_act_timeout: 1200
+
+## anything ACT should know about this site
+# site_act_extra_instructions: ""
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## ---- Teams (1.86.0): the team view of the health reports on the report website ------------------

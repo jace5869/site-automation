@@ -132,6 +132,18 @@ class Ask(Base):
         self.assertNotIn("VMWARE_USER", seen)
         self.assertFalse([k for k in seen if k.startswith("ASK_")])
         self.assertEqual(seen["GENAI_KEY"], "test-key")
+        # 1.104.0 (Neon P1): an allowlist - no other secret of the service's environment either
+        self.assertEqual(s.act_env({"SN_PASSWORD": "x", "REPORT_WEB_TOKEN": "y", "SOME_API_KEY": "z", "PATH": "/usr/bin", "GENAI_KEY": "k",
+                                    "ACT_TOOLS": "0", "https_proxy": "http://proxy.example.mil:3128"}),
+                         {"PATH": "/usr/bin", "GENAI_KEY": "k", "ACT_TOOLS": "0", "https_proxy": "http://proxy.example.mil:3128"})
+        # Codex: never a credential with ACT's prefix (only its provider keys), and the encoding kept
+        self.assertEqual(s.act_env({"GENAI_ADMIN_TOKEN": "t", "ACT_AUDIT_TOKEN": "t", "ASKSAGE_SECRET": "s", "GENAI_PASSWORD": "p",
+                                    "ASKSAGE_API_KEY": "k", "GENAI_KEYS": "a,b", "ACT_MAX_TOKENS": "4000", "PYTHONIOENCODING": "utf-8"}),
+                         {"ASKSAGE_API_KEY": "k", "GENAI_KEYS": "a,b", "ACT_MAX_TOKENS": "4000", "PYTHONIOENCODING": "utf-8"})
+        # Codex (4fbe8ac8): AskSage's pool too; a passphrase or an APIKEY never; ACT's own settings named like a credential kept
+        self.assertEqual(s.act_env({"ASKSAGE_KEYS": "a\nb\nc", "ACT_SSH_PASSPHRASE": "p", "GENAI_ADMIN_APIKEY": "k", "ACT_KEY_ROTATION": "failover",
+                                    "ACT_TOKEN_PARAM": "max_tokens", "GENAI_SESSION_COOKIE": "c"}),
+                         {"ASKSAGE_KEYS": "a\nb\nc", "ACT_KEY_ROTATION": "failover", "ACT_TOKEN_PARAM": "max_tokens"})
 
     def test_refused_before_genai(self):
         r = self.asker().ask("find the VMs with dbv in the name and reboot them")
