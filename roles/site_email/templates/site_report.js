@@ -674,6 +674,12 @@
           else if(on&&r._tm&&!(r._f||r._p||r._d||r._ot||r._sv))km++});
         all('ul.lines>li,ul.passed>li,.todo',body).forEach(function(el){var on=whole||low(el).indexOf(q)>=0;if(el.hidden===on)el.hidden=!on;if(on)k++});
         [].forEach.call(body.children,function(el){if((el.tagName==='P'||el.classList.contains('snote'))&&low(el).indexOf(q)>=0)k++});
+        /* 1.104.0 (Neon): the cause cards - a card that matches stays (a folded one opens; it folds again when the search is
+           cleared), the others step aside; the overall line counts as text */
+        all('.causes .cz',body).forEach(function(c){var on=whole||low(c).indexOf(q)>=0;if(c.hidden===on)c.hidden=!on;if(!q||!on)return;k++;
+          if(c.tagName==='DETAILS'&&!c.open&&!whole){c.open=true;c._fo=1}});
+        all('.causes .cz',body).forEach(function(c){if(!q&&c._fo){c.open=false;c._fo=0}});
+        all('.causes .cz-ov',body).forEach(function(el){if(q&&low(el).indexOf(q)>=0)k++});
         var away=!!q&&!k&&!km&&!whole;if(d.hidden!==away)d.hidden=away;
         if(q&&!d.hidden){d.open=true;total+=k;others+=km;ns++}
         (links[d.id]||[]).forEach(function(a){var m=a.querySelector('.m');a.classList.toggle('off',d.hidden);
@@ -897,6 +903,26 @@
       b.addEventListener('click',function(){otGo(e.n,function(t){var p=dl.parentNode,x=p.querySelector('.otx-note')||document.createElement('p');x.className='otx-note';
         x.setAttribute('role','status');x.textContent=t;p.appendChild(x)})});
       add('Go to','',false,b)};
+    /* 1.104.0: ACT's cards (folded) - an event's number goes to its row (otGo), "Show these on the time line" rings the marks it read
+       and fades the others; pressed again, all back */
+    /* the card's note (why a row or a mark cannot be shown): in its body, where it opens; gone again with the next click (Neon) */
+    var czSay=function(el,t){var p=el.closest('.cz'),body=p&&(p.querySelector('.cz-body')||p),x=body&&body.querySelector('.cz-act-off');
+      if(!t){if(x)x.parentNode.removeChild(x);return}if(!body)return;if(!x){x=document.createElement('p');x.className='cz-note cz-act-off';x.setAttribute('role','status');body.appendChild(x)}x.textContent=t};
+    all('.causes a[data-ot]').forEach(function(a){a.addEventListener('click',function(ev){var n=+a.getAttribute('data-ot');czSay(a,'');
+      if(otGo(n,function(t){czSay(a,t)}))ev.preventDefault()})});
+    all('.causes .cz-show[data-ots]').forEach(function(b){b.hidden=false;b.addEventListener('click',function(){
+      var on=b.getAttribute('aria-pressed')!=='true',want=b.getAttribute('data-ots').split(' ').map(Number);czSay(b,'');
+      all('.causes .cz-show').forEach(function(o){o.setAttribute('aria-pressed','false')});all('.ot-m.ot-act').forEach(function(m){m.classList.remove('ot-act')});all('.ot.ot-acting').forEach(function(o){o.classList.remove('ot-acting')});
+      if(!on)return;var first=null,off=0;
+      /* only the marks the time line shows (a mark its controls put away is ot-off: never ringed, the rest never faded for it) */
+      all('.ot-track .ot-m[data-ev]').forEach(function(m){if((m._ev||[]).some(function(e){return want.indexOf(e.n)>=0})){if(m.classList.contains('ot-off')){off++;return}
+        m.classList.add('ot-act');first=first||m}});
+      if(!first){czSay(b,off?"These events are hidden by the time line's controls (host, vCenter, VM, Show, kinds, repeats).":'These events are not on the time line.');return}
+      b.setAttribute('aria-pressed','true');var ot=first.closest('.ot'),sec=ot.closest('details');if(sec)sec.open=true;      /* its section folded: opened */
+      ot.classList.add('ot-acting');ot.scrollIntoView({block:'center'})})});
+    /* the folded cards print open, and fold again after */
+    var czOpened=[];window.addEventListener('beforeprint',function(){all('details.cz-act:not([open])').forEach(function(d){d.open=true;czOpened.push(d)})});
+    window.addEventListener('afterprint',function(){czOpened.forEach(function(d){d.open=false});czOpened=[]});
     var otOpen=function(m){if(otOpenM===m){otClose(true);return}otClose();if(!otVisible(m._ev||[]).length)return;
       hide();otOpenM=m;m.setAttribute('aria-expanded','true');m.setAttribute('aria-controls','otx-open');
       var p=otPanel=document.createElement('div');p.className='otx';p.id='otx-open';p.setAttribute('role','region');p.setAttribute('aria-labelledby','otx-title');

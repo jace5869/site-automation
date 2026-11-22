@@ -69,6 +69,14 @@
 - name: ACT triage
   when: act_triage_needed | bool
   block:
+    - name: ACT | needs ansible-core 2.16 or newer
+      ansible.builtin.fail:
+        msg: >-
+          ACT is not started: this is ansible-core {{ ansible_version.full }}; act_triage needs 2.16 or newer (it
+          relies on expand_argument_vars: false to keep text from tickets and hosts as text). Run the job in an
+          execution environment with ansible-core 2.16+.
+      when: ansible_version.full is version('2.16', '<')
+
     - name: ACT | find a Python >= 3.6
       ansible.builtin.shell: |
         for p in {{ act_triage_python_candidates | map('quote') | join(' ') }}; do
@@ -101,6 +109,12 @@
         src: "{{ act_triage_script_src }}"
         dest: "{{ act_triage_dest_dir }}/act"
         mode: "0755"
+
+    - name: ACT | install the launcher
+      ansible.builtin.copy:
+        src: act_launch.py
+        dest: "{{ act_triage_dest_dir }}/act_launch.py"
+        mode: "0644"
 
     - name: ACT | result file
       ansible.builtin.tempfile:
@@ -141,53 +155,62 @@
           {{ (parts | join(_act_nl ~ _act_nl))[:act_triage_evidence_total_chars | int] }}
       when: act_triage_mode == 'evidence'
 
-    # The API keys never go through Ansible's `environment:` - Ansible puts that on the sudo / sh
-    # command line ("GENAI_KEY=... python3 ..."), where ps and the sudo log on the host see it, and
-    # no_log does not help. They go on the task's STDIN as NAME=value lines (ended by a blank line)
-    # to a small sh that exports them and then runs ACT. Non-secret settings stay in `environment:`.
+    # 1.104.0: the keys and act_triage_env go on stdin, as NAME=value lines, to files/act_launch.py - never through
+    # Ansible's `environment:`, which Ansible puts on the remote command line (ps, the sudo log). The launcher takes
+    # only ACT's provider keys and allowed settings (anything else: refused, ACT not started), builds ACT's
+    # environment from an allowlist - never the job's credentials - and execs ACT: no shell, no key in any argument.
+    # No async: the async job file on the host would keep the task's stdin. The run's limit is the launcher's
+    # SIGALRM (act_triage_timeout) and this task's timeout (a minute more).
     - name: ACT | run {{ 'the evidence analysis (evidence mode; ACT runs no commands)' if act_triage_mode == 'evidence'
                          else ('diagnosis + pre-approved fixes' if act_triage_allow else 'diagnosis only') }}
       ansible.builtin.command:
         argv: >-
-          {{ ['/bin/sh', '-c', _act_key_reader, 'act-keys',
+          {{ [_act_python.stdout_lines | last, act_triage_dest_dir ~ '/act_launch.py',
               _act_evfile.path if act_triage_mode == 'evidence' else '/dev/null',
+              act_triage_env_pass | map('string') | join(' '),
+              '0' if ansible_connection | default('ssh') == 'local' or inventory_hostname in ['localhost', '127.0.0.1'] else '1',
+              act_triage_timeout | string,
               _act_python.stdout_lines | last, act_triage_dest_dir ~ '/act', '--non-interactive',
               '--result-file', _act_tmp.path]
              + (['--allow-piped-upload'] if act_triage_mode == 'evidence'
                 else (['--max-steps', act_triage_max_steps | string]
                       + (act_triage_allow | map('string') | map('regex_replace', '^', '--allow=') | list)))
              + [act_triage_task if act_triage_task else lookup('ansible.builtin.template', 'task.j2') | trim] }}
-        stdin: "{{ (_act_secrets.items() | map('join', '=') | join(_act_nl)) ~ _act_nl }}"
-      environment: >-
-        {{ act_triage_env | dict2items | rejectattr('key', 'search', act_triage_secret_env_regex) | items2dict
-           | combine({'ACT_NO_BANNER': '1',
-             'ACT_PSEUDONYMIZE': '1' if act_triage_pseudonymize | bool else '0',
-             'ACT_PSEUDO_NAMES': ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
-                                  + act_triage_pseudo_names) | map('string') | select | unique | join(',')}) }}
-      vars:
-        # the keys (act_triage_key_env_names, from the controller's environment) and any secret-looking
-        # entry of act_triage_env; names must be plain NAME_LIKE_THIS
-        _act_secrets: >-
-          {%- set keys = {} -%}
-          {%- for name in act_triage_key_env_names -%}
+        stdin: >-
+          {%- set entries = {} -%}
+          {%- for name in _act_keys_forwarded -%}
           {%-   set value = lookup('ansible.builtin.env', name) -%}
-          {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
+          {%-   if value -%}{%- set _ = entries.update({name: value}) -%}{%- endif -%}
           {%- endfor -%}
-          {%- for name, value in act_triage_env.items() if name is search(act_triage_secret_env_regex) and value -%}
-          {%-   set _ = keys.update({name: value | string}) -%}
+          {%- set lines = [] -%}
+          {%- for name, value in (entries | combine(act_triage_env)).items() -%}
+          {%-   if name is not string or name is not regex('[A-Za-z_][A-Za-z0-9_]*', match_type='fullmatch') -%}
+          {%-     set _ = lines.append('INVALID') -%}
+          {%-   elif name not in _act_provider_keys and name not in _act_not_secrets and name is search(_act_credential) -%}
+          {%-     set _ = lines.append(name) -%}
+          {%-   elif name.endswith('_KEYS') -%}
+          {%-     set _ = lines.append(name ~ '=' ~ (value | string | regex_replace('[\r\n]+', ','))) -%}
+          {%-   elif value | string is search('[\r\n]') -%}
+          {%-     set _ = lines.append(name) -%}
+          {%-   else -%}
+          {%-     set _ = lines.append(name ~ '=' ~ value) -%}
+          {%-   endif -%}
           {%- endfor -%}
-          {{ keys | dict2items | selectattr('key', 'match', '^[A-Z_][A-Z0-9_]*$') | items2dict }}
-        # reads NAME=value lines until a blank line, exports only plain upper-case names, then runs
-        # ACT with its stdin from $1 (the evidence file, or /dev/null)
-        _act_key_reader: >-
-          while IFS= read -r l && [ -n "$l" ]; do
-          n=${l%%=*};
-          case $n in ''|[!ABCDEFGHIJKLMNOPQRSTUVWXYZ_]*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*) continue;; esac;
-          export "$n=${l#*=}";
-          done;
-          f=$1; shift; exec "$@" < "$f"
-      async: "{{ act_triage_timeout | int }}"
-      poll: "{{ act_triage_poll | int }}"
+          {{ lines | join(_act_nl) }}
+        # Keep $NAME in task text literal.
+        expand_argument_vars: false
+      environment:
+        ACT_NO_BANNER: "1"
+        ACT_PSEUDONYMIZE: "{{ '1' if act_triage_pseudonymize | bool else '0' }}"
+        ACT_PSEUDO_NAMES: "{{ ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
+                               + act_triage_pseudo_names) | map('string') | select | unique | join(',') }}"
+      vars:
+        _act_credential: '(?i)PASSW|PASSPHRASE|SECRET|APIKEY|CREDENTIAL|COOKIE|PRIVATE|TOKEN|AUTH|SESSION|BEARER|(^|_)(KEYS?|PASS|PWD|PW)(_|$)'
+        _act_provider_keys: [GENAI_KEY, GENAI_KEYS, ASKSAGE_KEY, ASKSAGE_API_KEY, ASKSAGE_KEYS, GENAI_BETA_KEY, GENAI_BETA_KEYS]
+        _act_not_secrets: [ACT_KEY_COOLDOWN, ACT_KEY_ROTATION, ACT_KEY_USAGE_LOG, ACT_MAX_TOKENS, ACT_TOKEN_PARAM]
+        # act_triage_key_env_names held to ACT's provider keys: another name there (SN_PASSWORD) is never read
+        _act_keys_forwarded: "{{ act_triage_key_env_names | map('string') | select('in', _act_provider_keys) | list }}"
+      timeout: "{{ act_triage_timeout | int + 60 }}"
       register: _act_run
       changed_when: false
       failed_when: false
@@ -214,7 +237,7 @@
                    'exit_code': _act_run.rc | default(-1),
                    'summary': '', 'changed': false, 'commands': [], 'denied': [], 'files_changed': [],
                    'stop_reason': 'ACT produced no result (it timed out after ' ~ act_triage_timeout
-                                  ~ 's or could not start); rerun with -v and no_log off to debug'} }}
+                                  ~ 's or could not start)'} }}
 
     - name: ACT | remove the result file from the host
       ansible.builtin.file:

@@ -1,5 +1,67 @@
 # Changelog
 
+## 1.104.0 — 2026-11-22
+
+**To set up (only to use it):** attach the **ACT model key** credential to the job template **VM - outage watch** (it
+is optional there; run *AAP - set up job templates* or add it by hand), then launch a review with
+`vm_outage_act: true`. Off by default: nothing changes without it.
+
+**Every job that asks ACT: ACT no longer sees the job's credentials.** On the AAP side (localhost: the alarms and
+capacity analyses, the health and log analyses, the outage review, fapolicyd, the service watch, STIG answer keys ...)
+ACT ran with the job's whole environment: `VMWARE_PASSWORD`, `SN_PASSWORD`, `SMTP_PASSWORD`, the report website's
+token and the other credentials AAP injects. Now roles act_triage starts ACT through a small Python launcher
+(act_launch.py: no shell) that builds ACT's environment from scratch, from an allowlist: PATH,
+HOME, the locale, TZ, TMPDIR, `PYTHONIOENCODING`, `PYTHONUTF8`, the proxy and CA settings, ACT's own `ACT_*`,
+`GENAI_*` and `ASKSAGE_*` names, `act_triage_env`, and `act_triage_env_pass` (new; the tests' stand-in ACT's two
+settings). A name that looks like a credential (`*PASSW*`, `*PASSPHRASE*`, `*SECRET*`, `*APIKEY*`, a word `KEY`,
+`TOKEN`, `AUTH` ...) never passes, whatever its prefix or list, unless ACT's own code reads it: its provider keys and
+key pools (`GENAI_KEY(S)`, `ASKSAGE_KEY`, `ASKSAGE_API_KEY`, `ASKSAGE_KEYS`, `GENAI_BETA_KEY(S)`) and its settings
+named like one (`ACT_MAX_TOKENS`, `ACT_KEY_ROTATION` ...). `act_triage_key_env_names` is held to those keys. A key pool
+reaches ACT whole (its newlines sent as commas, as ACT reads them). A key travels only on stdin, never on a command
+line; `act_triage_env` goes on stdin too (an authenticated proxy URL is never on a command line); any other input
+there is refused and ACT is not started. The ACT run is no longer an async task (its job file kept the stdin): the
+launcher's alarm ends it at `act_triage_timeout`. On a remote host ACT still reads its own provider key from that
+host's environment when the job sends none. ACT's task text is no longer expanded by Ansible
+(`expand_argument_vars: false`): a `$VMWARE_PASSWORD` quoted from a ticket stays text. act_triage needs ansible-core
+2.16 or newer and says so below it. The VMware ask page (vmware_ask.py) starts ACT with the same rules. Nothing to
+set up; a site that gave ACT another setting through the job's environment adds its name to `act_triage_env_pass`,
+or sets it in `site_act_env`.
+
+**VM - outage watch: ACT's possible causes and fixes on the review** (vm_outage_act; outage_act_filters.py,
+roles/vmware_vm/tasks/outage_act.yml, report_causes.html.j2, site_report.js), as the approved mockup (shots-1104).
+
+- **ACT reads the review's time line**: the first critical event and the lead-up's own problems first (the latest
+  of them within the limit), then the events nearest to it, at most `vm_outage_act_max_events` (120). Evidence mode:
+  ACT runs no command, on no host and not on vCenter. A review with events only (`vm_watch_review`); the watch's
+  scheduled runs never ask ACT.
+- **A short wait**: `vm_outage_act_model_timeout` is 180 seconds, and the whole ACT run is held to twice that and a
+  minute (`site_act_timeout` at most), for every evidence analysis that sets its own model time.
+- **Cards that open**, before *How it judged*: each cause with its level, events, confidence and the tag *Suggestion -
+  check before acting*. Opened: why (naming the events), *What to check* (read-only), *Possible fix*, and the events
+  it read as links to their rows. *Show these on the time line* rings their marks. Cards print open.
+- **The ACT lane is unchanged**: only what ACT wrote in the tickets. A step that names an event ACT did not read (in
+  what to do, why or its command) is left out; in a cause's title and why such a number is marked. A number with #
+  past the last event is not an event (PSU #40). The names ACT masks are single words.
+- **Email**: the causes and their first checks, always (a website may show the email's look, or fail to publish);
+  with a website that shows cards (atlas, brief, ops), one line points there.
+- **The page**: the search box searches the cards (a match opens); a card's note sits in its body and goes with the
+  next click; *Show these on the time line* rings only the marks the time line shows and opens its section; a step
+  with no kind is under *Other steps*; Copy names its group (check 1, fix 1).
+- The outage filters' results are marked unsafe: text from vCenter events and tickets is never templated by
+  ansible-core 2.16, wherever it is used.
+- With `site_act_enabled: false`, *ACT is off* is said once (How it judged), not again as a section. ACT's folder on
+  the AAP side is removed also when ACT fails.
+- **Without an answer** (no credential, model not reached, an unreadable answer): one line in *How it judged* says
+  why; the review is otherwise as before.
+- act_causes keeps a cause's *why* and a step's *kind* (check or fix) when an answer gives them; the cause cards keep
+  an event's number. Other reports are unchanged.
+- aap/job_templates.yml: the ACT model key is an optional credential of *VM - outage watch*. docs/VM_OUTAGE_WATCH.md:
+  "ACT's possible causes and fixes"; VARIABLES_REFERENCE; aap/extra_vars/vm_outage_watch.yml.
+- Tests: tests/test_outage_act.py (what ACT reads, its answer held to the page, where the report puts it, the cards
+  in each look, outage_act.yml as a play: ACT off, no key, a stand-in ACT, ACT's environment, its folder);
+  tests/test_report_hover.py RealChromeOutageAct in Chromium (a card opens, its events go to their rows, Show these
+  on the time line, printed open, the search, the notes); tests/test_vmware_ask.py (the ask page's allowlist).
+
 ## 1.103.1 — 2026-11-21
 
 **Nothing to set up.** A route that 1.103.0 read wrongly now stops the job, named. Fix it as the message says.

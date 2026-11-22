@@ -94,10 +94,12 @@
       {{ {'banner': report_banner | default('auto'), 'text': report_banner_text | default('SECRET'), 'color': report_banner_color | default(''),
           'subject': report_banner_subject | default(true), 'enclave': site_enclave | default(''),
           'domains': site_enclave_classified_domains | default([]), 'hosts': names | report_banner_hosts(hostvars)} | report_banner }}
+    # 1.104.0 (Neon): not when the report says it already (the outage review's How it judged: "ACT (vm_outage_act): ACT is off ...")
     _act_off: >-
       {{ not site_act_enabled | default(true) | bool
          and ((ansible_play_hosts_all + [inventory_hostname, 'localhost']) | unique | select('in', hostvars) | map('extract', hostvars)
-              | map(attribute='_site_act_off', default=false) | map('bool') | select | list | length > 0) }}
+              | map(attribute='_site_act_off', default=false) | map('bool') | select | list | length > 0)
+         and 'ACT is off (site_act_enabled false).' not in ((_report | default({}) | to_json) ~ (_report_body | default(''))) }}
     _act_old: >-
       {%- set out = [] -%}
       {%- for h in (ansible_play_hosts_all + [inventory_hostname]) | unique | select('in', hostvars) | sort -%}

@@ -1,0 +1,41 @@
+---
+# 1.104.0, ACT on the outage review (vm_outage_act; included by watch.yml for a review). ACT reads the review's time line -
+# the lead-up first, then the first critical event and the events around it - and suggests possible causes, read-only
+# checks and a possible fix: cards that fold at the bottom of the review page (plugins/filter/outage_act_filters.py).
+# ACT runs no command (evidence mode) and needs the "ACT model key" credential on the template. It never stops the
+# watch: without an answer, How it judged says why.
+# Input: _vm_w_tl (outage_timeline). Output: _vm_w_tl with "act" (outage_act_section).
+- name: VMware | ACT on the outage review (vm_outage_act)
+  block:
+    - name: VMware | what ACT reads (the lead-up first, then the first critical event and the events around it)
+      ansible.builtin.set_fact:
+        _vm_w_act_in: >-
+          {{ _vm_w_tl | outage_act_input({'max_events': vm_outage_act_max_events | int,
+                                         'extra': site_act_extra_instructions | default('')}) }}
+
+    - name: VMware | ACT reads {{ _vm_w_act_in.count }} event(s) of the review - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_batches.yml
+        public: true
+      vars:
+        _eb_batches: "{{ [{'items': _vm_w_act_in['items'], 'evidence': _vm_w_act_in.evidence, 'task': _vm_w_act_in.task}] }}"
+        _eb_check_url: true
+        _ea_names: "{{ _vm_w_act_in.names }}"
+        _ea_model_timeout: "{{ vm_outage_act_model_timeout }}"
+
+    - name: VMware | ACT's suggestions for the review
+      ansible.builtin.set_fact:
+        _vm_w_tl: >-
+          {{ _vm_w_tl | combine({'act': _vm_w_tl | outage_act_section(_ea_parsed | default({}),
+               {'asked': true, 'ran': _ea_ran | default(false) | bool, 'reason': _ea_reason | default(''),
+                'model': _ea_model | default(''), 'input': _vm_w_act_in,
+                'web': report_web_dest | default('', true) | string | trim | length > 0
+                       and report_web_theme | default('atlas', true) | string | trim | lower in ['atlas', 'brief', 'ops']})}) }}
+  rescue:
+    - name: VMware | ACT could not be asked (the review goes on without its suggestions)
+      ansible.builtin.set_fact:
+        _vm_w_tl: >-
+          {{ _vm_w_tl | combine({'act': {'web': none, 'email': [],
+               'judged': 'ACT (vm_outage_act): ' ~ (ansible_failed_result.msg | default('the request failed') | string | truncate(200))
+                         ~ ' No suggestions this time.'}}) }}

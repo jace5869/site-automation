@@ -4,6 +4,7 @@
 act_triage_script_src: "{{ role_path }}/../../../act"
 act_triage_dest_dir: /opt/act
 # ACT needs Python >= 3.6 (RHEL 8's default python3 is 3.6 and works); newer ones are tried first.
+# ansible-core 2.17+ needs Python 3.7+ for its managed-host modules. ACT can use a separate 3.6 interpreter.
 act_triage_python_candidates: [python3.13, python3.12, python3.11, python3.10, python3.9, python3.8, python3.6, python3]
 
 # ---- Model credentials --------------------------------------------------------------------
@@ -12,11 +13,20 @@ act_triage_python_candidates: [python3.13, python3.12, python3.11, python3.10, p
 # variable named here that is set on the controller/EE is forwarded to ACT on the host through
 # the ACT task's STDIN (no_log), never a command line: Ansible's `environment:` would put it on the
 # sudo / sh command line, visible in ps and in the host's sudo log.
-act_triage_key_env_names: [GENAI_KEY, GENAI_BETA_KEY, ASKSAGE_API_KEY, ASKSAGE_KEY]
-# Non-secret settings for ACT, e.g. {ACT_PROVIDER: asksage, ASKSAGE_MODEL: gpt-4.1-gov}. An entry whose
-# name matches act_triage_secret_env_regex is treated as a secret and goes the way the keys go.
+# Only ACT's own provider keys count (its _KEY_ENV: each provider's key and its pool, *_KEYS - comma or
+# newline separated); another name here is never read or sent.
+# 1.104.0: remote hosts keep their own provider keys unless stdin supplies them. Local runs use only stdin keys.
+act_triage_key_env_names: [GENAI_KEY, GENAI_KEYS, ASKSAGE_KEY, ASKSAGE_API_KEY, ASKSAGE_KEYS, GENAI_BETA_KEY, GENAI_BETA_KEYS]
+# Explicit settings go on stdin, including proxy URLs. Unknown names and other credentials refuse the run.
 act_triage_env: {}
-act_triage_secret_env_regex: '(KEY|TOKEN|SECRET|PASSW)'
+# 1.104.0: ACT starts with a clean environment, never the job's. On localhost (the controller or
+# execution environment) the job's credentials are environment variables: VMWARE_PASSWORD,
+# SN_PASSWORD, SMTP_PASSWORD, REPORT_WEB_TOKEN ... ACT gets only PATH, HOME, USER, LOGNAME, the
+# locale, TZ, TMPDIR, TERM, NO_COLOR, XDG_CONFIG_HOME, PYTHONIOENCODING, PYTHONUTF8, the proxy and CA
+# settings, ACT_*, GENAI_* and ASKSAGE_* names and the names listed here - never a name that looks
+# like a credential (files/act_launch.py CREDENTIAL) unless it is one of ACT's provider keys or of
+# its settings named like one (ACT_MAX_TOKENS ...). The default: the tests' stand-in ACT's settings.
+act_triage_env_pass: [FAKE_ACT_OUT, FAKE_ACT_CONFIG]
 
 # ---- Privacy (ACT 0.6.18+) -------------------------------------------------------------------
 # ACT replaces host names, IP addresses, user names and e-mail addresses with placeholders
@@ -57,7 +67,7 @@ act_triage_task: ""                      # override the whole prompt (templates/
 act_triage_extra_instructions: ""
 act_triage_max_steps: 30
 act_triage_timeout: 900                  # seconds for the whole ACT run
-act_triage_poll: 10
+act_triage_poll: 10                      # unused since 1.104.0; kept for existing vars files
 
 # ---- Outcome handling ---------------------------------------------------------------------
 act_triage_fail_on: [error]              # statuses that fail the host (add needs_approval to gate)

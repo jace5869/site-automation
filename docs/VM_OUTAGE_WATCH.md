@@ -189,6 +189,7 @@ Leave `vm_watch_review` off on the schedule. A scheduled run that finds somethin
 | What happened, in order (website: atlas, brief) | the time line: four lanes, a mark per event, a band while a host was down |
 | The events | every event as a table row: time, lane, where, what, level. **This table is the source**; the chart only draws it |
 | For the after-action report | lines to paste into the AAR job's survey, each named by its variable |
+| From ACT - possible causes and fixes (1.104.0, with `vm_outage_act: true`) | ACT's suggestions, as cards that open: see below |
 | The watch's own sections | *Down or hung now* and the rest, below, as in every watch report |
 
 ### The list, the related events and the filters
@@ -315,6 +316,51 @@ The four lanes:
 - **The job artifact** `vm_outage_review`: the numbers (first signal, ticket, seconds from signal to ticket, seconds
   down, hosts down, VMs restarted by HA), for a later workflow step.
 
+### ACT's possible causes and fixes (vm_outage_act)
+
+ACT can read the review's time line and suggest what caused the outage, what to check, and what could fix it. It is
+off by default. Each suggestion is a guess to check, never a finding.
+
+1. Attach the **ACT model key** credential to the job template **VM - outage watch** (it is optional there).
+2. Launch a review with ACT:
+
+   ```yaml
+   vm_watch_review: true
+   vm_outage_act: true
+   ```
+
+3. Open the review on the report website. At the bottom, before *How it judged*, the section *From ACT - possible
+   causes and fixes* has one card per cause.
+4. Click a card to open it. It shows:
+   - why ACT thinks so, naming the events by number (#27);
+   - **What to check**: read-only checks that confirm the cause, numbered;
+   - **Possible fix**: what could fix it, numbered, each command with a **Copy** button (a step ACT gave no kind is
+     under **Other steps**);
+   - **The events it read**: each number goes to its row in *The events*;
+   - **Show these on the time line**: rings the events' marks and fades the others. Press it again to undo.
+5. Check before you act. The tag *Suggestion - check before acting* is on every card.
+
+What ACT reads and does:
+
+- **It reads the time line only.** The first critical event and the lead-up's own problems come first (the latest of
+  them when the lead-up is longer than the limit), then the events nearest to it in time, at most
+  `vm_outage_act_max_events` (120) events. ACT runs no command, on no host and not on vCenter.
+- **It runs for a review only.** The watch's scheduled runs never ask ACT, and neither does a review with no events.
+- **It does not hold up the report for long.** The model has `vm_outage_act_model_timeout` (180 seconds) for its
+  answer. The whole ACT run gets twice that and a minute, never more than `site_act_timeout`.
+- **ACT gets a clean environment.** It never sees the job's credentials (vCenter, ServiceNow, mail, the report
+  website). Only its own key and settings, the path, home, locale and proxy settings. `act_triage_env_pass` adds names.
+- **The ACT lane stays as it was.** It shows only what ACT wrote in the tickets. The suggestions are only in the cards.
+- **What it names must be on the page.** A step that names an event ACT did not read is left out, and so is an
+  event number the page does not have. The count line says so. In a cause's title and why, such a number says
+  *(an event ACT did not read)*. A number with # past the page's last event is not an event (*PSU #40*), unless the
+  text calls it one.
+- **The email** lists the causes and the first check of each. With a report website that shows cards (the atlas,
+  brief and ops themes), one more line points there.
+- **The search box** also searches the cards: a card that matches opens, the others step aside.
+- **Without an answer** (no credential, the model not reached, an answer that cannot be read), *How it judged* has one
+  line that says why. The rest of the review is as always. A dry run (Check) does not ask ACT.
+
 ### From the review to the AAR
 
 The AAR stays a document a person writes ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)). The review gives it the facts:
@@ -336,6 +382,7 @@ The AAR stays a document a person writes ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)).
 | *The outage time line was not made* in the job output | the read failed; the watch and its report went on without it |
 | No events at all | vCenter keeps events for a limited time (30 days by default): an older window is empty |
 | The window is refused | write the times as `2026-11-12 01:00`; the end must be after the start |
+| *ACT (vm_outage_act): ... No suggestions this time.* in *How it judged* | ACT gave no suggestion; the line says why (often: attach the ACT model key credential) |
 
 ## Settings
 
@@ -370,6 +417,9 @@ The AAR stays a document a person writes ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)).
 | `vm_watch_review_tickets` | [] | more tickets to show, by number |
 | `vm_watch_review_event_types` | [] | vCenter event types to read; empty = the built-in list |
 | `vm_watch_review_max_events` | 2000 | the most events per vCenter (the newest are kept) |
+| `vm_outage_act` | false | true, at launch with `vm_watch_review`: ACT's possible causes and fixes on the review (needs the ACT model key credential) |
+| `vm_outage_act_max_events` | 120 | the most events ACT reads: the lead-up, the first critical event, then the nearest in time |
+| `vm_outage_act_model_timeout` | 180 | seconds the model may take for its answer; the whole ACT run gets twice that and a minute (`site_act_timeout` at most) |
 
 Also used: `vmware_vcenters`, `vmware_datacenter`, `vmware_validate_certs`, `vmware_protected_vms`,
 `vmware_protected_groups`, `report_email_to`, `report_web_dest`, and the `servicenow_*` settings of the

@@ -143,6 +143,14 @@
       ansible.builtin.debug:
         msg: "The outage time line was not made: {{ ansible_failed_result.msg | default('the read failed') }}"
 
+# 1.104.0, ACT on the outage review (vm_outage_act): ACT's possible causes and fixes, as cards (outage_act.yml). A review
+# only (vm_watch_review), never on the watch's own runs.
+- name: VMware | ACT on the outage review (vm_outage_act)
+  ansible.builtin.include_tasks: outage_act.yml
+  when: >-
+    _vm_w_review | bool and vm_outage_act | bool and _vm_w_tl | default({}) | length > 0
+    and not _vm_w_tl.skip | default(false) | bool and (_vm_w_tl.act_in.events | default([]) | length) > 0
+
 # 1.79.12: vm_watch_review_skip_blips - a trigger that was only usage alarms that cleared within vm_watch_review_min_seconds sends nothing
 - name: VMware | only a short usage blip (vm_watch_review_skip_blips) - no report is sent
   ansible.builtin.debug:

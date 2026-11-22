@@ -25,6 +25,7 @@ Settings: ASK_* (Config); the vCenter account: VMWARE_HOST, VMWARE_USER, VMWARE_
 SSL_CERT_FILE (Python's and ACT's default trust)."""
 import json
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -48,8 +49,27 @@ KEYS = {"genai": ["GENAI_KEY"], "genai-beta": ["GENAI_BETA_KEY"], "asksage": ["A
 URLS = {"genai": ("GENAI_URL", "https://api.genai.mil/v1/chat/completions"),
         "genai-beta": ("GENAI_BETA_URL", "https://api-beta.genai.mil/v1/chat/completions"),
         "asksage": ("ASKSAGE_URL", "https://api.genai.army.mil/server/openai/v1/chat/completions")}
-# what ACT never gets: the vCenter account and the service's own settings
-NOT_FOR_ACT = ("VMWARE_", "ASK_")
+# 1.104.0: what ACT gets - an allowlist (as roles act_triage): never the vCenter account, the service's own settings or
+# any other secret of this container's environment. ACT's own names (ACT_*, GENAI_*, ASKSAGE_*: its settings and key),
+# the basics, the proxy and CA settings, and the tests' stand-in ACT's two settings (never secrets).
+FOR_ACT = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "TZ", "TMPDIR", "TERM",
+           "NO_COLOR", "XDG_CONFIG_HOME", "PYTHONIOENCODING", "PYTHONUTF8", "http_proxy", "https_proxy", "no_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+           "NO_PROXY", "ALL_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+           "FAKE_ACT_OUT", "FAKE_ACT_CONFIG")
+FOR_ACT_PREFIXES = ("ACT_", "GENAI_", "ASKSAGE_")
+# the only names that look like a credential and still reach ACT (as roles act_triage): its provider keys - exactly
+# ACT's _KEY_ENV (each provider's key and its pool) - and its settings named like one (tests/test_vmware_ask.py
+# reads both from ACT's code)
+ACT_KEYS = ("GENAI_KEY", "GENAI_KEYS", "ASKSAGE_KEY", "ASKSAGE_API_KEY", "ASKSAGE_KEYS", "GENAI_BETA_KEY", "GENAI_BETA_KEYS")
+ACT_NOT_SECRETS = ("ACT_KEY_COOLDOWN", "ACT_KEY_ROTATION", "ACT_KEY_USAGE_LOG", "ACT_MAX_TOKENS", "ACT_TOKEN_PARAM")
+CREDENTIAL = re.compile(r"PASSW|PASSPHRASE|SECRET|APIKEY|CREDENTIAL|COOKIE|PRIVATE|TOKEN|AUTH|SESSION|BEARER|(^|_)(KEYS?|PASS|PWD|PW)(_|$)", re.I)
+
+
+def act_env(env):
+    """The environment ACT starts with: only FOR_ACT and FOR_ACT_PREFIXES of env, never a name that looks like a credential
+    (GENAI_ADMIN_TOKEN, ACT_SSH_PASSPHRASE, GENAI_ADMIN_APIKEY) unless it is one of ACT_KEYS or ACT_NOT_SECRETS (1.104.0)."""
+    return {k: v for k, v in env.items() if (k in FOR_ACT or k.startswith(FOR_ACT_PREFIXES))
+            and (k in ACT_KEYS or k in ACT_NOT_SECRETS or not CREDENTIAL.search(k))}
 SIMPLE = ("'VMs with dbv in the name', 'VMs in the acas folder', 'hosts in maintenance mode', 'snapshots older than "
           "7 days'")
 BANNERS = {"U": ("UNCLASSIFIED", "#007a33", "#fff"), "CUI": ("CUI", "#502b85", "#fff"), "C": ("CONFIDENTIAL", "#0033a0", "#fff"),
@@ -312,7 +332,7 @@ class Asker(object):
             return False, "", "", "ACT is not there (%s)" % c.act
         if not c.genai_key():
             return False, "", "", "this service has no API key for provider %s (the deploy's ACT model key credential)" % c.provider
-        env = {k: v for k, v in c.env.items() if not k.startswith(NOT_FOR_ACT)}
+        env = act_env(c.env)
         with tempfile.TemporaryDirectory(prefix="ask-act-") as d:
             res = os.path.join(d, "result.json")
             # a plain answer, not one of ACT's own steps (as the job: site_act _site_act_plain_env)
