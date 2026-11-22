@@ -60,6 +60,8 @@ if ($adModule) {
     try {
         $me = Get-ADDomainController -Server localhost
         $dc.site = [string]$me.Site
+        $dc.server_dn = [string]$me.ServerObjectDN
+        $dc.dsa_dn = [string]$me.NTDSSettingsObjectDN
         $dc.forest = [string]$me.Forest
         $dc.is_gc = [bool]$me.IsGlobalCatalog
         $dc.is_rodc = [bool]$me.IsReadOnly

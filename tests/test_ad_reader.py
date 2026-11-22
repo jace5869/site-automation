@@ -20,6 +20,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+sys.path.insert(0, os.path.join(REPO, "plugins", "module_utils"))
 sys.path.insert(0, os.path.join(REPO, "roles", "ad_report", "library"))
 import ad_filters as F          # noqa: E402
 import site_ad_reader as M      # noqa: E402
@@ -761,7 +762,7 @@ class ReadReplication(unittest.TestCase):
         res = self.read({NC: {"msDS-NCReplCursors": [cur]}, self.CFG: {"msDS-NCReplCursors": [cur]}})
         self.assertEqual((res["why"], res["not_granted"], res["source"]), ("", [], "msDS-NCReplCursors"))
         self.assertEqual(res["cursors"][0], {"nc": NC, "partner": "dc01.corp.example.mil", "invocation_id": DC01_INV,
-                                             "partner_id": DC01_INV,
+                                             "partner_id": DC01_INV, "partner_dn": "",
                                              "last_sync": "2026-11-10T06:30:00Z"})
 
 

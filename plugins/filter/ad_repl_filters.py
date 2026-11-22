@@ -32,6 +32,8 @@ _spec = importlib.util.spec_from_file_location("ad_filters_for_repl", os.path.jo
 _ad = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ad)
 
+ident = _ad.ident
+
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "ok": 4}
 WORD = {"critical": "Critical", "warning": "Warning", "low": "Low", "ok": "OK", "unknown": "Not read"}
 SPARK_W, SPARK_H, SPARK_PAD = 120, 30, 4         # the Trend column's line, as the other reports' (1.52.0, 1.58.0, 1.61.0)
@@ -125,13 +127,14 @@ def _pairs(repl, now, o, tz):
         age = _ad.age_hours(ln.get("last_success"), now)
         st, why = link_status(age, int(ln.get("failures") or 0), o)
         x = dict(ln, age=age, st=st, why=why)
-        by.setdefault((ln["frm"], ln["to"]), []).append(x)
+        dst, src, _nc = ident.link_id(ln)
+        by.setdefault((src, dst), []).append(x)
     pairs = {}
     for k, lst in by.items():
         lst.sort(key=lambda x: (RANK.get(x["st"], 9), -(x["age"] if x["age"] is not None else 1e9)))
         w = lst[0]
-        pairs[k] = {"frm": k[0], "to": k[1], "st": w["st"], "why": w["why"], "age": w["age"], "nc": _ad.nc_name(w.get("nc")),
-                    "nc_dn": w.get("nc") if str(w.get("nc") or "").upper().startswith(("DC=", "CN=")) else "",
+        pairs[k] = {"frm": w["frm"], "to": w["to"], "src_id": k[0], "dst_id": k[1], "st": w["st"], "why": w["why"], "age": w["age"], "nc": _ad.nc_name(w.get("nc")),
+                    "nc_dn": w.get("nc_dn") or (w.get("nc") if str(w.get("nc") or "").upper().startswith(("DC=", "CN=")) else ""),
                     "last_success": _ad.time_text(w.get("last_success")), "last_failure": _ad.time_text(w.get("last_failure")),
                     "failures": int(w.get("failures") or 0), "error": str(w.get("error") or ""), "ncs": len(lst)}
         pairs[k]["ls_local"] = _ad._tm.local(pairs[k]["last_success"], tz) if pairs[k]["last_success"] else ""
@@ -140,7 +143,7 @@ def _pairs(repl, now, o, tz):
 
 
 def _tip(p, site_of):
-    lines = ["%s (%s) → %s (%s)" % (p["frm"], site_of.get(p["frm"]) or NO_SITE, p["to"], site_of.get(p["to"]) or NO_SITE),
+    lines = ["%s (%s) → %s (%s)" % (p["frm"], site_of.get(p["src_id"]) or NO_SITE, p["to"], site_of.get(p["dst_id"]) or NO_SITE),
              "%s: %s" % (WORD.get(p["st"], p["st"]), p["why"] or "on time"),
              "Partition: %s%s" % (p["nc"], (" (the worst of %d)" % p["ncs"]) if p["ncs"] > 1 else ""),
              "Last success: %s" % (("%s, %s ago" % (p["ls_local"], _ad.age_text(p["age"]))) if p["ls_local"] else "never")]
@@ -158,9 +161,11 @@ def _say(age):
 def _matrix(dcs, pairs, o, site_of):
     """The matrix the atlas and brief looks draw (report_matrix.html.j2): DC x DC by site, or site x site past max_dcs
     (each column a number, its site in the row of that number); None past FIT_COLS sites (the list instead)."""
-    sites = sorted(set(d["site"] or NO_SITE for d in dcs), key=lambda s: (s == NO_SITE, s.lower()))
-    order = sorted(dcs, key=lambda d: (sites.index(d["site"] or NO_SITE), d["name"]))
-    by_site = dict((s, [d for d in order if (d["site"] or NO_SITE) == s]) for s in sites)
+    labels = {ident.dc_site(d) or NO_SITE: d["site"] or NO_SITE for d in dcs}
+    site_keys = {ident.dc_id(d): ident.dc_site(d) or NO_SITE for d in dcs}
+    sites = sorted(labels, key=lambda s: (s == NO_SITE, labels[s].lower(), s))
+    order = sorted(dcs, key=lambda d: (sites.index(site_keys[ident.dc_id(d)]), d["name"], ident.dc_id(d)))
+    by_site = {s: [d for d in order if site_keys[ident.dc_id(d)] == s] for s in sites}
     legend = [{"st": "ok", "text": "up to %s without success" % _ad.age_text(o["low"] or o["warn"])},
               {"st": "low", "text": "%s (a schedule missed)" % _ad.age_text(o["low"])} if o["low"] else None,
               {"st": "warning", "text": "%s, or failing" % _ad.age_text(o["warn"])},
@@ -171,22 +176,22 @@ def _matrix(dcs, pairs, o, site_of):
         cols = [{"name": d["name"], "site": d["site"] or NO_SITE} for d in order]
         rows = []
         for d in order:
-            s = d["site"] or NO_SITE
+            s = site_keys[ident.dc_id(d)]
             cells = []
             for c in order:
-                to = next(x for x in order if x["name"] == c["name"])
-                if c["name"] == d["name"]:
+                to = c
+                if ident.same_dc(c, d):
                     cells.append({"st": "self", "text": "", "tip": ""})
+                elif (ident.dc_id(d), ident.dc_id(c)) in pairs:
+                    p = pairs[(ident.dc_id(d), ident.dc_id(c))]
+                    cells.append({"st": p["st"], "text": age_cell(p["age"]), "say": _say(p["age"]), "tip": _tip(p, site_of)})
                 elif not to["read"]:
                     cells.append({"st": "unknown", "text": "?", "say": "not read",
                                   "tip": "%s → %s\nNot read: %s" % (d["name"], c["name"], to["why"] or "no data")})
-                elif (d["name"], c["name"]) in pairs:
-                    p = pairs[(d["name"], c["name"])]
-                    cells.append({"st": p["st"], "text": age_cell(p["age"]), "say": _say(p["age"]), "tip": _tip(p, site_of)})
                 else:
-                    cells.append({"st": "none", "text": "", "tip": "%s → %s\nNot replication partners" % (d["name"], c["name"])})
-            rows.append({"name": d["name"], "site": s, "first": by_site[s][0] is d, "span": len(by_site[s]), "cells": cells})
-        return _marks({"mode": "dc", "groups": [{"name": s, "n": len(by_site[s])} for s in sites], "cols": cols, "rows": rows,
+                    cells.append({"st": "none", "text": "", "tip": "%s → %s\nNot replication partners" % (ident.dc_id(d), ident.dc_id(c))})
+            rows.append({"name": d["name"], "site": labels[s], "site_id": s, "first": by_site[s][0] is d, "span": len(by_site[s]), "cells": cells})
+        return _marks({"mode": "dc", "groups": [{"name": labels[s], "site_id": s, "n": len(by_site[s])} for s in sites], "cols": cols, "rows": rows,
                        "legend": legend, "axis": "From ↓ To →"})
     if len(sites) > FIT_COLS:
         return None
@@ -195,23 +200,23 @@ def _matrix(dcs, pairs, o, site_of):
     for a in sites:
         cells = []
         for b in sites:
-            ps = [p for (f, t), p in pairs.items() if (site_of.get(f) or NO_SITE) == a and (site_of.get(t) or NO_SITE) == b]
+            ps = [p for (f, t), p in pairs.items() if site_keys.get(f, NO_SITE) == a and site_keys.get(t, NO_SITE) == b]
             unread = [d["name"] for d in by_site[b] if not d["read"]]
             if not ps:
                 cells.append({"st": "unknown" if unread else "none", "text": "?" if unread else "", "say": "not read" if unread else "",
-                              "tip": "%s → %s\n%s" % (a, b, ("Not read: " + ", ".join(unread)) if unread else "No replication link")})
+                              "tip": "%s → %s\n%s" % (labels[a], labels[b], ("Not read: " + ", ".join(unread)) if unread else "No replication link")})
                 continue
             ps.sort(key=lambda p: (RANK.get(p["st"], 9), -(p["age"] if p["age"] is not None else 1e9)))
             w = ps[0]
             late = len([p for p in ps if p["st"] != "ok"])
-            tip = "%s → %s: %d link(s), %d late\nWorst: %s" % (a, b, len(ps), late, _tip(w, site_of))
+            tip = "%s → %s: %d link(s), %d late\nWorst: %s" % (labels[a], labels[b], len(ps), late, _tip(w, site_of))
             if unread:
                 tip += "\nNot read: " + ", ".join(unread)
             cells.append({"st": w["st"], "text": age_cell(w["age"]), "say": _say(w["age"]), "tip": tip})
-        rows.append({"name": "%s (%d)" % (a, len(by_site[a])), "key": str(len(rows) + 1), "site": "", "first": False, "span": 1,
+        rows.append({"name": "%s (%d)" % (labels[a], len(by_site[a])), "key": str(len(rows) + 1), "site": "", "first": False, "span": 1,
                      "cells": cells})
     return _marks({"mode": "site", "groups": [], "rows": rows, "legend": legend, "axis": "From site ↓ To site →",
-                   "cols": [{"name": "%s (%d)" % (s, len(by_site[s])), "key": str(i + 1), "site": s} for i, s in enumerate(sites)],
+                   "cols": [{"name": "%s (%d)" % (labels[s], len(by_site[s])), "key": str(i + 1), "site": labels[s], "site_id": s} for i, s in enumerate(sites)],
                    "note": "%d DCs: more than ad_repl_matrix_max_dcs (%d), so each cell is a site's worst link to another site. "
                            "The columns are numbered: each number is the row's site." % (len(order), min(o["max_dcs"], FIT_COLS))})
 
@@ -223,8 +228,9 @@ def _marks(mx):
     return mx
 
 
-def _site_list(pairs, site_of, top):
+def _site_list(pairs, site_of, top, labels=None):
     """Past FIT_COLS sites: each pair of sites that replicate, its worst link, worst first (the matrix section's table)."""
+    labels = labels or {}
     rows, rst = [], []
     by = {}
     for (f, t), p in pairs.items():
@@ -237,7 +243,7 @@ def _site_list(pairs, site_of, top):
     for a, b, ps in out[:top]:
         w = ps[0]
         late = len([p for p in ps if p["st"] != "ok"])
-        rows.append([a, b, ("%d (%d late)" % (len(ps), late)) if late else str(len(ps)), "%s → %s" % (w["frm"], w["to"]),
+        rows.append([labels.get(a, a), labels.get(b, b), ("%d (%d late)" % (len(ps), late)) if late else str(len(ps)), "%s → %s" % (w["frm"], w["to"]),
                      ("%s ago" % _ad.age_text(w["age"])) if w["age"] is not None else "never", WORD[w["st"]]])
         rst.append(w["st"])
     return rows, rst, len(out)
@@ -255,7 +261,9 @@ def _series(site, runs, now_e, now_h, days):
     for r in runs or []:
         a = (r.get("artifacts") or {}).get("ad_repl") or {}
         t = _epoch(a.get("read_at")) or _epoch(r.get("finished"))
-        v = (a.get("sites") or {}).get(site)
+        values = a.get("sites") or {}
+        matches = [v for k, v in values.items() if ident.site_id({"name": k}) == site]
+        v = matches[0] if len(matches) == 1 else None
         if t is None or v is None or t < since or t >= now_e:
             continue
         try:
@@ -306,29 +314,31 @@ def ad_repl_view(repl, runs=None, opts=None):
           "tsl": float(r.get("tombstone_days") or 0), "max_dcs": int(o.get("max_dcs", 12))}
     days, top = int(o.get("trend_days", 14)), int(o.get("max_rows", 50))
     dcs = r["dcs"]
-    site_of = dict((d["name"], d["site"]) for d in dcs)
+    site_of = dict((ident.dc_id(d), d["site"]) for d in dcs)
+    site_keys = {ident.dc_id(d): ident.dc_site(d) or NO_SITE for d in dcs}
+    site_names = {ident.dc_site(d) or NO_SITE: d["site"] or NO_SITE for d in dcs}
     pairs = _pairs(r, now, oo, tz)
-    read = [d for d in dcs if d["read"]]
-    unread = [d for d in dcs if not d["read"]]
+    read = [d for d in dcs if d["read"] and not d.get("partial")]
+    unread = [d for d in dcs if not d["read"] or d.get("partial")]
     count = dict((k, len([p for p in pairs.values() if p["st"] == k])) for k in ("ok", "low", "warning", "critical"))
     late = sorted([p for p in pairs.values() if p["st"] != "ok"],
                   key=lambda p: (RANK.get(p["st"], 9), -(p["age"] if p["age"] is not None else 1e9), p["frm"], p["to"]))
     status = "critical" if count["critical"] else ("warning" if count["warning"] else ("low" if count["low"] else "ok"))
-    if not pairs:
+    if not pairs or (unread and status == "ok"):
         status = "unknown"
-    sites = sorted(set(d["site"] or NO_SITE for d in dcs), key=lambda s: (s == NO_SITE, s.lower()))
+    sites = sorted(site_names, key=lambda s: (s == NO_SITE, site_names[s].lower(), s))
 
     # the numbers
     nums = "%d link(s) between %d DCs in %d site(s): %d on time, %d Low, %d warning, %d critical." % (
         len(pairs), len(dcs), len(sites), count["ok"], count["low"], count["warning"], count["critical"])
     if unread:
-        nums += " Not read: %s." % ", ".join("%s (%s)" % (d["name"], d["why"] or "no data") for d in unread[:10])
+        nums += " Not read: %s." % ", ".join("%s (%s)" % (d["name"], ("partitions not read: " + ", ".join(d["partial"])) if d.get("partial") else d["why"] or "no data") for d in unread[:10])
 
     # the links that need a look (web and email)
     cols = ["From", "To", "Partition", "Last success", "Last error", "Status"]
     rows, rst = [], []
     for p in late[:top]:
-        rows.append(["%s (%s)" % (p["frm"], site_of.get(p["frm"]) or NO_SITE), "%s (%s)" % (p["to"], site_of.get(p["to"]) or NO_SITE),
+        rows.append(["%s (%s)" % (p["frm"], site_of.get(p["src_id"]) or NO_SITE), "%s (%s)" % (p["to"], site_of.get(p["dst_id"]) or NO_SITE),
                      p["nc"], ("%s ago" % _ad.age_text(p["age"])) if p["age"] is not None else "never",
                      ("%s (%d failure(s))" % (_err(p["error"]), p["failures"])) if p["error"] else (p["why"] if p["st"] != "ok" else ""),
                      WORD[p["st"]]])
@@ -340,7 +350,7 @@ def ad_repl_view(repl, runs=None, opts=None):
     if rows:
         links_sec.update(columns=cols, rows=rows, row_status=rst, cell_status=[[""] * 5 + [s] for s in rst])
     elif pairs:
-        links_sec["text"] = "Every link replicates on time. %s" % nums
+        links_sec["text"] = ("The observed links replicate on time; coverage is incomplete. %s" if unread else "Every link replicates on time. %s") % nums
     else:
         links_sec["text"] = "No replication link was read. %s" % nums
     if status in ("critical", "warning"):
@@ -350,21 +360,21 @@ def ad_repl_view(repl, runs=None, opts=None):
     now_site = {}
     st_site = {}
     for s in sites:
-        ps = [p for p in pairs.values() if (site_of.get(p["to"]) or NO_SITE) == s]
+        ps = [p for p in pairs.values() if site_keys.get(p["dst_id"], NO_SITE) == s]
         ages = [p["age"] for p in ps if p["age"] is not None]
         now_site[s] = round(max(ages), 2) if ages else None
         st_site[s] = min([p["st"] for p in ps], key=lambda x: RANK.get(x, 9)) if ps else "unknown"
     t_rows, t_rst, sparks, t_lines, by_day = [], [], [], [], {}
     for s in sites:
         pts = _series(s, runs, now_e, now_site[s], days)
-        sp = _spark(pts, now_e, days, oo["warn"], s)
+        sp = _spark(pts, now_e, days, oo["warn"], site_names[s])
         week = [v for t, v in pts if now_e - 8 * 86400 <= t <= now_e - 6 * 86400]
         then = ("%s → %s" % (_ad.age_text(week[0]), _ad.age_text(now_site[s]))) if week and now_site[s] is not None else ""
         since = then or ("%d day(s) of history: no line yet" % len(pts) if len(pts) < 2 else "")
-        t_rows.append([s, sp.get("label", ""), age_short(now_site[s]) if now_site[s] is not None else "-", since, WORD.get(st_site[s], "")])
+        t_rows.append([site_names[s], sp.get("label", ""), age_short(now_site[s]) if now_site[s] is not None else "-", since, WORD.get(st_site[s], "")])
         t_rst.append(st_site[s] if st_site[s] != "ok" else "ok")
         sparks.append(sp)
-        t_lines.append("%s: worst now %s%s." % (s, _ad.age_text(now_site[s]) if now_site[s] is not None else "not read",
+        t_lines.append("%s: worst now %s%s." % (site_names[s], _ad.age_text(now_site[s]) if now_site[s] is not None else "not read",
                                                  (", a week ago %s" % _ad.age_text(week[0])) if week else ""))
         for t, v in pts:
             by_day.setdefault(s, {})[time.strftime("%Y-%m-%d", time.gmtime(t))] = round(v, 2)
@@ -382,16 +392,16 @@ def ad_repl_view(repl, runs=None, opts=None):
     cards = []
     if late:
         w = late[0]
-        back = pairs.get((w["to"], w["frm"]))
+        back = pairs.get((w["dst_id"], w["src_id"]))
         both = back is not None and back["st"] != "ok"
         nxt, code = _next_step(w)
         cards.append({"status": w["st"], "chip": WORD[w["st"]], "meta": "Worst pair",
                       "title": "%s %s %s: %s" % (w["frm"], "↔" if both else "→", w["to"], age_short(w["age"])),
-                      "subject": "%s → %s, %s%s%s" % (site_of.get(w["frm"]) or NO_SITE, site_of.get(w["to"]) or NO_SITE, w["nc"],
+                      "subject": "%s → %s, %s%s%s" % (site_of.get(w["src_id"]) or NO_SITE, site_of.get(w["dst_id"]) or NO_SITE, w["nc"],
                                                           (", last success " + w["ls_local"]) if w["ls_local"] else ", never replicated",
                                                           (", error " + _err(w["error"])) if w["error"] else ""),
                       "next": nxt, "code": code})
-        rest = [p for p in late[1:] if not (both and p["frm"] == w["to"] and p["to"] == w["frm"])]
+        rest = [p for p in late[1:] if not (both and p["src_id"] == w["dst_id"] and p["dst_id"] == w["src_id"])]
         if rest:
             a = rest[0]
             cards.append({"status": a["st"], "chip": WORD[a["st"]], "meta": "Also late (%d)" % len(rest),
@@ -409,7 +419,7 @@ def ad_repl_view(repl, runs=None, opts=None):
             m_text += " " + mx["note"]
         matrix_sec = {"title": "Replication matrix", "text": m_text, "cards": cards, "matrix": mx}
     else:
-        s_rows, s_rst, n_pairs = _site_list(pairs, site_of, top)
+        s_rows, s_rst, n_pairs = _site_list(pairs, site_keys, top, site_names)
         m_text = ("%d sites: too many for a grid that fits the page, so each pair of sites is listed, worst first. The "
                   "workbook has every link." % len(sites))
         if n_pairs > top:
@@ -427,7 +437,7 @@ def ad_repl_view(repl, runs=None, opts=None):
     for ln in sorted(r.get("links") or [], key=lambda x: (x["frm"], x["to"], str(x.get("nc")))):
         age = _ad.age_hours(ln.get("last_success"), now)
         st, why = link_status(age, int(ln.get("failures") or 0), oo)
-        sheet_rows.append([ln["frm"], site_of.get(ln["frm"]) or "", ln["to"], site_of.get(ln["to"]) or "", _ad.nc_name(ln.get("nc")),
+        sheet_rows.append([ln["frm"], site_of.get(ident.link_id(ln)[1]) or "", ln["to"], site_of.get(ident.link_id(ln)[0]) or "", _ad.nc_name(ln.get("nc")),
                            _ad._tm.local(_ad.time_text(ln.get("last_success")), tz) if ln.get("last_success") else "never",
                            round(age, 2) if age is not None else "", int(ln.get("failures") or 0),
                            _ad._tm.local(_ad.time_text(ln.get("last_failure")), tz) if ln.get("last_failure") else "",
@@ -436,7 +446,7 @@ def ad_repl_view(repl, runs=None, opts=None):
     sheets = [{"name": "Replication", "columns": ["From", "From site", "To", "To site", "Partition", "Last success", "Hours since",
                                                   "Failures", "Last failure", "Last error", "Status", "Why"], "rows": sheet_rows},
               {"name": "Replication by site", "columns": ["Site", "Trend"] + dates,
-               "rows": [[s, ""] + [by_day.get(s, {}).get(d, "") for d in dates] for s in sites]}]
+               "rows": [[site_names[s], ""] + [by_day.get(s, {}).get(d, "") for d in dates] for s in sites]}]
     if len(dates) > 1:                                    # the line in Excel, as Clusters by day (vmware_heat_filters)
         sheets[1]["sparklines"] = [{"column": "Trend", "from": [dates[0], dates[-1]]}]
 

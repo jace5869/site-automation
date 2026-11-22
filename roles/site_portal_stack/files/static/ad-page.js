@@ -72,23 +72,22 @@
   }
   function note(kind, text) { return el("div", "note" + (kind ? " " + kind : ""), el("p", "", text)); }
 
-  // the newest run's DCs as SolarWinds sees them: {"domain|dc": [text, status]} - a DC by its domain and name (two domains'
-  // DC01 are two DCs). status: critical, warning, ok (a positive Up only) or "" (not in SolarWinds, not matched, not known)
-  const idOf = d => (String(d.domain || "") + "|" + String(d.dc || "")).toLowerCase();
+  // the newest run's DCs as SolarWinds sees them: {dc_id: [text, status]}. status: critical, warning, ok (a positive Up only) or "" (not in SolarWinds, not matched, not known)
+  const idOf = d => d.dc_id || (String(d.domain || "").replace(/\.$/, "") + "|" + String(d.dc || "")).toLowerCase();
   function swOf(sw) {
     const out = {}, s = sw && sw.section;
     if (!s) return out;
     const i = s.columns.indexOf("DC"), j = s.columns.indexOf("SolarWinds"), keys = s.keys || [];
     s.rows.forEach((r, k) => {
       const c = (s.cell_status[k] || [])[j] || "", st = c === "critical" || c === "warning" ? c : c === "ok" && r[j] === "Up" ? "ok" : "";
-      if (keys.length === s.rows.length && !/^\|/.test(keys[k])) { out[keys[k]] = [r[j], st]; return; }
+      if (keys.length === s.rows.length && (!/^\|/.test(keys[k]) || keys[k].includes("\\"))) { out[keys[k]] = [r[j], st]; return; }
       const key = "?|" + String(r[i]).toLowerCase();        // no domain with the row: by name, a name twice not known
       out[key] = key in out ? ["two DCs of this name", ""] : [r[j], st];
     });
     return out;
   }
   // a row without a domain: only for the one DC of that name on the page - never one Up for two domains' DC01
-  const swFor = (sws, d, m) => sws[idOf(d)] || ((m.dcs || []).filter(x => x.dc.toLowerCase() === String(d.dc).toLowerCase()).length === 1
+  const swFor = (sws, d, m) => sws[idOf(d)] || ((m.live && m.live.known || m.dcs || []).filter(x => String(x.dc || x.name).toLowerCase() === String(d.dc).toLowerCase()).length === 1
                                                 ? sws["?|" + String(d.dc).toLowerCase()] : undefined);
   // a DC's name, with its domain when another DC on the page has the same name
   const nameOf = (m, d) => (m.dcs || []).filter(x => x.dc.toLowerCase() === String(d.dc).toLowerCase()).length > 1 && d.domain ? d.dc + " (" + d.domain + ")" : d.dc;

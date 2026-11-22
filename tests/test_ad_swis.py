@@ -295,8 +295,8 @@ class View1940(unittest.TestCase):
     def test_6_dcs_and_their_ips(self):
         hv = {"dc01.corp.test": {"ansible_host": "192.0.2.11"}, "dc02.corp.test": {"ansible_host": "dc02.corp.test"}}
         self.assertEqual(af.ad_swis_dcs([{"dc": "DC01", "host": "dc01.corp.test"}, {"dc": "DC02", "host": "dc02.corp.test"}, {"dc": "DC03", "host": "x"}], hv),
-                         [{"dc": "DC01", "ip": "192.0.2.11", "fqdn": "dc01.corp.test", "domain": ""}, {"dc": "DC02", "ip": "", "fqdn": "dc02.corp.test", "domain": ""},
-                          {"dc": "DC03", "ip": "", "fqdn": "", "domain": ""}])
+                         [{"dc_id": "corp.test|dc01", "dc": "DC01", "ip": "192.0.2.11", "fqdn": "dc01.corp.test", "domain": ""}, {"dc_id": "corp.test|dc02", "dc": "DC02", "ip": "", "fqdn": "dc02.corp.test", "domain": ""},
+                          {"dc_id": "|dc03", "dc": "DC03", "ip": "", "fqdn": "", "domain": ""}])
 
 
 class Review1940(unittest.TestCase):

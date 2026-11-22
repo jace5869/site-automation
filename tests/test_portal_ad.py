@@ -82,10 +82,10 @@ class Site(object):
 SQLITE = ("CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY AUTOINCREMENT, read_at TEXT NOT NULL, job INTEGER NOT NULL DEFAULT 0, "
           "template_id INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', critical INTEGER NOT NULL DEFAULT 0, "
           "warning INTEGER NOT NULL DEFAULT 0, dcs INTEGER NOT NULL DEFAULT 0, dcs_read INTEGER NOT NULL DEFAULT 0, live TEXT, why TEXT NOT NULL DEFAULT '', repl_dcs INTEGER NOT NULL DEFAULT 0, repl_read INTEGER NOT NULL DEFAULT 0)",
-          "CREATE TABLE ad_dc (run_id INTEGER NOT NULL, dc TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', site TEXT NOT NULL DEFAULT '', "
+          "CREATE TABLE ad_dc (run_id INTEGER NOT NULL, dc_key TEXT NOT NULL, dc_id TEXT NOT NULL, dc TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', site_id TEXT NOT NULL, site TEXT NOT NULL DEFAULT '', "
           "is_read INTEGER NOT NULL DEFAULT 0, repl_read INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', problems INTEGER NOT NULL DEFAULT 0, worst TEXT NOT NULL DEFAULT '', "
-          "PRIMARY KEY (run_id, domain, dc))",
-          "CREATE TABLE ad_link (run_id INTEGER NOT NULL, link_key TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', frm TEXT NOT NULL, src TEXT NOT NULL DEFAULT '', to_dc TEXT NOT NULL, nc TEXT NOT NULL DEFAULT '', last_success TEXT, "
+          "PRIMARY KEY (run_id, dc_key))",
+          "CREATE TABLE ad_link (run_id INTEGER NOT NULL, link_key TEXT NOT NULL, src_id TEXT NOT NULL, dst_id TEXT NOT NULL, nc_dn TEXT NOT NULL, domain TEXT NOT NULL DEFAULT '', frm TEXT NOT NULL, src TEXT NOT NULL DEFAULT '', to_dc TEXT NOT NULL, nc TEXT NOT NULL DEFAULT '', last_success TEXT, "
           "failures INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', last_failure TEXT, status TEXT NOT NULL DEFAULT '', "
           "PRIMARY KEY (run_id, link_key))")
 
@@ -196,7 +196,7 @@ class Db1012(unittest.TestCase):
         self.assertEqual(n, 3)
         self.assertEqual(db.db.execute("SELECT COUNT(*) FROM ad_dc").fetchone()[0], 0)
         ddl = adb.ddl()
-        for t in ("CREATE TABLE IF NOT EXISTS ad_run", "CREATE TABLE IF NOT EXISTS ad_dc", "CREATE TABLE IF NOT EXISTS ad_link", "'ad_run', 3"):
+        for t in ("CREATE TABLE IF NOT EXISTS ad_run", "CREATE TABLE IF NOT EXISTS ad_dc", "CREATE TABLE IF NOT EXISTS ad_link", "'ad_run', 4"):
             self.assertIn(t, ddl)
 
     def test_6_the_statements_in_the_doc_are_the_modules(self):
@@ -211,6 +211,25 @@ class Db1012(unittest.TestCase):
         self.assertEqual([x["status"] for x in p["links"]], ["critical", "ok"])
         p = dbf.ad_db_payload({"dcs": [{"dc": "DC09", "domain": "corp.test", "read": False, "error": "WinRM did not answer"}]})
         self.assertEqual((p["dcs"][0]["status"], p["dcs"][0]["worst"]), ("critical", "not read: WinRM did not answer"))
+
+    def test_7_unpolled_dc_is_only_in_replication_coverage(self):
+        for extra in ({"read": False}, {}):
+            with self.subTest(extra=extra):
+                now, ad = ad_run(0)
+                ad["dcs"] = ad["dcs"][:1]
+                guid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                ad["repl"]["dcs"] = [{"name": "DC01", "domain": "corp.test", "dsa_guid": guid, "read": True},
+                                     dict(name="DC02", domain="corp.test", **extra)]
+                p = dbf.ad_db_payload(ad)
+                self.assertEqual([(d["dc"], d["dc_id"]) for d in p["dcs"]], [("DC01", guid)])
+                self.assertEqual((p["repl_dcs"], p["repl_read"]), (2, 1))
+                db = Lite()
+                self.addCleanup(db.db.close)
+                adb.write(db, now, 9000, 12, p)
+                self.assertEqual(db.db.execute("SELECT dc, dc_id FROM ad_dc").fetchall(), [("DC01", guid)])
+                m = sp.AdDb(None, connect=lambda: db, mark="?").read()
+                self.assertEqual([d["dc"] for d in m["dcs"]], ["DC01"])
+                self.assertEqual((m["run"]["dcs"], m["run"]["repl_dcs"], m["run"]["repl_read"]), (1, 2, 1))
 
 
 def live(lite, site, **kw):
@@ -239,7 +258,7 @@ class Answer1012(unittest.TestCase):
         self.assertEqual((d3["dc"], d3["runs_since"]), ("DC03", 2))
         self.assertTrue(d3["since_shown"].endswith("UTC"))
         self.assertNotIn("live", m)                                    # the DCs for SolarWinds stay on the server
-        self.assertEqual(m["worst7"], {"dc": "DC03", "domain": "corp.test", "critical": 2})
+        self.assertEqual(m["worst7"], {"dc_id": "corp.test|dc03", "dc": "DC03", "domain": "corp.test", "critical": 2})
         self.assertEqual(out["sw"]["job"], "9006")
         rows = dict((r[1], r) for r in out["sw"]["section"]["rows"])
         self.assertEqual(rows["DC02"][2], "Down")
@@ -499,7 +518,7 @@ class Routes1012(unittest.TestCase):
     def test_5_the_deploy_ships_the_files(self):
         with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
             t = fh.read()
-        for n in ("site_swis_db.py", "site_ad_swis.py", "ad_swis_filters.py", "site_report_db.py", "static/ad-page.js", "static/ad-page.css"):
+        for n in ("site_swis_db.py", "site_ad_swis.py", "ad_swis_filters.py", "site_report_db.py", "site_ad_ident.py", "static/ad-page.js", "static/ad-page.css"):
             self.assertIn("dest: %s}" % n, t)
         for k in ("PORTAL_AD:", "PORTAL_AD_SECONDS:", "PORTAL_AD_OLD_MINUTES:", "PORTAL_AD_TEMPLATE:", "site-portal-reportdb"):
             self.assertIn(k, t)
@@ -509,7 +528,7 @@ class Routes1012(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
         shutil.copy(os.path.join(ROOT, "plugins", "filter", "ad_swis_filters.py"), d)
-        for n in ("site_time.py", "site_swis.py", "site_swis_db.py", "site_ad_swis.py", "site_report_db.py"):
+        for n in ("site_time.py", "site_swis.py", "site_swis_db.py", "site_ad_swis.py", "site_report_db.py", "site_ad_ident.py"):
             shutil.copy(os.path.join(ROOT, "plugins", "module_utils", n), d)
         out = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, %r); sys.modules['ansible'] = None; "
                               "import ad_swis_filters, site_ad_swis, site_report_db; print('ok')" % d],
@@ -532,7 +551,7 @@ class Job1012(unittest.TestCase):
                                            {"text": "no object"}]},
                              [{"dc": "DC01", "ip": "192.0.2.11"}, {"dc": ""}], {"cpu_warn": "85", "days": "14"})
         self.assertEqual(b["kind"], "ad")
-        self.assertEqual(b["dcs"], [{"dc": "DC01", "ip": "192.0.2.11"}])
+        self.assertEqual(b["dcs"], [{"dc": "DC01", "ip": "192.0.2.11", "dc_id": "|dc01"}])
         self.assertEqual(len(b["problems"]), 1)
         self.assertEqual(len(b["problems"][0]["text"]), 300)
         self.assertEqual(b["opts"], {"cpu_warn": 85.0, "mem_warn": 90.0, "days": 14})
@@ -1234,13 +1253,13 @@ class CodexD1012(unittest.TestCase):
         self.assertEqual(list(found), [0])
         self.assertIsNone(found[0][0])
         block = af.ad_live_block({"repl": {"dcs": [{"name": d["dc"], "domain": d["domain"].upper()} for d in known]}}, dcs)
-        self.assertEqual(block["known"], known)
+        self.assertEqual(block["known"], [dict(d, dc_id=d["domain"] + "|dc01") for d in known])
         self.assertEqual(af.ad_live_block({}, dcs)["known"], [])
         a = live(Lite(), Site(self))
         with patch.object(sp.site_ad_swis, "from_live", return_value={}) as read:
             a._swis(block)
-            self.assertEqual(read.call_args[0][0], dcs)
-            self.assertEqual(read.call_args[0][1]["known"], known)
+            self.assertEqual(read.call_args[0][0], [dict(d, dc_id=d["domain"] + "|dc01") for d in dcs])
+            self.assertEqual(read.call_args[0][1]["known"], [dict(d, dc_id=d["domain"] + "|dc01") for d in known])
             a._swis({"dcs": dcs})
             self.assertEqual(read.call_args[0][1]["known"], [])
 
@@ -1254,19 +1273,20 @@ class CodexD1012(unittest.TestCase):
         ad["repl"] = ad_filters._repl_admin(dcs, doms, now)
         self.assertEqual(len(ad["repl"]["dcs"]), 3)
         source = [d for d in ad["repl"]["dcs"] if d["site"] == "SITEB0201"]
-        self.assertEqual(source, [{"name": "DC01", "site": "SITEB0201", "read": False, "why": "not in the inventory: not read", "domain": ""}])
+        self.assertEqual(source, [{"name": "DC01", "site": "SITEB0201", "read": False, "why": "not in the inventory: not read", "domain": "", "dsa_dn": "", "dsa_guid": "", "dc_id": "|siteb0201\\dc01"}])
         ad["dcs"] = ad["dcs"][:2]
         p = dbf.ad_db_payload(ad, {}, {})
         self.assertEqual((p["repl_dcs"], p["repl_read"]), (3, 2))
-        self.assertTrue(all(d["repl_read"] for d in p["dcs"]))
+        self.assertEqual(sum(d["repl_read"] for d in p["dcs"]), 2)
+        self.assertEqual(len(p["dcs"]), 2)
         for site in ("sitea0101", ""):
             dcs[1]["data"]["repl"][0]["source_site"] = site
             self.assertEqual(len(ad_filters._repl_admin(dcs, doms, now)["dcs"]), 2)
 
     def test_5_schema_two_requires_recovery(self):
         from unittest.mock import Mock
-        self.assertEqual(adb.SCHEMA_VERSION, 3)
-        for version in (1, 2):
+        self.assertEqual(adb.SCHEMA_VERSION, 4)
+        for version in (1, 2, 3):
             for create in (False, True):
                 conn = Mock()
                 cur = conn.cursor.return_value

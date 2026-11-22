@@ -292,7 +292,7 @@ draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 3) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
 | `stig_scorecard_platform` | 1.67.0: one row per run, collection and platform - its assets and open findings (*The STIG scorecard's points*) |
@@ -1027,9 +1027,9 @@ from here: each DC now, since when, its last runs, the replication links that ne
 
 | | |
 |---|---|
-| What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds, why its rows could not be made when so, how many DCs the replication read knew and read in full), a row per DC in `ad_dc` (its domain, site, whether it and its replication were read, status, problems, the worst one's text) and a row per replication link in `ad_link` (its domain, from and the source as AD names it, to, partition, last success, failures, error, status; keyed by all of those) |
-| Schema version | 3 (`schema_version` component `ad_run`). Versions 1 and 2 were only in builds before 1.101.2 shipped: drop the three tables and its row, the next run makes them again |
-| How much | 10 DCs and 40 links every 30 minutes: about 2,400 rows a day, under 200 bytes each |
+| What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds, why its rows could not be made when so, how many DCs the replication read knew and read in full), a row per DC in `ad_dc` (its `dc_id`, domain, site and `site_id`, whether it and its replication were read, status, problems, the worst one's text) and a row per replication link in `ad_link` (its domain, display endpoints, `src_id`, `dst_id`, exact partition, last success, failures, error, status; `link_key` hashes the receiving ID, source ID and partition) |
+| Schema version | 4 (`schema_version` component `ad_run`). Versions 1, 2 and 3 were only in builds before 1.101.2 shipped: drop the three tables and its row, the next run makes them again |
+| How much | 10 DCs and 40 links every 30 minutes: about 2,400 rows a day, size depends on the stored names and DNs |
 | What a run deletes | its own template's runs older than `ad_db_keep_days`, with their rows (another forest's job keeps its own) |
 | When the database is down | one warning in the job output. The report goes on, the job stays green. The portal's page shows the run before |
 | A dry run (Check) | logs in and looks at the tables, writes nothing |
@@ -1076,15 +1076,18 @@ CREATE TABLE IF NOT EXISTS ad_run (
 ```sql
 CREATE TABLE IF NOT EXISTS ad_dc (
   run_id BIGINT NOT NULL,
+  dc_key CHAR(64) NOT NULL,
+  dc_id TEXT NOT NULL,
   dc VARCHAR(191) NOT NULL,
   domain VARCHAR(191) NOT NULL DEFAULT '',
+  site_id TEXT NOT NULL,
   site VARCHAR(191) NOT NULL DEFAULT '',
   is_read TINYINT NOT NULL DEFAULT 0,
   repl_read TINYINT NOT NULL DEFAULT 0,
   status VARCHAR(16) NOT NULL DEFAULT '',
   problems INT NOT NULL DEFAULT 0,
   worst VARCHAR(300) NOT NULL DEFAULT '',
-  PRIMARY KEY (run_id, domain, dc)
+  PRIMARY KEY (run_id, dc_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
@@ -1093,6 +1096,9 @@ CREATE TABLE IF NOT EXISTS ad_link (
   run_id BIGINT NOT NULL,
   link_key CHAR(40) NOT NULL,
   domain VARCHAR(191) NOT NULL DEFAULT '',
+  src_id TEXT NOT NULL,
+  dst_id TEXT NOT NULL,
+  nc_dn TEXT NOT NULL,
   frm VARCHAR(191) NOT NULL,
   src VARCHAR(255) NOT NULL DEFAULT '',
   to_dc VARCHAR(191) NOT NULL,
@@ -1107,7 +1113,7 @@ CREATE TABLE IF NOT EXISTS ad_link (
 ```
 
 ```sql
-INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 3, UTC_TIMESTAMP());
+INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 4, UTC_TIMESTAMP());
 ```
 <!-- end of the AD runs statements -->
 

@@ -14,6 +14,14 @@ import importlib.util
 import os
 import re
 
+_ident_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_ad_ident.py")
+if os.path.isfile(_ident_path):
+    _spec_ident = importlib.util.spec_from_file_location("site_ad_ident", _ident_path)
+    ident = importlib.util.module_from_spec(_spec_ident)
+    _spec_ident.loader.exec_module(ident)
+else:
+    import site_ad_ident as ident
+
 _tm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py")
 if os.path.isfile(_tm_path):
     _spec = importlib.util.spec_from_file_location("site_time", _tm_path)
@@ -210,7 +218,7 @@ def _view(res, ad, opts=None):
                 det.append({"title": "Active alerts", "columns": ["Alert", "Since", "Message"], "kinds": ["wrap", "nw", "wrap"],
                             "rows": [[a.get("name") or "-", _when(a.get("triggered_at"), tz), a.get("message") or "-"] for a in al[:10]]})
         rows.append((RANK.get(worst, 4), d["dc"].lower(), [row[c] for c in cols], cs, worst, det,
-                     ("%s|%s" % (d.get("domain") or "", d["dc"])).lower()))
+                     ident.dc_id(d)))
     rows.sort(key=lambda x: (x[0], x[1]))
     when = (_tm.local(r["read_at"] + " UTC", tz) if tz else r["read_at"] + " UTC") if r.get("read_at") else ""
     if r.get("source") == "db-snapshot":
@@ -311,7 +319,7 @@ def ad_swis_dcs(dcs, hostvars=None):
         except Exception:  # noqa: BLE001 - a host var that does not template: no IP, the name still matches
             ip = ""
         if name:
-            out.append({"dc": name, "ip": ip, "fqdn": fqdn, "domain": str(d.get("domain") or "")})
+            out.append({"dc_id": ident.dc_id(d), "dc": name, "ip": ip, "fqdn": fqdn, "domain": str(d.get("domain") or "")})
     return out
 
 
@@ -325,8 +333,8 @@ def ad_live_block(ad, dcs, opts=None):
               "text": str(p.get("text") or "")[:300],
               "dc": str(p.get("dc") or re.sub(r"^\s*(\S+)\s+<-\s.*$", r"\1", str(p.get("object") or ""), flags=re.S))}
              for p in (ad or {}).get("problems") or [] if isinstance(p, dict) and p.get("object")]
-    return {"v": 1, "kind": "ad", "dcs": [dict(d) for d in dcs or [] if d.get("dc")], "problems": probs[:500],
-            "known": [{"dc": d.get("name"), "domain": str(d.get("domain") or "").lower()}
+    return {"v": 1, "kind": "ad", "dcs": [dict(d, dc_id=ident.dc_id(ident.resolve(d, ((ad or {}).get("repl") or {}).get("dcs") or []) or d)) for d in dcs or [] if d.get("dc")], "problems": probs[:500],
+            "known": [dict(ident.fields(d), dc=d.get("name"), domain=ident.domain(d), dc_id=ident.dc_id(d))
                       for d in ((ad or {}).get("repl") or {}).get("dcs") or [] if d.get("name")],
             "opts": {"cpu_warn": float(o.get("cpu_warn", 90)), "mem_warn": float(o.get("mem_warn", 90)), "days": int(o.get("days", 30))}}
 

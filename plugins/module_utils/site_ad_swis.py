@@ -14,6 +14,11 @@ dcs: [{dc, ip}]; opts: max_age (min), days (last down window), now (test: "YYYY-
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+try:
+    from ansible.module_utils import site_ad_ident as ident
+except ImportError:
+    import site_ad_ident as ident
+
 import datetime
 import re
 
@@ -170,9 +175,9 @@ def match(dcs, nodes, known=None):
     out, claimed = {}, {}
     ad_short = {}                                        # the AD domains each short name is in (two domains' DC01: ambiguous)
     for d in list(dcs) + list(known or []):
-        ad_short.setdefault(_short(d.get("dc")), set()).add(str(d.get("domain") or "").strip().lower().rstrip("."))
+        ad_short.setdefault(ident.short_name(d), set()).add(ident.dc_id(d))
     for i, d in enumerate(dcs):                          # by position: two domains' DC01 are two DCs
-        fq, sn, ip = _full(d.get("fqdn")), _short(d.get("dc")), str(d.get("ip") or "").strip()
+        fq, sn, ip = ((ident.short_name(d) + "." + ident.domain(d)) if ident.domain(d) else _full(d.get("fqdn"))), _short(d.get("dc")), str(d.get("ip") or "").strip()
         node, how, why = None, "", ""
         c = uniq(full.get(fq, [])) if fq else []
         if len(c) == 1:
@@ -211,7 +216,7 @@ def _dc_rows(dcs, found, apps, alerts, downs, sam, ifaces=None):
     res = []
     for i, d in enumerate(dcs):
         node, how, why = found.get(i, (None, "", ""))
-        rec = {"dc": d["dc"], "domain": d.get("domain") or "", "fqdn": d.get("fqdn") or "", "ip": d.get("ip") or "", "matched": how, "unmatched_why": why, "status": "", "status_text": "", "last_poll": "",
+        rec = {"dc_id": ident.dc_id(d), "dc": d["dc"], "domain": d.get("domain") or "", "fqdn": d.get("fqdn") or "", "ip": d.get("ip") or "", "matched": how, "unmatched_why": why, "status": "", "status_text": "", "last_poll": "",
                "cpu": None, "mem": None, "apps": None, "alerts": [], "last_down": None, "node_id": None, "ifaces": None}
         if node:
             nid = node.get("node_id")

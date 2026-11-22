@@ -3815,27 +3815,27 @@ class AdDb(object):
             runs = [r for r in runs if (self._dt(r[1]) or now) > day0] or runs[:1]      # the last 24 h by read_at, whatever the schedule
             ids = [int(r[0]) for r in runs]
             marks = ",".join(["%s"] * len(ids))
-            dcrows = self._q(cur, "SELECT run_id, dc, domain, site, is_read, status, problems, worst FROM ad_dc WHERE run_id IN (%s)" % marks, ids)
-            links = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status, domain FROM ad_link WHERE run_id = %s "
+            dcrows = self._q(cur, "SELECT run_id, dc, domain, site, is_read, status, problems, worst, dc_id, site_id FROM ad_dc WHERE run_id IN (%s)" % marks, ids)
+            links = self._q(cur, "SELECT frm, to_dc, nc, last_success, failures, error, last_failure, status, domain, src_id, dst_id, link_key FROM ad_link WHERE run_id = %s "
                                  "AND status NOT IN ('ok', '')", [ids[0]])
             hist = self._q(cur, "SELECT r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, "
                                 "SUM(CASE WHEN d.status = 'critical' THEN 1 ELSE 0 END), SUM(CASE WHEN d.status = 'warning' THEN 1 ELSE 0 END), r.status, r.why "
                                 "FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND r.read_at >= %s "
                                 "GROUP BY r.run_id, r.read_at, r.job, r.dcs, r.dcs_read, r.status, r.why ORDER BY r.read_at", [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
             # a DC by its domain and name: two domains' DC01 are two DCs
-            top7 = self._q(cur, "SELECT d.dc, d.domain, COUNT(*) FROM ad_run r JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND "
-                                 "r.read_at >= %s AND d.status = 'critical' GROUP BY d.domain, d.dc ORDER BY COUNT(*) DESC, d.dc, d.domain LIMIT 1",
+            top7 = self._q(cur, "SELECT MAX(d.dc), MAX(d.domain), COUNT(*), d.dc_id FROM ad_run r JOIN ad_dc d ON d.run_id = r.run_id WHERE r.template_id = %s AND "
+                                 "r.read_at >= %s AND d.status = 'critical' GROUP BY d.dc_id ORDER BY COUNT(*) DESC, MAX(d.dc), MAX(d.domain) LIMIT 1",
                             [tid, now - datetime.timedelta(days=AD_HISTORY_DAYS)])
             order = dict((rid, k) for k, rid in enumerate(reversed(ids)))       # oldest first
             at = dict((int(r[0]), self._dt(r[1])) for r in runs)
             by = {}
-            for rid, dc, dom, site, is_read, st, probs, worst in dcrows:
-                by.setdefault((str(dom or ""), str(dc)), {})[int(rid)] = (str(st or ""), str(worst or ""), str(site or ""), bool(is_read), int(probs or 0))
+            for rid, dc, dom, site, is_read, st, probs, worst, dcid, siteid in dcrows:
+                by.setdefault(str(dcid), {})[int(rid)] = (str(st or ""), str(worst or ""), str(site or ""), bool(is_read), int(probs or 0), str(dom or ""), str(dc), str(siteid or ""))
             dcs = []
-            for (dom, dc), seen in by.items():
+            for dcid, seen in by.items():
                 if ids[0] not in seen:
                     continue                                   # not in the newest run: gone from AD (said by its runs only)
-                st, worst, site, is_read, probs = seen[ids[0]]
+                st, worst, site, is_read, probs, dom, dc, siteid = seen[ids[0]]
                 trend = [""] * len(ids)
                 for rid, v in seen.items():
                     trend[order[rid]] = v[0] or "ok"
@@ -3848,21 +3848,21 @@ class AdDb(object):
                 longer = False                                 # 1.101.2 review: the streak's start is always found (kept for older pages)
                 if n == len(ids) and st not in ("ok", ""):     # the same state all the runs shown: when it began, further back
                     # the last run of this template before them that is not this state - another state, or the DC not in it
-                    r = self._q(cur, "SELECT MAX(r.read_at) FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id AND d.domain = %s AND d.dc = %s "
+                    r = self._q(cur, "SELECT MAX(r.read_at) FROM ad_run r LEFT JOIN ad_dc d ON d.run_id = r.run_id AND d.dc_id = %s "
                                      "WHERE r.template_id = %s AND r.read_at < %s AND (d.run_id IS NULL OR d.status <> %s)",
-                                [dom, dc, tid, at[ids[-1]], st])
+                                [dcid, tid, at[ids[-1]], st])
                     before = self._dt(r[0][0]) if r and r[0] else None
                     # the streak: the runs after it (none before: the template's first kept run) up to the newest
                     nxt = self._q(cur, "SELECT MIN(read_at), COUNT(*) FROM ad_run WHERE template_id = %s AND read_at <= %s" +
                                        (" AND read_at > %s" if before is not None else ""), [tid, at[ids[0]]] + ([before] if before is not None else []))
                     if nxt and nxt[0] and nxt[0][0] is not None:
                         since, n = self._dt(nxt[0][0]) or since, max(n, int(nxt[0][1] or 0))   # its whole length: no "+"
-                dcs.append({"dc": dc, "domain": dom, "site": site, "read": is_read, "now": st or "ok", "problems": probs, "worst": worst,
+                dcs.append({"dc_id": dcid, "site_id": siteid, "dc": dc, "domain": dom, "site": site, "read": is_read, "now": st or "ok", "problems": probs, "worst": worst,
                             "since": since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else "", "runs_since": n, "longer": longer, "trend": trend})
             rank = {"critical": 0, "warning": 1, "unknown": 2, "low": 3, "ok": 4}
             dcs.sort(key=lambda d: (rank.get(d["now"], 5), d["dc"].lower()))
-            out_links = [{"frm": f, "to": t, "nc": nc, "domain": dm or "", "last_success": self._iso(ls), "failures": int(fl or 0), "error": err or "",
-                          "last_failure": self._iso(lf), "now": st or ""} for f, t, nc, ls, fl, err, lf, st, dm in links]
+            out_links = [{"src_id": srcid, "dst_id": dstid, "link_key": lkey, "frm": f, "to": t, "nc": nc, "domain": dm or "", "last_success": self._iso(ls), "failures": int(fl or 0), "error": err or "",
+                          "last_failure": self._iso(lf), "now": st or ""} for f, t, nc, ls, fl, err, lf, st, dm, srcid, dstid, lkey in links]
             out_links.sort(key=lambda x: (rank.get(x["now"], 5), x["frm"].lower(), x["to"].lower()))
             try:
                 live = json.loads(top[9] or "{}")
@@ -3876,7 +3876,7 @@ class AdDb(object):
                     "times": [self._iso(at[rid]) for rid in reversed(ids)], "dcs": dcs, "links": out_links, "live": live,
                     "hist": [{"at": self._iso(h[1]), "job": int(h[2] or 0), "dcs": int(h[3] or 0), "read": int(h[4] or 0),
                               "c": int(h[5] or 0), "w": int(h[6] or 0), "status": str(h[7] or ""), "why": str(h[8] or "")} for h in hist],
-                    "worst7": {"dc": str(top7[0][0]), "domain": str(top7[0][1] or ""), "critical": int(top7[0][2])} if top7 else None}
+                    "worst7": {"dc_id": str(top7[0][3]), "dc": str(top7[0][0]), "domain": str(top7[0][1] or ""), "critical": int(top7[0][2])} if top7 else None}
         finally:
             try:
                 conn.close()
@@ -3985,7 +3985,7 @@ class AdLive(object):
         sec = v.get("section")
         if not sec:
             raise ValueError("; ".join(v.get("not_read") or []) or "SolarWinds' answer could not be made into the section")
-        # keys: each row's DC by domain and name (the section's own, in its order): two domains' DC01 are never one
+        # keys: each row's dc_id in the section's order; display names do not identify a controller
         keep = dict((k, sec.get(k)) for k in ("columns", "rows", "cell_status", "row_status", "status", "text", "keys"))
         return {"at": time.time(), "key": key, "job": job, "section": keep, "tile": v.get("tile")}
 

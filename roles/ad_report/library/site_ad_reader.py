@@ -50,6 +50,11 @@ RETURN = r'''
 reader: {description: "What was read (roles/ad_report/tasks/reader.yml; plugins/filter/ad_filters.py ad_reader_report).", type: dict}
 '''
 
+try:
+    from ansible.module_utils import site_ad_ident as ident
+except ImportError:
+    import site_ad_ident as ident
+
 import datetime
 import json
 import os
@@ -810,12 +815,14 @@ class Reader(object):
             return out
 
         # 2. every DC: AD's and the inventory's
+        population = out.get("known_dcs") or out["dcs_ad"]
         ad_names = [d["fqdn"] for d in out["dcs_ad"]]
-        all_names = ad_names + [d["name"] for d in inv if d["name"] not in ad_names and d["name"].split(".")[0] not in [x.split(".")[0] for x in ad_names]]
+        all_names = ad_names + [d["name"] for d in inv if not ident.resolve(d, population)]
         dcs = []
         for fq in all_names:
             rec = next((d for d in out["dcs_ad"] if d["fqdn"] == fq), None)
-            in_inv = next((d for d in inv if d["name"] == fq or d["name"].split(".")[0] == fq.split(".")[0]), None)
+            in_inv = next((d for d in inv if d["name"] == fq or
+                           (rec and ident.resolve(d, population) is not None and ident.same_dc(ident.resolve(d, population), rec))), None)
             dc = self.read_dc(fq, rec, in_inv, out)
             dcs.append(dc)
         # clocks against the others (the median of the offsets cancels this side's own clock)
@@ -901,33 +908,36 @@ class Reader(object):
         for e in comps:
             comp_of[str(first(e, "dNSHostName") or first(e, "cn") or "").lower()] = e
         self.dsa_name = {}                          # NTDS Settings DN, objectGUID, invocationId -> fqdn
-        dcs = []
+        dcs, known = [], []
         for s in servers:
             dsa = dsa_of.get(s["dn"].lower())
             if not dsa:
                 continue                            # a server object with no NTDS Settings: not a DC (or demoted)
             fq = str(first(s, "dNSHostName") or "").lower() or (first(s, "cn") or "").lower() + "." + self.domain
-            if not fq.endswith("." + self.domain) and fq != self.domain:
-                continue                            # a DC of another domain of the forest
             comp = comp_of.get(fq) or {}
             opts = int(first(dsa, "options") or 0)
             rodc = str(first(dsa, "msDS-isRODC") or "").upper() == "TRUE" or "NTDS-DSA-RO" in str(first(dsa, "objectCategory") or "")
             rec = {"fqdn": fq, "name": rdn(s["dn"]).upper(), "site": site_of(s["dn"]), "gc": bool(opts & 1), "rodc": rodc,
                    "os": first(comp, "operatingSystem") or "", "os_version": first(comp, "operatingSystemVersion") or "",
+                   "domain": ident.domain({"fqdn": fq}), "server_dn": s["dn"], "site_dn": parent_dn(parent_dn(s["dn"])),
                    "dsa_dn": dsa["dn"], "dsa_guid": guid_text(first(dsa, "objectGUID")),
                    "invocation_id": guid_text(first(dsa, "invocationId")), "roles": [], "computer": bool(comp)}
-            dcs.append(rec)
+            rec["dc_id"] = ident.dc_id(rec)
+            known.append(rec)
+            if ident.domain(rec) == ident.domain_id(self.domain):
+                dcs.append(rec)
             for k2 in (dsa["dn"].lower(), rec["dsa_guid"], rec["invocation_id"]):
                 self.dsa_name[k2] = fq
         # DC accounts with no server object in Configuration (a DC removed badly, or one being built)
         for fq, comp in comp_of.items():
-            if fq and not any(d["fqdn"] == fq for d in dcs) and fq.endswith("." + self.domain):
+            if fq and not any(d["fqdn"] == fq for d in dcs) and ident.domain({"fqdn": fq}) == ident.domain_id(self.domain):
                 dcs.append({"fqdn": fq, "name": fq.split(".")[0].upper(), "site": "", "gc": False,
                             "rodc": bool(int(first(comp, "userAccountControl") or 0) & UF_PARTIAL_SECRETS),
                             "os": first(comp, "operatingSystem") or "", "os_version": first(comp, "operatingSystemVersion") or "",
                             "dsa_dn": "", "dsa_guid": "", "invocation_id": "", "roles": [], "computer": True, "no_server": True})
         dcs.sort(key=lambda x: x["fqdn"])
         out["dcs_ad"] = dcs
+        out["known_dcs"] = known
 
         # FSMO: fSMORoleOwner of the five objects
         fsmo = []
@@ -1048,7 +1058,7 @@ class Reader(object):
                 for v in curs:
                     cur = parse_cursor_xml(v)
                     name = self.dsa_name.get(cur["partner_dn"].lower()) or self.dsa_name.get(cur["invocation_id"].lower(), "")
-                    res["cursors"].append({"nc": nc, "partner": name, "partner_id": (cur["partner_dn"] or cur["invocation_id"]).lower(),
+                    res["cursors"].append({"nc": nc, "partner": name, "partner_dn": cur["partner_dn"], "partner_id": (cur["partner_dn"] or cur["invocation_id"]).lower(),
                                            "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
             elif utd:
                 seen_any, cur_src = True, cur_src or "replUpToDateVector"
@@ -1072,6 +1082,8 @@ class Reader(object):
         partner = self.dsa_name.get(str(x.get("partner_dn") or "").lower()) or self.dsa_name.get(str(x.get("partner_guid") or "").lower()) \
             or self.dsa_name.get(str(x.get("invocation_id") or "").lower()) or rdn(parent_dn(x.get("partner_dn") or "")) or x.get("address", "")
         return {"nc": nc, "partner": partner, "last_success": x["last_success"], "last_attempt": x["last_attempt"],
+                "partner_dn": x.get("partner_dn") or "", "partner_guid": x.get("partner_guid") or "",
+                "invocation_id": x.get("invocation_id") or "",
                 "partner_id": str(x.get("partner_dn") or x.get("partner_guid") or x.get("invocation_id") or "").lower(),
                 "failures": x["failures"], "result": x["result"]}
 

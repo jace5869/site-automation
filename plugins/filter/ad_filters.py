@@ -11,6 +11,14 @@ import re
 import importlib.util
 import os
 
+_ident_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_ad_ident.py")
+if os.path.isfile(_ident_path):
+    _spec_ident = importlib.util.spec_from_file_location("site_ad_ident", _ident_path)
+    ident = importlib.util.module_from_spec(_spec_ident)
+    _spec_ident.loader.exec_module(ident)
+else:
+    import site_ad_ident as ident
+
 # the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
 _spec = importlib.util.spec_from_file_location(
     "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
@@ -273,12 +281,11 @@ def ad_report(dcs, domains, opts=None):
         fq = str(data.get("fqdn") or "").lower()
         x["_fqdn"] = fq or str(x.get("host", "")).lower()
         x["_name"] = short(data.get("name") or x["_fqdn"]).upper() if (data.get("name") or x["_fqdn"]) else str(x.get("host"))
-        dom = str(data.get("domain") or "").lower()
+        dom = ident.domain(data)
         if not dom:
-            h = x["_fqdn"]
-            for k, (dn, _) in known.items():
-                if k == h or short(k) == short(h):
-                    dom = dn
+            candidates = [dict(rec, name=k, domain=dn) for k, (dn, rec) in known.items()]
+            found = ident.resolve(dict(ident.fields(data), name=x["_fqdn"]), candidates)
+            dom = ident.domain(found) if found else ident.domain({"fqdn": x["_fqdn"]})
         x["_domain"] = dom or "?"
         x["_ok"] = bool(x.get("reachable", True)) and bool(data)
         if x["_ok"]:
@@ -975,9 +982,12 @@ def ad_report(dcs, domains, opts=None):
               "subtitle": "Read %s - changes of the last %s h%s" % (_tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), _hours(hours),
                                                                          (" - " + o["mode_line"]) if o.get("mode_line") else ""),
               "summary": summary, "sections": R.sections}
-    dc_sum = [{"dc": x["_name"], "domain": x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")} for x in dcs]
+    repl = _repl_admin(dcs, doms, now)
+    dc_sum = [dict(ident.fields(x.get("data") or {}), **{"dc": x["_name"], "domain": "" if x["_domain"] == "?" else x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")}) for x in dcs]
+    dc_sum = [dict(d, **ident.fields(ident.resolve(d, repl["dcs"]) or d)) for d in dc_sum]
+    dc_sum = [dict(d, dc_id=ident.dc_id(d)) for d in dc_sum]
     return {"report": report, "problems": R.problems, "dcs": dc_sum, "domains": summaries,
-            "critical": len(crit), "warning": len(warn), "repl": _repl_admin(dcs, doms, now)}
+            "critical": len(crit), "warning": len(warn), "repl": repl}
 
 
 def ps_error(stderr):
@@ -1216,6 +1226,8 @@ def ad_reader_report(reader, opts=None):
                      for c in rp["cursors"] if c.get("partner") and c.get("last_sync")]
         if rp.get("source"):
             sources.add(rp["source"])
+        for nc in rp.get("failed") or []:
+            rows.append(_row([name, nc_name(nc), "", "", "", "partition query failed", "not read"], [""] * 5 + ["unknown"], "unknown"))
         for nc in rp.get("not_granted") or []:
             not_granted.setdefault(nc_name(nc), []).append(name)
         if not links:
@@ -1254,6 +1266,9 @@ def ad_reader_report(reader, opts=None):
         repl_lines.append('Replication not read on %s: %s lacks "%s" on the partitions (see %s).' % (
             ", ".join(not_read), user, REPL_RIGHT, REPL_DOC))
     partial = sorted(k for k, v in not_granted.items() if [n for n in v if n not in not_read])
+    failed = sorted({nc_name(nc) for d in dcs for nc in (d.get("repl") or {}).get("failed") or []})
+    if failed:
+        repl_lines.append("Partition queries failed: %s (not read)." % ", ".join(failed))
     if partial:
         repl_lines.append('Nothing readable on %s: "%s" is not granted there, or the partition has no other copy (see %s).' % (
             ", ".join(partial), REPL_RIGHT, REPL_DOC))
@@ -1440,11 +1455,12 @@ def ad_reader_report(reader, opts=None):
               "subtitle": "Read %s - reader mode: LDAP, DNS and Kerberos from AAP as %s - changes of the last %s h" % (
                   _tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), user, _hours(hours)),
               "summary": summary, "sections": R.sections}
-    dc_sum = [{"dc": d.get("name") or _dc_short(d.get("fqdn")), "domain": dom, "host": d.get("fqdn"), "read": bool((d.get("bind") or {}).get("ok")),
-               "error": (d.get("bind") or {}).get("error", "")} for d in dcs if d.get("in_ad")]
+    dc_sum = [dict(ident.fields(d), **{"dc": d.get("name") or _dc_short(d.get("fqdn")), "domain": dom, "host": d.get("fqdn"), "read": bool((d.get("bind") or {}).get("ok")),
+               "error": (d.get("bind") or {}).get("error", "")}) for d in dcs if d.get("in_ad")]
+    dc_sum = [dict(d, dc_id=ident.dc_id(d)) for d in dc_sum]
     return {"report": report, "problems": R.problems, "dcs": dc_sum,
             "domains": [{"domain": dom, "forest": r.get("forest", ""), "dcs": len(in_ad), "dcs_read": n_ans, "collector": r.get("read_from")}],
-            "critical": len(crit), "warning": len(warn), "repl": _repl_reader(dcs, now, tsl, dom)}
+            "critical": len(crit), "warning": len(warn), "repl": _repl_reader(dcs, now, tsl, dom, r.get("known_dcs"))}
 
 
 # ---- 1.63.0: every replication link, for the replication matrix (plugins/filter/ad_repl_filters.py) ----------------------
@@ -1452,81 +1468,99 @@ def _repl_admin(dcs, doms, now):
     """Admin mode: each DC's repadmin /showrepl rows -> {dcs: [{name, site, read, why, domain}], links: [{to, frm, nc, domain,
     last_success, last_attempt, last_failure, failures, error}], source, now, tombstone_days} (domain: the receiving DC's). A DC AD knows but the job did not read is
     in dcs (read false): its column has no data, never a guess."""
-    seen = {}                                            # (domain, name) -> the DC: two domains' DC01 are two DCs
+    seen = {}
     for d in doms:
         for x in d["data"].get("dcs") or []:
-            n = short(x.get("name")).upper()
-            k = (str(d["data"].get("dns") or "").lower(), n)
-            if n and k not in seen:
-                seen[k] = {"name": n, "site": str(x.get("site") or ""), "read": False, "why": "not in the inventory: not read", "domain": k[0]}
-    links = []
+            rec = dict(ident.fields(x), name=short(x.get("name")).upper(), site=str(x.get("site") or ""), domain=ident.domain_id(d["data"].get("dns")),
+                       read=False, why="not in the inventory: not read")
+            rec["dc_id"] = ident.dc_id(rec)
+            seen[rec["dc_id"]] = rec
+    polled = []
     for x in dcs:
-        n = x["_name"]
         data = x.get("data") or {}
-        dom = "" if x.get("_domain") == "?" else str(x.get("_domain") or "").lower()
-        if not dom:                                      # its domain not known: AD's DC of that name, when there is one only
-            same = [k for k in seen if k[1] == n]
-            dom = same[0][0] if len(same) == 1 else ""
-        rec = seen.setdefault((dom, n), {"name": n, "site": str(data.get("site") or ""), "read": False, "why": "", "domain": dom})
-        rec["site"] = rec["site"] or str(data.get("site") or "")
+        rec = dict(ident.fields(data), name=x["_name"], domain=ident.domain_id(x.get("_domain") if x.get("_domain") != "?" else ""),
+                   site=str(data.get("site") or ""))
+        found = ident.resolve(rec, seen.values())
+        rec = dict(found or {}, **rec)
+        rec["domain"] = rec["domain"] or (found or {}).get("domain", "")
+        rec["site"] = rec["site"] or (found or {}).get("site", "")
+        rec["dc_id"] = ident.dc_id(rec)
         errs = [e for e in data.get("errors") or [] if str(e).startswith("repadmin /showrepl")]
-        if not x["_ok"]:
-            rec.update(read=False, why="not reached: %s" % (x.get("error") or "no answer"))
-            continue
-        rec.update(read=not errs, why=errs[0] if errs else "")
+        rec.update(read=bool(x["_ok"]) and not errs,
+                   why=(errs[0] if errs else "") if x["_ok"] else "not reached: %s" % (x.get("error") or "no answer"))
+        seen[rec["dc_id"]] = rec
+        polled.append((rec, data))
+    # Resolve all site-qualified sources together: an unknown site is not a wildcard.
+    pending = []
+    for rec, data in polled:
         for r in data.get("repl") or []:
-            frm = short(r.get("source")).upper()
-            if not frm:
+            src = ident.source(r)
+            if not ident.short_name(src):
                 continue
-            source_site = str(r.get("source_site") or "")
-            if not any(k[1] == frm and (not source_site or not v["site"] or v["site"].lower() == source_site.lower()) for k, v in seen.items()):
-                seen[("site:" + source_site.lower(), frm)] = {"name": frm, "site": source_site, "read": False, "why": "not in the inventory: not read", "domain": ""}
-            links.append({"to": n, "frm": frm, "nc": nc_name(r.get("nc")), "last_success": r.get("last_success") or "", "domain": dom,
-                          # the source as AD names it (site\server: unique in the forest), not only its short name
-                          "src": (("%s\\%s" % (r.get("source_site"), r.get("source"))) if r.get("source_site") and "\\" not in str(r.get("source"))
-                                  else str(r.get("source") or ""))[:255],
-                          "last_attempt": "", "last_failure": r.get("last_failure") or "", "failures": int(r.get("failures") or 0),
-                          "error": str(r.get("status") or "").strip() if int(r.get("failures") or 0) else ""})
+            found = ident.resolve(src, seen.values())
+            src = found or dict(src, name=ident.short_name(src).upper(), domain=ident.domain(src), read=False, why="not in the inventory: not read")
+            src["dc_id"] = ident.dc_id(src)
+            seen.setdefault(src["dc_id"], src)
+            pending.append((rec, src, r))
+    links = []
+    for rec, src, r in pending:
+        links.append({"to": rec["name"], "frm": ident.short_name(src).upper(), "nc": nc_name(r.get("nc")), "nc_dn": r.get("nc") or "",
+                      "last_success": r.get("last_success") or "", "domain": rec["domain"],
+                      "src": ((str(r.get("source_site")) + "\\") if r.get("source_site") and "\\" not in str(r.get("source")) else "") + str(r.get("source") or ""), "src_id": ident.dc_id(src), "dst_id": ident.dc_id(rec),
+                      "source_site": src.get("site") or "", "last_attempt": "", "last_failure": r.get("last_failure") or "",
+                      "failures": int(r.get("failures") or 0),
+                      "error": str(r.get("status") or "").strip() if int(r.get("failures") or 0) else ""})
     tsl = min([d["data"].get("tombstone_days") or 60 for d in doms] or [60])
     return {"dcs": list(seen.values()), "links": links, "source": "repadmin /showrepl", "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tombstone_days": tsl}
 
 
-def _repl_reader(dcs, now, tsl, dom=""):
-    """Reader mode: each DC's own partition heads (site_ad_reader's repl) -> as _repl_admin. With no link readable, the
-    up-to-dateness cursors stand in (when each DC's changes last arrived), the DC itself left out."""
-    out, links, sources = [], [], set()
+def _repl_reader(dcs, now, tsl, dom="", known=None):
+    """Reader observations and every discovered controller, with exact link endpoints."""
+    population = [dict(ident.fields(d), name=d.get("name"), site=d.get("site") or "", domain=ident.domain(d) or ident.domain_id(dom)) for d in (known or [])]
+    population += [dict(ident.fields(d), name=d.get("name"), site=d.get("site") or "", domain=ident.domain(d) or ident.domain_id(dom)) for d in dcs if d.get("in_ad")]
+    out = {ident.dc_id(d): dict(d, read=False, why="not polled: not read") for d in population}
+    links, sources = [], set()
     for d in dcs:
         if not d.get("in_ad"):
             continue
-        name = d.get("name") or _dc_short(d.get("fqdn"))
+        rec = dict(ident.fields(d), name=d.get("name") or _dc_short(d.get("fqdn")), site=str(d.get("site") or ""),
+                   domain=ident.domain(d) or ident.domain_id(dom), read=False, why="")
+        rec["dc_id"] = ident.dc_id(rec)
+        out[rec["dc_id"]] = rec
         rp = d.get("repl") or {}
-        rec = {"name": name, "site": str(d.get("site") or ""), "read": False, "why": "", "domain": str(dom or "").lower()}
-        out.append(rec)
+        rec["partial"] = sorted(nc_name(x) for x in (rp.get("not_granted") or []) + (rp.get("failed") or []))
         if not (d.get("bind") or {}).get("ok"):
             rec["why"] = "not reached: %s" % ((d.get("bind") or {}).get("error") or "no answer")
-            continue
-        if rp.get("why") in (NEEDS_ADMIN, REPL_NOT_GRANTED):
+        elif rp.get("why") in (NEEDS_ADMIN, REPL_NOT_GRANTED):
             rec["why"] = 'not read: needs "%s"' % REPL_RIGHT
-            continue
-        rec["read"] = True
-        rec["partial"] = sorted(nc_name(x) for x in (rp.get("not_granted") or []) + (rp.get("failed") or []))   # partitions not readable on this DC
+        else:
+            rec["read"] = True
         if rp.get("source"):
             sources.add(rp["source"])
-        got = rp.get("links") or []
-        if not got:
-            got = [{"nc": c.get("nc"), "partner": c.get("partner"), "partner_id": c.get("partner_id"), "last_success": c.get("last_sync"), "failures": 0, "result": 0}
-                   for c in rp.get("cursors") or [] if c.get("partner") and c.get("last_sync")]
+        got = rp.get("links") or [dict(c, last_success=c.get("last_sync"), failures=0, result=0, cursor=True)
+                                  for c in rp.get("cursors") or [] if c.get("partner") and c.get("last_sync")]
         for ln in got:
-            frm = _dc_short(ln.get("partner"))
-            if not frm or frm == name:
+            src = ident.source(ln)
+            src = ident.resolve(src, out.values()) or src
+            # Invocation IDs identify an incarnation, not a DC. They only resolve a known cursor.
+            if ln.get("cursor") and ln.get("invocation_id"):
+                matches = [v for v in out.values() if v.get("invocation_id") == ln["invocation_id"]]
+                if len(matches) == 1:
+                    src = matches[0]
+            frm = ident.short_name(src).upper()
+            if not frm or ident.same_dc(src, rec):
                 continue
+            src = dict(src, dc_id=ident.dc_id(src))
+            out.setdefault(src["dc_id"], dict(src, name=frm, site=str(src.get("site") or ""), read=False, why="not polled: not read"))
             fails = int(ln.get("failures") or 0)
-            links.append({"to": name, "frm": frm, "nc": nc_name(ln.get("nc")), "last_success": ln.get("last_success") or "",
-                          "domain": str(dom or "").lower(), "src": str(ln.get("partner_id") or ln.get("partner") or "")[:255], "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
-                          "failures": fails, "error": str(ln.get("result") or "") if fails else ""})
-    return {"dcs": out, "links": links, "source": ", ".join(sorted(sources)), "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "tombstone_days": tsl or 60}
+            links.append(dict(ln, to=rec["name"], frm=frm, nc=nc_name(ln.get("nc")), nc_dn=ln.get("nc") or "", domain=rec["domain"],
+                              src=ln.get("partner_id") or ln.get("partner") or "", src_id=src["dc_id"], dst_id=rec["dc_id"],
+                              last_success=ln.get("last_success") or "", last_attempt=ln.get("last_attempt") or "",
+                              last_failure=(ln.get("last_attempt") or "") if fails else "", failures=fails,
+                              error=str(ln.get("result") or "") if fails else ""))
+    return {"dcs": list(out.values()), "links": links, "source": ", ".join(sorted(sources)),
+            "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "tombstone_days": tsl or 60}
 
 
 def ad_mode(dcs, wanted):

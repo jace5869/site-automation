@@ -98,7 +98,7 @@ catch { Note 'schema' $_ }
 $D.dcs = @()
 try {
     foreach ($x in @(Get-ADDomainController -Filter * @OnDc)) {
-        $D.dcs += @(@{ name = ([string]$x.HostName).ToLower(); site = [string]$x.Site; ip = [string]$x.IPv4Address; gc = [bool]$x.IsGlobalCatalog
+        $D.dcs += @(@{ name = ([string]$x.HostName).ToLower(); server_dn = [string]$x.ServerObjectDN; dsa_dn = [string]$x.NTDSSettingsObjectDN; site = [string]$x.Site; ip = [string]$x.IPv4Address; gc = [bool]$x.IsGlobalCatalog
                 rodc = [bool]$x.IsReadOnly; os = [string]$x.OperatingSystem; ntds = [string]$x.NTDSSettingsObjectDN; roles = @($x.OperationMasterRoles | ForEach-Object { [string]$_ }) })
     }
 }

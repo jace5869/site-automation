@@ -59,7 +59,7 @@ read-only account `report_reader`) and `report_db`, run it, then run *Site porta
   SolarWinds not read or overdue, the portal not answering (20 s), replication not read, no DC found, a run whose rows
   could not be made - each said on the page; a DC is up only when SolarWinds says Up for that DC (its own domain).
 - **The AD job keeps each run** in the report database (`ad_db`, new tables `ad_run`, `ad_dc`, `ad_link`, made by the
-  job, schema version 3; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job
+  job, schema version 4; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job
   stays green. The website page is as before.
 - **Site portal - deploy**: the read-only login as the podman secret `site-portal-reportdb` (from the attached Report
   database credential); a login that can write is a warning; never a failed deploy. The portal starts a Python of its
