@@ -129,7 +129,7 @@ def _short_scope(sub):
     """A subtitle's first clause as the scope line: parentheses and everything after ' - ' belong to the method (end of the report)."""
     first = re.sub(r"\s*\([^)]*\)", "", sub.split(" - ", 1)[0]).strip().rstrip(".,;:")
     if len(first) > SCOPE_MAX:
-        first = first[:SCOPE_MAX].rsplit(",", 1)[0].rsplit(" ", 1)[0] if "," in first[:SCOPE_MAX] else first[:SCOPE_MAX].rsplit(" ", 1)[0]
+        first = first[:SCOPE_MAX].rsplit(",", 1)[0] if "," in first[:SCOPE_MAX] else first[:SCOPE_MAX].rsplit(" ", 1)[0]
     return first
 
 

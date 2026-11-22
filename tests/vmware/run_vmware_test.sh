@@ -562,8 +562,11 @@ t = b.get_content() if b is not None and b.get_content_subtype() == sys.argv[1] 
 t = re.sub(r"<span class=\"(?:sa|g)-lab\"[^>]*>[^<]*</span>", "", t)
 print(re.sub(r"<span class=\"(?:sa|g)-brk\">([^<]*)</span>", r"\1", t))' "$1" "$2"
 }
+subject() {  # the decoded Subject of an email (a long one is folded over two lines in the file)
+    "$py" -c 'import email, email.policy, sys; print(email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)["Subject"])' "$1"
+}
 [ -n "$eml" ] && getpart plain "$eml" > "$body" && getpart html "$eml" > "$work/body.html"
-if [ -n "$eml" ] && grep -q "Subject: \[AAP\] VMware secure boot report: 6 VM(s) to fix" "$eml" \
+if [ -n "$eml" ] && subject "$eml" | grep -qx "\[AAP\] VMware secure boot: 6 VMs to fix" \
    && grep -q "^Secure boot OFF (EFI firmware) (2)" "$body" && grep -q "^BIOS firmware (4)" "$body" \
    && grep -Eq "^DC0_H0_VM0 +/DC0/vm +DC0_H0 +aap01.example.mil +192.0.2.5 +poweredOn +otherGuest$" "$body" \
    && grep -Eq "^dup +/DC0/vm/other " "$body" \
@@ -618,7 +621,8 @@ emlrs="$(grep -l 'Subject: \[AAP\] VM right-sizing: ' "$work/mail"/*.eml | head 
 if [ -n "$emlrs" ] && "$py" - "$emlrs" <<'PY'
 import email, email.policy, io, re, sys, zipfile
 m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
-n = int(re.search(r"of (\d+) VM", m["Subject"]).group(1))
+assert m["Subject"] == "[AAP] VM right-sizing: 1 too big", m["Subject"]        # 1.82.0: the head's subject, the VM count is in the body
+n = int(re.search(r"^VMs checked: (\d+)$", m.get_body(preferencelist=("plain",)).get_content(), re.M).group(1))
 html = [p for p in m.walk() if p.get_content_type() == "text/html"][0].get_content()
 assert "Too big" in html and "How the suggestions are worked out" in html and "16 → 8" in html, "the tables"
 att = [p for p in m.walk() if re.match(r"vm-right-sizing-report_\d{4}-\d{2}-\d{2}\.xlsx$", p.get_filename() or "")]
@@ -636,7 +640,7 @@ getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware s
     && echo "ok   -   ...the snapshot table in the email, the age limit in the subject and headings" || { echo "FAIL -   ...snapshot email"; fails=$((fails + 1)); }
 run "datastore report emailed" ok vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 -e "$mail" -- "emailed"
 eml3="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
-getpart plain "$eml3" | grep -Eq "^LocalDS_0 +DC0 +.* ok$" && grep -q "Subject: \[AAP\] VMware datastore report: 1 of 1 at 0.5%+ used" "$eml3" \
+getpart plain "$eml3" | grep -Eq "^LocalDS_0 +DC0 +.* ok$" && subject "$eml3" | grep -qx "\[AAP\] VMware datastore: 1 of 1 at 0.5%+ used" \
     && echo "ok   -   ...subject with the count, a row per datastore" || { echo "FAIL -   ...datastore email"; getpart plain "$eml3" | head; fails=$((fails + 1)); }
 run "datastore report emailed, default thresholds" ok vm_datastore_report.yml -e "$mail" -- "emailed"
 eml5="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
@@ -680,9 +684,6 @@ actvars="{\"act_triage_script_src\": \"$repo/tests/containers/fake_act.py\", \"a
           \"site_act_url\": \"http://127.0.0.1:$http_port/v1/chat/completions\"}"
 export FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json"
 lastmail() { ls "$work/mail"/*.eml | sort -V | tail -1; }
-subject() {  # the decoded Subject of an email (a long one is folded over two lines in the file)
-    "$py" -c 'import email, email.policy, sys; print(email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)["Subject"])' "$1"
-}
 nmail() { ls "$work/mail" | grep -c 'eml$'; }
 run "ACT analysis with nothing to analyze (no alarm, no events read): ACT not called, no email" ok vm_alarm_act_analysis.yml \
     -e vm_alarm_hours=0 -e "$mail" -e "$actvars" -- "VMware alarms ACT analysis: nothing to analyze" "No email: nothing to analyze"
@@ -694,7 +695,7 @@ run "alarms report: host not connected, connection lost, failed logins grouped, 
        "Host DC0_C0_H1 lost its connection to vCenter" "Guest OS shut down for DC0_H0_VM1" "Datastore LocalDS_0 latency is high" \
        '"hosts_not_connected": [   "DC0_C0_H2"' '"failed_logins"' "emailed" "Alarms that fired in the last 24 h (1)" '"alarms_fired"'
 eml="$(lastmail)"; getpart html "$eml" > "$work/al.html"; getpart plain "$eml" > "$work/al.txt"
-if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware alarms report: no triggered alarms, 1 host(s) not connected" \
+if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -qx "\[AAP\] VMware alarms: 1 host lost the connection, 3 failed logins" \
    && grep -q 'bgcolor="#fee2e2"' "$work/al.html" && grep -q 'bgcolor="#b91c1c"[^>]*>CRITICAL<' "$work/al.html" \
    && grep -q 'bgcolor="#fef3c7"' "$work/al.html" && grep -q 'bgcolor="#b45309"[^>]*>WARNING<' "$work/al.html" \
    && grep -q ">DC0_C0_H2<" "$work/al.html" && grep -q ">disconnected<" "$work/al.html" \
@@ -734,7 +735,7 @@ if [ "$(nmail)" = $((n0 + 1)) ] && grep -q "P1 \[CRITICAL\] Host DC0_C0_H2 (DC0_
    && grep -q "BEGIN_ACT_ANALYSIS" "$work/act/fake-act-task.txt" && grep -q "You cannot run any commands" "$work/act/fake-act-task.txt" \
    && grep -q 'bgcolor="#15803d"[^>]*>92% high<' "$work/act.html" && grep -q 'bgcolor="#b45309"[^>]*>55% medium<' "$work/act.html" \
    && grep -q 'bgcolor="#b91c1c"[^>]*>30% low<' "$work/act.html" && grep -q "Likely causes and fixes" "$work/act.html" \
-   && subject "$eml" | grep -q "^\[AAP\] VMware alarms ACT analysis: likely causes and fixes for 4 problem(s)"; then
+   && subject "$eml" | grep -qx "\[AAP\] VMware alarms ACT analysis: likely causes and fixes for 4 problems"; then
     echo "ok   -   ...ACT got the evidence on stdin and the JSON contract; the email colours the confidence"
 else
     echo "FAIL -   ...ACT evidence / email"; head -c 800 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1))
@@ -756,7 +757,7 @@ unset GENAI_KEY
 n0="$(nmail)"
 run "ACT analysis without an API key: says which credential, still emails the problems, fails" fail vm_alarm_act_analysis.yml -e "$mail" -e "$actvars" \
     -- "This job has no API key for provider genai" "ACT model key" "emailed"
-[ "$(nmail)" = $((n0 + 1)) ] && subject "$(lastmail)" | grep -q "ACT did not run - 4 problem(s) not analyzed" \
+[ "$(nmail)" = $((n0 + 1)) ] && subject "$(lastmail)" | grep -qx "\[AAP\] VMware alarms ACT analysis: ACT did not run - 4 problems not analyzed" \
     && echo "ok   -   ...the email says ACT did not run, and lists the problems" || { echo "FAIL -   ...no-key email"; fails=$((fails + 1)); }
 
 # ---- capacity planning (vcsim's statistics are generated: the checks are about the report, not its numbers) ----
@@ -919,7 +920,7 @@ run "ESXi security settings (dry run) on both vCenters' hosts" ok esxi_security.
 run "a vCenter that cannot be reached: the others are reported, it is listed, the report completes green" ok vm_datastore_report.yml \
     -e "{\"vmware_vcenters\": [\"$vc2\", \"127.0.0.1:1\"]}" -e "$mail" \
     -- "NOT READ: Could not connect to vCenter 127.0.0.1:1" "all 2 below 85% used" "emailed"
-subject "$(lastmail)" | grep -q "1 vCenter(s) not read" && getpart html "$(lastmail)" | grep -q ">vCenters not read <span" \
+subject "$(lastmail)" | grep -qx "\[AAP\] VMware datastore report: all 2 below 85% used - 1 vCenter not read" && getpart html "$(lastmail)" | grep -q ">vCenters not read <span" \
     && echo "ok   -   ...the email says so, in red on top" || { echo "FAIL -   ...unreachable vCenter email"; subject "$(lastmail)"; fails=$((fails + 1)); }
 run "...vmware_vcenter_fail_unread: true makes the job fail at its end (for a workflow)" fail vm_datastore_report.yml \
     -e "{\"vmware_vcenters\": [\"127.0.0.1:1\"]}" -e vmware_vcenter_fail_unread=true \
@@ -2076,7 +2077,7 @@ RUN_PORT=$port3 run "health report: every datacenter, cluster and host; retreat 
        "Disconnected from vCenter since 20" "UTC (vCenter's event)" "vSphere HA is off: the VMs of a failed host are not restarted" \
        "HA admission control is off" '"vm_health"' '"problems"' "emailed"
 eml="$(lastmail)"; getpart html "$eml" > "$work/hl.html"; getpart plain "$eml" > "$work/hl.txt"
-if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware health report: 2 critical, 3 warning(s)" \
+if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -qx "\[AAP\] VMware health: 2 critical, 3 warnings" \
    && grep -Eq "^CRITICAL +DC1_C0 +DC1 +2 of 2 +OFF +on +RETREAT MODE" "$work/hl.txt" \
    && grep -Eq "^CRITICAL +DC0_C1 +DC0 +1 of 2 \(1 not connected\) +OFF" "$work/hl.txt" \
    && grep -Eq "^OK +DC0_C0 +DC0 +2 of 2 +on, admission control off +on +normal" "$work/hl.txt" \
@@ -2692,7 +2693,7 @@ VMWARE_PORT=$port "$py" "$here/vcsim.py" outage 2
 run "outage review, nothing down now: a report all the same - the short loss is one Low row, the job is green" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e vm_watch_review=true \
     -- "Outage review: DC0_C0_H0: all paths down to a storage device" "Host not responding, back after 2 s  [Low]" "HA restarted 1 VM  [Warning]" \
-       "ServiceNow was not read: attach the ServiceNow API credential to the job template." "VM outage watch: nothing down" \
+       "ServiceNow was not read: attach the ServiceNow API credential to the job template." '"VM outage watch",' '"nothing down",' \
        '"vm_outage_review": {' '"hosts_down": []' '"site_health_targets": []'
 run "outage review with vm_watch_review_low_seconds: 0 - the loss counts as time down, with its end" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_low_seconds=0 \
@@ -2798,7 +2799,7 @@ printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_pytho
     "$py" "$py" "$work/relay/main.cf" > "$work/inv-relay.yml"
 INV="$work/inv-relay.yml" run "mail relay format: names from DNS, the VM and its folder from vCenter" ok mail_relay_format.yml \
     -e '{"mail_relay_become": false, "mail_relay_check_command": "true", "mail_relay_postconf": "", "mail_relay_format_dns_timeout": 2}' \
-    -- "Finance" "1 of 1 relay(s) formatted" "2 of 3 address(es) looked up matched a VM (2 by its IP address, 0 by its DNS name); 1 of them in a folder." \
+    -- "Finance" "1 of 1 relay formatted" "2 of 3 address(es) looked up matched a VM (2 by its IP address, 0 by its DNS name); 1 of them in a folder." \
        "VM(s) read." "1 matched VM(s) sit at the top of their datacenter"
 printf 'myhostname = relay1.example.mil\nmynetworks =\n    192.0.2.0/28\n\n    # localhost [AAP]\n    127.0.0.1\n\n    # DC0_H0_VM1 [AAP]\n    192.0.2.20\n\n    # DC0_C0_RP0_VM1  Finance [AAP]\n    192.0.2.40\n' \
     | cmp -s - "$work/relay/main.cf" \

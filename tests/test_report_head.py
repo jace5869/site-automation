@@ -180,6 +180,11 @@ class Pages(unittest.TestCase):
         self.assertEqual(h["scope_text"], u"1 host \u00b7 blocked since yesterday")
         self.assertIn("ausearch", h["method"])
         self.assertEqual(H.report_head({"title": "X report: 1 critical", "subtitle": "3 hosts"})["method"], "")
+        # cut at the last comma within 80 characters: the item before it whole (the outage watch's lost "datastore")
+        sub = ("Read 2026-11-22T03:00:17Z UTC: 4 hosts, 1 datastore, 4 powered-on VMs; HA and storage events of the last 15 minutes. "
+               "A VM is hung only when it has no heartbeat")
+        self.assertEqual(H.report_head({"title": "VM outage watch: nothing down", "subtitle": sub})["scope"],
+                         ["Read 2026-11-22T03:00:17Z UTC: 4 hosts, 1 datastore"])
 
     def test_the_text_email(self):
         t = sf.report_text(self.doc())
