@@ -37,7 +37,7 @@ bad() { echo "FAIL - $1"; fails=$((fails + 1)); }
     --tls-version= >/dev/null || { echo "ABORT - MySQL did not start"; exit 1; }
 "$py" - "$dbport" "$root" "$wpw" "$rpw" <<'EOPY' || { echo "ABORT - MySQL not ready"; "${rtc[@]}" logs "$name" 2>&1 | tail -5; exit 1; }
 import sys, time, pymysql
-for _ in range(120):
+for _ in range(300):                 # MySQL 8.4 first start: up to minutes on a busy box
     try:
         c = pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user="root", password=sys.argv[2], ssl_disabled=True, autocommit=True)
         break
@@ -119,7 +119,7 @@ class C(object):
     data = work
     report_db = {"host": "127.0.0.1", "port": int(port), "database": "site_reports", "user": "report_reader", "password": rpw, "tls": False}
 m = sp.AdDb(C()).read(template_id=12)
-d3 = [d for d in m["dcs"] if d["dc"] == "DC03"][0]
+d3 = [d for d in m["dcs"] if d["dc"] == "dc03"][0]          # the DC key: its lower-case host label (1.101.2)
 print("RUN", m["run"]["job"], m["run"]["status"], m["run"]["dcs"], m["run"]["dcs_read"])
 print("DC03", d3["now"], d3["runs_since"], d3["since"] == m["times"][-3], "".join(x[0] for x in d3["trend"]))
 print("ORDER", ",".join(d["dc"] for d in m["dcs"]))
@@ -135,8 +135,8 @@ except Exception as e:
 EOPY
 grep -q "^RUN 9000 critical 3 3$" "$work/read.txt" && ok "the portal (report_reader): the newest run" || bad "the newest run: $(cat "$work/read.txt")"
 grep -q "^DC03 critical 3 True oooooccc$" "$work/read.txt" && ok "DC03: critical since the run 3 back, its trend" || bad "DC03: $(grep DC03 "$work/read.txt")"
-grep -q "^ORDER DC03,DC01,DC02$" "$work/read.txt" && ok "the DCs worst first" || bad "order: $(grep ORDER "$work/read.txt")"
-grep -q '^LINKS \[\["DC01", "DC03", "critical", 3\]\]$' "$work/read.txt" && ok "the link that needs a look, the healthy one left out" || bad "links: $(grep LINKS "$work/read.txt")"
+grep -q "^ORDER dc03,dc01,dc02$" "$work/read.txt" && ok "the DCs worst first" || bad "order: $(grep ORDER "$work/read.txt")"
+grep -q '^LINKS \[\["dc01", "dc03", "critical", 3\]\]$' "$work/read.txt" && ok "the link that needs a look, the healthy one left out" || bad "links: $(grep LINKS "$work/read.txt")"
 grep -q "^HIST 8 1 0$" "$work/read.txt" && ok "the week: 8 runs" || bad "hist: $(grep HIST "$work/read.txt")"
 grep -q "^LIVE ad$" "$work/read.txt" && ok "the run's live part (the DCs for SolarWinds)" || bad "live: $(grep LIVE "$work/read.txt")"
 grep -q "^READER_WRITES no 1142$" "$work/read.txt" && ok "report_reader cannot write (1142)" || bad "the reader: $(grep READER "$work/read.txt")"
