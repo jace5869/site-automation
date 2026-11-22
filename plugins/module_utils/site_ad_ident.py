@@ -103,7 +103,7 @@ def merge(population):
 
 def unsupported(data):
     """Only AD evidence: never a host's DNS suffix or a SolarWinds caption."""
-    domains, forests, where = set(), set(), []
+    domains, forests, where, ncs = set(), set(), [], []
 
     def walk(value, path="AD"):
         if isinstance(value, list):
@@ -125,11 +125,18 @@ def unsupported(data):
                 elif k in ("nc", "nc_dn") and isinstance(v, str):
                     nc = re.sub(r"^DC=(?:DomainDnsZones|ForestDnsZones),", "", v, flags=re.I)
                     if re.fullmatch(r"DC=[^,]+(?:,DC=[^,]+)*", nc, re.I):
-                        domains.add(domain_id(".".join(x[3:] for x in nc.split(","))))
-                        where.append("partner NC: " + v)
+                        ncs.append((domain_id(".".join(x[3:] for x in nc.split(","))), v))    # weighed after the walk
                 elif isinstance(v, (dict, list)):
                     walk(v, path + "." + k)
     walk(data)
+    # a partition NC under a known domain's DN with more DC= labels in front (an application partition such as
+    # DC=TAPI3Directory,DC=ad,...) is that domain's partition, not another domain; shortest first, so the domain's own NC
+    # is known before its application partitions
+    for name, v in sorted(ncs, key=lambda x: len(x[0])):
+        if any(name == k or name.endswith("." + k) for k in domains):
+            continue
+        domains.add(name)
+        where.append("partner NC: " + v)
     return "; ".join(where) if len(domains) > 1 or len(forests) > 1 else ""
 
 

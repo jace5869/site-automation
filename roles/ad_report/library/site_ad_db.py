@@ -159,8 +159,9 @@ def write(conn, now, job, template_id, run):
                    int(d["node_id"]) if d.get("node_id") is not None else None, 1 if d.get("stale_dsa") else 0, str(d.get("site") or "")[:191],
                    1 if d.get("read") else 0, 1 if d.get("repl_read") else 0, str(d.get("status") or "")[:16], int(d.get("problems") or 0),
                    str(d.get("worst") or "")[:300]) for d in dcs]
-        linkrows = [(link_key(x), ident.link_id(x)[1], ident.link_id(x)[0], ident.link_id(x)[2], ident.domain(x),
-                     ident.link_id(x)[1], ident.link_id(x)[0], str(x.get("nc") or "")[:191], stamp(x.get("last_success")),
+        # each value cut to its column (strict MySQL refuses longer ones): a "dsa:<ntds dn>" source can pass 191
+        linkrows = [(link_key(x), ident.link_id(x)[1][:255], ident.link_id(x)[0][:191], ident.link_id(x)[2], ident.domain(x)[:191],
+                     ident.link_id(x)[1][:191], ident.link_id(x)[0][:191], str(x.get("nc") or "")[:191], stamp(x.get("last_success")),
                      int(x.get("failures") or 0), str(x.get("error") or "")[:255], stamp(x.get("last_failure")),
                      str(x.get("status") or "")[:16]) for x in links]
     except (ValueError, TypeError, OverflowError) as e:

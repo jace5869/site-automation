@@ -1259,5 +1259,30 @@ class Joint11012(unittest.TestCase):
         self.assertEqual(ok["read"], 3)                                 # read: the layer as before
 
 
+class FableP2_11012(unittest.TestCase):
+    """Fable's final check of 1.101.2: two P2s."""
+
+    def test_1_an_application_partition_is_not_a_second_domain(self):
+        import site_ad_ident as ident
+        one = {"dcs": [{"dc": "dc01", "domain": "ad.example.mil"}],
+               "repl": {"links": [{"nc": "DC=ad,DC=example,DC=mil"}, {"nc": "DC=TAPI3Directory,DC=ad,DC=example,DC=mil"},
+                                  {"nc": "DC=DomainDnsZones,DC=ad,DC=example,DC=mil"}]}}
+        self.assertEqual(ident.unsupported(one), "")
+        two = dict(one, dcs=one["dcs"] + [{"dc": "dc09", "domain": "other.example.mil"}])
+        self.assertIn("other.example.mil", ident.unsupported(two))        # a second domain still refused
+        other_nc = {"repl": {"links": [{"nc": "DC=ad,DC=example,DC=mil"}, {"nc": "DC=other,DC=test"}]}}
+        self.assertIn("partner NC: DC=other,DC=test", ident.unsupported(other_nc))
+
+    def test_2_long_link_keys_are_cut_to_their_columns(self):
+        def long_src(ad):
+            # a source that resolves to no DC and has no GUID: its key is "dsa:<its NTDS DN>"
+            ad["repl"]["links"][0]["src_id"] = "dsa:cn=ntds settings,cn=" + "x" * 300 + ",cn=servers,cn=sitea0101,cn=sites,cn=configuration,dc=ad,dc=example,dc=mil"
+        db = one_run(long_src)
+        rows = db.db.execute("SELECT LENGTH(src), LENGTH(dst), LENGTH(frm), LENGTH(to_dc), LENGTH(domain) FROM ad_link").fetchall()
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertTrue(r[0] <= 255 and all(n <= 191 for n in r[1:]), r)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
