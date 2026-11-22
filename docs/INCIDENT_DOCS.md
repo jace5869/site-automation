@@ -192,7 +192,9 @@ The VM outage watch's review (`vm_watch_review: true`) writes the AAR as a Word 
 
 1. Launch *Outage AAR - Word document*.
 2. In **Fill from an outage review** (`incident_review`), type the review's AAP job number (for example `4714`), or `latest`.
-   *latest* is the newest *VM - outage watch* job that made a review. The job output names the job it picked.
+   *latest* is the newest *VM - outage watch* job of this project (`incident_docs_survey_project`) that made a review. The
+   job output names the job it picked. When a newer run cannot be read, it stops and says which: it never takes an older
+   outage's review instead.
 3. Leave empty what the review knows: start, end, impact, detection, actions, recovery, the outage's name. Type what it
    cannot know: the impact level, the root cause, the lessons learned. **What you type wins.**
 4. Launch. The job output says *Filled from the outage review of AAP job 4714 ...* and which boxes came from it.

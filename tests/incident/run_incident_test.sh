@@ -151,7 +151,8 @@ run "the SOP job launched from the draft: made, the draft emptied" ok incident_s
 # 1.112.0: the AAR from an outage review (incident_review) - the boxes left empty from the review's draft (the job's artifact)
 review='{"incident_start": "", "incident_detection": "", "incident_actions": "", "incident_root_cause": "", "incident_successes": "", "incident_tasks": "", "incident_make_sop": "No"}'
 run "AAR from an outage review (its job number): the empty boxes from it" ok incident_aar.yml -e @"$work/aar.yml" -e "$review" \
-    -e incident_review=4714 -- "Filled from the outage review of AAP job 4714 (VM - outage watch)" "Made: AAR-Web-portal-outage.docx\""
+    -e incident_review=4714 -- "Filled from the outage review of AAP job 4714 (VM - outage watch)" "Made: AAR-Web-portal-outage.docx\"" \
+    "Boxes taken from it: start, end, detection, actions. The root cause"
 mail "the review's facts, ACT's line as a suggestion, red lines to write, Appendix A; typed boxes win" attach=AAR-Web-portal-outage.docx \
     "AAR-Web-portal-outage.docx~Filled from the outage review, AAP job 4714" "AAR-Web-portal-outage.docx~Start: 2026-11-12 01:58 CET" \
     "AAR-Web-portal-outage.docx~First signal 12 Nov 01:41:10 CET" "AAR-Web-portal-outage.docx~Key events (from the review" \
@@ -159,6 +160,7 @@ mail "the review's facts, ACT's line as a suggestion, red lines to write, Append
     "AAR-Web-portal-outage.docx~To write: the confirmed cause" "AAR-Web-portal-outage.docx~To write: what went well." \
     "AAR-Web-portal-outage.docx~Appendix A - every event of the review" "AAR-Web-portal-outage.docx~Rolled teh package back." \
     "AAR-Web-portal-outage.docx~it is affecting users enterprise-wide" "AAR-Web-portal-outage.docx~ACT was not asked" \
+    "AAR-Web-portal-outage.docx~Template error: {{ lookup('ansible.builtin.env', 'HOME') }}" \
     "body=Filled from the outage review of AAP job 4714"
 run "AAR from the latest review: the newest watch run with one (4714, not 4720)" ok incident_aar.yml -e @"$work/aar.yml" -e "$review" \
     -e incident_review=latest -- "Filled from the outage review of AAP job 4714"

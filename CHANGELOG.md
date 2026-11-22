@@ -35,6 +35,17 @@
 - Clear messages: a run without a review, a job AAP does not have, no credential, neither a number nor `latest`.
 - The setup job can now make a question that is there not required (`optional`), and changes nothing else of it.
 
+**Review fixes (Neon, before release):**
+
+- Ticket and vCenter text stays text on its way into the AAR: a `{{ ... }}` in a work note is never run (ansible-core 2.16).
+- A skipped usage blip (`vm_watch_review_skip_blips`) keeps no AAR draft, so `latest` never picks it.
+- `latest` never takes an older outage's review when a newer run cannot be read: it stops and says which job. It reads past
+  200 jobs page by page (`incident_review_look_back`). Only this project's outage watch (`incident_docs_survey_project`).
+- ACT's line comes only from a ticket of this outage's window, never from an older ticket of another outage.
+- Every time in the draft has its day and time zone. A host still down says *still down*, also in the numbers and the end.
+- The key events always keep the ticket, HA's restarts, the host back and the ticket resolved.
+- The job output names only the boxes really taken from the review. The AAR's temporary folder is always deleted.
+
 **Docs:** VM_OUTAGE_WATCH.md (*The AAR draft (Word)*), INCIDENT_DOCS.md (*The AAR from an outage review*), the role defaults,
 VARIABLES_REFERENCE, the template variables.
 

@@ -23,6 +23,8 @@ aap.jobs = [_jt(1, "Outage AAR", "playbooks/incident_aar.yml"), _jt(2, "SOP - Wo
 aap.specs = {("job", 1): {}, ("job", 2): {"name": "", "description": "", "spec": f.incident_survey("sop")}}
 r = T.made()
 draft = f.incident_review_draft(r["draft"], None, {"job": "4714", "made": "2026-11-12 02:45 UTC"})
+# Neon P1 (1.112.0): text from a ticket that looks like a template stays text all the way into the AAR
+draft["actions"].append("12 Nov 03:30 CET - Work note in INC0012345: Template error: {{ lookup('ansible.builtin.env', 'HOME') }}")
 JOBS = {4714: {"id": 4714, "name": "VM - outage watch", "playbook": "playbooks/vm_outage_watch.yml",
                "artifacts": {"vm_outage_review": dict(r["numbers"], review=True, aar=draft)}},
         4720: {"id": 4720, "name": "VM - outage watch", "playbook": "playbooks/vm_outage_watch.yml",

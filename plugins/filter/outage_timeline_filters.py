@@ -14,6 +14,16 @@ import json
 import os
 import re
 
+try:                                       # 1.112.0 (Neon P1): ticket and vCenter text stays text - never templated again
+    from ansible.utils.unsafe_proxy import wrap_var as _wrap
+    _OLD = type(_wrap("x")) is not str     # ansible-core before 2.19; later ones never template a filter's result
+except ImportError:                        # the unit tests, without Ansible
+    _OLD = False
+
+
+def _unsafe(v):
+    return _wrap(v) if _OLD else v
+
 _spec = importlib.util.spec_from_file_location(
     "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
 _tm = importlib.util.module_from_spec(_spec)
@@ -317,10 +327,10 @@ def _ticket_events(tickets, begin, end, instance="", table=""):
             out.append(dict(base, t=opened, lane="servicenow", level=sev, label="Ticket %s opened" % num, message=short, role="ticket"))
             if act:
                 out.append(dict(base, t=opened, lane="act", level="info", label="ACT analysis in %s: %s" % (num, _cut(act)), message=act))
+                # 1.112.0 (Neon P1): only a ticket of this window - never an older ticket's analysis of another outage
+                cause = cause or "ACT in %s: %s" % (num, _cut(act, 300))
         elif opened is not None and opened < begin:
             before.append(num)
-        if act and not cause:
-            cause = "ACT in %s: %s" % (num, _cut(act, 300))
         for note in k.get("notes") or []:
             if not isinstance(note, (list, tuple)) or len(note) < 2:
                 continue
@@ -1064,24 +1074,27 @@ def outage_timeline(events, tickets=None, opts=None):
     draft = {}
     if first:
         start = first_bad or first
+
+        def stamp(t, sec=False):               # 1.112.0 (Neon P1): always the day, the time and the time zone
+            return loc(t).strftime("%d %b %H:%M" + (":%S" if sec else "")) + " " + zname(t)
         where_name = (head or start)["where"] or (hosts_down[0] if hosts_down else "")
         impact = []
         for h, a_, b_ in [(shown(d), d[1], d[2]) for d in downs]:
-            impact.append("%s down %s (%s to %s)" % (h, _span(((b_ or end) - a_).total_seconds()), hm(a_), hm(b_) if b_ else "still down"))
+            impact.append("%s down %s (%s to %s)" % (h, _span(((b_ or end) - a_).total_seconds()), stamp(a_),
+                                                     stamp(b_) if b_ else "still down at the end of the window"))
         if restarted:
             impact.append("vSphere HA restarted %d VM%s" % (restarted, "" if restarted == 1 else "s"))
         if not impact:
             impact.append("no host was lost: %s%s" % (_lower_first(start["what"]), (" on " + start["where"]) if start["where"] else ""))
-        detection = ["First signal %s %s: %s%s (%s)" % (hm(first["t"], True), zname(first["t"]), first["what"],
+        detection = ["First signal %s: %s%s (%s)" % (stamp(first["t"], True), first["what"],
                                                        (" on " + first["where"]) if first["where"] else "", LANE[first["lane"]])]
         if to_ticket is not None:
-            detection.append("Ticket %s opened %s %s, %s after the first signal" % (opened["ticket"], hm(opened["t"]), zname(opened["t"]),
-                                                                                    _span(to_ticket)))
+            detection.append("Ticket %s opened %s, %s after the first signal" % (opened["ticket"], stamp(opened["t"]), _span(to_ticket)))
         elif o.get("tickets_asked") and not o.get("tickets_error"):
             detection.append("No ticket of the health workflows in the window")
         actions, recovery = [], []
         for e in evs:
-            at = "%s %s - " % (hm(e["t"]), zname(e["t"]))
+            at = stamp(e["t"]) + " - "
             if e["role"] == "restart":
                 actions.append(at + e["label"] + ((" (" + e["where"] + ")") if e["where"] else ""))
             elif e["lane"] == "servicenow" and e["level"] == "info":
@@ -1091,40 +1104,47 @@ def outage_timeline(events, tickets=None, opts=None):
             elif e["lane"] == "host" and e["role"] == "up":
                 recovery.append((e["t"], at + e["what"] + ((" (" + e["where"] + ")") if e["where"] else "")))
         if back:
-            recovery.append((back["t"], "%s %s - all back to normal: %s" % (hm(back["t"]), zname(back["t"]), back["what"])))
+            recovery.append((back["t"], "%s - all back to normal: %s" % (stamp(back["t"]), back["what"])))
         recovery = [x[1] for x in sorted(recovery, key=lambda x: x[0])]
+        # the milestones always (Neon P2: a burst of critical events never pushes them out), then the critical events, at most 15
         key_ids = set(id(x) for x in (first, start, back, opened) if x is not None)
-        key = [e for e in evs if id(e) in key_ids or e["level"] == "critical" or e["role"] in ("restart", "resolved", "up")][:15]
+        must = [e for e in evs if id(e) in key_ids or e["role"] in ("restart", "resolved", "up")][:15]
+        more = [e for e in evs if e["level"] == "critical" and not any(e is m for m in must)][:max(0, 15 - len(must))]
+        key = [e for e in evs if any(e is x for x in must + more)]
 
         def row(e):
-            return [hm(e["t"], True) + ("" if len(zones) == 1 else " " + zname(e["t"])), LANE[e["lane"]], WORD[e["level"]], e["what"], e["where"]]
+            return [loc(e["t"]).strftime("%d %b %H:%M:%S") + ("" if len(zones) == 1 else " " + zname(e["t"])), LANE[e["lane"]],
+                    WORD[e["level"]], e["what"], e["where"]]
         tk_rows = []
         for k in tickets or []:
             num = str((k or {}).get("number") or "") if isinstance(k, dict) else ""
             if not num or not any(e.get("ticket") == num for e in evs):
                 continue
             op, rs = _time(k.get("opened")), _time(k.get("resolved")) or _time(k.get("closed"))
-            tk_rows.append([num, (hm(op) + " " + zname(op)) if op else "", (hm(rs) + " " + zname(rs)) if rs else "not yet",
+            tk_rows.append([num, stamp(op) if op else "", stamp(rs) if rs else "not yet",
                             _cut(k.get("short"), 120), _cut(k.get("close_notes"), 200)])
         follow = [a for a in aar if a.startswith("Follow-up: ")]
         draft = {"v": 1, "title": title, "window": window_text, "time_column": tcol,
                  "name": ("%s %s" % (where_name, loc(start["t"]).strftime("%Y-%m-%d"))).strip(),
                  "start": "%s - %s%s" % (full(start["t"]), start["what"], (" on " + start["where"]) if start["where"] else ""),
-                 "end": ("%s - %s" % (full(back["t"]), back["what"])) if back else "",
+                 "end": ("%s - %s" % (full(back["t"]), back["what"])) if back else (
+                     ("not yet: %s still down at the end of the window (%s)" % (", ".join(sorted(shown(d) for d in still)), full(end)))
+                     if still else ""),
                  "impact": "; ".join(impact), "detection": detection, "actions": actions[:30], "recovery": recovery[:30],
-                 "numbers": [["First signal", hm(first["t"], True) + " " + zname(first["t"]), "%s%s (%s)" % (
+                 "numbers": [["First signal", stamp(first["t"], True), "%s%s (%s)" % (
                                  first["what"], (" on " + first["where"]) if first["where"] else "", LANE[first["lane"]])],
                              ["First signal to ticket", _span(to_ticket) if to_ticket is not None else "-",
-                              ("%s opened %s" % (opened["ticket"], hm(opened["t"]))) if to_ticket is not None else "no ticket measured"],
-                             ["Time down", _span(down_s) if spans else "0", down_word or "no host lost in the window"]],
+                              ("%s opened %s" % (opened["ticket"], stamp(opened["t"]))) if to_ticket is not None else "no ticket measured"],
+                             ["Time down", (_span(down_s) + (", still down" if still else "")) if spans else "0",
+                              ((down_word + (" - still down at the end of the window" if still else "")) if spans else "no host lost in the window")]],
                  "key": [row(e) for e in key], "events": [row(e) for e in evs[:DRAFT_EVENTS]], "events_total": len(evs),
                  "tickets": tk_rows, "ticket_hint": cause, "follow_up": follow[0][len("Follow-up: "):] if follow else ""}
-    return {"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
+    return _unsafe({"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
             "lines": out, "aar": aar, "window": window_text, "events": len(evs),
             "skip": bool(blip and o.get("skip_blips")),
             "cleared_before_review": cleared_only, "blip": blip,
             "alarm_window": [r_from.strftime("%Y-%m-%dT%H:%M:%SZ"), r_to.strftime("%Y-%m-%dT%H:%M:%SZ")] if cleared_runs else [],
-            "trigger": trig, "trigger_line": "Triggered by: " + trig[0] + ((" (and %d more)" % (len(trig) - 1)) if len(trig) > 1 else "")}
+            "trigger": trig, "trigger_line": "Triggered by: " + trig[0] + ((" (and %d more)" % (len(trig) - 1)) if len(trig) > 1 else "")})
 
 
 def outage_timeline_doc(doc, timeline, web=False, review=False):
@@ -1151,7 +1171,7 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
     else:
         mine = [s for s in mine if s.get("title") in ("What happened, in order", "The events")]
         out["sections"] = own[:1] + mine + own[1:]
-    return out
+    return _unsafe(out)
 
 
 def outage_review_aar(doc, info=None, web=False):
@@ -1187,7 +1207,7 @@ def outage_review_aar(doc, info=None, web=False):
                        text="The after action report, filled from this review. ACT's causes are in it as suggestions, never as the root cause.")
         secs.append(sec)
     out["sections"] = secs
-    return out
+    return _unsafe(out)
 
 
 class FilterModule(object):

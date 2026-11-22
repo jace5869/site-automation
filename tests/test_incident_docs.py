@@ -607,7 +607,7 @@ class AarFromReview(unittest.TestCase):
         d = self.draft()
         self.assertEqual((d["job"], d["made"], d["name"]), ("4714", "2026-11-12 02:45 UTC", "esx03 2026-11-12"))
         self.assertEqual(d["start"], "2026-11-12 01:58 CET - Storage path redundancy lost on esx03")
-        self.assertEqual(d["impact"], "esx03 down 46 min (12 Nov 02:19 to 12 Nov 03:05); vSphere HA restarted 14 VMs")
+        self.assertEqual(d["impact"], "esx03 down 46 min (12 Nov 02:19 CET to 12 Nov 03:05 CET); vSphere HA restarted 14 VMs")
         self.assertEqual(d["detection"][1], "Ticket INC0012345 opened 12 Nov 03:14 CET, 93 min after the first signal")
         self.assertEqual([x[0] for x in d["numbers"]], ["First signal", "First signal to ticket", "Time down"])
         self.assertEqual(d["recovery"][0], "12 Nov 03:05 CET - Host connected again (esx03)")
@@ -615,6 +615,9 @@ class AarFromReview(unittest.TestCase):
         self.assertEqual(len(d["events"]), d["events_total"])
         self.assertLessEqual(len(d["key"]), 15)
         self.assertIn(["12 Nov 02:21:05", "vCenter alarms", "Warning", "HA restarted 14 VMs", "cluster1"], d["key"])
+        self.assertEqual(f.incident_review_filled({"start": "typed"}, d), ["end", "impact", "detection", "actions", "recovery"])
+        self.assertEqual(f.incident_review_filled({}, dict(d, end="", actions=[])), ["start", "impact", "detection", "recovery"])
+        self.assertEqual(f.incident_review_filled({}, {}), [])
         self.assertEqual(d["tickets"][0][0], "INC0012345")
         self.assertNotIn("root_cause", d)                                             # never in the draft
         self.assertNotIn("ticket_hint", d)
@@ -695,11 +698,15 @@ class AarFromReview(unittest.TestCase):
 class ReviewReader(unittest.TestCase):
     """roles/incident_docs/library/site_outage_review_read.py: a job number, latest, and what it says when it cannot."""
     class Api(object):
-        def __init__(self, jobs):
-            self.jobs, self.calls = jobs, []
+        base = "api/controller/v2/"
+
+        def __init__(self, jobs, fail=None):
+            self.jobs, self.calls, self.fail = jobs, [], dict(fail or {})      # fail: {path: [codes, ...]} answered first
 
         def call(self, method, path, body=None, base=None):
             self.calls.append((method, path))
+            if self.fail.get(path):
+                return self.fail[path].pop(0), {"detail": "busy"}
             if path.startswith("jobs/?"):
                 return 200, {"results": [dict((k, v) for k, v in j.items() if k != "artifacts") for _, j in sorted(self.jobs.items(), reverse=True)]}
             n = path.split("/")[1]
@@ -727,6 +734,61 @@ class ReviewReader(unittest.TestCase):
         del none[10]
         self.assertIn("no outage review among the newest 1", rr.read(self.Api(none), "latest")["error"])
         self.assertEqual(rr.draft_of({"artifacts": {"vm_outage_review": {"aar": {"v": 0}}}}), {})
+
+    def test_neon_p1_latest_never_falls_back(self):
+        """A run latest cannot read stops it, said - never last week's review instead; a lost answer is asked again once."""
+        jobs = self.jobs()
+        jobs[11] = {"id": 11, "name": "VM - outage watch", "playbook": "playbooks/vm_outage_watch.yml",
+                    "artifacts": {"vm_outage_review": {"review": True, "aar": {"v": 1, "title": "today"}}}}
+        got = rr.read(self.Api(jobs, {"jobs/12/": [503, 503]}), "latest")
+        self.assertFalse(got["ok"])
+        self.assertIn("outage watch job 12 could not be read (HTTP 503)", got["error"])
+        self.assertIn("latest stops there rather than take an older review", got["error"])
+        got = rr.read(self.Api(jobs, {"jobs/11/": [-1]}), "latest")                 # cut off once: asked again
+        self.assertEqual((got["ok"], got["draft"]["title"]), (True, "today"))
+
+    def test_neon_p1_latest_pages_past_200(self):
+        class Paged(self.Api):
+            def call(s, method, path, body=None, base=None):
+                s.calls.append((method, path))
+                if path.startswith("jobs/?"):
+                    start = int(path.split("&start=")[1]) if "&start=" in path else 0
+                    ids = list(range(1000, 500, -1))[start:start + 200]
+                    nxt = ("/api/controller/v2/jobs/?playbook__endswith=vm_outage_watch.yml&order_by=-id&page_size=200&start=%d"
+                           % (start + 200)) if start + 200 < 500 else None
+                    return 200, {"next": nxt, "results": [{"id": i, "playbook": "playbooks/vm_outage_watch.yml"} for i in ids]}
+                n = int(path.split("/")[1])
+                art = {"vm_outage_review": {"aar": {"v": 1, "title": "old"}}} if n == 760 else {}
+                return 200, {"id": n, "name": "VM - outage watch", "playbook": "playbooks/vm_outage_watch.yml", "artifacts": art}
+        api = Paged({})
+        got = rr.read(api, "latest", look_back=300)
+        self.assertEqual((got["ok"], got["job"]), (True, "760"))                       # job 760 is the 241st newest
+        lists = [p for _, p in api.calls if p.startswith("jobs/?")]
+        self.assertEqual(len(lists), 2)
+        self.assertTrue(all("page_size=200" in p for p in lists))
+        self.assertIn("no outage review among the newest 230", rr.read(Paged({}), "latest", look_back=230)["error"])
+
+    def test_neon_p2_digits_and_project(self):
+        self.assertIn("give an AAP job number", rr.read(self.Api(self.jobs()), "²")["error"])
+        jobs = self.jobs()
+        for j in jobs.values():
+            j["summary_fields"] = {"project": {"name": "Other"}}
+        self.assertIn("is of project Other, not Site automation", rr.read(self.Api(jobs), "10", project="Site automation")["error"])
+        self.assertIn("no VM - outage watch job", rr.read(self.Api(jobs), "latest", project="Site automation")["error"])
+        self.assertTrue(rr.read(self.Api(jobs), "latest", project="Other")["ok"])
+
+    def test_neon_p1_review_text_stays_text(self):
+        try:
+            from ansible.utils.unsafe_proxy import AnsibleUnsafeText, wrap_var
+        except ImportError:
+            self.skipTest("no ansible-core")
+        if type(wrap_var("x")) is str:
+            self.skipTest("this ansible-core never templates a filter's result")
+        d = {"v": 1, "actions": ["02:30 - {{ lookup('ansible.builtin.env', 'HOME') }}"], "start": "s"}
+        r = f.incident_review_fill(f.incident_record({"kind": "aar"}), d)
+        self.assertIsInstance(r["actions"], AnsibleUnsafeText)
+        doc = f.incident_aar_docx(r, {}, [], False, f.incident_review_draft(d))
+        self.assertTrue(all(isinstance(x, AnsibleUnsafeText) for b in doc["blocks"] for x in b.get("lines") or []))
 
 
 class SurveyRelax(unittest.TestCase):

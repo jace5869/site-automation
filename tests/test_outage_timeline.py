@@ -10,6 +10,7 @@ import ast
 import copy
 import json
 import os
+import re
 import sys
 import unittest
 
@@ -1710,7 +1711,9 @@ class AarDraft1120(unittest.TestCase):
         d = made(e, [])["draft"]
         self.assertIn("esx03 down", d["impact"])
         self.assertIn("still down", d["impact"])
-        self.assertEqual(d["end"], "")
+        self.assertEqual(d["end"], "not yet: esx03 still down at the end of the window (2026-11-12 03:45 CET)")
+        self.assertEqual(d["numbers"][2][1], "85 min, still down")                     # Neon P1: never as if it had ended
+        self.assertIn("still down at the end of the window", d["numbers"][2][2])
 
     def test_the_page_and_the_email(self):
         r = made()
@@ -1735,6 +1738,54 @@ class AarDraft1120(unittest.TestCase):
         self.assertIn("incident_review): 4714", [x for x in off["sections"] if x["title"] == "For the after-action report"][0]["lines"][0])
         self.assertEqual(ot.outage_review_aar(web, {"draft": False}, True), web)       # a normal watch run: as it is
         self.assertEqual(ot.outage_review_aar({}, info, True), {})
+
+    def test_neon_p1_cause_only_from_this_window(self):
+        """An older ticket of another outage, still open and carrying its own ACT analysis, never gives this AAR its cause."""
+        old = {"sys_id": "z9", "number": "INC0010001", "short": "[site-health] sql02.example.mil: disk full",
+               "description": "Severity: warning\n\nACT (GenAI) analysis - level 2, status ok:\nThe log volume of sql02 is full.\n",
+               "opened": "2026-11-09T08:00:00Z", "resolved": "", "closed": "", "close_notes": "", "state": "2", "active": True,
+               "correlation_id": "site-health:9:disk", "notes": [[DAY + "01:00:00Z", "Still failing at 01:00"]]}
+        d = made(None, [old] + tickets())["draft"]
+        self.assertEqual(d["ticket_hint"], "ACT in INC0012345: " + ACT)
+        self.assertEqual(made(None, [old])["draft"]["ticket_hint"], "")
+        self.assertEqual([t[0] for t in d["tickets"]], ["INC0012345"])
+
+    def test_neon_p1_dates_with_day_and_zone(self):
+        """A same-day window: the ticket resolved the next day still says which day, every time has its zone."""
+        t = tickets()
+        t[0]["resolved"] = "2026-11-13T00:05:00Z"
+        d = made(None, t, begin="2026-11-12T00:00:00Z", end="2026-11-12T06:00:00Z")["draft"]
+        self.assertEqual(d["tickets"][0][1:3], ["12 Nov 03:14 CET", "13 Nov 01:05 CET"])
+        self.assertEqual(d["impact"], "esx03 down 46 min (12 Nov 02:19 CET to 12 Nov 03:05 CET); vSphere HA restarted 14 VMs")
+        self.assertEqual(d["numbers"][1][2], "INC0012345 opened 12 Nov 03:14 CET")
+        self.assertTrue(all(re.match(r"\d\d \w{3} \d\d:\d\d:\d\d$", r[0]) for r in d["events"]), d["events"][:2])
+        self.assertTrue(all(re.match(r"\d\d \w{3} \d\d:\d\d \w+ - ", x) for x in d["actions"] + d["recovery"]))
+
+    def test_neon_p2_milestones_survive_a_burst(self):
+        burst = [ev("01:%02d:%02d" % (20 + i // 60, i % 60), "esx.problem.storage.apd.start", "esx%02d.example.mil" % (i + 10))
+                 for i in range(20)]
+        d = made(events() + burst, tickets())["draft"]
+        whats = [r[3] for r in d["key"]]
+        self.assertEqual(len(d["key"]), 15)
+        for want in ("Ticket INC0012345 opened", "HA restarted 14 VMs", "Host connected again"):
+            self.assertIn(want, whats)
+        self.assertTrue(any(w.startswith("Ticket INC0012345 resolved") for w in whats))
+        self.assertEqual([r[0] for r in d["key"]], sorted(r[0] for r in d["key"]))         # in time order
+
+    def test_neon_p1_text_stays_text(self):
+        """Ticket text is handed on as data Ansible never templates again (ansible-core 2.16: AnsibleUnsafeText)."""
+        try:
+            from ansible.utils.unsafe_proxy import AnsibleUnsafeText, wrap_var
+        except ImportError:
+            self.skipTest("no ansible-core")
+        if type(wrap_var("x")) is str:                                                 # 2.19+: data tagging does it
+            self.skipTest("this ansible-core never templates a filter's result")
+        t = tickets()
+        t[0]["notes"].append([DAY + "02:30:00Z", "Template error: {{ lookup('ansible.builtin.env', 'HOME') }}"])
+        r = made(None, t)
+        self.assertTrue(any("lookup(" in a for a in r["draft"]["actions"]))
+        self.assertTrue(all(isinstance(a, AnsibleUnsafeText) for a in r["draft"]["actions"]))
+        self.assertIsInstance(r["title"], AnsibleUnsafeText)
 
 
 if __name__ == "__main__":

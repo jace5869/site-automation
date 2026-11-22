@@ -15,6 +15,17 @@ import json
 import os
 import re
 
+try:                                       # 1.112.0 (Neon P1): ticket and vCenter text from a review stays text - never templated again
+    from ansible.utils.unsafe_proxy import wrap_var as _wrap
+    _OLD = type(_wrap("x")) is not str     # ansible-core before 2.19; later ones never template a filter's result
+except ImportError:                        # the unit tests, without Ansible
+    _OLD = False
+
+
+def _unsafe(v):
+    return _wrap(v) if _OLD else v
+
+
 # the classification banner's code (plugins/module_utils/site_banner.py): one colour table for the reports and these
 _spec = importlib.util.spec_from_file_location(
     "site_banner", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_banner.py"))
@@ -80,7 +91,7 @@ def incident_record(given):
     r["kind"] = "sop" if str(g.get("kind") or "aar").lower() == "sop" else "aar"
     if r["kind"] == "sop":
         r["make_sop"] = True
-    return r
+    return _unsafe(r)
 
 
 def incident_problems(record):
@@ -287,7 +298,7 @@ def incident_aar_docx(record, opts=None, suggestions=None, tidied=False, review=
     key events and tickets, ACT's possible causes as "Suggested - confirm", red "To write" lines for what only a person
     can write, an empty task table, and every event in Appendix A."""
     if review:
-        return _aar_from_review(record, opts, suggestions, tidied, review)
+        return _unsafe(_aar_from_review(record, opts, suggestions, tidied, review))
     r, o = record or {}, opts or {}
     start = "Start: " + r.get("start", "") if r.get("start") else ""
     if r.get("end"):
@@ -319,7 +330,7 @@ def incident_aar_docx(record, opts=None, suggestions=None, tidied=False, review=
     blocks += _instructions(o.get("instructions"), o.get("instructions_color") or o.get("heading_color") or "1F2D86")
     d = _common(o)
     d["blocks"] = blocks
-    return d
+    return _unsafe(d)
 
 
 # ---- 1.112.0: the AAR from an outage review ----
@@ -388,7 +399,7 @@ def incident_review_draft(draft, act=None, meta=None):
     d["causes"] = incident_review_causes(act, d.pop("ticket_hint", ""))
     d["job"] = str(m.get("job") or "").strip()
     d["made"] = str(m.get("made") or "").strip()
-    return d
+    return _unsafe(d)
 
 
 def incident_review_fill(record, draft):
@@ -404,7 +415,15 @@ def incident_review_fill(record, draft):
             r[k] = _text("\n".join(v) if isinstance(v, (list, tuple)) else v)
     if not _text(r.get("name")) and d.get("name"):
         r["name"] = _text(d["name"])
-    return r
+    return _unsafe(r)
+
+
+def incident_review_filled(record, draft):
+    """The boxes incident_review_fill takes from the draft: empty in record, not empty in the draft (Neon P2: what the job says)."""
+    r, d = record or {}, draft or {}
+    if not d.get("v"):
+        return []
+    return [k for k in REVIEW_FILLS if not _text(r.get(k)) and _text("\n".join(d[k]) if isinstance(d.get(k), (list, tuple)) else d.get(k))]
 
 
 def _red(label, text):
@@ -871,4 +890,5 @@ class FilterModule(object):
                 "incident_sop_docx": incident_sop_docx, "incident_act_evidence": incident_act_evidence,
                 "incident_act_task": incident_act_task, "incident_act_apply": incident_act_apply, "incident_email": incident_email,
                 "incident_survey": incident_survey, "incident_review_causes": incident_review_causes,
-                "incident_review_draft": incident_review_draft, "incident_review_fill": incident_review_fill}
+                "incident_review_draft": incident_review_draft, "incident_review_fill": incident_review_fill,
+                "incident_review_filled": incident_review_filled}

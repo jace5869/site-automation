@@ -46,6 +46,7 @@
       site_outage_review_read:
         review: "{{ incident_review | string | trim }}"
         look_back: "{{ incident_review_look_back | int }}"
+        project: "{{ incident_docs_survey_project }}"      # this project's outage watch only
         ca_path: "{{ incident_docs_survey_ca_path }}"
       register: _inc_rv
 
@@ -57,13 +58,16 @@
 
     - name: Incident docs | the boxes left empty, from the review
       ansible.builtin.set_fact:
+        _inc_review_filled: "{{ _inc | incident_review_filled(_inc_rv.draft) }}"
         _inc: "{{ _inc | incident_review_fill(_inc_rv.draft) }}"
         _inc_review: "{{ _inc_rv.draft }}"
+
+    - name: Incident docs | what came from the review
+      ansible.builtin.set_fact:
         _inc_review_line: >-
-          Filled from the outage review of AAP job {{ _inc_rv.job }}{{ (' (' ~ _inc_rv.job_name ~ ')') if _inc_rv.job_name else '' }}:
-          {{ _inc_rv.draft.title | default('') }}. Boxes taken from it: {{ ['start', 'end', 'impact', 'detection', 'actions', 'recovery']
-             | select('in', _inc_rv.draft.keys() | list) | list | join(', ') }} - where you typed nothing. The root cause is never
-          taken from it.
+          Filled from the outage review of AAP job {{ _inc_rv.job }}{{ (' (' ~ _inc_rv.job_name ~ ')') if _inc_rv.job_name else '' }}.
+          Boxes taken from it: {{ _inc_review_filled | join(', ') if _inc_review_filled else 'none (you typed them all)' }}.
+          The root cause is never taken from it.
 
     - name: Incident docs | {{ _inc_review_line }}
       ansible.builtin.debug:

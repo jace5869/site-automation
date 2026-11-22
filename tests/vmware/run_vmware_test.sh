@@ -2716,7 +2716,7 @@ run "outage review, a usage alarm raised and cleared: cleared before the review,
        "Alarm red: Virtual machine CPU usage" "Alarm back to green: Virtual machine CPU usage"
 run "  ... vm_watch_review_skip_blips: a blip sends no report, said" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0, \"vm_watch_review_skip_blips\": true}" -e report_time_zone=UTC \
-    -- "not sent (vm_watch_review_skip_blips)"
+    -- "not sent (vm_watch_review_skip_blips)" '!"aar": {'      # 1.112.0 (Neon P1): a skipped blip keeps no AAR draft
 sleep $((61 - 10#$(date -u +%S)))
 VMWARE_PORT=$port "$py" "$here/vcsim.py" usage raise
 sleep $((61 - 10#$(date -u +%S)))
@@ -2760,7 +2760,9 @@ json.dump([
      "sys_created_on": t(3000), "sys_updated_on": t(2900), "resolved_at": t(2900), "state": "6", "active": "true",
      "correlation_id": "site-health:9f8e7d6c:disk"},
     {"_table": "sys_journal_field", "element": "work_notes", "name": "incident", "element_id": "a1a1",
-     "value": "On site, checking the cabling.", "sys_created_on": t(0)}], open(sys.argv[1], "w"))
+     "value": "On site, checking the cabling.", "sys_created_on": t(0)},
+    {"_table": "sys_journal_field", "element": "work_notes", "name": "incident", "element_id": "a1a1",
+     "value": "Template error: {{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}", "sys_created_on": t(0)}], open(sys.argv[1], "w"))
 EOPY
 : > "$work/wsn.jsonl"
 SNMOCK_SEED="$work/review-seed.json" SNMOCK_LOG="$work/wsn.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$wsn_port" >/dev/null 2>&1 &
@@ -2787,8 +2789,10 @@ docs = [p for p in m.walk() if (p.get_filename() or "").startswith("AAR-DC0-C0-H
 assert len(docs) == 1, [p.get_filename() for p in m.walk()]
 text = zipfile.ZipFile(io.BytesIO(docs[0].get_payload(decode=True))).read("word/document.xml").decode()
 for want in ("Filled from the outage review, AAP job 4711", "Appendix A - every event of the review", "To write: the confirmed cause",
-             "Suggested - confirm: ACT in INC0012345", "OVERVIEW"):
+             "Suggested - confirm: ACT in INC0012345", "OVERVIEW",
+             "Template error: {{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"):      # Neon P1: text stays text
     assert want in text, want
+assert "goodpw" not in text, "a secret in the AAR"
 pages = [p for p in glob.glob(sys.argv[2] + "/**/*.html", recursive=True) if "Download AAR (Word)" in open(p).read()]
 assert pages, "no page with the link"
 h = open(pages[0]).read()
