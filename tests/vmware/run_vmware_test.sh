@@ -71,6 +71,9 @@ sed 's/aap01.example.mil: {ansible_host: 192.0.2.5}/AAP01: {}/' "$work/inv.yml" 
 
 fresh() {  # a new simulator with the test VMs (tests/vmware/vcsim.py setup)
     "$engine" rm -f "$name" >/dev/null 2>&1
+    # the removed simulator's port is freed a moment later (rootless podman): wait for it, 60 s at most - else the new one
+    # met "Address already in use" and the run stopped half way
+    for _ in $(seq 1 60); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null || break; sleep 1; done
     "$engine" run -d --name "$name" -p "127.0.0.1:$port:8989" "$image" -l 0.0.0.0:8989 -api-version 8.0 -pg 2 >/dev/null \
         || { echo "ABORT - could not start $image"; exit 1; }
     VMWARE_PORT=$port "$py" "$here/vcsim.py" setup || { echo "ABORT - vcsim setup"; exit 1; }
