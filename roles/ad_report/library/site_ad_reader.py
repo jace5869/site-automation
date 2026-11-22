@@ -50,6 +50,11 @@ RETURN = r'''
 reader: {description: "What was read (roles/ad_report/tasks/reader.yml; plugins/filter/ad_filters.py ad_reader_report).", type: dict}
 '''
 
+try:
+    from ansible.module_utils import site_ad_ident as ident
+except ImportError:
+    import site_ad_ident as ident
+
 import datetime
 import json
 import os
@@ -809,13 +814,20 @@ class Reader(object):
             out.update(ok=False, why="reading the domain on %s failed: %s" % (read_from, e))
             return out
 
+        if ident.unsupported(out):
+            out.update(ok=False, why=ident.REFUSAL, unsupported=ident.unsupported(out), dcs_ad=[])
+            conn.unbind()
+            return out
+
         # 2. every DC: AD's and the inventory's
+        population = out.get("known_dcs") or out["dcs_ad"]
         ad_names = [d["fqdn"] for d in out["dcs_ad"]]
-        all_names = ad_names + [d["name"] for d in inv if d["name"] not in ad_names and d["name"].split(".")[0] not in [x.split(".")[0] for x in ad_names]]
+        all_names = ad_names + [d["name"] for d in inv if not ident.resolve(d, population)]
         dcs = []
         for fq in all_names:
             rec = next((d for d in out["dcs_ad"] if d["fqdn"] == fq), None)
-            in_inv = next((d for d in inv if d["name"] == fq or d["name"].split(".")[0] == fq.split(".")[0]), None)
+            in_inv = next((d for d in inv if d["name"] == fq or
+                           (rec and ident.resolve(d, population) is not None and ident.same_dc(ident.resolve(d, population), rec))), None)
             dc = self.read_dc(fq, rec, in_inv, out)
             dcs.append(dc)
         # clocks against the others (the median of the offsets cancels this side's own clock)
@@ -855,6 +867,8 @@ class Reader(object):
         nc = first(root, "defaultNamingContext") or ""
         cfg = first(root, "configurationNamingContext") or ""
         sch = first(root, "schemaNamingContext") or ""
+        self.domain = dn_to_dns(nc) or self.domain
+        out["domain"] = self.domain
         forest_dn = first(root, "rootDomainNamingContext") or nc
         out.update(base_dn=nc, config_dn=cfg, forest=dn_to_dns(forest_dn), is_root=(forest_dn.lower() == nc.lower()),
                    naming_contexts=list((root.get("attributes") or {}).get("namingContexts") or []))
@@ -889,9 +903,12 @@ class Reader(object):
             self.not_read.append("the RID pool: %s" % e)
         out["domain_info"] = info
 
+        refs = self.search(c, "CN=Partitions," + cfg, "(objectClass=crossRef)", ["dnsRoot", "systemFlags"])
+        out["domains"] = [first(e, "dnsRoot") for e in refs if int(first(e, "systemFlags") or 0) & 2 and first(e, "dnsRoot")]
+
         # the DCs AD knows: the server objects in Configuration (site, NTDS Settings) and the DC computer accounts (OS)
         servers = self.search(c, "CN=Sites," + cfg, "(objectClass=server)", ["dNSHostName", "serverReference", "cn"])
-        dsas = self.search(c, "CN=Sites," + cfg, "(objectClass=nTDSDSA)", ["options", "objectGUID", "invocationId", "msDS-isRODC", "objectCategory"])
+        dsas = self.search(c, "CN=Sites," + cfg, "(objectClass=nTDSDSA)", ["options", "objectGUID", "invocationId", "msDS-isRODC", "objectCategory", "msDS-HasDomainNCs", "hasMasterNCs"])
         comps = self.search(c, nc, "(&(objectCategory=computer)(|(primaryGroupID=516)(primaryGroupID=521)))",
                             ["dNSHostName", "operatingSystem", "operatingSystemVersion", "cn", "userAccountControl"])
         dsa_of = {}
@@ -901,33 +918,45 @@ class Reader(object):
         for e in comps:
             comp_of[str(first(e, "dNSHostName") or first(e, "cn") or "").lower()] = e
         self.dsa_name = {}                          # NTDS Settings DN, objectGUID, invocationId -> fqdn
-        dcs = []
+        dcs, known = [], []
         for s in servers:
             dsa = dsa_of.get(s["dn"].lower())
             if not dsa:
                 continue                            # a server object with no NTDS Settings: not a DC (or demoted)
             fq = str(first(s, "dNSHostName") or "").lower() or (first(s, "cn") or "").lower() + "." + self.domain
-            if not fq.endswith("." + self.domain) and fq != self.domain:
-                continue                            # a DC of another domain of the forest
             comp = comp_of.get(fq) or {}
+            domain_ncs = (dsa.get("attributes") or {}).get("msDS-HasDomainNCs") or []
+            if not domain_ncs:
+                domain_ncs = [v for v in (dsa.get("attributes") or {}).get("hasMasterNCs") or []
+                              if str(v).lower().startswith("dc=") and not str(v).lower().startswith(("dc=domaindnszones,", "dc=forestdnszones,"))]
+            # A DC computer account in this domain is also AD evidence.
+            dc_domain = dn_to_dns(domain_ncs[0]) if domain_ncs else (dn_to_dns(nc) if comp else "")
+            out["domains"].extend(dn_to_dns(v) for v in domain_ncs)
             opts = int(first(dsa, "options") or 0)
             rodc = str(first(dsa, "msDS-isRODC") or "").upper() == "TRUE" or "NTDS-DSA-RO" in str(first(dsa, "objectCategory") or "")
             rec = {"fqdn": fq, "name": rdn(s["dn"]).upper(), "site": site_of(s["dn"]), "gc": bool(opts & 1), "rodc": rodc,
                    "os": first(comp, "operatingSystem") or "", "os_version": first(comp, "operatingSystemVersion") or "",
+                   "domain": dc_domain, "server_dn": s["dn"], "site_dn": parent_dn(parent_dn(s["dn"])),
                    "dsa_dn": dsa["dn"], "dsa_guid": guid_text(first(dsa, "objectGUID")),
                    "invocation_id": guid_text(first(dsa, "invocationId")), "roles": [], "computer": bool(comp)}
+            rec["dc_id"] = ident.dc_id(rec)
+            known.append(rec)
             dcs.append(rec)
             for k2 in (dsa["dn"].lower(), rec["dsa_guid"], rec["invocation_id"]):
-                self.dsa_name[k2] = fq
+                if k2:
+                    self.dsa_name[k2] = fq
         # DC accounts with no server object in Configuration (a DC removed badly, or one being built)
         for fq, comp in comp_of.items():
-            if fq and not any(d["fqdn"] == fq for d in dcs) and fq.endswith("." + self.domain):
+            if fq and not any(d["fqdn"] == fq for d in dcs):
                 dcs.append({"fqdn": fq, "name": fq.split(".")[0].upper(), "site": "", "gc": False,
                             "rodc": bool(int(first(comp, "userAccountControl") or 0) & UF_PARTIAL_SECRETS),
                             "os": first(comp, "operatingSystem") or "", "os_version": first(comp, "operatingSystemVersion") or "",
-                            "dsa_dn": "", "dsa_guid": "", "invocation_id": "", "roles": [], "computer": True, "no_server": True})
+                            "domain": dn_to_dns(nc), "dsa_dn": "", "dsa_guid": "", "invocation_id": "", "roles": [], "computer": True, "no_server": True})
+        dcs = list(ident.merge(dcs).values())
         dcs.sort(key=lambda x: x["fqdn"])
+        out["discovered"] = True
         out["dcs_ad"] = dcs
+        out["known_dcs"] = list(ident.merge(known + dcs).values())
 
         # FSMO: fSMORoleOwner of the five objects
         fsmo = []
@@ -976,11 +1005,17 @@ class Reader(object):
             dc["bind"]["error"] = dc["ldaps"]["error"] or (dc.get("starttls") or {}).get("error") or dc["ldap"]["error"]
         # rootDSE: synchronized, GC ready, its clock, its USN
         src = bound or a
+        dc_ncs = []
         if src is not None:
             try:
                 t0 = time.time()
-                r = self.base(src, "", ["isSynchronized", "isGlobalCatalogReady", "currentTime", "highestCommittedUSN", "dsServiceName", "dnsHostName"])
+                r = self.base(src, "", ["isSynchronized", "isGlobalCatalogReady", "currentTime", "highestCommittedUSN", "dsServiceName", "dnsHostName", "defaultNamingContext", "rootDomainNamingContext", "namingContexts"])
                 t1 = time.time()
+                dc_ncs = list((r.get("attributes") or {}).get("namingContexts") or [])
+                if first(r, "defaultNamingContext"):
+                    dc["domain"] = dn_to_dns(first(r, "defaultNamingContext"))
+                if first(r, "rootDomainNamingContext"):
+                    dc["forest"] = dn_to_dns(first(r, "rootDomainNamingContext"))
                 ct = gentime(first(r, "currentTime"))
                 dc.update(synchronized=str(first(r, "isSynchronized") or "").upper() == "TRUE" if first(r, "isSynchronized") is not None else None,
                           gc_ready=str(first(r, "isGlobalCatalogReady") or "").upper() == "TRUE" if first(r, "isGlobalCatalogReady") is not None else None,
@@ -992,7 +1027,7 @@ class Reader(object):
                 dc["rootdse_error"] = str(e)
         # replication: what a plain user may read on this DC's own copy of each NC head
         if bound:
-            dc["repl"] = self.read_repl(bound, out)
+            dc["repl"] = self.read_repl(bound, dict(out, naming_contexts=dc_ncs))
             bound.unbind()
         if a is not None:
             a.unbind()
@@ -1007,17 +1042,21 @@ class Reader(object):
         return dc
 
     def read_repl(self, c, out):
-        """{source, links: [{nc, partner, last_success, last_attempt, failures, result}], cursors, why, not_granted}.
+        """{source, links: [{nc, partner, partner_id, last_success, last_attempt, failures, result}], cursors, why, not_granted, failed}.
         msDS-NCReplInboundNeighbors (Windows builds it), else repsFrom, else msDS-NCReplCursors or replUpToDateVector (when
         each DC's changes last arrived). Windows gives none of them without the right (REPL_RIGHT) and says nothing: a
         partition with nothing at all is named in not_granted - every one of them when the account may read none."""
         ncs = [n for n in out.get("naming_contexts") or [] if n]
-        res = {"source": "", "links": [], "cursors": [], "why": "", "not_granted": []}
+        res = {"source": "", "links": [], "cursors": [], "why": "", "not_granted": [], "failed": []}
+        if not ncs:
+            res["why"] = "partition list not read"
+            return res
         seen_any, cur_src = False, ""
         for nc in ncs:
             try:
                 e = self.base(c, nc, ["msDS-NCReplInboundNeighbors", "repsFrom", "msDS-NCReplCursors", "replUpToDateVector"])
             except LookupError:
+                res["failed"].append(nc)
                 continue
             nbr = raw_all(e, "msDS-NCReplInboundNeighbors")
             reps = raw_all(e, "repsFrom")
@@ -1039,6 +1078,7 @@ class Reader(object):
                         x = parse_reps_from(v)
                     except (ValueError, struct.error) as err:
                         self.errors.append("repsFrom on %s: %s" % (nc, err))
+                        res["failed"].append(nc)
                         continue
                     res["links"].append(self._link(nc, x))
                 seen_any = True
@@ -1047,14 +1087,16 @@ class Reader(object):
                 for v in curs:
                     cur = parse_cursor_xml(v)
                     name = self.dsa_name.get(cur["partner_dn"].lower()) or self.dsa_name.get(cur["invocation_id"].lower(), "")
-                    res["cursors"].append({"nc": nc, "partner": name, "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
+                    res["cursors"].append({"nc": nc, "partner": name, "partner_dn": cur["partner_dn"], "partner_id": (cur["partner_dn"] or cur["invocation_id"]).lower(),
+                                           "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
             elif utd:
                 seen_any, cur_src = True, cur_src or "replUpToDateVector"
                 for v in utd:
                     try:
                         for cur in parse_utd(v):
                             name = self.dsa_name.get(cur["invocation_id"], "")
-                            res["cursors"].append({"nc": nc, "partner": name, "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
+                            res["cursors"].append({"nc": nc, "partner": name, "partner_id": cur["invocation_id"].lower(),
+                                                   "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
                     except (ValueError, struct.error) as err:
                         self.errors.append("replUpToDateVector on %s: %s" % (nc, err))
         if not res["source"] and res["cursors"]:
@@ -1067,8 +1109,11 @@ class Reader(object):
 
     def _link(self, nc, x):
         partner = self.dsa_name.get(str(x.get("partner_dn") or "").lower()) or self.dsa_name.get(str(x.get("partner_guid") or "").lower()) \
-            or self.dsa_name.get(str(x.get("invocation_id") or "").lower()) or rdn(parent_dn(x.get("partner_dn") or "")) or x.get("address", "")
-        return {"nc": nc, "partner": partner, "last_success": x["last_success"], "last_attempt": x["last_attempt"],
+            or self.dsa_name.get(str(x.get("invocation_id") or "").lower()) or ""
+        return {"nc": nc, "partner": partner, "unresolved": not bool(partner), "last_success": x["last_success"], "last_attempt": x["last_attempt"],
+                "partner_dn": x.get("partner_dn") or "", "partner_guid": x.get("partner_guid") or "",
+                "invocation_id": x.get("invocation_id") or "",
+                "partner_id": str(x.get("partner_dn") or x.get("partner_guid") or x.get("invocation_id") or "").lower(),
                 "failures": x["failures"], "result": x["result"]}
 
     def read_groups(self, c, out):

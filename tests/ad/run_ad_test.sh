@@ -110,7 +110,7 @@ export SOLARWINDS_URL="https://127.0.0.1:$swport" SOLARWINDS_USERNAME=svc_swis_r
 rm -f "$work"/mail/*.eml
 run "From SolarWinds: read live, the section, the AD monitors not up in the email" ok "$mail" \
     'From SolarWinds (swis-live): 3 DC(s)' 'From SolarWinds' '2 of 9 down: AD Replication (repadmin), Netlogon service' \
-    'From SolarWinds: AD monitors not up' 'Last success 7 h ago: 8524' 'Not in SolarWinds'
+    'From SolarWinds: AD monitors not up' 'Last success 7 h ago: 8524' 'not in SolarWinds'
 grep -qF 'ro&"<test>9' "$work/out.txt" "$work"/mail/*.eml && { echo "FAIL - the SolarWinds password is in the output or the mail"; fails=$((fails + 1)); }
 grep -q 'SECRET-COLUMN-ASKED' "$work/swis.log" && { echo "FAIL - a secret column was asked of SolarWinds"; fails=$((fails + 1)); }
 # 1.101.0: the replication map - on the website (its piece: markup, data, script), How AD sites were matched in the email too
@@ -125,7 +125,7 @@ else echo "ok   - the replication map on the website's page"; fi
 grep -l 'admap-data' "$work"/mail/*.eml >/dev/null 2>&1 && { echo "FAIL - the replication map is in the email"; fails=$((fails + 1)); }
 LIMIT=dc01.corp.test run "From SolarWinds never fails the job: a healthy domain stays green with ad_report_fail" ok \
     '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' 'Active Directory health' 'all 1 domain controller healthy (corp.test)' \
-    'From SolarWinds (swis-live): 1 DC(s)'
+    'From SolarWinds (swis-live): 2 DC(s)'          # dc01, and the DC AD lists that was not polled (1.101.2: its grey row)
 run "ad_solarwinds: false - not read, no line" ok '{"ad_solarwinds": false}' 'Inbound replication'
 grep -q 'From SolarWinds (swis-live)\|SolarWinds: not read\|SolarWinds: down or warning' "$work/out.txt" && { echo "FAIL - ad_solarwinds: false still reads SolarWinds"; fails=$((fails + 1)); }
 kill "$swpid" 2>/dev/null

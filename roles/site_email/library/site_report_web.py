@@ -70,7 +70,7 @@ options:
   html: {description: The page (not with keep)., type: str, default: ''}
   images: {description: "Pictures in the page: [{cid: name, path: file}].", type: list, elements: dict, default: []}
   data: {description: "The report and its run (written as JSON beside the page); its banner ({on, text, bg, fg} - plugins/module_utils/site_banner.py) goes at the top and bottom of the page and the index.", type: dict, default: {}}
-  entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job (and step, the first Start here card of data's report - the brief index shows it).", type: dict, required: true}
+  entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job (and step, the first Start here card of data's report - the brief index shows it; 1.101.2: live, a report the portal shows live - ad).", type: dict, required: true}
   prune: {description: "Leave out of the index the lines whose latest page is no longer there (deleted by hand). Not with windows_host (the server's folder is not read here).", type: bool, default: true}
   drop: {description: "Leave out of the index the lines whose key matches one of these patterns (* and ?) - e.g. pages a report once listed there.", type: list, elements: str, default: []}
   pages: {description: "More pages written in the same session, beside the page and never on the index (1.14.0, the ticket insights' site, unit and team pages, many per call) - each {page, html, report, runs}: its HTML (images and the banner as the page's) and, with json, its data (data with its own report and runs).", type: list, elements: dict, default: []}
@@ -2309,7 +2309,9 @@ def main():
         js_name = page_script_name(html)                 # site-report.js, or the page's own file (data-file)
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
-        entry.pop('banner', None)                        # this run's banner, never one the entry brings
+        entry.pop('banner', None)
+        if not entry.get('live'):                        # 1.101.2: only a report the portal shows live carries it
+            entry.pop('live', None)                        # this run's banner, never one the entry brings
         # kept on its line and run, an empty one too (1.24.0b/c: a line or run with the key is from 1.24.0 on): the index carries the
         # highest
         entry['banner'] = _mark(banner)

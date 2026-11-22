@@ -1,10 +1,17 @@
 #!/bin/sh
 # Site portal: start the service with a Python 3 of this image (standard library only). PORTAL_PYTHON picks one.
+# 1.101.2: one that has PyMySQL first (the report database for the live AD page; the all-in-one EE has it), else any.
 # start.sh --aap-check: the deploy's check of AAP (in the container: its network, its token).
-for py in ${PORTAL_PYTHON:-} python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3; do
-    if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
-        exec "$py" /app/site_portal.py "$@"
-    fi
+if [ -n "${PORTAL_PYTHON:-}" ] && command -v "$PORTAL_PYTHON" >/dev/null 2>&1 \
+    && "$PORTAL_PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec "$PORTAL_PYTHON" /app/site_portal.py "$@"                      # the one asked for, when it is 3.8 or later
+fi
+for want in pymysql sys; do
+    for py in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3; do
+        if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys, $want; sys.exit(sys.version_info < (3, 8))" >/dev/null 2>&1; then
+            exec "$py" /app/site_portal.py "$@"
+        fi
+    done
 done
 echo "site-portal: no Python 3.8 or later in this image (portal_image)" >&2
 exit 1

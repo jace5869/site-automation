@@ -134,6 +134,8 @@ aap_templates_credentials:
   machine_windows: Windows machine
   aap: AAP reader
   stigman_api: STIG Manager API
+  # report_db: Report database                  # the report jobs' (writes their tables)
+  # report_db_reader: Report database (reader)  # 1.101.2: the read-only account report_reader, for the portal's deploy
 ## The execution environment of each kind (all, windows, network); a kind left out: the project's
 # aap_templates_ee: {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
 ## Only some templates (* and ?, any case)
@@ -645,7 +647,8 @@ vmware_ask_image: aap.example.mil/site-ee-all:1
 ## The page's address, as people open it
 vmware_ask_public_url: https://stigman.example.mil/ask/
 """),
-    "site_portal_deploy.yml": ("Site portal - deploy", "Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token)", "", """\
+    "site_portal_deploy.yml": ("Site portal - deploy", "Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token), "
+                          "Report database (reader) (optional: report_reader, for the AD page), Report database (optional: else the writer, warned)", "", """\
 ## The podman network of STIG Manager's nginx container (docs/SITE_PORTAL.md, step 1: sudo podman ps): the portal joins
 ## it and sits behind that nginx at /portal/ - its mTLS (the card) says who it is; the job never changes STIG Manager
 portal_network: stigman

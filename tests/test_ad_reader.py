@@ -20,6 +20,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
+sys.path.insert(0, os.path.join(REPO, "plugins", "module_utils"))
 sys.path.insert(0, os.path.join(REPO, "roles", "ad_report", "library"))
 import ad_filters as F          # noqa: E402
 import site_ad_reader as M      # noqa: E402
@@ -761,7 +762,60 @@ class ReadReplication(unittest.TestCase):
         res = self.read({NC: {"msDS-NCReplCursors": [cur]}, self.CFG: {"msDS-NCReplCursors": [cur]}})
         self.assertEqual((res["why"], res["not_granted"], res["source"]), ("", [], "msDS-NCReplCursors"))
         self.assertEqual(res["cursors"][0], {"nc": NC, "partner": "dc01.corp.example.mil", "invocation_id": DC01_INV,
+                                             "partner_id": DC01_INV, "partner_dn": "",
                                              "last_sync": "2026-11-10T06:30:00Z"})
+
+
+class ReaderD1012(unittest.TestCase):
+    def test_failed_partition_keeps_the_links(self):
+        nc = "DC=corp,DC=test"
+        cfg = "CN=Configuration," + nc
+        r = M.Reader({})
+        r.dsa_name = {}
+        self.addCleanup(r.close)
+
+        def base(c, dn, attrs):
+            if dn == cfg:
+                raise LookupError("partition read failed")
+            return {"raw_attributes": {"msDS-NCReplInboundNeighbors": [xml("DS_REPL_NEIGHBOR", pszNamingContext=nc,
+                pszSourceDsaDN="CN=NTDS Settings,CN=DC01,CN=Servers,CN=SITEA0101,CN=Sites," + cfg,
+                ftimeLastSyncSuccess=NOW, ftimeLastSyncAttempt=NOW, dwLastSyncResult="0", cNumConsecutiveSyncFailures="0").encode()]}}
+        r.base = base
+        res = r.read_repl(None, {"naming_contexts": [cfg, nc], "dcs_ad": [{}, {}]})
+        self.assertEqual(res["failed"], [cfg])
+        self.assertEqual(res["not_granted"], [])
+        self.assertEqual(res["why"], "")
+        self.assertEqual(len(res["links"]), 1)
+        self.assertEqual(res["links"][0]["nc"], nc)
+
+    def test_link_identity_falls_back_without_using_the_display_name(self):
+        r = M.Reader({})
+        r.dsa_name = {}
+        self.addCleanup(r.close)
+        values = {"partner_dn": "CN=NTDS Settings,CN=DC01,DC=corp,DC=test", "partner_guid": DC01_GUID.upper(), "invocation_id": DC01_INV.upper()}
+        x = dict(values, last_success=NOW, last_attempt=NOW, failures=0, result=0, address="dc01.corp.test")
+        for key in ("partner_dn", "partner_guid", "invocation_id"):
+            self.assertEqual(r._link("DC=corp,DC=test", x)["partner_id"], values[key].lower())
+            del x[key]
+        self.assertEqual(r._link("DC=corp,DC=test", x)["partner_id"], "")
+
+    def test_cursor_identities_reach_the_link_source(self):
+        nc = "DC=corp,DC=test"
+        dn = "CN=NTDS Settings,CN=DC01,CN=Servers,CN=SITEA0101,CN=Sites,CN=Configuration," + nc
+        r = M.Reader({})
+        self.addCleanup(r.close)
+        r.dsa_name = {dn.lower(): "DC01", DC01_INV: "DC01", DC02_INV: "DC01"}
+        for attr, blob, ident in (
+                ("msDS-NCReplCursors", xml("DS_REPL_CURSOR", pszSourceDsaDN=dn, uuidSourceDsaInvocationID=DC01_INV, ftimeLastSyncSuccess=NOW).encode(), dn.lower()),
+                ("msDS-NCReplCursors", xml("DS_REPL_CURSOR", uuidSourceDsaInvocationID=DC01_INV, ftimeLastSyncSuccess=NOW).encode(), DC01_INV),
+                ("replUpToDateVector", bytes.fromhex(UTD_DC01), DC02_INV)):
+            r.base = lambda c, dn, attrs: {"raw_attributes": {attr: [blob]}}
+            res = r.read_repl(None, {"naming_contexts": [nc], "dcs_ad": [{}, {}]})
+            self.assertEqual(res["cursors"][0]["partner_id"], ident)
+            res["cursors"][0]["last_sync"] = NOW
+            repl = F._repl_reader([{"in_ad": True, "name": "DC02", "bind": {"ok": True}, "repl": res}],
+                                   datetime.datetime(2026, 11, 10, 9), 60, "corp.test")
+            self.assertEqual(repl["links"][0]["src"], ident)
 
 
 if __name__ == "__main__":

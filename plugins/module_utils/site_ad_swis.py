@@ -14,6 +14,11 @@ dcs: [{dc, ip}]; opts: max_age (min), days (last down window), now (test: "YYYY-
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+try:
+    from ansible.module_utils import site_ad_ident as ident
+except ImportError:
+    import site_ad_ident as ident
+
 import datetime
 import inspect
 import re
@@ -148,9 +153,7 @@ def _full(x):
 
 
 def match(dcs, nodes):
-    """Each DC -> (its node or None, how, why). The full name first (the DC's FQDN against a node's caption or DNS name);
-    a short name only when one node has it and that node's own full name (if any) is not another domain's; then an IP
-    that one node has. Never one node for two DCs (the second is said, not shown)."""
+    """Full DNS name, unique label, then unique IP; a node claimed twice belongs to neither."""
     full, short, ips = {}, {}, {}
     for n in nodes:
         for k in set(x for x in (_full(n.get("name")), _full(n.get("dns"))) if x):
@@ -167,33 +170,34 @@ def match(dcs, nodes):
                 out.append(r)
         return out
     out, claimed = {}, {}
-    for i, d in enumerate(dcs):                          # by position: two domains' DC01 are two DCs
-        fq, sn, ip = _full(d.get("fqdn")), _short(d.get("dc")), str(d.get("ip") or "").strip()
+    for i, d in enumerate(dcs):
+        fq, sn, ip = _full(d.get("dns_host") or d.get("fqdn")), ident.short_name(d), str(d.get("ip") or "").strip()
         node, how, why = None, "", ""
         c = uniq(full.get(fq, [])) if fq else []
         if len(c) == 1:
             node, how = c[0], "name"
         elif len(c) > 1:
-            why = "%d SolarWinds nodes are named %s" % (len(c), fq)
+            why = "ambiguous (%d nodes named %s)" % (len(c), fq)
         if node is None and not c:
             c = uniq(short.get(sn, []))
-            if fq:                                       # a node with another domain's full name is not this DC
-                c = [n for n in c if not ({_full(n.get("name")), _full(n.get("dns"))} - {""}) or fq in (_full(n.get("name")), _full(n.get("dns")))]
             if len(c) == 1:
                 node, how = c[0], "name"
             elif len(c) > 1:
-                why = "%d SolarWinds nodes are named %s" % (len(c), sn)
+                why = "ambiguous (%d nodes named %s)" % (len(c), sn)
         if node is None and ip:
             c = uniq(ips.get(ip, []))
             if len(c) == 1:
                 node, how, why = c[0], "ip", ""
             elif len(c) > 1:
-                why = "%d SolarWinds nodes have its IP %s (a cluster address?)" % (len(c), ip)
-        if node is not None and node.get("node_id") in claimed:
-            node, how, why = None, "", "the same SolarWinds node as %s - set its caption or DNS name in SolarWinds" % claimed[node.get("node_id")]
+                why = "ambiguous (%d nodes with IP %s)" % (len(c), ip)
         if node is not None:
-            claimed[node.get("node_id")] = d.get("fqdn") or d["dc"]
+            claimed.setdefault(node.get("node_id"), []).append(i)
         out[i] = (node, how, why)
+    for indices in claimed.values():
+        if len(indices) > 1:
+            names = ", ".join(ident.short_name(dcs[i]) for i in indices)
+            for i in indices:
+                out[i] = (None, "", "not matched: the same SolarWinds node claimed by " + names)
     return out
 
 
@@ -201,8 +205,8 @@ def _dc_rows(dcs, found, apps, alerts, downs, sam, ifaces=None):
     res = []
     for i, d in enumerate(dcs):
         node, how, why = found.get(i, (None, "", ""))
-        rec = {"dc": d["dc"], "domain": d.get("domain") or "", "fqdn": d.get("fqdn") or "", "ip": d.get("ip") or "", "matched": how, "unmatched_why": why, "status": "", "status_text": "", "last_poll": "",
-               "cpu": None, "mem": None, "apps": None, "alerts": [], "last_down": None, "node_id": None, "ifaces": None}
+        rec = {"dc_id": ident.dc_id(d), "dc": d["dc"], "domain": d.get("domain") or "", "fqdn": d.get("fqdn") or "", "ip": d.get("ip") or "", "matched": how if node else "", "unmatched_why": why if not node else "", "status": "", "status_text": "", "last_poll": "",
+               "cpu": None, "mem": None, "apps": None, "alerts": [], "last_down": None, "node_id": d.get("node_id"), "ifaces": None}
         if node:
             nid = node.get("node_id")
             crit = str(node.get("status_code")) == "14"          # Orion's Critical: worse than a warning, said as it is
@@ -287,7 +291,9 @@ def _db_read(dcs, opts, conn, swdb, snap, age, now):
         for r in (v if isinstance(v, list) else [v]):     # a reader that gives every node of a name: all of them
             if r and all(r.get("node_id") != o.get("node_id") for o in rows):
                 rows.append(r)
-    found = match(dcs, rows)
+    found = match(dcs, rows) if not opts.get("by_node_id") else {
+        i: (next((n for n in rows if d.get("node_id") is not None and str(n["node_id"]) == str(d["node_id"])), None), "node_id", ("not in SolarWinds" if d.get("node_id") is not None else d.get("match_why") or "not matched"))
+        for i, d in enumerate(dcs)}
     ids = sorted(set(v[0]["node_id"] for v in found.values() if v[0]))
     note = {}
     try:
@@ -337,13 +343,19 @@ def _cols(client, entity, want):
 def from_live(dcs, opts, client, swdb=None):
     """SolarWinds itself, the DCs only. Events (the last down) are not read live."""
     now = _now(opts)
+    where = ""
+    if opts.get("by_node_id"):
+        ids = sorted({int(d["node_id"]) for d in dcs if str(d.get("node_id") or "").isdigit()})
+        where = " WHERE N.NodeID IN (%s)" % ",".join(str(n) for n in ids) if ids else " WHERE 1 = 0"
     nodes, cut = client.paged("SELECT N.NodeID, N.Caption, N.DNS, N.IPAddress, N.Status, N.StatusDescription, N.UnManaged, N.CPULoad, "
-                               "N.PercentMemoryUsed, N.LastSync FROM Orion.Nodes N", "N.NodeID", page=int(opts.get("page") or 1000),
+                               "N.PercentMemoryUsed, N.LastSync FROM Orion.Nodes N" + where, "N.NodeID", page=int(opts.get("page") or 1000),
                                cap=int(opts.get("max_nodes") or 20000))
     rows = [{"node_id": n.get("NodeID"), "name": n.get("Caption") or "", "dns": n.get("DNS") or "", "ip": n.get("IPAddress") or "",
              "status": sw.status_of(n.get("Status"), n.get("UnManaged")), "status_text": n.get("StatusDescription") or "",
              "last_poll": n.get("LastSync"), "cpu_pct": n.get("CPULoad"), "mem_pct": n.get("PercentMemoryUsed")} for n in nodes]
-    found = match(dcs, rows)
+    found = match(dcs, rows) if not opts.get("by_node_id") else {
+        i: (next((n for n in rows if d.get("node_id") is not None and str(n["node_id"]) == str(d["node_id"])), None), "node_id", ("not in SolarWinds" if d.get("node_id") is not None else d.get("match_why") or "not matched"))
+        for i, d in enumerate(dcs)}
     why = []
     if cut:                                              # past max_nodes: a DC not found may be one not read
         why.append("SolarWinds has more nodes than were read (%d): a DC not found may be past them" % len(nodes))

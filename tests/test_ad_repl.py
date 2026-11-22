@@ -123,7 +123,7 @@ class Matrix(unittest.TestCase):
     def test_dc_by_dc(self):
         mx = view()["web_sections"][0]["matrix"]
         self.assertEqual(mx["mode"], "dc")
-        self.assertEqual(mx["groups"], [{"name": "SITEA", "n": 3}, {"name": "SITEB", "n": 2}, {"name": "SPLIT", "n": 1}])
+        self.assertEqual(mx["groups"], [{"name": "SITEA", "site_id": "sitea", "n": 3}, {"name": "SITEB", "site_id": "siteb", "n": 2}, {"name": "SPLIT", "site_id": "split", "n": 1}])
         self.assertEqual([c["name"] for c in mx["cols"]], ["DC01", "DC02", "DC03", "DC04", "DC05", "DC06"])
         self.assertEqual([(r["name"], r["first"], r["span"]) for r in mx["rows"]][:4],
                          [("DC01", True, 3), ("DC02", False, 3), ("DC03", False, 3), ("DC04", True, 2)])
@@ -281,8 +281,8 @@ class Trend(unittest.TestCase):
         a = view()["artifact"]
         self.assertEqual(a["read_at"], NOW)
         # each site's worst link INTO its DCs: SITEA gets DC06 -> DC03's 2 days, SITEB DC06 -> DC04's 10 h
-        self.assertEqual(a["sites"], {"SITEA": 48.33, "SITEB": 10.0, "SPLIT": 48.33})
-        self.assertEqual(a["status"], {"SITEA": "critical", "SITEB": "warning", "SPLIT": "critical"})
+        self.assertEqual(a["sites"], {"sitea": 48.33, "siteb": 10.0, "split": 48.33})
+        self.assertEqual(a["status"], {"sitea": "critical", "siteb": "warning", "split": "critical"})
 
 
 class Workbook(unittest.TestCase):
@@ -312,12 +312,14 @@ class FromTheReaders(unittest.TestCase):
         doms = [{"data": {"dns": "corp.example.mil", "tombstone_days": 180,
                           "dcs": [{"name": "dc01.corp.example.mil", "site": "SITEA"}, {"name": "dc02.corp.example.mil", "site": "SITEB"},
                                   {"name": "dc09.corp.example.mil", "site": "SITEB"}]}}]
-        dcs = [{"_name": "DC01", "_ok": True, "data": {"site": "SITEA", "repl": [
+        dcs = [{"_name": "DC01", "_domain": "corp.example.mil", "_ok": True, "data": {"site": "SITEA", "repl": [
                    {"nc": NC, "source": "DC02", "source_site": "SITEB", "failures": 2, "last_success": ago(30), "last_failure": ago(5), "status": "1722"}]}},
                {"_name": "DC02", "_ok": False, "error": "WinRM timed out", "data": {}}]
         r = af._repl_admin(dcs, doms, now)
-        self.assertEqual(r["links"], [{"to": "DC01", "frm": "DC02", "nc": "corp.example.mil", "last_success": ago(30), "last_attempt": "",
-                                       "last_failure": ago(5), "failures": 2, "error": "1722"}])
+        self.assertEqual(r["links"], [{"to": "DC01", "frm": "DC02", "nc": "corp.example.mil", "nc_dn": "DC=corp,DC=example,DC=mil", "last_success": ago(30), "last_attempt": "",
+                                       "last_failure": ago(5), "failures": 2, "error": "1722", "domain": "corp.example.mil",   # the receiving DC's (1.101.2)
+                                       "src": "SITEB\\DC02", "src_id": "dc02", "dst_id": "dc01", "source_site": "SITEB"}])                                         # the source as AD names it
+        self.assertEqual(set(d["domain"] for d in r["dcs"]), {"corp.example.mil"})
         self.assertEqual(sorted((d["name"], d["site"], d["read"]) for d in r["dcs"]),
                          [("DC01", "SITEA", True), ("DC02", "SITEB", False), ("DC09", "SITEB", False)])
         self.assertEqual(r["tombstone_days"], 180)

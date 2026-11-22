@@ -126,6 +126,10 @@
           | ad_repl_insert(_ad_map.sections | default([]) | ad_map_sections(false)) | report_xlsx_sheets) + _ad_repl.sheets
          if _ad_repl.sheets is defined and report_email_xlsx | default(false) | bool else [] }}
 
+- name: AD | the run in the report database (1.101.2, the portal's live AD page)
+  ansible.builtin.include_tasks: db.yml
+  when: ad_db | bool and lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length > 0
+
 - name: AD | report
   ansible.builtin.include_tasks: report.yml
 

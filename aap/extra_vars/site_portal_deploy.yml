@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Site portal - deploy"
 #   playbook:    playbooks/site_portal_deploy.yml
-#   credentials: Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token)
+#   credentials: Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token), Report database (reader) (optional: report_reader, for the AD page), Report database (optional: else the writer, warned)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -286,6 +286,51 @@ portal_public_url: https://stigman.example.mil/portal/
 ## the CA that signed SolarWinds' certificate, a file ON THE PORTAL SERVER (PEM), added to what the
 ## service trusts; "" = the server's own CAs (portal_trust_host_cas) only
 # portal_solarwinds_ca_file: ""
+
+## ---- 1.101.2: the live AD page (docs/SITE_PORTAL.md, "Active Directory")
+## ----------------------------------------------------- /portal/ad: the AD job's runs from the
+## report database - each DC now and since when, its last 48 runs, the replication links that need a
+## look, the last 7 days - and the link to the newest run's full report. The AD checks are the AD
+## job's (schedule it, e.g. every 30 min); each DC's SolarWinds status is read by the portal's
+## server every portal_ad_seconds with the Network map's SolarWinds login (none: not shown).
+# portal_ad: true
+
+## the SolarWinds read: how often (120 at least); nothing is read while nobody has the page open
+# portal_ad_seconds: 600
+
+## the AD checks older than this are said to be old on the page
+# portal_ad_old_minutes: 90
+
+## two AD templates (two forests): the ID of the one the page shows; "" = the newest run's
+# portal_ad_template: ""
+
+## The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when
+## this deploy's job template has a "Report database" credential - attach it with the read-only
+## account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on
+## the server (site-portal-reportdb). A login that can write works too and is said (a warning).
+## false: the page says the database is off.
+# portal_report_db: auto
+
+## the server (the credential's)
+# portal_report_db_host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+
+## its port (the credential's)
+# portal_report_db_port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+
+## the database (the credential's)
+# portal_report_db_name: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+
+## the account (the credential's; report_reader is enough)
+# portal_report_db_user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+
+## the credential's password (secret)
+# portal_report_db_password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+
+## TLS with the certificate checked (the credential's)
+# portal_report_db_tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+
+## on the controller: its text goes in the secret
+# portal_report_db_ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
 
 ## ---- Secrets: NEVER set these in a vars file or inventory
 ## --------------------------------------------------------------- From the AAP credential, as

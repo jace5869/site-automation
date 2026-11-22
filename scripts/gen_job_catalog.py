@@ -68,7 +68,8 @@ KINDS = [("Machine (Windows)", "machine_windows"), ("Red Hat Ansible Automation 
          ("Horizon API", "horizon"), ("NetApp ONTAP", "ontap"), ("ACT model key", "act_model_key"), ("Windows file share", "windows_share"),
          ("Tenable.sc API", "tenable"), ("Cisco UCS Manager", "ucs"), ("SolarWinds (read-only)", "solarwinds"), ("Palo Alto PAN-OS API", "panos"),
          ("Network config git repository", "net_git"), ("MariaDB monitor", "mariadb"), ("TLS certificate", "tls_certificate"),
-         ("SQL Server (certificate inventory)", "sqlserver"), ("Keystore password", "keystore"), ("Report database", "report_db"),
+         ("SQL Server (certificate inventory)", "sqlserver"), ("Keystore password", "keystore"), ("Report database (reader)", "report_db_reader"),
+         ("Report database", "report_db"),
          ("Teams webhook", "teams"), ("STIG Manager API (writer)", "stigman_api_writer"), ("Machine", "machine")]   # writer: 1.83.0, CREDS
 OPTIONAL = re.compile(r"optional|\bwith\b|\bonly\b", re.I)
 

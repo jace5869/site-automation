@@ -30,6 +30,8 @@
     _report: "{{ _ad_doc | combine({'footer': _ad_footer}) }}"
     # the website's copy (atlas, brief): the replication matrix and its trend too (1.63.0); the workbook: every link
     _report_web: "{{ _ad_web | combine({'footer': _ad_footer}) if _ad_web | default({}, true) else {} }}"
+    # 1.101.2: the index line marked live: ad - the portal's Active Directory page links this page (its run's full report)
+    _report_live: ad
     _report_xlsx: "{{ _ad_xlsx | default([]) }}"
     # 1.101.0: the replication map's piece of the website page (markup, style, script, data: report_page_piece)
     _report_page_extra: "{{ _ad_map.extra | default({}) }}"

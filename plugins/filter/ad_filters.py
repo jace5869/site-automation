@@ -11,6 +11,14 @@ import re
 import importlib.util
 import os
 
+_ident_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_ad_ident.py")
+if os.path.isfile(_ident_path):
+    _spec_ident = importlib.util.spec_from_file_location("site_ad_ident", _ident_path)
+    ident = importlib.util.module_from_spec(_spec_ident)
+    _spec_ident.loader.exec_module(ident)
+else:
+    import site_ad_ident as ident
+
 # the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
 _spec = importlib.util.spec_from_file_location(
     "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
@@ -242,6 +250,29 @@ def _low(text, st):
 
 
 # ---- the report -------------------------------------------------------------------------------------
+def _refused(where):
+    return {"report": {"title": "Active Directory health report", "status": "unknown", "summary": [],
+                       "sections": [{"title": "Not supported", "status": "unknown", "text": ident.REFUSAL, "lines": [where]}]},
+            "why": ident.REFUSAL, "unsupported": where, "problems": [], "dcs": [], "domains": [], "critical": 0, "warning": 0,
+            "repl": {"dcs": [], "links": [], "why": ident.REFUSAL, "discovered": False}}
+
+
+def _coverage_report(report, repl):
+    if ident.coverage(repl) == ident.COVERAGE_UNKNOWN:
+        for tile in report.get("summary") or []:
+            if tile.get("label") in ("DCs answering", "DCs read"):
+                tile.update(value="unknown", status="unknown")
+        if report.get("status") == "ok":
+            report["status"] = "unknown"
+    report["sections"].append({"title": "Replication coverage", "text": ident.coverage(repl),
+                               "columns": ["DC", "Site", "Replication"],
+                               "rows": [[d["name"], d.get("site") or "Site unknown", "not polled"]
+                                        for d in repl["dcs"] if d.get("why") in ("not polled", "not in the inventory: not read")],
+                               "row_status": ["unknown" for d in repl["dcs"] if d.get("why") in ("not polled", "not in the inventory: not read")],
+                               "lines": ["Two NTDS objects for %s - stale DSA, metadata cleanup" % d["name"]
+                                         for d in repl["dcs"] if d.get("stale_dsa")]})
+
+
 def ad_report(dcs, domains, opts=None):
     """The AD health report (roles/site_email layout) and the problems found.
     dcs:     [{host, reachable, error, data: <ad_dc.ps1's dc>}]          one per DC in the inventory
@@ -261,6 +292,9 @@ def ad_report(dcs, domains, opts=None):
     dcs = [dict(x) for x in (dcs or [])]
     domains = [dict(x) for x in (domains or []) if x]
     doms = [d for d in domains if (d.get("data") or {}).get("dns")]
+    refused = ident.unsupported([dcs, domains])
+    if refused:
+        return _refused(refused)
 
     # Which domain each DC belongs to, and every DC AD knows about (also those not in the inventory)
     known = {}                                          # fqdn -> (domain, the domain's record of it)
@@ -273,12 +307,11 @@ def ad_report(dcs, domains, opts=None):
         fq = str(data.get("fqdn") or "").lower()
         x["_fqdn"] = fq or str(x.get("host", "")).lower()
         x["_name"] = short(data.get("name") or x["_fqdn"]).upper() if (data.get("name") or x["_fqdn"]) else str(x.get("host"))
-        dom = str(data.get("domain") or "").lower()
+        dom = ident.domain(data)
         if not dom:
-            h = x["_fqdn"]
-            for k, (dn, _) in known.items():
-                if k == h or short(k) == short(h):
-                    dom = dn
+            candidates = [dict(rec, name=k, domain=dn) for k, (dn, rec) in known.items()]
+            found = ident.resolve(dict(ident.fields(data), name=x["_fqdn"]), candidates)
+            dom = ident.domain(found) if found else ""
         x["_domain"] = dom or "?"
         x["_ok"] = bool(x.get("reachable", True)) and bool(data)
         if x["_ok"]:
@@ -397,7 +430,7 @@ def ad_report(dcs, domains, opts=None):
         dn = x["_domain"]
         if not x["_ok"]:
             err = x.get("error") or "no answer"
-            rows.append(_row([x["_name"], dn, "", "", "", "", "UNREACHABLE"], [""] * 6 + ["critical"]))
+            rows.append(_row([x["_name"], dn, "Site unknown", "", "", "", "UNREACHABLE"], [""] * 6 + ["critical"]))
             health.append(_row([x["_name"], "UNREACHABLE", "", "", "", "", err], ["", "critical"]))
             R.problem(dn, "dc", x["_name"], "critical", "the DC could not be read: " + err)
             continue
@@ -506,7 +539,7 @@ def ad_report(dcs, domains, opts=None):
         u_st = "warning" if up_warn and up_h is not None and up_h / 24.0 > up_warn else ""
         kind = ("GC" if d.get("is_gc") else "") + (" RODC" if d.get("is_rodc") else "")
         roles = ", ".join(FSMO_SHORT.get(r, r) for r in d.get("fsmo") or [])
-        rows.append(_row([name, dn, d.get("site", ""), d.get("os", "").replace("Microsoft Windows Server", "Server").strip(),
+        rows.append(_row([name, dn, d.get("site") or "Site unknown", d.get("os", "").replace("Microsoft Windows Server", "Server").strip(),
                           kind.strip() or "-", roles or "-", age_text(up_h)], ["", "", "", "", "", "", u_st]))
         health.append(_row([name, l_txt, ", ".join(down) or "all running", g_txt, sv_txt, t_txt, free_txt],
                            ["", l_st, s_st, g_st, sv_st, t_st, k_st]))
@@ -515,11 +548,11 @@ def ad_report(dcs, domains, opts=None):
     for fq, (dn, rec) in sorted(known.items()):
         if fq in seen or short(fq).lower() in seen:
             continue
-        rows.append(_row([short(fq).upper(), dn, rec.get("site", ""), str(rec.get("os", "")).replace("Windows Server", "Server"),
+        rows.append(_row([short(fq).upper(), dn, rec.get("site") or "Site unknown", str(rec.get("os", "")).replace("Windows Server", "Server"),
                           ("GC" if rec.get("gc") else "") + (" RODC" if rec.get("rodc") else ""), ", ".join(FSMO_SHORT.get(r, r) for r in rec.get("roles") or []),
-                          "not in the inventory"], [""] * 6 + ["info"], "info"))
+                          "not polled"], [""] * 6 + ["unknown"], "unknown"))
     R.table("Domain controllers", "Each DC: site, operating system, global catalog / read-only, the operations master roles it "
-            "holds and the time since it started. Blue: a DC in AD that is not in this job's inventory (only the domain-wide "
+            "holds and the time since it started. Grey: a DC in AD that is not polled by this job (only the domain-wide "
             "checks cover it).", ["DC", "Domain", "Site", "OS", "Kind", "Roles", "Up"], rows, "No domain controller was read.")
     R.table("Domain controllers' health", "Each DC read: LDAP answering (and synchronized), the DC services not running, dcdiag's "
             "failed tests, SYSVOL (shared, DFSR state), its clock against the PDC emulator (the PDC: against its NTP source) and "
@@ -575,10 +608,11 @@ def ad_report(dcs, domains, opts=None):
             err = ("%s (%s)" % (code, REPL_ERRORS[code]) if code in REPL_ERRORS else code) if fails else ""
             if fails:
                 why = "%d consecutive failure(s), last success %s: error %s" % (fails, age_text(ls_h) + " ago" if ls_h is not None else "never", err or "?")
-            rows.append(_row([x["_name"], nc_name(r.get("nc")), r.get("source", ""), r.get("source_site", ""), fails,
+            partner_name = ident.source(r)["name"] or "unknown DSA"
+            rows.append(_row([x["_name"], nc_name(r.get("nc")), partner_name, r.get("source_site") or "Site unknown", fails,
                               age_text(ls_h) if ls_h is not None else "never", tt(r.get("last_failure")), err],
                              ["", "", "", "", "critical" if fails else "", st]))
-            R.problem(x["_domain"], "replication", "%s <- %s (%s)" % (x["_name"], r.get("source"), nc_name(r.get("nc"))), st, why)
+            R.problem(x["_domain"], "replication", "%s <- %s (%s)" % (x["_name"], partner_name, nc_name(r.get("nc"))), st, why)
         q = x["data"].get("queue")
         qw = int(o.get("repl_queue_warn", 50))
         if q is not None and int(q) >= qw:
@@ -606,7 +640,7 @@ def ad_report(dcs, domains, opts=None):
                 continue                                # retired invocation IDs, deleted DCs, the collector itself
             h = age_hours(u.get("last"), now)
             st = level(h, rw, rc) if h is not None else "unknown"
-            rows.append(_row([data["dns"], n.upper(), names[n].get("site", ""), short(coll).upper(), age_text(h)], ["", "", "", "", st]))
+            rows.append(_row([data["dns"], n.upper(), names[n].get("site") or "Site unknown", short(coll).upper(), age_text(h)], ["", "", "", "", st]))
             R.problem(data["dns"], "replication", n.upper(), st, "the last replication from %s that reached %s was %s ago" % (n.upper(), coll.upper(), age_text(h)))
     R.table("Replication from every DC (up-to-dateness)", "For each DC of the domain, how long ago the latest of its changes "
             "reached the DC that read the domain (repadmin /showutdvec /latency). This covers the DCs that are not in the "
@@ -975,9 +1009,13 @@ def ad_report(dcs, domains, opts=None):
               "subtitle": "Read %s - changes of the last %s h%s" % (_tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), _hours(hours),
                                                                          (" - " + o["mode_line"]) if o.get("mode_line") else ""),
               "summary": summary, "sections": R.sections}
-    dc_sum = [{"dc": x["_name"], "domain": x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")} for x in dcs]
+    repl = _repl_admin(dcs, doms, now)
+    _coverage_report(report, repl)
+    dc_sum = [dict(ident.fields(x.get("data") or {}), **{"dc": x["_name"], "domain": "" if x["_domain"] == "?" else x["_domain"], "host": x.get("host"), "read": x["_ok"], "error": x.get("error", "")}) for x in dcs]
+    dc_sum = [dict(d, **ident.fields(ident.resolve(d, repl["dcs"]) or d)) for d in dc_sum]
+    dc_sum = [dict(d, dc_id=ident.dc_id(d)) for d in dc_sum]
     return {"report": report, "problems": R.problems, "dcs": dc_sum, "domains": summaries,
-            "critical": len(crit), "warning": len(warn), "repl": _repl_admin(dcs, doms, now)}
+            "critical": len(crit), "warning": len(warn), "repl": repl}
 
 
 def ps_error(stderr):
@@ -1022,6 +1060,9 @@ def ad_reader_report(reader, opts=None):
     o = opts or {}
     R = _Report(o)
     r = dict(reader or {})
+    refused = r.get("unsupported") or ident.unsupported(r)
+    if refused:
+        return _refused(refused)
     now = parse_time(o.get("now")) or parse_time(r.get("read_at")) or datetime.datetime.now(datetime.timezone.utc)
     tz = _tm.zone(o.get("time_zone"))[0]          # report_time_zone (1.54.0): every time shown; None = UTC as before
 
@@ -1047,6 +1088,7 @@ def ad_reader_report(reader, opts=None):
         report = {"title": "Active Directory health report: NOT READ (%s)" % dom, "status": "critical",
                   "subtitle": "Read %s - reader mode" % _tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz),
                   "summary": [{"label": "DCs answering", "value": "0", "status": "critical"}], "sections": R.sections}
+        _coverage_report(report, {"dcs": [], "discovered": False})
         return {"report": report, "problems": R.problems, "dcs": [], "domains": [{"domain": dom, "dcs": 0, "dcs_read": 0, "collector": ""}],
                 "critical": 1, "warning": 0}
 
@@ -1081,7 +1123,7 @@ def ad_reader_report(reader, opts=None):
     facts = [("Domain", dom, ""), ("Forest", r.get("forest", ""), ""),
              ("Functional level", "domain %s, forest %s" % (_level(info.get("level")), _level(info.get("forest_level"))), ""),
              ("Schema version", info.get("schema_version", ""), ""),
-             ("DCs answering", "%d of %d" % (n_in, len(in_ad)), "ok" if n_in >= len(in_ad) else "critical"), ("PDC emulator", pdc or "?", ""),
+             ("DCs answering", ("%d of %d" % (n_in, len(in_ad))) if in_ad else "unknown", "ok" if n_in >= len(in_ad) else "critical"), ("PDC emulator", pdc or "?", ""),
              ("Tombstone lifetime", ("%d days" % tsl) if tsl else "not set (60 days)", ""),
              ("Recycle Bin", "on" if rb else ("OFF" if rb is False else "?"), "ok" if rb else ("warning" if rb is False else "")),
              ("RID pool left", rid_txt, rid_st), ("krbtgt password", (age_text(k_age) + " old") if k_age is not None else "?", k_st)]
@@ -1171,7 +1213,7 @@ def ad_reader_report(reader, opts=None):
         e_txt = "EXPIRED" if days is not None and days < 0 else ("%d days" % int(days) if days is not None else "-")
         e_st = level(days, cw, cc, higher_is_worse=False) if days is not None else ""
         kind = ("GC" if d.get("gc") else "") + (" RODC" if d.get("rodc") else "")
-        what.append(_row([name, d.get("site", ""), str(d.get("os", "")).replace("Windows Server", "Server").strip() or "-", kind.strip() or "-",
+        what.append(_row([name, d.get("site") or "Site unknown", str(d.get("os", "")).replace("Windows Server", "Server").strip() or "-", kind.strip() or "-",
                           ", ".join(ROLE_SHORT.get(x, x) for x in d.get("roles") or []) or "-",
                           "yes" if d.get("in_inventory") else "no", "yes" if d.get("in_ad") else "NO"],
                          ["", "", "", "", "", "info" if not d.get("in_inventory") else "", "warning" if not d.get("in_ad") else ""]))
@@ -1216,6 +1258,8 @@ def ad_reader_report(reader, opts=None):
                      for c in rp["cursors"] if c.get("partner") and c.get("last_sync")]
         if rp.get("source"):
             sources.add(rp["source"])
+        for nc in rp.get("failed") or []:
+            rows.append(_row([name, nc_name(nc), "", "", "", "partition query failed", "not read"], [""] * 5 + ["unknown"], "unknown"))
         for nc in rp.get("not_granted") or []:
             not_granted.setdefault(nc_name(nc), []).append(name)
         if not links:
@@ -1243,10 +1287,10 @@ def ad_reader_report(reader, opts=None):
                 ok_links += 1
                 continue
             code = str(ln.get("result") or "")
-            rows.append(_row([name, nc_name(ln.get("nc")), _dc_short(ln.get("partner")), fails, age_text(ls_h) if ls_h is not None else "never",
+            rows.append(_row([name, nc_name(ln.get("nc")), (_dc_short(ln.get("partner")) if ln.get("partner") else "unknown DSA"), fails, age_text(ls_h) if ls_h is not None else "never",
                               ("%s (%s)" % (code, REPL_ERRORS[code]) if code in REPL_ERRORS else code) if fails else "", why],
                              ["", "", "", "critical" if fails else "", st]))
-            R.problem(dom, "replication", "%s <- %s (%s)" % (name, _dc_short(ln.get("partner")), nc_name(ln.get("nc"))), st, why)
+            R.problem(dom, "replication", "%s <- %s (%s)" % (name, (_dc_short(ln.get("partner")) if ln.get("partner") else "unknown DSA"), nc_name(ln.get("nc"))), st, why)
     src = ", ".join(sorted(sources)) or "nothing readable"
     # 1.63.0: replication not read is said in one line - the right and where - never as a replication failure
     repl_lines = []
@@ -1254,6 +1298,9 @@ def ad_reader_report(reader, opts=None):
         repl_lines.append('Replication not read on %s: %s lacks "%s" on the partitions (see %s).' % (
             ", ".join(not_read), user, REPL_RIGHT, REPL_DOC))
     partial = sorted(k for k, v in not_granted.items() if [n for n in v if n not in not_read])
+    failed = sorted({nc_name(nc) for d in dcs for nc in (d.get("repl") or {}).get("failed") or []})
+    if failed:
+        repl_lines.append("Partition queries failed: %s (not read)." % ", ".join(failed))
     if partial:
         repl_lines.append('Nothing readable on %s: "%s" is not granted there, or the partition has no other copy (see %s).' % (
             ", ".join(partial), REPL_RIGHT, REPL_DOC))
@@ -1440,83 +1487,126 @@ def ad_reader_report(reader, opts=None):
               "subtitle": "Read %s - reader mode: LDAP, DNS and Kerberos from AAP as %s - changes of the last %s h" % (
                   _tm.local(now.strftime("%Y-%m-%d %H:%M UTC"), tz), user, _hours(hours)),
               "summary": summary, "sections": R.sections}
-    dc_sum = [{"dc": d.get("name") or _dc_short(d.get("fqdn")), "domain": dom, "host": d.get("fqdn"), "read": bool((d.get("bind") or {}).get("ok")),
-               "error": (d.get("bind") or {}).get("error", "")} for d in dcs if d.get("in_ad")]
+    dc_sum = [dict(ident.fields(d), **{"dc": d.get("name") or _dc_short(d.get("fqdn")), "domain": dom, "host": d.get("fqdn"), "read": bool((d.get("bind") or {}).get("ok")),
+               "error": (d.get("bind") or {}).get("error", "")}) for d in dcs if d.get("in_ad")]
+    dc_sum = [dict(d, dc_id=ident.dc_id(d)) for d in dc_sum]
+    repl = _repl_reader(dcs, now, tsl, dom, r.get("known_dcs") or r.get("dcs_ad"), r.get("discovered"))
+    _coverage_report(report, repl)
     return {"report": report, "problems": R.problems, "dcs": dc_sum,
             "domains": [{"domain": dom, "forest": r.get("forest", ""), "dcs": len(in_ad), "dcs_read": n_ans, "collector": r.get("read_from")}],
-            "critical": len(crit), "warning": len(warn), "repl": _repl_reader(dcs, now, tsl)}
+            "critical": len(crit), "warning": len(warn), "repl": repl}
 
 
 # ---- 1.63.0: every replication link, for the replication matrix (plugins/filter/ad_repl_filters.py) ----------------------
 def _repl_admin(dcs, doms, now):
-    """Admin mode: each DC's repadmin /showrepl rows -> {dcs: [{name, site, read, why}], links: [{to, frm, nc, last_success,
-    last_attempt, last_failure, failures, error}], source, now, tombstone_days}. A DC AD knows but the job did not read is
+    """Admin mode: each DC's repadmin /showrepl rows -> {dcs: [{name, site, read, why, domain}], links: [{to, frm, nc, domain,
+    last_success, last_attempt, last_failure, failures, error}], source, now, tombstone_days} (domain: the receiving DC's). A DC AD knows but the job did not read is
     in dcs (read false): its column has no data, never a guess."""
+    refused = ident.unsupported([dcs, doms])
+    if refused:
+        return _refused(refused)["repl"]
     seen = {}
     for d in doms:
         for x in d["data"].get("dcs") or []:
-            n = short(x.get("name")).upper()
-            if n and n not in seen:
-                seen[n] = {"name": n, "site": str(x.get("site") or ""), "read": False, "why": "not in the inventory: not read"}
-    links = []
+            rec = dict(ident.fields(x), fqdn=x.get("fqdn") or x.get("name") or "", name=short(x.get("name")).upper(), site=str(x.get("site") or ""), domain=ident.domain_id(d["data"].get("dns")),
+                       read=False, why="not polled")
+            rec["dc_id"] = ident.dc_id(rec)
+            seen = ident.merge(list(seen.values()) + [rec])
+    polled = []
     for x in dcs:
-        n = x["_name"]
         data = x.get("data") or {}
-        rec = seen.setdefault(n, {"name": n, "site": str(data.get("site") or ""), "read": False, "why": ""})
-        rec["site"] = rec["site"] or str(data.get("site") or "")
+        rec = dict(ident.fields(data), name=x["_name"], domain=ident.domain_id(x.get("_domain") if x.get("_domain") != "?" else ""),
+                   site=str(data.get("site") or ""))
+        found = ident.resolve(rec, seen.values())
+        rec = dict(found or {}, **rec)
+        rec["domain"] = rec["domain"] or (found or {}).get("domain", "")
+        rec["site"] = rec["site"] or (found or {}).get("site", "")
+        rec["dc_id"] = ident.dc_id(rec)
         errs = [e for e in data.get("errors") or [] if str(e).startswith("repadmin /showrepl")]
-        if not x["_ok"]:
-            rec.update(read=False, why="not reached: %s" % (x.get("error") or "no answer"))
-            continue
-        rec.update(read=not errs, why=errs[0] if errs else "")
+        rec.update(read=bool(x["_ok"]) and not errs,
+                   why=(errs[0] if errs else "") if x["_ok"] else "not reached: %s" % (x.get("error") or "no answer"))
+        seen = ident.merge(list(seen.values()) + [rec])
+        polled.append((rec, data))
+    # Sites are attributes; a partner can move between sites.
+    pending = []
+    for rec, data in polled:
         for r in data.get("repl") or []:
-            frm = short(r.get("source")).upper()
-            if not frm:
-                continue
-            if frm not in seen:
-                seen[frm] = {"name": frm, "site": str(r.get("source_site") or ""), "read": False, "why": "not in the inventory: not read"}
-            links.append({"to": n, "frm": frm, "nc": nc_name(r.get("nc")), "last_success": r.get("last_success") or "",
-                          "last_attempt": "", "last_failure": r.get("last_failure") or "", "failures": int(r.get("failures") or 0),
-                          "error": str(r.get("status") or "").strip() if int(r.get("failures") or 0) else ""})
+            src = ident.partner(r, seen.values())
+            src["dc_id"] = ident.dc_id(src)
+            if not src["dc_id"].startswith("dsa:"):
+                seen.setdefault(src["dc_id"], src)
+            pending.append((rec, src, r))
+    links = []
+    for rec, src, r in pending:
+        links.append({"to": rec["name"], "frm": "unknown DSA" if ident.dc_id(src).startswith("dsa:") else ident.short_name(src).upper(), "nc": nc_name(r.get("nc")), "nc_dn": r.get("nc") or "",
+                      "last_success": r.get("last_success") or "", "domain": rec["domain"],
+                      "src": ((str(r.get("source_site")) + "\\") if r.get("source_site") and "\\" not in str(r.get("source")) else "") + str(r.get("source") or ""), "src_id": ident.dc_id(src), "dst_id": ident.dc_id(rec),
+                      "source_site": src.get("site") or "", "last_attempt": "", "last_failure": r.get("last_failure") or "",
+                      "failures": int(r.get("failures") or 0),
+                      "error": str(r.get("status") or "").strip() if int(r.get("failures") or 0) else ""})
     tsl = min([d["data"].get("tombstone_days") or 60 for d in doms] or [60])
     return {"dcs": list(seen.values()), "links": links, "source": "repadmin /showrepl", "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "tombstone_days": tsl}
+            "tombstone_days": tsl, "discovered": any(d["data"].get("dcs") for d in doms)}
 
 
-def _repl_reader(dcs, now, tsl):
-    """Reader mode: each DC's own partition heads (site_ad_reader's repl) -> as _repl_admin. With no link readable, the
-    up-to-dateness cursors stand in (when each DC's changes last arrived), the DC itself left out."""
-    out, links, sources = [], [], set()
+def _repl_reader(dcs, now, tsl, dom="", known=None, discovered=None):
+    """Reader observations and every discovered controller, with exact link endpoints."""
+    refused = ident.unsupported({"domain": dom, "dcs": dcs, "known": known or []})
+    if refused:
+        return _refused(refused)["repl"]
+    population = [dict(ident.fields(d), name=d.get("name"), site=d.get("site") or "", domain=ident.domain(d) or ident.domain_id(dom)) for d in (known or [])]
+    population += [dict(ident.fields(d), name=d.get("name"), site=d.get("site") or "", domain=ident.domain(d) or ident.domain_id(dom)) for d in dcs if d.get("in_ad")]
+    out = ident.merge([dict(d, read=False, why="not polled") for d in population])
+    links, sources = [], set()
     for d in dcs:
         if not d.get("in_ad"):
             continue
-        name = d.get("name") or _dc_short(d.get("fqdn"))
+        rec = dict(ident.fields(d), name=d.get("name") or _dc_short(d.get("fqdn")), site=str(d.get("site") or ""),
+                   domain=ident.domain(d) or ident.domain_id(dom), read=False, why="")
+        rec["dc_id"] = ident.dc_id(rec)
+        out = ident.merge(list(out.values()) + [rec])
+        rec = out[rec["dc_id"]]
         rp = d.get("repl") or {}
-        rec = {"name": name, "site": str(d.get("site") or ""), "read": False, "why": ""}
-        out.append(rec)
+        rec["partial"] = sorted([nc_name(x) + ": no right" for x in rp.get("not_granted") or []] +
+                                [nc_name(x) + ": query failed" for x in rp.get("failed") or []])
         if not (d.get("bind") or {}).get("ok"):
             rec["why"] = "not reached: %s" % ((d.get("bind") or {}).get("error") or "no answer")
-            continue
-        if rp.get("why") in (NEEDS_ADMIN, REPL_NOT_GRANTED):
+        elif rp.get("why") in (NEEDS_ADMIN, REPL_NOT_GRANTED):
             rec["why"] = 'not read: needs "%s"' % REPL_RIGHT
-            continue
-        rec["read"] = True
+        elif rp.get("why") and rp["why"] != "one DC: no partner":
+            rec["why"] = rp["why"]
+        elif "repl" not in d:
+            rec["why"] = "replication not read"
+        else:
+            rec["read"] = True
         if rp.get("source"):
             sources.add(rp["source"])
-        got = rp.get("links") or []
-        if not got:
-            got = [{"nc": c.get("nc"), "partner": c.get("partner"), "last_success": c.get("last_sync"), "failures": 0, "result": 0}
-                   for c in rp.get("cursors") or [] if c.get("partner") and c.get("last_sync")]
+        got = rp.get("links") or [dict(c, last_success=c.get("last_sync"), failures=0, result=0, cursor=True)
+                                  for c in rp.get("cursors") or [] if c.get("partner") and c.get("last_sync")]
         for ln in got:
-            frm = _dc_short(ln.get("partner"))
-            if not frm or frm == name:
+            src = ident.partner(ln, out.values())
+            # Invocation IDs identify an incarnation, not a DC. They only resolve a known cursor.
+            if ln.get("cursor") and ln.get("invocation_id"):
+                matches = [v for v in out.values() if v.get("invocation_id") == ln["invocation_id"]]
+                if len(matches) == 1:
+                    src = matches[0]
+            frm = ident.short_name(src).upper()
+            if ln.get("cursor") and ident.same_dc(src, rec) and not rec.get("stale_dsa"):
                 continue
+            if frm.startswith("DSA:"):
+                frm = "unknown DSA"
+            src = dict(src, dc_id=ident.dc_id(src))
+            if not src["dc_id"].startswith("dsa:"):
+                out.setdefault(src["dc_id"], dict(src, name=frm, site=str(src.get("site") or ""), read=False, why="not polled"))
             fails = int(ln.get("failures") or 0)
-            links.append({"to": name, "frm": frm, "nc": nc_name(ln.get("nc")), "last_success": ln.get("last_success") or "",
-                          "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
-                          "failures": fails, "error": str(ln.get("result") or "") if fails else ""})
-    return {"dcs": out, "links": links, "source": ", ".join(sorted(sources)), "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "tombstone_days": tsl or 60}
+            links.append(dict(ln, to=rec["name"], frm=frm, nc=nc_name(ln.get("nc")), nc_dn=ln.get("nc") or "", domain=rec["domain"],
+                              src=ln.get("partner_id") or ln.get("partner") or "", src_id=src["dc_id"], dst_id=rec["dc_id"],
+                              last_success=ln.get("last_success") or "", last_attempt=ln.get("last_attempt") or "",
+                              last_failure=(ln.get("last_attempt") or "") if fails else "", failures=fails,
+                              error=str(ln.get("result") or "") if fails else ""))
+    return {"dcs": list(out.values()), "links": links, "source": ", ".join(sorted(sources)),
+            "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "tombstone_days": tsl or 60,
+            "discovered": bool(population) if discovered is None else discovered}
 
 
 def ad_mode(dcs, wanted):

@@ -322,6 +322,40 @@ in the report database (1.101.2).
 - **Tests:** test_netmap_region.py (the layer, the job's filter, history by template name, the portal's reader on
   SQLite, and Region in Chromium with label geometry at 1280 and 800 px, also in a wider font). Also
   test_netmap.py (the live AD layer) and the netmap e2e (the AD job's artifact read from the fake AAP).
+## 1.101.2 — 2026-11-22
+
+**To set up:** in *AAP - set up job templates*, map `report_db_reader` (the **Report database** credential with the
+read-only account `report_reader`) and `report_db`, run it, then run *Site portal - deploy* once.
+
+**The portal's Active Directory page (`/portal/ad`), drawn from the report database** (user-approved mockup B):
+- **At a glance** (8 tiles), the **domain controllers** worst first: now, **since when**, its **runs of the last 24 h** (a
+  square each), SolarWinds now, what is wrong; **replication links that need a look** (failing or late, since the last success);
+  **DCs with a problem over 7 days** (a chart and the runs table); a link to the shown run's own report page.
+- Live while open: the database every minute, SolarWinds every `portal_ad_seconds` (600), one read every viewer shares,
+  an ETag; a DC that changes gets a toast (motion settings apply).
+- Never old data as current: the database off, not read now, no run yet, a run older than `portal_ad_old_minutes` (90),
+  SolarWinds not read or overdue, the portal not answering (20 s), replication not read, no DC found, a run whose rows
+  could not be made - each said on the page; a DC is up only when SolarWinds says Up for that DC's saved NodeID.
+- Seen but unpolled DCs are grey, marked "not polled" in the page and full report, and excluded from "DCs with a
+  problem". Coverage names each unread DC and partition; failed discovery says "coverage unknown". A second domain
+  names its AD evidence. Missing sites, unknown DSAs and stale NTDS objects are said explicitly. The SolarWinds
+  column gives the sample's age, "last known" when overdue, and the matching reason; history uses the stored run
+  status and says "Rows not kept" when conversion failed.
+- **The AD job keeps each run** in the report database (`ad_db`, new tables `ad_run`, `ad_dc`, `ad_link`, made by the
+  job, schema version 4: one-domain host-label DC keys, DNS host/DSA/site attributes, NodeID and stale-DSA flag;
+  versions 1–3 refused; `ad_db_keep_days` 400, each template its own). A database that is down is a warning; the job
+  stays green. The website page is as before.
+- **Site portal - deploy**: the read-only login as the podman secret `site-portal-reportdb` (from the attached Report
+  database credential); a login that can write is a warning; never a failed deploy. The portal starts a Python of its
+  image that has PyMySQL (the all-in-one EE).
+- The job-template catalog attaches `report_db_reader` (else `report_db`) to *Site portal - deploy*.
+- New settings: `ad_db`, `ad_db_create`, `ad_db_keep_days`, `portal_ad`, `portal_ad_seconds`, `portal_ad_old_minutes`,
+  `portal_ad_template`, `portal_report_db` (and its credential fields).
+- Docs: SITE_PORTAL.md (*The Active Directory page*), REPORT_DATABASE.md (*The AD runs for the portal*, the statements),
+  ACTIVE_DIRECTORY.md.
+- Tests: `tests/test_portal_ad.py` (the writer and reader on SQLite, the answer and every state, the routes, the deploy's
+  files, the page in Chromium in three looks at 1280 and 800); `tests/ad/run_ad_db_test.sh` (a real MySQL 8.4: the writer,
+  `report_reader`, the grants, the warnings, prune).
 
 ## 1.101.1 — 2026-11-21
 

@@ -24,6 +24,8 @@ aap_templates_credentials:
   machine_windows: Windows machine
   aap: AAP reader
   stigman_api: STIG Manager API
+  # report_db: Report database                  # the report jobs' (writes their tables)
+  # report_db_reader: Report database (reader)  # 1.101.2: the read-only account report_reader, for the portal's deploy
 ## The execution environment of each kind (all, windows, network); a kind left out: the project's
 # aap_templates_ee: {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
 ## Only some templates (* and ?, any case)

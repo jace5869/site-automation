@@ -292,12 +292,13 @@ draws the lines into each page.
 | `insights_ticket` | 1.17.0: one row per ticket - its fields less its text, people and CI, and its follow-up reads (*The ticket store*) |
 | `insights_act_class` | 1.17.0: each description's issue, the description as a hash (*The ACT cache*) |
 | `insights_act_issue` | 1.17.0: each issue's number, name (masked), kind and self-service (*The ACT cache*) |
-| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1) |
+| `schema_version` | The schema's version, per component (`servicenow_insights`: 1; `ontap_capacity`: 1; 1.58.0 `stig_scorecard`: 3 since 1.68.0; 1.63.0 `ad_repl`: 1; 1.65.0 `vm_heat`: 1; 1.101.2 `ad_run`: 4) |
 | `ontap_capacity_point` | 1.52.0: the capacity trends' points (*The capacity trends' points*) |
 | `stig_scorecard_point` | 1.58.0: one row per run and STIG Manager collection - its open findings (*The STIG scorecard's points*) |
 | `stig_scorecard_platform` | 1.67.0: one row per run, collection and platform - its assets and open findings (*The STIG scorecard's points*) |
 | `stig_scorecard_host` | 1.68.0: one row per run, collection, host and platform - its CAT I, II and III open (*The STIG scorecard's points*) |
 | `ad_repl_point` | 1.63.0: one row per run and AD site - its worst replication age (*The replication trend's points*) |
+| `ad_run`, `ad_dc`, `ad_link` | 1.101.2: each AD run, its DCs and its replication links, for the portal's live AD page (*The AD runs for the portal*) |
 | `vm_heat_point` | 1.65.0: one row per run and cluster - its CPU and memory used; the hosts not OK (*The heat grid's points*) |
 | `insights_v_service`, `_volume`, `_process`, `_lifecycle`, `_quality` | A row per run and node, a column per figure of that set |
 | `insights_v_labelled` | The figures with an item: outcomes, categories, backlog age, hot CIs |
@@ -1012,6 +1013,122 @@ INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_repl', 1
 | `ad_repl_db_create` | `true` | Make the table on the first run |
 | `ad_repl_db_timeout` | `10` | Seconds to connect |
 | `ad_repl_db_keep_days` | `400` | Delete older points. `0`: never |
+
+## The AD runs for the portal (1.101.2)
+
+The site portal's live *Active Directory* page (`/portal/ad`, [SITE_PORTAL.md](SITE_PORTAL.md)) reads the AD job's runs
+from here: each DC now, since when, its last runs, the replication links that need a look, the last 7 days.
+
+1. Add the **Report database** credential (the writer's) to the template *Active Directory health report*. The template
+   setup job attaches it when `aap_templates_credentials` maps `report_db`.
+2. Add the **Report database** credential with the read-only account `report_reader` to the template *Site portal -
+   deploy*. The template setup job attaches it when `aap_templates_credentials` maps `report_db_reader`.
+3. Launch the AD job: the first run makes the tables and writes its run. Run *Site portal - deploy* once.
+
+| | |
+|---|---|
+| What a run writes | one row in `ad_run` (when, the job, its template, the status and counts, the DCs to find in SolarWinds, why its rows could not be made when so, how many DCs the replication read knew and read in full), a row per DC in `ad_dc` (its host-label `dc`, AD domain, `dns_host`, `dsa_guid`, site name, matched `node_id`, `stale_dsa`, whether it and its replication were read, status, problems, the worst one's text) and a row per replication link in `ad_link` (its AD domain, host-label `src`, `dst`, readable `frm` and `to_dc`, exact `nc_dn` partition, last success, failures, error, status; `link_key` hashes the receiving host label, source host label (or `dsa:<guid>`) and lower-case partition DN) |
+| Schema version | 4 (`schema_version` component `ad_run`). Versions 1, 2 and 3 were only in builds before 1.101.2 shipped: drop the three tables and its row, the next run makes them again |
+| How much | 10 DCs and 40 links every 30 minutes: about 2,400 rows a day, size depends on the stored names and DNs |
+| What a run deletes | its own template's runs older than `ad_db_keep_days`, with their rows (another forest's job keeps its own) |
+| When the database is down | one warning in the job output. The report goes on, the job stays green. The portal's page shows the run before |
+| A dry run (Check) | logs in and looks at the tables, writes nothing |
+| Who reads it | the portal, as `report_reader` (SELECT only). A writer's login works too: the portal's deploy says so in a warning |
+| Turning it off | `ad_db: false`, or take the credential off the template |
+| Removing it | `DROP TABLE ad_link, ad_dc, ad_run;` and `DELETE FROM schema_version WHERE component = 'ad_run';` |
+
+The rows hold DC, site and partition names, the replication error codes and the AD problems' text: no account, password
+or event detail.
+
+**By hand.** If the writer may not create tables, set `ad_db_create: false` and make them once as root, in `site_reports`.
+The writer then needs SELECT, INSERT, UPDATE and DELETE.
+
+A run supports one forest and one AD domain. A DC's key is its lower-case host label, even after a site move or an
+NTDS object replacement. The domain comes from AD, never the host's DNS suffix: `dc01.example.mil` can belong to
+`ad.example.mil`. A second domain or forest in AD data refuses the run with status `unknown`; no DCs or links are kept.
+Unpolled DCs remain visible as `not polled`. Without discovery the coverage is unknown. An unresolved source is
+`dsa:<guid>` (shown as `unknown DSA`) and does not count as a DC. A second NTDS object for one name is flagged
+`stale DSA, metadata cleanup`. The portal reads SolarWinds by the `node_id` saved with the run.
+
+<!-- the statements: site_ad_db.ddl(), word for word (tests/test_portal_ad.py checks it) -->
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+  component VARCHAR(64) NOT NULL PRIMARY KEY,
+  version INT NOT NULL,
+  applied_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ad_run (
+  run_id BIGINT NOT NULL AUTO_INCREMENT,
+  read_at DATETIME NOT NULL,
+  job BIGINT NOT NULL DEFAULT 0,
+  template_id BIGINT NOT NULL DEFAULT 0,
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  critical INT NOT NULL DEFAULT 0,
+  warning INT NOT NULL DEFAULT 0,
+  dcs INT NOT NULL DEFAULT 0,
+  dcs_read INT NOT NULL DEFAULT 0,
+  live MEDIUMTEXT NULL,
+  why VARCHAR(300) NOT NULL DEFAULT '',
+  repl_dcs INT NOT NULL DEFAULT 0,
+  repl_read INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id),
+  KEY ad_run_read_at (read_at),
+  KEY ad_run_template (template_id, read_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ad_dc (
+  run_id BIGINT NOT NULL,
+  dc VARCHAR(191) NOT NULL,
+  domain VARCHAR(191) NOT NULL DEFAULT '',
+  dns_host VARCHAR(255) NOT NULL DEFAULT '',
+  dsa_guid VARCHAR(36) NOT NULL DEFAULT '',
+  node_id BIGINT NULL,
+  stale_dsa TINYINT NOT NULL DEFAULT 0,
+  site VARCHAR(191) NOT NULL DEFAULT '',
+  is_read TINYINT NOT NULL DEFAULT 0,
+  repl_read TINYINT NOT NULL DEFAULT 0,
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  problems INT NOT NULL DEFAULT 0,
+  worst VARCHAR(300) NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, dc)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+CREATE TABLE IF NOT EXISTS ad_link (
+  run_id BIGINT NOT NULL,
+  link_key CHAR(40) NOT NULL,
+  domain VARCHAR(191) NOT NULL DEFAULT '',
+  dst VARCHAR(191) NOT NULL,
+  nc_dn TEXT NOT NULL,
+  frm VARCHAR(191) NOT NULL,
+  src VARCHAR(255) NOT NULL DEFAULT '',
+  to_dc VARCHAR(191) NOT NULL,
+  nc VARCHAR(191) NOT NULL DEFAULT '',
+  last_success DATETIME NULL,
+  failures INT NOT NULL DEFAULT 0,
+  error VARCHAR(255) NOT NULL DEFAULT '',
+  last_failure DATETIME NULL,
+  status VARCHAR(16) NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, link_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+```
+
+```sql
+INSERT INTO schema_version (component, version, applied_at) VALUES ('ad_run', 4, UTC_TIMESTAMP());
+```
+<!-- end of the AD runs statements -->
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ad_db` | `true` | Keep each run here when the template has the credential |
+| `ad_db_create` | `true` | Make the tables on the first run |
+| `ad_db_keep_days` | `400` | Delete this template's older runs. `0`: never |
 
 ## The heat grid's points (1.65.0)
 
