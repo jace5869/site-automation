@@ -14,10 +14,13 @@ import importlib.util
 import os
 import re
 
-_spec = importlib.util.spec_from_file_location(
-    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
-_tm = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_tm)
+_tm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py")
+if os.path.isfile(_tm_path):
+    _spec = importlib.util.spec_from_file_location("site_time", _tm_path)
+    _tm = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_tm)
+else:                                                    # 1.101.2: the portal's copy - site_time.py beside it
+    import site_time as _tm
 
 TITLE = "From SolarWinds"
 AFTER = ("Domain controllers' health", "Domain controllers")
@@ -310,6 +313,18 @@ def ad_swis_dcs(dcs, hostvars=None):
     return out
 
 
+def ad_live_block(ad, dcs, opts=None):
+    """1.101.2: what the portal's live AD page (/portal/ad) needs beside the run's page, in the page's JSON (report.live):
+    the DCs to find in SolarWinds, the AD problems by DC (What it means) and the From SolarWinds settings. No secret, no
+    SolarWinds data: the portal reads SolarWinds itself."""
+    o = opts or {}
+    probs = [{"domain": str(p.get("domain") or ""), "object": str(p.get("object") or ""), "severity": str(p.get("severity") or ""),
+              "text": str(p.get("text") or "")[:300]}
+             for p in (ad or {}).get("problems") or [] if isinstance(p, dict) and p.get("object")]
+    return {"v": 1, "kind": "ad", "dcs": [dict(d) for d in dcs or [] if d.get("dc")], "problems": probs[:500],
+            "opts": {"cpu_warn": float(o.get("cpu_warn", 90)), "mem_warn": float(o.get("mem_warn", 90)), "days": int(o.get("days", 30))}}
+
+
 class FilterModule(object):
     def filters(self):
-        return {"ad_swis_view": ad_swis_view, "ad_swis_insert": ad_swis_insert, "ad_swis_dcs": ad_swis_dcs}
+        return {"ad_swis_view": ad_swis_view, "ad_swis_insert": ad_swis_insert, "ad_swis_dcs": ad_swis_dcs, "ad_live_block": ad_live_block}

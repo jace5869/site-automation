@@ -362,6 +362,13 @@
     - {src: "{{ role_path }}/../netmap_report/files/web/netglobe.js", dest: static/netglobe.js}
     - {src: "{{ role_path }}/../netmap_report/files/web/world-land.js", dest: static/world-land.js}
     - {src: "{{ role_path }}/../netmap_report/files/web/netmap-live.js", dest: static/netmap-live.js}
+    # 1.101.2: the live AD page - the AD report's SolarWinds reader and its section (the job's own), the page's live part
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_swis_db.py", dest: site_swis_db.py}
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_ad_swis.py", dest: site_ad_swis.py}
+    - {src: "{{ role_path }}/../../plugins/filter/ad_swis_filters.py", dest: ad_swis_filters.py}
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_report_db.py", dest: site_report_db.py}
+    - {src: "{{ role_path }}/../ad_report/files/web/ad-live.js", dest: static/ad-live.js}
+    - {src: "{{ role_path }}/../ad_report/files/web/ad-live.css", dest: static/ad-live.css}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -539,6 +546,102 @@
     msg: "podman secret create site-portal-swis failed (rc {{ _portal_swis_set.rc }}): {{ _portal_swis_set.stderr | default('', true) | trim or 'no reason given' }}"
   when: _portal_swis_set.rc | default(0) != 0
 
+# ---------------------------------------------------------------- 1.101.2: the report database's read-only login, a podman secret
+# {host, port, database, user, password, tls, ca_pem} as JSON in one secret (site-portal-reportdb -> PORTAL_REPORT_DB), its
+# SHA-256 on a label as the others'. The live AD page reads the AD job's runs with it; the deploy never fails on it.
+- name: Report database | on? (portal_report_db; the "Report database" credential on this template)
+  ansible.builtin.set_fact:
+    _portal_rdb: >-
+      {{ (portal_report_db | string | lower in ['true', 'yes', 'on', '1'] or portal_report_db | string | lower == 'auto')
+         and portal_report_db_host | length > 0 and portal_report_db_user | length > 0 and portal_report_db_password | length > 0 }}
+
+- name: Report database | the login, looked at from here (read only; its grants, the AD job's runs)
+  site_portal_db_check:
+    host: "{{ portal_report_db_host }}"
+    port: "{{ portal_report_db_port | int }}"
+    database: "{{ portal_report_db_name }}"
+    user: "{{ portal_report_db_user }}"
+    password: "{{ portal_report_db_password }}"
+    tls: "{{ portal_report_db_tls | bool }}"
+    ca_file: "{{ portal_report_db_ca_file }}"
+  register: _portal_rdb_check
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false                       # only reads
+  when: _portal_rdb | bool
+
+- name: Report database | what was found
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('The report database: ' ~ portal_report_db_user ~ ' logs in, ' ~
+          (('the AD job has kept ' ~ _portal_rdb_check.ad_runs ~ ' runs') if _portal_rdb_check.ad_runs | int >= 0
+           else 'no AD run yet (the AD job makes its tables on its next run)') ~ '.')
+         if _portal_rdb_check.ok | default(false) else
+         ('The report database could not be read from here: ' ~ _portal_rdb_check.error | default('?')
+          ~ ' - the secret is made anyway; the page says so if the portal cannot read it either.') }}
+  when: _portal_rdb | bool
+
+- name: Report database | a login that can write (the portal only reads)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: the Report database credential on this template can write ({{ _portal_rdb_check.privileges | join(', ') }}). The
+      portal only reads: attach one with the read-only account report_reader (GRANT SELECT, SHOW VIEW;
+      docs/REPORT_DATABASE.md) instead. It works as it is.
+  when: _portal_rdb | bool and _portal_rdb_check.writes | default(false) | bool
+
+- name: Report database | not on
+  ansible.builtin.debug:
+    msg: >-
+      The live AD page reads the AD job's runs from the report database: attach the "Report database" credential (the read-only
+      account report_reader) to this template and run it again. Until then the page says the database is off.
+  when: not _portal_rdb | bool and portal_report_db | string | lower != 'false'
+
+- name: Report database | current state
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, site-portal-reportdb, --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]
+  register: _portal_rdb_state
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads the label
+
+- name: Report database | the value
+  ansible.builtin.set_fact:
+    _portal_rdb_login: >-
+      {{ {'host': portal_report_db_host, 'port': portal_report_db_port | int, 'database': portal_report_db_name,
+          'user': portal_report_db_user, 'password': portal_report_db_password, 'tls': portal_report_db_tls | bool,
+          'ca_pem': lookup('ansible.builtin.file', portal_report_db_ca_file) if portal_report_db_tls | bool and portal_report_db_ca_file | length > 0 else ''} | to_json }}
+  no_log: true
+  when: _portal_rdb | bool
+
+- name: Report database | the old value removed first (podman before 4.7), or the database turned off
+  ansible.builtin.command:
+    argv: [podman, secret, rm, site-portal-reportdb]
+  when: >-
+    _portal_rdb_state.rc == 0 and (not _portal_rdb | bool or
+    ((_portal_rdb_state.stdout | trim) != (_portal_rdb_login | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
+  changed_when: true
+  no_log: true
+
+- name: Report database | create or replace
+  ansible.builtin.command:
+    argv: >-
+      {{ ['podman', 'secret', 'create']
+         + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') and _portal_rdb_state.rc == 0 else [])
+         + ['--label', 'site.sha256=' ~ (_portal_rdb_login | hash('sha256')), 'site-portal-reportdb', '-'] }}
+    stdin: "{{ _portal_rdb_login }}"
+    stdin_add_newline: false
+  when: _portal_rdb | bool and (_portal_rdb_state.rc != 0 or (_portal_rdb_state.stdout | trim) != (_portal_rdb_login | hash('sha256')))
+  changed_when: true
+  failed_when: false                      # said by the next task, with podman's reason
+  no_log: true
+  register: _portal_rdb_set
+
+- name: Report database | podman made it
+  ansible.builtin.fail:
+    msg: "podman secret create site-portal-reportdb failed (rc {{ _portal_rdb_set.rc }}): {{ _portal_rdb_set.stderr | default('', true) | trim or 'no reason given' }}"
+  when: _portal_rdb_set.rc | default(0) != 0
+
 # ---------------------------------------------------------------- configuration
 # The reports' banner, worked out as roles/site_email does (plugins/module_utils/site_banner.py), the portal's server as
 # the host held to site_enclave_classified_domains
@@ -598,6 +701,10 @@
       PORTAL_LAUNCHES_PER_HOUR: "{{ portal_launches_per_hour | string }}"
       PORTAL_JOB_EVENTS: "{{ portal_job_events | string }}"
       PORTAL_STIGMAN_PATH: "{{ portal_stigman_path }}"
+      # 1.101.2: the live AD page
+      PORTAL_AD: "{{ '1' if portal_ad | bool else '0' }}"
+      PORTAL_AD_SECONDS: "{{ portal_ad_seconds | string }}"
+      PORTAL_AD_OLD_MINUTES: "{{ portal_ad_old_minutes | string }}"
       # 1.85.0: the live Network map (its login: the secret site-portal-swis)
       PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
       PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"
@@ -764,6 +871,7 @@
   vars:
     _portal_has_trust: "{{ _portal_trust_parts.matched | int > 0 }}"
     _portal_has_swis: "{{ _portal_netmap | bool }}"
+    _portal_has_rdb: "{{ _portal_rdb | bool }}"
   register: _portal_units
 
 - name: Units | an own nginx no longer wanted

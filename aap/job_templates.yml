@@ -1807,7 +1807,8 @@ job_templates:
   - name: Site portal - deploy
     playbook: playbooks/site_portal_deploy.yml
     credentials: [machine, aap]
-    optional_credentials: []
+    # 1.101.2: the report database's read-only account for the live AD page (report_db_reader, else report_db - said)
+    optional_credentials: [report_db_reader, report_db]
     ask_limit: true
     ask_variables: false
     ask_inventory: false

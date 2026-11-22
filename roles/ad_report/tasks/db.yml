@@ -1,0 +1,32 @@
+---
+# 1.101.2: this run in the report database (site_ad_db: ad_run, ad_dc, ad_link) for the portal's live AD page (/portal/ad).
+# The "Report database" credential's login; the tables made on the first run (ad_db_create). Never fails the job: a
+# database that cannot be written is one warning (plugins/filter/ad_db_filters.py makes the rows)
+- name: AD | the report database - this run, its DCs and replication links (ad_db)
+  site_ad_db:
+    host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+    port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+    database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+    user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+    password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+    tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+    ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+    connect_timeout: "{{ ad_repl_db_timeout | int }}"
+    create: "{{ ad_db_create | bool }}"
+    read_at: "{{ (_ad.repl | default({})).now | default(ad_report_now | default(now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ'), true), true) }}"
+    job: "{{ (awx_job_id | default(tower_job_id | default(0))) | int }}"
+    template_id: "{{ (awx_job_template_id | default(tower_job_template_id | default(0))) | int }}"
+    run: >-
+      {{ _ad | ad_db_payload(_ad | ad_live_block(_ad.dcs | ad_swis_dcs(hostvars), {
+           'cpu_warn': ad_solarwinds_cpu_warn | float, 'mem_warn': ad_solarwinds_mem_warn | float, 'days': ad_solarwinds_days | int}), {
+           'low_hours': ad_repl_low_hours | float, 'warn_hours': ad_repl_warn_hours | float, 'crit_hours': ad_repl_crit_hours | float}) }}
+    keep_days: "{{ ad_db_keep_days | int }}"
+  register: _ad_db
+  failed_when: false                     # never the job's result: the module says why (a warning)
+
+- name: AD | the report database
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('This run is kept in the report database (run %s: %s DCs, %s replication links) - the portal\'s live AD page reads it.'
+          | format(_ad_db.run_id, _ad_db.dcs, _ad_db.links)) if _ad_db.ok | default(false)
+         else 'Not kept in the report database: ' ~ (_ad_db.error | default(_ad_db.msg | default('the module stopped'), true)) }}

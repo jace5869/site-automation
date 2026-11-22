@@ -37,6 +37,10 @@ Secret=site-portal-aap-token,type=env,target=PORTAL_AAP_TOKEN
 # 1.85.0: SolarWinds' read-only login for the live Network map, a podman secret too
 Secret=site-portal-swis,type=env,target=PORTAL_SWIS_LOGIN
 {% endif %}
+{% if _portal_has_rdb | default(false) | bool %}
+# 1.101.2: the report database's read-only login for the live AD page, a podman secret too
+Secret=site-portal-reportdb,type=env,target=PORTAL_REPORT_DB
+{% endif %}
 Exec=/bin/sh /app/start.sh
 
 [Service]
