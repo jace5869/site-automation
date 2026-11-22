@@ -1007,17 +1007,18 @@ class Reader(object):
         return dc
 
     def read_repl(self, c, out):
-        """{source, links: [{nc, partner, last_success, last_attempt, failures, result}], cursors, why, not_granted}.
+        """{source, links: [{nc, partner, partner_id, last_success, last_attempt, failures, result}], cursors, why, not_granted, failed}.
         msDS-NCReplInboundNeighbors (Windows builds it), else repsFrom, else msDS-NCReplCursors or replUpToDateVector (when
         each DC's changes last arrived). Windows gives none of them without the right (REPL_RIGHT) and says nothing: a
         partition with nothing at all is named in not_granted - every one of them when the account may read none."""
         ncs = [n for n in out.get("naming_contexts") or [] if n]
-        res = {"source": "", "links": [], "cursors": [], "why": "", "not_granted": []}
+        res = {"source": "", "links": [], "cursors": [], "why": "", "not_granted": [], "failed": []}
         seen_any, cur_src = False, ""
         for nc in ncs:
             try:
                 e = self.base(c, nc, ["msDS-NCReplInboundNeighbors", "repsFrom", "msDS-NCReplCursors", "replUpToDateVector"])
             except LookupError:
+                res["failed"].append(nc)
                 continue
             nbr = raw_all(e, "msDS-NCReplInboundNeighbors")
             reps = raw_all(e, "repsFrom")
@@ -1047,14 +1048,16 @@ class Reader(object):
                 for v in curs:
                     cur = parse_cursor_xml(v)
                     name = self.dsa_name.get(cur["partner_dn"].lower()) or self.dsa_name.get(cur["invocation_id"].lower(), "")
-                    res["cursors"].append({"nc": nc, "partner": name, "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
+                    res["cursors"].append({"nc": nc, "partner": name, "partner_id": (cur["partner_dn"] or cur["invocation_id"]).lower(),
+                                           "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
             elif utd:
                 seen_any, cur_src = True, cur_src or "replUpToDateVector"
                 for v in utd:
                     try:
                         for cur in parse_utd(v):
                             name = self.dsa_name.get(cur["invocation_id"], "")
-                            res["cursors"].append({"nc": nc, "partner": name, "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
+                            res["cursors"].append({"nc": nc, "partner": name, "partner_id": cur["invocation_id"].lower(),
+                                                   "invocation_id": cur["invocation_id"], "last_sync": cur["last_sync"]})
                     except (ValueError, struct.error) as err:
                         self.errors.append("replUpToDateVector on %s: %s" % (nc, err))
         if not res["source"] and res["cursors"]:
@@ -1069,6 +1072,7 @@ class Reader(object):
         partner = self.dsa_name.get(str(x.get("partner_dn") or "").lower()) or self.dsa_name.get(str(x.get("partner_guid") or "").lower()) \
             or self.dsa_name.get(str(x.get("invocation_id") or "").lower()) or rdn(parent_dn(x.get("partner_dn") or "")) or x.get("address", "")
         return {"nc": nc, "partner": partner, "last_success": x["last_success"], "last_attempt": x["last_attempt"],
+                "partner_id": str(x.get("partner_dn") or x.get("partner_guid") or x.get("invocation_id") or "").lower(),
                 "failures": x["failures"], "result": x["result"]}
 
     def read_groups(self, c, out):

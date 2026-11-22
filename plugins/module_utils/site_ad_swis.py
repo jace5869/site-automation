@@ -146,11 +146,12 @@ def _full(x):
     return n if "." in n and not sw.IPV4.match(n) else ""
 
 
-def match(dcs, nodes):
+def match(dcs, nodes, known=None):
     """Each DC -> (its node or None, how, why). The full name first (the DC's FQDN against a node's caption or DNS name);
     a short name only when one node has it and that node's own full name (if any) is not another domain's (the DC's FQDN,
     else its AD domain); then an IP
-    that one node has. Never one node for two DCs (the second is said, not shown)."""
+    that one node has. Never one node for two DCs (the second is said, not shown). known: AD identities not polled,
+    counted only for short-name ambiguity."""
     full, short, ips = {}, {}, {}
     for n in nodes:
         for k in set(x for x in (_full(n.get("name")), _full(n.get("dns"))) if x):
@@ -168,7 +169,7 @@ def match(dcs, nodes):
         return out
     out, claimed = {}, {}
     ad_short = {}                                        # the AD domains each short name is in (two domains' DC01: ambiguous)
-    for d in dcs:
+    for d in list(dcs) + list(known or []):
         ad_short.setdefault(_short(d.get("dc")), set()).add(str(d.get("domain") or "").strip().lower().rstrip("."))
     for i, d in enumerate(dcs):                          # by position: two domains' DC01 are two DCs
         fq, sn, ip = _full(d.get("fqdn")), _short(d.get("dc")), str(d.get("ip") or "").strip()
@@ -296,7 +297,7 @@ def _db_read(dcs, opts, conn, swdb, snap, age, now):
         for r in (v if isinstance(v, list) else [v]):     # a reader that gives every node of a name: all of them
             if r and all(r.get("node_id") != o.get("node_id") for o in rows):
                 rows.append(r)
-    found = match(dcs, rows)
+    found = match(dcs, rows, opts.get("known"))
     ids = sorted(set(v[0]["node_id"] for v in found.values() if v[0]))
     note = {}
     try:
@@ -349,7 +350,7 @@ def from_live(dcs, opts, client, swdb=None):
     rows = [{"node_id": n.get("NodeID"), "name": n.get("Caption") or "", "dns": n.get("DNS") or "", "ip": n.get("IPAddress") or "",
              "status": sw.status_of(n.get("Status"), n.get("UnManaged")), "status_text": n.get("StatusDescription") or "",
              "last_poll": n.get("LastSync"), "cpu_pct": n.get("CPULoad"), "mem_pct": n.get("PercentMemoryUsed")} for n in nodes]
-    found = match(dcs, rows)
+    found = match(dcs, rows, opts.get("known"))
     why = []
     if cut:                                              # past max_nodes: a DC not found may be one not read
         why.append("SolarWinds has more nodes than were read (%d): a DC not found may be past them" % len(nodes))

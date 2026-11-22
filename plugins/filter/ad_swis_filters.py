@@ -326,6 +326,8 @@ def ad_live_block(ad, dcs, opts=None):
               "dc": str(p.get("dc") or re.sub(r"^\s*(\S+)\s+<-\s.*$", r"\1", str(p.get("object") or ""), flags=re.S))}
              for p in (ad or {}).get("problems") or [] if isinstance(p, dict) and p.get("object")]
     return {"v": 1, "kind": "ad", "dcs": [dict(d) for d in dcs or [] if d.get("dc")], "problems": probs[:500],
+            "known": [{"dc": d.get("name"), "domain": str(d.get("domain") or "").lower()}
+                      for d in ((ad or {}).get("repl") or {}).get("dcs") or [] if d.get("name")],
             "opts": {"cpu_warn": float(o.get("cpu_warn", 90)), "mem_warn": float(o.get("mem_warn", 90)), "days": int(o.get("days", 30))}}
 
 

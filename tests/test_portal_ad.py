@@ -196,7 +196,7 @@ class Db1012(unittest.TestCase):
         self.assertEqual(n, 3)
         self.assertEqual(db.db.execute("SELECT COUNT(*) FROM ad_dc").fetchone()[0], 0)
         ddl = adb.ddl()
-        for t in ("CREATE TABLE IF NOT EXISTS ad_run", "CREATE TABLE IF NOT EXISTS ad_dc", "CREATE TABLE IF NOT EXISTS ad_link", "'ad_run', 2"):
+        for t in ("CREATE TABLE IF NOT EXISTS ad_run", "CREATE TABLE IF NOT EXISTS ad_dc", "CREATE TABLE IF NOT EXISTS ad_link", "'ad_run', 3"):
             self.assertIn(t, ddl)
 
     def test_6_the_statements_in_the_doc_are_the_modules(self):
@@ -1184,6 +1184,99 @@ class CodexCBrowser1012(unittest.TestCase):
         self.assertIn("Live", r["live"])
         self.assertNotIn("Not live", r["live"])
         self.assertEqual(r["sent"][:3], ["", "e1", "e1"])                 # the bad answer's tag never kept
+
+
+class CodexD1012(unittest.TestCase):
+    """Codex's fourth pass on 1.101.2 (5 P1): each finding's case."""
+
+    def test_1_reader_dsa_identities_keep_two_links(self):
+        import ad_filters
+        import site_ad_reader
+        now, ad = ad_run(0)
+        reader = site_ad_reader.Reader({})
+        self.addCleanup(reader.close)
+        nc = "CN=Configuration,DC=corp,DC=test"
+        dns = ["CN=NTDS Settings,CN=DC01,CN=Servers,CN=%s,CN=Sites,%s" % (s, nc) for s in ("SITEA0101", "SITEB0201")]
+        reader.dsa_name = dict((dn.lower(), "DC01") for dn in dns)
+        links = [reader._link(nc, {"partner_dn": dn, "last_success": "2026-01-01T00:00:00Z" if i == 0 else ad["repl"]["now"],
+                                  "last_attempt": ad["repl"]["now"], "failures": 4 if i == 0 else 0, "result": 8524 if i == 0 else 0})
+                 for i, dn in enumerate(dns)]
+        self.assertEqual([ln["partner"] for ln in links], ["DC01", "DC01"])
+        ad["repl"] = ad_filters._repl_reader([{"in_ad": True, "name": "DC02", "bind": {"ok": True}, "repl": {"links": links}}], now, 60, "corp.test")
+        self.assertEqual([ln["src"] for ln in ad["repl"]["links"]], [dn.lower() for dn in dns])
+        p = dbf.ad_db_payload(ad, {}, {})
+        self.assertNotEqual(adb.link_key(p["links"][0]), adb.link_key(p["links"][1]))
+        db = Lite()
+        adb.write(db, now, 9000, 12, p)
+        self.assertEqual(sorted(db.db.execute("SELECT src, status FROM ad_link").fetchall()), [(dns[0].lower(), "critical"), (dns[1].lower(), "ok")])
+
+    def test_2_failed_partition_is_an_incomplete_read(self):
+        import ad_filters
+        now, ad = ad_run(0)
+        dcs = [{"in_ad": True, "name": d["dc"], "bind": {"ok": True}, "repl": {"links": []}} for d in ad["dcs"]]
+        dcs[1]["repl"] = {"links": [{"partner": "DC01", "nc": "DC=corp,DC=test", "last_success": ad["repl"]["now"]}],
+                           "failed": ["CN=Configuration,DC=corp,DC=test"]}
+        ad["repl"] = ad_filters._repl_reader(dcs, now, 60, "corp.test")
+        self.assertEqual(ad["repl"]["dcs"][1]["partial"], ["Configuration"])
+        self.assertEqual(len(ad["repl"]["links"]), 1)
+        p = dbf.ad_db_payload(ad, {}, {})
+        self.assertEqual([(d["dc"], d["repl_read"]) for d in p["dcs"]], [("DC01", True), ("DC02", False), ("DC03", True)])
+        self.assertEqual((p["repl_dcs"], p["repl_read"]), (3, 2))
+
+    def test_3_unpolled_dcs_make_short_names_ambiguous(self):
+        import site_ad_swis as asw
+        from unittest.mock import patch
+        dcs = [{"dc": "DC01", "domain": "east.test"}]
+        known = dcs + [{"dc": "DC01", "domain": "west.test"}]
+        nodes = [{"node_id": 1, "name": "DC01", "dns": ""}]
+        self.assertEqual(asw.match(dcs, nodes)[0][0], nodes[0])
+        found = asw.match(dcs, nodes, known)
+        self.assertEqual(list(found), [0])
+        self.assertIsNone(found[0][0])
+        block = af.ad_live_block({"repl": {"dcs": [{"name": d["dc"], "domain": d["domain"].upper()} for d in known]}}, dcs)
+        self.assertEqual(block["known"], known)
+        self.assertEqual(af.ad_live_block({}, dcs)["known"], [])
+        a = live(Lite(), Site(self))
+        with patch.object(sp.site_ad_swis, "from_live", return_value={}) as read:
+            a._swis(block)
+            self.assertEqual(read.call_args[0][0], dcs)
+            self.assertEqual(read.call_args[0][1]["known"], known)
+            a._swis({"dcs": dcs})
+            self.assertEqual(read.call_args[0][1]["known"], [])
+
+    def test_4_source_only_dc_is_qualified_by_site(self):
+        import ad_filters
+        now, ad = ad_run(0)
+        doms = [{"data": {"dns": "corp.test", "dcs": [{"name": n, "site": "SITEA0101"} for n in ("DC01", "DC02")]}}]
+        dcs = [{"_name": n, "_domain": "corp.test", "_ok": True, "data": {"site": "SITEA0101", "repl": []}} for n in ("DC01", "DC02")]
+        dcs[1]["data"]["repl"] = [{"source": "DC01", "source_site": "SITEB0201", "nc": "CN=Configuration,DC=corp,DC=test",
+                                    "last_success": ad["repl"]["now"], "failures": 0}]
+        ad["repl"] = ad_filters._repl_admin(dcs, doms, now)
+        self.assertEqual(len(ad["repl"]["dcs"]), 3)
+        source = [d for d in ad["repl"]["dcs"] if d["site"] == "SITEB0201"]
+        self.assertEqual(source, [{"name": "DC01", "site": "SITEB0201", "read": False, "why": "not in the inventory: not read", "domain": ""}])
+        ad["dcs"] = ad["dcs"][:2]
+        p = dbf.ad_db_payload(ad, {}, {})
+        self.assertEqual((p["repl_dcs"], p["repl_read"]), (3, 2))
+        self.assertTrue(all(d["repl_read"] for d in p["dcs"]))
+        for site in ("sitea0101", ""):
+            dcs[1]["data"]["repl"][0]["source_site"] = site
+            self.assertEqual(len(ad_filters._repl_admin(dcs, doms, now)["dcs"]), 2)
+
+    def test_5_schema_two_requires_recovery(self):
+        from unittest.mock import Mock
+        self.assertEqual(adb.SCHEMA_VERSION, 3)
+        for version in (1, 2):
+            for create in (False, True):
+                conn = Mock()
+                cur = conn.cursor.return_value
+                cur.fetchall.return_value = [(t,) for t in adb.TABLES]
+                cur.fetchone.side_effect = [("schema_version",), (version,)]
+                with self.assertRaises(RuntimeError) as err:
+                    adb.schema(conn, create)
+                self.assertEqual(str(err.exception), "the AD tables are version %d, from a build before 1.101.2 shipped: drop ad_run, ad_dc and ad_link "
+                                 "(and its schema_version row) and the next run makes them again" % version)
+                conn.commit.assert_not_called()
 
 
 if __name__ == "__main__":

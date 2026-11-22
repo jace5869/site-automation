@@ -53,7 +53,7 @@ import re
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_report_db as db
 
-SCHEMA_VERSION = 2                      # 2 (1.101.2 reviews, before it shipped): ad_run why/repl_dcs/repl_read, ad_dc.repl_read, ad_link domain/src/link_key
+SCHEMA_VERSION = 3                      # 3: ad_run repl_dcs/repl_read, ad_link link_key/src; 1 and 2 were unshipped pre-release layouts
 COMPONENT = "ad_run"
 TABLES = ("ad_run", "ad_dc", "ad_link")
 CREATE = (
@@ -135,7 +135,7 @@ def schema(conn, create):
             cur.execute("INSERT INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
         elif r is not None and int(r[0]) > SCHEMA_VERSION:
             raise RuntimeError("the AD tables are version %s, newer than this release knows (%s) - update site-automation" % (r[0], SCHEMA_VERSION))
-        elif r is not None and int(r[0]) < SCHEMA_VERSION:   # 1: a build from before 1.101.2 shipped - its columns differ
+        elif r is not None and int(r[0]) < SCHEMA_VERSION:   # a build before 1.101.2 shipped - its columns differ
             raise RuntimeError("the AD tables are version %s, from a build before 1.101.2 shipped: drop ad_run, ad_dc and ad_link "
                                "(and its schema_version row) and the next run makes them again" % r[0])
     conn.commit()

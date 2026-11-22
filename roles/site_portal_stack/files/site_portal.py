@@ -3950,7 +3950,7 @@ class AdLive(object):
         if self.client is None or self.client.url != site_swis.base_url(c.swis_url):
             self.client = site_swis.Client(c.swis_url, c.swis_user, c.swis_password, verify=c.swis_verify, timeout=c.swis_timeout)
         mx = (c.netmap_opts or {}).get("max_nodes") or 20000
-        return site_ad_swis.from_live(live.get("dcs") or [], {"page": 1000, "max_nodes": mx}, self.client)
+        return site_ad_swis.from_live(live.get("dcs") or [], {"page": 1000, "max_nodes": mx, "known": live.get("known") or []}, self.client)
 
     def sw_source(self):
         """(key, live, template_id, job) SolarWinds is read for: the database's newest run (key: its run_id - a job ID can be

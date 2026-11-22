@@ -490,5 +490,43 @@ class Orion1101(unittest.TestCase):
         self.assertEqual(r["source"], "db-snapshot")                                # the same Orion: host:port, not the URL
 
 
+class KnownD1012(unittest.TestCase):
+    def test_unpolled_dcs_count_in_snapshot_and_live_reads(self):
+        from unittest.mock import Mock
+
+        class ShortSnap(Snap):
+            def nodes_for(self, conn, snap_id, names):
+                rows = super(ShortSnap, self).nodes_for(conn, snap_id, names)
+                rows["dc01"]["name"] = "DC01"
+                return rows
+        dcs = [{"dc": "DC01", "domain": "east.test"}]
+        known = dcs + [{"dc": "DC01", "domain": "west.test"}]
+        client = Mock()
+        client.paged.return_value = ([{"NodeID": 11, "Caption": "DC01", "Status": 1}], False)
+        client.query.return_value = []
+        for extra in ([], known):
+            opts = {"now": NOW, "known": extra}
+            conn, snap = Conn([]), ShortSnap()
+            results = [ad.from_db(dcs, opts, conn, snap)[0], ad.from_live(dcs, opts, client),
+                       ad.read(dcs, opts, conn=conn, swdb=snap), ad.read(dcs, opts, client=client),
+                       ad.read(dcs, opts, conn=conn, swdb=ShortSnap(age=7200))]
+            for r in results:
+                self.assertTrue(r["ok"])
+                self.assertEqual(len(r["dcs"]), 1)
+                self.assertEqual(r["dcs"][0]["matched"], "" if extra else "name")
+
+    def test_job_uses_the_same_known_list(self):
+        import yaml
+        with open(os.path.join(ROOT, "roles", "ad_report", "tasks", "swis.yml")) as fh:
+            tasks = yaml.safe_load(fh)
+        params = next(t["site_ad_swis"] for t in tasks if "site_ad_swis" in t)
+        env = jinja2.Environment()
+        env.filters.update(af.FilterModule().filters())
+        ad_run = {"repl": {"dcs": [{"name": "DC01", "domain": "East.test"}, {"name": "DC01", "domain": "West.test"}]}}
+        rendered = env.from_string(params["known"]).render(_ad=ad_run)
+        self.assertEqual(yaml.safe_load(rendered), af.ad_live_block(ad_run, [])["known"])
+        self.assertEqual(yaml.safe_load(env.from_string(params["known"]).render(_ad={})), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

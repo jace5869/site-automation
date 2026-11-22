@@ -1478,8 +1478,9 @@ def _repl_admin(dcs, doms, now):
             frm = short(r.get("source")).upper()
             if not frm:
                 continue
-            if not any(k[1] == frm for k in seen):
-                seen[("", frm)] = {"name": frm, "site": str(r.get("source_site") or ""), "read": False, "why": "not in the inventory: not read", "domain": ""}
+            source_site = str(r.get("source_site") or "")
+            if not any(k[1] == frm and (not source_site or not v["site"] or v["site"].lower() == source_site.lower()) for k, v in seen.items()):
+                seen[("site:" + source_site.lower(), frm)] = {"name": frm, "site": source_site, "read": False, "why": "not in the inventory: not read", "domain": ""}
             links.append({"to": n, "frm": frm, "nc": nc_name(r.get("nc")), "last_success": r.get("last_success") or "", "domain": dom,
                           # the source as AD names it (site\server: unique in the forest), not only its short name
                           "src": (("%s\\%s" % (r.get("source_site"), r.get("source"))) if r.get("source_site") and "\\" not in str(r.get("source"))
@@ -1509,12 +1510,12 @@ def _repl_reader(dcs, now, tsl, dom=""):
             rec["why"] = 'not read: needs "%s"' % REPL_RIGHT
             continue
         rec["read"] = True
-        rec["partial"] = sorted(nc_name(x) for x in rp.get("not_granted") or [])   # partitions not readable on this DC
+        rec["partial"] = sorted(nc_name(x) for x in (rp.get("not_granted") or []) + (rp.get("failed") or []))   # partitions not readable on this DC
         if rp.get("source"):
             sources.add(rp["source"])
         got = rp.get("links") or []
         if not got:
-            got = [{"nc": c.get("nc"), "partner": c.get("partner"), "last_success": c.get("last_sync"), "failures": 0, "result": 0}
+            got = [{"nc": c.get("nc"), "partner": c.get("partner"), "partner_id": c.get("partner_id"), "last_success": c.get("last_sync"), "failures": 0, "result": 0}
                    for c in rp.get("cursors") or [] if c.get("partner") and c.get("last_sync")]
         for ln in got:
             frm = _dc_short(ln.get("partner"))
@@ -1522,7 +1523,7 @@ def _repl_reader(dcs, now, tsl, dom=""):
                 continue
             fails = int(ln.get("failures") or 0)
             links.append({"to": name, "frm": frm, "nc": nc_name(ln.get("nc")), "last_success": ln.get("last_success") or "",
-                          "domain": str(dom or "").lower(), "src": str(ln.get("partner") or "")[:255], "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
+                          "domain": str(dom or "").lower(), "src": str(ln.get("partner_id") or ln.get("partner") or "")[:255], "last_attempt": ln.get("last_attempt") or "", "last_failure": (ln.get("last_attempt") or "") if fails else "",
                           "failures": fails, "error": str(ln.get("result") or "") if fails else ""})
     return {"dcs": out, "links": links, "source": ", ".join(sorted(sources)), "now": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tombstone_days": tsl or 60}

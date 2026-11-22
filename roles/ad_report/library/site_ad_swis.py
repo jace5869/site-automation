@@ -23,7 +23,7 @@ except ImportError:
 
 def main():
     module = AnsibleModule(
-        argument_spec=dict(dcs=dict(type="list", elements="dict", default=[]), max_age=dict(type="int", default=60),
+        argument_spec=dict(dcs=dict(type="list", elements="dict", default=[]), known=dict(type="list", elements="dict", default=[]), max_age=dict(type="int", default=60),
                            days=dict(type="int", default=30), now=dict(type="str", default=""), timeout=dict(type="int", default=30),
                            host=dict(type="str", default=""), port=dict(type="int", default=3309), database=dict(type="str", default="site_reports"),
                            user=dict(type="str", default=""), password=dict(type="str", default="", no_log=True),
@@ -32,7 +32,7 @@ def main():
                            netmap=dict(type="dict", default={})),        # 1.101.0: the netmap_* settings (the replication map's places)
         supports_check_mode=True)
     p = module.params
-    opts = {"max_age": p["max_age"], "days": p["days"], "now": p["now"],
+    opts = {"max_age": p["max_age"], "days": p["days"], "now": p["now"], "known": p["known"],
             "orion": (os.environ.get("SOLARWINDS_URL") or p["url"] or "").strip()}   # 1.101.0: another Orion's snapshot is not this one's
     why, conn, client = [], None, None
     if p["host"]:
