@@ -21,6 +21,7 @@ repo="$(cd "$here/../.." && pwd)"
 ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 py="${PORTAL_TEST_PYTHON:-$(command -v python3)}"
 image="${PORTAL_TEST_IMAGE:-docker.io/library/python:3.12-slim}"
+aap_image="${PORTAL_TEST_AAP_IMAGE:-docker.io/library/python:3.12-slim}"   # the stand-in AAP: not the image under test
 nginx_image="${PORTAL_TEST_NGINX:-docker.io/library/nginx:stable}"
 port="${PORTAL_TEST_PORT:-18543}"          # the stand-in STIG Manager nginx (mTLS)
 shot_port=$((port + 1))                    # a test-only server for the screenshots (a fixed person, no card)
@@ -65,7 +66,7 @@ podman network create "$net" >/dev/null
 mkdir -p "$work/aap" "$work/pki" "$work/nginx" "$work/reports/linux-health"
 podman run -d --name portal-test-aap --network "$net" -v "$here/fake_aap.py:/t/fake_aap.py:ro,Z" -v "$work/aap:/log:Z" \
     -e FAKE_AAP_LOG=/log/aap.jsonl -e FAKE_AAP_SEED_REPORTS=1 -e FAKE_AAP_SEED_FOUND=1 -e FAKE_AAP_RUN_SECONDS=4 -e FAKE_AAP_JINJA=always -e FAKE_AAP_TOKEN=test-token-1670 \
-    "$image" python3 /t/fake_aap.py 8000 >/dev/null || { echo "ABORT - could not start the stand-in AAP"; exit 1; }
+    "$aap_image" python3 /t/fake_aap.py 8000 >/dev/null || { echo "ABORT - could not start the stand-in AAP"; exit 1; }
 printf '<!doctype html><meta charset=utf-8><title>Reports</title><h1>The report website</h1>\n' > "$work/reports/index.html"
 printf '<!doctype html><meta charset=utf-8><title>Linux health</title><p>linux health\n' > "$work/reports/linux-health/index.html"
 
