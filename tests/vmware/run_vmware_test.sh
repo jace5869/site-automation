@@ -695,7 +695,7 @@ run "alarms report: host not connected, connection lost, failed logins grouped, 
        "Host DC0_C0_H1 lost its connection to vCenter" "Guest OS shut down for DC0_H0_VM1" "Datastore LocalDS_0 latency is high" \
        '"hosts_not_connected": [   "DC0_C0_H2"' '"failed_logins"' "emailed" "Alarms that fired in the last 24 h (1)" '"alarms_fired"'
 eml="$(lastmail)"; getpart html "$eml" > "$work/al.html"; getpart plain "$eml" > "$work/al.txt"
-if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -qx "\[AAP\] VMware alarms: 1 host lost the connection, 3 failed logins" \
+if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -qx "\[AAP\] VMware alarms: 1 host not connected" \
    && grep -q 'bgcolor="#fee2e2"' "$work/al.html" && grep -q 'bgcolor="#b91c1c"[^>]*>CRITICAL<' "$work/al.html" \
    && grep -q 'bgcolor="#fef3c7"' "$work/al.html" && grep -q 'bgcolor="#b45309"[^>]*>WARNING<' "$work/al.html" \
    && grep -q ">DC0_C0_H2<" "$work/al.html" && grep -q ">disconnected<" "$work/al.html" \

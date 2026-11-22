@@ -288,6 +288,28 @@ def vm_alarm_report(data, opts=None):
     if cleared:
         parts.append("%d alarm(s) fired and cleared" % len(cleared))
     title = "VMware alarms report: " + ", ".join(parts) + (" (events: last %s h)" % hours if events_on else "")
+    # 1.108.0: the report head's counts with each item's own table level, worst first (report_head's word guess
+    # rated "host not connected" as a warning and sorted it behind "host lost the connection" and "failed logins")
+    h_raw = []
+    if crit:
+        h_raw.append([len(crit), "critical alarm" if len(crit) == 1 else "critical alarms", "critical"])
+    if notconn:
+        h_raw.append([len(notconn), "host not connected" if len(notconn) == 1 else "hosts not connected", "critical"])
+    if warn:
+        h_raw.append([len(warn), "warning alarm" if len(warn) == 1 else "warning alarms", "warning"])
+    if lost:
+        h_raw.append([len(lost), "host lost the connection" if len(lost) == 1 else "hosts lost the connection", "warning"])
+    if login_n:
+        h_raw.append([login_n, "failed login" if login_n == 1 else "failed logins", _worst([x["severity"] for x in g["logins"]])])
+    if vm_bad:
+        h_raw.append([len(vm_bad), "VM event to check" if len(vm_bad) == 1 else "VM events to check", _worst([e.get("severity") for e in vm_bad])])
+    if cleared:
+        h_raw.append([len(cleared), "alarm fired and cleared" if len(cleared) == 1 else "alarms fired and cleared", "info"])
+    h_raw.sort(key=lambda c: RANK.get(c[2], 9))
+    head_counts = h_raw[:4] or [["no", "triggered alarms", "ok"]]
+    head_scope = ((["events: last %s h" % hours] if events_on else [])
+                  + ["%s %s" % (c[0], c[1]) for c in h_raw[4:]]
+                  + ([vc.strip()] if vc.strip() else []))
     worst = _worst([a.get("severity") for a in alarms] + ["critical" if notconn else ""]
                    + [x["severity"] for x in g["logins"] + g["connection"] + g["other"]]
                    + [e.get("severity") for e in vm_bad] + ["warning" if issues else ""])
@@ -408,8 +430,8 @@ def vm_alarm_report(data, opts=None):
         if "cell_status" in s and hosts[i].get("connection") not in ("connected", ""):
             s["cell_status"][i][3] = "critical"
     sections.append(s)
-    return {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections,
-            "footer": "Read-only."}
+    return {"title": title, "head_counts": head_counts, "head_scope": head_scope, "status": status, "subtitle": subtitle,
+            "summary": summary, "sections": sections, "footer": "Read-only."}
 
 
 def vm_alarm_problems(data, opts=None):

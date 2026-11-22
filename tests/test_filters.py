@@ -1260,6 +1260,32 @@ class VmwareAlarms(unittest.TestCase):
         self.assertNotIn("Failed logins", [s["title"] for s in r["sections"]])
         self.assertNotIn("events: last", r["title"])
 
+    def test_report_head_subject(self):
+        quiet = dict(self.D, alarms=[], config_issues=[], events=[], hosts=[dict(self.D["hosts"][0])])
+        logins = [e for e in self.D["events"] if e["group"] == "login"]
+        # hosts not connected plus failed logins: critical host leads before warning logins
+        r = va.vm_alarm_report(dict(quiet, hosts=[dict(self.D["hosts"][0]), dict(self.D["hosts"][1])], events=logins))
+        h = f.report_head(r)
+        self.assertEqual(h["subject"], "VMware alarms: 1 host not connected, 3 failed logins")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]],
+                         [("1 host not connected", "critical"), ("3 failed logins", "warning")])
+        # only failed logins
+        r = va.vm_alarm_report(dict(quiet, events=logins))
+        h = f.report_head(r)
+        self.assertEqual(h["subject"], "VMware alarms: 3 failed logins")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]], [("3 failed logins", "warning")])
+        # nothing triggered
+        h = f.report_head(va.vm_alarm_report(quiet))
+        self.assertEqual(h["subject"], "VMware alarms: no triggered alarms")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]], [("no triggered alarms", "ok")])
+        # full mixed report: critical items first, capped at 4 chips, overflow in scope
+        h = f.report_head(va.vm_alarm_report(self.D, {"login_critical": 10}))
+        self.assertEqual(h["subject"], "VMware alarms: 1 critical alarm, 1 host not connected")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]],
+                         [("1 critical alarm", "critical"), ("1 host not connected", "critical"),
+                          ("1 warning alarm", "warning"), ("3 failed logins", "warning")])
+        self.assertIn("1 VM event to check", h["scope"])
+
     def test_problems_order_ids_and_cap(self):
         p = va.vm_alarm_problems(self.D, {"login_critical": 10})
         kinds = [(x["id"], x["kind"], x["severity"]) for x in p["problems"]]

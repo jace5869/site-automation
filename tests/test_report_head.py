@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "plugins", "module_utils"))
 import report_head as H  # noqa: E402
 import site_filters as sf  # noqa: E402
 import stig_filters as stf  # noqa: E402
+import vmware_alarm_filters as va  # noqa: E402
 
 FIX = os.path.join(HERE, "fixtures", "report_fit")
 
@@ -56,6 +57,48 @@ class ReviewRound(unittest.TestCase):
         h = H.report_head(stf.stig_update_report([{"state": "would write", "host": "h"}], True))
         self.assertEqual([c["text"] for c in h["counts"]], ["1 review would be written"])
         self.assertEqual(h["scope"], ["Check: nothing written"])
+
+    def test_vmware_alarms_leads_with_hosts_not_connected(self):
+        base = {"vcenter": "vc01.example.mil", "read_at": "2026-11-22T06:00:00Z", "window_hours": 24.0,
+                "alarms": [], "config_issues": [], "hosts": [], "events": [], "alarm_changes": []}
+        logins = [{"key": i, "time": "2026-11-22T0%d:00:00Z" % i, "type": "BadUsernameSessionEvent", "group": "login",
+                   "severity": "warning", "category": "info", "message": "Cannot login svc_scan@192.0.2.99",
+                   "user": "", "login_user": "svc_scan", "ip": "192.0.2.99", "host": "esx01.example.mil",
+                   "vm": "", "cluster": "CL1", "datacenter": "SITEA"} for i in range(1, 4)]
+        h_conn = {"name": "esx01.example.mil", "moid": "host-1", "cluster": "CL1", "datacenter": "SITEA",
+                  "connection": "connected", "power": "poweredOn", "maintenance": False}
+        h_down = {"name": "esx02.example.mil", "moid": "host-2", "cluster": "CL1", "datacenter": "SITEA",
+                  "connection": "disconnected", "power": "unknown", "maintenance": False}
+        # hosts not connected + failed logins: critical host leads before warning logins
+        h = H.report_head(va.vm_alarm_report(dict(base, hosts=[h_conn, h_down], events=logins)))
+        self.assertEqual(h["subject"], "VMware alarms: 1 host not connected, 3 failed logins")
+        self.assertLessEqual(len(h["subject"]), 60)
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]],
+                         [("1 host not connected", "critical"), ("3 failed logins", "warning")])
+        # hosts not connected + host lost the connection + failed logins + cleared alarm (integration fixture shape)
+        lost = [{"key": 10, "time": "2026-11-22T05:00:00Z", "type": "HostConnectionLostEvent", "group": "connection",
+                 "severity": "critical", "category": "error", "message": "Host esx01.example.mil lost its connection to vCenter",
+                 "user": "", "login_user": "", "ip": "", "host": "esx01.example.mil", "vm": "", "cluster": "CL1", "datacenter": "SITEA"}]
+        cleared = [{"time": "2026-11-22T01:00:00Z", "alarm": "Host error", "entity_type": "host", "entity": "esx01.example.mil",
+                    "moid": "host-1", "from": "green", "to": "red", "cluster": "CL1", "datacenter": "SITEA"},
+                   {"time": "2026-11-22T02:00:00Z", "alarm": "Host error", "entity_type": "host", "entity": "esx01.example.mil",
+                    "moid": "host-1", "from": "red", "to": "green", "cluster": "CL1", "datacenter": "SITEA"}]
+        h = H.report_head(va.vm_alarm_report(dict(base, hosts=[h_conn, h_down], events=logins + lost, alarm_changes=cleared)))
+        self.assertEqual(h["subject"], "VMware alarms: 1 host not connected")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]],
+                         [("1 host not connected", "critical"), ("1 host lost the connection", "warning"),
+                          ("3 failed logins", "warning"), ("1 alarm fired and cleared", "info")])
+        # only failed logins: warning below login_critical, critical at/above it
+        h = H.report_head(va.vm_alarm_report(dict(base, hosts=[h_conn], events=logins)))
+        self.assertEqual(h["subject"], "VMware alarms: 3 failed logins")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]], [("3 failed logins", "warning")])
+        h = H.report_head(va.vm_alarm_report(dict(base, hosts=[h_conn], events=logins), {"login_critical": 3}))
+        self.assertEqual(h["subject"], "VMware alarms: 3 failed logins")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]], [("3 failed logins", "critical")])
+        # nothing triggered
+        h = H.report_head(va.vm_alarm_report(dict(base, hosts=[h_conn])))
+        self.assertEqual(h["subject"], "VMware alarms: no triggered alarms")
+        self.assertEqual([(c["text"], c["status"]) for c in h["counts"]], [("no triggered alarms", "ok")])
 
 
 class Rules(unittest.TestCase):
