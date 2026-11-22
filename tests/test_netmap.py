@@ -65,7 +65,9 @@ class Fake(object):
     """One fake SWIS (a process) with its fixture, log and state file."""
 
     def __init__(self, tmp, env=None):
-        self.port, self.log, self.state = free_port(), os.path.join(tmp, "swis-%d.log" % id(self)), os.path.join(tmp, "state-%d.json" % id(self))
+        # a fresh name each time: id() is reused once an object is freed, and a reused name read the last fake's log (CI flake)
+        Fake.made = getattr(Fake, "made", 0) + 1
+        self.port, self.log, self.state = free_port(), os.path.join(tmp, "swis-%d.log" % Fake.made), os.path.join(tmp, "state-%d.json" % Fake.made)
         self.fx = os.path.join(tmp, "fx.json")
         if not os.path.exists(self.fx):
             subprocess.check_call([sys.executable, os.path.join(ROOT, "tests", "netmap", "fixture.py"), self.fx, "1500", "svc_swis_ro", PW],
