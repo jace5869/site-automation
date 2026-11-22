@@ -1153,7 +1153,10 @@ def _host_node(row):
 
 
 def canon(x):
-    return str(x or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").strip(" ").rstrip(".").lower()
+    """A name as matched: every Unicode white space (a tab, a non-breaking space) a space, trimmed, a trailing dot off,
+    lower case. SQL cannot trim them all, so nodes_for_hosts also selects by name_key (trimmed in Python) and the match
+    is decided here."""
+    return re.sub(r"\s", " ", str(x or "")).strip(" ").rstrip(".").lower()
 
 
 def nodes_for_hosts(conn, snap_id, fulls, shorts, ips):

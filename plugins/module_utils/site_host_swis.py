@@ -284,11 +284,13 @@ def _read(hs, o, conn, swdb, snap):
     fulls, shorts, ips = (sorted({h[key] for h in hs if h[key]}) for key in ("fqdn", "short", "ip"))
     not_read = []
     core = snap.get("core") or {}
+    # a cut snapshot may have left out a node with the same short name or address: both off (review 1970e A)
     allow_short = not core.get("cut")
-    allow_ip = _part(swdb, snap, "ip", "the other addresses")[0] is not None
+    ip_read = _part(swdb, snap, "ip", "the other addresses")[0] is not None
+    allow_ip = allow_short and ip_read
     if not allow_short:
-        not_read.append("short name matching is off. The snapshot reached solarwinds_snapshot_max_nodes")
-    if not allow_ip:
+        not_read.append("short name and IP matching are off. The snapshot reached solarwinds_snapshot_max_nodes")
+    if not ip_read:
         not_read.append("IP matching is off. The other node addresses were not read")
     rows = swdb.nodes_for_hosts(conn, sid, fulls, shorts, ips)
     if mode == "vcenter":
@@ -320,6 +322,7 @@ def _read(hs, o, conn, swdb, snap):
     if detail and not events_read:
         not_read.append("the events: not read by the last snapshot")
     ports = (swdb.ports_for(conn, sid, ids) or {}) if ids and detail and ports_read else {}
+    port_events_read = ports_read                   # no topology: the switch ports' events cannot be asked (review 1970e E)
     events, ev_ok = {}, False
     if ids and detail and events_read:
         now = _now(o)
@@ -332,6 +335,8 @@ def _read(hs, o, conn, swdb, snap):
             evs = swdb.events_for(conn, now - datetime.timedelta(hours=hours), now, ids, sorted(port_of),
                                   limit=int(o.get("event_limit") or 2000), **({"orion": snap["orion"]} if snap.get("orion") else {}))
             ev_ok = True
+            if not port_events_read:
+                not_read.append("switch port events: not read. The topology was not read")
         except Exception:  # noqa: BLE001 - the events are a nicety: said as not read
             evs = []
             not_read.append("SolarWinds' events: not read")
@@ -351,6 +356,9 @@ def _read(hs, o, conn, swdb, snap):
     for i, h in enumerate(hs):
         node, how, why = found.get(i, (None, "", ""))
         rec = dict(h, matched=how, unmatched_why=why, node=None, alerts=[], apps=[], volumes=[], ports=[], events=[])
+        if not node and (not allow_short or (not allow_ip and h["ip"])):     # never "not in SolarWinds" (review 1970e D)
+            rec.update(uncertain=True, unmatched_why="match not certain: " + (
+                "the snapshot reached solarwinds_snapshot_max_nodes" if not allow_short else "the other node addresses were not read"))
         if node:
             nid = int(node["node_id"])
             m = more.get(nid) or {}
@@ -364,8 +372,9 @@ def _read(hs, o, conn, swdb, snap):
                        volumes=list(vols.get(nid) or []), ports=list(ports.get(nid) or []),
                        events=[_event(e) for e in events.get(nid) or []])
         out.append(rec)
-    res = {"alerts_read": alerts_read, "ports_read": ports_read, "poll_read": poll_read is True,
-           "sam": sam, "volumes": vols_on, "events": ev_ok, "hosts": out, "not_read": not_read}
+    res = {"alerts_read": alerts_read, "ports_read": ports_read, "poll_read": poll_read is True, "port_events_read": port_events_read,
+           "sam": sam, "volumes": vols_on, "events": ev_ok, "hosts": out, "not_read": not_read,
+           "uncertain": sum(1 for h in out if h.get("uncertain"))}
     if mode == "vcenter":
         res["vim"] = vim
     return res
@@ -413,6 +422,7 @@ def syslog_live(client, node_ids, opts=None):
     -> {ok, why, capped, max_rows, hours, levels, by_node: {node_id: {count, top: [{message, count, last}]}}}.
     An Orion without Log Analyzer (no Orion.OLM.LogEntry), or one without a column it needs: ok False, why says so."""
     o = dict(opts or {})
+    red = o.get("redact") or (lambda s: s)
     ids = sorted(set(int(i) for i in node_ids or [] if i is not None))
     hours = max(1, int(o.get("hours") or 24))
     cap = max(1, int(o.get("max_rows") or 5000))
@@ -457,7 +467,8 @@ def syslog_live(client, node_ids, opts=None):
         nid = sdb._int(r.get(cols["node_id"]))
         if nid is None:
             continue
-        msg = re.sub(r"\s+", " ", str(r.get(cols["message"]) or "")).strip()
+        # redacted whole, then cut: a cut can split a secret so the redactor no longer sees it (review 1970e B)
+        msg = red(re.sub(r"\s+", " ", str(r.get(cols["message"]) or "")).strip())
         t = ad._utc(r.get(cols["time"]))
         n = by.setdefault(nid, {"count": 0, "groups": {}})
         n["count"] += 1

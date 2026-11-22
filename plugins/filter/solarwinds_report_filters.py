@@ -180,7 +180,7 @@ def swr_health(read, findings_by_host=None, opts=None):
     rows, det, rs, cs = [], [], [], []
     alerts_read = r.get("alerts_read", True)
     alerts_n, alert_hosts, alert_sts = 0, 0, []
-    disagree, absent, left_out = [], [], []
+    disagree, absent, left_out, unsure = [], [], [], []
     apps_bad = vols_bad = 0
     for h in sorted(r.get("hosts") or [], key=lambda h: h["host"]):
         name, short = h["host"], _short(h["host"])
@@ -192,6 +192,13 @@ def swr_health(read, findings_by_host=None, opts=None):
         if not node:
             if _skipped(name, pats, h.get("fqdn")):
                 left_out.append(name)
+                continue
+            if h.get("uncertain"):                       # review 1970e D: unknown, never missing or 0 alerts
+                unsure.append((name, h.get("unmatched_why") or ""))
+                rows.append(["", short, "?", "?", "?", "?", "?", ours])
+                det.append([])
+                rs.append("info")
+                cs.append(["", "", "info", "", "", "", "", ours_st if ours_st in ("critical", "warning") else ""])
                 continue
             absent.append((name, h.get("unmatched_why") or ""))
             rows.append(["", short, "Missing", "-" if alerts_read else "?", "-", "-", "-", ours])
@@ -274,7 +281,10 @@ def swr_health(read, findings_by_host=None, opts=None):
             notes.append("No SAM on this SolarWinds: no applications.")
         if notes:
             says["note"] = " ".join(notes)
-        if alerts_read:
+        if alerts_read and unsure:
+            tile = {"value": "%s+" % _n(alerts_n), "status": _worst(alert_sts + ["info"]),
+                    "note": "%s not certain" % _p(len(unsure), "host")}
+        elif alerts_read:
             tile = {"value": alerts_n, "status": _worst(alert_sts) if alerts_n else "ok",
                     "note": ("on %s" % _p(alert_hosts, "host")) if alerts_n else "none on these hosts"}
         else:
@@ -286,6 +296,10 @@ def swr_health(read, findings_by_host=None, opts=None):
         web.append({"title": "SolarWinds alerts, our checks are green (%d)" % len(disagree), "status": _worst(d["status"] for d in disagree),
                     "under_findings": True, "glance": disagree,
                     "text": "The two disagree. Look at the host, or at the alert in SolarWinds."})
+    if unsure:
+        web.append({"title": "Match not certain (%d)" % len(unsure), "status": "info", "under_findings": True,
+                    "lines": ["%s: %s" % (a, w) if w else a for a, w in unsure],
+                    "text": "The snapshot could not tell which SolarWinds node these hosts are. Their alerts are not counted."})
     if absent:
         web.append({"title": "Not in SolarWinds (%d)" % len(absent), "status": "warning", "under_findings": True,
                     "lines": ["%s: %s" % (a, w) if w else a for a, w in absent],
@@ -296,6 +310,8 @@ def swr_health(read, findings_by_host=None, opts=None):
         bits = ["alerts not read"]
         if alerts_read:
             bits = [_p(alerts_n, "alert") + (" on %s" % _p(alert_hosts, "host") if alerts_n else "")]
+            if unsure:
+                bits = ["%s+ alerts (%s not certain)" % (_n(alerts_n), _p(len(unsure), "host"))]
         if r.get("sam"):
             bits.append(_p(apps_bad, "application") + " not up")
         if r.get("volumes") is None:
@@ -305,6 +321,8 @@ def swr_health(read, findings_by_host=None, opts=None):
         lines.append("SolarWinds says (%s): %s." % (_p(n, "host"), ", ".join(bits)))
     if disagree:
         lines.append("SolarWinds alerts, our checks are green: %s." % ", ".join(d["name"] for d in disagree))
+    if unsure:
+        lines.append("Match not certain: %s." % ", ".join(_short(a) for a, _w in unsure[:10]) + (" +%d" % (len(unsure) - 10) if len(unsure) > 10 else ""))
     if absent:
         lines.append("Not in SolarWinds: %s." % ", ".join(_short(a) for a, _w in absent[:10]) + (" +%d" % (len(absent) - 10) if len(absent) > 10 else ""))
     email = []
@@ -398,6 +416,7 @@ def swr_troubleshoot(read, opts=None):
     alerts_read = r.get("alerts_read", True)
     ports_read = r.get("ports_read", True)
     events_read = r.get("events")
+    port_ev = r.get("port_events_read", True)          # review 1970e E: no topology, no port events: the count is a floor
     multi = len(hosts) > 1
     web, lines = [], []
     for h in hosts:
@@ -409,6 +428,12 @@ def swr_troubleshoot(read, opts=None):
                         "glance": [{"status": "info", "label": "Left out", "name": short,
                                     "text": "In solarwinds_report_skip_hosts: not in SolarWinds on purpose."}]})
             lines.append("%s: left out (solarwinds_report_skip_hosts)." % short)
+            continue
+        if not node and h.get("uncertain"):              # review 1970e D: unknown, never "not in SolarWinds"
+            web.append({"title": "What SolarWinds sees" + sfx, "status": "info", "first": True, "top": True,
+                        "glance": [{"status": "info", "label": "Not certain", "name": short,
+                                    "text": (h.get("unmatched_why") or "match not certain").capitalize() + ". " + _snap_text(r)}]})
+            lines.append("%s: match not certain." % short)
             continue
         if not node:
             web.append({"title": "What SolarWinds sees" + sfx, "status": "warning", "first": True, "top": True,
@@ -447,9 +472,12 @@ def swr_troubleshoot(read, opts=None):
         for e in ev:
             kinds[e.get("kind") or "Event"] = kinds.get(e.get("kind") or "Event", 0) + 1
         top = sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
-        g.append({"status": "info" if ev or not events_read else "ok", "label": _n(len(ev)) if events_read else "Not read",
+        g.append({"status": "info" if ev or not events_read or not port_ev else "ok",
+                  "label": (_n(len(ev)) + ("" if port_ev else "+")) if events_read else "Not read",
                   "name": "Events (%d h)" % hours,
-                  "text": (", ".join("%s %s" % (_n(c), k) for k, c in top) + "." if ev else "No event in the last %d h." % hours)
+                  "text": ((", ".join("%s %s" % (_n(c), k) for k, c in top) + "." if ev else
+                            "No event in the last %d h." % hours if port_ev else "No node event in the last %d h." % hours)
+                           + ("" if port_ev else " Switch port events not read."))
                   if events_read else "Not read."})
         web.append({"title": "What SolarWinds sees" + sfx, "status": _worst([x["status"] for x in g if x["status"] != "ok"]) or "ok",
                     "first": True, "top": True, "glance": g, "text": _snap_text(r)})
@@ -480,7 +508,8 @@ def swr_troubleshoot(read, opts=None):
         lines.append("%s: node %s, %s, %s, %s." % (
             short, (node.get("status") or "unknown").lower(), _p(len(al), "alert") if alerts_read else "alerts not read",
             ("port " + _port_text(ports[0]).rstrip(".")) if ports else ("no switch port known" if ports_read else "topology not read"),
-            "%s in %d h" % (_p(len(ev), "event"), hours) if events_read else "events not read"))
+            ("%s in %d h" % (_p(len(ev), "event"), hours) if port_ev else
+             "%s+ events in %d h (switch port events not read)" % (_n(len(ev)), hours)) if events_read else "events not read"))
     email = [{"title": "What SolarWinds sees", "first": True, "top": True, "status": _worst([s.get("status") for s in web if s.get("status")]),
               "lines": lines, "text": _snap_text(r) + " The report website has the tables."}] if lines else []
     if r.get("not_read"):

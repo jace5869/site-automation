@@ -21,6 +21,8 @@ Three sections sit right under Findings.
    - A row opens to its alerts, its SAM applications not up, its full volumes and its top 3 syslog messages.
 - **SolarWinds alerts, our checks are green (N)**: hosts where SolarWinds sees a problem and the job found none. The
   two disagree, so look at the host or at the alert.
+- **Match not certain (N)**: hosts the snapshot could not place, as a part of it was not read. Their cells say `?`,
+  and the alerts tile says `N+`. Not a warning.
 - **Not in SolarWinds (N)**: hosts AAP checks but SolarWinds does not monitor. A warning.
    - Hosts that are never in SolarWinds on purpose (a lab) go in `solarwinds_report_skip_hosts`.
    - The other OS's hosts (a Windows server in a Linux health check) are left out, as the job leaves them out.
@@ -41,6 +43,7 @@ What SolarWinds sees comes first on the page, above Start here.
 ## How a host is matched
 
 A host is never matched by a guess. A host that is not matched is listed in **Not in SolarWinds**, with the reason.
+When a part of the snapshot that the match needs was not read, it is listed in **Match not certain** instead.
 
 1. Start with the inventory name. If it has no domain, use the full name from `ansible_host`.
 2. Look for that full name in the node's caption and DNS name.
@@ -114,5 +117,8 @@ old"). Every SolarWinds caption gives the snapshot's date, time and age.
 | Syslog not read: no Log Analyzer | SolarWinds has no Log Analyzer. The other columns are complete. |
 | Syslog not read: no SolarWinds credential | Attach SolarWinds (read-only) to the template. |
 | SAM's applications: not read by the last snapshot | The column shows `?`. Look at the last runs of *SolarWinds - snapshot*. |
+| short name and IP matching are off | The snapshot reached `solarwinds_snapshot_max_nodes`. Raise it. |
+| IP matching is off | The nodes' other addresses were not read. Look at the last runs of *SolarWinds - snapshot*. |
+| switch port events: not read | The topology was not read. The events count says `N+`. |
 
 With `report_email_xlsx: true` the workbook has SolarWinds' tables as sheets too.

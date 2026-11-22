@@ -981,8 +981,8 @@ class Review1970d(unittest.TestCase):
             self.assertEqual([h["matched"] for h in r["hosts"]], ["name", "", ""])
             self.assertTrue(any("short" in line and "max_nodes" in line for line in r["not_read"]))
             self.assertTrue(any("IP" in line and "addresses" in line for line in r["not_read"]))
-        self.db.notes["ip"]["absent"] = True
-        self.assertEqual([h["matched"] for h in self.read(hosts)["hosts"]], ["name", "ip", ""])
+        self.db.notes["ip"]["absent"] = True                  # review 1970e A: cut, so no address match either
+        self.assertEqual([h["matched"] for h in self.read(hosts)["hosts"]], ["name", "", ""])
         self.db.core.clear()
         self.unread("ip")
         self.assertEqual([h["matched"] for h in self.read(hosts)["hosts"]], ["name", "", "name"])
@@ -994,7 +994,7 @@ class Review1970d(unittest.TestCase):
         node = N(91, "\tTAB\rHOST01.EXAMPLE.MIL...\n", dns="mgmt91.example.mil")
         self.assertEqual(hs.match(host, [N(92, "tab host01"), node])[0][:2], (node, "name"))
         self.assertEqual(hs._short(node["name"]), "tab host01")
-        self.assertEqual(hs._full("\vHOST.EXAMPLE.MIL."), "\vhost.example.mil")
+        self.assertEqual(hs._full("\vHOST.EXAMPLE.MIL."), "host.example.mil")
 
     def test_events_not_read(self):
         for failed in (False, True):
@@ -1059,6 +1059,76 @@ class Review1970d(unittest.TestCase):
         for secret in ("abc123secretvalue", "hunter2x"):
             self.assertNotIn(secret, json.dumps(result))
         self.assertEqual(result["syslog"]["by_node"]["101"]["top"][0]["message"], site_redact.redact(bearer))
+
+
+class Review1970e(unittest.TestCase):
+    """Codex's check of 0276f907: a test for each item left open, failing before the fix."""
+
+    def setUp(self):
+        self.db = Snap()
+
+    def read(self, hosts=None, mode="troubleshoot"):
+        r = hs.read(hosts or HOSTS[:1], {"mode": mode, "now": NOW}, object(), self.db)
+        self.assertTrue(r["ok"], r["why"])
+        return r
+
+    def test_a_cut_snapshot_never_matches_by_address(self):
+        self.db.core["cut"] = True                            # the other addresses were read: only the cut is said
+        self.db.nodes_for_hosts = lambda *args: [N(2, "other", ip="192.0.2.22")]
+        r = self.read([HOSTS[2]], "health")
+        self.assertEqual((r["hosts"][0]["matched"], r["hosts"][0]["node"]), ("", None))
+        self.assertTrue(any("IP matching" in line and "max_nodes" in line for line in r["not_read"]))
+
+    def test_b_syslog_redacted_before_the_cut(self):
+        secret = "hunter2secretpass"
+        msg = "x" * (300 - len("https://admin:" + secret)) + "https://admin:" + secret + "@db.example.mil/x"
+        self.assertEqual(len(msg.split("@")[0]), 300)                  # character 300 ends the password, before "@"
+        r = hs.syslog_live(Client(rows=[entry(101, "10:00", msg)]), [101], {"now": NOW, "redact": site_redact.redact})
+        r = hs.redact_read({"syslog": r, "hosts": []}, site_redact.redact)
+        self.assertNotIn("hunter2", json.dumps(r))
+
+    def test_c_unicode_white_space_around_a_caption(self):
+        host = H(("web01.example.mil",))
+        down = dict(N(1, "\u00a0WEB01.EXAMPLE.MIL.\u2003"), status_code=2, status="Down")
+        up = N(2, "web01")
+        self.assertEqual(hs.match(host, [up, down])[0][:2], (down, "name"))
+        self.assertEqual(hs.canon("\u00a0Web01.Example.Mil.\u3000"), "web01.example.mil")
+
+    def test_d_unresolved_after_a_failed_address_read_is_unknown(self):
+        self.db.notes["ip"] = {"what": "ip", "why": "timeout", "absent": False}
+        self.db.nodes_for_hosts = lambda *args: [N(101, "web01.example.mil"), N(2, "other", ip="192.0.2.22")]
+        r = self.read([HOSTS[0], HOSTS[2]], "health")
+        h = r["hosts"][1]
+        self.assertTrue(h["uncertain"])
+        self.assertEqual(h["unmatched_why"], "match not certain: the other node addresses were not read")
+        self.assertEqual(r["uncertain"], 1)
+        view = swr.swr_health(r)
+        titles = [s["title"] for s in view["web_sections"]]
+        self.assertIn("Match not certain (1)", titles)
+        self.assertFalse(any(t.startswith("Not in SolarWinds") for t in titles))
+        says = view["web_sections"][0]
+        row = next(x for x in says["rows"] if x[1] == "db01")
+        self.assertEqual(row[2:7], ["?"] * 5)
+        tile = says["boxes"][0]
+        self.assertEqual((tile["value"], tile["note"], tile["status"]), ("1+", "1 host not certain", "critical"))
+        self.assertIn("(1 host not certain)", view["lines"][0])
+        self.assertNotIn("Not in SolarWinds", " ".join(view["lines"]))
+        t = swr.swr_troubleshoot(self.read([HOSTS[2]]))
+        g = t["web_sections"][0]["glance"][0]
+        self.assertEqual((g["label"], g["status"]), ("Not certain", "info"))
+        self.assertIn("db01: match not certain.", t["lines"])
+
+    def test_e_port_events_not_checked(self):
+        self.db.core["topology_ok"] = False
+        r = self.read()
+        self.assertFalse(r["port_events_read"])
+        self.assertTrue(r["events"])
+        self.assertTrue(any("switch port events" in line for line in r["not_read"]))
+        t = swr.swr_troubleshoot(r)
+        g = next(x for x in t["web_sections"][0]["glance"] if x["name"] == "Events (24 h)")
+        self.assertTrue(g["label"].endswith("+"), g)
+        self.assertIn("Switch port events not read.", g["text"])
+        self.assertIn("(switch port events not read)", t["lines"][0])
 
 
 if __name__ == "__main__":

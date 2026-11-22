@@ -83,7 +83,7 @@ def main():
         else:
             ids = [h["node"]["node_id"] for h in res["hosts"] if h.get("node")]
             res["syslog"] = hs.syslog_live(client, ids, {"hours": p["syslog_hours"], "levels": p["syslog_levels"],
-                                                         "max_rows": p["syslog_max_rows"], "now": p["now"]})
+                                                         "max_rows": p["syslog_max_rows"], "now": p["now"], "redact": redact})
         # the module's answer travels as JSON: node ids as text
         res["syslog"]["by_node"] = dict((str(k), v) for k, v in (res["syslog"].get("by_node") or {}).items())
         res["syslog"]["queried"] = [str(k) for k in res["syslog"].get("queried") or []]
