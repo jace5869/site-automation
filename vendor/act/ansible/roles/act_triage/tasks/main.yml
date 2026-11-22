@@ -155,6 +155,32 @@
           {{ (parts | join(_act_nl ~ _act_nl))[:act_triage_evidence_total_chars | int] }}
       when: act_triage_mode == 'evidence'
 
+    # 1.104.0c (Codex): a name in act_triage_env the launcher would refuse is found here, on the controller, before
+    # any value leaves it (a module file kept on the host - ANSIBLE_KEEP_REMOTE_FILES - holds the task's stdin):
+    # ACT is not started and the result names it, never its value. The same rules as files/act_launch.py.
+    - name: ACT | the settings ACT may get (act_triage_env)
+      ansible.builtin.set_fact:
+        _act_refused_names: >-
+          {%- set bad = [] -%}
+          {%- for name in act_triage_env -%}
+          {%-   set n = name | string -%}
+          {%-   if n not in _act_provider_keys
+                   and not (n is match('^[A-Za-z_][A-Za-z0-9_]*$')
+                            and (n in _act_base or n in act_triage_env_pass or n.startswith(('ACT_', 'GENAI_', 'ASKSAGE_')))
+                            and (n in _act_not_secrets or n is not search(_act_credential))) -%}
+          {%-     set _ = bad.append(n) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ bad | join(', ') }}
+      vars:
+        _act_base: [PATH, HOME, USER, LOGNAME, LANG, LANGUAGE, LC_ALL, LC_CTYPE, LC_MESSAGES, TZ, TMPDIR, TERM, NO_COLOR,
+                    XDG_CONFIG_HOME, XDG_RUNTIME_DIR, PYTHONIOENCODING, PYTHONUTF8, http_proxy, https_proxy, no_proxy,
+                    all_proxy, HTTP_PROXY, HTTPS_PROXY, NO_PROXY, ALL_PROXY, SSL_CERT_FILE, SSL_CERT_DIR,
+                    REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE]
+        _act_credential: '(?i)PASSW|PASSPHRASE|SECRET|APIKEY|CREDENTIAL|COOKIE|PRIVATE|TOKEN|AUTH|SESSION|BEARER|(^|_)(KEYS?|PASS|PWD|PW)(_|$)'
+        _act_provider_keys: [GENAI_KEY, GENAI_KEYS, ASKSAGE_KEY, ASKSAGE_API_KEY, ASKSAGE_KEYS, GENAI_BETA_KEY, GENAI_BETA_KEYS]
+        _act_not_secrets: [ACT_KEY_COOLDOWN, ACT_KEY_ROTATION, ACT_KEY_USAGE_LOG, ACT_MAX_TOKENS, ACT_TOKEN_PARAM]
+
     # 1.104.0: the keys and act_triage_env go on stdin to files/act_launch.py, as the line "act_launch/1" and one
     # JSON object - never through Ansible's `environment:`, which Ansible puts on the remote command line (ps, the
     # sudo log). The launcher reads the whole object (cut short: refused), takes only ACT's provider keys and allowed
@@ -213,6 +239,7 @@
         # act_triage_key_env_names held to ACT's provider keys: another name there (SN_PASSWORD) is never read
         _act_keys_forwarded: "{{ act_triage_key_env_names | map('string') | select('in', _act_provider_keys) | list }}"
       timeout: "{{ act_triage_timeout | int + 60 }}"
+      when: _act_refused_names | length == 0
       register: _act_run
       changed_when: false
       failed_when: false
@@ -238,7 +265,9 @@
              else {'schema': 'act.result/1', 'status': 'error',
                    'exit_code': _act_run.rc | default(-1),
                    'summary': '', 'changed': false, 'commands': [], 'denied': [], 'files_changed': [],
-                   'stop_reason': 'ACT produced no result (it timed out after ' ~ act_triage_timeout
+                   'stop_reason': ('ACT was not started: act_triage_env has names ACT may not get (a credential or an '
+                                   ~ 'unknown setting): ' ~ _act_refused_names) if _act_refused_names | length > 0
+                                  else 'ACT produced no result (it timed out after ' ~ act_triage_timeout
                                   ~ 's or could not start)'} }}
 
     - name: ACT | remove the result file from the host

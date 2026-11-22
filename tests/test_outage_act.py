@@ -325,7 +325,8 @@ class Timeouts(unittest.TestCase):
         read |= set(re.findall(r"""['"]((?:ACT|GENAI|ASKSAGE)_[A-Z0-9_]+)['"]""", src))
         blocked = set(n for n in read if vmware_ask.CREDENTIAL.search(n))
         with open(os.path.join(REPO, "vendor", "act", "ansible", "roles", "act_triage", "tasks", "main.yml")) as f:
-            run = act_launch(yaml.safe_load(f))
+            tasks_all = yaml.safe_load(f)
+        run = act_launch(tasks_all)
         with open(os.path.join(REPO, "vendor", "act", "ansible", "roles", "act_triage", "defaults", "main.yml")) as f:
             defaults = yaml.safe_load(f)
         self.assertEqual(set(run["vars"]["_act_provider_keys"]), keys)
@@ -336,6 +337,12 @@ class Timeouts(unittest.TestCase):
         self.assertEqual(set(launcher["ACT_KEYS"]), keys)
         self.assertEqual(set(launcher["ACT_NOT_SECRETS"]), blocked - keys)
         self.assertEqual(launcher["CREDENTIAL"].pattern, vmware_ask.CREDENTIAL.pattern)
+        check = task_by_name(tasks_all, "ACT | the settings ACT may get")["vars"]           # 1.104.0c: the controller's check
+        self.assertEqual(check["_act_credential"], "(?i)" + vmware_ask.CREDENTIAL.pattern)
+        self.assertEqual(check["_act_base"], list(launcher["BASE"]))
+        self.assertEqual(set(check["_act_provider_keys"]), keys)
+        self.assertEqual(set(check["_act_not_secrets"]), blocked - keys)
+        self.assertIn(repr(launcher["PREFIXES"]), task_by_name(tasks_all, "ACT | the settings ACT may get")["ansible.builtin.set_fact"]["_act_refused_names"])
 
     def test_act_refuses_ansible_core_below_2_16(self):
         import jinja2
@@ -554,6 +561,31 @@ class Play(unittest.TestCase):
                 _, work = self.stand_in(extra={"ansible_connection": connection, "act_triage_key_env_names": []}, host="actnode")
                 with open(os.path.join(work, "fake-act-env-names.json")) as f:
                     self.assertNotIn("GENAI_KEY", json.load(f))
+
+    def test_a_forbidden_setting_never_leaves_the_controller(self):
+        # 1.104.0c (Codex P1, ec3e9ee7): a name ACT may not get in act_triage_env (site_act_env SN_PASSWORD, an unknown
+        # name) is found on the controller: ACT is not started, the reason names it, and its value is in no file on the
+        # host - with ANSIBLE_KEEP_REMOTE_FILES the module file keeps the task's stdin (before: the value was in it)
+        keep = tempfile.mkdtemp()
+        act, work = self.stand_in(extra={"site_act_env": {"SN_PASSWORD": "sn-value-999", "OTHER_SETTING": "other-value-888"}},
+                                  env_more={"ANSIBLE_KEEP_REMOTE_FILES": "1", "ANSIBLE_REMOTE_TMP": keep})
+        wrong = []
+        for root, _, files in os.walk(keep):
+            for name in files:
+                with open(os.path.join(root, name), "rb") as f:
+                    data = f.read()
+                for value in (b"sn-value-999", b"other-value-888"):
+                    if value in data:
+                        wrong.append("%s is in %s" % (value.decode(), name))
+        if not any(n.endswith(".py") for _, _, fs in os.walk(keep) for n in fs):
+            wrong.append("no module file was kept: the check proves nothing")
+        if os.path.exists(os.path.join(work, "fake-act-env-names.json")):
+            wrong.append("ACT ran")
+        if "SN_PASSWORD, OTHER_SETTING" not in act["judged"] or "sn-value-999" in act["judged"]:
+            wrong.append("the reason: %s" % act["judged"])
+        if "sn-value-999" in self.play_output:
+            wrong.append("the value is in the play's output")
+        self.assertEqual(wrong, [])
 
     def test_acts_folder_goes_when_act_fails(self):
         # 1.104.0 (Neon P2): roles/site_act evidence_ask.yml removes ACT's folder in an always - also when act_triage fails
