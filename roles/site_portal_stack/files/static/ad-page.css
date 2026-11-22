@@ -1,0 +1,40 @@
+/* 1.101.2: the portal's Active Directory page (/portal/ad, ad-page.js) - the look's own tokens, light and dark */
+.adp-live .adp-sep{color:var(--muted)}
+.adp-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg)}
+.adp-dot.off{background:var(--muted);box-shadow:none}
+html.moves .adp-dot:not(.off){animation:adppulse 2.4s ease-in-out infinite}
+@keyframes adppulse{50%{box-shadow:0 0 0 6px var(--ok-bg)}}
+.sec>h2 .adp-hint{margin-left:auto;font-family:var(--sans);font-size:12.5px;font-weight:500;color:var(--muted)}
+.adp-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+.adp-tiles .tile:nth-child(n+5){border-top:1px solid var(--line)}
+.adp-tiles .tile:nth-child(5){border-left:0}
+.adp-trend{display:inline-flex;gap:1px;vertical-align:middle;padding:2px 0}
+.adp-trend i,.adp-leg i{display:inline-block;width:4px;height:16px;border-radius:1px;background:var(--ok);opacity:.55}
+.adp-trend i.k-warning,.adp-leg i.k-warning,.adp-trend i.k-low,.adp-trend i.k-unknown{background:var(--warning);opacity:1}
+.adp-trend i.k-critical,.adp-leg i.k-critical{background:var(--critical);opacity:1}
+.adp-trend i.k-none,.adp-leg i.k-none{background:transparent;outline:1px dashed var(--muted);outline-offset:-1px;opacity:1}
+.adp-leg{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 2px 0;font-size:12.5px;color:var(--muted);align-items:center}
+.adp-leg i{width:10px;height:10px;margin-right:6px;vertical-align:-1px}
+tr.r-critical>td:first-child{box-shadow:inset 3px 0 0 var(--critical)}
+tr.r-warning>td:first-child,tr.r-low>td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+.adp-dc{white-space:nowrap}
+.adp-why{display:none;font-size:12.5px;color:var(--muted);margin-top:2px;white-space:normal;max-width:34ch}
+.muted{color:var(--muted)}
+.adp-chart{position:relative;padding:12px 12px 6px}
+.adp-chart svg{display:block;width:100%;height:auto}
+.adp-chart .ax{font:500 11px var(--sans);fill:var(--muted)}
+.adp-chart .gl{stroke:var(--line);stroke-width:1}
+.adp-chart .bc{fill:var(--critical)}.adp-chart .bw{fill:var(--warning)}
+.adp-chart .hit{fill:transparent}.adp-chart .hit:hover{fill:var(--hover)}
+.adp-tip{position:absolute;z-index:3;padding:8px 10px;border-radius:10px;background:var(--card-solid);border:1px solid var(--edge);box-shadow:var(--shadow);
+  font-size:12.5px;line-height:1.45;pointer-events:none;white-space:nowrap}
+.adp-tip b{display:block}
+.adp-foot{margin:28px 0 8px;font-size:12.5px;color:var(--muted);max-width:90ch}
+.adp-toast{display:flex;gap:10px;align-items:flex-start}
+.adp-toast.bad{border-color:var(--critical)}.adp-toast.bad b{color:var(--critical)}
+.adp-toast .x{margin-left:auto;border:0;background:none;color:var(--muted);font-size:16px;line-height:1;cursor:pointer}
+html.moves tr.adp-flash>td{animation:adpflash 1.6s ease-out 1}
+@keyframes adpflash{0%{background:var(--warning-bg)}100%{background:transparent}}
+@media (max-width:900px){.adp-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.adp-tiles .tile:nth-child(odd){border-left:0}
+  .adp-tiles .tile:nth-child(n+3){border-top:1px solid var(--line)}.adp-wide{display:none}.adp-why{display:block}.adp-trend i{width:3px}}
+@media print{.adp-toasts,.adp-chart .hit{display:none}}

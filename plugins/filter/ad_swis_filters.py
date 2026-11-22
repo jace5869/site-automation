@@ -314,9 +314,9 @@ def ad_swis_dcs(dcs, hostvars=None):
 
 
 def ad_live_block(ad, dcs, opts=None):
-    """1.101.2: what the portal's live AD page (/portal/ad) needs beside the run's page, in the page's JSON (report.live):
-    the DCs to find in SolarWinds, the AD problems by DC (What it means) and the From SolarWinds settings. No secret, no
-    SolarWinds data: the portal reads SolarWinds itself."""
+    """1.101.2: what the portal's Active Directory page (/portal/ad) needs to read SolarWinds for a run, kept with the run in
+    the report database (ad_run.live): the DCs to find in SolarWinds, the AD problems by DC (What it means) and the From
+    SolarWinds settings. No secret, no SolarWinds data: the portal reads SolarWinds itself."""
     o = opts or {}
     probs = [{"domain": str(p.get("domain") or ""), "object": str(p.get("object") or ""), "severity": str(p.get("severity") or ""),
               "text": str(p.get("text") or "")[:300]}

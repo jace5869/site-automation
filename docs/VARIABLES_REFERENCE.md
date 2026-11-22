@@ -356,6 +356,9 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_repl_db_create` | `true` | make the table ad_repl_point on the first run; false = an admin makes it (docs/REPORT_DATABASE.md) |
 | `ad_repl_db_timeout` | `10` | seconds to wait for the report database's connection |
 | `ad_repl_db_keep_days` | `400` | delete the database's points older than this many days (0 = never) |
+| `ad_db` | `true` | 1.101.2: each run (its DCs and replication links) in the report database, for the portal's live AD page (/portal/ad), when the job template has a "Report database" credential (no credential = not used; the job never fails on it) |
+| `ad_db_create` | `true` | make the tables ad_run, ad_dc, ad_link on the first run; false = an admin makes them (docs/REPORT_DATABASE.md) |
+| `ad_db_keep_days` | `400` | delete runs older than this many days (0 = never) |
 | `ad_repl_map_web` | `true` | ---- Replication map (1.101.0): the AD sites where the network map places their sites, on the report website ----- Each AD site is matched to a network-map site: ad_site_map first, then the DCs' own SolarWinds nodes (From SolarWinds), then the same site code, then the same name. The places and the WAN traffic come fro… (all of it: the role file) |
 | `ad_site_map` | `{}` | an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301} |
 | `ad_time_warn_seconds` | `5` | a DC's clock against the PDC emulator (the PDC: against its NTP source) |
@@ -2174,6 +2177,18 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_solarwinds_url` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_URL') or netmap_solarwinds_url \| default(''…` | SolarWinds' address and certificate check: the credential's, else netmap_solarwinds_url / netmap_validate_certs |
 | `portal_solarwinds_validate_certs` | (worked out by the role; see its file) | check SolarWinds' certificate (the credential's verify, else netmap_validate_certs) |
 | `portal_solarwinds_ca_file` | (empty) | the CA that signed SolarWinds' certificate, a file ON THE PORTAL SERVER (PEM), added to what the service trusts; "" = the server's own CAs (portal_trust_host_cas) only |
+| `portal_ad` | `true` | ---- 1.101.2: the live AD page (docs/SITE_PORTAL.md, "Active Directory") ----------------------------------------------------- /portal/ad: the AD job's runs from the report database - each DC now and since when, its last 48 runs, the replication links that need a look, the last 7 days - and the link to the newest run'… (all of it: the role file) |
+| `portal_ad_seconds` | `600` | the SolarWinds read: how often (120 at least); nothing is read while nobody has the page open |
+| `portal_ad_old_minutes` | `90` | the AD checks older than this are said to be old on the page |
+| `portal_ad_template` | (empty) | two AD templates (two forests): the ID of the one the page shows; "" = the newest run's |
+| `portal_report_db` | `auto` | The AD job's runs come from the report database (the AD job writes them: ad_db). auto: on when this deploy's job template has a "Report database" credential - attach it with the read-only account (report_reader: GRANT SELECT, SHOW VIEW, docs/REPORT_DATABASE.md); one podman secret on the server (site-portal-reportdb).… (all of it: the role file) |
+| `portal_report_db_host` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') \| trim }}"` | the server (the credential's) |
+| `portal_report_db_port` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') \| default('3309', true) \| int }}"` | its port (the credential's) |
+| `portal_report_db_name` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') \| default('site_reports', true) \| tri…` | the database (the credential's) |
+| `portal_report_db_user` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') \| trim }}"` | the account (the credential's; report_reader is enough) |
+| `portal_report_db_password` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"` | the credential's password (secret) |
+| `portal_report_db_tls` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') \| default('false', true) \| bool }}"` | TLS with the certificate checked (the credential's) |
+| `portal_report_db_ca_file` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') \| trim }}"` | on the controller: its text goes in the secret |
 | `portal_aap_token` | (worked out by the role; see its file) | ---- Secrets: NEVER set these in a vars file or inventory --------------------------------------------------------------- From the AAP credential, as environment variables on the controller: the token of the portal's account (a podman secret on the server, never in a file, a unit or the logs). |
 | `portal_solarwinds_username` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"` | 1.85.0: the "SolarWinds (read-only)" credential's login - one podman secret on the server (site-portal-swis), never in a file, a unit or the logs |
 | `portal_solarwinds_password` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"` | the credential's password (secret) |

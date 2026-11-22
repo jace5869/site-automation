@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""1.101.2: the live AD page (/portal/ad) - roles/site_portal_stack/files/site_portal.py AdLive and ad_page (the AD job's
-newest page from the report website: its index line marked live: ad, its page and JSON of one job; each missing,
-unreadable or half-written file said, the last whole run kept with its own time), the routes, the AD job's live block
-(plugins/filter/ad_swis_filters.py ad_live_block) and roles/ad_report/files/web/ad-live.js in Chromium (the strip, the
-From SolarWinds cells and tile written again, a DC that changes said, a newer run, no motion). Placeholders only.
+"""1.101.2: the portal's Active Directory page (/portal/ad) from the report database - the AD job's writer
+(roles/ad_report/library/site_ad_db.py, plugins/filter/ad_db_filters.py), the portal's reader (site_portal.py AdDb: now, since
+when, the last 48 runs, the week), its answer (AdLive: the database's runs or why not, SolarWinds for the newest run, the link
+to the full report, a read that fails said as stale), the routes, the deploy's files and roles/site_portal_stack/files/static/
+ad-page.js in Chromium (every part drawn, every state said, a DC that changes said). SQLite stands in for MySQL here; tests/ad/
+run_ad_db_test.sh runs the same against a real MySQL 8.4. Placeholders only.
   python tests/test_portal_ad.py"""
 import json
 import os
@@ -21,7 +22,6 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 FILES = os.path.join(ROOT, "roles", "site_portal_stack", "files")
-WEB = os.path.join(ROOT, "roles", "ad_report", "files", "web")
 sys.path[:0] = [os.path.join(ROOT, "plugins", "module_utils"), os.path.join(ROOT, "plugins", "filter"), FILES, HERE,
                 os.path.join(HERE, "site_portal")]
 import site_portal as sp  # noqa: E402
@@ -35,10 +35,6 @@ sys.path.insert(0, os.path.join(ROOT, "roles", "ad_report", "library"))
 import site_ad_db as adb  # noqa: E402
 
 JDOE = "CN=DOE.JANE.Q.1234567890,OU=CONTRACTOR,OU=PKI,O=U.S. Government,C=US"
-LIVE = {"v": 1, "kind": "ad", "dcs": [{"dc": "DC01", "ip": ""}, {"dc": "DC02", "ip": ""}, {"dc": "DC03", "ip": "192.0.2.13"},
-                                       {"dc": "DC04", "ip": ""}],
-        "problems": [{"domain": "corp.test", "object": "DC01", "severity": "critical", "text": "LDAP not in sync"}],
-        "opts": {"cpu_warn": 90, "mem_warn": 90, "days": 30}}
 
 
 def utc(minutes_ago):
@@ -46,33 +42,19 @@ def utc(minutes_ago):
 
 
 def sw_answer(down=("DC02",)):
-    """site_ad_swis.from_live's shape: DC01-DC04 as SolarWinds sees them."""
+    """site_ad_swis.from_live's shape: DC01-DC03 as SolarWinds sees them."""
     def d(name):
         return {"dc": name, "ip": "", "matched": "name", "status": "Down" if name in down else "Up", "status_text": "",
                 "cpu": None if name in down else 12, "mem": None if name in down else 40, "alerts": [], "apps": {}, "last_down": None}
     return {"ok": True, "source": "swis-live", "read_at": time.strftime("%Y-%m-%d %H:%M", time.gmtime()), "age_min": 0, "why": [],
             "sam": False, "sam_why": "SAM's applications are not on this Orion", "events": False,
-            "dcs": [d("DC01"), d("DC02"), d("DC03"), d("DC04")]}
-
-
-def ad_page_html(look="report_atlas"):
-    """The AD page in a look, with From SolarWinds (tests/test_ad_swis.py's snapshot read and fixture)."""
-    import test_ad_swis as T
-    import jinja2
-    import site_filters as sf
-    r = T.ad.read(T.DCS, {"now": T.NOW}, conn=T.Conn(["2026-10-15 06:43", "2026-10-15 06:33"]), swdb=T.Snap())
-    r["asked"] = True
-    doc = af.ad_swis_insert(T.ad_doc(), af.ad_swis_view(r, {"problems": []}, {"now": T.NOW, "days": 30}))
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROOT, "roles", "site_email", "templates")), autoescape=False)
-    env.filters.update(sf.FilterModule().filters())
-    return env.get_template(look + ".html.j2").render(_report=doc, _email_footer="x", _page_logo_cid="", report_email_header_text="x", _page_runs=[])
+            "dcs": [d("DC01"), d("DC02"), d("DC03")]}
 
 
 class Site(object):
-    """A report folder as site_report_web writes it: index.json, the AD template's latest page and its JSON."""
+    """A portal's folders: data, actions, and the report website's index.json with the AD job's line (live: ad)."""
 
-    def __init__(self, test, when=None, job="77", live=True, html="<!doctype html><html><head><title>AD</title></head><body><h1>AD</h1>"
-                 '<script src="site-report.js"></script><a href="../index.html">All reports</a><a href="#s5">x</a></body></html>'):
+    def __init__(self, test, when=None, index=True):
         self.tmp = tempfile.mkdtemp()
         test.addCleanup(shutil.rmtree, self.tmp, True)
         self.root = os.path.join(self.tmp, "reports")
@@ -81,24 +63,12 @@ class Site(object):
         with open(os.path.join(self.tmp, "a.json"), "w") as fh:
             json.dump({"actions": {}}, fh)
         self.when = when or utc(20)
-        self.page(html)
-        self.data(job, live)
-        self.index(job)
+        if index:
+            self.index()
 
-    def page(self, html):
-        with open(os.path.join(self.root, "ad-health", "latest.html"), "w") as fh:
-            fh.write(html)
-
-    def data(self, job, live=True):
-        rep = {"title": "Active Directory health report"}
-        if live:
-            rep["live"] = LIVE
-        with open(os.path.join(self.root, "ad-health", "latest.json"), "w") as fh:
-            json.dump({"job": job, "template_id": "12", "report": rep}, fh)
-
-    def index(self, job, when=None, live="ad", extra=()):
-        lines = [{"key": "ad-health/latest.html", "latest": "ad-health/latest.html", "page": "ad-health/2026-11-22_0300_job-%s.html" % job,
-                  "when": when or self.when, "job": job, "live": live}] + list(extra)
+    def index(self, extra=(), rel="ad-health/latest.html"):
+        lines = [{"key": rel, "latest": rel, "when": self.when, "job": "77", "live": "ad"},
+                 {"key": "linux/latest.html", "latest": "linux/latest.html", "when": utc(1), "job": "5"}] + list(extra)
         with open(os.path.join(self.root, "index.json"), "w") as fh:
             json.dump({"reports": lines}, fh)
 
@@ -229,6 +199,11 @@ class Db1012(unittest.TestCase):
         for t in ("CREATE TABLE IF NOT EXISTS ad_run", "CREATE TABLE IF NOT EXISTS ad_dc", "CREATE TABLE IF NOT EXISTS ad_link", "'ad_run', 1"):
             self.assertIn(t, ddl)
 
+    def test_6_the_statements_in_the_doc_are_the_modules(self):
+        doc = open(os.path.join(ROOT, "docs", "REPORT_DATABASE.md")).read()
+        for part in adb.ddl().split("\n\n"):
+            self.assertIn(part, doc, "docs/REPORT_DATABASE.md: the statement differs from site_ad_db.ddl()")
+
     def test_5_payload_never_raises(self):
         self.assertIn("were not made into rows", dbf.ad_db_payload({"dcs": "not a list"}, {}, {})["why"])
         p = dbf.ad_db_payload(ad_run(0, "warning")[1], {}, {"crit_hours": 24})
@@ -238,17 +213,22 @@ class Db1012(unittest.TestCase):
         self.assertEqual((p["dcs"][0]["status"], p["dcs"][0]["worst"]), ("critical", "not read: WinRM did not answer"))
 
 
-class DbAnswer1012(unittest.TestCase):
-    """/api/ad's database part: the model with its times, or why not; a read that fails keeps the last one said as stale."""
+def live(lite, site, **kw):
+    """An AdLive on the SQLite database, SolarWinds stood in (DC02 Down unless said)."""
+    a = sp.AdLive(site.cfg(**kw.pop("env", {})), sp.Log(None), source=lambda lv: sw_answer(kw.get("down", ("DC02",))),
+                  db=sp.AdDb(None, connect=lambda: lite, mark="?") if lite is not None else None)
+    a.cfg.ad_swis_why = kw.get("swis_why", "")
+    return a
 
-    def test_1_model_in_the_answer_and_solarwinds_for_its_run(self):
-        s = Site(self)
-        lite = fill(["ok"] * 5 + ["critical"] * 2)
-        a = sp.AdLive(s.cfg(), sp.Log(None), source=lambda live: sw_answer(), db=sp.AdDb(None, connect=lambda: lite, mark="?"))
-        a.cfg.ad_swis_why = ""
+
+class Answer1012(unittest.TestCase):
+    """/api/ad: the database's runs with their times, SolarWinds for the newest run, the full report's link; every state said."""
+
+    def test_1_model_and_solarwinds_for_its_run(self):
+        a = live(fill(["ok"] * 5 + ["critical"] * 2), Site(self))
         a.read_db()
-        src = a.sw_source(a.run()[0])
-        self.assertEqual(src[0], "9006")                              # the database's newest run, not the page's job 77
+        src = a.sw_source()
+        self.assertEqual(src[0], "9006")                              # the database's newest run
         a.sw = a.read_sw(src)
         out = json.loads(a.answer()[1])
         m = out["db"]["model"]
@@ -258,12 +238,16 @@ class DbAnswer1012(unittest.TestCase):
         d3 = m["dcs"][0]
         self.assertEqual((d3["dc"], d3["runs_since"]), ("DC03", 2))
         self.assertTrue(d3["since_shown"].endswith("UTC"))
-        self.assertNotIn("live", m)
+        self.assertNotIn("live", m)                                    # the DCs for SolarWinds stay on the server
+        self.assertEqual(m["worst7"], {"dc": "DC03", "critical": 2})
         self.assertEqual(out["sw"]["job"], "9006")
-        self.assertIn("section", out["sw"])
+        rows = dict((r[1], r) for r in out["sw"]["section"]["rows"])
+        self.assertEqual(rows["DC02"][2], "Down")
+        self.assertIn("read by the portal every 10 min", out["sw"]["section"]["text"])
+        self.assertEqual(out["sw"]["tile"]["value"], 1)
+        self.assertEqual(out["report"]["url"], "/portal/reports/ad-health/latest.html")
 
     def test_2_a_failed_read_said_the_last_model_kept_as_stale(self):
-        s = Site(self)
         lite = fill(["ok"] * 3)
         calls = []
 
@@ -272,7 +256,7 @@ class DbAnswer1012(unittest.TestCase):
             if len(calls) > 1:
                 raise RuntimeError("(2003, \"Can't connect to MySQL server\")")
             return lite
-        a = sp.AdLive(s.cfg(), sp.Log(None), db=sp.AdDb(None, connect=connect, mark="?"))
+        a = sp.AdLive(Site(self).cfg(), sp.Log(None), db=sp.AdDb(None, connect=connect, mark="?"))
         a.read_db()
         with self.assertRaises(RuntimeError):
             a.read_db()
@@ -287,132 +271,83 @@ class DbAnswer1012(unittest.TestCase):
         self.assertIn("report_reader", out["why"])
         self.assertNotIn("model", out)
 
+    def test_4_old_is_said(self):
+        lite = Lite()
+        now, ad = ad_run(200)
+        adb.write(lite, now, 9000, 12, dbf.ad_db_payload(ad, {"kind": "ad"}, {}))
+        a = live(lite, Site(self), env={"PORTAL_AD_OLD_MINUTES": "90"})
+        a.read_db()
+        r = json.loads(a.answer()[1])["db"]["model"]["run"]
+        self.assertTrue(r["old"])
+        self.assertGreaterEqual(r["age_min"], 199)
 
-class Run1012(unittest.TestCase):
-    """The newest AD run: found by its index line, its page and JSON of one job; every other state said, never old as new."""
-
-    def test_1_a_whole_run(self):
-        s = Site(self)
-        run, why = sp.AdLive(s.cfg(), sp.Log(None)).run()
-        self.assertEqual(why, "")
-        self.assertEqual((run["rel"], run["line"]["job"], run["live"]["kind"]), ("ad-health/latest.html", "77", "ad"))
-
-    def test_2_each_missing_part_said(self):
-        s = Site(self)
-        os.unlink(os.path.join(s.root, "index.json"))
-        self.assertIn("no index.json yet", sp.AdLive(s.cfg(), sp.Log(None)).run()[1])
-        s.index("77", live="")
-        self.assertIn("No AD health report on the report website has its live part yet", sp.AdLive(s.cfg(), sp.Log(None)).run()[1])
-        s.index("77")
-        os.unlink(os.path.join(s.root, "ad-health", "latest.json"))
-        self.assertIn("report_web_json true", sp.AdLive(s.cfg(), sp.Log(None)).run()[1])
-        s.data("77", live=False)
-        self.assertIn("made before 1.101.2", sp.AdLive(s.cfg(), sp.Log(None)).run()[1])
-        os.unlink(os.path.join(s.root, "ad-health", "latest.html"))
-        self.assertIn("is not in the report folder", sp.AdLive(s.cfg(), sp.Log(None)).run()[1])
-
-    def test_3_half_written_keeps_the_last_whole_run_said(self):
-        s = Site(self)
-        a = sp.AdLive(s.cfg(), sp.Log(None))
-        self.assertEqual(a.run()[0]["line"]["job"], "77")
-        s.index("78", when=utc(1))                          # the index is the new job's, its JSON still the old one's
-        run, why = a.run()
-        self.assertEqual(run["line"]["job"], "77")          # the last whole run, with its own time
-        self.assertIn("being written", why)
-        with open(os.path.join(s.root, "index.json"), "w") as fh:
-            fh.write('{"reports": [')                       # cut short
-        run, why = a.run()
-        self.assertEqual(run["line"]["job"], "77")
-        self.assertIn("index.json could not be read", why)
-        s.data("78")
-        s.index("78", when=utc(1))
-        run, why = a.run()
-        self.assertEqual((run["line"]["job"], why), ("78", ""))
-
-    def test_4_never_outside_the_folder(self):
-        s = Site(self)
-        for bad in ("../secret.html", "/etc/passwd.html", "ad-health\\latest.html"):
-            with open(os.path.join(s.root, "index.json"), "w") as fh:
-                json.dump({"reports": [{"latest": bad, "when": s.when, "job": "77", "live": "ad"}]}, fh)
-            self.assertIn("names no page inside the report folder", sp.AdLive(s.cfg(), sp.Log(None)).run()[1], bad)
-
-    def test_5_the_newest_of_two(self):
-        s = Site(self)
-        other = {"key": "ad-old/latest.html", "latest": "ad-old/latest.html", "when": utc(600), "job": "5", "live": "ad"}
-        s.index("77", extra=[other])
-        self.assertEqual(sp.AdLive(s.cfg(), sp.Log(None)).run()[0]["rel"], "ad-health/latest.html")
-
-
-class Answer1012(unittest.TestCase):
-    def test_1_the_run_and_solarwinds_off(self):
-        s = Site(self)
-        code, body, etag = sp.AdLive(s.cfg(), sp.Log(None)).answer()
-        a = json.loads(body)
-        self.assertEqual(code, 200)
-        self.assertTrue(a["ok"])
-        self.assertFalse(a["run"]["old"])
-        self.assertIn(a["run"]["age_min"], (19, 20, 21))
-        self.assertFalse(a["sw"]["on"])
-        self.assertIn("no SolarWinds login", a["sw"]["why"])
-        self.assertNotIn("section", a["sw"])
-
-    def test_2_old_is_said(self):
-        s = Site(self, when=utc(200))
-        a = json.loads(sp.AdLive(s.cfg(PORTAL_AD_OLD_MINUTES="90"), sp.Log(None)).answer()[1])
-        self.assertTrue(a["run"]["old"])
-        self.assertEqual(a["run"]["old_after"], 90)
-
-    def test_3_solarwinds_read_the_section_and_tile(self):
-        s = Site(self)
-        a = sp.AdLive(s.cfg(), sp.Log(None), source=lambda live: sw_answer())
-        a.cfg.ad_swis_why = ""
-        a.sw = a.read_sw(a.run()[0])
-        out = json.loads(a.answer()[1])["sw"]
-        sec = out["section"]
-        rows = dict((r[1], r) for r in sec["rows"])
-        self.assertEqual(rows["DC02"][2], "Down")
-        self.assertEqual(out["tile"], {"label": "SolarWinds: down or warning", "status": "critical", "value": 1})
-        self.assertIn("read by the portal every 10 min while this page is open", sec["text"])
-        self.assertNotIn("details", sec)                      # the rows' details stay as of the run
-        self.assertEqual(rows["DC01"][-1], "-")
-        self.assertIn("LDAP not in sync", [r for r in sec["rows"] if r[1] == "DC01"][0][-1] + "LDAP not in sync")
-
-    def test_4_a_read_of_another_run_is_not_shown(self):
-        s = Site(self)
-        a = sp.AdLive(s.cfg(), sp.Log(None), source=lambda live: sw_answer())
-        a.cfg.ad_swis_why = ""
-        a.sw = a.read_sw(a.run()[0])
-        s.data("78")
-        s.index("78", when=utc(1))
-        out = json.loads(a.answer()[1])
-        self.assertEqual(out["run"]["job"], "78")
-        self.assertNotIn("section", out["sw"])                # the DCs of job 77: read again for 78 first
+    def test_5_etag_and_304_and_a_read_of_another_run_not_shown(self):
+        lite = fill(["ok"] * 3)
+        a = live(lite, Site(self))
+        a.read_db()
+        a.sw = a.read_sw(a.sw_source())
+        code, _b, etag = a.answer()
+        self.assertEqual(a.answer(etag), (304, "", etag))
+        real = time.time
+        try:                                                            # 5 min later, the same reads: the same tag (the ages are not in it)
+            sp.time.time = lambda: real() + 300
+            self.assertEqual(a.answer(etag)[0], 304)
+        finally:
+            sp.time.time = real
+        now, ad = ad_run(0, "critical")
+        adb.write(lite, now, 9100, 12, dbf.ad_db_payload(ad, {"kind": "ad", "dcs": [{"dc": "DC01"}]}, {}))
+        a.read_db()
+        out = json.loads(a.answer(etag)[1])
+        self.assertEqual(out["db"]["model"]["run"]["job"], 9100)
+        self.assertNotIn("section", out["sw"])                         # job 9002's SolarWinds: read again for 9100 first
         self.assertTrue(a.wake.is_set())
 
-    def test_5_etag_and_304(self):
+    def test_6_solarwinds_failure_and_off_said(self):
+        a = live(fill(["ok"] * 2), Site(self))
+        a.read_db()
+        bad = sp.AdLive(a.cfg, sp.Log(None), source=lambda lv: {"ok": False, "why": ["the login was refused"]}, db=a.db)
+        bad.read_db()
+        with self.assertRaisesRegex(ValueError, "the login was refused"):
+            bad.read_sw(bad.sw_source())
+        bad.sw_stale = "the login was refused"
+        self.assertEqual(json.loads(bad.answer()[1])["sw"]["stale"], "the login was refused")
+        off = live(fill(["ok"] * 2), Site(self), swis_why="the portal has no SolarWinds login")
+        out = json.loads(off.answer()[1])["sw"]
+        self.assertEqual((out["on"], out["why"]), (False, "the portal has no SolarWinds login"))
+
+    def test_7_two_forests_never_mixed(self):
+        lite = fill(["critical"] * 3, template_id=12)
+        now, ad = ad_run(0)
+        adb.write(lite, now, 9500, 34, dbf.ad_db_payload(ad, {"kind": "ad"}, {}))
+        m = sp.AdDb(None, connect=lambda: lite, mark="?").read()
+        self.assertEqual((m["run"]["template_id"], len(m["times"])), (34, 1))     # the newest run's template only
+        m = sp.AdDb(None, connect=lambda: lite, mark="?").read(template_id=12)
+        self.assertEqual((m["run"]["template_id"], len(m["times"])), (12, 3))     # portal_ad_template
+
+
+class Link1012(unittest.TestCase):
+    """The full report's link: index.json's newest line marked live: ad, a page inside the folder, read again when it changed."""
+
+    def test_1_the_newest_and_never_outside(self):
         s = Site(self)
         a = sp.AdLive(s.cfg(), sp.Log(None))
-        code, _body, etag = a.answer()
-        self.assertEqual(a.answer(etag), (304, "", etag))
-        s.index("77", when=utc(400))                          # old now: another answer
-        self.assertEqual(a.answer(etag)[0], 200)
+        self.assertEqual(a.report_link()["url"], "/portal/reports/ad-health/latest.html")
+        s.index(extra=[{"latest": "ad-other/latest.html", "when": utc(0), "job": "9", "live": "ad"}])
+        self.assertEqual(a.report_link()["url"], "/portal/reports/ad-other/latest.html")
+        for bad in ("../secret.html", "/etc/x.html", "a/../../x.html", "ad\\\\x.html"):
+            with open(os.path.join(s.root, "index.json"), "w") as fh:
+                json.dump({"reports": [{"latest": bad, "when": utc(0), "job": "9", "live": "ad"}]}, fh)
+            self.assertIsNone(sp.AdLive(s.cfg(), sp.Log(None)).report_link(), bad)
 
-    def test_6_solarwinds_failure_said(self):
-        s = Site(self)
-
-        def boom(live):
-            raise RuntimeError("SolarWinds did not answer")
-        a = sp.AdLive(s.cfg(), sp.Log(None), source=boom)
-        a.cfg.ad_swis_why = ""
-        with self.assertRaises(RuntimeError):
-            a.read_sw(a.run()[0])
-        a.sw_stale = "SolarWinds did not answer"
-        out = json.loads(a.answer()[1])["sw"]
-        self.assertEqual(out["stale"], "SolarWinds did not answer")
-        bad = sp.AdLive(s.cfg(), sp.Log(None), source=lambda live: {"ok": False, "why": ["the login was refused"]})
-        bad.cfg.ad_swis_why = ""
-        with self.assertRaisesRegex(ValueError, "the login was refused"):
-            bad.read_sw(bad.run()[0])
+    def test_2_missing_or_half_written(self):
+        s = Site(self, index=False)
+        a = sp.AdLive(s.cfg(), sp.Log(None))
+        self.assertIsNone(a.report_link())
+        s.index()
+        self.assertIsNotNone(a.report_link())
+        with open(os.path.join(s.root, "index.json"), "w") as fh:
+            fh.write('{"reports": [')
+        self.assertEqual(a.report_link()["url"], "/portal/reports/ad-health/latest.html")    # the last one, read again next time
 
 
 class Routes1012(unittest.TestCase):
@@ -439,58 +374,72 @@ class Routes1012(unittest.TestCase):
         sp.sys.stdout = open(os.devnull, "w")
         self.addCleanup(setattr, sp.sys, "stdout", sys.__stdout__)
 
-    def test_1_the_page(self):
-        s = Site(self)
-        base = self.serve(s)
-        code, html, h = self.get(base + "/ad")
+    def test_1_the_page_and_its_answer(self):
+        base = self.serve(Site(self))
+        code, page, h = self.get(base + "/ad")
         self.assertEqual(code, 200)
-        self.assertIn("'unsafe-inline'", h["Content-Security-Policy"])                     # the report pages' own CSP
-        self.assertIn('<script src="/portal/reports/ad-health/site-report.js">', html)      # relative links: the report folder's
-        self.assertIn('href="/portal/reports/ad-health/../index.html"', html)
-        self.assertIn('href="#s5"', html)                                                   # the page's own places stay
-        self.assertRegex(html, r'<meta name="ad-live" content="/portal/api/ad" data-portal="/portal/" data-tag="[0-9a-f]{12}">')
-        self.assertRegex(html, r'<script src="/portal/static/ad-live.js\?v=[0-9a-f]*"></script></body>')
+        self.assertIn("script-src 'self';", h["Content-Security-Policy"])                    # the portal's own CSP: no inline script
+        self.assertNotIn("<script>", page)
+        self.assertNotIn(" style=", page)
+        self.assertRegex(page, r'<div id="ad" data-src="/portal/api/ad">')
+        self.assertRegex(page, r'<script src="/portal/static/ad-page.js\?v=[0-9a-f]{10}"></script>')
+        self.assertRegex(page, r'<link rel="stylesheet" href="/portal/static/ad-page.css\?v=[0-9a-f]{10}">')
+        self.assertIn('aria-current="page">Active Directory</a>', page)
         code, body, h = self.get(base + "/api/ad")
-        self.assertEqual((code, json.loads(body)["run"]["job"]), (200, "77"))
+        a = json.loads(body)
+        self.assertEqual((code, a["db"]["on"], a["report"]["url"]), (200, False, "/portal/reports/ad-health/latest.html"))
         self.assertEqual(self.get(base + "/api/ad", {"If-None-Match": h["ETag"]})[0], 304)
+        code, js, h = self.get(base + "/static/ad-page.js")
+        self.assertEqual((code, h["Content-Type"]), (200, "text/javascript; charset=utf-8"))
 
-    def test_2_no_run_said_in_the_portal(self):
-        s = Site(self)
-        os.unlink(os.path.join(s.root, "index.json"))
-        code, html, _h = self.get(self.serve(s) + "/ad")
-        self.assertEqual(code, 200)
-        self.assertIn("no index.json yet", html)
-        self.assertIn('<a href="/portal/ad">Active Directory</a>', html)
-
-    def test_3_off(self):
-        s = Site(self)
-        base = self.serve(s, PORTAL_AD="0")
+    def test_2_off(self):
+        base = self.serve(Site(self), PORTAL_AD="0")
         self.assertEqual(self.get(base + "/ad")[0], 404)
         self.assertEqual(self.get(base + "/api/ad")[0], 404)
         self.assertNotIn(">Active Directory</a>", self.get(base + "/")[1])
 
-    def test_4_a_signed_in_person_only(self):
-        s = Site(self)
-        base = self.serve(s)
+    def test_3_a_signed_in_person_only(self):
+        base = self.serve(Site(self))
         self.assertEqual(self.get(base + "/api/ad", {"X-SSL-Client-Verify": "NONE"})[0], 403)
+        self.assertEqual(self.get(base + "/ad", {"X-SSL-Client-Verify": "NONE"})[0], 403)
+
+    def test_4_the_login_from_its_secret(self):
+        s = Site(self)
+        cfg = s.cfg(PORTAL_REPORT_DB=json.dumps({"host": "db.example.mil", "port": 3309, "database": "site_reports", "user": "report_reader",
+                                                 "password": "x", "tls": False}))
+        self.assertEqual(cfg.report_db["user"], "report_reader")
+        self.assertIsNotNone(sp.AdLive(cfg, sp.Log(None)).db)
+        self.assertEqual(s.cfg(PORTAL_REPORT_DB="not json").report_db, {})
+        self.assertEqual(s.cfg(PORTAL_REPORT_DB='{"host": ""}').report_db, {})
 
     def test_5_the_deploy_ships_the_files(self):
         with open(os.path.join(ROOT, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
             t = fh.read()
-        for n in ("site_swis_db.py", "site_ad_swis.py", "ad_swis_filters.py", "static/ad-live.js", "static/ad-live.css"):
+        for n in ("site_swis_db.py", "site_ad_swis.py", "ad_swis_filters.py", "site_report_db.py", "static/ad-page.js", "static/ad-page.css"):
             self.assertIn("dest: %s}" % n, t)
-        for k in ("PORTAL_AD:", "PORTAL_AD_SECONDS:", "PORTAL_AD_OLD_MINUTES:"):
+        for k in ("PORTAL_AD:", "PORTAL_AD_SECONDS:", "PORTAL_AD_OLD_MINUTES:", "PORTAL_AD_TEMPLATE:", "site-portal-reportdb"):
             self.assertIn(k, t)
-        # the portal's copy of the section: its site_time beside it, no plugins/ folder
+        with open(os.path.join(ROOT, "roles", "site_portal_stack", "templates", "site-portal-app.container.j2")) as fh:
+            self.assertIn("Secret=site-portal-reportdb,type=env,target=PORTAL_REPORT_DB", fh.read())
+        # the portal's copy of the readers: site_time beside them, no plugins/ folder, no ansible
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
-        for n in ("ad_swis_filters.py",):
-            shutil.copy(os.path.join(ROOT, "plugins", "filter", n), d)
-        for n in ("site_time.py", "site_swis.py", "site_swis_db.py", "site_ad_swis.py"):
+        shutil.copy(os.path.join(ROOT, "plugins", "filter", "ad_swis_filters.py"), d)
+        for n in ("site_time.py", "site_swis.py", "site_swis_db.py", "site_ad_swis.py", "site_report_db.py"):
             shutil.copy(os.path.join(ROOT, "plugins", "module_utils", n), d)
-        out = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, %r); import ad_swis_filters, site_ad_swis; print('ok')" % d],
+        out = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, %r); sys.modules['ansible'] = None; "
+                              "import ad_swis_filters, site_ad_swis, site_report_db; print('ok')" % d],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         self.assertEqual(out.stdout.strip(), "ok", out.stdout)
+        with open(os.path.join(FILES, "start.sh")) as fh:
+            self.assertIn("for want in pymysql sys", fh.read())
+
+    def test_6_the_catalog_attaches_the_reader(self):
+        import yaml
+        cat = yaml.safe_load(open(os.path.join(ROOT, "aap", "job_templates.yml")))["job_templates"]
+        t = dict((e["name"], e) for e in cat)
+        self.assertEqual(t["Site portal - deploy"]["optional_credentials"], ["report_db_reader", "report_db"])
+        self.assertIn("report_db", t["Active Directory health report"]["optional_credentials"])
 
 
 class Job1012(unittest.TestCase):
@@ -505,13 +454,14 @@ class Job1012(unittest.TestCase):
         self.assertEqual(b["opts"], {"cpu_warn": 85.0, "mem_warn": 90.0, "days": 14})
         self.assertNotIn("area", b["problems"][0])
 
-    def test_2_the_role_marks_it(self):
-        with open(os.path.join(ROOT, "roles", "ad_report", "tasks", "report.yml")) as fh:
-            t = fh.read()
-        self.assertIn("_report_live: ad", t)
-        self.assertIn("ad_live_block(", t)
+    def test_2_the_role(self):
+        t = open(os.path.join(ROOT, "roles", "ad_report", "tasks", "db.yml")).read()
+        for k in ("site_ad_db:", "ad_db_payload(", "ad_live_block(", "failed_when: false", "REPORT_DB_PASSWORD"):
+            self.assertIn(k, t)
+        self.assertIn("_report_live: ad", open(os.path.join(ROOT, "roles", "ad_report", "tasks", "report.yml")).read())
+        self.assertIn("include_tasks: db.yml", open(os.path.join(ROOT, "roles", "ad_report", "tasks", "main.yml")).read())
         with open(os.path.join(ROOT, "roles", "site_email", "tasks", "main.yml")) as fh:
-            self.assertIn("live: \"{{ _report_live | default('') if _web_report.live is defined else '' }}\"", fh.read())
+            self.assertIn("live: \"{{ _report_live | default('') }}\"", fh.read())
 
 
 def _browser():
@@ -523,99 +473,110 @@ def _browser():
 
 @unittest.skipUnless(_browser(), "no google-chrome or chromium")
 class Browser1012(unittest.TestCase):
-    """ad-live.js on the real AD page (atlas, brief, ops), the portal's answers stood in by a fetch stand-in."""
+    """ad-page.js in the real portal shell (atlas, brief, ops), the portal's answers stood in by a fetch stand-in."""
 
-    def answer(self, down=("DC02",), tag="t1", old=False, sw_on=True):
-        s = Site(self)
-        a = sp.AdLive(s.cfg(), sp.Log(None), source=lambda live: sw_answer(down))
-        a.cfg.ad_swis_why = ""
-        a.sw = a.read_sw(a.run()[0])
-        out = json.loads(a.answer()[1])
-        out["run"]["tag"], out["run"]["old"] = tag, old
-        if old:
-            out["run"]["age_min"] = 200
-        if not sw_on:
-            out["sw"] = {"on": False, "why": "the portal has no SolarWinds login", "stale": "", "every": 600}
-        return out
+    def answer(self, states=None, down=("DC02",), sw_on=True, db=True, **kw):
+        lite = fill(states or (["ok"] * 40 + ["critical"] * 8))
+        a = live(lite if db else None, Site(self), down=down, swis_why="" if sw_on else "the portal has no SolarWinds login", env=kw.get("env", {}))
+        if db:
+            a.read_db()
+            if kw.get("stale"):
+                a.db_stale = kw["stale"]
+            if sw_on:
+                a.sw = a.read_sw(a.sw_source())
+        return json.loads(a.answer()[1])
 
-    def page(self, answers, js, look="report_atlas", motion=True, hidden=False):
+    def page(self, answers, js, look="atlas", width=1280, wait=1500, motion_off=False):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
-        html = ad_page_html(look)
-        stub = ("(function(){var A=%s,i=0;window.__reloads=0;%s"
-                "window.fetch=function(){var a=A[Math.min(i++,A.length-1)];return Promise.resolve({status:200,ok:true,"
-                "headers:{get:function(){return 'e'+i}},json:function(){return Promise.resolve(a)}})}})();"
-                % (json.dumps(answers), "Object.defineProperty(document,'hidden',{get:function(){return true}});" if hidden else ""))
+        cfg = Site(self).cfg(PORTAL_THEME=look, PORTAL_MOTION="off" if motion_off else "auto")
+        html = sp.ad_page(cfg, "DOE.JANE.Q.1234567890", {}).replace("/portal/static/", "")
+        for n in ("ad-page.js", "ad-page.css", "portal.css", "portal-theme.js"):
+            shutil.copy(os.path.join(FILES, "static", n), d)
+        with open(os.path.join(d, "banner.css"), "w") as fh:
+            fh.write("")
         with open(os.path.join(d, "stub.js"), "w") as fh:
-            fh.write(stub)
+            fh.write("(function(){var A=%s,i=0;window.fetch=function(){var a=A[Math.min(i++,A.length-1)];return Promise.resolve({status:200,ok:true,"
+                     "headers:{get:function(){return 'e'+i}},json:function(){return Promise.resolve(a)}})}})();" % json.dumps(answers))
         with open(os.path.join(d, "t.js"), "w") as fh:
             fh.write("setTimeout(function(){var r={};try{%s}catch(e){r.err=String(e)}document.getElementById('res').textContent=JSON.stringify(r)},%d);"
-                     % (js, 40000 if len(answers) > 1 else 1500))
-        shutil.copy(os.path.join(WEB, "ad-live.js"), d)
-        head = '<meta name="ad-live" content="/portal/api/ad" data-portal="/portal/" data-tag="t1"><script src="stub.js"></script>'
-        html = html.replace("</head>", head + "</head>", 1)
-        if not motion:
-            html = html.replace("<html", '<html class="motion-off"', 1)
-        html = html.replace("</body>", '<pre id="res"></pre><script src="ad-live.js"></script><script src="t.js"></script></body>', 1)
+                     % (js, wait))
+        html = html.replace('<script src="portal.js?v=" defer></script>', "").replace('<script src="portal.js" defer></script>', "")
+        html = html.replace("<head>", '<head><script src="stub.js"></script>', 1)
+        html = html.replace("</body>", '<pre id="res"></pre><script src="t.js"></script></body>', 1)
         with open(os.path.join(d, "p.html"), "w") as fh:
             fh.write(html)
-        out = subprocess.run([_browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1280,900", "--virtual-time-budget=60000",
+        out = subprocess.run([_browser(), "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=%d,900" % width, "--virtual-time-budget=90000",
                               "--dump-dom", "file://" + os.path.join(d, "p.html")], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                              universal_newlines=True, timeout=180).stdout
         m = re.search(r'<pre id="res">(.*?)</pre>', out, re.S)
-        self.assertIsNotNone(m, out[-2000:])
+        self.assertIsNotNone(m, out[-1500:])
         return json.loads(m.group(1).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
 
-    CELLS = ("var s=adLive.section(),rows=[].slice.call(s.querySelectorAll('table.xt > tbody > tr:not(.xr)'));"
-             "r.cells={};rows.forEach(function(tr){var dc=tr.querySelector('td[data-l=\"DC\"]').textContent.trim();"
-             "var c=tr.querySelector('td[data-l=\"SolarWinds\"]');r.cells[dc]=[c.textContent.trim(),(c.querySelector('.chip')||{className:''}).className,"
-             "tr.className,tr.querySelector('td[data-l=\"Last down (30 days)\"]').textContent.trim()]});"
-             "var t=[].filter.call(document.querySelectorAll('.tile .tcopy'),function(b){return b.getAttribute('aria-label')==='Copy SolarWinds: down or warning'})[0].closest('.tile');"
-             "r.tile=[t.querySelector('.v').textContent,t.querySelector('.v').className];"
-             "r.strip=document.querySelector('.adl-strip').textContent;r.badge=(s.querySelector('h2 .adl-badge')||{}).textContent;"
-             "r.toasts=[].map.call(document.querySelectorAll('.adl-toast .t'),function(x){return x.textContent});"
-             "r.flash=document.querySelectorAll('.adl-flash').length;r.newer=!document.querySelector('.adl-newer').hidden;"
-             "r.note=document.querySelector('.adl-note').hidden?'':document.querySelector('.adl-note').textContent;"
-             "r.stripAfterH1=document.querySelector('h1').parentNode.contains(document.querySelector('.adl-strip'));"
-             "r.text=s.querySelector('.body > p').textContent;")
+    READ = ("var q=function(s){return [].map.call(document.querySelectorAll(s),function(x){return x.textContent.trim()})};"
+            "r.h2=q('#ad section.sec > h2');r.tiles=q('.adp-tiles .tile .k');r.tv=q('.adp-tiles .tile .v');r.notes=q('#ad .note');"
+            "r.live=q('.adp-live .l').join('');r.link=(document.querySelector('.adp-live a')||{}).href||'';"
+            "r.dcs=[].map.call(document.querySelectorAll('.adp-dcs tbody tr'),function(tr){return [tr.dataset.dc,tr.className,tr.cells[2].textContent,"
+            "tr.cells[3].textContent,tr.querySelectorAll('.adp-trend i').length,tr.querySelectorAll('.adp-trend i.k-critical').length,tr.cells[5].textContent]});"
+            "r.links=q('#ad section:nth-of-type(3) tbody tr');r.bars=document.querySelectorAll('.adp-chart rect.bc').length;"
+            "r.runs=document.querySelectorAll('#ad section:nth-of-type(4) tbody tr').length;"
+            "r.toasts=q('.adp-toast b');r.flash=document.querySelectorAll('.adp-flash').length;"
+            "r.side=document.documentElement.scrollWidth-document.documentElement.clientWidth;")
 
-    def test_1_the_cells_and_the_tile_in_every_look(self):
-        for look in ("report_atlas", "report_brief", "report_ops"):
-            r = self.page([self.answer()], self.CELLS, look)
-            self.assertNotIn("err", r, look)
-            self.assertEqual(r["cells"]["DC02"][:3], ["Down", "chip s-critical", "r-critical"], (look, r["cells"]))
-            self.assertEqual(r["cells"]["DC01"][:2], ["Up", "chip s-ok"], look)
-            self.assertEqual(r["cells"]["DC01"][3], "now, for 38 min", look)               # Last down: the run's (not read live)
-            self.assertEqual(r["tile"][0], "1", look)
-            self.assertIn("c-critical", r["tile"][1], look)
-            self.assertIn("Live on the portal", r["strip"])
-            self.assertIn("SolarWinds parts: updated just now (read every 10 min)", r["strip"])
-            self.assertIn("AD checks: as of ", r["strip"])
-            self.assertEqual(r["badge"], "updated just now", look)
-            self.assertTrue(r["stripAfterH1"], look)
-            self.assertIn("read by the portal every 10 min", r["text"], look)
-            self.assertEqual((r["toasts"], r["flash"], r["newer"]), ([], 0, False), look)  # the first answer: nothing said
+    def test_1_every_part_in_every_look(self):
+        a = self.answer()
+        for look in ("atlas", "brief", "ops"):
+            for w in (1280, 800):
+                r = self.page([a], self.READ, look, w)
+                self.assertNotIn("err", r, (look, w))
+                self.assertEqual(r["h2"][:4], ["At a glance", "Domain controllers3worst first · a square is one run, oldest left",
+                                               "Replication links that need a look1as of " + a["db"]["model"]["run"]["as_of"][11:],
+                                               "DCs with a problem, last 7 daysthe worst run of each 2 hours; the numbers: the runs below"], (look, w))
+                self.assertEqual(len(r["tiles"]), 8)
+                self.assertEqual(r["dcs"][0][:6], ["DC03", "r-critical", "Critical", r["dcs"][0][3], 48, 8], (look, w))
+                self.assertRegex(r["dcs"][0][3], r"^since \d\d:\d\d UTC · 8 runs$")
+                self.assertEqual([x[0] for x in r["dcs"]], ["DC03", "DC02", "DC01"])   # AD's worst, then SolarWinds down
+                self.assertEqual(r["dcs"][1][6], "Down")
+                self.assertIn("Live", r["live"])
+                self.assertIn("SolarWinds: updated just now", r["live"])
+                self.assertTrue(r["link"].endswith("/portal/reports/ad-health/latest.html"))
+                self.assertEqual(r["notes"], [])
+                self.assertGreaterEqual(r["bars"], 1)
+                self.assertEqual(r["runs"], 8)
+                self.assertEqual(r["side"], 0, (look, w))                    # no sideways scroll
 
-    def test_2_a_dc_that_changes_is_said(self):
-        r = self.page([self.answer(), self.answer(down=("DC02", "DC03"))], self.CELLS)
-        self.assertNotIn("err", r)
-        self.assertEqual(r["cells"]["DC03"][0], "Down")
-        self.assertEqual(r["toasts"], ["DC03: SolarWinds: Down"])
+    def test_2_each_state_said(self):
+        r = self.page([self.answer(db=False)], self.READ)
+        self.assertIn("The report database is off here", r["notes"][0])
+        self.assertEqual(r["h2"], [])
+        r = self.page([self.answer(stale="Can't connect to MySQL server")], self.READ)
+        self.assertIn("The report database was not read just now (Can't connect to MySQL server)", r["notes"][0])
+        self.assertIn("Not live", r["live"])
+        r = self.page([self.answer(sw_on=False)], self.READ)
+        self.assertIn("SolarWinds: not read (the portal has no SolarWinds login)", r["live"])
+        self.assertEqual(r["dcs"][0][6], "not read")
+        lite = Lite()
+        a = live(lite, Site(self))
+        a.read_db()
+        r = self.page([json.loads(a.answer()[1])], self.READ)
+        self.assertIn("No AD run in the report database yet", r["notes"][0])
+        old = Lite()
+        now, ad = ad_run(300)
+        adb.write(old, now, 9000, 12, dbf.ad_db_payload(ad, {"kind": "ad"}, {}))
+        a = live(old, Site(self))
+        a.read_db()
+        r = self.page([json.loads(a.answer()[1])], self.READ)
+        self.assertTrue(any("old (more than 90 min): the AD job has not run since" in n for n in r["notes"]), r["notes"])
+
+    def test_3_a_dc_that_changes_is_said(self):
+        one = self.answer(["ok"] * 10)
+        two = self.answer(["ok"] * 9 + ["critical"], down=("DC02", "DC03"))
+        r = self.page([one, two], self.READ, wait=68000)                   # the second answer at 60 s, its toasts for 15 s
+        self.assertEqual(sorted(r["toasts"]), ["DC03: AD Critical", "DC03: SolarWinds Down"])
         self.assertEqual(r["flash"], 1)
-        r = self.page([self.answer(), self.answer(down=("DC02", "DC03"))], self.CELLS, motion=False)
-        self.assertEqual((r["toasts"], r["flash"]), (["DC03: SolarWinds: Down"], 0))      # report_motion off: said, no flash
-
-    def test_3_old_newer_and_solarwinds_off(self):
-        r = self.page([self.answer(old=True)], self.CELLS)
-        self.assertIn("200 min", r["strip"].replace("3.3 h", "200 min"))
-        self.assertIn("old: the AD job has not run since", r["strip"])
-        r = self.page([self.answer(tag="t2")], self.CELLS)
-        self.assertTrue(r["newer"])                           # a newer run: "Show it"
-        r = self.page([self.answer(sw_on=False)], self.CELLS)
-        self.assertIn("SolarWinds parts: as of the AD run (the portal has no SolarWinds login)", r["strip"])
-        self.assertEqual(r["cells"]["DC01"][0], "Down")       # the run's own cells stay
-        self.assertEqual(r["badge"], "as of the AD run")
-
+        self.assertTrue(r["dcs"][0][3].endswith(" · 1 run"), r["dcs"][0][3])
+        r = self.page([one, two], self.READ, wait=68000, motion_off=True)
+        self.assertEqual((len(r["toasts"]), r["flash"]), (2, 0))              # portal_motion off: said, no flash
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

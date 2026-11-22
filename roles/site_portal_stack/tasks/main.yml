@@ -367,8 +367,8 @@
     - {src: "{{ role_path }}/../../plugins/module_utils/site_ad_swis.py", dest: site_ad_swis.py}
     - {src: "{{ role_path }}/../../plugins/filter/ad_swis_filters.py", dest: ad_swis_filters.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_report_db.py", dest: site_report_db.py}
-    - {src: "{{ role_path }}/../ad_report/files/web/ad-live.js", dest: static/ad-live.js}
-    - {src: "{{ role_path }}/../ad_report/files/web/ad-live.css", dest: static/ad-live.css}
+    - {src: static/ad-page.js, dest: static/ad-page.js}
+    - {src: static/ad-page.css, dest: static/ad-page.css}
   loop_control:
     label: "{{ item.dest }}"
   register: _portal_app_files
@@ -705,6 +705,7 @@
       PORTAL_AD: "{{ '1' if portal_ad | bool else '0' }}"
       PORTAL_AD_SECONDS: "{{ portal_ad_seconds | string }}"
       PORTAL_AD_OLD_MINUTES: "{{ portal_ad_old_minutes | string }}"
+      PORTAL_AD_TEMPLATE: "{{ portal_ad_template | string }}"
       # 1.85.0: the live Network map (its login: the secret site-portal-swis)
       PORTAL_NETMAP: "{{ '1' if _portal_netmap | bool else '0' }}"
       PORTAL_NETMAP_SECONDS: "{{ netmap_live_seconds | string }}"
