@@ -86,54 +86,6 @@ job, a bad answer, no credential).
 **VMware alarms: the email subject leads with the hosts not connected**
 
 - The VMware alarms report now gives its report head the exact counts and severity levels shown in its tables, so critical items (such as hosts not connected) come first in the report head and email subject instead of being rated as warnings and pushed behind hosts that lost the connection or failed logins.
-## 1.106.0 — 2026-11-22
-
-**Hardening: four small fixes from earlier reviews**
-
-- A second click while a job opens no longer leaves a row marked when you come back.
-- The outage report test waits for the filter note after one click and checks that a second click leaves only one note.
-- Following a link within ticket insights keeps the selected tab in the address. Opening the link restores the tab and scrolls to the target, even on an already open page.
-- When only status can be refreshed, the live network map shows when its links were last read. Older caches show the link age as unknown until a full read succeeds.
-
-To set up: nothing.
-## 1.105.0 — 2026-11-22
-
-**To set up:** nothing for Linux. For Windows Server: use the job template **STIG - answer file generator** with Windows hosts (WinRM) and the
-Windows credential of your Windows STIG jobs; STIG Manager's benchmarks are `check_stig_stigman_benchmarks_windows` (the defaults fit
-2019, 2022 and 2025). **A trial on a real Windows Server is needed before you rely on it** - the steps are in `docs/STIG_ANSWER_KEYS.md`, "First run".
-
-**STIG answer keys for Windows Server 2019, 2022 and 2025** (`playbooks/stig_answer_keys.yml`, `plugins/module_utils/stig_answer_win.py`):
-- **Windows hosts in the same job**, beside Linux ones. The job asks each Windows which Windows Server it is (name, then build); any other
-  Windows is listed and left out. Evaluate-STIG runs for the picked rules only, by the Windows STIG recheck's own path (as SYSTEM in a
-  one-time task, deleted after); nothing is kept on the server and nothing is written to STIG Manager. Only the operating system's STIG is used.
-- **Fixed patterns** draft the code from DISA's check text: *registry value*, *AuditPol subcategory*, *user right* (secedit) and *role or feature*.
-  Of the 129 fixture rules, 72 have fixed patterns with site values supplied. Rules explicitly scoped to a server role go to manual review.
-  ACT can draft other unmatched rules with a Windows prompt. Never a false Not a Finding: a code that cannot tell returns false.
-- **The trial** runs in a restricted PowerShell session (`roles/check_stig/files/win_ak_try.ps1`): Constrained Language Mode, a syntax check
-  that accepts only an allowlist of read-only commands, and three proxies - `secedit.exe`, `Remove-Item`, `auditpol.exe` - that accept one exact
-  form each (anything else is refused, never run). A time limit; its work folder is removed; the report says what is left: nothing.
-- **The report** as the mockup: *Drafted by* the pattern's kind, **What DISA checks**, **Ran in** (the session and its proxies), **Trial - matches
-  Evaluate-STIG**, tiles for Windows and Linux, and the answer file of each STIG (`answer-keys-MS_Windows_Server_2022_STIG-V2R11.xml`), its
-  STIGComments Name your own answer file's, else Evaluate-STIG's short name (`WinServer2019`, `WinServer2022`, `WinServer2025`).
-- **The cross-check on Windows:** the evidence is what each pattern read in the trial, compared with Evaluate-STIG and STIG Manager; ACT sees
-  that evidence only, never the code; a rule no pattern reads says *not read: no fixed reading for this rule*.
-- Review round (Codex, Neon): Evaluate-STIG's output is pinned to CKLB and never run in full; named rules keep the review protections; a
-Windows client is not a server; ACT's code may not use `secedit.exe` or `Remove-Item` (fixed patterns only); the trial runs each code in a
-child process that is killed on a timeout, with path and provider limits (no UNC or device paths, HKLM only, no Env: or Variable:), no
-`Get-WindowsOptionalFeature`; the user-right patterns follow DISA's direction (exact, subset, superset), ask for documented exceptions
-(`approved_..._accounts`, `documented_required_features`) and do not guess domain SIDs; HKCU and unmodelled applicability conditions are
-not drafted; the audit policy is read by GUID; evidence is redacted whole before it is cut; failure texts and unsupported-host texts are
-redacted or fixed words in the email; batches of codes under the environment limit; the cross-check keeps each revision's reading.
-Each baseline now uses an exclusive work directory, a unique task name and an empty `-AFPath`. Approved account names preserve spaces.
-ACT prompts redact credentials by field name. Scan facts omit checklist evidence and failure log tails. The trial restricts type operands
-and directory listings to allowlisted types and nonrecursive reads.
-New: `check_stig_stigman_benchmarks_windows`; `win_stig.ps1` gets `texts` (DISA's check text for Not Reviewed rules too); `win_os.ps1`.
-
-Tests: `tests/test_stig_answer_win.py` (the patterns over the fixture `tests/fixtures/stig_win/rules.json`, real DISA text), `test_win_ak_try.py` (the
-restricted session: writes, redirection, Add-Type, indirect calls and wrong proxy arguments refused, nothing left; needs pwsh),
-`test_stig_answer_win_host.py` (the host, the scan, the report, the cross-check; every pattern code passes the session's check),
-`tests/stig/run_stig_answer_keys_win_test.sh` (a stand-in Windows host: PowerShell 7, the stand-in Evaluate-STIG, STIG Manager and auditpol).
-Not tested here: the Windows-only commands and the registry on a real Windows Server.
 ## 1.107.0 — 2026-11-22
 
 **To set up:**
@@ -221,6 +173,54 @@ Not tested here: the Windows-only commands and the registry on a real Windows Se
   stand-in AAP, the reviews' findings), test_workflow_dry_run.py (the guard), run_net_config_test.sh (the lines as text),
   the fake AAP (surveys as AAP checks them, a node's Job type and Show changes, a read that fails).
 
+## 1.106.0 — 2026-11-22
+
+**Hardening: four small fixes from earlier reviews**
+
+- A second click while a job opens no longer leaves a row marked when you come back.
+- The outage report test waits for the filter note after one click and checks that a second click leaves only one note.
+- Following a link within ticket insights keeps the selected tab in the address. Opening the link restores the tab and scrolls to the target, even on an already open page.
+- When only status can be refreshed, the live network map shows when its links were last read. Older caches show the link age as unknown until a full read succeeds.
+
+To set up: nothing.
+## 1.105.0 — 2026-11-22
+
+**To set up:** nothing for Linux. For Windows Server: use the job template **STIG - answer file generator** with Windows hosts (WinRM) and the
+Windows credential of your Windows STIG jobs; STIG Manager's benchmarks are `check_stig_stigman_benchmarks_windows` (the defaults fit
+2019, 2022 and 2025). **A trial on a real Windows Server is needed before you rely on it** - the steps are in `docs/STIG_ANSWER_KEYS.md`, "First run".
+
+**STIG answer keys for Windows Server 2019, 2022 and 2025** (`playbooks/stig_answer_keys.yml`, `plugins/module_utils/stig_answer_win.py`):
+- **Windows hosts in the same job**, beside Linux ones. The job asks each Windows which Windows Server it is (name, then build); any other
+  Windows is listed and left out. Evaluate-STIG runs for the picked rules only, by the Windows STIG recheck's own path (as SYSTEM in a
+  one-time task, deleted after); nothing is kept on the server and nothing is written to STIG Manager. Only the operating system's STIG is used.
+- **Fixed patterns** draft the code from DISA's check text: *registry value*, *AuditPol subcategory*, *user right* (secedit) and *role or feature*.
+  Of the 129 fixture rules, 72 have fixed patterns with site values supplied. Rules explicitly scoped to a server role go to manual review.
+  ACT can draft other unmatched rules with a Windows prompt. Never a false Not a Finding: a code that cannot tell returns false.
+- **The trial** runs in a restricted PowerShell session (`roles/check_stig/files/win_ak_try.ps1`): Constrained Language Mode, a syntax check
+  that accepts only an allowlist of read-only commands, and three proxies - `secedit.exe`, `Remove-Item`, `auditpol.exe` - that accept one exact
+  form each (anything else is refused, never run). A time limit; its work folder is removed; the report says what is left: nothing.
+- **The report** as the mockup: *Drafted by* the pattern's kind, **What DISA checks**, **Ran in** (the session and its proxies), **Trial - matches
+  Evaluate-STIG**, tiles for Windows and Linux, and the answer file of each STIG (`answer-keys-MS_Windows_Server_2022_STIG-V2R11.xml`), its
+  STIGComments Name your own answer file's, else Evaluate-STIG's short name (`WinServer2019`, `WinServer2022`, `WinServer2025`).
+- **The cross-check on Windows:** the evidence is what each pattern read in the trial, compared with Evaluate-STIG and STIG Manager; ACT sees
+  that evidence only, never the code; a rule no pattern reads says *not read: no fixed reading for this rule*.
+- Review round (Codex, Neon): Evaluate-STIG's output is pinned to CKLB and never run in full; named rules keep the review protections; a
+Windows client is not a server; ACT's code may not use `secedit.exe` or `Remove-Item` (fixed patterns only); the trial runs each code in a
+child process that is killed on a timeout, with path and provider limits (no UNC or device paths, HKLM only, no Env: or Variable:), no
+`Get-WindowsOptionalFeature`; the user-right patterns follow DISA's direction (exact, subset, superset), ask for documented exceptions
+(`approved_..._accounts`, `documented_required_features`) and do not guess domain SIDs; HKCU and unmodelled applicability conditions are
+not drafted; the audit policy is read by GUID; evidence is redacted whole before it is cut; failure texts and unsupported-host texts are
+redacted or fixed words in the email; batches of codes under the environment limit; the cross-check keeps each revision's reading.
+Each baseline now uses an exclusive work directory, a unique task name and an empty `-AFPath`. Approved account names preserve spaces.
+ACT prompts redact credentials by field name. Scan facts omit checklist evidence and failure log tails. The trial restricts type operands
+and directory listings to allowlisted types and nonrecursive reads.
+New: `check_stig_stigman_benchmarks_windows`; `win_stig.ps1` gets `texts` (DISA's check text for Not Reviewed rules too); `win_os.ps1`.
+
+Tests: `tests/test_stig_answer_win.py` (the patterns over the fixture `tests/fixtures/stig_win/rules.json`, real DISA text), `test_win_ak_try.py` (the
+restricted session: writes, redirection, Add-Type, indirect calls and wrong proxy arguments refused, nothing left; needs pwsh),
+`test_stig_answer_win_host.py` (the host, the scan, the report, the cross-check; every pattern code passes the session's check),
+`tests/stig/run_stig_answer_keys_win_test.sh` (a stand-in Windows host: PowerShell 7, the stand-in Evaluate-STIG, STIG Manager and auditpol).
+Not tested here: the Windows-only commands and the registry on a real Windows Server.
 ## 1.104.0 — 2026-11-22
 
 **To set up (only to use it):** attach the **ACT model key** credential to the job template **VM - outage watch** (it
@@ -1428,6 +1428,25 @@ in roles/ and playbooks/ had it; each now uses a task var holding a real line br
   allowlist, empty today); a value it cannot read fails it. It also renders seven of the fixed texts from their files
   with ansible-playbook.
 
+## 1.79.16 — 2026-11-20
+
+**To set up: nothing.** One new setting, `aap_templates_describe_list_missing` (false).
+
+**AAP - describe templates**, after the first real Check run:
+
+- *not in AAP* lines are counted in *in short* only; `aap_templates_describe_list_missing: true` lists each one again.
+  An organization or project not found is still said.
+- ACT's own playbooks (`vendor/act/ansible/playbooks/`: podman_app_health, act_triage, act_apply_approved,
+  fapolicyd_denials) have descriptions (`aap/job_descriptions.yml` vendored, `aap/job_templates.yml` vendored): a
+  template that runs one is described, never made, never *not in AAP*.
+- Two templates for one catalog template (the same playbook, nothing to tell them apart): both described, and one line
+  in *in short*: `2 templates run playbooks/stigman_update.yml: 'A', 'B' - keep one` (when their Variables differ:
+  *their Variables differ: keep both only if they are different jobs*). An organization or project not found is
+  counted apart.
+- Docs: SETUP_AAP (the descriptions), VARIABLES_REFERENCE, aap/extra_vars.
+- Tests: `tests/test_job_catalog.py` (the vendored entries), `run_aap_describe_test.sh` (not in AAP counted, listed
+  with the setting; a podman health template on ACT's playbook described; two templates of one playbook said).
+
 ## 1.79.15 — 2026-11-20
 
 **To set up: nothing.** Two new settings with working defaults: `fapolicyd_rules_guard_seconds`,
@@ -1522,25 +1541,6 @@ bigger only as approved. It never reboots, and never changes `-e`, `-f` or a STI
 - **Cleared before the review.** When the only problems are alarms and all have cleared, the title, the tile and a card say so, with the VM and the time from the first raise to the last clear, and the chart has one band for it. A lost host, an HA restart or a storage problem keeps the usual title.
 - **A short usage blip.** Only CPU or memory usage alarms, each cleared within `vm_watch_review_min_seconds`: the title says *a short usage blip, Low*. Still sent by default; `vm_watch_review_skip_blips: true` sends nothing and the job says so.
 - Tests: `tests/test_outage_timeline.py` (the raise before the window, the subject and the related events, the title, tile and band, a raise that does not clear, no raise read, a blip and the skip, the trigger always, other problems), and the vcsim e2e (a usage alarm raised and cleared, a raise before the window and its clear in it, no lookback, the skip).
-
-## 1.79.16 — 2026-11-20
-
-**To set up: nothing.** One new setting, `aap_templates_describe_list_missing` (false).
-
-**AAP - describe templates**, after the first real Check run:
-
-- *not in AAP* lines are counted in *in short* only; `aap_templates_describe_list_missing: true` lists each one again.
-  An organization or project not found is still said.
-- ACT's own playbooks (`vendor/act/ansible/playbooks/`: podman_app_health, act_triage, act_apply_approved,
-  fapolicyd_denials) have descriptions (`aap/job_descriptions.yml` vendored, `aap/job_templates.yml` vendored): a
-  template that runs one is described, never made, never *not in AAP*.
-- Two templates for one catalog template (the same playbook, nothing to tell them apart): both described, and one line
-  in *in short*: `2 templates run playbooks/stigman_update.yml: 'A', 'B' - keep one` (when their Variables differ:
-  *their Variables differ: keep both only if they are different jobs*). An organization or project not found is
-  counted apart.
-- Docs: SETUP_AAP (the descriptions), VARIABLES_REFERENCE, aap/extra_vars.
-- Tests: `tests/test_job_catalog.py` (the vendored entries), `run_aap_describe_test.sh` (not in AAP counted, listed
-  with the setting; a podman health template on ACT's playbook described; two templates of one playbook said).
 
 ## 1.79.11 — 2026-11-20
 

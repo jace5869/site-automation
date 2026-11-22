@@ -29,3 +29,6 @@ act-reports/
 ee/*/freetds.tar.gz
 ee/*/freetds.tar.gz.part
 aap-keycloak*.env
+# reviewer scratch files (Codex/Neon): never committed
+REVIEW.diff
+.prompt.txt
