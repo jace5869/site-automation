@@ -59,7 +59,7 @@ $dc.ldap = @{ ok = $false; synchronized = $null; gc_ready = $null; error = '' }
 if ($adModule) {
     try {
         $me = Get-ADDomainController -Server localhost
-        $dc.domain = [string]$me.Domain
+        if ($me.Domain) { $dc.domain = [string]$me.Domain }    # AD's domain; never blanks the one Win32_ComputerSystem gave
         $dc.site = [string]$me.Site
         $dc.server_dn = [string]$me.ServerObjectDN
         $dc.dsa_dn = [string]$me.NTDSSettingsObjectDN

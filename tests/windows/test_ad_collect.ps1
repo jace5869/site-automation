@@ -16,6 +16,7 @@ $cases = @(
     @('ad_dc', 'dc_ok', 'dc', [ordered]@{
             'no error'                  = { param($r) @($r.errors).Count -eq 0 }
             'name, domain, PDC'         = { param($r) $r.name -eq 'DC01' -and $r.domain -eq 'corp.test' -and $r.role -eq 'pdc' -and $r.fqdn -eq 'dc01.corp.test' }
+            'DSA objectGUID (1.101.2), the AD name as AD has it' = { param($r) $r.dsa_guid -eq '0f0e0d0c-0b0a-0908-0706-050403020100' -and $r.dsa_dn -like 'CN=NTDS Settings,CN=DC01,*' }
             'LDAP answers, synchronized' = { param($r) $r.ldap.ok -and $r.ldap.synchronized -and $r.gc_port.ok }
             'dcdiag: 3 tests passed'    = { param($r) @($r.dcdiag.tests | Where-Object { $_.result -eq 'passed' }).Count -eq 3 }
             'dcdiag DNS passed'         = { param($r) @($r.dcdiag_dns.tests).Count -eq 1 -and $r.dcdiag_dns.tests[0].result -eq 'passed' }

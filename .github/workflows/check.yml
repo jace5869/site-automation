@@ -925,7 +925,9 @@ jobs:
           grep -q 'DAYS  EXPIRES' /tmp/4.out || { echo 'FAIL: no certificate table'; fail=1; }
           # not a DC: the AD report's script must still answer over WinRM, and the report say what it could not read
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/ad_health_report.yml -e target=winrunner | tee /tmp/5.out || fail=1
-          grep -q 'DCs read: 1 of 1' /tmp/5.out || { echo 'FAIL: the AD script gave no answer'; fail=1; }
+          grep -q 'ad_health_mode auto: 1 of 1 DC(s) answered over WinRM' /tmp/5.out || { echo 'FAIL: the AD script gave no answer'; fail=1; }
+          # 1.101.2: not a domain member, so no DC list - coverage unknown, never "1 of 1"
+          grep -q 'DCs read: unknown' /tmp/5.out || { echo 'FAIL: the AD report does not say coverage is unknown'; fail=1; }
           grep -q 'ActiveDirectory PowerShell module' /tmp/5.out || { echo 'FAIL: the AD report does not say the module is missing'; fail=1; }
           # not a DC either: the lockout job's scripts answer over WinRM, and it stops saying why
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/ad_lockout.yml -e target=winrunner -e ad_lockout_user=satest | tee /tmp/6.out

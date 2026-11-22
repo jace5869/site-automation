@@ -27,6 +27,8 @@ function Ntds([string] $Dc) { return "CN=NTDS Settings,CN=$Dc,CN=Servers,CN=HQ,C
 $FAKE = @{ cim = @{}; events = @(); exe = @{}; reg = @{}; paths = @(); files = @{}; dirs = @{}; certs = @(); noAd = $false
     adobj = @{}; search = @(); meta = @{}; groups = @{} }
 $cfg = @{}
+# the DSA objectGUID of this DC (ad_dc.ps1: Get-ADObject -Identity <NTDS Settings DN>)
+$FAKE.adobj[(Ntds 'DC01')] = [pscustomobject]@{ ObjectGUID = [guid]'0f0e0d0c-0b0a-0908-0706-050403020100' }
 # ---- a healthy DC (also the base of the others) ---------------------------------------------------------
 function Base-Dc {
     $FAKE.cim.Win32_ComputerSystem = @(O @{ Name = 'DC01'; DNSHostName = 'dc01'; Domain = 'corp.test'; DomainRole = 5 })
@@ -42,7 +44,7 @@ function Base-Dc {
     $FAKE.cim.Win32_LogicalDisk = @((O @{ DeviceID = 'C:'; Size = 100 * $GB; FreeSpace = 60 * $GB }), (O @{ DeviceID = 'D:'; Size = 50 * $GB; FreeSpace = 40 * $GB }))
     $FAKE.reg['HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters'] = O @{ SysvolReady = 1; SysVol = 'C:\Windows\SYSVOL\sysvol' }
     $FAKE.reg['HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'] = O @{ 'DSA Database file' = 'D:\NTDS\ntds.dit'; 'Database log files path' = 'D:\NTDS' }
-    $FAKE.me = O @{ Site = 'HQ'; Forest = 'corp.test'; IsGlobalCatalog = $true; IsReadOnly = $false; HostName = 'dc01.corp.test'
+    $FAKE.me = O @{ Domain = 'corp.test'; NTDSSettingsObjectDN = (Ntds 'DC01'); Site = 'HQ'; Forest = 'corp.test'; IsGlobalCatalog = $true; IsReadOnly = $false; HostName = 'dc01.corp.test'
         OperationMasterRoles = @('PDCEmulator', 'RIDMaster') }
     $FAKE.rootdse = O @{ isSynchronized = 'TRUE'; isGlobalCatalogReady = 'TRUE'; dnsHostName = 'dc01.corp.test'
         configurationNamingContext = $cfgNc; schemaNamingContext = $schNc }
