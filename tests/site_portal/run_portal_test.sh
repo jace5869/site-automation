@@ -41,6 +41,7 @@ done
 for n in "$net" site-portal; do podman network exists "$n" && { echo "ABORT - a podman network $n exists already"; exit 1; }; done
 podman volume exists site-portal-data && { echo "ABORT - a podman volume site-portal-data exists already"; exit 1; }
 podman secret inspect site-portal-aap-token >/dev/null 2>&1 && { echo "ABORT - a podman secret site-portal-aap-token exists already"; exit 1; }
+podman secret inspect site-portal-reportdb >/dev/null 2>&1 && { echo "ABORT - a podman secret site-portal-reportdb exists already"; exit 1; }
 cleanup() {
     systemctl --user stop site-portal-nginx.service site-portal-app.service site-portal-network.service \
         site-portal-data-volume.service >/dev/null 2>&1
@@ -51,6 +52,7 @@ cleanup() {
     podman volume rm -f site-portal-data >/dev/null 2>&1
     podman network rm -f "$net" site-portal >/dev/null 2>&1
     podman secret rm site-portal-aap-token >/dev/null 2>&1
+    podman secret rm site-portal-reportdb >/dev/null 2>&1
     rm -rf "${work:?}"
 }
 trap cleanup EXIT
@@ -119,7 +121,9 @@ cat > "$work/vars.json" <<EOF
                              "finding_id": {"kind": "text", "max": 200, "pattern": "[A-Za-z0-9_.:/@-]{1,200}", "label": "Finding"}}}}}
 EOF
 deploy() {
+    # 1.101.2: a "Report database" credential on the deploy - nothing listens on port 9: its check says so, never a failure
     (cd "$repo" && CONTROLLER_HOST=http://portal-test-aap:8000 CONTROLLER_OAUTH_TOKEN=test-token-1670 ANSIBLE_NOCOLOR=1 \
+        REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=9 REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=Test-Only-dbpw-1012 \
         "$ap" -i "$work/inv.yml" playbooks/site_portal_deploy.yml -e "@$work/vars.json" "$@") > "$work/out.txt" 2>&1
 }
 if deploy -e '{"portal_network": "podman"}'; then fail "podman's default network refused" "$(cat "$work/out.txt")"
@@ -454,6 +458,23 @@ else fail "the log lines" "$(tail -8 "$work/log.jsonl")"; fi
 if podman logs site-portal-app 2>&1 | grep -q '"event": "launch"'; then pass "the journal has the same lines"; else fail "the journal's lines"; fi
 leak="$( (grep -rl "test-token-1670" "$work/etc" "$units" "$work/log.jsonl"; podman inspect site-portal-app | grep -c "test-token-1670" | grep -v '^0$') 2>/dev/null)"
 [ -z "$leak" ] && pass "the AAP token: not in a file, a unit, the log or podman inspect" || fail "the token leaked" "$leak"
+# 1.101.2: the report database's login - a podman secret, never in a file, a unit, the log, the job output or podman inspect
+leak="$( (grep -rl "Test-Only-dbpw-1012" "$work/etc" "$units" "$work/log.jsonl" "$work/out.txt"; podman inspect site-portal-app | grep -c "Test-Only-dbpw-1012" | grep -v '^0$') 2>/dev/null)"
+if podman secret inspect site-portal-reportdb >/dev/null 2>&1 && grep -q "Secret=site-portal-reportdb,type=env,target=PORTAL_REPORT_DB" "$units/site-portal-app.container" \
+    && [ -z "$leak" ]; then pass "the report database's login: the podman secret site-portal-reportdb, not in a file, a unit, the log or podman inspect"
+else fail "the report database's secret" "leak: $leak; $(grep -c site-portal-reportdb "$units/site-portal-app.container")"; fi
+if grep -q "The report database could not be read from here" "$work/out.txt"; then pass "the deploy's look at the login: a database not reached is said, the deploy goes on"
+else fail "the deploy's database check said" "$(grep -A4 'Report database' "$work/out.txt" | head -20)"; fi
+r="$(c "$k/jdoe" get /portal/ad)"; a="$(c "$k/jdoe" get /portal/api/ad)"; h="$(c "$k/jdoe" get /healthz)"
+if echo "$r" | grep -q 'id=\\"ad\\" data-src=\\"/portal/api/ad\\"' && echo "$a" | jq_ 'd["json"]["db"]["on"]' | grep -q True \
+    && echo "$a" | jq_ 'd["json"]["sw"]["on"]' | grep -q False; then
+    pass "the Active Directory page and its answer, from the container (the database login on, no SolarWinds login)"
+else fail "the Active Directory page" "$(echo "$r" | head -c 600)
+$a"; fi
+for _ in $(seq 1 20); do a="$(c "$k/jdoe" get /portal/api/ad)"; echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -q . && break; sleep 1; done
+if echo "$a" | jq_ 'd["json"]["db"]["stale"]' | grep -Eq "PyMySQL is not in the portal's image|Can't connect|refused"; then
+    pass "the database not read (here: $(echo "$a" | jq_ 'd["json"]["db"]["stale"]' | cut -c1-60)): said, no rows shown as current"
+else fail "the database not read, said" "$a"; fi
 r="$(c "$k/jdoe" get /portal/)"; css="$(c "$k/jdoe" get /portal/static/banner.css)"; t="$(c "$k/jdoe" get "/portal/api/jobs/$job2")"
 if echo "$r" | grep -q 'class=\\"banner\\">CUI</div>' && echo "$css" | grep -q "#502b85" \
     && echo "$t" | jq_ 'd["json"]["started_text"]' | grep -Eq '^[0-9-]{10} [0-9:]{5} E[SD]T$'; then

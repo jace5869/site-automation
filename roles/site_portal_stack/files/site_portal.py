@@ -3992,7 +3992,7 @@ class AdLive(object):
                     self.read_db()
                     self.db_due = time.time() + AD_POLL
                 except Exception as e:  # pylint: disable=broad-except
-                    why = clean(str(e), 300) or e.__class__.__name__
+                    why = clean(site_report_db.short_error(e) if site_report_db else str(e), 300) or e.__class__.__name__
                     with self.lock:
                         first, self.db_stale, self.db_fails = not self.db_stale, why, self.db_fails + 1
                     if first:

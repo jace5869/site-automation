@@ -44,6 +44,33 @@
   messages); run_stig_full_scan_test.sh (routes by STIG, a bad route); run_ckl_routes_test.sh and test_stig_ckl_import.py
   (the plan's wording).
 
+## 1.101.2 — 2026-11-22
+
+**To set up:** in *AAP - set up job templates*, map `report_db_reader` (the **Report database** credential with the
+read-only account `report_reader`) and `report_db`, run it, then run *Site portal - deploy* once.
+
+**The portal's Active Directory page (`/portal/ad`), drawn from the report database** (user-approved mockup B):
+- **At a glance** (8 tiles), the **domain controllers** worst first: now, **since when**, the **last 48 runs** (a square
+  each), SolarWinds now, what is wrong; **replication links that need a look** (failing or late, since the last success);
+  **DCs with a problem over 7 days** (a chart and the runs table); a link to the newest run's full report.
+- Live while open: the database every minute, SolarWinds every `portal_ad_seconds` (600), one read every viewer shares,
+  an ETag; a DC that changes gets a toast (motion settings apply).
+- Never old data as current: the database off, not read now, no run yet, a run older than `portal_ad_old_minutes` (90),
+  SolarWinds not read - each said on the page.
+- **The AD job keeps each run** in the report database (`ad_db`, new tables `ad_run`, `ad_dc`, `ad_link`, made by the
+  job; `ad_db_keep_days` 400). A database that is down is a warning; the job stays green. The website page is as before.
+- **Site portal - deploy**: the read-only login as the podman secret `site-portal-reportdb` (from the attached Report
+  database credential); a login that can write is a warning; never a failed deploy. The portal starts a Python of its
+  image that has PyMySQL (the all-in-one EE).
+- The job-template catalog attaches `report_db_reader` (else `report_db`) to *Site portal - deploy*.
+- New settings: `ad_db`, `ad_db_create`, `ad_db_keep_days`, `portal_ad`, `portal_ad_seconds`, `portal_ad_old_minutes`,
+  `portal_ad_template`, `portal_report_db` (and its credential fields).
+- Docs: SITE_PORTAL.md (*The Active Directory page*), REPORT_DATABASE.md (*The AD runs for the portal*, the statements),
+  ACTIVE_DIRECTORY.md.
+- Tests: `tests/test_portal_ad.py` (the writer and reader on SQLite, the answer and every state, the routes, the deploy's
+  files, the page in Chromium in three looks at 1280 and 800); `tests/ad/run_ad_db_test.sh` (a real MySQL 8.4: the writer,
+  `report_reader`, the grants, the warnings, prune).
+
 ## 1.101.1 — 2026-11-21
 
 **Nothing to set up.** The replication map (1.101.0) for a forest with many locations and several DCs at each

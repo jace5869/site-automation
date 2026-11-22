@@ -95,7 +95,7 @@ class Lite(object):
 
     def __init__(self):
         import sqlite3
-        self.db = sqlite3.connect(":memory:", detect_types=0)
+        self.db = sqlite3.connect(":memory:", detect_types=0, check_same_thread=False)
         for c in SQLITE:
             self.db.execute(c)
 
@@ -543,6 +543,7 @@ class Browser1012(unittest.TestCase):
                 self.assertEqual(r["notes"], [])
                 self.assertGreaterEqual(r["bars"], 1)
                 self.assertEqual(r["runs"], 8)
+                self.assertRegex(r["links"][0], r"failing, no success since \d{4}-\d\d-\d\d \d\d:\d\d UTC")   # another day: its date said
                 self.assertEqual(r["side"], 0, (look, w))                    # no sideways scroll
 
     def test_2_each_state_said(self):

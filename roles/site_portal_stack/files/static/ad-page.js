@@ -39,7 +39,8 @@
   }
   const ago = s => s == null ? "" : s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : (Math.round(s / 360) / 10) + " h ago";
   const hrs = m => m < 60 ? m + " min" : (Math.round(m / 6) / 10) + " h";
-  const hhmm = t => String(t || "").replace(/^\d{4}-\d\d-\d\d /, "");       // "2026-11-23 09:30 UTC" -> "09:30 UTC": today's runs
+  let today = "";                             // the newest run's day: a time of that day shown without it
+  const hhmm = t => { const x = String(t || ""); return today && x.slice(0, 10) === today ? x.slice(11) : x; };
   function table(head, rows, cls) {
     const t = el("table", cls || "");
     t.append(el("thead", "", el("tr", "", head.map(h => { const th = el("th", h[1] || "", h[0]); th.scope = "col"; return th; }))));
@@ -223,6 +224,7 @@
   function draw(a) {
     const db = a.db || {}, m = db.model;
     const parts = [];
+    today = m && m.run && m.run.as_of ? String(m.run.as_of).slice(0, 10) : "";
     if (!db.on) {
       parts.push(note("warn", "The report database is off here: " + db.why + "."));
     } else if (!m) {

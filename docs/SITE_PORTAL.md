@@ -793,6 +793,47 @@ setting that cannot work (`netmap_site_pattern`, `netmap_hierarchy`, `netmap_rol
   `portal_motion` applies.
 - No credential (or `portal_netmap: false`): no page and no menu entry; `/portal/netmap` says why.
 
+## The Active Directory page (1.101.2)
+
+The portal's **Active Directory** page (`/portal/ad`) shows the AD health job's runs from the report database
+([REPORT_DATABASE.md](REPORT_DATABASE.md), *The AD runs for the portal*). The portal draws it from the database. It has
+no static page behind it.
+
+- **The live line**: the AD checks as of the newest run, the AD job's next scheduled run, when SolarWinds was read, a
+  link to that run's full report on the report website.
+- **At a glance**: the status now, DCs read, DCs with a problem (since when), SolarWinds down or warning, replication
+  failing (since when), replication late, the AD job's runs in 24 h, the worst DC of 7 days.
+- **Domain controllers**, worst first: now, since when, the last 48 runs (one square each), SolarWinds now, what is wrong.
+- **Replication links that need a look**: now, the last success, failures, the error.
+- **DCs with a problem, last 7 days**: a chart (the worst run of each 2 hours) and the last runs as a table.
+
+While someone has the page open, the server reads the database every minute and SolarWinds every `portal_ad_seconds`
+(600). One read serves every viewer. The page asks the server every minute, with an ETag. A DC whose state changes
+between two reads gets a toast.
+
+Each state is said, never shown as current:
+
+| What | The page |
+|---|---|
+| No database login on the deploy | "The report database is off here", and how to turn it on |
+| The database could not be read | the last answer, "not read just now (why)", with its time |
+| No AD run kept yet | "No AD run in the report database yet" |
+| The newest run is older than `portal_ad_old_minutes` (90) | "N h old: the AD job has not run since" |
+| No SolarWinds login (the Network map's) | the SolarWinds column says "not read" |
+
+**Set it up.** No hand steps:
+
+1. The template setup job (*AAP - set up job templates*) attaches the **Report database** credential to *Active
+   Directory health report* (`report_db`) and to *Site portal - deploy* (`report_db_reader`: the read-only account
+   `report_reader`; without it, `report_db`). Map both in `aap_templates_credentials`.
+2. Run *Site portal - deploy*. It puts the login in a podman secret (`site-portal-reportdb`) and checks it from the
+   controller: a login that can write is a warning (the portal only reads), a database that cannot be reached is said.
+   The deploy never fails on it.
+3. The AD job's next run makes its tables (`ad_run`, `ad_dc`, `ad_link`) and keeps the run.
+
+Two AD templates (two forests): `portal_ad_template` is the one the page shows; empty shows the newest run's.
+`portal_ad: false` turns the page and its menu entry off.
+
 ## What is on and what is off
 
 An available card has a solid border, a bar in the accent colour and a filled **Run**. A card that is off has a grey surface, a dashed border, muted text, a lock chip, its reason on one line, and no Run (only Details); the accent

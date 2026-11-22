@@ -24,6 +24,11 @@ the AAP side as a plain domain user instead - over LDAP, DNS and Kerberos, no Wi
 the domain has every object in its own copy, and the replication metadata says on which DC a change
 was made. So the job works over WinRM with NTLM or Kerberos and needs no delegation or CredSSP.
 
+**On the portal (1.101.2).** With the **Report database** credential on the template, each run is kept in the report
+database (`ad_db`). The site portal's *Active Directory* page shows the runs there: each DC now and since when, its last
+48 runs, the replication links that need a look, the last 7 days ([SITE_PORTAL.md](SITE_PORTAL.md)). Schedule the
+job (every 30 minutes, for example) to keep the page current.
+
 ## What the report shows
 
 At the top: the title with the number of critical and warning findings, then boxes with the main
