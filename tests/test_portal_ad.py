@@ -176,19 +176,20 @@ def ad_run(minutes_ago, dc3="ok", fail_link=True):
                                     {"frm": "DC02", "to": "DC01", "nc": "Configuration", "last_success": iso(0.1), "failures": 0}]}}
 
 
+def fill(states, template_id=12):
+    db = Lite()
+    for k, st in enumerate(states):                   # oldest first, every 30 min
+        now, ad = ad_run(30 * (len(states) - 1 - k), st)
+        adb.write(db, now, 9000 + k, template_id, dbf.ad_db_payload(ad, {"kind": "ad", "dcs": [{"dc": "DC01"}]}, {}))
+    db.commit()
+    return db
+
+
 class Db1012(unittest.TestCase):
     """The AD job's run written (site_ad_db, ad_db_filters) and read back by the portal (AdDb): now, since when, the trend, the week."""
 
-    def fill(self, states, template_id=12):
-        db = Lite()
-        for k, st in enumerate(states):                   # oldest first, every 30 min
-            now, ad = ad_run(30 * (len(states) - 1 - k), st)
-            adb.write(db, now, 9000 + k, template_id, dbf.ad_db_payload(ad, {"kind": "ad", "dcs": [{"dc": "DC01"}]}, {}))
-        db.commit()
-        return db
-
     def test_1_round_trip(self):
-        db = self.fill(["ok"] * 10 + ["critical"] * 4)
+        db = fill(["ok"] * 10 + ["critical"] * 4)
         m = sp.AdDb(None, connect=lambda: db, mark="?").read()
         self.assertEqual((m["run"]["job"], m["run"]["status"], m["run"]["dcs"], m["run"]["dcs_read"]), (9013, "critical", 3, 3))
         self.assertEqual([d["dc"] for d in m["dcs"]], ["DC03", "DC01", "DC02"])           # worst first
@@ -203,7 +204,7 @@ class Db1012(unittest.TestCase):
         self.assertEqual(m["live"]["kind"], "ad")
 
     def test_2_since_further_back_than_the_trend(self):
-        db = self.fill(["critical"] * 3 + ["ok"] * 2 + ["critical"] * 50)
+        db = fill(["critical"] * 3 + ["ok"] * 2 + ["critical"] * 50)
         d3 = [d for d in sp.AdDb(None, connect=lambda: db, mark="?").read()["dcs"] if d["dc"] == "DC03"][0]
         self.assertTrue(d3["longer"])
         self.assertEqual(len(d3["trend"]), 48)
@@ -214,12 +215,12 @@ class Db1012(unittest.TestCase):
         self.assertTrue(49 * 30 - 5 <= age <= 50 * 30 + 5, age)                           # 50 runs back: after the last ok
 
     def test_3_template_and_nothing_yet(self):
-        db = self.fill(["ok"] * 3, template_id=12)
+        db = fill(["ok"] * 3, template_id=12)
         self.assertIsNone(sp.AdDb(None, connect=lambda: db, mark="?").read(template_id=99)["run"])
         self.assertEqual(sp.AdDb(None, connect=lambda: db, mark="?").read(template_id=12)["run"]["template_id"], 12)
 
     def test_4_the_writer_prunes_and_says_its_tables(self):
-        db = self.fill(["ok"] * 3)
+        db = fill(["ok"] * 3)
         import datetime as dt
         n = adb.prune(db, dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) + dt.timedelta(days=401), 400)
         self.assertEqual(n, 3)
@@ -235,6 +236,56 @@ class Db1012(unittest.TestCase):
         self.assertEqual([x["status"] for x in p["links"]], ["critical", "ok"])
         p = dbf.ad_db_payload({"dcs": [{"dc": "DC09", "domain": "corp.test", "read": False, "error": "WinRM did not answer"}]})
         self.assertEqual((p["dcs"][0]["status"], p["dcs"][0]["worst"]), ("critical", "not read: WinRM did not answer"))
+
+
+class DbAnswer1012(unittest.TestCase):
+    """/api/ad's database part: the model with its times, or why not; a read that fails keeps the last one said as stale."""
+
+    def test_1_model_in_the_answer_and_solarwinds_for_its_run(self):
+        s = Site(self)
+        lite = fill(["ok"] * 5 + ["critical"] * 2)
+        a = sp.AdLive(s.cfg(), sp.Log(None), source=lambda live: sw_answer(), db=sp.AdDb(None, connect=lambda: lite, mark="?"))
+        a.cfg.ad_swis_why = ""
+        a.read_db()
+        src = a.sw_source(a.run()[0])
+        self.assertEqual(src[0], "9006")                              # the database's newest run, not the page's job 77
+        a.sw = a.read_sw(src)
+        out = json.loads(a.answer()[1])
+        m = out["db"]["model"]
+        self.assertTrue(out["db"]["on"])
+        self.assertEqual((m["run"]["job"], m["run"]["old"]), (9006, False))
+        self.assertTrue(m["run"]["as_of"].endswith("UTC"))
+        d3 = m["dcs"][0]
+        self.assertEqual((d3["dc"], d3["runs_since"]), ("DC03", 2))
+        self.assertTrue(d3["since_shown"].endswith("UTC"))
+        self.assertNotIn("live", m)
+        self.assertEqual(out["sw"]["job"], "9006")
+        self.assertIn("section", out["sw"])
+
+    def test_2_a_failed_read_said_the_last_model_kept_as_stale(self):
+        s = Site(self)
+        lite = fill(["ok"] * 3)
+        calls = []
+
+        def connect():
+            calls.append(1)
+            if len(calls) > 1:
+                raise RuntimeError("(2003, \"Can't connect to MySQL server\")")
+            return lite
+        a = sp.AdLive(s.cfg(), sp.Log(None), db=sp.AdDb(None, connect=connect, mark="?"))
+        a.read_db()
+        with self.assertRaises(RuntimeError):
+            a.read_db()
+        a.db_stale = "Can't connect to MySQL server"                  # as the loop says it
+        out = json.loads(a.answer()[1])["db"]
+        self.assertEqual(out["stale"], "Can't connect to MySQL server")
+        self.assertEqual(out["model"]["run"]["job"], 9002)            # the last one read, with its own time and age
+
+    def test_3_no_login_said(self):
+        out = json.loads(sp.AdLive(Site(self).cfg(), sp.Log(None)).answer()[1])["db"]
+        self.assertFalse(out["on"])
+        self.assertIn("report_reader", out["why"])
+        self.assertNotIn("model", out)
 
 
 class Run1012(unittest.TestCase):

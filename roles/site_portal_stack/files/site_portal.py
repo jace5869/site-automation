@@ -3862,7 +3862,7 @@ class AdLive(object):
     shown with its own time (never as the current one). Its SolarWinds parts (From SolarWinds, its tile) are read by this
     server every portal_ad_seconds while someone has the page open - one read every viewer shares, as the Network map."""
 
-    def __init__(self, cfg, log, aap=None, source=None):
+    def __init__(self, cfg, log, aap=None, source=None, db=None):
         self.cfg, self.log, self.aap = cfg, log, aap
         self.lock = threading.Lock()
         self.wake = threading.Event()
@@ -3871,6 +3871,9 @@ class AdLive(object):
         self.sw, self.sw_stale, self.sw_fails, self.sw_next = None, "", 0, 0.0
         self.sched_at, self.sched = 0.0, {}
         self.source = source or self._swis
+        # the AD job's runs in the report database (AdDb): read every AD_POLL s while the page is open; None: no login
+        self.db = db if db is not None else (AdDb(cfg) if cfg.report_db else None)
+        self.dbm, self.db_at, self.db_stale, self.db_fails, self.db_due, self.sw_due = None, 0.0, "", 0, 0.0, 0.0
 
     # -- the run ------------------------------------------------------------------------------------------------------------
     def _file(self, rel):
@@ -3956,9 +3959,29 @@ class AdLive(object):
         mx = (c.netmap_opts or {}).get("max_nodes") or 20000
         return site_ad_swis.from_live(live.get("dcs") or [], {"page": 1000, "max_nodes": mx}, self.client)
 
+    def sw_source(self, run=None):
+        """(job, live, template_id) SolarWinds is read for: the database's newest run, else the page's; None: neither."""
+        with self.lock:
+            m = self.dbm
+        if m and m.get("run") and isinstance(m.get("live"), dict) and m["live"].get("dcs"):
+            return str(m["run"]["job"]), m["live"], m["run"]["template_id"]
+        if run is not None:
+            return str(run["line"].get("job")), run["live"], run.get("template_id")
+        return None
+
+    def read_db(self):
+        """One read of the database (the model of the page's own template when the page names one)."""
+        run, _why = self.run()
+        m = self.db.read(template_id=(run or {}).get("template_id"))
+        with self.lock:
+            was, self.dbm, self.db_at, self.db_stale, self.db_fails = self.db_stale, m, time.time(), "", 0
+        if was:
+            self.log.add({"event": "ad", "database": "ok"})
+
     def read_sw(self, run):
-        """One read of the DCs in SolarWinds -> {at, job, section, tile} (the AD job's own section and tile, as of now)."""
-        live = run["live"]
+        """One read of the DCs in SolarWinds -> {at, job, section, tile} (the AD job's own section and tile, as of now).
+        run: the page's run, or a (job, live, template_id) of sw_source."""
+        job, live, _tid = run if isinstance(run, tuple) else (str(run["line"].get("job")), run["live"], run.get("template_id"))
         res = self.source(live)
         if not res.get("ok"):
             raise ValueError("; ".join(res.get("why") or []) or "SolarWinds was not read")
@@ -3972,11 +3995,11 @@ class AdLive(object):
         if not sec:
             raise ValueError("; ".join(v.get("not_read") or []) or "SolarWinds' answer could not be made into the section")
         keep = dict((k, sec.get(k)) for k in ("columns", "rows", "cell_status", "row_status", "status", "text"))
-        return {"at": time.time(), "job": str(run["line"].get("job")), "section": keep, "tile": v.get("tile")}
+        return {"at": time.time(), "job": job, "section": keep, "tile": v.get("tile")}
 
-    def _schedule(self, run):
+    def _schedule(self, tid):
         """The AD template's next scheduled run (AAP), at most every AD_SCHEDULE_EVERY s; {} when there is none or AAP is not asked."""
-        tid = str(run.get("template_id") or "")
+        tid = str(tid or "")
         if self.aap is None or not tid.isdigit() or time.time() - self.sched_at < AD_SCHEDULE_EVERY:
             return
         self.sched_at = time.time()
@@ -4000,62 +4023,107 @@ class AdLive(object):
                 self.wake.set()
 
     def _run(self):
+        """While someone has the page open: the database every AD_POLL s, SolarWinds every portal_ad_seconds (and at once for a
+        new run's DCs), AAP's schedule every AD_SCHEDULE_EVERY s; a read that fails waits longer (15, 30, 60 ... s)."""
         while True:
             if time.time() - self.seen > NETMAP_IDLE:              # nobody looking: wait for the next viewer
                 self.wake.wait(NETMAP_IDLE)
                 self.wake.clear()
                 continue
-            run, _why = self.run()
-            wait = self.cfg.ad_seconds
-            if run is not None:
-                self._schedule(run)
-            if run is not None and not self.cfg.ad_swis_why:
+            now = time.time()
+            if self.db is not None and now >= self.db_due:
                 try:
-                    sw = self.read_sw(run)
+                    self.read_db()
+                    self.db_due = time.time() + AD_POLL
+                except Exception as e:  # pylint: disable=broad-except
+                    why = clean(str(e), 300) or e.__class__.__name__
+                    with self.lock:
+                        first, self.db_stale, self.db_fails = not self.db_stale, why, self.db_fails + 1
+                    if first:
+                        self.log.add({"event": "ad", "database": "not read", "why": why})
+                    self.db_due = time.time() + backoff(self.db_fails, AD_POLL * 4)
+            run, _why = self.run()
+            src = self.sw_source(run)
+            if src is not None:
+                self._schedule(src[2])
+            with self.lock:
+                new_run = src is not None and self.sw is not None and self.sw["job"] != src[0]
+            if src is not None and not self.cfg.ad_swis_why and (time.time() >= self.sw_due or new_run):
+                try:
+                    sw = self.read_sw(src)
                     with self.lock:
                         was, self.sw, self.sw_stale, self.sw_fails = self.sw_stale, sw, "", 0
-                    if was or sw is None:
+                    if was:
                         self.log.add({"event": "ad", "read": "ok"})
+                    self.sw_due = time.time() + self.cfg.ad_seconds
                 except Exception as e:  # pylint: disable=broad-except
                     why = clean(str(e), 300) or e.__class__.__name__
                     with self.lock:
                         first, self.sw_stale, self.sw_fails = not self.sw_stale, why, self.sw_fails + 1
                     if first:
                         self.log.add({"event": "ad", "read": "failed", "why": why})
-                    wait = backoff(self.sw_fails, self.cfg.ad_seconds)
-            with self.lock:
-                self.sw_next = time.time() + wait
-            self.wake.wait(wait)
+                    self.sw_due = time.time() + backoff(self.sw_fails, self.cfg.ad_seconds)
+                with self.lock:
+                    self.sw_next = self.sw_due
+            due = [self.sw_due] + ([self.db_due] if self.db is not None else [])
+            self.wake.wait(max(5, min(due) - time.time()))
             self.wake.clear()
 
     # -- the answer -----------------------------------------------------------------------------------------------------------
     def answer(self, etag_in=""):
-        """(code, body, etag) for /api/ad: the run's time and age, what is wrong with the newest one, the SolarWinds parts."""
+        """(code, body, etag) for /api/ad: the page's run (its time and age, what is wrong with the newest one), the database's
+        runs (now, since when, the last runs, the week - or why not), the SolarWinds parts - each with its own time."""
         run, why = self.run()
         now = time.time()
         with self.lock:
             sw, stale, nxt, sched = self.sw, self.sw_stale, self.sw_next, dict(self.sched)
-        if run is not None and sw is not None and sw["job"] != str(run["line"].get("job")):
+            dbm, db_at, db_stale = self.dbm, self.db_at, self.db_stale
+        src = self.sw_source(run)
+        if src is not None and sw is not None and sw["job"] != src[0]:
             self.wake.set()                                          # a new run (its DCs): SolarWinds read again now
-        out = {"ok": run is not None, "poll": AD_POLL, "why": why}
+        out = {"ok": run is not None or bool(dbm and dbm.get("run")), "poll": AD_POLL, "why": why}
         if run is not None:
             at = ad_when(run["when"])
             age = int((now - at) // 60) if at else None
             out["run"] = {"tag": run["tag"], "job": str(run["line"].get("job") or ""), "as_of": shown(self.cfg, run["when"]),
                           "age_min": age, "old": age is not None and age > self.cfg.ad_old_minutes, "old_after": self.cfg.ad_old_minutes,
                           "next": shown(self.cfg, sched.get("next")) if sched.get("next") else ""}
+        out["db"] = {"on": self.db is not None, "stale": db_stale,
+                     "why": "" if self.db is not None else ("the portal has no report database login: attach the \"Report database\" "
+                                                            "credential (the read-only account report_reader) to the portal's deploy "
+                                                            "template and run it")}
+        if dbm is not None:
+            out["db"]["age"] = int(now - db_at)
+            out["db"]["model"] = self._shown(dbm, now, sched)
         out["sw"] = {"on": not self.cfg.ad_swis_why, "why": self.cfg.ad_swis_why, "stale": stale, "every": self.cfg.ad_seconds,
                      "next": max(0, int(nxt - now)) if nxt else None}
-        if sw is not None and run is not None and sw["job"] == str(run["line"].get("job")):
-            out["sw"].update({"age": int(now - sw["at"]), "as_of": shown(self.cfg, now_iso(sw["at"])), "section": sw["section"], "tile": sw["tile"]})
+        if sw is not None and src is not None and sw["job"] == src[0]:
+            out["sw"].update({"age": int(now - sw["at"]), "as_of": shown(self.cfg, now_iso(sw["at"])), "job": sw["job"],
+                              "section": sw["section"], "tile": sw["tile"]})
         body = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
         # the ages are in minutes and seconds: the tag is of what the page shows, so a 304 is the common answer
-        tag_of = dict(out, sw=dict(out["sw"], age=None, next=None))
+        tag_of = dict(out, sw=dict(out["sw"], age=None, next=None), db=dict(out["db"], age=None))
+        if "model" in tag_of["db"]:
+            tag_of["db"]["model"] = dict(tag_of["db"]["model"], run=dict(tag_of["db"]["model"]["run"] or {}, age_min=None))
         etag = '"%s"' % hashlib.sha1(json.dumps(tag_of, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:20]
         if etag_matches(etag_in, etag):
             return 304, "", etag
         return 200, body, etag
 
+    def _shown(self, m, now, sched):
+        """The database's model with its times as the report pages show them (report_time_zone), its run's age and whether it is
+        old; the live part (the DCs for SolarWinds) left out."""
+        r = dict(m.get("run") or {}) if m.get("run") else None
+        if r:
+            at = ad_when(r.get("read_at"))
+            r["age_min"] = int((now - at) // 60) if at else None
+            r["old"] = r["age_min"] is not None and r["age_min"] > self.cfg.ad_old_minutes
+            r["as_of"] = shown(self.cfg, r.get("read_at"))
+            r["next"] = shown(self.cfg, sched.get("next")) if sched.get("next") else ""
+        return {"run": r, "times": [shown(self.cfg, t) for t in m.get("times") or []],
+                "dcs": [dict(d, since_shown=shown(self.cfg, d.get("since")) if d.get("since") else "") for d in m.get("dcs") or []],
+                "links": [dict(x, last_success_shown=shown(self.cfg, x.get("last_success")) if x.get("last_success") else "") for x in m.get("links") or []],
+                "hist": [dict(h, at_shown=shown(self.cfg, h.get("at"))) for h in m.get("hist") or []]}
 
 def ad_page(cfg, run, statics):
     """The AD job's newest page as the report website has it, its relative links made the report folder's, with the live
