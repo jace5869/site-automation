@@ -416,6 +416,7 @@ class History(unittest.TestCase):
             names = re.findall(r"^\| ([^|]+?) \| `playbooks/", f.read(), re.M)
         self.assertGreater(len(names), 70)
         never = {"Outage AAR - Word document", "SOP - Word document"}      # emailed only, never on the website (_report_web_skip)
+        never.add("Workflow dry run - the guard (1.107.0)")               # not a job template: a guard other playbooks import
         names = [n for n in names if n not in never]
         self.assertEqual([n for n in names if rw.area(n, tabs) == "Other" or rw.area(n, tabs) not in [t["tab"] for t in tabs]], [])
 
