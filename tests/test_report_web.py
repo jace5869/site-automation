@@ -1593,7 +1593,7 @@ class Back1872(unittest.TestCase):
         with open(os.path.join(REPO, "plugins", "filter", "servicenow_insights_page.py")) as fh:
             src = fh.read()
         self.assertEqual(src.count('<header class="bar gut"><div class="wrap"><!--site-report-back--><div class="brand">'), 2)       # the report and the breach page
-        self.assertIn("history.replaceState(history.state,'',id?h:location.pathname+location.search)", ip.SCRIPT)
+        self.assertIn("history.replaceState(history.state,'',url)", ip.SCRIPT)
 
     def test_e_no_step_in_the_history(self):
         files = [os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), os.path.join(REPO, "plugins", "filter", "servicenow_insights_page.py")]
@@ -1608,8 +1608,8 @@ class Back1872(unittest.TestCase):
         h = js[js.index("1.87.2: a link to a place on this page"):]
         self.assertIn("var a=e.target.closest&&e.target.closest('a[href^=\"#\"]')", h)
         self.assertIn("e.preventDefault();", h)
-        self.assertIn("history.replaceState(history.state,'',id?h:location.pathname+location.search)", h)
-        self.assertIn("for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;", h)   # the place itself opens too (Codex)
+        self.assertIn("history.replaceState(history.state,'',url)", h)
+        self.assertIn("for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;", js)   # the place itself opens too (Codex)
         self.assertIn("f.focus({preventScroll:true})", h)                                                         # the keyboard goes on from there
         self.assertIn("t0.classList.add('is-target')", h)                                                         # a row the address names: the same mark
         self.assertIn("document.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;", js)   # the lift: not for a new tab
@@ -1622,7 +1622,7 @@ class Back1872(unittest.TestCase):
         import servicenow_insights_page as ip
         self.assertIn('try{history.replaceState(null,"",u)}catch(e){if(!win)location.replace("#p="', ip.SCRIPT)   # the period stays in the address, no step
         self.assertIn('hs.push("tab="+encodeURIComponent(id));', ip.SCRIPT)                                     # the team tab too (Codex), restored on load
-        self.assertIn("var m=/[#&]tab=([^&]*)/.exec(location.hash)", ip.SCRIPT)
+        self.assertIn("m=/[#&]tab=([^&]*)/.exec(hash)", ip.SCRIPT)                                      # restored on load and on hashchange (1.106.0)
 
 
 class Outlook1872(unittest.TestCase):

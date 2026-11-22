@@ -758,11 +758,13 @@ class Portal(unittest.TestCase):
                     break
                 time.sleep(0.1)
             self.assertIn("the links were not refreshed", json.dumps(fell()[-1]))
-            d, _ = self.wait_map(lambda d: d.get("kind") == "status" and not d.get("stale"))
+            d, _ = self.wait_map(lambda d: d.get("links_as_of") and not d.get("stale"))
+            self.assertEqual(d["kind"], "status")
+            self.assertRegex(d["links_as_of"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$")
             self.assertEqual(len(d["map"]["links"]), links)                                # not a map without links
         finally:
             self.fake.set_state({})
-        self.wait_map(lambda d: d.get("map") and not d.get("stale"))
+        self.wait_map(lambda d: d.get("kind") == "full" and not d.get("links_as_of"))
 
     def test_8_two_speeds_and_the_map_kept_on_disk(self):
         """1.95.0: after a whole read, the status only (2-3 queries) until netmap_full_seconds; the last good map is kept on disk
@@ -1029,6 +1031,73 @@ class Review1950(unittest.TestCase):
                     conns.append([first, 0, nid, 0])
                 first = first or nid
         return {"nodes": nodes, "connections": conns, "interfaces": [], "custom_properties": [], "topology_ok": True, "read_at": "2026-11-21T09:00:00Z"}
+
+    def test_cached_topology_time_survives_options_and_legacy_time_is_unknown(self):
+        import site_portal as sp
+        from unittest.mock import Mock, patch
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = sp.Config({"PORTAL_DATA": tmp})
+            source = Mock(kind="swis-live")
+            live = sp.NetLive(cfg, Mock(), source=source)
+            source.read_full.return_value = self.flat()
+            live.seen = 3600
+            with patch.object(sp.time, "time", return_value=3600), patch.object(live.wake, "wait", side_effect=StopIteration):
+                with self.assertRaises(StopIteration):
+                    live._run()                         # publish and save one successful full read
+            source.read_full.side_effect = ValueError("links unavailable")
+            source.read_status.return_value = live.raw
+            data, raw, live.kind = live.read_once()
+            self.assertEqual(live.kind, "fallback")
+            live._save(json.dumps(data), raw)
+            cfg.netmap_opts["full_seconds"] = 900
+            changed = sp.NetLive(cfg, Mock(), source=source)
+            self.assertIsNone(changed.raw)
+            body = json.loads(changed.answer()[1])
+            self.assertTrue(body["from_disk"])
+            self.assertEqual(body["links_as_of"], "1970-01-01 01:00 UTC")
+
+            with open(live.cache) as fh:
+                legacy = json.load(fh)
+            del legacy["topology_at"]
+            legacy.update(full_at=time.time(), kind="status", opts=changed._sig()[1])
+            with open(live.cache, "w") as fh:
+                json.dump(legacy, fh)
+            old = sp.NetLive(cfg, Mock(), source=source)
+            self.assertEqual(json.loads(old.answer()[1])["links_as_of"], "unknown")
+            source.read_status.return_value = old.raw
+            _, _, old.kind = old.read_once()
+            old.from_disk = False
+            self.assertEqual(old.kind, "status")
+            self.assertEqual(json.loads(old.answer()[1])["links_as_of"], "unknown")
+            old.full_at = 0
+            source.read_full.side_effect = ValueError("links unavailable")
+            _, _, old.kind = old.read_once()
+            self.assertEqual(old.kind, "fallback")
+            self.assertEqual(json.loads(old.answer()[1])["links_as_of"], "unknown")
+
+    def test_fallback_keeps_the_time_of_the_last_full_read(self):
+        import datetime
+        import site_portal as sp
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Mock(kind="swis-live")
+            live = sp.NetLive(sp.Config({"PORTAL_DATA": tmp}), Mock(), source=source)
+            live.raw, live.full_at, live.topology_at = self.flat(), 3600, 3600
+            source.read_full.side_effect = ValueError("links unavailable")
+            source.read_status.return_value = live.raw
+            _, _, live.kind = live.read_once()
+            live.map_json, live.etag = "{}", '"SITEA"'
+            code, body, tag = live.answer(live.etag)
+            self.assertEqual((code, json.loads(body)["links_as_of"], live.topology_at), (200, "1970-01-01 01:00 UTC", 3600))
+            self.assertEqual(live.answer(tag)[0], 304)
+            live.cfg.tz = datetime.timezone(datetime.timedelta(hours=-5), "EST")
+            self.assertEqual(json.loads(live.answer()[1])["links_as_of"], "1969-12-31 20:00 EST")
+            self.assertEqual(live.read_once()[2], live.kind)
+            source.read_full.assert_called_once_with()
+            live.kind = "full"
+            code, body, _ = live.answer(tag)
+            self.assertEqual(code, 200)
+            self.assertNotIn("links_as_of", json.loads(body))
 
     def test_1_a_value_with_a_slash_keeps_it(self):
         m = sw.model(self.flat(), {"hierarchy": [{"level": "site", "from": "subnet", "value": 16},

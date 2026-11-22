@@ -115,6 +115,30 @@ class Interactive(unittest.TestCase):
         time.sleep(1.5)
         self.assertFalse(self.c.js("!!document.querySelector('.toast')"))
 
+    def test_a_second_job_click_while_the_pane_loads(self):
+        self.open("jobs/%d" % self.ids["clean"])
+        self.assertEqual(self.c.js("""(async () => {
+          const links = document.querySelectorAll('#jrows li:not(.on) a'), seen = [];
+          const later = window.setTimeout;
+          window.setTimeout = (fn, ms, ...args) => later(fn, ms === 8000 ? 0 : ms, ...args);
+          const click = a => {
+            document.addEventListener('click', e => { seen.push(e.defaultPrevented); e.preventDefault(); }, {once: true});
+            a.click();
+          };
+          click(links[0]);
+          window.setTimeout = later;
+          click(links[1]);
+          const count = () => document.querySelectorAll('#jrows .picked').length;
+          seen.push(count());
+          window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}));
+          seen.push(count());
+          click(links[1]);
+          await new Promise(resolve => later(resolve, 0));  // the first skeleton's deadline has passed
+          seen.push(count());
+          window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}));
+          return seen.concat(count());
+        })()"""), [False, True, 1, 0, False, 1, 0])
+
     # ---- the approvals page
     def test_5_an_approval_asks_once_more_in_place(self):
         self.open("approvals?__who=appr")

@@ -776,11 +776,15 @@ class RealChromeOutageFilters(RealChromeOutage):
         self.c.js("(() => {const f = %s; f.value = 'zzzz-nothing'; f.dispatchEvent(new Event('input', {bubbles: true}))})()" % box)
         self.c.js("document.getElementById('ot-row-%s').classList.remove('ot-flash')" % n)
         self.open_row(n)
-        self.c.js("document.querySelector('#otx-open .otx-f dd button').click()")                    # twice: one note, not two
+        end = time.monotonic() + 10
+        while not self.c.js("!!document.querySelector('#otx-open .otx-note')"):
+            self.assertLess(time.monotonic(), end, "the filter note did not appear")
+            time.sleep(0.05)
         note = self.c.js("(() => {const t = document.querySelector('#otx-open .otx-note'); return t && t.textContent})()") or ""
         self.assertIn("table's filter box", note)
         self.assertFalse(self.c.js(flashed))
-        self.assertEqual(self.c.js("document.querySelectorAll('#otx-open .otx-note').length"), 1)
+        self.assertEqual(self.c.js("""(() => {document.querySelector('#otx-open .otx-f dd button').click();
+          return document.querySelectorAll('#otx-open .otx-note').length})()"""), 1)
         self.assertEqual(self.c.js("document.querySelector('#otx-open .otx-note').getAttribute('role')"), "status")
         # a row a filter hides is never "cap-only": the click must not open (lift the 25-row cap of) its table
         self.assertFalse(self.c.js("!!document.getElementById('ot-row-%s').closest('table')._open" % n))
@@ -1085,6 +1089,17 @@ class RealChromeOutageLinks(RealChromeOutage):
     def web(cls):
         return tot.ot.outage_timeline_doc(tot.WATCH, tot.made(instance="https://dev.service-now.example"), True, True)
 
+    def test_shared_link_scrolls_to_an_event_row(self):
+        url = "http://127.0.0.1:%d/page.html?shared#ot-row-18&tab=p1" % self.srv.server_address[1]
+        self.c.call("Page.navigate", url=url)
+        end = time.monotonic() + 30
+        while not self.c.js("location.search === '?shared' && document.readyState === 'complete' && !!window.siteReport"):
+            self.assertLess(time.monotonic(), end, "the shared report did not load")
+            time.sleep(0.1)
+        self.assertTrue(self.c.js("""(() => {const row = document.getElementById('ot-row-18'), r = row.getBoundingClientRect();
+          return row.classList.contains('is-target') && row.closest('details').open && scrollY > 0 &&
+            r.height > 0 && r.top >= 0 && r.top < innerHeight})()"""))
+
     def test_9_the_incident_number_is_a_link_in_the_tip(self):
         i = self.c.js("[...document.querySelectorAll(%s)].findIndex(m => JSON.parse(m.getAttribute('data-ev'))[0].k)" % json.dumps(self.SEL))
         self.assertGreaterEqual(i, 0)
@@ -1235,11 +1250,63 @@ class RealChromeInsightsIndex(unittest.TestCase):
             self.c.call("Page.navigate", url=self.base + page)
         time.sleep(0.3)
         end = time.time() + 30
-        while not self.c.js("document.readyState === 'complete' && !!window.siteInsights && location.pathname === '/%s'" % page):
+        while not self.c.js("!window.__beforeReload && document.readyState === 'complete' && !!window.siteInsights && "
+                            "location.pathname + location.search === '/%s'" % page.split("#")[0]):
             if time.time() > end:
                 raise RuntimeError("%s did not load" % page)
             time.sleep(0.1)
         time.sleep(0.2)
+
+    def test_shared_link_opens_the_closed_group_chooser(self):
+        self.load("index.html?shared#cvq&tab=p1")
+        self.assertTrue(self.c.js("""(() => {const q = document.getElementById('cvq'), r = q.getBoundingClientRect();
+          return q.closest('details').open && scrollY > 0 && r.height > 0 && r.top >= 0 && r.top < innerHeight})()"""))
+        self.assertEqual(self.c.js("document.querySelector('.tab[aria-selected=true]').dataset.tab"), "p1")
+
+    def test_click_reveals_the_target_on_its_tab(self):
+        self.load("index.html?motion=off")
+        for href in ("#p1&tab=p1", "#cvq&tab=p1", "#cvq"):
+            with self.subTest(href=href):
+                state = self.c.js("""(href => {
+                  const q = document.getElementById('cvq'), details = q.closest('details');
+                  if (href.includes('&tab=')) document.querySelector('.tab[data-tab=p0]').click();
+                  details.open = false;
+                  window.scrollTo({top: 0, behavior: 'instant'});
+                  const a = document.createElement('a');
+                  a.href = href; document.body.appendChild(a); a.click(); a.remove();
+                  const t = document.getElementById(href.slice(1).split('&')[0]), r = t.getBoundingClientRect();
+                  return [location.hash, document.querySelector('.tab[aria-selected=true]').dataset.tab,
+                    t !== q || details.open, r.height > 0 && r.top >= -1 && r.top < innerHeight];   // in view (a sub-pixel top: -0.5)
+                })(%s)""" % json.dumps(href))
+                self.assertEqual(state, [href.split("&")[0] + "&tab=p1", "p1", True, True])
+
+    def test_fragment_change_opens_the_chooser_on_the_bookmarked_tab(self):
+        self.load("index.html")
+        self.c.js("""document.querySelector('.tab[data-tab=p0]').click();
+          document.getElementById('cvq').closest('details').open = false;
+          window.scrollTo({top: 0, behavior: 'instant'}); location.hash = 'cvq&tab=p1'""")
+        end = time.time() + 5
+        while not self.c.js("""(() => {const q = document.getElementById('cvq'), r = q.getBoundingClientRect();
+          return document.querySelector('.tab[aria-selected=true]').dataset.tab === 'p1' && q.closest('details').open &&
+            scrollY > 0 && r.height > 0 && r.top >= 0 && r.top < innerHeight})()"""):
+            if time.time() > end:
+                self.fail("The fragment change did not reveal the chooser on tab p1")
+            time.sleep(0.05)
+
+    def test_section_link_keeps_the_tab_after_a_period_change(self):
+        self.load("index.html")
+        self.c.js("document.querySelector('.tab[data-tab=p1]').click()")
+        self.c.js("""document.querySelector("#ppbar button.cvpd[data-name='3m']").click()""")
+        self.assertEqual(self.c.js("location.hash"), "#p=3m")
+        target = self.c.js("""(() => {const a = document.querySelectorAll('.toc a[href^="#"]')[6]; a.click(); return a.hash})()""")
+        self.assertEqual(self.c.js("location.hash"), target + "&tab=p1")
+        self.c.js("history.scrollRestoration = 'manual'; window.scrollTo({top: 0, behavior: 'instant'}); window.__beforeReload = 1")
+        self.c.call("Page.reload", ignoreCache=True)
+        self.load("index.html", wait_nav=True)
+        top, bar = self.c.js("[document.querySelector(%s).getBoundingClientRect().top, "
+                             "document.querySelector('.bar').getBoundingClientRect().bottom]" % json.dumps(target))
+        self.assertTrue(bar <= top <= bar + 20, (top, bar))
+        self.assertEqual(self.c.js("document.querySelector('.tab[aria-selected=true]').dataset.tab"), "p1")
 
     def test_the_index(self):
         c = self.c

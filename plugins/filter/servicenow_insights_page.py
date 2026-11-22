@@ -684,20 +684,26 @@ SCRIPT = r"""(function(){"use strict";
      the address shows it (history.replaceState - no new step), so Back leaves the report in one click. What the browser does for a #link
      is done here: the closed section around it opens, a row is marked (is-target, as tr:target), and the page scrolls to it - as the page's own scroll-behavior says
      (smooth under no-preference), at once when motion is off (a motion-off page or ?motion=off, the system's request). A link with a modifier key, another target or a name not on the page: the browser's own. */
+  var marked=null;
+  function openDetails(t){for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;}
+  function fragmentTab(hash){var m=/[#&]tab=([^&]*)/.exec(hash);
+    try{return m&&document.querySelector('.tab[data-tab="'+CSS.escape(decodeURIComponent(m[1]))+'"]')}catch(x){return null}}
+  function selectTab(b){var id=b.getAttribute("data-tab");document.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b?"true":"false")});
+    document.querySelectorAll(".tabs~.panel").forEach(function(p){p.classList.toggle("on",p.id===id)});return id}
   (function(){var H=document.documentElement;
     function still(){if(H.classList.contains('motion-off')||H.getAttribute('data-motion')==='off'||/[?&]motion=off\b/.test(location.search))return true;
       if(H.classList.contains('motion-always'))return false;return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)}
-    var marked=null;
-    /* one highlight: a row the address names when the page opens is marked the same way (no tr:target in the CSS) */
-    try{var t0=location.hash.length>1&&document.getElementById(decodeURIComponent(location.hash.slice(1)));if(t0&&t0.tagName==='TR'){marked=t0;t0.classList.add('is-target')}}catch(x){}
     document.addEventListener('click',function(e){
       if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
       var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||(a.target&&a.target!=='_self')||a.hasAttribute('download'))return;
-      var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1))}catch(x){return}
+      var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1).split('&tab=')[0])}catch(x){return}
       var t=id?document.getElementById(id):null;if(id&&!t)return;
       e.preventDefault();
-      for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;   /* the place itself too: a closed section opens */
-      try{history.replaceState(history.state,'',id?h:location.pathname+location.search)}catch(x){}
+      var tab=fragmentTab(h),url=id?h.split('&tab=')[0]:location.pathname+location.search;
+      if(tab)selectTab(tab);else tab=document.querySelector('.tab[aria-selected="true"]');
+      openDetails(t);
+      if(tab)url+=(id?'&':'#')+'tab='+encodeURIComponent(tab.getAttribute('data-tab'));
+      try{history.replaceState(history.state,'',url)}catch(x){}
       if(marked)marked.classList.remove('is-target');marked=t&&t.tagName==='TR'?t:null;if(marked)marked.classList.add('is-target');
       var b=still()?'instant':'auto';
       try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}
@@ -759,12 +765,10 @@ D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointe
  if(!s&&inc&&diff)asc=false;var dir=asc?"asc":"desc";
  th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);var ar=D.createElement("span");ar.className="ar";ar.textContent=(dir==="asc"?" \u25b2":" \u25bc");th.appendChild(ar);
  var by=[].map.call(tb.rows,function(r){return[r,skey(cval(r.cells[i]))]});by.sort(function(a,b){return scmp(a[1],b[1],asc)});by.forEach(function(x){tb.appendChild(x[0])})})});
-D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-tab");D.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b?"true":"false")});
- D.querySelectorAll(".tabs~.panel").forEach(function(p){p.classList.toggle("on",p.id===id)});
+D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){var id=selectTab(b);
  /* 1.87.2: the tab in the address (replaced: no new step), the rest of it kept - a reload or a shared link opens it again */
  var hs=location.hash.replace(/^#/,"").split("&").filter(function(x){return x&&!/^tab=/.test(x)});hs.push("tab="+encodeURIComponent(id));
  try{history.replaceState(history.state,"","#"+hs.join("&"))}catch(x){}})});
-(function(){var m=/[#&]tab=([^&]*)/.exec(location.hash),b=null;try{b=m&&D.querySelector('.tab[data-tab="'+CSS.escape(decodeURIComponent(m[1]))+'"]')}catch(x){}if(b)b.click()})();
 /* the team picker and the side bar's filter (0.96.0); t opens the picker, / goes to the search, Esc closes */
 var pk=D.getElementById("picker"),pq=D.getElementById("pickq"),pl=pk?[].slice.call(pk.querySelectorAll(".pickpop a")):[],ai=-1;
 function shown(){return pl.filter(function(a){return !a.parentNode.hidden})}
@@ -1099,6 +1103,13 @@ window.addEventListener("beforeprint",function(){D.querySelectorAll("main detail
  tb.querySelectorAll("th[data-bks]").forEach(function(th){th.addEventListener("click",function(ev){if(!ev.target.closest(".bq"))sortBy(th)});
   th.addEventListener("keydown",function(ev){if(ev.key==="Enter"&&!ev.target.closest(".bq"))sortBy(th)})});
  draw()})();
+/* The browser cannot scroll to a compound fragment. Restore its target after the selected tab is visible. */
+function restoreFragment(){var hash=location.hash,b=fragmentTab(hash),t=null;
+ try{t=D.getElementById(decodeURIComponent(hash.slice(1).split('&tab=')[0]))}catch(x){}
+ if(b)selectTab(b);
+ if(marked)marked.classList.remove('is-target');marked=t&&t.tagName==='TR'?t:null;if(marked)marked.classList.add('is-target');
+ if(t){openDetails(t);try{t.scrollIntoView({behavior:'instant',block:'start'})}catch(x){t.scrollIntoView(true)}}}
+window.addEventListener("hashchange",restoreFragment);restoreFragment();
 }
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
 })();"""

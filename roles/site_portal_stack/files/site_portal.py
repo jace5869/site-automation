@@ -3525,6 +3525,7 @@ class NetLive(object):
         self.stale, self.fails, self.seen, self.thread, self.reads = "", 0, 0.0, None, 0
         self.source = source or SwisSource(cfg)
         self.raw, self.full_at, self.kind, self.from_disk = None, 0.0, "", False
+        self.full_retry_at, self.topology_at = 0.0, 0.0
         self.cache = os.path.join(cfg.data, "netmap-cache.json")
         o = cfg.netmap_opts
         self.bad = site_swis.check_opts(o)                   # a setting that cannot work: said as the reason, never read
@@ -3548,6 +3549,7 @@ class NetLive(object):
             sig_url, sig_opts = self._sig()
             if d.get("v") == 1 and isinstance(d.get("map"), str) and d["map"] and d.get("url") == sig_url:
                 self.map_json, self.read_at, self.full_at = d["map"], float(d.get("read_at") or 0), float(d.get("full_at") or 0)
+                self.topology_at = float(d.get("topology_at") or 0)  # legacy full_at could have moved on a failed read
                 self.raw = d.get("raw") if isinstance(d.get("raw"), dict) else None
                 self.fp = str(d.get("fp") or "")
                 if d.get("opts") != sig_opts:           # the settings changed since: shown as it was, the next read is whole
@@ -3567,7 +3569,7 @@ class NetLive(object):
                 pass
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump({"v": 1, "read_at": self.read_at, "full_at": self.full_at, "kind": self.kind, "map": body, "raw": raw,
+                json.dump({"v": 1, "read_at": self.read_at, "full_at": self.full_at, "topology_at": self.topology_at, "kind": self.kind, "map": body, "raw": raw,
                            "url": sig_url, "opts": sig_opts, "fp": self.fp}, fh, separators=(",", ":"), ensure_ascii=False)
             os.replace(tmp, self.cache)                          # whole or not at all
         except OSError as e:
@@ -3591,17 +3593,17 @@ class NetLive(object):
         full_every = max(NETMAP_FULL_MIN, int(o.get("full_seconds") if o.get("full_seconds") is not None else 1800))
         if self.bad:
             raise ValueError("a netmap setting cannot work: " + "; ".join(self.bad))
-        if self.raw is None or time.time() - self.full_at >= full_every:
+        if self.raw is None or time.time() >= max(self.full_at + full_every, self.full_retry_at):
             try:
                 raw, kind = self.source.read_full(), "full"
             except Exception as e:  # pylint: disable=broad-except
                 if self.raw is None:
                     raise
                 self.log.add({"event": "netmap", "read": "whole map failed, status read on the kept one", "why": clean(str(e), 200)})
-                raw, kind = self.source.read_status(self.raw), "status"       # the whole map failed: the kept one, its status fresh
-                self.full_at = time.time() - full_every + max(NETMAP_FULL_MIN // 2, self.cfg.netmap_seconds)   # whole again soon
+                raw, kind = self.source.read_status(self.raw), "fallback"     # the whole map failed: the kept one, its status fresh
+                self.full_retry_at = time.time() + max(NETMAP_FULL_MIN // 2, self.cfg.netmap_seconds)   # whole again soon
         else:
-            raw, kind = self.source.read_status(self.raw), "status"
+            raw, kind = self.source.read_status(self.raw), "fallback" if self.kind == "fallback" else "status"
         m = site_swis.model(raw, {"site_by": o.get("site_by") or "auto", "site_split": o.get("site_split", ","), "sites": o.get("sites") or {},
                                   "lat_property": o.get("lat_property") or "", "lon_property": o.get("lon_property") or "",
                                   "properties": o.get("properties") or [], "warn_util": o.get("warn_util", 90), "no_site": o.get("no_site") or "Not placed",
@@ -3629,6 +3631,7 @@ class NetLive(object):
                     self.stale, self.fails, self.reads, self.kind, self.from_disk, self.raw = "", 0, self.reads + 1, kind, False, raw
                     if kind == "full":
                         self.full_at = started
+                        self.topology_at = started if raw.get("topology_ok") else 0.0
                 self._save(body, raw)
                 if was or self.reads == 1 or kind == "full":
                     self.log.add({"event": "netmap", "read": "ok", "kind": kind, "nodes": len(data["nodes"]), "seconds": raw.get("seconds"),
@@ -3652,10 +3655,16 @@ class NetLive(object):
         now = time.time()
         with self.lock:
             m, etag, read_at, stale, nxt = self.map_json, self.etag, self.read_at, self.stale, self.next_at
-            kind, from_disk, cut = self.kind, self.from_disk, bool((self.raw or {}).get("status_cut"))
+            links_at = self.topology_at
+            show_links = self.kind == "fallback" or self.from_disk or (self.kind == "status" and not links_at)
+            kind = "status" if self.kind == "fallback" else self.kind
+            from_disk, cut = self.from_disk, bool((self.raw or {}).get("status_cut"))
         head = {"ok": bool(m), "age": int(now - read_at) if read_at else None, "next": max(0, int(nxt - now)) if nxt else self.cfg.netmap_seconds,
                 "poll": self.cfg.netmap_seconds, "stale": stale, "kind": kind, "from_disk": from_disk, "cut": cut,
                 "as_of": shown(self.cfg, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(read_at))) if read_at else "", "source": self.source.kind}
+        if show_links:
+            head["links_as_of"] = shown(self.cfg, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(links_at))) if links_at else "unknown"
+            etag = '%s-f%d"' % (etag[:-1], links_at)
         if not m:
             head["why"] = ("SolarWinds could not be read: " + stale) if stale else ""
             return 200, json.dumps(head), ""

@@ -1742,6 +1742,44 @@ class Senders(unittest.TestCase):
 
 
 @unittest.skipUnless(__import__("shutil").which("node"), "no node here")
+class InsightsLinks(unittest.TestCase):
+    def test_click_selects_the_tab_before_scrolling(self):
+        dom = """
+const assert = require('node:assert/strict'), window = {}, location = {search: ''}, CSS = {escape: s => s};
+const history = {replaceState(state, title, url) {location.hash = url}};
+const tabs = ['p0', 'p1'].map(id => ({
+  'data-tab': id, 'aria-selected': String(id === 'p0'),
+  getAttribute(k) {return this[k]}, setAttribute(k, v) {this[k] = v}
+}));
+const panels = tabs.map(t => ({id: t['data-tab'], classList: {
+  on: t['data-tab'] === 'p0', toggle(k, v) {this[k] = v}
+}}));
+const details = {tagName: 'DETAILS', open: false}, scrolled = [];
+const target = {tagName: 'INPUT', parentNode: details, focus() {},
+  scrollIntoView() {scrolled.push([panels[1].classList.on, details.open])}};
+const listeners = {}, document = {readyState: 'loading', documentElement: {classList: {contains: () => true}},
+  addEventListener(k, fn) {listeners[k] = fn}, getElementById(id) {return id === 'cvq' ? target : null},
+  querySelectorAll(s) {return {'.tab': tabs, '.tabs~.panel': panels}[s]},
+  querySelector(s) {return tabs.find(t => s === '.tab[data-tab="' + t['data-tab'] + '"]' ||
+    (s === '.tab[aria-selected="true"]' && t['aria-selected'] === 'true'))}
+};
+"""
+        clicks = """
+for (const href of ['#cvq&tab=p1', '#cvq']) {
+  details.open = false;
+  const a = {getAttribute: () => href, hasAttribute: () => false};
+  const e = {target: {closest: () => a}, preventDefault() {this.defaultPrevented = true}};
+  listeners.click(e);
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(location.hash, '#cvq&tab=p1');
+  assert.deepEqual(tabs.map(t => t['aria-selected']), ['false', 'true']);
+  assert.deepEqual(scrolled.splice(0), [[true, true]]);
+}
+"""
+        subprocess.run(["node"], input=dom + P.SCRIPT + clicks, text=True, check=True)
+
+
+@unittest.skipUnless(__import__("shutil").which("node"), "no node here")
 class InsightsSort(unittest.TestCase):
     """1.18.0: the page's sort key is the website's (site_report.js 1.20.0): a lone number as that number, IPv4 by its
     octets, versions and host2 before host10, numbers before text, an empty cell or a lone dash last both ways."""
