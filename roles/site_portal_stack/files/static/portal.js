@@ -253,7 +253,7 @@ function jobsPage() {
     const row = pane.querySelector("#decide .dbtns[data-aid]");
     if (!row || row.dataset.wired) return;
     row.dataset.wired = "1";
-    decider(row, +row.dataset.aid, () => { last = 0; wait = 0; tick(); });
+    decider(row, +row.dataset.aid, () => { last = 0; tick(); });         // asked at once (last 0), the wait kept: a failed read never loops (1.110.0)
   };
   decideBox();
   if (+pane.dataset.wait) wait = +pane.dataset.wait;
@@ -340,7 +340,7 @@ function jobsPage() {
         putList(doc.querySelector("#jl"));
         wait = stale ? Math.min(Math.max(wait * 2, 6000), 30000) : (paneLive() ? (+pane.dataset.wait || 3000) : 6000);
       }
-    } catch (e) { wait = Math.min(wait * 2, 30000); }                       // a failed answer: ask again later, never stop for good
+    } catch (e) { wait = Math.min(Math.max(wait * 2, 3000), 30000); }       // a failed answer: ask again later (3 s at least), never stop for good
     busy = false;
     if (paneLive() || listLive()) timer = setTimeout(tick, wait);
   }
@@ -720,9 +720,18 @@ function decider(row, aid, after) {
         hold(false);
         setTimeout(() => after(d), 1500);
       } catch (e) {
+        // 1.110.0 (1.92.0 review): never a Sure? left behind - it would hold the list's 15 s read and the job page's pane.
+        // Decided already, timed out or not allowed (404, 403): the message alone, then the list or the pane is read again;
+        // anything else (AAP did not take it): Approve / Deny again, with the message, to try once more.
+        if (e.status === 404 || e.status === 403) {
+          row.replaceChildren(msg);
+          hold(false);
+          setTimeout(() => after(null), 3000);
+        } else {
+          draw();
+        }
         msg.textContent = e.message;
         msg.className = "state bad";
-        for (const x of row.querySelectorAll("button")) x.disabled = false;
       }
     });
   };

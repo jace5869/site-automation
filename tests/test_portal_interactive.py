@@ -151,6 +151,47 @@ class Interactive(unittest.TestCase):
         self.assertTrue(self.c.js("!![...document.querySelectorAll('#approvals button')].find(b => b.textContent === 'Approve')"))        # Back: nothing was decided
         self.assertEqual(self.c.js("document.querySelectorAll('#approvals tr.locked').length"), 0)
 
+    FAKE_POST = ("(() => { window.__f = window.__f || window.fetch; window.fetch = (u, o) => (o && o.method === 'POST' && /api\\/approvals\\/\\d+\\/approve$/.test(u))"
+                 " ? Promise.resolve(new Response(JSON.stringify({error: %s}), {status: %d, headers: {'Content-Type': 'application/json'}})) : window.__f(u, o); })()")
+    SURE = "!!document.querySelector('#approvals .decs .chip.s-warning')"
+
+    def approve_with(self, status, error):
+        self.open("approvals?__who=appr")
+        self.wait("document.querySelectorAll('#approvals tbody tr .decs button').length > 0", "the approvals were drawn")
+        self.c.js(self.FAKE_POST % (json.dumps(error), status))
+        self.c.js("document.querySelector('#approvals table').dataset.old = '1'")
+        self.c.js("document.querySelector('#approvals .decs button.pri').click()")
+        self.assertTrue(self.c.js(self.SURE))
+        self.c.js("[...document.querySelectorAll('#approvals button')].find(b => b.textContent === 'Yes, approve').click()")
+
+    def test_5b_a_decision_that_fails_leaves_no_sure_behind(self):
+        # 1.110.0 (1.92.0 review): decided already (404) - the message alone, then the list is read again (it never froze)
+        self.approve_with(404, "Approval 7 is not pending any more (decided already, or timed out).")
+        self.wait("[...document.querySelectorAll('#approvals .decs .state.bad')].some(s => s.textContent.includes('not pending any more'))", "the message")
+        self.assertFalse(self.c.js(self.SURE))
+        self.wait("!document.querySelector('#approvals table[data-old]')", "the list read again", 10)
+        # AAP did not take it (502): Approve / Deny again with the message, to try once more
+        self.approve_with(502, "AAP did not take it (HTTP 500): busy")
+        self.wait("[...document.querySelectorAll('#approvals .decs .state.bad')].some(s => s.textContent.includes('AAP did not take it'))", "the message")
+        self.assertFalse(self.c.js(self.SURE))
+        row = "[...document.querySelectorAll('#approvals .decs')].find(d => d.querySelector('.state.bad'))"
+        self.assertEqual(self.c.js("[...%s.querySelectorAll('button')].map(b => b.textContent + (b.disabled ? '-off' : '')).join(',')" % row), "Approve,Deny")
+
+    def test_5c_the_job_page_box_is_let_go_after_a_failed_decision(self):
+        # 1.110.0 (Codex): the job page's box - no Sure?, no hold left, and the pane's next read draws the box again
+        self.open("jobs/%d?__who=appr" % self.ids["plan"])
+        self.wait("!!document.querySelector('#decide .dbtns button.pri')", "the decision box")
+        self.c.js(self.FAKE_POST % (json.dumps("Approval 7 is not pending any more (decided already, or timed out)."), 404))
+        self.c.js("document.getElementById('decide').dataset.old = '1'")
+        self.c.js("document.querySelector('#decide .dbtns button.pri').click()")
+        self.assertEqual(self.c.js("document.getElementById('decide').dataset.hold"), "1")                     # held while asked
+        self.c.js("[...document.querySelectorAll('#decide button')].find(b => b.textContent === 'Yes, approve').click()")
+        self.wait("(document.querySelector('#decide .state.bad') || {}).textContent === 'Approval 7 is not pending any more (decided already, or timed out).'",
+                  "the message")
+        self.assertFalse(self.c.js("!!document.querySelector('#decide .dbtns .chip.s-warning')"))
+        self.assertIsNone(self.c.js("document.getElementById('decide').dataset.hold || null"))
+        self.wait("!document.querySelector('#decide[data-old]') && !!document.querySelector('#decide .dbtns button.pri')", "the pane read again", 15)
+
     def test_6_a_person_who_cannot_decide_has_a_grey_row(self):
         self.open("approvals")
         self.wait("document.querySelectorAll('#approvals tbody tr').length > 0", "the approvals were drawn")

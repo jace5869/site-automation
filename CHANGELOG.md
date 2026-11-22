@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.110.0 — 2026-11-22
+
+**Nothing to set up.**
+
+**The site portal's workflows and approvals: three gaps from the review of 1.92.0.**
+
+- When AAP did not answer for a workflow's steps and the portal had no full list kept (just after a start), a step
+  could show as a card of its own. Now every job template with the label `portal` and without `portal-alone` is held
+  back until AAP answers. *Why isn't my template here?* names each one: *held back for now*.
+- A waiting workflow whose second check was still queued or running (a Windows check beside the Linux one) was kept
+  with half its plan. *What it will change* now waits for every check to be over; it is read again every 10 seconds.
+- A decision AAP refused (decided already, or AAP busy) left the *Sure?* question in place. That froze the Approvals
+  page's 15-second update and held the job page. Now the message shows. Decided already, timed out or not allowed:
+  the list or the pane is read again. AAP did not take it: **Approve** and **Deny** come back, to try again.
+- Docs: SITE_PORTAL.md (Approvals, What it will change, Workflows, not their parts); the Ops guide PDF.
+- Tests: test_portal_workflows.py (Review1110), test_portal_interactive.py (a decision that fails, in Chromium).
 ## 1.109.0 — 2026-11-22
 
 **SolarWinds snapshot: four small fixes from the 1.96 review**

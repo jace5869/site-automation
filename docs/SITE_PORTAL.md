@@ -569,6 +569,8 @@ the check's plan (*What it will change*, below) and the report the steps before 
 
 - **Approve** and **Deny** are there only for the people in `portal_approvers`, and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
   (*Sure? Yes, approve / Back*).
+  - A decision AAP refuses (1.110.0) shows its message. Decided already, timed out or not allowed: the list is read
+    again after 3 seconds. Anything else: **Approve** and **Deny** are back, to try again. The list keeps updating.
 - **Everyone else sees why, in words to act on**, with the setting's name:
   - *You are not in `portal_approvers`* - only the approvers decide.
   - *You started this run* - another approver decides (`portal_allow_self_approval`).
@@ -607,6 +609,8 @@ Each of our checks that waits for an approval leaves a short summary of its plan
 - The checks that write it: the fapolicyd check, the STIG full and drift scans, the checklist import's check, Disk - plan a clean up,
   Service - look, and fapolicyd - allow this: check. Two side by side (Linux and Windows) are one summary.
 - A check without one shows only the report button.
+- While a check is still queued or running beside another (Linux and Windows), the summary is read again every 10 seconds
+  until both are over (1.110.0). It never stays with one half.
 - At most 50 items are kept. Only short words of the check's own: no command output, no secret.
 
 ### Fewer AAP calls (1.92.0)
@@ -945,6 +949,9 @@ workflow on the portal (found in AAP or built in) gets **no card of its own**.
   `playbooks/workflow_gate.yml`. They do nothing without a workflow's plan.
 - **Why isn't my template here?** says it in one line, *Hidden as workflow steps: N*. Open it for each name and the
   workflow it is a step of.
+- **When AAP does not answer for a workflow's steps** (1.110.0), the portal keeps its last full list. With no full list
+  yet (just after a start), every job template with the label `portal` and without `portal-alone` is *held back for
+  now* until AAP answers. A step never shows as a card of its own.
 - **AAP - set up portal actions** never gives the label to a step (a publish pattern that matches one says so and skips it).
   Its **Check** - and **AAP - set up job templates**' - lists each step that carries the label:
   *remove the portal label from X (a step of Y)*. It is said, never removed.

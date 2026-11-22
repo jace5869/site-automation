@@ -59,6 +59,28 @@ AAP_TIME = re.compile(r"^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d)")
 BODY_MAX = 65536                    # a POST's body
 TOKEN_HOURS = 8                     # a page's token is good this long
 DONE = ("successful", "failed", "error", "canceled")
+
+
+def after_approval(nodes):
+    """1.110.0: the ids of the workflow job nodes that come after an approval node still waiting for its decision (its success,
+    failure and always links, on and on) - the steps that wait for that decision, never one of the checks before it. An
+    approval already decided blocks nothing: the checks it started run, and are waited for (Codex: approval A passed, its
+    Linux and Windows checks run, Linux opens approval B while Windows still runs - B's plan waits for Windows)."""
+    kids = dict((n.get("id"), [int(x) for k in ("success_nodes", "failure_nodes", "always_nodes") for x in (n.get(k) or [])]) for n in nodes)
+
+    def waiting(n):
+        j = (n.get("summary_fields") or {}).get("job") or {}
+        approval = j.get("type") == "workflow_approval" or \
+            ((n.get("summary_fields") or {}).get("unified_job_template") or {}).get("unified_job_type") == "workflow_approval"
+        return approval and j.get("status") not in DONE
+    todo = [k for n in nodes if waiting(n) for k in kids.get(n.get("id")) or []]
+    seen = set()
+    while todo:
+        k = todo.pop()
+        if k not in seen:
+            seen.add(k)
+            todo.extend(kids.get(k) or [])
+    return seen
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 LOOKS = ("atlas", "brief", "ops")            # the report website's looks made for a browser (report_web_theme)
 PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
@@ -568,7 +590,8 @@ class Aap(object):
         out = empty_discovery()
         labelled_jobs = []                              # 1.92.0: (id, name, playbook, labels) of each labelled job template
         wf_steps = {}                                   # 1.92.0: job template id -> [the portal workflows it is a step of]
-        seen_inv = set()                                # 1.78.4: the distinct inventories of the Limits so far (portal_inventories_max)
+        wf_unsure = []                                  # 1.110.0: the workflows whose steps AAP did not answer for in this pass
+        seen_inv = set()                               # 1.78.4: the distinct inventories of the Limits so far (portal_inventories_max)
         prior_inventories = sorted(iid for iid, name in self.inv_names.items() if name is not None)
         self.inv_names = {}
         have = dict(((a["aap"]["type"], a["aap"]["name"]), n) for n, a in builtin.items())
@@ -623,6 +646,9 @@ class Aap(object):
             out["labelled"] += int(result.labelled)
             if result.labels is not None and key[0] == "job_templates":
                 labelled_jobs.append((key[1], tname, result.playbook, result.labels))
+            if result.transient and key[0] == "workflow_job_templates":
+                wf_unsure.append(tname)                 # 1.110.0: its labels, details or steps got no answer - its steps are not known
+                out["incomplete"] = True                # said here: an inventory check below may skip it without (Codex)
             if result.clash:
                 out["clashes"].append((tname, result.clash))
                 continue
@@ -632,6 +658,9 @@ class Aap(object):
                 if why:
                     out["skipped"].append((tname, why))
                     out["incomplete"] |= tr
+                    if tr and key[0] == "workflow_job_templates":
+                        wf_unsure.append(tname)         # 1.110.0: not a card this pass, so its steps are not hidden by it
+                        out["incomplete"] = True
                     continue
                 seen_inv.add(iid)
             if result.skipped:
@@ -650,7 +679,7 @@ class Aap(object):
                     wf_steps.setdefault(jid, []).append(wf_title)
         self.template_reads = kept
         self.inv_names = {iid: self.inv_names[iid] for iid in seen_inv}
-        self._hide_steps(out, builtin, labelled_jobs, wf_steps)
+        self._hide_steps(out, builtin, labelled_jobs, wf_steps, wf_unsure)
         return out
 
     def _read_template(self, typ, kind, r, have, unified):
@@ -737,11 +766,15 @@ class Aap(object):
             "approval": cfg.label_approval in labels or tname in cfg.approval_required}
         return TemplateRead(action=action, inventory=limit_inv, steps=steps)
 
-    def _hide_steps(self, out, builtin, labelled_jobs, wf_steps):
+    def _hide_steps(self, out, builtin, labelled_jobs, wf_steps, wf_unsure=()):
         """1.92.0: the portal shows a workflow, never its parts. A labelled job template that is a step of a portal workflow (found
         here or built in) has no card of its own - unless it also carries portal_label_alone (a check that is a useful report on its
         own); one that runs a playbook that does nothing without a workflow's plan (LOCAL_ONLY_PLAYBOOKS) never has one, whatever its
-        labels. Each is listed in out['hidden'] as (name, why) for the help ("Why isn't my template here?")."""
+        labels. Each is listed in out['hidden'] as (name, why) for the help ("Why isn't my template here?").
+        1.110.0 (1.92.0 review): a workflow whose steps AAP did not answer for (wf_unsure, or a built-in one here) leaves this pass
+        incomplete - the portal keeps its last whole list - but with no whole list kept, this pass is what is shown: every labelled job
+        template without portal_label_alone is then held back (it may be one of those steps), never shown as a card of its own."""
+        unsure = list(wf_unsure)
         # the built-in workflows' steps too; one not resolved yet (AAP was not there at the start, or it is new) is resolved here
         # first (1.92.0 review) - and a read AAP did not answer leaves this pass incomplete, so the last whole list stays
         # 1.92.0 on 1.99.0: one AAP said is not there is looked up again after RESOLVE_BACKOFF, not on every pass (one GET each); one AAP did
@@ -755,14 +788,18 @@ class Aap(object):
         todo = dict((n, a) for n, a in wf_builtin.items() if not (self.ids.get(n) or (None, ""))[0] and (n not in self.ids or due(n)))
         if todo:
             self.resolve(todo)
-            if any(self.resolve_seen.get(n, (None, True))[1] for n in todo):
-                out["incomplete"] = True
+            for n in todo:
+                if self.resolve_seen.get(n, (None, True))[1]:
+                    out["incomplete"] = True
+                    unsure.append(wf_builtin[n].get("title") or wf_builtin[n]["aap"]["name"])
         for name, a in sorted(wf_builtin.items()):
             tid = (self.ids.get(name) or (None, ""))[0]
             if tid:
                 rows, why, tr = self._paged_t("workflow_job_templates/%d/workflow_nodes/?order_by=id&page_size=200" % int(tid))
                 if why:
                     out["incomplete"] = out["incomplete"] or tr
+                    if tr:
+                        unsure.append(a.get("title") or a["aap"]["name"])
                 for jid in ([] if why else step_ids(rows)):
                     wf_steps.setdefault(jid, []).append(a.get("title") or a["aap"]["name"])
         for jid, tname, pb, labels in labelled_jobs:
@@ -776,6 +813,14 @@ class Aap(object):
             out["actions"].pop("jt_%d" % jid, None)
             out["skipped"] = [x for x in out["skipped"] if x[0] != tname]
             out["hidden"].append((tname, why))
+        if unsure:
+            ws = sorted(set(unsure))
+            why = "held back for now: AAP did not answer for the steps of %s%s, and it may be one of them" % (
+                ", ".join(ws[:3]), " and %d more" % (len(ws) - 3) if len(ws) > 3 else "")
+            for jid, tname, pb, labels in labelled_jobs:
+                if "jt_%d" % jid in out["actions"] and self.cfg.label_alone not in labels:
+                    out["actions"].pop("jt_%d" % jid)
+                    out["hidden"].append((tname, why))
 
     def _inventory_ok(self, iid, seen):
         """An inventory the Limit of a found template is checked against -> (its name, '' or why not): the account must be able to read it, and at most
@@ -2425,11 +2470,15 @@ class Portal(object):
             for jid in sorted(set(jobs) - set(arts)):          # an AAP whose list leaves the artifacts out: each check job once
                 c2, jd = self.aap.call("GET", "jobs/%d/" % jid)
                 arts[jid] = (jd.get("artifacts") or {}) if c2 == 200 and isinstance(jd, dict) else {}
+        after = after_approval(nodes if nodes_ok else [])
         for w in wids:
             # 1.92.0 review: a workflow whose reads failed, or whose checks are not all over yet (Linux and Windows side by side),
-            # is read again next cycle - never kept half known
-            if w not in wjs or not nodes_ok or any(n.get("workflow_job") == w and ((n.get("summary_fields") or {}).get("job") or {}).get("type") == "job"
-                                                    and ((n.get("summary_fields") or {}).get("job") or {}).get("status") not in DONE + ("pending", "waiting", "new", None)
+            # is read again next cycle - never kept half known. 1.110.0 (1.92.0 review): a check still new, pending or waiting (a Windows
+            # check queued beside the Linux one) is not over either: its plan would be left out of "What it will change". A job after
+            # an approval (the apply) is not a check: it waits for the decision, and would have the workflow read every cycle (Codex)
+            if w not in wjs or not nodes_ok or any(n.get("workflow_job") == w and n.get("id") not in after
+                                                    and ((n.get("summary_fields") or {}).get("job") or {}).get("type") == "job"
+                                                    and ((n.get("summary_fields") or {}).get("job") or {}).get("status") not in DONE
                                                     for n in nodes or []):
                 if w in wjs and nodes_ok:
                     al = [arts.get(j) or {} for j in by_wf.get(w, [])]

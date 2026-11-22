@@ -344,6 +344,173 @@ class On1990(unittest.TestCase):
             self.assertEqual(asks(), 4)
 
 
+class Review1110(unittest.TestCase):
+    """1.110.0, the P2s of the 1.92.0 review: (1) a pass that could not read a workflow's steps, with no whole list kept, shows no
+    labelled job template as a card of its own (it may be a step); (2) a waiting workflow whose checks are not all over (one still
+    new, pending or waiting) is read again, never kept with half its plan; (3) portal.js leaves no Sure? behind a failed decision."""
+    Api = On1990.Api
+    page = staticmethod(On1990.page)
+    setUp = On1990.setUp
+    route = On1990.route
+
+    def test_1_a_failed_step_read_holds_back_the_labelled_job_templates(self):
+        lab = {"count": 2, "results": [{"name": "portal"}, {"name": "portal-alone"}]}
+        self.rows.append({"type": "job_template", "id": 4, "name": "Disk - usage", "playbook": "playbooks/disk_usage.yml", "modified": "2026-11-21T00:00:00Z",
+                          "survey_enabled": False, "summary_fields": {"labels": lab, "user_capabilities": {"start": True}}})
+        self.down.add("workflow_job_templates/3/workflow_nodes/")
+        got = self.aap.discover({})
+        self.assertTrue(got["incomplete"])
+        self.assertEqual(sorted(got["actions"]), ["jt_4"])               # before 1.110.0: jt_1 (the workflow's step) and jt_2 too
+        hidden = dict(got["hidden"])
+        self.assertEqual(set(hidden), {"fapolicyd - check", "Disk - report"})
+        self.assertEqual(hidden["fapolicyd - check"],
+                         "held back for now: AAP did not answer for the steps of Linux - fapolicyd - daily, and it may be one of them")
+        self.down.clear()                                                # answered again: the step hidden as a step, the other a card
+        got = self.aap.discover({})
+        self.assertFalse(got["incomplete"])
+        self.assertEqual(sorted(got["actions"]), ["jt_2", "jt_4", "wf_3"])
+        self.assertEqual(dict(got["hidden"]), {"fapolicyd - check": "a step of Linux - fapolicyd - daily"})
+
+    def test_1b_an_inventory_check_after_an_unanswered_step_read_keeps_the_pass_incomplete(self):
+        self.cfg.inventories_max = 1                                     # Disk - report's inventory takes the one place
+        for r in self.rows:
+            r.update(ask_limit_on_launch=True)
+        self.rows[0].update(inventory=20)
+        self.rows[1].update(inventory=10)
+        asked = []
+
+        def route(method, path, body):
+            if path.startswith("inventories/"):
+                return 200, {"id": int(path.split("/")[1]), "name": "Inventory %s" % path.split("/")[1]}
+            if path.startswith("workflow_job_templates/3/workflow_nodes/"):
+                asked.append(path)
+                if len(asked) > 1:                                       # the Limit's check read the steps; the shape's read gets no answer
+                    return 503, {}
+            return self.route(method, path, body)
+        self.api.route = route
+        got = self.aap.discover({})
+        self.assertEqual(len(asked), 2)
+        self.assertIn(("Linux - fapolicyd - daily", "its inventory would be the 2. distinct one; portal_inventories_max is 1"), got["skipped"])
+        self.assertTrue(got["incomplete"])                               # before the Codex round: False - a held-back pass taken as whole
+        self.assertNotIn("jt_2", got["actions"])
+
+    def test_2_a_built_in_workflow_with_no_answer_holds_them_back_too(self):
+        builtin = {"flow": {"title": "A built-in workflow", "aap": {"type": "workflow", "name": "Built-in flow"}, "vars": {}, "limit_from": ""}}
+        self.down.add("workflow_job_templates/?name=")
+        got = self.aap.discover(builtin)
+        self.assertTrue(got["incomplete"])
+        self.assertEqual(sorted(got["actions"]), ["wf_3"])
+        self.assertIn("the steps of A built-in workflow", dict(got["hidden"])["Disk - report"])
+        self.assertEqual(dict(got["hidden"])["fapolicyd - check"], "a step of Linux - fapolicyd - daily")     # known: said as a step
+
+    def test_3_the_portal_shows_the_held_back_pass_only_without_a_whole_list(self):
+        p = sp.Portal.__new__(sp.Portal)                                 # refresh() alone, on the stand-in AAP
+        p.cfg = self.cfg
+        p.aap, p.builtin, p.actions = self.aap, {}, {}
+        p.found, p.found_at, p.found_fails, p.whole_at = {}, 0.0, 0, 0.0
+        p.found_whole = p.found_ready = p.restored = False
+        p.connected = True
+        p.found_lock = threading.Lock()
+        p._save_catalog = lambda: None
+        self.down.add("workflow_job_templates/3/workflow_nodes/")
+        p.refresh(force=True)                                            # no whole list yet: this pass is shown - with no step card
+        self.assertEqual(sorted(p.actions), [])
+        self.down.clear()
+        p.refresh(force=True)
+        self.assertEqual(sorted(p.actions), ["jt_2", "wf_3"])
+        self.down.add("workflow_job_templates/3/workflow_nodes/")
+        self.aap.template_reads = {}                                     # read again, not from the kept reads (Codex)
+        self.api.paths.clear()
+        p.refresh(force=True)                                            # a whole list kept: it stays as it was
+        self.assertIn("workflow_job_templates/3/workflow_nodes/?order_by=id&page_size=200", self.api.paths)
+        self.assertEqual(sorted(p.actions), ["jt_2", "wf_3"])
+        self.assertIn("the list is as of the last full read", p.found["error"])
+
+    def test_4_a_check_not_over_yet_is_read_again(self):
+        status = {201: "successful", 202: "pending", 204: "pending"}
+        arts = {201: {"site_approval_summary": {"title": "Linux", "counts": {"changes": 2, "hosts": 1}, "items": [{"host": "web01.example.mil", "what": "a"}]}},
+                202: {"site_approval_summary": {"title": "Windows", "counts": {"changes": 3, "hosts": 2}, "items": [{"host": "win01.example.mil", "what": "b"}]}}}
+        calls = []
+
+        class Aap(object):
+            def _paged(self, path, pages):
+                calls.append(path)
+                if path.startswith("workflow_jobs/"):
+                    return [{"id": 100, "name": "Fapolicyd - daily"}], ""
+                if path.startswith("workflow_job_nodes/"):           # two checks -> the approval -> the apply (waits, pending, after it)
+                    return [{"id": i, "workflow_job": 100, "success_nodes": [3], "summary_fields": {"job": {"id": j, "type": "job", "status": status[j]}}}
+                            for i, j in ((1, 201), (2, 202))] + \
+                           [{"id": 3, "workflow_job": 100, "success_nodes": [4], "summary_fields": {"job": {"id": 203, "type": "workflow_approval", "status": "pending"}}},
+                            {"id": 4, "workflow_job": 100, "summary_fields": {"job": {"id": 204, "type": "job", "status": "pending"}}}], ""
+                if path.startswith("jobs/"):
+                    return [{"id": j, "artifacts": arts[j]} for j in (201, 202) if "%d" % j in path and status[j] in sp.DONE], ""
+                return [], "no"
+
+            def call(self, method, path):
+                return 404, {}
+        import types
+        p = types.SimpleNamespace(aap=Aap(), wf_info={}, wf_tmp={})
+        for st in ("new", "pending", "waiting", None):
+            status[202] = st
+            p.wf_tmp = {}
+            sp.Portal._learn(p, [100])
+            self.assertNotIn(100, p.wf_info, st)                         # before 1.110.0: kept with the Linux plan alone
+            self.assertEqual(p.wf_tmp[100]["plan"]["counts"]["changes"], 2)      # shown meanwhile, read again next cycle
+        status[202] = "successful"
+        sp.Portal._learn(p, [100])                                       # the apply after the approval waits: not a check (Codex)
+        self.assertEqual(p.wf_info[100]["plan"]["counts"], {"changes": 5, "hosts": 3, "critical": 0, "warning": 0})
+        self.assertEqual(sp.after_approval([{"id": 1, "success_nodes": [2]}, {"id": 2, "failure_nodes": [3],
+                                             "summary_fields": {"unified_job_template": {"unified_job_type": "workflow_approval"}}},
+                                            {"id": 3, "always_nodes": [4]}, {"id": 4, "success_nodes": [3]}]), {3, 4})     # on and on, loops too
+
+    def test_4b_checks_after_a_decided_approval_are_waited_for(self):
+        # Codex (67bef52f): approval A passed and started the Linux and Windows checks; Linux is over and opened approval B
+        # while Windows still runs. B's plan waits for Windows - only an approval still waiting holds back what follows it
+        status = {301: "successful", 302: "running", 303: "successful", 304: "pending", 305: "pending"}
+        summ = {301: "Linux", 302: "Windows"}
+
+        def job(i, j, kind="job", links=()):
+            return {"id": i, "workflow_job": 100, "success_nodes": list(links), "summary_fields": {"job": {"id": j, "type": kind, "status": status[j]}}}
+
+        class Aap(object):
+            def _paged(self, path, pages):
+                if path.startswith("workflow_jobs/"):
+                    return [{"id": 100, "name": "Two approvals"}], ""
+                if path.startswith("workflow_job_nodes/"):    # A (303, decided) -> Linux 301, Windows 302 -> B (304, waiting) -> apply 305
+                    return [job(1, 303, "workflow_approval", (2, 3)), job(2, 301, links=(4,)), job(3, 302, links=(4,)),
+                            job(4, 304, "workflow_approval", (5,)), job(5, 305)], ""
+                if path.startswith("jobs/"):
+                    return [{"id": j, "artifacts": {"site_approval_summary": {"title": summ[j], "counts": {"changes": 1, "hosts": 1},
+                                                                                "items": [{"host": "h%d.example.mil" % j, "what": "x"}]}}}
+                            for j in (301, 302) if "%d" % j in path and status[j] in sp.DONE], ""
+                return [], "no"
+
+            def call(self, method, path):
+                return 404, {}
+        import types
+        p = types.SimpleNamespace(aap=Aap(), wf_info={}, wf_tmp={})
+        self.assertEqual(sp.after_approval(Aap()._paged("workflow_job_nodes/", 1)[0]), {5})      # before: {2, 3, 4, 5}
+        sp.Portal._learn(p, [100])
+        self.assertNotIn(100, p.wf_info)                                 # before: kept with the Linux plan alone
+        self.assertEqual(p.wf_tmp[100]["plan"]["counts"]["changes"], 1)
+        status[302] = "successful"
+        p.wf_tmp = {}
+        sp.Portal._learn(p, [100])
+        self.assertEqual(p.wf_info[100]["plan"]["counts"]["changes"], 2)  # both checks' plans, the apply after B still waiting
+
+    def test_5_portal_js_leaves_no_sure_behind_a_failed_decision(self):
+        with open(os.path.join(FILES, "static", "portal.js")) as fh:
+            js = fh.read()
+        body = js[js.index("function decider(row, aid, after)"):js.index("// 1.92.0: \"What it will change\"")]
+        fail = body[body.index("} catch (e) {"):]
+        self.assertIn("if (e.status === 404 || e.status === 403) {\n          row.replaceChildren(msg);\n          hold(false);", fail)
+        self.assertIn("setTimeout(() => after(null), 3000);", fail)
+        self.assertIn("} else {\n          draw();\n        }", fail)       # else: Approve / Deny again (draw drops the hold)
+        self.assertIn("() => { last = 0; tick(); }", js)                # the job page: asked at once, the wait kept (no loop on a failed read)
+        self.assertIn("wait = Math.min(Math.max(wait * 2, 3000), 30000);", js)
+        self.assertNotIn("x.disabled = false", fail)                    # before 1.110.0: the Sure? row came back as it was
+
+
 class Live(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
