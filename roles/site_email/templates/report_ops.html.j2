@@ -875,15 +875,15 @@ footer{margin-top:32px}
 {%- endif %}
 <main class="main" id="top">
 {#- the header card: the status, the verdict (the report's title) and what to do; the headline number - the first tile
-    that is Critical, else Warning (not 0), else the first number; under it the subtitle and SHOW: the job, the runs #}
+    that is Critical, else Warning (not 0), else the first number (1.97.0: never a tile with counted: false, another system's); under it the subtitle and SHOW: the job, the runs #}
 {%- set hd = namespace(t=none) %}
 {%- for k in ['critical', 'warning'] %}
 {%- for t in r.summary | default([]) %}
-{%- if hd.t is none and t.status | default('') == k and (('' if t.value is none else t.value) | string) not in ['0', ''] %}{% set hd.t = t %}{% endif %}
+{%- if hd.t is none and t.counted | default(true) and t.status | default('') == k and (('' if t.value is none else t.value) | string) not in ['0', ''] %}{% set hd.t = t %}{% endif %}
 {%- endfor %}
 {%- endfor %}
 {%- for t in r.summary | default([]) %}
-{%- if hd.t is none and (('' if t.value is none else t.value) | string).replace(',', '').replace('.', '', 1).isdigit() %}{% set hd.t = t %}{% endif %}
+{%- if hd.t is none and t.counted | default(true) and (('' if t.value is none else t.value) | string).replace(',', '').replace('.', '', 1).isdigit() %}{% set hd.t = t %}{% endif %}
 {%- endfor %}
 {%- set say = {'critical': 'Review what needs attention, worst first.', 'warning': 'Some items need a look.', 'ok': 'Nothing needs action.',
                'low': 'Nothing urgent - worth knowing.', 'unknown': 'Its state could not be read.'}.get(st, '') %}
@@ -1048,7 +1048,7 @@ footer{margin-top:32px}
 {%- set catrep = secs | selectattr('cat_cells', 'defined') | selectattr('cat_cells') | list %}
 {%- for s in secs %}
 {%- set si = loop.index %}
-{%- if s.columns is defined and s.rows | default([]) and (not catrep or s.cat_cells | default(false)) %}
+{%- if s.columns is defined and s.rows | default([]) and s.counted | default(true) and (not catrep or s.cat_cells | default(false)) %}
 {%- for row in s.rows %}
 {%- set ri = loop.index0 %}
 {%- if catrep %}

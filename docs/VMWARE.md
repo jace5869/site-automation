@@ -1222,7 +1222,7 @@ each of those problems, and say how sure it is. Neither changes anything.
 |---|---|---|
 | Triggered alarms | the alarms vCenter shows now on vCenter itself, the datacenters, clusters and hosts: severity, object, alarm, since when, acknowledged by whom | red = critical, amber = warning |
 | Alarms that fired in the last 24 h | every alarm that turned yellow or red in the window, one row per alarm and object: how many times it went red and yellow, first and last change, and how it is now - still on, or cleared since (an alarm that comes and goes is worth a look too) | red / amber = still on, Low = cleared |
-| Host connection | hosts not connected to vCenter now, and hosts that lost the connection in the last 24 h and came back | red / amber |
+| Host connection | hosts not connected to vCenter now (State now says "in maintenance" too), and hosts that lost the connection in the last 24 h and came back | red / amber |
 | Failed logins | wrong user name or password: one row per user, source address and server, with the count and the first and last time | amber; red from 10 failures |
 | Virtual machine events | guest shutdowns and restarts, power-offs, resets, HA restarts and failures, and who did it | blue = someone did it, amber = HA or nobody, red = a failover or power-on failed |
 | Other errors and warnings | every other error and warning event; the same event on the same object counted once | red = error, amber = warning |

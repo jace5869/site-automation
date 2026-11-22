@@ -42,6 +42,7 @@
   vars:
     site_os: windows
     health_checks: [daily]
+    _swr_mode: health           # 1.97.0: SolarWinds says, under Findings (roles/solarwinds_report)
     _health_sets:
       daily: [disk, services, performance, time, network, eventlog]
       weekly: [security, audit, accounts, certs, trust, patching]

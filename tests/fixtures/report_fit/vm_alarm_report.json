@@ -78,7 +78,6 @@
 "",
 "",
 "",
-"",
 ""
 ]
 ],
@@ -86,8 +85,7 @@
 "Severity",
 "Host",
 "State now",
-"Maintenance",
-"Connection events",
+"Events",
 "Last event (UTC)",
 "Last message",
 "Cluster",
@@ -100,8 +98,7 @@
 [
 "CRITICAL",
 "esx02",
-"notResponding",
-"no",
+"not responding",
 1,
 "2026-10-07 05:00:00",
 "Host esx02 is not responding",

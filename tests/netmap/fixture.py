@@ -15,12 +15,13 @@ distribution. Location is "Site X, building N, ..." (the site is the text before
 Site holds "SITE-X" too (netmap_site_by: Site). WAN links between the cores, one down (Site F - Site G), one busy (Site A -
 Site H, 91 %). Some nodes down and warning, one unmanaged. Custom properties: Site, Lat, Lon, Region."""
 import json
+import os
 import random
 import sys
 
 out = sys.argv[1]
 total = int(sys.argv[2]) if len(sys.argv) > 2 else 1500
-user, password = (sys.argv[3], sys.argv[4]) if len(sys.argv) > 4 else ("svc_swis_ro", 'ro&"<test>')
+user, password = (sys.argv[3], sys.argv[4]) if len(sys.argv) > 4 else ("svc_swis_ro", os.environ.get("SWIS_FIXTURE_PASSWORD", 'ro&"<test>'))
 rnd = random.Random(1850)
 SITES = ["Site A", "Site B", "Site C", "Site D", "Site E", "Site F", "Site G", "Site H", "Site J"]
 SHARE = [.2, .16, .13, .11, .1, .09, .08, .07, .06]

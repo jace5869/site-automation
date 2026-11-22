@@ -225,7 +225,8 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ## The pings need Host > CIM > CIM interaction for the vCenter account (docs/VMWARE.md, "The ESXi network check")
 # vm_hostnet_raw: true   # the first run, or a host that refuses a parameter: the first ping and the first failed one, whole
 """),
-    "health_check.yml": ("Health check", "Machine (ACT model key with use_act)", LINUX_CHECKS, """\
+    "health_check.yml": ("Health check", "Machine (ACT model key with use_act; optional: Report database and SolarWinds (read-only) "
+                         "for SolarWinds says, docs/SOLARWINDS_REPORTS.md)", LINUX_CHECKS, """\
 ## The checks to run: daily, weekly, all, or names, e.g. [disk, services]
 # health_checks: [daily]
 ## ACT (GenAI) looks at each host with findings (docs/ADDING_ACT.md)
@@ -683,7 +684,7 @@ portal_public_url: https://stigman.example.mil/portal/
 # check_trust_remove: false
 # check_trust_remove_severities: [critical, warning]
 """),
-    "troubleshoot.yml": ("Troubleshoot", "Machine", "", """\
+    "troubleshoot.yml": ("Troubleshoot", "Machine (optional: Report database, for what SolarWinds sees)", "", """\
 ## ACT (GenAI) reads everything collected and explains the root cause (docs/ADDING_ACT.md)
 # use_act: false
 """),
@@ -791,7 +792,8 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # win_cert_restore_backup: ''               # or one backup, by its folder name
 """),
     "win_connection_test.yml": ("Windows connection test", "Machine (Windows)", "", ""),
-    "win_health_check.yml": ("Windows health check", "Machine (Windows)", WIN_CHECKS, ""),
+    "win_health_check.yml": ("Windows health check", "Machine (Windows) (optional: Report database and SolarWinds (read-only) "
+                             "for SolarWinds says)", WIN_CHECKS, ""),
     "win_stig_drift_report.yml": ("Windows STIG drift report", "Machine (Windows), STIG Manager API", "win_check_stig", """\
 ## Evaluate-STIG on the servers: empty = found (a scheduled task that runs it, else a folder named Evaluate-STIG*
 ## on the local drives - the report says where). Or read the checklists it already writes: auto
@@ -855,7 +857,7 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # tmp_cleanup_confirm: false
 """),
     "win_patch.yml": ("Windows patch", "Machine (Windows)", "", ""),
-    "win_troubleshoot.yml": ("Windows troubleshoot", "Machine (Windows)", "", ""),
+    "win_troubleshoot.yml": ("Windows troubleshoot", "Machine (Windows) (optional: Report database, for what SolarWinds sees)", "", ""),
 }
 
 # a setting named in a file every VMware job shares, but read by one playbook only
@@ -870,6 +872,17 @@ ONLY = {"vm_snapshot_cleanup_email_only_if_deleted": ("vm_snapshot_cleanup.yml",
         "use_act": (),
         # one launch only - a template that keeps it would replace the secrets on every deploy
         "stigman_replace_secrets": ()}
+# 1.97.0: SolarWinds in a report (roles/solarwinds_report) - site_findings' report step has it, but only the health checks
+# and troubleshoot ask for it (_swr_mode)
+ONLY.update(dict((k, ("health_check.yml", "win_health_check.yml", "troubleshoot.yml", "win_troubleshoot.yml"))
+                 for k in ("solarwinds_report", "solarwinds_report_skip_hosts", "solarwinds_report_volume_pct",
+                           "solarwinds_report_volume_critical_pct", "solarwinds_report_event_hours")))
+ONLY.update(dict((k, ("health_check.yml", "win_health_check.yml")) for k in (
+    "solarwinds_report_syslog", "solarwinds_report_syslog_hours", "solarwinds_report_syslog_levels", "solarwinds_report_syslog_max_rows",
+    "solarwinds_report_timeout")))
+ONLY["solarwinds_report_events_shown"] = ("troubleshoot.yml", "win_troubleshoot.yml")
+ONLY["solarwinds_db_max_age"] = ("ad_health_report.yml", "netmap_report.yml", "solarwinds_snapshot.yml", "health_check.yml", "win_health_check.yml",
+                                 "troubleshoot.yml", "win_troubleshoot.yml")
 
 # a setting a job reads in one task file only: what it is for THERE, in place of the role's general words
 # (name -> (the one task file, the words))

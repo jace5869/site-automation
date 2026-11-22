@@ -25,6 +25,7 @@
   vars:
     site_os: windows
     site_fail_on: []
+    _swr_mode: troubleshoot     # 1.97.0: what SolarWinds sees, first on the page (roles/solarwinds_report)
   pre_tasks:
     - name: Windows hosts only
       ansible.builtin.include_role:

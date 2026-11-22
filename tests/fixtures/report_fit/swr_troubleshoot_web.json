@@ -1,0 +1,242 @@
+{
+"footer": "Checks run: services",
+"head_counts": [
+[
+1,
+"warning",
+"warning"
+]
+],
+"head_scope": null,
+"sections": [
+{
+"counted": false,
+"first": true,
+"glance": [
+{
+"label": "Up",
+"name": "web01",
+"status": "ok",
+"text": "Polled 10:38 UTC (2 min ago). 192.0.2.21, Dell R750, Red Hat Enterprise Linux 9."
+},
+{
+"label": "2 alerts",
+"name": "Active alerts",
+"status": "critical",
+"text": "Application down: Apache HTTP Server (09:58). Volume /var over 95 % (10:02)."
+},
+{
+"label": "Errors",
+"name": "Its switch port",
+"status": "warning",
+"text": "sw-acc-02 Gi1/0/14, 1 Gb/s: 412 errors this hour."
+},
+{
+"label": "12",
+"name": "Events (24 h)",
+"status": "info",
+"text": "4 Alert Triggered, 2 Alert Reset, 1 Interface Down."
+}
+],
+"status": "critical",
+"text": "From the SolarWinds snapshot of 2026-11-21 10:40 UTC (6 min old).",
+"title": "What SolarWinds sees",
+"top": true
+},
+{
+"cell_status": [
+[
+"",
+"",
+"ok",
+"",
+"",
+"",
+"warning",
+""
+]
+],
+"columns": [
+"Switch",
+"Port",
+"Status",
+"Speed",
+"In %",
+"Out %",
+"Errors (1 h)",
+"Discards (1 h)"
+],
+"counted": false,
+"first": true,
+"row_status": [
+"warning"
+],
+"rows": [
+[
+"sw-acc-02",
+"Gi1/0/14",
+"Up",
+"1 Gb/s",
+"71",
+"12",
+"412",
+"0"
+]
+],
+"status": "warning",
+"text": "The port SolarWinds' topology links to this host. Errors and discards are in and out together.",
+"title": "Its switch port",
+"top": true
+},
+{
+"columns": [
+"Time (UTC)",
+"Kind",
+"Event",
+"On"
+],
+"counted": false,
+"first": true,
+"row_status": [
+"warning",
+"warning",
+"",
+"warning",
+"",
+"warning",
+"",
+"",
+"warning",
+"",
+"warning",
+""
+],
+"rows": [
+[
+"10:02",
+"Alert Triggered",
+"Volume /var over 95 %",
+"web01"
+],
+[
+"09:58",
+"Alert Triggered",
+"Application down: Apache HTTP Server",
+"web01"
+],
+[
+"09:57",
+"Interface Up",
+"Gi1/0/14 is up",
+"sw-acc-02"
+],
+[
+"09:56",
+"Interface Down",
+"Gi1/0/14 is down",
+"sw-acc-02"
+],
+[
+"08:44",
+"Alert Reset",
+"High CPU load",
+"web01"
+],
+[
+"08:21",
+"Alert Triggered",
+"High CPU load",
+"web01"
+],
+[
+"06:10",
+"Node Rebooted",
+"web01 was rebooted",
+"web01"
+],
+[
+"06:06",
+"Node Up",
+"web01 is up",
+"web01"
+],
+[
+"06:04",
+"Node Down",
+"web01 is not responding",
+"web01"
+],
+[
+"02:30",
+"Alert Reset",
+"Volume /var over 90 %",
+"web01"
+],
+[
+"01:12",
+"Alert Triggered",
+"Volume /var over 90 %",
+"web01"
+],
+[
+"00:15",
+"Node Changed",
+"Custom property Owner changed",
+"web01"
+]
+],
+"text": "Newest first. The switch's events are its port's only.",
+"title": "Its events, last 24 h (12)",
+"top": true
+},
+{
+"cards": [
+{
+"code": "journalctl -u httpd",
+"meta": "Service",
+"next": "Look further:",
+"status": "warning",
+"subject": "web01.example.mil",
+"title": "httpd restarted 4 times"
+}
+],
+"status": "warning",
+"text": "What to act on first: critical, then warning. Every finding is in the tables below.",
+"title": "Start here"
+},
+{
+"columns": [
+"Severity",
+"Check",
+"Finding",
+"Look further"
+],
+"rows": [
+[
+"WARNING",
+"services",
+"httpd restarted 4 times",
+"journalctl -u httpd"
+]
+],
+"status": "warning",
+"title": "Findings"
+}
+],
+"status": "warning",
+"summary": [
+{
+"label": "Critical",
+"note": "act now",
+"status": "ok",
+"value": 0
+},
+{
+"label": "Warning",
+"note": "plan a fix",
+"status": "warning",
+"value": 1
+}
+],
+"title": "Troubleshoot web01: 1 finding(s)"
+}

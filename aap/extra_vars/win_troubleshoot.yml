@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Windows troubleshoot"
 #   playbook:    playbooks/win_troubleshoot.yml
-#   credentials: Machine (Windows)
+#   credentials: Machine (Windows) (optional: Report database, for what SolarWinds sees)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -142,6 +142,27 @@
 ## job "Linux - auditd tuning" raises it). auditd's backlog_limit below this: a warning
 # check_containers_console_backlog_min: 8192
 
+# ---- solarwinds_report ---------------------------------------------------------------------------
+## auto = when the job has the Report database credential; false = never
+# solarwinds_report: auto
+
+## Hosts that are never in SolarWinds on purpose (a lab): left out of "Not in SolarWinds". Names or
+## patterns (* and ?), a list or text with commas. A pattern with a dot is held against the full
+## name only. e.g. [lab*, "*.test.example.mil"]
+# solarwinds_report_skip_hosts: []
+
+## a volume this full or more: warning (Volumes over 90 %)
+# solarwinds_report_volume_pct: 90
+
+## this full or more: critical
+# solarwinds_report_volume_critical_pct: 95
+
+## Troubleshoot: SolarWinds' events of the host and of its switch port, this many hours back
+# solarwinds_report_event_hours: 24
+
+## troubleshoot: the newest this many events; the rest folded under them
+# solarwinds_report_events_shown: 20
+
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it
 ## -----------------------
@@ -171,6 +192,11 @@
 ## ESXi hosts named here (and keep their own lists). Set them in all.yml. names: whole, or short
 ## either way (web01 = web01.example.mil); * and ?; any case
 # site_exclude_hosts: []
+
+# ---- netmap_report -------------------------------------------------------------------------------
+## minutes a snapshot may be old for a report (all.yml: every report reads it); 0 = never the
+## snapshot
+# solarwinds_db_max_age: 20
 
 # ---- win_check_network ---------------------------------------------------------------------------
 ## Services every Windows server must reach, e.g. win_check_network_tcp: - {name: LDAPS, host:

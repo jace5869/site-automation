@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: solarwinds_report
+  description: The hosts of a health check, a troubleshoot run or a VMware alarms report as SolarWinds sees them (read only).
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

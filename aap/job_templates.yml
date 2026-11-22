@@ -30,7 +30,7 @@ job_templates:
   - name: Health check
     playbook: playbooks/health_check.yml
     credentials: [machine]
-    optional_credentials: [act_model_key]
+    optional_credentials: [solarwinds, act_model_key, report_db]
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -95,7 +95,7 @@ job_templates:
   - name: Troubleshoot
     playbook: playbooks/troubleshoot.yml
     credentials: [machine]
-    optional_credentials: []
+    optional_credentials: [report_db]
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -1138,7 +1138,7 @@ job_templates:
   - name: Windows health check
     playbook: playbooks/win_health_check.yml
     credentials: [machine_windows]
-    optional_credentials: []
+    optional_credentials: [solarwinds, report_db]
     ask_limit: true
     ask_variables: false
     ask_inventory: false
@@ -1177,7 +1177,7 @@ job_templates:
   - name: Windows troubleshoot
     playbook: playbooks/win_troubleshoot.yml
     credentials: [machine_windows]
-    optional_credentials: []
+    optional_credentials: [report_db]
     ask_limit: true
     ask_variables: false
     ask_inventory: false
