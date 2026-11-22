@@ -404,7 +404,7 @@ class Review1012(unittest.TestCase):
         self.assertEqual(a.report_link("1")["url"], "/portal/reports/ad-forest2/latest.html")         # not on the index: the newest
 
 
-class Link1012(unittest.TestCase):
+class ReportLink1012(unittest.TestCase):
     """The full report's link: index.json's newest line marked live: ad, a page inside the folder, read again when it changed."""
 
     def test_1_the_newest_and_never_outside(self):

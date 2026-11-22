@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Site portal - deploy"
 #   playbook:    playbooks/site_portal_deploy.yml
-#   credentials: Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token)
+#   credentials: Machine, Red Hat Ansible Automation Platform (the portal's own account, with a token), Report database (reader) (optional: report_reader, for the AD page), Report database (optional: else the writer, warned)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
