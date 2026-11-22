@@ -192,6 +192,8 @@ function ringIn(pane, from) {                 // the service drew the ring at it
 const SKEL_MS = 8000;
 function unskel(box) {                        // the content back, as it was
   if (!box.dataset.skel) return;
+  clearTimeout(box._skelTimer);
+  delete box._skelTimer;
   box.replaceChildren(...(box._kept || []));
   delete box.dataset.skel;
   if (box._back) { const f = box._back; box._back = null; f(); }
@@ -199,7 +201,7 @@ function unskel(box) {                        // the content back, as it was
 function skeleton(box, rows, back) {          // the shape of what comes, while the next page loads; it goes again (back() is called) when the page stays
   if (!box || box.dataset.skel) return;
   box._back = back || null;
-  setTimeout(() => unskel(box), SKEL_MS);
+  box._skelTimer = setTimeout(() => unskel(box), SKEL_MS);
   const k = el("div", "skel");
   k.setAttribute("aria-busy", "true");
   k.setAttribute("aria-label", "Loading");
@@ -260,6 +262,7 @@ function jobsPage() {
   $("jrows").addEventListener("click", (ev) => {              // 1.87.0: another job picked - its pane's shape while its page loads
     const a = ev.target.closest && ev.target.closest("a");
     if (!a || ev.defaultPrevented || ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    if (pane.dataset.skel) { ev.preventDefault(); return; }
     if (a.getAttribute("href").split("?")[0].endsWith("/jobs/" + pane.dataset.job)) return;
     const li = a.parentNode;
     li.classList.add("picked");                                  // marked as coming; the open job keeps on and aria-current until the next page is there

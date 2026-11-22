@@ -4544,7 +4544,8 @@ class Motion1870(unittest.TestCase):
         # the open job keeps on and aria-current until the next page is there
         self.assertIn("if (!moves()) { tn.nodeValue = m[1] + to + m[3]; return; }", js)
         self.assertIn("const SKEL_MS = 8000;", js)
-        self.assertIn("setTimeout(() => unskel(box), SKEL_MS);", js)
+        self.assertIn("box._skelTimer = setTimeout(() => unskel(box), SKEL_MS);", js)
+        self.assertIn("clearTimeout(box._skelTimer);", js[js.index("function unskel("):js.index("function skeleton(")])
         self.assertIn('() => { li.classList.remove("picked"); tick(); }', js)
         click = js[js.index("another job picked"):]
         click = click[:click.index("\n  });")]

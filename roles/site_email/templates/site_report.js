@@ -357,11 +357,13 @@
   /* 1.86.0: for report_pop.js (the team picker, the severity chips) - a row's flags applied, then the caps, the counts and the fit */
   window.siteReport.vis=vis;window.siteReport.rowsChanged=function(){capAll();counts.forEach(function(c){c()});fit()};
   /* a link to a row past the cap (a dashboard's drill link, Open item, a timeline line) shows every row of that table first */
-  function liftFor(h){if(!h||h.length<2)return;var id=decodeURIComponent(h.slice(1)),pending=deferredIds[id];
+  function openDetails(t){for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;}
+  function liftFor(h){if(!h||h.length<2)return;var id=decodeURIComponent(h.slice(1).split('&tab=')[0]),pending=deferredIds[id];
     if(pending){pending._open=true;pending._capApply();fitRows(pending)}
     var t=document.getElementById(id);
-    if(t){var sec=t.closest('details.sec');if(sec)sec.open=true;if(pending)t.scrollIntoView()}
-    var tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply();fitRows(tb)}}
+    openDetails(t);
+    var tr=t&&t.closest&&t.closest('tr');if(tr&&tr._c){var tb=tr.closest('table');tb._open=true;if(tb._capApply)tb._capApply();fitRows(tb)}
+    if(t&&(pending||h.indexOf('&tab=')>=0))t.scrollIntoView({behavior:'instant',block:'start'})}
   document.addEventListener('click',function(e){if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;   /* 1.87.2: a new tab - the report stays as it is */
     var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a)try{liftFor(a.getAttribute('href'))}catch(x){}},true);
   window.addEventListener('hashchange',function(){try{liftFor(location.hash)}catch(x){}});try{liftFor(location.hash)}catch(x){}
@@ -374,15 +376,17 @@
       if(H.classList.contains('motion-always'))return false;return !!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)}
     var marked=null;
     /* one highlight: a row the address names when the page opens is marked the same way (no tr:target in the CSS) */
-    try{var t0=location.hash.length>1&&document.getElementById(decodeURIComponent(location.hash.slice(1)));if(t0&&t0.tagName==='TR'){marked=t0;t0.classList.add('is-target')}}catch(x){}
+    try{var t0=location.hash.length>1&&document.getElementById(decodeURIComponent(location.hash.slice(1).split('&tab=')[0]));if(t0&&t0.tagName==='TR'){marked=t0;t0.classList.add('is-target')}}catch(x){}
     document.addEventListener('click',function(e){
       if(e.defaultPrevented||e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
       var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||(a.target&&a.target!=='_self')||a.hasAttribute('download'))return;
-      var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1))}catch(x){return}
+      var h=a.getAttribute('href'),id;try{id=decodeURIComponent(h.slice(1).split('&tab=')[0])}catch(x){return}
       var t=id?document.getElementById(id):null;if(id&&!t)return;
       e.preventDefault();
-      for(var d=t;d&&d!==document;d=d.parentNode)if(d.tagName==='DETAILS'&&!d.open)d.open=true;   /* the place itself too: a closed section opens */
-      try{history.replaceState(history.state,'',id?h:location.pathname+location.search)}catch(x){}
+      openDetails(t);
+      var tab=/(?:^#|&)tab=([^&]*)/.exec(location.hash),url=id?h:location.pathname+location.search;
+      if(tab&&h.indexOf('&tab=')<0)url+=(id?'&':'#')+'tab='+tab[1];
+      try{history.replaceState(history.state,'',url)}catch(x){}
       if(marked)marked.classList.remove('is-target');marked=t&&t.tagName==='TR'?t:null;if(marked)marked.classList.add('is-target');
       var b=still()?'instant':'auto';
       try{if(t)t.scrollIntoView({behavior:b,block:'start'});else window.scrollTo({top:0,behavior:b})}catch(x){if(t)t.scrollIntoView(true);else window.scrollTo(0,0)}

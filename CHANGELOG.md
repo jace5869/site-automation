@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.106.0 — 2026-11-22
+
+**Hardening: four small fixes from earlier reviews**
+
+- A second click while a job opens no longer leaves a row marked when you come back.
+- The outage report test waits for the filter note after one click and checks that a second click leaves only one note.
+- Following a link within ticket insights keeps the selected tab in the address. Opening the link restores the tab and scrolls to the target, even on an already open page.
+- When only status can be refreshed, the live network map shows when its links were last read. Older caches show the link age as unknown until a full read succeeds.
+
+To set up: nothing.
+
 ## 1.103.1 — 2026-11-21
 
 **Nothing to set up.** A route that 1.103.0 read wrongly now stops the job, named. Fix it as the message says.
