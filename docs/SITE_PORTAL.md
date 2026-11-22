@@ -796,6 +796,10 @@ setting that cannot work (`netmap_site_pattern`, `netmap_hierarchy`, `netmap_rol
 - The map's settings are the report's (`netmap_site_by`, `netmap_site_pattern`, `netmap_hierarchy`, `netmap_sites` ... in all.yml);
   `portal_motion` applies.
 - No credential (or `portal_netmap: false`): no page and no menu entry; `/portal/netmap` says why.
+- 1.102.0: the map opens on **Region** with the **WAN traffic** and **AD replication** layers. The AD layer reads the AD
+  job's newest run from the report database (the AD job's tables, 1.101.2) with the portal's read-only login, at most
+  every 5 minutes, and matches it as the AD report does (`ad_site_map` in all.yml). Without those tables the layer is off
+  and says *AD replication not in the report database yet*. `netmap_ad_layer: false` turns it off.
 
 ## What is on and what is off
 

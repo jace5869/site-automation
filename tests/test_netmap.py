@@ -863,6 +863,52 @@ class Portal(unittest.TestCase):
         self.assertIn("netmap_site_pattern", str(e.exception))
         self.assertIn("netmap_roles", str(e.exception))
 
+    def test_b_the_ad_layer_from_the_report_database(self):
+        """1.102.0: the live map's AD layer - the report database's newest AD run (1.101.2's ad_run, ad_dc, ad_link) read by
+        ad_repl_from_db, matched to this map (here by ad_site_map), in the map's JSON (so its ETag changes with it); no report
+        database: the layer off, said."""
+        import sqlite3
+        sp = self.sp
+        raw = sw.collect(sw.Client(self.fake.url, "svc_swis_ro", PW, verify=False), {"lat_property": "Lat", "lon_property": "Lon"})
+
+        class Src(object):
+            kind = "swis-live"
+
+            def read_full(self):
+                return raw
+
+            def read_status(self, r):
+                return r
+        cfg = sp.Config(dict(self.env, PORTAL_DATA=tempfile.mkdtemp()))
+        self.addCleanup(shutil.rmtree, cfg.data, True)
+        live = sp.NetLive(cfg, self.portal.log, source=Src())
+        data, _, _ = live.read_once()
+        self.assertEqual(data["ad"]["why"], "AD replication not in the report database yet (no report database login on the portal)")
+        db = os.path.join(cfg.data, "r.db")
+        con = sqlite3.connect(db)
+        con.executescript("CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY, read_at TEXT, template_id INT);"
+                          "CREATE TABLE ad_dc (run_id INT, dc TEXT, domain TEXT DEFAULT '', site TEXT);"
+                          "CREATE TABLE ad_link (run_id INT, frm TEXT, to_dc TEXT, nc TEXT, last_success TEXT, failures INT, error TEXT, last_failure TEXT, status TEXT);"
+                          "INSERT INTO ad_run VALUES (1, '%s', 5);"
+                          "INSERT INTO ad_dc VALUES (1, 'DC01', '', 'HQ'), (1, 'DC09', '', 'Branch-East');"
+                          "INSERT INTO ad_link VALUES (1, 'DC01', 'DC09', 'corp.example.mil', '%s', 0, '', NULL, 'warning');" % (
+                              time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - 3600)), time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - 8 * 3600))))
+        con.commit()
+        con.close()
+        cfg.netmap_opts = dict(cfg.netmap_opts, ad_site_map={"HQ": "Site A", "branch-east": "Site B"})
+        live = sp.NetLive(cfg, self.portal.log, source=Src())
+        live.ad_connect, live.ad_mark = (lambda: sqlite3.connect(db)), "?"
+        data, _, _ = live.read_once()
+        ad = data["ad"]
+        self.assertEqual(ad["why"], "")
+        self.assertEqual(ad["source"], "db")
+        self.assertEqual([(x["a"], x["b"], x["nma"], x["nmb"], x["cls"]) for x in ad["links"]], [("Branch-East", "HQ", "Site B", "Site A", "warning")])
+        self.assertAlmostEqual(ad["links"][0]["h"], 8.0, delta=0.2)                     # aged to now (the review), not to the run
+        self.assertFalse(ad["stale"])
+        self.assertTrue(ad["as_of"])
+        cfg.netmap_opts = dict(cfg.netmap_opts, ad_layer=False)
+        self.assertEqual(live._ad(data)["why"], "netmap_ad_layer is false")
+
     def test_b_a_kept_map_has_its_own_tag(self):
         """1.95.1: the map from disk and the same map read fresh are not one ETag (the viewer hears it is fresh)."""
         sp = self.sp

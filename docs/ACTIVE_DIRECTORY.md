@@ -110,6 +110,9 @@ places their sites.
    with several DCs opens again from there. Every AD site in one place: a ring, no map. Labels never sit on a dot or another
    label; one that fits nowhere is left off, and every dot names itself on hover and keyboard focus.
 6. Shown, never counted: the report's counts, status, headline and run history stay AD's.
+7. **For the network map (1.102.0):** each run keeps its replication in its job artifact `ad_repl` (its `layer`: each AD
+   site's DCs, their SolarWinds nodes when read, the replication between AD sites). The Network map job reads the newest
+   one for its **AD replication** layer and matches the AD sites with the same rules (docs/NETWORK_MAP.md, "Region").
 
 | Setting | Default | What |
 |---|---|---|

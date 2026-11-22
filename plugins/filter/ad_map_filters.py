@@ -13,102 +13,18 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import datetime
-import re
+import importlib.util
+import os
+
+# the matching and the pairs: plugins/module_utils/site_ad_layer.py (1.102.0: shared with the network map's AD layer)
+_spec = importlib.util.spec_from_file_location(
+    "site_ad_layer", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_ad_layer.py"))
+_al = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_al)
 
 MARK = "@@ADMAP@@"
-INF = 10 ** 6
-
-
-def _utc(text):
-    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)(?::(\d\d))?", str(text or ""))
-    return datetime.datetime(*[int(g) for g in m.groups()[:5]] + [int(m.group(6) or 0)]) if m else None
-
-
-def _code(x):
-    return re.sub(r"[^A-Za-z0-9]", "", str(x or "")).upper()
-
-
-def _cls(h, fail, o):
-    if fail or h >= o["crit"]:
-        return "critical"
-    if h >= o["warn"]:
-        return "warning"
-    if o["low"] and h >= o["low"]:
-        return "low"
-    return "ok"
-
-
-def _match(sites, dcs_of, node_of, nm, site_map):
-    """AD site -> (network-map site or "", by, why)."""
-    names = list(nm.get("names") or [])
-    no_site = nm.get("no_site") or "Not placed"
-    by_lower = dict((n.lower(), n) for n in names)
-    by_code = {}
-    for n in names:
-        by_code.setdefault(_code(n), []).append(n)
-    sm = dict((str(k).lower(), str(v)) for k, v in (site_map or {}).items())
-    node_site = nm.get("node_site") or {}
-    out = {}
-    for s in sites:
-        if s.lower() in sm:
-            out[s] = (sm[s.lower()], "ad_site_map", "set in all.yml")
-            continue
-        dcs = dcs_of.get(s) or []
-        nodes = [node_of.get(d.lower()) for d in dcs]
-        placed = [node_site.get(str(n)) for n in nodes if n is not None and node_site.get(str(n))]
-        placed = [p for p in placed if p != no_site]
-        if placed and len(set(placed)) == 1:
-            out[s] = (placed[0], "the DCs' nodes", "%d of %d DC%s %s SolarWinds node%s in %s" % (
-                len(placed), len(dcs), "" if len(dcs) == 1 else "s", "is a" if len(placed) == 1 else "are", "" if len(placed) == 1 else "s", placed[0]))
-            continue
-        split = "; its DCs' nodes are in %d network-map sites" % len(set(placed)) if len(set(placed)) > 1 else ""
-        c = by_code.get(_code(s)) or []
-        if len(c) == 1:                                  # the site codes first (the user: "we use site codes"), then the name
-            out[s] = (c[0], "code", ("the same code (%s)" % c[0] if c[0] == s else "the same code without separators (%s)" % c[0]) + split)
-            continue
-        if s.lower() in by_lower:
-            out[s] = (by_lower[s.lower()], "name", "the same name" + split)
-            continue
-        out[s] = ("", "none", ("no DC of it is in SolarWinds" if not placed else "its DCs are in several network-map sites")
-                  + " and no name or code matches - set ad_site_map")
-    return out
-
-
-def _pairs(links, site_of, now, o):
-    """The replication links -> (between sites {(a, b): agg}, inside a site {site: {(dc, dc): agg}})."""
-    between, inside = {}, {}
-    for ln in links or []:
-        a, b = str(ln.get("frm") or ""), str(ln.get("to") or "")
-        sa, sb = site_of.get(a.lower()), site_of.get(b.lower())
-        if not a or not b or sa is None or sb is None:
-            continue
-        ls = _utc(ln.get("last_success"))
-        h = (now - ls).total_seconds() / 3600.0 if ls else INF
-        fail = int(ln.get("failures") or 0) > 0
-        if sa != sb:
-            k = tuple(sorted([sa, sb]))
-            agg = between.setdefault(k, {})
-        else:
-            k = tuple(sorted([a, b], key=str.lower))
-            agg = inside.setdefault(sa, {}).setdefault(k, {})
-        if not agg:
-            agg.update(h=0.0, fail=False, err="", parts=[], ls="", lf="", n=0)
-        agg["n"] += 1
-        agg["h"] = max(agg["h"], h)
-        agg["fail"] = agg["fail"] or fail
-        if fail and not agg["err"]:
-            agg["err"] = str(ln.get("error") or "")
-        nc = str(ln.get("nc") or "")
-        if nc and nc not in agg["parts"]:
-            agg["parts"].append(nc)
-        if ln.get("last_success") and (not agg["ls"] or str(ln["last_success"]) < agg["ls"]):
-            agg["ls"] = str(ln["last_success"])                      # the oldest of the pair's last successes: its worst
-        if fail and ln.get("last_failure") and str(ln["last_failure"]) > agg["lf"]:
-            agg["lf"] = str(ln["last_failure"])
-    for agg in list(between.values()) + [x for v in inside.values() for x in v.values()]:
-        agg["cls"] = _cls(agg["h"], agg["fail"], o)
-        agg["h"] = None if agg["h"] >= INF else round(agg["h"], 1)
-    return between, inside
+INF = _al.INF
+_utc, _code, _cls, _match, _pairs = _al.utc, _al.code, _al.cls, _al.match, _al.pairs
 
 
 def ad_repl_map(repl, swis=None, opts=None):
@@ -116,20 +32,10 @@ def ad_repl_map(repl, swis=None, opts=None):
     o = {"low": float(o0.get("low_hours") or 0), "warn": float(o0.get("warn_hours") or 6), "crit": float(o0.get("crit_hours") or 24)}
     try:
         now = _utc(r.get("now")) or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-        dcs = [d for d in r.get("dcs") or [] if d.get("name")]
-        site_of = dict((str(d["name"]).lower(), str(d.get("site") or "")) for d in dcs if d.get("site"))
-        if len(set(site_of.values())) < 1:
+        # the DCs, their sites and nodes: one rule with the network map's AD layer (site_ad_layer.index, 1.102.0 review)
+        site_of, dcs_of, node_of, _dup = _al.index(r.get("dcs"), sw_.get("dcs"))
+        if not dcs_of:
             return {"sections": [], "extra": {}, "lines": ["Replication map: no AD site read"]}
-        dcs_of = {}
-        for d in dcs:
-            if d.get("site"):
-                dcs_of.setdefault(str(d["site"]), []).append(str(d["name"]))
-        seen = {}                                        # the DC's node by its short name - the replication data has no domain:
-        for x in sw_.get("dcs") or []:                   # a name two domains' DCs share is left out (matching falls through)
-            k = str(x.get("dc") or "").lower()
-            if k:
-                seen.setdefault(k, []).append(x.get("node_id"))
-        node_of = dict((k, v[0]) for k, v in seen.items() if len(v) == 1 and v[0] is not None)
         nm = sw_.get("netmap") or {}
         sites = sorted(dcs_of, key=str.lower)
         match = _match(sites, dcs_of, node_of, nm if nm.get("ok") else {}, o0.get("ad_site_map") or {})
@@ -179,6 +85,15 @@ def ad_map_sections(sections, web=True):
     return [s for s in sections or [] if web or not s.get("web_only")]
 
 
+def ad_layer_artifact(repl, swis=None, opts=None):
+    """1.102.0: what this AD run keeps for the network map's AD layer (job artifact ad_repl, its "layer"): the scale, each AD
+    site's DCs (with their SolarWinds node ids when read), the replication between AD sites. {} when it cannot be made."""
+    try:
+        return _al.compact(repl, opts, (swis or {}).get("dcs") or [], (opts or {}).get("orion") or "")
+    except Exception:  # noqa: BLE001 - never the job's result
+        return {}
+
+
 class FilterModule(object):
     def filters(self):
-        return {"ad_repl_map": ad_repl_map, "ad_map_sections": ad_map_sections}
+        return {"ad_repl_map": ad_repl_map, "ad_map_sections": ad_map_sections, "ad_layer_artifact": ad_layer_artifact}

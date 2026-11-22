@@ -41,7 +41,7 @@ options:
   snapshot_links: {description: "Keep each link's interface names in the copy (false = the ids only, a smaller artifact).", type: bool, default: true}
   last: {description: When the kept copy was made (shown)., type: str, default: ''}
   run: {description: When this run read SolarWinds (shown)., type: str, default: ''}
-  view: {description: "The world view's first look: globe or flat (netmap_view).", type: str, default: globe}
+  view: {description: "The world view's first look: region, globe or flat (netmap_view).", type: str, default: region}
   no_site: {description: The site of nodes without one., type: str, default: No site}
   db_host: {description: "The report database's server ('' = SolarWinds itself, always).", type: str, default: ''}
   db_port: {description: Its port., type: int, default: 3309}
@@ -90,7 +90,7 @@ def main():
                            warn_util=dict(type="int", default=90), page=dict(type="int", default=1000),
                            chunk=dict(type="int", default=500), max_nodes=dict(type="int", default=5000),
                            snapshot=dict(type="raw", default={}), snapshot_links=dict(type="bool", default=True), last=dict(type="str", default=""),
-                           run=dict(type="str", default=""), view=dict(type="str", default="globe"),
+                           run=dict(type="str", default=""), view=dict(type="str", default="region"),
                            no_site=dict(type="str", default="Not placed"), site_pattern=dict(type="str", default=""),
                            hierarchy=dict(type="list", elements="raw", default=[]), roles=dict(type="dict", default={}),
                            discover=dict(type="bool", default=True),

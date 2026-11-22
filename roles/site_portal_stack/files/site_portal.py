@@ -53,6 +53,10 @@ try:
     import site_swis  # noqa: E402  1.85.0: SolarWinds' SWIS, read only (the network map; the same reader as the report job's)
 except ImportError:                     # an older deploy's files: no live map
     site_swis = None
+try:
+    import site_ad_layer  # noqa: E402  1.102.0: the network map's AD layer (the AD report's own matching)
+except ImportError:                     # an older deploy's files: no AD layer
+    site_ad_layer = None
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 AAP_TIME = re.compile(r"^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d)")
@@ -3517,7 +3521,7 @@ def approvals_page(cfg, portal, cn):
 # ---- 1.85.0: the live network map ----------------------------------------------------------------------------------------
 NETMAP_FULL_MIN = 300           # 1.95.0: the whole read at most this often, whatever netmap_full_seconds says (tests lower it)
 NETMAP_IDLE = 300               # seconds without a viewer after which SolarWinds is no longer read (read again at the next view)
-NETMAP_STATIC = ("world-land.js", "netmap.js", "netglobe.js", "netmap-live.js", "netmap.css")
+NETMAP_STATIC = ("world-land.js", "netmap.js", "netglobe.js", "maplabel.js", "netregion.js", "netmap-live.js", "netmap.css")
 
 
 class SwisSource(object):
@@ -3558,6 +3562,76 @@ def etag_matches(header, tag):
     return any(item.strip() in (tag, "W/" + tag, "*") for item in header.split(","))
 
 
+AD_LAYER_EVERY = 300           # 1.102.0: the report database's AD replication read at most this often (the AD job runs hourly or daily)
+AD_NOT_YET = "AD replication not in the report database yet"
+
+
+AD_NOT_READ = "the report database's AD replication could not be read (the portal's log says why)"
+
+
+def _missing_table(e):
+    t = str(e).lower()
+    return (getattr(e, "args", None) or [None])[0] == 1146 or "no such table" in t or "doesn't exist" in t
+
+
+def ad_repl_from_db(connect, mark="%s", opts=None, log=None):
+    """1.102.0: the network map's AD layer from the report database - 1.101.2's tables as roles/ad_report/library/site_ad_db.py
+    makes them (its schema_version 1): ad_run (run_id, read_at), ad_dc (run_id, dc, site), ad_link (run_id, frm, to_dc, nc,
+    last_success, failures, error, last_failure). The newest run (so the newest run's template, as /portal/ad picks it) with
+    every one of its links, in one read-only transaction (MySQL: START TRANSACTION READ ONLY - one moment of the database).
+    -> (compact (site_ad_layer.compact), why). Never raises; why is fixed text (it goes to the browser): a database's own
+    error goes to log only. A change of those tables is fixed here, and only here. connect: a function giving a DB-API
+    session; mark: its parameter mark ("%s": MySQL; "?": the tests' SQLite)."""
+    conn = None
+    try:
+        if site_ad_layer is None:
+            return None, "the AD layer's reader (site_ad_layer.py) is not in the service's files - deploy again"
+        conn = connect()
+        if mark == "%s":
+            try:
+                conn.rollback()
+            except Exception:  # pylint: disable=broad-except
+                pass
+            conn.cursor().execute("START TRANSACTION READ ONLY")
+        cur = conn.cursor()
+
+        def q(sql, args=()):
+            cur.execute(sql.replace("%s", mark), tuple(args))
+            return cur.fetchall()
+        top = q("SELECT run_id, read_at FROM ad_run ORDER BY read_at DESC, run_id DESC LIMIT 1")
+        if not top:
+            return None, AD_NOT_YET + " (no AD run kept there)"
+        rid, at = top[0][0], top[0][1]
+        dcs = q("SELECT dc, site FROM ad_dc WHERE run_id = %s", [rid])
+        links = q("SELECT frm, to_dc, nc, last_success, failures, error, last_failure FROM ad_link WHERE run_id = %s", [rid])
+        return site_ad_layer.from_rows(at, dcs, links, opts), ""
+    except Exception as e:  # pylint: disable=broad-except
+        if _missing_table(e):
+            return None, AD_NOT_YET
+        if log is not None:
+            try:
+                log({"event": "netmap", "ad": "not read", "error": e.__class__.__name__, "detail": clean(str(e), 300)})
+            except Exception:  # pylint: disable=broad-except
+                pass
+        return None, AD_NOT_READ
+    finally:
+        try:
+            if conn is not None:
+                conn.rollback()
+                conn.close()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+
+def ad_db_connect(cfg):
+    """(connect, why): the report database's read-only login as the portal's live AD page has it (1.101.2: cfg.report_db and
+    its AdDb reader); without it the AD layer stays off, said."""
+    rdb, reader = getattr(cfg, "report_db", None), globals().get("AdDb")
+    if not rdb or reader is None:
+        return None, AD_NOT_YET + " (no report database login on the portal)"
+    return reader(cfg).connect, ""
+
+
 class NetLive(object):
     """SolarWinds, read by this server alone (plugins/module_utils/site_swis.py: SWQL queries only) while someone has the
     Network map open - one cache every viewer shares, never a read per viewer. 1.95.0: the last good map is kept on disk
@@ -3579,7 +3653,36 @@ class NetLive(object):
         o = cfg.netmap_opts
         self.bad = site_swis.check_opts(o)                   # a setting that cannot work: said as the reason, never read
         self.fp = ""                                         # the last read's site reading (auto keeps it on a near tie)
+        self.ad_at, self.ad_c, self.ad_why, self.ad_connect, self.ad_mark = 0.0, None, "", None, "%s"   # 1.102.0: the AD layer's last read
         self._load()
+
+    def _ad(self, data):
+        """1.102.0: the AD layer for this map - the report database read at most every AD_LAYER_EVERY s, matched to this map."""
+        o = self.cfg.netmap_opts
+        if site_ad_layer is None:
+            return {"why": "the AD layer's reader (site_ad_layer.py) is not in the service's files - deploy again", "source": "db"}
+        if str(o.get("ad_layer", True)).lower() in ("false", "0", "no", "off"):
+            return {"why": "netmap_ad_layer is false", "source": "db"}
+        if time.time() - self.ad_at >= AD_LAYER_EVERY:
+            self.ad_at = time.time()
+            try:                                             # 1.102.0 review: a database set-up error turns off the layer, never the map
+                conn, why = (self.ad_connect, "") if self.ad_connect else ad_db_connect(self.cfg)
+            except Exception as e:  # pylint: disable=broad-except
+                self.log.add({"event": "netmap", "ad": "no connection", "error": e.__class__.__name__, "detail": clean(str(e), 300)})
+                conn, why = None, AD_NOT_READ
+            try:
+                c, why = ad_repl_from_db(conn, mark=self.ad_mark, opts=o.get("ad_scale") or {}, log=self.log.add) if conn else (None, why)
+            except Exception as e:  # pylint: disable=broad-except   never half a read: off, said, read again next time
+                self.log.add({"event": "netmap", "ad": "failed", "error": e.__class__.__name__, "detail": clean(str(e), 300)})
+                c, why = None, AD_NOT_READ
+            if why != self.ad_why:
+                self.log.add({"event": "netmap", "ad": "read" if c else "not read", "why": why})
+            self.ad_c, self.ad_why = c, why
+        lay = site_ad_layer.layer(self.ad_c, data, site_map=o.get("ad_site_map") or {}, no_site=o.get("no_site") or "Not placed",
+                                  why=self.ad_why, source="db")
+        if lay.get("as_of"):
+            lay["as_of"] = shown(self.cfg, self.ad_c.get("read_at"))
+        return lay
 
     def _sig(self):
         """(SolarWinds' address, the netmap settings) as two short hashes: a kept map read elsewhere or by other settings."""
@@ -3660,8 +3763,13 @@ class NetLive(object):
                                   "prev_fingerprint": self.fp})
         self.fp = m.get("fingerprint") or self.fp
         ver = (raw.get("version") or {}).get("platform")
-        data = site_swis.page_data(m, run=shown(c, raw.get("read_at") or now_iso()), view=o.get("view") or "globe",
+        data = site_swis.page_data(m, run=shown(c, raw.get("read_at") or now_iso()), view=o.get("view") or "region",
                                    source="SolarWinds%s (SWIS, read-only, live)" % ((" " + ver) if ver else ""))
+        try:                                                 # 1.102.0: in the map's JSON, so its ETag changes with it
+            data["ad"] = self._ad(data)
+        except Exception as e:  # pylint: disable=broad-except   1.102.0 review: never the map's failure
+            self.log.add({"event": "netmap", "ad": "failed", "error": e.__class__.__name__, "detail": clean(str(e), 300)})
+            data["ad"] = {"why": AD_NOT_READ, "source": "db"}
         return data, raw, kind
 
     def _run(self):
@@ -3745,7 +3853,7 @@ def netmap_page(cfg, cn, static_dir, statics):
             '<span class="nm-tick" aria-live="off">reading SolarWinds…</span></p>'
             '<p class="note" id="nm-why" hidden></p>%s<div class="nm-toasts" id="nm-toasts" aria-live="polite"></div>'
             % (cfg.netmap_seconds, max(NETMAP_FULL_MIN, int(cfg.netmap_opts.get("full_seconds") or 1800)) // 60, cfg.path, poll, markup))
-    body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, v(n)) for n in ("world-land.js", "netmap.js", "netglobe.js", "netmap-live.js"))
+    body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, v(n)) for n in ("world-land.js", "netmap.js", "netglobe.js", "maplabel.js", "netregion.js", "netmap-live.js"))
     return shell(cfg, "Network map", body, cn, page="netmap",
                  head='<link rel="stylesheet" href="%sstatic/netmap.css?v=%s">' % (cfg.path, v("netmap.css")))
 

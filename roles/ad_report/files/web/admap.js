@@ -139,9 +139,8 @@
     Object.keys(agg).forEach(function (k) {
       var g = agg[k], a = g.a.p, b = g.b.p, ls = g.ls, cls = worstOf(ls.map(function (l) { return l.cls; }));
       var w0 = ls.map(function (l) { return l.wan && l.wan.bps || 0; }), bps = Math.max.apply(0, w0), util = Math.max.apply(0, ls.map(function (l) { return l.wan && l.wan.util != null ? l.wan.util : -1; }));
-      var straight = g.inner || oneSpot, mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, dx = b[0] - a[0], dy = b[1] - a[1];
-      var cx = straight ? mx : mx - dy * 0.12, cy = straight ? my : my + dx * 0.12;
-      var d = straight ? 'M' + a[0] + ',' + a[1] + ' L' + b[0] + ',' + b[1] : 'M' + a[0] + ',' + a[1] + ' Q' + cx + ',' + cy + ' ' + b[0] + ',' + b[1];
+      var straight = g.inner || oneSpot, cu = window.SiteMap.curve(a, b, straight ? 0 : 0.12), cx = cu.c[0], cy = cu.c[1];   // the shared curve (maplabel.js)
+      var d = straight ? 'M' + a[0] + ',' + a[1] + ' L' + b[0] + ',' + b[1] : cu.d;
       var w = straight ? 2.4 : bps ? 2.5 + 6 * Math.log(1 + bps) / Math.log(1 + maxB) : 2;
       var layer = straight ? gI : gL;
       var hasWan = ls.some(function (l) { return l.wan; });
@@ -159,47 +158,11 @@
             straight ? el('div', 'm', ['No WAN: the same location']) : el('div', '', [hasWan ? 'WAN: ' + (bps ? bpsText(bps) : 'speed not known') + (util >= 0 ? ', busiest ' + util + '%' : '') : D.wan_read ? 'WAN: no link in SolarWinds' : 'WAN: not read'])]);
       }, cx, cy, ls.length === 1 ? ls[0].a + ' to ' + ls[0].b + ', last success ' + ago(ls[0].h) : ls.length + ' connections', straight ? gI : gL, straight ? 8 : w + 6);
     });
-    /* labels: the worst and the bubbles first, the rest where they fit (all names on hover and focus) */
-    var taken = [];
-    // a label's width as this browser draws it (its own fonts: a wider sans than ours must not overlap); an unseen map
-    // (no layout yet) falls back to a width wide enough for a wide bold sans
-    var probe = sv('g', { 'class': 'am-s', visibility: 'hidden', 'aria-hidden': 'true' }); svg.appendChild(probe);
-    function textW(lines) {
-      return Math.max.apply(0, lines.map(function (t, i) {
-        var e = sv('text', { 'class': i ? 'sub' : null }, [t]), n; probe.appendChild(e);
-        try { n = e.getComputedTextLength(); } catch (err) { n = 0; }
-        e.remove(); return n > 0 ? Math.ceil(n) + 1 : t.length * 7.4;
-      }));
-    }
+    /* labels: the worst and the bubbles first, the rest where they fit (all names on hover and focus) - 1.102.0: the
+       placement shared with the network map's Region view (roles/netmap_report/files/web/maplabel.js) */
+    var LB = window.SiteMap.labels(svg, W, H, { probe: 'am-s', sub: 'sub', lead: 'am-lead', line: 13 }), taken = LB.taken;
     if (O) taken.push([O.x - R - 40, O.y - R - 50, O.x + R + 40, O.y + R + 40]);
-    function label(g, x, y, lines, force, end, r) {    // right of the dot, else left, below, above: the first place that is free
-      var w = textW(lines), h = 13 * lines.length, rr = r || 0, cx = x - rr - 6;
-      var tries = end ? [[x - w, y]] : [[x, y], [cx - rr - 6 - w, y], [cx - w / 2, y + rr + 16], [cx - w / 2, y - rr - 6 - h],
-        [x, y + rr + 14], [x, y - rr - 10], [cx - rr - 6 - w, y + rr + 14], [cx - rr - 6 - w, y - rr - 10], [x + 24, y + 26], [x + 24, y - 26]]
-        .concat([0, 1, 2, 3, 4, 5, 6, 7].map(function (k) {             // further out, all round the dot (a busy hub's label)
-          var a = k * Math.PI / 4, dx = Math.cos(a), dy = Math.sin(a), d = rr + 40;
-          return [cx + dx * d - (dx < -0.3 ? w : Math.abs(dx) <= 0.3 ? w / 2 : 0), y + dy * d]; }));
-      var hits = function (q, list) { var b = [q[0] - 2, q[1] - 12, q[0] + w + 2, q[1] + h - 9];
-        return list.filter(function (t) { return b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]; }).length; };
-      var al = end ? ['end'] : ['start', 'end', 'middle', 'middle', 'start', 'start', 'end', 'end', 'start', 'start']
-        .concat([0, 1, 2, 3, 4, 5, 6, 7].map(function (k) { var dx = Math.cos(k * Math.PI / 4); return dx < -0.3 ? 'end' : Math.abs(dx) <= 0.3 ? 'middle' : 'start'; }));
-      var fit = tries.map(function (q, k) { var f = [Math.max(4, Math.min(q[0], W - w - 4)), Math.max(14, Math.min(q[1], H - h))]; f.al = al[k]; return f; });
-      var pick = fit.filter(function (q) { return !hits(q, taken); })[0];
-      if (!pick && force) pick = fit.filter(function (q) { return !hits(q, dotsAt); }).sort(function (p, q) { return hits(p, taken) - hits(q, taken); })[0];
-      // a label is never on a dot: none fits even for the worst - left off (its name on hover and keyboard focus)
-      if (!pick) return false;
-      taken.push([pick[0] - 2, pick[1] - 12, pick[0] + w + 2, pick[1] + h - 9]);
-      // the leader is decided by the name (the first line): a second line beside the dot does not make the name near it
-      var w0 = lines.length > 1 ? textW(lines.slice(0, 1)) : w, x0 = pick.al === 'end' ? pick[0] + w - w0 : pick.al === 'middle' ? pick[0] + (w - w0) / 2 : pick[0];
-      var bx = [x0 - 2, pick[1] - 12, x0 + w0 + 2, pick[1] + 4], dy0 = y + 1;
-      var nx = Math.max(bx[0], Math.min(cx, bx[2])), ny = Math.max(bx[1], Math.min(dy0, bx[3])), dd = Math.hypot(nx - cx, ny - dy0) || 1;
-      if (!end && dd > rr + 10) {                         // not next to its dot (a far place, or pushed in from the edge): a thin leader to it
-        g.appendChild(sv('line', { x1: (cx + (nx - cx) / dd * (rr + 1)).toFixed(1), y1: (dy0 + (ny - dy0) / dd * (rr + 1)).toFixed(1), x2: nx.toFixed(1), y2: ny.toFixed(1), 'class': 'am-lead' }));
-      }
-      // anchored on the side that faces the dot: the gap to it is exact whatever the text's real width
-      var ax = pick.al === 'end' ? pick[0] + w : pick.al === 'middle' ? pick[0] + w / 2 : pick[0];
-      lines.forEach(function (t, i) { g.appendChild(sv('text', { x: ax, y: pick[1] + i * 13, 'text-anchor': pick.al, 'class': i ? 'sub' : null }, [t])); }); return true;
-    }
+    function label(g, x, y, lines, force, end, r) { return LB.place(g, x, y, lines, force, end, r); }
     function nameTip(g, lines, x, y) {
       var show = function (ev) { tip.replaceChildren.apply(tip, [el('b', '', [lines[0]])].concat(lines.slice(1).map(function (t) { return el('div', 'm', [t]); }))); place(ev, x, y); };
       g.addEventListener('mousemove', show); g.addEventListener('focus', function () { show(null); });
@@ -209,8 +172,7 @@
       var wa = worstOf(linksAt[a.id] || []), wb = worstOf(linksAt[b.id] || []);
       return (b.m.length > 1) - (a.m.length > 1) || RANKC[wa] - RANKC[wb] || b.m.length - a.m.length;
     });
-    var dotsAt = [];
-    order.forEach(function (L) { if (!L.open) { var rr = L.m.length > 1 ? 17 : 11, bx = [L.x - rr - 2, L.y - rr - 2, L.x + rr + 2, L.y + rr + 2]; taken.push(bx); dotsAt.push(bx); } });   // no label on any dot
+    order.forEach(function (L) { if (!L.open) LB.dot(L.x, L.y, L.m.length > 1 ? 17 : 11); });   // no label on any dot
     order.forEach(function (L) {
       if (L.open) return;
       var bub = L.m.length > 1, s = L.m[0], wst = worstOf(linksAt[L.id] || []), dcsN = L.m.reduce(function (n, x) { return n + x.dcs.length; }, 0);
@@ -227,7 +189,7 @@
       g.addEventListener('click', go); g.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
       gS.appendChild(g);
     });
-    probe.remove();
+    LB.done();
     if (O) {                                             // the location opened in place: its AD sites, the lines between them
       gI.insertBefore(sv('circle', { cx: O.x, cy: O.y, r: R + 30, 'class': 'am-ring' }), gI.firstChild);
       O.m.forEach(function (s) {

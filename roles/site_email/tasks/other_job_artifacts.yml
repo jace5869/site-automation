@@ -1,0 +1,34 @@
+---
+# 1.102.0: another job template's last successful runs with some of their job artifacts (site_report_history by template
+# name) - the network map's AD layer reads the AD job's ad_repl. Read only, from AAP, with the same "Red Hat Ansible
+# Automation Platform" credential as the strip of past runs (report_history). Never fails the job.
+# Input: _other_template (the template's name), _other_artifacts (names), _other_runs (how many, at most 50).
+# Output: _site_other_runs (oldest first; [] without AAP or outside AAP) and _site_other_why (why there are none).
+- name: History | {{ _other_template }}'s last runs, from AAP ({{ _other_artifacts | join(', ') }})
+  site_report_history:
+    job_id: "{{ awx_job_id | default(tower_job_id) | int }}"
+    template_id: "{{ awx_job_template_id | default(tower_job_template_id) | int }}"
+    template_name: "{{ _other_template }}"
+    runs: "{{ _other_runs | default(5) | int }}"
+    ca_path: "{{ report_history_aap_ca_path }}"
+    artifacts: "{{ _other_artifacts }}"
+  register: _site_other
+  check_mode: false                      # read only
+  delegate_to: localhost
+  run_once: true
+  become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when:
+    - report_history | bool
+    - (awx_job_id | default(tower_job_id | default(''))) | string | length > 0
+    - (awx_job_template_id | default(tower_job_template_id | default(''))) | string | length > 0
+
+- name: History | {{ _other_template }}'s runs
+  ansible.builtin.set_fact:
+    _site_other_runs: "{{ _site_other.runs | default([]) if _site_other.ok | default(false) else [] }}"
+    _site_other_why: >-
+      {{ _site_other.why | default('') if _site_other is not skipped
+         else ('report_history is false' if not report_history | bool else 'not run from AAP (no awx_job_id or awx_job_template_id)') }}
+  run_once: true

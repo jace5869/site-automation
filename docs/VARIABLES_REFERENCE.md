@@ -1406,7 +1406,9 @@ File: `roles/netmap_report/defaults/main.yml`
 | `netmap_lon_property` | (empty) | the node custom property holding the site's longitude ("" = not used) |
 | `netmap_sites` | `{}` | e.g. {"Site A": {lat: 39.4, lon: -93.2}, "SITB*": {lat: 34.9, lon: -112.8}} - usually in all.yml |
 | `netmap_properties` | `[]` | more node custom properties shown in a node's panel and the workbook, e.g. [Region, Building] |
-| `netmap_view` | `globe` | ---- The map -------------------------------------------------------------------------------------------------------------- the world view's first look: globe or flat (each viewer's own choice, once made, is kept in their browser) |
+| `netmap_view` | `region` | ---- The map -------------------------------------------------------------------------------------------------------------- the world view's first look: region (1.102.0: the placed sites' region, fitted), globe or flat (each viewer's own choice, once made, is kept in their browser) |
+| `netmap_ad_layer` | `true` | 1.102.0: the AD replication layer on the Region view (Layers: WAN traffic, AD replication - both on by default): the AD job's last replication, read from AAP (its job artifact ad_repl; the same "Red Hat Ansible Automation Platform" credential as "what changed"), matched to the map's sites as the AD report matches them… (all of it: the role file) |
+| `netmap_ad_template` | `Active Directory health report` | the AD job template's name in AAP (its runs' ad_repl), or its ID when two organizations have that name |
 | `netmap_link_warn_percent` | `90` | a link this busy (in or out, %) is Warning; 0 = never by load (an interface SolarWinds marks Warning still is) |
 | `netmap_page_size` | `1000` | ---- Reading ------------------------------------------------------------------------------------------------------------- rows a request (the nodes and links are read page by page) |
 | `netmap_max_nodes` | `5000` | nodes read at most (more: the first ones, said in the report) |

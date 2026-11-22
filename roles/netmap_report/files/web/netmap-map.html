@@ -4,8 +4,9 @@
 <div class="nm-find"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><input type="search" class="nm-q" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="nm-sugg" autocomplete="off" placeholder="Find a site, building, device or IP" aria-label="Find a site, building, device or IP"><div class="nm-sugg" id="nm-sugg" role="listbox" aria-label="Matches" hidden></div></div>
 <span class="nm-chips" role="group" aria-label="Show only"><button type="button" class="nm-b nm-c" data-c="down" aria-pressed="false">× Down <span class="nm-n"></span></button><button type="button" class="nm-b nm-c" data-c="warning" aria-pressed="false">! Warnings <span class="nm-n"></span></button><button type="button" class="nm-b nm-c" data-c="chg" aria-pressed="false">Changed <span class="nm-n"></span></button></span>
 <span class="nm-zoom nm-ws nm-wo" role="group" aria-label="The world as"><button type="button" class="nm-b nm-wv" data-w="tiles" aria-pressed="true">Tiles</button><button type="button" class="nm-b nm-wv" data-w="globe" aria-pressed="false">Map</button></span>
-<span class="nm-zoom ng-proj nm-w" role="group" aria-label="Projection"><button type="button" class="nm-b ng-p" data-p="globe" aria-pressed="true">Globe</button><button type="button" class="nm-b ng-p" data-p="flat" aria-pressed="false">Flat</button></span>
-<span class="nm-zoom nm-w" role="group" aria-label="Zoom the globe"><button type="button" class="nm-b nm-zi" aria-label="Zoom in">+</button><button type="button" class="nm-b nm-zo" aria-label="Zoom out">−</button><button type="button" class="nm-b nm-fit">Fit</button></span>
+<span class="nm-zoom ng-proj nm-w" role="group" aria-label="Projection"><button type="button" class="nm-b ng-p" data-p="region" aria-pressed="true">Region</button><button type="button" class="nm-b ng-p" data-p="globe" aria-pressed="false">Globe</button><button type="button" class="nm-b ng-p" data-p="flat" aria-pressed="false">Flat</button></span>
+<span class="nm-zoom nm-w ng-layers" role="group" aria-label="Layers"><span class="ng-lname">Layers</span><button type="button" class="nm-b ng-layer" data-l="wan" aria-pressed="true">WAN traffic</button><button type="button" class="nm-b ng-layer" data-l="ad" aria-pressed="true">AD replication</button></span>
+<span class="nm-zoom nm-w" role="group" aria-label="Zoom the map"><button type="button" class="nm-b nm-zi" aria-label="Zoom in">+</button><button type="button" class="nm-b nm-zo" aria-label="Zoom out">−</button><button type="button" class="nm-b nm-fit">Fit</button></span>
 <button type="button" class="nm-b nm-fbtn" aria-expanded="false" aria-controls="nm-fp">Filters <span class="nm-bdg" hidden></span></button>
 <div class="nm-fp" id="nm-fp" hidden><h4>Role</h4><div class="nm-roles"></div><h4>Vendor</h4><select class="nm-vendor" aria-label="Vendor"><option value="">All vendors</option></select><div class="nm-fprow"><span class="nm-fon"></span><button type="button" class="nm-b nm-clear">Clear</button></div></div>
 </div>
@@ -14,10 +15,12 @@
 <canvas class="ng-cv" tabindex="0" role="img" aria-label="World map of the sites and their WAN links. Arrow keys turn it, + and − zoom; a click on a site opens it. The same data is in the WAN links and Sites tables."></canvas>
 <div class="nm-tip ng-tip" hidden></div>
 <div class="ng-tray" hidden></div>
+<div class="rg-wrap"><div class="rg-tip" role="tooltip" hidden></div><div class="rg-leg"></div></div>
 <div class="nm-leg ng-leg"><span class="ng-lt">Utilization</span><span><i class="ng-lb b0"></i>under 25%</span><span><i class="ng-lb b1"></i>25-50%</span><span><i class="ng-lb b2"></i>50-75%</span><span><i class="ng-lb b3"></i>75% and over</span><span><i class="ng-lb warn"></i>Warning</span><span><i class="ng-lb down"></i>Down</span><span class="ng-lt">Width = bandwidth · dashes = traffic, both ways</span></div>
 </div>
+<div class="rg-match nm-w" hidden></div>
 <div class="nm-body nm-lv" aria-live="polite"></div>
-<p class="nm-hint nm-w">Drag to turn the globe, wheel to zoom, hover a link for its traffic, click a site to open it. Read from SolarWinds only: nothing is changed there.</p>
+<p class="nm-hint nm-w">Drag to move the map (Globe: to turn it), wheel to zoom, hover or focus a line for its traffic, click a site to open it. Read from SolarWinds only: nothing is changed there.</p>
 <p class="nm-hint ng-perf nm-w" aria-hidden="true"></p>
 <p class="nm-hint nm-lv">One level at a time: the sites, a site's buildings, a building's devices in tiers, a device's links. Read from SolarWinds only: nothing is changed there.</p>
 </div>

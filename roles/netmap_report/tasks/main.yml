@@ -55,7 +55,7 @@
     snapshot_links: "{{ netmap_snapshot_links | bool }}"
     last: "{{ (_nm_prev.artifacts.netmap_snapshot.at | default('') | regex_replace('^(\\d{4}-\\d\\d-\\d\\d)T(\\d\\d:\\d\\d).*$', '\\1 \\2 UTC')) | report_time_local(report_time_zone | default('', true)) }}"
     run: "{{ _nm_now | report_time_local(report_time_zone | default('', true)) }}"
-    view: "{{ netmap_view if netmap_view in ['globe', 'flat'] else 'globe' }}"
+    view: "{{ netmap_view if netmap_view in ['region', 'globe', 'flat'] else 'region' }}"
     # 1.96.0: the report database's SolarWinds snapshot first (a "Report database" credential; the reader is enough)
     db_host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim if netmap_from_db | bool else '' }}"
     db_port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
@@ -76,6 +76,30 @@
          if _nm.source | default('') == 'db-snapshot'
          else ('From SolarWinds itself' ~ ((': ' ~ (_nm.why_live | join('; '))) if _nm.why_live | default([]) | length > 0 else '') ~ '.') }}
 
+# 1.102.0: the map's AD layer - the AD job's last replication (its job artifact ad_repl), matched to this map's sites
+- name: Network map | the AD layer - the AD job's last runs (job artifact ad_repl, from AAP)
+  ansible.builtin.include_role:
+    name: site_email
+    tasks_from: other_job_artifacts.yml
+  vars:
+    _other_template: "{{ netmap_ad_template }}"
+    _other_artifacts: [ad_repl]
+    _other_runs: 5
+  when: netmap_ad_layer | bool and _nm.reachable
+
+- name: Network map | the AD layer
+  ansible.builtin.set_fact:
+    _nm_ad: >-
+      {{ _nm | netmap_ad_layer(_site_other_runs | default([]), {
+           'enabled': netmap_ad_layer | bool, 'template': netmap_ad_template, 'why': _site_other_why | default(''),
+           'site_map': ad_site_map | default({}, true), 'tz': report_time_zone | default('', true),
+           'orion': lookup('ansible.builtin.env', 'SOLARWINDS_URL') | default(netmap_solarwinds_url, true)}) }}
+
+- name: Network map | the AD layer, said
+  ansible.builtin.debug:
+    msg: "{{ _nm_ad | netmap_ad_lines }}"
+  when: _nm.reachable
+
 - name: Network map | the report
   ansible.builtin.set_fact:
     _nm_opts:
@@ -89,7 +113,7 @@
     _nm_doc: "{{ _nm | netmap_doc(_nm_opts) }}"
     _nm_doc_web: "{{ _nm | netmap_doc(_nm_opts | combine({'web': true})) }}"
     _nm_xlsx: "{{ _nm | netmap_xlsx if netmap_xlsx | bool and _nm.reachable else [] }}"
-    _nm_extra: "{{ _nm | netmap_page_extra(report_motion | default('auto') | string | lower) }}"
+    _nm_extra: "{{ _nm | netmap_page_extra(report_motion | default('auto') | string | lower, _nm_ad) }}"
 
 - name: Network map | what was read (one line a site) and what could not be
   ansible.builtin.debug:

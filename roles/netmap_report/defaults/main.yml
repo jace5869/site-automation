@@ -43,7 +43,13 @@ netmap_sites: {}                         # e.g. {"Site A": {lat: 39.4, lon: -93.
 netmap_properties: []                    # more node custom properties shown in a node's panel and the workbook, e.g. [Region, Building]
 
 # ---- The map --------------------------------------------------------------------------------------------------------------
-netmap_view: globe                       # the world view's first look: globe or flat (each viewer's own choice, once made, is kept in their browser)
+netmap_view: region                      # the world view's first look: region (1.102.0: the placed sites' region, fitted), globe or flat (each viewer's own choice, once made, is kept in their browser)
+# 1.102.0: the AD replication layer on the Region view (Layers: WAN traffic, AD replication - both on by default): the AD
+# job's last replication, read from AAP (its job artifact ad_repl; the same "Red Hat Ansible Automation Platform" credential
+# as "what changed"), matched to the map's sites as the AD report matches them (ad_site_map, the DCs' nodes, the code, the
+# name). The portal's live map reads it from the report database instead. false: no AD layer
+netmap_ad_layer: true
+netmap_ad_template: Active Directory health report   # the AD job template's name in AAP (its runs' ad_repl), or its ID when two organizations have that name
 netmap_link_warn_percent: 90             # a link this busy (in or out, %) is Warning; 0 = never by load (an interface SolarWinds marks Warning still is)
 # report_motion (the map's motion on the report website): a setting of every report page now - roles/site_email/defaults.
 

@@ -44,8 +44,26 @@ cfg = sp.Config({"PORTAL_DATA": os.path.join(tmp, "data"), "PORTAL_REPORTS": os.
                  "PORTAL_NETMAP": os.environ.get("PORTAL_DEMO_NETMAP", "1"), "PORTAL_SWIS_URL": swis, "PORTAL_SWIS_VERIFY": "0",
                  "PORTAL_SWIS_LOGIN": json.dumps({"user": "svc_swis_ro", "password": os.environ.get("PORTAL_DEMO_SWIS_PASSWORD", 'ro&"<test>9')}),
                  "PORTAL_NETMAP_OPTS": {"site_by": "Location", "lat_property": "Lat", "lon_property": "Lon", "properties": ["Region"],
-                                        "sites": sites, "view": os.environ.get("PORTAL_DEMO_VIEW", "globe"), "warn_util": 90}})
+                                        "sites": sites, "view": os.environ.get("PORTAL_DEMO_VIEW", "region"), "warn_util": 90}})
 cfg.netmap_seconds = seconds                  # a test's pace (the service's floor is 30 s)
+if os.environ.get("PORTAL_DEMO_AD"):          # 1.102.0: the AD layer from a stand-in report database (SQLite, 1.101.2's columns)
+    import sqlite3
+    adb = os.path.join(tmp, "ad.db")
+    con = sqlite3.connect(adb)
+    con.executescript("CREATE TABLE ad_run (run_id INTEGER PRIMARY KEY, read_at TEXT, template_id INT);"
+                      "CREATE TABLE ad_dc (run_id INT, dc TEXT, domain TEXT DEFAULT '', site TEXT);"
+                      "CREATE TABLE ad_link (run_id INT, frm TEXT, to_dc TEXT, nc TEXT, last_success TEXT, failures INT, error TEXT, last_failure TEXT, status TEXT);"
+                      "INSERT INTO ad_run VALUES (1, '2026-11-21 08:00:00', 5);"
+                      "INSERT INTO ad_dc VALUES (1, 'DC01', '', 'HQ'), (1, 'DC02', '', 'Branch-East'), (1, 'DC03', '', 'SITE-C'), (1, 'DC04', '', 'Lab-Annex');"
+                      "INSERT INTO ad_link VALUES (1, 'DC01', 'DC02', 'corp.example.mil', '2026-11-21 07:30:00', 0, '', NULL, 'ok'),"
+                      " (1, 'DC01', 'DC03', 'corp.example.mil', '2026-11-20 06:00:00', 2, '8524', '2026-11-21 07:00:00', 'critical'),"
+                      " (1, 'DC02', 'DC03', 'corp.example.mil', '2026-11-21 03:00:00', 0, '', NULL, 'low');")
+    con.commit()
+    con.close()
+    cfg.netmap_opts = dict(cfg.netmap_opts, ad_site_map={"HQ": "Site A", "Branch-East": "Site B"})
+    _orig = sp.ad_repl_from_db
+    sp.ad_db_connect = lambda c: ((lambda: sqlite3.connect(adb)), "")
+    sp.ad_repl_from_db = lambda conn, mark="%s", opts=None, log=None: _orig(conn, "?", opts, log)
 real = sys.stdout
 sys.stdout = open(os.devnull, "w")
 portal = sp.Portal(cfg)

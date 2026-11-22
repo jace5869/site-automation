@@ -61,11 +61,13 @@ PIECES = {
     "netmap": {"marker": "@@NETMAP@@", "data_id": "netmap-data", "script_file": "site-netmap.js",
                "markup": "roles/netmap_report/files/web/netmap-map.html", "css": "roles/netmap_report/files/web/netmap.css",
                "script": ["roles/netmap_report/files/web/world-land.js", "roles/netmap_report/files/web/netmap.js",
-                          "roles/netmap_report/files/web/netglobe.js"]},
+                          "roles/netmap_report/files/web/netglobe.js", "roles/netmap_report/files/web/maplabel.js",
+                          "roles/netmap_report/files/web/netregion.js"]},
     # 1.101.0: the AD report's replication map (the land: the network map's own)
     "admap": {"marker": "@@ADMAP@@", "data_id": "admap-data", "script_file": "site-admap.js",
               "markup": "roles/ad_report/files/web/admap.html", "css": "roles/ad_report/files/web/admap.css",
-              "script": ["roles/netmap_report/files/web/world-land.js", "roles/ad_report/files/web/admap.js"]},
+              "script": ["roles/netmap_report/files/web/world-land.js", "roles/netmap_report/files/web/maplabel.js",
+                         "roles/ad_report/files/web/admap.js"]},
 }
 DATA_MAX = 8 * 1024 * 1024              # a piece's data, as JSON, at most
 

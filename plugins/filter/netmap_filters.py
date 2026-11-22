@@ -15,6 +15,62 @@ _sw = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_sw)
 
 
+# 1.102.0: the AD layer - the AD report's own matching (plugins/module_utils/site_ad_layer.py) and the reports' times
+def _load(name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_al = _load("site_ad_layer")
+_tm = _load("site_time")
+
+
+def netmap_ad_layer(res, runs=None, opts=None):
+    """1.102.0: the map's AD layer from the AD job's newest run that kept one (its job artifact ad_repl's layer, read from AAP
+    by site_email other_job_artifacts.yml), matched to this map's sites. opts: enabled, template, why (why there are no runs),
+    site_map (ad_site_map), tz (report_time_zone). -> the data's "ad" ({why} when off: said on the page, the layer stays off)."""
+    o, r = opts or {}, res or {}
+    if not o.get("enabled", True):
+        return {"why": "netmap_ad_layer is false", "source": "artifact"}
+    if not isinstance(r.get("data"), dict):
+        return {"why": "SolarWinds not read", "source": "artifact"}
+    tpl = o.get("template") or "its template"
+    # 1.102.0 review: the AD job's NEWEST finished run, whatever its result - a failed run is the current state (said), and
+    # an older healthy run is never drawn in its place
+    done = [x for x in runs or [] if isinstance(x, dict)]
+    if not done:
+        return {"why": "AD replication not read: " + (o.get("why") or "no run of the AD job (%s)" % tpl), "source": "artifact"}
+    top = done[-1]
+    ar = (top.get("artifacts") or {}).get("ad_repl")
+    c = ar.get("layer") if isinstance(ar, dict) else None
+    if not isinstance(c, dict) or not c.get("dcs"):
+        why = ("the AD job's newest run (job %s) %s and kept no replication - an older run is not shown in its place" % (top.get("id"), top.get("status") or "ended")
+               if not isinstance(ar, dict) or top.get("status") != "successful" else
+               "the AD job (%s) has not run since 1.102.0 - its next run keeps the replication for the map" % tpl)
+        return {"why": "AD replication not read: " + why, "source": "artifact", "job": top.get("id")}
+    lay = _al.layer(c, r["data"], site_map=o.get("site_map") or {}, no_site=(r.get("map") or {}).get("no_site") or "Not placed",
+                    source="artifact", now=o.get("now"), orion_url=o.get("orion") or "")
+    lay["job"], lay["run_status"] = top.get("id"), str(top.get("status") or "")
+    if lay.get("as_of"):
+        t = _al.utc(c.get("read_at"))
+        lay["as_of"] = _tm.local(t.strftime("%Y-%m-%d %H:%M UTC"), _tm.zone(o.get("tz"))[0]) if t else lay["as_of"]
+    return lay
+
+
+def netmap_ad_lines(ad):
+    """The job's line about the AD layer."""
+    a = ad or {}
+    if a.get("why"):
+        return ["AD layer off: " + a["why"]]
+    drawn = sum(1 for x in a.get("links") or [] if x.get("nma") and x.get("nmb"))
+    return ["AD layer: %d AD site(s), %d matched to the map (%d not: set ad_site_map), %d replication line(s) between map sites, from the AD job's run of %s%s%s%s" % (
+        len(a.get("sites") or []), len(a.get("sites") or []) - int(a.get("none") or 0), int(a.get("none") or 0), drawn, a.get("as_of") or "?",
+        " (job %s)" % a["job"] if a.get("job") else "", ", which FAILED" if a.get("run_status") == "failed" else "",
+        " - STALE: %s h old, every line red" % a.get("age_h") if a.get("stale") else "")]
+
+
 def netmap_check_opts(o):
     """The portal deploy's netmap settings -> what is wrong with them ([] = fine): the job's own check (check_opts)."""
     return _sw.check_opts(o if isinstance(o, dict) else {})
@@ -280,14 +336,15 @@ def netmap_lines(res):
     return out
 
 
-def netmap_page_extra(res, motion="auto"):
+def netmap_page_extra(res, motion="auto", ad=None):
     """The map's piece of the website page, as site_email takes it (_report_page_extra) and keeps it for the copy job:
     {kind: netmap, data, motion} - data only; the markup, style and script come from this repository's files
     (plugins/filter/report_page_filters.py, report_page_piece), in the report job and in the copy job alike."""
     r = res or {}
     if not r.get("reachable", True) or not isinstance(r.get("data"), dict):
         return {}
-    return {"kind": "netmap", "data": r["data"], "motion": motion if motion in ("always", "off") else ""}
+    data = dict(r["data"], ad=ad) if isinstance(ad, dict) else r["data"]          # 1.102.0: the AD layer, with the map
+    return {"kind": "netmap", "data": data, "motion": motion if motion in ("always", "off") else ""}
 
 
 def netmap_summary_counts(res):
@@ -303,4 +360,4 @@ class FilterModule(object):
     def filters(self):
         return {"netmap_doc": netmap_doc, "netmap_xlsx": netmap_xlsx, "netmap_lines": netmap_lines,
                 "netmap_page_extra": netmap_page_extra, "netmap_summary_counts": netmap_summary_counts,
-                "netmap_check_opts": netmap_check_opts}
+                "netmap_check_opts": netmap_check_opts, "netmap_ad_layer": netmap_ad_layer, "netmap_ad_lines": netmap_ad_lines}

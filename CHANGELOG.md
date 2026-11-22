@@ -220,6 +220,64 @@ Not tested here: the Windows-only commands and the registry on a real Windows Se
   parts; each finding of the review), tests/portal_setup/run_aap_catalog_workflows_test.sh (all 40 against the
   stand-in AAP, the reviews' findings), test_workflow_dry_run.py (the guard), run_net_config_test.sh (the lines as text),
   the fake AAP (surveys as AAP checks them, a node's Job type and Show changes, a read that fails).
+## 1.102.0 — 2026-11-22
+
+**Nothing to set up.** The map opens on the new Region view. Each viewer can still pick Globe or Flat, and the browser
+keeps that choice. The AD layer fills after the AD job's next run. The live portal map fills once the AD job's runs are
+in the report database (1.101.2).
+
+**Network map: the Region view, and Layers for WAN traffic and AD replication.**
+
+- **Region** is the map's first look when most sites are placed. It fits the placed sites, also across the date line.
+  *Globe* and *Flat* are one click away. `netmap_view` takes `region` (the new default), `globe` or `flat`.
+- **WAN lines** are curved, as on the AD report's map:
+  - width = bandwidth, colour = utilization (the map's four steps);
+  - dashes move with the traffic, and stay still when motion is off;
+  - a down link is red and dashed.
+  - A hub's lines merge into a trunk near the hub.
+- **The card.** Hover or Tab to a line for its card: the two sites, the links, the bandwidth, the busiest % and the
+  interfaces. With the AD layer on, it also shows the AD replication over that link. A click keeps the card, and the
+  other lines fade.
+- **Sites** are coloured by their worst status and sized by their devices. Down and warning sites are labeled first, and
+  a down site always has its label. A label never covers another label or a dot.
+- **Layers:** WAN traffic and AD replication, both on. You can show either or both, never none.
+- **The AD layer:**
+  - The replication between AD sites is a thin line on the other side of the WAN curve.
+  - Its colour is the time since the last success (under 4 h, 4-6 h, 6-24 h, 24 h or failing).
+  - With both layers on, the WAN lines fade.
+  - *How AD sites were matched* shows under the map. It uses the AD report's rules and table: `ad_site_map`, the DCs'
+    nodes, the code, the name.
+- **Where the AD data comes from:**
+  - The report job reads the AD job's last run from AAP (its job artifact `ad_repl`), with the AAP credential that
+    *what changed* uses. The AD job keeps that data from this release on.
+  - The portal's live map reads the AD job's newest run from the report database.
+  - Without that data, the layer is off and the legend says why.
+  - New settings: `netmap_ad_layer` (true) and `netmap_ad_template` (the AD job template's name).
+- **The review of 1.102.0, fixed before release:**
+  - The newest AD run wins, even when it failed (said). One that failed before keeping its data turns the layer off; an
+    older healthy run never shows as current.
+  - Ages count to now from the AD run's time; a run older than `ad_repl_crit_hours` is stale (every line red, said);
+    "AD read" is on the legend and the cards.
+  - AD sites matched the same way in the AD report and on the map: two DCs with one short name (two domains' DC01) never
+    match by that name; full names must agree; `ad_site_map` values in any case; never "Not placed".
+  - A report-database set-up error turns off the AD layer only; the map is served. The read is one READ ONLY
+    transaction; the browser gets fixed text, the portal's log the detail.
+  - A down WAN link is drawn over the up ones on a trunk; the hub's west fan is one trunk; leaders start at the dot's
+    centre; keyboard cards sit by the line, Enter or Space keeps them; the card of sites on one spot lists each, with
+    their AD sites.
+- **Codex's review of 1.102.0, fixed before release:** the newest AD run of ONE template (a name in two organizations:
+  set `netmap_ad_template` to its ID; error and canceled runs count too); ages counted when the page is looked at; saved
+  node ids only from the same SolarWinds; DC identities and full names kept for matching; an invalid `ad_site_map` entry
+  shown as invalid; no AD layer when no DC's replication was read; "traffic not known" instead of 0%; an older archived
+  map page opens on the Globe.
+- **Fix (1.95.1 review, P2).** A pair of sites with one WAN link down and the others not read showed *Unknown*. It now
+  shows *Down* ("1 down, the other not read"). The Globe, Flat and Region views share one rule for this.
+- **Shared code.** The AD report's matching now lives in `plugins/module_utils/site_ad_layer.py`. Its label placement and
+  curve now live in `maplabel.js`. The AD report and the network map use the same code.
+- **Docs:** NETWORK_MAP.md ("Region"), ACTIVE_DIRECTORY.md, SITE_PORTAL.md, VARIABLES_REFERENCE.md and the role defaults.
+- **Tests:** test_netmap_region.py (the layer, the job's filter, history by template name, the portal's reader on
+  SQLite, and Region in Chromium with label geometry at 1280 and 800 px, also in a wider font). Also
+  test_netmap.py (the live AD layer) and the netmap e2e (the AD job's artifact read from the fake AAP).
 
 ## 1.103.1 — 2026-11-21
 

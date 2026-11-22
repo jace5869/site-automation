@@ -99,6 +99,19 @@
     msg: "{{ _ad_map.lines }}"
   when: _ad_map.lines is defined
 
+# 1.102.0: the network map's AD layer reads this run's replication from the job artifact ad_repl ("layer": each AD site's DCs,
+# their SolarWinds nodes when read, the replication between AD sites) - added to the matrix's ad_repl, which it keeps
+- name: AD | replication for the network map's AD layer (job artifact ad_repl, its layer)
+  ansible.builtin.set_stats:
+    data:
+      ad_repl: >-
+        {{ _ad_repl.artifact | default({}) | combine({'layer': _ad.repl | ad_layer_artifact(_ad_swis_read | default({}), {
+             'low_hours': ad_repl_low_hours | float, 'warn_hours': ad_repl_warn_hours | float, 'crit_hours': ad_repl_crit_hours | float,
+             'orion': lookup('ansible.builtin.env', 'SOLARWINDS_URL') | default(netmap_solarwinds_url | default(''), true)})}) }}
+    per_host: false
+    aggregate: false
+  when: _ad.repl is defined
+
 - name: AD | the report to print and email
   ansible.builtin.set_fact:
     _ad_doc: >-

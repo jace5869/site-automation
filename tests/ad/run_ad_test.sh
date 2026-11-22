@@ -36,7 +36,7 @@ for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && bre
 run() {
     local name="$1" want="$2" vars="$3"; shift 3
     (cd "$repo" && ANSIBLE_NOCOLOR=1 ANSIBLE_ROLES_PATH=roles ANSIBLE_FILTER_PLUGINS=plugins/filter ANSIBLE_LOCALHOST_WARNING=False \
-        ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default \
+        ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_SHOW_CUSTOM_STATS=True \
         "$ap" -i "$work/inv.yml" "$here/report.yml" -e '{"fixture_domain": "domain_changes"}' -e "$vars" ${CHECK:+--check} ${LIMIT:+-l "$LIMIT"}) > "$work/out.txt" 2>&1
     local rc=$?
     if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
@@ -69,6 +69,16 @@ if [ -z "$page" ] || ! grep -q '<table class="rm rm-dc"' "$page" || ! grep -q 'd
     echo "FAIL - the matrix is not on the website's page ($page)"; fails=$((fails + 1))
 else echo "ok   - the matrix on the website's page"; fi
 if grep -l 'class="rm rm-' "$work"/mail/*.eml >/dev/null 2>&1; then echo "FAIL - the matrix is in the email"; fails=$((fails + 1)); fi
+# 1.102.0: the artifact ad_repl keeps the matrix's points and, for the network map's AD layer, its "layer"
+"$py" - "$work/out.txt" <<'PY' || fails=$((fails + 1))
+import json, sys
+run = [x for x in open(sys.argv[1]).read().splitlines() if x.startswith("\tRUN: ")]
+a = (json.loads(run[-1][6:]) if run else {}).get("ad_repl") or {}
+lay = a.get("layer") or {}
+if not (a.get("sites") and lay.get("v") == 1 and lay.get("dcs") and isinstance(lay.get("pairs"), list) and lay.get("scale", {}).get("crit") == 24):
+    print("FAIL - the artifact ad_repl has no layer for the network map: %s" % json.dumps(a)[:300]); sys.exit(1)
+print("ok   - the artifact ad_repl: the matrix's points and the network map's layer (%d AD sites, %d pairs)" % (len(lay["dcs"]), len(lay["pairs"])))
+PY
 "$py" - "$work/mail" <<'PY' || fails=$((fails + 1))
 import email, glob, io, sys, zipfile
 m = email.message_from_binary_file(open(sorted(glob.glob(sys.argv[1] + "/*.eml"))[-1], "rb"))

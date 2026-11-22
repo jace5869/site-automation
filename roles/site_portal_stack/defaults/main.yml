@@ -140,7 +140,9 @@ portal_ready_delay: 4                               # seconds between those trie
 # job has a "SolarWinds (read-only)" credential; true: on (the deploy stops without one); false: off (no page, no menu
 # entry). The map's own settings are the report's (usually in all.yml): netmap_site_by, netmap_site_pattern, netmap_hierarchy,
 # netmap_roles, netmap_site_split, netmap_sites, netmap_lat_property, netmap_lon_property, netmap_properties, netmap_view,
-# netmap_link_warn_percent, netmap_max_nodes.
+# netmap_link_warn_percent, netmap_max_nodes. 1.102.0: the AD layer (netmap_ad_layer, ad_site_map, ad_repl_*_hours) reads
+# the AD job's replication from the report database (1.101.2's tables, the portal's read-only login); without them it is off
+# and says so.
 # 1.95.0: the page shows the last map the server kept (on disk, kept through a restart) at once, "as of" its time, and the
 # server reads again behind it: the node and link status every netmap_live_seconds (2 queries), the whole map every
 # netmap_full_seconds. Nothing is read while nobody has the page open.

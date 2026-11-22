@@ -360,6 +360,10 @@
     - {src: "{{ role_path }}/../netmap_report/files/web/netmap.css", dest: static/netmap.css}
     - {src: "{{ role_path }}/../netmap_report/files/web/netmap.js", dest: static/netmap.js}
     - {src: "{{ role_path }}/../netmap_report/files/web/netglobe.js", dest: static/netglobe.js}
+    # 1.102.0: the Region view and its labels (shared with the AD report's map); the AD layer's matching
+    - {src: "{{ role_path }}/../netmap_report/files/web/maplabel.js", dest: static/maplabel.js}
+    - {src: "{{ role_path }}/../netmap_report/files/web/netregion.js", dest: static/netregion.js}
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_ad_layer.py", dest: site_ad_layer.py}
     - {src: "{{ role_path }}/../netmap_report/files/web/world-land.js", dest: static/world-land.js}
     - {src: "{{ role_path }}/../netmap_report/files/web/netmap-live.js", dest: static/netmap-live.js}
   loop_control:
@@ -616,9 +620,14 @@
         lat_property: "{{ netmap_lat_property | default('') }}"
         lon_property: "{{ netmap_lon_property | default('') }}"
         properties: "{{ netmap_properties | default([], true) }}"
-        view: "{{ netmap_view | default('globe') }}"
+        view: "{{ netmap_view | default('region') }}"
         warn_util: "{{ netmap_link_warn_percent | default(90) | int }}"
         max_nodes: "{{ netmap_max_nodes | default(5000) | int }}"
+        # 1.102.0: the AD layer - the report database's AD replication (1.101.2), matched as the AD report matches
+        ad_layer: "{{ netmap_ad_layer | default(true) | bool }}"
+        ad_site_map: "{{ ad_site_map | default({}, true) }}"
+        ad_scale: {low_hours: "{{ ad_repl_low_hours | default(4) | float }}", warn_hours: "{{ ad_repl_warn_hours | default(6) | float }}",
+                   crit_hours: "{{ ad_repl_crit_hours | default(24) | float }}"}
         page: "{{ netmap_page_size | default(1000) | int }}"
   register: _portal_settings_file
 

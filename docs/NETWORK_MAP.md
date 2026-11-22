@@ -44,9 +44,10 @@ strict Content-Security-Policy (no inline script, no outside font or script).
 
 - **World:** the sites as **tiles**, worst first: devices, buildings, the worst status (a mark and a word), the WAN link
   (a hub says how many sites it links). Beside them, **Links between sites**: counted, down first, then the busiest.
-  When most sites have a place (below), the World is the **Globe** or **Flat** map instead; *Tiles / Map* switches. On
-  the map, sites on one spot share one label (the worst site and "+N") and a count; a label with no free place is left
-  off (down and warning sites are labeled first); pointing at a dot names it and the sites beside it.
+  When most sites have a place (below), the World is the **map** instead; *Tiles / Map* switches. The map is
+  **Region** (1.102.0, the first look), **Globe** or **Flat** - one click away; the viewer's choice is kept in their
+  browser. On the map, sites on one spot share one label (the worst site and "+N"); a label with no free place is left
+  off (down and warning sites are labeled first); pointing at a dot names it.
 - **Site:** its **buildings** as cards (devices, closets, core, distribution and access), and the links between two
   buildings **counted** on one line (red: one is down). Its WAN links, per site at the other end.
 - **Building:** its devices **in tiers**: the edge (routers, firewalls), the core, servers and wireless, then each
@@ -56,6 +57,41 @@ strict Content-Security-Policy (no inline script, no outside font or script).
   of closets: no line crosses a device or another closet.
 - **Device:** its links' interfaces (those on SolarWinds' topology) and the neighbour at the other end; a neighbour
   opens its own.
+
+**Region (1.102.0)** - the placed sites' region, fitted to them (also across the date line):
+
+- **Sites** coloured by their worst status and sized by their devices. Down and warning sites are labeled first; a down
+  site always has its label. A label never covers another label or a dot.
+- **Layers** (beside Region / Globe / Flat): **WAN traffic** and **AD replication**, both on. Either or both, never none:
+  turning off the only one shown turns the other on.
+- **WAN traffic:** one curve between two sites. Width = bandwidth, colour = utilization (under 25%, 25-50%, 50-75%, 75%
+  and over), dashes that move with the traffic (still when motion is off). A down link is red and dashed; one not read
+  is grey and dotted. One link down while the others were not read is **Down** ("1 down, the other not read"). A hub's
+  lines merge into a trunk for the last part, near the hub.
+- **Hover or Tab to a line** for its card: the two sites, how many links, the bandwidth, the busiest %, the interfaces;
+  with the AD layer on, the AD replication over that link. A click keeps the card; the other lines fade.
+- **AD replication:** the replication between AD sites, drawn between the network-map sites they matched - a thin line
+  on the other side of the WAN curve, coloured by the time since the last success (under 4 h, 4-6 h, 6-24 h, 24 h or
+  failing - the AD report's `ad_repl_*_hours`). With both layers on, the WAN lines fade. Its card: the AD sites, the last
+  success, failing, the partitions, and the WAN link under it.
+- **How AD sites were matched** (under the map while the AD layer is on): each AD site to a network-map site -
+  `ad_site_map`, then the DCs' own nodes, then the same code without separators, then the same name - or *none* ("set
+  `ad_site_map`"). The same rules and table as the AD report's.
+- **Where the AD data comes from:** the report job reads the AD job's last run (its job artifact `ad_repl`, kept from
+  1.102.0 on) from AAP, with the same "Red Hat Ansible Automation Platform" credential as *what changed*
+  (`netmap_ad_template` names the AD job template). The portal's live map reads the AD job's newest run from the report
+  database (the AD job's tables, 1.101.2). Without that data the AD layer is off and the legend says why - for example
+  *AD replication not in the report database yet*.
+- **Always the newest AD run, never fresher than it is:** the newest finished AD run is shown even when it failed (the
+  legend and the cards say so); when it failed before it kept its replication, the layer is off - an older run is never
+  drawn in its place. The ages count to now from the AD run's time ("AD read" in the legend and the cards); an AD run
+  older than the scale's top (`ad_repl_crit_hours`, 24 h) is **stale**: every line red, said. The ages are counted when
+  the page is looked at, so a page opened a day later shows them red too.
+- **Matched safely:** a DC's node by its SolarWinds id only when the AD job read the same SolarWinds; else by its name -
+  never a short name two DCs share, and the full name when known. An `ad_site_map` entry naming a site the map does not
+  have (or "Not placed") is shown as invalid. No DC's replication read (rights, reach): no AD layer, said.
+- A WAN link with no traffic % read is grey, "traffic not known" - never 0%.
+- Drag to move, the wheel or **+ / −** to zoom, **Fit** to fit again. A site opens on a click (or Enter).
 
 **The bar** - one slim row:
 - the **breadcrumbs** (World › site › building › device): a click goes back up;
@@ -258,7 +294,10 @@ left out, and the job says so: raise it. 1,500 nodes add about 45 KB to the defa
 | `netmap_lat_property` / `netmap_lon_property` | `""` | custom properties with the latitude and longitude |
 | `netmap_sites` | `{}` | `{site or pattern: {lat, lon}}` for sites SolarWinds has no place for |
 | `netmap_properties` | `[]` | more custom properties shown with each node |
-| `netmap_view` | `globe` | the world view's first look: `globe` or `flat` |
+| `netmap_view` | `region` | the map's first look: `region` (1.102.0), `globe` or `flat` |
+| `netmap_ad_layer` | `true` | the AD replication layer (1.102.0); `false` = none |
+| `netmap_ad_template` | `Active Directory health report` | the AD job template whose last run the report job reads: its name, or its ID when the name is in two organizations (then the layer is off, said) |
+| `ad_site_map` | `{}` | an AD site -> its network-map site, by hand (the AD report's setting) |
 | `netmap_link_warn_percent` | `90` | a link this busy (in or out) is Warning; 0 = never by load |
 | `report_motion` | `auto` | the map's motion on the report website: auto, always, off |
 | `netmap_page_size` | `1000` | rows a request |

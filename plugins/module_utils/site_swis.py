@@ -1246,9 +1246,9 @@ def _resite(m):
     return lambda n: no_site
 
 
-def page_data(m, last="", run="", source="SolarWinds (SWIS, read-only)", view="globe"):
+def page_data(m, last="", run="", source="SolarWinds (SWIS, read-only)", view="region"):
     """The map's data for the page's script (the report page's netmap-data, the portal's /api/netmap)."""
-    return {"run": run, "last": last, "source": source, "view": view if view in ("globe", "flat") else "globe",
+    return {"run": run, "last": last, "source": source, "view": view if view in ("region", "globe", "flat") else "region",   # 1.102.0: region
             "sites": [s["name"] for s in m["sites"]],
             "geo": dict((s["name"], [s["lat"], s["lon"]]) for s in m["sites"] if s["lat"] is not None),
             "unplaced": list(m.get("unplaced") or []),

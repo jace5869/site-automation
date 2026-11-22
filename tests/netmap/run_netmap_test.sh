@@ -99,7 +99,8 @@ run "the first run: read, the report, emailed, on the website" ok "{$base, $mail
     "SolarWinds 2025.4.1 at https://127.0.0.1:$port:" "nodes (1 down" "Topology from Orion.TopologyConnections" \
     "Site A: 299 nodes" "(SolarWinds' Worldwide Map)" "Site D: 164 nodes" "(custom properties)" "Site F: 134 nodes" "(netmap_sites)" \
     "Site J: " "unplaced" "Not compared with an earlier run" "Network map: 1 down" "WAN link down" "not compared: " \
-    "Unplaced sites (2)" '"netmap_snapshot": {' "to net@example.mil"
+    "Unplaced sites (2)" '"netmap_snapshot": {' "to net@example.mil" \
+    'AD layer off: AD replication not read: no job template \"Active Directory health report\" that the AAP user can see'
 reads_only "$work/swis.log"
 check "paged: Orion.Nodes asked page by page (WITH ROWS, 500 a page)" bash -c "test \$(grep -c ' Orion.Nodes ' '$work/swis.log') -ge 3"
 check "the interfaces in chunks of IDs (WHERE InterfaceID IN @ids)" bash -c "test \$(grep -c ' Orion.NPM.Interfaces ' '$work/swis.log') -ge 6"
@@ -116,7 +117,8 @@ check "the page: the map with its data, its own script file (site-netmap.js, whi
     && grep -q 'window.NM_LAND' '$work/web/site-netmap.js' && grep -q 'window.siteReport' '$work/web/site-netmap.js' && grep -q 'ngFly' '$work/web/site-netmap.js'"
 check "the page's data: sites placed, Site J unplaced, the WAN links flagged" "$py" -c 'import json, re, sys
 h = open(sys.argv[1]).read(); d = json.loads(re.search(r"id=\"netmap-data\">(.*?)</script>", h, re.S).group(1))
-assert set(d["geo"]) == set("Site " + c for c in "ABCDEFGH") and "Site J" in d["unplaced"] and d["view"] == "globe", d["geo"]
+assert set(d["geo"]) == set("Site " + c for c in "ABCDEFGH") and "Site J" in d["unplaced"] and d["view"] == "region", d["geo"]
+assert d["ad"]["why"].startswith("AD replication not read: no job template"), d.get("ad")
 assert sum(1 for l in d["links"] if l.get("wan")) == 11 and len(d["nodes"]) > 1400' "$work/web/network-map/$p"
 check "the page under its CSP: no inline style attribute in the map" bash -c "! sed -n '/class=\"nm\" id=\"nm\"/,/id=\"netmap-data\"/p' '$work/web/network-map/$p' | grep -q ' style=\"'"
 check "the email: the plain summary (counts, tables), the workbook attached, no map" "$py" -c 'import email, email.policy, glob, sys
@@ -135,8 +137,19 @@ acc = [n for n in fx["nodes"] if n["Caption"].startswith("sb-acc")]
 wan = [c for c in fx["connections"] if c["SrcNodeID"] == next(n["NodeID"] for n in fx["nodes"] if n["Caption"] == "sa-core01")]
 json.dump({"down": [acc[0]["NodeID"]], "ifdown": [wan[0]["SrcInterfaceID"]]}, open(sys.argv[2], "w"))
 PY
-run "the second run: what changed since the last run" ok "{$base, $(job 802)}" \
-    "Changes since the last run: " "What changed since the last run" "Up → Down" "sb-acc" "compared with "
+# 1.102.0: the AD job's last run kept its replication (job artifact ad_repl's layer): the map's AD layer reads it
+"$py" - "$work/jobs.json" <<'PY'
+import json, sys
+js = json.load(open(sys.argv[1]))
+layer = {"v": 1, "read_at": "2026-11-21T08:00:00Z", "scale": {"low": 4, "warn": 6, "crit": 24}, "dcs": {"Site A": ["DC01"], "SITE-B": ["DC02"]}, "nodes": {},
+         "pairs": [{"a": "SITE-B", "b": "Site A", "h": 7.5, "cls": "warning", "fail": False, "err": "", "parts": ["corp.example.mil"], "ls": "", "n": 1}]}
+js.append({"id": 790, "job_template": 77, "name": "Active Directory health report", "status": "successful", "job_type": "run",
+           "finished": "2026-11-21T08:01:00.0Z", "artifacts": {"ad_repl": {"read_at": "2026-11-21T08:00:00Z", "sites": {}, "status": {}, "layer": layer}}})
+json.dump(js, open(sys.argv[1], "w"))
+PY
+run "the second run: what changed since the last run, and the AD layer" ok "{$base, $(job 802)}" \
+    "Changes since the last run: " "What changed since the last run" "Up → Down" "sb-acc" "compared with " \
+    "AD layer: 2 AD site(s), 2 matched to the map (0 not: set ad_site_map), 1 replication line(s) between map sites, from the AD job's run of 2026-11-21 08:00 UTC (job 790)"
 check "the history was read from AAP (the kept copy of job 801)" grep -q '"netmap_snapshot"' "$work/jobs.json"
 rm -f "$work/state.json"
 

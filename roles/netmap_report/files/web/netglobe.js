@@ -13,7 +13,7 @@
   var ctx = cv.getContext('2d'), tip = box.querySelector('.ng-tip'), perf = box.querySelector('.ng-perf'), tray = box.querySelector('.ng-tray');
   var RAD = Math.PI / 180, GL = { Up: '✓', Warning: '!', Down: '×', Unknown: '?' };
   var HOME = { lam: -35, phi: 28, k: 1 }, KEY = 'site-netmap-view', DEBUG = /[?&]debug=1\b/.test(location.search);
-  var G = { lam: HOME.lam, phi: HOME.phi, k: HOME.k, flat: false, mix: 0, morph: null, W: 0, H: 0, dpr: 1, hover: null, spin: true, idle: 0, fly: null };
+  var G = { lam: HOME.lam, phi: HOME.phi, k: HOME.k, flat: false, region: false, mix: 0, morph: null, W: 0, H: 0, dpr: 1, hover: null, spin: true, idle: 0, fly: null };
   function dict() { return Object.create(null); }      // keyed by site names from SolarWinds: no inherited keys
   function own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
   var sites = [], bySite = dict(), arcs = [], D = null;
@@ -24,6 +24,18 @@
   function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
   function bps(t) { var m = /^([\d.]+)\s*([KMGT]?)/i.exec(t || ''); return m ? parseFloat(m[1]) * ({ '': 1, K: 1e3, M: 1e6, G: 1e9, T: 1e12 })[m[2].toUpperCase()] : 0; }
   function speedText(b) { var u = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'K']]; for (var i = 0; i < u.length; i++) if (b >= u[i][0]) { var v = b / u[i][0]; return (Math.abs(v - Math.round(v)) < .05 ? Math.round(v) : v.toFixed(1)) + u[i][1]; } return b ? String(b) : ''; }
+  // 1.102.0: the state of a pair of sites' WAN links, one rule for the globe, the flat map and the Region view: any up (or
+  // warning) -> Up, or Warning when one is down, not known or warning; none up and one down -> Down, even when the others
+  // were not read (1.95.1's review: "1 down, the others not read" is Down, not Unknown); none read at all -> Unknown
+  function wanState(ls) {
+    var n = ls.length, up = ls.filter(function (l) { return l.status === 'Up' || l.status === 'Warning'; }), dn = ls.filter(function (l) { return l.status === 'Down'; });
+    if (!up.length && dn.length) return { status: 'Down', why: dn.length === n ? (n > 1 ? 'all ' + n + ' links down' : (dn[0].why || 'down'))
+      : dn.length + ' down, the other' + (n - dn.length === 1 ? '' : 's') + ' not read' };
+    if (!up.length) return { status: 'Unknown', why: 'not in the last status read' };
+    var warn = up.length < n || up.some(function (l) { return l.status === 'Warning'; });
+    return { status: warn ? 'Warning' : 'Up', why: up.length < n ? (n - up.length) + ' of ' + n + ' links down or not known'
+      : (up.filter(function (l) { return l.status === 'Warning'; }).map(function (l) { return l.why; })[0] || '') };
+  }
   function build(data, changes) {
     D = data;
     var byId = dict(), old = bySite; D.nodes.forEach(function (n) { byId[n.id] = n; });
@@ -45,13 +57,10 @@
     });
     var oldArcs = dict(); arcs.forEach(function (A) { oldArcs[A.key] = A; });
     arcs = Object.keys(pair).map(function (k) {
-      var p = pair[k], a = p.a, b = p.b, ls = p.ls, up = ls.filter(function (x) { return x.l.status === 'Up' || x.l.status === 'Warning'; });
-      var unk = !up.length && ls.some(function (x) { return x.l.status === 'Unknown'; });   // 1.95.1: not read is not Up - grey, still
-      var down = !up.length && !unk, warn = !down && !unk && (up.length < ls.length || ls.some(function (x) { return x.l.status === 'Warning'; }));
+      var p = pair[k], a = p.a, b = p.b, ls = p.ls, st = wanState(ls.map(function (x) { return x.l; })), up = ls.filter(function (x) { return x.l.status === 'Up' || x.l.status === 'Warning'; });
+      var unk = st.status === 'Unknown', down = st.status === 'Down', why = st.why;
       var bw = ls.reduce(function (s, x) { return s + bps(x.l.speed); }, 0);
       var pin = up.reduce(function (m, x) { return Math.max(m, x.pin || 0); }, 0), pout = up.reduce(function (m, x) { return Math.max(m, x.pout || 0); }, 0);
-      var why = unk ? 'not in the last status read' : down ? (ls.length > 1 ? 'all ' + ls.length + ' links down' : (ls[0].l.why || 'down')) : up.length < ls.length ? (ls.length - up.length) + ' of ' + ls.length + ' links down or not known'
-        : (ls.filter(function (x) { return x.l.status === 'Warning'; }).map(function (x) { return x.l.why; })[0] || '');
       var om = Math.acos(Math.max(-1, Math.min(1, dot(a.v, b.v)))), pts = [], ll = [];
       for (var i = 0; i <= 64; i++) {
         var t = i / 64, s0 = om ? Math.sin((1 - t) * om) / Math.sin(om) : 1 - t, s1 = om ? Math.sin(t * om) / Math.sin(om) : t;
@@ -60,11 +69,12 @@
         ll.push([Math.atan2(q[1], q[0]) / RAD, Math.asin(Math.max(-1, Math.min(1, q[2] / (Math.hypot(q[0], q[1], q[2]) || 1)))) / RAD]);
       }
       for (var j = 1; j < ll.length; j++) { while (ll[j][0] - ll[j - 1][0] > 180) ll[j][0] -= 360; while (ll[j][0] - ll[j - 1][0] < -180) ll[j][0] += 360; }   // one line across the date line
-      var o = oldArcs[k], status = unk ? 'Unknown' : down ? 'Down' : warn ? 'Warning' : 'Up';
-      var L = { status: status, 'in': Math.round(pin), out: Math.round(pout), why: why };
-      return { key: k, l: L, a: a, b: b, pts: pts, ll: ll, w: Math.max(1.6, Math.min(6.5, 1.6 + 1.25 * Math.log(Math.max(bw, 1e8) / 1e8) / Math.LN10)), scr: [],
+      var o = oldArcs[k], status = st.status;
+      var known = up.some(function (x) { return x.l['in'] != null || x.l.out != null; });   // 1.102.0 review: no % read is not 0%
+      var L = { status: status, 'in': Math.round(pin), out: Math.round(pout), why: why, known: known };
+      return { key: k, l: L, a: a, b: b, pts: pts, ll: ll, bw: bw, ls: ls.map(function (x) { return x.l; }), w: Math.max(1.6, Math.min(6.5, 1.6 + 1.25 * Math.log(Math.max(bw, 1e8) / 1e8) / Math.LN10)), scr: [],
         oIn: o ? o.oIn : Math.random() * 40, oOut: o ? o.oOut : Math.random() * 40, flash: o && o.l.status !== status && (status === 'Down' || o.l.status === 'Down') ? performance.now() : o ? o.flash : 0,
-        tip: a.name + ' ↔ ' + b.name + (bw ? ' · ' + speedText(bw) : '') + (ls.length > 1 ? ' (' + ls.length + ' links)' : '') + ' · ' + (down ? 'no traffic' : unk ? 'traffic not known' : L['in'] + '% in / ' + L.out + '% out') + ' · ' + status + (why ? ' (' + why + ')' : '') };
+        tip: a.name + ' ↔ ' + b.name + (bw ? ' · ' + speedText(bw) : '') + (ls.length > 1 ? ' (' + ls.length + ' links)' : '') + ' · ' + (down ? 'no traffic' : unk || !known ? 'traffic not known' : L['in'] + '% in / ' + L.out + '% out') + ' · ' + status + (why ? ' (' + why + ')' : '') };
     });
     if (tray) {                                       // the sites without coordinates: buttons that open them in the Sites view
       var un = (D.unplaced || []).filter(function (s) { return D.sites.indexOf(s) >= 0; });
@@ -78,6 +88,7 @@
       tray.replaceChildren.apply(tray, kids); tray.hidden = !un.length;
     }
     if (changes && changes.length) start(); else redraw();
+    if (window.RG) window.RG.update();                // 1.102.0: the Region view draws the same sites and links
   }
   var land = window.NM_LAND.map(function (r) { var o = [], lo = 0; for (var i = 0; i < r.length; i += 2) { o.push(vec(r[i + 1], r[i])); lo += r[i]; } return { v: o, ll: r, mid: lo / (r.length / 2) }; });
   var grat = [];
@@ -163,7 +174,7 @@
   var last = 0, frames = [], drawMs = [];
   function paint(now) {
     var t0 = performance.now(); now = now || t0;
-    if (!G.W || !K.st || !D) return;                  // hidden, or not measured yet
+    if (!G.W || !K.st || !D || G.region) return;      // hidden, not measured yet, or the Region view (netregion.js) shows
     var dt = last ? Math.min(64, now - last) : 16; last = now;
     if (G.fly) flyStep(now);
     else if (G.morph) morphStep(now);
@@ -323,7 +334,7 @@
   /* ---- the loop: each display frame while it moves; on demand when motion is off --------------------------------------- */
   var running = false;
   function loop(t) { if (!running) return; paint(t); requestAnimationFrame(loop); }
-  function start() { if (running) return; if (still()) { redraw(); return; } running = true; requestAnimationFrame(loop); }
+  function start() { if (running || G.region) return; if (still()) { redraw(); return; } running = true; requestAnimationFrame(loop); }
   function stop() { running = false; }
   function redraw() { if (!running) requestAnimationFrame(function (t) { paint(t); }); }
   function resize() {
@@ -393,10 +404,11 @@
     e.preventDefault(); G.idle = performance.now() + 6000; redraw();
   });
   function inWorld() { return box.getAttribute('data-view') === 'world'; }
-  box.querySelector('.nm-zi').addEventListener('click', function () { if (inWorld()) zoom(1.3); });
-  box.querySelector('.nm-zo').addEventListener('click', function () { if (inWorld()) zoom(1 / 1.3); });
+  function rz(f) { if (G.region && window.RG) { window.RG.zoom(f); return true; } return false; }   // 1.102.0: the Region view's own
+  box.querySelector('.nm-zi').addEventListener('click', function () { if (inWorld() && !rz(1.3)) zoom(1.3); });
+  box.querySelector('.nm-zo').addEventListener('click', function () { if (inWorld() && !rz(1 / 1.3)) zoom(1 / 1.3); });
   box.querySelector('.nm-fit').addEventListener('click', function () {
-    if (!inWorld()) return;
+    if (!inWorld() || rz(0)) return;
     G.fly = null;
     if (G.flat) fitFlat(); else { G.lam = HOME.lam; G.phi = HOME.phi; G.k = HOME.k; }
     redraw();
@@ -417,9 +429,29 @@
   function fitFlat() { var f = flatFrame(); G.lam = f.lam; G.phi = f.phi; G.k = f.k; G.fitPending = !sites.length; }   // no sites yet: framed when they come
   if (tray) tray.addEventListener('click', function (e) { var b = e.target.closest('[data-site]'); if (b) open(b.getAttribute('data-site')); });
 
-  /* ---- Globe / Flat: the viewer's choice kept (this browser), else the site's netmap_view; the switch unrolls ----------- */
+  /* ---- Region / Globe / Flat: the viewer's choice kept (this browser), else the site's netmap_view; the switch unrolls --- */
   var pb = [].slice.call(box.querySelectorAll('.ng-p'));
-  function mark() { pb.forEach(function (b) { b.setAttribute('aria-pressed', String((b.getAttribute('data-p') === 'flat') === G.flat)); }); }
+  function mode() { return G.region ? 'region' : G.flat ? 'flat' : 'globe'; }
+  function mark() { pb.forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-p') === mode())); }); box.classList.toggle('ng-rg', G.region); }
+  // 1.102.0: Region - the placed sites' region on a flat map drawn by netregion.js (the canvas stops); Globe and Flat as before
+  function setMode(m) {
+    if (m === 'region') {
+      if (G.region || !box.querySelector('.rg-wrap')) return;
+      tip.hidden = true; G.hover = null; G.fly = null; G.morph = null; G.region = true; stop(); mark();
+      try { localStorage.setItem(KEY, 'region'); } catch (e) { /* this page only */ }
+      if (window.RG) window.RG.update();
+      return;
+    }
+    if (G.region) {                                    // from the Region view: straight to the globe or the flat map
+      G.region = false; G.flat = m === 'flat'; G.mix = G.flat ? 1 : 0;
+      if (G.flat) { if (G.W) fitFlat(); else G.fitPending = true; } else { G.phi = HOME.phi; G.k = HOME.k; }
+      mark();
+      try { localStorage.setItem(KEY, m); } catch (e) { /* this page only */ }
+      resize(); if (inWorld()) start();
+      return;
+    }
+    setFlat(m === 'flat', true);
+  }
   function setFlat(flat, animate) {
     if (flat === G.flat && !G.morph) return;
     tip.hidden = true; G.hover = null; G.fly = null;
@@ -442,11 +474,12 @@
     G.lam = M.lam0 + (M.lam1 - M.lam0) * e;                        // to the flat map: it turns to the sites' middle as it unrolls
     if (t >= 1) { G.morph = null; G.mix = M.to; G.phi = G.flat ? M.fphi : M.gphi; G.k = G.flat ? M.fk : M.gk; if (G.flat && !sites.length) G.fitPending = true; }
   }
-  pb.forEach(function (b) { b.addEventListener('click', function () { setFlat(b.getAttribute('data-p') === 'flat', true); }); });
+  pb.forEach(function (b) { b.addEventListener('click', function () { setMode(b.getAttribute('data-p')); }); });
 
   /* ---- fly in to a site, then open it in the Sites view ----------------------------------------------------------------- */
   function fly(name) {
     var s = bySite[name]; if (!s) return false;
+    if (G.region) { open(name); return true; }        // the Region view: no flight, the site opens
     tip.hidden = true; G.hover = null; G.morph = null; G.mix = G.flat ? 1 : 0;
     var to = { lam: s.lon, phi: G.flat ? s.lat / .35 : s.lat, k: G.flat ? flatK() * 3 : 3.4 };
     if (still()) { G.lam = to.lam; G.phi = to.phi; G.k = to.k; paint(); open(name); return true; }
@@ -470,7 +503,7 @@
   function view(v) {
     box.setAttribute('data-view', v);
     vb.forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-v') === v)); });
-    if (v === 'world' && shown !== 'world') { if (G.flat) G.fitPending = true; else G.k = Math.min(G.k, 1.2); G.idle = performance.now() + 1500; resize(); start(); }
+    if (v === 'world' && shown !== 'world') { if (G.flat) G.fitPending = true; else G.k = Math.min(G.k, 1.2); G.idle = performance.now() + 1500; resize(); start(); if (window.RG) window.RG.update(); }
     else if (v !== 'world') { stop(); tip.hidden = true; }
     shown = v;                                           // 1.95.1: a live refresh (the same view again) keeps where the viewer turned it
   }
@@ -486,15 +519,18 @@
   new MutationObserver(tokens).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   document.addEventListener('change', function (e) { if (e.target && e.target.name === 'theme') setTimeout(tokens, 0); });
 
-  window.ngTest = { G: G, sites: function () { return sites; }, arcs: function () { return arcs; }, paint: paint, hit: hit, fly: fly, start: start, stop: stop, drawMs: drawMs, frames: frames, setFlat: setFlat,
+  // 1.102.0: what the Region view (netregion.js) draws - the same sites and WAN links as the globe, one state rule
+  window.NG = { sites: function () { return sites; }, arcs: function () { return arcs; }, mode: mode, setMode: setMode, wanState: wanState, speedText: speedText, data: function () { return D; } };
+  window.ngTest = { G: G, sites: function () { return sites; }, arcs: function () { return arcs; }, paint: paint, hit: hit, fly: fly, start: start, stop: stop, drawMs: drawMs, frames: frames, setFlat: setFlat, setMode: setMode, wanState: wanState,
     point: function (name) { var s = bySite[name]; return s && s.p ? [s.p[0], s.p[1]] : null; },
     arcAt: function (i, f) { var A = arcs[i]; if (!A) return null; var r = A.scr.filter(function (x) { var q = x[Math.floor(x.length * (f || .5))]; return x.length > 4 && q[0] > 20 && q[0] < G.W - 20 && q[1] > 20 && q[1] < G.H - 60; })[0]; return r ? r[Math.floor(r.length * (f || .5))] : null; } };
   var first = true;
   window.NM.on(function (data, changes) {
     if (first) {                                      // the projection: this browser's last choice, else the site's (netmap_view)
-      first = false; var want = data.view === 'flat';
-      try { var kept = localStorage.getItem(KEY); if (kept === 'flat' || kept === 'globe') want = kept === 'flat'; } catch (e) { /* the site's */ }
-      G.flat = want; G.mix = want ? 1 : 0; G.phi = want ? 0 : HOME.phi; G.fitPending = want; mark();
+      first = false; var want = data.view === 'flat' || data.view === 'globe' ? data.view : 'region';   // 1.102.0: Region unless the site says
+      try { var kept = localStorage.getItem(KEY); if (kept === 'flat' || kept === 'globe' || kept === 'region') want = kept; } catch (e) { /* the site's */ }
+      if (want === 'region' && !box.querySelector('.rg-wrap')) want = 'globe';   // 1.102.0 review: an older page (no Region in it) - the globe
+      G.region = want === 'region'; G.flat = want === 'flat'; G.mix = G.flat ? 1 : 0; G.phi = G.flat ? 0 : HOME.phi; G.fitPending = G.flat; mark();
     }
     build(data, changes);
     if (G.flat && G.fitPending && G.W && sites.length) { fitFlat(); redraw(); }

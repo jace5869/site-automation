@@ -247,6 +247,11 @@
 # ad_report_fail: false
 
 # ---- netmap_report -------------------------------------------------------------------------------
+## SolarWinds' address, e.g. orion.yoursite.mil (https:// and the SWIS port 17774 are added; an
+## Orion older than 2023.1: https://orion.yoursite.mil:17778). The credential's SolarWinds URL, when
+## set, wins.
+# netmap_solarwinds_url: ""
+
 ## ---- Sites: which nodes make a site, and where it is on the map
 ## ---------------------------------------------------------- 1.95.0: auto = read it (the Discovery
 ## section says how): the nodes' names, Location's parts, the custom properties, the IPv4 subnets

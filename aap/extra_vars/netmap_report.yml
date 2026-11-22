@@ -75,9 +75,20 @@
 # netmap_properties: []
 
 ## ---- The map ------------------------------------------------------------------------------------
-## -------------------------- the world view's first look: globe or flat (each viewer's own choice,
-## once made, is kept in their browser)
-# netmap_view: globe
+## -------------------------- the world view's first look: region (1.102.0: the placed sites'
+## region, fitted), globe or flat (each viewer's own choice, once made, is kept in their browser)
+# netmap_view: region
+
+## 1.102.0: the AD replication layer on the Region view (Layers: WAN traffic, AD replication - both
+## on by default): the AD job's last replication, read from AAP (its job artifact ad_repl; the same
+## "Red Hat Ansible Automation Platform" credential as "what changed"), matched to the map's sites
+## as the AD report matches them (ad_site_map, the DCs' nodes, the code, the name). The portal's
+## live map reads it from the report database instead. false: no AD layer
+# netmap_ad_layer: true
+
+## the AD job template's name in AAP (its runs' ad_repl), or its ID when two organizations have that
+## name
+# netmap_ad_template: Active Directory health report
 
 ## a link this busy (in or out, %) is Warning; 0 = never by load (an interface SolarWinds marks
 ## Warning still is)
@@ -126,6 +137,10 @@
 ## true = also print what SolarWinds gave for the first nodes and links (to see what a field holds
 ## on your Orion)
 # netmap_raw: false
+
+# ---- ad_report -----------------------------------------------------------------------------------
+## an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301}
+# ad_site_map: {}
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

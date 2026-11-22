@@ -28,6 +28,7 @@ options:
   template_id: {description: Its job template's ID (awx_job_template_id)., type: int, required: true}
   runs: {description: How many past runs (at most 50)., type: int, default: 13}
   artifacts: {description: "Other job artifacts to return with each run, by name (1.61.0: patch_age, vm_versions) - in its artifacts.", type: list, elements: str, default: []}
+  template_name: {description: "1.102.0: another job template's runs instead, by its name (the network map reads the AD job's ad_repl) - its successful and failed runs before this job.", type: str, default: ''}
   ca_path: {description: A CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 15}
 author: site automation
@@ -43,6 +44,11 @@ runs:
   sample: [{id: 4180, status: successful, finished: "2026-10-21T06:01:12.5Z", report: {status: ok, value: 3, label: Deleted}}]
 '''
 
+try:
+    from urllib.parse import quote
+except ImportError:                                       # pragma: no cover - Python 2
+    from urllib import quote
+
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, connection, error_text
 
@@ -51,13 +57,35 @@ NO_CREDENTIAL = ('no AAP connection: attach a credential of type "Red Hat Ansibl
 DONE = "successful,failed,error,canceled"
 
 
-def history(api, job_id, template_id, runs, names=()):
-    """(runs oldest first, why): why is '' when AAP answered."""
+def history(api, job_id, template_id, runs, names=(), template_name=""):
+    """(runs oldest first, why): why is '' when AAP answered. template_name: another template's successful runs instead."""
     why = api.probe()
     if why:
         return [], why
-    code, data = api.call("GET", "jobs/?job_template=%d&id__lt=%d&status__in=%s&order_by=-id&page_size=%d"
-                          % (template_id, job_id, DONE, max(1, min(runs, 50))))
+    if template_name:
+        # 1.102.0 review: ONE template (a name in two organizations is refused, its ID is asked for) and every finished
+        # run of it (failed, error, canceled too) - the newest decides, an older healthy run is never shown in its place
+        tid = str(template_name).strip()
+        if not tid.isdigit():
+            code, data = api.call("GET", "job_templates/?name=%s&page_size=10" % quote(tid, safe=""))
+            if code != 200:
+                return [], "AAP answered HTTP %d for the job template \"%s\": %s" % (code, tid, error_text(data))
+            ids = [t.get("id") for t in data.get("results") or [] if isinstance(t, dict) and isinstance(t.get("id"), int)]
+            if not ids:
+                return [], ("no job template \"%s\" that the AAP user can see (it has another name, or the user needs "
+                            "Organization Auditor on its organization)" % tid)
+            if len(ids) > 1:
+                return [], ("%d job templates are named \"%s\" (IDs %s) - set it to the one's ID, the layer is off until then"
+                            % (len(ids), tid, ", ".join(str(i) for i in sorted(ids))))
+            tid = str(ids[0])
+        code, data = api.call("GET", "jobs/?job_template=%s&id__lt=%d&status__in=%s&order_by=-id&page_size=%d"
+                              % (tid, job_id, DONE, max(1, min(runs, 50))))
+    else:
+        code, data = api.call("GET", "jobs/?job_template=%d&id__lt=%d&status__in=%s&order_by=-id&page_size=%d"
+                              % (template_id, job_id, DONE, max(1, min(runs, 50))))
+    if template_name and code == 200 and not (data.get("results") or []):
+        return [], ("no finished run of the job template \"%s\" that the AAP user can see (it has not run, it has another "
+                    "name, or the user needs Organization Auditor on its organization)" % template_name)
     if code != 200:
         return [], ("AAP refused the list of this template's jobs (HTTP %d): %s - its user needs Organization Auditor on the template's organization"
                     % (code, error_text(data)) if code in (401, 403) else
@@ -107,12 +135,13 @@ def main():
     module = AnsibleModule(argument_spec=dict(job_id=dict(type="int", required=True), template_id=dict(type="int", required=True),
                                               runs=dict(type="int", default=13), ca_path=dict(type="str", default=""),
                                               artifacts=dict(type="list", elements="str", default=[]),
+                                              template_name=dict(type="str", default=""),
                                               timeout=dict(type="int", default=15)),
                            supports_check_mode=True)
     p = module.params
     api = Api(connection(), p["ca_path"], p["timeout"], ca_setting="report_history_aap_ca_path", no_credential=NO_CREDENTIAL)
     try:
-        runs, why = history(api, p["job_id"], p["template_id"], p["runs"], p["artifacts"])
+        runs, why = history(api, p["job_id"], p["template_id"], p["runs"], p["artifacts"], p["template_name"])
     except Exception as e:                                # noqa: BLE001 - never fail the job: the report goes out without the strip
         runs, why = [], "reading the past runs from AAP failed: %s: %s" % (e.__class__.__name__, e)
     module.exit_json(changed=False, ok=not why, why=why, runs=runs,

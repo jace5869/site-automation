@@ -259,10 +259,12 @@ portal_public_url: https://stigman.example.mil/portal/
 ## false: off (no page, no menu entry). The map's own settings are the report's (usually in
 ## all.yml): netmap_site_by, netmap_site_pattern, netmap_hierarchy, netmap_roles, netmap_site_split,
 ## netmap_sites, netmap_lat_property, netmap_lon_property, netmap_properties, netmap_view,
-## netmap_link_warn_percent, netmap_max_nodes. 1.95.0: the page shows the last map the server kept
-## (on disk, kept through a restart) at once, "as of" its time, and the server reads again behind
-## it: the node and link status every netmap_live_seconds (2 queries), the whole map every
-## netmap_full_seconds. Nothing is read while nobody has the page open.
+## netmap_link_warn_percent, netmap_max_nodes. 1.102.0: the AD layer (netmap_ad_layer, ad_site_map,
+## ad_repl_*_hours) reads the AD job's replication from the report database (1.101.2's tables, the
+## portal's read-only login); without them it is off and says so. 1.95.0: the page shows the last
+## map the server kept (on disk, kept through a restart) at once, "as of" its time, and the server
+## reads again behind it: the node and link status every netmap_live_seconds (2 queries), the whole
+## map every netmap_full_seconds. Nothing is read while nobody has the page open.
 # portal_netmap: auto
 
 ## the status read: how often (30 at least); after 5 minutes with nobody on the page it is not read
@@ -299,6 +301,22 @@ portal_public_url: https://stigman.example.mil/portal/
 
 ## the credential's password (secret)
 # portal_solarwinds_password: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"
+
+# ---- ad_report -----------------------------------------------------------------------------------
+## ---- Thresholds: at or above "warn" = amber, at or above "crit" = red
+## ------------------------------ a replication link with no success for this long (inter-site
+## schedules: keep above their interval)
+# ad_repl_warn_hours: 6
+
+## no success for this long (or a failing link) -> red
+# ad_repl_crit_hours: 24
+
+## no success for this long -> Low in the replication matrix (one site link schedule missed; 0 = no
+## Low)
+# ad_repl_low_hours: 4
+
+## an AD site -> its network-map site, by hand, e.g. {HQ: SITA0101, Branch-East: SITC0301}
+# ad_site_map: {}
 
 # ---- finding_ref ---------------------------------------------------------------------------------
 ## The report jobs a finding is taken from, by their playbook's file name (* and ?): a finding of
@@ -375,9 +393,16 @@ portal_public_url: https://stigman.example.mil/portal/
 # netmap_properties: []
 
 ## ---- The map ------------------------------------------------------------------------------------
-## -------------------------- the world view's first look: globe or flat (each viewer's own choice,
-## once made, is kept in their browser)
-# netmap_view: globe
+## -------------------------- the world view's first look: region (1.102.0: the placed sites'
+## region, fitted), globe or flat (each viewer's own choice, once made, is kept in their browser)
+# netmap_view: region
+
+## 1.102.0: the AD replication layer on the Region view (Layers: WAN traffic, AD replication - both
+## on by default): the AD job's last replication, read from AAP (its job artifact ad_repl; the same
+## "Red Hat Ansible Automation Platform" credential as "what changed"), matched to the map's sites
+## as the AD report matches them (ad_site_map, the DCs' nodes, the code, the name). The portal's
+## live map reads it from the report database instead. false: no AD layer
+# netmap_ad_layer: true
 
 ## a link this busy (in or out, %) is Warning; 0 = never by load (an interface SolarWinds marks
 ## Warning still is)

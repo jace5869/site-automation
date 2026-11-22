@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A fake AAP API for the report website's copy job (playbooks/report_web_copy.yml, roles/site_email site_report_copy):
 the jobs in a JSON file - [{id, job_template, name, status, job_type, finished, artifacts}], read again on every request,
-so a test can add jobs while it runs - listed as AAP lists them (finished__gt, status__in, job_type, job_template,
+so a test can add jobs while it runs - listed as AAP lists them (finished__gt, status__in, status, job_type, job_template, job_template__name (1.102.0),
 id__lt, order_by, page_size, page; the list leaves the artifacts out, each job's own page has them).
 Login: basic audit / pw, or a token (Bearer t0ken). API path /api/controller/v2/ (AAP 2.5 and later).
 Usage: fake_aap.py PORT JOBS_JSON"""
@@ -46,6 +46,9 @@ class H(BaseHTTPRequestHandler):
         rest = u.path[len(base):].strip("/").split("/")
         if rest == ["me"]:
             return self._send(200, {"results": [{"id": 1, "username": "audit"}]})
+        if rest[0] == "job_templates":                   # 1.102.0: by name - each template its jobs name (job_template)
+            ts = sorted(set(j["job_template"] for j in jobs() if j.get("name") == q.get("name")))
+            return self._send(200, {"count": len(ts), "results": [{"id": t, "name": q.get("name")} for t in ts]})
         if rest[0] != "jobs":
             return self._send(404, {"detail": "Not found."})
         js = jobs()
@@ -54,6 +57,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, found[0]) if found else self._send(404, {"detail": "Not found."})
         js = [j for j in js if (not q.get("job_type") or j.get("job_type", "run") == q["job_type"])
               and (not q.get("job_template") or str(j["job_template"]) == q["job_template"])
+              and (not q.get("job_template__name") or j.get("name") == q["job_template__name"])
+              and (not q.get("status") or j["status"] == q["status"])
               and (not q.get("id__lt") or j["id"] < int(q["id__lt"]))
               and (not q.get("status__in") or j["status"] in q["status__in"].split(","))
               and (not q.get("finished__gt") or j["finished"] > q["finished__gt"])]
