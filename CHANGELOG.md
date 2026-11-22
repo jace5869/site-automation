@@ -23,6 +23,44 @@
 - When only status can be refreshed, the live network map shows when its links were last read. Older caches show the link age as unknown until a full read succeeds.
 
 To set up: nothing.
+## 1.105.0 — 2026-11-22
+
+**To set up:** nothing for Linux. For Windows Server: use the job template **STIG - answer file generator** with Windows hosts (WinRM) and the
+Windows credential of your Windows STIG jobs; STIG Manager's benchmarks are `check_stig_stigman_benchmarks_windows` (the defaults fit
+2019, 2022 and 2025). **A trial on a real Windows Server is needed before you rely on it** - the steps are in `docs/STIG_ANSWER_KEYS.md`, "First run".
+
+**STIG answer keys for Windows Server 2019, 2022 and 2025** (`playbooks/stig_answer_keys.yml`, `plugins/module_utils/stig_answer_win.py`):
+- **Windows hosts in the same job**, beside Linux ones. The job asks each Windows which Windows Server it is (name, then build); any other
+  Windows is listed and left out. Evaluate-STIG runs for the picked rules only, by the Windows STIG recheck's own path (as SYSTEM in a
+  one-time task, deleted after); nothing is kept on the server and nothing is written to STIG Manager. Only the operating system's STIG is used.
+- **Fixed patterns** draft the code from DISA's check text: *registry value*, *AuditPol subcategory*, *user right* (secedit) and *role or feature*.
+  Of the 129 fixture rules, 72 have fixed patterns with site values supplied. Rules explicitly scoped to a server role go to manual review.
+  ACT can draft other unmatched rules with a Windows prompt. Never a false Not a Finding: a code that cannot tell returns false.
+- **The trial** runs in a restricted PowerShell session (`roles/check_stig/files/win_ak_try.ps1`): Constrained Language Mode, a syntax check
+  that accepts only an allowlist of read-only commands, and three proxies - `secedit.exe`, `Remove-Item`, `auditpol.exe` - that accept one exact
+  form each (anything else is refused, never run). A time limit; its work folder is removed; the report says what is left: nothing.
+- **The report** as the mockup: *Drafted by* the pattern's kind, **What DISA checks**, **Ran in** (the session and its proxies), **Trial - matches
+  Evaluate-STIG**, tiles for Windows and Linux, and the answer file of each STIG (`answer-keys-MS_Windows_Server_2022_STIG-V2R11.xml`), its
+  STIGComments Name your own answer file's, else Evaluate-STIG's short name (`WinServer2019`, `WinServer2022`, `WinServer2025`).
+- **The cross-check on Windows:** the evidence is what each pattern read in the trial, compared with Evaluate-STIG and STIG Manager; ACT sees
+  that evidence only, never the code; a rule no pattern reads says *not read: no fixed reading for this rule*.
+- Review round (Codex, Neon): Evaluate-STIG's output is pinned to CKLB and never run in full; named rules keep the review protections; a
+Windows client is not a server; ACT's code may not use `secedit.exe` or `Remove-Item` (fixed patterns only); the trial runs each code in a
+child process that is killed on a timeout, with path and provider limits (no UNC or device paths, HKLM only, no Env: or Variable:), no
+`Get-WindowsOptionalFeature`; the user-right patterns follow DISA's direction (exact, subset, superset), ask for documented exceptions
+(`approved_..._accounts`, `documented_required_features`) and do not guess domain SIDs; HKCU and unmodelled applicability conditions are
+not drafted; the audit policy is read by GUID; evidence is redacted whole before it is cut; failure texts and unsupported-host texts are
+redacted or fixed words in the email; batches of codes under the environment limit; the cross-check keeps each revision's reading.
+Each baseline now uses an exclusive work directory, a unique task name and an empty `-AFPath`. Approved account names preserve spaces.
+ACT prompts redact credentials by field name. Scan facts omit checklist evidence and failure log tails. The trial restricts type operands
+and directory listings to allowlisted types and nonrecursive reads.
+New: `check_stig_stigman_benchmarks_windows`; `win_stig.ps1` gets `texts` (DISA's check text for Not Reviewed rules too); `win_os.ps1`.
+
+Tests: `tests/test_stig_answer_win.py` (the patterns over the fixture `tests/fixtures/stig_win/rules.json`, real DISA text), `test_win_ak_try.py` (the
+restricted session: writes, redirection, Add-Type, indirect calls and wrong proxy arguments refused, nothing left; needs pwsh),
+`test_stig_answer_win_host.py` (the host, the scan, the report, the cross-check; every pattern code passes the session's check),
+`tests/stig/run_stig_answer_keys_win_test.sh` (a stand-in Windows host: PowerShell 7, the stand-in Evaluate-STIG, STIG Manager and auditpol).
+Not tested here: the Windows-only commands and the registry on a real Windows Server.
 
 ## 1.103.1 — 2026-11-21
 

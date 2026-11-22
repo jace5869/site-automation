@@ -408,8 +408,8 @@ job_templates:
     description:
       does: Builds Evaluate-STIG AnswerKey blocks per rule (from DISA check text, or drafted by ACT) for people to copy into
         their own answer files.
-      targets: Linux hosts with Evaluate-STIG (pwsh) of target or the Limit (Machine credential); STIG Manager API read; ACT
-        model on the AAP side
+      targets: Linux (Evaluate-STIG, pwsh) and Windows Server 2019, 2022 and 2025 hosts (WinRM) of target or the Limit; STIG
+        Manager read; ACT
       produces: A report of the answer key blocks, with answer XML files attached, by email and on the report website when
         set
       supports: Run constraint=Read-only on target hosts (Evaluate-STIG for those rules, output removed); STIG Manager read

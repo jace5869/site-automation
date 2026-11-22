@@ -184,6 +184,19 @@ VALUES = {   # every site value a pattern can ask for (docs/STIG_ANSWER_KEYS.md,
 OPTIONAL_VALUES = ("grub_superusers_not_allowed",)
 
 
+_SECRET_KEY = re.compile(r"pass|secret|token|key|credential|auth|cert|private|api", re.I)
+
+
+def _prompt_values(values):
+    """The site values an ACT prompt may carry: not a secret-looking name, every value through the redactor - never the whole settings."""
+    out = {}
+    for k, v in sorted(_redact.redact_all(stig_answer_values(values)).items()):
+        if _SECRET_KEY.search(str(k)):
+            continue
+        out[k] = ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
+    return out
+
+
 def stig_answer_values(values):
     """answer_keys_values -> a dict: from the template's Variables (a mapping) or a survey (a text: YAML or JSON, or
     lines of name: value). A list value may be a text of names, comma or space between them."""
@@ -199,7 +212,9 @@ def stig_answer_values(values):
         values = v
     out = {}
     for k, v in (values or {}).items() if isinstance(values, dict) else []:
-        if k in ("world_writable_owners",) + OPTIONAL_VALUES and isinstance(v, str):
+        if re.fullmatch(r"approved_\w+_accounts", str(k)) and isinstance(v, str):
+            v = [x.strip() for x in re.split(r"[,;\r\n]+", v.strip("[] ")) if x.strip()]
+        elif (k in ("world_writable_owners",) + OPTIONAL_VALUES or k == "documented_required_features") and isinstance(v, str):
             v = [x for x in re.split(r"[\s,;]+", v.strip("[] ")) if x]
         if k == "min_release" and isinstance(v, str) and re.search(r"[\s,;]", v.strip("[] ")):
             v = [x.strip("'\"") for x in re.split(r"[\s,;]+", v.strip("[] ")) if x]
@@ -691,11 +706,35 @@ def _find(c, text, values):
 
 
 # ---- ACT, for a rule no pattern fits ------------------------------------------------------------------------------------
+def _act_task_windows(rule, values):
+    """1.105.0: what ACT is asked for a Windows Server rule's ValidationCode - the same promises, the Windows read-only commands."""
+    allowed = ", ".join(sorted(_win().ALLOWED))
+    vals = "; ".join("%s = %s" % (k, v) for k, v in sorted(_prompt_values(values).items())) or "none given"
+    return "\n".join([
+        "Write an Evaluate-STIG answer file ValidationCode (Windows PowerShell 5.1 or PowerShell 7 on Windows Server, run as SYSTEM) for the STIG rule %s (%s): %s"
+        % (rule.get("v"), rule.get("sv"), redact(str(rule.get("title") or ""), backstop=False)),
+        "It must return $true when the server is as DISA's check text below wants (Not a Finding), else $false - one value, nothing else on the output.",
+        "Say what it read with Write-Verbose ('read: ...'). It must only read: no change to the server, no network, no Invoke-Expression, no aliases, no backticks,",
+        "no command from a variable, no call operator, no Add-Type, no [type]::Method calls, no redirection (> or >>), no exit or throw.",
+        "Allowed commands, and no others: %s." % allowed,
+        "auditpol.exe only as: auditpol.exe /get /subcategory:'NAME' /r. secedit.exe and Remove-Item are not allowed in your code.",
+        "The registry through Get-ItemProperty -LiteralPath 'HKLM:\\...' -Name NAME -ErrorAction Stop (a value that does not exist is an error: false).",
+        "The site's values (answer_keys_values): %s." % vals,
+        "If the check needs a site decision (an approved list, a site minimum ...), use ONLY a value given above, never one of your own;",
+        "with none given for it, answer only: NEEDS-VALUE <a short snake_case name> - <what it is> (no code).",
+        "Put the code alone in one ```powershell block. Below it, one line: what it checks; then a line VALUES USED: the names (or none).",
+        "",
+        "DISA's check text:",
+        redact(str(rule.get("check_text") or ""), backstop=False) or "(none)"])
+
+
 def stig_answer_act_task(rule, values=None):
     """What ACT is asked (diagnose: it may look on the host, it changes nothing) for a rule's ValidationCode."""
+    if (rule or {}).get("win"):
+        return _act_task_windows(rule, values)
     allowed = ", ".join(sorted(k for k in CMD_WHAT if not k.startswith("/"))) + "; by their full path only: " + \
         ", ".join(sorted(k for k in CMD_WHAT if k.startswith("/")))
-    vals = "; ".join("%s = %s" % (k, v) for k, v in sorted(stig_answer_values(values).items())) or "none given"
+    vals = "; ".join("%s = %s" % (k, v) for k, v in sorted(_prompt_values(values).items())) or "none given"
     return "\n".join([
         "Write an Evaluate-STIG answer file ValidationCode (PowerShell 7 on Linux, run as root) for the STIG rule %s (%s): %s"
         % (rule.get("v"), rule.get("sv"), redact(str(rule.get("title") or ""), backstop=False)),
@@ -793,7 +832,28 @@ def stig_answer_check_words(true, false, words=None):
     return ""
 
 
-def stig_answer_drafts(picks, values=None, act_on=True, act=None):
+def is_windows_stig(bench):
+    """1.105.0: a Windows Server STIG (MS_Windows_Server_2022_STIG ...): its blocks are drafted by plugins/module_utils/stig_answer_win.py."""
+    return bool(re.match(r"^(MS_)?Windows_Server_(2019|2022|2025)_STIG$", str(bench or "")))
+
+
+def _win_year(bench):
+    m = re.match(r"^(?:MS_)?Windows_Server_(2019|2022|2025)_STIG$", str(bench or ""))
+    return m.group(1) if m else ""
+
+
+def _draft_of(p, values, windows=False):
+    """A rule's fixed-pattern draft: the Linux patterns on its check text, or (windows) the Windows ones on the rule."""
+    if not windows:
+        return stig_answer_draft(p.get("check_text"), values)
+    d = _win().draft({"v": p.get("v"), "rule": p.get("sv"), "severity": p.get("severity") or "", "title": p.get("title") or "",
+                      "check": p.get("check_text") or "", "fix": p.get("fix_text") or ""}, stig_answer_values(values))
+    if d and d.get("kind") == "needs" and isinstance(d.get("example"), dict):         # the doc's line: answer_keys_values: {name: [...]}
+        d = dict(d, example="answer_keys_values: {%s}" % ", ".join("%s: [%s]" % (k, ", ".join(v)) for k, v in d["example"].items()))
+    return d
+
+
+def stig_answer_drafts(picks, values=None, act_on=True, act=None, windows=False):
     """Each allowed rule's draft -> {v: {by, code, uses, true, false} or {why}}: a fixed pattern first; a rule it does not
     fit, ACT's code (act: {v: {code, status, why}} - its answers) when ACT is on; else by hand. A rule that needs a site
     value not given: why says which, with an example line."""
@@ -801,10 +861,15 @@ def stig_answer_drafts(picks, values=None, act_on=True, act=None):
     for p in picks or []:
         if not p.get("ok"):
             continue
-        d = stig_answer_draft(p.get("check_text"), values)
+        d = _draft_of(p, values, windows)
         if d and d["kind"] == "pattern":
             out[p["v"]] = {"by": "pattern", "code": d["code"], "uses": d["uses"], "true": ("NotAFinding", d["true"]),
                            "false": ("Open", d["false"])}
+            if d.get("pattern"):                       # 1.105.0: which Windows pattern (registry value, AuditPol subcategory ...) and what DISA checks
+                out[p["v"]]["pattern"] = d["pattern"]
+                out[p["v"]]["disa"] = d.get("disa") or ""
+        elif d and d["kind"] == "role_scoped":
+            out[p["v"]] = {"why": "Not drafted - the check applies only to a specific server role. A shared key cannot represent that scope."}
         elif d and d["kind"] == "needs":
             out[p["v"]] = {"why": "Not drafted - needs answer_keys_values.%s (%s). Add to the template's Variables: %s" % (
                 d["needs"], d["why"], d["example"])}
@@ -819,6 +884,8 @@ def stig_answer_drafts(picks, values=None, act_on=True, act=None):
             if need:
                 out[p["v"]] = {"why": "Not drafted - needs answer_keys_values.%s (%s): ACT never makes one up. Add to the "
                                       "template's Variables: answer_keys_values: {%s: <the site's value>}" % (need[0], need[1] or "a site value", need[0])}
+            elif code and windows and re.search(r"\b(secedit\.exe|Remove-Item)\b", code, re.I):
+                out[p["v"]] = {"why": "Not drafted - ACT's code uses secedit.exe or Remove-Item, which only the fixed patterns may use: write this one by hand."}
             elif code:
                 t = (p.get("title") or p["v"]).rstrip(".")
                 out[p["v"]] = {"by": "ACT", "code": code, "uses": a.get("uses") or {}, "true": ("NotAFinding", "%s the ValidationCode returned true - %s." % (PREFIX_ACT, t)),
@@ -829,9 +896,9 @@ def stig_answer_drafts(picks, values=None, act_on=True, act=None):
     return out
 
 
-def stig_answer_for_act(picks, values=None):
+def stig_answer_for_act(picks, values=None, windows=False):
     """The allowed rules no fixed pattern fits and no site value is missing for: ACT drafts them (answer_keys_act)."""
-    return [p for p in picks or [] if p.get("ok") and p.get("check_text") and stig_answer_draft(p["check_text"], values) is None]
+    return [p for p in picks or [] if p.get("ok") and p.get("check_text") and _draft_of(p, values, windows) is None]
 
 
 def stig_answer_codes(drafts):
@@ -855,7 +922,7 @@ def stig_answer_rows(picks, drafts, host=None, key="DEFAULT", names=None, words=
             rows.append(r)
             continue
         g, t = gate.get(p["v"]) or {}, trial.get(p["v"]) or {}
-        r.update(by=d["by"], gate=g, trial=t, uses=d.get("uses") or {})
+        r.update(by=d["by"], gate=g, trial=t, uses=d.get("uses") or {}, pattern=d.get("pattern") or "", disa=d.get("disa") or "")
         bad = stig_answer_check_words(d["true"], d["false"], words)
         if bad:
             r["why"] = "Not drafted - %s." % bad
@@ -1082,6 +1149,18 @@ def stig_answer_att_items(sm, rules):
     return out
 
 
+def stig_answer_win_protect(rules, sm):
+    """1.105.0: the rules a person NAMED (answer_keys_rules) on a Windows host, without the ones whose review is protected - RA / POA&M words
+    (stigman_protect_words: the review's protect flag, as the automatic pick) -> {rules, dropped: [V-]}. Nothing read from STIG Manager: nothing to protect."""
+    sm = sm or {}
+    reviews = (sm.get("reviews") or {}) if sm.get("status") == "found" else {}
+    keep, dropped = [], []
+    for r in rules or []:
+        rv = reviews.get(r.get("sv")) or {}
+        (dropped if rv.get("protect") else keep).append(r.get("v") if rv.get("protect") else r)
+    return {"rules": keep, "dropped": dropped}
+
+
 def stig_answer_drop_att(rules, sm, att):
     """The automatic pick without the rules whose review has attachments (a person's evidence: never picked; one that
     cannot be read counts as having them) -> {rules, dropped: [V-]}."""
@@ -1127,8 +1206,9 @@ def stig_answer_for_act_groups(groups, values=None, act_on=True):
     if not act_on:
         return out
     for g in groups or []:
-        for p in stig_answer_for_act(g.get("picks") or [], values):
-            out.append(dict(p, ak=stig_answer_act_key(g, p["v"]), label=g.get("label") or ""))
+        win = bool(g.get("win")) or is_windows_stig(g.get("bench"))
+        for p in stig_answer_for_act(g.get("picks") or [], values, win):
+            out.append(dict(p, ak=stig_answer_act_key(g, p["v"]), label=g.get("label") or "", win=win))
     return out
 
 
@@ -1139,9 +1219,10 @@ def stig_answer_act_of(act, group):
 
 
 def stig_label(bench, rev=""):
-    """RHEL_9_STIG, V2R10 -> 'RHEL 9 V2R10'."""
+    """RHEL_9_STIG, V2R10 -> 'RHEL 9 V2R10'; (1.105.0) MS_Windows_Server_2022_STIG, V2R11 -> 'Windows Server 2022 V2R11'."""
     m = re.match(r"^RHEL_(\d+)_STIG$", str(bench or ""))
-    return ("%s %s" % ("RHEL %s" % m.group(1) if m else (bench or "STIG ?"), rev or "")).strip()
+    w = _win_year(bench)
+    return ("%s %s" % ("RHEL %s" % m.group(1) if m else ("Windows Server %s" % w) if w else (bench or "STIG ?"), rev or "")).strip()
 
 
 def stig_answer_merge(hosts, most=150):
@@ -1158,7 +1239,8 @@ def stig_answer_merge(hosts, most=150):
         key = "%s|%s" % (h.get("bench") or "", h.get("rev") or "")
         if key not in groups:
             groups[key] = {"key": key, "bench": h.get("bench") or "", "rev": h.get("rev") or "",
-                           "label": stig_label(h.get("bench"), h.get("rev")), "hosts": [], "rep": "", "rules": {}, "auto": h.get("auto")}
+                           "label": stig_label(h.get("bench"), h.get("rev")), "hosts": [], "rep": "", "rules": {}, "auto": h.get("auto"),
+                           "win": bool(h.get("win"))}
             order.append(key)
         g = groups[key]
         g["hosts"].append(h["host"])
@@ -1181,7 +1263,7 @@ def stig_answer_merge(hosts, most=150):
         g = groups[key]
         picks = []
         for sv, x in g["rules"].items():
-            m = dict(x["first"], hosts=x["hosts"], es_counts=x["counts"],
+            m = dict(x["first"], hosts=x["hosts"], es_counts=x["counts"], es_rep=x["first"].get("es") or "",
                      es=", ".join("%s %d" % (k, n) for k, n in sorted(x["counts"].items())))
             if x["ok"]:
                 ex = {}
@@ -1325,6 +1407,9 @@ def _short_name(g, ids, site):
         s = sel.get(major, sel.get(int(major), "") if major.isdigit() else "")
         if str(s or "").strip():
             return str(s).strip(), "check_stig_evaluate_select (the name this run gave Evaluate-STIG)", True
+    # 1.105.0: a Windows Server STIG (the major is its year): Evaluate-STIG's own short name, one STIG for the member servers and the domain controllers
+    if major in ("2019", "2022", "2025") and not (isinstance(sel, dict) and str(sel.get(major, "")).strip()):
+        return "WinServer" + major, "Evaluate-STIG's own short name for Windows Server %s" % major, True
     why = "your answer files name it two ways (%s)" % ", ".join("%s: %s" % (k, ", ".join(redact(x) for x in v["files"])) for k, v in tops) \
         if tops else "no answer file of yours for it was read, and check_stig_evaluate_select has no name for its host's RHEL version"
     if bad:
@@ -1378,6 +1463,90 @@ PER_STIG = ("Evaluate-STIG", "Evaluate-STIG's", "Evaluate-STIG on the host", "Ev
             "The read-only check and the trial ran with", "The read-only check ran with", "The trial is off", "The trial ran each code")
 
 
+_WIN_NAME = re.compile(r"^(The )?Windows Server 20\d\d (must )?", re.I)
+
+
+def _win_ran_in(ran_in, host, left=None):
+    """The 'Ran in' line of a Windows trial: where, in what, with what - and what the run left behind (never certified clean when it did)."""
+    ri = ran_in if isinstance(ran_in, dict) else {}
+    cmds = [c for c in ri.get("commands") or []]
+    proxies = [c for c in ri.get("proxies") or []]
+    return ("a restricted PowerShell session on %s%s over WinRM: %s, %s, %s" % (
+        host or "the trial host", (" (PowerShell " + str(ri["powershell"]) + ")") if ri.get("powershell") else "",
+        "Constrained Language Mode with only %d read-only commands" % len(cmds) if cmds else "Constrained Language Mode with only the read-only commands",
+        ("and %s - each accepts one exact form, anything else is refused" % ", ".join(proxies)) if proxies else "no write",
+        ("NOT CLEAN: left on the host: %s" % redact(", ".join(str(x) for x in left))[:200]) if left else "nothing registered or left on the host"))
+
+
+def _win_match(r):
+    """Does the trial agree with Evaluate-STIG's own result on the trial host? (a key is for a rule Evaluate-STIG found Open or Not Reviewed)"""
+    # the representative host's own status (the merged "Open 2" counts several hosts)
+    m = re.match(r"^\s*(Open|Not Reviewed|Not a Finding|Not Applicable)\b", str(r.get("es_rep") or r.get("es") or ""))
+    es, tv = (m.group(1) if m else ""), (r.get("trial") or {}).get("valid")
+    if tv is None or not es:
+        return "n/a (not tried)" if r.get("untried") else "n/a"
+    if es != "Open":
+        return "n/a (Evaluate-STIG left it %s)" % es
+    return "yes" if tv is False else "no - Evaluate-STIG says Open and the code says true"
+
+
+def _win_parts(rw, nd, hw, d, g):
+    """1.105.0: the per-STIG sections of a Windows Server STIG as the mockup shows them: what pattern drafted it, What DISA checks, Ran in (the
+    restricted session, its proxies named), whether the trial agrees with Evaluate-STIG, the rule's name without the product's."""
+    rows_by = dict((r["v"], r) for r in g.get("rows") or [] if r.get("block"))
+    ready = [r for r in g.get("rows") or [] if r.get("block")]
+    cols = list(rw.get("columns") or [])
+    rw = dict(rw)
+    if "Trial" in cols and "Drafted by" in cols and "What it checks" in cols:
+        ci, bi, wi = cols.index("Trial"), cols.index("Drafted by"), cols.index("What it checks")
+        cols[ci] = "Trial · matches Evaluate-STIG"
+        rows = []
+        for row, r in zip(rw.get("rows") or [], ready):
+            row = list(row)
+            row[bi] = ("pattern - " + r["pattern"]) if r.get("by") == "pattern" and r.get("pattern") else row[bi]
+            t = _WIN_NAME.sub(lambda m: "Must " if m.group(2) else "", str(row[wi])).strip()
+            row[wi] = (t[:1].upper() + t[1:]) if t else row[wi]
+            m = _win_match(r)
+            row[ci] = "%s · %s" % (row[ci], m.split(" (")[0].split(" - ")[0]) if row[ci] not in ("-", "") else row[ci]
+            rows.append(row)
+        rw["columns"], rw["rows"] = cols, rows
+    det = []
+    for blocks, r in zip(rw.get("details") or [], ready):
+        blocks = [dict(b) if isinstance(b, dict) else b for b in blocks]
+        for b in blocks:
+            if isinstance(b, dict) and str(b.get("columns", [""])[0]).startswith("Trial") and "rows" in b:
+                head = [["What DISA checks", r.get("disa") or "-"], ["Ran in", _win_ran_in(g.get("ran_in"), g.get("rep"), g.get("leftover"))]] if not r.get("untried") else []
+                b["rows"] = head + [x for x in b["rows"] if x[0] not in ("Replayed in the trial",)] + (
+                    [["Matches Evaluate-STIG", _win_match(r)]] if not r.get("untried") else [])
+        det.append(blocks)
+    if det:
+        rw["details"] = det
+    nd = dict(nd)
+    nd["rows"] = [[row[0], (lambda t: (t[:1].upper() + t[1:]) if t else t)(_WIN_NAME.sub(lambda m: "Must " if m.group(2) else "", str(row[1])).strip())] + list(row[2:])
+                  for row in nd.get("rows") or []]
+    hw = dict(hw)
+    ri = g.get("ran_in") or {}
+    lines = []
+    if g.get("leftover"):               # never certify a clean host when the session left something behind
+        rw["status"] = "warning"
+        lines.append("WARNING: the restricted session left files on %s: %s - look at the host." % (g.get("rep") or "the trial host", redact(", ".join(str(x) for x in g["leftover"]))[:200]))
+    for x in hw.get("lines") or []:
+        if x.startswith("The trial ran each code"):
+            x = ("The trial ran each code that passed the read-only check once on %s, in a restricted PowerShell session (WinRM): Constrained Language Mode, "
+                 "only the read-only commands, no write, no network%s. Nothing was registered or left on the host; its own temporary folder was removed after."
+                 % (g.get("rep") or "the trial host", (", and three proxies - %s - that accept one exact form each" % ", ".join(ri["proxies"])) if ri.get("proxies") else ""))
+        elif x.startswith("The read-only check and the trial ran with"):
+            x = "The read-only check and the trial ran in Windows PowerShell on the trial host (one restricted session for each code)."
+        elif x.startswith("Evaluate-STIG on the host:"):
+            x = "Evaluate-STIG on the host: found by the job (win_check_stig_evaluate, a scheduled task or a search), run %s for these rules only (never in full)." % (
+                "in the job's own session as the connecting user (win_check_stig_run_as: direct)" if g.get("run_as") == "direct"
+                else "as SYSTEM in a one-time task that is deleted after")
+        lines.append(x)
+    hw["lines"] = lines
+    d = dict(d)
+    return rw, nd, hw, d
+
+
 def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, left_out=None, auto=None, answered=None, trial_on=None, evidence="web",
                              site_files=None):
     """1.76.0: the report of many hosts, grouped by STIG. groups: [{label, bench, rev, hosts, rep, rows, ev, names_from,
@@ -1400,6 +1569,8 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
         nod = [r for r in g.get("rows") or [] if not r.get("block")]
         n_ready, n_nod = n_ready + len(ready), n_nod + len(nod)
         rw, nd, hw = d["web"]["sections"][0], d["web"]["sections"][1], d["web"]["sections"][2]
+        if is_windows_stig(g.get("bench")):
+            rw, nd, hw, d = _win_parts(rw, nd, hw, d, g)
         hosts = g.get("hosts") or []
         tag = "%s (%d host%s)" % (g["label"], len(hosts), "" if len(hosts) == 1 else "s")
         rw = dict(rw, title="%s - answer keys to copy (%d)" % (g["label"], len(ready)))
@@ -1495,6 +1666,13 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
     if any(offs):                    # 1.76.4: the trial is off (answer_keys_trial) - for every STIG, or for some
         tiles.append({"label": "Trial", "value": "off" if all(offs) else "off for %d of %d STIGs" % (sum(offs), len(offs)),
                       "status": "warning", "note": "answer_keys_trial" + (" - %d not tried" % n_off if n_off else "")})
+    if any(is_windows_stig(g.get("bench")) for g in groups or []):        # 1.105.0: Windows and Linux side by side - a tile for each
+        for fam, test in (("Windows", is_windows_stig), ("Linux", lambda b: not is_windows_stig(b))):
+            gs = [g for g in groups or [] if test(g.get("bench"))]
+            rd, nd_, hs = (sum(len([r for r in g.get("rows") or [] if r.get("block")]) for g in gs),
+                           sum(len([r for r in g.get("rows") or [] if not r.get("block")]) for g in gs), sum(len(g.get("hosts") or []) for g in gs))
+            tiles.append({"label": fam, "value": "%d ready" % rd, "status": "info",
+                          "note": "%d not drafted · %d STIG%s, %d host%s" % (nd_, len(gs), "" if len(gs) == 1 else "s", hs, "" if hs == 1 else "s")})
     pick = ("Picked: automatically from STIG Manager (answer_keys_rules empty) - %s." % auto) if auto else \
         "Picked: the rules asked (answer_keys_rules)."
     how_all = [pick] + how + [x for x in how_base if not x.startswith(("Asked:",) + PER_STIG)]
@@ -1508,6 +1686,194 @@ def stig_answer_report_multi(groups, key, act_on=True, failed=None, none=None, l
     extra_mail = [failed_mail if (failed_mail and x is extra[0]) else x for x in extra]
     return {"report": dict(base, sections=mail_secs + files_mail + extra_mail + [howsec]), "web": dict(base, sections=web_secs + extra + [howsec]),
             "xlsx": xlsx, "lines": [title] + lines, "files": [dict((k, v) for k, v in f.items() if k != "error") for f in files]}
+
+
+# ---- Windows hosts (1.105.0): Windows Server 2019, 2022 and 2025 over WinRM ------------------------------------------------
+WIN_YEARS = {"2019": "MS_Windows_Server_2019_STIG", "2022": "MS_Windows_Server_2022_STIG", "2025": "MS_Windows_Server_2025_STIG"}
+WIN_BUILDS = {"17763": "2019", "20348": "2022", "26100": "2025"}      # Windows Server's build numbers (win_os.ps1)
+
+
+def stig_answer_win_os(lines, benchmarks=None):
+    """win_os.ps1's output lines -> {ok, year, caption, build, domain_role, product_type, bench, why, why_mail}: which Windows Server this is (by its
+    name, else by its build number - and only a server: product type 2 or 3; Windows 10 and 11 share builds with Server) and the STIG Manager
+    benchmark of its operating-system STIG (check_stig_stigman_benchmarks_windows names them by year). Any other Windows is not ok: no answer keys.
+    why is redacted (the host gave the caption); why_mail is fixed words - nothing a host said goes in an email."""
+    import json
+    line = next((l for l in reversed([str(x) for x in lines or []]) if l.startswith("###SITE-JSON### ")), "")
+    try:
+        f = (json.loads(line[16:]).get("facts") or {}) if line else {}
+    except ValueError:
+        f = {}
+    cap, build, pt = str(f.get("caption") or ""), str(f.get("build") or ""), str(f.get("product_type") or "")
+    server = pt in ("2", "3") or (pt == "" and bool(re.search(r"Windows Server", cap)))      # an old answer without the product type: by its name only
+    m = re.search(r"Windows Server\s+(2019|2022|2025)\b", cap)
+    year = (m.group(1) if m else WIN_BUILDS.get(build, "")) if server else ""
+    bench = (benchmarks or WIN_YEARS).get(year, "") if year else ""
+    out = {"ok": bool(year and bench), "year": year, "caption": redact(cap)[:120], "build": build[:12], "domain_role": str(f.get("domain_role") or "")[:4],
+           "product_type": pt[:2], "bench": bench, "why": "", "why_mail": ""}
+    if not out["ok"]:
+        out["why"] = ("%s is not a Windows Server 2019, 2022 or 2025 (build %s): no answer keys for it" % (redact(cap)[:120] or "this Windows", redact(build)[:12] or "unknown")
+                      if cap or build else "win_os.ps1 gave no answer")
+        out["why_mail"] = "not a Windows Server 2019, 2022 or 2025 (or no answer): no answer keys for it"
+    return out
+
+
+def stig_answer_win_scan(stig, bench, error=""):
+    """win_facts.stig of win_stig.ps1 (-SelectVuln, texts: true, nothing kept) -> what site_stig_scan gives on Linux:
+    {scanned, why, benchmark, stig_version, items: [{key, severity, result, title, check_text}]}. Only the checklist of the
+    host's operating-system STIG (bench) - never Defender, the Firewall, IIS or another STIG the same run read."""
+    stig = stig if isinstance(stig, dict) else {}
+    if error or not stig:
+        return {"scanned": False, "why": redact(error or "the scan script gave no result")[:300], "benchmark": bench, "stig_version": "", "items": []}
+    if not stig.get("scanned"):
+        why = str(stig.get("why") or "Evaluate-STIG did not scan")
+        if why.startswith("Evaluate-STIG wrote no checklist"):
+            why = "Evaluate-STIG wrote no checklist"
+        return {"scanned": False, "why": redact(why)[:300], "benchmark": bench, "stig_version": "", "items": []}
+    # the operating system's own STIG: the same Windows Server year (STIG Manager's id has MS_ in front on newer releases, Evaluate-STIG's may not)
+    mine = [x for x in stig.get("scans") or [] if isinstance(x, dict) and not x.get("site") and not x.get("instance")
+            and (str(x.get("benchmark") or "") == bench or (_win_year(bench) and _win_year(x.get("benchmark")) == _win_year(bench)))]
+    if not mine:
+        return {"scanned": False, "why": "Evaluate-STIG gave no checklist of %s (it checked: %s)" % (
+            bench, redact(", ".join(sorted(str(x.get("benchmark") or "?") for x in stig.get("scans") or [] if isinstance(x, dict))))[:200] or "nothing"),
+            "benchmark": bench, "stig_version": "", "items": []}
+    x = mine[0]
+    items = []
+    for item in x.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        row = {k: redact(str(item[k] or "")) for k in ("key", "severity", "result", "title") if k in item}
+        check = str(item.get("check_text") or "")
+        # A masked operand could change the meaning of a draft. Withhold such check text altogether.
+        row["check_text"] = check if redact(check, backstop=False) == check else ""
+        items.append(row)
+    return {"scanned": True, "why": "", "benchmark": bench, "stig_version": redact(str(x.get("stig_version") or "")),
+            "items": items}
+
+
+
+_WIN = []
+
+
+def _win():
+    """plugins/module_utils/stig_answer_win.py, loaded by its path (as site_redact above)."""
+    if not _WIN:
+        spec = importlib.util.spec_from_file_location(
+            "stig_answer_win", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "stig_answer_win.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _WIN.append(mod)
+    return _WIN[0]
+
+
+def stig_answer_win_reads(groups, host):
+    """1.105.0, the cross-check on Windows: the evidence of each rule with a block on this host - what its pattern read in the restricted session of
+    the trial (the code's own 'read: ...' lines), in the shape site_stig_answer_reads gives on Linux ({reads: {V-: {from, ran: [{cmd, rc, out}], why}}}).
+    A rule no fixed pattern reads (ACT's draft) and a host that was not the trial host say so: 'not read'. No DISA UI step is attempted."""
+    reads = {}
+    for g in groups or []:
+        if not (g.get("win") or is_windows_stig(g.get("bench"))):
+            continue
+        for r in g.get("rows") or []:
+            if not r.get("block"):
+                continue
+            tr = r.get("trial") or {}
+            if g.get("rep") != host:
+                # another revision's trial host: never over what this host's own group read (the same V-id in two revisions)
+                reads.setdefault(r["v"], {"from": "", "ran": [], "why": "not read: the evidence of a Windows host is read on the trial host only", "refused": []})
+            elif r.get("by") == "pattern" and r.get("pattern") and tr.get("ran") and tr.get("read") and tr.get("read_ok", True):
+                reads[r["v"]] = {"from": "the pattern's own reading", "why": "", "refused": [],
+                                 "ran": [{"cmd": "%s (%s)" % (r.get("pattern"), r.get("disa") or "the rule's check"), "rc": 0, "out": str(tr["read"])}]}
+            elif r.get("by") == "pattern" and r.get("pattern") and tr.get("ran") and tr.get("read"):
+                reads[r["v"]] = {"from": "", "ran": [], "refused": [], "why": "not read: the pattern's reading failed on the trial host"}
+            else:
+                reads[r["v"]] = {"from": "", "ran": [], "why": "not read: no fixed reading for this rule", "refused": []}
+    return {"reads": reads}
+
+
+def stig_answer_win_allowed(extra=None):
+    """The read-only cmdlets a Windows ValidationCode may use (plugins/module_utils/stig_answer_win.py, ALLOWED) - what the trial's restricted
+    session lets run, besides the three proxies the harness defines itself (secedit.exe, Remove-Item, auditpol.exe)."""
+    return sorted(k for k in _win().ALLOWED if not k.endswith(".exe") and k != "Remove-Item")
+
+
+WIN_BATCH_CHARS = 24000          # the codes of one run of the trial: the whole settings text must stay under Windows' 32,767-character environment limit
+
+
+def stig_answer_win_codes(drafts, batch=0):
+    """The drafts with a code -> [{key, code, fixed}] for win_ak_try.ps1 (key: the rule's V-id; fixed: a fixed pattern's, the only code that may use the
+    write-capable proxies). batch n (1-based): only the n-th of the batches of at most WIN_BATCH_CHARS characters (0: all of them)."""
+    items = [{"key": v, "code": d["code"], "fixed": d.get("by") == "pattern"} for v, d in sorted((drafts or {}).items()) if d.get("code")]
+    if not batch:
+        return items
+    groups, cur, size = [], [], 0
+    for it in items:
+        n = len(it["code"]) + len(it["key"]) + 40
+        if cur and size + n > WIN_BATCH_CHARS:
+            groups.append(cur)
+            cur, size = [], 0
+        cur.append(it)
+        size += n
+    if cur:
+        groups.append(cur)
+    return groups[batch - 1] if 0 < batch <= len(groups) else []
+
+
+def stig_answer_win_batches(drafts):
+    """How many runs of the trial the drafts need (at most WIN_BATCH_CHARS of code each): [1, 2, ...] for a loop."""
+    n = 0
+    while stig_answer_win_codes(drafts, n + 1):
+        n += 1
+    return list(range(1, max(n, 1) + 1))
+
+
+def stig_answer_win_hc(facts, codes, trial_on=True, names=None):
+    """win_ak_try.ps1's facts ({results: [{key, valid, why, ran, result, verbose, refused, seconds}], ran_in, leftover}) - or a LIST of them, one for each
+    batch of codes the trial was run in - -> what the Linux read-only check and trial give (site_stig_answer_host), so the rows and the report read it
+    unchanged: {evaluate, gate: {v: {ok, why, used}}, trial: {v: {ran, ok, valid, read, read_ok, error, seconds, replayed}}, ran_in, leftover}. codes: {v: code}
+    (the keys of the harness's results are the rules' V-ids). The trial off: the read-only check only, each trial {off: true}. A refused call, a code that gave
+    no true or false, a timeout, a file left behind are never a trial that worked. What the code read is redacted whole before any cut (a secret split by a
+    cut would survive); the host's own words about a failure are redacted too."""
+    parts = [f for f in (facts if isinstance(facts, list) else [facts]) if isinstance(f, dict)]
+    by, leftover, ran_in = {}, [], {}
+    for f in parts:
+        for r in f.get("results") or []:
+            if isinstance(r, dict):
+                by[str(r.get("key"))] = r
+        leftover += [str(x) for x in (f.get("leftover") or [])]
+        ri = f.get("ran_in") if isinstance(f.get("ran_in"), dict) else {}
+        ran_in = dict(ran_in or ri)
+        if "clean" in ri:                       # the batches together: clean only when every run was
+            ran_in["clean"] = bool(ran_in.get("clean", True)) and bool(ri.get("clean"))
+    gate, trial = {}, {}
+    for v, code in (codes or {}).items():
+        r = by.get(str(v))
+        if r is None:
+            continue
+        code = code.get("code") if isinstance(code, dict) else code          # the drafts as they are, or their codes
+        try:
+            used = sorted(_win().commands_in(code))
+        except Exception:                # noqa: BLE001 - a code the lister cannot read: no list, the check's own answer stands
+            used = []
+        gate[v] = {"ok": bool(r.get("valid")), "why": [] if r.get("valid") else [redact(str(r.get("why") or "refused"), backstop=False)[:300]], "used": used}
+        if not r.get("valid"):
+            continue
+        if not trial_on:
+            trial[v] = {"off": True}
+            continue
+        res = r.get("result")
+        refused = [str(x) for x in r.get("refused") or []]
+        ok = bool(r.get("ran")) and isinstance(res, bool) and not refused
+        err = ""
+        if not ok:
+            err = ("refused: " + "; ".join(refused)) if refused else (str(r.get("why") or "") or (
+                "it gave no true or false" if r.get("ran") else "it did not run"))
+        records = [str(x) for x in r.get("verbose") or []]
+        read = redact("\n".join(records))[:300]                                 # the whole record redacted, then cut
+        trial[v] = {"ran": bool(r.get("ran")), "ok": ok, "valid": res if ok else None, "read": read,
+                    "read_ok": ok and not any(x.lstrip().lower().startswith("read: failed") for x in records),
+                    "error": redact(err)[:300], "seconds": r.get("seconds", "-"), "replayed": []}
+    return {"evaluate": {"names": list(names or [])}, "gate": gate, "trial": trial, "ran_in": ran_in, "leftover": leftover}
 
 
 class FilterModule(object):
@@ -1525,6 +1891,9 @@ class FilterModule(object):
                 "stig_answer_file_stigs": stig_answer_file_stigs, "stig_answer_xml_files": stig_answer_xml_files,
                 # 1.77.0d: the one redaction (site_redact), for an error text a task cuts: redact first, then cut
                 "site_redact": redact,
-                "stig_answer_att_items": stig_answer_att_items, "stig_answer_drop_att": stig_answer_drop_att,
+                "stig_answer_att_items": stig_answer_att_items, "stig_answer_drop_att": stig_answer_drop_att, "stig_answer_win_protect": stig_answer_win_protect,
                 "stig_answer_in_files": stig_answer_in_files, "stig_answer_cap": stig_answer_cap,
-                "stig_answer_for_act_groups": stig_answer_for_act_groups, "stig_answer_act_of": stig_answer_act_of}
+                "stig_answer_for_act_groups": stig_answer_for_act_groups, "stig_answer_act_of": stig_answer_act_of,
+                "stig_answer_win_os": stig_answer_win_os, "stig_answer_win_scan": stig_answer_win_scan,
+                "stig_answer_is_windows": is_windows_stig, "stig_answer_win_hc": stig_answer_win_hc, "stig_answer_win_allowed": stig_answer_win_allowed, "stig_answer_win_reads": stig_answer_win_reads,
+                "stig_answer_win_codes": stig_answer_win_codes, "stig_answer_win_batches": stig_answer_win_batches}

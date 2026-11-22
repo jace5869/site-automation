@@ -13,7 +13,8 @@
       {%-   set nm = hc.evaluate.names | default([]) | stig_answer_names -%}
       {%-   set rows = g.picks | stig_answer_rows(g.drafts, hc, _ak_key, nm.names, stigman_protect_words | default(none)) -%}
       {#- 1.76.4 (Codex): the trial's setting the host that tried this STIG had (answer_keys_check.yml) -#}
-      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm,
+      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm, 'ran_in': hc.ran_in | default({}), 'leftover': hc.leftover | default([]),
+                                          'run_as': hostvars[g.rep]._ak_h.run_as | default(''),
                                           'trial_on': hostvars[g.rep]._ak_trial_on | default(answer_keys_trial) | bool})) -%}
       {%- endfor -%}
       {{ gs }}

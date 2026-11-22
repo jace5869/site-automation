@@ -49,11 +49,24 @@
     quiet: true
   run_once: true
 
-- name: Answer keys | Evaluate-STIG is the scanner here, with PowerShell 7
+# 1.105.0: each host's kind as a host fact (a play variable is not in hostvars)
+- name: Answer keys | is this a Windows host
+  ansible.builtin.set_fact:
+    _ak_is_win: "{{ _ak_windows | default(false) | bool }}"
+
+- name: Answer keys | Evaluate-STIG is the scanner on the Linux hosts, with PowerShell 7 (a Windows host finds its own)
   ansible.builtin.assert:
-    that: check_stig_evaluate | default('') | length > 0
+    # the first Linux host of the run (as before: the first host's setting); Windows hosts find Evaluate-STIG themselves
+    that: >-
+      (_ak_linux_first | length == 0) or hostvars[_ak_linux_first[0]].check_stig_evaluate | default('') | length > 0
     fail_msg: "STIG answer keys need Evaluate-STIG on the hosts: set check_stig_evaluate (its folder) - docs/STIG_DRIFT.md, Evaluate-STIG."
     quiet: true
+  vars:
+    _ak_linux_first: "{{ ansible_play_hosts_all | reject('in', _ak_win_hosts) | list }}"
+    _ak_win_hosts: >-
+      {%- set o = [] -%}
+      {%- for h in ansible_play_hosts_all -%}{%- if hostvars[h]._ak_is_win | default(false) | bool -%}{%- set _ = o.append(h) -%}{%- endif -%}{%- endfor -%}
+      {{ o }}
   run_once: true
 
 - name: Answer keys | reach the host (its release; a host not reached is listed, the others go on)
@@ -63,23 +76,57 @@
   ignore_errors: true
   # 1.77.0h: a connection's failure text is shown only as the task below redacts it
   no_log: true
+  when: not (_ak_windows | default(false) | bool)
+
+# 1.105.0: a Windows host - which Windows Server it is (read only: win_os.ps1)
+- name: Answer keys | reach the Windows host (which Windows Server it is)
+  ansible.builtin.script: "{{ role_path }}/../win_check_stig/files/win_os.ps1"
+  register: _ak_wreach            # its own name: a skipped task still registers, and would overwrite the Linux reach's answer
+  ignore_errors: true
+  check_mode: false               # only reads
+  changed_when: false
+  no_log: true
+  when: _ak_windows | default(false) | bool
+
+# the answer of the reach that ran for this host (the other registered a skip)
+- name: Answer keys | what the reach said
+  ansible.builtin.set_fact:
+    _ak_rch: "{{ _ak_wreach if _ak_windows | default(false) | bool else _ak_reach }}"
+  no_log: true
+
+- name: Answer keys | which Windows Server (a Windows that is not 2019, 2022 or 2025 gets no keys)
+  ansible.builtin.set_fact:
+    _ak_win: "{{ _ak_wreach.stdout_lines | default([]) | stig_answer_win_os(check_stig_stigman_benchmarks_windows) }}"
+  when: (_ak_windows | default(false) | bool) and not (_ak_wreach.unreachable | default(false) or _ak_wreach.failed | default(false))
 
 - name: Answer keys | not reached
   ansible.builtin.set_fact:
     _ak_h:
       host: "{{ inventory_hostname }}"
       ok: false
-      why: "{{ 'not reached' if _ak_reach.unreachable | default(false) else 'it failed' }}: {{ (_ak_reach.msg | default('no answer') | string | site_redact)[:240] }}"
-      why_mail: "{{ 'not reached' if _ak_reach.unreachable | default(false) else 'it failed' }} (the job's output has why)"
-  when: _ak_reach.unreachable | default(false) or _ak_reach.failed | default(false)
+      why: "{{ 'not reached' if _ak_rch.unreachable | default(false) else 'it failed' }}: {{ (_ak_rch.msg | default('no answer') | string | site_redact)[:240] }}"
+      why_mail: "{{ 'not reached' if _ak_rch.unreachable | default(false) else 'it failed' }} (the job's output has why)"
+  when: _ak_rch.unreachable | default(false) or _ak_rch.failed | default(false)
+
+- name: Answer keys | a Windows that is no Windows Server 2019, 2022 or 2025
+  ansible.builtin.set_fact:
+    _ak_h:
+      host: "{{ inventory_hostname }}"
+      ok: false
+      why: "{{ _ak_win.why }}"
+      why_mail: "{{ _ak_win.why_mail }}"
+  when: (_ak_windows | default(false) | bool) and _ak_win is defined and not _ak_win.ok
 
 - name: Answer keys | this host
-  when: not (_ak_reach.unreachable | default(false) or _ak_reach.failed | default(false))
+  when: not (_ak_rch.unreachable | default(false) or _ak_rch.failed | default(false)) and _ak_h is not defined
   block:
-    - name: Answer keys | the host's STIG (check_stig_stigman_benchmarks by its release)
+    - name: Answer keys | the host's STIG (check_stig_stigman_benchmarks by its release; a Windows host by its year)
       ansible.builtin.set_fact:
-        _ak_major: "{{ ansible_facts.distribution_major_version | default('') | string }}"
-        _ak_bench0: "{{ check_stig_stigman_benchmarks[ansible_facts.distribution_major_version | default('') | string] | default('') }}"
+        _ak_major: >-
+          {{ _ak_win.year if _ak_windows | default(false) | bool else ansible_facts.distribution_major_version | default('') | string }}
+        _ak_bench0: >-
+          {{ _ak_win.bench if _ak_windows | default(false) | bool
+             else check_stig_stigman_benchmarks[ansible_facts.distribution_major_version | default('') | string] | default('') }}
 
     - name: Answer keys | the host's STIG Manager reviews (GET only, from the AAP side)
       site_stigman_read:
@@ -120,6 +167,18 @@
       ansible.builtin.set_fact:
         _ak_list: "{{ _ak_auto.rules | default([]) if _ak_rules.auto | default(false) else _ak_rules.rules }}"
 
+    # 1.105.0: the rules a person NAMED on a Windows host keep the protections of the automatic pick: a review with RA / POA&M words (stigman_protect_words)
+    # or with attachments is never drafted (an unreadable attachment check counts as protected)
+    - name: Answer keys | a Windows host - the named rules without the reviews a person protected
+      ansible.builtin.set_fact:
+        _ak_wp: "{{ _ak_list | stig_answer_win_protect(_ak_smh) }}"
+      when: _ak_windows | default(false) | bool and not _ak_rules.auto | default(false)
+
+    - name: Answer keys | a Windows host - the named rules that are left
+      ansible.builtin.set_fact:
+        _ak_list: "{{ _ak_wp.rules }}"
+      when: _ak_wp is defined
+
     # a review a person attached evidence to is never picked (as the STIG recheck; GET only, one read per review)
     - name: Answer keys | the picked reviews with attachments in STIG Manager (read-only) - never picked
       site_stigman_attachments:
@@ -139,7 +198,7 @@
       vars:
         ansible_connection: local
         ansible_python_interpreter: "{{ ansible_playbook_python }}"
-      when: _ak_rules.auto | default(false) and (_ak_smh | stig_answer_att_items(_ak_list)) | length > 0
+      when: (_ak_rules.auto | default(false) or _ak_is_win | bool) and (_ak_smh | stig_answer_att_items(_ak_list)) | length > 0
 
     - name: Answer keys | the automatic pick without them
       ansible.builtin.set_fact:
@@ -188,6 +247,7 @@
     # Evaluate-STIG's own result for these rules only - no answer files, none of check_stig_evaluate_args (an -Output to
     # STIG Manager or a share there would write), a checklist of its own read and removed, nothing kept (save: false)
     - name: Answer keys | Evaluate-STIG's own result for these rules on the host (nothing kept, nothing sent)
+      when: _ak_list | length > 0 and not (_ak_windows | default(false) | bool)
       site_stig_scan:
         dir: "{{ check_stig_dir }}"
         save: false
@@ -208,7 +268,42 @@
         history: false
       register: _ak_scan
       check_mode: false               # only reads; keeps nothing (save: false)
-      when: _ak_list | length > 0
+
+    # 1.105.0: a Windows host - the same Evaluate-STIG run path as the Windows STIG recheck (win_stig.ps1: -SelectVuln for the picked
+    # rules, as SYSTEM in a one-time scheduled task that is deleted after, its own output folder removed), nothing kept (save: false,
+    # history: false), DISA's check text for the Not Reviewed rules too (texts: true)
+    - name: Answer keys | Evaluate-STIG's own result for these rules on the Windows host (nothing kept, nothing sent)
+      when: _ak_list | length > 0 and (_ak_windows | default(false) | bool)
+      ansible.builtin.script: "{{ role_path }}/../win_check_stig/files/win_stig.ps1"
+      environment:
+        # the Windows STIG drift report's settings (win_check_stig_*; their defaults here: that role is not loaded in this job)
+        SITE_CHECK_CONFIG: >-
+          {{ {'evaluate': win_check_stig_evaluate | default(''), 'read': '', 'select': win_check_stig_evaluate_select | default([]),
+              'exclude': win_check_stig_evaluate_exclude | default([]), 'args': [],
+              'output': 'CKLB', 'rejected': win_check_stig_evaluate_rejected | default(true) | bool,
+              'run_as': win_check_stig_run_as | default('task'), 'powershell': win_check_stig_powershell | default(''),
+              'timeout': win_check_stig_timeout | default(3600) | int,
+              'dir': win_check_stig_dir | default('C:\\ProgramData\\site-automation\\stig'), 'keep': 0, 'save': false,
+              'search': win_check_stig_search | default([]), 'search_depth': win_check_stig_search_depth | default(4) | int,
+              'vulns': _ak_list | map(attribute='v') | list, 'history': false, 'texts': true,
+              'selected_only': true} | to_json }}
+      register: _ak_win_out
+      changed_when: false
+      failed_when: false
+      check_mode: false               # Evaluate-STIG only reads; save: false keeps nothing on the server
+      no_log: true
+
+    - name: Answer keys | the Windows scan's result, in the shape the Linux scan gives
+      when: _ak_list | length > 0 and (_ak_windows | default(false) | bool)
+      ansible.builtin.set_fact:
+        _ak_scan: >-
+          {{ _ak_win_stig | stig_answer_win_scan(_ak_bench0, _ak_win_err) }}
+      vars:
+        _ak_win_line: "{{ _ak_win_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+        _ak_win_stig: "{{ ((_ak_win_line[16:] | from_json).facts | default({})) if _ak_win_line | length > 0 else {} }}"
+        _ak_win_err: >-
+          {{ '' if _ak_win_line | length > 0 else
+             ('the scan script gave no result (exit code ' ~ _ak_win_out.rc | default('?') ~ ')') }}
 
     - name: Answer keys | what this host gave (its STIG, release, each rule's result) - for the AAP side
       ansible.builtin.set_fact:
@@ -225,7 +320,9 @@
           major: "{{ _ak_major }}"
           auto: "{{ _ak_rules.auto | default(false) }}"
           left_out: "{{ _ak_left | default(0) }}"
-          protected: "{{ _ak_auto.protected | default([]) }}"
+          protected: "{{ (_ak_auto.protected | default([])) + (_ak_wp.dropped | default([])) }}"
+          run_as: "{{ (win_check_stig_run_as | default('task')) if _ak_windows | default(false) | bool else '' }}"
+          win: "{{ _ak_windows | default(false) | bool }}"
           attached: "{{ _ak_att_split.dropped | default([]) }}"
           sm: "{{ _ak_smh.status | default('') }}"
           picks: >-

@@ -1,0 +1,8 @@
+#!/bin/sh
+# A stand-in auditpol.exe: /get /subcategory:NAME /r prints the CSV line of the subcategory with "Success and Failure"
+# (Test double for tests/stig/run_stig_answer_keys_win_test.sh - not used in production).
+echo "$*" >> "${FAKE_AUDITPOL_LOG:-/dev/null}"
+case "$*" in
+  *"/get /subcategory:"*" /r") printf 'Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting\nHOST,System,Fake,{0CCE9215-69AE-11D9-BED3-505054503030},Success and Failure,\n' ;;
+  *) echo "refused by the stand-in: $*" >&2; exit 1 ;;
+esac

@@ -11,7 +11,7 @@
     _ak_m: >-
       {%- set gs = [] -%}
       {%- for g in _ak_m.groups -%}
-      {%-   set _ = gs.append(g | combine({'drafts': g.picks | stig_answer_drafts(answer_keys_values, answer_keys_act | bool, _ak_act | stig_answer_act_of(g))})) -%}
+      {%-   set _ = gs.append(g | combine({'drafts': g.picks | stig_answer_drafts(answer_keys_values, answer_keys_act | bool, _ak_act | stig_answer_act_of(g), (g.win | default(false)) or (g.bench | stig_answer_is_windows))})) -%}
       {%- endfor -%}
       {{ _ak_m | combine({'groups': gs}) }}
   run_once: true
@@ -19,7 +19,7 @@
 # 1.76.0b (Codex): a trial host that fails (or cannot be reached any more) never fails the job - its STIG's blocks are
 # "not tried: the trial host failed (why)", the other STIGs and the report go on
 - name: Answer keys | the read-only check and the trial - on the first host of each STIG
-  when: inventory_hostname in _ak_reps | default([])
+  when: inventory_hostname in _ak_reps | default([]) and not (_ak_windows | default(false) | bool)
   block:
     # 1.76.4 (Codex): this host's own setting (an inventory group may differ), for the report
     - name: Answer keys | the trial on this host? (answer_keys_trial)
@@ -46,5 +46,52 @@
       when: _ak_hc.unreachable | default(false)
   rescue:
     - name: Answer keys | the trial host failed - its STIG not tried, the others go on
+      ansible.builtin.set_fact:
+        _ak_hc: {failed_host: "{{ (ansible_failed_result.msg | default('it failed') | string | site_redact)[:300] }}"}
+
+# 1.105.0 (after the Linux block: a skipped task still registers _ak_hc, which would overwrite this host's answer): a Windows host - the read-only check and one trial of each draft in a restricted PowerShell session (win_ak_try.ps1: Constrained
+# Language Mode, ONLY the read-only cmdlets of the allowlist, three proxies - secedit.exe, Remove-Item, auditpol.exe - that accept one exact form
+# each, a time limit, nothing left on the host). A host that fails never fails the job: its STIG's blocks are "not tried".
+- name: Answer keys | a Windows host - the read-only check and the trial, in the restricted session
+  when: inventory_hostname in _ak_reps | default([]) and _ak_windows | default(false) | bool
+  block:
+    - name: Answer keys | the trial on this host? (answer_keys_trial)
+      ansible.builtin.set_fact:
+        _ak_trial_on: "{{ answer_keys_trial | bool }}"
+        _ak_win_codes: "{{ (_ak_m.groups | selectattr('rep', 'eq', inventory_hostname) | first).drafts }}"
+
+    # the codes go in batches (the settings travel in an environment variable: Windows allows 32,767 characters) - one run of the session each
+    - name: Answer keys | the read-only check and one trial of each draft - in the restricted PowerShell session (nothing kept, nothing written)
+      ansible.builtin.script: "{{ role_path }}/../check_stig/files/win_ak_try.ps1"
+      environment:
+        SITE_CHECK_CONFIG: >-
+          {{ {'codes': _ak_win_codes | stig_answer_win_codes(_ak_batch), 'allowed': [] | stig_answer_win_allowed, 'timeout': answer_keys_trial_timeout | int,
+              'work_dir': '', 'trial': answer_keys_trial | bool} | to_json }}
+      loop: "{{ _ak_win_codes | stig_answer_win_batches }}"
+      loop_control:
+        loop_var: _ak_batch
+      register: _ak_win_try
+      changed_when: false
+      failed_when: false
+      check_mode: false               # only reads; its own work folder, removed
+      no_log: true
+
+    - name: Answer keys | what the Windows check and trial gave, in the shape the Linux ones give
+      ansible.builtin.set_fact:
+        _ak_hc: >-
+          {{ _ak_win_facts | stig_answer_win_hc(_ak_win_codes, answer_keys_trial | bool) if _ak_win_n | int > 0
+             else {'failed_host': 'the restricted session gave no result'} }}
+      vars:
+        _ak_win_lines: >-
+          {%- set o = [] -%}
+          {%- for r in _ak_win_try.results | default([]) -%}
+          {%-   set l = r.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') -%}
+          {%-   if l | length > 0 -%}{%- set _ = o.append((l[16:] | from_json).facts | default({})) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ o }}
+        _ak_win_n: "{{ _ak_win_lines | length }}"
+        _ak_win_facts: "{{ _ak_win_lines }}"
+  rescue:
+    - name: Answer keys | the Windows trial host failed - its STIG not tried, the others go on
       ansible.builtin.set_fact:
         _ak_hc: {failed_host: "{{ (ansible_failed_result.msg | default('it failed') | string | site_redact)[:300] }}"}

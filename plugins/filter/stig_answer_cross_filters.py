@@ -131,12 +131,12 @@ def stig_answer_cross_act_task(rule, evidence, values=None):
     for e in evidence or []:
         ev.append("$ %s   (exit %s)\n%s" % (redact(_s(e.get("cmd")), backstop=False), _s(e.get("rc")), (redact(_s(e.get("out"))) or "(nothing)")[:EV_MAX]))
     vals = "\n".join("%s = %s" % (k, ", ".join(v) if isinstance(v, list) else v) for k, v in sorted((values or {}).items()))
-    return ("You check one DISA STIG rule on one RHEL host, from evidence only. You run nothing.\n"
+    return ("You check one DISA STIG rule on one %s host, from evidence only. You run nothing.\n"
             "Rule %s: %s\n\nDISA's check text:\n%s\n\nWhat the host returned for these read-only commands:\n%s\n\n%s"
             "Answer on the first line with exactly one of NF (not a finding), Open, NA (not applicable) or unsure. "
             "On the second line, one short sentence: why, naming what in the evidence decides it. "
             "On the third line, copy the one line of the evidence that decides it, exactly as the host returned it."
-            % (_s(r.get("v")), redact(_s(r.get("title")), backstop=False),
+            % ("Windows Server" if r.get("win") else "RHEL", _s(r.get("v")), redact(_s(r.get("title")), backstop=False),
                redact(_s(r.get("check_text")), backstop=False).strip() or "(none)",
                "\n\n".join(ev) or "(none)", ("The site's values:\n" + vals + "\n\n") if vals else ""))
 
@@ -521,7 +521,8 @@ def stig_answer_cross_asks(groups, reads, act_max=ACT_MAX_DEFAULT, act_on=True, 
                     continue
                 n += 1
                 a = {"id": "x%d" % n, "v": r["v"], "label": label, "hosts": [h], "evidence": ev, "from": _s(x.get("from")),
-                     "task": stig_answer_cross_act_task({"v": r["v"], "title": r.get("title"), "check_text": r.get("check_text")},
+                     "task": stig_answer_cross_act_task({"v": r["v"], "title": r.get("title"), "check_text": r.get("check_text"),
+                                                         "win": bool(re.match(r"^(MS_)?Windows_Server_", _s(g.get("bench"))))},
                                                         x["ran"], r.get("uses") or {})}
                 asks.append(a)
                 seen[sk] = a

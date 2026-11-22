@@ -1,9 +1,9 @@
-# STIG answer keys (1.75.0; the trial and many hosts: 1.76.0; RHEL 8: 1.76.1; the cross-check: 1.77.0)
+# STIG answer keys (1.75.0; the trial and many hosts: 1.76.0; RHEL 8: 1.76.1; the cross-check: 1.77.0; Windows Server: 1.105.0)
 
 The **STIG answer keys** job (`playbooks/stig_answer_keys.yml`) drafts an Evaluate-STIG `<AnswerKey>` block for each
 rule. You paste each block into your own answer file, under that rule's `<Vuln ID>`.
 
-- Linux only, RHEL 8, 9 and 10: Evaluate-STIG with PowerShell 7 (`pwsh`) on the hosts.
+- RHEL 8, 9 and 10: Evaluate-STIG with PowerShell 7 (`pwsh`) on the hosts. **Windows Server 2019, 2022 and 2025 (1.105.0):** over WinRM, Evaluate-STIG on the server - see *Windows Server* below.
 - **Many hosts:** a group or a list (`target`, or the Limit), up to `answer_keys_max_hosts` (50), in parallel. The hosts
   are grouped by STIG and release (RHEL 8 V2R9, RHEL 9 V2R10, RHEL 10 V1R3): **one block per rule per STIG**.
 - **The rules:** the ones you name (RHEL 8, 9 and 10 ids in one list: each host takes those of its STIG), or none -
@@ -438,6 +438,98 @@ The check still matters most: when you paste a block, your Evaluate-STIG runs it
   `ExpectedStatus` is Evaluate-STIG's own status. A key with ExpectedStatus Open is then marked *applies only if your
   Evaluate-STIG version runs ValidationCode for Open*.
 
+## Windows Server (1.105.0)
+
+The same job drafts answer keys for **Windows Server 2019, 2022 and 2025**. Put Linux and Windows hosts in one run if you like:
+each host is read its own way, and the report has a section for each STIG (for example *Windows Server 2022 V2R11*).
+
+- **Over WinRM**, as the Windows STIG jobs. The Machine credential is the one those jobs use. The settings of the Windows STIG drift
+  report apply (`win_check_stig_evaluate`, `win_check_stig_run_as`, `win_check_stig_timeout` and the others), so Evaluate-STIG is found
+  and run the same way.
+- **Which Windows:** the server is asked its name and build. Windows Server 2019, 2022 and 2025 get keys. Any other Windows is listed
+  (*is not a Windows Server 2019, 2022 or 2025*) and left out. STIG Manager's benchmark for each year is
+  `check_stig_stigman_benchmarks_windows`.
+- **The STIG:** only the operating system's own STIG. The IIS, Defender, Edge or SQL Server checklists of the same run are not used.
+- **The rules and Evaluate-STIG:** as on Linux. Evaluate-STIG runs for the picked rules only and **never in full** (an Evaluate-STIG
+  without `-SelectVuln` is refused, said), as SYSTEM in a one-time task that is deleted after (`win_check_stig_run_as: direct` runs it in
+  the job's own session: the report says which). Its output is always **CKLB**, whatever `win_check_stig_evaluate_output` says: nothing is
+  sent to STIG Manager or a share. Each baseline claims a unique work directory and task name. Evaluate-STIG must accept
+  `-AFPath` so the baseline can use its own empty answer-file directory. The job removes that directory after the scan.
+- **Rules you name** (`answer_keys_rules`) keep the protections of the automatic pick: a review with RA / POA&M words
+  (`stigman_protect_words`) or with attachments in STIG Manager is never drafted, and an attachment check that cannot be read counts as protected.
+- **A Windows client** (Windows 10 or 11) is never taken for a server: the server's product type is checked, not only its build number.
+- **The answer file** of each STIG is named by your own answer file for it (`check_stig_evaluate_answers`) - else by Evaluate-STIG's own
+  short name: `WinServer2019`, `WinServer2022` or `WinServer2025`. One STIG covers the member servers and the domain controllers.
+
+### The drafts
+
+A fixed pattern drafts the code from DISA's check text for four kinds of check. The report says which: *pattern - registry value*,
+*AuditPol subcategory*, *user right* or *role or feature*. A rule no pattern fits goes to ACT, marked *ACT - read it before you use it*,
+or is listed as *not drafted*. Registry paths, subcategories and rights come from DISA's own text.
+
+A pattern **never drops a condition DISA gives**. Where DISA allows documented exceptions, the rule asks for the site's list in
+`answer_keys_values` (a list of names, or one text with commas), as on Linux:
+
+```yaml
+answer_keys_values:
+  approved_se_security_privilege_accounts: [Auditors, ExampleAppSvc]     # accounts that may hold the right; [] when none qualify
+  documented_required_features: [Web-Server, ExampleFeature]             # every role and feature documented as required here
+```
+
+Account lists accept commas, semicolons and line breaks between entries. Spaces within an account name are preserved.
+Rules explicitly limited to domain controllers or member servers are left for manual review because a shared key cannot express that scope.
+
+The name is in the report's *not drafted* line when it is missing. A rule whose text has an applicability condition the pattern cannot
+check (a server that sends its events to an audit server is NA), a user policy under HKCU, and a domain group whose domain the job cannot
+verify are **not drafted** - they are left to a person. The comparison of a user right follows DISA's own words: exactly these accounts,
+no account but these, or at least these.
+
+The audit policy is read by the subcategory's GUID, and its setting by position. A Windows in another language than English is not
+supported for those rules: the code says false for a setting it does not recognise (Open - the safe side).
+
+### The trial
+
+The trial permits nonrecursive directory listings. Casts and literal type checks accept only `int`, `long`, `string` and `bool`.
+It refuses `-as` conversions.
+
+Each code is tried once on one server of its STIG, in a **restricted PowerShell session**:
+
+- Constrained Language Mode, and only the read-only commands of a fixed list (an allowlist: what is not on it cannot run);
+- three proxies for the programs a check needs - `secedit.exe` (the user rights export), `Remove-Item` (that one export file) and
+  `auditpol.exe` (one subcategory) - each accepts one exact form, and anything else is refused, never run;
+- a time limit, and a work folder of its own that is removed after - the report says what is left: nothing.
+
+The report shows, for each block, **What DISA checks**, **Ran in** (the session and its proxies), what the code read, and whether the
+trial **matches Evaluate-STIG**. The code you paste into your answer file is the full code: Evaluate-STIG runs it with its own rights.
+
+### The cross-check on Windows
+
+The evidence for a rule is what its pattern read in the trial: the registry value, the audit setting, the holders of a user right, the
+role's install state. It is compared with Evaluate-STIG's status and STIG Manager's review as on Linux, and ACT sees that evidence only
+- never the code. A rule no pattern reads (ACT's draft) says *not read: no fixed reading for this rule*. No step of DISA's text that
+is a screen to click through is tried.
+
+### First run
+
+Before you rely on it, **try it on one Windows Server 2022 host and look at every block**: a trial on a real server is what proves a
+pattern for your Windows (the tests of this repository use a stand-in for Windows).
+
+1. Make the job template **STIG answer keys** as above, with the Windows credential of your Windows STIG jobs. Set `target` to one
+   Windows Server 2022 host and `answer_keys_rules` to one or two rule ids (a registry rule and an audit rule).
+2. Run it in **Check mode** first. It reads and says what it would do; nothing is drafted yet.
+3. Run it. Open the report: for each block read **What DISA checks**, **What it read** and **Matches Evaluate-STIG**.
+4. Put the answer file on a **test host**, run Evaluate-STIG with it and compare the rule's status with the report's.
+5. Only then add more rules or hosts (`answer_keys_rules: []` takes STIG Manager's Not Reviewed rules).
+
+### Known limits
+
+- Real Windows is needed for the values: the registry, the audit policy and the rights. The code's reading of them is read-only, but a
+  check that depends on something DISA describes in words (a documented exception, a list kept elsewhere) is left to ACT or by hand.
+- Some user right rules, the HKCU rules and the rules with an applicability condition are not drafted (see *The drafts*).
+- The trial needs a Windows PowerShell 5.1 or PowerShell 7 session on the server; the work folder of a trial is removed, and the report
+  says so - or says **NOT CLEAN** and names what is left.
+- Only the operating system's STIG is drafted. IIS, SQL Server, Defender, Firewall and Edge are not.
+
 ## The report
 
 - **Website** (atlas, brief, ops):
@@ -839,5 +931,5 @@ it shows and the email shows none of it. These shapes are known to pass. They ar
 
 ## Not in this version
 
-- Windows servers (registry, AuditPol).
+- Windows hosts other than Windows Server 2019, 2022 and 2025 (and their IIS, SQL Server, Defender or Edge STIGs: only the operating system's STIG).
 - Writing an answer file, or anything to the share.

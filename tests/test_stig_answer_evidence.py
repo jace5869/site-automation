@@ -302,7 +302,7 @@ class ThirdPass(unittest.TestCase):
                                        evidence="none")
         self.assertNotIn("hostline-b", _all_text(d["report"]) + _all_text(d["web"]))
         t = self.read("roles", "check_stig", "tasks", "answer_keys.yml")
-        self.assertEqual(t.count("why_mail: "), 3)       # not reached, and both rescues
+        self.assertEqual(t.count("why_mail: "), 4)       # not reached, a Windows that is no Windows Server 2019, 2022 or 2025 (1.105.0), and both rescues
 
     def test_a_key_named_in_a_comment(self):
         for key, shown in (("local tenant hostline", "another key"), ("default", "DEFAULT")):

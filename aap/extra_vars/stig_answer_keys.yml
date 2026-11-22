@@ -15,7 +15,7 @@
 # ==================================================================================================
 ---
 ## 1.75.0 / 1.76.0: the Evaluate-STIG answer keys, ready to copy into YOUR answer file - nothing is written anywhere.
-## The Linux hosts with Evaluate-STIG (pwsh): target - a group, many hosts (at most answer_keys_max_hosts) - or the Limit;
+## The Linux hosts with Evaluate-STIG (pwsh) and, 1.105.0, Windows Server 2019, 2022 and 2025 hosts over WinRM: target - a group, many hosts (at most answer_keys_max_hosts) - or the Limit;
 ## one block per rule per STIG (RHEL 8, 9, 10). Prompt on launch (or a survey) for these:
 target: rhel_servers
 ## The rules: a list (RHEL 8, 9 and 10 ids mixed: each host takes those of its STIG) - or an empty list []: the rules
@@ -137,6 +137,10 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## the STIG Manager benchmark (STIG) for each RHEL version
 # check_stig_stigman_benchmarks: {"8": RHEL_8_STIG, "9": RHEL_9_STIG, "10": RHEL_10_STIG}
 
+## 1.105.0: the STIG Manager benchmark of the operating-system STIG for each Windows Server year
+## (the STIG answer keys)
+# check_stig_stigman_benchmarks_windows: {"2019": MS_Windows_Server_2019_STIG, "2022": MS_Windows_Server_2022_STIG, "2025": MS_Windows_Server_2025_STIG}
+
 ## 1.73.0b: seconds for all the texts' reads from STIG Manager together; the first read that fails
 ## (no answer, HTTP 5xx, 401/403) stops them - the report is made without the texts not read and
 ## says so in one line
@@ -191,6 +195,56 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## ESXi hosts named here (and keep their own lists). Set them in all.yml. names: whole, or short
 ## either way (web01 = web01.example.mil); * and ?; any case
 # site_exclude_hosts: []
+
+# ---- win_check_stig ------------------------------------------------------------------------------
+## ---- Evaluate-STIG on the server
+## ------------------------------------------------------------------------------ its folder on the
+## server (or Evaluate-STIG.ps1), e.g. 'C:\Evaluate-STIG'; empty = found: a scheduled task that runs
+## Evaluate-STIG.ps1, else a folder named Evaluate-STIG* on the local drives
+## (win_check_stig_search_depth levels down) - the report says where. A script found is run as
+## SYSTEM only when SYSTEM and the Administrators alone own and can change its folder (or its
+## scheduled task runs as SYSTEM); found in several places, none is run - set this
+# win_check_stig_evaluate: ""
+
+## -SelectSTIG: only these STIGs, by the short names your Evaluate-STIG lists (Evaluate-STIG.ps1
+## -ListSupportedProducts), e.g. [WinServer2022, IIS10Server, IIS10Site]; [] = every STIG that
+## applies to the server
+# win_check_stig_evaluate_select: []
+
+## -ExcludeSTIG: leave these out (short names, as above); [] = none
+# win_check_stig_evaluate_exclude: []
+
+## a checklist Evaluate-STIG's own schema check rejects (moved to its Bad_CKL folder): true = read
+## it from there anyway, said in the report; false = the server is not scanned
+# win_check_stig_evaluate_rejected: true
+
+## task = as SYSTEM in a one-time scheduled task (deleted after; outside the WinRM session's memory
+## and time limits - Evaluate-STIG wants SYSTEM or an administrator); direct = in the job's own
+## WinRM session, as its user
+# win_check_stig_run_as: task
+
+## the PowerShell that runs Evaluate-STIG.ps1; empty = Windows PowerShell 5.1
+## (C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe)
+# win_check_stig_powershell: ""
+
+## seconds Evaluate-STIG may take (every STIG of a server: five to thirty minutes); then it is
+## stopped and the server not scanned
+# win_check_stig_timeout: 3600
+
+## folders to search for Evaluate-STIG when win_check_stig_evaluate is empty and no scheduled task
+## runs it; [] = the local drives
+# win_check_stig_search: []
+
+## how many folder levels down the search goes (C:\Users\admin\Desktop\Evaluate-STIG is 4)
+# win_check_stig_search_depth: 4
+
+## ---- Kept on the server
+## --------------------------------------------------------------------------------------- one
+## folder per checklist (a STIG, or a STIG of one web site or database instance): each run's summary
+## (JSON) and checklist (STIG Manager imports it), latest-summary.json; only SYSTEM and
+## Administrators can open it (one that is there already and that others can change is refused: the
+## server is not scanned). A dry run keeps nothing
+# win_check_stig_dir: 'C:\ProgramData\site-automation\stig'
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
@@ -558,11 +612,6 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # site_act_timeout: 1200
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
-## ---- Linux or Windows (set by the playbook; do not set) -----------------------------------------
-## Linux playbooks run the roles check_<name>, the Windows ones (win_*.yml) the roles
-## win_check_<name>.
-# site_os: linux
-
 ## ---- Teams (1.86.0): the team view of the health reports on the report website ------------------
 ## Which findings belong to which team: team: [matchers], in order - group:<inventory group>,
 ## host:<pattern> (* and ?, any case; without a dot the short name too), inventory:<AAP inventory

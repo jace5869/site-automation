@@ -50,15 +50,15 @@
   # fails the job while one worked
   hosts: "{{ target | default('', true) or ansible_limit | default('no-target-given') }}{{ hostvars['localhost']['site_exclude_not'] | default('') }}"
   gather_facts: false
-  become: true
+  # 1.105.0: Linux hosts (SSH, become) and Windows Server 2019, 2022 and 2025 hosts (WinRM, no become) in one play: each host is
+  # read its own way (answer_keys.yml), the blocks and the report are made once for all of them
+  become: "{{ not (_ak_windows | bool) }}"
   ignore_unreachable: true
   vars:
     site_report_title: STIG answer keys
-  pre_tasks:
-    - name: Linux hosts only (Evaluate-STIG with pwsh)
-      ansible.builtin.include_role:
-        name: site_findings
-        tasks_from: os_guard.yml
+    _ak_windows: >-
+      {{ (ansible_connection | default('ssh')) in ['winrm', 'psrp', 'ansible.builtin.winrm', 'ansible.builtin.psrp']
+         or (ansible_shell_type | default('sh')) in ['powershell', 'cmd'] }}
   tasks:
     # each host: the rules (asked, or STIG Manager's Open and Not Reviewed), Evaluate-STIG's own result for them alone
     - name: The answer keys - each host - the rules, Evaluate-STIG for the picked rules only, STIG Manager read

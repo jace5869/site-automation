@@ -15,7 +15,8 @@
       {%-   set hc = hostvars[g.rep]._ak_hc | default({}) -%}
       {%-   set nm = hc.evaluate.names | default([]) | stig_answer_names -%}
       {%-   set rows = g.picks | stig_answer_rows(g.drafts, hc, _ak_key, nm.names, stigman_protect_words | default(none)) -%}
-      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm})) -%}
+      {%-   set _ = gs.append(g | combine({'rows': rows, 'ev': hc.evaluate | default({}), 'names_from': nm, 'ran_in': hc.ran_in | default({}), 'leftover': hc.leftover | default([]),
+                                          'run_as': hostvars[g.rep]._ak_h.run_as | default('')})) -%}
       {%- endfor -%}
       {{ gs }}
     _akx_info: >-
@@ -38,7 +39,7 @@
 
 # a host that fails or cannot be reached here never fails the job: its rows say "not asked: the reads failed"
 - name: Answer keys cross-check | the read-only evidence on this host
-  when: (_akx_plan[inventory_hostname] | default([])) | length > 0
+  when: (_akx_plan[inventory_hostname] | default([])) | length > 0 and not (_ak_windows | default(false) | bool)
   block:
     - name: Answer keys cross-check | DISA's commands (else the code's) - the read-only grammar, a literal argv each, run once, never a shell
       site_stig_answer_reads:
@@ -57,6 +58,12 @@
     - name: Answer keys cross-check | the reads failed on this host - its rows say so, the others go on
       ansible.builtin.set_fact:
         _akx_r: {failed: "{{ (ansible_failed_result.msg | default('it failed') | string | site_redact)[:300] }}"}
+
+# 1.105.0 (after the Linux task: a skipped task still registers _akx_r): a Windows host - the evidence is what each rule's pattern read in the restricted session of the trial (nothing more is run)
+- name: Answer keys cross-check | a Windows host - what its patterns read in the trial (the same restricted session)
+  ansible.builtin.set_fact:
+    _akx_r: "{{ _ak_groups | stig_answer_win_reads(inventory_hostname) }}"
+  when: (_akx_plan[inventory_hostname] | default([])) | length > 0 and _ak_windows | default(false) | bool
 
 - name: Answer keys cross-check | every host's evidence, and the ACT calls (one per rule and evidence, at most answer_keys_cross_check_act_max)
   ansible.builtin.set_fact:

@@ -80,6 +80,7 @@ check_stig_stigman_collections: []       # with no collection set: search only t
 check_stig_stigman_collections_exclude: ["Archive*", "Base*", "Watcher*", "Eval-STIG*", "SCA*", "* SCA*", "*_SCA*"]
 check_stig_stigman_asset: ""             # this host's asset name in STIG Manager; empty = the inventory name, then its short name (web01 for web01.example.mil); the asset's FQDN field matches too
 check_stig_stigman_benchmarks: {"8": RHEL_8_STIG, "9": RHEL_9_STIG, "10": RHEL_10_STIG}  # the STIG Manager benchmark (STIG) for each RHEL version
+check_stig_stigman_benchmarks_windows: {"2019": MS_Windows_Server_2019_STIG, "2022": MS_Windows_Server_2022_STIG, "2025": MS_Windows_Server_2025_STIG}  # 1.105.0: the STIG Manager benchmark of the operating-system STIG for each Windows Server year (the STIG answer keys)
 check_stig_stigman_statuses: [saved, submitted, accepted]  # the reviews that count as the checklist (a rejected review does not); [accepted] = only what was accepted
 check_stig_stigman_missing_severity: warning  # a host not found in STIG Manager (or its collection not readable): warning; critical; or none = listed in the report only
 

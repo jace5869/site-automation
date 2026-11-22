@@ -512,7 +512,7 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 """),
     "stig_answer_keys.yml": ("STIG - answer file generator", "Machine, STIG Manager API, ACT model key (with answer_keys_act)", "check_stig", """\
 ## 1.75.0 / 1.76.0: the Evaluate-STIG answer keys, ready to copy into YOUR answer file - nothing is written anywhere.
-## The Linux hosts with Evaluate-STIG (pwsh): target - a group, many hosts (at most answer_keys_max_hosts) - or the Limit;
+## The Linux hosts with Evaluate-STIG (pwsh) and, 1.105.0, Windows Server 2019, 2022 and 2025 hosts over WinRM: target - a group, many hosts (at most answer_keys_max_hosts) - or the Limit;
 ## one block per rule per STIG (RHEL 8, 9, 10). Prompt on launch (or a survey) for these:
 target: rhel_servers
 ## The rules: a list (RHEL 8, 9 and 10 ids mixed: each host takes those of its STIG) - or an empty list []: the rules

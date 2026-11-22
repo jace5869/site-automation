@@ -8,12 +8,18 @@
 #    "details", "check", "fix" (1.73.0: DISA's check and fix text, as a checklist carries them), "af" (1.77.1: set from this
 #    answer file, which the checklist names), "afk" (1.77.1: set from an answer file, its key only)}]}]}
 param([string[]] $Output = @('CKLB'), [string] $OutputPath = '', [string[]] $SelectSTIG = @(), [string[]] $ExcludeSTIG = @(),
-      [string] $ScanType = 'Unclassified', [string] $AnswerKey = '', [string[]] $SelectVuln = @())
+      [string] $ScanType = 'Unclassified', [string] $AnswerKey = '', [string] $AFPath = (Join-Path $PSScriptRoot 'AnswerFiles'), [string[]] $SelectVuln = @())
 $ErrorActionPreference = 'Stop'
 $spec = ConvertFrom-Json -InputObject ([string](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'spec.json') -Raw))
 Set-Content -LiteralPath (Join-Path $PSScriptRoot 'args.txt') -Value @(
     ('Output=' + ($Output -join ',')), ('OutputPath=' + $OutputPath), ('SelectSTIG=' + ($SelectSTIG -join ',')),
     ('ExcludeSTIG=' + ($ExcludeSTIG -join ',')), ('ScanType=' + $ScanType), ('AnswerKey=' + $AnswerKey), ('SelectVuln=' + ($SelectVuln -join ',')), ('User=' + [Environment]::UserName))
+if ($spec.require_empty_answers) {
+    if (-not (Test-Path -LiteralPath $AFPath -PathType Container) -or @(Get-ChildItem -LiteralPath $AFPath -Force).Count) {
+        throw 'expected an empty answer-file directory'
+    }
+    Add-Content -LiteralPath (Join-Path $PSScriptRoot 'args.txt') -Value ('AFPath=' + $AFPath)
+}
 foreach ($l in @($spec.say)) { if ($l) { Write-Host $l } }
 if ($spec.vuln_needs_stig -and $SelectVuln.Count -and -not $SelectSTIG.Count) { Write-Host 'ERROR: -SelectVuln needs -SelectSTIG'; exit 1 }
 if ([int]$spec.sleep) { Start-Sleep -Seconds ([int]$spec.sleep) }

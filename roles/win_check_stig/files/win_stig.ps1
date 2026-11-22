@@ -160,6 +160,8 @@ $searchIn = @(Get-Setting 'search' @() | Where-Object { $_ })
 $shellSet = [string](Get-Setting 'powershell' '')
 $vulns = @(Get-Setting 'vulns' @() | Where-Object { $_ } | ForEach-Object { [string]$_ })
 $history = [bool](Get-Setting 'history' $true)
+$selectedOnly = [bool](Get-Setting 'selected_only' $false)      # 1.105.0: the STIG answer keys - the named rules or nothing, never a full scan
+$withTexts = [bool](Get-Setting 'texts' $false)          # 1.105.0: the STIG answer keys - DISA's check text of the rules left Not Reviewed too
 # 1.77.1: the answer files Evaluate-STIG read (Set-AfFolder) - for the report's Answer files sections
 $script:afFolder = ''; $script:afGiven = ''; $script:afRead = @{ files = @(); more = 0 }
 # 1.77.1c: in read mode, the Evaluate-STIG whose scheduled task writes to the folder read; one task only: that one;
@@ -718,11 +720,11 @@ function Invoke-Evaluate([string] $Script, [string] $OutDir, [string] $Work) {
     $t0 = Get-Date
     if ($runAs -eq 'task' -and $onWindows -and (Get-Command -Name Register-ScheduledTask -ErrorAction SilentlyContinue)) {
         $r.how = 'a scheduled task as SYSTEM'
-        $name = 'site-automation STIG scan ' + $stamp
+        $name = 'site-automation STIG scan ' + (Split-Path -Leaf $Work)
         $action = New-ScheduledTaskAction -Execute $shell -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $wrapper + '"')
         $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds ($timeout + 120)) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+        Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $action -Principal $principal -Settings $settings -ErrorAction Stop | Out-Null
         try {
             Start-ScheduledTask -TaskName $name -TaskPath '\'
             while (-not (Test-Path -LiteralPath $codeFile)) {
@@ -808,7 +810,8 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
         if (-not $v) { $v = 'V-' + $k.Substring(3) }
         if ($vulns.Count -and -not $wanted.ContainsKey([string]$v)) { continue }
         $it = @{ key = $k; v = $v; rule = $r.rule; stigid = $r.stigid; severity = $r.severity; result = $r.result }
-        if ($r.result -eq 'fail') {
+        # 1.105.0: the STIG answer keys (texts: true) need DISA's check text of the rules Evaluate-STIG leaves Not Reviewed too
+        if ($r.result -eq 'fail' -or ($withTexts -and $r.result -eq 'notchecked')) {
             $it.title = $r.title
             $d = $r.details.Trim()
             if ($d) { if ($d.Length -gt $detailsMax) { $d = $d.Substring(0, $detailsMax) }; $it.details = $d }
@@ -988,13 +991,26 @@ try {
             $pickVulns = [bool](Select-String -LiteralPath $script -Pattern 'SelectVuln' -SimpleMatch -Quiet)
             $facts.selected = $pickVulns
             $facts.vulns_asked = $vulns.Count
+            if ($selectedOnly -and -not $pickVulns) { throw 'this Evaluate-STIG has no -SelectVuln, and the answer keys never run it in full' }
         }
         $workBase = [string]$env:TEMP
         if (-not $workBase) { $workBase = '/tmp' }
         if ($save) { New-PrivateFolder $dir; $workBase = $dir }
-        $work = Join-Path $workBase ('run-' + $stamp)
-        New-Item -ItemType Directory -Path (Join-Path $work 'out') -Force | Out-Null
+        $work = Join-Path $workBase ('run-' + (New-Guid))
+        # Claim the cleanup destination with a same-parent rename that fails if it exists.
+        $fresh = (New-Item -ItemType Directory -Path (Join-Path $workBase ('claim-' + (New-Guid))) -ErrorAction Stop).FullName
+        try { Rename-Item -LiteralPath $fresh -NewName (Split-Path -Leaf $work) -ErrorAction Stop }
+        catch { Remove-Item -LiteralPath $fresh -ErrorAction SilentlyContinue; throw }
         try {
+            New-Item -ItemType Directory -Path (Join-Path $work 'out') | Out-Null
+            if ($selectedOnly) {
+                $parameters = (Get-Command -Name $script -ErrorAction Stop).Parameters
+                if ('AFPath' -notin $parameters.Keys -and 'AFPath' -notin @($parameters.Values | ForEach-Object { $_.Aliases })) {
+                    throw 'the baseline needs an Evaluate-STIG with -AFPath'
+                }
+                $answerDir = (New-Item -ItemType Directory -Path (Join-Path $work 'AnswerFiles')).FullName
+                $extra = @('-AFPath', $answerDir)
+            }
             $ran = Invoke-Evaluate $script (Join-Path $work 'out') $work
             if ($pickVulns -and -not $ran.timed_out -and -not @(Get-Checklists (Join-Path $work 'out')).Count -and
                 -not @((Get-EvaluateSaid $ran.said).rejected | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count) {
@@ -1003,6 +1019,7 @@ try {
                 if (-not $first) { $first = ([string]$ran.said).Trim() }
                 if (-not $first) { $first = 'no message' }
                 if ($first.Length -gt 300) { $first = $first.Substring($first.Length - 300) }
+                if ($selectedOnly) { throw ('with -SelectVuln it wrote no checklist (exit ' + $ran.code + '), and the answer keys never run it in full') }
                 $facts.select_note = 'with -SelectVuln it wrote no checklist (exit ' + $ran.code + ': ' + $first + '), so it ran in full'
                 $pickVulns = $false
                 $facts.selected = $false
@@ -1014,7 +1031,7 @@ try {
             $facts.evaluate_failed = $said.failed
             $facts.evaluate_log = $said.log
             $facts.stderr = ''
-            if ($ran.said) {
+            if ($ran.said -and -not $selectedOnly) {
                 $from = $ran.said.Length - 600      # no [Math] in Constrained Language Mode
                 if ($from -lt 0) { $from = 0 }
                 $facts.stderr = $ran.said.Substring($from).Trim()
@@ -1030,6 +1047,7 @@ try {
             }
             if (-not $files.Count) {
                 $why = 'Evaluate-STIG wrote no checklist (exit ' + $ran.code + ', run by ' + $ran.how + ')'
+                if ($selectedOnly) { throw $why }
                 if ($said.rejected.Count) {
                     $why += (': its schema check rejected ' + ((@($said.rejected | ForEach-Object { Split-Path -Leaf $_ })) -join ', ') + ' (moved to ' + (Split-Path -Parent $said.rejected[0]))
                     if (-not $takeRejected) { $why += '; win_check_stig_evaluate_rejected: true reads them)' } else { $why += ', not there any more)' }
