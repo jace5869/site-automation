@@ -331,13 +331,11 @@ class Timeouts(unittest.TestCase):
         self.assertEqual(set(run["vars"]["_act_provider_keys"]), keys)
         self.assertEqual(set(vmware_ask.ACT_KEYS), keys)
         self.assertEqual(set(defaults["act_triage_key_env_names"]), keys)
-        self.assertEqual(set(run["vars"]["_act_not_secrets"]), blocked - keys)
         self.assertEqual(set(vmware_ask.ACT_NOT_SECRETS), blocked - keys)
         launcher = runpy.run_path(os.path.join(REPO, "vendor", "act", "ansible", "roles", "act_triage", "files", "act_launch.py"))
         self.assertEqual(set(launcher["ACT_KEYS"]), keys)
         self.assertEqual(set(launcher["ACT_NOT_SECRETS"]), blocked - keys)
         self.assertEqual(launcher["CREDENTIAL"].pattern, vmware_ask.CREDENTIAL.pattern)
-        self.assertEqual(run["vars"]["_act_credential"], "(?i)" + vmware_ask.CREDENTIAL.pattern)
 
     def test_act_refuses_ansible_core_below_2_16(self):
         import jinja2
@@ -367,12 +365,12 @@ class Timeouts(unittest.TestCase):
 class Play(unittest.TestCase):
     """roles/vmware_vm/tasks/outage_act.yml as a play, on this ansible-core: ACT off, no key, a stand-in ACT."""
 
-    def run_play(self, extra, env=None, pre=""):
+    def run_play(self, extra, env=None, pre="", host="localhost", verbose=False):
         work = tempfile.mkdtemp()
         with open(os.path.join(work, "tl.json"), "w") as f:
             json.dump({"_vm_w_tl": review()}, f)
         with open(os.path.join(work, "act.yml"), "w") as f:
-            f.write("- hosts: localhost\n  gather_facts: false\n  vars_files: [tl.json]\n  tasks:\n" + pre +
+            f.write("- hosts: %s\n  gather_facts: false\n  vars_files: [tl.json]\n  tasks:\n" % host + pre +
                     "    - ansible.builtin.include_role: {name: vmware_vm, tasks_from: outage_act.yml}\n"
                     "    - ansible.builtin.copy: {content: '{{ _vm_w_tl.act | to_json }}', dest: '%s/act.json', mode: '0600'}\n" % work)
         ap = os.environ.get("ANSIBLE_PLAYBOOK") or os.path.join(os.path.dirname(sys.executable), "ansible-playbook")
@@ -381,10 +379,11 @@ class Play(unittest.TestCase):
         e = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="False", ANSIBLE_INVENTORY_UNPARSED_WARNING="False",
                  GENAI_KEY="")
         e.update(env or {})
-        out = subprocess.run([ap, os.path.join(work, "act.yml"), "-i", "localhost,",
+        out = subprocess.run([ap, os.path.join(work, "act.yml"), "-i", host + ","] + (["-vvv"] if verbose else []) + [
                               "-e", json.dumps(dict({"ansible_python_interpreter": sys.executable, "ansible_connection": "local"}, **extra))],
                              cwd=REPO, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
         self.assertEqual(out.returncode, 0, out.stdout[-3000:])
+        self.play_output = out.stdout
         with open(os.path.join(work, "act.json")) as f:
             return json.load(f), work
 
@@ -395,7 +394,7 @@ class Play(unittest.TestCase):
         self.assertRegex(act["judged"], r"^ACT \(vm_outage_act\): This job has no API key for provider genai: attach .*No suggestions this time\.$")
         self.assertIsNone(act["web"])
 
-    def stand_in(self, env=None, extra=None, pre="", env_more=None):
+    def stand_in(self, env=None, extra=None, pre="", env_more=None, **play):
         """outage_act.yml with the stand-in ACT and a reachable model URL -> (the act section, the stand-in's folder)."""
         class Any(http.server.BaseHTTPRequestHandler):                                 # the way to the model is open (any answer)
             def log_message(self, *a):
@@ -414,7 +413,7 @@ class Play(unittest.TestCase):
                                      "act_triage_poll": 1, "site_act_url": "http://127.0.0.1:%d/v1/chat/completions" % srv.server_port,
                                      "vm_outage_act_max_events": 12}, **(extra or {})),
                                dict({"GENAI_KEY": "test-key", "FAKE_ACT_OUT": work, "FAKE_ACT_CONFIG": os.path.join(work, "act.json")},
-                                    **dict(env or {}, **(env_more or {}))), pre)
+                                    **dict(env or {}, **(env_more or {}))), pre, **play)
         return act, work
 
     def test_act_gets_a_clean_environment(self):
@@ -516,6 +515,45 @@ class Play(unittest.TestCase):
         if "ACT_KEY_ROTATION" not in names:
             wrong.append("ACT's own setting ACT_KEY_ROTATION did not reach it")
         self.assertEqual(wrong, [])
+
+    def test_the_role_keeps_the_masking(self):
+        # 1.104.0 (Codex P1, c5d961c8): act_triage_env (site_act_env) cannot turn the masking off or replace the names
+        # it masks: the role's own ACT_PSEUDONYMIZE and ACT_PSEUDO_NAMES go last (before: site_act_env's won)
+        _, work = self.stand_in(extra={"site_act_env": {"ACT_PSEUDONYMIZE": "0", "ACT_PSEUDO_NAMES": "only-this"}})
+        with open(os.path.join(work, "fake-act-masking.json")) as f:
+            got = json.load(f)
+        self.assertEqual(got["ACT_PSEUDONYMIZE"], "1")
+        self.assertIn("localhost", (got["ACT_PSEUDO_NAMES"] or "").split(","))
+        self.assertNotIn("only-this", (got["ACT_PSEUDO_NAMES"] or "").split(","))
+
+    def test_a_proxy_password_stays_off_command_lines_and_output(self):
+        # 1.104.0 (Codex P1, c5d961c8): a proxy with a user name and password in site_act_env - the check of the way to
+        # the model does not use it (Ansible's environment: is a command line; -vvv prints it), its facts are not
+        # printed, and ACT still gets it (on stdin) and runs. Before: the password in the -vvv EXEC line and facts.
+        proxy = "http://act-user:proxy-pass-777@proxy.example.mil:3128"
+        act, work = self.stand_in(extra={"site_act_env": {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy}}, verbose=True)
+        wrong = []
+        if "proxy-pass-777" in self.play_output:
+            wrong.append("the proxy password is in the play's output (-vvv)")
+        if act["judged"]:
+            wrong.append("ACT did not run: %s" % act["judged"])
+        with open(os.path.join(work, "fake-act-env-names.json")) as f:
+            names = json.load(f)
+        if "HTTPS_PROXY" not in names:
+            wrong.append("ACT did not get HTTPS_PROXY")
+        with open(os.path.join(work, "fake-act-cmdlines.json")) as f:
+            if "proxy-pass-777" in f.read():
+                wrong.append("the proxy password is on ACT's command line")
+        self.assertEqual(wrong, [])
+
+    def test_a_named_local_host_gets_only_the_forwarded_keys(self):
+        # 1.104.0 (Codex P1, c5d961c8): ansible_connection "local" with ansible.builtin. or ansible.legacy. before it is the
+        # controller: ACT gets only the keys the job forwards (none here), never the controller's own (before: host keys)
+        for connection in ["ansible.%s.%s" % (ns, "local") for ns in ("builtin", "legacy")] + ["local"]:
+            with self.subTest(connection=connection):
+                _, work = self.stand_in(extra={"ansible_connection": connection, "act_triage_key_env_names": []}, host="actnode")
+                with open(os.path.join(work, "fake-act-env-names.json")) as f:
+                    self.assertNotIn("GENAI_KEY", json.load(f))
 
     def test_acts_folder_goes_when_act_fails(self):
         # 1.104.0 (Neon P2): roles/site_act evidence_ask.yml removes ACT's folder in an always - also when act_triage fails

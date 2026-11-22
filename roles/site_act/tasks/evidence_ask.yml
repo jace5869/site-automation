@@ -11,6 +11,15 @@
                     'asksage': 'https://api.genai.army.mil/server/openai/v1/chat/completions',
                     'genai-beta': 'https://api-beta.genai.mil/v1/chat/completions'}[site_act_provider]) }}
     _ea_proxy: "{{ _site_act_env_all | dict2items | selectattr('key', 'match', '(?i)^(https?|no)_proxy$') | items2dict }}"
+  no_log: true                       # 1.104.0 (Codex): a proxy address can carry a user name and password
+
+# 1.104.0 (Codex): a proxy with a user name and password (http://user:pass@proxy...) is not used for this check:
+# Ansible's `environment:` would put it on the command line. ACT itself gets it on stdin (act_triage).
+- name: ACT | check the way to the model (not through a proxy with a password)
+  ansible.builtin.set_fact:
+    _ea_probe: >-
+      {{ _ea_check_url | default(true) | bool
+         and _ea_proxy | dict2items | map(attribute='value') | map('string') | select('search', '@') | list | length == 0 }}
 
 # Any HTTP answer (even 401 or 404) shows the way is open; no answer at all means a firewall, a
 # proxy or DNS is in the way. The key is not sent.
@@ -24,7 +33,7 @@
   register: _ea_reach
   failed_when: false
   check_mode: false
-  when: _site_act_key_ok | bool and _ea_check_url | default(true) | bool and (not ansible_check_mode or _ea_in_check | default(false) | bool)
+  when: _site_act_key_ok | bool and _ea_probe | bool and (not ansible_check_mode or _ea_in_check | default(false) | bool)
 
 - name: ACT | can ACT run?
   ansible.builtin.set_fact:
@@ -33,7 +42,7 @@
       A dry run (Check): ACT was not called. It would analyze the {{ _ea_items | length }} item(s) below.
       {%- elif not _site_act_key_ok | bool -%}
       This job has no API key for provider {{ site_act_provider }}: attach {{ _site_act_key_hint }} to the job template.
-      {%- elif _ea_check_url | default(true) | bool and (_ea_reach.status | default(-1) | int) <= 0 -%}
+      {%- elif _ea_probe | bool and (_ea_reach.status | default(-1) | int) <= 0 -%}
       This AAP node cannot reach the model at {{ _ea_url }} ({{ _ea_reach.msg | default('no answer') | regex_replace('^Status code was -1 and not \[200\]: ', '') }}).
       {{ ' Its certificate is not trusted: set site_act_ca to the CA file (docs/VMWARE.md, "ACT analysis").'
          if 'certificate verify failed' in (_ea_reach.msg | default('') | lower)

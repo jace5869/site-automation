@@ -155,10 +155,12 @@
           {{ (parts | join(_act_nl ~ _act_nl))[:act_triage_evidence_total_chars | int] }}
       when: act_triage_mode == 'evidence'
 
-    # 1.104.0: the keys and act_triage_env go on stdin, as NAME=value lines, to files/act_launch.py - never through
-    # Ansible's `environment:`, which Ansible puts on the remote command line (ps, the sudo log). The launcher takes
-    # only ACT's provider keys and allowed settings (anything else: refused, ACT not started), builds ACT's
-    # environment from an allowlist - never the job's credentials - and execs ACT: no shell, no key in any argument.
+    # 1.104.0: the keys and act_triage_env go on stdin to files/act_launch.py, as the line "act_launch/1" and one
+    # JSON object - never through Ansible's `environment:`, which Ansible puts on the remote command line (ps, the
+    # sudo log). The launcher reads the whole object (cut short: refused), takes only ACT's provider keys and allowed
+    # settings (anything else: refused, ACT not started), builds ACT's environment from an allowlist - never the
+    # job's credentials - and execs ACT: no shell, no key in any argument. The role's own settings (ACT_NO_BANNER,
+    # ACT_PSEUDONYMIZE, ACT_PSEUDO_NAMES) go last, so act_triage_env cannot turn the masking off.
     # No async: the async job file on the host would keep the task's stdin. The run's limit is the launcher's
     # SIGALRM (act_triage_timeout) and this task's timeout (a minute more).
     - name: ACT | run {{ 'the evidence analysis (evidence mode; ACT runs no commands)' if act_triage_mode == 'evidence'
@@ -168,7 +170,7 @@
           {{ [_act_python.stdout_lines | last, act_triage_dest_dir ~ '/act_launch.py',
               _act_evfile.path if act_triage_mode == 'evidence' else '/dev/null',
               act_triage_env_pass | map('string') | join(' '),
-              '0' if ansible_connection | default('ssh') == 'local' or inventory_hostname in ['localhost', '127.0.0.1'] else '1',
+              '0' if _act_on_controller | bool else '1',
               act_triage_timeout | string,
               _act_python.stdout_lines | last, act_triage_dest_dir ~ '/act', '--non-interactive',
               '--result-file', _act_tmp.path]
@@ -182,32 +184,32 @@
           {%-   set value = lookup('ansible.builtin.env', name) -%}
           {%-   if value -%}{%- set _ = entries.update({name: value}) -%}{%- endif -%}
           {%- endfor -%}
-          {%- set lines = [] -%}
-          {%- for name, value in (entries | combine(act_triage_env)).items() -%}
-          {%-   if name is not string or name is not regex('[A-Za-z_][A-Za-z0-9_]*', match_type='fullmatch') -%}
-          {%-     set _ = lines.append('INVALID') -%}
-          {%-   elif name not in _act_provider_keys and name not in _act_not_secrets and name is search(_act_credential) -%}
-          {%-     set _ = lines.append(name) -%}
-          {%-   elif name.endswith('_KEYS') -%}
-          {%-     set _ = lines.append(name ~ '=' ~ (value | string | regex_replace('[\r\n]+', ','))) -%}
-          {%-   elif value | string is search('[\r\n]') -%}
-          {%-     set _ = lines.append(name) -%}
-          {%-   else -%}
-          {%-     set _ = lines.append(name ~ '=' ~ value) -%}
+          {%- set payload = {} -%}
+          {%- for name, value in (entries | combine(act_triage_env) | combine(_act_role_env)).items() -%}
+          {%-   set text = value | string -%}
+          {%-   if name is string and name.endswith('_KEYS') -%}
+          {%-     set text = text | regex_replace('[\r\n]+', ',') -%}
+          {%-   elif text is search('[\r\n]') -%}
+          {%-     set text = none -%}
           {%-   endif -%}
+          {%-   set _ = payload.update({name | string: text}) -%}
           {%- endfor -%}
-          {{ lines | join(_act_nl) }}
+          act_launch/1{{ _act_nl }}{{ payload | to_json }}
         # Keep $NAME in task text literal.
         expand_argument_vars: false
-      environment:
-        ACT_NO_BANNER: "1"
-        ACT_PSEUDONYMIZE: "{{ '1' if act_triage_pseudonymize | bool else '0' }}"
-        ACT_PSEUDO_NAMES: "{{ ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
-                               + act_triage_pseudo_names) | map('string') | select | unique | join(',') }}"
       vars:
-        _act_credential: '(?i)PASSW|PASSPHRASE|SECRET|APIKEY|CREDENTIAL|COOKIE|PRIVATE|TOKEN|AUTH|SESSION|BEARER|(^|_)(KEYS?|PASS|PWD|PW)(_|$)'
+        # last on stdin: the role's own settings win over act_triage_env (a name ACT may not get is refused there)
+        _act_role_env:
+          ACT_NO_BANNER: "1"
+          ACT_PSEUDONYMIZE: "{{ '1' if act_triage_pseudonymize | bool else '0' }}"
+          ACT_PSEUDO_NAMES: "{{ ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
+                                 + act_triage_pseudo_names) | map('string') | select | unique | join(',') }}"
+        # ACT runs on the controller (the job's own environment: keys only as forwarded) or on a managed host (its
+        # own provider keys too, stdin wins). "local", "ansible.builtin.local" and "ansible.legacy.local" are local.
+        _act_on_controller: >-
+          {{ ansible_connection | default('ssh') | string is match('^(ansible[.](builtin|legacy)[.])?local$')
+             or inventory_hostname in ['localhost', '127.0.0.1'] }}
         _act_provider_keys: [GENAI_KEY, GENAI_KEYS, ASKSAGE_KEY, ASKSAGE_API_KEY, ASKSAGE_KEYS, GENAI_BETA_KEY, GENAI_BETA_KEYS]
-        _act_not_secrets: [ACT_KEY_COOLDOWN, ACT_KEY_ROTATION, ACT_KEY_USAGE_LOG, ACT_MAX_TOKENS, ACT_TOKEN_PARAM]
         # act_triage_key_env_names held to ACT's provider keys: another name there (SN_PASSWORD) is never read
         _act_keys_forwarded: "{{ act_triage_key_env_names | map('string') | select('in', _act_provider_keys) | list }}"
       timeout: "{{ act_triage_timeout | int + 60 }}"

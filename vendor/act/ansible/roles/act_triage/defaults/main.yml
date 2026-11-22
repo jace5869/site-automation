@@ -15,17 +15,20 @@ act_triage_python_candidates: [python3.13, python3.12, python3.11, python3.10, p
 # sudo / sh command line, visible in ps and in the host's sudo log.
 # Only ACT's own provider keys count (its _KEY_ENV: each provider's key and its pool, *_KEYS - comma or
 # newline separated); another name here is never read or sent.
-# 1.104.0: remote hosts keep their own provider keys unless stdin supplies them. Local runs use only stdin keys.
+# 1.104.0: remote hosts keep their own provider keys unless stdin supplies them. Local runs (localhost, or
+# ansible_connection local / ansible.builtin.local / ansible.legacy.local) use only stdin keys.
 act_triage_key_env_names: [GENAI_KEY, GENAI_KEYS, ASKSAGE_KEY, ASKSAGE_API_KEY, ASKSAGE_KEYS, GENAI_BETA_KEY, GENAI_BETA_KEYS]
-# Explicit settings go on stdin, including proxy URLs. Unknown names and other credentials refuse the run.
+# Explicit settings go on stdin (one JSON object), including proxy URLs. Unknown names and other credentials
+# refuse the run. ACT_PSEUDONYMIZE and ACT_PSEUDO_NAMES here are ignored: the privacy settings below win.
 act_triage_env: {}
 # 1.104.0: ACT starts with a clean environment, never the job's. On localhost (the controller or
 # execution environment) the job's credentials are environment variables: VMWARE_PASSWORD,
 # SN_PASSWORD, SMTP_PASSWORD, REPORT_WEB_TOKEN ... ACT gets only PATH, HOME, USER, LOGNAME, the
-# locale, TZ, TMPDIR, TERM, NO_COLOR, XDG_CONFIG_HOME, PYTHONIOENCODING, PYTHONUTF8, the proxy and CA
-# settings, ACT_*, GENAI_* and ASKSAGE_* names and the names listed here - never a name that looks
-# like a credential (files/act_launch.py CREDENTIAL) unless it is one of ACT's provider keys or of
-# its settings named like one (ACT_MAX_TOKENS ...). The default: the tests' stand-in ACT's settings.
+# locale, TZ, TMPDIR, TERM, NO_COLOR, XDG_CONFIG_HOME, XDG_RUNTIME_DIR, PYTHONIOENCODING, PYTHONUTF8,
+# the proxy and CA settings, ACT_*, GENAI_* and ASKSAGE_* names and the names listed here - never a
+# name that looks like a credential (files/act_launch.py CREDENTIAL) unless it is one of ACT's provider
+# keys or of its settings named like one (ACT_MAX_TOKENS ...). The default: the tests' stand-in ACT's
+# settings.
 act_triage_env_pass: [FAKE_ACT_OUT, FAKE_ACT_CONFIG]
 
 # ---- Privacy (ACT 0.6.18+) -------------------------------------------------------------------

@@ -34,6 +34,8 @@ if m:
 with open(os.path.join(out, "fake-act-env.json"), "w") as fh:
     json.dump({k: os.environ.get(k) for k in ("ACT_STREAM", "GENAI_TIMEOUT", "ACT_PROVIDER", "GENAI_MODEL",
                                               "ASKSAGE_MODEL", "ACT_TOOLS", "ACT_JSON_MODE", "ACT_PREFILL")}, fh)
+with open(os.path.join(out, "fake-act-masking.json"), "w") as fh:     # 1.104.0: the role's masking settings as ACT got them
+    json.dump({k: os.environ.get(k) for k in ("ACT_PSEUDONYMIZE", "ACT_PSEUDO_NAMES", "XDG_RUNTIME_DIR")}, fh)
 with open(os.path.join(out, "fake-act-env-names.json"), "w") as fh:    # 1.104.0: the names ACT got (never the values)
     json.dump(sorted(os.environ), fh)
 cmdlines = {}

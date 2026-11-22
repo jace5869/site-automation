@@ -15,6 +15,7 @@ import unittest
 ACT_DIR = Path(__file__).resolve().parents[1] / "vendor/act"
 LAUNCHER = ACT_DIR / "ansible/roles/act_triage/files/act_launch.py"
 REFUSAL = "act_launch: refused the launcher input"
+HEADER = b"act_launch/1\n"
 STAND_IN = """import json
 import os
 import sys
@@ -27,6 +28,13 @@ with open(sys.argv[1], "w") as f:
     json.dump({"argv": sys.argv, "env": dict(os.environ), "self": cmdline(os.getpid()),
                "parent": cmdline(os.getppid()), "stdin": sys.stdin.read()}, f)
 """
+
+
+def payload(*pairs, **settings):
+    """The launcher's input: the header line and one JSON object (a value may be bytes: sent as ACT would get it)."""
+    items = list(pairs) + list(settings.items())
+    body = ", ".join("%s: %s" % (json.dumps(k), json.dumps(os.fsdecode(v) if isinstance(v, bytes) else v)) for k, v in items)
+    return HEADER + ("{" + body + "}").encode() + b"\n"
 
 
 class Launch(unittest.TestCase):
@@ -50,19 +58,19 @@ class Launch(unittest.TestCase):
                               input=data, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def test_keys_and_evidence(self):
-        key = b"""  ' " $(id) `id` = \xff \\"""
-        run = self.launch(b"GENAI_KEY=" + key + b"\nGENAI_KEYS=a,b,c\n\nunused\n")
+        key = b"""  ' " $(id) `id` = \xff \\ \r\n{"x": 1}"""
+        run = self.launch(payload(GENAI_KEY=key, GENAI_KEYS="a,b,c"))
         self.assertEqual(run.returncode, 0, run.stderr)
         got = json.loads(self.dump.read_text())
         self.assertEqual(os.fsencode(got["env"]["GENAI_KEY"]), key)
         self.assertEqual(got["env"]["GENAI_KEYS"], "a,b,c")
         self.assertEqual(got["stdin"], self.evidence.read_text())
         for field in ("argv", "self", "parent"):
-            for value in (os.fsdecode(key), "a,b,c"):
+            for value in ("$(id) `id`", "a,b,c"):
                 self.assertFalse(any(value in arg for arg in got[field]), field)
 
-    def test_environment_at_eof(self):
-        run = self.launch(b"ASKSAGE_KEY=ends in CR\r")
+    def test_environment(self):
+        run = self.launch(payload(ASKSAGE_KEY="ends in CR\r"))
         self.assertEqual(run.returncode, 0, run.stderr)
         env = json.loads(self.dump.read_text())["env"]
         self.assertEqual(env["ASKSAGE_KEY"], "ends in CR\r")
@@ -71,15 +79,9 @@ class Launch(unittest.TestCase):
         for name, value in (("ACT_MAX_TOKENS", "400"), ("EXTRA", "kept"), ("PATH", os.defpath)):
             self.assertEqual(env[name], value)
 
-    def test_crlf(self):
-        for data, want in ((b"GENAI_KEY=x\r\n\r\n", "x"), (b"GENAI_KEY=x\r", "x\r")):
-            run = self.launch(data)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            self.assertEqual(json.loads(self.dump.read_text())["env"]["GENAI_KEY"], want)
-
     def test_settings(self):
         proxy = "http://u:p@proxy.example.mil:3128"
-        run = self.launch(("HTTPS_PROXY=" + proxy + "\nACT_PROVIDER=genai\nEXTRA=override").encode())
+        run = self.launch(payload(HTTPS_PROXY=proxy, ACT_PROVIDER="genai", EXTRA="override"))
         self.assertEqual(run.returncode, 0, run.stderr)
         got = json.loads(self.dump.read_text())
         for name, value in (("HTTPS_PROXY", proxy), ("ACT_PROVIDER", "genai"), ("EXTRA", "override")):
@@ -87,8 +89,25 @@ class Launch(unittest.TestCase):
         for field in ("argv", "self", "parent"):
             self.assertFalse(any(proxy in arg for arg in got[field]), field)
 
+    def test_rootless_podman_callers(self):
+        # 1.104.0 (Codex P1): podman_app_health.yml and act_apply_approved.yml give ACT XDG_RUNTIME_DIR (podman_user);
+        # their own act_triage_env, rendered, starts ACT (before: refused, the rootless jobs broke)
+        import jinja2
+        import yaml
+        for book in ("podman_app_health.yml", "act_apply_approved.yml"):
+            with self.subTest(book=book):
+                text = (ACT_DIR / "ansible" / "playbooks" / book).read_text()
+                expr = next(v for play in yaml.safe_load(text) for v in [play.get("vars", {}).get("act_triage_env")]
+                            if v is not None)
+                rendered = ast.literal_eval(jinja2.Environment().from_string(expr).render(podman_user="svc", _podman_uid=1001))
+                self.assertEqual(rendered, {"XDG_RUNTIME_DIR": "/run/user/1001"})
+                run = self.launch(payload(*rendered.items(), GENAI_KEY="k", ACT_PSEUDONYMIZE="1"))
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(json.loads(self.dump.read_text())["env"]["XDG_RUNTIME_DIR"], "/run/user/1001")
+
     def test_host_keys(self):
-        for host_keys, data, want in (("0", b"", None), ("1", b"", "inherited"), ("1", b"GENAI_KEY=override", "override")):
+        for host_keys, data, want in (("0", payload(), None), ("1", payload(), "inherited"),
+                                      ("1", payload(GENAI_KEY="override"), "override")):
             run = self.launch(data, host_keys=host_keys)
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertEqual(json.loads(self.dump.read_text())["env"].get("GENAI_KEY"), want)
@@ -104,22 +123,43 @@ class Launch(unittest.TestCase):
         return result
 
     def test_refused(self):
-        for line in (b"missing equals", b"genai_key=x", b"SN_PASSWORD=x", b"GENAI_ACCESSTOKEN=x", b"GENAI_AUTHORIZATION=x",
-                     b"GENAI_KEY", b"GENAI_KEY=duplicate", b"GENAI_KEYS=a\0b", b"ACT_BAD-NAME=x", b"OTHER=x"):
-            with self.subTest(line=line):
-                self.assert_refused(self.launch(b"GENAI_KEY=first\n" + line + b"\n\n"))
+        for pair in (("genai_key", "x"), ("SN_PASSWORD", "x"), ("GENAI_ACCESSTOKEN", "x"), ("GENAI_AUTHORIZATION", "x"),
+                     ("GENAI_KEY", "duplicate"), ("GENAI_KEYS", "a\0b"), ("ACT_BAD-NAME", "x"), ("OTHER", "x"), ("", "x"),
+                     ("GENAI_URL", None), ("GENAI_TIMEOUT", 60), ("ACT_STREAM", True), ("ACT_TOOLS", ["0"]), ("A\0B", "x")):
+            with self.subTest(pair=pair):
+                self.assert_refused(self.launch(payload(("GENAI_KEY", "first"), pair)))
+
+    def test_framing(self):
+        # 1.104.0 (Codex P1): one whole JSON object after the header, or ACT does not start - a payload cut short (the
+        # writer stopped before the URL or the model) never runs ACT with part of its settings
+        whole = payload(GENAI_KEY="k", GENAI_URL="https://model.example.mil/v1", GENAI_MODEL="m", ACT_PSEUDONYMIZE="1")
+        run = self.launch(whole)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(self.dump.read_text())["env"]["GENAI_MODEL"], "m")
+        self.dump.unlink()
+        for cut in range(0, len(whole) - 2):
+            with self.subTest(cut=cut):
+                self.assert_refused(self.launch(whole[:cut]))
+        for data in (b"", b"\n", HEADER, b"GENAI_KEY=k\n", b'{"GENAI_KEY": "k"}', HEADER + b'{"GENAI_KEY": "k"}\n\n{"GENAI_URL": "u"}',
+                     HEADER + b'{"GENAI_KEY": "k"} trailing', HEADER + b'[["GENAI_KEY", "k"]]', HEADER + b'"GENAI_KEY=k"',
+                     HEADER + b"[" * 100000, HEADER + b'{"GENAI_KEY": "\xff"}', b"act_launch/2\n{}", b" " + HEADER + b"{}"):
+            with self.subTest(data=data[:40]):
+                self.assert_refused(self.launch(data))
+        for data in (HEADER + b"{}", HEADER + b"{}\n", HEADER + b'{"GENAI_KEY": "k"}  \n\n'):
+            run = self.launch(data)
+            self.assertEqual(run.returncode, 0, run.stderr)
 
     def test_bounds(self):
-        for size in (65 * 1024, 160000):
-            self.assert_refused(self.launch(b"GENAI_KEY=" + b"x" * size))
-        lines = b"".join(b"ACT_TEST_%d=x\n" % i for i in range(200))
-        self.assert_refused(self.launch(lines + b"ACT_LAST=x"))
-        for data in (lines, b"GENAI_KEY=".ljust(64 * 1024, b"x")):
+        self.assert_refused(self.launch(payload(GENAI_KEY="x" * (1024 * 1024))))
+        self.assert_refused(self.launch(payload(GENAI_KEY="x" * 160000)), REFUSAL + " (OSError)")      # E2BIG, cleanly
+        names = [("ACT_TEST_%d" % i, "x") for i in range(200)]
+        self.assert_refused(self.launch(payload(*names, ACT_LAST="x")))
+        for data in (payload(*names), payload(GENAI_KEY="x" * 100000)):
             run = self.launch(data)
             self.assertEqual(run.returncode, 0, run.stderr)
 
     def test_refusal_result(self):
-        result = self.assert_refused(self.launch(b"GENAI_KEY"))
+        result = self.assert_refused(self.launch(HEADER + b'{"GENAI_KEY"'))
         keys = next(ast.literal_eval(n.value) for n in ast.parse((ACT_DIR / "act").read_text()).body
                     if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "RESULT_KEYS")
         self.assertEqual(set(result), set(keys))
@@ -133,11 +173,11 @@ class Launch(unittest.TestCase):
                                   "tokens": None, "model_retries": 0})
 
     def test_exec_failure(self):
-        self.assert_refused(self.launch(b"GENAI_KEY=private", python=str(self.dump)), REFUSAL + " (FileNotFoundError)")
+        self.assert_refused(self.launch(payload(GENAI_KEY="private"), python=str(self.dump)), REFUSAL + " (FileNotFoundError)")
 
     def test_alarm(self):
         self.act.write_text("import time\ntime.sleep(5)\n")
-        self.assertEqual(self.launch(b"", limit=1).returncode, -signal.SIGALRM)
+        self.assertEqual(self.launch(payload(), limit=1).returncode, -signal.SIGALRM)
 
 
 if __name__ == "__main__":

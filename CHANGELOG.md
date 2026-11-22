@@ -10,22 +10,26 @@ is optional there; run *AAP - set up job templates* or add it by hand), then lau
 capacity analyses, the health and log analyses, the outage review, fapolicyd, the service watch, STIG answer keys ...)
 ACT ran with the job's whole environment: `VMWARE_PASSWORD`, `SN_PASSWORD`, `SMTP_PASSWORD`, the report website's
 token and the other credentials AAP injects. Now roles act_triage starts ACT through a small Python launcher
-(act_launch.py: no shell) that builds ACT's environment from scratch, from an allowlist: PATH,
-HOME, the locale, TZ, TMPDIR, `PYTHONIOENCODING`, `PYTHONUTF8`, the proxy and CA settings, ACT's own `ACT_*`,
-`GENAI_*` and `ASKSAGE_*` names, `act_triage_env`, and `act_triage_env_pass` (new; the tests' stand-in ACT's two
-settings). A name that looks like a credential (`*PASSW*`, `*PASSPHRASE*`, `*SECRET*`, `*APIKEY*`, a word `KEY`,
+(act_launch.py: no shell) that builds ACT's environment from scratch, from an allowlist: PATH, HOME, the locale, TZ,
+TMPDIR, `XDG_RUNTIME_DIR` (rootless podman), `PYTHONIOENCODING`, `PYTHONUTF8`, the proxy and CA settings, ACT's own
+`ACT_*`, `GENAI_*` and `ASKSAGE_*` names, `act_triage_env`, and `act_triage_env_pass` (new; the tests' stand-in ACT's
+two settings). A name that looks like a credential (`*PASSW*`, `*PASSPHRASE*`, `*SECRET*`, `*APIKEY*`, a word `KEY`,
 `TOKEN`, `AUTH` ...) never passes, whatever its prefix or list, unless ACT's own code reads it: its provider keys and
 key pools (`GENAI_KEY(S)`, `ASKSAGE_KEY`, `ASKSAGE_API_KEY`, `ASKSAGE_KEYS`, `GENAI_BETA_KEY(S)`) and its settings
-named like one (`ACT_MAX_TOKENS`, `ACT_KEY_ROTATION` ...). `act_triage_key_env_names` is held to those keys. A key pool
-reaches ACT whole (its newlines sent as commas, as ACT reads them). A key travels only on stdin, never on a command
-line; `act_triage_env` goes on stdin too (an authenticated proxy URL is never on a command line); any other input
-there is refused and ACT is not started. The ACT run is no longer an async task (its job file kept the stdin): the
-launcher's alarm ends it at `act_triage_timeout`. On a remote host ACT still reads its own provider key from that
-host's environment when the job sends none. ACT's task text is no longer expanded by Ansible
-(`expand_argument_vars: false`): a `$VMWARE_PASSWORD` quoted from a ticket stays text. act_triage needs ansible-core
-2.16 or newer and says so below it. The VMware ask page (vmware_ask.py) starts ACT with the same rules. Nothing to
-set up; a site that gave ACT another setting through the job's environment adds its name to `act_triage_env_pass`,
-or sets it in `site_act_env`.
+named like one (`ACT_MAX_TOKENS`, `ACT_KEY_ROTATION` ...). `act_triage_key_env_names` is held to those keys. A key
+pool reaches ACT whole (its newlines sent as commas, as ACT reads them). A key travels only on stdin, never on a
+command line; `act_triage_env` goes on stdin too (an authenticated proxy URL is never on a command line), as one JSON
+object read whole: input cut short, or any other input there, is refused and ACT is not started. The role's own
+masking settings (`ACT_PSEUDONYMIZE`, `ACT_PSEUDO_NAMES`) come last, so `site_act_env` cannot turn the masking off.
+The ACT run is no longer an async task (its job file kept the stdin): the launcher's alarm ends it at
+`act_triage_timeout`. On a remote host ACT still reads its own provider key from that host's environment when the job
+sends none; a host with `ansible_connection` `local` (also with `ansible.builtin.` or `ansible.legacy.` before it)
+counts as the controller (only the keys the job sends). With a proxy that carries a user name and password, the
+analyses skip their check of the way to the model (it would put the proxy on a command line); the settings facts are
+no longer shown at `-v`. ACT's task text is no longer expanded by Ansible (`expand_argument_vars: false`): a
+`$VMWARE_PASSWORD` quoted from a ticket stays text. act_triage needs ansible-core 2.16 or newer and says so below it.
+The VMware ask page (vmware_ask.py) starts ACT with the same rules. Nothing to set up; a site that gave ACT another
+setting through the job's environment adds its name to `act_triage_env_pass`, or sets it in `site_act_env`.
 
 **VM - outage watch: ACT's possible causes and fixes on the review** (vm_outage_act; outage_act_filters.py,
 roles/vmware_vm/tasks/outage_act.yml, report_causes.html.j2, site_report.js), as the approved mockup (shots-1104).
