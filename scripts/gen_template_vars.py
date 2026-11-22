@@ -712,8 +712,9 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
 # pki_bundle_proxy: http://proxy.yoursite.mil:8080
 # pki_bundle_url: /mnt/pki/unclass-certificates_pkcs7_DoD.zip
 """),
-    "vm_alarm_act_analysis.yml": ("VM - alarms ACT analysis", "VMware vCenter, ACT model key", "", ""),
-    "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter", "", ""),
+    "vm_alarm_act_analysis.yml": ("VM - alarms ACT analysis", "VMware vCenter, ACT model key (optional: Report database, for "
+                                  "SolarWinds' alerts)", "", ""),
+    "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter (optional: Report database, for SolarWinds' alerts)", "", ""),
     "vm_ask.yml": ("VM - ask a question", "VMware vCenter, ACT model key", "", """\
 ## The question comes from the template's survey: a Textarea question whose answer variable is vm_ask_question
 ## (docs/VM_ASK.md). The job only reads: a question that asks to restart, delete or change anything is refused.
@@ -875,8 +876,9 @@ ONLY = {"vm_snapshot_cleanup_email_only_if_deleted": ("vm_snapshot_cleanup.yml",
         # one launch only - a template that keeps it would replace the secrets on every deploy
         "stigman_replace_secrets": ()}
 # 1.97.0: SolarWinds in a report (roles/solarwinds_report) - site_findings' report step has it, but only the health checks
-# and troubleshoot ask for it (_swr_mode)
-ONLY.update(dict((k, ("health_check.yml", "win_health_check.yml", "troubleshoot.yml", "win_troubleshoot.yml"))
+# and troubleshoot ask for it (_swr_mode), and the VMware alarms reports
+ONLY.update(dict((k, ("health_check.yml", "win_health_check.yml", "troubleshoot.yml", "win_troubleshoot.yml", "vm_alarm_report.yml",
+                      "vm_alarm_act_analysis.yml"))
                  for k in ("solarwinds_report", "solarwinds_report_skip_hosts", "solarwinds_report_volume_pct",
                            "solarwinds_report_volume_critical_pct", "solarwinds_report_event_hours")))
 ONLY.update(dict((k, ("health_check.yml", "win_health_check.yml")) for k in (
@@ -884,7 +886,7 @@ ONLY.update(dict((k, ("health_check.yml", "win_health_check.yml")) for k in (
     "solarwinds_report_timeout")))
 ONLY["solarwinds_report_events_shown"] = ("troubleshoot.yml", "win_troubleshoot.yml")
 ONLY["solarwinds_db_max_age"] = ("ad_health_report.yml", "netmap_report.yml", "solarwinds_snapshot.yml", "health_check.yml", "win_health_check.yml",
-                                 "troubleshoot.yml", "win_troubleshoot.yml")
+                                 "troubleshoot.yml", "win_troubleshoot.yml", "vm_alarm_report.yml", "vm_alarm_act_analysis.yml")
 
 # a setting a job reads in one task file only: what it is for THERE, in place of the role's general words
 # (name -> (the one task file, the words))

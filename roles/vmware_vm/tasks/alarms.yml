@@ -8,6 +8,10 @@
 - name: VMware | read
   ansible.builtin.include_tasks: alarms_read.yml
 
+# 1.97.0: SolarWinds' active alerts on the same hosts and VMs (roles/solarwinds_report, the report database's snapshot)
+- name: VMware | SolarWinds - the same hosts and VMs
+  ansible.builtin.include_tasks: alarms_solarwinds.yml
+
 - name: VMware | the report
   ansible.builtin.set_fact:
     _vm_al_doc: "{{ _vm_al_read | vm_alarm_report(_vm_al_opts) }}"
@@ -18,8 +22,13 @@
   vars:
     _vm_vcenters: "{{ _vm_al_read.vcenters }}"
     _vm_report_subject: "{{ _vm_al_doc.title }}"
-    _vm_report_lines: "{{ (_vm_al_doc | report_text).splitlines() }}"
-    _vm_report_doc: "{{ _vm_al_doc }}"
+    _vm_report_lines: "{{ (_vm_al_doc | report_text).splitlines() + _vm_al_swr.lines }}"
+    _vm_report_doc: "{{ _vm_al_doc | swr_alarm_doc(_vm_al_swr, true) }}"
+    _vm_report_web_doc: "{{ _vm_al_doc | swr_alarm_doc(_vm_al_swr) }}"
+    # the workbook (report_email_xlsx) with SolarWinds' table too (review P2-5)
+    _vm_report_xlsx: >-
+      {{ (_vm_al_doc | swr_alarm_doc(_vm_al_swr) | report_xlsx_sheets)
+         if report_email_xlsx | default(false) | bool and _vm_al_swr.sheets | default([]) | length > 0 else [] }}
 
 - name: VMware | the alarms as job artifacts (vm_alarms)
   ansible.builtin.set_stats:

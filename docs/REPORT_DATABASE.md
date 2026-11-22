@@ -1356,7 +1356,7 @@ per run instead of once per report.
 *Network map* reads it first ([NETWORK_MAP.md](NETWORK_MAP.md#from-the-report-database-1960)). The other reports follow,
 one section at a time, each with a mockup first.
 
-In 1.97.0 the health checks and troubleshoot show what SolarWinds sees of their hosts
+1.97.0 and 1.113.0: the health checks, troubleshoot and the VMware alarms reports show what SolarWinds sees of their hosts
 ([SOLARWINDS_REPORTS.md](SOLARWINDS_REPORTS.md)). They read with the reader account, `report_reader`.
 
 ### Set it up
@@ -1385,7 +1385,7 @@ A run takes about as long as SolarWinds needs for its queries: about a minute fo
 | `sw_app` | SAM application: its node, its status, and how many components it has and how many are not up |
 | `sw_component` | SAM component that is not up: its application, status, statistic and message |
 | `sw_volume` | volume: its node, size, used and % used |
-| `sw_vim_host` | VIM host: its node, cluster, state, CPU and memory, VMs |
+| `sw_vim_host` | VIM host: its node, cluster, state, CPU and memory, VMs, its vCenter (1.113.0) |
 | `sw_vim_vm` | VIM VM: its host, power state, CPU, memory and IP |
 
 Each table asks only for the columns this Orion has. A module it does not have is said in the job output, not an
@@ -1465,8 +1465,9 @@ netmap job’s own tables using `report_reader` as described in [The network map
   report can then see two nodes with the same short name (in two domains), or one address on several nodes (a
   cluster's). Each row says how it matched: `name`, `ip`, or `other ip` (one of the node's other addresses).
 
-- 1.97.0: `volumes_for()`, `ports_for()`, `vim_for()` and `node_details()` read snapshot details. `ports_for()` gives the switch port at the other end of each of a node's links. `vim_for()` gives
-  VIM's own status of a host or VM by its name.
+- 1.97.0: `volumes_for()`, `ports_for()`, `vim_for()` and `node_details()` are for the health checks, troubleshoot and
+  the alarms reports. `ports_for()` gives the switch port at the other end of each of a node's links. `vim_for()` gives
+  VIM's own status of a host or VM by its full name, in the job's vCenter (1.113.0).
 
 The indexes are for those reads: a node by name or IP, a node's interfaces, alerts, applications and volumes, and the
 events of a time window or a node.
@@ -1698,6 +1699,7 @@ CREATE TABLE IF NOT EXISTS sw_vim_host (
   vm_count INT NULL,
   vm_running INT NULL,
   product VARCHAR(255) NULL,
+  vcenter VARCHAR(512) NULL,
   PRIMARY KEY (snap_id, host_id),
   KEY sw_vim_host_name (snap_id, name_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
@@ -1724,9 +1726,24 @@ CREATE TABLE IF NOT EXISTS sw_vim_vm (
 ```
 
 ```sql
-INSERT INTO schema_version (component, version, applied_at) VALUES ('solarwinds', 1, UTC_TIMESTAMP());
+INSERT INTO schema_version (component, version, applied_at) VALUES ('solarwinds', 2, UTC_TIMESTAMP());
 ```
 <!-- end of the SolarWinds statements -->
+
+### From an older release, by hand
+
+1.113.0 adds one column, the vCenter of each VIM host (schema version 2). The first run of *SolarWinds - snapshot*
+adds it. With `solarwinds_db_create: false`, add it once as root, in `site_reports`:
+
+<!-- the upgrade: site_swis_db.upgrade_ddl(), word for word (tests/test_solarwinds_snapshot.py checks it) -->
+```sql
+ALTER TABLE sw_vim_host ADD COLUMN vcenter VARCHAR(512) NULL;
+UPDATE schema_version SET version = 2, applied_at = UTC_TIMESTAMP() WHERE component = 'solarwinds' AND version < 2;
+```
+<!-- end of the SolarWinds upgrade -->
+
+Until then the snapshot is written without it and says so. The VMware alarms reports then use no VIM node link.
+
 
 | Setting | Default | What it does |
 |---|---|---|

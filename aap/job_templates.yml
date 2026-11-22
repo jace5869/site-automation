@@ -2002,7 +2002,7 @@ job_templates:
   - name: VM - alarms report
     playbook: playbooks/vm_alarm_report.yml
     credentials: [vmware]
-    optional_credentials: []
+    optional_credentials: [report_db]
     ask_limit: false
     ask_variables: false
     ask_inventory: false
@@ -2020,7 +2020,7 @@ job_templates:
   - name: VM - alarms ACT analysis
     playbook: playbooks/vm_alarm_act_analysis.yml
     credentials: [vmware, act_model_key]
-    optional_credentials: []
+    optional_credentials: [report_db]
     ask_limit: false
     ask_variables: false
     ask_inventory: false

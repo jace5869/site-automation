@@ -129,6 +129,11 @@ class Snapshot(unittest.TestCase):
     def tearDownClass(cls):
         cls.fake.stop()
 
+    def test_each_vim_host_has_its_vcenter(self):
+        # 1.113.0: Orion.VIM.Hosts.DataCenterID -> Orion.VIM.DataCenters.VCenterID -> Orion.VIM.VCenters.Name
+        self.assertEqual(set(h.get("vcenter") for h in self.snap["extra"]["vim_host"]), {"vc01.example.mil"})
+        self.assertTrue(all("datacenter_id" not in h for h in self.snap["extra"]["vim_host"]))
+
     def test_every_part_is_read(self):
         s = self.snap
         self.assertTrue(s["raw"]["reachable"])
@@ -235,7 +240,7 @@ class Parts(unittest.TestCase):
         cls.plain, cls.more = fixtures()
 
     def test_a_module_this_orion_lacks(self):
-        f = Fake(self.more, {"FAKE_SWIS_HIDE": "Orion.APM.Application,Orion.APM.Component,Orion.VIM.Hosts,Orion.VIM.VirtualMachines,Orion.VIM.Clusters"})
+        f = Fake(self.more, {"FAKE_SWIS_HIDE": "Orion.APM.Application,Orion.APM.Component,Orion.VIM.Hosts,Orion.VIM.VirtualMachines,Orion.VIM.Clusters,Orion.VIM.DataCenters,Orion.VIM.VCenters"})
         try:
             s = sd.read_swis(f.client())
         finally:
@@ -861,6 +866,73 @@ class Lines(unittest.TestCase):
         self.assertEqual(sf.swis_snapshot_lines({"ok": True, "counts": {}}, True)[0], "Check: SolarWinds read, nothing written.")
 
 
+class SchemaTwo(unittest.TestCase):
+    """1.113.0: schema 2 (sw_vim_host.vcenter) - an older release's tables brought up in place, the ALTER only when
+    information_schema lacks the column (MySQL 8.4 has no ADD COLUMN IF NOT EXISTS); without it the snapshot is
+    written without the column and says so."""
+
+    def conn(self, has_column, version=1):
+        st = {"column": has_column, "version": version}
+
+        def ans(sql, args):
+            if "information_schema.tables" in sql:
+                return [("table_name",)], ([(t,) for t in sd.TABLES] if "LIKE" in sql else [("schema_version",)])
+            if "information_schema.columns" in sql:
+                return [("n",)], [(1 if st["column"] else 0,)]
+            if sql.startswith("ALTER TABLE sw_vim_host ADD COLUMN vcenter"):
+                if st["column"]:
+                    raise RuntimeError("Duplicate column name 'vcenter'")
+                st["column"] = True
+                return [], []
+            if sql.startswith("SELECT version FROM schema_version"):
+                return [("version",)], [(st["version"],)]
+            if sql.startswith("UPDATE schema_version"):
+                st["version"] = 2
+                return [], []
+            return [], []
+        return FakeConn(ans), st
+
+    def test_an_older_release_brought_up_in_place_once(self):
+        c, st = self.conn(False)
+        self.assertEqual(sd.missing_columns(c), [("sw_vim_host", "vcenter")])
+        self.assertEqual(sd.schema(c, True), (True, False))
+        self.assertEqual(st, {"column": True, "version": 2})
+        self.assertEqual(sum(1 for s, _a in c.sql if s.startswith("ALTER")), 1)
+        sd.schema(c, True)                                   # again: no second ALTER, and no UPDATE (a read-only account gets that far)
+        self.assertEqual(sum(1 for s, _a in c.sql if s.startswith("ALTER")), 1)
+        self.assertEqual(sum(1 for s, _a in c.sql if s.startswith("UPDATE")), 1)
+
+    def test_tables_made_by_hand_are_never_altered(self):
+        c, st = self.conn(False)
+        self.assertEqual(sd.schema(c, False), (True, False))
+        self.assertEqual(st, {"column": False, "version": 1})
+        self.assertFalse(any(s.startswith(("ALTER", "UPDATE")) for s, _a in c.sql))
+
+    def test_written_without_a_missing_column(self):
+        got = []
+
+        class Cur(object):
+            def executemany(self, sql, rows):
+                got.append((sql, list(rows)))
+        row = (7, 60, 101, "esx01.example.mil", "esx01", "cluster1", 1, "connected", "poweredOn", 10.0, 20.0, 12, 11, "VMware ESXi",
+               "vc01.example.mil")
+        self.assertEqual(len(row), len(sd.COLS["sw_vim_host"]))
+        sd._insert(Cur(), "sw_vim_host", [row], [("sw_vim_host", "vcenter")])
+        sd._insert(Cur(), "sw_vim_host", [row])
+        (old_sql, old_rows), (new_sql, new_rows) = got
+        self.assertNotIn("vcenter", old_sql)
+        self.assertEqual(old_rows, [row[:-1]])
+        self.assertIn(", vcenter)", new_sql)
+        self.assertEqual(new_rows, [row])
+
+    def test_the_vcenter_of_each_vim_host(self):
+        snap = {"extra": {"vim_host": [{"host_id": 60, "node_id": 101, "name": "esx01.example.mil", "vcenter": "vc01.example.mil"},
+                                       {"host_id": 61, "node_id": 102, "name": "esx02.example.mil"}]}}
+        rows = sd.to_rows(dict(snap, raw={"nodes": [], "links": []}), 7)["sw_vim_host"]
+        i = sd.COLS["sw_vim_host"].index("vcenter")
+        self.assertEqual([r[i] for r in rows], ["vc01.example.mil", None])
+
+
 class Doc(unittest.TestCase):
     def test_the_doc_has_the_statements_word_for_word(self):
         with open(os.path.join(ROOT, "docs", "REPORT_DATABASE.md"), encoding="utf-8") as fh:
@@ -869,6 +941,13 @@ class Doc(unittest.TestCase):
         self.assertIsNotNone(m)
         blocks = re.findall(r"```sql\n(.*?)\n```", m.group(1), re.S)
         self.assertEqual("\n\n".join(blocks), sd.ddl())
+
+    def test_the_doc_has_the_upgrade_word_for_word(self):
+        with open(os.path.join(ROOT, "docs", "REPORT_DATABASE.md"), encoding="utf-8") as fh:
+            doc = fh.read()
+        m = re.search(r"<!-- the upgrade: site_swis_db.upgrade_ddl\(\)[^>]*-->\n```sql\n(.*?)\n```\n<!-- end of the SolarWinds upgrade -->", doc, re.S)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), sd.upgrade_ddl())
 
     def test_every_table_in_the_doc(self):
         with open(os.path.join(ROOT, "docs", "REPORT_DATABASE.md"), encoding="utf-8") as fh:

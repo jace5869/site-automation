@@ -50,7 +50,7 @@ DOCS = [  # (file, chapter title)
     ("docs/LOG_ANALYSIS.md", "Log analysis: the patterns in a group of servers' logs, explained by ACT"),
     ("docs/NETAPP.md", "NetApp ONTAP health report"),
     ("docs/NETWORK_MAP.md", "Network map: SolarWinds' sites, WAN links and nodes on a globe, and live on the portal"),
-    ("docs/SOLARWINDS_REPORTS.md", "SolarWinds in the health checks and troubleshoot"),
+    ("docs/SOLARWINDS_REPORTS.md", "SolarWinds in the health checks, troubleshoot and the VMware alarms reports"),
     ("docs/JAVA4SHELL.md", "Java4Shell (CVE-2026-114938): check Keycloak's running Java, add the JVM flag, recreate it"),
     ("docs/NETWORK_CERTS.md", "Network device certificates: report and renewal"),
     ("docs/TRUST_STORES.md", "Trust stores: who still trusts a compromised or dropped CA"),

@@ -43,7 +43,7 @@ def _swis_errors():
     return tuple(out)
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2                      # 2 (1.113.0): sw_vim_host.vcenter
 COMPONENT = "solarwinds"
 LOCK = "site_reports.sw_snapshot"
 TABLE_OPTS = "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
@@ -99,13 +99,16 @@ CREATE = [
     "CREATE TABLE IF NOT EXISTS sw_vim_host (snap_id BIGINT NOT NULL, host_id BIGINT NOT NULL, node_id BIGINT NULL, "
     "name VARCHAR(512) NULL, name_key VARCHAR(255) NULL, cluster VARCHAR(512) NULL, status INT NULL, connection_state VARCHAR(64) NULL, "
     "power_state VARCHAR(64) NULL, cpu_pct DOUBLE NULL, mem_pct DOUBLE NULL, vm_count INT NULL, vm_running INT NULL, "
-    "product VARCHAR(255) NULL, "
+    "product VARCHAR(255) NULL, vcenter VARCHAR(512) NULL, "
     "PRIMARY KEY (snap_id, host_id), KEY sw_vim_host_name (snap_id, name_key)) " + TABLE_OPTS,
     "CREATE TABLE IF NOT EXISTS sw_vim_vm (snap_id BIGINT NOT NULL, vm_id BIGINT NOT NULL, host_id BIGINT NULL, node_id BIGINT NULL, "
     "name VARCHAR(512) NULL, name_key VARCHAR(255) NULL, power_state VARCHAR(64) NULL, status INT NULL, cpu_pct DOUBLE NULL, "
     "mem_pct DOUBLE NULL, ip VARCHAR(64) NULL, guest_state VARCHAR(64) NULL, "
     "PRIMARY KEY (snap_id, vm_id), KEY sw_vim_vm_name (snap_id, name_key), KEY sw_vim_vm_host (snap_id, host_id)) " + TABLE_OPTS,
 ]
+# 1.113.0 (schema 2): the columns added to tables an older release made - ALTER TABLE when information_schema lacks them
+# (MySQL 8.4 has no ADD COLUMN IF NOT EXISTS). A VIM object's vCenter: without it a VIM node link is never used.
+ADDED = [("sw_vim_host", "vcenter", "ALTER TABLE sw_vim_host ADD COLUMN vcenter VARCHAR(512) NULL")]
 SCHEMA_VERSION_TABLE = ("CREATE TABLE IF NOT EXISTS schema_version (component VARCHAR(64) NOT NULL PRIMARY KEY, version INT NOT NULL, "
                         "applied_at DATETIME NOT NULL) " + TABLE_OPTS)
 TABLES = [re.match(r"CREATE TABLE IF NOT EXISTS (\w+)", s).group(1) for s in CREATE]
@@ -128,7 +131,7 @@ COLS = {
     "sw_component": ["snap_id", "component_id", "app_id", "name", "kind", "status", "status_text", "value", "message"],
     "sw_volume": ["snap_id", "volume_id", "node_id", "caption", "kind", "size_bytes", "used_bytes", "used_pct", "status"],
     "sw_vim_host": ["snap_id", "host_id", "node_id", "name", "name_key", "cluster", "status", "connection_state", "power_state",
-                    "cpu_pct", "mem_pct", "vm_count", "vm_running", "product"],
+                    "cpu_pct", "mem_pct", "vm_count", "vm_running", "product", "vcenter"],
     "sw_vim_vm": ["snap_id", "vm_id", "host_id", "node_id", "name", "name_key", "power_state", "status", "cpu_pct", "mem_pct", "ip",
                   "guest_state"],
 }
@@ -171,11 +174,14 @@ WANT = {
                                  ("used_pct", ["VolumePercentUsed"]), ("status", ["Status"])]),
     "vim_cluster": ("Orion.VIM.Clusters", [("*cluster_id", ["ClusterID"]), ("*name", ["Name"])]),
     "vim_host": ("Orion.VIM.Hosts", [("*host_id", ["HostID"]), ("node_id", ["NodeID"]), ("name", ["HostName", "Name"]),
-                                     ("cluster_id", ["ClusterID"]), ("status", ["Status", "OverallStatus"]),
+                                     ("cluster_id", ["ClusterID"]), ("datacenter_id", ["DataCenterID"]), ("status", ["Status", "OverallStatus"]),
                                      ("connection_state", ["ConnectionState"]), ("power_state", ["PowerState"]),
                                      ("cpu_pct", ["CpuLoad", "CPULoad"]), ("mem_pct", ["MemUsage", "MemoryUsage"]),
                                      ("vm_count", ["VmCount"]), ("vm_running", ["VmRunningCount"]),
                                      ("product", ["VMwareProductName", "ProductName"])]),
+    # 1.113.0: a host's vCenter - its datacenter's VCenterID, that vCenter's name (its address when it has none)
+    "vim_dc": ("Orion.VIM.DataCenters", [("*datacenter_id", ["DataCenterID"]), ("*vcenter_id", ["VCenterID"])]),
+    "vim_vcenter": ("Orion.VIM.VCenters", [("*vcenter_id", ["VCenterID"]), ("name", ["Name", "DisplayName"]), ("ip", ["IPAddress"])]),
     "vim_vm": ("Orion.VIM.VirtualMachines", [("*vm_id", ["VirtualMachineID"]), ("host_id", ["HostID"]), ("node_id", ["NodeID"]),
                                              ("name", ["Name", "DisplayName"]), ("power_state", ["PowerState"]),
                                              ("status", ["Status", "OverallStatus"]), ("cpu_pct", ["CPULoad", "CpuLoad"]),
@@ -572,9 +578,16 @@ def read_swis(client, opts=None):
         except _swis_errors() as e:
             if e.kind != "absent":
                 not_read.append({"what": "the VIM clusters' names (Orion.VIM.Clusters)", "why": str(e)})
-        hosts = paged("vim_host")
+        hosts = paged("vim_host")       # first: an Orion without VIM is said once, as VIM's hosts and VMs
+        dcs = {}
+        try:
+            centers = dict((r["vcenter_id"], r.get("name") or r.get("ip")) for r in paged("vim_vcenter"))
+            dcs = dict((r["datacenter_id"], centers.get(r["vcenter_id"])) for r in paged("vim_dc"))
+        except _swis_errors() as e:      # no vCenter known: the reports use no VIM node link (1.113.0)
+            not_read.append({"what": "the VIM objects' vCenters (Orion.VIM.DataCenters, Orion.VIM.VCenters)", "why": str(e)})
         for h in hosts:
             h["cluster"] = cl.get(h.pop("cluster_id", None))
+            h["vcenter"] = dcs.get(h.pop("datacenter_id", None))
         extra["vim_host"] = hosts
         extra["vim_vm"] = paged("vim_vm")
 
@@ -594,7 +607,8 @@ PART_WORDS = {"node": "the nodes' last poll, CPU and memory (Orion.Nodes)", "ip"
               "event": "the events (Orion.Events)", "app": "SAM's applications (Orion.APM.Application)",
               "component": "SAM's components not up (Orion.APM.Component)", "volume": "the volumes (Orion.Volumes)",
               "vim": "VIM's hosts and VMs (Orion.VIM.Hosts, Orion.VIM.VirtualMachines)", "alert_object": "the alerts' objects",
-              "event_type": "the events' kinds", "vim_cluster": "the VIM clusters", "vim_host": "VIM's hosts", "vim_vm": "VIM's VMs"}
+              "event_type": "the events' kinds", "vim_cluster": "the VIM clusters", "vim_host": "VIM's hosts", "vim_vm": "VIM's VMs",
+              "vim_dc": "the VIM datacenters", "vim_vcenter": "the VIM vCenters"}
 
 
 # -------------------------------------------------------------------------------------------- a snapshot as table rows
@@ -672,7 +686,8 @@ def to_rows(snap, snap_id):
         out["sw_vim_host"].append((snap_id, _int(h.get("host_id")), _int(h.get("node_id")), _cut(h.get("name"), 512), name_key(h.get("name")),
                                    _cut(h.get("cluster"), 512), _int(h.get("status")), _cut(h.get("connection_state"), 64),
                                    _cut(h.get("power_state"), 64), _float(h.get("cpu_pct")), _float(h.get("mem_pct")),
-                                   _int(h.get("vm_count")), _int(h.get("vm_running")), _cut(h.get("product"), 255)))
+                                   _int(h.get("vm_count")), _int(h.get("vm_running")), _cut(h.get("product"), 255),
+                                   _cut(h.get("vcenter"), 512)))
     for v in ex.get("vim_vm") or []:
         out["sw_vim_vm"].append((snap_id, _int(v.get("vm_id")), _int(v.get("host_id")), _int(v.get("node_id")), _cut(v.get("name"), 512),
                                  name_key(v.get("name")), _cut(v.get("power_state"), 64), _int(v.get("status")), _float(v.get("cpu_pct")),
@@ -733,6 +748,27 @@ def ddl():
                         % (COMPONENT, SCHEMA_VERSION)])
 
 
+def upgrade_ddl():
+    """The statements that bring tables an older release made up to this schema, by hand (solarwinds_db_create: false).
+    The doc carries this text too."""
+    return "\n".join(["%s;" % sql for _t, _c, sql in ADDED] +
+                     ["UPDATE schema_version SET version = %d, applied_at = UTC_TIMESTAMP() WHERE component = '%s' AND version < %d;"
+                      % (SCHEMA_VERSION, COMPONENT, SCHEMA_VERSION)])
+
+
+def missing_columns(conn):
+    """[(table, column)] of ADDED that information_schema does not show: the tables of an older release."""
+    cur = conn.cursor()
+    out = []
+    for table, column, _sql in ADDED:
+        cur.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = %s "
+                    "AND column_name = %s", (table, column))
+        r = cur.fetchone()
+        if not r or not int(r[0]):
+            out.append((table, column))
+    return out
+
+
 def schema(conn, create):
     """(there, created): every table, made when one is missing and create is true; schema_version's row with them."""
     cur = conn.cursor()
@@ -754,6 +790,13 @@ def schema(conn, create):
         elif r is not None and int(r[0]) > SCHEMA_VERSION:
             raise RuntimeError("the SolarWinds tables are version %s, newer than this release knows (%s) - update site-automation"
                                % (r[0], SCHEMA_VERSION))
+        # 1.113.0: an older release's tables brought up to this schema in place - each column only when it is not there
+        if create:
+            for table, column in missing_columns(conn):
+                cur.execute(next(sql for t, c, sql in ADDED if (t, c) == (table, column)))
+            if r is not None and int(r[0]) < SCHEMA_VERSION and not missing_columns(conn):     # only when it is older
+                cur.execute("UPDATE schema_version SET version = %s, applied_at = UTC_TIMESTAMP() WHERE component = %s AND version < %s",
+                            (SCHEMA_VERSION, COMPONENT, SCHEMA_VERSION))
     conn.commit()
     return True, bool(missing)
 
@@ -790,10 +833,14 @@ def newest_event(conn, orion=""):
     return event_cursor(conn, orion)[1:]
 
 
-def _insert(cur, table, rows):
+def _insert(cur, table, rows, skip=()):
     if not rows:
         return
     cols = COLS[table]
+    drop = [i for i, c in enumerate(cols) if (table, c) in skip]
+    if drop:                             # an older release's table (solarwinds_db_create: false): written without the column
+        cols = [c for i, c in enumerate(cols) if i not in drop]
+        rows = [tuple(v for i, v in enumerate(r) if i not in drop) for r in rows]
     sql = "INSERT INTO %s (%s) VALUES (%s)" % (table, ", ".join(cols), ", ".join(["%s"] * len(cols)))
     if table == "sw_event":              # an event seen again: only whether it was acknowledged changes
         sql += " ON DUPLICATE KEY UPDATE acknowledged = VALUES(acknowledged)"
@@ -820,10 +867,11 @@ def write(conn, snap, job=0, now=None, error=""):
                     (started or now or now_utc(), int(job or 0), orion_key(raw.get("url")), _cut(error or raw.get("error") or "", 1000) or None))
     sid = int(cur.lastrowid)
     c, n = {}, 0
+    skip = missing_columns(conn) if ok else []
     if ok:
         rows = to_rows(snap, sid)
         for t in COLS:
-            _insert(cur, t, rows[t])
+            _insert(cur, t, rows[t], skip)
         n = sum(len(v) for v in rows.values())
         c = counts(rows, snap)
     sets = dict(c, ok=1 if ok else 0, finished_at=now or now_utc(), seconds=snap.get("seconds"), queries=snap.get("queries"),
@@ -832,7 +880,7 @@ def write(conn, snap, job=0, now=None, error=""):
     keys = sorted(sets)
     cur.execute("UPDATE sw_snapshot SET %s WHERE snap_id = %%s" % ", ".join("%s = %%s" % k for k in keys), [sets[k] for k in keys] + [sid])
     conn.commit()
-    return {"snap_id": sid, "ok": ok, "counts": c, "rows": n}
+    return {"snap_id": sid, "ok": ok, "counts": c, "rows": n, "missing_columns": ["%s.%s" % x for x in skip]}
 
 
 def prune(conn, keep_snapshots=12, keep_days=400, event_days=400, now=None):
@@ -1197,13 +1245,15 @@ def nodes_for_hosts(conn, snap_id, fulls, shorts, ips):
 
 
 def vim_nodes(conn, snap_id, ids):
-    """The node row and owning kind for every VIM link to these node IDs, including links under unrelated names."""
+    """The node row, owning kind and VIM object (vim_id, vim_name) for every VIM link to these node IDs, including links
+    under unrelated names: a node linked to two VIM objects is neither's (review 1970c P1-3)."""
     if not ids:
         return []
     cur = conn.cursor()
     queries, args = [], []
     for kind in ("host", "vm"):
-        queries.append("SELECT n." + _NODE_COLUMNS.replace(", ", ", n.") + ", '" + kind + "' AS kind FROM sw_vim_" + kind +
+        queries.append("SELECT n." + _NODE_COLUMNS.replace(", ", ", n.") + ", '" + kind + "' AS kind, v." + kind +
+                       "_id AS vim_id, v.name AS vim_name FROM sw_vim_" + kind +
                        " v JOIN sw_node n ON n.snap_id = v.snap_id AND n.node_id = v.node_id "
                        "WHERE v.snap_id = %%s AND v.node_id IN (%s)" % _ph(len(ids)))
         args.extend([snap_id] + sorted(ids))
@@ -1538,43 +1588,78 @@ def ports_for(conn, snap_id, node_ids):
     return out
 
 
+def same_center(job, snap, centers):
+    """1.113.0: is the snapshot's vCenter name snap the job's vCenter job? Names compared after canon(). An FQDN against
+    a short name only when that short name fits exactly one of the snapshot's vCenters (centers), and that one is the
+    other name. Anything doubtful: False."""
+    a, b = canon(job), canon(snap)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if normalized_ip(a) or normalized_ip(b) or ("." in a) == ("." in b):
+        return False
+    short = a if "." not in a else b
+    fits = set(c for c in (canon(x) for x in centers or []) if c.split(".", 1)[0] == short)
+    return fits == {b}
+
+
 def vim_for(conn, snap_id, names):
-    """VIM's hosts and VMs: {name: {kind (host | vm), name, status, status_code, connection_state, power_state, cluster,
-    node_id}} or None. names: a list of names, or of {name, kind} (1.97.0 review P1-2: a host is looked up among VIM's
-    hosts only, a VM among its VMs; the answer is then keyed "kind|name"). The full name first (case aside); a short name only when it names one object of
-    that kind - two hosts esx01.a and esx01.b, or a short name that fits several: None, never a guess. Two queries."""
-    objs = []
-    for n in names or []:
-        if isinstance(n, dict):
-            objs.append((str(n.get("name") or ""), str(n.get("kind") or "")))
-        else:
-            objs.append((str(n or ""), ""))
-    key = lambda n, k: ("%s|%s" % (k, n)) if k else n         # noqa: E731 - by kind and name: host esx01 and VM esx01 are two
-    out = dict((key(n, k), None) for n, k in objs)
-    keys = sorted(set(name_key(n) for n, _k in objs if name_key(n)))
+    """VIM's hosts and VMs: {key: {kind (host | vm), name, status, status_code, connection_state, power_state, cluster,
+    node_id, vcenter, why}} or None. names: [{name, kind, vcenter}], key "kind|vcenter|name" (vim_key). Only the full name
+    (case and white space aside; review 1970c P1-2), only an object of the kind asked (a host among VIM's hosts), only
+    in the job's vCenter (1.113.0, same_center). node_id is None with why when the snapshot cannot say: tables of an older
+    release, or a VIM object without its vCenter (a snapshot before 1.113.0) - never a guess. Three queries."""
+    objs = [(str(n.get("name") or ""), str(n.get("kind") or ""), str(n.get("vcenter") or "")) for n in names or []]
+    out = dict((vim_key(k, v, n), None) for n, k, v in objs)
+    keys = sorted(set(name_key(n) for n, _k, _v in objs if name_key(n)))
     if not keys:
+        return out
+    if missing_columns(conn):
+        for n, k, v in objs:
+            out[vim_key(k, v, n)] = {"kind": k, "name": n, "node_id": None, "vcenter": "",
+                                     "why": "VIM not verifiable: the report database's tables are of an older release (the next snapshot run brings them up to date)"}
         return out
     cur = conn.cursor()
     rows = []
-    cur.execute("SELECT name, name_key, status, connection_state, power_state, cluster, node_id FROM sw_vim_host "
+    cur.execute("SELECT host_id AS vim_id, name, name_key, status, connection_state, power_state, cluster, node_id, vcenter FROM sw_vim_host "
                 "WHERE snap_id = %%s AND name_key IN (%s) ORDER BY host_id" % _ph(len(keys)), [snap_id] + keys)
     rows += [dict(r, kind="host") for r in _dicts(cur)]
-    cur.execute("SELECT name, name_key, status, NULL AS connection_state, power_state, NULL AS cluster, node_id FROM sw_vim_vm "
-                "WHERE snap_id = %%s AND name_key IN (%s) ORDER BY vm_id" % _ph(len(keys)), [snap_id] + keys)
+    cur.execute("SELECT v.vm_id AS vim_id, v.name, v.name_key, v.status, NULL AS connection_state, v.power_state, NULL AS cluster, "
+                "v.node_id, h.vcenter FROM sw_vim_vm v LEFT JOIN sw_vim_host h ON h.snap_id = v.snap_id AND h.host_id = v.host_id "
+                "WHERE v.snap_id = %%s AND v.name_key IN (%s) ORDER BY v.vm_id" % _ph(len(keys)), [snap_id] + keys)
     rows += [dict(r, kind="vm") for r in _dicts(cur)]
-    for n, kind in objs:
-        mine = [r for r in rows if not kind or r["kind"] == kind]
-        full = [r for r in mine if str(r["name"] or "").strip().lower().rstrip(".") == n.strip().lower().rstrip(".")]
-        short = [r for r in mine if r["name_key"] == name_key(n)
-                 and ("." not in n.strip().rstrip(".") or "." not in str(r["name"] or "").strip().rstrip("."))]
-        pick = full if full and "." in n.strip().rstrip(".") else short
-        if len(pick) != 1:
+    cur.execute("SELECT DISTINCT vcenter FROM sw_vim_host WHERE snap_id = %s AND vcenter IS NOT NULL", [snap_id])
+    centers = [r[0] for r in cur.fetchall()]
+    for n, kind, vc in objs:
+        same = [r for r in rows if r["kind"] == kind and canon(r["name"]) == canon(n)]
+        known = [r for r in same if canon(r.get("vcenter"))]
+        mine = [r for r in known if same_center(vc, r["vcenter"], centers)]
+        if len(mine) > 1 or (not mine and not (same and not known)):
+            continue                     # none, or two in the job's vCenter: no VIM object, never a guess
+        if not mine:
+            out[vim_key(kind, vc, n)] = {"kind": kind, "name": n, "node_id": None, "vcenter": "",
+                                         "why": "VIM not verifiable: the snapshot has no vCenter for it (the next snapshot run adds it)"}
             continue
-        r = pick[0]
-        out[key(n, kind)] = {"kind": r["kind"], "name": r["name"] or "", "status": site_swis.status_of(r["status"]) if r["status"] is not None else "",
-                  "status_code": r["status"], "connection_state": r["connection_state"] or "", "power_state": r["power_state"] or "",
-                  "cluster": r["cluster"] or "", "node_id": _int(r["node_id"])}
+        r = mine[0]
+        out[vim_key(kind, vc, n)] = {"kind": r["kind"], "name": r["name"] or "",
+                                     "status": site_swis.status_of(r["status"]) if r["status"] is not None else "",
+                                     "status_code": r["status"], "connection_state": r["connection_state"] or "",
+                                     "power_state": r["power_state"] or "", "cluster": r["cluster"] or "", "node_id": _int(r["node_id"]),
+                                     "vcenter": r["vcenter"] or "", "why": ""}
+    # the other kind under the same name (a host and a VM both esx01): a node of that name is not this object's (review 1970c P1-5)
+    for n, kind, vc in objs:
+        e = out.get(vim_key(kind, vc, n))
+        other = any(r["kind"] != kind and canon(r["name"]) == canon(n) for r in rows)
+        if e is None and other:
+            out[vim_key(kind, vc, n)] = {"kind": kind, "name": n, "node_id": None, "vcenter": "", "other_kind": True, "why": ""}
+        elif e is not None:
+            e["other_kind"] = other
     return out
+
+
+def vim_key(kind, vcenter, name):
+    return "%s|%s|%s" % (kind, canon(vcenter), canon(name))
 
 
 def events_for(conn, start, end, node_ids, ports=(), limit=2000, orion=None):

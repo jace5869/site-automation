@@ -202,7 +202,11 @@ def main():
                         "Concurrent jobs on the template." % newer)
             module.exit_json(**res)
         w = swdb.write(conn, snap, p["job"])
-        res.update(snap_id=w["snap_id"], ok=w["ok"], counts=w["counts"], changed=True)
+        res.update(snap_id=w["snap_id"], ok=w["ok"], counts=w["counts"], changed=True, missing_columns=w.get("missing_columns") or [])
+        if res["missing_columns"]:      # 1.113.0: an older release's tables (solarwinds_db_create: false)
+            module.warn("The SolarWinds tables are of an older release: %s is not there, so the snapshot was kept without it and the "
+                        "VMware alarms reports use no VIM node link. Add it once: docs/REPORT_DATABASE.md (The SolarWinds snapshot, "
+                        "From an older release, by hand)." % ", ".join(res["missing_columns"]))
         if w["ok"] and snap.get("events_reset"):
             r = snap["events_reset"]
             res["events_reset"] = dict(r, key=snap.get("event_orion") or "")

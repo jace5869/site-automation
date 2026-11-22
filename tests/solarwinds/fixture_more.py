@@ -90,7 +90,10 @@ for k, n in enumerate(nodes[:120]):
                      "VolumeSize": size, "VolumeSpaceUsed": round(size * pct / 100.0), "VolumePercentUsed": pct, "Status": 1})
 t["Orion.Volumes"] = vols
 t["Orion.VIM.Clusters"] = [{"ClusterID": 1, "Name": "cluster1"}]
-t["Orion.VIM.Hosts"] = [{"HostID": 60 + k, "HostName": n["DNS"], "NodeID": n["NodeID"], "ClusterID": 1, "Status": n["Status"],
+# 1.113.0: each host's vCenter - its datacenter's VCenterID
+t["Orion.VIM.VCenters"] = [{"VCenterID": 1, "Name": "vc01.example.mil", "IPAddress": "192.0.2.250"}]
+t["Orion.VIM.DataCenters"] = [{"DataCenterID": 1, "VCenterID": 1}]
+t["Orion.VIM.Hosts"] = [{"HostID": 60 + k, "HostName": n["DNS"], "NodeID": n["NodeID"], "ClusterID": 1, "DataCenterID": 1, "Status": n["Status"],
                          "ConnectionState": "notResponding" if n["Status"] == 2 else "connected", "PowerState": "poweredOn",
                          "CpuLoad": 0 if n["Status"] == 2 else rnd.randint(10, 70), "MemUsage": 0 if n["Status"] == 2 else rnd.randint(30, 80),
                          "VmCount": 12, "VmRunningCount": 0 if n["Status"] == 2 else 11, "VMwareProductName": "VMware ESXi"}

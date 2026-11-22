@@ -1,5 +1,5 @@
 ---
-# SolarWinds in the health checks and troubleshoot (1.97.0, docs/SOLARWINDS_REPORTS.md).
+# SolarWinds in the health checks, troubleshoot and the VMware alarms reports (1.97.0, docs/SOLARWINDS_REPORTS.md).
 # Read only. Everything comes from the report database's SolarWinds snapshot (the job "SolarWinds - snapshot", 1.96.0):
 # attach the "Report database" credential (the reader is enough) to the template. Without it, nothing changes.
 
@@ -9,7 +9,7 @@ solarwinds_report: auto                  # auto = when the job has the Report da
 solarwinds_report_skip_hosts: []         # e.g. [lab*, "*.test.example.mil"]
 solarwinds_report_volume_pct: 90         # a volume this full or more: warning (Volumes over 90 %)
 solarwinds_report_volume_critical_pct: 95   # this full or more: critical
-# Troubleshoot: SolarWinds' events of the host and of its switch port, this many hours back
+# Troubleshoot and the alarms reports: SolarWinds' events of the host and of its switch port, this many hours back
 solarwinds_report_event_hours: 24
 solarwinds_report_events_shown: 20       # troubleshoot: the newest this many events; the rest folded under them
 

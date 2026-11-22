@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "VM - alarms report"
 #   playbook:    playbooks/vm_alarm_report.yml
-#   credentials: VMware vCenter
+#   credentials: VMware vCenter (optional: Report database, for SolarWinds' alerts)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -89,9 +89,22 @@
 ## configuration issues too (false = alarms and events only)
 # vm_alarm_act_config_issues: true
 
+# ---- solarwinds_report ---------------------------------------------------------------------------
+## auto = when the job has the Report database credential; false = never
+# solarwinds_report: auto
+
+## Troubleshoot and the alarms reports: SolarWinds' events of the host and of its switch port, this
+## many hours back
+# solarwinds_report_event_hours: 24
+
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy
 # portal_path: /portal/
+
+# ---- netmap_report -------------------------------------------------------------------------------
+## minutes a snapshot may be old for a report (all.yml: every report reads it); 0 = never the
+## snapshot
+# solarwinds_db_max_age: 20
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

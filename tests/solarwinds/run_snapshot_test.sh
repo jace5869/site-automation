@@ -50,7 +50,7 @@ printf 'subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\n' > "$work/ext.c
 openssl x509 -req -in "$work/srv.csr" -CA "$work/ca.pem" -CAkey "$work/ca.key" -CAcreateserial -days 2 -out "$work/srv.pem" -extfile "$work/ext.cnf" 2>/dev/null
 wait_port() { for _ in $(seq 1 100); do (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && return; sleep 0.1; done; echo "ABORT - port $1"; exit 1; }
 FAKE_SWIS_ECHO=1 "$py" "$repo/tests/netmap/fake_swis.py" "$port" "$work/fx.json" "$work/swis.log" "$work/srv.pem" "$work/srv.key" & pids+=($!)
-FAKE_SWIS_HIDE=Orion.APM.Application,Orion.APM.Component,Orion.VIM.Hosts,Orion.VIM.VirtualMachines,Orion.VIM.Clusters \
+FAKE_SWIS_HIDE=Orion.APM.Application,Orion.APM.Component,Orion.VIM.Hosts,Orion.VIM.VirtualMachines,Orion.VIM.Clusters,Orion.VIM.DataCenters,Orion.VIM.VCenters \
     "$py" "$repo/tests/netmap/fake_swis.py" $((port + 1)) "$work/fx.json" "$work/swis2.log" "$work/srv.pem" "$work/srv.key" & pids+=($!)
 echo '[]' > "$work/jobs.json"
 "$py" "$repo/tests/email/fake_aap.py" $((port + 3)) "$work/jobs.json" 2>"$work/aap.err" & pids+=($!)
@@ -151,8 +151,8 @@ EOPY
     reads_only "$work/swis.log"
     [ "$(qr "SELECT CONCAT(ok, '/', nodes, '/', job) FROM sw_snapshot WHERE snap_id = 1")" = "1/$nodes/7001" ] \
         && [ "$(qr "SELECT COUNT(*) FROM sw_node WHERE snap_id = 1")" = "$nodes" ] \
-        && [ "$(qr "SELECT version FROM schema_version WHERE component = 'solarwinds'")" = 1 ] \
-        && ok "  ...sw_snapshot ok, $nodes nodes, the job's ID, schema_version solarwinds 1; the reader account reads them" \
+        && [ "$(qr "SELECT version FROM schema_version WHERE component = 'solarwinds'")" = 2 ] \
+        && ok "  ...sw_snapshot ok, $nodes nodes, the job's ID, schema_version solarwinds 2; the reader account reads them" \
         || bad "  ...the first snapshot: $(qr "SELECT CONCAT(ok, '/', nodes, '/', job) FROM sw_snapshot")"
     local t empty=""
     for t in sw_link sw_interface sw_alert_active sw_event sw_app sw_component sw_volume sw_vim_host sw_vim_vm; do
@@ -164,6 +164,8 @@ EOPY
     [ "$got" = 1/2 ] && ok "  ...an active alert with its name, severity and node" || bad "  ...the alert on esx02: $got"
     got="$(qr "SELECT CONCAT(cluster, '/', connection_state) FROM sw_vim_host WHERE name_key = 'esx02'")"
     [ "$got" = cluster1/notResponding ] && ok "  ...a VIM host with its cluster and state" || bad "  ...the VIM host esx02: $got"
+    got="$(qr "SELECT CONCAT(COUNT(*), '/', SUM(vcenter = 'vc01.example.mil')) FROM sw_vim_host")"
+    [ "$got" = 3/3 ] && ok "  ...each VIM host with its vCenter (1.113.0)" || bad "  ...the VIM hosts' vCenter: $got"
     got="$(qr "SELECT COUNT(*) FROM sw_interface WHERE in_errors_hour > 0")"
     [ "$got" -gt 0 ] && ok "  ...interface errors ($got interfaces)" || bad "  ...no interface errors"
     got="$(qr "SELECT COUNT(*) FROM sw_node WHERE snap_id = 1 AND ips LIKE '%198.51.100.%'")"
@@ -428,6 +430,20 @@ EOPY
     DB_ENV="${DBR/PORT=$dbport/PORT=$((port + 2))}" run "the network map: solarwinds_db_max_age 0 - the database not asked" ok netmap_report \
         -e "{\"netmap_ca_path\": \"$work/ca.pem\", \"solarwinds_db_max_age\": 0}" \
         -- "From SolarWinds itself: solarwinds_db_max_age is 0: SolarWinds itself every time" "!could not be reached"
+
+    # ---- 1.113.0: an older release's tables (schema 1, no sw_vim_host.vcenter) brought up in place
+    local colq="SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'site_reports' AND table_name = 'sw_vim_host' AND column_name = 'vcenter'"
+    q root "$root" "ALTER TABLE sw_vim_host DROP COLUMN vcenter" >/dev/null
+    q root "$root" "UPDATE schema_version SET version = 1 WHERE component = 'solarwinds'" >/dev/null
+    DB_ENV="$DBW" run "schema 1 tables and solarwinds_db_create: false: kept without the vCenter, said, green" ok solarwinds_snapshot \
+        -e solarwinds_db_create=false -- "kept." "The SolarWinds tables are of an older release: sw_vim_host.vcenter is not there"
+    [ "$(qr "$colq")" = 0 ] && [ "$(qr "SELECT version FROM schema_version WHERE component = 'solarwinds'")" = 1 ] \
+        && ok "  ...nothing altered (solarwinds_db_create: false)" || bad "  ...the tables were altered: column $(qr "$colq")"
+    DB_ENV="$DBW" run "schema 1 tables, the next run: the column added in place" ok solarwinds_snapshot -- "kept." "!older release"
+    got="$(qr "SELECT CONCAT((SELECT version FROM schema_version WHERE component = 'solarwinds'), '/', COUNT(*), '/', SUM(vcenter = 'vc01.example.mil')) FROM sw_vim_host WHERE snap_id = (SELECT MAX(snap_id) FROM sw_snapshot WHERE ok = 1)")"
+    [ "$got" = 2/3/3 ] && ok "  ...schema_version 2, the newest snapshot's VIM hosts with their vCenter" || bad "  ...after the upgrade: $got"
+    DB_ENV="$DBW" run "  ...and the run after: no second ALTER" ok solarwinds_snapshot -- "kept." "!older release" "!Duplicate column"
+    [ "$(qr "$colq")" = 1 ] && ok "  ...one vcenter column" || bad "  ...vcenter columns: $(qr "$colq")"
 
     # ---- the statements of docs/REPORT_DATABASE.md, by hand
     "$py" - "$dbport" "$root" "$repo" <<'EOPY' && ok "the tables made by hand with the statements of docs/REPORT_DATABASE.md (site_swis_db.ddl())" || bad "the statements by hand"

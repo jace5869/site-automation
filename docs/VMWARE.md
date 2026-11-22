@@ -1222,6 +1222,7 @@ each of those problems, and say how sure it is. Neither changes anything.
 |---|---|---|
 | Triggered alarms | the alarms vCenter shows now on vCenter itself, the datacenters, clusters and hosts: severity, object, alarm, since when, acknowledged by whom | red = critical, amber = warning |
 | Alarms that fired in the last 24 h | every alarm that turned yellow or red in the window, one row per alarm and object: how many times it went red and yellow, first and last change, and how it is now - still on, or cleared since (an alarm that comes and goes is worth a look too) | red / amber = still on, Low = cleared |
+| SolarWinds alerts on the same hosts (1.113.0) | SolarWinds' active alerts on the hosts and VMs, VIM's status, and the vCenter alarm on the same object. Only with the Report database credential ([SOLARWINDS_REPORTS.md](SOLARWINDS_REPORTS.md)) | red / amber |
 | Host connection | hosts not connected to vCenter now (State now says "in maintenance" too), and hosts that lost the connection in the last 24 h and came back | red / amber |
 | Failed logins | wrong user name or password: one row per user, source address and server, with the count and the first and last time | amber; red from 10 failures |
 | Virtual machine events | guest shutdowns and restarts, power-offs, resets, HA restarts and failures, and who did it | blue = someone did it, amber = HA or nobody, red = a failover or power-on failed |
@@ -1239,7 +1240,8 @@ On top: the counts in coloured boxes. The subject says the most important ones, 
    - Inventory: any (e.g. your VMware one: the job runs on the AAP side)
    - Project: site-automation. Playbook: `playbooks/vm_alarm_report.yml`
    - Execution environment: your VMware one (this job needs only pyVmomi, which it has)
-   - Credentials: your **VMware vCenter** credential. A read-only vCenter account is enough.
+   - Credentials: your **VMware vCenter** credential. A read-only vCenter account is enough. Optional (1.113.0): the
+     **Report database** credential, for SolarWinds' alerts on the same hosts.
    - Variables: `report_email_to: vmteam@yoursite.mil`
    - Save.
 2. **Schedules > Create schedule:** e.g. every day at 06:00.
@@ -1259,6 +1261,10 @@ problem (P1, P2, ...): severity, object, the problem, the **likely cause**, the 
 and a **confidence**. The confidence is ACT's own estimate, from 0 to 100: green 80 and up (the
 evidence shows it), amber 50-79 (likely), red under 50 (a guess: check first). These are likely
 causes, not certain ones: check before you change anything. ACT runs no command and changes nothing.
+
+1.113.0: with the **Report database** credential, ACT also reads SolarWinds' alerts on the same hosts and VMs, and their
+switch ports' events. Its evidence names the tool of each line. *What ACT was given from SolarWinds* lists them, folded,
+at the end ([SOLARWINDS_REPORTS.md](SOLARWINDS_REPORTS.md)).
 
 **Where ACT runs, and what about the hosts?** ACT runs inside this job's execution environment, on
 the AAP server (or the execution node that runs the job). Not on the ESXi hosts, not on the VMs. So:

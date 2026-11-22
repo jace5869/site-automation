@@ -575,7 +575,9 @@ def swr_alarms(read, alarms_read=None, opts=None):
         if vc is None or len(owners[node["node_id"]]) > 1:
             continue
         k = _key(vc, kind, name)
-        vim = (r.get("vim") or {}).get("%s|%s" % (kind, h["host"])) or (r.get("vim") or {}).get(h["host"]) or {}
+        # 1.113.0: VIM's status of this very object (its kind and its vCenter), as the read gives it
+        vim = {"status": h["vim_status"]} if "vim_status" in h else (
+            (r.get("vim") or {}).get("%s|%s" % (kind, h["host"])) or (r.get("vim") or {}).get(h["host"]) or {})
         for a in h.get("alerts") or []:
             both = vc_alarm.get(k) or []
             nc = notconn.get(k) if kind == "host" else None

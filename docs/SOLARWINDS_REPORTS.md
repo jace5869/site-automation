@@ -1,8 +1,7 @@
-# SolarWinds in the health checks and troubleshoot (1.97.0)
+# SolarWinds in the health checks, troubleshoot and the VMware alarms reports (1.97.0)
 
-Four reports show what SolarWinds sees next to what AAP found. Each host's node, alerts, applications and volumes sit in
+Six reports show what SolarWinds sees next to what AAP found. Each host's node, alerts, applications and volumes sit in
 the same page as the job's own findings.
-The VMware alarms reports get SolarWinds in the next release.
 
 - It reads only. Nothing is ever written to SolarWinds.
 - It reads the report database's SolarWinds snapshot (*The SolarWinds snapshot* in `docs/REPORT_DATABASE.md`). No
@@ -40,6 +39,14 @@ What SolarWinds sees comes first on the page, above Start here.
 - **Its events, last 24 h (N)**: newest first. The switch's events are its port's only. Over 20, the rest fold
   under them (`solarwinds_report_events_shown`).
 
+### VM - alarms report and VM - alarms ACT analysis
+
+- **SolarWinds alerts on the same hosts (N)** sits right under Triggered alarms. Each row has SolarWinds' alert,
+  VIM's status and the vCenter alarm on the same object, if there is one.
+- One new tile: **SolarWinds alerts**.
+- The ACT analysis gets the same alerts and their switch ports' events as evidence. ACT names the tool of each line
+  it quotes. **What ACT was given from SolarWinds** lists them, folded, at the end.
+
 ## How a host is matched
 
 A host is never matched by a guess. A host that is not matched is listed in **Not in SolarWinds**, with the reason.
@@ -53,12 +60,28 @@ When a part of the snapshot that the match needs was not read, it is listed in *
 4. Try the short name last. A different domain or a conflicting address rules a node out.
    A host with no domain cannot take a node with a domain. Only one node and one remaining host may fit.
 
+### The VMware alarms reports (1.113.0)
+
+Each vCenter's hosts and VMs stay separate. VIM's own link is used first:
+
+1. VIM must know the object by its full name, as a host or as a VM, like vCenter.
+2. That VIM object must be in the job's vCenter. Names are compared in lower case, without a trailing dot. A short
+   name fits an FQDN only when it fits just one of the snapshot's vCenters.
+3. Its node must be linked to that one VIM object only.
+
+Otherwise the steps above are tried, among the nodes VIM links to nothing. An address still counts every node. A name
+is not used when VIM has a host and a VM of that name, or when VIM was not read.
+
+The snapshot keeps each VIM host's vCenter from 1.113.0 on. Until its next run after the upgrade, the alarms reports
+say "VIM not verifiable" under Not read. Those objects then get no alerts, never a guess.
+
 ## Set it up
 
 1. Let the job *SolarWinds - snapshot* run every 10 minutes (`docs/REPORT_DATABASE.md`, *The SolarWinds snapshot*).
 2. Attach the **Report database** credential to these job templates. The reader account (`report_reader`) is enough.
    - Health check, Windows health check
    - Troubleshoot, Windows troubleshoot
+   - VM - alarms report, VM - alarms ACT analysis
 3. Optional, for the syslog column: attach **SolarWinds (read-only)** to the health check templates too. SolarWinds
    needs Log Analyzer.
 4. Optional: name the hosts that are never in SolarWinds, in `all.yml`:
@@ -82,7 +105,7 @@ attached, set `solarwinds_report: false`.
 | `solarwinds_report_skip_hosts` | `[]` | Hosts left out of Not in SolarWinds. Names or patterns. |
 | `solarwinds_report_volume_pct` | `90` | A volume this full: warning. |
 | `solarwinds_report_volume_critical_pct` | `95` | A volume this full: critical. |
-| `solarwinds_report_event_hours` | `24` | Hours of events shown in troubleshoot. |
+| `solarwinds_report_event_hours` | `24` | Troubleshoot and the alarms reports: the events of these hours. |
 | `solarwinds_report_events_shown` | `20` | Troubleshoot: the newest events shown. The rest fold. |
 | `solarwinds_report_syslog` | `auto` | `auto`: read it. Without the SolarWinds credential the column says so. `false`: never. |
 | `solarwinds_report_syslog_hours` | `24` | The syslog of these hours. |
@@ -100,7 +123,7 @@ The health checks count each host's syslog errors from Log Analyzer.
 - Before it, the job checks that `Orion.OLM.LogEntry` and its columns are there. It does not go by the version.
 - Messages that differ only in their numbers count as one ("child pid 4121" and "child pid 977").
 - When the read stopped at the cap, the counts say "at least" (`41+`, `0+`), and a host it never asked about says `?`.
-- Troubleshoot never asks Log Analyzer.
+- Troubleshoot and the alarms reports never ask Log Analyzer.
 
 ## When it cannot read
 
@@ -114,6 +137,7 @@ old"). Every SolarWinds caption gives the snapshot's date, time and age.
 | no whole SolarWinds snapshot yet | Run *SolarWinds - snapshot* once. |
 | the report database: the login was refused | Check the Report database credential. |
 | the snapshot is of another SolarWinds | The template's SolarWinds credential names another address. |
+| VIM not verifiable | The snapshot has no vCenter for VIM's hosts yet. Wait for the next run of *SolarWinds - snapshot*. |
 | Syslog not read: no Log Analyzer | SolarWinds has no Log Analyzer. The other columns are complete. |
 | Syslog not read: no SolarWinds credential | Attach SolarWinds (read-only) to the template. |
 | SAM's applications: not read by the last snapshot | The column shows `?`. Look at the last runs of *SolarWinds - snapshot*. |

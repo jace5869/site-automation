@@ -164,7 +164,8 @@
 ## this full or more: critical
 # solarwinds_report_volume_critical_pct: 95
 
-## Troubleshoot: SolarWinds' events of the host and of its switch port, this many hours back
+## Troubleshoot and the alarms reports: SolarWinds' events of the host and of its switch port, this
+## many hours back
 # solarwinds_report_event_hours: 24
 
 ## troubleshoot: the newest this many events; the rest folded under them

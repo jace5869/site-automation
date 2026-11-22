@@ -1,0 +1,34 @@
+---
+# 1.97.0: the VMware alarms report's SolarWinds part (roles/vmware_vm/tasks/alarms_solarwinds.yml) on a vCenter read of
+# three ESXi hosts (the fake SolarWinds knows esx01..esx03): the section and tile in the report, ACT's evidence.
+- name: VMware alarms - SolarWinds
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    _vm_al_read:
+      vcenter: vc01.example.mil
+      read_at: "2026-11-21T10:00:00Z"
+      window_hours: 24
+      vcenters: [{name: vc01.example.mil, ok: true, error: "", note: ""}]
+      hosts:
+        - {name: esx01.example.mil, moid: host-1, cluster: cluster1, datacenter: DC1, connection: connected, power: poweredOn,
+           maintenance: false, version: "8.0.3", build: "1", vendor: VMware, model: x, status: green}
+        - {name: esx02.example.mil, moid: host-2, cluster: cluster1, datacenter: DC1, connection: notResponding, power: unknown,
+           maintenance: false, version: "8.0.3", build: "1", vendor: VMware, model: x, status: red}
+        - {name: esx03.example.mil, moid: host-3, cluster: cluster1, datacenter: DC1, connection: connected, power: poweredOn,
+           maintenance: false, version: "8.0.3", build: "1", vendor: VMware, model: x, status: green}
+      alarms:
+        - {entity_type: host, entity: esx01.example.mil, moid: host-1, alarm: Host CPU usage, severity: warning,
+           time: "2026-11-21T09:00:00Z", acknowledged: false, cluster: cluster1, datacenter: DC1}
+      events: []
+      config_issues: []
+  tasks:
+    - name: SolarWinds
+      ansible.builtin.include_tasks: ../../roles/vmware_vm/tasks/alarms_solarwinds.yml
+
+    - name: The report with it, and ACT's evidence
+      ansible.builtin.debug:
+        msg:
+          doc: "{{ _vm_al_read | vm_alarm_report({}) | swr_alarm_doc(_vm_al_swr) }}"
+          evidence: "{{ _vm_al_swr | swr_alarm_evidence((_vm_al_read | vm_alarm_problems({})).problems) }}"

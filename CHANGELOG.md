@@ -208,6 +208,37 @@ report history); without it, it emails as before.
   "has the Read role already". The 1.112.0 hand step is no longer needed.
 - Tests: tests/test_incident_docs.py (the role given once, Check writes nothing; each "by hand" case; no outage watch template).
 
+## 1.113.0 — 2026-11-23
+
+**To set up:** nothing. The first run of *SolarWinds - snapshot* after the upgrade adds one column to the report
+database (`sw_vim_host.vcenter`). The VMware alarms reports use VIM's links from that run on. With
+`solarwinds_db_create: false`, add the column once by hand (`docs/REPORT_DATABASE.md`, *From an older release, by hand*).
+
+**SolarWinds in the VMware alarms reports (1.97.0's second part).**
+
+- *VM - alarms report*: **SolarWinds alerts on the same hosts (N)** right under Triggered alarms, with VIM's status and
+  the vCenter alarm on the same object. One new tile, **SolarWinds alerts**.
+- *VM - alarms ACT analysis*: the same alerts and their switch ports' events as evidence. ACT names the tool of each
+  line. **What ACT was given from SolarWinds** lists them, folded, at the end.
+- Both templates take the **Report database** credential as optional. Without it the reports are as before.
+
+**The node of a vCenter object, never a guess (Codex's 5 VMware/VIM findings).**
+
+- VIM's link counts only for an object of the job's vCenter. The snapshot keeps each VIM host's vCenter (schema 2).
+  Names are compared in lower case, without a trailing dot. A short name fits an FQDN only when one vCenter fits.
+- VIM's link needs the object's full name. A short name is never VIM's proof.
+- A node linked to two VIM objects is neither's.
+- An address is counted over every node before VIM's nodes are set aside. One shared with a VMware object's node never
+  matches.
+- No node by the name when VIM has a host and a VM of that name, or when VIM was not read.
+- Tables of an older release, or a snapshot without the vCenter: "VIM not verifiable" under Not read, no link.
+
+**The snapshot's schema 2.**
+
+- `sw_vim_host.vcenter`: from Orion.VIM.DataCenters and Orion.VIM.VCenters. The ALTER runs only when
+  information_schema lacks the column, then `schema_version` says 2.
+- With `solarwinds_db_create: false` and the column missing, the snapshot is kept without it. The job says so, green.
+
 ## 1.112.0 — 2026-11-22
 
 **To set up:**

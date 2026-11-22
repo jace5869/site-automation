@@ -1,0 +1,16 @@
+---
+# SOLARWINDS ON THE SAME HOSTS AND VMS (1.97.0): the alarms report's and its ACT analysis' SolarWinds part, from the report
+# database's SolarWinds snapshot (roles/solarwinds_report; attach the "Report database" credential). Read only. Never the
+# job's result: what could not be read is one muted line of the report. -> _vm_al_swr (plugins/filter/solarwinds_report_filters.py)
+- name: VMware | SolarWinds - read
+  ansible.builtin.include_role:
+    name: solarwinds_report
+    tasks_from: hosts.yml
+    public: true                         # its settings' defaults, for the sections after it
+  vars:
+    _swr_mode: vcenter
+    _swr_hosts: "{{ _vm_al_read | swr_vcenter_objects }}"
+
+- name: VMware | SolarWinds - the section and its tile
+  ansible.builtin.set_fact:
+    _vm_al_swr: "{{ _swr_read | swr_alarms(_vm_al_read) }}"

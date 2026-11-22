@@ -2215,7 +2215,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 
 File: `roles/solarwinds_report/defaults/main.yml`
 
-> SolarWinds in the health checks and troubleshoot (1.97.0, docs/SOLARWINDS_REPORTS.md). Read only. Everything comes from the report database's SolarWinds snapshot (the job "SolarWinds - snapshot", 1.96.0): attach the "Report database" credential (the reader is enough) to the template. Without it, nothing changes.
+> SolarWinds in the health checks, troubleshoot and the VMware alarms reports (1.97.0, docs/SOLARWINDS_REPORTS.md). Read only. Everything comes from the report database's SolarWinds snapshot (the job "SolarWinds - snapshot", 1.96.0): attach the "Report database" credential (the reader is enough) to the template. Without it, nothing changes.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -2223,7 +2223,7 @@ File: `roles/solarwinds_report/defaults/main.yml`
 | `solarwinds_report_skip_hosts` | `[]` | Hosts that are never in SolarWinds on purpose (a lab): left out of "Not in SolarWinds". Names or patterns (* and ?), a list or text with commas. A pattern with a dot is held against the full name only. e.g. [lab*, "*.test.example.mil"] |
 | `solarwinds_report_volume_pct` | `90` | a volume this full or more: warning (Volumes over 90 %) |
 | `solarwinds_report_volume_critical_pct` | `95` | this full or more: critical |
-| `solarwinds_report_event_hours` | `24` | Troubleshoot: SolarWinds' events of the host and of its switch port, this many hours back |
+| `solarwinds_report_event_hours` | `24` | Troubleshoot and the alarms reports: SolarWinds' events of the host and of its switch port, this many hours back |
 | `solarwinds_report_events_shown` | `20` | troubleshoot: the newest this many events; the rest folded under them |
 | `solarwinds_report_syslog` | `auto` | auto = read it; without the "SolarWinds (read-only)" credential or Log Analyzer, the column says why. false = never |
 | `solarwinds_report_syslog_hours` | `24` | the syslog of the last this many hours |

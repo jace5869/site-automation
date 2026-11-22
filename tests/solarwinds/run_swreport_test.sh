@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SolarWinds in the health checks and troubleshoot (1.97.0, roles/solarwinds_report) against a
+# SolarWinds in the health checks, troubleshoot and the VMware alarms reports (1.97.0, roles/solarwinds_report) against a
 # real report database (MySQL 8.4 and MariaDB 10.11, one after the other: SWREPORT_DB_TEST_IMAGES) filled by the job
 # "SolarWinds - snapshot" from a fake SolarWinds (tests/netmap/fake_swis.py over tests/solarwinds/fixture_hosts.py).
 # The reports read with the reader account (report_reader: SELECT only), and Log Analyzer's syslog in one query.
@@ -7,7 +7,8 @@
 # tile, the syslog counted (a warning and an older error never). Without the SolarWinds credential, or without Log
 # Analyzer: the syslog column says why. No Report database credential, or solarwinds_report: false: nothing. A wrong
 # password, an old snapshot: one line under Not read, never counted, the job green. Troubleshoot: first on the page, the switch port, its
-# events (another port's never). Only SWQL SELECTs.
+# events (another port's never). The alarms report: the section, the tile, ACT's evidence; VIM's links only of the
+# job's vCenter, none on an older release's tables or a snapshot without the vCenter (1.113.0). Only SWQL SELECTs.
 # Containers by name, removed by name; ports from variables. Skipped (exit 0) without a container runtime, an image or PyMySQL.
 #   bash tests/solarwinds/run_swreport_test.sh   (ANSIBLE_PLAYBOOK=..., SWREPORT_DB_TEST_IMAGES="...", SWREPORT_DB_TEST_PORT=18580:
 #   the database, the fakes on the ports after it; SWREPORT_DB_TEST_NAME=..., SWREPORT_DB_TEST_PYTHON=..., SWREPORT_DB_TEST_RUNTIME=docker,
@@ -264,10 +265,31 @@ assert sec["Its switch port"]["rows"][0][1:] == ["Gi1/0/14", "Up", "1 Gb/s", "71
     n=$(olm_queries "$work/swis.log")
     [ "$n" = 0 ] && ok "  ...troubleshoot never asks Log Analyzer" || bad "  ...troubleshoot asked Log Analyzer $n times"
 
+    # ---- the VMware alarms report
+    DB_ENV="$DBR" run "alarms: SolarWinds alerts on the same hosts, the tile, ACT's evidence" ok tests/solarwinds/swalarms.yml \
+        -- "SolarWinds alerts on the same hosts (" '"label": "SolarWinds alerts"' "Host esx02" "Node is down" \
+           "SolarWinds: Host esx02.example.mil alert [CRITICAL] Node is down" "Not responding (Host connection)"
+    DB_ENV= run "alarms without a Report database credential: the report as before" ok tests/solarwinds/swalarms.yml \
+        -- "!SolarWinds alerts on the same hosts" '"evidence": ""'
+
+    # ---- 1.113.0: an older release's tables (no sw_vim_host.vcenter): VIM not verifiable, said - never a guess by the name
+    q "ALTER TABLE sw_vim_host DROP COLUMN vcenter" > /dev/null
+    DB_ENV="$DBR" run "alarms on an older release's tables: VIM not verifiable, no alert by the name" ok tests/solarwinds/swalarms.yml \
+        -- "VIM not verifiable" '"title": "Not read"' "!SolarWinds: Host esx02.example.mil alert"
+    q "ALTER TABLE sw_vim_host ADD COLUMN vcenter VARCHAR(512) NULL" > /dev/null
+    DB_ENV="$DBR" run "alarms on a snapshot without the vCenter: VIM not verifiable" ok tests/solarwinds/swalarms.yml \
+        -- "VIM not verifiable" "!SolarWinds: Host esx02.example.mil alert"
+    q "UPDATE sw_vim_host SET vcenter = 'vc02.example.mil'" > /dev/null
+    DB_ENV="$DBR" run "alarms: VIM's hosts of another vCenter are not this one's" ok tests/solarwinds/swalarms.yml \
+        -- "!SolarWinds: Host esx02.example.mil alert" "!VIM not verifiable"
+    q "UPDATE sw_vim_host SET vcenter = 'vc01.example.mil'" > /dev/null
+
     # ---- an old snapshot (its time moved back): one line under Not read with its age, the job green
     q "UPDATE sw_snapshot SET read_at = DATE_SUB(read_at, INTERVAL 2 HOUR)" > /dev/null
     DB_ENV="$DBR" run "health with an old snapshot: one line under Not read with its age, green" ok tests/solarwinds/swreport.yml -e "@$work/fs.json" \
         -- "SolarWinds not read: the SolarWinds snapshot is 2 h " "older than solarwinds_db_max_age (20 min)" "!SolarWinds says ("
+    DB_ENV="$DBR" run "alarms with an old snapshot: one line under Not read" ok tests/solarwinds/swalarms.yml \
+        -- '"SolarWinds: the SolarWinds snapshot is 2 h ' '"title": "Not read"' '!"title": "SolarWinds alerts on the same hosts ('
     "${rtc[@]}" rm -f "$name" >/dev/null 2>&1
 }
 # q SQL (as root): the first row's first value

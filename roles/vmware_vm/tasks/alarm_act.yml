@@ -10,6 +10,10 @@
 - name: VMware | read
   ansible.builtin.include_tasks: alarms_read.yml
 
+# 1.97.0: SolarWinds' alerts on the same hosts and VMs, and their switch ports' events, as evidence (roles/solarwinds_report)
+- name: VMware | SolarWinds - the same hosts and VMs
+  ansible.builtin.include_tasks: alarms_solarwinds.yml
+
 - name: VMware | the problems ACT analyzes, most severe first
   ansible.builtin.set_fact:
     _vm_al_p: "{{ _vm_al_read | vm_alarm_problems(_vm_al_opts) }}"
@@ -22,12 +26,14 @@
     _vm_report_lines:
       - "No triggered alarm, every host connected, and no failed login, VM event to check, error or warning in the last {{ vm_alarm_hours }} h."
       - "ACT was not called."
+      - "{{ _vm_al_swr.lines | default([]) | first | default('SolarWinds: not asked (no Report database credential).') }}"
     _vm_report_doc: >-
       {{ {'title': 'VMware alarms ACT analysis: nothing to analyze', 'status': 'ok',
           'subtitle': ('vCenters ' if _vm_al_read.vcenters | default([]) | vm_vcenters_read | length > 1 else 'vCenter ')
                       ~ _vm_al_read.vcenter ~ ': no triggered alarm, every host connected, and no failed login, VM event to check, '
                       ~ 'error or warning in the last ' ~ vm_alarm_hours ~ ' h.',
-          'sections': [{'title': 'Result', 'lines': ['Nothing for ACT to analyze: ACT was not called.']}]} }}
+          'sections': [{'title': 'Result', 'lines': ['Nothing for ACT to analyze: ACT was not called.']}]}
+         | swr_alarm_doc(_vm_al_swr, true) }}
     _vm_report_no_email: "{{ not vm_alarm_act_email_if_none | bool }}"
     _vm_report_no_email_why: "nothing to analyze (vm_alarm_act_email_if_none)."
   when: _vm_al_p.problems | length == 0
@@ -45,8 +51,10 @@
         _eb_batches: >-
           {%- set out = [] -%}
           {%- for b in _vm_al_p.problems | batch(vm_alarm_act_batch | int if vm_alarm_act_batch | int > 0 else 100000) -%}
-          {%-   set _ = out.append({'items': b, 'evidence': _vm_al_read | vm_alarm_evidence(b),
-                                    'task': b | vm_alarm_act_task({'hours': vm_alarm_hours, 'extra': site_act_extra_instructions | default('')})}) -%}
+          {%-   set sw = _vm_al_swr | swr_alarm_evidence(b) -%}
+          {%-   set _ = out.append({'items': b, 'evidence': (_vm_al_read | vm_alarm_evidence(b)) ~ sw,
+                                    'task': b | vm_alarm_act_task({'hours': vm_alarm_hours, 'extra': site_act_extra_instructions | default(''),
+                                                                    'solarwinds': sw | length > 0})}) -%}
           {%- endfor -%}
           {{ out }}
         _eb_check_url: "{{ vm_alarm_act_check_url }}"
@@ -73,8 +81,13 @@
       vars:
         _vm_vcenters: "{{ _vm_al_read.vcenters }}"
         _vm_report_subject: "{{ _vm_al_doc.title }}"
-        _vm_report_lines: "{{ (_vm_al_doc | report_text).splitlines() }}"
-        _vm_report_doc: "{{ _vm_al_doc }}"
+        _vm_report_lines: "{{ (_vm_al_doc | report_text).splitlines() + _vm_al_swr.lines | default([]) }}"
+        # review P2-5: the email one line of SolarWinds, the website the table, the workbook its sheet too
+        _vm_report_doc: "{{ _vm_al_doc | swr_act_report(_vm_al_swr, _vm_al_p.problems, true) }}"
+        _vm_report_web_doc: "{{ _vm_al_doc | swr_act_report(_vm_al_swr, _vm_al_p.problems) }}"
+        _vm_report_xlsx: >-
+          {{ (_vm_al_doc | swr_act_report(_vm_al_swr, _vm_al_p.problems) | report_xlsx_sheets)
+             if report_email_xlsx | default(false) | bool and _vm_al_swr.sheets | default([]) | length > 0 else [] }}
 
     - name: VMware | ACT's analysis as job artifacts (vm_alarm_act)
       ansible.builtin.set_stats:

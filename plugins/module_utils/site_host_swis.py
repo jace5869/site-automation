@@ -74,8 +74,10 @@ def _hosts(hosts):
     return out
 
 
-def match(hs, nodes, allow_short=True, allow_ip=True):
-    """Resolve full names, then addresses, then compatible short names across the whole job."""
+def match(hs, nodes, allow_short=True, allow_ip=True, assignable=None, skip=()):
+    """Resolve full names, then addresses, then compatible short names across the whole job. assignable: the node IDs a
+    host may get (None: all); an address is still counted over every node and every host first (review 1970c P1-4).
+    skip: hosts already decided (their addresses count, they get nothing here)."""
     rows = {n["node_id"]: n for n in nodes or []}
     full, short, address = defaultdict(set), defaultdict(set), defaultdict(set)
     domains, ips = {}, {}
@@ -105,7 +107,7 @@ def match(hs, nodes, allow_short=True, allow_ip=True):
             continue
         candidates, owners = {}, defaultdict(list)
         for i, h in enumerate(hs):
-            if i in found:
+            if i in found or i in skip:
                 continue
             fq, sn, ip = _full(h["fqdn"]), _short(h["short"]), _ip(h["ip"])
             if stage == "full":
@@ -118,6 +120,9 @@ def match(hs, nodes, allow_short=True, allow_ip=True):
                         "node" if len(address[ip]) == 1 else "nodes")
                 elif ip:
                     ids = set(address[ip])
+                    if assignable is not None and not ids <= assignable:
+                        reasons[i] = "its IP %s is a VMware object's node in SolarWinds (VIM): not used to match" % ip
+                        ids = set()
             else:
                 ids = set()
                 pool = short[sn]
@@ -132,6 +137,8 @@ def match(hs, nodes, allow_short=True, allow_ip=True):
                         reasons[i] = "the SolarWinds node named %s has another IP (%s)" % (sn, _ip(rows[nid].get("ip")) or min(ips[nid]))
                     else:
                         ids.add(nid)
+            if assignable is not None and stage != "ip":
+                ids = ids & assignable           # a node VIM links to a VMware object is that object's
             candidates[i] = ids
             for nid in ids:
                 owners[nid].append(i)
@@ -156,25 +163,35 @@ def match(hs, nodes, allow_short=True, allow_ip=True):
                     how = "ip" if _ip(rows[nid].get("ip")) == _ip(h["ip"]) else "other ip"
                 found[i] = (rows[nid], how, "")
                 claimed[nid] = h["host"]
-    return {i: found.get(i, (None, "", reasons.get(i, ""))) for i in range(len(hs))}
+    return {i: found.get(i, (None, "", reasons.get(i, ""))) for i in range(len(hs)) if i not in skip}
 
 
-def _vcenter_matches(hs, rows, vim, linked, allow_short, allow_ip):
+def _vcenter_matches(hs, rows, vim, linked, allow_short, allow_ip, vim_read=True):
+    """vCenter objects to nodes. VIM's own link first: only for an object VIM knows in the job's vCenter (vim_for), and
+    only when that node is linked to that one VIM object (review 1970c P1-3). Else the names and addresses, among the
+    nodes VIM links to nothing, and only when the object's kind cannot be mistaken (review 1970c P1-5): never when VIM
+    has an object of the other kind under this name, nor when VIM was not read."""
     by_id = {n["node_id"]: n for n in rows + linked}
-    kinds = defaultdict(set)
+    links = defaultdict(set)
     for n in linked:
-        kinds[n["node_id"]].add(n["kind"])
-    owners, names = defaultdict(list), defaultdict(list)
+        links[n["node_id"]].add((n["kind"], n.get("vim_id")))
+    owners, names, found = defaultdict(list), defaultdict(list), {}
     for i, h in enumerate(hs):
-        names[h["host"].lower().rstrip(".")].append(i)
-        obj = vim.get("%s|%s" % (h["kind"], h["host"])) or {}
+        names[canon(h["host"])].append(i)
+        obj = vim.get(sdb.vim_key(h["kind"], h.get("vcenter"), h["host"])) or {}
         if obj.get("node_id") is not None:
             owners[obj["node_id"]].append(i)
-            kinds[obj["node_id"]].add(h["kind"])
-    found = {}
+        elif obj.get("why"):
+            found[i] = (None, "", obj["why"])
+        elif obj.get("other_kind"):
+            found[i] = (None, "", "VIM has a %s of this name too: which node is this %s's is not known" % (
+                "VM" if h["kind"] == "host" else "host", "host" if h["kind"] == "host" else "VM"))
+        elif vim_read is None:
+            found[i] = (None, "", "VIM was not read: which node is this %s's is not known" % ("host" if h["kind"] == "host" else "VM"))
     for nid, indices in owners.items():
         for i in indices:
-            if nid in by_id and len(indices) == 1 and kinds[nid] == {hs[i]["kind"]}:
+            mine = links.get(nid) or set()
+            if nid in by_id and len(indices) == 1 and len(mine) == 1 and next(iter(mine))[0] == hs[i]["kind"]:
                 found[i] = (by_id[nid], "vim", "")
             else:
                 found[i] = (None, "", "the VIM node could not be identified")
@@ -183,8 +200,9 @@ def _vcenter_matches(hs, rows, vim, linked, allow_short, allow_ip):
             for i in indices:
                 found.setdefault(i, (None, "", "several vCenter objects have this name"))
     pending = [i for i in range(len(hs)) if i not in found]
-    fallback = match([hs[i] for i in pending], [n for n in rows if n["node_id"] not in kinds], allow_short, allow_ip)
-    found.update((i, fallback[j]) for j, i in enumerate(pending))
+    assignable = set(n["node_id"] for n in rows if n["node_id"] not in links)
+    fallback = match(hs, rows, allow_short, allow_ip, assignable=assignable, skip=set(found))
+    found.update((i, fallback[i]) for i in pending)
     return found
 
 
@@ -280,7 +298,7 @@ def _read(hs, o, conn, swdb, snap):
     mode = o.get("mode") or "health"
     vim = {}
     if mode == "vcenter":
-        vim = swdb.vim_for(conn, sid, [{"name": h["host"], "kind": h["kind"]} for h in hs]) or {}
+        vim = swdb.vim_for(conn, sid, [{"name": h["host"], "kind": h["kind"], "vcenter": h.get("vcenter") or ""} for h in hs]) or {}
     fulls, shorts, ips = (sorted({h[key] for h in hs if h[key]}) for key in ("fqdn", "short", "ip"))
     not_read = []
     core = snap.get("core") or {}
@@ -296,7 +314,11 @@ def _read(hs, o, conn, swdb, snap):
     if mode == "vcenter":
         ids = {n["node_id"] for n in rows}
         ids.update(v["node_id"] for v in vim.values() if v and v.get("node_id") is not None)
-        found = _vcenter_matches(hs, rows, vim, swdb.vim_nodes(conn, sid, ids), allow_short, allow_ip)
+        vim_read, line = _part(swdb, snap, "vim", "VIM's hosts and VMs")
+        not_read += [line] if line else []
+        if any((v or {}).get("why") for v in vim.values()):
+            not_read.append("VIM not verifiable: the snapshot has no vCenter for its hosts and VMs. The next snapshot run adds them")
+        found = _vcenter_matches(hs, rows, vim, swdb.vim_nodes(conn, sid, ids), allow_short, allow_ip, vim_read)
     else:
         found = match(hs, rows, allow_short, allow_ip)
     ids = sorted(set(v[0]["node_id"] for v in found.values() if v[0]))
@@ -356,6 +378,8 @@ def _read(hs, o, conn, swdb, snap):
     for i, h in enumerate(hs):
         node, how, why = found.get(i, (None, "", ""))
         rec = dict(h, matched=how, unmatched_why=why, node=None, alerts=[], apps=[], volumes=[], ports=[], events=[])
+        if mode == "vcenter":                            # VIM's status of this very object (its kind, its vCenter)
+            rec["vim_status"] = (vim.get(sdb.vim_key(h["kind"], h.get("vcenter"), h["host"])) or {}).get("status") or ""
         if not node and (not allow_short or (not allow_ip and h["ip"])):     # never "not in SolarWinds" (review 1970e D)
             rec.update(uncertain=True, unmatched_why="match not certain: " + (
                 "the snapshot reached solarwinds_snapshot_max_nodes" if not allow_short else "the other node addresses were not read"))

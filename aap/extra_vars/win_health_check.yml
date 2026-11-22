@@ -459,7 +459,8 @@
 ## this full or more: critical
 # solarwinds_report_volume_critical_pct: 95
 
-## Troubleshoot: SolarWinds' events of the host and of its switch port, this many hours back
+## Troubleshoot and the alarms reports: SolarWinds' events of the host and of its switch port, this
+## many hours back
 # solarwinds_report_event_hours: 24
 
 ## auto = read it; without the "SolarWinds (read-only)" credential or Log Analyzer, the column says

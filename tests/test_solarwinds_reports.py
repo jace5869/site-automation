@@ -115,8 +115,9 @@ class Snap(object):
 
     def vim_for(self, conn, sid, names):
         self.calls.append(("vim", tuple(tuple(sorted(n.items())) for n in names)))
-        return dict(("%s|%s" % (n["kind"], n["name"]), {"kind": "host", "name": n["name"], "status": "Warning", "status_code": 3, "connection_state": "connected",
-                                 "power_state": "poweredOn", "cluster": "cluster1", "node_id": 201}
+        return dict((hs.sdb.vim_key(n["kind"], n.get("vcenter"), n["name"]),
+                     {"kind": "host", "name": n["name"], "status": "Warning", "status_code": 3, "connection_state": "connected",
+                      "power_state": "poweredOn", "cluster": "cluster1", "node_id": 201, "vcenter": "vc01.example.mil", "why": ""}
                      if n["name"].startswith("esx01") and n["kind"] == "host" else None) for n in names)
 
 
@@ -160,8 +161,8 @@ class Read1970(unittest.TestCase):
 
     def test_vcenter_mode_asks_vim(self):
         r = hs.read([{"host": "esx01.example.mil", "kind": "host"}], {"max_age": 20, "mode": "vcenter", "now": NOW}, object(), Snap())
-        self.assertEqual(r["vim"]["host|esx01.example.mil"]["status"], "Warning")
-        self.assertEqual(r["hosts"][0]["kind"], "host")
+        self.assertEqual(r["vim"][hs.sdb.vim_key("host", "", "esx01.example.mil")]["status"], "Warning")
+        self.assertEqual((r["hosts"][0]["kind"], r["hosts"][0]["vim_status"]), ("host", "Warning"))
 
     def test_a_snapshot_that_cannot_be_used_is_one_reason(self):
         cases = [(Snap(age=45 * 60), {"max_age": 20}, "the SolarWinds snapshot is 45 min old (of 2026-11-21 10:40 UTC), older than "
@@ -552,8 +553,7 @@ class Wiring1970(unittest.TestCase):
         self.assertIn("_swr_view.sections | default([])", r)
         self.assertIn("_swr_view.web_sections | default([])", r)
         for p in ("roles/vmware_vm/tasks/alarms.yml", "roles/vmware_vm/tasks/alarm_act.yml"):
-            self.assertNotIn("alarms_solarwinds.yml", self.read(p))
-        self.assertFalse(os.path.exists(os.path.join(ROOT, "roles/vmware_vm/tasks/alarms_solarwinds.yml")))
+            self.assertIn("alarms_solarwinds.yml", self.read(p))              # 1.113.0: the alarms reports again
 
     def test_never_the_jobs_result_and_read_only(self):
         t = self.read("roles/solarwinds_report/tasks/hosts.yml")
@@ -626,15 +626,24 @@ class Review1970(unittest.TestCase):
         import site_swis_db as sd
 
         def ans(sql, args):
-            cols = [("name",), ("name_key",), ("status",), ("connection_state",), ("power_state",), ("cluster",), ("node_id",)]
-            if "sw_vim_host" in sql:
-                return cols, [("esx01.a.example.mil", "esx01", 1, "connected", "poweredOn", "c1", 11), ("esx01.b.example.mil", "esx01", 2, "x", "y", "c2", 12)]
-            return cols, [("esx01", "esx01", 3, None, "poweredOn", None, None)]
-        got = sd.vim_for(ts.FakeConn(ans), 7, [{"name": "esx01.b.example.mil", "kind": "host"}, {"name": "esx01", "kind": "vm"},
-                                               {"name": "esx01", "kind": "host"}])
-        self.assertEqual((got["host|esx01.b.example.mil"]["status"], got["host|esx01.b.example.mil"]["cluster"]), ("Down", "c2"))
-        self.assertIsNone(got["host|esx01"])          # host esx01: two hosts are esx01 - never a guess, and never the VM
-        self.assertEqual(got["vm|esx01"]["kind"], "vm")
+            if "information_schema.columns" in sql:
+                return [("n",)], [(1,)]
+            if "DISTINCT vcenter" in sql:
+                return [("vcenter",)], [("vc01.example.mil",)]
+            cols = [(k,) for k in ("vim_id", "name", "name_key", "status", "connection_state", "power_state", "cluster", "node_id", "vcenter")]
+            if "FROM sw_vim_host" in sql:
+                return cols, [(1, "esx01.a.example.mil", "esx01", 1, "connected", "poweredOn", "c1", 11, "vc01.example.mil"),
+                              (2, "esx01.b.example.mil", "esx01", 2, "x", "y", "c2", 12, "vc01.example.mil")]
+            return cols, [(3, "esx01", "esx01", 3, None, "poweredOn", None, None, "vc01.example.mil")]
+        got = sd.vim_for(ts.FakeConn(ans), 7, [{"name": "esx01.b.example.mil", "kind": "host", "vcenter": "vc01"},
+                                               {"name": "esx01", "kind": "vm", "vcenter": "vc01"},
+                                               {"name": "esx01", "kind": "host", "vcenter": "vc01"}])
+        b = got[sd.vim_key("host", "vc01", "esx01.b.example.mil")]
+        self.assertEqual((b["status"], b["cluster"], b["vcenter"]), ("Down", "c2", "vc01.example.mil"))
+        host = got[sd.vim_key("host", "vc01", "esx01")]    # host esx01: no host has that full name - never a guess, never the VM
+        self.assertIsNone(host["node_id"])
+        self.assertTrue(host["other_kind"])
+        self.assertEqual(got[sd.vim_key("vm", "vc01", "esx01")]["kind"], "vm")
 
     def test_p1_2_alarms_join_by_kind_and_full_name(self):
         d = {"hosts": [{"name": "esx01.a.example.mil", "connection": "connected"}, {"name": "esx01.b.example.mil", "connection": "notResponding"}],
@@ -787,8 +796,8 @@ class Review1970(unittest.TestCase):
         self.assertNotIn("rows", em)
         with open(os.path.join(ROOT, "roles", "vmware_vm", "tasks", "alarm_act.yml")) as f:
             t = f.read()
-        self.assertNotIn("_vm_report_web_doc", t)
-        self.assertNotIn("_vm_al_swr.lines", t)
+        self.assertIn("_vm_report_web_doc", t)
+        self.assertIn("_vm_al_swr.lines", t)
         with open(os.path.join(ROOT, "roles", "site_findings", "tasks", "report.yml")) as f:
             self.assertIn("_swr_view.sheets", f.read())
 
@@ -841,9 +850,9 @@ class Review1970b(unittest.TestCase):
     def test_vim_node_ownership(self):
         name = "esx01.a.example.mil"
         snap = Snap()
-        snap.vim_for = lambda *args: {"vm|" + name: {"node_id": 101, "kind": "vm"}}
+        snap.vim_for = lambda *args: {hs.sdb.vim_key("vm", "", name): {"node_id": 101, "kind": "vm", "why": ""}}
         snap.nodes_for_hosts = lambda *args: [N(77, name)]
-        snap.vim_nodes = lambda *args: [dict(N(101, "guest01"), kind="vm"), dict(N(77, name), kind="vm")]
+        snap.vim_nodes = lambda *args: [dict(N(101, "guest01"), kind="vm", vim_id=1), dict(N(77, name), kind="vm", vim_id=2)]
         objs = [{"host": name, "kind": kind} for kind in ("host", "vm")]
         for requested in (objs, objs[:1]):
             r = hs.read(requested, {"mode": "vcenter", "now": NOW}, object(), snap)
@@ -853,16 +862,20 @@ class Review1970b(unittest.TestCase):
                 vm = r["hosts"][1]
                 self.assertEqual((vm["matched"], vm["node"]["node_id"], len(vm["alerts"])), ("vim", 101, 1))
 
-    def test_vim_domain_fallback(self):
+    def test_vim_full_name_only(self):
         import site_swis_db as sd
         from test_solarwinds_snapshot import FakeConn
-        cols = [(k,) for k in ("name", "name_key", "status", "connection_state", "power_state", "cluster", "node_id")]
-        row = ("esx01.a.example.mil", "esx01", 1, "", "", "", 11)
-        c = FakeConn(lambda sql, args: (cols, [row] if "sw_vim_host" in sql else []))
-        req = "esx01.b.example.mil"
-        got = sd.vim_for(c, 7, [{"kind": "host", "name": n} for n in (req, "esx01")])
-        self.assertIsNone(got["host|" + req])
-        self.assertEqual(got["host|esx01"]["node_id"], 11)
+        cols = [(k,) for k in ("vim_id", "name", "name_key", "status", "connection_state", "power_state", "cluster", "node_id", "vcenter")]
+        row = (1, "esx01.a.example.mil", "esx01", 1, "", "", "", 11, "vc01")
+
+        def ans(sql, args):
+            if "information_schema.columns" in sql:
+                return [("n",)], [(1,)]
+            if "DISTINCT vcenter" in sql:
+                return [("vcenter",)], [("vc01",)]
+            return cols, [row] if "FROM sw_vim_host" in sql else []
+        got = sd.vim_for(FakeConn(ans), 7, [{"kind": "host", "name": n, "vcenter": "vc01"} for n in ("esx01.b.example.mil", "esx01")])
+        self.assertEqual(set(got.values()), {None})          # review 1970c P1-2: a short name is never VIM's proof
 
     def test_inventory_fqdn_first(self):
         hosts = H(("web01.a.example.mil", {"fqdn": "mgmt01.b.example.mil"}), ("alias", {"fqdn": "web01.a.example.mil"}))
@@ -1156,6 +1169,112 @@ class Review1970f(unittest.TestCase):
         r["hosts"][1] = dict(r["hosts"][0], host="web02.example.mil")     # every host matched: plain counts
         r["hosts"][1]["node"] = dict(r["hosts"][0]["node"], node_id=103)
         self.assertIn("0 applications not up", swr.swr_health(r)["lines"][0])
+
+
+def vim_conn(hosts=(), vms=(), centers=None, column=True):
+    """site_swis_db's VIM reads on a FakeConn: hosts (vim_id, name, node_id, vcenter), vms (vim_id, name, node_id, vcenter)."""
+    from test_solarwinds_snapshot import FakeConn
+    cols = [(k,) for k in ("vim_id", "name", "name_key", "status", "connection_state", "power_state", "cluster", "node_id", "vcenter")]
+
+    def ans(sql, args):
+        if "information_schema.columns" in sql:
+            return [("n",)], [(1 if column else 0,)]
+        if "DISTINCT vcenter" in sql:
+            return [("vcenter",)], [(c,) for c in (centers if centers is not None else sorted(set(h[3] for h in hosts if h[3])))]
+        src = hosts if "FROM sw_vim_host" in sql else vms
+        return cols, [(i, n, hs.sdb.name_key(n), 1, "", "", "", nid, vc) for i, n, nid, vc in src]
+    return FakeConn(ans)
+
+
+class Review1113(unittest.TestCase):
+    """Codex's 5 VMware/VIM findings of rev-1970c, and the director's vCenter rule (1.113.0): a test each, failing on 35d1287e."""
+
+    def read(self, objs, snap):
+        r = hs.read(objs, {"mode": "vcenter", "now": NOW}, object(), snap)
+        self.assertTrue(r["ok"], r["why"])
+        return r
+
+    # P1-1: the VIM object of the job's vCenter only
+    def test_vim_link_only_in_the_jobs_vcenter(self):
+        c = vim_conn(vms=[(1, "payroll", 41, "vc-a.example.mil")], centers=["vc-a.example.mil", "vc-b.example.mil"])
+        got = hs.sdb.vim_for(c, 7, [{"name": "payroll", "kind": "vm", "vcenter": "vc-b.example.mil"},
+                                     {"name": "payroll", "kind": "vm", "vcenter": "vc-a"}])
+        self.assertIsNone(got[hs.sdb.vim_key("vm", "vc-b.example.mil", "payroll")])          # vc-a's VM is not vc-b's
+        self.assertEqual(got[hs.sdb.vim_key("vm", "vc-a", "payroll")]["node_id"], 41)        # the short name fits one vCenter
+        snap = Snap()
+        snap.vim_for = lambda conn, sid, names: hs.sdb.vim_for(c, sid, names)
+        snap.nodes_for_hosts = lambda *args: [N(41, "payroll")]
+        snap.vim_nodes = lambda *args: [dict(N(41, "payroll"), kind="vm", vim_id=1)]
+        r = self.read([{"host": "payroll", "kind": "vm", "vcenter": "vc-b.example.mil"}], snap)
+        self.assertIsNone(r["hosts"][0]["node"])                                             # nor by its name: VIM's node is vc-a's
+
+    def test_the_vcenter_name_rule(self):
+        same = hs.sdb.same_center
+        two = ["vc01.a.example.mil", "vc02.a.example.mil"]
+        self.assertTrue(same("VC01.A.example.mil.", "vc01.a.example.mil", two))
+        self.assertTrue(same("vc01", "vc01.a.example.mil", two))
+        self.assertTrue(same("vc01.a.example.mil", "vc01", ["vc01", "vc02"]))
+        self.assertFalse(same("vc01", "vc01.a.example.mil", two + ["vc01.b.example.mil"]))   # two fit: doubtful, no link
+        self.assertFalse(same("vc01.b.example.mil", "vc01.a.example.mil", two))
+        self.assertFalse(same("192.0.2.5", "vc01.a.example.mil", two))
+        self.assertFalse(same("", "vc01.a.example.mil", two))
+
+    def test_an_old_snapshot_is_not_verifiable(self):
+        for c in (vim_conn(hosts=[(1, "esx01.example.mil", 11, None)]), vim_conn(column=False)):
+            got = hs.sdb.vim_for(c, 7, [{"name": "esx01.example.mil", "kind": "host", "vcenter": "vc01.example.mil"}])
+            e = got[hs.sdb.vim_key("host", "vc01.example.mil", "esx01.example.mil")]
+            self.assertIsNone(e["node_id"])
+            self.assertTrue(e["why"].startswith("VIM not verifiable"), e)
+            snap = Snap()
+            snap.vim_for = lambda conn, sid, names, c=c: hs.sdb.vim_for(c, sid, names)
+            snap.nodes_for_hosts = lambda *args: [N(11, "esx01.example.mil")]
+            r = self.read([{"host": "esx01.example.mil", "kind": "host", "vcenter": "vc01.example.mil"}], snap)
+            self.assertIsNone(r["hosts"][0]["node"])                       # never a guess by the name either
+            self.assertTrue(r["hosts"][0]["unmatched_why"].startswith("VIM not verifiable"))
+            self.assertTrue(any(x.startswith("VIM not verifiable") for x in r["not_read"]))
+
+    # P1-2: the full name, never a short one (test_vim_full_name_only above too)
+    def test_a_short_name_is_never_vims_proof(self):
+        c = vim_conn(vms=[(1, "payroll.backup", 41, "vc01")])
+        got = hs.sdb.vim_for(c, 7, [{"name": "payroll", "kind": "vm", "vcenter": "vc01"}])
+        self.assertIsNone(got[hs.sdb.vim_key("vm", "vc01", "payroll")])
+
+    # P1-3: a node linked to two VIM objects is neither's
+    def test_a_node_of_two_vim_objects(self):
+        snap = Snap()
+        snap.vim_for = lambda *args: {hs.sdb.vim_key("vm", "vc01", "payroll-copy"): {"node_id": 41, "kind": "vm", "why": ""}}
+        snap.nodes_for_hosts = lambda *args: []
+        snap.vim_nodes = lambda *args: [dict(N(41, "payroll"), kind="vm", vim_id=1), dict(N(41, "payroll"), kind="vm", vim_id=2)]
+        r = self.read([{"host": "payroll-copy", "kind": "vm", "vcenter": "vc01"}], snap)
+        self.assertEqual((r["hosts"][0]["node"], r["hosts"][0]["unmatched_why"]), (None, "the VIM node could not be identified"))
+
+    # P1-4: an address counted over every node before VIM's nodes are set aside
+    def test_an_address_shared_with_a_vim_node(self):
+        snap = Snap()
+        snap.vim_for = lambda *args: {}
+        snap.nodes_for_hosts = lambda *args: [N(50, "guest50", ip="192.0.2.50"), N(51, "other51", ip="192.0.2.50")]
+        snap.vim_nodes = lambda *args: [dict(N(50, "guest50", ip="192.0.2.50"), kind="vm", vim_id=7)]
+        r = self.read([{"host": "192.0.2.50", "kind": "host", "vcenter": "vc01"}], snap)
+        self.assertIsNone(r["hosts"][0]["node"])
+        self.assertIn("192.0.2.50", r["hosts"][0]["unmatched_why"])
+
+    # P1-5: a name VIM also gives an object of the other kind, or VIM not read: no node by the name
+    def test_the_kind_must_be_known(self):
+        snap = Snap()
+        snap.vim_for = lambda *args: {hs.sdb.vim_key("host", "vc01", "esx01"): {"node_id": None, "kind": "host", "other_kind": True, "why": ""}}
+        snap.nodes_for_hosts = lambda *args: [N(9, "esx01")]
+        r = self.read([{"host": "esx01", "kind": "host", "vcenter": "vc01"}], snap)
+        self.assertIsNone(r["hosts"][0]["node"])
+        self.assertIn("VIM has a VM of this name too", r["hosts"][0]["unmatched_why"])
+        snap = Snap()
+        snap.vim_for = lambda *args: {}
+        snap.nodes_for_hosts = lambda *args: [N(9, "esx01")]
+        snap.notes["vim"] = {"what": "vim", "why": "timeout", "absent": False}
+        r = self.read([{"host": "esx01", "kind": "host", "vcenter": "vc01"}], snap)
+        self.assertIsNone(r["hosts"][0]["node"])
+        self.assertIn("VIM was not read", r["hosts"][0]["unmatched_why"])
+        snap.notes["vim"]["absent"] = True                                   # no VIM on this Orion: the name is all there is
+        self.assertEqual(self.read([{"host": "esx01", "kind": "host", "vcenter": "vc01"}], snap)["hosts"][0]["node"]["node_id"], 9)
 
 
 if __name__ == "__main__":
