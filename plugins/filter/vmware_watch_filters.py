@@ -55,7 +55,7 @@ STORAGE = {"esx.problem.storage.apd.start": ("all paths down", ["esx.clear.stora
            "esx.problem.scsi.device.state.permanentloss": ("permanent device loss", ["esx.clear.scsi.device.state.permanentloss.deviceonline"]),
            "esx.problem.scsi.device.state.permanentloss.noopens": ("permanent device loss", ["esx.clear.scsi.device.state.permanentloss.deviceonline"]),
            "esx.problem.vmfs.heartbeat.timedout": ("VMFS heartbeat timed out", ["esx.problem.vmfs.heartbeat.recovered"])}
-DEVICE_RE = re.compile(r"\b(naa\.[0-9a-fA-F]+|eui\.[0-9a-fA-F]+|t10\.\S+|mpx\.\S+)")
+DEVICE_RE = re.compile(r"\b(naa\.[0-9a-fA-F]+\b|eui\.[0-9a-fA-F]+\b|t10\.\S+|mpx\.\S+)")
 
 
 def _id(value):
@@ -85,7 +85,8 @@ def _device(e):
     for v in list((e.get("args") or {}).values()) + [e.get("message", "")]:
         m = DEVICE_RE.search(str(v or ""))
         if m:
-            return m.group(1)
+            dev = m.group(1)
+            return dev.lower() if dev.startswith(("naa.", "eui.")) else dev
     return ""
 
 
@@ -105,6 +106,33 @@ def _shown_names(names, most=8):
     return ", ".join(names[:most]) + ((" and %d more" % (len(names) - most)) if len(names) > most else "")
 
 
+def _inventory_id(kind, row):
+    return "vm-watch:%s:%s:%s" % (kind, row["vcenter"], row["moid"])
+
+
+def _ticket_id(c, d):
+    """1.112.4: the id ServiceNow keys its incident on (site_correlation_id hashes it with the vCenter, the finding's "host").
+    The ids tickets already carry stay as they were, so an open incident is not resolved and opened again at the upgrade:
+    vm-watch:host:<name>, vm-watch:storage:<host>:<device>, vm-watch:datastore:<name> - the last one for path loss AND for
+    not accessible (one incident as it worsens), with :<moid> only when two datastores of one vCenter share the name.
+    New in 1.112.4, nothing open under them yet: vm-watch:lost:<vcenter>:<moid>, vm-watch:paths:<device>."""
+    kind = c.get("kind")
+    if kind == "host":
+        return "vm-watch:host:%s" % c["object"]
+    if kind == "storage":
+        return "vm-watch:storage:%s:%s" % (c.get("host") or c["object"], c.get("device") or c.get("event_type") or "")
+    if kind == "datastore" and c.get("object_type") == "datastore":
+        same = [x for x in d.get("datastores") or [] if x.get("vcenter") == c.get("vcenter") and x.get("name") == c["object"]]
+        return "vm-watch:datastore:%s" % c["object"] + ((":%s" % c["moid"]) if len(same) > 1 and c.get("moid") else "")
+    if kind == "datastore":
+        return "vm-watch:paths:%s" % c["object"]
+    return c["id"]
+
+
+def _member(vm):
+    return "%s [%s]" % (vm["name"], vm["moid"])
+
+
 def _protected(v, o):
     """1.112.4: a VM of the protected list (vm_watch_actions' rule: the AAP server, vmware_protected_groups' hosts by name or
     address, vmware_protected_vms / vm_watch_protect patterns) - listed like any other, marked."""
@@ -118,9 +146,6 @@ def vm_watch_conditions(data, opts=None):
     d, o = data or {}, opts or {}
     one = o.get("one_signal_severity") or "warning"
     lost = d.get("vms_lost") or []
-    on_host = {}
-    for v in d.get("vms_disconnected") or []:
-        on_host.setdefault((v.get("vcenter", ""), v.get("esxi_host", "")), []).append(v.get("name", ""))
     out = []
     for s in d.get("vcenters") or []:
         if s.get("error"):
@@ -133,14 +158,20 @@ def vm_watch_conditions(data, opts=None):
             continue
         conn = h.get("connection") or ""
         if conn in ("notResponding", "disconnected"):
-            vms = sorted(on_host.get((h.get("vcenter", ""), h["name"]), []))
-            out.append(_cond("critical", "host", "host", h["name"], h,
-                             "ESXi host %s is %s%s: its VMs may be down (vSphere HA restarts them on other hosts when it is on)%s"
-                             % (h["name"], "not responding" if conn == "notResponding" else "disconnected",
-                                " (cluster %s)" % h["cluster"] if h.get("cluster") else "",
-                                ("; %d VM%s on it: %s" % (len(vms), "" if len(vms) == 1 else "s", _shown_names(vms))) if vms else ""),
-                             "Check the host's management network and its console (iDRAC / iLO): is it up? Reconnect it in the vSphere "
-                             "Client (Connection > Connect) once it answers. Do not restart its VMs elsewhere by hand while HA is working."))
+            vms = sorted(h.get("vms") or [], key=lambda v: (v["name"], v["moid"]))
+            listed = "; %d VM%s potentially affected: %s" % (len(vms), "" if len(vms) == 1 else "s",
+                                                              _shown_names([v["name"] for v in vms])) if vms else ""
+            c = _cond("critical", "host", "host", h["name"], h,
+                      "ESXi host %s is %s%s: its VMs may be down (vSphere HA restarts them on other hosts when it is on)%s"
+                      % (h["name"], "not responding" if conn == "notResponding" else "disconnected",
+                         " (cluster %s)" % h["cluster"] if h.get("cluster") else "", listed),
+                      "Check the host's management network and its console (iDRAC / iLO): is it up? Reconnect it in the vSphere "
+                      "Client (Connection > Connect) once it answers. Do not restart its VMs elsewhere by hand while HA is working.")
+            if h.get("moid"):
+                c.update(id=_inventory_id("host", h), moid=h["moid"])
+            if vms:
+                c["membership"] = "Potentially affected VMs: " + ", ".join(_member(v) for v in vms)
+            out.append(c)
             continue
         ha = h.get("ha_state") or ""
         if ha in HA_CRITICAL or ha in HA_WARNING:
@@ -150,12 +181,13 @@ def vm_watch_conditions(data, opts=None):
                              "Otherwise: Reconfigure for vSphere HA on the host in the vSphere Client."))
     for ds in d.get("datastores") or []:
         if not ds.get("accessible", True) and ds.get("maintenance") in ("normal", "", None):
-            mine = sorted(v.get("name", "") for v in lost if ds["name"] in (v.get("datastores") or []))
-            out.append(_cond("critical", "datastore", "datastore", ds["name"], ds,
-                             "datastore %s is not accessible: the VMs on it are hung or down%s"
-                             % (ds["name"], ("; vCenter shows %d VM%s on it as inaccessible: %s" % (len(mine), "" if len(mine) == 1 else "s",
-                                                                                                    _shown_names(mine))) if mine else ""),
-                             "Check the storage array and the paths (Storage > Devices > Paths on a host); rescan the storage adapters."))
+            c = _cond("critical", "datastore", "datastore", ds["name"], ds,
+                      "datastore %s is not accessible: the VMs on it are hung or down" % ds["name"],
+                      "Check the storage array and the paths (Storage > Devices > Paths on a host); rescan the storage adapters.")
+            c["inaccessible"] = True
+            if ds.get("moid"):
+                c.update(id=_inventory_id("datastore", ds), moid=ds["moid"])
+            out.append(c)
     # storage events: a problem with no clear event after it (same host, same device when both say) stays critical
     evs = sorted(d.get("events") or [], key=lambda e: (e.get("time", ""), e.get("key") or 0))      # oldest first; one second: by key
     seen = {}
@@ -164,19 +196,24 @@ def vm_watch_conditions(data, opts=None):
             continue
         what, clears = STORAGE[e["type"]]
         dev = _device(e)
-        cleared = next((c for c in evs[i + 1:] if c.get("type") in clears and c.get("host") == e.get("host")
+        cleared = next((c for c in evs[i + 1:] if c.get("type") in clears and c.get("vcenter") == e.get("vcenter")
+                        and (c.get("host_moid") or c.get("host")) == (e.get("host_moid") or e.get("host"))
                         and (not dev or not _device(c) or _device(c) == dev)), None)
-        key = "%s:%s" % (e.get("host") or "?", dev or e["type"])
-        c = _cond("warning" if cleared else "critical", "storage", "host", key, e,
+        host = e.get("host") or "?"
+        c = _cond("warning" if cleared else "critical", "storage", "host", host, e,
                   "%s on host %s%s at %s%s" % (what, e.get("host") or "?", (" (device %s)" % dev) if dev else "", e.get("time", ""),
                                              (", cleared at %s" % cleared.get("time", "")) if cleared else ", not cleared"),
                   "Check the array and the SAN / storage network for the device; the VMs on its datastore may be hung.", e.get("message", ""))
-        c["object"] = e.get("host") or "?"
-        c.update({"device": dev, "host": e.get("host") or "", "since": e.get("time", ""), "what": what})
+        c.update(device=dev, host=host, host_moid=e.get("host_moid") or "", since=e.get("time", ""), what=what, event_type=e["type"])
+        key = (c["vcenter"], c["host_moid"] or host, dev or e["type"])
+        if c["host_moid"]:
+            c["id"] = "vm-watch:storage:%s:%s:%s" % key
+        else:
+            c["id"] = "vm-watch:storage:%s:%s" % key[1:]
         prev = seen.get(key)
         if prev is None or RANK[c["severity"]] < RANK[prev["severity"]]:
             seen[key] = c
-    out += _fold_paths(seen, out, d, lost)
+    out += _fold_paths(seen, out, d)
     seen = {}
     for e in evs:
         sev = EVENT_SEVERITY.get(e.get("type"))
@@ -206,6 +243,7 @@ def vm_watch_conditions(data, opts=None):
                   "Check the datastore (Storage in the vSphere Client: accessible?) and its paths (a host > Storage > Devices > "
                   "Paths); rescan the storage adapters. Do not remove the VM from the inventory: it comes back when its files "
                   "can be reached.", "power %s" % (v.get("power") or "unknown"))
+        c["id"] = _inventory_id("lost", v)
         c.update({"vm": _vm_ids(v), "connection": conn, "datastores": dss, "protected": _protected(v, o),
                   "not_judged": v.get("not_judged") or ""})
         out.append(c)
@@ -226,83 +264,105 @@ def vm_watch_conditions(data, opts=None):
             continue
         c.update({"vm": _vm_ids(v), "signals": signals, "detail": "checked %s" % _span(v), "datastores": list(v.get("datastores") or [])})
         out.append(c)
-    out.sort(key=lambda c: (RANK.get(c["severity"], 9), c["kind"], c["object"]))
-    # 1.112.4: a lost VM right under its datastore's condition (the first of its datastores that is down)
-    down = [c["object"] for c in out if c["kind"] == "datastore"]
+    out.sort(key=lambda c: (RANK.get(c["severity"], 9), not c.get("inaccessible"), c["kind"], c["object"]))
+    # 1.112.4: the report and the tickets use the same root.
+    roots = {(c["kind"], c["vcenter"], c["moid"]): c for c in out
+             if c["kind"] in ("host", "datastore") and c.get("moid") and c["severity"] == "critical"}
     under = {}
     for c in out:
-        if c["kind"] == "lost":
-            ds = next((x for x in c.get("datastores") or [] if x in down), None)
-            if ds is not None:
-                under.setdefault(ds, []).append(c)
-    if under:
-        moved = set(id(c) for cs in under.values() for c in cs)
-        grouped = []
-        for c in out:
-            if id(c) in moved:
-                continue
-            grouped.append(c)
-            if c["kind"] == "datastore":
-                grouped += under.get(c["object"], [])
-        out = grouped
-    return out
+        matches = _vm_roots(c, roots)
+        if matches:
+            c["root_id"] = matches[0]["id"]           # one VM row, even with two down datastores
+            for root in matches:
+                under.setdefault(root["id"], []).append(c)
+    grouped = []
+    for c in out:
+        if "root_id" in c:
+            continue
+        children = sorted(under.get(c["id"], []), key=lambda x: (RANK.get(x["severity"], 9), x["object"], x["vm"]["moid"]))
+        if children:
+            names = ["%s (%s)" % (_member(x["vm"]), x.get("connection") or VM_WORD[x["kind"]]) for x in children]
+            listed = "%d VM%s: %s" % (len(names), "" if len(names) == 1 else "s", ", ".join(names))
+            c["membership"] = ". ".join(filter(None, [c.get("membership"), listed]))
+            mine = [x["object"] for x in children if x["kind"] == "lost"]
+            if c.get("inaccessible") and mine:
+                count = "%d VM%s" % (len(mine), "" if len(mine) == 1 else "s")
+                if c.get("paths"):
+                    c["summary"] += " - %s inaccessible: %s" % (count, _shown_names(sorted(mine)))
+                else:
+                    c["summary"] += "; vCenter shows %s on it as inaccessible: %s" % (count, _shown_names(sorted(mine)))
+        if c.get("membership"):
+            c["detail"] = ". ".join(filter(None, [c["detail"], c["membership"]]))
+        grouped.append(c)
+        grouped.extend(x for x in children if x["root_id"] == c["id"])
+    return grouped
 
 
 def _short(name):
     return str(name or "").split(".")[0]
 
 
-def _fold_paths(seen, out, d, lost):
-    """1.112.4 (the user, after a 60-hour storage outage: "it should have been clearly noticeable in the report that a datastore
-    went down instead of sifting through all paths down on each host"). The hosts' storage conditions (seen: one per host and
-    device) of a datastore that is not accessible fold INTO that datastore's condition: "Datastore ds-07 NOT ACCESSIBLE on 3
-    hosts (esx02, esx04, esx05): all paths down since ... - 6 VMs inaccessible", with each host's line in its paths (the
-    report's detail). The same device lost on 2 or more hosts, its datastore still accessible: one condition for it. A path
-    problem on one host, of no lost datastore, stays as it is. -> the storage conditions left."""
-    dev_ds = {}
-    for ds in d.get("datastores") or []:
+def _fold_paths(seen, out, d):
+    """1.112.4: fold a confirmed outage, or a shared device lost on at least two hosts."""
+    datastores = {_inventory_id("datastore", ds): ds for ds in d.get("datastores") or [] if ds.get("moid")}
+    extents = {}
+    for ds_id, ds in datastores.items():
         for dev in ds.get("devices") or []:
-            dev_ds[dev] = ds["name"]
-    ds_cond = dict((c["object"], c) for c in out if c["kind"] == "datastore")
-    groups = {}
+            extents.setdefault((ds["vcenter"], dev.lower()), []).append(ds_id)
+    inaccessible = {c["id"]: c for c in out if c.get("inaccessible")}
+    devices = {}
     for key, c in seen.items():
-        name = dev_ds.get(c.get("device") or "")
-        g = ("ds", name) if name else (("dev", c["device"]) if c.get("device") else None)
-        if g is not None:
-            groups.setdefault(g, []).append(key)
-    left = dict(seen)
-    for (kind, name), keys in groups.items():
-        cs = sorted((seen[k] for k in keys), key=lambda c: (c.get("since", ""), c.get("host", "")))
-        hosts = sorted(set(c.get("host") or "?" for c in cs))
-        down = [c for c in cs if c["severity"] == "critical"]
-        paths = ["%s: %s" % (c.get("host") or "?", c["summary"]) for c in cs]
-        first = cs[0]
-        if kind == "ds" and name in ds_cond:
-            ds = ds_cond[name]
-            mine = sorted(v.get("name", "") for v in lost if name in (v.get("datastores") or []))
-            head = "Datastore %s NOT ACCESSIBLE on %d host%s (%s)" % (name, len(hosts), "" if len(hosts) == 1 else "s",
-                                                                      ", ".join(_short(h) for h in hosts))
-            ds.update({"summary": "%s: %s since %s%s" % (head, first.get("what", ""), first.get("since", ""),
-                                                         (" - %d VM%s inaccessible: %s" % (len(mine), "" if len(mine) == 1 else "s",
-                                                                                           _shown_names(mine))) if mine else ""),
-                       "headline": head, "paths": paths, "hosts": hosts, "since": first.get("since", ""),
-                       "detail": "Per host: " + "; ".join(paths)})
-        elif len(set(c.get("host") for c in down)) >= 2 or (not down and len(hosts) >= 2):
-            what = (down or cs)[0].get("what", "")
-            label = ("Datastore %s" % name) if kind == "ds" else ("Device %s" % name)
-            head = "%s lost its paths on %d hosts (%s)" % (label, len(hosts), ", ".join(_short(h) for h in hosts))
-            c = _cond("critical" if down else "warning", "datastore", "datastore" if kind == "ds" else "device", name, first,
-                      "%s: %s since %s%s" % (head, what, first.get("since", ""), "" if down else ", cleared since on every host"),
-                      first.get("todo", ""))
-            c.update({"headline": head, "paths": paths, "hosts": hosts, "since": first.get("since", ""), "device": first.get("device", ""),
-                      "detail": "Per host: " + "; ".join(paths), "vcenter": first.get("vcenter", "")})
-            c["id"] = "vm-watch:paths:%s" % name
-            out.append(c)
-        else:
+        dev = c["device"]
+        if dev and not dev.startswith("mpx."):
+            devices.setdefault((c["vcenter"], dev), []).append(key)
+
+    groups = {}
+    for (vc, dev), keys in devices.items():
+        matches = extents.get((vc, dev.lower()), [])
+        if len(matches) > 1:
             continue
-        for k in keys:
-            left.pop(k, None)
-    return list(left.values())
+        group = matches[0] if matches else "vm-watch:paths:%s:%s" % (vc, dev)
+        if group not in inaccessible:
+            if not dev.startswith(("naa.", "eui.")):
+                continue
+            # 1.112.4: each extent must qualify before it joins a datastore ticket.
+            active = [k for k in keys if seen[k]["severity"] == "critical"]
+            if len({seen[k]["host_moid"] for k in active or keys} - {""}) < 2:
+                continue
+            keys = [k for k in keys if seen[k]["host_moid"]]
+        groups.setdefault(group, []).extend(keys)
+
+    left = dict(seen)
+    folded = []
+    for group, keys in groups.items():
+        ds = datastores.get(group)
+        root = inaccessible.get(group)
+        cs = sorted((left.pop(k) for k in keys), key=lambda c: (c["since"], c["host"], c["device"]))
+        active = [c for c in cs if c["severity"] == "critical"]
+        first = (active or cs)[0]
+        affected = cs if root is not None else (active or cs)
+        hosts = {c["host_moid"] or c["host"]: c["host"] for c in affected}
+        names = sorted(hosts.values())
+        where = "on %d host%s (%s)" % (len(hosts), "" if len(hosts) == 1 else "s", ", ".join(_short(h) for h in names))
+        if root is None:
+            kind, name = ("datastore", ds["name"]) if ds else ("device", first["device"])
+            head = "%s %s lost its paths %s" % (kind.title(), name, where)
+            root = _cond("critical" if active else "warning", "datastore", kind, name, ds or first, "", first["todo"])
+            root["id"] = group
+            if ds:
+                root["moid"] = ds["moid"]
+            root["path_host_moids"] = sorted({c["host_moid"] for c in active})
+            if len({c["device"] for c in cs}) == 1:
+                root["device"] = first["device"]
+            folded.append(root)
+        else:
+            head = "Datastore %s NOT ACCESSIBLE %s" % (ds["name"], where)
+        paths = ["%s: %s" % (c["host"], c["summary"]) for c in cs]
+        root.update(headline=head, hosts=names, paths=paths, since=first["since"], detail="Per host: " + "; ".join(paths),
+                    summary="%s: %s since %s" % (head, first["what"], first["since"]))
+        if not active and not root.get("inaccessible"):
+            root["summary"] += ", cleared since on every host"
+    return folded + list(left.values())
 
 
 def _event_todo(type_id, otype):
@@ -346,6 +406,7 @@ def _span(v):
 
 def _vm_ids(v):
     return {"name": v.get("name", ""), "moid": v.get("moid", ""), "vcenter": v.get("vcenter", ""), "esxi_host": v.get("esxi_host", ""),
+            "host_moid": v.get("host_moid", ""), "datastore_moids": v.get("datastore_moids") or [],
             "hostname": v.get("hostname", ""), "ips": sorted(set([v.get("ip", "")] + list(v.get("ips") or [])) - {""})}
 
 
@@ -450,7 +511,7 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
         sections.append({"title": "Down or hung now", "status": status,
                          "columns": ["Severity", "Object", "Where", "Problem", "What to do"],
                          "rows": [[c["severity"], "%s %s" % (c["object_type"], c["object"]), _where(c, multi),
-                                   c["summary"] + ((". Per host: " + "; ".join(c["paths"])) if c.get("paths") else ""), c["todo"]] for c in cs],
+                                   c["summary"] + (". " + c["detail"] if c["kind"] in ("host", "datastore") and c.get("detail") else ""), c["todo"]] for c in cs],
                          "row_status": [c["severity"] for c in cs], "cell_status": [[c["severity"], "", "", "", ""] for c in cs]})
     if hung:
         wr = a.get("would_restart") or []
@@ -477,12 +538,14 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
     if int(d.get("vms_skipped") or 0):
         lines.append("%d VM(s) skipped by vm_watch_skip_vms / vm_watch_skip_folders / site_exclude_hosts." % int(d["vms_skipped"]))
     if "vms_read" in d:                               # 1.112.4: what was read, what was judged, what was listed
-        lost, disc = d.get("vms_lost") or [], d.get("vms_disconnected") or []
+        lost = d.get("vms_lost") or []
+        down_vms = sum(len(h.get("vms") or []) for h in d.get("hosts") or []
+                       if not h.get("maintenance") and h.get("standby") not in ("in", "entering"))
         lines.append("VMs read: %d. Judged (powered on, connected): %d. Listed as inaccessible, invalid or orphaned: %d%s. "
-                     "On a disconnected host (listed under it): %d." % (
+                     "Potentially affected on down hosts: %d." % (
                          int(d.get("vms_read") or 0), int(d.get("vms_checked") or 0), len(lost),
                          (" (%d of them not judged: vm_watch_skip_vms / vm_watch_skip_folders)" % len([v for v in lost if v.get("not_judged")]))
-                         if any(v.get("not_judged") for v in lost) else "", len(disc)))
+                         if any(v.get("not_judged") for v in lost) else "", down_vms))
     sections.append({"title": "How it judged", "lines": lines})
     return {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections,
             "footer": "Read-only: the watch changed nothing."}
@@ -500,14 +563,21 @@ VM_KINDS = ("lost", "hung", "no-heartbeat")
 VM_WORD = {"lost": "inaccessible", "hung": "hung", "no-heartbeat": "no heartbeat"}
 
 
-def _root(c, roots):
-    """1.112.4: the lost datastore or the down host that explains a VM's condition (None: the VM is its own ticket)."""
-    if c.get("kind") not in VM_KINDS:
-        return None
-    for ds in c.get("datastores") or []:
-        if ("datastore", ds) in roots:
-            return roots[("datastore", ds)]
-    return roots.get(("host", (c.get("vm") or {}).get("esxi_host") or ""))
+def _vm_roots(c, roots):
+    """1.112.4: affected datastores first, then the VM's down host."""
+    if c["kind"] not in VM_KINDS:
+        return []
+    v = c["vm"]
+    vc, host = v["vcenter"], v.get("host_moid")
+    down, paths = [], []
+    for moid in v["datastore_moids"]:
+        ds = roots.get(("datastore", vc, moid))
+        if ds and ds.get("inaccessible"):
+            down.append(ds)
+        elif ds and host in ds.get("path_host_moids", []):
+            paths.append(ds)
+    h = roots.get(("host", vc, host))
+    return down + paths + ([h] if h else [])
 
 
 def vm_watch_health(data, conditions, opts=None):
@@ -515,19 +585,10 @@ def vm_watch_health(data, conditions, opts=None):
     vCenter: {vcenter: {status, checks: [vm_watch], findings, reach: false, ...}}. Each condition is a finding
     (check vm_watch), so a ticket per condition, noted (or resolved) once the watch no longer finds it.
     A vCenter not read lists vm_watch as failed: its open tickets are left alone.
-    1.112.4: tickets fold to their root - one per lost datastore or down host, listing its inaccessible, hung and off VMs
-    (its summary changes as they do, so the ticket is noted); a VM is its own ticket only when no lost datastore or down
-    host explains it."""
+    1.112.4: each root finding carries the full VM list in its summary for the incident and repeat work notes."""
     d, o = data or {}, opts or {}
     conditions = list(conditions or [])
-    roots = dict(((c["object_type"], c["object"]), c) for c in conditions
-                 if c.get("severity") == "critical" and ((c.get("kind") == "datastore" and c.get("object_type") == "datastore")
-                                                         or c.get("kind") == "host"))
-    under = {}
-    for c in conditions:
-        r = _root(c, roots)
-        if r is not None:
-            under.setdefault(id(r), []).append(c)
+    root_ids = {c["id"] for c in conditions if c.get("kind") in ("datastore", "host")}
     out = {}
     for s in d.get("vcenters") or []:
         name = s.get("name", "")
@@ -535,17 +596,15 @@ def vm_watch_health(data, conditions, opts=None):
             continue
         out[name] = {"status": "healthy", "checks": ["vm_watch"], "checks_failed": ["vm_watch"] if s.get("error") else [],
                      "findings": [], "act": {}, "time": d.get("read_at", ""), "job": str(o.get("job", "")), "reach": False}
-    folded = set(id(x) for cs in under.values() for x in cs)
     for c in conditions:
-        if id(c) in folded:
+        if c.get("root_id") in root_ids:
             continue
         vc = c.get("vcenter") or ""
         h = out.setdefault(vc, {"status": "healthy", "checks": ["vm_watch"], "checks_failed": [], "findings": [], "act": {},
                                 "time": d.get("read_at", ""), "job": str(o.get("job", "")), "reach": False})
-        vms = sorted(under.get(id(c), []), key=lambda x: (RANK.get(x["severity"], 9), x["object"]))
-        listed = ("; %d VM%s: %s" % (len(vms), "" if len(vms) == 1 else "s",
-                                     _shown_names(["%s (%s)" % (x["object"], VM_WORD.get(x["kind"], x["kind"])) for x in vms], 30))) if vms else ""
-        h["findings"].append({"check": "vm_watch", "id": c["id"], "severity": c["severity"],
+        # 1.112.4: repeat work notes send the finding's summary, including its full VM list.
+        listed = "; " + c["membership"] if c.get("membership") else ""
+        h["findings"].append({"check": "vm_watch", "id": _ticket_id(c, d), "severity": c["severity"],
                               "summary": "%s%s%s" % (c["summary"], listed, (" [%s]" % _where(c, False)) if _where(c, False) else ""),
                               "hint": c.get("todo", "")})
         h["status"] = "findings"

@@ -47,7 +47,7 @@ author: site automation
 
 RETURN = r'''
 hosts:
-  description: Every host, with its state.
+  description: "Every host, with its state. 1.112.4: a down host lists its VMs by runtime.host."
   type: list
   returned: success
   sample: [{name: esx01.example.mil, moid: host-12, cluster: CL1, datacenter: DC1, vcenter: vc01.example.mil,
@@ -73,7 +73,7 @@ vms_lost:
   type: list
   returned: success
 vms_disconnected:
-  description: "1.112.4: the VMs on a disconnected host (connection disconnected), listed under that host."
+  description: "1.112.4: VMs whose own connection state is disconnected."
   type: list
   returned: success
 vms_read:
@@ -421,7 +421,8 @@ def _events(content, root, begin, types, cap=2000):
             args[str(getattr(a, "key", ""))] = str(getattr(a, "value", ""))
         out.append({"key": e.key, "time": _iso(e.createdTime), "type": getattr(e, "eventTypeId", "") or type(e).__name__.split(".")[-1],
                     "message": " ".join(str(e.fullFormattedMessage or getattr(e, "message", "") or "").split()), "args": args,
-                    "host": e.host.name if e.host else "", "vm": e.vm.name if e.vm else "",
+                    "host": e.host.name if e.host else "", "host_moid": getattr(getattr(e.host, "host", None), "_moId", ""),
+                    "vm": e.vm.name if e.vm else "",
                     "cluster": e.computeResource.name if e.computeResource else "",
                     "datacenter": e.datacenter.name if e.datacenter else ""})
     return out
@@ -484,13 +485,20 @@ def _read(content, p, now, vcenter):
     for m, (o, pr) in vms.items():
         if pr.get("config.template"):
             continue
-        h = host_of.get(getattr(pr.get("runtime.host"), "_moId", None), {})
+        host_moid = getattr(pr.get("runtime.host"), "_moId", "")
+        h = host_of.get(host_moid, {})
         folder = _folder(o, folders)
         dc = h.get("datacenter") or (folder.split("/")[1] if folder.count("/") > 1 else "")
         if not in_dc(dc):
             continue
         v = {"name": pr.get("name", ""), "moid": m, "vcenter": vcenter, "datacenter": dc, "folder": folder,
-             "cluster": h.get("cluster", ""), "esxi_host": h.get("name", ""), "hostname": pr.get("guest.hostName") or ""}
+             "cluster": h.get("cluster", ""), "esxi_host": h.get("name", ""), "host_moid": host_moid, "hostname": pr.get("guest.hostName") or ""}
+        v["datastore_moids"] = sorted(set(getattr(x, "_moId", "") for x in pr.get("datastore") or []) - {""})
+        v["datastores"] = sorted(set(ds_name.get(ds, "") for ds in v["datastore_moids"]) - {""})
+        # 1.112.4: runtime.host still lists the VM when its last guest readings look healthy.
+        down_host = h.get("connection") in ("notResponding", "disconnected")
+        if down_host:
+            h.setdefault("vms", []).append({"name": v["name"], "moid": m})
         v.update(_guest(pr, now))
         q = pr.get("runtime.question")
         if q is not None:
@@ -501,12 +509,11 @@ def _read(content, p, now, vcenter):
         res["vms_read"] += 1
         conn = str(pr.get("runtime.connectionState") or "connected")
         skip = name_skipped(v, p["skip_vms"], p["skip_folders"])
-        v["datastores"] = sorted(set(ds_name.get(getattr(x, "_moId", None), "") for x in pr.get("datastore") or []) - {""})
         if conn in LOST or conn == "disconnected":
             v.update({"connection": conn, "not_judged": skip})
             res["vms_lost" if conn in LOST else "vms_disconnected"].append(v)
             continue
-        if v["power"] != "poweredOn":
+        if down_host or v["power"] != "poweredOn":
             continue
         if skip:
             res["vms_skipped"] += 1

@@ -43,22 +43,29 @@
 - In the report these VMs sit right under their datastore's row, and the datastore's row names them. A VM in
   `vm_watch_skip_vms` or `vm_watch_skip_folders` is still listed, as "not judged" (info). A protected VM is marked
   "protected". Nothing is restarted: phase 2 only ever acts on hung VMs.
-- A disconnected host's row names the VMs on it, instead of leaving them out.
+- A down host's row lists every VM on it (by `runtime.host`), as "potentially affected", even one whose last heartbeat
+  was green. Being on a down host never makes a VM "hung".
 - **A lost datastore is the headline, not "all paths down" per host.** When a datastore is not accessible, its hosts'
-  storage path lines fold into its row: "Datastore ds-07 NOT ACCESSIBLE on 3 hosts (esx02, esx04, esx05): all paths
-  down since ... - 6 VMs inaccessible". It is the first row and leads the email's subject and the page's title. Each
-  host's line is in that row's detail ("Per host: ..."). The same device lost on 2 or more hosts, while its datastore is
-  still accessible, is one row too. A path problem on one host, of no lost datastore, stays as it was. The watch reads
-  each VMFS datastore's devices (its extents) to tell which datastore a device is.
+  path lines fold into its row: "Datastore ds-07 NOT ACCESSIBLE on 3 hosts (esx02, esx04, esx05): all paths down since
+  ... - 6 VMs inaccessible". It is the first row and leads the email's subject and the page's title. Each host's line
+  is in that row's detail. While a datastore is still accessible, its path lines fold only when the same naa or eui
+  device is lost on 2 or more hosts. Different extents never count as one device, and host-local mpx disks stay per
+  host. The watch reads each VMFS datastore's devices (its extents) to tell which datastore a device is.
 - *How it judged* says how many VMs were read, judged, listed as inaccessible, and on a disconnected host.
-- **One ServiceNow ticket per root, not per VM.** A datastore that is not accessible, or a host that is down, is one
-  ticket that lists its inaccessible, hung and off VMs, and is noted as that list changes. A VM gets its own ticket only
-  when no lost datastore or down host explains it. A storage loss with 20 VMs is 1 ticket. The report still lists every
-  VM.
-- Tests: tests/test_vmware_modules.py (the read, on stand-ins: 3 inaccessible VMs powered off or of unknown power and 1
-  orphaned on a lost datastore, a skipped one, a template, a disconnected host); tests/test_vm_watch.py (the conditions,
-  their order, the marks, no restart, the counts; Fold1124: the lost datastore's line, the device on 2 hosts, the
-  headline, cleared on every host; Tickets1124: 20 VMs on a lost datastore = 1 ticket).
+- **One ServiceNow ticket per lost datastore or down host, not per VM.** That ticket lists every VM it affects
+  (inaccessible, hung, off, potentially affected), in full, in its description and repeat work notes, so it changes as
+  they do. A VM is matched to its datastore and host by vCenter and object ID, never by name alone. A datastore that is
+  not accessible covers its VMs on every host. A datastore with path loss only covers its VMs on the hosts that lost
+  the paths. A VM nothing explains keeps its own ticket. A storage loss with 20 VMs is 1 ticket. The report still
+  lists every VM.
+- **Open tickets keep their ids.** A datastore's ticket stays the same from path loss to not accessible. Its id is the
+  one tickets already had (`vm-watch:datastore:<name>`; the object ID is added only when two datastores in one vCenter
+  share a name), and hosts and single host paths keep theirs too. So an incident open at the upgrade stays open; none
+  is resolved and opened again.
+- Tests: tests/test_vmware_modules.py LostVMs1124 (the read, on stand-ins: 3 inaccessible VMs powered off or of
+  unknown power and 1 orphaned on a lost datastore, a skipped one, a template, a disconnected host, the devices, a
+  down host's VMs); tests/test_vm_watch.py Lost1124, Fold1124, Tickets1124 (20 VMs = 1 ticket), Review1124 (two
+  vCenters, same names, path loss on some hosts, shared devices only, full lists) and TicketIds1124 (the ids).
 
 ## 1.112.3 — 2026-11-23
 
