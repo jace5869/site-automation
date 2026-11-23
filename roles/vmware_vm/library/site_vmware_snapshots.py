@@ -35,7 +35,7 @@ snapshots:
   type: list
   returned: success
   sample: [{vm: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, cluster: PROD-CL01, hostname: web01.example.mil, ip: 192.0.2.3, ips: [192.0.2.3],
-            power: poweredOn, name: before-patch,
+            power: poweredOn, template: false, name: before-patch,
             id: 7, description: "CHG123", taken_by: "CORP\\jdoe", created: "2026-10-01T12:00:00Z", age_days: 4.8, size_gb: 12.4,
             quiesced: false, memory: false, current: true, depth: 0}]
 vcenters:
@@ -178,7 +178,8 @@ def _read(content, p, now, vcenter):
             selectSet=[vmodl.query.PropertyCollector.TraversalSpec(name="v", path="view", skip=False, type=vim.view.ContainerView)])],
         propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine,
                                                              pathSet=["name", "snapshot", "runtime.powerState", "runtime.host",
-                                                                      "guest.hostName", "guest.ipAddress", "guest.net"])])
+                                                                      "guest.hostName", "guest.ipAddress", "guest.net",
+                                                                      "config.template"])])
     for o in content.propertyCollector.RetrieveContents([spec]):
         pr = {x.name: x.val for x in o.propSet}
         info = pr.get("snapshot")
@@ -212,7 +213,8 @@ def _read(content, p, now, vcenter):
             out.append({"vm": pr.get("name", ""), "moid": vm._moId, "vcenter": vcenter, "datacenter": dc, "folder": folder,
                         "cluster": _cluster(pr.get("runtime.host"), clusters),
                         "hostname": pr.get("guest.hostName") or "", "ip": pr.get("guest.ipAddress") or "", "ips": _ips(pr),
-                        "power": str(pr.get("runtime.powerState") or ""), "name": n.name, "id": int(n.id),
+                        "power": str(pr.get("runtime.powerState") or ""), "template": bool(pr.get("config.template")),
+                        "name": n.name, "id": int(n.id),
                         "description": n.description or "", "taken_by": who.get(key, ""),
                         "created": created.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "age_days": round(max(age, 0.0), 1),

@@ -1,7 +1,7 @@
 ---
 # REFRESH THE PICK LISTS (vm_pick_refresh.yml, on a schedule): what may be done right now, written as the
 # choices of one multiple-choice question in the survey of each template of vm_pick_snapshot_templates (the
-# snapshots that may be deleted: pick_snapshots.yml) and vm_pick_reboot_templates (the VMs that may be
+# snapshots that may be deleted - and, vm_pick_snapshot_offer_held, the held ones with why: pick_snapshots.yml) and vm_pick_reboot_templates (the VMs that may be
 # restarted: pick_vms.yml). Whoever launches such a template picks from that list; the job that gets the
 # answer checks every pick again, live. In a workflow only the workflow's own survey is asked: name the
 # workflow job template. Changes nothing in vCenter. As Check (a dry run) it writes no survey either.
@@ -48,7 +48,9 @@
 - name: VMware | the choices
   ansible.builtin.set_fact:
     _vm_pr_when: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M') }} UTC"
-    _vm_pr_snap: "{{ _vm_sn.old | vm_pick_snapshot_choices(_vm_sn_multi, vm_pick_max_choices) if _vm_sn is defined else {'choices': [], 'more': 0} }}"
+    _vm_pr_snap: "{{ _vm_po.offered | vm_pick_snapshot_choices(_vm_sn_multi, vm_pick_max_choices) if _vm_po is defined else {'choices': [], 'more': 0} }}"
+    # how many of the choices are held snapshots (vm_pick_snapshot_offer_held), each saying why
+    _vm_pr_held: "{{ (_vm_po.offered[:vm_pick_max_choices | int] | rejectattr('pick_held', 'equalto', '') | list | length) if _vm_po is defined else 0 }}"
     _vm_pr_vms: "{{ _vm_pk.offered | map(attribute='choice') | list if _vm_pk is defined else [] }}"
 
 - name: "VMware | write the choices into the surveys{{ ' - read only, what it would change' if ansible_check_mode else '' }}"
@@ -58,9 +60,12 @@
       {%- for t in _vm_pr_targets -%}
       {%-   set snap = t.what == 'snapshots' -%}
       {%-   set n = (_vm_pr_snap.choices if snap else _vm_pr_vms) | length -%}
+      {#-   a survey another job made first (e.g. only report_email_also) gets the question added, after its own -#}
       {%-   set _ = out.append({'template': t.template, 'kind': t.kind, 'question': t.question, 'multiselect': true,
+                                'add_question': 'Which snapshots to delete?' if snap else 'Which VMs to restart?',
                                 'choices': _vm_pr_snap.choices if snap else _vm_pr_vms,
-                                'note': 'of ' ~ _vm_pr_when ~ ': ' ~ n ~ (' snapshot(s) that may be deleted' if snap else
+                                'note': 'of ' ~ _vm_pr_when ~ ': ' ~ n ~ ((' snapshot(s) that may be deleted'
+                                         ~ ((' - ' ~ _vm_pr_held ~ ' of them held from the automatic cleanup, each says why') if _vm_pr_held | int else '')) if snap else
                                         (' hung VM(s)' if vm_pick_reboot_only_hung | bool else ' VM(s) that may be restarted')),
                                 'empty_choice': '(nothing to pick: ' ~ ('no snapshot may be deleted' if snap else
                                                 (('no VM looks hung' if vm_pick_reboot_only_hung | bool else 'no VM may be restarted')))
@@ -78,7 +83,7 @@
     _vm_report_no_email_why: "the pick list refresh never emails (it runs often; its result is in the surveys)."
     _vm_report_subject: >-
       VMware pick lists{{ ' (dry run)' if ansible_check_mode else '' }}:
-      {{ (([(_vm_pr_snap.choices | length ~ ' snapshot(s) to delete')] if _vm_sn is defined else [])
+      {{ (([(_vm_pr_snap.choices | length ~ ' snapshot(s) to delete')] if _vm_po is defined else [])
           + ([(_vm_pr_vms | length) ~ (' hung VM(s)' if vm_pick_reboot_only_hung | bool else ' VM(s) to restart')] if _vm_pk is defined else []))
          | join(', ') }}{{ ' - ' ~ (_vm_pr_set.problems + (_vm_pr_set.results | rejectattr('ok') | list)) | length ~ ' survey(s) NOT updated'
                            if _vm_pr_set.problems or _vm_pr_set.results | rejectattr('ok') | list else '' }}
@@ -90,16 +95,22 @@
       {%-   if not r.ok -%}
       {%-     set _ = out.append('NOT UPDATED ' ~ what ~ ' (question ' ~ r.question ~ '): ' ~ r.error) -%}
       {%-   else -%}
+      {%-     if r.added | default(false) -%}
+      {%-       set _ = out.append(('would add' if ansible_check_mode else 'added') ~ ' the question ' ~ r.question ~ ' to ' ~ what
+                                   ~ ' (Multiple choice, multiple select, required - after its own questions)') -%}
+      {%-     endif -%}
       {%-     set _ = out.append(what ~ ', question ' ~ r.question ~ ': ' ~ r.choices ~ ' choice(s) - '
                                  ~ (('would change: ' if ansible_check_mode else 'updated: ') ~ r.changes | join(', ') if r.changed else 'unchanged')) -%}
       {%-   endif -%}
       {%-   for w in r.warnings -%}{%- set _ = out.append('WARNING: ' ~ w) -%}{%- endfor -%}
       {%- endfor -%}
-      {%- if _vm_sn is defined -%}
-      {%-   set _ = out.append('Snapshots: ' ~ _vm_pr_snap.choices | length ~ ' offered, oldest first'
+      {%- if _vm_po is defined -%}
+      {%-   set _ = out.append('Snapshots: ' ~ _vm_pr_snap.choices | length ~ ' offered'
+                               ~ ((' (' ~ _vm_pr_held ~ ' held from the automatic cleanup, offered with the reason)') if _vm_pr_held | int else '')
+                               ~ ', oldest first'
                                ~ ((', at least ' ~ _vm_sn_days ~ ' old') if vm_pick_snapshot_min_age_days | float > 0 else '')
                                ~ ((' - ' ~ _vm_pr_snap.more ~ ' more not offered (vm_pick_max_choices: ' ~ vm_pick_max_choices ~ ')') if _vm_pr_snap.more else '')
-                               ~ ('; ' ~ _vm_sn.held | length ~ ' held back: ' ~ _vm_sn.held | vm_pick_reasons if _vm_sn.held else '')) -%}
+                               ~ ('; ' ~ _vm_po.held | length ~ ' held back: ' ~ _vm_po.held | vm_pick_reasons if _vm_po.held else '')) -%}
       {%-   for c in _vm_pr_snap.choices -%}{%- set _ = out.append('  ' ~ c) -%}{%- endfor -%}
       {%- endif -%}
       {%- if _vm_pk is defined -%}

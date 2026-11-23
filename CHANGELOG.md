@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.118.3 — 2026-11-23
+
+**To set up:** run the pick list's refresh job (or wait for its schedule) - the held snapshots appear with their reason;
+vm_pick_snapshot_offer_held: false keeps today's list. Database VMs named in vmware_protected_vms: list them in
+vm_pick_snapshot_offer_vms too (never the AAP VM).
+
+- **VMware snapshot pick list: the held snapshots are offered too, each saying why.** The list offered only what the
+  automatic cleanup could delete, so a database VM (protected, excluded, a snapshot named keep, or bigger than 1 TB) was
+  missing. The holds are for the cleanup; a person picking chooses. New `vm_pick_snapshot_offer_held: true` (the
+  default): such a choice ends with its hold before its IDs - `[held: protected VM]`, `[held: excluded VM]`,
+  `[held: name says keep]`, `[held: size unknown]`, `[held: 1.30 TB - consolidation can take long and stun the VM]` -
+  in the list's usual order (oldest first). The refresh's output counts them.
+- **Never offered, never deleted:** the AAP server's own snapshots (the inventory's `aap` / `aap_hosts` hosts by VM
+  name, guest host name or IP address), the VMs of `vmware_protected_vms` - where the AAP VM is named when vCenter
+  cannot tell it otherwise - unless the new `vm_pick_snapshot_offer_vms` lists them (e.g. `[SQL*, DB01]`; never the
+  AAP VM; only with an `aap` group), the hosts `site_exclude_hosts` / `site_exclude_groups` leave out of every job,
+  VM templates. A job that cannot tell which VM
+  is AAP is still refused. The snapshot reader now says whether a VM is a template.
+- **The pick job:** a held snapshot picked is deleted - the plan says `WOULD DELETE ... - it is held: <reason>`, the
+  job `DELETED ... - deleted - it was held: <reason>`; a big one gets one warning first. The AAP server's is refused
+  and said (also when its ID is typed in). A pick whose choice did not say it was held, or says another kind of hold,
+  is skipped (refresh and pick again), and so is a held pick whose names cannot be read (not a whole choice). New `vm_pick_snapshot_max_size_gb` (0 = no limit) caps what may be picked.
+  `vm_pick_snapshot_offer_held: false`: exactly as before.
+- **The refresh adds a missing pick list question.** A workflow whose survey was made by another job first (only
+  `report_email_also`) failed the refresh: "its survey has no question whose variable is vm_snapshot_picks". The
+  refresh now adds it after the survey's own questions, which it leaves as they are - *Which snapshots to delete?*
+  (or *Which VMs to restart?* for the restart list), multiple select, required, the current list as choices - and
+  says "added the question vm_snapshot_picks to <template>" (as Check: "would add"). A template with no survey at all
+  is still refused.
+- Tests: tests/test_filters.py PickLists (the offer, the choice read back with its hold, the re-check: held pick deleted,
+  AAP refused, an unsaid hold skipped, an approved plan), tests/test_vmware_protect.py (a protected DB VM offered with
+  `[held: protected VM]`, the AAP VM by its IP never, no aap group, the setting off), tests/vmware/run_vmware_test.sh
+  (keep-me offered with its hold, aap-snap never, the plan of a held pick, the question added to a survey with only
+  the email question), tests/test_aap_survey.py AddQuestion and the fake AAP's workflow 63.
+
 ## 1.118.2 — 2026-11-23
 
 **To set up:** nothing.

@@ -769,9 +769,26 @@ with the same name, or two VMs with the same name in different vCenters, are nev
 
 | List | Offered | Never offered (counted in the refresh's output, with the reason) |
 |---|---|---|
-| Snapshots | every snapshot the **snapshot cleanup could delete**: the same holds (table "What the cleanup never deletes" above), at least `vm_pick_snapshot_min_age_days` old (0 = any age) | a name or description that says keep, the excluded VMs, datacenters and clusters, `vmware_protected_vms` and `vmware_protected_groups`, the AAP server, bigger than 1 TB. **Not** the name words: they only narrow the automatic cleanup |
+| Snapshots | every snapshot at least `vm_pick_snapshot_min_age_days` old (0 = any age): the ones the **snapshot cleanup could delete**, and (`vm_pick_snapshot_offer_held: true`, the default, 1.118.3) the ones it **holds back** - a name or description that says keep, the excluded VMs (`vm_snapshot_cleanup_exclude_vms`), datacenters and clusters, the hosts of `vmware_protected_groups` (a database server, say), the VMs of `vmware_protected_vms` that `vm_pick_snapshot_offer_vms` lists, bigger than `vm_snapshot_cleanup_max_size_gb` (1 TB) or size unknown - each choice ending with why it is held (below). The name words are never used: they only narrow the automatic cleanup | **the AAP server's own snapshots** (the inventory's `aap` / `aap_hosts` hosts, by VM name, guest host name or IP address), the VMs of `vmware_protected_vms` - where the AAP VM is named (step 4 above) - unless `vm_pick_snapshot_offer_vms` lists them (never the AAP VM; only with an `aap` group), the hosts `site_exclude_hosts` / `site_exclude_groups` leave out of every job, VM templates, bigger than `vm_pick_snapshot_max_size_gb` (0 = no limit). `vm_pick_snapshot_offer_held: false`: every hold too, as before 1.118.3 |
 | VMs | every VM that is **powered on**, among `vm_pick_reboot_vms` / `vm_pick_reboot_clusters` / `vm_pick_reboot_folders` (empty = all) | templates, VMs that are off, the AAP server and the protected VMs (the same rules as every restart), `vm_pick_reboot_exclude_vms` |
 | Hung VMs (`vm_pick_reboot_only_hung: true`) | powered on, VMware Tools **installed**, but **no heartbeat** (red in vCenter) or Tools **not running** - and up for `vm_pick_hung_min_minutes` (15) at least | a VM that is still starting (it has neither yet), a VM without VMware Tools (vCenter cannot tell if it is hung) |
+
+**Held snapshots (1.118.3).** The holds are for the automatic cleanup; a person picking chooses. A held
+snapshot's choice says why, between its details and its IDs:
+
+```
+DB01: "nightly" (420.0 GB, 9.1 days old, taken 2026-11-14 01:00 UTC) [held: protected VM] [vc01.yoursite.mil/vm-7/3]
+SQL02: "pre-upgrade" (1.30 TB, 6.0 days old, taken 2026-11-17 22:00 UTC) [held: 1.30 TB - consolidation can take long and stun the VM] [vc01.yoursite.mil/vm-9/2]
+```
+
+The holds read `protected VM`, `excluded VM`, `excluded datacenter`, `excluded cluster`, `name says keep`,
+`size unknown`, or the size. A held snapshot picked is deleted (after the workflow's approval, as any pick); the
+plan says `WOULD DELETE ... - it is held: <reason>`, the job `DELETED ... - deleted - it was held: <reason>`. A big
+one gets one warning first: vCenter merges it into the disks, which can take hours and stun the VM - pick a quiet
+time. The pick job checks the hold again: a snapshot that is held now but whose choice did not say so (the list
+was older than the hold), or says another kind of hold, is skipped - refresh the list and pick it again. The AAP
+server's own snapshot is refused, also when its ID is typed in. `vm_pick_snapshot_max_size_gb` (0 = no limit)
+caps what may be picked: bigger, or of unknown size, is neither offered nor deleted.
 
 A list has at most `vm_pick_max_choices` (200) choices; the refresh's output says how many more
 there were. With nothing to pick, the list has one line `(nothing to pick: ... - list of <time>)`,
@@ -792,7 +809,9 @@ Inventory: your inventory with the `aap` group. Execution environment: the one w
 the approval must get its plan from the step before, not from whoever launches). No survey.
 
 **AAP - set up job templates makes both workflows (1.107.0)**, each with its survey and the placeholder choice. The
-refresh then writes the choices; the job never changes a survey that is there. The steps below are the manual way.
+refresh then writes the choices; the job never changes a survey that is there. A survey that is there
+without the pick list's question (another job made it first, e.g. only the email question) gets the question from
+the refresh itself (1.118.3), after its own questions, which stay as they are; as Check it says it would add it. The steps below are the manual way.
 
 **Step 2 - the workflows**, one per list. Templates > Create template > Create workflow job template:
 
@@ -2142,7 +2161,7 @@ the last column says.
 
 | You see | It means | Do |
 |---|---|---|
-| `NOT UPDATED ...: its survey has no question whose variable is vm_snapshot_picks` | the workflow's survey has no such question, or its Answer variable name differs | add the question (section "Pick lists", Step 2), or set `vm_pick_snapshot_question` / `vm_pick_reboot_question` to its variable name |
+| `added the question vm_snapshot_picks to ...` (1.118.3) | the survey was there (another job made it, e.g. only the email question) but had no pick list question: the refresh added it after the survey's own questions - *Which snapshots to delete?* / *Which VMs to restart?*, multiple select, required | nothing; if the workflow's question has another Answer variable name, set `vm_pick_snapshot_question` / `vm_pick_reboot_question` to it instead (else the refresh adds a second one) |
 | `NOT UPDATED ...: the question ... is a text question` | the question is not multiple choice | make it **Multiple choice (multiple select)** |
 | `NOT UPDATED ...: no job template or workflow job template ... that the AAP user can see` | a typo in the name, or the AAP credential's user has no role on it | the name as AAP shows it; the **Admin** role on that template for the user |
 | `2 templates are named ...` | a job template and a workflow share the name | `{template: "<its ID>", kind: workflow}` |

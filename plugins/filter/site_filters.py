@@ -1258,25 +1258,26 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
         ids = {_id(x.get("vm")), _id(x.get("hostname"))} | {_id(i) for i in [x.get("ip")] + list(x.get("ips") or [])}
         ids -= {""}
         if rx and (rx.search(x.get("name") or "") or rx.search(x.get("description") or "")):
-            why = "its name or description says keep"
+            why, hold = "its name or description says keep", "keep"
         elif name_matches(x.get("vm"), exclude):
-            why = "the VM is on the exclusion list"
+            why, hold = "the VM is on the exclusion list", "exclude"
         elif x.get("datacenter") and name_matches(x.get("datacenter"), exclude_datacenters):
-            why = "its datacenter %s is on the exclusion list" % x.get("datacenter")
+            why, hold = "its datacenter %s is on the exclusion list" % x.get("datacenter"), "datacenter"
         elif x.get("cluster") and name_matches(x.get("cluster"), exclude_clusters):
-            why = "its cluster %s is on the exclusion list" % x.get("cluster")
+            why, hold = "its cluster %s is on the exclusion list" % x.get("cluster"), "cluster"
         elif ids & prot:
-            why = "the VM is the AAP server or a protected VM (vmware_protected_groups)"
+            why, hold = "the VM is the AAP server or a protected VM (vmware_protected_groups)", "protected"
         elif words and not any(w.lower() in (x.get("name") or "").lower() for w in words):
-            why = "its name has none of: %s" % ", ".join(words)
+            why, hold = "its name has none of: %s" % ", ".join(words), "words"
         elif max_size_gb is not None and size is None:
-            why = "its size could not be read"
+            why, hold = "its size could not be read", "size_unknown"
         elif max_size_gb is not None and float(size) > float(max_size_gb):
-            why = "bigger than %s: delete it by hand, at a quiet time" % human_size(max_size_gb)
+            why, hold = "bigger than %s: delete it by hand, at a quiet time" % human_size(max_size_gb), "size"
         else:
             old.append(x)
             continue
-        held.append(dict(x, reason=why))
+        # hold: which hold it is (the first that applies) - the pick list's short label (vm_pick_snapshot_offer)
+        held.append(dict(x, reason=why, hold=hold))
     return {"all": allsn, "old": old, "held": held}
 
 
@@ -1306,7 +1307,9 @@ def vm_snapshot_plan(old, approved=None, default_vcenter=""):
 # gets the answer finds exactly that VM or snapshot again, never one with the same name.
 PICK_TOKEN = re.compile(r"\[(?P<vc>[^\[\]/\s]+)/(?P<moid>[^\[\]/\s]+)(?:/(?P<id>\d+))?\]\s*$")
 PICK_VM = re.compile(r"^(?P<vm>.*) \((?P<detail>[^()]*)\) \[[^\[\]]*\]\s*$")
-PICK_SNAP = re.compile(r'^(?P<vm>.*?): "(?P<name>.*)" \((?P<detail>[^()]*)\) \[[^\[\]]*\]\s*$')
+# a held snapshot's choice (vm_pick_snapshot_offer_held) has its hold between the details and the ID token:
+# 'db01: "nightly" (1.3 TB, ...) [held: protected VM] [vc01.example.mil/vm-7/3]'
+PICK_SNAP = re.compile(r'^(?P<vm>.*?): "(?P<name>.*)" \((?P<detail>[^()]*)\)(?: \[held: (?P<held>[^\[\]]*)\])? \[[^\[\]]*\]\s*$')
 PICK_EMPTY = "(nothing to pick"
 
 
@@ -1327,8 +1330,9 @@ def _ago(minutes):
 
 
 def vm_pick_snapshot_choices(snaps, multi=False, max_choices=200):
-    """The snapshots that may be deleted (vm_snapshot_split's 'old', oldest first) as survey choices:
-    'web01: "before patch" (12.4 GB, 6.2 days old, taken 2026-10-14 08:12 UTC) [vc01.example.mil/vm-42/7]'.
+    """The snapshots that may be deleted (vm_snapshot_split's 'old', or vm_pick_snapshot_offer's 'offered', oldest first)
+    as survey choices: 'web01: "before patch" (12.4 GB, 6.2 days old, taken 2026-10-14 08:12 UTC) [vc01.example.mil/vm-42/7]';
+    a held one (pick_held) says why before its ID token: '... UTC) [held: protected VM] [vc01.example.mil/vm-7/3]'.
     -> {'choices': [...], 'more': how many were left out (max_choices)}"""
     out = []
     for x in snaps or []:
@@ -1336,11 +1340,97 @@ def vm_pick_snapshot_choices(snaps, multi=False, max_choices=200):
                   "taken %s UTC" % str(x.get("created", "")).replace("T", " ").replace("Z", "")[:16]]
         if multi and x.get("vcenter"):
             detail.append(vc_short(x["vcenter"]))
-        out.append('%s: "%s" (%s) [%s/%s/%s]' % (" ".join(str(x.get("vm", "")).split()), " ".join(str(x.get("name", "")).split()),
-                                                  _plain(", ".join(detail)), str(x.get("vcenter", "")).lower(), x.get("moid", ""),
-                                                  x.get("id", "")))
+        held = (" [held: %s]" % _plain(x["pick_held"])) if x.get("pick_held") else ""
+        out.append('%s: "%s" (%s)%s [%s/%s/%s]' % (" ".join(str(x.get("vm", "")).split()), " ".join(str(x.get("name", "")).split()),
+                                                    _plain(", ".join(detail)), held, str(x.get("vcenter", "")).lower(), x.get("moid", ""),
+                                                    x.get("id", "")))
     n = int(max_choices)
     return {"choices": out[:n], "more": max(len(out) - n, 0)}
+
+
+PICK_HELD_LABELS = {"keep": "name says keep", "exclude": "excluded VM", "datacenter": "excluded datacenter",
+                    "cluster": "excluded cluster", "protected": "protected VM", "words": "name words", "size_unknown": "size unknown"}
+PICK_BIG = "consolidation can take long and stun the VM"
+
+
+def _pick_held_label(x, protected_names=None):
+    """The short hold a held snapshot's choice shows: 'protected VM', 'excluded VM', 'name says keep', 'size unknown',
+    '1.3 TB - consolidation can take long and stun the VM' ..."""
+    h = x.get("hold") or ""
+    if h == "size":
+        return "%s - %s" % (human_size(x.get("size_gb")), PICK_BIG)
+    if h == "exclude" and name_matches(x.get("vm"), protected_names):
+        return "protected VM"
+    return PICK_HELD_LABELS.get(h, "held")
+
+
+def _pick_held_kind(label):
+    """A hold's kind, from its label: the size one changes with the snapshot ('1.3 TB - ...', then '1.4 TB - ...')."""
+    t = " ".join(str(label or "").split())
+    return "size" if t.endswith(PICK_BIG) else t
+
+
+def _pick_never(x, o):
+    """Why a snapshot is never offered nor deleted by a pick ('' = it may be): the AAP server's own (by VM name, guest host
+    name or any IP address - the inventory's aap / aap_hosts hosts), a VM of vmware_protected_vms (where the AAP VM is
+    named when vCenter cannot tell it otherwise) unless the inventory has an aap group and offer_names
+    (vm_pick_snapshot_offer_vms) lists it, a host site_exclude_hosts / site_exclude_groups leave out of every job, a VM template, bigger
+    than vm_pick_snapshot_max_size_gb (0 = no limit) or its size unknown with such a limit."""
+    ids = {_id(x.get("vm")), _id(x.get("hostname"))} | {_id(i) for i in [x.get("ip")] + list(x.get("ips") or [])}
+    ids -= {""}
+    if ids & set(o.get("aap_ids") or []):
+        return "the AAP server's own snapshot - never deleted by a job"
+    if o.get("aap_names") and name_matches(x.get("vm"), o.get("aap_names")):
+        if not o.get("aap_group"):
+            return "the AAP server's own snapshot - never deleted by a job (no aap group: any VM of vmware_protected_vms may be it)"
+        if not (o.get("offer_names") and name_matches(x.get("vm"), o.get("offer_names"))):
+            return ("a VM of vmware_protected_vms, where the AAP VM is named - not offered unless vm_pick_snapshot_offer_vms "
+                    "lists it")
+    if ids & set(o.get("never_ids") or []) or (o.get("never_names") and name_matches(x.get("vm"), o.get("never_names"))):
+        return "left out of every job (site_exclude_hosts / site_exclude_groups)"
+    if x.get("template"):
+        return "a VM template"
+    cap = float(o.get("max_size_gb") or 0)
+    if cap > 0 and x.get("size_gb") is None:
+        return "its size could not be read (vm_pick_snapshot_max_size_gb: %s)" % human_size(cap)
+    if cap > 0 and float(x["size_gb"]) > cap:
+        return "bigger than vm_pick_snapshot_max_size_gb (%s)" % human_size(cap)
+    return ""
+
+
+def vm_pick_snapshot_offer(split, opts=None):
+    """What the snapshot pick list offers: vm_snapshot_split's answer (old enough; deletable or held) -> {'offered': [snapshot
+    + pick_held ('' = the cleanup could delete it, else the short hold its choice shows) + pick_reason], 'held': [snapshot +
+    reason: not offered]}, in the split's order (oldest first).
+    opts: offer_held (vm_pick_snapshot_offer_held: false = only the deletable ones - as before 1.118.3), aap_ids (the AAP
+    server's names and IP addresses: protected.yml's aap_ids), aap_names (vmware_protected_vms: the AAP VM may be named there),
+    aap_group (the inventory has an aap group), offer_names (vm_pick_snapshot_offer_vms: VMs of vmware_protected_vms that
+    may be offered all the same - only with an aap group), never_ids / never_names (site_exclude_groups / site_exclude_hosts), protected_names
+    (vmware_protected_vms: their hold reads 'protected VM'), max_size_gb (vm_pick_snapshot_max_size_gb, 0 = no limit).
+    Never offered, whatever the setting says: the AAP server's own snapshots, the hosts left out of every job, VM templates."""
+    o = dict(opts or {})
+    split = split or {}
+    if not o.get("offer_held"):
+        return {"offered": [dict(x, pick_held="", pick_reason="") for x in split.get("old") or []], "held": list(split.get("held") or [])}
+    key = lambda x: (str(x.get("vcenter", "")).lower(), str(x.get("moid", "")), str(x.get("id", "")))
+    old = {key(x) for x in split.get("old") or []}
+    held = {key(x): x for x in split.get("held") or []}
+    offered, back = [], []
+    for x in split.get("all") or []:
+        k = key(x)
+        if k not in old and k not in held:
+            continue                                    # not old enough
+        h = held.get(k)
+        never = _pick_never(x, o)
+        if never:
+            back.append(dict(h or x, reason=never))
+        elif h is None:
+            offered.append(dict(x, pick_held="", pick_reason=""))
+        elif h.get("hold") == "words":
+            back.append(h)                              # the name words only narrow the cleanup: a pick list never sets them
+        else:
+            offered.append(dict(h, pick_held=_pick_held_label(h, o.get("protected_names")), pick_reason=h.get("reason", "")))
+    return {"offered": offered, "held": back}
 
 
 def _vm_hung(v, min_minutes):
@@ -1423,8 +1513,8 @@ def vm_pick_reasons(held):
 
 def vm_pick_parse(picks, kind="vm"):
     """The survey's answer (a list, or text one per line) or an approved plan (a list of dicts) -> the picks:
-    {'picks': [{vcenter, moid, id (snapshots), vm, name (the names the choice showed, '' when not readable),
-    text}], 'bad': [lines that are no choice of a pick list], 'ignored': n (the "nothing to pick" line)}."""
+    {'picks': [{vcenter, moid, id and held (snapshots: the hold its choice showed, '' = none), vm, name (the names the
+    choice showed, '' when not readable), text}], 'bad': [lines that are no choice of a pick list], 'ignored': n (the "nothing to pick" line)}."""
     if isinstance(picks, str):
         picks = picks.splitlines()
     out, bad, ignored, seen = [], [], 0, set()
@@ -1434,6 +1524,9 @@ def vm_pick_parse(picks, kind="vm"):
                    "name": str(p.get("name", "")) if kind == "snapshot" else "", "text": str(p.get("text", "") or p.get("vm", ""))}
             if kind == "snapshot":
                 rec["id"] = str(p.get("id", ""))
+                # the hold the approver saw (the plan step's); a plan from before 1.118.3: what its choice said
+                h = PICK_SNAP.match(" ".join(rec["text"].split()))
+                rec["held"] = " ".join(str(p.get("held") if p.get("held") is not None else ((h.group("held") or "") if h else "")).split())
             if not rec["vcenter"] or not rec["moid"] or (kind == "snapshot" and not rec["id"].isdigit()):
                 bad.append(json.dumps(p, sort_keys=True)[:200])
                 continue
@@ -1454,6 +1547,9 @@ def vm_pick_parse(picks, kind="vm"):
                 n = PICK_SNAP.match(text)
                 if n:
                     rec["vm"], rec["name"] = n.group("vm"), n.group("name")
+                # the hold only from a whole choice (its VM and snapshot names read too): a held pick is deleted only
+                # when its names are checked against the live snapshot
+                rec["held"] = (n.group("held") or "").strip() if n else ""
             else:
                 n = PICK_VM.match(text)
                 if n:
@@ -1474,19 +1570,26 @@ def _pick_vc(p, read):
     return next((r for r in read or [] if str(r).lower() == p["vcenter"]), "")
 
 
-def vm_pick_snapshot_plan(split, picks, vcenters_read):
+def vm_pick_snapshot_plan(split, picks, vcenters_read, offer=None):
     """What a picked-snapshot job deletes: each pick found again live - same vCenter, VM ID and snapshot ID,
     the same names as its choice showed, still allowed (vm_snapshot_split: not held back).
     split: vm_snapshot_split's answer for the live snapshots; picks: vm_pick_parse's; vcenters_read: the
-    vCenters the job read. -> {'todo': [live snapshots], 'skipped': [pick + reason]}"""
+    vCenters the job read. offer: vm_pick_snapshot_offer's answer for the same live snapshots (None = only what the
+    cleanup could delete, as before 1.118.3): a held snapshot is then deleted when it is offered now AND its choice
+    said it was held, with the same kind of hold (the person saw it); never the AAP server's own, a host left out
+    of every job, a template, nor one over vm_pick_snapshot_max_size_gb.
+    -> {'todo': [live snapshots + held ('' or the hold) + held_reason], 'skipped': [pick + reason]}"""
     key = lambda x: (str(x.get("vcenter", "")).lower(), str(x.get("moid", "")), str(x.get("id", "")))
     ok = {key(x): x for x in (split or {}).get("old") or []}
     held = {key(x): x for x in (split or {}).get("held") or []}
     every = {key(x): x for x in (split or {}).get("all") or []}
+    offered = {key(x): x for x in (offer or {}).get("offered") or []} if offer is not None else None
+    back = {key(x): x for x in (offer or {}).get("held") or []} if offer is not None else {}
     todo, skipped = [], []
     for p in picks or []:
         k = (p["vcenter"], p["moid"], p.get("id", ""))
         live = every.get(k)
+        shown = " ".join(str(p.get("held") or "").split())
         if not _pick_vc(p, vcenters_read):
             why = "its vCenter %s was not read by this job (vmware_vcenters, or it could not be reached)" % p["vcenter"]
         elif live is None:
@@ -1495,10 +1598,24 @@ def vm_pick_snapshot_plan(split, picks, vcenters_read):
             why = 'the VM was renamed since the list was made (was "%s", now "%s")' % (p["vm"], live.get("vm"))
         elif p.get("name") and not _same(p["name"], live.get("name")):
             why = 'the snapshot was renamed since the list was made (was "%s", now "%s")' % (p["name"], live.get("name"))
+        elif offered is not None and k in back:
+            why = "Refused: " + back[k].get("reason", "?")
+        elif offered is not None and k in offered:
+            o = offered[k]
+            if o.get("pick_held") and not (p.get("vm") and p.get("name")):
+                why = ("held back now: %s - a held snapshot is deleted only from its whole choice, as the list wrote it "
+                       "(the VM and snapshot names are checked)" % (o.get("pick_reason") or o["pick_held"]))
+            elif o.get("pick_held") and _pick_held_kind(o["pick_held"]) != _pick_held_kind(shown):
+                why = ("held back now: %s - the list did not say so when it was picked (%s); refresh the list "
+                       "(vm_pick_refresh.yml) and pick it again" % (o.get("pick_reason") or o["pick_held"],
+                                                                     ("it said held: " + shown) if shown else "it was not held then"))
+            else:
+                todo.append(dict(o, text=p.get("text", ""), held=o.get("pick_held", ""), held_reason=o.get("pick_reason", "")))
+                continue
         elif k in held:
             why = "held back now: " + held[k].get("reason", "?")
         elif k in ok:
-            todo.append(dict(ok[k], text=p.get("text", "")))
+            todo.append(dict(ok[k], text=p.get("text", ""), held="", held_reason=""))
             continue
         else:
             why = "not old enough to be offered (vm_pick_snapshot_min_age_days)"
@@ -3081,7 +3198,7 @@ class FilterModule(object):
                 "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,
                 "vc_short": vc_short, "act_is_chat_reply": act_is_chat_reply, "vm_dc_label": vm_dc_label, "vm_vcenters_read": vm_vcenters_read, "vm_vcenter_report": vm_vcenter_report,
                 "vm_snapshot_split": vm_snapshot_split, "snapshot_name_words": snapshot_name_words, "vm_snapshot_plan": vm_snapshot_plan, "vm_pick_snapshot_choices": vm_pick_snapshot_choices, "vm_pick_vms": vm_pick_vms, "vm_pick_ids": vm_pick_ids,
-                "vm_pick_reasons": vm_pick_reasons, "vm_pick_parse": vm_pick_parse, "vm_pick_snapshot_plan": vm_pick_snapshot_plan,
+                "vm_pick_reasons": vm_pick_reasons, "vm_pick_parse": vm_pick_parse, "vm_pick_snapshot_plan": vm_pick_snapshot_plan, "vm_pick_snapshot_offer": vm_pick_snapshot_offer,
                 "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "patch_vm_match": patch_vm_match, "patch_protected": patch_protected, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,

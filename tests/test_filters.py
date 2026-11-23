@@ -1076,7 +1076,7 @@ class PickLists(unittest.TestCase):
         self.assertEqual(c, 'web01: "before (patch)" (12.4 GB, 6.2 days old, taken 2026-10-14 08:12 UTC, VC01) [vc01.example.mil/vm-42/7]')
         p = f.vm_pick_parse([c, c], "snapshot")                         # the same pick twice: once
         self.assertEqual(p["picks"], [{"vcenter": "vc01.example.mil", "moid": "vm-42", "id": "7", "vm": "web01", "name": "before (patch)",
-                                       "text": c}])
+                                       "text": c, "held": ""}])
         self.assertEqual(f.vm_pick_snapshot_choices([self.SNAP] * 3, max_choices=2)["more"], 1)
 
     def test_parse_text_bad_and_empty(self):
@@ -1135,6 +1135,122 @@ class PickLists(unittest.TestCase):
                       f.vm_pick_snapshot_plan(split, renamed, ["vc01.example.mil"])["skipped"][0]["reason"])
         moved = f.vm_pick_parse([tok(7, vm="web02")], "snapshot")["picks"]
         self.assertIn('the VM was renamed', f.vm_pick_snapshot_plan(split, moved, ["vc01.example.mil"])["skipped"][0]["reason"])
+
+    # ---- 1.118.3: the held snapshots offered too (vm_pick_snapshot_offer_held), never the AAP server's ----
+    HELD = [dict(vm="db01", moid="vm-7", vcenter="vc01.example.mil", id=3, name="nightly", age_days=9, size_gb=20,
+                 created="2026-11-01T00:00:00Z"),                                                    # protected (vmware_protected_vms)
+            dict(vm="web01", moid="vm-8", vcenter="vc01.example.mil", id=1, name="pre", age_days=8, size_gb=2,
+                 created="2026-11-01T00:00:00Z"),                                                    # deletable
+            dict(vm="AAP-Controller", moid="vm-9", vcenter="vc01.example.mil", id=2, name="keep me", age_days=7, size_gb=2,
+                 ip="192.0.2.5", ips=["192.0.2.5"], created="2026-11-01T00:00:00Z"),                 # AAP by IP, its name says keep
+            dict(vm="aap01", moid="vm-12", vcenter="vc01.example.mil", id=6, name="x", age_days=7, size_gb=2,
+                 created="2026-11-01T00:00:00Z"),                                                    # AAP by name
+            dict(vm="sql02", moid="vm-10", vcenter="vc01.example.mil", id=4, name="big", age_days=6, size_gb=1331.2,
+                 created="2026-11-01T00:00:00Z"),                                                    # bigger than 1 TB
+            dict(vm="gold", moid="vm-11", vcenter="vc01.example.mil", id=5, name="x", age_days=6, size_gb=2, template=True,
+                 created="2026-11-01T00:00:00Z"),                                                    # a VM template
+            dict(vm="app01", moid="vm-13", vcenter="vc01.example.mil", id=7, name="Keep - before upgrade", age_days=5, size_gb=None,
+                 created="2026-11-01T00:00:00Z"),                                                    # keep name
+            dict(vm="file01", moid="vm-14", vcenter="vc01.example.mil", id=8, name="x", age_days=5, size_gb=None,
+                 created="2026-11-01T00:00:00Z"),                                                    # size unknown
+            dict(vm="lab01", moid="vm-15", vcenter="vc01.example.mil", id=9, name="x", age_days=5, size_gb=1,
+                 created="2026-11-01T00:00:00Z")]                                                    # excluded VM
+    OPTS = {"offer_held": True, "aap_ids": ["aap01", "192.0.2.5"], "aap_names": ["db01"], "aap_group": True, "offer_names": ["DB*"],
+            "never_ids": [], "never_names": [], "protected_names": ["db01"]}
+
+    def held_split(self):
+        return f.vm_snapshot_split(self.HELD, 0, "(?i)keep", ["db01", "lab*"], ["aap01", "192.0.2.5"], 1024)
+
+    def test_offer_held_with_the_reason(self):
+        o = f.vm_pick_snapshot_offer(self.held_split(), self.OPTS)
+        c = f.vm_pick_snapshot_choices(o["offered"])["choices"]
+        self.assertEqual(c, [
+            'db01: "nightly" (20.0 GB, 9 days old, taken 2026-11-01 00:00 UTC) [held: protected VM] [vc01.example.mil/vm-7/3]',
+            'web01: "pre" (2.0 GB, 8 days old, taken 2026-11-01 00:00 UTC) [vc01.example.mil/vm-8/1]',
+            'sql02: "big" (1.30 TB, 6 days old, taken 2026-11-01 00:00 UTC) [held: 1.30 TB - consolidation can take long and stun the VM]'
+            ' [vc01.example.mil/vm-10/4]',
+            'app01: "Keep - before upgrade" (?, 5 days old, taken 2026-11-01 00:00 UTC) [held: name says keep] [vc01.example.mil/vm-13/7]',
+            'file01: "x" (?, 5 days old, taken 2026-11-01 00:00 UTC) [held: size unknown] [vc01.example.mil/vm-14/8]',
+            'lab01: "x" (1.0 GB, 5 days old, taken 2026-11-01 00:00 UTC) [held: excluded VM] [vc01.example.mil/vm-15/9]'])
+        # never: the AAP server (by its IP although its name says keep, and by its name) and the template
+        self.assertEqual(sorted((x["vm"], x["reason"]) for x in o["held"]), [
+            ("AAP-Controller", "the AAP server's own snapshot - never deleted by a job"),
+            ("aap01", "the AAP server's own snapshot - never deleted by a job"), ("gold", "a VM template")])
+        # the choice still reads back: the VM and snapshot names (the rename check) and the hold
+        p = f.vm_pick_parse(c, "snapshot")["picks"]
+        self.assertEqual([(x["vm"], x["name"], x["held"]) for x in p][:3], [
+            ("db01", "nightly", "protected VM"), ("web01", "pre", ""), ("sql02", "big", "1.30 TB - consolidation can take long and stun the VM")])
+
+    def test_offer_held_false_is_as_before(self):
+        split = self.held_split()
+        o = f.vm_pick_snapshot_offer(split, dict(self.OPTS, offer_held=False))
+        self.assertEqual([x["vm"] for x in o["offered"]], ["web01", "gold"])
+        self.assertEqual(f.vm_pick_snapshot_choices(o["offered"])["choices"], f.vm_pick_snapshot_choices(split["old"])["choices"])
+        self.assertEqual(o["held"], split["held"])
+
+    def test_offer_protected_vms_only_when_listed(self):
+        # vmware_protected_vms is where the AAP VM is named: not offered unless vm_pick_snapshot_offer_vms lists it
+        o = f.vm_pick_snapshot_offer(self.held_split(), dict(self.OPTS, offer_names=[]))
+        self.assertNotIn("db01", [x["vm"] for x in o["offered"]])
+        self.assertIn("db01", [x["vm"] for x in o["held"]])
+        # the AAP VM named there under another name (no Tools: no IP) - never, as long as offer_vms does not list it
+        s = [dict(self.HELD[1], vm="AAP-VM", moid="vm-99", ip="", ips=[])]
+        o = f.vm_pick_snapshot_offer(f.vm_snapshot_split(s, 0, "", ["AAP-VM"], ["aap01"], 1024), dict(self.OPTS, aap_names=["AAP-VM"]))
+        self.assertEqual((o["offered"], o["held"][0]["reason"].split(",")[0]), ([], "a VM of vmware_protected_vms"))
+        # the inventory has no aap group: any VM of vmware_protected_vms may be the AAP server - never, offer_vms or not
+        o = f.vm_pick_snapshot_offer(self.held_split(), dict(self.OPTS, aap_ids=[], aap_group=False))
+        self.assertNotIn("db01", [x["vm"] for x in o["offered"]])
+        self.assertIn(("db01", "the AAP server's own snapshot - never deleted by a job (no aap group: any VM of vmware_protected_vms may be it)"),
+                      [(x["vm"], x["reason"]) for x in o["held"]])
+        # site_exclude_hosts / site_exclude_groups: never
+        o = f.vm_pick_snapshot_offer(self.held_split(), dict(self.OPTS, never_names=["lab*"], never_ids=["db01"]))
+        self.assertFalse({"lab01", "db01"} & {x["vm"] for x in o["offered"]})
+
+    def test_offer_size_cap(self):
+        o = f.vm_pick_snapshot_offer(self.held_split(), dict(self.OPTS, max_size_gb=1024))
+        self.assertEqual({x["vm"] for x in o["offered"]}, {"db01", "web01", "lab01"})   # not the 1.30 TB, nor the two of unknown size
+
+    def test_delete_recheck_held(self):
+        split = self.held_split()
+        o = f.vm_pick_snapshot_offer(split, self.OPTS)
+        c = f.vm_pick_snapshot_choices(o["offered"])["choices"]
+        aap = '%s: "keep me" (2.0 GB, 7 days old, taken 2026-11-01 00:00 UTC) [vc01.example.mil/vm-9/2]' % "AAP-Controller"
+        picks = f.vm_pick_parse([c[0], c[2], aap], "snapshot")["picks"]
+        plan = f.vm_pick_snapshot_plan(split, picks, ["vc01.example.mil"], o)
+        self.assertEqual([(x["vm"], x["held"], x["hold"]) for x in plan["todo"]],
+                         [("db01", "protected VM", "exclude"), ("sql02", "1.30 TB - consolidation can take long and stun the VM", "size")])
+        self.assertEqual([(x["vm"], x["reason"]) for x in plan["skipped"]],
+                         [("AAP-Controller", "Refused: the AAP server's own snapshot - never deleted by a job")])
+        # the same held pick with the setting off: held back, as before
+        plan = f.vm_pick_snapshot_plan(split, picks[:1], ["vc01.example.mil"])
+        self.assertEqual((plan["todo"], plan["skipped"][0]["reason"].split(":")[0]), ([], "held back now"))
+        # a pick whose choice did not say held (the list is older than the hold): not deleted - refresh and pick again
+        plain = f.vm_pick_parse(['db01: "nightly" (20.0 GB, 9 days old, taken x) [vc01.example.mil/vm-7/3]'], "snapshot")["picks"]
+        plan = f.vm_pick_snapshot_plan(split, plain, ["vc01.example.mil"], o)
+        self.assertEqual(plan["todo"], [])
+        self.assertIn("the list did not say so when it was picked (it was not held then)", plan["skipped"][0]["reason"])
+        # the size changed since (1.3 TB then 1.4 TB): the same kind of hold - deleted
+        grown = f.vm_pick_parse([c[2].replace("[held: 1.30 TB", "[held: 1.20 TB")], "snapshot")["picks"]
+        self.assertEqual(len(f.vm_pick_snapshot_plan(split, grown, ["vc01.example.mil"], o)["todo"]), 1)
+        # another kind of hold than the choice said: not deleted
+        other = f.vm_pick_parse([c[0].replace("[held: protected VM]", "[held: size unknown]")], "snapshot")["picks"]
+        self.assertEqual(f.vm_pick_snapshot_plan(split, other, ["vc01.example.mil"], o)["todo"], [])
+        # an approved plan (dicts, the plan step's held): the same
+        approved = f.vm_pick_parse([{"vm": "db01", "name": "nightly", "vcenter": "vc01.example.mil", "moid": "vm-7", "id": 3,
+                                     "text": "x", "held": "protected VM"},
+                                    {"vm": "AAP-Controller", "name": "keep me", "vcenter": "vc01.example.mil", "moid": "vm-9", "id": 2,
+                                     "text": "x", "held": "protected VM"}], "snapshot")["picks"]
+        plan = f.vm_pick_snapshot_plan(split, approved, ["vc01.example.mil"], o)
+        self.assertEqual(([x["vm"] for x in plan["todo"]], [x["vm"] for x in plan["skipped"]]), (["db01"], ["AAP-Controller"]))
+        # a held pick whose names cannot be read (not a whole choice): its hold is not taken, not deleted
+        broken = f.vm_pick_parse(["other-vm: nightly (20 GB) [held: protected VM] [vc01.example.mil/vm-7/3]"], "snapshot")["picks"]
+        self.assertEqual((broken[0]["vm"], broken[0]["held"]), ("", ""))
+        plan = f.vm_pick_snapshot_plan(split, broken, ["vc01.example.mil"], o)
+        self.assertEqual(plan["todo"], [])
+        self.assertIn("deleted only from its whole choice", plan["skipped"][0]["reason"])
+        # a template picked by hand: refused
+        tpl = f.vm_pick_parse(['gold: "x" (2.0 GB, 6 days old, taken x) [vc01.example.mil/vm-11/5]'], "snapshot")["picks"]
+        self.assertEqual(f.vm_pick_snapshot_plan(split, tpl, ["vc01.example.mil"], o)["skipped"][0]["reason"], "Refused: a VM template")
 
     def test_reboot_plan(self):
         vms = [self.vm(), self.vm(name="nt", moid="vm-7", tools_running="guestToolsNotRunning"), self.vm(name="SQL01", moid="vm-2")]

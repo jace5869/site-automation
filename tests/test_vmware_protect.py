@@ -139,6 +139,47 @@ class Protected(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             self.assertIn("SPLIT old=web01 held=DC-01|File Server 01", out)
 
+    # ---- 1.118.3: the pick list offers the held snapshots too, with why - never the AAP server's (pick_offer.yml) ----
+    OFFER_CHECK = """    - ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: pick_offer.yml
+    - ansible.builtin.debug:
+        msg: "OFFER {{ (_vm_po.offered | vm_pick_snapshot_choices).choices | join(' || ') }} NEVER {{ _vm_po.held | map(attribute='vm') | join('|') }}"
+"""
+    PICK_SNAPS = {"vcenters": [{"name": "vc01.example.mil", "ok": True}],
+                  "snapshots": [{"vm": "DB 01", "moid": "vm-4", "vcenter": "vc01.example.mil", "id": 2, "name": "nightly", "description": "",
+                                 "age_days": 3.0, "size_gb": 4.0, "hostname": "", "ip": "", "created": "2026-11-20T00:00:00Z"},
+                                {"vm": "AAP-Controller", "moid": "vm-5", "vcenter": "vc01.example.mil", "id": 1, "name": "pre", "description": "",
+                                 "age_days": 3.0, "size_gb": 1.0, "hostname": "ctl.example.mil", "ip": "192.0.2.5", "created": "2026-11-20T00:00:00Z"},
+                                {"vm": "web01", "moid": "vm-3", "vcenter": "vc01.example.mil", "id": 1, "name": "old", "description": "",
+                                 "age_days": 3.0, "size_gb": 1.0, "hostname": "web01.example.mil", "ip": "192.0.2.40", "created": "2026-11-20T00:00:00Z"}]}
+
+    def offer(self, extra, inv="inv.yml"):
+        rc, out = self.run_tasks("snapshot_split.yml", dict({"_vm_snap_read": self.PICK_SNAPS, "_vm_sn_age": 0, "_vm_sn_words": []}, **extra),
+                                 self.OFFER_CHECK, inv=inv)
+        self.assertEqual(rc, 0, out)
+        return out.replace('\\"', '"')
+
+    def test_pick_offer_protected_db_with_reason_never_aap(self):
+        # the AAP server: the inventory's aap01 (192.0.2.5) - the VM has another name, its IP says it is AAP
+        out = self.offer({"vmware_protected_vms": "AAP Controller, DB 01", "vm_pick_snapshot_offer_vms": "DB*"})
+        self.assertIn('OFFER DB 01: "nightly" (4.0 GB, 3.0 days old, taken 2026-11-20 00:00 UTC) [held: protected VM] [vc01.example.mil/vm-4/2]'
+                      ' || web01: "old" (1.0 GB, 3.0 days old, taken 2026-11-20 00:00 UTC) [vc01.example.mil/vm-3/1] NEVER AAP-Controller', out)
+
+    def test_pick_offer_protected_vms_not_listed_never(self):
+        out = self.offer({"vmware_protected_vms": "DB 01"})
+        self.assertIn('[vc01.example.mil/vm-3/1] NEVER AAP-Controller|DB 01', out)
+
+    def test_pick_offer_no_aap_group_protected_vms_never(self):
+        # no aap group: the VMs of vmware_protected_vms may be the AAP server - never offered
+        out = self.offer({"vmware_protected_vms": "DB 01", "vm_pick_snapshot_offer_vms": "DB*"}, inv="inv-noaap.yml")
+        self.assertIn('[vc01.example.mil/vm-3/1] NEVER DB 01', out)
+        self.assertNotIn("vm-4/2]", out.split("NEVER")[0].split("OFFER")[-1])
+
+    def test_pick_offer_held_false_as_before(self):
+        out = self.offer({"vmware_protected_vms": "DB 01", "vm_pick_snapshot_offer_held": False})
+        self.assertIn('OFFER web01: "old" (1.0 GB, 3.0 days old, taken 2026-11-20 00:00 UTC) [vc01.example.mil/vm-3/1] NEVER AAP-Controller|DB 01', out)
+
     def test_snapshot_cleanup_refused_without_the_aap_group(self):
         rc, out = self.run_tasks("snapshot_cleanup.yml", {}, inv="inv-noaap.yml", env={"VMWARE_HOST": "vc01.example.mil"})
         self.assertNotEqual(rc, 0, out)

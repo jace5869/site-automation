@@ -346,8 +346,9 @@ q = [r for r in rows if r["kind"] == sys.argv[2] and r["id"] == int(sys.argv[3])
 c = q["choices"] if isinstance(q["choices"], list) else q["choices"].split("\n")
 print("\n".join(c) if len(sys.argv) < 5 else c[int(sys.argv[4])])' "$work/survey.jsonl" "$@"
 }
+# (vm_pick_snapshot_offer_held false here: only what the cleanup could delete - the held ones offered: after the picks)
 picklist='{"vm_pick_snapshot_templates": ["VM - delete picked snapshots", {"template": "61", "kind": "workflow"}],
-           "vm_pick_reboot_templates": ["VM - restart picked VMs"]}'
+           "vm_pick_reboot_templates": ["VM - restart picked VMs"], "vm_pick_snapshot_offer_held": false}'
 # (on DC0_C0_RP0_VM1, which keeps keep-me: vcsim cannot take a snapshot of a VM whose snapshots were all deleted)
 run "pick lists: two snapshots of the same name, and a third" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=pick-a -- "Took snapshot"
 VMWARE_PORT=$port "$py" "$here/vcsim.py" snap DC0_C0_RP0_VM1 pick-a
@@ -373,9 +374,22 @@ run "pick lists again, nothing new: no choice changed (at most the time of the l
     -- "question vm_snapshot_picks: 3 choice(s) - " && ! grep -q "updated: 3 choice" "$work/out.txt" && echo "ok   -   ...the same choices" \
     || { echo "FAIL -   ...the choices were written again"; fails=$((fails + 1)); }
 run "pick lists: a template that is not there - the others are still written, the job fails and says so" fail vm_pick_refresh.yml \
-    -e '{"vm_pick_snapshot_templates": ["Nope", "VM - delete picked snapshots"]}' \
+    -e '{"vm_pick_snapshot_templates": ["Nope", "VM - delete picked snapshots"], "vm_pick_snapshot_offer_held": false}' \
     -- "NOT UPDATED template Nope (question vm_snapshot_picks): no job template or workflow job template Nope that the AAP user can see" \
        "job template VM - delete picked snapshots, question vm_snapshot_picks: 3 choice(s) - "
+# 1.118.3: a survey another job made first (only report_email_also): the refresh adds the pick list's question
+emq='{"vm_pick_snapshot_templates": [{"template": "Email question only", "kind": "workflow"}], "vm_pick_snapshot_offer_held": false}'
+run "pick lists, as Check: a survey with only the email question - says it would add the question" ok vm_pick_refresh.yml --check -e "$emq" \
+    -- "would add the question vm_snapshot_picks to workflow job template Email question only"
+run "pick lists: a survey with only the email question - the question added after it" ok vm_pick_refresh.yml -e "$emq" \
+    -- "added the question vm_snapshot_picks to workflow job template Email question only"
+"$py" -c 'import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1])]
+s = [r for r in rows if r["kind"] == "workflow" and r["id"] == 63][-1]["spec"]["spec"]
+assert [q["variable"] for q in s] == ["report_email_also", "vm_snapshot_picks"], s
+assert (s[1]["type"], s[1]["required"], s[1]["question_name"]) == ("multiselect", True, "Which snapshots to delete?"), s[1]
+assert len(s[1]["choices"]) == 3, s[1]' "$work/survey.jsonl" && echo "ok   -   ...the email question first and untouched, then Which snapshots to delete? (3 choices)" \
+    || { echo "FAIL -   ...question added"; fails=$((fails + 1)); }
 run "pick lists: no template named - says which settings" fail vm_pick_refresh.yml -- "Nothing to refresh: name the templates"
 (unset CONTROLLER_HOST; run "pick lists: no AAP credential - says which credential" fail vm_pick_refresh.yml -e "$picklist" \
     -- 'No AAP connection: attach a credential of type \"Red Hat Ansible Automation Platform\"') || fails=$((fails + 1))
@@ -425,12 +439,27 @@ plan="{\"vm_snapshot_pick_plan\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"name\": \"pick
 run "picked snapshots after the approval: exactly the plan - one pick-a (not its namesake), never the AAP server's" ok vm_snapshot_delete_picked.yml \
     -e "$plan" -e "@$sp" -e awx_workflow_job_id=77 \
     -- "VMware picked snapshots: deleted 1 (approved), 1 skipped" 'DELETED DC0_C0_RP0_VM1: \"pick-a\"' \
-       'SKIPPED DC0_H0_VM0: \"aap-snap\" - held back now: the VM is the AAP server'
+       "SKIPPED DC0_H0_VM0: \\\"aap-snap\\\" - Refused: the AAP server's own snapshot - never deleted by a job"
 check "  ...the other pick-a is still there" DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'pick-a'] == [$pa2]" "True"
 check "  ...and aap-snap" DC0_H0_VM0 "len(v['snapshots'])" 1
 run "picked snapshots, confirmed on their own: the rest deleted, the one already gone skipped" ok vm_snapshot_delete_picked.yml -e "@$sp" -e vm_pick_confirm=true \
     -- "VMware picked snapshots: deleted 2, 3 skipped" 'DELETED DC0_C0_RP0_VM1: \"pick-b\"' '"vm_snapshot_picked"'
 check "  ...only keep-me left" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me"
+# 1.118.3: the held snapshots offered too (vm_pick_snapshot_offer_held, the default), each saying why - never the AAP server's
+run "pick lists, the held ones too: keep-me offered with why, the AAP server's aap-snap never" ok vm_pick_refresh.yml \
+    -e '{"vm_pick_snapshot_templates": ["VM - delete picked snapshots"]}' \
+    -- "VMware pick lists: 1 snapshot(s) to delete" "Snapshots: 1 offered (1 held from the automatic cleanup, offered with the reason)" \
+       "1 held back: 1 the AAP server's own snapshot - never deleted by a job" '[held: name says keep] [127.0.0.1/vm-'
+[ "$(choices job 51 | grep -c 'keep-me.*\[held: name says keep\] \[127.0.0.1/vm-[0-9]*/[0-9]*\]$')" = 1 ] && ! choices job 51 | grep -q aap-snap \
+    && echo "ok   -   ...keep-me in the survey with [held: name says keep], aap-snap not" \
+    || { echo "FAIL -   ...held choices"; choices job 51; fails=$((fails + 1)); }
+hp="$work/held-picks.json"
+"$py" -c 'import json, sys; json.dump({"vm_snapshot_picks": sys.stdin.read().splitlines() + ["DC0_H0_VM0: \"aap-snap\" (x) [127.0.0.1/'"$aapmoid/$aapsnap"']"]},
+    open(sys.argv[1], "w"))' "$hp" <<< "$(choices job 51)"
+run "picked held snapshot: the plan says it is held; the AAP server's, typed in, refused" ok vm_snapshot_delete_picked.yml -e "@$hp" \
+    -- 'WOULD DELETE DC0_C0_RP0_VM1: \"keep-me\"' "- it is held: name says keep" \
+       "SKIPPED DC0_H0_VM0: \\\"aap-snap\\\" - Refused: the AAP server's own snapshot - never deleted by a job" "would delete 1, 1 skipped (nothing deleted)"
+check "  ...keep-me still there (a plan only)" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me"
 
 # the restart picks (DC0_H0_VM1 is hung now: Tools installed, no heartbeat; DC0_C0_RP0_VM0 runs no Tools)
 rp="$work/vm-picks.json"

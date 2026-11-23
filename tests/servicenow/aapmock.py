@@ -21,7 +21,7 @@ Surveys (the pick lists, vm_pick_refresh.yml; each survey written appended to $A
   vm_power_mode), 53 "Text question" (vm_snapshot_picks is a text box), 54 "No survey", 55 "Survey off" (a
   survey that is turned off), 56 "Both" (a workflow is named so too), 57 "Read only" (the user may not change
   it); workflow job templates 61 "VM - delete picked snapshots (workflow)" (vm_snapshot_picks: multiple select,
-  a list) and 62 "Both". AAPMOCK_SURVEY_FAIL=1: writing a survey answers 400.
+  a list), 62 "Both" and 63 "Email question only" (a survey with report_email_also only). AAPMOCK_SURVEY_FAIL=1: writing a survey answers 400.
 
 Jobs (the reports' strip of past runs, roles/site_email site_report_history): job template 71 "Snapshot cleanup"
 has jobs 901-918 (successful, failed, one canceled, one still running; some with the artifact site_report_run,
@@ -83,7 +83,8 @@ def _q(var, kind, choices=None, default="", required=False):
 TPLS = {"job": [_tpl("job", 51, "VM - delete picked snapshots"), _tpl("job", 52, "VM - restart picked VMs"),
                 _tpl("job", 53, "Text question"), _tpl("job", 54, "No survey", enabled=False), _tpl("job", 55, "Survey off", enabled=False),
                 _tpl("job", 56, "Both"), _tpl("job", 57, "Read only", edit=False)],
-        "workflow": [_tpl("workflow", 61, "VM - delete picked snapshots (workflow)"), _tpl("workflow", 62, "Both")]}
+        "workflow": [_tpl("workflow", 61, "VM - delete picked snapshots (workflow)"), _tpl("workflow", 62, "Both"),
+                     _tpl("workflow", 63, "Email question only")]}
 SPECS = {("job", 51): {"name": "", "description": "", "spec": [_q("vm_snapshot_picks", "multiselect", "old one\nold two", "old two", True)]},
          ("job", 52): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiplechoice", ["x"], "x"),
                                                                 _q("vm_power_mode", "multiplechoice", ["guest", "hard"], "guest")]},
@@ -93,7 +94,9 @@ SPECS = {("job", 51): {"name": "", "description": "", "spec": [_q("vm_snapshot_p
          ("job", 56): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
          ("job", 57): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
          ("workflow", 61): {"name": "", "description": "", "spec": [_q("vm_snapshot_picks", "multiselect", [], "")]},
-         ("workflow", 62): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]}}
+         ("workflow", 62): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
+         # another job's survey came first: only the email question, no pick list question (1.118.3: the refresh adds it)
+         ("workflow", 63): {"name": "", "description": "", "spec": [_q("report_email_also", "text")]}}
 
 
 class H(BaseHTTPRequestHandler):

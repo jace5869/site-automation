@@ -231,10 +231,25 @@ vm_pick_snapshot_question: vm_snapshot_picks   # the question's Answer variable 
 vm_pick_reboot_templates: []             # e.g. ["VM - restart picked VMs (workflow)"]
 vm_pick_reboot_question: vm_reboot_picks       # the question's Answer variable name
 vm_pick_max_choices: 200                 # a list never has more choices than this (the rest is counted in the job's output)
-# The snapshots offered: only those the snapshot cleanup could delete (the same holds - a name that says
-# keep, the excluded VMs, datacenters and clusters, the protected VMs and the AAP server, bigger than
-# vm_snapshot_cleanup_max_size_gb; not the name words), at least this many days old. 0 = any age.
+# The snapshots offered: at least this many days old (0 = any age) - those the snapshot cleanup could delete,
+# and (vm_pick_snapshot_offer_held) the ones it holds back, each saying why.
 vm_pick_snapshot_min_age_days: 0
+# true = the held snapshots are offered too - a name that says keep, the excluded VMs, datacenters and clusters,
+# the hosts of vmware_protected_groups (a database server, say), bigger than vm_snapshot_cleanup_max_size_gb or
+# size unknown; the holds are for the automatic cleanup, a person picking chooses. Each such choice ends with why,
+# e.g. "[held: protected VM]", "[held: 1.3 TB - consolidation can take long and stun the VM]"; one picked is
+# deleted, and the report says "deleted - it was held: ...". Never offered nor deleted: the AAP server's own
+# snapshots (the inventory's aap / aap_hosts hosts by VM name, guest host name or IP address), the VMs of
+# vmware_protected_vms - where the AAP VM is named - unless vm_pick_snapshot_offer_vms lists them, the hosts
+# site_exclude_hosts / site_exclude_groups leave out, VM templates. false = only what the cleanup could delete
+# (before 1.118.3).
+vm_pick_snapshot_offer_held: true
+# VMs of vmware_protected_vms whose held snapshots may be offered all the same (names, * and ?; e.g. [SQL*, DB01]) -
+# never the AAP VM. Only with an aap group in the inventory (else any of them may be the AAP server). [] = none.
+vm_pick_snapshot_offer_vms: []
+# With vm_pick_snapshot_offer_held: never offer nor delete a snapshot bigger than this many GB (or of unknown size).
+# 0 = no limit.
+vm_pick_snapshot_max_size_gb: 0
 # The VMs offered for a restart: powered on, never the AAP server or a protected VM (vmware_protected_*),
 # among these (names, * and ?, any case; [] = every VM; survey text: separated by commas or line breaks) ...
 vm_pick_reboot_vms: []

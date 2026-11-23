@@ -1,0 +1,15 @@
+---
+# WHAT THE SNAPSHOT PICK LIST OFFERS (pick_snapshots.yml, after snapshot_split.yml): the snapshots the cleanup could
+# delete and - vm_pick_snapshot_offer_held - the ones it holds back, each with why (pick_held). Never the AAP server's
+# own (protected.yml's aap_ids: the aap / aap_hosts hosts by VM name, guest host name or IP address), the VMs of
+# vmware_protected_vms - where the AAP VM is named - unless vm_pick_snapshot_offer_vms lists them, the hosts site_exclude_hosts / site_exclude_groups
+# leave out, VM templates, nor one over vm_pick_snapshot_max_size_gb. Input: _vm_sn, _vm_prot. Output: _vm_po.
+- name: VMware | the snapshots offered (vm_pick_snapshot_offer_held - never the AAP server's)
+  ansible.builtin.set_fact:
+    _vm_po: >-
+      {{ _vm_sn | vm_pick_snapshot_offer({'offer_held': vm_pick_snapshot_offer_held | bool,
+                                          'aap_ids': _vm_prot.aap_ids, 'aap_names': _vm_prot.aap_names, 'aap_group': _vm_prot.aap_group,
+                                          'offer_names': vm_pick_snapshot_offer_vms | name_list,
+                                          'never_ids': _vm_prot.never_ids, 'never_names': _vm_prot.never_names,
+                                          'protected_names': _vm_prot.protected_names,
+                                          'max_size_gb': vm_pick_snapshot_max_size_gb | float}) }}

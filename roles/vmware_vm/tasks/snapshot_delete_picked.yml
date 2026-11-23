@@ -2,7 +2,10 @@
 # DELETE THE SNAPSHOTS PICKED FROM THE LIST (vm_snapshot_delete_picked.yml): vm_snapshot_picks, the survey's
 # answer - choices pick_refresh.yml wrote, each ending with its [vcenter/VM ID/snapshot ID]. Every pick is
 # found again live and must still be allowed (pick_snapshots.yml: the cleanup's holds); one that is gone,
-# renamed or held back now is skipped, with the reason.
+# renamed or held back now is skipped, with the reason. vm_pick_snapshot_offer_held (true): a held snapshot is
+# deleted when it is offered now and its choice said it was held (the person chose it) - the report says
+# "deleted - it was held: <reason>"; never the AAP server's own (refused, said), a host left out of every job, a
+# template, nor one over vm_pick_snapshot_max_size_gb. A big one gets a warning first: merging it takes long.
 #   - plan (on its own, or the first step of a workflow): lists exactly what would be deleted and hands that
 #     list on (job artifact vm_snapshot_pick_plan); deletes nothing. Nothing left to delete = failed, so a
 #     workflow stops before its approval.
@@ -49,7 +52,8 @@
 - name: VMware | each pick found again
   ansible.builtin.set_fact:
     _vm_pd_plan: >-
-      {%- set p = _vm_sn | vm_pick_snapshot_plan(_vm_pd.picks, _vm_snap_read.vcenters | vm_vcenters_read) -%}
+      {%- set p = _vm_sn | vm_pick_snapshot_plan(_vm_pd.picks, _vm_snap_read.vcenters | vm_vcenters_read,
+                                                 _vm_po if vm_pick_snapshot_offer_held | bool else none) -%}
       {%- set bad = [] -%}
       {%- for b in _vm_pd.bad -%}{%- set _ = bad.append({'text': b, 'vm': '', 'name': '', 'reason': 'not a choice of the pick list (no [vCenter/VM/snapshot] at its end)'}) -%}{%- endfor -%}
       {{ p | combine({'skipped': p.skipped + bad}) }}
@@ -62,6 +66,23 @@
       Refused: {{ _vm_pd_plan.todo | length }} snapshots picked - more than vm_pick_max ({{ vm_pick_max }}). Nothing was
       deleted. Pick fewer, or raise vm_pick_max on purpose.
     quiet: true
+
+- name: VMware | the big held snapshots picked
+  ansible.builtin.set_fact:
+    _vm_pd_big: >-
+      {%- set out = [] -%}
+      {%- for x in _vm_pd_plan.todo if x.held | default('') and x.hold | default('') == 'size' -%}
+      {%-   set _ = out.append(x.vm ~ ': "' ~ x.name ~ '" ' ~ x.size_gb | human_size) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware | a big held snapshot takes long to merge
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ _vm_pd_big | length }} picked snapshot(s) bigger than vm_snapshot_cleanup_max_size_gb
+      ({{ vm_snapshot_cleanup_max_size_gb | float | human_size }}) - {{ _vm_pd_big | join('; ') }}: vCenter merges each into its
+      disks; consolidation can take hours and stun (pause) the VM. Better at a quiet time.
+  when: _vm_pd_big | length > 0
 
 - name: VMware | delete the picked snapshots
   vmware.vmware.vm_snapshot:
@@ -76,7 +97,7 @@
     timeout: "{{ vm_snapshot_delete_timeout | int }}"
   loop: "{{ _vm_pd_plan.todo }}"
   loop_control:
-    label: "{{ item.vm }}{{ ' (' ~ item.vcenter | vc_short ~ ')' if _vm_sn_multi else '' }}: {{ item.name }}"
+    label: "{{ item.vm }}{{ ' (' ~ item.vcenter | vc_short ~ ')' if _vm_sn_multi else '' }}: {{ item.name }}{{ (' - it was held: ' ~ item.held) if item.held | default('') else '' }}"
   register: _vm_pd_del
   ignore_errors: true                 # one that fails does not stop the others; the report lists it, the job fails at the end
   when: _vm_pd_do | bool
@@ -97,13 +118,18 @@
       {%- endif -%}
     _vm_report_lines: >-
       {%- set out = [] -%}
+      {%- if _vm_pd_big -%}
+      {%-   set _ = out.append('WARNING: ' ~ _vm_pd_big | length ~ ' big held snapshot(s) picked (' ~ _vm_pd_big | join('; ') ~ '): consolidation can take hours and stun the VM.') -%}
+      {%- endif -%}
       {%- if not _vm_pd_do | bool -%}
       {%-   set _ = out.append('Nothing deleted: ' ~ ('a dry run (Check).' if ansible_check_mode and _vm_pd_mode != 'plan' else
                                ('the plan for the approval (the next step deletes exactly these).' if awx_workflow_job_id is defined else
                                 'the plan - run again with vm_pick_confirm: true to delete them, or use the workflow with its approval.'))) -%}
-      {%-   for x in _vm_pd_plan.todo -%}{%- set _ = out.append('WOULD DELETE ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%-   for x in _vm_pd_plan.todo -%}{%- set _ = out.append('WOULD DELETE ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size
+                                                                  ~ ((' - it is held: ' ~ x.held) if x.held | default('') else '')) -%}{%- endfor -%}
       {%- else -%}
-      {%-   for x in _vm_pd_done -%}{%- set _ = out.append('DELETED ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%-   for x in _vm_pd_done -%}{%- set _ = out.append('DELETED ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size
+                                                             ~ ((' - deleted - it was held: ' ~ x.held) if x.held | default('') else '')) -%}{%- endfor -%}
       {%-   for r in _vm_pd_failed -%}{%- set _ = out.append('FAILED ' ~ r.item.vm ~ ': "' ~ r.item.name ~ '" - ' ~ r.msg | default('?') | truncate(200)) -%}{%- endfor -%}
       {%- endif -%}
       {%- for x in _vm_pd_plan.skipped -%}{%- set _ = out.append('SKIPPED ' ~ (x.vm or x.text) ~ (': "' ~ x.name ~ '"' if x.name else '') ~ ' - ' ~ x.reason) -%}{%- endfor -%}
@@ -116,7 +142,7 @@
         {%- set out = [] -%}
         {%- for x in _vm_pd_plan.todo -%}
         {%-   set _ = out.append({'vm': x.vm, 'name': x.name, 'vcenter': x.vcenter, 'moid': x.moid, 'id': x.id, 'created': x.created,
-                                  'size': x.size_gb | human_size, 'text': x.text}) -%}
+                                  'size': x.size_gb | human_size, 'text': x.text, 'held': x.held | default('')}) -%}
         {%- endfor -%}
         {{ out }}
       # the approved step checks the plan is its own workflow's, not one pasted in or left from another run

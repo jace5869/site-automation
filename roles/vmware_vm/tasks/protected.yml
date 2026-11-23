@@ -7,7 +7,10 @@
 # variable ("dcs", "AAP01, File Server 01", one per line) is names separated by commas or line breaks - never the
 # letters of one name, and a name with spaces stays one name.
 # Input: _vm_prot_refuse (optional): what the job will not do when the inventory cannot say which VM is the AAP server
-# - given, the job is refused then. Output: _vm_prot {groups, ids, names, aap_known}.
+# - given, the job is refused then. Output: _vm_prot {groups, ids, names, aap_known, and for the snapshot pick list
+# (vm_pick_snapshot_offer): aap_ids (the AAP hosts' names and IP addresses), aap_names (vmware_protected_vms: where the
+# AAP VM is named when vCenter cannot tell it by host name or IP), aap_group (the inventory has an aap group), never_ids / never_names (site_exclude_groups /
+# site_exclude_hosts), protected_names (vmware_protected_vms)}.
 - name: VMware | the protected VMs (the AAP server, vmware_protected_groups, vmware_protected_vms)
   ansible.builtin.set_fact:
     _vm_prot: >-
@@ -19,7 +22,13 @@
       {{ {'groups': (grp + sx_grp) | unique | list,
           'ids': (grp + sx_grp) | unique | select('in', groups) | map('extract', groups) | flatten | unique | list | host_ids(hostvars),
           'names': names + (site_exclude_hosts | default([], true) | site_exclude_patterns),
-          'aap_known': aap | length > 0 or names | length > 0} }}
+          'aap_known': aap | length > 0 or names | length > 0,
+          'aap_ids': aap | host_ids(hostvars),
+          'aap_names': names,
+          'aap_group': aap | length > 0,
+          'never_ids': sx_grp | select('in', groups) | map('extract', groups) | flatten | unique | list | host_ids(hostvars),
+          'never_names': site_exclude_hosts | default([], true) | site_exclude_patterns,
+          'protected_names': names} }}
 
 - name: VMware | the AAP server is on the protected list
   ansible.builtin.assert:

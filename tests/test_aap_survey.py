@@ -74,6 +74,29 @@ class SetChoices(unittest.TestCase):
                       m.set_choices(spec, "nope", ["a"])[1])
 
 
+class AddQuestion(unittest.TestCase):
+    """1.118.3: a survey another job made first (only report_email_also) gets the pick list's question added."""
+    def test_added_after_the_others(self):
+        email = q("report_email_also", "text", desc="Also email to")
+        spec = {"name": "", "description": "", "spec": [email]}
+        new, err, changes = m.set_choices(spec, "vm_snapshot_picks", ["a [vc/vm-1/1]"], note="of now: 1",
+                                          add_question="Which snapshots to delete?")
+        self.assertEqual(err, "")
+        self.assertEqual(new["spec"][0], email)                                       # untouched, still first
+        added = new["spec"][1]
+        self.assertEqual((added["variable"], added["type"], added["required"], added["question_name"], added["choices"]),
+                         ("vm_snapshot_picks", "multiselect", True, "Which snapshots to delete?", ["a [vc/vm-1/1]"]))
+        self.assertEqual(changes[0], "added the question vm_snapshot_picks")
+        self.assertEqual(len(spec["spec"]), 1)                                       # the original untouched
+        # without add_question: refused, as before
+        self.assertIn("its survey has no question whose variable is vm_snapshot_picks (its questions: report_email_also)",
+                      m.set_choices(spec, "vm_snapshot_picks", ["a"])[1])
+        # nothing to offer and no empty_choice: refused, the survey unchanged
+        new, err, _ = m.set_choices(spec, "vm_snapshot_picks", [], add_question="Which snapshots to delete?")
+        self.assertIn("AAP needs at least one choice", err)
+        self.assertEqual(new["spec"], [email])
+
+
 class Redirects(unittest.TestCase):
     """A redirect from AAP's address is an answer, not a path: the login must never travel on to where it points."""
     def test_not_followed(self):
@@ -164,6 +187,20 @@ class AgainstFakeAap(unittest.TestCase):
         self.assertIn("the survey of job template Survey off is turned off", r["warnings"][0])
         os.environ["AAPMOCK_SURVEY_FAIL"] = "1"
         self.assertIn("AAP refused the new survey (HTTP 400): error: Survey question 1", self.one("VM - delete picked snapshots")["error"])
+
+    def test_question_added_to_a_survey_with_only_the_email_question(self):
+        r = self.one("Email question only", kind="workflow", check=True, add_question="Which snapshots to delete?")
+        self.assertEqual((r["ok"], r["added"], r["changed"], self.log()), (True, True, True, []))        # Check: would add, writes nothing
+        r = self.one("Email question only", kind="workflow", add_question="Which snapshots to delete?")
+        self.assertEqual((r["ok"], r["added"], r["id"], r["choices"]), (True, True, 63, 1))
+        written = self.log()[-1]["spec"]["spec"]
+        self.assertEqual([x["variable"] for x in written], ["report_email_also", "vm_snapshot_picks"])
+        self.assertEqual(written[0]["type"], "text")
+        r = self.one("Email question only", kind="workflow", add_question="Which snapshots to delete?")
+        self.assertEqual((r["ok"], r["added"], r["changed"]), (True, False, False))     # there now: only the choices, unchanged
+        # without add_question: refused, as before
+        self.assertIn("no question whose variable is vm_reboot_picks (its questions: report_email_also, vm_snapshot_picks)",
+                      self.one("Email question only", kind="workflow", question="vm_reboot_picks")["error"])
 
     def test_no_credential(self):
         self.assertIn("the Admin role on the templates", m.Api(m.connection({}), no_credential=m.NO_CREDENTIAL).probe())

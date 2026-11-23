@@ -2627,7 +2627,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_pick_reboot_templates` | `[]` | e.g. ["VM - restart picked VMs (workflow)"] |
 | `vm_pick_reboot_question` | `vm_reboot_picks` | the question's Answer variable name |
 | `vm_pick_max_choices` | `200` | a list never has more choices than this (the rest is counted in the job's output) |
-| `vm_pick_snapshot_min_age_days` | `0` | The snapshots offered: only those the snapshot cleanup could delete (the same holds - a name that says keep, the excluded VMs, datacenters and clusters, the protected VMs and the AAP server, bigger than vm_snapshot_cleanup_max_size_gb; not the name words), at least this many days old. 0 = any age. |
+| `vm_pick_snapshot_min_age_days` | `0` | The snapshots offered: at least this many days old (0 = any age) - those the snapshot cleanup could delete, and (vm_pick_snapshot_offer_held) the ones it holds back, each saying why. |
+| `vm_pick_snapshot_offer_held` | `true` | true = the held snapshots are offered too - a name that says keep, the excluded VMs, datacenters and clusters, the hosts of vmware_protected_groups (a database server, say), bigger than vm_snapshot_cleanup_max_size_gb or size unknown; the holds are for the automatic cleanup, a person picking chooses. Each such choice… (all of it: the role file) |
+| `vm_pick_snapshot_offer_vms` | `[]` | VMs of vmware_protected_vms whose held snapshots may be offered all the same (names, * and ?; e.g. [SQL*, DB01]) - never the AAP VM. Only with an aap group in the inventory (else any of them may be the AAP server). [] = none. |
+| `vm_pick_snapshot_max_size_gb` | `0` | With vm_pick_snapshot_offer_held: never offer nor delete a snapshot bigger than this many GB (or of unknown size). 0 = no limit. |
 | `vm_pick_reboot_vms` | `[]` | The VMs offered for a restart: powered on, never the AAP server or a protected VM (vmware_protected_*), among these (names, * and ?, any case; [] = every VM; survey text: separated by commas or line breaks) ... |
 | `vm_pick_reboot_clusters` | `[]` | e.g. [PROD-*] |
 | `vm_pick_reboot_folders` | `[]` | folder paths as vCenter shows them, e.g. ["/DC1/vm/Linux*"] |

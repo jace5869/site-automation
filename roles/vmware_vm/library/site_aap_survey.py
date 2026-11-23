@@ -4,8 +4,9 @@
 job templates, through AAP's own API: the pick lists (vm_pick_refresh.yml) write what may be restarted
 or deleted right now, so whoever launches the template picks from a current list. The address and login
 come from the "Red Hat Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py).
-Standard library only. Never creates a template, a survey or a question: a name that is not there is
-refused, never guessed. The rest of the survey is left as it is."""
+Standard library only. Never creates a template or a survey: a name that is not there is refused, never
+guessed. A survey without the question gets it added (add_question, 1.118.3), after its own questions; the rest
+of the survey is left as it is."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -20,6 +21,9 @@ description:
   - The question must be Multiple choice (single select) or Multiple choice (multiple select);
     multiselect=true makes a single-select one multiple select. Anything else is refused.
   - No choices at all - AAP needs at least one - writes empty_choice instead, which the pick jobs ignore.
+  - A survey that has no question of that variable (another job added a survey first) gets it added, when the target
+    gives add_question (the question's text): Multiple choice (multiple select), required, after the survey's own
+    questions, which are left as they are. A template with no survey at all is still refused.
   - In check mode it only reads, and says what it would change.
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform"
     credential sets it (CONTROLLER_HOST, CONTROLLER_OAUTH_TOKEN or CONTROLLER_USERNAME and
@@ -28,8 +32,9 @@ description:
 options:
   targets:
     description: "[{template: name or ID, kind: job, workflow or empty (either - a name both kinds have is refused),
-      question: the variable name, choices: [text], multiselect: true, note: text, empty_choice: text}]. note
-      goes at the end of the question's description, in brackets, replacing the note an earlier run put there."
+      question: the variable name, choices: [text], multiselect: true, note: text, empty_choice: text, add_question: text}].
+      note goes at the end of the question's description, in brackets, replacing the note an earlier run put there.
+      add_question: the text of the question to add when the survey has none of that variable (empty = refused)."
     type: list
     elements: dict
     required: true
@@ -45,7 +50,7 @@ results:
   description: Each target - the template found, how many choices it has now, whether they changed, and why not when it failed.
   type: list
   sample: [{template: VM - restart picked VMs, kind: job, id: 52, question: vm_reboot_picks, choices: 3, changed: true, ok: true,
-            error: "", warnings: []}]
+            added: false, error: "", warnings: []}]
 '''
 
 import copy
@@ -75,12 +80,21 @@ def _like(value, items):
     return "\n".join(items) if isinstance(value, str) else list(items)
 
 
-def set_choices(spec, question, choices, multiselect=True, note="", empty_choice=""):
+def set_choices(spec, question, choices, multiselect=True, note="", empty_choice="", add_question=""):
     """The survey with the question's choices replaced. Pure: no AAP, so it can be tested on its own.
+    add_question: the question's text - a survey without the question gets it, after its own questions (they are kept
+    as they are): Multiple choice (multiple select), required; '' = refused, as before 1.118.3.
     -> (new survey, error text or '', [what changed]); the survey is unchanged when there is an error."""
     spec = copy.deepcopy(spec or {})
     qs = spec.get("spec") or []
     q = next((x for x in qs if isinstance(x, dict) and x.get("variable") == question), None)
+    added = []
+    if q is None and str(add_question or "").strip() and isinstance(spec.get("spec"), list):
+        q = {"question_name": " ".join(str(add_question).split()), "question_description": "", "required": True,
+             "type": "multiselect", "variable": question, "choices": [], "default": "", "min": None, "max": None,
+             "new_question": True}
+        spec["spec"].append(q)
+        added = ["added the question %s" % question]
     if q is None:
         have = ", ".join(str(x.get("variable")) for x in qs if isinstance(x, dict)) or "none"
         return spec, "its survey has no question whose variable is %s (its questions: %s): add it (Survey > Add question)" % (question, have), []
@@ -97,8 +111,10 @@ def set_choices(spec, question, choices, multiselect=True, note="", empty_choice
     if not out and empty_choice:
         out = [" ".join(str(empty_choice).split())]
     if not out:
+        if added:
+            spec["spec"].pop()
         return spec, "nothing to offer, and no empty_choice: AAP needs at least one choice", []
-    changes = []
+    changes = list(added)
     if multiselect and kind == "multiplechoice":
         q["type"] = "multiselect"
         changes.append("made multiple select")
@@ -157,7 +173,7 @@ def find(api, target, kind):
 
 def one(api, t, check_mode):
     r = {"template": str(t.get("template") or ""), "kind": str(t.get("kind") or ""), "id": None, "question": str(t.get("question") or ""),
-         "choices": 0, "changed": False, "ok": False, "error": "", "warnings": [], "changes": []}
+         "choices": 0, "changed": False, "ok": False, "added": False, "error": "", "warnings": [], "changes": []}
     if r["kind"] and r["kind"] not in KINDS:
         r["error"] = "kind is %s: job, workflow, or empty for either" % r["kind"]
         return r
@@ -179,7 +195,7 @@ def one(api, t, check_mode):
         r["error"] = "it has no survey: add one (the template > Survey) with the question %s, Multiple choice (multiple select)" % r["question"]
         return r
     new, why, changes = set_choices(spec, r["question"], t.get("choices") or [], t.get("multiselect", True) is not False,
-                                    t.get("note") or "", t.get("empty_choice") or "")
+                                    t.get("note") or "", t.get("empty_choice") or "", t.get("add_question") or "")
     if why:
         r["error"] = why
         return r
@@ -189,6 +205,7 @@ def one(api, t, check_mode):
         r["warnings"].append("the survey of %s %s is turned off: turn it on (Survey > the switch), or the list is never asked"
                              % (KINDS[kind][1], r["template"]))
     r["changes"] = changes
+    r["added"] = ("added the question %s" % r["question"]) in changes
     if changes and not check_mode:
         code, d = api.call("POST", path, new)
         if code not in (200, 201, 204):
@@ -214,7 +231,7 @@ def main():
             results.append(one(api, t, module.check_mode))
         except Exception as e:                  # noqa: BLE001 - one template's surprise never stops the others
             results.append({"template": str(t.get("template") or ""), "kind": str(t.get("kind") or ""), "id": None,
-                            "question": str(t.get("question") or ""), "choices": 0, "changed": False, "ok": False,
+                            "question": str(t.get("question") or ""), "choices": 0, "changed": False, "ok": False, "added": False,
                             "error": "unexpected answer from AAP: %s" % e, "warnings": [], "changes": []})
     module.exit_json(changed=any(r["changed"] for r in results), api=api.base, problems=[], results=results)
 

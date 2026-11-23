@@ -5,7 +5,12 @@
 # datacenters and clusters, the AAP server and the protected VMs of protected.yml - refused when the inventory
 # cannot say which VM is the AAP server - bigger than vm_snapshot_cleanup_max_size_gb or size unknown), at least
 # vm_pick_snapshot_min_age_days old. The name words are not used: they only narrow the automatic cleanup.
-# Output: _vm_snap_read, _vm_sn (all / old = may be picked / held), _vm_sn_multi.
+# vm_pick_snapshot_offer_held (true): the held ones are offered too, each with why it is held - a person picking is
+# an explicit choice; never the AAP server's own snapshots, a host site_exclude_hosts / site_exclude_groups leave out,
+# a VM template, nor one bigger than vm_pick_snapshot_max_size_gb (vm_pick_snapshot_offer). false: only the ones the
+# cleanup could delete (before 1.118.3).
+# Output: _vm_snap_read, _vm_sn (all / old = the cleanup could delete / held), _vm_sn_multi, _vm_po (offered = may be
+# picked, each with pick_held: '' or its hold / held = not offered, with the reason).
 - name: VMware | the protected VMs, and this inventory says which server is AAP
   ansible.builtin.include_tasks: protected.yml
   vars:
@@ -27,3 +32,6 @@
     _vm_sn_age: "{{ vm_pick_snapshot_min_age_days }}"
     _vm_sn_age_name: vm_pick_snapshot_min_age_days
     _vm_sn_words: []
+
+- name: VMware | which snapshots the pick list offers
+  ansible.builtin.include_tasks: pick_offer.yml
