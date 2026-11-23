@@ -86,6 +86,48 @@ set `report_portal_link: ""` for none, or an address or `/portal/` to choose it 
   content styles unchanged and no sideways scroll on atlas, brief, ops and their index and on the portal's Jobs page, the
   sticky table heads in all three looks; the portal's files).
 
+## 1.113.0 — 2026-11-23
+
+**To set up:** nothing. The first run of *SolarWinds - snapshot* after the upgrade adds one column to the report
+database (`sw_vim_host.vcenter`). The VMware alarms reports use VIM's links from that run on. With
+`solarwinds_db_create: false`, add the column once by hand (`docs/REPORT_DATABASE.md`, *From an older release, by hand*).
+
+**SolarWinds in the VMware alarms reports (1.97.0's second part).**
+
+- *VM - alarms report*: **SolarWinds alerts on the same hosts (N)** right under Triggered alarms, with VIM's status and
+  the vCenter alarm on the same object. One new tile, **SolarWinds alerts**.
+- *VM - alarms ACT analysis*: the same alerts and their switch ports' events as evidence. ACT names the tool of each
+  line. **What ACT was given from SolarWinds** lists them, folded, at the end.
+- Both templates take the **Report database** credential as optional. Without it the reports are as before.
+
+**The node of a vCenter object, never a guess (Codex's 5 VMware/VIM findings).**
+
+- VIM's link counts only for an object of the job's vCenter. The snapshot keeps each VIM host's vCenter (schema 2).
+  Names are compared in lower case, without a trailing dot. A short name fits an FQDN only when one vCenter fits.
+- VIM's link needs the object's full name. A short name is never VIM's proof.
+- A node linked to two VIM objects is neither's.
+- An address is counted over every node before VIM's nodes are set aside. One shared with a VMware object's node never
+  matches.
+- No node by the name when VIM has a host and a VM of that name, or when VIM was not read.
+- Tables of an older release, or a snapshot without the vCenter: "VIM not verifiable" under Not read, no link.
+
+**No link when VIM cannot be sure (Codex's 7 findings on the first draft).**
+
+- VIM not read whole: no node at all, VIM's own link included. That covers a failed read, a read cut at
+  `solarwinds_snapshot_max_rows`, and `vim` left out of `solarwinds_snapshot_parts`. A failed VM read keeps no VIM hosts
+  either.
+- A short vCenter name fits only one of the snapshot's vCenters, even when the names are the same.
+- Two vCenters of one name: their objects are kept without a vCenter.
+- A VIM object of the same kind and name without its vCenter, or two in the job's vCenter: no link.
+- Two vCenter objects of one name (two MoIDs): neither gets a node, so ACT gets no SolarWinds lines for them.
+- The alarms reports read no SAM applications. SAM's component messages are redacted in every report's job output.
+
+**The snapshot's schema 2.**
+
+- `sw_vim_host.vcenter`: from Orion.VIM.DataCenters and Orion.VIM.VCenters. The ALTER runs only when
+  information_schema lacks the column, then `schema_version` says 2.
+- With `solarwinds_db_create: false` and the column missing, the snapshot is kept without it. The job says so, green.
+
 ## 1.112.5 — 2026-11-23
 
 **To set up:** nothing - the watch needs its Red Hat Ansible Automation Platform credential to read its last email (as
@@ -207,48 +249,6 @@ report history); without it, it emails as before.
   template's line says why, to give by hand; the setup job never fails for it. Only templates of playbooks/vm_outage_watch.yml. Check only reads and says "the Read role given to ..."; a second run says
   "has the Read role already". The 1.112.0 hand step is no longer needed.
 - Tests: tests/test_incident_docs.py (the role given once, Check writes nothing; each "by hand" case; no outage watch template).
-
-## 1.113.0 — 2026-11-23
-
-**To set up:** nothing. The first run of *SolarWinds - snapshot* after the upgrade adds one column to the report
-database (`sw_vim_host.vcenter`). The VMware alarms reports use VIM's links from that run on. With
-`solarwinds_db_create: false`, add the column once by hand (`docs/REPORT_DATABASE.md`, *From an older release, by hand*).
-
-**SolarWinds in the VMware alarms reports (1.97.0's second part).**
-
-- *VM - alarms report*: **SolarWinds alerts on the same hosts (N)** right under Triggered alarms, with VIM's status and
-  the vCenter alarm on the same object. One new tile, **SolarWinds alerts**.
-- *VM - alarms ACT analysis*: the same alerts and their switch ports' events as evidence. ACT names the tool of each
-  line. **What ACT was given from SolarWinds** lists them, folded, at the end.
-- Both templates take the **Report database** credential as optional. Without it the reports are as before.
-
-**The node of a vCenter object, never a guess (Codex's 5 VMware/VIM findings).**
-
-- VIM's link counts only for an object of the job's vCenter. The snapshot keeps each VIM host's vCenter (schema 2).
-  Names are compared in lower case, without a trailing dot. A short name fits an FQDN only when one vCenter fits.
-- VIM's link needs the object's full name. A short name is never VIM's proof.
-- A node linked to two VIM objects is neither's.
-- An address is counted over every node before VIM's nodes are set aside. One shared with a VMware object's node never
-  matches.
-- No node by the name when VIM has a host and a VM of that name, or when VIM was not read.
-- Tables of an older release, or a snapshot without the vCenter: "VIM not verifiable" under Not read, no link.
-
-**No link when VIM cannot be sure (Codex's 7 findings on the first draft).**
-
-- VIM not read whole: no node at all, VIM's own link included. That covers a failed read, a read cut at
-  `solarwinds_snapshot_max_rows`, and `vim` left out of `solarwinds_snapshot_parts`. A failed VM read keeps no VIM hosts
-  either.
-- A short vCenter name fits only one of the snapshot's vCenters, even when the names are the same.
-- Two vCenters of one name: their objects are kept without a vCenter.
-- A VIM object of the same kind and name without its vCenter, or two in the job's vCenter: no link.
-- Two vCenter objects of one name (two MoIDs): neither gets a node, so ACT gets no SolarWinds lines for them.
-- The alarms reports read no SAM applications. SAM's component messages are redacted in every report's job output.
-
-**The snapshot's schema 2.**
-
-- `sw_vim_host.vcenter`: from Orion.VIM.DataCenters and Orion.VIM.VCenters. The ALTER runs only when
-  information_schema lacks the column, then `schema_version` says 2.
-- With `solarwinds_db_create: false` and the column missing, the snapshot is kept without it. The job says so, green.
 
 ## 1.112.0 — 2026-11-22
 
