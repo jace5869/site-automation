@@ -68,6 +68,18 @@ events:
   description: The HA and storage events of the window, newest first.
   type: list
   returned: success
+vms_lost:
+  description: "1.112.4: the VMs vCenter shows as inaccessible, invalid or orphaned, whatever their power state (a skipped one too: not_judged says why), each with connection, power and datastores (where its files are)."
+  type: list
+  returned: success
+vms_disconnected:
+  description: "1.112.4: the VMs on a disconnected host (connection disconnected), listed under that host."
+  type: list
+  returned: success
+vms_read:
+  description: "1.112.4: how many VMs (not templates) were read in the datacenter."
+  type: int
+  returned: success
 '''
 
 import datetime
@@ -101,7 +113,8 @@ BUSY_TASKS = ("snapshot", "consolidate", "migrate", "relocate", "clone", "vmotio
               "reconfig", "poweron", "reboot", "reset", "shutdown", "standby", "suspend")
 VM_PROPS = ["name", "config.template", "runtime.powerState", "runtime.connectionState", "runtime.host", "runtime.bootTime",
             "runtime.question", "guest.hostName", "guest.ipAddress", "guest.net", "guest.toolsStatus",
-            "guest.toolsRunningStatus", "guestHeartbeatStatus", "config.guestFullName"]
+            "guest.toolsRunningStatus", "guestHeartbeatStatus", "config.guestFullName", "datastore"]
+LOST = ("inaccessible", "invalid", "orphaned")      # 1.112.4: vCenter cannot reach the VM's files (or its host lost it): listed, whatever its power
 RECHECK_PROPS = ["runtime.powerState", "runtime.bootTime", "guest.ipAddress", "guest.net", "guest.toolsStatus",
                  "guest.toolsRunningStatus", "guestHeartbeatStatus", "recentTask"]
 
@@ -416,7 +429,7 @@ def _events(content, root, begin, types, cap=2000):
 
 def _read(content, p, now, vcenter):
     res = {"hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
-           "vms_not_judged": []}
+           "vms_not_judged": [], "vms_read": 0, "vms_lost": [], "vms_disconnected": []}
     root = content.rootFolder
     dcs = _props(content, root, vim.Datacenter, ["name"])
     if p["datacenter"] and p["datacenter"] not in [v[1].get("name") for v in dcs.values()]:
@@ -444,7 +457,9 @@ def _read(content, p, now, vcenter):
         host_of[m] = rec
         if in_dc(dc):
             res["hosts"].append(rec)
+    ds_name = {}
     for m, (o, pr) in _props(content, root, vim.Datastore, ["name", "summary.accessible", "summary.maintenanceMode", "parent"]).items():
+        ds_name[m] = pr.get("name", "")
         dc = _datacenter_of(o, dc_cache)
         if in_dc(dc):
             res["datastores"].append({"name": pr.get("name", ""), "moid": m, "datacenter": dc, "vcenter": vcenter,
@@ -468,14 +483,23 @@ def _read(content, p, now, vcenter):
         q = pr.get("runtime.question")
         if q is not None:
             res["questions"].append(dict(v, question=" ".join(str(getattr(q, "text", "") or "").split()), question_id=str(getattr(q, "id", "") or "")))
+        # 1.112.4: before the power state - a VM vCenter shows as inaccessible, invalid or orphaned often reads poweredOff or
+        # unknown once its files are gone; it was skipped without a word. Now it is listed (a skipped one too, "not judged"), and
+        # so is a VM whose host is disconnected (under that host). The datastores: where its files are
+        res["vms_read"] += 1
+        conn = str(pr.get("runtime.connectionState") or "connected")
+        skip = name_skipped(v, p["skip_vms"], p["skip_folders"])
+        if conn in LOST or conn == "disconnected":
+            v.update({"connection": conn, "not_judged": skip,
+                      "datastores": sorted(set(ds_name.get(getattr(x, "_moId", None), "") for x in pr.get("datastore") or []) - {""})})
+            res["vms_lost" if conn in LOST else "vms_disconnected"].append(v)
+            continue
         if v["power"] != "poweredOn":
             continue
-        skip = name_skipped(v, p["skip_vms"], p["skip_folders"])
         if skip:
             res["vms_skipped"] += 1
             continue
         res["vms_checked"] += 1
-        conn = str(pr.get("runtime.connectionState") or "connected")
         if conn != "connected":                 # its host is not responding: the host's condition covers it
             continue
         reason = suspect_reason(v, p["min_up_minutes"])
@@ -548,11 +572,12 @@ def main():
     res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses, "window_minutes": p["window_minutes"],
            "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
            "hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
-           "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
+           "vms_read": 0, "vms_lost": [], "vms_disconnected": [], "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
            "confirm": {"checks": checks, "seconds": p["confirm_seconds"]}}
     for _, part in done:
-        for k in ("hosts", "datastores", "questions", "suspects", "events"):
+        for k in ("hosts", "datastores", "questions", "suspects", "events", "vms_lost", "vms_disconnected"):
             res[k] += part[k]
+        res["vms_read"] += part["vms_read"]
         res["vms_checked"] += part["vms_checked"]
         res["vms_skipped"] += part["vms_skipped"]
     res["events"].sort(key=lambda x: x["time"], reverse=True)

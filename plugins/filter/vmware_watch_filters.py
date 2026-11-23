@@ -9,7 +9,8 @@ What counts:
             partitioned, down or in error; a datastore not accessible; all paths down or a permanent device
             loss in the window that did not clear; HA could not restart a VM, or found a host failed or
             isolated; a VM waiting on a question; a VM hung (no heartbeat AND no answer on the network, in
-            every check of the run)
+            every check of the run); a VM vCenter shows as inaccessible, invalid or orphaned (1.112.4: whatever its
+            power state; listed under its datastore)
   warning   a VM HA restarted or reset in the window; a storage problem of the window that cleared since;
             a VM with no heartbeat that still answers on the network, or could not be probed (one signal
             only: never called hung); a host whose HA agent is unreachable or failed to uninitialize
@@ -94,10 +95,32 @@ def _cond(sev, kind, otype, obj, x, summary, todo, detail=""):
             "summary": summary, "detail": detail, "todo": todo}
 
 
+LOST_WORD = {"inaccessible": "inaccessible in vCenter: its files cannot be reached",
+             "invalid": "invalid in vCenter: its configuration cannot be read (its files cannot be reached)",
+             "orphaned": "orphaned in vCenter: its host no longer has it registered"}
+
+
+def _shown_names(names, most=8):
+    names = [n for n in names if n]
+    return ", ".join(names[:most]) + ((" and %d more" % (len(names) - most)) if len(names) > most else "")
+
+
+def _protected(v, o):
+    """1.112.4: a VM of the protected list (vm_watch_actions' rule: the AAP server, vmware_protected_groups' hosts by name or
+    address, vmware_protected_vms / vm_watch_protect patterns) - listed like any other, marked."""
+    ids = set(_id(x) for x in [v.get("name"), v.get("hostname"), v.get("ip")] + list(v.get("ips") or []) if x)
+    return bool(ids & set(_id(i) for i in o.get("protected_ids") or [] if i)) or _matches(v.get("name"), o.get("protected_names") or [])
+
+
 def vm_watch_conditions(data, opts=None):
-    """Everything the watch found, most severe first. opts: one_signal_severity (warning)."""
+    """Everything the watch found, most severe first. opts: one_signal_severity (warning); protected_ids, protected_names
+    (1.112.4: a lost VM of the protected list is marked protected)."""
     d, o = data or {}, opts or {}
     one = o.get("one_signal_severity") or "warning"
+    lost = d.get("vms_lost") or []
+    on_host = {}
+    for v in d.get("vms_disconnected") or []:
+        on_host.setdefault((v.get("vcenter", ""), v.get("esxi_host", "")), []).append(v.get("name", ""))
     out = []
     for s in d.get("vcenters") or []:
         if s.get("error"):
@@ -110,10 +133,12 @@ def vm_watch_conditions(data, opts=None):
             continue
         conn = h.get("connection") or ""
         if conn in ("notResponding", "disconnected"):
+            vms = sorted(on_host.get((h.get("vcenter", ""), h["name"]), []))
             out.append(_cond("critical", "host", "host", h["name"], h,
-                             "ESXi host %s is %s%s: its VMs may be down (vSphere HA restarts them on other hosts when it is on)"
+                             "ESXi host %s is %s%s: its VMs may be down (vSphere HA restarts them on other hosts when it is on)%s"
                              % (h["name"], "not responding" if conn == "notResponding" else "disconnected",
-                                " (cluster %s)" % h["cluster"] if h.get("cluster") else ""),
+                                " (cluster %s)" % h["cluster"] if h.get("cluster") else "",
+                                ("; %d VM%s on it: %s" % (len(vms), "" if len(vms) == 1 else "s", _shown_names(vms))) if vms else ""),
                              "Check the host's management network and its console (iDRAC / iLO): is it up? Reconnect it in the vSphere "
                              "Client (Connection > Connect) once it answers. Do not restart its VMs elsewhere by hand while HA is working."))
             continue
@@ -125,8 +150,11 @@ def vm_watch_conditions(data, opts=None):
                              "Otherwise: Reconfigure for vSphere HA on the host in the vSphere Client."))
     for ds in d.get("datastores") or []:
         if not ds.get("accessible", True) and ds.get("maintenance") in ("normal", "", None):
+            mine = sorted(v.get("name", "") for v in lost if ds["name"] in (v.get("datastores") or []))
             out.append(_cond("critical", "datastore", "datastore", ds["name"], ds,
-                             "datastore %s is not accessible: the VMs on it are hung or down" % ds["name"],
+                             "datastore %s is not accessible: the VMs on it are hung or down%s"
+                             % (ds["name"], ("; vCenter shows %d VM%s on it as inaccessible: %s" % (len(mine), "" if len(mine) == 1 else "s",
+                                                                                                    _shown_names(mine))) if mine else ""),
                              "Check the storage array and the paths (Storage > Devices > Paths on a host); rescan the storage adapters."))
     # storage events: a problem with no clear event after it (same host, same device when both say) stays critical
     evs = sorted(d.get("events") or [], key=lambda e: (e.get("time", ""), e.get("key") or 0))      # oldest first; one second: by key
@@ -164,6 +192,22 @@ def vm_watch_conditions(data, opts=None):
         out.append(_cond("critical", "question", "vm", q["name"], q,
                          "VM %s is waiting for an answer in vCenter: %s" % (q["name"], q.get("question") or "(no text)"),
                          "Answer it in the vSphere Client (the VM > Guest OS > Answer Question): until then the VM does not run."))
+    # 1.112.4: a VM vCenter cannot reach (inaccessible, invalid, orphaned), whatever its power state - before, the power check
+    # skipped it without a word. Never removed from the inventory: it comes back when its files can be reached
+    for v in lost:
+        conn = v.get("connection") or "inaccessible"
+        dss = list(v.get("datastores") or [])
+        c = _cond("info" if v.get("not_judged") else "critical", "lost", "vm", v.get("name", ""), v,
+                  "VM %s is %s%s%s%s" % (v.get("name", ""), LOST_WORD.get(conn, conn),
+                                         (" (datastore %s)" % ", ".join(dss)) if dss else "",
+                                         (" - not judged (%s)" % v["not_judged"]) if v.get("not_judged") else "",
+                                         " - protected" if _protected(v, o) else ""),
+                  "Check the datastore (Storage in the vSphere Client: accessible?) and its paths (a host > Storage > Devices > "
+                  "Paths); rescan the storage adapters. Do not remove the VM from the inventory: it comes back when its files "
+                  "can be reached.", "power %s" % (v.get("power") or "unknown"))
+        c.update({"vm": _vm_ids(v), "connection": conn, "datastores": dss, "protected": _protected(v, o),
+                  "not_judged": v.get("not_judged") or ""})
+        out.append(c)
     for v in d.get("suspects") or []:
         signals = _signals(v)
         if v.get("verdict") == "hung":
@@ -182,6 +226,24 @@ def vm_watch_conditions(data, opts=None):
         c.update({"vm": _vm_ids(v), "signals": signals, "detail": "checked %s" % _span(v)})
         out.append(c)
     out.sort(key=lambda c: (RANK.get(c["severity"], 9), c["kind"], c["object"]))
+    # 1.112.4: a lost VM right under its datastore's condition (the first of its datastores that is down)
+    down = [c["object"] for c in out if c["kind"] == "datastore"]
+    under = {}
+    for c in out:
+        if c["kind"] == "lost":
+            ds = next((x for x in c.get("datastores") or [] if x in down), None)
+            if ds is not None:
+                under.setdefault(ds, []).append(c)
+    if under:
+        moved = set(id(c) for cs in under.values() for c in cs)
+        grouped = []
+        for c in out:
+            if id(c) in moved:
+                continue
+            grouped.append(c)
+            if c["kind"] == "datastore":
+                grouped += under.get(c["object"], [])
+        out = grouped
     return out
 
 
@@ -352,6 +414,13 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
         lines.append("Not probed (over vm_watch_max_suspects): %s." % ", ".join(d["not_probed"]))
     if int(d.get("vms_skipped") or 0):
         lines.append("%d VM(s) skipped by vm_watch_skip_vms / vm_watch_skip_folders / site_exclude_hosts." % int(d["vms_skipped"]))
+    if "vms_read" in d:                               # 1.112.4: what was read, what was judged, what was listed
+        lost, disc = d.get("vms_lost") or [], d.get("vms_disconnected") or []
+        lines.append("VMs read: %d. Judged (powered on, connected): %d. Listed as inaccessible, invalid or orphaned: %d%s. "
+                     "On a disconnected host (listed under it): %d." % (
+                         int(d.get("vms_read") or 0), int(d.get("vms_checked") or 0), len(lost),
+                         (" (%d of them not judged: vm_watch_skip_vms / vm_watch_skip_folders)" % len([v for v in lost if v.get("not_judged")]))
+                         if any(v.get("not_judged") for v in lost) else "", len(disc)))
     sections.append({"title": "How it judged", "lines": lines})
     return {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections,
             "footer": "Read-only: the watch changed nothing."}

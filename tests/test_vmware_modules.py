@@ -891,6 +891,73 @@ class VcsaAccess(unittest.TestCase):
             self.run_one()
 
 
+class LostVMs1124(unittest.TestCase):
+    """1.112.4: a VM vCenter shows as inaccessible, invalid or orphaned is listed whatever its power state (before, the power
+    check skipped it without a word); a VM on a disconnected host is listed under it; a skipped one still listed, "not judged".
+    _read on stand-ins for pyVmomi's objects."""
+
+    def read(self):
+        import types
+        T = lambda n: type(n, (), {})                                        # noqa: E731
+        fake = types.SimpleNamespace(Datacenter=T("Datacenter"), ClusterComputeResource=T("Cluster"), HostSystem=T("Host"),
+                                     Datastore=T("Datastore"), VirtualMachine=T("VM"))
+
+        def obj(kind, moid):
+            o = getattr(fake, kind)()
+            o._moId = moid
+            return o
+        cl, ds7, ds2 = obj("ClusterComputeResource", "domain-c1"), obj("Datastore", "ds-7"), obj("Datastore", "ds-2")
+        h1, h2 = obj("HostSystem", "host-1"), obj("HostSystem", "host-2")
+        ok = {"guestHeartbeatStatus": "green", "guest.toolsStatus": "toolsOk", "guest.toolsRunningStatus": "guestToolsRunning"}
+
+        def vm(moid, name, power, conn, dss, host=h1, **kw):
+            pr = dict({"name": name, "runtime.powerState": power, "runtime.connectionState": conn, "runtime.host": host,
+                       "datastore": dss}, **kw)
+            return moid, (obj("VirtualMachine", moid), pr)
+        table = {
+            fake.Datacenter: {"dc-1": (obj("Datacenter", "dc-1"), {"name": "DC1"})},
+            fake.ClusterComputeResource: {"domain-c1": (cl, {"name": "CL1"})},
+            fake.HostSystem: {"host-1": (h1, {"name": "esx01.example.mil", "parent": cl, "runtime.connectionState": "connected"}),
+                              "host-2": (h2, {"name": "esx02.example.mil", "parent": cl, "runtime.connectionState": "disconnected"})},
+            fake.Datastore: {"ds-7": (ds7, {"name": "ds-07", "summary.accessible": False}), "ds-2": (ds2, {"name": "ds-02", "summary.accessible": True})},
+            fake.VirtualMachine: dict([
+                vm("vm-1", "app01", "poweredOff", "inaccessible", [ds7]),
+                vm("vm-2", "app02", None, "inaccessible", [ds7]),                   # power unknown once the files are gone
+                vm("vm-3", "db01", "poweredOff", "inaccessible", [ds7, ds2]),
+                vm("vm-4", "old01", "poweredOff", "orphaned", [ds7]),
+                vm("vm-5", "test01", "poweredOff", "inaccessible", [ds7]),          # in vm_watch_skip_vms: still listed
+                vm("vm-6", "web01", "poweredOn", "disconnected", [ds2], host=h2),   # its host is disconnected
+                vm("vm-7", "web02", "poweredOn", "connected", [ds2], **ok),         # fine
+                vm("vm-8", "web03", "poweredOff", "connected", [ds2]),              # off, its files fine: not listed
+                vm("vm-9", "tpl01", "poweredOff", "inaccessible", [ds7], **{"config.template": True})])}
+        saved = (getattr(wt, "vim", None), wt._props, wt._folder, wt._datacenter_of, wt._objs_props)
+        try:
+            wt.vim = fake
+            wt._props = lambda content, root, objtype, paths: table[objtype]
+            wt._folder = lambda o, cache: "/DC1/vm"
+            wt._datacenter_of = lambda o, cache: "DC1"
+            wt._objs_props = lambda content, objs, objtype, paths: {}
+            p = {"datacenter": "", "skip_vms": ["test*"], "skip_folders": [], "min_up_minutes": 15, "window_minutes": 0, "event_types": []}
+            import types as _t
+            return wt._read(_t.SimpleNamespace(rootFolder=None), p, 1763900000.0, "vc01.example.mil")
+        finally:
+            wt.vim, wt._props, wt._folder, wt._datacenter_of, wt._objs_props = saved
+
+    def test_1_listed_whatever_the_power(self):
+        r = self.read()
+        lost = dict((v["name"], v) for v in r["vms_lost"])
+        self.assertEqual(sorted(lost), ["app01", "app02", "db01", "old01", "test01"])    # not the template, not the fine ones
+        self.assertEqual((lost["app01"]["connection"], lost["app01"]["power"]), ("inaccessible", "poweredOff"))
+        self.assertEqual(lost["app02"]["power"], "")
+        self.assertEqual(lost["old01"]["connection"], "orphaned")
+        self.assertEqual(lost["db01"]["datastores"], ["ds-02", "ds-07"])
+        self.assertEqual(lost["test01"]["not_judged"], "vm_watch_skip_vms")
+        self.assertEqual([v["name"] for v in r["vms_disconnected"]], ["web01"])
+        self.assertEqual(r["vms_disconnected"][0]["esxi_host"], "esx02.example.mil")
+        self.assertEqual((r["vms_read"], r["vms_checked"], r["vms_skipped"]), (8, 1, 0))
+        self.assertEqual(r["suspects"], [])
+
+
 class OutageWatch(unittest.TestCase):
     """site_vmware_watch: who is a suspect, a task that makes it busy, where it is probed, the verdict."""
     VM = {"name": "app01", "power": "poweredOn", "tools": "toolsOk", "tools_running": "guestToolsRunning", "heartbeat": "red",
