@@ -611,8 +611,19 @@
               if [ -n "$own" ]; then echo "+ $own"; run sh -c "$own"; exit 0; fi   # as the engine user, like the containers
               unit={{ _j4s.containers | map(attribute='systemd') | select | first | default('') | quote }}
               # podman-compose labels every container with a unit name; only a unit that is really running owns it
-              if [ -n "$unit" ] && { systemctl is-active --quiet "$unit" 2>/dev/null || run systemctl --user is-active --quiet "$unit" 2>/dev/null; }; then
-                echo "Keycloak runs under the systemd unit $unit: set j4s_restart_cmd to how you restart it"; exit 3
+              # 1.112.3: a running systemd unit owns the containers (podman-compose's unit): stop it, remove exactly this
+              # service's containers (by id, volumes kept - the older podman-compose would start the old one again), start it
+              sys=""
+              if [ -n "$unit" ] && systemctl is-active --quiet "$unit" 2>/dev/null; then sys=system
+              elif [ -n "$unit" ] && run systemctl --user is-active --quiet "$unit" 2>/dev/null; then sys=user; fi
+              if [ -n "$sys" ]; then
+                sc() { if [ "$sys" = system ]; then systemctl "$@"; else run systemctl --user "$@"; fi; }
+                set -x; sc stop "$unit"; set +x
+                for c in {{ _j4s.containers | selectattr('service', 'in', _j4s_svcs) | map(attribute='id') | map('quote') | join(' ') }}; do
+                  set -x; run $e rm -f "$c"; set +x
+                done
+                set -x; sc start "$unit"; set +x
+                echo "Keycloak recreated through its systemd unit $unit ($sys)"; exit 0
               fi
               # older podman-compose (RHEL's) starts an existing container again instead of recreating it, so the new
               # environment never reaches it: remove exactly this service's containers (by id, volumes kept) first
@@ -652,6 +663,15 @@
                   for c in $ids; do
                     seen=$((seen+1))
                     r=$(run $e exec "$c" sh -c 'jcmd io.quarkus.bootstrap.runner.QuarkusEntryPoint VM.flags -all 2>/dev/null || jcmd 1 VM.flags -all 2>/dev/null' | grep -E '\bUseBASE64Intrinsics\b' || true)
+                    if [ -z "$r" ]; then
+                      # 1.112.3: no jcmd in the image: the JVM's command line read from the host (its process tree in /proc)
+                      cp=$(run $e inspect --format '{% raw %}{{.State.Pid}}{% endraw %}' "$c" 2>/dev/null || true)
+                      for q in $cp $(ps -o pid= --ppid "$cp" 2>/dev/null) $(ps -e -o pid= -o ppid= 2>/dev/null | awk -v p="$cp" '$2==p{print $1}'); do
+                        case "$(readlink /proc/$q/exe 2>/dev/null)" in */java|*/alt-java)
+                          if tr '\0' '\n' < /proc/$q/cmdline 2>/dev/null | grep -qx -- '-XX:-UseBASE64Intrinsics'; then r="UseBASE64Intrinsics = false"
+                          else r="UseBASE64Intrinsics not set on its command line (read from the host)"; fi; break;; esac
+                      done
+                    fi
                     case "$r" in *"= false"*) out="$out$s/$c: UseBASE64Intrinsics = false (live)\n";;
                       "") bad=1; why="$s/$c: its JVM flags could not be read yet (no jcmd, or Keycloak still starting)";;
                       *) bad=1; why="$s/$c: $(echo $r | tr -s ' ')";; esac

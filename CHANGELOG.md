@@ -152,6 +152,9 @@ report history); without it, it emails as before.
   A minimal image with no readlink or jcmd in it is read from the HOST instead (read only, nothing runs in the container):
   the container's process tree in /proc, the JDK's release file through /proc/<pid>/root, the options from its command
   line and environment. Tested on Keycloak 26 started through a wrapper, with the tools taken away.
+- **Java4Shell restart (j4s_restart=true) when a systemd unit runs Keycloak** (podman-compose's unit): it stopped and asked
+  for j4s_restart_cmd. It now stops the unit, removes exactly that service's container (by id, volumes kept), and starts
+  the unit again. The check that the flag is live reads the JVM's command line from the host when the image has no jcmd.
 - **Site portal: the Auto/Light/Dark switch no longer covers a tab.** With Network map and Active Directory on, at
   800 px the switch sat over *Active Directory*. The same happened with a long user name (1001 to 1280 px) or a long
   portal name. Now the tabs take the room the portal's name and the switch leave, and wrap to a second row there.
