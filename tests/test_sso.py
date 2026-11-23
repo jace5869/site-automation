@@ -105,6 +105,28 @@ class VcenterSso(unittest.TestCase):
         self.assertEqual((c["vcenter"], c["object_type"], c["severity"]), ("vc01.example.mil", "OCSP responder", "critical"))
         self.assertEqual(vf.vcenter_sso_problems(s, {"ocsp_severity": "warning"})[0]["severity"], "warning")
 
+    def test_no_url_secret_in_a_condition_its_ticket_or_the_report(self):
+        # 1.118.6: an OCSP responder's token (?token=) or login (user:password@) never reaches a condition, the ticket the
+        # watch hands over, the job artifact or the report; an address without either keys its condition as before
+        sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))
+        import vmware_watch_filters as wf
+        secret = "s3cr3t-T0KEN"
+        s = sso(ocsp=[{"url": "http://ocsp.example.mil/status?token=%s&id=7" % secret, "ok": False,
+                       "why": "HTTP 403 from http://ocsp.example.mil/status?token=%s" % secret, "status": ""},
+                      {"url": "https://svc:%s@ocsp2.example.mil/" % secret, "ok": False, "why": "no answer"},
+                      {"url": "http://ocsp3.example.mil/", "ok": False, "why": "no answer"}],
+                crl=[{"url": "http://crl.example.mil/ca.crl?sig=%s" % secret, "ok": False, "why": "not read"}])
+        conds = vf.vcenter_sso_conditions(s)
+        data = {"vcenters": [{"name": "vc01.example.mil", "ok": True}], "read_at": "2026-11-23T10:00:00Z"}
+        outs = [conds, vf.vcenter_sso_problems(s), vf.vcenter_sso_doc({"title": "T", "sections": []}, s),
+                wf.vm_watch_health(data, conds), wf.vm_watch_artifact(data, conds)]
+        for out in outs:
+            self.assertNotIn(secret, repr(out))
+        ids = sorted(c["id"] for c in conds)
+        self.assertEqual(ids, ["vm-watch:ocsp:http://ocsp.example.mil/status?...", "vm-watch:ocsp:http://ocsp3.example.mil/",
+                               "vm-watch:ocsp:https://...@ocsp2.example.mil/"])       # no query, no login: the id of before
+        self.assertIn("HTTP 403 from http://ocsp.example.mil/status?...", conds[0]["summary"] + conds[1]["summary"] + conds[2]["summary"])
+
     def test_crl_in_the_report_only_a_warning(self):
         bad = {"url": "http://crl.example.mil/ca.crl", "ok": False, "why": "the CRL is stale: its next update (2026-10-01 00:00 UTC) has passed",
                "entries": 120000, "size": 31457280, "next_update": "2026-10-01 00:00 UTC", "ms": 4200}

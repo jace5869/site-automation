@@ -17,6 +17,7 @@ __metaclass__ = type
 
 import importlib.util
 import os
+import re
 
 # the times a report shows, in report_time_zone (1.54.0): plugins/module_utils/site_time.py, loaded as site_filters.py does
 _spec = importlib.util.spec_from_file_location(
@@ -25,6 +26,29 @@ _tm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tm)
 
 RANK = {"critical": 0, "warning": 1, "low": 2, "info": 3}
+# 1.118.6: an OCSP responder or CRL address can carry a secret - a token in its query (?token=..., ?key=...) or a login
+# (user:password@). Neither ever reaches a condition, its ticket, the job artifact or a report: the query is shown as "?..."
+# and the login as "...@". An address with neither is shown, and keys its condition, exactly as before.
+_URL_SECRET = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)(?:[^/@\s?#]*@)?([^/\s?#]*)([^\s?#]*)(\?[^\s#]*)?(#\S*)?")
+
+
+def _url_shown(text):
+    """text with every URL's login and query (and fragment) masked."""
+    def mask(m):
+        login = "...@" if re.match(r"(?i)[a-z][a-z0-9+.-]*://[^/@\s?#]*@", m.group(0)) else ""
+        return m.group(1) + login + m.group(2) + m.group(3) + ("?..." if m.group(4) else "") + ("#..." if m.group(5) else "")
+    return _URL_SECRET.sub(mask, str(text or ""))
+
+
+def _clean(sso):
+    """The SSO read with every OCSP responder's and CRL's address and message masked (_url_shown)."""
+    if not isinstance(sso, dict):
+        return sso
+    out = dict(sso)
+    for k in ("ocsp", "crl"):
+        out[k] = [dict(x, **dict((f, _url_shown(x[f])) for f in ("url", "why", "status") if isinstance(x.get(f), str)))
+                  for x in sso.get(k) or [] if isinstance(x, dict)]
+    return out
 
 
 def _o(opts):
@@ -34,6 +58,7 @@ def _o(opts):
 
 
 def _problems(sso, opts, now_only):
+    sso = _clean(sso)
     """[(severity, vcenter or '', kind, object, problem, fix)]"""
     o = _o(opts)
     out = []
@@ -110,6 +135,7 @@ def _status(ps):
 
 
 def vcenter_sso_doc(doc, sso, opts=None):
+    sso = _clean(sso)
     """The health report with its section "Single sign-on and OCSP" (after "Needs attention") and the SSO problems counted
     in its title and status."""
     d = dict(doc or {})

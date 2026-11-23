@@ -35,6 +35,18 @@
   and log, and the deploy's secret. tests/ad/run_ad_reader_test.sh, against real Samba DCs: a nested member, a disabled
   member, a wrong password, a DC that does not answer and an untrusted certificate.
 
+## 1.118.6 — 2026-11-23
+
+**To set up:** nothing to set up.
+
+- **VM outage watch and the VMware health report: no secret from an OCSP or CRL address.** An OCSP responder's or a
+  CRL's address can carry a token in its query (`?token=...`) or a login (`user:password@`). It was shown as it is in
+  the watch's condition, its ServiceNow ticket, the job artifact `vm_watch`, and the report's "Single sign-on and OCSP"
+  section. Now the query shows as `?...` and the login as `...@`, there and in the error message. An address with
+  neither is shown, and keys its ticket, exactly as before. An address with a token gets a new ticket once.
+- Tests: tests/test_sso.py (a token, a login and a plain address: no secret in the conditions, the ticket findings, the
+  artifact or the report; the plain address keeps its id).
+
 ## 1.118.5 — 2026-11-23
 
 **To set up:** nothing - a site with its own stigman_scorecard_platforms keeps its list (add the new patterns there to use them).
