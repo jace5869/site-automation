@@ -71,6 +71,12 @@
 
 **To set up:** nothing to set up.
 
+- **A job no longer fails on an apostrophe.** The AD health job's report database line failed on some ansible-core
+  releases ("expected token ')', got 's'"); on others it printed a stray backslash. Every task's message text with an
+  escaped apostrophe now uses ’ (15 lines in 7 files, the MariaDB health check's SQL hints among them).
+  tests/test_no_escaped_quote.py keeps it so.
+- **Java4Shell check: a Keycloak container whose JVM is not PID 1** (a wrapper script or an init starts it) said
+  "Java version not read". The check now finds the container's java process itself and reads its version and flags.
 - **Site portal: the Auto/Light/Dark switch no longer covers a tab.** With Network map and Active Directory on, at
   800 px the switch sat over *Active Directory*. The same happened with a long user name (1001 to 1280 px) or a long
   portal name. Now the tabs take the room the portal's name and the switch leave, and wrap to a second row there.
