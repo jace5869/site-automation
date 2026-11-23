@@ -2313,7 +2313,7 @@ def keep(module, p, page, latest, index, urls, where, win, hosted=(), refused=()
     text, cut = pack(dict(doc, downloads_refused=list(refused)), limit)
     downloads, refused = [], list(refused)
     for f in hosted:
-        more = downloads + [{'filename': f['name'], 'b64': base64.b64encode(rf.read_bytes(f)).decode('ascii')}]
+        more = downloads + [{'filename': f['name'], 'b64': base64.b64encode(rf.read_bytes(f)).decode('ascii'), 'desc': f.get('desc') or ''}]
         t2, c2 = pack(dict(doc, downloads=more, downloads_refused=refused), limit) if text and not cut else ('', [1])
         if t2 and not c2:
             downloads = more

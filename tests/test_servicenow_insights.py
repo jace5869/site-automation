@@ -122,6 +122,21 @@ def page_links(m, rel=""):
     return links
 
 
+class Files1181(unittest.TestCase):
+    def test_the_files_line_in_the_main_column(self):
+        """1.118.1: the run's Files line (site_report_web) in the main column under the header and the page's own lines -
+        before, it had no mark and went on top of the page, above the sticky bar."""
+        x = site()
+        m = F.servicenow_insights_model(x["r"], F.servicenow_insights_state(), x["mask"], OPTS)
+        h = P.servicenow_insights_page(m, "all", {})
+        self.assertEqual(h.count("<!--site-report-files-->"), 1)
+        main = h.split("<main>", 1)[1].split("</main>", 1)[0]
+        self.assertIn("<!--site-report-files-->", main)
+        self.assertLess(main.index("<!--site-report-files-->"), main.index("<section"))
+        self.assertLess(h.index("</header>"), h.index("<!--site-report-files-->"))
+        self.assertIn(".sfiles{", h)
+
+
 class Window(unittest.TestCase):
     def test_months_to_a_day_and_the_months_before(self):
         w = rd.window(6, 0, "2026-10-31", True, "", NOW)

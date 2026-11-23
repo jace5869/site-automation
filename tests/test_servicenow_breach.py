@@ -211,6 +211,14 @@ class Outputs(unittest.TestCase):
         self.assertEqual(days[0][1:], ("2", "%.1f" % (13 / 7.0)))
         self.assertNotIn("<script", h)
 
+    def test_the_files_line_in_main(self):
+        """1.118.1: the run's Files line (site_report_web) first in the main column, under the header - never on top of the page."""
+        h = P.servicenow_insights_breach_page(self.m, {})
+        self.assertEqual(h.count("<!--site-report-files-->"), 1)
+        self.assertIn("<main><!--site-report-files-->", h)
+        self.assertLess(h.index("</header>"), h.index("<!--site-report-files-->"))
+        self.assertIn(".sfiles{", h)
+
     def test_first_on_the_page(self):
         main = P.servicenow_insights_breach_page(self.m, {"links": {"full": "../latest.html"}}).split("<main>")[1]
         self.assertLess(main.index('href="../latest.html"'), main.index('id="breach"'))

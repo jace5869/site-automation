@@ -226,7 +226,12 @@
             _vm_report_doc: "{{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, false) }}"
             _vm_report_web_doc: >-
               {{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, true, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, true) if _vm_w_tl else {} }}
-            _vm_report_attachments: "{{ [_vm_w_aar_file] if _vm_w_aar_file.path | default('') else [] }}"
+            _vm_report_attachments: >-
+              {{ [_vm_w_aar_file | combine({'desc': 'Word document - the after action report (AAR) draft, filled from this outage review: '
+                                                    ~ 'check it and finish it before you send it'})] if _vm_w_aar_file.path | default('') else [] }}
+            _vm_report_xlsx_desc: >-
+              Excel workbook - this outage review's tables, a sheet each, and the whole time line (sheet Timeline: every event in
+              time order, with its source, host, level and message)
             _vm_report_xlsx: >-
               {{ (_vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | report_xlsx_sheets) + [_vm_w_tl.sheet]
                  if _vm_w_tl and report_email_xlsx | default(false) | bool else [] }}

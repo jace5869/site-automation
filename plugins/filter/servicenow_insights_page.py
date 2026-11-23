@@ -30,6 +30,8 @@ ICON = {"trophy": '<path d="M7 4h10v4a5 5 0 01-10 0V4zM7 6H4a3 3 0 003 4M17 6h3a
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 DAYS_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
+FILES_MARK = "<!--site-report-files-->"     # 1.118.1: the run's Files line (site_report_web) - in the main column, under the header
+
 CSS = r"""/* Layout: sticky report bar with the group filter; section index on the left (wide screens); one column of sections, summary before detail. */
 :root{
   --bg:#edf3f1; --surface:#ffffff; --surface-2:#f4f8f6; --line:#d6e1dc; --line-2:#e6ede9;
@@ -426,6 +428,10 @@ kbd{font:600 11px var(--mono);border:1px solid var(--line);border-bottom-width:2
 a.glink{color:inherit;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
 a.glink:hover{color:var(--accent);text-decoration-color:currentColor}
 svg a.glink text{fill:var(--fg-2)}svg a.glink:hover text{fill:var(--accent);text-decoration:underline}
+/* 1.118.1: the run's files (site_report_web puts them at site-report-files) */
+.sfiles{margin:0 0 16px;padding:12px 16px}.sf-h{margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.sf-l{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}.sf-l li{min-width:0;overflow-wrap:anywhere;color:var(--fg)}
+.sf-a{font-weight:650;color:var(--accent)}.sf-z,.sf-d{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
 @media print{.bar{position:static}.toc,.tools,.teamnav{display:none}.layout{grid-template-columns:1fr}section.card{box-shadow:none;break-inside:avoid-page}}/* 1.81.0: the Automation backlog */
 #backlog .bkn{font-size:12px;margin-left:auto}
 #backlog .bkpg{display:flex;gap:6px}
@@ -1847,7 +1853,7 @@ def servicenow_insights_breach_page(bm, opts=None):
            '<div class="sub">%s · generated %s%s</div></div></div></header>' % (
                logo, e(o.get("scope_label") or "All assignment groups"), e(o.get("generated") or ""),
                (" · AAP job %s" % e(o["job"])) if o.get("job") and str(o["job"]) != "local" else ""),
-           '<div class="gut"><div class="wrap"><main>']
+           '<div class="gut"><div class="wrap"><main>' + FILES_MARK]
     if full:
         out.append('<p class="cvaway">The whole report, with every section: <a href="%s">ticket insights</a>.</p>' % e(full))
     out.append(breach_section(bm, url, o.get("prefixes") or {}) or '<div class="callout">ServiceNow was not read.</div>')
@@ -3031,7 +3037,7 @@ def servicenow_insights_page(model, key="all", opts=None):
             "<li>%s</li>" % e(x) for x in cut)
     elif m.get("compare_cut"):
         bc += '<div class="callout cutbar"><b>No compare this run.</b> %s</div>' % e(m["compare_cut"])
-    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc] + body + [pdata,
+    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav, bc, FILES_MARK] + body + [pdata,
         '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
         '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
             e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT + POP_JS)]

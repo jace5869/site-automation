@@ -579,7 +579,10 @@
                'logo_height': incident_docs_logo_height | default(64) | int})) }}
     - name: Insights | the Word file, attached to the email
       ansible.builtin.set_fact:
-        _sni_bk_attach: "{{ [{'path': _wd_result.path, 'filename': 'Automation backlog.docx'}] if _wd_result.path | default('') | length > 0 else [] }}"
+        _sni_bk_attach: >-
+          {{ [{'path': _wd_result.path, 'filename': 'Automation backlog.docx',
+               'desc': 'Word document - the Automation backlog: every ticket cluster in a table, then a proposal for each of the top issues'}]
+             if _wd_result.path | default('') | length > 0 else [] }}
   rescue:
     - name: Insights | the Word file not made - the email goes without it
       ansible.builtin.debug:
@@ -596,6 +599,10 @@
         _report_html: "{{ _sni_model | servicenow_insights_page('all', _sni_page_opts) }}"
         _report_xlsx: "{{ _sni_model | servicenow_insights_xlsx(_sni, _sni_state, _sni_mask, _sni_opts) if servicenow_insights_xlsx | bool else [] }}"
         _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('ticket-insights')) }}"
+        # 1.118.1: what the workbook is, beside it on the website (servicenow_insights_xlsx's sheets)
+        _report_xlsx_desc: >-
+          Excel workbook - every incident of the period with its issue, SLA and close-note grade (sheet Incidents), then a
+          sheet each for the issues, requests, categories, priorities, failed changes, problem candidates and people
         report_web_names: "{{ _sni_web.names | combine({'team': 'all', 'site': 'all', 'dir': 'all'}) }}"
         _web_sub_pages: "{{ _sni_web.files }}"        # the other pages: those an older run wrote and this one did not are deleted
         _web_index_drop: >-

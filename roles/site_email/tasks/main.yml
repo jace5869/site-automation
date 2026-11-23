@@ -401,7 +401,8 @@
         # 1.79.8: the files the report hands over (_report_files; else its attachments and the workbook), hosted beside the page
         downloads: >-
           {{ (_report_files if _report_files is defined else
-              _report_attachments | default([]) + ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else []))
+              _report_attachments | default([]) + ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name,
+                                                      'desc': _report_xlsx_desc | default('', true)}] if _email_xlsx.path | default('') else []))
              if report_web_files | default(true) | bool else [] }}
         files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
         files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) }}"

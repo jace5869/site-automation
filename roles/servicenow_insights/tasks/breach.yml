@@ -66,6 +66,9 @@
            'links': {'full': (report_web_latest | default('{template}/latest.html', true)) | servicenow_insights_rel(_snb_page)}}) }}
     _report_xlsx: "{{ _snb_model | servicenow_insights_breach_xlsx if servicenow_insights_xlsx | bool else [] }}"
     _report_xlsx_name: "{{ (awx_job_template_name | default(tower_job_template_name | default('ticket-insights'))) ~ '-about-to-breach' }}"
+    _report_xlsx_desc: >-
+      Excel workbook - the tickets about to breach their SLA with the time left (sheet About to breach), and the breaches of
+      each day (Breaches by day)
     _report_email_skip: "{{ servicenow_breach_email_to | default([], true) | length == 0 }}"
     _report_email_to_override: "{{ servicenow_breach_email_to | default([], true) }}"
     report_web_page: "{{ _snb_page }}"

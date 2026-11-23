@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.118.1 — 2026-11-23
+
+**To set up:** nothing.
+
+- **The run's Files line under the header on every page.** The ticket insights page (and its about-to-breach page) had no
+  place for it, so it went on top of the page, unstyled, above the sticky bar, and the bar covered *On this page*. It is
+  now in the main column, under the header, in the page's own look (light and dark). The email looks (portal, command,
+  glass, the plain one) put it as a row of their card under the header; atlas, brief and ops as before.
+- **Each file says what it is**, beside its size: the ticket insights' workbook (every incident of the period with its issue,
+  SLA and close-note grade, then a sheet each for the issues, requests, categories, priorities, failed changes, problem
+  candidates and people), the about-to-breach workbook, the Automation backlog (Word), the outage review's workbook and its
+  AAR draft (Word). A file a report says nothing of gets its type's line (*Excel workbook - the tables of this page, one
+  sheet each*, *Word document* ...). The copy job keeps them.
+- Tests: tests/test_report_web.py Files1181 (every look: the mark once, the line under the header, the words), the insights
+  and breach pages' tests (the line in the main column, under the header).
+
 ## 1.118.0 — 2026-11-23
 
 **To set up:** nothing. The link shows by itself where `report_portal_url` is set (or `portal_path` in the inventory);

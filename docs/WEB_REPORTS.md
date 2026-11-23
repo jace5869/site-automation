@@ -654,7 +654,10 @@ so no email is needed to get them.
   playbook can give its own list instead: `_report_files: [{path, filename}]`.
 - **Where**: a folder beside the run's page, named after it: `stig-answer-keys/2026-11-20_0605_job-4901-files/`. File
   names are made safe: letters, digits, `.`, `_` and `-` only.
-- **On the page**: a **Files** line under the header, with each file's name and size. The STIG answer keys' "the answer
+- **On the page**: a **Files** line under the header, with each file's name, size and what it is (1.118.1: the report's own words -
+  the ticket insights' workbook: every incident of the period, then a sheet each for the issues, requests ... - else its
+  type's: *Excel workbook - the tables of this page, one sheet each*). In every look, and on the ticket insights' pages in
+  their main column. The STIG answer keys' "the answer
   file" sections also get **Download answer-keys-<STIG>-<release>.xml** beside their Copy button. These are plain
   links (`<a href download>`), so they work without the page's script and under any Content-Security-Policy. A file
   that is not hosted is named there, with why.

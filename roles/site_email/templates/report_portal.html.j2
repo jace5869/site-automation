@@ -121,6 +121,8 @@
 {%- endif %}
 </td></tr></table>
 </td></tr>
+{#- 1.118.1: the run's files (site_report_web), under the header #}
+{%- if _page_runs is defined %}<!--site-report-files row="padding:14px 0 0 0;"-->{% endif %}
 {#- 1.76.2: the email links its full web report at the top and the bottom (_email_web_url; never on the web page itself) #}
 {%- if _email_web_url | default('') and _page_runs is not defined %}
 {{ gap(12) }}

@@ -2078,6 +2078,60 @@ class WideTables(unittest.TestCase):
         self.assertIn('<input type="checkbox" class="c1" checked>Cluster', h)
 
 
+class Files1181(unittest.TestCase):
+    """1.118.1: the run's Files line under every page's header - every look here, the ticket insights' pages in
+    tests/test_servicenow_insights.py and tests/test_servicenow_breach.py - and each file said in plain words (the report's
+    own description, else its type's)."""
+    WEB = ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2")
+
+    def test_1_every_look_puts_it_under_its_header(self):
+        rf = sys.modules["ansible.module_utils.site_report_files"]
+        env = Back1872().env()
+        doc = {"title": "Weekly title", "subtitle": "", "status": "warning", "summary": [{"label": "Hosts", "value": 3, "status": "warning"}],
+               "sections": [{"title": "A", "lines": ["x"]}]}
+        base = dict(_report=doc, _email_footer="AAP job 7 (T).", report_email_header_text="Site automation report", awx_job_id=7, awx_job_template_name="T")
+        files = [{"name": "t.xlsx", "size": 3879731, "desc": "Excel workbook - every incident of the period"}, {"name": "aar.docx", "size": 2048}]
+        for look in Back1872.LOOKS:
+            web = env.get_template(look).render(dict(base, _page_runs=[], _page_logo_cid="", _page_logo_size=[0, 0]))
+            self.assertEqual(web.count(rf.MARK) + len(rf.ROW_RE.findall(web)), 1, look)
+            h = rf.put_files(web, files, [], "t/2026-11-23_0600_job-7.html", "t/2026-11-23_0600_job-7-files", look in self.WEB)
+            at = h.index(rf.START)
+            self.assertNotRegex(h[:at], r"<body[^>]*>\s*$", look)                       # never on top of the page (its bar)
+            self.assertGreater(at, h.index("Weekly title", h.index("<body")), look)         # under the header's title
+            if look not in self.WEB:
+                self.assertRegex(h[:at], r'<tr><td style="[^"]*">$', look)                 # a row of the email look's card
+                self.assertNotIn('style="max-width:760px;margin:12px auto', h, look)        # the row's own width
+            self.assertIn('<span class="sf-z">3.7 MB</span> <span class="sf-d">&middot; Excel workbook - every incident of the period</span>', h, look)
+            self.assertIn('<span class="sf-d">&middot; Word document</span>', h, look)               # no description given: its type's
+            if look not in self.WEB:                                                          # an email look's email: no mark
+                self.assertNotIn("site-report-files", env.get_template(look).render(base), look)
+            if look in self.WEB:
+                self.assertIn(".sf-d{", web, look)
+
+    def test_2_descriptions(self):
+        rf = sys.modules["ansible.module_utils.site_report_files"]
+        self.assertEqual(rf.describe(None, ".xlsx"), "Excel workbook - the tables of this page, one sheet each")
+        self.assertEqual(rf.describe("  Word document -\n the AAR draft ", ".docx"), "Word document - the AAR draft")
+        self.assertEqual(len(rf.describe("x" * 400, ".csv")), 300)
+        self.assertEqual(rf.describe("", ".bin"), "")
+        ok, _ = rf.prepare([{"filename": "a.csv", "b64": base64.b64encode(b"a").decode()},
+                            {"filename": "b.csv", "b64": base64.b64encode(b"b").decode(), "desc": "CSV - the hosts"}], 5, packed_only=True)
+        self.assertEqual([f["desc"] for f in ok], ["CSV - a table of this page, as text (Excel opens it)", "CSV - the hosts"])   # the copy job too
+        with open(os.path.join(REPO, "roles", "site_email", "library", "site_report_web.py")) as fh:
+            self.assertIn("'desc': f.get('desc') or ''}]", fh.read())                         # a kept report keeps them
+
+    def test_3_the_reports_say_what_their_files_are(self):
+        for rel, words in (("roles/servicenow_insights/tasks/main.yml", ("every incident of the period", "Automation backlog: every ticket cluster")),
+                           ("roles/servicenow_insights/tasks/breach.yml", ("(sheet About to breach)",)),
+                           ("roles/vmware_vm/tasks/watch.yml", ("(sheet Timeline:", "after action report (AAR) draft")),
+                           ("roles/vmware_vm/tasks/report.yml", ("_report_xlsx_desc:",)),
+                           ("roles/site_email/tasks/main.yml", ("'desc': _report_xlsx_desc",))):
+            with open(os.path.join(REPO, rel)) as fh:
+                src = " ".join(fh.read().split())
+            for w in words:
+                self.assertIn(w, src, rel)
+
+
 rfs = sys.modules["ansible.module_utils.site_report_files"]
 FAKE_WEB = os.path.join(HERE, "email", "fake_web.py")
 FAKE_SMB = os.path.join(HERE, "email", "fake_smb")

@@ -24,6 +24,11 @@ CTYPES = {'.xml': 'application/xml', '.csv': 'text/csv; charset=utf-8', '.md': '
           '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
 MARK = '<!--site-report-files-->'       # where a look puts the Files line (atlas, brief, ops: under the header)
+# 1.118.1: the email looks' (tables): <!--site-report-files row="<the cell's style>"--> - the line as a row of the card
+ROW_RE = re.compile(r'<!--site-report-files row="([^"<>]*)"-->')
+# 1.118.1: what a file is, in plain words, when the report says nothing of it (its own: desc on the item)
+DESC = {'.xlsx': 'Excel workbook - the tables of this page, one sheet each', '.csv': 'CSV - a table of this page, as text (Excel opens it)',
+        '.docx': 'Word document', '.pdf': 'PDF document', '.md': 'Markdown text', '.txt': 'Text file', '.xml': 'XML file'}
 START, END = '<!--site-report-files:start-->', '<!--site-report-files:end-->'
 # a Download link a report puts in its page (a text's file: the answer file) - made into the run's link here
 LINK_RE = re.compile(r'<a class="dl" href="site-report-file:([^"]*)" download>.*?</a>', re.S)
@@ -112,8 +117,14 @@ def prepare(items, max_mb, types=TYPES, packed_only=False):
             continue
         seen.add(name.lower())
         total += size
-        ok.append(dict(src, name=name, size=size, ctype=CTYPES.get(ext, 'application/octet-stream')))
+        ok.append(dict(src, name=name, size=size, ctype=CTYPES.get(ext, 'application/octet-stream'), desc=describe(it.get('desc'), ext)))
     return ok, refused
+
+
+def describe(desc, ext):
+    """1.118.1: a file's description: the report's own (one line, at most 300 characters), else its type's."""
+    d = ' '.join(str(desc or '').split())[:300]
+    return d or DESC.get(str(ext or '').lower(), '')
 
 
 def read_bytes(f):
@@ -150,8 +161,11 @@ def block_html(files, refused, page, folder, web_look=True):
     if not files and not refused:
         return ''
     e = htmllib.escape
-    items = ['<li>%s</li>' % _item(mark_id(folder, f['name']), '<a class="sf-a" href="%s" download="%s">%s</a> <span class="sf-z">%s</span>'
-                                    % (_href(page, folder + '/' + f['name']), e(f['name']), e(f['name']), e(human(f['size']))))
+    def desc(f):
+        d = f.get('desc') if 'desc' in f else describe('', os.path.splitext(f['name'])[1])
+        return (' <span class="sf-d">&middot; %s</span>' % e(d)) if d else ''
+    items = ['<li>%s</li>' % _item(mark_id(folder, f['name']), '<a class="sf-a" href="%s" download="%s">%s</a> <span class="sf-z">%s</span>%s'
+                                    % (_href(page, folder + '/' + f['name']), e(f['name']), e(f['name']), e(human(f['size'])), desc(f)))
              for f in files]
     items += ['<li><span class="dl off">%s is not on the website: %s</span></li>' % (e(r['name']), e(r['why'])) for r in refused]
     if web_look:
@@ -169,8 +183,13 @@ def put_files(html, files, refused, page, folder, web_look=True):
     (site-report-file:NAME) made into the link to this run's file - or why it is not on the website, or nothing when
     the run hands over no files."""
     block = block_html(files, refused, page, folder, web_look)
+    row = ROW_RE.search(html)
     if MARK in html:
         html = html.replace(MARK, block, 1)
+    elif row:                                            # an email look: the line as a row of its card, under its header
+        cell = ('<tr><td style="%s">%s</td></tr>' % (row.group(1), block.replace('max-width:760px;margin:12px auto;', 'margin:0;', 1))
+                if block else '')
+        html = html[:row.start()] + cell + html[row.end():]
     elif block:
         m = re.search(r'<body\b[^>]*>', html, re.I)
         html = (html[:m.end()] + block + html[m.end():]) if m else block + html
