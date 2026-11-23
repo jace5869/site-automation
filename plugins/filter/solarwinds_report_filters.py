@@ -699,15 +699,24 @@ def _alarm_objects(d, include_event_hosts=False):
 
 
 def swr_vcenter_objects(alarms_read):
-    """Each host and each VM named by an alarm or a warning or critical event, once per vCenter."""
+    """Each host and each VM named by an alarm or a warning or critical event, once per vCenter. same_name: how many
+    objects of that vCenter, kind and name the rows' MoIDs show (review 1113 P1-6: two VMs named alike in two folders);
+    over 1, the read links neither to a node."""
     d = alarms_read or {}
+    moids = {}
+    for row, kind, name in _alarm_objects(d, include_event_hosts=True):
+        if row.get("moid"):
+            moids.setdefault(_key(_center(row, d), kind, name), set()).add(str(row["moid"]))
     out, seen = [], set()
     for row, kind, name in _alarm_objects(d):
         vc = _center(row, d)
         key = _key(vc, kind, name)
         if key[2] and key not in seen:
             seen.add(key)
-            out.append({"host": name.strip(), "kind": kind, "vcenter": vc})
+            obj = {"host": name.strip(), "kind": kind, "vcenter": vc}
+            if len(moids.get(key) or ()) > 1:
+                obj["same_name"] = len(moids[key])
+            out.append(obj)
     return out
 
 

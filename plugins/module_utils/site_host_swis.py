@@ -70,7 +70,7 @@ def _hosts(hosts):
         fq = _full(name) or _full(h.get("fqdn")) or _full(given)
         ip = _ip(given) or _ip(name)
         out.append({"host": name, "short": _short(fq or name), "fqdn": fq, "ip": ip, "kind": str(h.get("kind") or ""),
-                    "vcenter": h.get("vcenter") or ""})
+                    "vcenter": h.get("vcenter") or "", "same_name": int(h.get("same_name") or 0)})
     return out
 
 
@@ -170,7 +170,12 @@ def _vcenter_matches(hs, rows, vim, linked, allow_short, allow_ip, vim_read=True
     """vCenter objects to nodes. VIM's own link first: only for an object VIM knows in the job's vCenter (vim_for), and
     only when that node is linked to that one VIM object (review 1970c P1-3). Else the names and addresses, among the
     nodes VIM links to nothing, and only when the object's kind cannot be mistaken (review 1970c P1-5): never when VIM
-    has an object of the other kind under this name, nor when VIM was not read."""
+    has an object of the other kind under this name. VIM not read whole (vim_read None: failed, cut at
+    solarwinds_snapshot_max_rows, or not asked): no node at all, VIM's own link included (review 1113 P1-1, P1-2).
+    Several vCenter objects of one name (same_name, by their MoIDs; review 1113 P1-6): no node."""
+    if vim_read is None:
+        return dict((i, (None, "", "VIM was not read whole: which node is this %s's is not known" % (
+            "host" if h["kind"] == "host" else "VM"))) for i, h in enumerate(hs))
     by_id = {n["node_id"]: n for n in rows + linked}
     links = defaultdict(set)
     for n in linked:
@@ -179,15 +184,16 @@ def _vcenter_matches(hs, rows, vim, linked, allow_short, allow_ip, vim_read=True
     for i, h in enumerate(hs):
         names[canon(h["host"])].append(i)
         obj = vim.get(sdb.vim_key(h["kind"], h.get("vcenter"), h["host"])) or {}
-        if obj.get("node_id") is not None:
+        if h.get("same_name", 0) > 1:
+            found[i] = (None, "", "%d %ss in this vCenter have this name: which one SolarWinds has is not known" % (
+                h["same_name"], "host" if h["kind"] == "host" else "VM"))
+        elif obj.get("node_id") is not None:
             owners[obj["node_id"]].append(i)
         elif obj.get("why"):
             found[i] = (None, "", obj["why"])
         elif obj.get("other_kind"):
             found[i] = (None, "", "VIM has a %s of this name too: which node is this %s's is not known" % (
                 "VM" if h["kind"] == "host" else "host", "host" if h["kind"] == "host" else "VM"))
-        elif vim_read is None:
-            found[i] = (None, "", "VIM was not read: which node is this %s's is not known" % ("host" if h["kind"] == "host" else "VM"))
     for nid, indices in owners.items():
         for i in indices:
             mine = links.get(nid) or set()
@@ -293,6 +299,22 @@ def _part(swdb, snap, part, words):
     return None, "%s: not read by the last snapshot (%s)" % (words, ad._clean(str(note.get("why") or "?"), 160))
 
 
+def _vim_state(swdb, snap):
+    """(read, line) of VIM for the alarms reports: True only when the last snapshot read VIM's hosts, VMs and their
+    vCenters whole. Not asked (solarwinds_snapshot_parts) or cut at solarwinds_snapshot_max_rows: None and a line
+    (review 1113 P1-2). An Orion without VIM: False, no line."""
+    read, line = _part(swdb, snap, "vim", "VIM's hosts and VMs")
+    if read is not True:
+        return read, line
+    cut = [str(x.get("what") or "") for x in snap.get("not_read") or []
+           if any(str(x.get("what") or "").startswith(sdb.PART_WORDS[t] + " past ") for t in sdb.VIM_TABLES)]
+    if cut:
+        return None, "VIM's hosts and VMs: only part read by the last snapshot (%s). See solarwinds_snapshot_max_rows" % ", ".join(cut)
+    if snap.get("vim_hosts") is None or snap.get("vim_vms") is None:
+        return None, "VIM's hosts and VMs: not read by the last snapshot. Add vim to solarwinds_snapshot_parts"
+    return True, ""
+
+
 def _read(hs, o, conn, swdb, snap):
     sid = snap["snap_id"]
     mode = o.get("mode") or "health"
@@ -314,15 +336,18 @@ def _read(hs, o, conn, swdb, snap):
     if mode == "vcenter":
         ids = {n["node_id"] for n in rows}
         ids.update(v["node_id"] for v in vim.values() if v and v.get("node_id") is not None)
-        vim_read, line = _part(swdb, snap, "vim", "VIM's hosts and VMs")
+        vim_read, line = _vim_state(swdb, snap)
         not_read += [line] if line else []
-        if any((v or {}).get("why") for v in vim.values()):
-            not_read.append("VIM not verifiable: the snapshot has no vCenter for its hosts and VMs. The next snapshot run adds them")
+        if vim_read is not None and any(str((v or {}).get("why") or "").startswith("VIM not verifiable") for v in vim.values()):
+            not_read.append("VIM not verifiable: some of VIM's hosts and VMs have no vCenter in the snapshot. "
+                            "The next snapshot run adds them, unless two vCenters share a name")
         found = _vcenter_matches(hs, rows, vim, swdb.vim_nodes(conn, sid, ids), allow_short, allow_ip, vim_read)
     else:
         found = match(hs, rows, allow_short, allow_ip)
     ids = sorted(set(v[0]["node_id"] for v in found.values() if v[0]))
     sam, line = _part(swdb, snap, "app", "SAM's applications")
+    if mode == "vcenter":                # the alarms reports show no SAM: never read, never in the job's output (review 1113 P1-7)
+        sam, line = False, ""
     not_read += [line] if line else []
     vols_on, line = _part(swdb, snap, "volume", "the volumes")
     not_read += [line] if line else []
@@ -415,6 +440,9 @@ def redact_read(res, redact_fn):
             alert["message"] = redact_fn(alert["message"])
         for event in host.get("events") or []:
             event["message"] = redact_fn(event["message"])
+        for app in host.get("apps") or []:         # SAM's component messages too (review 1113 P1-7)
+            for comp in app.get("components_not_up") or []:
+                comp["message"] = redact_fn(comp.get("message") or "")
     return res
 
 

@@ -32,8 +32,8 @@ class Snap(object):
     domains, db01 by its IP, esx01 in VIM."""
 
     def __init__(self, age=360, orion="orion.example.mil:17774", latest="ok"):
-        self.counts = {"alerts": 1, "events": 4}
-        self.core, self.notes = {}, {}
+        self.counts = {"alerts": 1, "events": 4, "vim_hosts": 3, "vim_vms": 3}
+        self.core, self.notes, self.not_read = {}, {}, []
         self.age, self.orion, self.kind, self.calls = age, orion, latest, []
 
     def begin_read(self, conn):
@@ -49,7 +49,7 @@ class Snap(object):
         if self.kind == "none":
             return None
         return {"snap_id": 7, "read_at": T("2026-11-21 10:40"), "age_seconds": self.age, "orion": self.orion, "core": self.core,
-                "not_read": [], **self.counts}
+                "not_read": list(self.not_read), **self.counts}
 
     def last_failure(self, conn):
         return (T("2026-11-21 10:50"), "login refused")
@@ -1275,6 +1275,110 @@ class Review1113(unittest.TestCase):
         self.assertIn("VIM was not read", r["hosts"][0]["unmatched_why"])
         snap.notes["vim"]["absent"] = True                                   # no VIM on this Orion: the name is all there is
         self.assertEqual(self.read([{"host": "esx01", "kind": "host", "vcenter": "vc01"}], snap)["hosts"][0]["node"]["node_id"], 9)
+
+
+class Review1113b(unittest.TestCase):
+    """Codex's 7 P1s of rev-1113 (d8b613e2): a test each, failing on d8b613e2. (P1-4 and P1-1's snapshot side:
+    test_solarwinds_snapshot.Parts.)"""
+
+    ESX = [{"host": "esx01", "kind": "host", "vcenter": "vc01"}]
+
+    def linked(self, snap=None):
+        """VIM's own link: esx01 of vc01 is node 41, and node 41 is that one VIM host's."""
+        snap = snap or Snap()
+        snap.vim_for = lambda *args: {hs.sdb.vim_key("host", "vc01", "esx01"): {"node_id": 41, "kind": "host", "status": "Up", "why": ""}}
+        snap.nodes_for_hosts = lambda *args: []
+        snap.vim_nodes = lambda *args: [dict(N(41, "esx01"), kind="host", vim_id=1)]
+        return snap
+
+    def read(self, objs, snap):
+        r = hs.read(objs, {"mode": "vcenter", "now": NOW}, object(), snap)
+        self.assertTrue(r["ok"], r["why"])
+        return r
+
+    def test_the_link_itself_when_whole(self):
+        self.assertEqual(self.read(self.ESX, self.linked())["hosts"][0]["matched"], "vim")          # the baseline
+
+    # P1-1: VIM's hosts read, its VMs not: VIM's own link is not used either
+    def test_1_a_partial_vim_read_links_nothing(self):
+        snap = self.linked()
+        snap.notes["vim"] = {"what": "vim", "why": "timed out", "absent": False}
+        h = self.read(self.ESX, snap)["hosts"][0]
+        self.assertIsNone(h["node"])
+        self.assertIn("VIM was not read whole", h["unmatched_why"])
+
+    # P1-2: cut at solarwinds_snapshot_max_rows, or vim not in solarwinds_snapshot_parts: never whole
+    def test_2_a_cut_or_skipped_vim_read_links_nothing(self):
+        snap = self.linked()
+        snap.not_read = [{"what": hs.sdb.PART_WORDS["vim_vm"] + " past 100 rows", "why": "only the first were kept (solarwinds_snapshot_max_rows)"}]
+        r = self.read(self.ESX, snap)
+        self.assertIsNone(r["hosts"][0]["node"])
+        self.assertTrue(any("only part read" in x and "solarwinds_snapshot_max_rows" in x for x in r["not_read"]), r["not_read"])
+        snap = self.linked()
+        snap.counts.update(vim_hosts=None, vim_vms=None)               # not asked: the snapshot has no count
+        r = self.read(self.ESX, snap)
+        self.assertIsNone(r["hosts"][0]["node"])
+        self.assertTrue(any("solarwinds_snapshot_parts" in x for x in r["not_read"]), r["not_read"])
+        snap = self.linked()
+        snap.notes["vim"] = {"what": "vim", "why": "not on this Orion", "absent": True}
+        snap.counts.update(vim_hosts=None, vim_vms=None)               # no VIM on this Orion: no line, the names decide
+        snap.vim_for = lambda *args: {}
+        snap.vim_nodes = lambda *args: []
+        snap.nodes_for_hosts = lambda *args: [N(9, "esx01")]
+        r = self.read(self.ESX, snap)
+        self.assertEqual(r["hosts"][0]["node"]["node_id"], 9)
+        self.assertFalse(any("VIM" in x for x in r["not_read"]), r["not_read"])
+
+    # P1-3: the same short name is no proof when it fits two of the snapshot's vCenters
+    def test_3_the_same_short_name_fits_two_centers(self):
+        centers = ["vc01", "vc01.b.example.mil"]
+        self.assertFalse(hs.sdb.same_center("vc01", "vc01", centers))
+        self.assertTrue(hs.sdb.same_center("vc01", "vc01", ["vc01", "vc02.b.example.mil"]))
+        self.assertTrue(hs.sdb.same_center("vc01.b.example.mil", "vc01.b.example.mil", centers))     # an FQDN: itself
+        self.assertTrue(hs.sdb.same_center("192.0.2.250", "192.0.2.250", ["192.0.2.250", "vc01"]))
+        c = vim_conn(vms=[(1, "payroll", 41, "vc01"), (2, "payroll", 42, "vc01.b.example.mil")])
+        got = hs.sdb.vim_for(c, 7, [{"name": "payroll", "kind": "vm", "vcenter": "vc01"}])
+        self.assertIsNone((got[hs.sdb.vim_key("vm", "vc01", "payroll")] or {}).get("node_id"))
+
+    # P1-5: one of the same kind and name without its vCenter may be the job's very object
+    def test_5_an_unknown_center_row_keeps_it_doubtful(self):
+        c = vim_conn(vms=[(10, "payroll", 41, "vc-a.example.mil"), (20, "payroll", 42, None)])
+        e = hs.sdb.vim_for(c, 7, [{"name": "payroll", "kind": "vm", "vcenter": "vc-a.example.mil"}])[
+            hs.sdb.vim_key("vm", "vc-a.example.mil", "payroll")]
+        self.assertIsNone(e["node_id"])
+        self.assertTrue(e["why"].startswith("VIM not verifiable"), e)
+        c = vim_conn(vms=[(10, "payroll", 41, "vc-a.example.mil"), (20, "payroll", 42, "vc-a.example.mil")])
+        e = hs.sdb.vim_for(c, 7, [{"name": "payroll", "kind": "vm", "vcenter": "vc-a.example.mil"}])[
+            hs.sdb.vim_key("vm", "vc-a.example.mil", "payroll")]
+        self.assertEqual((e["node_id"], e["why"]), (None, "VIM has 2 VMs of this name in this vCenter"))
+
+    # P1-6: two VMs of one name (two MoIDs) in one vCenter: neither is linked to a node
+    def test_6_two_objects_of_one_name(self):
+        d = {"vcenter": "vc01", "hosts": [], "events": [],
+             "alarms": [{"entity_type": "vm", "entity": "payroll", "moid": "vm-12", "alarm": "VM CPU usage"},
+                        {"entity_type": "vm", "entity": "payroll", "moid": "vm-34", "alarm": "VM memory usage"},
+                        {"entity_type": "vm", "entity": "web01", "moid": "vm-56", "alarm": "VM CPU usage"}]}
+        objs = swr.swr_vcenter_objects(d)
+        self.assertEqual([(o["host"], o.get("same_name")) for o in objs], [("payroll", 2), ("web01", None)])
+        snap = Snap()
+        snap.vim_for = lambda *args: {hs.sdb.vim_key("vm", "vc01", "payroll"): {"node_id": 41, "kind": "vm", "status": "Up", "why": ""}}
+        snap.nodes_for_hosts = lambda *args: []
+        snap.vim_nodes = lambda *args: [dict(N(41, "payroll"), kind="vm", vim_id=12)]
+        h = self.read(objs[:1], snap)["hosts"][0]
+        self.assertIsNone(h["node"])
+        self.assertIn("2 VMs in this vCenter have this name", h["unmatched_why"])
+
+    # P1-7: no SAM in the alarms reports; SAM's component messages redacted wherever they are read
+    def test_7_sam_messages_never_in_the_output(self):
+        snap = self.linked()
+        r = self.read(self.ESX, snap)
+        self.assertFalse(any(c[0] == "apps" for c in snap.calls if isinstance(c, tuple)), snap.calls)
+        self.assertEqual((r["sam"], r["hosts"][0]["apps"]), (False, []))
+        app = reads.sam_app("Payroll", "Down", ["login"])
+        app["components_not_up"][0]["message"] = "login failed: password=example-secret"
+        res = {"hosts": [{"alerts": [], "events": [], "apps": [app]}]}
+        out = hs.redact_read(res, site_redact.redact)
+        self.assertNotIn("example-secret", json.dumps(out))
 
 
 if __name__ == "__main__":

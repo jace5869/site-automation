@@ -66,11 +66,21 @@ Each vCenter's hosts and VMs stay separate. VIM's own link is used first:
 
 1. VIM must know the object by its full name, as a host or as a VM, like vCenter.
 2. That VIM object must be in the job's vCenter. Names are compared in lower case, without a trailing dot. A short
-   name fits an FQDN only when it fits just one of the snapshot's vCenters.
-3. Its node must be linked to that one VIM object only.
+   name, even the same one, fits only when it fits just one of the snapshot's vCenters.
+3. VIM must have only one object of that kind and name there, each with its vCenter known.
+4. Its node must be linked to that one VIM object only.
 
 Otherwise the steps above are tried, among the nodes VIM links to nothing. An address still counts every node. A name
-is not used when VIM has a host and a VM of that name, or when VIM was not read.
+is not used when VIM has a host and a VM of that name.
+
+No node is linked at all in these cases:
+
+- The last snapshot did not read VIM whole. It failed, stopped at `solarwinds_snapshot_max_rows`, or `vim` is not in
+  `solarwinds_snapshot_parts`.
+- vCenter has two objects of one name, for example two VMs in two folders. The alarms' MoIDs show it.
+- Two vCenters have the same name in SolarWinds. Their hosts and VMs are kept without a vCenter.
+
+The alarms reports show no SAM applications. They are not read there.
 
 The snapshot keeps each VIM host's vCenter from 1.113.0 on. Until its next run after the upgrade, the alarms reports
 say "VIM not verifiable" under Not read. Those objects then get no alerts, never a guess.
@@ -137,7 +147,8 @@ old"). Every SolarWinds caption gives the snapshot's date, time and age.
 | no whole SolarWinds snapshot yet | Run *SolarWinds - snapshot* once. |
 | the report database: the login was refused | Check the Report database credential. |
 | the snapshot is of another SolarWinds | The template's SolarWinds credential names another address. |
-| VIM not verifiable | The snapshot has no vCenter for VIM's hosts yet. Wait for the next run of *SolarWinds - snapshot*. |
+| VIM not verifiable | Some VIM hosts and VMs have no vCenter in the snapshot. Wait for the next run of *SolarWinds - snapshot*. If it stays, two vCenters share a name in SolarWinds. |
+| VIM's hosts and VMs: not read, or only part read | No VIM link is used. Add `vim` to `solarwinds_snapshot_parts`, or raise `solarwinds_snapshot_max_rows`. |
 | Syslog not read: no Log Analyzer | SolarWinds has no Log Analyzer. The other columns are complete. |
 | Syslog not read: no SolarWinds credential | Attach SolarWinds (read-only) to the template. |
 | SAM's applications: not read by the last snapshot | The column shows `?`. Look at the last runs of *SolarWinds - snapshot*. |

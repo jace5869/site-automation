@@ -422,10 +422,12 @@ def read_swis(client, opts=None):
         try:
             fn()
         except _swis_errors() as e:
-            extra.pop(name, None)
+            for k in TABLES_OF.get(name, (name,)):
+                extra.pop(k, None)
             not_read.append({"what": PART_WORDS[name], "why": str(e)})
         except Exception as e:   # noqa: BLE001 - never raises: what failed is said, the rest is kept
-            extra.pop(name, None)
+            for k in TABLES_OF.get(name, (name,)):
+                extra.pop(k, None)
             not_read.append({"what": PART_WORDS[name], "why": "could not be read (%s)" % e.__class__.__name__})
 
     def paged(p, where="", params=None, order=None):
@@ -582,14 +584,26 @@ def read_swis(client, opts=None):
         dcs = {}
         try:
             centers = dict((r["vcenter_id"], r.get("name") or r.get("ip")) for r in paged("vim_vcenter"))
+            # two vCenters of one name (review 1113 P1-4): their objects get no vCenter, so no VIM link is made for them
+            ids_of = {}
+            for vid, name in centers.items():
+                ids_of.setdefault(canon(name), set()).add(vid)
+            twice = sorted(n for n, ids in ids_of.items() if n and len(ids) > 1)
+            for n in twice:
+                for vid in ids_of[n]:
+                    centers[vid] = None
+            if twice:
+                not_read.append({"what": "the VIM vCenters' names", "why": "%s: more than one vCenter has this name. Their hosts "
+                                 "and VMs are kept without a vCenter" % ", ".join(twice)})
             dcs = dict((r["datacenter_id"], centers.get(r["vcenter_id"])) for r in paged("vim_dc"))
         except _swis_errors() as e:      # no vCenter known: the reports use no VIM node link (1.113.0)
             not_read.append({"what": "the VIM objects' vCenters (Orion.VIM.DataCenters, Orion.VIM.VCenters)", "why": str(e)})
         for h in hosts:
             h["cluster"] = cl.get(h.pop("cluster_id", None))
             h["vcenter"] = dcs.get(h.pop("datacenter_id", None))
-        extra["vim_host"] = hosts
-        extra["vim_vm"] = paged("vim_vm")
+        vms = paged("vim_vm")
+        # both or neither (review 1113 P1-1): hosts without their VMs would leave a node looking like a host's alone
+        extra["vim_host"], extra["vim_vm"] = hosts, vms
 
     for name, fn in (("node", nodes), ("ip", ips), ("iface", ifaces), ("alert", alerts), ("event", events), ("app", apps),
                      ("component", components), ("volume", volumes), ("vim", vim)):
@@ -601,6 +615,11 @@ def read_swis(client, opts=None):
     out.update(seconds=round(time.time() - started, 1), queries=client.calls)
     return out
 
+
+# a part kept in more than one extra table: all of them go when the part fails
+TABLES_OF = {"vim": ("vim", "vim_host", "vim_vm")}
+# the tables of VIM's objects and their vCenters: one cut at solarwinds_snapshot_max_rows makes VIM's links incomplete
+VIM_TABLES = ("vim_host", "vim_vm", "vim_dc", "vim_vcenter")
 
 PART_WORDS = {"node": "the nodes' last poll, CPU and memory (Orion.Nodes)", "ip": "the nodes' other IP addresses (Orion.NodeIPAddresses)",
               "iface": "the links' interface errors and discards (Orion.NPM.Interfaces)", "alert": "the active alerts (Orion.AlertActive)",
@@ -915,8 +934,8 @@ def latest(conn, now=None, fresh=True):
         except Exception:        # noqa: BLE001
             pass
     cur = conn.cursor()
-    cur.execute("SELECT snap_id, read_at, core, not_read, nodes, alerts, events, orion, TIMESTAMPDIFF(SECOND, read_at, UTC_TIMESTAMP()), links "
-                "FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1")
+    cur.execute("SELECT snap_id, read_at, core, not_read, nodes, alerts, events, orion, TIMESTAMPDIFF(SECOND, read_at, UTC_TIMESTAMP()), links, "
+                "vim_hosts, vim_vms FROM sw_snapshot WHERE ok = 1 ORDER BY snap_id DESC LIMIT 1")
     r = cur.fetchone()
     if not r:
         return None
@@ -930,7 +949,9 @@ def latest(conn, now=None, fresh=True):
         nr = []
     age = (now - r[1]).total_seconds() if now is not None else (r[8] or 0)
     return {"snap_id": int(r[0]), "read_at": r[1], "core": core, "not_read": nr, "nodes": r[4], "alerts": r[5], "events": r[6],
-            "orion": r[7] or "", "age_seconds": max(0, int(age)), "links": r[9]}
+            "orion": r[7] or "", "age_seconds": max(0, int(age)), "links": r[9],
+            # 1.113.0: NULL when VIM was not read (not asked, or failed) - its links are then never complete
+            "vim_hosts": r[10] if len(r) > 10 else None, "vim_vms": r[11] if len(r) > 11 else None}
 
 
 def newer_snapshot(conn, before):
@@ -1589,15 +1610,15 @@ def ports_for(conn, snap_id, node_ids):
 
 
 def same_center(job, snap, centers):
-    """1.113.0: is the snapshot's vCenter name snap the job's vCenter job? Names compared after canon(). An FQDN against
-    a short name only when that short name fits exactly one of the snapshot's vCenters (centers), and that one is the
-    other name. Anything doubtful: False."""
+    """1.113.0: is the snapshot's vCenter name snap the job's vCenter job? Names compared after canon(). An FQDN or an
+    address equal to it: yes. A short name (the same short name too, review 1113 P1-3) only when it fits exactly one of
+    the snapshot's vCenters (centers), and that one is the other name. Anything doubtful: False."""
     a, b = canon(job), canon(snap)
     if not a or not b:
         return False
-    if a == b:
+    if a == b and ("." in a or normalized_ip(a)):
         return True
-    if normalized_ip(a) or normalized_ip(b) or ("." in a) == ("." in b):
+    if normalized_ip(a) or normalized_ip(b) or (a != b and ("." in a) == ("." in b)):
         return False
     short = a if "." not in a else b
     fits = set(c for c in (canon(x) for x in centers or []) if c.split(".", 1)[0] == short)
@@ -1635,12 +1656,17 @@ def vim_for(conn, snap_id, names):
         same = [r for r in rows if r["kind"] == kind and canon(r["name"]) == canon(n)]
         known = [r for r in same if canon(r.get("vcenter"))]
         mine = [r for r in known if same_center(vc, r["vcenter"], centers)]
-        if len(mine) > 1 or (not mine and not (same and not known)):
-            continue                     # none, or two in the job's vCenter: no VIM object, never a guess
-        if not mine:
+        if len(same) > len(known):
+            # one of this kind and name without its vCenter may be the job's very object (review 1113 P1-5): no link
             out[vim_key(kind, vc, n)] = {"kind": kind, "name": n, "node_id": None, "vcenter": "",
-                                         "why": "VIM not verifiable: the snapshot has no vCenter for it (the next snapshot run adds it)"}
+                                         "why": "VIM not verifiable: the snapshot has no vCenter for it"}
             continue
+        if len(mine) > 1:
+            out[vim_key(kind, vc, n)] = {"kind": kind, "name": n, "node_id": None, "vcenter": "",
+                                         "why": "VIM has %d %ss of this name in this vCenter" % (len(mine), "host" if kind == "host" else "VM")}
+            continue
+        if not mine:
+            continue                     # not in the job's vCenter: no VIM object
         r = mine[0]
         out[vim_key(kind, vc, n)] = {"kind": r["kind"], "name": r["name"] or "",
                                      "status": site_swis.status_of(r["status"]) if r["status"] is not None else "",

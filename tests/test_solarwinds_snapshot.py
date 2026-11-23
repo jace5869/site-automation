@@ -255,6 +255,54 @@ class Parts(unittest.TestCase):
         self.assertNotIn("Not read:", lines)
         self.assertFalse(any("SAM application" in l for l in lines))
 
+    def vim_read(self, change):
+        """read_swis() against the fixture, with change(swql, rows, cut) -> (rows, cut) on each paged query (or raising)."""
+        f = Fake(self.more)
+        try:
+            c = f.client()
+            orig = c.paged
+
+            def paged(swql, *args, **kw):
+                rows, cut = orig(swql, *args, **kw)
+                return change(swql, rows, cut)
+            c.paged = paged
+            return sd.read_swis(c)
+        finally:
+            f.stop()
+
+    def test_vims_hosts_without_its_vms_are_not_kept(self):
+        # review 1113 P1-1: the VMs timed out after the hosts were read - neither is kept, VIM is said not read
+        def change(swql, rows, cut):
+            if "Orion.VIM.VirtualMachines" in swql:
+                raise sd.site_swis.SwisError("timed out after 30 s", "timeout")
+            return rows, cut
+        s = self.vim_read(change)
+        self.assertNotIn("vim_host", s["extra"])
+        self.assertNotIn("vim_vm", s["extra"])
+        self.assertEqual([(x["what"], x.get("absent")) for x in s["not_read"]], [(sd.PART_WORDS["vim"], None)])
+        c = sd.counts(sd.to_rows(s, 1), s)
+        self.assertEqual((c["vim_hosts"], c["vim_vms"]), (None, None))
+
+    def test_two_vcenters_of_one_name(self):
+        # review 1113 P1-4: VCenterIDs 1 and 2 both vc01.example.mil - their hosts get no vCenter, never one for both
+        def change(swql, rows, cut):
+            if "Orion.VIM.VCenters" in swql:
+                return rows + [dict(rows[0], VCenterID=2, Name="VC01.example.mil.", IPAddress="192.0.2.251")], cut
+            return rows, cut
+        s = self.vim_read(change)
+        self.assertEqual(set(h["vcenter"] for h in s["extra"]["vim_host"]), {None})
+        self.assertEqual([x["what"] for x in s["not_read"]], ["the VIM vCenters' names"])
+        self.assertIn("vc01.example.mil: more than one vCenter has this name", s["not_read"][0]["why"])
+
+    def test_the_newest_snapshot_says_whether_vim_was_read(self):
+        # review 1113 P1-2: VIM's counts come back with the snapshot (NULL: not asked or failed)
+        self.assertIn("vim_hosts, vim_vms FROM sw_snapshot", "\n".join(x[0] for x in self.latest_sql()))
+
+    def latest_sql(self):
+        conn = FakeConn(lambda sql, args: ([("x",)], []))
+        sd.latest(conn)
+        return conn.sql
+
     def test_an_orion_without_metadata_property(self):
         f = Fake(self.plain, {"FAKE_SWIS_HIDE": "Metadata.Property"})     # an Orion that refuses Metadata.Property
         try:

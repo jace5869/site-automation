@@ -283,6 +283,12 @@ assert sec["Its switch port"]["rows"][0][1:] == ["Gi1/0/14", "Up", "1 Gb/s", "71
     DB_ENV="$DBR" run "alarms: VIM's hosts of another vCenter are not this one's" ok tests/solarwinds/swalarms.yml \
         -- "!SolarWinds: Host esx02.example.mil alert" "!VIM not verifiable"
     q "UPDATE sw_vim_host SET vcenter = 'vc01.example.mil'" > /dev/null
+    # ---- 1.113.0 (review 1113 P1-2): a snapshot without VIM's count (vim not asked, or not read): no VIM link at all
+    vms=$(q "SELECT vim_vms FROM sw_snapshot ORDER BY snap_id DESC LIMIT 1")
+    q "UPDATE sw_snapshot SET vim_vms = NULL" > /dev/null
+    DB_ENV="$DBR" run "alarms on a snapshot that did not read VIM: no alert by VIM's link, said" ok tests/solarwinds/swalarms.yml \
+        -- "Add vim to solarwinds_snapshot_parts" "!SolarWinds: Host esx02.example.mil alert"
+    q "UPDATE sw_snapshot SET vim_vms = $vms" > /dev/null
 
     # ---- an old snapshot (its time moved back): one line under Not read with its age, the job green
     q "UPDATE sw_snapshot SET read_at = DATE_SUB(read_at, INTERVAL 2 HOUR)" > /dev/null

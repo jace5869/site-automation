@@ -233,6 +233,17 @@ database (`sw_vim_host.vcenter`). The VMware alarms reports use VIM's links from
 - No node by the name when VIM has a host and a VM of that name, or when VIM was not read.
 - Tables of an older release, or a snapshot without the vCenter: "VIM not verifiable" under Not read, no link.
 
+**No link when VIM cannot be sure (Codex's 7 findings on the first draft).**
+
+- VIM not read whole: no node at all, VIM's own link included. That covers a failed read, a read cut at
+  `solarwinds_snapshot_max_rows`, and `vim` left out of `solarwinds_snapshot_parts`. A failed VM read keeps no VIM hosts
+  either.
+- A short vCenter name fits only one of the snapshot's vCenters, even when the names are the same.
+- Two vCenters of one name: their objects are kept without a vCenter.
+- A VIM object of the same kind and name without its vCenter, or two in the job's vCenter: no link.
+- Two vCenter objects of one name (two MoIDs): neither gets a node, so ACT gets no SolarWinds lines for them.
+- The alarms reports read no SAM applications. SAM's component messages are redacted in every report's job output.
+
 **The snapshot's schema 2.**
 
 - `sw_vim_host.vcenter`: from Orion.VIM.DataCenters and Orion.VIM.VCenters. The ALTER runs only when
