@@ -331,7 +331,9 @@ function jobsPage() {
           const fresh = document.importNode(np, true);
           // 1.92.0: the decision box stays as the person left it - a question being answered is not swapped away; an open panel stays open
           const oldBox = same && pane.querySelector("#decide"), newBox = fresh.querySelector("#decide");
-          if (oldBox && newBox && oldBox.dataset.hold) newBox.replaceWith(oldBox);
+          const previous = oldBox?.querySelector("[data-aid]")?.dataset, next = newBox?.querySelector("[data-aid]")?.dataset;
+          if (oldBox?.dataset.hold && previous && next && previous.aid === next.aid &&
+              previous.savedJob === next.savedJob && previous.pendingJob === next.pendingJob) newBox.replaceWith(oldBox);
           else if (oldBox && newBox && oldBox.querySelector("details.wic[open]") && newBox.querySelector("details.wic")) newBox.querySelector("details.wic").open = true;
           pane.replaceWith(fresh); pane = $("jd");
           ringIn(pane, was);
@@ -678,6 +680,188 @@ function rememberRunning(id) {
   } catch (e) { /* no memory in this browser: the toast needs a look while it runs */ }
 }
 
+// Keep a draft per VM while the shortlist is open. Only a measured, complete destination can be saved.
+function placementEditor(card, approval, viewer, save, undo) {
+  const plan = approval.deploy_plan, shortlist = approval.deploy_shortlist;
+  const panel = el("section", "placement-editor");
+  const names = plan.vms.filter(vm => Object.hasOwn(shortlist.vms, vm.name));
+  const choices = new Map(), tables = new Map();
+  for (const group of card.querySelectorAll("[data-vm]")) tables.set(group.dataset.vm, group);
+  const fields = ["vcenter", "cluster", "datastore", "folder"];
+  const location = c => c.vcenter + ", datacenter " + c.datacenter;
+  const dcKey = c => c.vcenter + "|" + c.datacenter;
+  const stores = (lists, c) => c ? lists.datastores[dcKey(c) + "|" + c.name] || [] : [];
+  const folders = (lists, c) => c ? lists.folders[dcKey(c)] || [] : [];
+  const number = n => n == null ? "unknown" : String(Math.round(n * 10) / 10);
+  const clusterFit = c => number(c.pct_after) + " % memory with this VM and " + number(c.down) +
+    (c.down === 1 ? " host" : " hosts") + " down (target " + number(c.target) + " %)";
+  const storeFit = d => number(d.pct_after) + " % used with the VM at full size (at most " + number(d.max) + " %)";
+  const button = (label, cls) => {
+    const b = el("button", cls, label);
+    b.type = "button";
+    return b;
+  };
+  const originals = new Map(names.map(vm => [vm.name, Object.fromEntries(vm.rows.map(r => [r.key, r.value]))]));
+  let name = names[0].name;
+  const clusterBox = el("fieldset"), storeBox = el("fieldset");
+  const folderLabel = el("label", "placement-folder", "Folder"), folder = el("select");
+  const note = el("pre"), saveButton = button("Save the new placement", "pri"), back = button("Undo");
+  const message = el("p", "state");
+  message.setAttribute("role", "status");
+  const preview = el("div", "placement-note"), actions = el("div", "dbtns");
+  panel.append(el("h3", "", "Change placement"));
+  if (names.length > 1) {
+    const label = el("label", "placement-folder", "VM"), select = el("select");
+    for (const vm of names) select.append(el("option", "", vm.name));
+    select.onchange = () => { name = select.value; showVM(); };
+    label.append(select);
+    panel.append(label);
+  } else panel.append(el("b", "mono", name));
+  const columns = el("div", "placement-lists");
+  columns.append(clusterBox, storeBox);
+  folderLabel.append(folder);
+  preview.append(el("h4", "", "Work note preview for " + plan.ticket), note);
+  actions.append(saveButton, back, message);
+  panel.append(columns, folderLabel, preview, actions);
+
+  function clearMarks() {
+    for (const tr of card.querySelectorAll("tr.placement-draft")) {
+      tr.classList.remove("placement-draft");
+      for (const mark of tr.querySelectorAll(".draft")) mark.remove();
+    }
+  }
+  let requested = [];
+  function refreshDraft() {
+    clearMarks();
+    for (const chip of panel.querySelectorAll(".placement-pick")) chip.remove();
+    const notes = [];
+    requested = [];
+    let valid = true;
+    for (const [vm, pick] of choices) {
+      if (!pick.edited) continue;
+      const c = pick.cluster, d = pick.store;
+      const values = {vcenter: location(c), cluster: c.name, datastore: d?.name || "", folder: pick.folder};
+      const old = originals.get(vm);
+      const moved = old.vcenter !== values.vcenter;
+      const changed = fields.filter(k => moved || old[k] !== values[k]);
+      if (!changed.length) continue;
+      requested.push({vm_name: vm, vcenter: c.vcenter, cluster: c.name, datastore: values.datastore, folder: values.folder});
+      valid = valid && Boolean(c.fits && d?.fits && pick.folder);
+      for (const tr of tables.get(vm).querySelectorAll("[data-field]")) {
+        const key = tr.dataset.field;
+        if (!changed.includes(key)) continue;
+        tr.classList.add("placement-draft");
+        tr.cells[1].append(el("b", "draft", values[key] || "Choose a " + key), el("div", "sub draft", "Was " + old[key]));
+        tr.cells[2].append(el("span", "chip s-plan draft", "Changed by you"));
+      }
+      if (vm === name) {
+        for (const key of ["cluster", "datastore", "folder"]) {
+          const selected = key === "folder" ? folderLabel : panel.querySelector('input[name="placement-' + key + '"]:checked')?.parentElement;
+          if (changed.includes(key) && values[key] && selected) selected.append(el("span", "chip s-plan placement-pick", "Changed by you"));
+        }
+      }
+      const reasons = {
+        vcenter: "was " + (old.vcenter || "").split(", datacenter ")[0],
+        cluster: number(c.pct_after) + "% memory used with this VM and " + c.down + (c.down === 1 ? " host" : " hosts") + " down (target " + c.target + "%)",
+        datastore: d ? number(d.pct_after) + "% used with this VM at full size (at most " + d.max + "%)" : "not selected",
+        folder: "vm_deploy_folders"
+      };
+      const labels = {vcenter: "vCenter", cluster: "Cluster", datastore: "Datastore", folder: "Folder"};
+      const lines = fields.map(k => "- " + labels[k] + ": " + (values[k] || "not selected") + "   (changed by the approver: " + reasons[k] + ")");
+      notes.push("[AAP] Placement changed - VM " + vm + " (AAP job pending, asked by " + viewer +
+        ", for AAP job " + shortlist.job + ", ticket text " + plan.digest + "):\nIt would go to:\n" + lines.join("\n"));
+    }
+    preview.hidden = !notes.length;
+    note.textContent = notes.join("\n\n");
+    saveButton.disabled = !valid || !notes.length;
+  }
+  function option(box, group, choice, checked, detail, context, reason, select) {
+    const label = el("label", "placement-option" + (reason ? " off" : ""));
+    const radio = el("input"), title = el("span", "mono", choice.name);
+    radio.type = "radio";
+    radio.name = group;
+    radio.checked = checked && !reason;
+    radio.disabled = Boolean(reason);
+    radio.onchange = select;
+    if (context) title.append(el("small", "", context));
+    label.append(radio, title);
+    const fit = el("span", "placement-fit");
+    if (choice.pct_after != null) {
+      const bar = el("meter");
+      bar.max = 100;
+      bar.high = choice.target ?? choice.max ?? 100;
+      bar.optimum = 0;
+      bar.value = choice.pct_after;
+      bar.setAttribute("aria-hidden", "true");
+      fit.append(bar);
+    }
+    fit.append(el("span", "", detail));
+    label.append(fit);
+    if (reason) label.append(el("small", "placement-reason", reason));
+    box.append(label);
+  }
+  function showStorage() {
+    const pick = choices.get(name), c = pick.cluster, lists = shortlist.vms[name];
+    storeBox.replaceChildren(el("legend", "", "Datastore"));
+    for (const d of stores(lists, c)) {
+      option(storeBox, "placement-datastore", d, pick.store === d, number(d.free_gb) + " GB free · " + storeFit(d),
+        "", d.fits ? "" : d.why || "Does not fit", () => { pick.store = d; pick.edited = true; refreshDraft(); });
+    }
+    if (!stores(lists, c).length) storeBox.append(el("p", "sub", c ? "No datastores in this shortlist." : "Choose a fitting cluster."));
+    folder.replaceChildren();
+    if (!pick.folder && folders(lists, c).length) {
+      const prompt = el("option", "", "Choose a folder");
+      prompt.value = "";
+      prompt.disabled = true;
+      folder.append(prompt);
+    }
+    for (const f of folders(lists, c)) folder.append(el("option", "", f));
+    folder.value = pick.folder;
+    folder.disabled = !folder.options.length;
+    folder.onchange = () => { pick.folder = folder.value; pick.edited = true; refreshDraft(); };
+    refreshDraft();
+  }
+  function chooseCluster(c, initial) {
+    const lists = shortlist.vms[name], old = originals.get(name);
+    const fitting = stores(lists, c).filter(d => d.fits).sort((a, b) => a.pct_after - b.pct_after);
+    const paths = folders(lists, c);
+    const store = initial ? fitting.find(d => d.name === old.datastore) : fitting[0];
+    choices.set(name, {cluster: c, store, folder: paths.includes(old.folder) ? old.folder : initial ? "" : paths[0] || "", edited: !initial});
+  }
+  function showVM() {
+    const lists = shortlist.vms[name], old = originals.get(name);
+    const ambiguous = c => lists.clusters.some(o => o !== c && o.vcenter === c.vcenter && o.name === c.name);
+    if (!choices.has(name)) chooseCluster(lists.clusters.find(c => c.fits && !ambiguous(c) && location(c) === old.vcenter && c.name === old.cluster), true);
+    clusterBox.replaceChildren(el("legend", "", "Cluster"));
+    for (const [group, heading] of [["plan", "In the plan's vCenter"], ["outside", "Outside the plan's vCenter"]]) {
+      const rows = lists.clusters.filter(c => c.group === group);
+      if (rows.length) clusterBox.append(el("h4", "", heading));
+      for (const c of rows) {
+        const reason = !c.fits ? c.why || "Does not fit" : ambiguous(c) ? "This cluster name is ambiguous in its vCenter." : "";
+        option(clusterBox, "placement-cluster", c, choices.get(name).cluster === c, clusterFit(c), c.vcenter + " · " + c.datacenter,
+          reason, () => { chooseCluster(c, false); showStorage(); });
+      }
+    }
+    showStorage();
+  }
+  back.onclick = () => { clearMarks(); panel.remove(); undo(); };
+  saveButton.onclick = async () => {
+    const controls = panel.querySelectorAll("button:enabled, input:enabled, select:enabled");
+    controls.forEach(b => { b.disabled = true; });
+    try {
+      const result = await post("api/approvals/" + approval.id + "/placement", {vms: requested});
+      clearMarks();
+      panel.remove();
+      save(result.job);
+    } catch (e) {
+      message.textContent = e.message;
+      controls.forEach(b => { b.disabled = false; });
+    }
+  };
+  showVM();
+  return panel;
+}
+
 // ---- 1.92.0: Approve / Deny with one more question, in place (Sure? Yes, approve / Back) - the Approvals page's rows and the job page's box alike.
 // row: where the buttons are drawn; after(d): what follows a decision AAP took (the list read again, the job's pane asked again).
 function decider(row, aid, after) {
@@ -686,18 +870,22 @@ function decider(row, aid, after) {
   const box = row.closest(".decide");
   const keep = row.querySelector(".log"), rep = row.querySelector("a.btn");
   const approveButton = row.querySelector('[data-d="approve"]');
-  const approveLabel = approveButton ? approveButton.textContent : "Approve";
+  const approveLabel = approveButton ? approveButton.textContent : row.dataset.approveLabel || "Approve";
+  const change = row.querySelector("[data-change-placement]");
+  let pendingJob = Number(row.dataset.pendingJob);
   const hold = (on) => { if (box) { if (on) box.dataset.hold = "1"; else delete box.dataset.hold; } };
   const draw = () => {
     hold(false);
     row.replaceChildren();
     for (const [d, label] of [["approve", approveLabel], ["deny", "Deny"]]) {
+      if (pendingJob && d === "approve") continue;
       const b = el("button", d === "deny" ? "deny" : "pri", label);
       b.type = "button";
       b.dataset.d = d;
       b.addEventListener("click", () => confirmIt(d));
       row.append(b);
     }
+    if (change && !pendingJob) row.append(change);
     if (rep) row.append(el("span", "sp"), rep);
     row.append(msg);
     if (keep) row.append(keep);
@@ -738,7 +926,50 @@ function decider(row, aid, after) {
       }
     });
   };
-  draw();
+  function follow(job) {
+    pendingJob = job;
+    row.dataset.pendingJob = String(job);
+    draw();
+    msg.textContent = "Checking placement in AAP job " + job + ".";
+    hold(true);
+    async function poll() {
+      if (!row.isConnected) return;
+      try {
+        const result = await call("api/placement/" + job);
+        if (result.done) {
+          msg.textContent = result.ok ? "Placement saved. Updating the plan…" : result.error + " Nothing was changed.";
+          hold(false);
+          after(null);
+          return;
+        }
+      } catch (e) {
+        msg.textContent = e.message;
+        if (e.status === 403 || e.status === 404) { hold(false); after(null); return; }
+      }
+      setTimeout(poll, 3000);
+    }
+    setTimeout(poll, 3000);
+  }
+  if (change) change.onclick = async () => {
+    hold(true);
+    row.replaceChildren(msg);
+    msg.textContent = "Loading the placement shortlist…";
+    try {
+      const listing = await call("api/approvals");
+      const approval = listing.approvals.find(a => a.id === aid);
+      if (!approval?.may_decide || !approval.deploy_shortlist) { hold(false); after(null); return; }
+      if (approval.deploy_plan.placement?.done === false) { follow(approval.deploy_plan.placement.job); return; }
+      msg.textContent = "";
+      const editor = placementEditor(box, approval, row.dataset.viewer, follow, () => { draw(); change.focus(); });
+      row.before(editor);
+      editor.querySelector("select:enabled, input:enabled, button:enabled")?.focus();
+    } catch (e) {
+      draw();
+      msg.textContent = e.message;
+    }
+  };
+  if (pendingJob && box) follow(pendingJob);
+  else draw();
 }
 
 // 1.92.0: "What it will change" - closed, one line of count chips; open, each host's items with their level (as the job page draws it: plan_html)
@@ -786,7 +1017,7 @@ function planEl(plan) {
 }
 function deployPlanEl(plan) {
   const sources = {ticket: ["s-ok", "From the ticket", "ok"], default: ["s-info", "Default", "skip"],
-                   job: ["s-low", "Chosen by the job", "wait"], stop: ["s-critical", "Stop", "bad"]};
+                   job: ["s-low", "Chosen by the job", "wait"], approver: ["s-plan", "Changed by the approver", "ok"], stop: ["s-critical", "Stop", "bad"]};
   const c = plan.counts;
   const details = el("details", "wic"), summary = el("summary"), counts = el("span", "cnt");
   counts.append(el("span", "chip n", c.vms + (c.vms === 1 ? " VM" : " VMs")));
@@ -794,6 +1025,7 @@ function deployPlanEl(plan) {
     const [cls, label] = sources[key];
     counts.append(el("span", "chip " + cls, c[key] + " " + label.toLowerCase()));
   }
+  if (c.approver) counts.append(el("span", "chip s-plan", c.approver + " changed by the approver"));
   if (c.warnings) counts.append(el("span", "chip s-warning", c.warnings + (c.warnings === 1 ? " warning" : " warnings")));
   summary.append(chev(), el("span", "t", "What will be built"), counts);
   const body = el("div", "wicp deploy-list");
@@ -810,6 +1042,7 @@ function deployPlanEl(plan) {
       const value = el("div");
       value.append(el("b", "", row.value), el("div", "sub", row.where));
       if (row.why && level) value.append(el("div", "deploy-why", (level === "warning" ? "Warning: " : "Stop: ") + row.why));
+      if (row.kind === "approver" && row.why) value.append(el("div", "deploy-why", row.why));
       item.append(el("span", "deploy-label", row.label), value, chip);
       list.append(item);
     }
@@ -904,6 +1137,8 @@ function approvalsPage() {
       const act = el("td", "nw decs");
       if (a.may_decide) {
         const row = el("div", "row-btns");
+        if (a.deploy_plan?.saved_job) row.dataset.approveLabel = "Approve with the new placement";
+        if (a.deploy_plan?.placement?.done === false) row.dataset.pendingJob = a.deploy_plan.placement.job;
         decider(row, a.id, () => load());
         act.append(row);
       } else {

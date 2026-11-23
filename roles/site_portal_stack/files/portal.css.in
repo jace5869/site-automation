@@ -574,3 +574,32 @@ html.moves main{transition:padding-right .3s cubic-bezier(.3,.7,.2,1)}
   .deploy-tiles .tile:nth-child(even){border-left:1px solid var(--line)}
   .deploy-tiles .tile:nth-child(n+3){border-top:1px solid var(--line)}
 }
+
+.placement-hint{display:block;font:600 11.5px var(--sans);color:var(--accent)}
+.placement-editor{display:grid;gap:12px;padding:14px;border:1px solid var(--accent);border-radius:var(--r);background:var(--card-strong);overflow-wrap:anywhere}
+.placement-editor :is(h3,h4,p,pre){margin:0}
+.placement-lists{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.placement-lists fieldset{min-width:0;margin:0;padding:5px 10px 10px;border:1px solid var(--line);border-radius:10px}
+.placement-lists legend{font-weight:700;padding:0 5px}
+.placement-lists h4,.placement-note h4{font-size:12px;color:var(--muted);margin:6px 0}
+.placement-option{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start;gap:3px 8px;padding:7px 2px;border-top:1px solid var(--line);cursor:pointer}
+.placement-option input{margin:4px 0;width:auto;accent-color:var(--accent)}
+.placement-option small{display:block;font:12px/1.5 var(--sans);color:var(--muted)}
+.placement-fit,.placement-option .placement-reason{grid-column:2;font:12.5px/1.45 var(--sans)}
+.placement-fit{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.placement-fit meter{width:3.4em;flex:none}
+.placement-option.off{color:var(--muted);background:var(--bg);cursor:not-allowed}
+.placement-option .placement-reason{color:var(--critical)}
+.placement-pick{grid-column:2;justify-self:start}
+.placement-folder .placement-pick{grid-column:1}
+.placement-folder{display:grid;gap:4px;font-weight:650;min-width:0}
+.placement-folder select{min-width:0;max-width:100%;white-space:normal}
+.placement-note{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px 12px}
+.placement-note pre{white-space:pre-wrap;font:12.5px/1.55 var(--mono)}
+.deploy-fields tr.placement-draft>*{background:var(--accent-soft)}
+.placement-draft td>:not(.draft){display:none}
+@supports (appearance:base-select){
+  .placement-folder select,.placement-folder select::picker(select){appearance:base-select;max-width:100%;overflow-wrap:anywhere}
+  .placement-folder option{white-space:normal}
+}
+@media(max-width:900px){.placement-lists{grid-template-columns:minmax(0,1fr)}}

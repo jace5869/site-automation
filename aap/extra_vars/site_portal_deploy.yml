@@ -91,6 +91,9 @@ portal_public_url: https://stigman.example.mil/portal/
 ## one person's launches in an hour, at most
 # portal_launches_per_hour: 20
 
+## AAP job that checks and records a placement before approval
+# portal_vm_deploy_placement_template: "VM - deploy placement change"
+
 ## true = an approver may approve or deny a run they started themselves
 # portal_allow_self_approval: false
 

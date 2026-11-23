@@ -337,7 +337,8 @@ class H(BaseHTTPRequestHandler):
             labs = [{"id": 500 + i, "name": n} for i, n in enumerate((t or {}).get("labels", []))]
             return self._send(200, {"count": len(labs), "next": None, "results": labs})
         if m and not q.get("id__in"):
-            rows = [{"id": t["id"], "name": t["name"]} for t in STATE["templates"][m.group(1)] if t["name"] == q.get("name")]
+            rows = [{k: t[k] for k in ("id", "name", "ask_variables_on_launch", "survey_enabled") if k in t}
+                    for t in STATE["templates"][m.group(1)] if t["name"] == q.get("name")]
             return self._send(200, {"count": len(rows), "results": rows})
         mi = re.match(r"^(job_templates|workflow_job_templates)/$", p)
         if mi and q.get("id__in"):                                      # 1.78.0: the cards' last runs, one call per kind
@@ -501,6 +502,8 @@ class H(BaseHTTPRequestHandler):
             t = next((t for t in STATE["templates"][m.group(1)] if t["id"] == int(m.group(2))), None)
             if not t:
                 return self._send(404, {"detail": "Not found."})
+            if not t.get("execute", True):
+                return self._send(403, {"detail": "The account has no Execute role."})
             ev, limit = body.get("extra_vars") or {}, body.get("limit") or ""
             ignored = {}
             if not t["ask_variables_on_launch"]:

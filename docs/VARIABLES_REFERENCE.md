@@ -2135,6 +2135,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_requesters` | `[]` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- who may run the actions (an action's own who overrides); [] = any person with a verified card |
 | `portal_approvers` | `[]` | who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works) |
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
+| `portal_vm_deploy_placement_template` | `"VM - deploy placement change"` | AAP job that checks and records a placement before approval |
 | `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
 | `portal_actions` | `{}` | ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it ----------------------- |
 | `portal_actions_extra` | `{}` | 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked by the same rules; a name a built-in has is an error), and built-in actions to hide (a list of their names). docs/SITE_PORTAL.md, "Adding your own action". |

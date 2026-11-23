@@ -13,6 +13,7 @@
   for the VM requires a new check and approval. A stopped plan records the questions for the requester.
 - The portal shows VM values, sources and warnings on Jobs and Approvals. Stopped plans show what needs an answer.
 - The propose job lists eligible placements. **VM - deploy placement change** checks an approver’s selection and records it on the change and its CTASKs.
+- Approvers can change VM placement on the portal and review the saved plan before approving the build.
 
 ## 1.112.1 — 2026-11-23
 

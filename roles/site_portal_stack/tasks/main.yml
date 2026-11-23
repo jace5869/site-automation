@@ -693,6 +693,7 @@
       PORTAL_THEME: "{{ report_web_theme | default('atlas') }}"
       PORTAL_BANNER: "{{ {'on': _portal_banner.on, 'text': _portal_banner.text, 'bg': _portal_banner.bg, 'fg': _portal_banner.fg} }}"
       PORTAL_TIME_ZONE: "{{ report_time_zone | default('') }}"
+      PORTAL_VM_DEPLOY_PLACEMENT_TEMPLATE: "{{ portal_vm_deploy_placement_template }}"
       PORTAL_SELF_APPROVAL: "{{ '1' if portal_allow_self_approval | bool else '0' }}"
       PORTAL_DATA: /data
       PORTAL_REPORTS: /reports

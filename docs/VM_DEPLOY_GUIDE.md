@@ -383,6 +383,8 @@ refusal stop the workflow. The requester gets a comment and the stopped plan ide
 
 ### Changing the placement before the approval
 
+For the portal steps, see [Changing placement on the VM deploy plan](SITE_PORTAL.md#the-vm-deploy-plan).
+
 Portal approvers can choose a different cluster, one of its mounted datastores, and a VM folder in its datacenter.
 Clusters outside the plan’s vCenter or datacenter form a separate group. The same template must exist there in an allowed template folder.
 The network stays on the template’s staging VLAN with DHCP.
