@@ -2113,7 +2113,8 @@ def _plan_artifact(plan):
             return {k: bound(v) for k, v in value.items()}
         return value
 
-    return bound(dict(plan, vms=plan["vms"][:10]))
+    # the comment sent to the requester is shown whole on the portal: kept up to 2000 characters
+    return dict(bound(dict(plan, vms=plan["vms"][:10])), comment=str(plan.get("comment") or "")[:2000])
 
 
 def vm_deploy_plan_note_lines(plan, vm_name):

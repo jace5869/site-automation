@@ -33,7 +33,8 @@
     per_host: false
     aggregate: false
     data:
-      vm_deploy_plan: "{{ _vd_plan | vm_deploy_plan_artifact }}"
+      # phase: the portal tells a plan stopped before the approval from a build that refused the approved one
+      vm_deploy_plan: "{{ _vd_plan | combine({'phase': vm_deploy_phase | default('', true) | string | lower | trim}) | vm_deploy_plan_artifact }}"
       site_approval_summary: >-
         {{ _vd_summary_items | site_approval_summary('VM deploy ' ~ _vd_number ~ ': ' ~ _vd_plan.counts.vms
                                                      ~ (' VM' if _vd_plan.counts.vms == 1 else ' VMs')) }}

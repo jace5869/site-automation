@@ -2078,7 +2078,7 @@ plan_run "two OS answers stop the change before approval" fail -e vm_deploy_phas
 "$py" - "$work/out.txt" "$work/sn.jsonl" <<'EOPY' || { echo "FAIL - stopped change plan"; fails=$((fails + 1)); }
 import json, sys
 plan = next(json.loads(l.strip()[5:])["vm_deploy_plan"] for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
-assert plan["state"] == "stopped" and plan["counts"]["stops"] > 0
+assert plan["state"] == "stopped" and plan["counts"]["stops"] > 0 and plan["phase"] == "propose"
 assert any(r["key"] == "template" and r["kind"] == "stop" for r in plan["vms"][0]["rows"])
 assert plan["comment"].startswith("[AAP] We cannot build this VM yet")
 assert any(json.loads(l).get("body", {}).get("comments", "").startswith(plan["comment"]) for l in open(sys.argv[2]) if '"PATCH"' in l)

@@ -337,6 +337,8 @@ Create this workflow by hand in AAP. Launch it with the approved change in Imple
 in the work note on the change, or on the portal. Every VM value says **from the ticket**, **default**,
 or **chosen by the job**. The network row shows the template's staging port groups and DHCP.
 
+For the job page and the Approvals view, see [The VM deploy plan](SITE_PORTAL.md#the-vm-deploy-plan).
+
 A capacity warning goes to the approver. Conflicting answers, missing required fields or a placement
 refusal stop the workflow. The requester gets a comment and the stopped plan identifies the affected rows.
 

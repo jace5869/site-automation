@@ -10,6 +10,7 @@
   The propose job publishes the plan in its output, email, change notes and job artifacts.
 - The build pins the approved placement. A newly exceeded capacity target or a datastore without room
   for the VM requires a new check and approval. A stopped plan records the questions for the requester.
+- The portal shows VM values, sources and warnings on Jobs and Approvals. Stopped plans show what needs an answer.
 
 ## 1.112.1 — 2026-11-23
 

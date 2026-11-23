@@ -162,6 +162,14 @@ class ApprovalPlan(unittest.TestCase):
         self.assertIn("the change does not say the owner: its Owner field is empty", self.checked["problems"])
         self.assertEqual(self.rows(self.plan(owner=owner))["owner"]["level"], "stop")
 
+    def test_the_artifact_keeps_the_requesters_comment_whole(self):
+        # review 1.117 a2: the portal shows what the requester was sent; other texts stay cut at 240
+        comment = "[AAP] We cannot build this VM yet:\n- " + "x" * 600
+        art = d._plan_artifact(self.plan(report=True, comment=comment))
+        self.assertEqual(art["comment"], comment)
+        self.vm["folder"] = "/SITA0101-DC/vm/" + "App/" * 80
+        self.assertEqual(len(self.rows(d._plan_artifact(self.plan(report=True)))["folder"]["value"]), 240)
+
     def test_not_ready_has_no_rows(self):
         reason = d.vm_deploy_ready(dict(self.record, approval="Requested"), "change_request", {"change_request": {"approval": "Approved"}})
         p = self.plan(state="not_ready", reason=reason)

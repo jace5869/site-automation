@@ -685,13 +685,16 @@ function decider(row, aid, after) {
   msg.setAttribute("aria-live", "polite");
   const box = row.closest(".decide");
   const keep = row.querySelector(".log"), rep = row.querySelector("a.btn");
+  const approveButton = row.querySelector('[data-d="approve"]');
+  const approveLabel = approveButton ? approveButton.textContent : "Approve";
   const hold = (on) => { if (box) { if (on) box.dataset.hold = "1"; else delete box.dataset.hold; } };
   const draw = () => {
     hold(false);
     row.replaceChildren();
-    for (const [d, label] of [["approve", "Approve"], ["deny", "Deny"]]) {
+    for (const [d, label] of [["approve", approveLabel], ["deny", "Deny"]]) {
       const b = el("button", d === "deny" ? "deny" : "pri", label);
       b.type = "button";
+      b.dataset.d = d;
       b.addEventListener("click", () => confirmIt(d));
       row.append(b);
     }
@@ -781,6 +784,42 @@ function planEl(plan) {
   d.append(sm, body);
   return d;
 }
+function deployPlanEl(plan) {
+  const sources = {ticket: ["s-ok", "From the ticket", "ok"], default: ["s-info", "Default", "skip"],
+                   job: ["s-low", "Chosen by the job", "wait"], stop: ["s-critical", "Stop", "bad"]};
+  const c = plan.counts;
+  const details = el("details", "wic"), summary = el("summary"), counts = el("span", "cnt");
+  counts.append(el("span", "chip n", c.vms + (c.vms === 1 ? " VM" : " VMs")));
+  for (const key of ["ticket", "default", "job"]) {
+    const [cls, label] = sources[key];
+    counts.append(el("span", "chip " + cls, c[key] + " " + label.toLowerCase()));
+  }
+  if (c.warnings) counts.append(el("span", "chip s-warning", c.warnings + (c.warnings === 1 ? " warning" : " warnings")));
+  summary.append(chev(), el("span", "t", "What will be built"), counts);
+  const body = el("div", "wicp deploy-list");
+  body.append(el("p", "pt", [plan.ticket, ...plan.tasks, plan.digest].filter(Boolean).join(" · ")));
+  for (const vm of plan.vms) {
+    const group = el("div", "hg"), list = el("ul");
+    group.append(el("div", "hn", vm.name));
+    for (const row of vm.rows) {
+      const [cls, source, mark] = sources[row.kind];
+      const chip = el("span", "chip " + cls, source);
+      chip.prepend(icon(mark));
+      const level = row.kind === "stop" ? "stop" : row.level;
+      const item = el("li", level ? "deploy-" + level : "");
+      const value = el("div");
+      value.append(el("b", "", row.value), el("div", "sub", row.where));
+      if (row.why && level) value.append(el("div", "deploy-why", (level === "warning" ? "Warning: " : "Stop: ") + row.why));
+      item.append(el("span", "deploy-label", row.label), value, chip);
+      list.append(item);
+    }
+    group.append(list);
+    body.append(group);
+  }
+  details.append(summary, body);
+  return details;
+}
+
 // 1.92.0: why someone may not decide, with the setting's name to search for (the service says which: approvers, self, role)
 function whyEl(a) {
   const box = el("div", "dwhy"), t = el("span");
@@ -835,7 +874,7 @@ function approvalsPage() {
       who.append(el("div", "mono", a.requested_by || a.launched_in || "not through the portal"), el("div", "sub", a.requested_by ? (a.launched_in || "") : ""));
       const run = el("td");
       run.append(wf, el("div", "sub", vals));
-      const apw = el("div", "apw"), plan = planEl(a.plan), rep = reportEl(a.report);
+      const apw = el("div", "apw"), plan = a.deploy_plan ? deployPlanEl(a.deploy_plan) : planEl(a.plan), rep = reportEl(a.report);
       let wrow = null;
       if (plan) {
         apw.append(plan);

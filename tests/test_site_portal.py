@@ -76,6 +76,41 @@ def cert(dn=JDOE, verify="SUCCESS"):
     return {"X-SSL-Client-Verify": verify, "X-SSL-Client-S-DN": dn}
 
 
+def vm_plan():
+    rows = [{"key": "vm_name", "label": "VM name", "value": "vm-app01", "where": "the description",
+             "kind": "ticket", "level": "", "why": "", "editable": False},
+            {"key": "cluster", "label": "Cluster", "value": "SITA0101", "where": "the site default",
+             "kind": "default", "level": "warning", "why": "Memory exceeds the target.", "editable": True}]
+    return {"version": 1, "state": "ready", "phase": "propose", "ticket": "CHG0030001", "table": "change_request", "tasks": ["CTASK0030002"],
+            "digest": "sha256:1234", "read_at": "2026-11-23T09:14:00Z", "job": "AAP job 4813", "reason": "", "comment": "",
+            "counts": {"vms": 1, "fields": 2, "ticket": 1, "default": 1, "job": 0, "stops": 0, "warnings": 1},
+            "warnings": ["Memory exceeds the target."], "stops": [], "vms": [{"name": "vm-app01", "rows": rows}]}
+
+
+class DeployPlan(unittest.TestCase):
+    def test_only_version_one_and_known_states(self):
+        plan = vm_plan()
+        self.assertEqual(sp.deploy_plan(plan), plan)
+        for bad in (None, [], {}, dict(plan, version=2), dict(plan, state="unknown")):
+            self.assertIsNone(sp.deploy_plan(bad))
+
+    def test_bounds_types_and_unexpected_fields(self):
+        plan = vm_plan()
+        row = dict(plan["vms"][0]["rows"][0], kind="unknown", level=["warning"], editable="yes", value="x" * 250, extra="omit")
+        plan.update(vms=[{"name": "n" * 130, "rows": [row] * 13}] * 11, extra="omit",
+                    counts={"vms": "11", "ticket": -3, "job": "many", "stops": []})
+        got = sp.deploy_plan(plan)
+        self.assertNotIn("extra", got)
+        self.assertEqual(got["counts"], dict(vms=11, fields=0, ticket=0, default=0, job=0, stops=0, warnings=0))
+        self.assertEqual(len(got["vms"]), 10)
+        self.assertEqual(len(got["vms"][0]["name"]), 120)
+        rows = got["vms"][0]["rows"]
+        self.assertEqual(len(rows), 12)
+        self.assertEqual((rows[0]["kind"], rows[0]["level"], rows[0]["editable"]), ("default", "", False))
+        self.assertEqual(rows[0]["value"], "x" * 240)
+        self.assertNotIn("extra", rows[0])
+
+
 class Loader(unittest.TestCase):
     def test_the_example_actions_load(self):
         a, p = rules.check_actions(ACTIONS)
@@ -2516,6 +2551,170 @@ class StubApi(object):
 
 def page(rows, nxt=None, count=None):
     return 200, {"count": len(rows) if count is None else count, "next": StubApi.base + nxt if nxt else None, "results": rows}
+
+
+class DeployPlanWords(unittest.TestCase):
+    """review 1.117 a2: the plan reads as the mockup - units, a stop's question once, a value never read said so,
+    the requester's comment whole."""
+    def test_units_stop_words_and_the_whole_comment(self):
+        plan = vm_plan()
+        rows = plan["vms"][0]["rows"]
+        rows[:] = [dict(rows[0], key=k, value=v) for k, v in (("cpu", "4"), ("memory_gb", "16"), ("disks_gb", "120 + 200"),
+                                                                 ("vcenter", ""), ("network", "the template's - IP by DHCP"))]
+        rows.append(dict(rows[0], key="template", kind="stop", level="stop", value="which one?", why="which one?"))
+        plan["comment"] = "[AAP] We cannot build this VM yet:\n- " + "x" * 600
+        got = sp.deploy_plan(plan)
+        self.assertEqual([r["value"] for r in got["vms"][0]["rows"]],
+                         ["4 vCPU", "16 GB", "120 GB + 200 GB", "not read", "the template's - IP by DHCP", "Needs an answer"])
+        self.assertEqual(got["vms"][0]["rows"][-1]["why"], "which one?")
+        self.assertEqual(got["comment"], plan["comment"])
+
+
+class DeployPlanPages(unittest.TestCase):
+    """Exercise both GET handlers with the fake AAP's workflow, nodes and artifacts in memory."""
+
+    @staticmethod
+    def read(handler, path, headers):
+        request = object.__new__(handler)
+        request.path = path
+        request.headers = headers
+        request._send = lambda code, body, *args: (code, body)
+        return request.do_GET()
+
+    def setUp(self):
+        from unittest.mock import patch
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for setting in (patch.object(fake_aap, "LOG", ""), patch.dict(fake_aap.STATE, jobs={}, approvals={})):
+            setting.start()
+            self.addCleanup(setting.stop)
+        actions = os.path.join(tmp.name, "actions.json")
+        with open(actions, "w") as fh:
+            json.dump({"actions": {"deploy": {"title": "Deploy a VM", "aap": {"type": "workflow", "name": "Deploy a VM"},
+                                              "vars": {}, "approval": True, "who": [sp.who(cert())[0]]}}}, fh)
+        cfg = sp.Config({"PORTAL_DATA": tmp.name, "PORTAL_ACTIONS": actions, "PORTAL_APPROVERS": json.dumps([sp.who(cert(APPR))[0]]),
+                         "PORTAL_TIME_ZONE": "America/New_York"})
+        api = StubApi(lambda method, path, body: self.read(fake_aap.H, fake_aap.BASE + path, {"Authorization": "Bearer " + fake_aap.TOKEN}))
+        self.portal = sp.Portal(cfg, aap=sp.Aap(cfg, api=api))
+        self.portal.aap.ids["deploy"] = (1, "")
+        self.handler = sp.make_handler(cfg, self.portal, os.path.join(FILES, "static"))
+
+    def get(self, path, dn=JDOE):
+        code, body = self.read(self.handler, path, cert(dn))
+        self.assertEqual(code, 200, body)
+        return body
+
+    def _vm_workflow(self, plan):
+        wid, jid, aid = (fake_aap.new_id() for _ in range(3))
+        jobs = fake_aap.STATE["jobs"]
+        now = time.time() - 60
+        jobs[wid] = {"id": wid, "type": "workflow_job", "name": "Deploy a VM", "template": 1, "created": now, "nodes": [jid]}
+        jobs[jid] = {"id": jid, "type": "job", "name": "Propose", "template_id": 1, "created": now,
+                     "force": "successful" if plan["state"] == "ready" else "failed",
+                     "arts": {"vm_deploy_plan": plan, "site_approval_summary": {"counts": {"changes": 1}}}}
+        if plan["state"] == "ready":
+            jobs[wid]["nodes"].append(aid)
+            jobs[aid] = {"id": aid, "type": "workflow_approval", "name": "Build the VM?", "created": now, "status": "pending"}
+            fake_aap.STATE["approvals"][aid] = dict(jobs[aid], workflow=wid, expires=now + 3600)
+        self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0]})
+        return wid, jid
+
+    def test_vm_plan_at_approval_and_on_the_propose_job(self):
+        plan = vm_plan()
+        plan["vms"][0]["rows"][0]["value"] = "<b>vm-app01</b>"
+        wid, jid = self._vm_workflow(plan)
+        page = self.get("/jobs/%d" % wid, dn=APPR)
+        for word in ("The plan - what will be built", "Value · where exactly", 'class="deploy-warning"',
+                     "Warning: Memory exceeds the target.", "as read", "read 04:14", "CTASK0030002", "sha256:1234",
+                     "the plan for 1 VM on CHG0030001 has 1 warning.", "Approve to build it as shown, or Deny.",
+                     'data-d="approve">Approve - build as shown', 'data-d="deny"', "<b>&lt;b&gt;vm-app01&lt;/b&gt;</b>"):
+            self.assertIn(word, page)
+        self.assertNotIn("What it will change", page)
+        self.assertNotIn("<b><b>vm-app01", page)
+        starter = self.get("/jobs/%d" % wid)
+        self.assertIn("portal_approvers", starter)
+        self.assertNotIn('data-d="approve"', starter)
+        rows = self.get("/api/approvals", dn=APPR)["approvals"]
+        self.assertEqual(next(a["deploy_plan"] for a in rows if a["workflow_job"] == wid), plan)
+        self.assertNotIn(wid, [a["workflow_job"] for a in self.get("/api/approvals", dn=RROE)["approvals"]])
+        job = self.get("/jobs/%d?via=%d" % (jid, wid), dn=APPR)
+        self.assertIn("The plan - what will be built", job)
+        self.assertIn("Warning: Memory exceeds the target.", job)
+        self.assertNotIn('data-d=', job)
+
+    def test_without_a_deploy_plan_the_existing_decision_is_used(self):
+        wid, jid = self._vm_workflow(vm_plan())
+        del fake_aap.STATE["jobs"][jid]["arts"]["vm_deploy_plan"]
+        page = self.get("/jobs/%d" % wid, dn=APPR)
+        self.assertIn("What it will change", page)
+        self.assertIn('data-d="approve">Approve</button>', page)
+        self.assertNotIn("what will be built", page)
+
+    def test_two_vms_without_warnings_while_another_check_finishes(self):
+        plan = vm_plan()
+        plan["vms"].append(dict(plan["vms"][0], name="vm-app01.corp.example.mil"))
+        plan["vms"][0]["rows"][1].update(level="", why="")
+        plan["counts"].update(vms=2, warnings=0)
+        plan["warnings"] = []
+        wid, _ = self._vm_workflow(plan)
+        jobs = fake_aap.STATE["jobs"]
+        other = fake_aap.new_id()
+        jobs[other] = {"id": other, "type": "job", "name": "Check", "created": time.time(), "force": "running"}
+        jobs[wid]["nodes"].insert(0, other)
+        page = self.get("/jobs/%d" % wid, dn=APPR)
+        self.assertEqual(self.portal.wf_tmp[wid]["deploy_plan"], plan)
+        self.assertIn("the plan for 2 VMs on CHG0030001 is ready.", page)
+        for vm in plan["vms"]:
+            self.assertIn("<h3>%s</h3>" % vm["name"], page)
+        self.assertEqual(page.count('<table class="deploy-fields">'), 2)
+        jobs[other]["force"] = "successful"
+        self.portal.pending(fresh=True)
+        self.assertEqual(self.portal.wf_info[wid]["deploy_plan"], plan)
+
+    def test_a_build_that_refused_the_approved_plan_is_not_before_the_approval(self):
+        # review 1.117 a2: the build step leaves a stopped plan too (the change or the placement changed after the approval).
+        # The approval was reached: the card and the banner say the build refused it, not "before the approval"
+        plan = vm_plan()
+        plan.update(state="stopped", phase="build", stops=["vm-app01: the approved plan has no placement for VM vm-app01"])
+        wid, _ = self._vm_workflow(plan)
+        page = self.get("/jobs/%d" % wid, dn=APPR)
+        self.assertIn("The build stopped after the approval", page)
+        self.assertIn("<b>Stopped</b> - the build refused the approved plan. Nothing was built.", page)
+        self.assertIn("Run the workflow again: the plan is checked and approved again.", page)
+        for wrong in ("before the approval", "not reached"):
+            self.assertNotIn(wrong, page)
+        self.assertEqual(sp.deploy_plan(dict(plan, phase="<x>"))["phase"], "")
+
+    def test_vm_plan_stopped_and_not_ready(self):
+        for state in ("stopped", "not_ready"):
+            plan = vm_plan()
+            plan.update(state=state, reason="The change must be in Implement.")
+            if state == "stopped":
+                row = plan["vms"][0]["rows"][1]
+                row.update(kind="stop", level="stop", why="Two answers for the cluster.")
+                plan.update(stops=[row["why"]], comment="Which cluster should we use?")
+            else:
+                plan["vms"] = []
+            wid, jid = self._vm_workflow(plan)
+            for path in ("/jobs/%d" % wid, "/jobs/%d?via=%d" % (jid, wid)):
+                page = self.get(path, dn=APPR)
+                self.assertIn("The plan stopped before the approval", page)
+                self.assertIn("The change must be in Implement.", page)
+                self.assertIn("Approval and build: not reached", page)
+                self.assertNotIn('data-d=', page)
+                if state == "stopped":
+                    self.assertIn('class="deploy-stop"', page)
+                    self.assertIn("Stop: Two answers for the cluster.", page)
+                    self.assertIn("Sent to the requester as a comment", page)
+                    self.assertIn("<blockquote>Which cluster should we use?</blockquote>", page)
+                else:
+                    self.assertNotIn("Sent to the requester", page)
+                    self.assertNotIn("deploy-fields", page)
+            workflow = self.get("/jobs/%d" % wid, dn=APPR)
+            self.assertIn("<b>Stopped</b> - the plan needs an answer before the approval.", workflow)
+            self.assertIn('<span class="chip s-warning">%sStopped</span>' % sp.icon("wait"), workflow)
+            self.assertNotIn("Plan ready", workflow)
+            self.assertNotIn("Failed</span>", workflow)          # review 1.117 a2: the title's chip is amber Stopped too
 
 
 class Speed1990(unittest.TestCase):
