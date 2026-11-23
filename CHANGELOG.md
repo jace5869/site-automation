@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.118.4 — 2026-11-23
+
+**To set up:** nothing to set up.
+
+- **VM outage watch: a VM vCenter could not read is never taken as recovered.** When vCenter left a VM's power state
+  out of its answer (a property fault), the watch took the VM as not powered on and passed over it. On the second read
+  of a suspect, it judged the VM recovered. Either way the VM's open hung-VM ticket could be cleared, and the 1.112.5
+  email could report a recovery.
+- Now a VM without its power or connection state (first read), or its power or heartbeat (second read), is not judged
+  and is named in *How it judged*. Its vCenter's check counts as incomplete for that run: the tickets job clears none of
+  that vCenter's tickets, and the email does not count anything missing as cleared. A fault on any other property (the
+  guest OS name, the host name) still lets the VM be judged as before.
+- Tests: tests/test_vmware_modules.py Unread1184 (power or connection missing on the first read, power and heartbeat
+  missing on the second read, an optional property missing on a hung VM, no ticket cleared, no recovered email).
+
 ## 1.118.3 — 2026-11-23
 
 **To set up:** run the pick list's refresh job (or wait for its schedule) - the held snapshots appear with their reason;

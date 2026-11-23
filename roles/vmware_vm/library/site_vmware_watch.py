@@ -115,6 +115,8 @@ VM_PROPS = ["name", "config.template", "runtime.powerState", "runtime.connection
             "runtime.question", "guest.hostName", "guest.ipAddress", "guest.net", "guest.toolsStatus",
             "guest.toolsRunningStatus", "guestHeartbeatStatus", "config.guestFullName", "datastore"]
 LOST = ("inaccessible", "invalid", "orphaned")      # 1.112.4: vCenter cannot reach the VM's files (or its host lost it): listed, whatever its power
+REQUIRED_READ = ("runtime.powerState", "runtime.connectionState")     # 1.118.4: without them a VM is not judged
+REQUIRED_RECHECK = ("runtime.powerState", "guestHeartbeatStatus")
 RECHECK_PROPS = ["runtime.powerState", "runtime.bootTime", "guest.ipAddress", "guest.net", "guest.toolsStatus",
                  "guest.toolsRunningStatus", "guestHeartbeatStatus", "recentTask"]
 
@@ -430,7 +432,7 @@ def _events(content, root, begin, types, cap=2000):
 
 def _read(content, p, now, vcenter):
     res = {"hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
-           "vms_not_judged": [], "vms_read": 0, "vms_lost": [], "vms_disconnected": []}
+           "vms_not_judged": [], "vms_read": 0, "vms_lost": [], "vms_disconnected": [], "vms_unread": []}
     root = content.rootFolder
     dcs = _props(content, root, vim.Datacenter, ["name"])
     if p["datacenter"] and p["datacenter"] not in [v[1].get("name") for v in dcs.values()]:
@@ -512,6 +514,12 @@ def _read(content, p, now, vcenter):
         # unknown once its files are gone; it was skipped without a word. Now it is listed (a skipped one too, "not judged"), and
         # so is a VM whose host is disconnected (under that host). The datastores: where its files are
         res["vms_read"] += 1
+        # 1.118.4: vCenter left out the VM's power or connection state (a property fault): it is not judged, never taken as
+        # powered off or connected - its vCenter is marked incomplete, so no open ticket of it is cleared this run
+        missing = [k for k in REQUIRED_READ if k not in pr]
+        if missing:
+            res["vms_unread"].append({"name": v["name"], "moid": m, "vcenter": vcenter, "why": ", ".join(missing) + " not read"})
+            continue
         conn = str(pr.get("runtime.connectionState") or "connected")
         skip = name_skipped(v, p["skip_vms"], p["skip_folders"])
         if conn in LOST or conn == "disconnected":
@@ -548,6 +556,23 @@ def _read(content, p, now, vcenter):
     return res
 
 
+def mark_incomplete(res):
+    """1.118.4: a vCenter with a VM it could not read (first or second read), or that could not be read again, is incomplete:
+    its vm_watch check is not complete this run (vm_watch_health: checks_failed), so the tickets job clears none of its
+    tickets, and the email does not count a missing condition as cleared (watch_email.yml unread)."""
+    short = {}
+    for v in res.get("vms_unread") or []:
+        short.setdefault(v["vcenter"], []).append("%s (%s)" % (v["name"], v["why"]))
+    for v in res.get("suspects") or []:
+        for c in v["checks"][1:]:
+            if c.get("unread") or str(c.get("busy", "")).startswith("vCenter could not be read again"):
+                short.setdefault(v["vcenter"], []).append("%s (%s)" % (v["name"], c.get("busy") or "not read again"))
+    for st in res.get("vcenters") or []:
+        if st.get("name") in short:
+            st["incomplete"] = "; ".join(sorted(set(short[st["name"]])))
+    return res
+
+
 def _recheck(content, vcenter, suspects, p, now):
     """Read the suspects of this vCenter again: heartbeat, Tools, boot time, running tasks."""
     mine = [v for v in suspects if v["vcenter"] == vcenter]
@@ -560,6 +585,11 @@ def _recheck(content, vcenter, suspects, p, now):
         t = _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc))
         if pr is None:
             out[v["moid"]] = {"time": t, "reason": "", "gone": True, "busy": "", "heartbeat": "", "tools_running": ""}
+            continue
+        missing = [k for k in REQUIRED_RECHECK if k not in pr]
+        if missing:                          # 1.118.4: not "recovered" on half the evidence - not judged, its vCenter incomplete
+            out[v["moid"]] = {"time": t, "reason": v["checks"][-1].get("reason", ""), "unread": True,
+                              "busy": "vCenter did not give %s on the second read" % ", ".join(missing), "heartbeat": "", "tools_running": ""}
             continue
         g = _guest(pr, now)
         g.update(name=v["name"])
@@ -596,10 +626,10 @@ def main():
     res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses, "window_minutes": p["window_minutes"],
            "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
            "hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
-           "vms_read": 0, "vms_lost": [], "vms_disconnected": [], "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
+           "vms_read": 0, "vms_lost": [], "vms_disconnected": [], "vms_unread": [], "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
            "confirm": {"checks": checks, "seconds": p["confirm_seconds"]}}
     for _, part in done:
-        for k in ("hosts", "datastores", "questions", "suspects", "events", "vms_lost", "vms_disconnected"):
+        for k in ("hosts", "datastores", "questions", "suspects", "events", "vms_lost", "vms_disconnected", "vms_unread"):
             res[k] += part[k]
         res["vms_read"] += part["vms_read"]
         res["vms_checked"] += part["vms_checked"]
@@ -655,6 +685,7 @@ def main():
         probe_all(live)
     for v in res["suspects"]:
         v["verdict"] = verdict(v["checks"]) if v["name"] not in res["not_probed"] else "unprobed"
+    mark_incomplete(res)
     # the third signal, for the silent ones: did vCenter see the VM send anything since the first check?
     silent = [v for v in res["suspects"] if v["verdict"] == "hung"]
     if silent and p["traffic"]:

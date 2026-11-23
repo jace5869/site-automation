@@ -41,6 +41,9 @@ Every vCenter of the job (the credential's, and `vmware_vcenters`), or one datac
 | A vCenter that could not be read | critical |
 | vCenter's single sign-on down now: an SSO service stopped, the test domain account refused, an OCSP responder not answering (`vm_watch_sso`; [VMWARE.md](VMWARE.md#single-sign-on-and-ocsp-vcenter-80)) | critical |
 
+A VM whose power or connection state vCenter leaves out of its answer is not judged that run. It is named in *How it
+judged*, and none of its vCenter's tickets is cleared that run (1.118.4).
+
 "The window" is the last `vm_watch_window_minutes` (15): set it to the schedule's interval, so every
 event is seen once.
 

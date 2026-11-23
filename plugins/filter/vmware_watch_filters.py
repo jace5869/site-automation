@@ -558,6 +558,9 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
                          int(d.get("vms_read") or 0), int(d.get("vms_checked") or 0), len(lost),
                          (" (%d of them not judged: vm_watch_skip_vms / vm_watch_skip_folders)" % len([v for v in lost if v.get("not_judged")]))
                          if any(v.get("not_judged") for v in lost) else "", down_vms))
+    for st in d.get("vcenters") or []:                 # 1.118.4: what vCenter did not give, and what that means for the tickets
+        if st.get("incomplete"):
+            lines.append("Not read completely on %s this run, so no open ticket of it is cleared: %s." % (st.get("name", ""), st["incomplete"]))
     sections.append({"title": "How it judged", "lines": lines})
     return {"title": title, "status": status, "subtitle": subtitle, "summary": summary, "sections": sections,
             "footer": "Read-only: the watch changed nothing."}
@@ -613,7 +616,8 @@ def vm_watch_health(data, conditions, opts=None):
         name = s.get("name", "")
         if s.get("note", "").startswith("the same vCenter"):
             continue
-        out[name] = {"status": "healthy", "checks": ["vm_watch"], "checks_failed": ["vm_watch"] if s.get("error") else [],
+        out[name] = {"status": "healthy", "checks": ["vm_watch"],
+                     "checks_failed": ["vm_watch"] if s.get("error") or s.get("incomplete") else [],    # 1.118.4: incomplete clears nothing
                      "findings": [], "act": {}, "time": d.get("read_at", ""), "job": str(o.get("job", "")), "reach": False}
     by_id = {}
 

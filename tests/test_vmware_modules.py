@@ -891,6 +891,103 @@ class VcsaAccess(unittest.TestCase):
             self.run_one()
 
 
+class Unread1184(unittest.TestCase):
+    """1.118.4: a VM whose power / connection (first read) or power / heartbeat (the confirmation read) vCenter does not give
+    (a property fault: left out of the answer) is never taken as powered off, dropped or "recovered": it is listed as not read,
+    its vCenter is incomplete, and no open ticket of that vCenter is cleared. Before: a hung VM whose power was not given on
+    the second read was judged recovered, its ticket cleared and a recovered email sent."""
+
+    def fake(self):
+        import types
+        T = lambda n: type(n, (), {"__init__": lambda self, moid=None, stub=None: setattr(self, "_moId", moid)})   # noqa: E731
+        return types.SimpleNamespace(Datacenter=T("Datacenter"), ClusterComputeResource=T("Cluster"), HostSystem=T("Host"),
+                                     Datastore=T("Datastore"), VirtualMachine=T("VM"), Task=T("Task"))
+
+    def test_1_first_read_without_power_is_not_read(self):
+        import types
+        fake = self.fake()
+        h1 = fake.HostSystem("host-1")
+        hung = {"guestHeartbeatStatus": "red", "guest.toolsStatus": "toolsOk", "guest.toolsRunningStatus": "guestToolsRunning"}
+        table = {fake.Datacenter: {"dc-1": (fake.Datacenter("dc-1"), {"name": "DC1"})},
+                 fake.ClusterComputeResource: {},
+                 fake.HostSystem: {"host-1": (h1, {"name": "esx01.example.mil", "runtime.connectionState": "connected"})},
+                 fake.Datastore: {},
+                 fake.VirtualMachine: {
+                     "vm-1": (fake.VirtualMachine("vm-1"), dict({"name": "app01", "runtime.host": h1, "runtime.connectionState": "connected"}, **hung)),
+                     "vm-2": (fake.VirtualMachine("vm-2"), dict({"name": "app02", "runtime.host": h1, "runtime.powerState": "poweredOn"}, **hung))}}
+        saved = (getattr(wt, "vim", None), wt._props, wt._folder, wt._datacenter_of, wt._objs_props)
+        try:
+            wt.vim, wt._props = fake, (lambda content, root, objtype, paths: table[objtype])
+            wt._folder, wt._datacenter_of = (lambda o, cache: "/DC1/vm"), (lambda o, cache: "DC1")
+            wt._objs_props = lambda content, objs, objtype, paths: {}
+            p = {"datacenter": "", "skip_vms": [], "skip_folders": [], "min_up_minutes": 15, "window_minutes": 0, "event_types": []}
+            r = wt._read(types.SimpleNamespace(rootFolder=None), p, 1763900000.0, "vc01.example.mil")
+        finally:
+            wt.vim, wt._props, wt._folder, wt._datacenter_of, wt._objs_props = saved
+        self.assertEqual(sorted((v["name"], v["why"]) for v in r["vms_unread"]),
+                         [("app01", "runtime.powerState not read"), ("app02", "runtime.connectionState not read")])
+        self.assertEqual(r["suspects"], [])
+        res = wt.mark_incomplete(dict(r, vcenters=[{"name": "vc01.example.mil", "ok": True, "error": "", "note": ""}]))
+        self.assertIn("app01 (runtime.powerState not read)", res["vcenters"][0]["incomplete"])
+
+    def test_2_second_read_without_power_is_not_recovered(self):
+        import types
+        fake = self.fake()
+        v = {"name": "db01", "moid": "vm-5", "vcenter": "vc01.example.mil",
+             "checks": [{"reason": "no guest heartbeat (red)", "busy": "", "probe": "no answer"}]}
+        saved = (getattr(wt, "vim", None), wt._objs_props)
+        try:
+            wt.vim = fake
+            wt._objs_props = lambda content, objs, objtype, paths: {"vm-5": {"guest.toolsStatus": "toolsOk"}}   # no power, no heartbeat
+            got = wt._recheck(types.SimpleNamespace(rootFolder=types.SimpleNamespace(_stub=None)), "vc01.example.mil", [v],
+                              {"min_up_minutes": 15}, 1763900100.0)
+        finally:
+            wt.vim, wt._objs_props = saved
+        c = got["vm-5"]
+        self.assertTrue(c["unread"])
+        self.assertEqual(c["reason"], "no guest heartbeat (red)")               # never "" (= recovered)
+        v["checks"].append(c)
+        self.assertNotEqual(wt.verdict(v["checks"]), "recovered")
+        res = wt.mark_incomplete({"vcenters": [{"name": "vc01.example.mil", "ok": True}], "suspects": [v], "vms_unread": []})
+        self.assertIn("db01", res["vcenters"][0]["incomplete"])
+
+    def test_4_an_optional_property_never_hides_a_hung_vm(self):
+        # pinned (1.116.0 must keep it): config.guestFullName / guest.hostName left out still judge the VM by its heartbeat
+        import types
+        fake = self.fake()
+        h1 = fake.HostSystem("host-1")
+        pr = {"name": "app07", "runtime.host": h1, "runtime.powerState": "poweredOn", "runtime.connectionState": "connected",
+              "guestHeartbeatStatus": "red", "guest.toolsStatus": "toolsOk", "guest.toolsRunningStatus": "guestToolsRunning"}
+        table = {fake.Datacenter: {"dc-1": (fake.Datacenter("dc-1"), {"name": "DC1"})}, fake.ClusterComputeResource: {},
+                 fake.HostSystem: {"host-1": (h1, {"name": "esx01.example.mil", "runtime.connectionState": "connected"})},
+                 fake.Datastore: {}, fake.VirtualMachine: {"vm-7": (fake.VirtualMachine("vm-7"), pr)}}
+        saved = (getattr(wt, "vim", None), wt._props, wt._folder, wt._datacenter_of, wt._objs_props)
+        try:
+            wt.vim, wt._props = fake, (lambda content, root, objtype, paths: table[objtype])
+            wt._folder, wt._datacenter_of = (lambda o, cache: "/DC1/vm"), (lambda o, cache: "DC1")
+            wt._objs_props = lambda content, objs, objtype, paths: {}
+            p = {"datacenter": "", "skip_vms": [], "skip_folders": [], "min_up_minutes": 15, "window_minutes": 0, "event_types": []}
+            r = wt._read(types.SimpleNamespace(rootFolder=None), p, 1763900000.0, "vc01.example.mil")
+        finally:
+            wt.vim, wt._props, wt._folder, wt._datacenter_of, wt._objs_props = saved
+        self.assertEqual([v["name"] for v in r["suspects"]], ["app07"])
+        self.assertEqual(r["vms_unread"], [])
+
+    def test_3_no_ticket_cleared_and_no_recovered_email(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, os.path.join(here, "..", "plugins", "filter"))
+        import vmware_watch_filters as w
+        d = {"vcenters": [{"name": "vc01.example.mil", "ok": True, "error": "", "note": "", "incomplete": "db01 (...)"}],
+             "read_at": "2026-11-23T10:00:00Z"}
+        h = w.vm_watch_health(d, [])["vc01.example.mil"]
+        self.assertEqual(h["checks_failed"], ["vm_watch"])                     # tickets.yml clears nothing of a failed check
+        rep = w.vm_watch_report(dict(d, hosts=[], datastores=[], vms_checked=0), [], {})
+        how = next(s for s in rep["sections"] if s["title"] == "How it judged")
+        self.assertTrue(any(l.startswith("Not read completely on vc01.example.mil this run") for l in how["lines"]))
+        with open(os.path.join(here, "..", "roles", "vmware_vm", "tasks", "watch_email.yml")) as fh:
+            self.assertIn("selectattr('incomplete', 'defined')", fh.read())   # the email: nothing missing counts as cleared
+
+
 class LostVMs1124(unittest.TestCase):
     """1.112.4: a VM vCenter shows as inaccessible, invalid or orphaned is listed whatever its power state (before, the power
     check skipped it without a word); a VM on a disconnected host is listed under it; a skipped one still listed, "not judged".
