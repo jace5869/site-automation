@@ -1,6 +1,11 @@
 ---
 - name: VMware | check every destination before recording a placement change
   block:
+    - name: VMware | save one VM at a time
+      ansible.builtin.assert:
+        that: vm_deploy_placement is sequence and vm_deploy_placement | length == 1
+        fail_msg: Save one VM at a time.
+
     - name: VMware | read the ticket and compute its digest
       ansible.builtin.include_tasks: deploy_ticket.yml
       vars:
@@ -81,12 +86,13 @@
       vars:
         _vd_nl: "\n"
 
-    - name: VMware | record each placement on its related tickets and then the launch ticket
+    - name: VMware | write the placement on the launch ticket
       ansible.builtin.include_tasks: deploy_placement_note.yml
-      loop: "{{ (_vd_also + [{'table': _vd_table, 'sys_id': _vd_rec.sys_id, 'number': _vd_number}]) | product(_vd_bodies) | list }}"
-      loop_control:
-        loop_var: _vd_write
-        label: "{{ _vd_write.0.number }}"
+
+    - name: VMware | copy the saved placement to the related tickets
+      ansible.builtin.include_tasks: deploy_note_also.yml
+      vars:
+        _vd_also_bodies: "{{ _vd_bodies }}"
 
   rescue:
     - name: VMware | keep the reason for refusal
@@ -118,6 +124,9 @@
           {%-   set after = (fields | map('extract', found)) if found else (['vcenter', 'cluster', 'datastore', 'folder'] | map('extract', request)) -%}
           {%-   set _ = sections.append({'title': name, 'lines': ['Before: ' ~ fields | map('extract', old) | join(', '),
                                                                   'Requested: ' ~ after | join(', ')]}) -%}
+          {%- endfor -%}
+          {%- for copy in _vd_also_res.results | default([]) if copy.status | default(0) != 200 -%}
+          {%-   set _ = sections.append({'title': 'Warning', 'status': 'warning', 'lines': ['ServiceNow did not take the note on ' ~ copy._vd_x.1.number]}) -%}
           {%- endfor -%}
           {{ sections + ([{'title': 'Refused', 'lines': [_vd_change_error]}] if _vd_change_error is defined else []) }}
         _vm_report_lines: >-

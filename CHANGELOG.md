@@ -6,7 +6,7 @@
 *Read the plan on the portal or in the propose job's output before approving*. Optionally set
 `vm_deploy_owner_field` in AAP to show the change's owner. Run **AAP - set up job templates** again and give the portal’s AAP account
 **Execute** on **VM - deploy placement change**. For no touch, attach an AAP credential to the deploy template.
-Give its account **Execute** on the approval workflow.
+Give its account **Execute** on the approval workflow. The setup rerun adds the optional `vm_deploy_handoff_from` question to that workflow.
 
 - The VM deploy plan shows each VM's values, sources, template network and capacity warnings before approval.
   The propose job publishes the plan in its output, email, change notes and job artifacts.

@@ -614,7 +614,7 @@ vm_capacity_act_check_url: true          # first check that the AAP node can rea
 vm_deploy_ticket: ""
 # The propose job whose Checked notes authorize the placement.
 vm_deploy_checked_job: ""
-# The VMs whose placement the portal approver wants to change.
+# One VM per placement save.
 vm_deploy_placement: []
 # The portal approver requesting the change. Single-line text of at most 120 characters.
 vm_deploy_placement_by: ""
@@ -852,7 +852,7 @@ vm_deploy_genai_approval: true
 # Leave empty for a plain run. The approval workflow uses propose to check and build to apply the approved plan.
 # The no_touch phase builds a clean plan from an approved change in Implement.
 vm_deploy_phase: ""
-# Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket.
+# Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket and vm_deploy_handoff_from.
 vm_deploy_approval_workflow: "VM - deploy from ServiceNow ticket (workflow)"
 vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer
 # ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ----

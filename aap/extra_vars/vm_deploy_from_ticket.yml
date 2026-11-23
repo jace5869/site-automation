@@ -345,7 +345,8 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## approved plan. The no_touch phase builds a clean plan from an approved change in Implement.
 # vm_deploy_phase: ""
 
-## Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket.
+## Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket and
+## vm_deploy_handoff_from.
 # vm_deploy_approval_workflow: "VM - deploy from ServiceNow ticket (workflow)"
 
 ## seconds the model may take for its answer

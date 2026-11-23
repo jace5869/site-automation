@@ -3746,6 +3746,16 @@ workflows:
       produces: The plan on the ticket and in an email, the approval, the new VMs, and the result (IP included) on the ticket.
       supports: Run constraint=Writes vCenter (new VMs) after an approval; writes ServiceNow ticket notes (before and after),
         email.
+    survey:
+      - question_name: Ticket number
+        variable: vm_deploy_ticket
+        type: text
+        required: true
+      - question_name: Originating no-touch workflow job ID
+        variable: vm_deploy_handoff_from
+        type: text
+        required: false
+        min: 0
     deferred: 'left by hand for now: the build''s binding to what was approved is being reviewed'
   - name: VM - deploy from change (no touch)
     playbooks:

@@ -374,6 +374,20 @@ class Builder(unittest.TestCase):
         w.catalog = TPL
         return w, api
 
+    def test_setup_adds_the_handoff_question_to_the_existing_survey(self):
+        w, api = self.wf(check=False)
+        workflow = next(entry for entry in WFS if entry["name"] == "VM - deploy from ServiceNow ticket (workflow)")
+        existing = {"variable": "vm_deploy_ticket", "question_name": "Ticket", "required": True, "type": "text"}
+        survey = {"name": "Deploy", "description": "", "spec": [existing]}
+        api.call.side_effect = [(200, {"results": [{"id": 7, "organization": 1, "name": workflow["name"], "survey_enabled": True}]}),
+                                (200, survey), (200, {})]
+        w.one(workflow, {}, {}, {})
+        api.call.assert_called()
+        method, path, body = api.call.call_args.args
+        self.assertEqual((method, path), ("POST", "workflow_job_templates/7/survey_spec/"))
+        question = next(q for q in workflow["survey"] if q["variable"] == "vm_deploy_handoff_from")
+        self.assertEqual(body, dict(survey, spec=[existing, SW.survey_question(question)]))
+
     def test_node_why(self):
         w, api = self.wf()
         hc = {"id": 5, "name": "Health check", "ask_variables_on_launch": False, "survey_enabled": True}
@@ -521,10 +535,15 @@ class Review2(unittest.TestCase):
         self.assertGreaterEqual(n_dry, 5)
         self.assertTrue(TPL["STIG Manager - deploy (dry run)"].get("diff_mode"))
 
+    def test_approval_workflow_has_optional_handoff_question(self):
+        w = next(w for w in WFS if w["name"] == "VM - deploy from ServiceNow ticket (workflow)")
+        self.assertIn("survey", w)
+        q = next(q for q in w["survey"] if q["variable"] == "vm_deploy_handoff_from")
+        self.assertEqual((q["type"], q["required"]), ("text", False))
+
     def test_vm_deploy_workflow_is_deferred(self):
         w = next(w for w in WFS if w["name"] == "VM - deploy from ServiceNow ticket (workflow)")
         self.assertNotIn("nodes", w)
-        self.assertNotIn("survey", w)
         self.assertEqual(w["deferred"], "left by hand for now: the build's binding to what was approved is being reviewed")
         # the deferred build binding left nothing behind in the deploy tasks (no git history needed: CI and zips have none)
         with open(os.path.join(REPO, "roles/vmware_vm/tasks/deploy.yml")) as f:

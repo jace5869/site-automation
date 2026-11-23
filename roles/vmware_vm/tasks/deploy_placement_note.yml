@@ -1,14 +1,14 @@
 ---
-- name: VMware | record the placement on {{ _vd_write.0.number }}
+- name: VMware | record the placement on {{ _vd_number }}
   ansible.builtin.uri:
-    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_write.0.table }}/{{ _vd_write.0.sys_id }}"
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
     method: PATCH
     url_username: "{{ _vd_sn_user }}"
     url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
     force_basic_auth: true
     headers: {Accept: application/json}
     body_format: json
-    body: "{{ _vd_write.1 }}"
+    body: "{{ _vd_bodies[0] }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"

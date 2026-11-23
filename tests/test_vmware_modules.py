@@ -67,7 +67,7 @@ class DeployFit(unittest.TestCase):
         self.params = dict(name="vm-app01", template=self.tpl.name, cluster=self.cr.name, datastore=self.ds.name, folder="/",
                            ticket="CHG0030001", vcenter=self.vc, datacenter=self.dc.name, customize=False)
 
-    def run_module(self, check=True, **params):
+    def run_module(self, check=True, expect_clone=False, **params):
         class Result(BaseException):
             pass
 
@@ -76,6 +76,15 @@ class DeployFit(unittest.TestCase):
             return NS(params={**defaults, **self.params, **params}, check_mode=check,
                       exit_json=lambda **kw: self.finish(Result, False, kw), fail_json=lambda **kw: self.finish(Result, True, kw))
 
+        if expect_clone:
+            self.vim.vm.CloneSpec = self.vim.vm.RelocateSpec = self.vim.vm.ConfigSpec = NS
+            self.vim.TaskInfo = NS(State=NS(success="success", error="error"))
+            task = NS(info=NS(state="success", result=None))
+            new = NS(_moId="1", runtime=NS(powerState="poweredOff", host=self.cr.host[0]),
+                     config=NS(hardware=NS(device=[])), ReconfigVM_Task=Mock(return_value=task))
+            self.tpl.CloneVM_Task.side_effect = None
+            self.tpl.CloneVM_Task.return_value = NS(info=NS(state="success", result=new))
+            params["power_on"] = False
         objects = {self.vc: self.objects, **getattr(self, "outside_objects", {})}
         props = [(self.tpl, {"name": self.tpl.name, "config.template": True})] + getattr(self, "others", [])
         with patch.object(deploy, "vim", self.vim, create=True), patch.multiple(
@@ -84,7 +93,11 @@ class DeployFit(unittest.TestCase):
                 disconnect=lambda si: None, vm_properties=lambda vc, paths: props if vc == self.vc else self.copies,
                 vcenter_list=lambda names: list(objects), _all=lambda content, kind, root: objects[content][kind]), self.assertRaises(Result) as result:
             deploy.main()
-        self.tpl.CloneVM_Task.assert_not_called()
+        if expect_clone:
+            self.tpl.CloneVM_Task.assert_called_once()
+            self.tpl.CloneVM_Task.reset_mock()
+        else:
+            self.tpl.CloneVM_Task.assert_not_called()
         return result.exception.args[0]
 
     @staticmethod
@@ -239,6 +252,16 @@ class DeployFit(unittest.TestCase):
         result = self.run_module(**args)
         self.assertFalse(result["failed"], result)
 
+    def test_an_approved_unshared_datastore_still_builds(self):
+        # review 1.117 fix round: not shared and approved (a warning) builds; not approved, or require_fit, refuses
+        self.ds.summary.multipleHostAccess = False
+        self.ds.host = self.ds.host[:1]
+        args = dict(pinned=True, mem_target_pct=100)
+        self.assertFalse(self.run_module(pinned_ok=["datastore", "unshared"], pinned_pct={"datastore": 76}, **args)["failed"])
+        self.assertIn("not shared", self.run_module(pinned_ok=["datastore"], pinned_pct={"datastore": 76}, **args)["msg"])
+        self.assertIn("not shared", self.run_module(**args)["msg"])
+        self.assertTrue(self.run_module(pinned_ok=["datastore", "unshared"], pinned_pct={"datastore": 76}, require_fit=True, **args)["failed"])
+
     def test_changed_placement_requires_fit_and_checked_size(self):
         args = dict(pinned=True, datacenter="", checked_spec=dict(template=self.tpl.name, cpu="4", memory_gb="16", disks_gb="10"))
         self.assertFalse(self.run_module(**args)["failed"])
@@ -248,6 +271,34 @@ class DeployFit(unittest.TestCase):
         self.assertIn("not shared", self.run_module(**dict(args, datacenter=self.dc.name), check=False)["msg"])
         self.ds.summary.multipleHostAccess = True
         self.assertIn("VM size differs", self.run_module(**args, memory_mb=1024)["msg"])
+
+    def test_pinned_build_checks_cpu_and_allows_only_the_approved_warning(self):
+        args = dict(pinned=True, mem_target_pct=70, pinned_ok=["cluster"], pinned_pct={"cluster": 76},
+                    checked_spec=dict(template=self.tpl.name, cpu="4", memory_gb="16", disks_gb="10"))
+        import jinja2.nativetypes
+        import yaml
+        with open(os.path.join(os.path.dirname(__file__), "..", "roles/vmware_vm/tasks/deploy_build_one.yml")) as f:
+            expr = yaml.safe_load(f)[0]["site_vmware_deploy"]["checked_spec"]
+        pin = {"checked_spec": args["checked_spec"]}
+        args["checked_spec"] = jinja2.nativetypes.NativeEnvironment().from_string(expr).render(_vd_pin=pin)
+        self.assertTrue(self.run_module(check=False, expect_clone=True, **args)["vm"]["created"])
+        self.assertTrue(self.run_module(check=False, **args, require_fit=True)["failed"])
+        self.tpl.config.hardware.numCPU = 8
+        self.assertIn("VM size differs", self.run_module(check=False, **args)["msg"])
+
+    def test_pinned_warning_limits_drift_and_requires_shared_accessible_storage(self):
+        args = dict(pinned=True, pinned_ok=["datastore"], pinned_pct={"datastore": 86})
+        self.ds.summary.freeSpace = 30 * G
+        refused = self.run_module(**args)
+        self.assertTrue(refused["failed"], refused)
+        self.assertIn(self.ds.name + ": 96% now, 86% when approved", refused["msg"])
+        self.ds.summary.freeSpace = 39.5 * G
+        self.assertTrue(self.run_module(check=False, expect_clone=True, **args)["vm"]["created"])
+        self.ds.summary.multipleHostAccess = False
+        self.ds.host.pop()
+        self.assertIn("not shared", self.run_module(**args)["msg"])
+        self.ds.summary.accessible = False
+        self.assertIn("not accessible", self.run_module(**args)["msg"])
 
     def test_pod_template_and_automatic_placement(self):
         vm = self.run_module(datastore=self.pod.name)["vm"]

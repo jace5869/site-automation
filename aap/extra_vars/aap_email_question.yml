@@ -107,6 +107,7 @@
 #   - esxi_network_check.yml
 #   - vm_deploy_from_ticket.yml
 #   - vm_deploy_inventory.yml
+#   - vm_deploy_placement.yml
 #   - vm_deploy_poll.yml
 #   - vm_health_report.yml
 #   - vm_log_analysis.yml
@@ -163,6 +164,9 @@
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## The text to write.
 # vm_notes: ""
+
+## One VM per placement save.
+# vm_deploy_placement: []
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

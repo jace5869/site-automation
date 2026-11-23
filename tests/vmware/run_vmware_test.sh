@@ -2142,6 +2142,15 @@ placement_run() {
         -e vm_deploy_mem_target_pct=80 -e awx_job_id=4820 -e "@$work/placement.json" "${@:3}"
 }
 nplan=$(nsn)
+"$py" - "$work/placement.json" "$work/two-placements.json" <<'EOPY'
+import json, sys
+with open(sys.argv[1]) as f:
+    first, = json.load(f)["vm_deploy_placement"]
+with open(sys.argv[2], "w") as f:
+    json.dump({"vm_deploy_placement": [first, dict(first, vm_name="vm-app02")]}, f)
+EOPY
+placement_run "refuse two VMs in one placement job" fail -e "@$work/two-placements.json" -- "Save one VM at a time"
+[ "$(patches_since "$nplan")" = 0 ] || { echo "FAIL - two-VM placement wrote a note"; fails=$((fails + 1)); }
 placement_run "refuse LocalDS_1 outside the datastore allow-list" fail -e '{"vm_deploy_datastores":["LocalDS_0"]}' -- "not in vm_deploy_datastores"
 [ "$(patches_since "$nplan")" = 0 ] || { echo "FAIL - refused placement wrote a note"; fails=$((fails + 1)); }
 "$py" - "$work/out.txt" <<'EOPY' || { echo "FAIL - refused placement artifact"; fails=$((fails + 1)); }
@@ -2154,7 +2163,7 @@ placement_run "change to LocalDS_1 before approval" ok -- '"vm_deploy_placement_
 "$py" - "$work/sn.jsonl" "$nplan" "$work/out.txt" <<'EOPY' || { echo "FAIL - changed placement notes or artifact"; fails=$((fails + 1)); }
 import json, sys
 writes = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):] if '"PATCH"' in l]
-assert sorted(w["path"].split("/")[-2] for w in writes) == ["change_request", "change_task"]
+assert [w["path"].split("/")[-2] for w in writes] == ["change_request", "change_task"]
 notes = [w["body"]["work_notes"] for w in writes]
 assert notes[0] == notes[1] and notes[0].startswith("[AAP] Placement changed - VM vm-app01")
 assert "for AAP job 4813" in notes[0] and "- Datastore: LocalDS_1   (changed by the approver:" in notes[0]
@@ -2193,7 +2202,7 @@ EOPY
 STATE_PORT=$plan_port state vm-app01 "1" >/dev/null 2>&1 && { echo "FAIL - built without the fallback credential"; fails=$((fails + 1)); }
 
 nplan=$(nsn)
-CONTROLLER_HOST="http://127.0.0.1:$aap_port" CONTROLLER_OAUTH_TOKEN=goodtoken no_touch "send the warning to approval" ok -- "Sent to approval"
+CONTROLLER_HOST="http://127.0.0.1:$aap_port" CONTROLLER_OAUTH_TOKEN=goodtoken no_touch "send the warning to approval" ok -e awx_workflow_job_id=4813 -- "Sent to approval"
 "$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" "$work/aap.jsonl" <<'EOPY' || { echo "FAIL - approval handoff"; fails=$((fails + 1)); }
 import json, sys
 stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
@@ -2202,7 +2211,7 @@ result = plan["no_touch"]
 assert plan["phase"] == "no_touch" and result["outcome"] == "sent_to_approval"
 assert result["why"] == plan["warnings"] and "target 0%" in result["why"][0]
 launch, = [json.loads(l) for l in open(sys.argv[4])]
-assert launch["workflow"] == 42 and launch["extra_vars"] == {"vm_deploy_ticket": "CHG0030001"}
+assert launch["workflow"] == 42 and launch["extra_vars"] == {"vm_deploy_ticket": "CHG0030001", "vm_deploy_handoff_from": "4813"}
 assert result["workflow_job"] == launch["job"]
 writes = [json.loads(l) for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
 assert sorted(w["path"].split("/")[-2] for w in writes) == ["change_request", "change_task"]

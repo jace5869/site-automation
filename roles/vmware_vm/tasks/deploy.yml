@@ -61,7 +61,7 @@
 - name: VMware | the placements approved for this build
   ansible.builtin.set_fact:
     _vd_pinned: "{{ _vd_phase == 'build' and not ansible_check_mode }}"
-    _vd_approved: "{{ _vd_rec | vm_deploy_checked_placement(_vd_digest, vm_deploy_checked_job | default('')) if _vd_phase == 'build' and not ansible_check_mode else {} }}"
+    _vd_approved: "{{ _vd_rec | vm_deploy_checked_placement(_vd_digest, vm_deploy_checked_job | default(''), with_spec=true) if _vd_phase == 'build' and not ansible_check_mode else {} }}"
 
 - name: VMware | check the proposal and ticket digest for the build
   ansible.builtin.set_fact:

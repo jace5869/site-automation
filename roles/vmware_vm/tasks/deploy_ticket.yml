@@ -281,5 +281,4 @@
     _vd_change_required: >-
       {{ '' if _vd_phase | default('') != 'no_touch' else
          'Launch no touch with an approved change in Implement.' if _vd_table != 'change_request' else
-         _vd_rec | vm_deploy_ready(_vd_table, {'change_request': (vm_deploy_ready_by_table | default({}, true)).change_request
-                                                                  | default({'approval': 'Approved', 'state': 'Implement'}, true)}, _vd_number) }}
+         _vd_rec | vm_deploy_ready(_vd_table, vm_deploy_ready_by_table | default({}), _vd_number, no_touch=true) }}

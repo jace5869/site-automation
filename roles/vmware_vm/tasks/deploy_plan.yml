@@ -14,7 +14,7 @@
   ansible.builtin.include_tasks: deploy_no_touch_outcome.yml
   vars:
     _vd_outcome: stopped
-    _vd_why: "{{ (_vd_plan | vm_deploy_no_touch).why }}"
+    _vd_why: "{{ (_vd_plan | vm_deploy_no_touch(_vd_results | default([]) | map(attribute='issues', default=[]) | flatten)).why }}"
   when: _vd_plan.phase == 'no_touch' and _vd_plan.state != 'ready'
 
 - name: VMware | the plan in the report and approval summary

@@ -2610,7 +2610,7 @@ class DeployPlanPages(unittest.TestCase):
             headers = dict(headers, **{"Content-Length": str(len(raw))})
         request.path = path
         request.headers = headers
-        request._send = lambda code, body, *args: (code, body)
+        request._send = lambda code, body=None, *args: (code, body or {})
         return request.do_POST() if body is not None else request.do_GET()
 
     def setUp(self):
@@ -2636,7 +2636,7 @@ class DeployPlanPages(unittest.TestCase):
         self.assertEqual(code, 200, body)
         return body
 
-    def _vm_workflow(self, plan):
+    def _vm_workflow(self, plan, launched=True):
         wid, jid, aid = (fake_aap.new_id() for _ in range(3))
         jobs = fake_aap.STATE["jobs"]
         now = time.time() - 60
@@ -2648,7 +2648,8 @@ class DeployPlanPages(unittest.TestCase):
             jobs[wid]["nodes"].append(aid)
             jobs[aid] = {"id": aid, "type": "workflow_approval", "name": "Build the VM?", "created": now, "status": "pending"}
             fake_aap.STATE["approvals"][aid] = dict(jobs[aid], workflow=wid, expires=now + 3600)
-        self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0]})
+        if launched:
+            self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0]})
         return wid, jid
 
     def test_read_only_no_touch_job_shows_the_outcome(self):
@@ -2688,10 +2689,10 @@ class DeployPlanPages(unittest.TestCase):
         vm = {"vm_name": "vm-app01", "vcenter": dest, "cluster": "SITB0201", "datastore": "SITB0201", "folder": "APP-TEAM-1"}
         return wid, jid, aid, vm, shortlist
 
-    def change(self, aid, body, dn=APPR, token=None):
+    def change(self, aid, body, dn=APPR, token=None, action="placement"):
         headers = dict(cert(dn), Host="vc01.corp.example.mil", Origin="https://vc01.corp.example.mil",
                        **{"Content-Type": "application/json", "X-Portal-Token": self.portal.token(sp.who(cert(dn))[0]) if token is None else token})
-        return self.request(self.handler, "/api/approvals/%d/placement" % aid, headers, body)
+        return self.request(self.handler, "/api/approvals/%d/%s" % (aid, action), headers, body)
 
     def placement_template(self):
         from unittest.mock import patch
@@ -2702,6 +2703,35 @@ class DeployPlanPages(unittest.TestCase):
         template = fake_aap.STATE["templates"]["job_templates"][0]
         template["ask_variables_on_launch"] = True
         return template
+
+    def test_handoff_keeps_the_portal_requester(self):
+        parent, _ = self._vm_workflow(vm_plan())
+        child, _ = self._vm_workflow(vm_plan(), launched=False)
+        forged, _ = self._vm_workflow(vm_plan(), launched=False)
+        jobs = fake_aap.STATE["jobs"]
+        jobs[child]["template"] = jobs[forged]["template"] = 0
+        jobs[child]["extra_vars"] = {"vm_deploy_handoff_from": str(parent)}
+        jobs[forged]["extra_vars"] = {"vm_deploy_handoff_from": str(child)}
+        requester = sp.who(cert())[0]
+        visible = [a["workflow_job"] for a in self.get("/api/approvals")["approvals"]]
+        self.assertIn(child, visible)
+        self.assertNotIn(forged, visible)
+        self.portal.cfg.approvers.append(requester)
+        approvals = {a["workflow_job"]: a for a in self.get("/api/approvals")["approvals"]}
+        self.assertEqual(approvals[child]["requested_by"], requester)
+        self.assertEqual(approvals[forged]["requested_by"], "")
+        self.assertEqual(self.portal.decide(requester, "", approvals[child]["id"], "approve")[0], 403)
+
+    def test_placement_save_accepts_only_one_vm(self):
+        _, jid, aid, vm, raw = self.placement_workflow()
+        plan = fake_aap.STATE["jobs"][jid]["arts"]["vm_deploy_plan"]
+        second = dict(vm, vm_name="vm-app02")
+        plan["vms"].append(dict(plan["vms"][0], name=second["vm_name"]))
+        raw["vms"][second["vm_name"]] = raw["vms"][vm["vm_name"]]
+        self.placement_template()
+        code, result = self.change(aid, {"vms": [vm, second]})
+        self.assertEqual((code, result), (400, {"error": "Save one VM at a time."}))
+        self.assertFalse(self.portal.log.read("placement"))
 
     def test_shortlist_bounds_and_binding(self):
         wid, jid, aid, vm, raw = self.placement_workflow()
@@ -2795,6 +2825,30 @@ class DeployPlanPages(unittest.TestCase):
         name = self.portal.cfg.placement_template
         self.portal.actions["placement"] = dict(self.portal.actions["deploy"], aap={"type": "job", "name": name})
         self.assertEqual(self.portal.launch(sp.who(cert())[0], "", "placement", {})[0], 403)
+
+    def test_approval_is_bound_to_the_saved_plan_on_screen(self):
+        wid, _, aid, vm, raw = self.placement_workflow()
+        self.placement_template()
+        lists = raw["vms"][vm["vm_name"]]
+        stores = next(iter(lists["datastores"].values()))
+        stores[1].update(fits=True, why="")
+        saved = []
+        for store in stores:
+            edit = dict(vm, datastore=store["name"])
+            code, result = self.change(aid, {"vms": [edit]})
+            self.assertEqual(code, 200, result)
+            job = result["job"]
+            place = {k: edit[k] for k in sp.PLACEMENT_KEYS}
+            place.update(name=vm["vm_name"], datacenter=lists["clusters"][1]["datacenter"],
+                         fit={"cluster": lists["clusters"][1], "datastore": store})
+            fake_aap.STATE["jobs"][job].update(force="successful", arts={"vm_deploy_placement_change": {"ok": True, "vms": [place]}})
+            plan = self.get("/api/approvals", APPR)["approvals"][0]["deploy_plan"]
+            self.assertIn('data-saved-job="%d"' % job, self.get("/jobs/%d" % wid, APPR))
+            saved.append(plan["saved_job"])
+        for stale in ({}, {"plan": ""}, {"plan": saved[0]}):
+            self.assertEqual(self.change(aid, stale, action="approve"),
+                             (409, {"error": "The plan changed since you opened it: read it again."}))
+        self.assertEqual(self.change(aid, {"plan": str(saved[1])}, action="approve")[0], 200)
 
     def test_placement_job_and_saved_views(self):
         wid, jid, aid, vm, raw = self.placement_workflow()

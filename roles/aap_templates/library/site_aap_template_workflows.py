@@ -322,6 +322,10 @@ class Workflows(Sync):
         if not w.get("nodes"):
             if w.get("deferred"):
                 self.note("workflow", w["name"], "left", why=w["deferred"])
+                if w.get("survey"):
+                    rows = [r for r in self.by_name("workflow_job_templates", w["name"]) if r.get("organization") == self.org_id]
+                    if len(rows) == 1:
+                        self.survey(int(rows[0]["id"]), w, add_missing=True)
             elif w.get("made_by"):             # 1.107.0: the site portal's own workflows - its setup job makes them
                 self.note("workflow", w["name"], "left", why="%s makes it (its own nodes and templates): run that job" % w["made_by"])
             return

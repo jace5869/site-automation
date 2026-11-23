@@ -42,8 +42,10 @@ options:
   clusters_allowed: {description: Allowed cluster names or patterns for the shortlist., type: list, elements: str, default: []}
   datastores_allowed: {description: Allowed datastore names or patterns for the shortlist., type: list, elements: str, default: []}
   datastore_rule: {description: Datastore patterns of the rule matching this VM., type: list, elements: str, default: []}
-  checked_spec: {description: Template and size recorded before a placement change. Requires a fitting pinned placement., type: dict, default: {}}
-  pinned_ok: {description: Capacity warnings recorded for this VM before approval., type: list, elements: str, choices: [cluster, datastore], default: []}
+  require_fit: {description: Require a pinned placement to meet both capacity targets., type: bool, default: false}
+  pinned_pct: {description: Approved capacity warning percentages by placement field., type: dict, default: {}}
+  checked_spec: {description: Template and size recorded by the check., type: dict, default: {}}
+  pinned_ok: {description: Capacity warnings recorded for this VM before approval (unshared - its datastore approved as not shared)., type: list, elements: str, choices: [cluster, datastore, unshared], default: []}
   cluster_candidates: {description: With no cluster - choose among these (names; * and ?) the one with the most memory left with failover_hosts host(s) down, staying under mem_target_pct. Empty = the template's cluster., type: list, elements: str, default: []}
   datastore_candidates: {description: With no datastore - choose among these (names; * and ?) a shared, accessible datastore of the chosen cluster that stays under datastore_max_used_pct with the VM's full size. Empty = the template's datastore., type: list, elements: str, default: []}
   mem_target_pct: {description: Automatic placement - a cluster's memory used with failover_hosts host(s) down stays under this., type: float, default: 80}
@@ -244,7 +246,7 @@ def rank_datastores(datastores, need_bytes, max_pct=85.0):
     out = []
     for d in datastores:
         cap, free = float(d.get("capacity") or 0), float(d.get("free") or 0)
-        details = {"name": d["name"], "max": max_pct, "free_gb": free / 1073741824, "capacity_gb": cap / 1073741824}
+        details = {"name": d["name"], "shared": bool(d.get("shared")), "max": max_pct, "free_gb": free / 1073741824, "capacity_gb": cap / 1073741824}
         if not d.get("ok") or cap <= 0:
             out.append({**details, "pct_after": None, "fits": False, "why": "not accessible, or in maintenance"})
             continue
@@ -271,14 +273,19 @@ def datastore_info(ds, cluster, planned, vc="", dc="", require_shared=False):
             "shared": bool(summary.multipleHostAccess) or len(ds.host or []) >= 2 or (not require_shared and len(cluster.host or []) == 1)}
 
 
-def pinned_problem(fit, need_disk, warned):
+def pinned_problem(fit, need_disk, warned, pinned_pct):
     ds = fit["datastore"]
-    if ds["free_gb"] * 1073741824 < need_disk:
+    if ds["pct_after"] is None or (not ds["shared"] and "unshared" not in warned):     # approved as not shared, or refused
+        why = "%s: %s" % (ds["name"], ds["why"])
+    elif ds["free_gb"] * 1073741824 < need_disk:
         why = "%s no longer has room for the full VM" % ds["name"]
     else:
         why = ""
         for key, limit in (("cluster", "target"), ("datastore", "max")):
             item = fit[key]
+            if key in warned and key in pinned_pct and item["pct_after"] is not None and item["pct_after"] > pinned_pct[key] + 1:
+                why = "%s: %g%% now, %g%% when approved" % (item["name"], item["pct_after"], pinned_pct[key])
+                break
             if item["pct_after"] is None or (item["pct_after"] > item[limit] and key not in warned):
                 why = "%s %s: %s" % (key, item["name"], item["why"])
                 break
@@ -563,8 +570,9 @@ def main():
                            clusters_allowed=dict(type="list", elements="str", default=[]),
                            datastores_allowed=dict(type="list", elements="str", default=[]),
                            datastore_rule=dict(type="list", elements="str", default=[]),
-                           pinned=dict(type="bool", default=False),
-                           pinned_ok=dict(type="list", elements="str", choices=["cluster", "datastore"], default=[]),
+                           pinned=dict(type="bool", default=False), pinned_pct=dict(type="dict", default={}),
+                           require_fit=dict(type="bool", default=False),
+                           pinned_ok=dict(type="list", elements="str", choices=["cluster", "datastore", "unshared"], default=[]),
                            cluster_candidates=dict(type="list", elements="str", default=[]),
                            datastore_candidates=dict(type="list", elements="str", default=[]),
                            mem_target_pct=dict(type="float", default=80), failover_hosts=dict(type="int", default=1),
@@ -861,17 +869,13 @@ def main():
             info = datastore_info(ds, cr, planned, vc, dc.name)
             fit["datastore"] = rank_datastores([info], need_disk, p["datastore_max_used_pct"])[0]
         vm.update(fit=fit, chosen=chosen)
+        if p["checked_spec"]:
+            actual = {"template": vm["template"], "cpu": str(vm["cpu"]), "memory_gb": "%g" % vm["memory_gb"],
+                      "disks_gb": " + ".join(str(gb) for gb in vm["disks_gb"])}
+            if actual != p["checked_spec"]:
+                module.fail_json(msg="the template or VM size differs from the checked plan", vm=vm, notes=notes)
         if p["pinned"]:
-            why = pinned_problem(fit, need_disk, p["pinned_ok"])
-            if p["checked_spec"]:
-                for key in ("cluster", "datastore"):
-                    if not fit[key]["fits"]:
-                        why = "%s %s: %s" % (key, fit[key]["name"], fit[key]["why"])
-                        break
-                actual = {"template": vm["template"], "cpu": str(vm["cpu"]), "memory_gb": "%g" % vm["memory_gb"],
-                          "disks_gb": " + ".join(str(gb) for gb in vm["disks_gb"])}
-                if actual != p["checked_spec"]:
-                    why = "the template or VM size differs from the checked plan"
+            why = pinned_problem(fit, need_disk, [] if p["require_fit"] else p["pinned_ok"], p["pinned_pct"])
             if cr.name != p["cluster"] or ds.name != p["datastore"] or folder != _find_folder(dc, p["folder"]):
                 why = "placement has changed: run the workflow again: it is checked and approved again"
             if why:

@@ -1720,10 +1720,9 @@ PLACEMENT_KEYS = ("vcenter", "cluster", "datastore", "folder")
 def placement_error(plan, shortlist, vms):
     if not plan or not shortlist:
         return "This approval has no matching placement shortlist."
-    if not isinstance(vms, list) or not 1 <= len(vms) <= 10:
-        return "Send only a vms list with between 1 and 10 VMs."
+    if not isinstance(vms, list) or len(vms) != 1:
+        return "Save one VM at a time."
     names = {vm["name"] for vm in plan["vms"]}
-    seen = set()
     for vm in vms:
         if not isinstance(vm, dict) or set(vm) != {"vm_name", *PLACEMENT_KEYS}:
             return "Each placement needs only vm_name, vcenter, cluster, datastore and folder."
@@ -1731,9 +1730,8 @@ def placement_error(plan, shortlist, vms):
             return "Each placement value must be a name in the shortlist."
         name = vm["vm_name"]
         lists = shortlist["vms"].get(name)
-        if name in seen or name not in names or not lists:
+        if name not in names or not lists:
             return "Choose each VM once from the plan and its shortlist."
-        seen.add(name)
         clusters = [c for c in lists["clusters"] if (c["vcenter"], c["name"]) == (vm["vcenter"], vm["cluster"])]
         if len(clusters) != 1:
             return "Choose a cluster identified by its name and vCenter in the shortlist."
@@ -2775,6 +2773,17 @@ class Portal(object):
                 continue
             a = wf_ids.get(int(wj.get("workflow_job_template") or 0))
             rec = mine.get(wid) or {}
+            if not rec:
+                extra = wj.get("extra_vars")
+                if isinstance(extra, str):
+                    extra = site_aap.vars_of(extra)
+                parent = str(deploy_mapping(extra).get("vm_deploy_handoff_from", ""))
+                if re.fullmatch(r"[1-9][0-9]{0,11}", parent):
+                    source = mine.get(int(parent)) or {}
+                    # A forged ID grants no approval rights. It can only name a portal
+                    # workflow's requester, which blocks that person from self-approval.
+                    if source.get("kind") == "workflow":
+                        rec = source
             if cn and cn not in self.cfg.approvers and not (self.may_see(cn, rec) if rec else (a is not None and rules.may_run(a, cn, self.cfg.requesters))):
                 continue
             sf = wj.get("summary_fields") or {}
@@ -2976,11 +2985,13 @@ class Portal(object):
             return refused("placement in progress", "Wait for placement job %d to finish." % placement["job"], 409)
         return 200, ap
 
-    def decide(self, cn, ip, aid, decision):
+    def decide(self, cn, ip, aid, decision, plan=None):
         with self.decision_lock:
             code, ap = self._decision_approval(cn, ip, aid, decision)
             if code != 200:
                 return code, ap
+            if decision == "approve" and ap.get("deploy_plan") and str(plan) != str(ap["deploy_plan"].get("saved_job", "")):
+                return 409, {"error": "The plan changed since you opened it: read it again."}
             return self._post_decision(cn, ip, aid, decision, ap)
 
     def _post_decision(self, cn, ip, aid, decision, ap):
@@ -5221,7 +5232,7 @@ def make_handler(cfg, portal, static_dir):
                 return self._send(code, out)
             if m_dec.group(2) == "placement":
                 return self._send(*portal.change_placement(cn, self._ip(), int(m_dec.group(1)), body.get("vms") if set(body) == {"vms"} else None))
-            code, out = portal.decide(cn, self._ip(), int(m_dec.group(1)), m_dec.group(2))
+            code, out = portal.decide(cn, self._ip(), int(m_dec.group(1)), m_dec.group(2), body.get("plan"))
             return self._send(code, out)
 
     return Handler

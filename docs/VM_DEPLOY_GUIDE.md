@@ -340,6 +340,9 @@ Create this workflow by hand in AAP. Launch it with the approved change in Imple
 `vm_deploy_ticket: CHG0030001`. Before approval, read the plan in the propose job's output or email,
 in the work note on the change, or on the portal. Every VM value says **from the ticket**, **default**,
 or **chosen by the job**. The network row shows the template's staging port groups and DHCP.
+A named customization specification (`customization_spec`, `vm_deploy_template_specs`) keeps its own IP settings.
+The plan's DHCP then holds only when that specification uses DHCP. Blank PXE or ISO templates
+(`vm_deploy_pxe_templates`) have no specification, so this does not apply to them.
 
 For the job page and the Approvals view, see [The VM deploy plan](SITE_PORTAL.md#the-vm-deploy-plan).
 
@@ -393,7 +396,7 @@ The placement change job checks the allow-lists and the VM’s datastore rule. B
 The datastore must stay at or below 85% with the VM at full size. The limits come from `vm_deploy_mem_target_pct`,
 `vm_deploy_failover_hosts` and `vm_deploy_datastore_max_used_pct`.
 
-The job records each accepted placement in an `[AAP] Placement changed` work note on the change and the CTASKs that receive Checked notes.
+Save one VM at a time. The job writes the `[AAP] Placement changed` note on the launch ticket first. Its report names any related ticket that refused the copy.
 The note names the approver and the propose job. The build checks the ticket digest, the allow-lists and the fit again before cloning.
 
 ### No touch: a clean change builds without an approval
@@ -411,7 +414,7 @@ Job type **Check** previews the decision without writing notes, starting a workf
 
 Run **AAP - set up job templates** again to create the workflow. Attach a **Red Hat Ansible Automation Platform**
 credential to the deploy template. Give its account **Execute** on **VM - deploy from ServiceNow ticket (workflow)**.
-Set `vm_deploy_approval_workflow` if your approval workflow has another name. It must accept `vm_deploy_ticket`.
+Set `vm_deploy_approval_workflow` if your approval workflow has another name. Its survey must accept `vm_deploy_ticket` and the optional text question `vm_deploy_handoff_from`.
 
 ## 9. The scheduled pickup
 

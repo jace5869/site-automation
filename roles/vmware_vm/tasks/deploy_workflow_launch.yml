@@ -12,7 +12,10 @@
     validate_certs: "{{ _vp_aap_verify }}"
     ca_path: "{{ _vp_aap_ca | default(omit, true) }}"
     body_format: json
-    body: {extra_vars: {vm_deploy_ticket: "{{ _vp_ticket }}"}}
+    body:
+      extra_vars: >-
+        {{ {'vm_deploy_ticket': _vp_ticket, 'vm_deploy_handoff_from': _vp_handoff_from | string} if _vp_handoff_from is defined
+           else {'vm_deploy_ticket': _vp_ticket} }}
     timeout: 60
     status_code: [200, 201, 400, 401, 403, 404, 405]
   register: _vp_launch
@@ -26,7 +29,9 @@
       {%- set jid = l.json.workflow_job | default(l.json.id | default(0)) | int if l.status | default(0) in [200, 201] else 0 -%}
       {%- set ign = (l.json.ignored_fields | default({})).extra_vars | default({}) if jid else {} -%}
       {%- set url = (_vp_aap_host ~ ('/execution/jobs/workflow/' if _vp_wf.api == 'api/controller/v2/' else '/#/jobs/workflow/') ~ jid ~ '/output') if jid else '' -%}
-      {%- set err = '' if jid and not ign else
+      {%- set rejected_parent = l.status | default(0) == 400 and 'vm_deploy_handoff_from' in (l.json | default({}) | to_json) -%}
+      {%- set err = _vd_handoff_fix if _vp_handoff_from is defined and ('vm_deploy_handoff_from' in ign or rejected_parent) else
+            '' if jid and not ign else
             ('started as workflow job ' ~ jid ~ ', but it ignored vm_deploy_ticket: give the workflow its survey question vm_deploy_ticket') if jid else
             ('AAP did not start it (HTTP ' ~ l.status | default('?') ~ ': ' ~ ((l.json | default({})) | to_json | truncate(200)) ~ ')') -%}
       {{ {'job': jid | int, 'url': url, 'error': err} }}

@@ -713,7 +713,15 @@ function placementEditor(card, approval, viewer, save, undo) {
   if (names.length > 1) {
     const label = el("label", "placement-folder", "VM"), select = el("select");
     for (const vm of names) select.append(el("option", "", vm.name));
-    select.onchange = () => { name = select.value; showVM(); };
+    select.onchange = () => {
+      if (requested.length) {
+        select.value = name;
+        message.textContent = "Save one VM at a time.";
+        return;
+      }
+      name = select.value;
+      showVM();
+    };
     label.append(select);
     panel.append(label);
   } else panel.append(el("b", "mono", name));
@@ -738,7 +746,7 @@ function placementEditor(card, approval, viewer, save, undo) {
     requested = [];
     let valid = true;
     for (const [vm, pick] of choices) {
-      if (!pick.edited) continue;
+      if (vm !== name || !pick.edited) continue;
       const c = pick.cluster, d = pick.store;
       const values = {vcenter: location(c), cluster: c.name, datastore: d?.name || "", folder: pick.folder};
       const old = originals.get(vm);
@@ -771,6 +779,7 @@ function placementEditor(card, approval, viewer, save, undo) {
       notes.push("[AAP] Placement changed - VM " + vm + " (AAP job pending, asked by " + viewer +
         ", for AAP job " + shortlist.job + ", ticket text " + plan.digest + "):\nIt would go to:\n" + lines.join("\n"));
     }
+    message.textContent = "";
     preview.hidden = !notes.length;
     note.textContent = notes.join("\n\n");
     saveButton.disabled = !valid || !notes.length;
@@ -905,7 +914,7 @@ function decider(row, aid, after) {
       msg.className = "state";
       msg.textContent = (d === "approve" ? "Approving" : "Denying") + "…";
       try {
-        await post("api/approvals/" + aid + "/" + d, {});
+        await post("api/approvals/" + aid + "/" + d, d === "approve" ? {plan: row.dataset.savedJob || ""} : {});
         msg.textContent = (d === "approve" ? "Approved" : "Denied") + ". The workflow goes on in AAP.";
         row.replaceChildren(msg);                                 // the question is answered: no Sure? left to hold the list (1.92.0 review)
         hold(false);
@@ -914,7 +923,7 @@ function decider(row, aid, after) {
         // 1.110.0 (1.92.0 review): never a Sure? left behind - it would hold the list's 15 s read and the job page's pane.
         // Decided already, timed out or not allowed (404, 403): the message alone, then the list or the pane is read again;
         // anything else (AAP did not take it): Approve / Deny again, with the message, to try once more.
-        if (e.status === 404 || e.status === 403) {
+        if (e.status === 404 || e.status === 403 || e.status === 409) {
           row.replaceChildren(msg);
           hold(false);
           setTimeout(() => after(null), 3000);
@@ -1137,6 +1146,7 @@ function approvalsPage() {
       const act = el("td", "nw decs");
       if (a.may_decide) {
         const row = el("div", "row-btns");
+        row.dataset.savedJob = a.deploy_plan?.saved_job || "";
         if (a.deploy_plan?.saved_job) row.dataset.approveLabel = "Approve with the new placement";
         if (a.deploy_plan?.placement?.done === false) row.dataset.pendingJob = a.deploy_plan.placement.job;
         decider(row, a.id, () => load());

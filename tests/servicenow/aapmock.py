@@ -152,6 +152,8 @@ class H(BaseHTTPRequestHandler):
         if rest == ["workflow_job_templates"] and method == "GET":
             found = [WF] if q.get("name") == WF["name"] else []
             return self._send(200, {"count": len(found), "results": found})
+        if rest == ["workflow_job_templates", str(WF["id"]), "survey_spec"] and method == "GET":
+            return self._send(200, {"spec": [] if no_survey else [{"variable": "vm_deploy_ticket"}, {"variable": "vm_deploy_handoff_from"}]})
         if rest == ["workflow_job_templates", str(WF["id"]), "launch"]:
             if method == "GET":
                 return self._send(200, {"survey_enabled": not no_survey, "ask_variables_on_launch": False,

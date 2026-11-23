@@ -145,7 +145,9 @@ class Units(unittest.TestCase):
         with open(os.path.join(FILES, "static", "portal.js")) as fh:
             js = fh.read()
         self.assertIn("function decider(row, aid, after)", js)
-        self.assertIn('if (oldBox && newBox && oldBox.dataset.hold) newBox.replaceWith(oldBox);', js)
+        # 1.117.0: the held box is kept only while it is the same decision on the same plan (its saved and pending placement job)
+        self.assertIn('if (oldBox?.dataset.hold && previous && next && previous.aid === next.aid &&', js)
+        self.assertIn('previous.savedJob === next.savedJob && previous.pendingJob === next.pendingJob) newBox.replaceWith(oldBox);', js)
         self.assertIn("(+pane.dataset.wait || 3000)", js)
         self.assertIn('toast("Approval waiting: " + w.title', js)
         # the toasts (the director's notes): none for the job page that is open, once a session, two at a time, held while pointed at
@@ -503,7 +505,8 @@ class Review1110(unittest.TestCase):
             js = fh.read()
         body = js[js.index("function decider(row, aid, after)"):js.index("// 1.92.0: \"What it will change\"")]
         fail = body[body.index("} catch (e) {"):]
-        self.assertIn("if (e.status === 404 || e.status === 403) {\n          row.replaceChildren(msg);\n          hold(false);", fail)
+        # 1.117.0: 409 (the plan changed since it was opened) is answered the same way: the message, then the plan read again
+        self.assertIn("if (e.status === 404 || e.status === 403 || e.status === 409) {\n          row.replaceChildren(msg);\n          hold(false);", fail)
         self.assertIn("setTimeout(() => after(null), 3000);", fail)
         self.assertIn("} else {\n          draw();\n        }", fail)       # else: Approve / Deny again (draw drops the hold)
         self.assertIn("() => { last = 0; tick(); }", js)                # the job page: asked at once, the wait kept (no loop on a failed read)
@@ -674,7 +677,8 @@ class Live(unittest.TestCase):
         h = self.req("/jobs/%d" % wid, dn=APPR)
         self.assertIn('id="decide"', h)
         self.assertIn("<b>Waiting for your decision</b> - the check planned 2 changes on 1 host.", h)
-        self.assertRegex(h, r'<div class="dbtns" data-aid="\d+"><button type="button" class="pri" data-d="approve">Approve</button>')
+        # 1.117.0: the row carries its viewer and the plan's saved placement job (data-viewer, data-saved-job)
+        self.assertRegex(h, r'<div class="dbtns" data-aid="\d+"[^>]*><button type="button" class="pri" data-d="approve">Approve</button>')
         self.assertIn('href="https://reports.example.mil/service-watch/job-plan.html" target="_blank" rel="noopener">Open the full report', h)
         self.assertIn("<span class=\"t\">What it will change</span>", h)
         self.assertIn("Restart crond (down since 05:52)", h)

@@ -153,6 +153,19 @@ class ApprovalPlan(unittest.TestCase):
         self.assertEqual(d.vm_deploy_checked_digest(rec), self.digest)
         self.assertIn("vm-app01", d.vm_deploy_checked_placement(rec, self.digest, "4813"))
 
+    def test_an_unshared_named_datastore_is_a_warning_the_build_accepts(self):
+        # review 1.117 fix round: the pinned build refuses a datastore that is not shared - unless the approval saw it.
+        # A ticket that names one host's own datastore must show that as a warning, or it could never build.
+        self.vm["chosen"]["datastore"] = "named"
+        self.vm["fit"]["datastore"].update(shared=False)
+        p = self.plan()
+        row = self.rows(p)["datastore"]
+        self.assertEqual(row["level"], "warning")
+        self.assertIn("not shared", row["why"])
+        place = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest)["vm-app01"]
+        self.assertEqual(place["warned"], ["cluster", "datastore", "unshared"])         # the plan's cluster warning too
+        self.assertEqual(place["warned_pct"]["datastore"], 41.2)
+
     def test_named_datastore_warning_and_site_source(self):
         self.vm["chosen"]["datastore"] = "named"
         self.vm["fit"]["datastore"].update(pct_after=87.5)
@@ -239,12 +252,105 @@ class ApprovalPlan(unittest.TestCase):
         self.checked["vms"] *= 6
         self.assertEqual(len(self.plan()["vms"]), 10)
 
+    def test_build_reads_the_checked_spec_from_its_propose_note(self):
+        import jinja2.nativetypes
+        with open(os.path.join(HERE, "..", "roles/vmware_vm/tasks/deploy.yml")) as f:
+            expr = next(t["ansible.builtin.set_fact"]["_vd_approved"] for t in yaml.safe_load(f)
+                        if "_vd_approved" in t.get("ansible.builtin.set_fact", {}))
+        env = jinja2.nativetypes.NativeEnvironment()
+        env.filters.update(d.FilterModule().filters())
+        pins = env.from_string(expr).render(_vd_rec=self.journal(self.note()), _vd_digest=self.digest, _vd_phase="build",
+                                            vm_deploy_checked_job="4813", ansible_check_mode=False)
+        self.assertEqual(pins["vm-app01"].get("checked_spec"), dict(template="rhel9-gold", cpu="4", memory_gb="16", disks_gb="120 + 200"))
+
+    def test_checked_note_keeps_approved_percentages(self):
+        self.vm["fit"]["datastore"]["pct_after"] = 86
+        pin = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest)["vm-app01"]
+        self.assertEqual(pin.get("warned_pct"), {"cluster": 82.4, "datastore": 86})
+
+    def test_placement_job_refuses_two_vms(self):
+        old = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest)
+        old["vm-app02"] = old["vm-app01"]
+        request = [dict(vm_name=name, **{k: place[k] for k in d._PLACES}) for name, place in old.items()]
+        import jinja2
+        with open(os.path.join(HERE, "..", "roles/vmware_vm/tasks/deploy_placement.yml")) as f:
+            tasks = yaml.safe_load(f)[0]["block"]
+        guard = tasks[0].get("ansible.builtin.assert", {})
+        self.assertEqual(guard.get("fail_msg"), "Save one VM at a time.")
+        accepts = jinja2.Environment().compile_expression(guard["that"])
+        self.assertTrue(accepts(vm_deploy_placement=request[:1]))
+        self.assertFalse(accepts(vm_deploy_placement=request))
+
+    def test_no_touch_pins_preflight_placement_and_size(self):
+        import jinja2.nativetypes
+        with open(os.path.join(HERE, "..", "roles/vmware_vm/tasks/deploy_no_touch.yml")) as f:
+            facts = {k: v for t in yaml.safe_load(f) for k, v in t.get("ansible.builtin.set_fact", {}).items()}
+        env = jinja2.nativetypes.NativeEnvironment(undefined=jinja2.StrictUndefined)
+        env.filters.update(d.FilterModule().filters())
+        vm = dict(self.vm, name="vm-app01", template="rhel9-gold")
+        self.assertIs(facts.get("_vd_pinned"), True)
+        pins = env.from_string(facts["_vd_approved"]).render(_vd_pre_res=[{"vm": vm}])
+        self.assertEqual(pins["vm-app01"], dict(vcenter=vm["vcenter"], datacenter=vm["datacenter"], cluster=vm["cluster"],
+                                                datastore=vm["datastore"], folder="Servers/App", warned=[],
+                                                checked_spec=dict(template=vm["template"], cpu="4", memory_gb="16", disks_gb="120 + 200")))
+
+        with open(os.path.join(HERE, "..", "roles/vmware_vm/tasks/deploy_build_one.yml")) as f:
+            clone = yaml.safe_load(f)[0]["site_vmware_deploy"]
+        env.filters["bool"] = bool
+        inputs = dict(_vd_phase="no_touch", _vd_pinned=True, _vd_pin=pins["vm-app01"], _vd_i={"spec": {}})
+        for key in ("vcenter", "datacenter", "cluster", "datastore", "folder", "checked_spec"):
+            self.assertEqual(env.from_string(clone[key]).render(**inputs), pins["vm-app01"][key])
+        self.assertTrue(env.from_string(clone["require_fit"]).render(**inputs))
+
+    def test_no_touch_sends_preflight_issues_to_approval(self):
+        self.vm["fit"]["cluster"]["pct_after"] = 76
+        issues = ["Network adapter is not set to connect at power on."]
+        import jinja2.nativetypes
+        with open(os.path.join(HERE, "..", "roles/vmware_vm/tasks/deploy_no_touch.yml")) as f:
+            decision = next(t["ansible.builtin.set_fact"]["_vd_decision"] for t in yaml.safe_load(f)
+                            if "_vd_decision" in t.get("ansible.builtin.set_fact", {}))
+        env = jinja2.nativetypes.NativeEnvironment()
+        env.filters.update(d.FilterModule().filters(), flatten=lambda lists: [s for group in lists for s in group])
+        got = env.from_string(decision).render(_vd_plan=self.plan(), _vd_pre_res=[{}, {"issues": issues}])
+        self.assertEqual(got, {"build": False, "why": issues})
+
+    def test_handoff_launch_sends_parent_workflow_only_for_no_touch(self):
+        import jinja2.nativetypes
+        root = os.path.join(HERE, "..", "roles/vmware_vm/tasks")
+        with open(os.path.join(root, "deploy_workflow_launch.yml")) as f:
+            launch, result = yaml.safe_load(f)
+        with open(os.path.join(root, "deploy_send_to_approval.yml")) as f:
+            handoff = next(t["vars"] for t in yaml.safe_load(f) if t.get("ansible.builtin.include_tasks") == "deploy_workflow_launch.yml")
+        env = jinja2.nativetypes.NativeEnvironment(undefined=jinja2.StrictUndefined)
+        expected = {"vm_deploy_ticket": self.ticket["number"]}
+        body = launch["ansible.builtin.uri"]["body"]["extra_vars"]
+        self.assertIn("_vp_handoff_from", handoff)
+        for values in ({}, {"awx_workflow_job_id": 4813}):
+            parent = jinja2.Environment().from_string(handoff["_vp_handoff_from"]).render(**values)
+            self.assertEqual(env.from_string(body).render(_vp_ticket=self.ticket["number"], _vp_handoff_from=parent),
+                             dict(expected, vm_deploy_handoff_from=str(values.get("awx_workflow_job_id", ""))))
+        self.assertEqual(env.from_string(body).render(_vp_ticket=self.ticket["number"]), expected)
+
+        with open(os.path.join(root, "deploy_no_touch.yml")) as f:
+            fix = next(t["vars"]["_vd_handoff_fix"] for t in yaml.safe_load(f) if "_vd_handoff_fix" in t.get("vars", {}))
+        env.filters.update(to_json=json.dumps, combine=lambda a, b: {**a, **b})
+        result_expr = env.from_string(result["ansible.builtin.set_fact"]["_vp_started"])
+        ignored = {"extra_vars": {"vm_deploy_handoff_from": "4813"}}
+        started = result_expr.render(_vp_launch={"status": 201, "json": {"id": 4814, "ignored_fields": ignored}},
+                                     _vp_wf={"api": "api/v2/"}, _vp_handoff_from="4813", _vd_handoff_fix=fix, _vp_aap_host="")
+        self.assertEqual(started["error"], fix)
+        with open(os.path.join(root, "deploy_workflow_find.yml")) as f:
+            verify = yaml.safe_load(f)[0]["block"][-1]["ansible.builtin.set_fact"]["_vp_wf"]
+        for keys, error in ((expected, fix), (dict(expected, vm_deploy_handoff_from=""), "")):
+            survey = {"status": 200, "json": {"spec": [{"variable": k} for k in keys]}}
+            self.assertEqual(env.from_string(verify).render(_vp_wf={}, _vp_survey=survey, _vd_handoff_fix=fix)["error"], error)
+
     def test_placement_header_and_round_trip(self):
         note = self.note()
         rec = self.journal(note)
         place = d.vm_deploy_checked_placement(rec, self.digest)
         self.assertEqual(place["vm-app01"], dict(vcenter=self.vm["vcenter"], datacenter=self.vm["datacenter"], cluster=self.vm["cluster"],
-                                                 datastore=self.vm["datastore"], folder="Servers/App", warned=["cluster"]))
+                                                 datastore=self.vm["datastore"], folder="Servers/App", warned=["cluster"], warned_pct={"cluster": 82.4}))
         self.assertEqual(d.vm_deploy_checked_digest(rec), self.digest)
         self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest + "f"), {})
         h = note.splitlines()[0]
@@ -276,7 +382,7 @@ class ApprovalPlan(unittest.TestCase):
             return d.vm_deploy_checked_placement(self.journal(*notes), digest, job)
 
         place = read(changed, checked)["vm-app01"]
-        self.assertEqual({k: place[k] for k in old}, {**old, **{k: vm[k] for k in old if k != "warned"}, "warned": []})
+        self.assertEqual({k: place[k] for k in old}, {**old, **{k: vm[k] for k in old if k in vm}, "warned": [], "warned_pct": {}})
         self.assertEqual(read(changed, checked, job=""), {"vm-app01": place})
         self.assertEqual(read(checked, changed), {"vm-app01": old})
         self.assertEqual(read(changed.replace("for AAP job 4813", "for AAP job 4812"), checked), {"vm-app01": old})
@@ -383,7 +489,6 @@ class NoTouchReview(unittest.TestCase):
         self.assertTrue(d.vm_deploy_no_touch(plan)["build"])
 
     def test_the_sites_own_labels_for_a_ready_change(self):
-        # no touch reads vm_deploy_ready_by_table's change entry (the site's labels), the default only without one
         import jinja2
         import yaml
         here = os.path.dirname(os.path.abspath(__file__))
@@ -396,6 +501,12 @@ class NoTouchReview(unittest.TestCase):
         rec = {"number": "CHG0030001", "approval": "Approved", "state": "Scheduled"}
         render = lambda ready, record: tpl.render(_vd_phase="no_touch", _vd_table="change_request", _vd_rec=record,      # noqa: E731
                                                   _vd_number="CHG0030001", vm_deploy_ready_by_table=ready).strip()
+        partial = {"change_request": {"state": "Implement"}}
+        self.assertIn("approval", render(partial, dict(rec, state="Implement", approval="Requested")))
+        for field in ("approval", "state"):
+            for empty in ("", [], None, "  ", [""]):
+                self.assertIn("change_request needs both approval and state for no touch",
+                              render({"change_request": {field: empty}}, dict(rec, state="Implement")))
         self.assertEqual(render(site, rec), "")
         self.assertIn("Implement", render({}, rec))
         self.assertEqual(render({}, dict(rec, state="Implement")), "")

@@ -17,7 +17,7 @@
 
 - name: VMware | does the plan need an approval?
   ansible.builtin.set_fact:
-    _vd_decision: "{{ _vd_plan | vm_deploy_no_touch }}"
+    _vd_decision: "{{ _vd_plan | vm_deploy_no_touch(_vd_pre_res | map(attribute='issues', default=[]) | flatten) }}"
     _vd_no_touch_job: "{{ 'AAP job ' ~ awx_job_id if awx_job_id is defined else 'AAP' }}"
 
 - name: VMware | preview the no-touch decision
@@ -33,10 +33,14 @@
 
 - name: VMware | hand this change to the approval workflow
   ansible.builtin.include_tasks: deploy_send_to_approval.yml
+  vars:
+    _vd_handoff_fix: "run AAP - set up job templates again: the approval workflow needs its survey question vm_deploy_handoff_from"
   when: not _vd_decision.build
 
 - name: VMware | the checked note to write before the first clone
   ansible.builtin.set_fact:
+    _vd_pinned: true
+    _vd_approved: "{{ _vd_pre_res | vm_deploy_preflight_pins }}"
     _vd_b_deploying:
       work_notes: >-
         {{ (['[AAP] Checked - building without an approval (' ~ _vd_no_touch_job ~ ', ticket text ' ~ _vd_digest ~ '): the plan is clean']

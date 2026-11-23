@@ -366,7 +366,7 @@ class Sync(object):
     # AAP has none on it, never changed after (like a template's Variables file): a person's edit, or a job that keeps
     # its choices (VM - refresh the pick lists), stays. A survey that cannot be read or written is said for this workflow,
     # never the end of the run (the workflow itself is made).
-    def survey(self, oid, w, write=True):
+    def survey(self, oid, w, write=True, add_missing=False):
         qs = [survey_question(q) for q in w.get("survey") or []]
         names = ", ".join(q["variable"] for q in qs)
         last = self.results[-1]
@@ -386,7 +386,12 @@ class Sync(object):
                 got = sorted(str(q.get("variable")) for q in have.get("spec") or [])
                 miss = [q["variable"] for q in qs if q["variable"] not in got]
                 said = []
-                if miss:
+                if miss and add_missing:
+                    added = [q for q in qs if q["variable"] in miss]
+                    self.write("POST", path + "survey_spec/", dict(have, spec=have["spec"] + added))
+                    self.wrote_survey = not self.check
+                    said.append(("would add " if self.check else "added ") + ", ".join(miss))
+                elif miss:
                     said.append("its survey is yours, left as it is: it has no question %s (docs/WORKFLOWS_AND_SCHEDULES.md)" % ", ".join(miss))
                 if not enabled:
                     if write:
