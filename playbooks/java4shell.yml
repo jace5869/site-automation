@@ -620,9 +620,15 @@
                 sc() { if [ "$sys" = system ]; then systemctl "$@"; else run systemctl --user "$@"; fi; }
                 set -x; sc stop "$unit"; set +x
                 for c in {{ _j4s.containers | selectattr('service', 'in', _j4s_svcs) | map(attribute='id') | map('quote') | join(' ') }}; do
-                  set -x; run $e rm -f "$c"; set +x
+                  # the unit's stop may have removed it already (--rm): gone is fine, never an error
+                  if run $e container exists "$c" 2>/dev/null || run $e inspect "$c" >/dev/null 2>&1; then set -x; run $e rm -f "$c" || true; set +x; fi
                 done
                 set -x; sc start "$unit"; set +x
+                for i in 1 2 3 4 5 6; do sc is-active --quiet "$unit" && break; sleep 5; done
+                if ! sc is-active --quiet "$unit"; then
+                  echo "The unit $unit did not come back after the restart - start it: systemctl$([ "$sys" = user ] && echo ' --user') start $unit"
+                  sc status "$unit" --no-pager -l 2>&1 | tail -15; exit 4
+                fi
                 echo "Keycloak recreated through its systemd unit $unit ($sys)"; exit 0
               fi
               # older podman-compose (RHEL's) starts an existing container again instead of recreating it, so the new
