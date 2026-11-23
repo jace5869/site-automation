@@ -121,6 +121,37 @@ class DeployFit(unittest.TestCase):
         self.assertTrue(self.run_module(pinned=True, cluster="", cluster_candidates=["*"])["failed"])
 
 
+    def test_a_pinned_build_counts_a_vm_already_cloned_once(self):
+        # review 1.117 a1: two VMs approved onto one datastore of 200 GB, 100 GB free, each 26 GB at full size (10 GB disk +
+        # 16 GB memory). The check before the first clone counts VM 1's planned space: VM 2 = (100 + 26 + 26) / 200 = 76 %.
+        # VM 1 is cloned: 74 GB free. At VM 2's clone the datastore as it is now: (126 + 26) / 200 = 76 %, under 85 %.
+        # VM 1 counted twice (its clone and its planned 26 GB) gives (152 + 26) / 200 = 89 %: VM 2 refused half way.
+        self.ds.summary.capacity, self.ds.summary.freeSpace = 200 * G, 100 * G
+        args = dict(pinned=True, pinned_ok=["cluster"], datastore_max_used_pct=85)
+        before = self.run_module(datastore_planned={self.ds.name: 26}, **args)
+        self.assertFalse(before["failed"], before)
+        self.assertEqual(before["vm"]["fit"]["datastore"]["pct_after"], 76)
+        self.ds.summary.freeSpace = 74 * G
+        twice = self.run_module(datastore_planned={self.ds.name: 26}, **args)
+        self.assertTrue(twice["failed"])
+        self.assertIn("89", twice["msg"])
+        # deploy_build_one.yml: in a pinned build, the module gets no planned space at the clone, only at the check before it
+        import jinja2
+        import yaml
+        with open(os.path.join(os.path.dirname(__file__), "..", "roles", "vmware_vm", "tasks", "deploy_build_one.yml")) as f:
+            task = next(t for t in yaml.safe_load(f) if "site_vmware_deploy" in t)
+        expr = jinja2.Environment()
+        expr.filters["bool"] = lambda v: v is True or str(v).lower() in ("true", "yes", "1")
+        planned = {self.ds.name: 26}
+        tpl = expr.from_string(task["site_vmware_deploy"]["datastore_planned"])
+        render = lambda **kw: tpl.render(_vd_ds_planned=planned, **kw)      # noqa: E731
+        self.assertEqual(render(_vd_pinned=True, _vd_pre=False), "{}")
+        self.assertEqual(render(_vd_pinned=True, _vd_pre=True), str(planned))
+        self.assertEqual(render(_vd_pinned=False, _vd_pre=False), str(planned))
+        at_clone = self.run_module(datastore_planned={}, **args)
+        self.assertFalse(at_clone["failed"], at_clone)
+        self.assertEqual(at_clone["vm"]["fit"]["datastore"]["pct_after"], 76)
+
     def test_check_mode_keeps_the_template_network_notes(self):
         # review 1.117 a1: the propose step (check mode) reports a template adapter that does not connect at power on
         result = self.run_module()
