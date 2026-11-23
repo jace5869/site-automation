@@ -27,6 +27,6 @@
 - name: AD | the report database
   ansible.builtin.debug:
     msg: >-
-      {{ ('This run is kept in the report database (run %s: %s DCs, %s replication links) - the portal\'s live AD page reads it.'
+      {{ ('This run is kept in the report database (run %s: %s DCs, %s replication links) - the portal’s live AD page reads it.'
           | format(_ad_db.run_id, _ad_db.dcs, _ad_db.links)) if _ad_db.ok | default(false)
          else 'Not kept in the report database: ' ~ (_ad_db.error | default(_ad_db.msg | default('the module stopped'), true)) }}

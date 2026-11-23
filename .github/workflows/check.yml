@@ -177,6 +177,7 @@ jobs:
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_limit_localhost.py
           python tests/test_yaml_regex.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_yaml_regex.py
+          python tests/test_no_escaped_quote.py
           python tests/test_report_time.py
           python tests/test_report_zone.py
           python tests/test_report_zone_horizon.py

@@ -319,8 +319,8 @@
       {%- set where = ('container ' ~ _mdb_c) if _mdb_c else ('service ' ~ _mdb_p.unit | default('?')) -%}
       {%- set lbl = _mdb_label | default('MariaDB/MySQL') -%}
       {#- the privileges the read-only monitoring account needs differ: MariaDB 10.5.9+ has REPLICA MONITOR, MySQL has REPLICATION CLIENT -#}
-      {%- set grant_my = "GRANT PROCESS, REPLICATION CLIENT ON *.* TO \'monitor\'@\'localhost\'; (MySQL Group Replication also: GRANT SELECT ON performance_schema.* TO \'monitor\'@\'localhost\';)" -%}
-      {%- set grant_maria = "GRANT PROCESS, REPLICA MONITOR ON *.* TO \'monitor\'@\'localhost\'; (MariaDB before 10.5.9: PROCESS, REPLICATION CLIENT)" -%}
+      {%- set grant_my = "GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'monitor'@'localhost'; (MySQL Group Replication also: GRANT SELECT ON performance_schema.* TO 'monitor'@'localhost';)" -%}
+      {%- set grant_maria = "GRANT PROCESS, REPLICA MONITOR ON *.* TO 'monitor'@'localhost'; (MariaDB before 10.5.9: PROCESS, REPLICATION CLIENT)" -%}
       {%- set grant = grant_maria if lbl == 'MariaDB' else (grant_my if lbl == 'MySQL' else ('MySQL: ' ~ grant_my ~ ' MariaDB: ' ~ grant_maria)) -%}
       {%- set hp = ('sudo -u ' ~ _mdb_run_as ~ ' ') if _mdb_run_as | default('') else '' -%}
       {%- set look = (hp ~ 'podman ps -a --filter name=' ~ _mdb_c ~ '; ' ~ hp ~ 'podman logs --tail 50 ' ~ _mdb_c)
@@ -361,13 +361,13 @@
       {%-   if (s.THREADS_RUNNING | default('0') | int) >= check_mariadb_threads_running_warn | int -%}
       {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:threads-running', 'severity': 'warning',
                                 'summary': s.THREADS_RUNNING ~ ' queries are executing at this moment (a pile-up: locking or a slow query)',
-                                'hint': sql ~ ' -e "SELECT ID, USER, DB, TIME, STATE FROM information_schema.PROCESSLIST WHERE COMMAND <> \'Sleep\' ORDER BY TIME DESC LIMIT 15"'}) -%}
+                                'hint': sql ~ ' -e "SELECT ID, USER, DB, TIME, STATE FROM information_schema.PROCESSLIST WHERE COMMAND <> ' ~ "'" ~ 'Sleep' ~ "'" ~ ' ORDER BY TIME DESC LIMIT 15"'}) -%}
       {%-   endif -%}
       {%-   if _mdb.L -%}
       {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:long-queries', 'severity': 'warning',
                                 'summary': (_mdb.L | length) ~ ' query/queries running longer than ' ~ check_mariadb_long_query_seconds ~ 's (user / db / seconds / state / command): '
                                            ~ (_mdb.L[:3] | join('; ')),
-                                'hint': sql ~ ' -e "SELECT ID, USER, DB, TIME, STATE FROM information_schema.PROCESSLIST WHERE COMMAND <> \'Sleep\' ORDER BY TIME DESC LIMIT 15"'}) -%}
+                                'hint': sql ~ ' -e "SELECT ID, USER, DB, TIME, STATE FROM information_schema.PROCESSLIST WHERE COMMAND <> ' ~ "'" ~ 'Sleep' ~ "'" ~ ' ORDER BY TIME DESC LIMIT 15"'}) -%}
       {%-   endif -%}
       {%-   set reads = s.INNODB_BUFFER_POOL_READ_REQUESTS | default('0') | int -%}
       {%-   if reads >= 1000000 -%}
@@ -375,7 +375,7 @@
       {%-     if hit < check_mariadb_bufferpool_hit_warn | float -%}
       {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:bufferpool', 'severity': 'warning',
                                   'summary': 'only ' ~ hit ~ '% of reads come from memory (innodb_buffer_pool_size may be too small for the data)',
-                                  'hint': sql ~ ' -e "SHOW GLOBAL VARIABLES LIKE \'innodb_buffer_pool_size\'"'}) -%}
+                                  'hint': sql ~ ' -e "SHOW GLOBAL VARIABLES LIKE ' ~ "'" ~ 'innodb_buffer_pool_size' ~ "'" ~ '"'}) -%}
       {%-     endif -%}
       {%-   endif -%}
       {%-   if _mdb_repl.rc | default(0) != 0 -%}
@@ -423,7 +423,7 @@
       {%-     endif -%}
       {%-   endif -%}
       {%-   if g.WSREP_ON | default('OFF') == 'ON' -%}
-      {%-     set glook = sql ~ ' -e "SHOW GLOBAL STATUS LIKE \'wsrep_%\'" | grep -E "cluster_size|cluster_status|local_state_comment|ready"' -%}
+      {%-     set glook = sql ~ ' -e "SHOW GLOBAL STATUS LIKE ' ~ "'" ~ 'wsrep_%' ~ "'" ~ '" | grep -E "cluster_size|cluster_status|local_state_comment|ready"' -%}
       {%-     if s.WSREP_READY | default('') != 'ON' or s.WSREP_LOCAL_STATE_COMMENT | default('') != 'Synced' or s.WSREP_CLUSTER_STATUS | default('') != 'Primary' -%}
       {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:galera', 'severity': 'critical',
                                   'summary': 'Galera node is not healthy: ready ' ~ s.WSREP_READY | default('?') ~ ', state ' ~ s.WSREP_LOCAL_STATE_COMMENT | default('?')

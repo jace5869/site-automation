@@ -107,7 +107,7 @@
                           ~ (d.content.items() | map('join', ' ') | join(', ')) ~ ')') if d.content else '')
                        ~ ('; the old one kept as ' ~ d.previous if d.previous else '')
                        ~ ('; answer files carried over: ' ~ (d.kept | length) if d.kept else '')
-                       ~ ('; yours kept over the zip\'s: ' ~ (d.replaced | join(', ')) if d.replaced else '')
+                       ~ ('; yours kept over the zip’s: ' ~ (d.replaced | join(', ')) if d.replaced else '')
                        ~ ('; ' ~ d.smoke if d.smoke else '') ~ ('; ' ~ d.preferences if d.preferences else '') -%}
       {%- elif d.decision == 'update' -%}
       {%-   set line = line ~ ('would be updated: ' if ansible_check_mode else '') ~ d.why -%}

@@ -222,7 +222,7 @@
           {%-       set _ = out.append("The form of '" ~ r.template ~ "' is filled in from this AAR"
                                       ~ (' (a dry run: not written)' if ansible_check_mode else '')
                                       ~ ': launch it, review and add to the answers, then launch - it makes the SOP.') -%}
-          {%-       if r.cut -%}{%- set _ = out.append('Cut to the box\'s maximum length: ' ~ (r.cut | join(', ')) ~ '.') -%}{%- endif -%}
+          {%-       if r.cut -%}{%- set _ = out.append('Cut to the box’s maximum length: ' ~ (r.cut | join(', ')) ~ '.') -%}{%- endif -%}
           {%-       if r.no_question -%}
           {%-         set _ = out.append('Its survey has no question for ' ~ (r.no_question | join(', '))
                                          ~ ': run "AAP - incident document surveys".') -%}
