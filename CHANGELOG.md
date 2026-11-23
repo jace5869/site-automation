@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.115.0 — 2026-11-23
+
+**To set up:** set `report_theme_season: christmas` (or `auto`: on from Dec 1 to Jan 6). Nothing else.
+
+**The Christmas theme for the report website and the Site portal (user-approved mockup).**
+
+- **16-bit pixel decor in the bar**: a string of lights at its bottom that **twinkle** (each bulb fades and comes back in
+  steps, at its own time), a small tree after the site's name, a red-and-green stripe under the active tab, a few snowflakes
+  in the side margins (windows 1200 px wide or more). `report_theme_season_style: 8bit` for flat colours and bigger pixels.
+- **On the atlas, brief and ops pages and their index**, and on every portal page (`portal_theme_season`, which is
+  `report_theme_season` unless set). The email looks on the website and the ticket insights pages have no decor.
+- **A Festive button for each viewer**, beside Light / Auto / Dark: a small panel with Festive (all of it), Lights, Twinkle
+  (while Lights is on) and Snow, each On or Off, kept in that browser; mouse and keyboard. The tree goes with Festive.
+- **Site settings** `report_theme_season_lights`, `_twinkle` and `_snow` (each `true`): `false` turns that part off for
+  everyone and hides its switch.
+- **Less motion** (the system's setting, or `report_motion` / `portal_motion: off`): no twinkle, no snow.
+- **Content untouched**: tiles, tables, chips and status colours are the same as with the theme off (tested in Chrome, light
+  and dark, 1280 and 800 px); the tables' sticky heads sit under the lights. Print, the PDFs and the emails never get it
+  (the email tested byte for byte).
+- **It ends by itself**: each page carries the season's last day (Jan 6) and is not festive after it - from midnight where
+  the site is (`report_time_zone`), the same moment for every viewer, also on a page left open. With `auto`, the
+  portal decides on each page (no restart).
+- **Strict CSP, offline**: the website writes `site-festive.css` and `site-festive.js` beside `site-report.js`; the portal
+  serves them as `static/festive.css` and `static/festive.js`. Inline SVG sprites, no inline script, nothing from outside.
+- Code: plugins/module_utils/site_festive.py (one source for both), site_report_web.py, site_portal.py.
+- Tests: tests/test_festive.py (the season and its last day; none changes nothing; the other looks and the email never; the
+  files written and linked, the Windows script too; in Chrome under the sites' CSP: on by default, the menu from the
+  keyboard, each switch on and off and kept, the site settings, reduced motion, a page past its last day, print, the
+  content styles unchanged and no sideways scroll on atlas, brief, ops and their index and on the portal's Jobs page, the
+  sticky table heads in all three looks; the portal's files).
+
 ## 1.112.1 — 2026-11-23
 
 **To set up:** run **AAP - incident document surveys** again (with `incident_docs_draft_credential` set). Nothing by hand.

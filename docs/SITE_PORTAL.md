@@ -677,6 +677,7 @@ AAP yourself). It never gives a write role.
 | `portal_finding_days` | 7 | how far back the report jobs are read (14 at most) |
 | `portal_finding_jobs` | 5 | the last this many runs of each report playbook |
 | `portal_finding_playbooks` | the report playbooks of `finding_ref` | which playbooks count as reports |
+| `portal_theme_season` | `report_theme_season` (`none`) | 1.115.0: the Christmas theme on the portal - `none`, `christmas` or `auto` (Dec 1 to Jan 6); see *The Christmas theme* above |
 | `portal_motion` | `auto` | What moves: the running icons and the stripe, and (1.87.0) the pages' motion - see *What moves* below. `auto`: it moves unless the system asks for reduced motion. `always` overrides the system's reduced-motion request (use only if the site agrees; a Windows image may turn animations off by policy). `off`: never. Print is still in every mode |
 | `portal_pick_max_launches` | 10 | jobs one confirm page may start (1 to 200) |
 | `portal_pick_max_hosts` | 50 | the hosts the finding steps take at once, groups counted by their hosts (1 to 500) |
@@ -1129,6 +1130,16 @@ portal's own files. Nothing is loaded from outside, and the fonts are the system
 `roles/site_portal_stack/files/portal.css.in` and the reports' palettes by `scripts/gen_portal_css.py`.
 
 Run **Site portal - deploy** again after you change `report_web_theme`.
+
+### The Christmas theme (1.115.0)
+
+The portal's pages get the report website's Christmas theme (lights that twinkle in the bar, a tree after the title, a
+stripe under the page's tab, snow in the side margins; the **Festive** button with its Lights, Twinkle and Snow switches) -
+see *The Christmas theme* in docs/WEB_REPORTS.md. `portal_theme_season` is `report_theme_season` unless you set it
+(`none`, `christmas` or `auto`); the look and the parts follow `report_theme_season_style`, `_lights`, `_twinkle` and
+`_snow`. With `auto` the portal decides on each page, so it starts on Dec 1 and stops after Jan 6 without a restart.
+The theme's files are served as `static/festive.css` and `static/festive.js` (the same content security policy).
+Run **Site portal - deploy** again after you change these settings.
 
 ### Your logo
 

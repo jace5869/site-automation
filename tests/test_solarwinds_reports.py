@@ -655,7 +655,7 @@ class Review1970(unittest.TestCase):
     def test_p1_3_never_counted(self):
         import importlib.util
         sys.path.insert(0, os.path.join(ROOT, "roles", "site_email", "library"))
-        for name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files"):   # as test_report_web.py loads them
+        for name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files", "site_festive"):   # as test_report_web.py loads them
             if "ansible.module_utils." + name not in sys.modules:
                 spec = importlib.util.spec_from_file_location("ansible.module_utils." + name, os.path.join(ROOT, "plugins", "module_utils", name + ".py"))
                 mod = importlib.util.module_from_spec(spec)

@@ -171,6 +171,17 @@
     quiet: true
   when: _web_on | bool
 
+- name: Email | report_theme_season is none, christmas or auto, report_theme_season_style 16bit or 8bit
+  ansible.builtin.assert:
+    that:
+      - "report_theme_season | default('none') is sameas false or report_theme_season | default('none') | string | trim | lower in ['none', 'christmas', 'auto']"
+      - "report_theme_season_style | default('16bit') | string | trim | lower in ['16bit', '8bit']"
+    fail_msg: >-
+      report_theme_season must be none, christmas or auto (not '{{ report_theme_season | default('none') }}') and report_theme_season_style
+      16bit or 8bit (not '{{ report_theme_season_style | default('16bit') }}') - docs/WEB_REPORTS.md, "The Christmas theme".
+    quiet: true
+  when: _web_on | bool
+
 - name: Email | the logo's size
   ansible.builtin.set_fact:
     # portal, glass: the logo sits in the header card, at most 56 / 80 px tall
@@ -342,6 +353,12 @@
         logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
         header_text: "{{ report_email_header_text | default('Site automation report') }}"
         theme: "{{ _web_theme }}"
+        # 1.115.0: the Christmas theme (docs/WEB_REPORTS.md) - none, christmas or auto; the look, the parts the viewer may turn off
+        season: "{{ 'none' if report_theme_season | default('none') is sameas false else report_theme_season | default('none') | string | trim | lower }}"
+        season_style: "{{ report_theme_season_style | default('16bit') | string | trim | lower }}"
+        season_lights: "{{ report_theme_season_lights | default(true) | bool }}"
+        season_twinkle: "{{ report_theme_season_twinkle | default(true) | bool }}"
+        season_snow: "{{ report_theme_season_snow | default(true) | bool }}"
         time_zone: "{{ report_time_zone | default('', true) | string | trim }}"
         json: "{{ report_web_json | bool }}"
         history: "{{ report_web_history | int }}"

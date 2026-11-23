@@ -32,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REPO, "plugins", "filter"))
 sys.path.insert(0, os.path.join(REPO, "roles", "site_email", "library"))
-for _name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files"):   # as Ansible gives them to the modules (ansible.cfg: module_utils)
+for _name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files", "site_festive"):   # as Ansible gives them to the modules (ansible.cfg: module_utils)
     _spec = importlib.util.spec_from_file_location("ansible.module_utils." + _name, os.path.join(REPO, "plugins", "module_utils", _name + ".py"))
     _mod = importlib.util.module_from_spec(_spec)
     sys.modules["ansible.module_utils." + _name] = _mod
@@ -796,7 +796,7 @@ class Retries(unittest.TestCase):
 # (Python, with m the module) runs before main() - a target that changes the folder half-way, say
 BOOT = ("import importlib.util, json, os, sys\n"
         "args, module, utils, patch = sys.argv[1:5]\n"
-        "for n in ('site_aap', 'site_report_page', 'site_banner', 'site_time', 'site_report_files'):\n"
+        "for n in ('site_aap', 'site_report_page', 'site_banner', 'site_time', 'site_report_files', 'site_festive'):\n"
         "    sp = importlib.util.spec_from_file_location('ansible.module_utils.' + n, os.path.join(utils, n + '.py'))\n"
         "    u = importlib.util.module_from_spec(sp)\n"
         "    sys.modules['ansible.module_utils.' + n] = u\n"

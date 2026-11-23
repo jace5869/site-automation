@@ -104,6 +104,11 @@ options:
   files_total_max_mb: {description: "1.79.8 - every report's files together (report_web_files_total_max_mb).", type: int, default: 500}
   files_keep_days: {description: "1.79.8 - a run's files removed after this many days; 0 = never (report_web_files_keep_days).", type: int, default: 30}
   index_gone: {description: "1.79.8 - with windows_host: the ledger's pages the read script found missing there.", type: list, elements: str, default: []}
+  season: {description: "1.115.0 - the Christmas theme (report_theme_season): none, christmas, or auto (Dec 1 to Jan 6, by the day in time_zone). On, the atlas, brief and ops pages and their index get the decor and site-festive.css / site-festive.js beside site-report.js (plugins/module_utils/site_festive.py); the other looks never.", type: str, default: none}
+  season_style: {description: "1.115.0 - 16bit or 8bit (report_theme_season_style).", type: str, default: 16bit}
+  season_lights: {description: "1.115.0 - the string of lights, the viewer's Lights switch (report_theme_season_lights).", type: bool, default: true}
+  season_twinkle: {description: "1.115.0 - the lights twinkle, the viewer's Twinkle switch (report_theme_season_twinkle).", type: bool, default: true}
+  season_snow: {description: "1.115.0 - snow in the side margins, the viewer's Snow switch (report_theme_season_snow).", type: bool, default: true}
   lock_wait: {description: "1.79.14 - seconds to wait for the index's lock (<index.json>.lock; report_web_index_lock_wait); 0 = no lock.", type: int, default: 120}
   index_sha: {description: "1.79.14 - with windows_host: the index.json's SHA-256 as read there (the script writes it only when it is still that).", type: str, default: ''}
   index_pending: {description: "1.79.14 - with windows_host: the index.pending-*.json the read script found, [{name, text}] (put in, then deleted).", type: list, elements: dict, default: []}
@@ -146,6 +151,7 @@ import tempfile
 import time
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils import site_festive as fz
 from ansible.module_utils.site_banner import COLOURS, OTHER, colour_of, ink, inject as banner_inject
 from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
 from ansible.module_utils import site_report_files as rf
@@ -213,7 +219,7 @@ def safe_name(rel, ends=('.html',)):
             and not any(x in ('', '.', '..') for x in rel.split('/')))
 
 
-WRITTEN = ('.html', '.json', '.js')                     # the files the module writes: pages, their JSON, the pages' script
+WRITTEN = ('.html', '.json', '.js', '.css')             # the files the module writes: pages, their JSON, the pages' script (1.115.0: site-festive.css)
 
 
 class Target(object):
@@ -918,7 +924,7 @@ def windows_script(dest, files, remove=(), soft=(), dirs=(), edits=(), index=Non
                         (_ps_quote(report_script_file(text)), _ps_quote(rel), seen[text]))
             body.append('        catch { $out.busy += @(%s + ": " + [string]$_.Exception.Message) } }' % _ps_quote(rel))
             continue
-        if rel == INDEX_SCRIPT_FILE:                      # Staged cannot read this file until the writer runs on the server
+        if rel in (INDEX_SCRIPT_FILE, fz.CSS_FILE, fz.JS_FILE):   # Staged cannot read this file until the writer runs on the server
             flags = (flags or ' $false') + ' $true'
         body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), page_text(rel, seen[text]), flags))
     if ix.get('json') and ix['json'] in idx:
@@ -2245,6 +2251,11 @@ def main():
             files_total_max_mb=dict(type='int', default=500),
             files_keep_days=dict(type='int', default=30),
             index_gone=dict(type='list', elements='str', default=[]),
+            season=dict(type='str', default='none'),
+            season_style=dict(type='str', default='16bit'),
+            season_lights=dict(type='bool', default=True),
+            season_twinkle=dict(type='bool', default=True),
+            season_snow=dict(type='bool', default=True),
         ),
         supports_check_mode=True,
     )
@@ -2291,6 +2302,21 @@ def main():
     tz, tz_note = zone_of(p['time_zone'])
     if tz_note and index:
         module.warn('The report website: %s' % tz_note)
+    # 1.115.0: the Christmas theme - on for this run's pages when the season setting says so (auto: by today's date where the
+    # site is); each page carries its last day, so it stops being festive by itself after Jan 6
+    today = datetime.datetime.now(tz or datetime.timezone.utc).date()
+    festive = dict(until=fz.season_until(p['season'], today) if p['theme'] in WEB_LOOKS else '', style=fz.style_of(p['season_style']),
+                   parts=fz.allowed(p['season_lights'], p['season_twinkle'], p['season_snow']), used=[])
+
+    def deck(h, rel, where):
+        """The page rel with the decor (festive['until'] '': as it is); its CSS and JS linked from its place."""
+        if not festive['until']:
+            return h
+        out = fz.decorate(h, where, festive['until'], festive['style'], festive['parts'],
+                          '%s?v=%s' % (_href(rel, fz.CSS_FILE), fz.version(fz.CSS)), '%s?v=%s' % (_href(rel, fz.JS_FILE), fz.version(fz.JS)), tz)
+        if out != h:
+            festive['used'].append(rel)
+        return out
     dry_at = urls['url'] or _place(where, page or str(((p['pages'] or [{}])[0] or {}).get('page') or ''), bs)
     box = {}
     token = '%s-%d-%s' % (re.sub(r'[^A-Za-z0-9.-]', '', os.uname()[1])[:40], os.getpid(), base64.b32encode(os.urandom(5)).decode().lower())
@@ -2415,6 +2441,7 @@ def main():
                 continue
             h = rf.put_files(html, step['hosted'], step['refused'], rel, folder, web_look)   # the latest page links the run's
             h = back_link(h, rel, back_to if inside(back_to) else '', banner)   # 1.87.2: the way back to the index, from this page's place
+            h = deck(h, rel, 'report')                   # 1.115.0: the Christmas theme, when it is on
             publish_page(h, rel, js, js_name, rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
@@ -2428,7 +2455,7 @@ def main():
             if not rel:
                 continue
             h = rf.put_files(banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner), [], [], rel, '')
-            h = back_link(h, rel, back_to if inside(back_to) else '', banner)
+            h = deck(back_link(h, rel, back_to if inside(back_to) else '', banner), rel, 'report')
             sjs, sname = page_script(h), page_script_name(h)
             if sjs and not (js and sname == js_name) and (sname != SCRIPT or ready(sjs)):
                 scripts[sname] = sjs
@@ -2462,6 +2489,20 @@ def main():
             index_js = ''
         index_text = ''
         deleted, not_deleted, gone = [], [], []
+
+        def festive_files():
+            """1.115.0: site-festive.css and site-festive.js at the folder's top, when a page of this run has the decor and the
+            file there is not this one already (as site-report-index.js)."""
+            for name, text, ctype in ((fz.CSS_FILE, fz.CSS, 'text/css; charset=utf-8'), (fz.JS_FILE, fz.JS, 'text/javascript; charset=utf-8')):
+                if not festive['used'] or name in written:
+                    continue
+                try:
+                    there = target.read(name)
+                except (Fail, OSError, UnicodeError):
+                    there = None
+                if there != text:
+                    put(name, text, ctype, soft=True)
+        festive_files()                                  # the pages above (the index's, when it has it, below)
         if index:
             line, dropped = history(old, entry, p['history'])
             reports = [r for r in reports if r.get('key') != entry.get('key')]
@@ -2573,6 +2614,7 @@ def main():
             index_text = json.dumps(out_doc, indent=2, sort_keys=True, default=str) + '\n'
             index_page = banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz,
                                                   base, files_line), top)
+            index_page = deck(index_page, index, 'index')     # 1.115.0
             if isinstance(target, Staged) and index_js:
                 target.script_fallbacks[index] = (report_script_file(index_js), index_page.replace(script_tag(index, index_js), '', 1))
             if box.get('lock'):
@@ -2589,6 +2631,7 @@ def main():
                     there = None
                 if there != INDEX_SCRIPT:
                     put(INDEX_SCRIPT_FILE, INDEX_SCRIPT, 'text/javascript; charset=utf-8', soft=True)
+            festive_files()
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
             put(index, index_page, 'text/html; charset=utf-8', True)
             release_lock(target, box.pop('lock', None), token)   # after both: never an older index page over a newer one
@@ -2701,7 +2744,7 @@ def main():
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
             pend = box.get('pending') or {}
-            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, INDEX_SCRIPT_FILE, js_name],
+            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, INDEX_SCRIPT_FILE, js_name, fz.CSS_FILE, fz.JS_FILE],
                                    target.dirs, target.edits,
                                    {'json': _json_name(index), 'html': index, 'sha': str(p['index_sha'] or '').upper(),
                                     'pending': pend.get('name') or '', 'pending_text': pend.get('text') or '', 'consumed': pend.get('consumed') or [],

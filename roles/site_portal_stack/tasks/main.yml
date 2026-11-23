@@ -195,6 +195,19 @@
     fail_msg: "portal_motion is {{ portal_motion }}; it must be auto, always or off - nothing was changed"
     quiet: true
 
+# 1.115.0: the Christmas theme (YAML reads an unquoted off or no as false: none)
+- name: Settings | portal_theme_season is none, christmas or auto
+  ansible.builtin.set_fact:
+    _portal_season: "{{ 'none' if portal_theme_season is sameas false else (portal_theme_season | string | trim | lower) }}"
+
+- name: Settings | portal_theme_season is none, christmas or auto (checked)
+  ansible.builtin.assert:
+    that:
+      - _portal_season in ['none', 'christmas', 'auto']
+      - report_theme_season_style | default('16bit') | string | trim | lower in ['16bit', '8bit']
+    fail_msg: "portal_theme_season is {{ portal_theme_season }}; it must be none, christmas or auto (report_theme_season_style 16bit or 8bit) - nothing was changed"
+    quiet: true
+
 # 1.85.0: the live Network map - on with a SolarWinds credential (auto), or as portal_netmap says
 - name: Settings | the live Network map (portal_netmap)
   ansible.builtin.set_fact:
@@ -354,6 +367,7 @@
     - {src: "{{ role_path }}/../../plugins/filter/site_portal_filters.py", dest: site_portal_filters.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_aap.py", dest: site_aap.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_time.py", dest: site_time.py}
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_festive.py", dest: site_festive.py}   # 1.115.0: the Christmas theme
     # 1.85.0: the live Network map - SolarWinds' reader (the report job's) and the map's page files (the report's)
     - {src: "{{ role_path }}/../../plugins/module_utils/site_swis.py", dest: site_swis.py}
     - {src: "{{ role_path }}/../netmap_report/files/web/netmap-map.html", dest: static/netmap-map.html}
@@ -686,6 +700,11 @@
       PORTAL_AREA_RULES: "{{ portal_area_rules | default([]) | to_json }}"
       PORTAL_PLAYBOOK_AREAS: "{{ _portal_playbook_areas | default({}) | to_json }}"
       PORTAL_MOTION: "{{ _portal_motion }}"
+      PORTAL_SEASON: "{{ _portal_season }}"
+      PORTAL_SEASON_STYLE: "{{ report_theme_season_style | default('16bit') | string | trim | lower }}"
+      PORTAL_SEASON_LIGHTS: "{{ '1' if report_theme_season_lights | default(true) | bool else '0' }}"
+      PORTAL_SEASON_TWINKLE: "{{ '1' if report_theme_season_twinkle | default(true) | bool else '0' }}"
+      PORTAL_SEASON_SNOW: "{{ '1' if report_theme_season_snow | default(true) | bool else '0' }}"
       PORTAL_PUBLISH_ORGANIZATION: "{{ portal_publish_organization | default('') }}"
       PORTAL_LABEL_TITLE: "{{ portal_label_title }}"
       PORTAL_TITLES: "{{ (portal_titles | site_portal_titles).titles | to_json }}"

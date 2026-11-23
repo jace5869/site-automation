@@ -49,6 +49,7 @@ import site_portal_filters as rules  # noqa: E402  the actions' loader and rules
 import site_aap  # noqa: E402  AAP's API (the same client as the jobs' modules)
 import netmap_history  # noqa: E402
 import site_time  # noqa: E402  the reports' times in report_time_zone (the same as the report pages)
+import site_festive  # noqa: E402  1.115.0: the Christmas theme (the same decor and files as the report website's)
 from site_time import local as in_zone  # noqa: E402
 try:
     import site_swis  # noqa: E402  1.85.0: SolarWinds' SWIS, read only (the network map; the same reader as the report job's)
@@ -238,6 +239,12 @@ class Config(object):
                        "fg": b.get("fg") if HEX.match(str(b.get("fg") or "")) else "#ffffff"}
         # the reports' time zone (report_time_zone): times shown as the report pages show them, "2026-11-13 05:37 CET"
         self.tz, self.tz_note = site_time.zone(g("PORTAL_TIME_ZONE"))
+        # 1.115.0: the Christmas theme (portal_theme_season, as report_theme_season: none | christmas | auto - decided on each page,
+        # by the day in the time zone above, so auto starts on Dec 1 and ends after Jan 6 without a restart)
+        self.season = str(g("PORTAL_SEASON", "none")).strip().lower()
+        self.season = self.season if self.season in site_festive.SEASONS else "none"
+        self.season_style = site_festive.style_of(g("PORTAL_SEASON_STYLE", "16bit"))
+        self.season_parts = site_festive.allowed(g("PORTAL_SEASON_LIGHTS", "1"), g("PORTAL_SEASON_TWINKLE", "1"), g("PORTAL_SEASON_SNOW", "1"))
         self.self_approval = flag(g("PORTAL_SELF_APPROVAL", "0"))
         # 1.85.0: the live network map - SolarWinds' address and its read-only login (the secret PORTAL_SWIS_LOGIN: JSON
         # {user, password}), read every netmap_live_seconds (30 at least) while someone has the page open
@@ -2692,17 +2699,27 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head=""):
         meta += '<meta name="portal-data" content="%s">' % esc(json.dumps(data))
     seg = "".join('<input type="radio" name="theme" id="theme-%s" value="%s"%s><label for="theme-%s">%s</label>'
                   % (v, v, " checked" if v == "auto" else "", v, v.capitalize()) for v in ("auto", "light", "dark"))
-    bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s">%s%s</a>'
-           '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who">%s</span>'
-           '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div></div>'
+    # 1.115.0: the Christmas theme, when portal_theme_season has it on today (site_festive: the report website's decor and files)
+    until = site_festive.season_until(cfg.season, datetime.datetime.now(cfg.tz or datetime.timezone.utc).date())
+    fz = (lambda part: part) if until else (lambda part: "")
+    st = cfg.season_style
+    bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s">%s%s%s</a>'
+           '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who">%s</span>%s'
+           '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div>%s</div>'
            % (cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
-              else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title), nav, esc(user), seg))
-    return ('<!doctype html><html lang="en" data-look="%s"%s><head><meta charset="utf-8">'
+              else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title),
+              fz(until and site_festive.tree(st)), nav, esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), seg,
+              fz(until and site_festive.lights(st))))
+    festive_head = ('<link rel="stylesheet" href="%sstatic/festive.css?v=%s"><script src="%sstatic/festive.js?v=%s"></script>'
+                    % (cfg.path, site_festive.version(site_festive.CSS), cfg.path, site_festive.version(site_festive.JS))) if until else ""
+    return ('<!doctype html><html lang="en" data-look="%s"%s%s><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">%s<title>%s - %s</title>'
             '<link rel="stylesheet" href="%sstatic/portal.css"><link rel="stylesheet" href="%sstatic/banner.css">'
-            '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script>%s</head>'
-            '<body data-page="%s">%s%s<main>%s</main>%s</body></html>'
-            % (cfg.look, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "", meta, esc(title), esc(cfg.title), cfg.path, cfg.path, cfg.path, cfg.path, head, esc(page), banner, bar, body, banner))
+            '<script src="%sstatic/portal-theme.js"></script><script src="%sstatic/portal.js" defer></script>%s%s</head>'
+            '<body data-page="%s">%s%s%s<main>%s</main>%s</body></html>'
+            % (cfg.look, (' class="motion-%s"' % cfg.motion) if cfg.motion != "auto" else "",
+               site_festive.html_attrs(until, st, cfg.season_parts, cfg.tz) if until else "", meta, esc(title), esc(cfg.title),
+               cfg.path, cfg.path, cfg.path, cfg.path, head, festive_head, esc(page), fz(until and site_festive.snow(st)), banner, bar, body, banner))
 
 
 def message_page(cfg, title, text, user="", kind="info"):
@@ -4493,6 +4510,9 @@ def make_handler(cfg, portal, static_dir):
                 name = path.rsplit("/", 1)[1]
                 with open(os.path.join(static_dir, name), "rb") as fh:
                     return self._static(fh.read(), TYPES[os.path.splitext(name)[1]])
+            if path in ("/static/festive.css", "/static/festive.js"):      # 1.115.0: the Christmas theme's files (site_festive.py)
+                css = path.endswith(".css")
+                return self._static((site_festive.CSS if css else site_festive.JS).encode("utf-8"), TYPES[".css" if css else ".js"])
             if path.startswith("/static/") and path[8:] in statics:          # 1.85.0: the network map's files
                 with open(os.path.join(static_dir, path[8:]), "rb") as fh:
                     return self._static(fh.read(), TYPES[os.path.splitext(path)[1]])

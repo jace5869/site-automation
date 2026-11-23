@@ -459,7 +459,7 @@ class Counts1940(unittest.TestCase):
 
     def test_1_run_counts_unchanged(self):
         import importlib.util
-        for name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files"):   # as Ansible gives them (test_report_web)
+        for name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files", "site_festive"):   # as Ansible gives them (test_report_web)
             if "ansible.module_utils." + name not in sys.modules:
                 sp = importlib.util.spec_from_file_location("ansible.module_utils." + name, os.path.join(ROOT, "plugins", "module_utils", name + ".py"))
                 mod = importlib.util.module_from_spec(sp)

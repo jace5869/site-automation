@@ -455,6 +455,43 @@ where to look:
 Print is always still. Nothing comes from outside the page, and there is no inline script: a strict
 Content-Security-Policy and an offline network are fine.
 
+## The Christmas theme (1.115.0)
+
+A festive look for the season, in 16-bit pixel art: a string of lights at the bottom of the bar that twinkle, a small tree
+after the site's name, a red-and-green stripe under the active tab, and a few snowflakes in the page's side margins. It is
+on the atlas, brief and ops pages and their index (the email looks on the website - standard, command, portal, glass - and
+the ticket insights pages have no decor). The Site portal follows the same setting.
+
+Turn it on in your settings:
+
+```yaml
+report_theme_season: auto        # none (default) | christmas | auto (Dec 1 to Jan 6)
+```
+
+| Setting | Default | What it does |
+|---|---|---|
+| `report_theme_season` | `none` | `none`: off, the pages as always. `christmas`: on. `auto`: on from Dec 1 to Jan 6, by the day in `report_time_zone` |
+| `report_theme_season_style` | `16bit` | `16bit` (shaded sprites) or `8bit` (flat colours, bigger pixels) |
+| `report_theme_season_lights` | `true` | the string of lights; `false` = off for everyone, and no *Lights* switch |
+| `report_theme_season_twinkle` | `true` | the lights twinkle; `false` = steady lights for everyone, and no *Twinkle* switch |
+| `report_theme_season_snow` | `true` | the snow; `false` = off for everyone, and no *Snow* switch |
+
+- **Each viewer** gets a **Festive** button in the bar (beside Light / Auto / Dark). It opens a small panel with
+  **Festive** (all of it), **Lights**, **Twinkle** (shown while Lights is on) and **Snow**, each On or Off. It works with
+  the mouse and the keyboard (Enter opens it, Tab moves, Space switches, Esc closes). The choices are kept in that browser
+  (the same on the website and the portal). The tree has no switch: it is there while Festive is on.
+- **Less motion**: when the viewer's system asks for reduced motion, or with `report_motion: off`, the lights do not
+  twinkle and there is no snow (their switches are not offered), whatever else is set.
+- **The content never changes**: At a glance, the tables, the chips and the status colours are the same as with the
+  theme off. The festive red and green are only in the bar and under the active tab, as pixel blocks.
+- **Snow** falls only in the side margins of a window 1200 px wide or more - never over text, tables or tiles.
+- **Print, the PDF guides and the emails** never get it.
+- **When it ends**: each page carries the season's last day (Jan 6). A page written in the season stops being festive
+  after that day by itself, with no new run - at midnight where the site is (`report_time_zone`), the same moment for every viewer, also on a page left open.
+- **Files**: the job writes `site-festive.css` and `site-festive.js` beside `site-report.js` (only when they changed,
+  like it) and the pages load them from there. No inline script, nothing from outside: a strict
+  Content-Security-Policy (`script-src 'self'`) and an offline network are fine. No script: no decor.
+
 ## The classification banner
 
 In a classified enclave every page carries its banner at the top and bottom - each report's page, latest page, the
