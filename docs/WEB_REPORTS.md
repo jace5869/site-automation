@@ -671,7 +671,7 @@ so no email is needed to get them.
 |---|---|---|
 | `report_web_files` | `true` | `false` = no files on the website; the email still attaches them |
 | `report_web_files_max_mb` | `20` | each file, and one run's files together; a bigger one is not hosted, and the page says why |
-| `report_web_files_types` | `[.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]` | any other type is not hosted |
+| `report_web_files_types` | `[.xml, .docx, .xlsx, .csv, .md, .txt, .pdf]` | any other type is not hosted (1.122.2: a report may add its own types - the Windows local groups job adds .json, .yml, .ps1) |
 | `report_web_files_total_max_mb` | `500` | all reports' files together (below) |
 | `report_web_files_keep_days` | `30` | a run's files are removed after this many days; `0` = only with their page |
 
