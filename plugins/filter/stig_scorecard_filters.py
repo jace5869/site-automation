@@ -27,18 +27,27 @@ SPARK_W, SPARK_H, SPARK_PAD = 110, 30, 4
 CATS = (1, 2, 3)
 CAT_WORD = {1: "CAT I", 2: "CAT II", 3: "CAT III"}
 TIP_IDS = 10                    # a hover lists this many rule ids, then "N more"
+OTHER_LIST = 10                 # 1.118.5: the email names this many of the STIGs in Other, then "and N more"
 XLSX_CELL = 30000               # a workbook cell holds 32767 characters
 WORST = {"critical": 4, "warning": 3, "low": 2, "ok": 1, "info": 0, "": 0}
 # 1.67.0: stigman_scorecard_platforms' default (roles/stigman_ckl_import/defaults/main.yml repeats it; a test compares):
-# in order, the first whose pattern matches a STIG's benchmark id wins (* and ?, any case); no match - Other
+# in order, the first whose pattern matches a STIG's benchmark id wins (* and ?, any case); no match - Other. 1.118.5: the
+# common DISA STIGs and SRGs placed (AD, IE, Adobe; Aria, VCF, Photon; network SRGs, EVVM; MariaDB, web/app SRGs; SAN) and
+# Endpoint security last (its colour after the others'). Aria by "_Aria_" / " Aria " - "*Aria*" would take MariaDB.
 PLATFORMS = [
     {"name": "Linux", "stigs": ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]},
-    {"name": "Windows", "stigs": ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*"]},
-    {"name": "VMware", "stigs": ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*"]},
-    {"name": "Network", "stigs": ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]},
+    {"name": "Windows", "stigs": ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*", "Active_Directory_*", "IE_*",
+                                  "Adobe_Acrobat*", "*Acrobat*"]},
+    {"name": "VMware", "stigs": ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*", "VMware*", "*_Aria_*", "* Aria *", "VCF*", "*Photon*"]},
+    {"name": "Network", "stigs": ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*",
+                                  "Application_Layer_Gateway_SRG", "IDPS_SRG", "Network_*", "Infoblox_*", "VPN*", "AAA_Services*",
+                                  "MULTI-FUNCTION_DEVICE", "EVVM_*"]},
     {"name": "Applications", "stigs": ["Apache_*", "*Tomcat*", "*PostgreSQL*", "*Chrome*", "*Firefox*", "Mozilla_*", "*Kubernetes*",
-                                       "Docker_*", "Oracle_Database_*", "*MongoDB*", "*JBoss*", "*Nginx*"]},
-    {"name": "Storage", "stigs": ["NetApp_*", "*ONTAP*"]},
+                                       "Docker_*", "Oracle_Database_*", "*MongoDB*", "*JBoss*", "*Nginx*", "MariaDB_*", "Web_Server_SRG",
+                                       "Application_Security_Development_STIG", "Central_Log_Server_SRG", "Container_Platform_SRG",
+                                       "Cloud_Computing_*", "*ColdFusion*"]},
+    {"name": "Storage", "stigs": ["NetApp_*", "*ONTAP*", "SAN"]},
+    {"name": "Endpoint security", "stigs": ["ESS_*", "*McAfee*", "HBSS_*"]},
 ]
 OTHER = "Other"
 ANY = frozenset(["*"])            # a collection's hosts not listed (stigman_scorecard_hosts, or too slow): any host
@@ -178,6 +187,19 @@ def _short(name):
 
 
 # ---- the platforms (1.67.0) ----------------------------------------------------------------------------------
+def other_head(others):
+    """1.118.5: the STIGs no platform matched, as a heading: "Other: 34 STIGs no platform matched"."""
+    return "Other: %s no platform matched" % _count(len(others), "STIG")
+
+
+def other_line(others, n=OTHER_LIST):
+    """1.118.5: the email's line of them - the first n names, then how many more (the atlas, brief and ops
+    websites open the whole list in How the scorecard counts)."""
+    more = len(others) - n
+    return "%s - %s%s. Give them a platform with stigman_scorecard_platforms." % (
+        other_head(others), ", ".join(others[:n]), (" and %d more" % more) if more > 0 else "")
+
+
 def _platforms(cfg):
     """stigman_scorecard_platforms -> [(name, [patterns, lower case])] in order; a bad entry is left out."""
     out = []
@@ -1009,7 +1031,8 @@ def stig_scorecard(read, point, runs, opts=None):
     (this run's among them). opts: weeks (stigman_scorecard_weeks), top (stigman_scorecard_top), cat2_warn
     (stigman_scorecard_cat2_warn), fixed (site_stig_scorecard_history's), history (lines: where the earlier points came
     from), api (STIG Manager's address), list_max, portal (1.67.0, report_portal_url: the website's copy gets an
-    Import checklists button and a Recheck link on each row fixed on the host, still Open). -> {ok, error, title, status, subtitle, tiles, sections (the email's and
+    Import checklists button and a Recheck link on each row fixed on the host, still Open); 1.118.5: rules_timeout, hosts_timeout, text_timeout, timeout - the
+    settings' values in the hints of Slow or not read). -> {ok, error, title, status, subtitle, tiles, sections (the email's and
     the other looks'), web (the same with the sparkline column), notes (the last section: how it is counted), xlsx, lines,
     counts}"""
     o = opts or {}
@@ -1156,20 +1179,50 @@ def stig_scorecard(read, point, runs, opts=None):
               if str(c.get("hosts") or "").startswith(("not listed", "hosts not")) and c.get("rules_read") is not False]
     slow_m = [str(c.get("name") or c.get("id")) for c in good if c.get("checklists_note")]
     slow_p = [str(c.get("name") or c.get("id")) for c in good if not _plat_known(c)]
+
+    # 1.118.5: each kind says which setting helps - a timeout only when the read ran out of time
+    def raise_(name, key):
+        v = o.get(key)
+        return "raise %s%s" % (name, " (now %s s)" % v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else "")
+
+    def fix(cs, note, name, key):
+        """One hint for a kind: raise its timeout (a read that ran out of time), the counts-only setting (not asked),
+        else the job output (another error)."""
+        h = []
+        if any("STIG Manager was slow" in str(c.get(note) or "") for c in cs):
+            h.append(raise_(name, key))
+        if any(not c.get(note) for c in cs):
+            h.append("stigman_scorecard_hosts is false (the counts only)")
+        if any(c.get(note) and "STIG Manager was slow" not in str(c.get(note)) for c in cs):
+            h.append("see the reason in the job output")
+        return (" To fix: %s." % "; ".join(h)) if h else ""
+
+    def word(cs, note, slow_word):
+        """"Rules too slow" when each of them ran out of time, else "Rules not read"."""
+        return slow_word if cs and all("STIG Manager was slow" in str(c.get(note) or "") for c in cs) else "not read"
+
+    rc, hc = [c for c in good if c.get("rules_read") is False], [c for c in good if str(c.get("name") or c.get("id")) in slow_h]
+    r_hint = fix(rc, "rules_note", "stigman_scorecard_rules_timeout", "rules_timeout")
+    h_hint = fix(hc, "hosts", "stigman_scorecard_hosts_timeout", "hosts_timeout")
     slow_lines = (["Not read: %s - %s" % (c.get("name") or c.get("id"), c.get("error")) for c in bad]
-                  + (["Rules too slow (stigman_scorecard_rules_timeout), counts complete: %s." % ", ".join(slow_r)] if slow_r else [])
-                  + (["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: %s." % ", ".join(slow_h)] if slow_h else [])
-                  + (["Host counts not read (STIG Manager's metrics per checklist), totals complete: %s." % ", ".join(slow_m)]
+                  + (["Rules %s, counts complete: %s.%s" % (word(rc, "rules_note", "too slow"), ", ".join(slow_r), r_hint)] if slow_r else [])
+                  + (["Host lists %s, counts complete: %s.%s" % (word(hc, "hosts", "too slow"), ", ".join(slow_h), h_hint)] if slow_h else [])
+                  + (["Host counts not read (STIG Manager's metrics per checklist), totals complete: %s. %s" % (", ".join(slow_m),
+                      "To fix: %s." % raise_("check_stig_stigman_timeout", "timeout")
+                      if all("a slow answer" in str(c.get("checklists_note")) for c in good if c.get("checklists_note"))
+                      else "See the reason in the job output%s." % ("; a slow answer: " + raise_("check_stig_stigman_timeout", "timeout")
+                                                                    if any("a slow answer" in str(c.get("checklists_note")) for c in good) else ""))]
                      if slow_m else [])
-                  + (["Not in By platform (no host counts and no rules to tell the platforms by): %s." % ", ".join(slow_p)]
-                     if slow_p else []))
+                  + (["Not in By platform (no host counts and no rules to tell the platforms by): %s. It follows from the reads above."
+                      % ", ".join(slow_p)] if slow_p else []))
     # 1.68.0: what could not be read for the history (AAP's job history, the report database) is a not-read kind too
     hist = [str(x) for x in o.get("history") or [] if x and not str(x).startswith("Earlier points")]
     slow_lines += hist
     # 1.68.0: the rules' check and fix text - not read (no scope), or the time ran out
     asked, got = _n(tinfo.get("asked")), _n(tinfo.get("read"))
     tx = (["Check and fix text not read: %s." % str(tinfo["error"]).rstrip(".")] if tinfo.get("error") else
-          ["Check and fix text too slow (stigman_scorecard_text_timeout): %d of %d rules without it." % (asked - got, asked)]
+          ["Check and fix text too slow: %d of %d rules without it. To fix: %s." % (
+              asked - got, asked, raise_("stigman_scorecard_text_timeout", "text_timeout"))]
           if tinfo.get("slow") and asked > got else [])
     slow_lines += tx
     slow_sec = ({"title": "Slow or not read (%d)" % (len(bad) + len(slow_r) + len(slow_h) + len(slow_m) + len(slow_p) + len(hist) + len(tx)),
@@ -1652,9 +1705,12 @@ def stig_scorecard(read, point, runs, opts=None):
         "A finding is a rule Open on an asset, as STIG Manager has it. Nothing is written to STIG Manager.",
         "Since last week: each host's findings of a category against the run of 6 to 8 days ago. Fewer is closed, more is opened.",
         "An asset counts under each platform it has a STIG of. A finding counts under its own STIG's platform (stigman_scorecard_platforms)."]
-        + (["Other: the STIGs no platform matched - %s." % ", ".join(others)] if others else [])
         + ([CORA_NOTE, CORA_BANDS] if cora_all else [])
         + (["Compared with the run of %s UTC." % _utc(base["_t"]).strftime("%Y-%m-%d %H:%M")] if base else [])}
+    if others:                  # 1.118.5: the names folded (a long list at a big site), opened with a click - no script
+        notes["line_folds"] = [{"text": other_head(others), "more": ", ".join(others) + "."}]
+        # the email (and its PDF): one short line under By platform, the first names and how many more
+        pl_sec = dict(pl_sec, lines=list(pl_sec.get("lines") or []) + [other_line(others)])
 
     last = [slow_sec] if slow_sec else []
     fixes = [fix_sec] if (scans or fixed) else []          # 1.67.0: no scans - no section (said in the job output)

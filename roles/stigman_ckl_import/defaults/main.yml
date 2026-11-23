@@ -84,14 +84,25 @@ stigman_scorecard_weeks: 12                 # the trend line and "The numbers be
 stigman_scorecard_cat2_warn: 0              # a collection with this many CAT II open or more: Warning (0 = off)
 # 1.67.0, "By platform": a STIG's platform is the first of these whose pattern matches its benchmark id (* and ?, any
 # case); no match is Other. An asset counts under each platform it has a STIG of, a finding under its STIG's platform.
+# A site's own list replaces this one whole (not merged): to use the 1.118.5 patterns, add them to it. 1.118.5: the common
+# DISA STIGs and SRGs placed - Active Directory, IE, Adobe (Windows); Aria, VCF, Photon (VMware; "*Aria*" alone would take
+# MariaDB); the network SRGs, Infoblox, VPN, AAA, multi-function devices, EVVM voice/video (Network); MariaDB and the
+# web, application, log, container and cloud SRGs (Applications); SAN (Storage); a new Endpoint security last (ESS, McAfee,
+# HBSS). The VMM SRG (any hypervisor, not one product) stays Other.
 stigman_scorecard_platforms:
   - {name: Linux, stigs: ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]}
-  - {name: Windows, stigs: ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*"]}
-  - {name: VMware, stigs: ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*"]}
-  - {name: Network, stigs: ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]}
+  - {name: Windows, stigs: ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*", "Active_Directory_*", "IE_*",
+                            "Adobe_Acrobat*", "*Acrobat*"]}
+  - {name: VMware, stigs: ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*", "VMware*", "*_Aria_*", "* Aria *", "VCF*", "*Photon*"]}
+  - {name: Network, stigs: ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*",
+                            "Application_Layer_Gateway_SRG", "IDPS_SRG", "Network_*", "Infoblox_*", "VPN*", "AAA_Services*",
+                            "MULTI-FUNCTION_DEVICE", "EVVM_*"]}
   - {name: Applications, stigs: ["Apache_*", "*Tomcat*", "*PostgreSQL*", "*Chrome*", "*Firefox*", "Mozilla_*", "*Kubernetes*",
-                                 "Docker_*", "Oracle_Database_*", "*MongoDB*", "*JBoss*", "*Nginx*"]}
-  - {name: Storage, stigs: ["NetApp_*", "*ONTAP*"]}
+                                 "Docker_*", "Oracle_Database_*", "*MongoDB*", "*JBoss*", "*Nginx*", "MariaDB_*", "Web_Server_SRG",
+                                 "Application_Security_Development_STIG", "Central_Log_Server_SRG", "Container_Platform_SRG",
+                                 "Cloud_Computing_*", "*ColdFusion*"]}
+  - {name: Storage, stigs: ["NetApp_*", "*ONTAP*", "SAN"]}
+  - {name: Endpoint security, stigs: ["ESS_*", "*McAfee*", "HBSS_*"]}
 stigman_scorecard_platform_filter: []       # only these platforms, by name (e.g. [Windows]; [] = every platform)
 # 1.68.0: the counts come from STIG Manager's metrics, one quick read per collection. Then the open rules (the Findings
 # view, Top rules, the week rule by rule) and each rule's hosts (a rule opened, "Fixed on the host") - the slow reads on a

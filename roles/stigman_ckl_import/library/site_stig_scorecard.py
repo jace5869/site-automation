@@ -361,7 +361,7 @@ def read(p, client):
                 rec["rules_read"] = True
             except RuntimeError as e:
                 rec["rules_note"] = ("rules not read (STIG Manager was slow: over %ss, stigman_scorecard_rules_timeout)" % p.get("rules_timeout")
-                                     if "in time" in str(e) else "rules not read (%s)" % e)
+                                     if "in time" in str(e) and "connection dropped" not in str(e) else "rules not read (%s)" % e)
                 rec["hosts"] = "hosts not listed (%s)" % rec["rules_note"][len("rules not read ("):].rstrip(")")
             rec["timing"]["rules"] = round(time.time() - t, 2)
         if p.get("hosts", True) and not rec["error"] and rec["rules"] and rec["rules_read"]:
@@ -376,7 +376,7 @@ def read(p, client):
                 rec["hosts"] = "listed"
             except RuntimeError as e:
                 rec["hosts"] = ("hosts not listed (STIG Manager was slow: over %ss, stigman_scorecard_hosts_timeout)" % p.get("hosts_timeout")
-                                if "in time" in str(e) else "hosts not listed (%s)" % e)
+                                if "in time" in str(e) and "connection dropped" not in str(e) else "hosts not listed (%s)" % e)
             rec["timing"]["hosts"] = round(time.time() - t, 2)
         elif not rec["error"] and not open_:
             rec["hosts"] = "listed"                 # no open finding: no rule, no host to list

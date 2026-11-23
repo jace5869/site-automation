@@ -965,8 +965,14 @@ class Platforms(unittest.TestCase):
         # without VMware and Applications in the setting: Other, listed by STIG name
         d = card(opts={"platforms": f.PLATFORMS[:2]})
         self.assertEqual([r[0] for r in section(d, "By platform")["rows"]], ["Linux", "Windows", "Other"])
-        self.assertIn("Other: the STIGs no platform matched - %s, %s, %s." % (fx.APACHE, fx.ARIA, "VMW_vSphere_7-0_ESXi_STIG"),
-                      d["notes"]["lines"])
+        # 1.118.5: on the website a line that opens to the names; the email one line under By platform
+        self.assertEqual(d["notes"]["line_folds"], [{"text": "Other: 3 STIGs no platform matched",
+                                                     "more": "%s, %s, %s." % (fx.APACHE, fx.ARIA, "VMW_vSphere_7-0_ESXi_STIG")}])
+        self.assertFalse([x for x in d["notes"]["lines"] if x.startswith("Other")])
+        self.assertEqual(section(d, "By platform")["lines"],
+                         ["Other: 3 STIGs no platform matched - %s, %s, %s. Give them a platform with stigman_scorecard_platforms."
+                          % (fx.APACHE, fx.ARIA, "VMW_vSphere_7-0_ESXi_STIG")])
+        self.assertNotIn("lines", section(d, "By platform", "web"))         # the website: the fold in How the scorecard counts
         # the website's "Since last week": each count with its word (a narrow column never breaks between them)
         self.assertEqual(section(self.doc, "By platform", "web")["rows"][0][5], u"▼\u00a0Better\n4\u00a0closed, 1\u00a0opened")
 
@@ -1032,7 +1038,7 @@ class Platforms(unittest.TestCase):
         d = card(opts={"platform_filter": ["Mainframe"]})
         self.assertEqual(len(section(d, "By collection")["rows"]), 3)
         self.assertIn("Not a platform (stigman_scorecard_platform_filter): Mainframe. Platforms: Linux, Windows, VMware, Network, "
-                      "Applications, Storage, Other.", d["lines"])          # the job output only
+                      "Applications, Storage, Endpoint security, Other.", d["lines"])          # the job output only
 
     def test_with_the_collections_left_out(self):
         """stigman_scorecard_collections picks the collections (the read: '!' leaves one out, * and ?), the platform filter
@@ -1054,6 +1060,128 @@ class Platforms(unittest.TestCase):
         self.assertEqual(x["sparklines"][0]["points"][0][:5], [None] * 5)
         rows = section(self.doc, "The numbers behind", "web")["rows"]
         self.assertEqual([r[0] for r in rows[-4:]], ["Platform Linux", "Platform Windows", "Platform VMware", "Platform Applications"])
+
+
+class Platforms11185(unittest.TestCase):
+    """1.118.5: the common DISA STIGs and SRGs a site saw as Other each under its platform (the first match wins, so a
+    finding counts once); a site's own stigman_scorecard_platforms replaces the default whole; Other folded on the
+    website, one short line in the email."""
+    WANT = {
+        "Windows": ["Active_Directory_Domain", "Active_Directory_Forest", "Adobe_Acrobat_Pro_DC_Continuous_STIG", "IE_11_STIG",
+                    "Adobe_Acrobat_Reader_DC_Continuous_STIG"],
+        "VMware": ["VCF Photon OS 5.0", "VMware Aria Operations 8.x Apache", "VMware Aria Operations 8.x API",
+                   "VMware Aria Operations 8.x Application", "VMware Aria Operations 8.x Casa", "VMware Aria Operations 8.x UI",
+                   "VMware Aria Operations 8.x vPostgres", "VMware Aria Operations for Logs - Photon OS 4.0",
+                   "VMware Aria Operations for Logs 8.x - Application", "VMware Aria Operations for Logs 8.x - Cassandra",
+                   "VMware Aria Operations for Logs 8.x - tc Server", "VMW_Aria_Operations_8-x_Apache_STIG"],
+        "Network": ["AAA_Services", "Application_Layer_Gateway_SRG", "IDPS_SRG", "Infoblox_8_DNS_STIG", "MULTI-FUNCTION_DEVICE",
+                    "Network_Device_Management_SRG", "Network_Infrastructure_Policy_STIG", "VPN", "EVVM_Endpoint_SRG",
+                    "EVVM_Policy_SRG", "EVVM_Session_Management_SRG"],
+        "Applications": ["Application_Security_Development_STIG", "Central_Log_Server_SRG", "Cloud_Computing_Mission_Owner_OS_SRG",
+                         "Cloud_Computing_Mission_Owner_SRG", "Container_Platform_SRG", "MariaDB_Enterprise_10-x_STIG", "Web_Server_SRG",
+                         "Adobe_ColdFusion_STIG"],
+        "Storage": ["SAN"],
+        "Endpoint security": ["ESS_ePO_5-3_5-9_STIG", "ESS_McAfee_Agent_STIG", "HBSS_PolicyAuditor", "HBSS_Rogue_Sensor",
+                              "McAfee_ENS_10-x_STIG"],
+        "Other": ["VMM"],               # the VMM SRG is any hypervisor's, not one product's
+    }
+    # the default before 1.118.5 - a site that set its own list keeps it
+    OLD = [{"name": "Linux", "stigs": ["RHEL_*", "Oracle_Linux_*", "*Ubuntu*", "SLES_*", "*Linux*"]},
+           {"name": "Windows", "stigs": ["MS_Windows_*", "Windows_*", "MS_SQL_*", "IIS_*", "MS_*", "Microsoft_*"]},
+           {"name": "VMware", "stigs": ["VMW_*", "*vSphere*", "*ESXi*", "*vCenter*"]},
+           {"name": "Network", "stigs": ["Cisco_*", "Juniper_*", "Palo_Alto_*", "F5_*", "Arista_*", "*Router*", "*Switch*", "*Firewall*"]},
+           {"name": "Applications", "stigs": ["Apache_*", "*Tomcat*", "*PostgreSQL*", "*Chrome*", "*Firefox*", "Mozilla_*", "*Kubernetes*",
+                                              "Docker_*", "Oracle_Database_*", "*MongoDB*", "*JBoss*", "*Nginx*"]},
+           {"name": "Storage", "stigs": ["NetApp_*", "*ONTAP*"]}]
+
+    def names(self):
+        return [n for v in self.WANT.values() for n in v]
+
+    def read(self):
+        """One collection: an asset with every one of the STIGs, one CAT II finding of each."""
+        names = self.names()
+        rules = [{"rule": "SV-%d_rule" % (900000 + i), "sv": "SV-%d" % (900000 + i), "cat": 2, "version": "X-%d" % i, "title": "t",
+                  "assets": ["h1"], "count": 1, "stig": n} for i, n in enumerate(names)]
+        col = {"id": "9", "name": "SITEA - Lab", "assets": 1, "cat1": 0, "cat2": len(rules), "cat3": 0, "rules": rules, "error": "",
+               "asset_stigs": {"h1": names}}
+        return {"ok": True, "error": "", "read_at": NOW, "collections": [col], "missing": []}
+
+    def test_each_lands_where_meant(self):
+        for want, names in self.WANT.items():
+            for n in names:
+                self.assertEqual(f.stig_platform(n), want, n)
+                self.assertEqual(f.stig_platform(n.lower()), want, n)          # any case
+        # what was placed before stays (the old patterns first in each platform)
+        for b, want in (("RHEL_9_STIG", "Linux"), ("MS_Windows_Server_2022_STIG", "Windows"), ("VMW_vSphere_7-0_ESXi_STIG", "VMware"),
+                        ("Crunchy_Data_PostgreSQL_STIG", "Applications"), ("Oracle_Linux_8_STIG", "Linux"), ("Zebra_Printer_STIG", "Other")):
+            self.assertEqual(f.stig_platform(b), want, b)
+        self.assertEqual(f.PLATFORMS[:6], [dict(p, stigs=p["stigs"] + [x for x in q["stigs"] if x not in p["stigs"]])
+                                           for p, q in zip(self.OLD, f.PLATFORMS[:6])])     # only added to, same order
+        self.assertEqual(f.PLATFORMS[6]["name"], "Endpoint security")                     # last: the others keep their colours
+
+    def test_a_finding_once_under_its_platform(self):
+        d = card(runs=[], read=self.read())
+        by = d["counts"]["by_platform"]
+        self.assertEqual(dict((k, v["cat2"]) for k, v in by.items() if v["cat2"]),
+                         dict((k, len(v)) for k, v in self.WANT.items()))
+        self.assertEqual(sum(v["cat2"] for v in by.values()), len(self.names()))
+        self.assertTrue(all(v["assets"] == 1 for k, v in by.items() if k in self.WANT))     # the asset under each of its platforms
+
+    def test_a_site_list_replaces_the_default(self):
+        old = f._platforms(self.OLD)
+        for n in self.names():
+            want = "VMware" if n.startswith("VMW_") else "Other"
+            self.assertEqual(f.stig_platform(n, self.OLD), want, n)
+            self.assertEqual(f.stig_platform(n, old), want, n)
+        d = card(runs=[], read=self.read(), opts={"platforms": self.OLD})
+        self.assertEqual(sorted(k for k, v in d["counts"]["by_platform"].items() if v["cat2"]), ["Other", "VMware"])
+        # the fixture site's STIGs: the same counts with the old list as with the new default
+        self.assertEqual(card(opts={"platforms": self.OLD})["counts"], card()["counts"])
+
+    def test_slow_hints_only_for_a_read_that_ran_out_of_time(self):
+        """The timeout advice only when the read ran out of time; a 403 or a dropped connection points to the reason."""
+        def slow_lines(**kw):
+            r = read_of()
+            r["collections"][0].update(kw)
+            return section(card(read=r, opts={"rules_timeout": 600, "timeout": 60}), "Slow or not read")["lines"]
+        name = read_of()["collections"][0]["name"]
+        self.assertEqual(slow_lines(checklists_note="host counts not read (HTTP 403 from x: no)", rules_read=True)[0],
+                         "Host counts not read (STIG Manager's metrics per checklist), totals complete: %s. See the reason in the "
+                         "job output." % name)
+        self.assertEqual(slow_lines(rules_read=False, rules_note="rules not read (no answer from x in time (the connection dropped): reset)")[0],
+                         "Rules not read, counts complete: %s. To fix: see the reason in the job output." % name)
+        self.assertEqual(slow_lines(rules_read=False, rules_note="rules not read (STIG Manager was slow: over 600s, "
+                                                                 "stigman_scorecard_rules_timeout)")[0],
+                         "Rules too slow, counts complete: %s. To fix: raise stigman_scorecard_rules_timeout (now 600 s)." % name)
+        self.assertEqual(slow_lines(rules_read=False)[0],
+                         "Rules not read, counts complete: %s. To fix: stigman_scorecard_hosts is false (the counts only)." % name)
+
+    def test_other_folded_on_the_page_capped_in_the_email(self):
+        d = card(runs=[], read=self.read(), opts={"platforms": self.OLD})
+        others = sorted([n for n in self.names() if not n.startswith("VMW_")], key=lambda s: s.lower())
+        fold = d["notes"]["line_folds"]
+        self.assertEqual(fold, [{"text": "Other: %d STIGs no platform matched" % len(others), "more": ", ".join(others) + "."}])
+        line = section(d, "By platform")["lines"][-1]
+        self.assertEqual(line, "Other: %d STIGs no platform matched - %s and %d more. Give them a "
+                               "platform with stigman_scorecard_platforms." % (len(others), ", ".join(others[:10]), len(others) - 10))
+        self.assertEqual(f.other_line(["A"]), "Other: 1 STIG no platform matched - A. Give them a platform with stigman_scorecard_platforms.")
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        from test_report_fit import EmailTiles
+        env = EmailTiles()._env()
+        joined = f.stig_scorecard_join(d, None, "scorecard")
+        for tpl in ("report_atlas.html.j2", "report_brief.html.j2", "report_ops.html.j2"):
+            h = env.get_template(tpl).render(_report=joined["web"], _email_footer="AAP job 9", report_email_header_text="x")
+            m = re.search(r'<li><details class="snm"><summary>([^<]*)</summary><p>([^<]*)</p></details></li>', h)
+            self.assertTrue(m, tpl)
+            self.assertEqual(m.group(1), "Other: %d STIGs no platform matched" % len(others), tpl)
+            self.assertIn(others[-1], m.group(2), tpl)
+            self.assertNotIn(others[-1] + " and", h, tpl)       # never the email's capped line on the website
+        # the email: the capped line, never the whole list
+        h = env.get_template("report.html.j2").render(_report=joined["report"], _email_footer="AAP job 9", report_email_header_text="x")
+        self.assertIn("and %d more. Give them" % (len(others) - 10), h)
+        self.assertNotIn(others[-1], h)
+        self.assertNotIn("<details", h)
 
 
 class SlowClient(object):
@@ -1153,7 +1281,10 @@ class HostLists(unittest.TestCase):
         d = card(read=read, opts={"fixed": {"rows": [["rhel01.example.mil", RHEL, "rhel01", "SV-257985", "CAT II", "x", NOW]], "jobs": [{}]}})
         self.assertEqual(d["counts"]["cat1"], 4)
         self.assertEqual(section(d, "Slow or not read (1)")["lines"],
-                         ["Host lists too slow (stigman_scorecard_hosts_timeout), counts complete: SITEA - RHEL 9."])
+                         ["Host lists too slow, counts complete: SITEA - RHEL 9. To fix: raise stigman_scorecard_hosts_timeout."])
+        d2 = card(read=read, opts={"hosts_timeout": 600})         # 1.118.5: the setting's value when the run gives it
+        self.assertEqual(section(d2, "Slow or not read (1)")["lines"],
+                         ["Host lists too slow, counts complete: SITEA - RHEL 9. To fix: raise stigman_scorecard_hosts_timeout (now 600 s)."])
         self.assertEqual(d["counts"]["fixed"], 0)
         self.assertIn("Fixed on the host: left out SITEA - RHEL 9 - its hosts were not listed, so a scan's row cannot be tied to its host.",
                       d["lines"])
@@ -1189,7 +1320,9 @@ class HostLists(unittest.TestCase):
         self.assertEqual((p["rr"], p["r2"], p["h"]["rhel04"]), (False, {}, {"Linux": [1, 1, 0]}))
         d = card(read=read)
         self.assertTrue(any(x.startswith("Counted from STIG Manager's metrics, the rules not read") for x in d["lines"]))
-        self.assertEqual(section(d, "Slow or not read")["lines"], ["Rules too slow (stigman_scorecard_rules_timeout), counts complete: SITEA - RHEL 9."])
+        self.assertEqual(section(d, "Slow or not read")["lines"], ["Rules too slow, counts complete: SITEA - RHEL 9. To fix: raise stigman_scorecard_rules_timeout."])
+        self.assertEqual(section(card(read=read, opts={"rules_timeout": 900}), "Slow or not read")["lines"],
+                         ["Rules too slow, counts complete: SITEA - RHEL 9. To fix: raise stigman_scorecard_rules_timeout (now 900 s)."])
         # a 1.66.2 point that read the counts only (nr) and one of 1.68.0 without hosts: not compared, "Counts only"
         self.assertEqual(f.comparable({"nr": True}, {"r1": {}}), "")
         self.assertEqual(f.comparable({"h": {}}, {"h": {}}), "hosts")
@@ -1270,8 +1403,8 @@ class Review1680(unittest.TestCase):
         read = {"ok": True, "error": "", "read_at": NOW, "collections": cols, "missing": []}
         d = card(read=read)
         self.assertEqual(section(d, "By collection")["rows"][[r[0] for r in section(d, "By collection")["rows"]].index(RHEL)][:5], [RHEL, 6, 1, 8, 2])
-        self.assertIn("Host counts not read (STIG Manager's metrics per checklist), totals complete: SITEA - RHEL 9.",
-                      section(d, "Slow or not read")["lines"])
+        self.assertIn("Host counts not read (STIG Manager's metrics per checklist), totals complete: SITEA - RHEL 9. To fix: "
+                      "raise check_stig_stigman_timeout.", section(d, "Slow or not read")["lines"])
         p = next(c for c in f.stig_scorecard_point(read)["collections"] if c["name"] == RHEL)
         self.assertEqual((p["cat2"], p["rr"], "h" in p), (8, False, False))     # no host counts: not compared host by host
         # the rules read: the hosts from the rules, as before
@@ -1294,7 +1427,7 @@ class Review1680(unittest.TestCase):
         self.assertNotIn("p", p)                                                # no platform counts kept as zeros
         d = card(read=read)
         self.assertEqual([r[0] for r in section(d, "By platform")["rows"]], ["Windows", "VMware"])   # no Linux row of zeros
-        self.assertIn("Not in By platform (no host counts and no rules to tell the platforms by): SITEA - RHEL 9.",
+        self.assertIn("Not in By platform (no host counts and no rules to tell the platforms by): SITEA - RHEL 9. It follows from the reads above.",
                       section(d, "Slow or not read")["lines"])
         why = ("Not read: SITEA - RHEL 9 - its counts by platform not read (host counts not read (no answer from "
                "https://stigman.example.mil/api/collections/2/metrics/summary in time (a slow answer)); rules not read "
@@ -1761,7 +1894,7 @@ class Texts(unittest.TestCase):
     def test_slow_or_not_read_says_it_in_one_line(self):
         d = card(read=with_texts(info={"asked": 11, "read": 4, "slow": True, "error": "", "missing": 0}))
         s = section(d, "Slow or not read", "web")
-        self.assertIn("Check and fix text too slow (stigman_scorecard_text_timeout): 7 of 11 rules without it.", s["lines"])
+        self.assertIn("Check and fix text too slow: 7 of 11 rules without it. To fix: raise stigman_scorecard_text_timeout.", s["lines"])
         d = card(read=with_texts(info={"asked": 11, "read": 0, "slow": False, "missing": 0,
                                        "error": "HTTP 403 from x - the client needs the scope stig-manager:stig:read"}))
         self.assertIn("Check and fix text not read: HTTP 403 from x - the client needs the scope stig-manager:stig:read.",

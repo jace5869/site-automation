@@ -997,10 +997,14 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- if s.note | default('') %}
 <div class="snote"><p>{{ s.note | e }}</p>{% if s.note_more | default('') %}<details class="snm"><summary>More</summary><p>{{ s.note_more | e }}</p></details>{% endif %}</div>
 {%- endif %}
-{%- if s.lines | default([]) and not s.glance | default([]) %}
+{%- if (s.lines | default([]) or s.line_folds | default([])) and not s.glance | default([]) %}
 <ul class="lines">
-{%- for l in s.lines if l | trim %}
+{%- for l in s.lines | default([]) if l | trim %}
 <li>{{ l | e }}</li>
+{%- endfor %}
+{#- 1.118.5: a line whose long list opens with a click (the STIG scorecard's Other) - details, no script #}
+{%- for fl in s.line_folds | default([]) if fl.text | default('') %}
+<li><details class="snm"><summary>{{ fl.text | e }}</summary><p>{{ fl.more | default('') | e }}</p></details></li>
 {%- endfor %}
 </ul>
 {%- endif %}

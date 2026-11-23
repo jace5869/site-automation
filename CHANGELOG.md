@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.118.5 — 2026-11-23
+
+**To set up:** nothing - a site with its own stigman_scorecard_platforms keeps its list (add the new patterns there to use them).
+
+- **STIG scorecard: the common DISA STIGs and SRGs under their platform.** A big site saw a long *Other* line. The
+  default `stigman_scorecard_platforms` now places them (the first match wins, so a finding still counts once):
+  Windows `Active_Directory_*`, `IE_*`, `Adobe_Acrobat*`, `*Acrobat*`; VMware `VMware*`, `*_Aria_*`, `* Aria *`, `VCF*`,
+  `*Photon*` (not a bare `*Aria*`: it would take MariaDB); Network the ALG, IDPS, network device and infrastructure
+  SRGs, `Infoblox_*`, `VPN*`, `AAA_Services*`, `MULTI-FUNCTION_DEVICE` and `EVVM_*` (voice and video); Applications
+  `MariaDB_*`, `*ColdFusion*`, the web server, application security, central log server, container platform and cloud computing SRGs;
+  Storage `SAN`; and a new platform last, **Endpoint security** (`ESS_*`, `*McAfee*`, `HBSS_*`). The VMM SRG (any
+  hypervisor) stays Other. The first run compares with last week's point made the old way: a platform's *Since last
+  week* can jump once; the collections' counts do not change.
+- **Other folded.** The website's *How the scorecard counts* says "Other: N STIGs no platform matched"; a click opens
+  the names (no script). The email and its PDF get one line under *By platform*: the first 10 names and how many more.
+- **Slow or not read says which setting helps.** Rules or host lists that ran out of time: "raise
+  stigman_scorecard_rules_timeout (now 600 s)" (or the hosts or text timeout); rules not asked: stigman_scorecard_hosts
+  is false; another error: the reason in the job output.
+- Tests: tests/test_stig_scorecard.py Platforms11185 (each listed STIG on its platform, a finding once, a site list
+  replaces the default, the fold in the atlas, brief and ops looks, the capped line in the email) and the new hints.
+
 ## 1.118.4 — 2026-11-23
 
 **To set up:** nothing to set up.

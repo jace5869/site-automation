@@ -403,7 +403,7 @@ says what was read, when, and what it was compared with.
 | **Hosts** | every asset, the most CAT I first, with its oldest review. A host opens to its open rules |
 | **Fixed on the host, still Open** | the drift scans say it passes; STIG Manager still has it Open. Only when there are drift scans |
 | **The numbers behind the lines** | the open findings per week |
-| **Slow or not read** | only when something was: which collection, which step |
+| **Slow or not read** | only when something was: which collection, which step, and the setting that helps - for example *raise stigman_scorecard_rules_timeout (now 600 s)* (1.118.5) |
 
 - A finding is a rule Open on an asset, as STIG Manager has it now.
 - A collection is **CAT I open** (critical), **Worse** (more opened than closed this week) or **OK**.
@@ -462,18 +462,27 @@ patterns (`*` and `?`, any case). The first platform with a pattern that matches
 | Platform | Its default patterns |
 |---|---|
 | Linux | `RHEL_*`, `Oracle_Linux_*`, `*Ubuntu*`, `SLES_*`, `*Linux*` |
-| Windows | `MS_Windows_*`, `Windows_*`, `MS_SQL_*`, `IIS_*`, `MS_*`, `Microsoft_*` (Edge, Defender, Office) |
-| VMware | `VMW_*`, `*vSphere*`, `*ESXi*`, `*vCenter*` |
-| Network | `Cisco_*`, `Juniper_*`, `Palo_Alto_*`, `F5_*`, `Arista_*`, `*Router*`, `*Switch*`, `*Firewall*` |
-| Applications | `Apache_*`, `*Tomcat*`, `*PostgreSQL*`, `*Chrome*`, `*Firefox*`, `Mozilla_*`, `*Kubernetes*`, `Docker_*`, `Oracle_Database_*`, `*MongoDB*`, `*JBoss*`, `*Nginx*` |
-| Storage | `NetApp_*`, `*ONTAP*` |
+| Windows | `MS_Windows_*`, `Windows_*`, `MS_SQL_*`, `IIS_*`, `MS_*`, `Microsoft_*` (Edge, Defender, Office), `Active_Directory_*`, `IE_*`, `Adobe_Acrobat*`, `*Acrobat*` |
+| VMware | `VMW_*`, `*vSphere*`, `*ESXi*`, `*vCenter*`, `VMware*`, `*_Aria_*`, `* Aria *`, `VCF*`, `*Photon*` |
+| Network | `Cisco_*`, `Juniper_*`, `Palo_Alto_*`, `F5_*`, `Arista_*`, `*Router*`, `*Switch*`, `*Firewall*`, `Application_Layer_Gateway_SRG`, `IDPS_SRG`, `Network_*`, `Infoblox_*`, `VPN*`, `AAA_Services*`, `MULTI-FUNCTION_DEVICE`, `EVVM_*` (voice and video) |
+| Applications | `Apache_*`, `*Tomcat*`, `*PostgreSQL*`, `*Chrome*`, `*Firefox*`, `Mozilla_*`, `*Kubernetes*`, `Docker_*`, `Oracle_Database_*`, `*MongoDB*`, `*JBoss*`, `*Nginx*`, `MariaDB_*`, `Web_Server_SRG`, `Application_Security_Development_STIG`, `Central_Log_Server_SRG`, `Container_Platform_SRG`, `Cloud_Computing_*`, `*ColdFusion*` (an application server, not Windows) |
+| Storage | `NetApp_*`, `*ONTAP*`, `SAN` |
+| Endpoint security | `ESS_*`, `*McAfee*`, `HBSS_*` (1.118.5) |
 
 The order matters. `Oracle_Linux_8_STIG` is Linux (before Applications' `Oracle_Database_*`). A VMware product's own
-Apache STIG (`VMW_..._Apache_STIG`) is VMware. Anything else, an SRG or a printer for example, is Other.
+Apache STIG (`VMW_..._Apache_STIG`) is VMware. Aria is matched as `_Aria_` or ` Aria ` - a bare `*Aria*` would take
+`MariaDB_*` too. Anything else, a printer or the VMM SRG (any hypervisor, not one product) for example, is Other.
+
+1.118.5 added the common DISA STIGs and SRGs to the default (the rows above, from Active Directory on), and Endpoint
+security last, so the other platforms keep their colours. A site that sets its own `stigman_scorecard_platforms` keeps
+its list as it is - a site's list replaces the default whole, it is not merged. Add the new patterns to yours to use
+them. The first run after the update compares with last week's point, made with the old patterns: a platform's
+*Since last week* can show one week's jump (Other down, Windows or Network up). The collections' counts do not change.
 
 - An asset counts under each platform it has a STIG of. One with STIGs of two platforms counts in both.
 - A finding counts once, under its own STIG's platform.
-- *How the scorecard counts* lists the STIGs that are Other, by name. Add a pattern to give them a platform.
+- *How the scorecard counts* says how many STIGs are Other; a click opens their names (1.118.5). The email names the
+  first 10 under *By platform* and how many more. Add a pattern to give them a platform.
 - Each platform has a colour of its own, always beside its name. It is never a status colour.
 - `stigman_scorecard_platform_filter` limits a run to some platforms, for example `[Windows]`. Every number on the page
   is then of those platforms. A name that is no platform is said in the job output, and nothing is left out.
@@ -732,7 +741,7 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | `stigman_scorecard_top` | `5` | the rules listed in *Top rules open across hosts* |
 | `stigman_scorecard_weeks` | `12` | the weeks of the trend lines and of *The numbers behind the lines* |
 | `stigman_scorecard_cat2_warn` | `0` | a collection with this many CAT II open or more is a warning. `0`: off |
-| `stigman_scorecard_platforms` | Linux, Windows, VMware, Network, Applications, Storage | the platforms in order, each with its STIG patterns. No match: Other (1.67.0) |
+| `stigman_scorecard_platforms` | Linux, Windows, VMware, Network, Applications, Storage, Endpoint security | the platforms in order, each with its STIG patterns. No match: Other (1.67.0). A site's list replaces the default whole (1.118.5: more DISA STIGs placed, *By platform*) |
 | `stigman_scorecard_platform_filter` | `[]` | only these platforms, by name, for example `[Windows]`. `[]`: every platform (1.67.0) |
 | `stigman_scorecard_hosts` | `true` | list each open rule's hosts, a second call per collection. `false`: counts only (1.67.0) |
 | `stigman_scorecard_rules_timeout` | `600` | seconds for the rules per collection. Slower: that collection shows *Counts only* (1.66.2; 600 since 1.68.0) |

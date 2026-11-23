@@ -92,6 +92,10 @@
            'link_style': stigman_link_style | default('plain'),
            'platforms': stigman_scorecard_platforms,
            'platform_filter': stigman_scorecard_platform_filter,
+           'rules_timeout': stigman_scorecard_rules_timeout | int,
+           'hosts_timeout': stigman_scorecard_hosts_timeout | int,
+           'text_timeout': stigman_scorecard_text_timeout | int,
+           'timeout': check_stig_stigman_timeout | default(60) | int,
            'fixed': _sc_aap.fixed | default({}),
            'history': [
              "Earlier points: " ~ _sc_runs.counts.aap ~ " from AAP's job history, " ~ _sc_runs.counts.db ~ " from the report database.",
