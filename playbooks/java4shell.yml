@@ -644,6 +644,18 @@
               fi
           register: _j4s_up
           changed_when: true           # it recreates the service whenever it runs (as the shell module says by itself)
+          failed_when: false           # 1.112.3: said below in plain lines - a failed task here showed the whole script, not why
+
+        - name: Java4Shell | the restart, as it went
+          ansible.builtin.debug:
+            msg: "{{ (['rc ' ~ _j4s_up.rc | default('?')] + (_j4s_up.stdout_lines | default([]))[-15:]
+                      + (_j4s_up.stderr_lines | default([]))[-15:]) }}"
+
+        - name: Java4Shell | the restart worked
+          ansible.builtin.assert:
+            that: _j4s_up.rc | default(1) | int == 0
+            fail_msg: "The restart did not work - the lines above say why. Keycloak may be stopped now: start it (systemctl start <its unit>, or podman-compose up -d)."
+            quiet: true
 
         - name: Java4Shell | wait for each recreated Keycloak and read its flag
           ansible.builtin.shell:
