@@ -292,6 +292,11 @@ kept here: the portal draws the page from them, not from a snapshot.
 2. Launch it. The first run makes the tables `netmap_read`, `netmap_site`, `netmap_link`, `netmap_site_day` and `netmap_link_day`
    and writes the run's read.
 3. The job output says `Report database: read kept (... sites, ... WAN links)`.
+4. The portal reads the five tables and the `netmap` component of `schema_version` as `report_reader`.
+   Its **Report database** credential on *Site portal - deploy* needs only `GRANT SELECT` on `site_reports.*`.
+   The history endpoint shares a read-only transaction across viewers. Raw reads supply the 24-hour strips, two-hour
+   peaks and timed outages. When retention has rolled up a day, its totals supply outage counts and down minutes.
+   Individual read times and chart points are available only for raw reads.
 
 | | |
 |---|---|
@@ -1440,7 +1445,8 @@ SELECT snap_id, read_at, ok, nodes, nodes_down, alerts, seconds, error FROM sw_s
 
 ### How a report reads it
 
-The reader is `plugins/module_utils/site_swis_db.py`.
+The SolarWinds snapshot reader is `plugins/module_utils/site_swis_db.py`. The portal’s Network map history reads the
+netmap job’s own tables using `report_reader` as described in [The network map’s history](#the-network-maps-history-11110).
 
 - `answer()` gives the network map's read: the very dict `site_swis.collect()` gives, from the snapshot when it is new
   enough, else from SolarWinds itself. It adds `snapshot_at`, `age_seconds` and `source` (`db-snapshot` or

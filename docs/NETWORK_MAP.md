@@ -104,7 +104,8 @@ No step goes into the browser's history: **Back** leaves the page. **Motion:** `
 ### Live on the portal
 
 With a SolarWinds credential on the portal's deploy, the site portal has a **Network map** page (behind the card login),
-the same map as the report's.
+the same map as the report's. Above it, **History** shows the netmap job's last seven days from the report database.
+The map opens and refreshes independently, including when history is unavailable.
 
 - **At once:** the page shows the last map the portal's server kept - on disk, so also after a restart - with *as of
   HH:MM · refreshing*. It never waits for SolarWinds.
@@ -207,15 +208,39 @@ It reads SolarWinds itself when:
 The map is the same either way: the snapshot gives back exactly what a read of SolarWinds gives. Its time is the
 snapshot's. With the snapshot, the SolarWinds credential is only needed for that fallback.
 
-## The history (1.111.0)
+## History (1.111.0)
 
 With a **Report database** credential on the template *Network map*, each run keeps what it read - the sites, the WAN links, their status and
 their utilization - in the report database ([REPORT_DATABASE.md](REPORT_DATABASE.md), *The network map's history*). The portal's *Network map*
-draws its history from there (the portal side comes with the next step of this release).
+reads those tables as `report_reader`. If the portal already has its Report database credential, the next portal deploy includes history.
+Otherwise attach the read-only credential to *Site portal - deploy* and run it with `portal_report_db: auto`.
+
+The live line dates the job’s last read in the portal’s configured time zone. The next expected time is estimated from the
+usual interval. SolarWinds status comes from the live map below. If the SolarWinds address on the latest successful read
+differs from the portal’s configured address, the history shows both addresses in a message and the live map keeps running.
+The full-report link opens that exact job when its page is published.
+
+- **At a glance** shows the last observed status, sites and nodes, sites and links down, warnings, weekly outages,
+  the longest observed outage and successful reads out of all recorded reads in 24 hours.
+- **WAN links and Sites** show up to 300 rows each, worst first. Each row shows when its observed state began and its 7-day outage count and down time.
+  The 24-hour strips show up to the latest 288 reads on a shared axis, oldest to newest. A line shows how many reads or rows
+  are visible when a limit cuts the display. The glance totals include all reads and rows. Hover or focus a bar for its time
+  and state. WAN bar height is the higher of in and out.
+  Amber marks a warning or utilization over 80%. A missed read is a labelled grey gap. A missing element also breaks the streak.
+- **Open a WAN link** for its seven days. The solid line is peak inbound and the dashed line peak outbound in each two-hour
+  window. A red band marks a window with a down read. The link’s outages and a table of chart values are below.
+- **Down or warning, last 7 days** stacks the site and WAN link counts from the worst single read in each two-hour window
+  (most down, then most warnings). The outage list gives the observed start and recovery, or *Still down*.
+  *Last seen down* means the observations ended before recovery could be confirmed. Rolled-up days supply daily totals only.
+- The portal shares one database refresh across viewers about once a minute while the page is open.
+  A read is **stale** after twice the median interval between recent successful reads, with a 30-minute minimum stale threshold
+  and a 30-minute assumed interval when history cannot establish one. A stale or missed latest read dates each row *as of*
+  its last observation. If the database cannot be read, the history shows the problem and clears its rows.
+  Missing credentials, missing tables and an empty history each have their own message.
 
 - **Every read is kept 90 days** (`netmap_db_keep_reads_days`), then **one row a site and a link a day for 400 days** (`netmap_db_keep_days`).
   The job does the roll-up and the pruning; nothing is set up by hand (the tables are made on the first run).
-- **An outage** is a link or a site down for **two reads in a row**, also across midnight. A missed read, or reads far apart, never make one (the gap rule: REPORT_DATABASE.md). A link busy over `netmap_link_warn_percent` for three reads is a warning.
+- **An outage** is a link or a site down for **two reads in a row**, also across midnight. A missed read, or reads far apart, never make one (the gap rule: REPORT_DATABASE.md). A WAN link over 80% in either direction for three consecutive reads is a warning on the page. History adds no email finding or scheduled job.
 - The job never fails for it: a database that cannot be reached is one warning in the output, and the report goes on.
 - `netmap_db: false` turns it off; without the credential nothing is written.
 

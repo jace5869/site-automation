@@ -372,6 +372,9 @@
     - {src: "{{ role_path }}/../../plugins/filter/ad_swis_filters.py", dest: ad_swis_filters.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_report_db.py", dest: site_report_db.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_ad_ident.py", dest: site_ad_ident.py}
+    - {src: netmap_history.py, dest: netmap_history.py}
+    - {src: static/netmap-history.js, dest: static/netmap-history.js}
+    - {src: static/netmap-history.css, dest: static/netmap-history.css}
     - {src: static/ad-page.js, dest: static/ad-page.js}
     - {src: static/ad-page.css, dest: static/ad-page.css}
   loop_control:

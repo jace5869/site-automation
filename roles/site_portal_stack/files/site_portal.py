@@ -47,6 +47,7 @@ APP = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP)
 import site_portal_filters as rules  # noqa: E402  the actions' loader and rules (the deploy checks with the same)
 import site_aap  # noqa: E402  AAP's API (the same client as the jobs' modules)
+import netmap_history  # noqa: E402
 import site_time  # noqa: E402  the reports' times in report_time_zone (the same as the report pages)
 from site_time import local as in_zone  # noqa: E402
 try:
@@ -3550,7 +3551,8 @@ def approvals_page(cfg, portal, cn):
 # ---- 1.85.0: the live network map ----------------------------------------------------------------------------------------
 NETMAP_FULL_MIN = 300           # 1.95.0: the whole read at most this often, whatever netmap_full_seconds says (tests lower it)
 NETMAP_IDLE = 300               # seconds without a viewer after which SolarWinds is no longer read (read again at the next view)
-NETMAP_STATIC = ("world-land.js", "netmap.js", "netglobe.js", "maplabel.js", "netregion.js", "netmap-live.js", "netmap.css")
+NETMAP_STATIC = ("world-land.js", "netmap.js", "netglobe.js", "maplabel.js", "netregion.js", "netmap-live.js", "netmap.css",
+                 "netmap-history.js", "netmap-history.css")
 
 
 class SwisSource(object):
@@ -3878,17 +3880,18 @@ def netmap_page(cfg, cn, static_dir, statics):
         markup = '<div class="nm" id="nm"></div>'
     v = lambda n: statics.get(n, "")
     poll = max(5, min(30, cfg.netmap_seconds // 4))
-    body = ('<div class="hero"><h1>Network map</h1>'
-            '<p class="lede">Live from SolarWinds (read only): the last map this server kept shows at once; while the page is open it '
-            'reads the status every %d s and the whole map every %d min - one read that everyone here shares. The daily report keeps '
-            'the history.</p></div>'
+    message = "Reading network map history…" if cfg.report_db else netmap_history.NO_LOGIN
+    body = ('<div class="hero"><p class="eyebrow">Network map · SolarWinds</p><h1>Network map</h1>'
+            '<p class="lede">Now and the last 7 days, from the netmap job’s reads in the report database. The map is below the history.</p></div>'
+            '<section id="netmap-history" aria-label="Network map history" data-src="%sapi/netmap-history">'
+            '<p class="nmh-muted">%s</p></section>'
             '<p class="nm-live" id="nm-live" data-src="%sapi/netmap" data-poll="%d"><i class="nm-dotlive" aria-hidden="true"></i>'
             '<span class="nm-tick" aria-live="off">reading SolarWinds…</span></p>'
             '<p class="note" id="nm-why" hidden></p>%s<div class="nm-toasts" id="nm-toasts" aria-live="polite"></div>'
-            % (cfg.netmap_seconds, max(NETMAP_FULL_MIN, int(cfg.netmap_opts.get("full_seconds") or 1800)) // 60, cfg.path, poll, markup))
-    body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, v(n)) for n in ("world-land.js", "netmap.js", "netglobe.js", "maplabel.js", "netregion.js", "netmap-live.js"))
+            % (cfg.path, esc(message), cfg.path, poll, markup))
+    body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, v(n)) for n in ("world-land.js", "netmap.js", "netglobe.js", "maplabel.js", "netregion.js", "netmap-live.js", "netmap-history.js"))
     return shell(cfg, "Network map", body, cn, page="netmap",
-                 head='<link rel="stylesheet" href="%sstatic/netmap.css?v=%s">' % (cfg.path, v("netmap.css")))
+                 head="".join('<link rel="stylesheet" href="%sstatic/%s?v=%s">' % (cfg.path, n, v(n)) for n in ("netmap.css", "netmap-history.css")))
 
 
 # ---- 1.101.2: the live AD page --------------------------------------------------------------------------------------------
@@ -3938,15 +3941,15 @@ class AdDb(object):
             except OSError:
                 same = False
             if not same:                                       # a new CA on the credential (a deploy since): written again, whole
-                tmp = ca + ".tmp"
-                try:
-                    os.unlink(tmp)
-                except FileNotFoundError:
-                    pass
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    fh.write(p["ca_pem"])
-                os.replace(tmp, ca)
+                # The AD and network map readers can initialize this CA concurrently.
+                with tempfile.NamedTemporaryFile(mode="w", dir=self.cfg.data, delete=False, encoding="utf-8") as fh:
+                    try:
+                        fh.write(p["ca_pem"])
+                        fh.flush()
+                        os.replace(fh.name, ca)
+                    finally:
+                        if os.path.exists(fh.name):
+                            os.unlink(fh.name)
         conn, _tls = site_report_db.connect({"host": p.get("host"), "port": int(p.get("port") or 3309), "user": p.get("user"),
                                              "password": p.get("password"), "database": p.get("database") or "site_reports",
                                              "tls": bool(p.get("tls")), "ca_file": ca, "connect_timeout": 10,
@@ -4069,31 +4072,11 @@ class AdDb(object):
         d = self._dt(v)
         return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else ""
 
-class AdLive(object):
-    """The portal's Active Directory page (/portal/ad): the AD job's runs from the report database (AdDb, read every AD_POLL s
-    while someone has the page open), each DC's SolarWinds status for the newest run (read every portal_ad_seconds with the
-    Network map's login), the AD template's next scheduled run (AAP), and the link to the newest run's full report (the
-    report website's index.json: its line marked live: ad). One read of each that every viewer shares; a read that fails
-    keeps the last answer, said as stale with its own time - never as the current one."""
-
-    def __init__(self, cfg, log, aap=None, source=None, db=None):
-        self.cfg, self.log, self.aap = cfg, log, aap
-        self.lock = threading.Lock()
-        self.wake = threading.Event()
-        self.seen, self.thread, self.client = 0.0, None, None
-        self.sw, self.sw_stale, self.sw_fails, self.sw_next = None, "", 0, 0.0
-        self.sched = {}                                      # template id -> (when asked, {next}): each template its own
-        self.source = source or self._swis
-        # the AD job's runs in the report database (AdDb): read every AD_POLL s while the page is open; None: no login
-        self.db = db if db is not None else (AdDb(cfg) if cfg.report_db else None)
-        self.dbm, self.db_at, self.db_stale, self.db_fails, self.db_due, self.sw_due = None, 0.0, "", 0, 0.0, 0.0
-        self.idx_sig, self.link_lines = None, []
-        self.sw_tried = ""                                   # the run SolarWinds was last asked for (its backoff kept for it)
+class ReportIndex:
+    live_kind = None
 
     def report_link(self, job=None):
-        """The shown run's own page on the report website -> {url, when} or None: in index.json's lines marked live: ad, the
-        run of that job (a line's runs each keep their page); no such run: no link (never another run's page). Read again
-        only when the file changed."""
+        """Find the published page of this exact AAP job. Refresh the index when it changes."""
         idx = os.path.join(os.path.realpath(self.cfg.reports), "index.json")
         try:
             st = os.stat(idx)
@@ -4107,7 +4090,7 @@ class AdLive(object):
             with open(idx, encoding="utf-8") as fh:
                 doc = json.load(fh)
             for r in (doc.get("reports") or []) if isinstance(doc, dict) else []:
-                if not isinstance(r, dict) or r.get("live") != "ad":
+                if not isinstance(r, dict) or (self.live_kind and r.get("live") != self.live_kind):
                     continue
                 # the line's own run (its page, else latest.html) and each run it keeps with its own page
                 runs = [dict(r, page=r.get("page") or r.get("latest"))] + [x for x in r.get("runs") or [] if isinstance(x, dict)]
@@ -4125,6 +4108,30 @@ class AdLive(object):
     def _pick(lines, job):
         mine = [x for x in lines or [] if job and str(job) != "0" and x["job"] == str(job)]
         return {"url": mine[0]["url"], "when": mine[0]["when"]} if mine else None
+
+
+class AdLive(ReportIndex):
+    """The portal's Active Directory page (/portal/ad): the AD job's runs from the report database (AdDb, read every AD_POLL s
+    while someone has the page open), each DC's SolarWinds status for the newest run (read every portal_ad_seconds with the
+    Network map's login), the AD template's next scheduled run (AAP), and the link to the newest run's full report (the
+    report website's index.json: its line marked live: ad). One read of each that every viewer shares; a read that fails
+    keeps the last answer, said as stale with its own time - never as the current one."""
+
+    live_kind = "ad"
+
+    def __init__(self, cfg, log, aap=None, source=None, db=None):
+        self.cfg, self.log, self.aap = cfg, log, aap
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.seen, self.thread, self.client = 0.0, None, None
+        self.sw, self.sw_stale, self.sw_fails, self.sw_next = None, "", 0, 0.0
+        self.sched = {}                                      # template id -> (when asked, {next}): each template its own
+        self.source = source or self._swis
+        # the AD job's runs in the report database (AdDb): read every AD_POLL s while the page is open; None: no login
+        self.db = db if db is not None else (AdDb(cfg) if cfg.report_db else None)
+        self.dbm, self.db_at, self.db_stale, self.db_fails, self.db_due, self.sw_due = None, 0.0, "", 0, 0.0, 0.0
+        self.idx_sig, self.link_lines = None, []
+        self.sw_tried = ""                                   # the run SolarWinds was last asked for (its backoff kept for it)
 
     # -- SolarWinds -----------------------------------------------------------------------------------------------------------
     def _swis(self, live):
@@ -4320,8 +4327,64 @@ def ad_page(cfg, cn, statics):
             '<script src="%sstatic/ad-page.js?v=%s"></script>' % (cfg.path, cfg.path, v("ad-page.js")))
     return shell(cfg, "Active Directory", body, cn, page="ad", head='<link rel="stylesheet" href="%sstatic/ad-page.css?v=%s">' % (cfg.path, v("ad-page.css")))
 
+class NetmapHistoryLive(ReportIndex):
+    """A viewer starts at most one refresh per minute. An idle page schedules no reads."""
+
+    def __init__(self, cfg, db=None):
+        self.cfg = cfg
+        self.idx_sig, self.link_lines = None, []
+        self.db = db or (netmap_history.Database(AdDb(cfg).connect, cfg.swis_url) if cfg.report_db else None)
+        self.lock = threading.Condition()
+        self.reading = False
+        self.updated = self.stale_at = None
+        self.cached = self.encode({"message": netmap_history.NO_LOGIN} if not self.db else {"loading": True})
+        self.waiting = self.encode({"loading": True})
+
+    @staticmethod
+    def encode(model):
+        body = json.dumps(model, separators=(",", ":"), ensure_ascii=False)
+        return body, '"%s"' % hashlib.sha256(body.encode()).hexdigest()[:20]
+
+    def refresh(self):
+        stale_at = None
+        try:
+            model = self.db.read(int(time.time()))
+            if model.get("read"):
+                if not model["stale"]:
+                    stale_at = model["read"]["read_at"] + model["stale_after"]
+                model["report"] = self.report_link(model["read"]["job"])
+                model["zone"] = self.cfg.tz_name if self.cfg.tz else "UTC"
+            answer = self.encode(model)
+        except Exception:
+            answer, stale_at = self.encode({"message": netmap_history.DB_ERROR}), None
+        with self.lock:
+            self.cached, self.updated, self.reading = answer, time.monotonic(), False
+            self.stale_at = stale_at
+            self.lock.notify_all()
+
+    def viewed(self):
+        with self.lock:
+            if self.db and not self.reading and (self.updated is None or time.monotonic() - self.updated >= AD_POLL):
+                self.reading = True
+                threading.Thread(target=self.refresh, name="netmap-history", daemon=True).start()
+
+    def answer(self, etag_in=""):
+        with self.lock:
+            self.lock.wait_for(lambda: not self.reading, timeout=1)
+            if self.stale_at is not None and time.time() > self.stale_at:
+                model = json.loads(self.cached[0])
+                model["stale"] = True
+                for outage in model.get("outages", []):
+                    if outage["end"] == "Still down":
+                        outage["end"] = "Last seen down"
+                self.cached, self.stale_at = self.encode(model), None
+            body, tag = self.waiting if self.reading else self.cached
+        return (304, "", tag) if etag_matches(etag_in, tag) else (200, body, tag)
+
+
 def make_handler(cfg, portal, static_dir):
     live = NetLive(cfg, portal.log) if not cfg.netmap_why else None
+    history = NetmapHistoryLive(cfg) if live else None
     adl = AdLive(cfg, portal.log, getattr(portal, "aap", None)) if cfg.ad else None      # 1.101.2: the live AD page
     statics = {}                        # 1.85.0: the map's files, by a short hash of each (a browser that keeps a copy takes the new one)
     for n in NETMAP_STATIC + AD_STATIC:
@@ -4462,11 +4525,12 @@ def make_handler(cfg, portal, static_dir):
                 adl.viewed()
                 code, body, etag = adl.answer((self.headers.get("If-None-Match") or "").strip())
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
-            if path == "/api/netmap":
+            if path in ("/api/netmap", "/api/netmap-history"):
                 if not live:
                     return self._send(404, {"error": "The network map is off here: %s." % cfg.netmap_why})
-                live.viewed()
-                code, body, etag = live.answer((self.headers.get("If-None-Match") or "").strip())
+                reader = history if path == "/api/netmap-history" else live
+                reader.viewed()
+                code, body, etag = reader.answer((self.headers.get("If-None-Match") or "").strip())
                 return self._send(code, body if code == 200 else b"", "application/json", [("ETag", etag)] if etag else None)
             portal.refresh_soon()                           # 1.78.0: the actions AAP offers (portal_discover_seconds; 1.79.9: read in the background)
             if path == "/":

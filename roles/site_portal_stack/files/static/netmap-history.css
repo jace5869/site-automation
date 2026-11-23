@@ -1,0 +1,66 @@
+/* The portal shell supplies the three palettes, tiles, section headings, tables and chips. */
+#netmap-history { margin: 8px 0 24px; }
+.nmh-muted, .nmh-foot, .nmh-values, .nmh-leg, .nmh-hint, #netmap-history small { color: var(--muted); }
+.nmh-muted { font-size: 13.5px; }
+.nmh-foot { max-width: 90ch; margin: 24px 0; font-size: 12.5px; }
+.nmh-tiles { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.nmh-tiles .tile:nth-child(n+5) { border-top: 1px solid var(--line); }
+.nmh-tiles .tile:nth-child(5) { border-left: 0; }
+#netmap-history .chip.s-ok { color: var(--ink); color: color-mix(in srgb, var(--ok) 82%, var(--ink)); }
+.nmh-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 3px var(--card-strong); }
+.nmh-dot.ok, .nmh-leg .ok { background: var(--ok); }
+.nmh-dot.gap, .nmh-leg .gap { background: var(--muted); }
+.nmh-leg .critical { background: var(--critical); }
+.nmh-leg .warning { background: var(--warning); }
+.nmh-leg { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 2px; align-items: center; font-size: 12.5px; }
+.nmh-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 1px; margin-right: 6px; }
+.nmh-hint { font: 500 12.5px var(--sans); }
+#netmap-history h2 .nmh-hint { margin-left: auto; }
+#netmap-history th, #netmap-history td, .nmh-tip { overflow-wrap: anywhere; white-space: normal; }
+#netmap-history .tw { overflow: visible; }
+#netmap-history table { table-layout: fixed; }
+#netmap-history .nmh-elements > table > thead th:nth-child(1) { width: 21%; }
+#netmap-history .nmh-elements > table > thead th:nth-child(2) { width: 10%; }
+#netmap-history .nmh-elements > table > thead th:nth-child(3) { width: 16%; }
+#netmap-history .nmh-elements > table > thead th:nth-child(5) { width: 22%; }
+#netmap-history small { display: block; margin-top: 2px; font-size: 12.5px; }
+.nmh-toggle { border: 0; padding: 0 7px 0 0; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.nmh-toggle[aria-expanded=true] { transform: rotate(90deg); }
+.nmh-open { cursor: pointer; }
+.nmh-detail > td { padding: 0; }
+.nmh-detail-body { background: var(--hover); padding: 12px 14px 14px 32px; }
+.nmh-strip { width: 100%; max-width: 245px; height: 24px; vertical-align: middle; }
+.nmh-strip .bar.ok { fill: var(--ok); opacity: .55; }
+.nmh-strip .bar.warning, .nmh-plot .warning { fill: var(--warning); }
+.nmh-strip .bar.critical, .nmh-plot .critical { fill: var(--critical); }
+.nmh-strip .bar.gap, .nmh-strip .bar.info { fill: var(--muted); }
+.nmh-strip .hit, .nmh-plot .hit { fill: transparent; }
+.nmh-strip g:focus .hit, .nmh-strip g:hover .hit, .nmh-plot .hit:hover { fill: var(--hover); stroke: var(--muted); stroke-width: .5; }
+.nmh-plot { padding: 8px 10px; }
+.nmh-plot svg { display: block; width: 100%; height: auto; }
+.nmh-plot text { fill: var(--muted); font: 12px var(--sans); }
+.nmh-plot .grid { stroke: var(--line); }
+.nmh-plot .cap { stroke: var(--warning); stroke-dasharray: 2 4; }
+.nmh-plot .band { fill: var(--critical); opacity: .22; }
+.nmh-plot .ln-in, .nmh-plot .ln-out { fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.nmh-plot .ln-out { stroke: var(--muted); stroke-dasharray: 4 3; }
+.nmh-values { font-size: 12.5px; margin-top: 8px; }
+.nmh-values summary { cursor: pointer; }
+.nmh-tip { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
+.nmh-tip svg { width: 100%; height: 100%; }
+.nmh-tip rect { fill: var(--card-solid); stroke: var(--edge); }
+.nmh-tip text { fill: var(--ink); font: 12.5px var(--sans); }
+.nmh-tip .nmh-card-time { font-weight: 650; }
+.nmh-narrow { display: none; }
+@media (max-width: 900px) {
+  .nmh-wide { display: none; }
+  .nmh-narrow { display: block; color: var(--muted); font-size: 12px; }
+  .nmh-tiles { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .nmh-tiles .tile:nth-child(odd) { border-left: 0; }
+  .nmh-tiles .tile:nth-child(n+3) { border-top: 1px solid var(--line); }
+  #netmap-history .nmh-elements > table > thead th:nth-child(1) { width: 30%; }
+  #netmap-history .nmh-elements > table > thead th:nth-child(2) { width: 16%; }
+  #netmap-history .nmh-elements > table > thead th:nth-child(3) { width: 24%; }
+  #netmap-history .nmh-elements > table > thead th:nth-child(5) { width: 30%; }
+  .nmh-detail-body { padding-left: 14px; }
+}

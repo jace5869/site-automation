@@ -801,6 +801,17 @@ setting that cannot work (`netmap_site_pattern`, `netmap_hierarchy`, `netmap_rol
   every 5 minutes, and matches it as the AD report does (`ad_site_map` in all.yml). Without those tables the layer is off
   and says *AD replication not in the report database yet*. `netmap_ad_layer: false` turns it off.
 
+### Network map history (1.111.0)
+
+Above the map, the portal shows the Network map job’s reads for each WAN link and site. Focus or hover the bars for a read’s
+details. Open a link for its two-hour peaks and outages over seven days. The whole-map chart and outage table follow the site rows.
+
+The authenticated `/portal/api/netmap-history` uses the existing `portal_report_db` credential (`PORTAL_REPORT_DB`,
+`report_reader`). One read-only transaction supplies all viewers about once a minute while the page is open. An unchanged
+answer returns HTTP 304. Times use `report_time_zone`. A stale or missed read dates the last observed rows. A database error
+replaces them with a message. The live SolarWinds map below continues with its own refresh interval. See
+[Network map history](NETWORK_MAP.md#history-11110) for the streak and gap rules.
+
 ## The Active Directory page (1.101.2)
 
 The portal's **Active Directory** page (`/portal/ad`) shows the AD health job's runs from the report database

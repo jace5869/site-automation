@@ -71,9 +71,9 @@ files off, removed), tests/incident/run_incident_test.sh (the AAR from job 4714,
 job, a bad answer, no credential).
 ## 1.111.0 — 2026-11-22
 
-**To set up:** nothing by hand. Add the **Report database** credential (the writer's) to the template *Network map* if it has none; the setup job attaches it. The first run makes the tables.
+**To set up:** nothing by hand. Add the **Report database** credential (the writer's) to the template *Network map* if it has none; the setup job attaches it. The first run makes the tables. Deploy the updated portal. If it already has the report database credential, its history needs no further setup. Otherwise attach the read-only **Report database** credential (report_reader) to *Site portal - deploy* and run it.
 
-**Network map history: the job keeps what it reads (the writer side; the portal page comes after).**
+**Network map history: the job keeps what it reads.**
 
 - Each *Network map* run keeps its read in the report database: a row for the read (also when SolarWinds could not be read: `ok` 0), a row for each site (its nodes by status) and for each WAN link (status, in and out utilization). New module `site_netmap_db` (`roles/netmap_report/library`), tasks `roles/netmap_report/tasks/db.yml`, filter `netmap_db_rows`.
 - Every read is kept 90 days (`netmap_db_keep_reads_days`). Older days become one row for each site and link a day (`netmap_site_day`, `netmap_link_day`: reads, reads down and warning, the busiest in and out, the averages, outages, minutes down) and their reads are deleted. The day rows are kept 400 days (`netmap_db_keep_days`). The job does both; at most 40 days a run.
@@ -87,6 +87,8 @@ job, a bad answer, no credential).
 - The job never fails for it: a database that is down, a wrong password, a read-only account or a missing table is one warning, and the report goes on. `netmap_db: false` turns it off; no credential, nothing written. A dry run (Check) writes nothing.
 - Settings: `netmap_db`, `netmap_db_create`, `netmap_db_timeout`, `netmap_db_keep_reads_days`, `netmap_db_keep_days`. Docs: REPORT_DATABASE.md (*The network map's history*, the statements for making the tables by hand), NETWORK_MAP.md.
 - Tests: `tests/test_netmap_db.py` (40: writing, outages across midnight, the gap rule, down minutes, merging, the lock, pruning, the statements in the doc), `tests/netmap/run_netmap_db_test.sh` (a real MySQL 8.4: tables, the read, roll-up of three old days, pruning, dry run, wrong password, read-only account, server down, no table; ansible-core 2.22 and 2.16).
+
+**Network map history on the portal.** Above the live map, WAN links and sites show their last 24 hours and outages over seven days. The tables show up to 300 links and 300 sites, worst first, with the latest 288 reads in each strip. A line gives the counts when the display is limited. Open a link for its inbound and outbound peaks. The whole-map chart shows the worst read in each two-hour window. Three consecutive reads over 80% utilization mark a WAN link as a warning. Missed reads appear as gaps, stale rows say when they were observed, and a database error clears the rows. When the latest successful read names a different SolarWinds address from the portal, a message shows both addresses and the live map keeps running. The authenticated history endpoint shares one read-only refresh per minute while viewed. This page adds no email finding or job.
 
 ## 1.110.0 — 2026-11-22
 
