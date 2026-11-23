@@ -96,6 +96,63 @@ class Lost1124(unittest.TestCase):
         self.assertFalse(any(l.startswith("VMs read") for l in how["lines"]))
 
 
+def apd(key, t, host_, dev, typ="esx.problem.storage.apd.start"):
+    return {"key": key, "time": t, "type": typ, "host": host_, "vcenter": VC, "args": {},
+            "message": "Device %s has %s the All Paths Down state." % (dev, "exited" if "clear" in typ else "entered")}
+
+
+class Fold1124(unittest.TestCase):
+    """1.112.4 (the user): a datastore lost on several hosts is ONE line, first, the headline - its hosts' "all paths down"
+    lines fold into it (its detail); a device lost on 2+ hosts is one line; one host's path problem stays as it is."""
+
+    def d(self):
+        hs = [host(h) for h in ("esx02.example.mil", "esx04.example.mil", "esx05.example.mil", "esx06.example.mil")]
+        dss = [{"name": "ds-07", "accessible": False, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1", "devices": ["naa.600a07"]},
+               {"name": "ds-08", "accessible": True, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1", "devices": ["naa.600a08"]},
+               {"name": "ds-09", "accessible": True, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1", "devices": ["naa.600a09"]}]
+        ev = [apd(1, "2026-11-20T22:09:00Z", "esx02.example.mil", "naa.600a07"), apd(2, "2026-11-20T22:09:30Z", "esx04.example.mil", "naa.600a07"),
+              apd(3, "2026-11-20T22:10:00Z", "esx05.example.mil", "naa.600a07"),
+              apd(4, "2026-11-20T22:11:00Z", "esx02.example.mil", "naa.600a08"), apd(5, "2026-11-20T22:11:00Z", "esx04.example.mil", "naa.600a08"),
+              apd(6, "2026-11-20T22:12:00Z", "esx06.example.mil", "naa.600a09")]
+        return data(hosts=hs, datastores=dss, events=ev, vms_read=30, vms_lost=[lost("app01"), lost("app02")])
+
+    def test_1_the_lost_datastore_is_one_line_and_first(self):
+        cs = w.vm_watch_conditions(self.d())
+        first = cs[0]
+        self.assertEqual((first["kind"], first["object"]), ("datastore", "ds-07"))
+        self.assertEqual(first["summary"], "Datastore ds-07 NOT ACCESSIBLE on 3 hosts (esx02, esx04, esx05): all paths down since "
+                                           "2026-11-20T22:09:00Z - 2 VMs inaccessible: app01, app02")
+        self.assertEqual(len(first["paths"]), 3)
+        self.assertTrue(first["paths"][0].startswith("esx02.example.mil: all paths down on host esx02.example.mil (device naa.600a07)"))
+        storage = [c for c in cs if c["kind"] == "storage"]
+        self.assertEqual([c["object"] for c in storage], ["esx06.example.mil"])          # one host, no lost datastore: as it was
+        self.assertEqual(first["id"], "vm-watch:datastore:ds-07")                         # the ticket stays the datastore's
+
+    def test_2_a_device_on_two_hosts_is_one_line(self):
+        cs = w.vm_watch_conditions(self.d())
+        c = next(c for c in cs if c["object"] == "ds-08")
+        self.assertEqual(c["severity"], "critical")
+        self.assertTrue(c["summary"].startswith("Datastore ds-08 lost its paths on 2 hosts (esx02, esx04): all paths down since"))
+        self.assertFalse(any(x["kind"] == "storage" and "naa.600a08" in x["summary"] for x in cs))
+
+    def test_3_the_headline(self):
+        d = self.d()
+        cs = w.vm_watch_conditions(d)
+        rep = w.vm_watch_report(d, cs, w.vm_watch_actions(cs))
+        self.assertTrue(rep["title"].startswith("Datastore ds-07 NOT ACCESSIBLE on 3 hosts (esx02, esx04, esx05) - VM outage watch: "), rep["title"])
+        row = next(s for s in rep["sections"] if s["title"] == "Down or hung now")["rows"][0]
+        self.assertIn("Per host: esx02.example.mil: all paths down", row[3])
+
+    def test_4_cleared_on_every_host_is_a_warning(self):
+        ev = [apd(1, "2026-11-20T22:09:00Z", "esx02.example.mil", "naa.600a08"), apd(2, "2026-11-20T22:09:00Z", "esx04.example.mil", "naa.600a08"),
+              apd(3, "2026-11-20T22:20:00Z", "esx02.example.mil", "naa.600a08", "esx.clear.storage.apd.exit"),
+              apd(4, "2026-11-20T22:20:00Z", "esx04.example.mil", "naa.600a08", "esx.clear.storage.apd.exit")]
+        cs = w.vm_watch_conditions(dict(self.d(), events=ev))
+        c = next(c for c in cs if c["object"] == "ds-08")
+        self.assertEqual(c["severity"], "warning")
+        self.assertTrue(c["summary"].endswith("cleared since on every host"))
+
+
 class Conditions(unittest.TestCase):
     def test_clean(self):
         self.assertEqual(w.vm_watch_conditions(data()), [])

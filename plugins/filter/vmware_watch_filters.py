@@ -172,10 +172,11 @@ def vm_watch_conditions(data, opts=None):
                                              (", cleared at %s" % cleared.get("time", "")) if cleared else ", not cleared"),
                   "Check the array and the SAN / storage network for the device; the VMs on its datastore may be hung.", e.get("message", ""))
         c["object"] = e.get("host") or "?"
+        c.update({"device": dev, "host": e.get("host") or "", "since": e.get("time", ""), "what": what})
         prev = seen.get(key)
         if prev is None or RANK[c["severity"]] < RANK[prev["severity"]]:
             seen[key] = c
-    out += list(seen.values())
+    out += _fold_paths(seen, out, d, lost)
     seen = {}
     for e in evs:
         sev = EVENT_SEVERITY.get(e.get("type"))
@@ -245,6 +246,63 @@ def vm_watch_conditions(data, opts=None):
                 grouped += under.get(c["object"], [])
         out = grouped
     return out
+
+
+def _short(name):
+    return str(name or "").split(".")[0]
+
+
+def _fold_paths(seen, out, d, lost):
+    """1.112.4 (the user, after a 60-hour storage outage: "it should have been clearly noticeable in the report that a datastore
+    went down instead of sifting through all paths down on each host"). The hosts' storage conditions (seen: one per host and
+    device) of a datastore that is not accessible fold INTO that datastore's condition: "Datastore ds-07 NOT ACCESSIBLE on 3
+    hosts (esx02, esx04, esx05): all paths down since ... - 6 VMs inaccessible", with each host's line in its paths (the
+    report's detail). The same device lost on 2 or more hosts, its datastore still accessible: one condition for it. A path
+    problem on one host, of no lost datastore, stays as it is. -> the storage conditions left."""
+    dev_ds = {}
+    for ds in d.get("datastores") or []:
+        for dev in ds.get("devices") or []:
+            dev_ds[dev] = ds["name"]
+    ds_cond = dict((c["object"], c) for c in out if c["kind"] == "datastore")
+    groups = {}
+    for key, c in seen.items():
+        name = dev_ds.get(c.get("device") or "")
+        g = ("ds", name) if name else (("dev", c["device"]) if c.get("device") else None)
+        if g is not None:
+            groups.setdefault(g, []).append(key)
+    left = dict(seen)
+    for (kind, name), keys in groups.items():
+        cs = sorted((seen[k] for k in keys), key=lambda c: (c.get("since", ""), c.get("host", "")))
+        hosts = sorted(set(c.get("host") or "?" for c in cs))
+        down = [c for c in cs if c["severity"] == "critical"]
+        paths = ["%s: %s" % (c.get("host") or "?", c["summary"]) for c in cs]
+        first = cs[0]
+        if kind == "ds" and name in ds_cond:
+            ds = ds_cond[name]
+            mine = sorted(v.get("name", "") for v in lost if name in (v.get("datastores") or []))
+            head = "Datastore %s NOT ACCESSIBLE on %d host%s (%s)" % (name, len(hosts), "" if len(hosts) == 1 else "s",
+                                                                      ", ".join(_short(h) for h in hosts))
+            ds.update({"summary": "%s: %s since %s%s" % (head, first.get("what", ""), first.get("since", ""),
+                                                         (" - %d VM%s inaccessible: %s" % (len(mine), "" if len(mine) == 1 else "s",
+                                                                                           _shown_names(mine))) if mine else ""),
+                       "headline": head, "paths": paths, "hosts": hosts, "since": first.get("since", ""),
+                       "detail": "Per host: " + "; ".join(paths)})
+        elif len(set(c.get("host") for c in down)) >= 2 or (not down and len(hosts) >= 2):
+            what = (down or cs)[0].get("what", "")
+            label = ("Datastore %s" % name) if kind == "ds" else ("Device %s" % name)
+            head = "%s lost its paths on %d hosts (%s)" % (label, len(hosts), ", ".join(_short(h) for h in hosts))
+            c = _cond("critical" if down else "warning", "datastore", "datastore" if kind == "ds" else "device", name, first,
+                      "%s: %s since %s%s" % (head, what, first.get("since", ""), "" if down else ", cleared since on every host"),
+                      first.get("todo", ""))
+            c.update({"headline": head, "paths": paths, "hosts": hosts, "since": first.get("since", ""), "device": first.get("device", ""),
+                      "detail": "Per host: " + "; ".join(paths), "vcenter": first.get("vcenter", "")})
+            c["id"] = "vm-watch:paths:%s" % name
+            out.append(c)
+        else:
+            continue
+        for k in keys:
+            left.pop(k, None)
+    return list(left.values())
 
 
 def _event_todo(type_id, otype):
@@ -368,6 +426,9 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
     hung = [c for c in cs if c["kind"] == "hung"]
     title = "VM outage watch: %s" % (", ".join(x for x in ("%d critical" % len(crit) if crit else "", "%d warning" % len(warn) if warn else "") if x)
                                      or "nothing down")
+    lead = next((c for c in cs if c["kind"] == "datastore" and c["severity"] == "critical"), None)
+    if lead is not None:                         # 1.112.4: a lost datastore is the headline (the email's subject, the page's title)
+        title = "%s - %s" % (lead.get("headline") or "Datastore %s NOT ACCESSIBLE" % lead["object"], title)
     status = "critical" if crit else "warning" if warn else "ok"
     conf = d.get("confirm") or {}
     pr = d.get("probe") or {}
@@ -388,7 +449,8 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
     if cs:
         sections.append({"title": "Down or hung now", "status": status,
                          "columns": ["Severity", "Object", "Where", "Problem", "What to do"],
-                         "rows": [[c["severity"], "%s %s" % (c["object_type"], c["object"]), _where(c, multi), c["summary"], c["todo"]] for c in cs],
+                         "rows": [[c["severity"], "%s %s" % (c["object_type"], c["object"]), _where(c, multi),
+                                   c["summary"] + ((". Per host: " + "; ".join(c["paths"])) if c.get("paths") else ""), c["todo"]] for c in cs],
                          "row_status": [c["severity"] for c in cs], "cell_status": [[c["severity"], "", "", "", ""] for c in cs]})
     if hung:
         wr = a.get("would_restart") or []
