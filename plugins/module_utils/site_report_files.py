@@ -124,7 +124,8 @@ def prepare(items, max_mb, types=TYPES, packed_only=False):
 def describe(desc, ext):
     """1.118.1: a file's description: the report's own (one line, at most 300 characters), else its type's."""
     d = ' '.join(str(desc or '').split())[:300]
-    return d or DESC.get(str(ext or '').lower(), '')
+    ext = str(ext or '').lower()
+    return d or DESC.get(ext) or ('%s file' % ext[1:].upper() if re.match(r'\.[a-z0-9]{1,8}$', ext) else '')
 
 
 def read_bytes(f):
@@ -182,8 +183,8 @@ def put_files(html, files, refused, page, folder, web_look=True):
     """The page with its Files line (at MARK, else at the top of its body) and each Download link a report put in it
     (site-report-file:NAME) made into the link to this run's file - or why it is not on the website, or nothing when
     the run hands over no files."""
-    block = block_html(files, refused, page, folder, web_look)
     row = ROW_RE.search(html)
+    block = block_html(files, refused, page, folder, True if MARK in html else False if row else web_look)
     if MARK in html:
         html = html.replace(MARK, block, 1)
     elif row:                                            # an email look: the line as a row of its card, under its header

@@ -24,8 +24,11 @@ _web_portal_link: >-
 # started (awx_parent_job_schedule_id, awx_workflow_job_launch_type); else awx_job_launch_type
 _web_launch: >-
   {%- set t = awx_job_launch_type | default(tower_job_launch_type | default('', true), true) | string -%}
-  {%- set ids = [awx_schedule_id | default(''), tower_schedule_id | default(''), awx_parent_job_schedule_id | default(''),
-                 tower_parent_job_schedule_id | default('')] | map('int') | select('gt', 0) | list -%}
+  {%- set ids = [] -%}
+  {%- for x in [awx_schedule_id | default(''), tower_schedule_id | default(''), awx_parent_job_schedule_id | default(''),
+                tower_parent_job_schedule_id | default('')] if x is not boolean and (x | string) == (x | int | string) and x | int > 0 -%}
+  {%- set _ = ids.append(x) -%}
+  {%- endfor -%}
   {{ 'scheduled' if t == 'scheduled' or ids
      or awx_workflow_job_launch_type | default(tower_workflow_job_launch_type | default('', true), true) == 'scheduled' else t }}
 _email_dry: "{{ ansible_check_mode and not _report_check_live | default(false) | bool }}"

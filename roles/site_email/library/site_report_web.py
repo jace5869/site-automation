@@ -1104,7 +1104,7 @@ def portal_href(link):
     """report_portal_link as written into a page: an http(s) address or a path from the server's root (/portal/); '' for
     anything else (none, or not a link a page may carry)."""
     link = str(link or '').strip()
-    if not link or re.search(r'[\\\x00-\x20\x7f"<>]', link):
+    if not link or re.search(r'[\\\x00-\x20\x7f"<>]|\s', link):
         return ''                                    # a backslash (/\\host) or a control character: a browser may read another host
     if re.match(r'(?i)https?://', link):
         try:
@@ -1915,12 +1915,12 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
             look_li.append(((1, 0, name.lower()), '<li class="lf-r">%s<span class="lf-d lf-nc">%s<b>Not checked</b></span>%s%s</li>'
                             % (nm, BOARD_ICON['notchecked'], said, go)))
         if hook and due:
-            gap = max(1, int(round(_median(_gaps(r)))))
+            gap = _median(_gaps(r))                      # hours; under one: said in minutes
+            every = _plural(int(round(gap)), 'hour', 'hours') if gap >= 1 else _plural(max(1, int(round(gap * 60))), 'minute', 'minutes')
             try:
-                exp = 'expected by %s (every %s)' % (local_time((w + datetime.timedelta(hours=gap)).strftime('%Y-%m-%d %H:%M UTC'), tz),
-                                                    _plural(gap, 'hour', 'hours'))
+                exp = 'expected by %s (every %s)' % (local_time((w + datetime.timedelta(hours=gap)).strftime('%Y-%m-%d %H:%M UTC'), tz), every)
             except OverflowError:
-                exp = 'every %s' % _plural(gap, 'hour', 'hours')
+                exp = 'every %s' % every
             late_li.append('<li data-late-li="%s" data-name="%s" hidden>%s<span class="lf-lw">last ran %s</span><span class="lf-lw">%s</span>%s</li>'
                            % (rid, e(name), nm, e(local_time(r.get('when') or '', tz)), e(exp), go))
     # the areas' cards, report_web_tabs' order; in each, the reports that need a look first, then A to Z

@@ -1572,6 +1572,8 @@ class LookFirst1180(unittest.TestCase):
         hourly = self.board([self.line("Hourly", [1, 1, 1, 1, 1], "scheduled")])
         self.assertIn('data-due="26"', hourly)                                              # late after 26 h (the floor) ...
         self.assertIn("expected by 2026-11-23 09:00 UTC (every 1 hour)", hourly)              # ... expected every hour (review)
+        quarter = self.board([self.line("Quarter", [0.25] * 5, "scheduled")])
+        self.assertIn("expected by 2026-11-23 08:15 UTC (every 15 minutes)", quarter)
         far = self.line("Far", [24], "scheduled")
         far["trend"] = [dict(x, when=w) for x, w in zip(far["trend"], ("9999-12-31 08:00 UTC", "9999-12-30 08:00 UTC"))]
         far["when"] = far["trend"][0]["when"]
@@ -1580,7 +1582,7 @@ class LookFirst1180(unittest.TestCase):
     def test_4_the_portal_link(self):
         for ok in ("https://portal.example.mil/portal/", "/portal/", "http://192.0.2.5/portal"):
             self.assertEqual(rw.portal_href(ok), ok)
-        for bad in ("", "auto", "javascript:alert(1)", "//elsewhere.example.mil/", "portal/", 'https://a.example.mil/"x', "/a b",
+        for bad in ("https://portal\u00a0team.example.mil/", "", "auto", "javascript:alert(1)", "//elsewhere.example.mil/", "portal/", 'https://a.example.mil/"x', "/a b",
                     "/\\elsewhere.example.mil/", "https://?x", "https://h.example.mil:port/", "/portal/\x01"):
             self.assertEqual(rw.portal_href(bad), "", bad)
         r = [self.line("A", [24], "scheduled")]
@@ -1620,7 +1622,7 @@ class LookFirst1180(unittest.TestCase):
         self.assertEqual(r("_web_launch", awx_job_launch_type="workflow", awx_workflow_job_launch_type="scheduled",
                            awx_parent_job_schedule_id=9), "scheduled")
         self.assertEqual(r("_web_launch", tower_job_launch_type="scheduled"), "scheduled")
-        for empty in (None, "", "0", 0):                                                    # a placeholder is no schedule (review)
+        for empty in (None, "", "0", 0, True, "1.5", "1e2", -3):                            # a placeholder is no schedule (review)
             self.assertEqual(r("_web_launch", awx_job_launch_type="manual", awx_schedule_id=empty), "manual", empty)
         self.assertEqual(r("_web_launch", awx_job_launch_type="manual", awx_schedule_id=12), "scheduled")
         self.assertEqual(r("_web_portal_link", report_portal_url=None, portal_path="/portal/"), "/portal/")
@@ -2113,7 +2115,13 @@ class Files1181(unittest.TestCase):
         self.assertEqual(rf.describe(None, ".xlsx"), "Excel workbook - the tables of this page, one sheet each")
         self.assertEqual(rf.describe("  Word document -\n the AAR draft ", ".docx"), "Word document - the AAR draft")
         self.assertEqual(len(rf.describe("x" * 400, ".csv")), 300)
-        self.assertEqual(rf.describe("", ".bin"), "")
+        self.assertEqual(rf.describe("", ".zip"), "ZIP file")                              # a type with no words of its own
+        self.assertEqual(rf.describe("", ""), "")
+        f = [{"name": "a.xlsx", "size": 10}]
+        own = rf.put_files("<body><header>H</header><main>%s</main></body>" % rf.MARK, f, [], "p/x.html", "p/x-files", False)
+        self.assertIn('<section class="card sfiles"', own)        # a page with its own Files style (the insights) - whatever report_web_theme is
+        row = rf.put_files('<body><table><tr><td>H</td></tr><!--site-report-files row="padding:0"--></table></body>', f, [], "p/x.html", "p/x-files", True)
+        self.assertIn('<tr><td style="padding:0"><!--site-report-files:start--><div class="sfiles" style="margin:0;', row)
         ok, _ = rf.prepare([{"filename": "a.csv", "b64": base64.b64encode(b"a").decode()},
                             {"filename": "b.csv", "b64": base64.b64encode(b"b").decode(), "desc": "CSV - the hosts"}], 5, packed_only=True)
         self.assertEqual([f["desc"] for f in ok], ["CSV - a table of this page, as text (Excel opens it)", "CSV - the hosts"])   # the copy job too
