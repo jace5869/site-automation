@@ -119,6 +119,25 @@ def _payload(ad, live, opts):
             "repl_dcs": len(rdcs), "repl_read": sum(1 for key, d in rdcs.items() if key in observations and bool(d.get("read")) and not d.get("partial"))}
 
 
+def ad_db_how_line(report, line):
+    """1.112.3: the report with line added to its "How this was read" section (a section of its own when it has none) - e.g.
+    that this run is not kept in the report database (roles/ad_report/tasks/db_none.yml). A report with no sections (an empty
+    web form) stays as it is."""
+    rep = dict(report or {})
+    secs = rep.get("sections")
+    if not secs or not line:
+        return rep
+    out, done = [], False
+    for s in secs:
+        if not done and isinstance(s, dict) and s.get("title") == "How this was read":
+            s, done = dict(s, lines=list(s.get("lines") or []) + [line]), True
+        out.append(s)
+    if not done:
+        out.append({"title": "How this was read", "status": "unknown", "text": line})
+    rep["sections"] = out
+    return rep
+
+
 class FilterModule(object):
     def filters(self):
-        return {"ad_db_payload": ad_db_payload}
+        return {"ad_db_payload": ad_db_payload, "ad_db_how_line": ad_db_how_line}

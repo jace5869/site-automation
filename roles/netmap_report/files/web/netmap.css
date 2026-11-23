@@ -127,10 +127,11 @@
 .nm-move .nm-live .nm-dotlive,.nm-live.on .nm-dotlive{animation:none}
 .nm-live.stale .nm-dotlive{background:var(--nm-warn)}
 .nm-tick{font-variant-numeric:tabular-nums}
-.nm-toasts{position:fixed;right:16px;top:76px;display:grid;gap:8px;z-index:50;max-width:min(420px,calc(100vw - 32px))}   /* top right, under the bar: never over the legend or the help line */
+.nm-toasts{position:absolute;right:16px;top:calc(100% + 16px);display:grid;gap:8px;z-index:50;max-width:min(420px,calc(100% - 32px))}   /* top right, under the bar: never over the legend or the help line. 1.112.3: in the portal's bar (it is sticky), just under it, whatever its height */
 .nm-toast{display:flex;gap:10px;align-items:flex-start;background:var(--card);color:var(--ink);border:1px solid var(--edge);border-left:5px solid var(--nm-unk);
   border-radius:10px;padding:10px 14px;box-shadow:0 14px 40px -16px rgba(0,0,0,.45);font-size:13.5px}
 .nm-toast b{font-size:15px}
+.nm-toast span{min-width:0;overflow-wrap:anywhere}     /* 1.112.3: a long device name wraps (the portal's bar clips its sides) */
 .nm-toast.down{border-left-color:var(--nm-down)}.nm-toast.down b{color:var(--critical)}
 .nm-toast.up{border-left-color:var(--nm-up)}.nm-toast.up b{color:var(--ok)}
 .nm-toast.info{border-left-color:var(--nm-warn)}

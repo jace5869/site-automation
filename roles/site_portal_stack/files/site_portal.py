@@ -2684,9 +2684,10 @@ def icon(kind, turn=True):
     return '<svg class="ic%s" viewBox="0 0 16 16" aria-hidden="true">%s</svg>' % (" ic-run" if kind == "run" and turn else "", ICONS[kind])
 
 
-def shell(cfg, title, body, user="", token="", page="", data=None, head=""):
+def shell(cfg, title, body, user="", token="", page="", data=None, head="", bar_end=""):
     """A page in the report website's look: the banner, the bar (the portal's pages, who, the colours switch), the body; its
-    scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style)."""
+    scripts are static/portal-theme.js (the colours chosen last time) and static/portal.js (no inline script, no inline style).
+    bar_end (1.112.3): markup at the end of the bar, under it whatever its height (the network map's toasts: NETMAP_TOASTS)."""
     banner = ('<div class="banner">%s</div>' % esc(cfg.banner["text"])) if cfg.banner["on"] else ""
     nav = "".join('<a href="%s%s"%s>%s</a>' % (cfg.path, href, ' aria-current="page"' if page in keys else "", esc(text))
                   for keys, href, text in ((("home", "action"), "", "Actions"), (("jobs", "job"), "jobs", "Jobs"), (("reports",), "reports/", "Reports"),
@@ -2704,12 +2705,12 @@ def shell(cfg, title, body, user="", token="", page="", data=None, head=""):
     fz = (lambda part: part) if until else (lambda part: "")
     st = cfg.season_style
     bar = ('<div class="appbar"><div class="appbar-in"><a class="home" href="%s">%s%s%s</a>'
-           '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who">%s</span>%s'
-           '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div>%s</div>'
+           '<nav class="nav" aria-label="Portal">%s</nav><div class="tools"><span class="who" title="%s">%s</span>%s'
+           '<div class="seg" id="theme" role="group" aria-label="Colours">%s</div></div></div>%s%s</div>'
            % (cfg.path, ('<img class="logo" src="%sstatic/logo?v=%d" alt="%s">' % (cfg.path, cfg.logo_v, esc(cfg.title))) if cfg.logo
               else '<span class="mark" aria-hidden="true">%s</span>' % esc((cfg.title[:1] or "S").upper()), esc(cfg.title),
-              fz(until and site_festive.tree(st)), nav, esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), seg,
-              fz(until and site_festive.lights(st))))
+              fz(until and site_festive.tree(st)), nav, esc(user), esc(user), fz(until and site_festive.menu(st, cfg.season_parts)), seg,
+              fz(until and site_festive.lights(st)), bar_end))
     festive_head = ('<link rel="stylesheet" href="%sstatic/festive.css?v=%s"><script src="%sstatic/festive.js?v=%s"></script>'
                     % (cfg.path, site_festive.version(site_festive.CSS), cfg.path, site_festive.version(site_festive.JS))) if until else ""
     return ('<!doctype html><html lang="en" data-look="%s"%s%s><head><meta charset="utf-8">'
@@ -3617,9 +3618,18 @@ AD_NOT_YET = "AD replication not in the report database yet"
 AD_NOT_READ = "the report database's AD replication could not be read (the portal's log says why)"
 
 
-def _missing_table(e):
+def missing_table(e):
+    """1.112.3: an error of the report database that only says a job's table is not there yet (MySQL 1146; SQLite's "no such
+    table" in the tests) - the normal state before that job's first run with the Report database credential: a page says so
+    calmly, not as a fault. Any portal page that reads a job's tables uses this."""
+    code = (getattr(e, "args", None) or [None])[0]
+    if isinstance(code, int):                   # MySQL's own code: only 1146 (1932 "doesn't exist in engine" is a fault)
+        return code == 1146
     t = str(e).lower()
-    return (getattr(e, "args", None) or [None])[0] == 1146 or "no such table" in t or "doesn't exist" in t
+    return "no such table" in t or "(mysql error 1146)" in t     # SQLite (the tests); a MySQL error said as text (short_error)
+
+
+_missing_table = missing_table
 
 
 def ad_repl_from_db(connect, mark="%s", opts=None, log=None, template_id=None):
@@ -3888,6 +3898,11 @@ class NetLive(object):
         return 200, json.dumps(head)[:-1] + ',"map":' + m + "}", etag
 
 
+# 1.112.3: the map's toasts sit in the bar (shell bar_end), just under it: the bar is taller when its tabs wrap, and a toast at a
+# fixed height covered the second row of tabs (netmap.css .nm-toasts)
+NETMAP_TOASTS = '<div class="nm-toasts" id="nm-toasts" aria-live="polite"></div>'
+
+
 def netmap_page(cfg, cn, static_dir, statics):
     """The live Network map: the map (the report's own markup and script), the "updated N s ago" line, the toasts."""
     try:
@@ -3904,10 +3919,10 @@ def netmap_page(cfg, cn, static_dir, statics):
             '<p class="nmh-muted">%s</p></section>'
             '<p class="nm-live" id="nm-live" data-src="%sapi/netmap" data-poll="%d"><i class="nm-dotlive" aria-hidden="true"></i>'
             '<span class="nm-tick" aria-live="off">reading SolarWinds…</span></p>'
-            '<p class="note" id="nm-why" hidden></p>%s<div class="nm-toasts" id="nm-toasts" aria-live="polite"></div>'
+            '<p class="note" id="nm-why" hidden></p>%s'
             % (cfg.path, esc(message), cfg.path, poll, markup))
     body += "".join('<script src="%sstatic/%s?v=%s"></script>' % (cfg.path, n, v(n)) for n in ("world-land.js", "netmap.js", "netglobe.js", "maplabel.js", "netregion.js", "netmap-live.js", "netmap-history.js"))
-    return shell(cfg, "Network map", body, cn, page="netmap",
+    return shell(cfg, "Network map", body, cn, page="netmap", bar_end=NETMAP_TOASTS,
                  head="".join('<link rel="stylesheet" href="%sstatic/%s?v=%s">' % (cfg.path, n, v(n)) for n in ("netmap.css", "netmap-history.css")))
 
 
@@ -4147,6 +4162,7 @@ class AdLive(ReportIndex):
         # the AD job's runs in the report database (AdDb): read every AD_POLL s while the page is open; None: no login
         self.db = db if db is not None else (AdDb(cfg) if cfg.report_db else None)
         self.dbm, self.db_at, self.db_stale, self.db_fails, self.db_due, self.sw_due = None, 0.0, "", 0, 0.0, 0.0
+        self.db_missing = False          # 1.112.3: the AD job has not made its tables yet (missing_table): said calmly
         self.idx_sig, self.link_lines = None, []
         self.sw_tried = ""                                   # the run SolarWinds was last asked for (its backoff kept for it)
 
@@ -4171,9 +4187,23 @@ class AdLive(ReportIndex):
         """One read of the database (the model of the page's own template when the page names one)."""
         m = self.db.read(template_id=self.cfg.ad_template or None)
         with self.lock:
-            was, self.dbm, self.db_at, self.db_stale, self.db_fails = self.db_stale, m, time.time(), "", 0
+            was, self.dbm, self.db_at, self.db_stale, self.db_fails, self.db_missing = self.db_stale, m, time.time(), "", 0, False
         if was:
             self.log.add({"event": "ad", "database": "ok"})
+
+    def db_failed(self, e):
+        """A read of the database that failed. 1.112.3: no AD table yet (ad_run, ad_dc or ad_link: missing_table) is the state
+        before the AD job's first run with the Report database credential - said calmly (db.missing), read again every AD_POLL s;
+        any other error (the connection, a grant) is a fault, said (db.stale), read again later and later. Tables gone after a
+        read that had them are a fault too: the run shown is then the last good read, said as stale (never as live)."""
+        why = clean(site_report_db.short_error(e) if site_report_db else str(e), 300) or e.__class__.__name__
+        with self.lock:
+            missing = missing_table(e) and self.dbm is None
+            first = not (self.db_missing if missing else self.db_stale)
+            self.db_missing, self.db_stale, self.db_fails = missing, "" if missing else why, 0 if missing else self.db_fails + 1
+        if first:
+            self.log.add({"event": "ad", "database": "no AD tables yet" if missing else "not read", "why": why})
+        self.db_due = time.time() + (AD_POLL if missing else backoff(self.db_fails, AD_POLL * 4))
 
     def read_sw(self, run):
         """One read of the DCs in SolarWinds -> {at, job, section, tile} (the AD job's own section and tile, as of now).
@@ -4243,12 +4273,7 @@ class AdLive(ReportIndex):
                     self.read_db()
                     self.db_due = time.time() + AD_POLL
                 except Exception as e:  # pylint: disable=broad-except
-                    why = clean(site_report_db.short_error(e) if site_report_db else str(e), 300) or e.__class__.__name__
-                    with self.lock:
-                        first, self.db_stale, self.db_fails = not self.db_stale, why, self.db_fails + 1
-                    if first:
-                        self.log.add({"event": "ad", "database": "not read", "why": why})
-                    self.db_due = time.time() + backoff(self.db_fails, AD_POLL * 4)
+                    self.db_failed(e)
             self._schedule(self._tid())                            # the shown run's template, SolarWinds DCs or not
             src = self.sw_source()
             new_run = src is not None and src[0] != self.sw_tried          # once per run: a read that fails keeps its backoff
@@ -4282,14 +4307,14 @@ class AdLive(ReportIndex):
         now = time.time()
         with self.lock:
             sw, stale, nxt = self.sw, self.sw_stale, self.sw_next
-            dbm, db_at, db_stale = self.dbm, self.db_at, self.db_stale
+            dbm, db_at, db_stale, db_missing = self.dbm, self.db_at, self.db_stale, self.db_missing
             tid = str(dbm["run"].get("template_id") or "") if dbm and dbm.get("run") else ""
             sched = dict(self.sched.get(tid, (0.0, {}))[1])
         src = self.sw_source()
         if src is not None and src[0] != self.sw_tried:
             self.wake.set()                                          # a new run (its DCs): SolarWinds read for it now
         out = {"poll": AD_POLL, "old_after": self.cfg.ad_old_minutes, "report": self.report_link(dbm["run"]["job"] if dbm and dbm.get("run") else None)}
-        out["db"] = {"on": self.db is not None, "stale": db_stale,
+        out["db"] = {"on": self.db is not None, "stale": db_stale, "missing": db_missing,
                      "why": "" if self.db is not None else ("the portal has no report database login: the template setup job attaches the "
                                                             "\"Report database\" credential (the read-only account report_reader) to "
                                                             "Site portal - deploy; run that once")}

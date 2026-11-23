@@ -264,6 +264,9 @@
     today = m && m.run && m.run.as_of ? String(m.run.as_of).slice(0, 10) : "";
     if (!db.on) {
       parts.push(note("warn", "The report database is off here: " + db.why + "."));
+    } else if (!m && db.missing && !db.stale) {     // 1.112.3: the AD job has not made its tables yet - the usual start, not a fault
+      parts.push(note("muted", "No AD run in the report database yet. Run Active Directory health report once with the Report database " +
+                               "credential on its template (it makes the tables; ad_db_create). Then this page fills."));
     } else if (!m) {
       parts.push(db.stale ? note("bad", "The report database could not be read: " + db.stale + ". Tried again every minute.")
                           : note("", "Reading the report database…"));
@@ -345,7 +348,8 @@
         }
         shown = a; etag = got2.tag; got = Date.now();
         // the first read not there yet, or an answer from before a quiet spell: asked again soon, not in a minute
-        poll = a.db && a.db.on && (!a.db.model || a.db.refreshing) && !a.db.stale ? 3 : Math.max(15, Math.min(300, a.poll || 60));
+        // 1.112.3: no AD table yet is an answer (db.missing), not a read in progress: asked again in a minute
+        poll = a.db && a.db.on && (!a.db.model || a.db.refreshing) && !a.db.stale && !a.db.missing ? 3 : Math.max(15, Math.min(300, a.poll || 60));
       }
       else if (shown) {                         // the same answer: its ages move on
         last = null;                           // the same DCs: nothing to say

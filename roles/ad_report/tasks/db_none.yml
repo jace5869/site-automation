@@ -1,0 +1,12 @@
+---
+# 1.112.3: ad_db is on, but this template has no "Report database" credential (no REPORT_DB_HOST): this run is not kept, so the
+# portal's Active Directory page (/portal/ad) stays empty. Said in the job's output and in the report's "How this was read"
+# (the email, the PDF and the web page) - before, the run skipped db.yml without a word
+- name: AD | the report database
+  ansible.builtin.debug:
+    msg: "{{ _ad_db_none }}"
+
+- name: AD | the report says it too (How this was read)
+  ansible.builtin.set_fact:
+    _ad_doc: "{{ _ad_doc | ad_db_how_line(_ad_db_none) }}"
+    _ad_web: "{{ _ad_web | ad_db_how_line(_ad_db_none) }}"

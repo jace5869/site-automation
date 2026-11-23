@@ -130,6 +130,14 @@
   ansible.builtin.include_tasks: db.yml
   when: ad_db | bool and lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length > 0
 
+- name: AD | not kept in the report database - no Report database credential (1.112.3, said, not skipped silently)
+  ansible.builtin.include_tasks: db_none.yml
+  when: ad_db | bool and lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim | length == 0
+  vars:
+    _ad_db_none: >-
+      Not kept in the report database: this template has no Report database credential - the portal's Active Directory
+      page stays empty until it has one
+
 - name: AD | report
   ansible.builtin.include_tasks: report.yml
 

@@ -27,7 +27,9 @@ was made. So the job works over WinRM with NTLM or Kerberos and needs no delegat
 **On the portal (1.101.2).** With the **Report database** credential on the template, each run is kept in the report
 database (`ad_db`). The site portal's *Active Directory* page shows the runs there: each DC now and since when, its
 runs of the last 24 h, the replication links that need a look, the last 7 days ([SITE_PORTAL.md](SITE_PORTAL.md)). Schedule the
-job (every 30 minutes, for example) to keep the page current.
+job (every 30 minutes, for example) to keep the page current. Without that credential the run is not kept: the job's
+output and the report's *How this was read* say "Not kept in the report database: this template has no Report database
+credential" (1.112.3). Until the first run with it, the portal page shows a muted "No AD run in the report database yet".
 
 ## What the report shows
 

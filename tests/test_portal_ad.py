@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import urllib.error
 import urllib.request
@@ -233,6 +234,141 @@ def live(lite, site, **kw):
                   db=sp.AdDb(None, connect=lambda: lite, mark="?") if lite is not None else None)
     a.cfg.ad_swis_why = kw.get("swis_why", "")
     return a
+
+
+class Bare(Lite):
+    """1.112.3: the report database before the AD job's first run with the Report database credential - no AD table at all."""
+
+    def __init__(self):  # pylint: disable=super-init-not-called
+        import sqlite3
+        self.db = sqlite3.connect(":memory:", detect_types=0, check_same_thread=False)
+
+
+class MySQLError(Exception):
+    """PyMySQL's errors carry (code, message)."""
+
+
+class NoTables11123(unittest.TestCase):
+    """1.112.3: no AD table yet (MySQL 1146) is the usual start, said calmly (db.missing), not as a fault; a connection or grant
+    error stays a fault (db.stale)."""
+
+    def failed(self, e, lite=None):
+        a = live(lite or Lite(), Site(self))
+        a.db_failed(e)
+        return a, json.loads(a.answer()[1])["db"]
+
+    def test_1_no_table_is_not_a_fault(self):
+        a = live(Bare(), Site(self))
+        with self.assertRaises(Exception) as cm:                      # the read itself: SQLite's "no such table"
+            a.read_db()
+        self.assertTrue(sp.missing_table(cm.exception), cm.exception)
+        for e in (cm.exception, MySQLError(1146, "Table 'site_reports.ad_run' doesn't exist"),
+                  MySQLError(1146, "Table 'site_reports.ad_dc' doesn't exist"), MySQLError(1146, "Table 'site_reports.ad_link' doesn't exist")):
+            a, db = self.failed(e)
+            self.assertEqual((db["missing"], db["stale"]), (True, ""), e)
+            self.assertNotIn("model", db)
+            self.assertEqual(a.db_fails, 0)
+            self.assertLessEqual(a.db_due - time.time(), sp.AD_POLL + 1)  # read again every minute, never later and later
+
+    def test_2_a_connection_or_grant_error_stays_a_fault(self):
+        for e in (MySQLError(2003, "Can't connect to MySQL server on 'db.example.mil'"),
+                  MySQLError(1142, "SELECT command denied to user 'report_reader'@'192.0.2.10' for table 'ad_run'"),
+                  MySQLError(1045, "Access denied for user 'report_reader'@'192.0.2.10'"),
+                  MySQLError(1932, "Table 'site_reports.ad_link' doesn't exist in engine")):        # a storage fault, not "not made yet"
+            a, db = self.failed(e)
+            self.assertFalse(db["missing"], e)
+            self.assertIn("MySQL error %d" % e.args[0], db["stale"])
+
+    def test_3_the_tables_made_then_read(self):
+        a = live(Bare(), Site(self))
+        a.db_failed(MySQLError(1146, "Table 'site_reports.ad_run' doesn't exist"))
+        a.db = sp.AdDb(None, connect=Lite, mark="?")                  # the AD job ran: its tables are there, no run yet
+        a.read_db()
+        db = json.loads(a.answer()[1])["db"]
+        self.assertEqual((db["missing"], db["stale"]), (False, ""))
+        self.assertIn("model", db)
+
+    def test_5_tables_gone_after_a_good_read_is_a_fault(self):
+        # Codex: a run was read, then the tables are gone - the run shown is the last good read, said as stale, never as live
+        a = live(fill(["ok"] * 3), Site(self))
+        a.read_db()
+        a.db_failed(MySQLError(1146, "Table 'site_reports.ad_link' doesn't exist"))
+        db = json.loads(a.answer()[1])["db"]
+        self.assertFalse(db["missing"])
+        self.assertIn("MySQL error 1146", db["stale"])
+        self.assertEqual(db["model"]["run"]["job"], 9002)
+        self.assertGreater(a.db_fails, 0)
+
+    def test_6_the_helper(self):
+        self.assertTrue(sp.missing_table(RuntimeError("Table 'site_reports.ad_run' doesn't exist (MySQL error 1146)")))   # short_error's text
+        self.assertFalse(sp.missing_table(RuntimeError("Can't connect to MySQL server (MySQL error 2003)")))
+        self.assertFalse(sp.missing_table(MySQLError(1932, "Table 'site_reports.ad_run' doesn't exist in engine")))
+        self.assertIs(sp._missing_table, sp.missing_table)            # the map's AD layer: the same rule
+
+    def test_4_said_once_in_the_log(self):
+        logged = []
+        a = live(Lite(), Site(self))
+        a.log = types.SimpleNamespace(add=logged.append)
+        for _ in range(3):
+            a.db_failed(MySQLError(1146, "Table 'site_reports.ad_run' doesn't exist"))
+        self.assertEqual([x["database"] for x in logged], ["no AD tables yet"])
+
+
+class NotKept11123(unittest.TestCase):
+    """1.112.3: ad_db on and no Report database credential on the template (no REPORT_DB_HOST): the run is not kept, and the
+    job says so - in its output and in the report's "How this was read" - instead of skipping db.yml without a word."""
+    LINE = ("Not kept in the report database: this template has no Report database credential - the portal's Active Directory "
+            "page stays empty until it has one")
+
+    def test_1_the_filter(self):
+        rep = {"sections": [{"title": "Domain controllers"}, {"title": "How this was read", "text": "Reader mode", "lines": ["Not run - x."]}]}
+        out = dbf.ad_db_how_line(rep, self.LINE)
+        self.assertEqual(out["sections"][1]["lines"], ["Not run - x.", self.LINE])
+        self.assertEqual(rep["sections"][1]["lines"], ["Not run - x."])              # the report given is not changed
+        out = dbf.ad_db_how_line({"sections": [{"title": "Not read"}]}, self.LINE)
+        self.assertEqual(out["sections"][-1], {"title": "How this was read", "status": "unknown", "text": self.LINE})
+        self.assertEqual(dbf.ad_db_how_line({}, self.LINE), {})                        # the web form when there is none
+
+    def play(self, ad_db, db_host=""):
+        ap = os.environ.get("ANSIBLE_PLAYBOOK") or shutil.which("ansible-playbook")
+        if not ap:
+            self.skipTest("no ansible-playbook")
+        import yaml
+        with open(os.path.join(ROOT, "roles", "ad_report", "tasks", "main.yml")) as fh:
+            task = [t for t in yaml.safe_load(fh) if str(t.get("name", "")).startswith("AD | not kept in the report database")]
+        self.assertEqual(len(task), 1)
+        task = dict(task[0], **{"ansible.builtin.include_tasks": os.path.join(ROOT, "roles", "ad_report", "tasks", "db_none.yml")})
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        play = [{"hosts": "localhost", "gather_facts": False, "vars": {
+                    "ad_db": ad_db, "_ad_web": {},
+                    "_ad_doc": {"title": "AD", "sections": [{"title": "How this was read", "text": "Reader mode", "lines": ["Not run - x."]}]}},
+                 "tasks": [task, {"name": "the report", "ansible.builtin.debug": {"msg": "DOC{{ _ad_doc | to_json }}WEB{{ _ad_web | to_json }}END"}}]}]
+        with open(os.path.join(d, "p.yml"), "w") as fh:
+            yaml.safe_dump(play, fh)
+        env = dict(os.environ, ANSIBLE_FILTER_PLUGINS=os.path.join(ROOT, "plugins", "filter"), ANSIBLE_NOCOLOR="1",
+                   ANSIBLE_STDOUT_CALLBACK="default", ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0")
+        env.pop("REPORT_DB_HOST", None)
+        if db_host:
+            env["REPORT_DB_HOST"] = db_host
+        r = subprocess.run([ap, "-i", "localhost,", "-c", "local", os.path.join(d, "p.yml")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, env=env, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:])
+        m = re.search(r"DOC(.*?)WEB(.*?)END", r.stdout.replace('\\"', '"'))
+        self.assertIsNotNone(m, r.stdout[-3000:])
+        return r.stdout, json.loads(m.group(1)), json.loads(m.group(2))
+
+    def test_2_no_credential_said_in_the_output_and_the_report(self):
+        out, doc, web = self.play(True)
+        self.assertIn(self.LINE, " ".join(out.split()))                                # the job's output
+        self.assertEqual(doc["sections"][0]["lines"], ["Not run - x.", self.LINE])     # How this was read
+        self.assertEqual(web, {})
+
+    def test_3_said_only_when_it_matters(self):
+        for ad_db, host in ((False, ""), (True, "db.example.mil")):                    # ad_db off; or the credential is there (db.yml)
+            out, doc, _web = self.play(ad_db, host)
+            self.assertNotIn("Not kept in the report database", out, (ad_db, host))
+            self.assertEqual(doc["sections"][0]["lines"], ["Not run - x."])
 
 
 class Answer1012(unittest.TestCase):
@@ -865,6 +1001,28 @@ class CodexBrowser1012(unittest.TestCase):
         r = self.page([a, "FAIL", a], self.READ, wait=40000)            # an answer again: Live again, the note gone
         self.assertIn("Live", r["live"])
         self.assertFalse(any("did not answer" in n for n in r["notes"]), r["notes"])
+
+    def test_1112_3_no_ad_table_yet_is_said_calmly(self):
+        a = live(Bare(), Site(self))
+        a.db_failed(MySQLError(1146, "Table 'site_reports.ad_run' doesn't exist"))
+        js = self.READ + "r.cls=[].map.call(document.querySelectorAll('#ad .note'),function(n){return n.className});"
+        r = self.page([json.loads(a.answer()[1])], js)
+        self.assertEqual(r["notes"], ["No AD run in the report database yet. Run Active Directory health report once with the Report "
+                                      "database credential on its template (it makes the tables; ad_db_create). Then this page fills."])
+        self.assertEqual(r["cls"], ["note muted"])                       # not red (note bad), no "Tried again"
+        r = self.page([json.loads(a.answer()[1]), "304"], self.READ + "r.n=window.__sent.length;", wait=20000)
+        self.assertEqual(r["n"], 1)                                     # an answer, not a read in progress: asked again in a minute, not 3 s
+        b = live(fill(["ok"] * 3), Site(self))                           # tables gone after a good read: the last run, not Live
+        b.read_db()
+        b.db_failed(MySQLError(1146, "Table 'site_reports.ad_link' doesn't exist"))
+        r = self.page([json.loads(b.answer()[1])], js)
+        self.assertIn("Not live", r["live"])
+        self.assertTrue(any(n.startswith("The report database was not read just now (Table") for n in r["notes"]), r["notes"])
+        a = live(Lite(), Site(self))                                       # a grant error: still the red box
+        a.db_failed(MySQLError(1142, "SELECT command denied to user 'report_reader'"))
+        r = self.page([json.loads(a.answer()[1])], js)
+        self.assertEqual(r["cls"], ["note bad"])
+        self.assertTrue(r["notes"][0].startswith("The report database could not be read: SELECT command denied"), r["notes"])
 
     def test_p1_4_a_failed_read_after_an_empty_one_is_said(self):
         a = live(Lite(), Site(self))

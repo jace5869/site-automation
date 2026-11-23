@@ -31,6 +31,37 @@
   content styles unchanged and no sideways scroll on atlas, brief, ops and their index and on the portal's Jobs page, the
   sticky table heads in all three looks; the portal's files).
 
+## 1.112.3 — 2026-11-23
+
+**To set up:** nothing to set up.
+
+- **Site portal: the Auto/Light/Dark switch no longer covers a tab.** With Network map and Active Directory on, at
+  800 px the switch sat over *Active Directory*. The same happened with a long user name (1001 to 1280 px) or a long
+  portal name. Now the tabs take the room the portal's name and the switch leave, and wrap to a second row there.
+  When that room is under 24rem (a logo and a long portal name), the bar wraps: the tabs, the switch or both go to a
+  row under the name. At 1280 px with the usual name the bar is one row, as before.
+- The bar's other parts keep to the window too. The user name shown is at most 40 characters wide; a longer one ends
+  in "..." (the whole name shows on hover). A long portal name wraps beside the logo. A long word in the banner wraps.
+- **Network map:** the live map's toasts sit just under the bar, whatever its height. Before, they were at a fixed
+  height and covered the second row of tabs. A long device name in a toast wraps.
+- **Active Directory page (/portal/ad): no AD run yet is not a fault.** Before the AD job has written to the report
+  database, its tables are not there (MySQL error 1146). The page showed that as a red error ("could not be read ...
+  Tried again every minute"). Now it shows a muted box: *No AD run in the report database yet*, with what to run once.
+  A connection or grant error stays red, as before.
+- **Active Directory health report: said when a run is not kept.** With `ad_db` on and no **Report database**
+  credential on the template, the job skipped the report database without a word. Now its output and the report's
+  *How this was read* say: "Not kept in the report database: this template has no Report database credential - the
+  portal's Active Directory page stays empty until it has one".
+- Tests: tests/test_portal_ad.py. No AD table: the muted box, read again every minute. A connection or grant error, or
+  tables gone after a read: red, as before. No credential: the line in the job's output and the report (ansible-playbook
+  on the role's own task); nothing said with `ad_db` off or with the credential.
+- Tests: tests/test_portal_bar.py, also run in CI. Headless Chrome, the real bar and stylesheets, the ops, atlas and
+  brief looks, light and dark, 360 to 1280 px. Four bars: every tab with both counts and a long user name (the usual
+  portal name and a long one); four tabs; a logo, a long portal name, a banner, a 150-character user name and a map
+  toast, on the Network map page itself, scrolled past the banner. In each, no tab, count, name or switch overlaps
+  another or is cut, the bar stays at the top, the toast is under it and whole, and the page does not scroll
+  sideways. At 800 px *Active Directory* and the switch are apart; at 1280 px the usual bar is one row.
+
 ## 1.112.1 — 2026-11-23
 
 **To set up:** run **AAP - incident document surveys** again (with `incident_docs_draft_credential` set). Nothing by hand.
