@@ -49,26 +49,26 @@
       {%- set word = {'current': 'CURRENT - yours has the same certificates',
                       'newer': 'NEWER - it differs from yours: put it in your repository (below)',
                       'first': 'FOUND - no bundle of yours yet (cert_install_ca_bundle): its roots are taken on trust - check them (below)',
-                      'not verified': 'NOT VERIFIED - it differs from yours, but DISA\'s signature on it could not be checked: not offered (below)',
+                      'not verified': 'NOT VERIFIED - it differs from yours, but DISA’s signature on it could not be checked: not offered (below)',
                       'failed': 'FAILED - do not use it'} -%}
       {%- set _ = out.append(word[b.status] ~ ' | ' ~ (b.name or pki_bundle_url) ~ (' | version ' ~ b.version if b.version else '')
                              ~ ' | ' ~ b.cas ~ ' CA certificates' ~ ('; yours ' ~ b.current_count ~ ((' (version ' ~ b.current_version ~ ')') if b.current_version else '') if _pkib_current else '')) -%}
-      {%- set _ = out.append('DISA signature on its list of files: ' ~ b.signature ~ ((' | the files\' SHA-256: ' ~ b.hashes) if b.hashes else '')) -%}
+      {%- set _ = out.append('DISA signature on its list of files: ' ~ b.signature ~ ((' | the files’ SHA-256: ' ~ b.hashes) if b.hashes else '')) -%}
       {%- for p in b.problems -%}{%- set _ = out.append('PROBLEM: ' ~ p) -%}{%- endfor -%}
       {%- for c in b.added -%}{%- set _ = out.append('ADDS ' ~ c.subject ~ ' (until ' ~ c.not_after ~ ')') -%}{%- endfor -%}
       {%- for c in b.removed -%}{%- set _ = out.append('NO LONGER HAS ' ~ c.subject ~ ' (until ' ~ c.not_after ~ ')') -%}{%- endfor -%}
-      {%- for c in b.new_roots -%}{%- set _ = out.append('A ROOT NOT IN YOURS: ' ~ c.subject ~ ' SHA-1 ' ~ c.sha1 ~ ' - compare it with DISA\'s before you use the bundle') -%}{%- endfor -%}
+      {%- for c in b.new_roots -%}{%- set _ = out.append('A ROOT NOT IN YOURS: ' ~ c.subject ~ ' SHA-1 ' ~ c.sha1 ~ ' - compare it with DISA’s before you use the bundle') -%}{%- endfor -%}
       {%- for c in b.untrusted -%}{%- set _ = out.append('NOT UNDER YOUR ROOTS: ' ~ c) -%}{%- endfor -%}
       {%- for c in b.broken -%}{%- set _ = out.append('ITS CHAIN DOES NOT BUILD IN THE BUNDLE (not used for a chain): ' ~ c) -%}{%- endfor -%}
       {%- if b.status == 'first' -%}
-      {%-   for c in b.roots -%}{%- set _ = out.append('ROOT ' ~ c.subject ~ ' SHA-1 ' ~ c.sha1 ~ ' - compare it with DISA\'s') -%}{%- endfor -%}
+      {%-   for c in b.roots -%}{%- set _ = out.append('ROOT ' ~ c.subject ~ ' SHA-1 ' ~ c.sha1 ~ ' - compare it with DISA’s') -%}{%- endfor -%}
       {%- endif -%}
       {%- for c in b.expiring -%}{%- set _ = out.append('EXPIRES SOON ' ~ c.subject ~ ' on ' ~ c.not_after) -%}{%- endfor -%}
       {%- for c in b.expired -%}{%- set _ = out.append('EXPIRED ' ~ c.subject ~ ' on ' ~ c.not_after) -%}{%- endfor -%}
       {%- if b.status == 'not verified' -%}
       {%-   set _ = out.append(_pkib_not_verified) -%}
       {%- endif -%}
-      {%- if b.unreadable -%}{%- set _ = out.append(b.unreadable ~ ' certificate(s) in it cannot be read by this execution environment\'s Python library (left out)') -%}{%- endif -%}
+      {%- if b.unreadable -%}{%- set _ = out.append(b.unreadable ~ ' certificate(s) in it cannot be read by this execution environment’s Python library (left out)') -%}{%- endif -%}
       {%- if b.file -%}
       {%-   set _ = out.append('The checked bundle: ' ~ (b.file | basename) ~ ' - attached to the email; save it as '
                                ~ _pkib_save_as ~ ' in your repository') -%}
@@ -111,9 +111,9 @@
         {%-   set _ = out.append({'title': 'Not verified', 'status': 'warning', 'lines': [_pkib_not_verified]}) -%}
         {%- endif -%}
         {%- set _ = out.append({'title': 'Checked', 'lines': ['DISA signature on its list of files: ' ~ b.signature]
-                                + (['The files\' SHA-256: ' ~ b.hashes] if b.hashes else [])
+                                + (['The files’ SHA-256: ' ~ b.hashes] if b.hashes else [])
                                 + ['Every CA certificate checked by its signature up to: ' ~ (b.roots | map(attribute='subject') | join('; '))]
-                                + ([b.unreadable ~ ' certificate(s) in it cannot be read by this execution environment\'s Python library (left out)'] if b.unreadable else [])}) -%}
+                                + ([b.unreadable ~ ' certificate(s) in it cannot be read by this execution environment’s Python library (left out)'] if b.unreadable else [])}) -%}
         {%- if b.file and not b.problems -%}
         {%-   set _ = out.append({'title': 'What to do', 'status': 'warning', 'lines': [
                 'Save the attached ' ~ (b.file | basename) ~ ' in your repository as ' ~ _pkib_save_as
@@ -125,9 +125,9 @@
         {%- for c in b.added -%}{%- set _ = rows.append(['added', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
         {%- for c in b.removed -%}{%- set _ = rows.append(['no longer in it', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
         {%- for c in (b.roots if b.status == 'first' else []) -%}
-        {%-   set _ = rows.append(['a root, taken on trust (no bundle of yours to check it against): compare its SHA-1 with DISA\'s', c.subject, c.not_after, c.sha1]) -%}
+        {%-   set _ = rows.append(['a root, taken on trust (no bundle of yours to check it against): compare its SHA-1 with DISA’s', c.subject, c.not_after, c.sha1]) -%}
         {%- endfor -%}
-        {%- for c in b.new_roots -%}{%- set _ = rows.append(['a root not in yours (DISA\'s signature vouches for it when verified): compare its SHA-1 with DISA\'s', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
+        {%- for c in b.new_roots -%}{%- set _ = rows.append(['a root not in yours (DISA’s signature vouches for it when verified): compare its SHA-1 with DISA’s', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
         {%- for c in b.expiring -%}{%- set _ = rows.append(['expires soon', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
         {%- for c in b.expired -%}{%- set _ = rows.append(['expired', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
         {%- if rows -%}
@@ -154,6 +154,6 @@
     msg: >-
       {{ 'A different' if _pkib.bundle.status == 'not verified' else 'A newer' }} DoD PKI
       bundle{{ (' (' ~ _pkib.bundle.version ~ ')') if _pkib.bundle.version else '' }} than yours:
-      {{ 'DISA\'s signature on it could not be checked, so it is not offered (the job output says what to do).'
+      {{ 'DISA’s signature on it could not be checked, so it is not offered (the job output says what to do).'
          if _pkib.bundle.status == 'not verified' else 'put it in your repository (the email has it).' }}
   when: pki_bundle_fail_when_newer | bool and _pkib.bundle.status in ['newer', 'first', 'not verified']

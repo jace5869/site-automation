@@ -45,7 +45,7 @@
       {%-     endfor -%}
       {%-   else -%}
       {%-     set _ = f.append({'check': 'stigman', 'id': 'stigman:host:' ~ h, 'severity': 'warning',
-                                'summary': h ~ ': its host was not read (not reached, sudo refused, or not in this run\'s Limit) - its containers, disk and database are not checked',
+                                'summary': h ~ ': its host was not read (not reached, sudo refused, or not in this run’s Limit) - its containers, disk and database are not checked',
                                 'hint': 'ansible ' ~ h ~ ' -m ping'}) -%}
       {%-   endif -%}
       {%- endfor -%}
