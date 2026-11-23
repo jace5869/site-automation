@@ -17,6 +17,12 @@
 - **Approvals page:** the "not an approver" line names `portal_approver_groups` too, and the status line follows the
   AD read while the page stays open.
 - **Portal deploy: an empty `win_dc` inventory group** no longer hides `domain_controllers` for the AD groups.
+- **SolarWinds report database: names are kept as names.** Node, DNS, VM, host, interface, alert, app, component
+  and volume names with a word like `token`, `key`, `pw` or `Community` in them were replaced with "line removed: may
+  hold a secret", which also broke `name_key` matching (network map, outage review). Names now get the first masking
+  layer only; messages keep both.
+- **SolarWinds daily topology (`sw_link_day`)** is copied only from a whole read: every link read, no node left out,
+  the links' interfaces read. Before, a first read after midnight that was cut or had no interfaces fixed the day.
 
 ## 1.123.0 — 2026-11-23
 

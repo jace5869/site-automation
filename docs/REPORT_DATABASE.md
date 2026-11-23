@@ -1412,6 +1412,8 @@ sees one whole read, never half of one.
 - 1.118.7: each Orion's first whole snapshot with links on a UTC day copies them into `sw_link_day`. An outage review
   can read the node and interface names seen that day even after an Orion rebuild reuses the IDs. Daily copies are
   kept for `solarwinds_db_link_days` (400 days by default, 0 = always). At 2,000 links that is 2,000 rows a day.
+  1.122.2: "whole" means every link read, no node left out by `netmap_max_nodes`, and the links' interfaces read; a
+  snapshot that is not whole leaves the day open for the next one.
   Allowing about 375 bytes per row including indexes, 2,000 × 400 × 375 bytes is about 0.3 GB. Name lengths affect size.
 - The rows of `sw_snapshot` itself are kept `solarwinds_db_keep_days` (400). They are a cheap trend of the counts.
 - `sw_event` is one row per SolarWinds event, with the SolarWinds it came from (`orion`, its address's host and port).

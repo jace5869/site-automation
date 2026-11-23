@@ -177,6 +177,26 @@ class Snapshot(unittest.TestCase):
         self.assertEqual((c["apps"], c["apps_down"], c["vim_hosts"], c["vim_vms"], c["alerts"]), (20, 2, 3, 36, 7))
         self.assertEqual(c["nodes"], n)
 
+    def test_names_with_a_secrets_word_stay_names(self):
+        """1.122.2: the backstop never takes a node's, a VM's or an alert's name whole (it broke name_key's matching)."""
+        snap = {"raw": {"url": "orion.example.mil", "nodes": [{"id": 1, "name": "token-01", "dns": "token-01.corp.example.mil"},
+                                                             {"id": 2, "name": "srv-key01", "dns": ""}]},
+                "extra": {"vim_vm": [{"vm_id": 5, "host_id": 1, "name": "pw-app01"}],
+                          "vim_host": [{"host_id": 1, "name": "app_keycloak.corp.example.mil"}],
+                          "alert": [{"alert_active_id": 1, "alert_id": 2, "name": "SNMP Community Mismatch",
+                                     "message": "password=Hunter2x on this line"}]}}
+        rows = sd.to_rows(snap, 3)
+        nodes = [dict(zip(sd.COLS["sw_node"], r)) for r in rows["sw_node"]]
+        self.assertEqual([(n["name"], n["name_key"], n["dns"]) for n in nodes],
+                         [("token-01", "token-01", "token-01.corp.example.mil"), ("srv-key01", "srv-key01", "")])
+        vm = dict(zip(sd.COLS["sw_vim_vm"], rows["sw_vim_vm"][0]))
+        self.assertEqual((vm["name"], vm["name_key"]), ("pw-app01", "pw-app01"))
+        host = dict(zip(sd.COLS["sw_vim_host"], rows["sw_vim_host"][0]))
+        self.assertEqual(host["name_key"], "app_keycloak")
+        alert = dict(zip(sd.COLS["sw_alert_active"], rows["sw_alert_active"][0]))
+        self.assertEqual(alert["name"], "SNMP Community Mismatch")
+        self.assertNotIn("Hunter2x", alert["message"])                                                # free text: still masked
+
     def test_alerts_and_components_read_by_id(self):
         # review d: keyset paging (WHERE id > @last ORDER BY id) - never row numbers that shift while rows move
         q = [l for l in self.fake.queries() if " Orion.AlertActive " in l or " Orion.APM.Component " in l]
@@ -551,12 +571,28 @@ class DailyTopology(unittest.TestCase):
         self.conn = LinkDayDB()
         self.addCleanup(self.conn.db.close)
 
-    def write(self, at, name="Router A", links=True, failed="", host="orion.example.mil"):
-        raw = {"reachable": True, "url": host, "read_at": at,
+    def write(self, at, name="Router A", links=True, failed="", host="orion.example.mil", **raw_more):
+        raw = {"reachable": True, "url": host, "read_at": at, "topology_ok": True, "cut": False, "not_read": [],
                "nodes": [{"id": 1, "name": name, "dns": "r1.example.mil"}, {"id": 2, "name": "Switch B"}],
                "interfaces": [{"InterfaceID": 10, "Name": "port-a"}, {"InterfaceID": 20, "Caption": "port-b"}],
                "connections": [[1, 10, 2, 20], [2, 20, 3, None]] if links else []}
+        raw.update(raw_more)
         return sd.write(self.conn, {"raw": raw, "failed": failed}, now=datetime.datetime(2026, 11, 25))
+
+    def test_a_read_that_is_not_whole_leaves_the_day_open(self):
+        """1.122.2: links cut, nodes cut, or the interfaces' read failed: the day waits for a whole read (never locked in)."""
+        at = "2026-11-21T00:05:00Z"
+        failed_ifaces = [{"what": "the links' interfaces (Orion.NPM.Interfaces)", "why": "timed out"}]
+        for more, why in (({"topology_ok": False}, "the links were not all read"), ({"cut": True}, "nodes were left out"),
+                          ({"not_read": failed_ifaces, "interfaces": []}, "the links' interfaces were not read")):
+            r = self.write(at, **more)
+            self.assertTrue(r["ok"])
+            self.assertIn("topology: not kept - this read was not whole (" + why, r["topology"])
+            self.assertEqual(sd.links_on(self.conn, "2026-11-21"), [])
+        no_npm = [{"what": "the links' interfaces", "why": "this Orion has no Orion.NPM.Interfaces (NPM): links without speed or traffic"}]
+        whole = self.write("2026-11-21T00:15:00Z", not_read=no_npm)                                   # no NPM: whole as it can be
+        self.assertEqual(whole["topology"], "topology: copied for 2026-11-21")
+        self.assertEqual([r["snap_id"] for r in sd.links_on(self.conn, "2026-11-21")], [whole["snap_id"]] * 2)
 
     def test_first_whole_snapshot_with_links_per_utc_day_and_orion(self):
         first = self.write("2026-11-22T00:59:00+01:00")
