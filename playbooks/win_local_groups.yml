@@ -58,7 +58,9 @@
           {%- set out = [] -%}
           {%- for p in _wlg_model.pairs.values() if p.unusual or p.local_admin -%}
           {%-   set _ = out.append(('WARNING ' if p.local_admin else 'unusual ') ~ p.member.name ~ ' in ' ~ p.label ~ ' on '
-                                   ~ (p.hosts | length) ~ ' of ' ~ p.of ~ ': ' ~ (p.hosts | sort | join(', '))) -%}
+                                   ~ (p.hosts | length) ~ ' of ' ~ p.of ~ ': '
+                                   ~ ((p.admin_hosts if p.local_admin else p.hosts) | sort | join(', '))
+                                   ~ ((' (enabled there; in the group on ' ~ (p.hosts | length) ~ ')') if p.local_admin and p.admin_hosts | length < p.hosts | length else '')) -%}
           {%- endfor -%}
           {%- for u in _wlg_model.unread -%}
           {%-   set _ = out.append('NOT READ ' ~ u.host ~ ': ' ~ u.why) -%}
@@ -133,6 +135,8 @@
           {{ (_wlg_by_host | findings_report(site_report_title, [], ['local groups'], _wlg_model | win_local_groups_sections(true, win_local_groups_stig_rules | default([]))))
              | combine({'footer': _wlg_note, 'facets': _wlg_model | win_local_groups_facets}) }}
         _report_xlsx: "{{ (_wlg_model | win_local_groups_sheets) if report_email_xlsx | default(false) | bool else [] }}"
+        # 1.122.2: the files this job promises on the website - local-groups.json, approved-list.yml, check-local-admins.ps1
+        _report_web_files_more: ['.json', '.yml', '.ps1']
         # the inventory (CSV, JSON), the list to build the approved list from, and the checks made from it (when set)
         _report_attachments: >-
           {%- set out = [] -%}
@@ -164,3 +168,14 @@
                 'rows': _wlg_model | win_local_groups_rows} }}
         per_host: false
       run_once: true
+
+    # 1.122.2: the inventory files' folder on the AAP side removed once the email and the website have them (outside an
+    # execution environment, /tmp would keep them)
+    - name: The inventory files' folder removed
+      ansible.builtin.file:
+        path: "{{ _wlg_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      run_once: true
+      when: _wlg_dir.path | default('') | length > 0

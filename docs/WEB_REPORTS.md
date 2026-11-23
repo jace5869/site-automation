@@ -720,6 +720,11 @@ nginx sends an upload into a `-files/` folder to this block, which does not take
 
 IIS serves `.xml` and `.docx` with their own types. The links still save them.
 
+1.122.2: the Windows local groups job also hosts `local-groups.json`, `approved-list.yml` and `check-local-admins.ps1`
+(a report's own extra types, beside `report_web_files_types`). nginx and the site portal serve them as above. **IIS**
+serves no `.yml` or `.ps1` until it knows their type: in IIS Manager, *MIME Types*, add `.yml` and `.ps1` as
+`text/plain` (and `.json` as `application/json` if it is not there). Without that, those links answer 404.
+
 ### Two jobs at once (1.79.14)
 
 Every report job reads `index.json`, adds its own line and its hosted files' list, and writes it back. Two jobs doing

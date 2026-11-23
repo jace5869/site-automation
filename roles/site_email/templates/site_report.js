@@ -1044,7 +1044,13 @@
     /* control characters, U+FFFE/FFFF, and a surrogate without its pair (a pair is one character: kept) */
     bad:{test:function(v){return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/.test(v)||/[\ud800-\udbff](?![\udc00-\udfff])|(^|[^\ud800-\udbff])[\udc00-\udfff]/.test(v)}},
     xesc:function(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')},
-    admins:function(rows){return rows.filter(function(r){return r.g==='Administrators'&&r.e}).map(function(r){return [r.e,'','']})},
+    /* 1.122.2: a By server row (s) is approved on that server only: hosts = its full name (f), else match = its computer
+       name (c, ASCII, no [ ]); neither: left out (counted in left) - never approved on every server */
+    admins:function(rows){var out=[],left=0;rows.forEach(function(r){if(r.g!=='Administrators'||!r.e)return;
+        if(!r.s){out.push([r.e,'','']);return}
+        if(r.f){out.push([r.e,'',r.f]);return}
+        var c=String(r.c||'');if(/^[\x21-\x7e]+$/.test(c)&&!/[\[\];*?]/.test(c)){out.push([r.e,c,''])}else left++});
+      out.left=left;return out},
     code:function(entries,c){return [SelX.data(entries,c),c.body,c.vc_tail].join('\n')},
     xml:function(entries,c,st){var code=SelX.code(entries,c).split('\n').map(SelX.xesc).join('\n');return st.xml.split(c.mark).join(code)},
     ps1:function(entries,c){return '\ufeff'+[c.ps1_head,SelX.data(entries,c),c.body,c.ps1_tail].join('\n')+'\n'}
@@ -1071,7 +1077,8 @@
      ['Approved list (YAML)',function(p){save(SelX.yaml(p,cfg.setting||'approved',cfg.kind||'groups'),'approved-list-selected.yml','text/yaml')}]];
     /* 1.122.0: the checks from the ticked Administrators rows - an Evaluate-STIG answer file per STIG, and the PowerShell check */
     var ck=cfg.check;
-    if(ck&&ck.stigs){var fit=function(f){return function(p){var e=SelX.admins(p);if(!e.length){cnt.textContent='Tick an Administrators row first';return}f(e)}};
+    if(ck&&ck.stigs){var fit=function(f){return function(p){var e=SelX.admins(p);if(!e.length){cnt.textContent=e.left?'No server name to approve the ticked rows on':'Tick an Administrators row first';return}
+      f(e);if(e.left)cnt.textContent=e.left+(e.left===1?' row':' rows')+' left out: no server name to approve it on'}};
       ck.stigs.forEach(function(st){acts.push(['Answer file '+st.name+' (XML)',fit(function(e){save(SelX.xml(e,ck,st),st.file,'application/xml')})])});
       acts.push(['PowerShell check (.ps1)',fit(function(e){save(SelX.ps1(e,ck),'check-local-admins.ps1','text/plain')})])}
     acts.forEach(function(x){
@@ -1084,7 +1091,8 @@
       allb.checked=sh.length>0&&ks===sh.length;allb.indeterminate=ks>0&&ks<sh.length;
       rows.forEach(function(r){r.classList.toggle('sel-on',r._sel.checked)})};
     if(window.MutationObserver)new MutationObserver(function(){upd()}).observe(tb.tBodies[0],{childList:true});
-    allb.addEventListener('change',function(){var on=allb.checked;shown().forEach(function(r){r._sel.checked=on});upd()});
+    /* 1.122.2: ticking it shows every row first (the ones past the first 100 too, as Show all does): all of them go in the export */
+    allb.addEventListener('change',function(){var on=allb.checked;if(on&&tb._capApply){tb._open=true;tb._capApply()}shown().forEach(function(r){r._sel.checked=on});upd()});
     var w=tb.closest('.tw');w.parentNode.insertBefore(bar,w);upd();
     document.addEventListener('site-facets',upd);var f=document.getElementById('fhost');if(f)f.addEventListener('input',function(){setTimeout(upd,200)})});
   });

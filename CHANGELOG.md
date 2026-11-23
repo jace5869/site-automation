@@ -23,6 +23,18 @@
   layer only; messages keep both.
 - **SolarWinds daily topology (`sw_link_day`)** is copied only from a whole read: every link read, no node left out,
   the links' interfaces read. Before, a first read after midnight that was cut or had no interfaces fixed the day.
+- **Report website: *Select all shown* takes every row**, past the first 100 too (it shows them all first). Before,
+  the export, the answer files and the PowerShell check from it held only the first 100 rows.
+- **Windows local groups: a row ticked in By server is approved on that server only** in the page's answer files and
+  PowerShell check (by its full name, else its computer name). Before, a domain account ticked on one server was
+  approved on every server.
+- **Windows local groups: the website hosts `local-groups.json`, `approved-list.yml` and `check-local-admins.ps1`** as
+  the job promises (before: refused, "not on the website"). On IIS, add the `.yml` and `.ps1` MIME types
+  (docs/WEB_REPORTS.md). The copy job hosts them too.
+- **Report website: *Export selected* on the brief and ops looks** (before: atlas only).
+- **Windows local groups:** one name (not a list) in `win_local_groups_approved_by` is one entry, never its letters;
+  all 14 well-known groups the read knows are one group on any language of Windows; the job log lists the servers
+  where a local account is enabled; the inventory files' folder on the AAP side is removed after the email.
 
 ## 1.123.0 — 2026-11-23
 

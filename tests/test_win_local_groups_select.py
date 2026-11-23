@@ -134,5 +134,130 @@ class Page(unittest.TestCase):
         self.assertNotIn("data-sel", render("report.html.j2", mail))
 
 
+def _modules():
+    """site_report_web as Ansible gives it its module_utils (as tests/test_report_web.py does)."""
+    import importlib.util
+    sys.path.insert(0, os.path.join(REPO, "roles", "site_email", "library"))
+    for name in ("site_aap", "site_report_page", "site_banner", "site_time", "site_report_files", "site_festive"):
+        if "ansible.module_utils." + name in sys.modules:
+            continue
+        spec = importlib.util.spec_from_file_location("ansible.module_utils." + name, os.path.join(REPO, "plugins", "module_utils", name + ".py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["ansible.module_utils." + name] = mod
+        spec.loader.exec_module(mod)
+    import site_report_web as rw
+    return rw
+
+
+def big_fleet(n=45):
+    """n servers, 3 By server rows each (two Administrators, one Remote Desktop Users): past the page's first 100 rows."""
+    import test_win_local_groups as t
+    import win_local_groups_filters as w
+    hd = t.mem("CORP\\Helpdesk-RDP", t.D + "-4202")
+    return w.win_local_groups_model([{"host": "SRV-%03d.corp.example.mil" % i,
+                                      "result": t.result("SRV-%03d" % i, [t.admins("SRV-%03d" % i, i), t.rdp([hd])])} for i in range(n)], "auto")
+
+
+HARNESS = """<pre id="out"></pre><script>
+window.addEventListener('load',function(){setTimeout(function(){var R={errors:E};
+  var sec=document.querySelector('details.sec[data-sel-export]');R.bar=!!(sec&&sec.querySelector('.selx'));
+  if(sec){var all=sec.querySelector('.selx .sela input');all.click();
+    var tb=sec.querySelector('.tw table');R.rows=tb.querySelectorAll('tbody tr[data-sel]').length;
+    R.ticked=tb.querySelectorAll('tbody tr[data-sel] input.selc:checked').length;
+    R.count=sec.querySelector('.selx .seln').textContent}
+  document.getElementById('out').textContent=JSON.stringify(R)},300)});
+</script>"""
+
+
+class Review1122(unittest.TestCase):
+    """1.122.2: Select all shown takes every row (past the first 100 too), on every web look (atlas, brief, ops); a By
+    server row's checks approve it on that server only; the website hosts the files the job promises."""
+
+    def test_by_server_rows_carry_the_server(self):
+        import win_local_groups_filters as w
+        m = big_fleet(2)
+        sec = [x for x in w.win_local_groups_sections(m, True) if x["title"] == "By server"][0]
+        sels = [json.loads(t["data"]["sel"]) for t in sec["row_tags"] if t.get("data")]
+        da = [x for x in sels if x["m"] == "CORP\\Domain Admins"][0]
+        self.assertEqual((da["s"], da["f"], da["c"]), ("SRV-000.corp.example.mil", "SRV-000.corp.example.mil", "SRV-000"))
+
+    @unittest.skipUnless(shutil.which("node"), "no node")
+    def test_a_by_server_row_is_approved_on_its_server_only(self):
+        rows = [{"g": "Administrators", "e": "CORP\\SQL-Admins", "s": "srv-sql01.corp.example.mil", "f": "SRV-SQL01.corp.example.mil", "c": "SRV-SQL01"},
+                {"g": "Administrators", "e": "CORP\\Ops", "s": "wg01", "f": "", "c": "WG01"},                  # a workgroup server: its name
+                {"g": "Administrators", "e": "CORP\\Odd", "s": "x", "f": "", "c": "NÄME"},              # neither: left out
+                {"g": "Administrators", "e": "CORP\\Domain Admins", "x": {"SRV-A": "S-1-5-21-1-1-1-512"}}]    # By member: every server
+        env = dict(os.environ, ROWS=json.dumps(rows))
+        with open(JS) as fh:
+            pure = re.search(r"/\* sel-pure-start \*/(.*?)/\* sel-pure-end \*/", fh.read(), re.S).group(1)
+        r = subprocess.run(["node", "-e", pure + "\nvar e=SelX.admins(JSON.parse(process.env.ROWS));process.stdout.write(JSON.stringify([e,e.left]));"],
+                           capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        e, left = json.loads(r.stdout)
+        self.assertEqual(e, [["CORP\\SQL-Admins", "", "SRV-SQL01.corp.example.mil"], ["CORP\\Ops", "WG01", ""], ["CORP\\Domain Admins", "", ""]])
+        self.assertEqual(left, 1)
+        import win_local_groups_filters as w
+        self.assertIn('"CORP\\SQL-Admins","","SRV-SQL01.corp.example.mil"', w.check_data([tuple(x) for x in e]))
+
+    def test_the_website_hosts_the_promised_files(self):
+        _modules()
+        rf = sys.modules["ansible.module_utils.site_report_files"]
+        import tempfile
+        d = tempfile.mkdtemp()
+        items = []
+        for n in ("local-groups.json", "approved-list.yml", "check-local-admins.ps1"):
+            with open(os.path.join(d, n), "w") as fh:
+                fh.write("x\n")
+            items.append({"path": os.path.join(d, n), "filename": n})
+        base = [".xml", ".docx", ".xlsx", ".csv", ".md", ".txt", ".pdf"]
+        ok, refused = rf.prepare(items, 20, base + [".json", ".yml", ".ps1"])
+        self.assertEqual(refused, [])
+        self.assertEqual([x["ctype"] for x in ok], ["application/json", "text/plain; charset=utf-8", "text/plain; charset=utf-8"])
+        self.assertEqual(len(rf.prepare(items, 20, base)[1]), 3)                                          # the default list alone: refused
+        with open(os.path.join(REPO, "playbooks", "win_local_groups.yml")) as fh:
+            self.assertIn("_report_web_files_more: ['.json', '.yml', '.ps1']", fh.read())
+        for f in ("main.yml", "copy_page.yml"):
+            with open(os.path.join(REPO, "roles", "site_email", "tasks", f)) as fh:
+                self.assertIn(("+ _report_web_files_more | default([])" if f == "main.yml" else "+ _copy_doc.data.files_more | default([])"), fh.read(), f)
+
+    def test_select_all_in_a_browser_every_look(self):
+        b = next((shutil.which(x) for x in ("google-chrome", "chromium", "chromium-browser") if shutil.which(x)), None)
+        if not b:
+            self.skipTest("no headless browser here")
+        import site_filters as sf
+        import tempfile
+        import win_local_groups_filters as w
+        from test_report_hover import render
+        rw = _modules()
+        m = big_fleet()
+        by = dict((s["host"], w.win_local_groups_findings(m, s["host"])) for s in m["read"])
+        r = sf.findings_report(by, "Windows - local group members", [], ["local groups"], w.win_local_groups_sections(m, True))
+        n = len([x for x in r["sections"] if x["title"] == "By server"][0]["rows"])
+        self.assertGreater(n, 120)
+        for look in ("atlas", "brief", "ops"):
+            raw = render("report_%s.html.j2" % look, r)
+            js = rw.page_script(raw)
+            page = rw.deferred_page(raw, "page.html", js, rw.SCRIPT)
+            self.assertIn('class="defer-main"', page, look)
+            page = page.replace("<head>", "<head><script>var E=[];window.addEventListener('error',function(e){E.push(String(e.message))})</script>", 1)
+            page = page.replace("</body>", HARNESS + "</body>", 1)
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "page.html"), "w") as fh:
+                    fh.write(page)
+                with open(os.path.join(d, rw.report_script_file(js)), "w") as fh:
+                    fh.write(js)
+                out = subprocess.run([b, "--headless=new", "--disable-gpu", "--no-sandbox", "--window-size=1280,1200",
+                                      "--virtual-time-budget=6000", "--dump-dom", "file://" + os.path.join(d, "page.html")],
+                                     capture_output=True, text=True, timeout=120)
+            mm = re.search(r'<pre id="out">(.*?)</pre>', out.stdout, re.S)
+            self.assertTrue(mm and mm.group(1), (look, out.stderr[-800:]))
+            import html as htmllib
+            res = json.loads(htmllib.unescape(mm.group(1)))
+            self.assertEqual(res["errors"], [], look)
+            self.assertTrue(res["bar"], look)                                                         # brief and ops too
+            self.assertEqual((res["rows"], res["ticked"]), (n, n), look)                             # every row, not the first 100
+            self.assertEqual(res["count"], "%d selected" % n, look)
+
+
 if __name__ == "__main__":
     unittest.main()

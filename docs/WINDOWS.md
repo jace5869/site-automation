@@ -540,6 +540,10 @@ The job judges nothing. To check the servers against an approved list:
 2. Paste it into all.yml as `win_local_groups_approved`. Run the job again.
 3. It attaches the checks: `answer-file-WinServer2019.xml` (and 2022, 2025) for Evaluate-STIG, and
    `check-local-admins.ps1`. The page's *Export selected* makes the same files from the ticked Administrators rows.
+   A row ticked in **By server** is approved on that server only (by its full name, else its computer name); a row
+   of **By member** on every server. *Select all shown* takes every row the Group buttons and the search leave, past
+   the first 100 too. The page's *Approved list (YAML)* has no per-server part: a domain member ticked in By server
+   goes into it for all servers - add it under `win_local_groups_approved_by` instead to keep it to some servers.
 4. Check each answer file's `STIGComments Name` against your Evaluate-STIG's short names, and try it on a test server.
 
 - An entry is a name (any case) or a SID. `{computer}` is each server's own name.

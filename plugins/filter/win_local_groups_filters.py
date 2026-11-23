@@ -27,7 +27,11 @@ ADMINS = "S-1-5-32-544"
 BUILTIN_RIDS = ("500", "501", "503", "504")
 WELL_KNOWN = {"S-1-5-32-544": "Administrators", "S-1-5-32-555": "Remote Desktop Users", "S-1-5-32-580": "Remote Management Users",
               "S-1-5-32-551": "Backup Operators", "S-1-5-32-549": "Server Operators", "S-1-5-32-550": "Print Operators",
-              "S-1-5-32-548": "Account Operators"}
+              "S-1-5-32-548": "Account Operators",
+              # 1.122.2: every SID the read knows (win_local_groups.ps1 $known): one group on any language of Windows
+              "S-1-5-32-547": "Power Users", "S-1-5-32-545": "Users", "S-1-5-32-546": "Guests",
+              "S-1-5-32-556": "Network Configuration Operators", "S-1-5-32-573": "Event Log Readers",
+              "S-1-5-32-562": "Distributed COM Users", "S-1-5-32-578": "Hyper-V Administrators"}
 # the DISA rules "only administrators responsible for the system may have Administrator rights" (U_MS_Windows_Server_*
 # XCCDF: 2019 V3R9, 2022 V2R11, 2025 V1R4) - the default of win_local_groups_stig_rules
 STIG_RULES = [{"stig": "WinServer2019", "role": "member", "rule": "WN19-MS-000010", "vuln": "V-205746"},
@@ -263,11 +267,15 @@ def literal_entry(entry, sid):
 def _sel(server, p, m=None):
     """A row's data for the page's Export selected (site-report.js): JSON in data-sel. A By server row (server given) is
     that server's member: its own name as the entry (SRV01\\svc approves it there only); a By member row is the member
-    on all its servers: the shared entry ({computer}\\svc) and each server's SID (x)."""
+    on all its servers: the shared entry ({computer}\\svc) and each server's SID (x). 1.122.2: a By server row (server: the
+    read's server) also carries the server's full name (f, as the checks compare it) and computer name (c): its checks
+    approve the entry on that server only - a domain account ticked on one server is never approved on all of them."""
     m = m or p["member"]
     if server:
+        srv = server if isinstance(server, dict) else {"host": str(server), "computer": "", "domain": ""}
         e = m["sid"] if m["source"] == "Unresolved" else m["raw"]
-        d = {"g": p["label"], "e": literal_entry(e, m["sid"]), "m": m["name"], "i": m["sid"], "k": _kind(m), "n": len(p["hosts"]), "s": server}
+        d = {"g": p["label"], "e": literal_entry(e, m["sid"]), "m": m["name"], "i": m["sid"], "k": _kind(m), "n": len(p["hosts"]), "s": srv["host"],
+             "f": _fqdn(srv) if srv.get("computer") else "", "c": str(srv.get("computer") or "")}
     else:
         sids = p.get("sids") or {}
         d = {"g": p["label"], "e": literal_entry(_entry(p), m["sid"] if len(set(sids.values())) <= 1 else ""), "m": m["name"],
@@ -352,7 +360,7 @@ def win_local_groups_sections(model, web=True, rules=None):
                 if g.get("partial") and m is g["members"][0]:
                     note = (note + "; " if note else "") + "partial read: " + (g["error"] or "the read stopped part way")
                 rows.append([_shown(model, s["host"]), g["label"], m["name"], _kind(m), m["last_logon"], note])
-                tags.append(_tag([g["key"]], [m["name"]], _sel(s["host"], p, m)))
+                tags.append(_tag([g["key"]], [m["name"]], _sel(s, p, m)))
                 rstat.append("warning" if _local_admin(m, g["key"]) else ("low" if p["unusual"] else ""))
     cut = None if web else 40
     by_server = {"title": "By server", "text": "Every member of every group read, server by server.",
@@ -743,14 +751,14 @@ def approved_entries(model, approved, approved_by=None):
             hosts = set(_fqdn(s) for s in inside if _fqdn(s).lower() not in outside)
             if not hosts:
                 continue
-        for k, v in items.items():
+        for k, v in approved_kind(items).items():          # 1.122.2: one name (not a list) is one entry, never its letters
             sc = scope_of(k)
             if sc is None:
                 continue
             h = hosts if sc == "" else (sc if hosts is None else sc & hosts)
             if h is not None and not h:
                 continue
-            out += [(str(e), ";".join(globs) if has_match else "", ";".join(sorted(h)) if h else "") for e in (v or [])]
+            out += [(str(e), ";".join(globs) if has_match else "", ";".join(sorted(h)) if h else "") for e in v]
     return out
 
 

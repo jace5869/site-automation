@@ -322,6 +322,13 @@ ul.passed .ic{width:16px;height:16px}
 .rail a .dot:after{content:attr(data-g);color:var(--card);font:700 9px/1 var(--mono)}
 th button:has(.hsub){flex-wrap:wrap;row-gap:0;white-space:nowrap}th .hsub{display:block;flex-basis:100%;font-weight:400;font-size:10.5px;letter-spacing:0;text-transform:none;color:var(--muted)}
 .capbar{margin:8px 0 0;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0;max-width:100%}.capbar .btn{max-width:100%;white-space:normal}@media print{.capbar{display:none}tr[data-cap][hidden]{display:table-row!important}}
+/* 1.122.2: Export selected (as the atlas look: site_report.js draws the bar and the boxes) */
+.selx{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 10px;padding:8px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--card-strong)}
+.selx .sela{font-weight:600;display:inline-flex;align-items:center;gap:6px}.selx .seln{color:var(--muted);font-variant-numeric:tabular-nums}
+.selx .sell{font-weight:600;color:var(--label);margin-left:auto}.selx .selb:disabled{opacity:.5;cursor:default}
+.selx .selnote{flex-basis:100%;font-size:12px;color:var(--muted)}
+input.selc{margin:0 6px 0 0;vertical-align:-2px}tr.sel-on td{background:var(--accent-soft)}
+@media print{.selx,input.selc{display:none!important}}
 @media (min-width:801px){
 .tw td.cl .cv{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;min-width:0;max-width:100%}.tw td.cl{cursor:pointer}.tw td.cl:after{content:"more";display:block;grid-column:1/-1;margin-top:2px;color:var(--accent);font-size:12px;font-weight:600}
 .tw td.cl.open .cv{display:block;-webkit-line-clamp:unset}.tw td.cl.open:after{content:"less"}
@@ -1128,7 +1135,7 @@ footer{margin-top:32px}
 {%- include 'report_teams.html.j2' %}
 {%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
-<details class="sec{{ ' start' if start else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
+<details class="sec{{ ' start' if start else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}{% if s.select_export is defined %} data-sel-export="{{ s.select_export | tojson | forceescape }}"{% endif %}>
 <summary><div class="hr">{% if ss in words and not (s.glance | default([]) and r.dashboard | default({})) %}<span class="stc s-{{ ss }}"><span class="d" aria-hidden="true"></span>{{ opsword[ss] }}</span>{% elif start %}<span class="lbl">Ranked by severity</span>{% endif %}<span class="sp"></span>
 {%- if s.rows is defined %}<span class="pill"><span class="count">{{ s.rows | length }}</span> {{ 'row' if s.rows | length == 1 else 'rows' }}</span>{% elif start %}<span class="pill"><span class="count">{{ s.cards | length }}</span> {{ 'step' if s.cards | length == 1 else 'steps' }}</span>{% endif %}
 <button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>

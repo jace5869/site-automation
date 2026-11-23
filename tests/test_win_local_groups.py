@@ -726,5 +726,36 @@ class Playbook(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class Review1122(unittest.TestCase):
+    """1.122.2: one name in win_local_groups_approved_by is one entry (never its letters); every well-known SID the read
+    knows is one group on any language; the job log names the servers where a local account is enabled; the files'
+    folder on the AAP side is removed."""
+
+    def test_one_name_not_a_list(self):
+        m = w.win_local_groups_model(fleet())
+        self.assertEqual(w.approved_entries(m, {}, [{"match": "SRV-DB*", "groups": {"Administrators": "CORP\\SQL-Admins"}}]),
+                         [("CORP\\SQL-Admins", "SRV-DB*", "")])
+        self.assertEqual(w.approved_entries(m, {}, [{"match": "SRV-DB*", "groups": {"Administrators": 7}}]), [("7", "SRV-DB*", "")])
+
+    def test_every_known_sid(self):
+        with open(os.path.join(REPO, "roles", "win_local_groups", "files", "win_local_groups.ps1")) as fh:
+            known = re.findall(r"'(S-1-5-32-\d+)'", fh.read().split("$known", 1)[1].split("}", 1)[0])
+        self.assertEqual(len(known), 14)
+        self.assertEqual(sorted(known), sorted(w.WELL_KNOWN))
+        g = {"asked": "Event Log Readers", "sid": "S-1-5-32-573", "name": "Ereignisprotokollleser", "found": True, "method": "Get-LocalGroupMember",
+             "members": [mem("CORP\\Log-Readers", D + "-77")]}
+        m = w.win_local_groups_model([{"host": "SRV-DE01.corp.example.mil", "result": result("SRV-DE01", [dict(g)])},
+                                      {"host": "SRV-EN01.corp.example.mil", "result": result("SRV-EN01", [dict(g, name="Event Log Readers")])}])
+        self.assertEqual([x["label"] for x in m["groups"]], ["Event Log Readers"])                  # one group, both languages
+
+    def test_the_log_and_the_folder(self):
+        with open(os.path.join(REPO, "playbooks", "win_local_groups.yml")) as fh:
+            t = fh.read()
+        self.assertIn("((p.admin_hosts if p.local_admin else p.hosts) | sort | join(', '))", t)
+        cleanup = t[t.index("- name: The inventory files' folder removed"):]
+        self.assertIn('path: "{{ _wlg_dir.path }}"', cleanup)
+        self.assertIn("state: absent", cleanup)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -51,7 +51,7 @@
         index_pending: "{{ _copy_pending | default([]) if _web_win | bool else [] }}"
         downloads_refused: "{{ _copy_doc.downloads_refused | default([]) }}"
         files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
-        files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) }}"
+        files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) + _copy_doc.data.files_more | default([]) }}"
         files_total_max_mb: "{{ report_web_files_total_max_mb | default(500) | int }}"
         files_keep_days: "{{ report_web_files_keep_days | default(30) | int }}"
       vars:

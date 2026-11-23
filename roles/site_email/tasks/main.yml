@@ -379,6 +379,7 @@
           when: "{{ _web_when }}"
           runs: "{{ _web_runs | default([]) }}"
           banner: "{{ _banner if _banner.on else {} }}"     # site_report_web puts it on the page and the index, as does the copy job
+          files_more: "{{ _report_web_files_more | default([]) }}"     # 1.122.2: the copy job hosts the same types
         entry:
           key: "{{ _web_files.latest or _web_files.page.split('/')[0] }}"
           name: "{{ _report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('Report'))), true) }}"
@@ -407,7 +408,8 @@
                                                       'desc': _report_xlsx_desc | default('', true) if _report_xlsx | default([]) | length > 0 else ''}] if _email_xlsx is succeeded and _email_xlsx.path | default('') else []))
              if report_web_files | default(true) | bool else [] }}
         files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
-        files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) }}"
+        # 1.122.2: and the types a report hands over itself (_report_web_files_more: the Windows local groups job's .json, .yml, .ps1)
+        files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) + _report_web_files_more | default([]) }}"
         files_total_max_mb: "{{ report_web_files_total_max_mb | default(500) | int }}"
         files_keep_days: "{{ report_web_files_keep_days | default(30) | int }}"
         index_gone: "{{ _web_win_read.gone | default([]) if _web_win | bool and not _email_dry else [] }}"

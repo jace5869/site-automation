@@ -21,6 +21,8 @@ SUFFIX = '-files'                       # a run's folder: its page's name withou
 TYPES = ('.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf')
 CTYPES = {'.xml': 'application/xml', '.csv': 'text/csv; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
           '.txt': 'text/plain; charset=utf-8', '.pdf': 'application/pdf',
+          # 1.122.2: a report's own more types (_report_web_files_more: the Windows local groups job's) - text, never run
+          '.json': 'application/json', '.yml': 'text/plain; charset=utf-8', '.ps1': 'text/plain; charset=utf-8',
           '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
 MARK = '<!--site-report-files-->'       # where a look puts the Files line (atlas, brief, ops: under the header)
@@ -28,7 +30,8 @@ MARK = '<!--site-report-files-->'       # where a look puts the Files line (atla
 ROW_RE = re.compile(r'<!--site-report-files row="([^"<>]*)"-->')
 # 1.118.1: what a file is, in plain words, when the report says nothing of it (its own: desc on the item)
 DESC = {'.xlsx': 'Excel workbook - the tables of this page, one sheet each', '.csv': 'CSV - a table of this page, as text (Excel opens it)',
-        '.docx': 'Word document', '.pdf': 'PDF document', '.md': 'Markdown text', '.txt': 'Text file', '.xml': 'XML file'}
+        '.docx': 'Word document', '.pdf': 'PDF document', '.md': 'Markdown text', '.txt': 'Text file', '.xml': 'XML file',
+        '.json': 'JSON file', '.yml': 'YAML text', '.ps1': 'PowerShell script (text)'}
 START, END = '<!--site-report-files:start-->', '<!--site-report-files:end-->'
 # a Download link a report puts in its page (a text's file: the answer file) - made into the run's link here
 LINK_RE = re.compile(r'<a class="dl" href="site-report-file:([^"]*)" download>.*?</a>', re.S)
