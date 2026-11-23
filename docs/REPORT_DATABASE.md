@@ -11,6 +11,15 @@ changed (*The ticket store and the ACT cache*).
 Since 1.96.0 it also keeps a copy of SolarWinds, so the reports need not ask SolarWinds each time (*The SolarWinds
 snapshot*).
 
+The VM outage review (1.116.1, *What else saw it*) uses the **Report database** credential with
+`report_reader` on the outage watch template. It reads the SolarWinds snapshot job's latest successful
+`sw_snapshot`, its `sw_vim_host`, `sw_link`, `sw_node` and `sw_alert_active` rows, and that Orion's
+`sw_event` history. Network map writes `netmap_read`, `netmap_site` and `netmap_link`. The AD report
+writes `ad_run`, `ad_dc` and `ad_link`. When present, `sw_interface` supplies the port caption and snapshot state,
+and `ad_dc` supplies the AD site label. The review reads these in one read-only transaction for the outage window.
+Log Analyzer syslog comes directly from the matching Orion with the **SolarWinds (read-only)** credential.
+Traps have no source. The application snapshot (`sw_app`) has no window history.
+
 ## What it keeps
 
 The figures, per run and per org node (All, each site, each unit at any depth, each team, and the split's two halves).

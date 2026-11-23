@@ -430,6 +430,10 @@ outage_escalate_network: ""  # NOC escalation contact. Empty uses "your network 
 outage_escalate_vmware: ""  # NOC escalation contact. Empty uses "your VMware team".
 outage_escalate_backup: ""  # NOC escalation contact. Empty uses "your backup team".
 outage_aar_appendix_max: 40  # Maximum grouped event rows in Appendix A.
+vm_watch_review_context: true  # 1.116.1: read other sources for the outage review's What else saw it cards.
+vm_watch_review_context_minutes: 15  # Minutes to include before and after the dated outage window.
+vm_watch_review_storage_nodes: []  # Storage switch and array node names or patterns (* and ?) when SolarWinds topology has no path.
+vm_watch_review_syslog: true  # Read Log Analyzer once for the storage path and window with the SolarWinds read-only credential.
 vm_watch_review_from: ""                 # a review of an older outage: its window starts here, in report_time_zone (e.g. "2026-11-12 01:00") ...
 vm_watch_review_to: ""                   # ... and ends here ("" = vm_watch_review_hours after vm_watch_review_from, at most now)
 vm_watch_timeline: true                  # the time line also in the report a normal run sends when something is down; false = that report as before

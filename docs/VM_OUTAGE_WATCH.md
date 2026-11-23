@@ -247,11 +247,14 @@ read and what the vCenter event read showed.
 
 1. **What went down** gives the roots, their hosts, down spans and recoveries. Overlapping datastore losses
    on the same host in the same vCenter share a chain. Separate roots keep their own entries.
+   A span with only a watch observation starts at that run (*down by 23:40 (the watch's run)*).
+   Cluster-wide loss and overlaps count from there. An earlier recorded loss dates the span when available.
 2. **What it affected** lists datastore and host members and the watch's findings on those VMs. It counts
    HA restarts in a failed host's cluster during its down span. A VM known only from membership reads
    *on the lost datastore (state not read)* or *on the down host (state not read)*.
-3. **Down now** gives every current watch condition across all vCenters, worst first. Each down VM is also listed
-   under **Issues by type > VMs**, with its datastores when known.
+3. **Down now** gives every current watch condition across all vCenters, worst first. If the condition has no time,
+   it uses the story's dated loss for that root's current span, or says *time not recorded*. Each down VM is also
+   listed under **Issues by type > VMs**, with its datastores when known.
 4. **Recovered** gives the object, recovery event, time and duration when recorded.
 
 With `vm_watch_review_noise: true`, usage alarms, gray transitions, unpaired greens and brief flaps
@@ -271,16 +274,35 @@ The configured vCenter event cap still applies.
 |---|---|
 | The boxes | Went down, VMs affected, Down now, Recovered, Signal to ticket, Noise |
 | The outage, in order | The outage chain by day, including lead-up, recoveries and the watch's current read. |
-| Issues by type (website) | Filter Datastores, VMs or Hosts. Open a row to see its members and state. |
+| Issues by type (website) | Filter Datastores, VMs or Hosts. Network and Domain controllers appear when those sources have rows. |
 | The four parts | What went down, what it affected, down now and recovered. |
 | What this usually means (for the NOC) | Patterns actually seen, in order of first evidence, with causes, read-only first checks, contacts and the objects and times seen here. |
 | All events (N) - chart | Open to see Storage, Hosts, HA and VMs, and Tickets. Choose Everything to see usage and gray alarms in ten-minute bars. |
+| What else saw it | SolarWinds, network map and AD observations in the outage window, on the page, in the email and before Lessons Learned in the AAR. |
 | The outage in short | The first signal, the ticket, the time down and when it was back. |
 | The events (website) | the numbered rows behind the chart and ACT links, initially folded, and the CSV download |
 | Download AAR (Word) (1.112.0) | in the page's head: the after action report, filled from this review ([The AAR draft](#the-aar-draft-word)) |
 | For the after-action report | where the AAR draft is, the job number for the AAR job, and the lines to paste into its survey |
 | From ACT - possible causes and fixes (1.104.0, with `vm_outage_act: true`) | ACT's suggestions, as cards that open: see below |
 | The watch's own sections | *Down or hung now* and the rest, below, as in every watch report |
+
+### What else saw it
+
+Attach the **Report database** reader credential to the outage watch template (1.116.1). Only a review that passes the
+email throttle reads context. Each card says *same time, not cause*. The window follows the dated outage in
+the story, with 15 minutes on each side by default. A missing table says *no data yet*. A disabled read,
+missing credential or database failure gives a reason on the cards and the review continues.
+
+*How it judged* counts the down hosts and the hosts of the reviewed lost datastores linked by SolarWinds.
+The review matches their VIM nodes and follows links in both directions for two hops. If no links establish a path, set
+`vm_watch_review_storage_nodes`, for example `[sitea-fc-sw01, sitea-array01]`. The event card counts
+events elsewhere and leaves them out. The alert card can show only alerts still active at the snapshot.
+The network map reports WAN links and sites seen down in successful reads. AD supplies the last failure
+stored for each replication link in a run and any subsequent success that run recorded.
+
+Attach the **SolarWinds (read-only)** credential for syslog. Log Analyzer reads up to 100 entries across
+the path, at all levels, once for the same time window. Traps are unavailable. SolarWinds application
+status is a snapshot and has no history for the window.
 
 ### Reading the chain and chart
 
@@ -444,6 +466,10 @@ the ticket, not a finding.
 | `outage_escalate_vmware` | `""` | NOC escalation contact. Empty uses "your VMware team". |
 | `outage_escalate_backup` | `""` | NOC escalation contact. Empty uses "your backup team". |
 | `outage_aar_appendix_max` | `40` | Maximum grouped event rows in Appendix A. |
+| `vm_watch_review_context` | `true` | Read other sources for the outage review's What else saw it cards. |
+| `vm_watch_review_context_minutes` | `15` | Minutes to include before and after the dated outage window. |
+| `vm_watch_review_storage_nodes` | `[]` | Storage switch and array node names or patterns (`*` and `?`) when SolarWinds topology has no path. |
+| `vm_watch_review_syslog` | `true` | Read Log Analyzer once for the storage path and window with the SolarWinds read-only credential. |
 | `vm_watch_review_from` | "" | an older outage: the window's start, in `report_time_zone`, e.g. `2026-11-12 01:00` |
 | `vm_watch_review_to` | "" | its end; empty = `vm_watch_review_hours` after the start, at most now |
 | `vm_watch_timeline` | true | the time line also in the report of a normal run that finds something down |

@@ -1,9 +1,11 @@
 {%- set words_by_state = {'Down now':'down', 'Inaccessible in vCenter':'down', 'At risk':'risk', 'Not judged':'skip', 'Recovered':'ok'} %}
-{%- set kinds = [('ds','Datastores'), ('vm','VMs'), ('host','Hosts')] %}
+{%- set kinds = [('ds','Datastores'), ('vm','VMs'), ('host','Hosts'), ('net','Network'), ('dc','Domain controllers')] %}
 {%- set counts = {} %}
 {%- for key, label in kinds %}
   {%- set rows = s.issues | selectattr('kind', 'equalto', key) | list %}
-  {%- set _ = counts.update({key: (rows | sum(attribute='n') if key == 'vm' else rows | length)}) %}
+  {%- if rows or key in ('ds','vm','host') %}
+    {%- set _ = counts.update({key: (rows | sum(attribute='n') if key == 'vm' else rows | length)}) %}
+  {%- endif %}
 {%- endfor %}
 <div class="ibk"><fieldset class="ibk-f"><legend class="vh">Filter issues by type</legend>
 <input class="ibk-r" type="radio" id="ibk-all" name="ibk" checked>
@@ -33,5 +35,5 @@
 {%- endfor %}</ul>{% endfor %}</div></details>
 {%- endfor %}</div>
 {%- endfor %}
-</section>
+{% if key == 'net' and s.network_note | default('') %}<p class="ibk-note">{{ s.network_note | e }}</p>{% endif %}</section>
 {%- endfor %}</div></fieldset></div>

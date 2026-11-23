@@ -212,6 +212,45 @@
           The outage time line was not made: {{ (ansible_failed_result.msg | default('the read failed') | outage_redact)
              if _vm_w_review | bool else ansible_failed_result.msg | default('the read failed') }}
 
+# 1.116.1: only the review that passed the mail throttle reads the other sources. The reader has no write path.
+- name: VMware | what else saw the outage
+  when: _vm_w_review | bool and _vm_w_tl | length > 0 and not _vm_w_tl.skip | bool
+  vars:
+    _vm_w_db_host: "{{ lookup('ansible.builtin.env', 'REPORT_DB_HOST') | trim }}"
+  block:
+    - name: VMware | other sources in the outage window (read only)
+      site_vm_outage_context:
+        scope: "{{ _vm_w_tl.context_scope }}"
+        minutes: "{{ vm_watch_review_context_minutes | int }}"
+        storage_nodes: "{{ vm_watch_review_storage_nodes | name_list }}"
+        syslog: "{{ vm_watch_review_syslog | bool }}"
+        time_zone: "{{ report_time_zone | default('') }}"
+        host: "{{ _vm_w_db_host }}"
+        port: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PORT') | default('3309', true) | int }}"
+        database: "{{ lookup('ansible.builtin.env', 'REPORT_DB_NAME') | default('site_reports', true) | trim }}"
+        user: "{{ lookup('ansible.builtin.env', 'REPORT_DB_USER') | trim }}"
+        password: "{{ lookup('ansible.builtin.env', 'REPORT_DB_PASSWORD') }}"
+        tls: "{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') | default('false', true) | bool }}"
+        ca_file: "{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') | trim }}"
+        url: "{{ netmap_solarwinds_url | default('') }}"
+        validate_certs: "{{ netmap_validate_certs | default(true) | bool }}"
+        ca_path: "{{ netmap_ca_path | default('') }}"
+      register: _vm_w_context
+      when: vm_watch_review_context | bool and _vm_w_db_host | length > 0 and _vm_w_tl.context_scope | length > 0
+      check_mode: false
+      no_log: true
+
+    - name: VMware | the other sources in the page, email and AAR
+      ansible.builtin.set_fact:
+        _vm_w_tl: >-
+          {{ _vm_w_tl | outage_review_context(_vm_w_context.context | default(none),
+               'vm_watch_review_context is off' if not vm_watch_review_context | bool else
+               'no Report database credential' if not _vm_w_db_host else 'no dated outage window') }}
+  rescue:
+    - name: VMware | the context read failed (the review goes on)
+      ansible.builtin.set_fact:
+        _vm_w_tl: "{{ _vm_w_tl | outage_review_context }}"
+
 # 1.104.0, ACT on the outage review (vm_outage_act): ACT's possible causes and fixes, as cards (outage_act.yml). A review
 # only (vm_watch_review), never on the watch's own runs.
 - name: VMware | ACT on the outage review (vm_outage_act)

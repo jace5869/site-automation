@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.116.1 — 2026-11-23
+
+**To set up:** attach the **Report database** reader credential to the outage watch template for the cards, and the
+**SolarWinds (read-only)** credential for syslog. Optionally set `vm_watch_review_storage_nodes` when SolarWinds has
+no storage path for the reviewed hosts. Nothing else to set up.
+
+- **What else saw it** shows SolarWinds, network map and AD observations for the watch's roots and their outage window
+  on the page, in the email and in the AAR. Network and Domain controllers appear in Issues by type with rows.
+- **Down spans** count from the watch's first observation when no earlier loss event dates them. Down now uses the
+  current root's dated loss when its watch condition has no time, or says *time not recorded*.
+- **Same time, not cause.** The cards say what other tools saw in the window; they never name a cause. The storage path
+  comes from SolarWinds links (sw_link) to the reviewed hosts on their own site, else `vm_watch_review_storage_nodes`,
+  else one line says it is not known. *How it judged* says how many hosts were linked. A host name found on two vCenters
+  is left unresolved. Events that cannot be tied to the path are counted as elsewhere and left out.
+- **Read only, and it never stops the review.** One read-only transaction, bounded reads, a fixed message on any
+  database error (never a password or driver text). Every source string is masked (URL logins too) before it is cut. A
+  source that fails is *not read* with its reason; the cards of the sources already read stay.
+- Tests: tests/test_outage_context.py (the cards, the storage path, the masking, the read-only transaction, the latest
+  AD read, a failing source), tests/test_outage_timeline.py (cluster loss inside the window and ended by a connected
+  host, observation-only spans, the context window, Down now times). The scheduled watch stays 1.118.4's
+  (tests/test_watch_frozen.py, unchanged).
+
 ## 1.118.7 — 2026-11-23
 
 **To set up:** nothing. The next SolarWinds snapshot run makes `sw_link_day`. With `solarwinds_db_create: false`,

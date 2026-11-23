@@ -48,6 +48,7 @@ def _load(name, folder):
     return module
 
 
+_context = _load("site_outage_context", "../module_utils")
 _redact = _load("site_redact", "../module_utils").redact_all
 _review_text = _load("outage_review_text", "../module_utils")
 _tm = _load("site_time", "../module_utils")
@@ -1059,6 +1060,11 @@ def _review_inventory(opts, events):
         if kind == "host":
             for name in c.get("ticket_names") or []:
                 register(vc, kind, condition_moid(c), name)
+        # 1.116.1: retain the root's qualified path host names for the SolarWinds lookup.
+        for name in c.get("hosts") or []:
+            register(vc, "host", None, name)
+        for path in c.get("folded") or []:
+            register(vc, "host", path.get("host_moid"), path.get("host"))
         for path in c.get("path_devices") or []:
             register(vc, "host", path.get("host_moid"), path["host"])
         vms.extend(dict(v, vcenter=vc) for v in c.get("members") or [])
@@ -1134,7 +1140,8 @@ def _review_inventory(opts, events):
             e["source_names"] = original  # the workbook and CSV show the source event
     _match_path_clears(events)
     n = len(opts["triggers"])
-    hosts = [dict(h, name=label(h.get("vcenter", ""), "host", h.get("moid"), h["name"])) for h in opts.get("hosts") or []]
+    hosts = [dict(h, full_name=h["name"], name=label(h.get("vcenter", ""), "host", h.get("moid"), h["name"]))
+             for h in opts.get("hosts") or []]
     _review_clusters(events + hosts + triggers)
     host_aliases = defaultdict(set)
     for (vc, _), names_seen in full_hosts.items():
@@ -1340,6 +1347,10 @@ def _count(n, word):
     return "%d %s%s" % (n, word, "" if n == 1 else "s")
 
 
+def _down_by(when):
+    return "down by %s (the watch's run)" % when
+
+
 def _finding_object(c):
     return c.get("vcenter", ""), c.get("object_type"), c.get("object")
 
@@ -1356,14 +1367,13 @@ def _root_history(events, opts):
     path_spans = defaultdict(list)
     infrastructure = [e for e in events if not _vm_key(e) and
                       ((e["vcenter"], "datastore", e["datastore"]) in roots or _scope(e) == "host")]
-    # A watch read establishes that the host was down at that instant. Only a loss event
-    # (or an explicit "since") can date the onset. Keep observations out of the event export.
+    # 1.116.1: count a span from the first recorded loss or watch observation.
+    # Keep its provenance for the reports and keep observations out of the event export.
     observed_starts = set()
     for obj, c in roots.items():
-        if obj[1] == "host":
-            since = _time(current.get(obj, {}).get("since"))
-            for at in sorted(set(c["observations"]) | ({since} if since else set())):
-                infrastructure.append(dict(t=at, observed_host=obj, onset_known=at == since))
+        since = _time(current.get(obj, {}).get("since"))
+        for at in sorted(set(c["observations"]) | ({since} if since else set())):
+            infrastructure.append(dict(t=at, observed_root=obj, onset_known=at == since))
     infrastructure.sort(key=lambda e: e["t"])
     spans, chain, starts = _history(infrastructure, path_spans, observed_starts)
     paths = {obj: set() for obj in roots}
@@ -1380,9 +1390,6 @@ def _root_history(events, opts):
                     path_spans[obj, host].append([since, None])
         for host in c.get("hosts") or []:
             paths[obj].add(host)
-        since = _time(current.get(obj, {}).get("since"))
-        if since and not spans[obj]:
-            spans[obj].append([since, None])
     def during(intervals, t):
         return any(a <= t and (not b or t <= b) for a, b in intervals)
 
@@ -1533,14 +1540,17 @@ def _history(events, path_spans=None, observed_starts=None, object_type=None):
     opened, spans, chain = defaultdict(set), defaultdict(list), []
     restarts, closed, episode_starts = set(), set(), set()
     for e in events:
-        if "observed_host" in e:
-            obj = e["observed_host"]
+        if "observed_root" in e:
+            obj = e["observed_root"]
             if not opened[obj]:
                 spans[obj].append([e["t"], None])
                 if not e["onset_known"]:
                     observed_starts.add((obj, e["t"]))
-            opened[obj].difference_update([k for k in opened[obj] if k[0].startswith("alarm:")])
-            opened[obj].add(("conn", "", ""))
+            if obj[1] == "host":
+                opened[obj].difference_update([k for k in opened[obj] if k[0].startswith("alarm:")])
+                opened[obj].add(("conn", "", ""))
+            elif not opened[obj]:
+                opened[obj].add(("watch", "", ""))  # no individual datastore path identified
             continue
         signal = _change(e)
         if not signal:
@@ -1584,9 +1594,28 @@ def _history(events, path_spans=None, observed_starts=None, object_type=None):
                 spans[obj].append([e["t"], None])
             if host_path and not any(k[1] == e["host"] for k in active):
                 path_spans[obj, e["host"]].append([e["t"], None])
+            active.discard(("watch", "", ""))
             active.add(condition)
         chain.append((e, obj, kind, clear))
     return spans, chain, episode_starts
+
+
+def _context_scope(incident, opts, start, finish):
+    """1.116.1: only the watch roots and their path hosts in the dated outage story."""
+    if not incident["roots"] or not start or not finish or start > finish:
+        return {}
+    inventory = {(h.get("vcenter"), h["name"]): h for h in opts.get("hosts") or []}
+    sites = {c.get("datacenter") for c in incident["roots"].values()}
+    sites.update(e.get("datacenter") for e, obj, _, _ in incident["chain"] if obj in incident["roots"])
+    hosts = []
+    for key in sorted(incident["hosts"]):  # down hosts and the hosts of the rooted datastore paths
+        host = inventory.get(key, {})
+        sites.add(host.get("datacenter"))
+        aliases = opts["host_aliases"].get(key, ())
+        name = next(iter(aliases)) if len(aliases) == 1 else host.get("full_name") or key[1]
+        site = host.get("datacenter") or incident["roots"].get((key[0], "host", key[1]), {}).get("datacenter")
+        hosts.append(dict(vcenter=key[0], host=key[1], name=name, site=site or ""))
+    return dict(begin=start.timestamp(), end=finish.timestamp(), hosts=hosts, sites=sorted(filter(None, sites)))
 
 
 def outage_events_csv(sheet):
@@ -1599,24 +1628,32 @@ def outage_events_csv(sheet):
     return _unsafe(buf.getvalue())
 
 
-def _cluster_spans(hosts, spans, current, observed_starts):
+def _cluster_spans(hosts, spans, current, observed_starts, begin, end, read):
     members = defaultdict(set)
+    connected = set()
     for h in hosts:
         # the cluster's MoID when the read gives it, else the cluster within its vCenter and datacenter (1.118.4's watch read
         # gives cluster and datacenter, no cluster MoID)
         key = h.get("cluster_key") or ((h.get("vcenter", ""), h.get("datacenter", ""), h["cluster"]) if h.get("cluster") else None)
         if key and h.get("cluster") and h.get("name"):
-            members[key, h["cluster"]].add((h.get("vcenter", ""), "host", h["name"]))
+            obj = (h.get("vcenter", ""), "host", h["name"])
+            members[key, h["cluster"]].add(obj)
+            if h.get("connection") == "connected" and read:
+                connected.add(obj)
     found = []
     for (_, name), group in sorted(members.items()):
         changes = defaultdict(int)
         observations = set()
         for obj in group:
             for a, b in spans.get(obj, []):
-                changes[a] += 1
+                if obj in connected and a <= read and (not b or read < b):
+                    b = read
+                if a > end or b and b <= begin:
+                    continue
+                changes[max(a, begin)] += 1
                 if (obj, a) in observed_starts:
                     observations.add(a)
-                if b:
+                if b and b <= end:
                     changes[b] -= 1
         n, since = 0, None
         for at, delta in sorted(changes.items()):
@@ -1624,11 +1661,11 @@ def _cluster_spans(hosts, spans, current, observed_starts):
             if n == len(group) and since is None:
                 since = at
             elif n < len(group) and since:
-                found.append((name, None if since in observations else since, at, False))
+                found.append((name, since, at, False, since in observations))
                 since = None
-        live = group <= current.keys()
-        if since or live:
-            found.append((name, None if since in observations else since, None, live))
+        live = bool(read and begin <= read <= end and group <= current.keys() and group.isdisjoint(connected))
+        if since:
+            found.append((name, since, None, live, since in observations))
     return found
 
 
@@ -1639,7 +1676,7 @@ PART_COLUMNS = (["Object", "What", "First signal", "Down for", "Now"],
 NOISE_COLUMNS = ["Alarm", "VMs", "Changes", "When", "Verdict"]
 
 
-def _review_parts(incident, opts, end, stamp):
+def _review_parts(incident, opts, begin, end, stamp):
     clean, history, chain = incident["facts"], incident["history"], incident["chain"]
     current, locations = incident["current"], incident["locations"]
     read = _time(opts.get("read_at")) or end
@@ -1669,6 +1706,11 @@ def _review_parts(incident, opts, end, stamp):
 
     def duration(a, b):
         return _span((b - a).total_seconds()) if a and b and b >= a else "unknown"
+
+    def loss_time(obj, at):
+        if not at:
+            return "time not recorded"
+        return _down_by(stamp(at)) if (obj, at) in observed_starts else stamp(at)
 
     def issue(kind, group_name, state, name, what, since, items):
         return dict(kind=kind, group=group_name, state=state, name=name, what=what, since=since, n=len(items), items=items)
@@ -1730,8 +1772,6 @@ def _review_parts(incident, opts, end, stamp):
             continue
         if state == "Recovered" and back:
             origin = next((a for a, b in history.get((vc, "host", host), []) if a <= back and (not b or b >= back)), None)
-            if ((vc, "host", host), origin) in observed_starts:
-                origin = None
             origin = origin or (history[obj][-1][0] if history.get(obj) and history[obj][-1][1] == back else None)
             recovered.append((back, [display(vc, vm), word, stamp(back), duration(origin, back)]))
         now_word = word if state != "Recovered" else "not read"
@@ -1754,8 +1794,6 @@ def _review_parts(incident, opts, end, stamp):
         c = current.get(obj)
         intervals = history.get(obj) or [(None, None)]
         a, b = intervals[-1]
-        if (obj, a) in observed_starts:
-            a = None
         live = c is not None
         if live and b:
             a, b = None, None  # the historical stretch closed before this observation
@@ -1769,7 +1807,7 @@ def _review_parts(incident, opts, end, stamp):
             what, now_word = OBJECT_WORD[typ], "no loss recorded"
         length = duration(a, read if live else b)
         shown = display(vc, name)
-        went.append([shown, what, stamp(a) if a else "unknown", length, now_word])
+        went.append([shown, what, loss_time(obj, a), length, now_word])
         if live:
             down_times.append((a, shown, length))
         # Each host regains access independently. A datastore alarm can also close
@@ -1783,9 +1821,10 @@ def _review_parts(incident, opts, end, stamp):
                            "host connected again" if typ == "host" else "access restored")
                 clearances.append((lost, back, how))
         for lost, back, how in clearances:
-            recovered.append((back, [shown, how, stamp(back), duration(None if (obj, lost) in observed_starts else lost, back)]))
+            recovered.append((back, [shown, how, stamp(back), duration(lost, back)]))
             back_times.append(back)
-        since_text = ("since " + stamp(a) if a and live else now_word) + " · " + length
+        since_text = (loss_time(obj, a) if (obj, a) in observed_starts else
+                      "since " + stamp(a) if a and live else now_word) + " · " + length
         if typ == "datastore":
             items = [item for key, (item, ds) in vm_items.items()
                      if (obj in lost_files[key] if live else key[0] == vc and name in ds)]
@@ -1810,8 +1849,7 @@ def _review_parts(incident, opts, end, stamp):
         state = "Down now" if obj in current else "At risk" if at_risk else "Recovered" if interval[1] or details and all(
             d["state"] == "Recovered" for d in details) else "Not judged"
         why = ", ".join(at_risk) + " not accessible" if at_risk else "host connected again" if interval[1] else "storage paths"
-        at = interval[1] or (None if (obj, interval[0]) in observed_starts else interval[0])
-        since = stamp(at) if at else "unknown"
+        since = stamp(interval[1]) if interval[1] else loss_time(obj, interval[0])
         if state == "Down now":
             why = current[obj].get("summary") or "host not responding"
         elif state == "At risk":
@@ -1822,6 +1860,12 @@ def _review_parts(incident, opts, end, stamp):
     for c in opts["triggers"]:
         obj = _finding_object(c)
         since = _time(c.get("since"))
+        # 1.116.1: use only this root's still-open loss. A closed episode cannot date a new finding.
+        if not since and obj in incident["roots"] and c.get("kind") == obj[1] and history.get(obj):
+            lost, back = history[obj][-1]
+            # The current read alone tells us it is down now, not how long it has been down.
+            if not back and ((obj, lost) not in observed_starts or lost < read):
+                since = lost
         name = " ".join(filter(None, [OBJECT_WORD.get(obj[1], obj[1]), obj[2]])) or "Watch"
         if many_centers and obj[0]:
             name += " (%s)" % obj[0]
@@ -1831,7 +1875,7 @@ def _review_parts(incident, opts, end, stamp):
             if files != "not read" and "(datastore %s)" % files not in detail:
                 detail += " (datastore %s)" % files
         down.append([(c.get("severity") or "info").title(), name, detail,
-                     stamp(since) if since else "unknown", duration(since, read)])
+                     loss_time(obj, since), duration(since, read)])
     issues.sort(key=lambda v: (v["group"], ISSUE_STATES.index(v["state"]), v["name"]))
     down.sort(key=lambda r: (-RANK.get(r[0].lower(), 0), r[1]))
     recovered.sort(key=lambda r: (r[0], r[1][0]))
@@ -1876,8 +1920,10 @@ def _review_parts(incident, opts, end, stamp):
     connected = sorted(h for vc, h in host_keys if (vc, "host", h) not in hosts)
     if connected:
         note += " Storage paths were lost on %s." % ", ".join(connected)
-    for cluster, lost, back, live in _cluster_spans(opts.get("hosts") or [], history, current, observed_starts):
-        note += " Cluster %s lost all hosts%s%s." % (cluster, " at " + stamp(lost) if lost else "",
+    for cluster, lost, back, live, observed in _cluster_spans(
+            opts.get("hosts") or [], history, current, observed_starts, begin, end, _time(opts.get("read_at"))):
+        when = " - " + _down_by(stamp(lost)) if observed else " at " + stamp(lost) if lost else ""
+        note += " Cluster %s lost all hosts%s%s." % (cluster, when,
             " for " + duration(lost, back) if back else " and is still down" if live else " (recovery not recorded)")
     reviewed = ", ".join("%s %s (%s)%s" % (kind, name, vc, " " + c["root_source"] if c["root_source"] else "")
                          for (vc, kind, name), c in sorted(incident["roots"].items()))
@@ -1901,19 +1947,31 @@ def _review_parts(incident, opts, end, stamp):
         if destinations[row_key]:
             how += " on " + ", ".join(sorted(destinations[row_key]))
         aff_rows.append([h, ds, "%d: %s" % (len(vms), ", ".join(vms)), how, nw])
-    observations = sorted(at for _, at in observed_starts if at <= end)
-    unknown_start = bool(observations and (not start or observations[0] < start))
-    if unknown_start:
-        start = observations[0]
-    last_signal = max(observations + [e["t"] for e in clean if e["level"] in BAD + ("ok",)], default=None)
-    open_observation = any(history[obj][-1] == [at, None] for obj, at in observed_starts)
+    seen = {at for c in incident["roots"].values() for at in c["observations"] if begin <= at <= end}
+    opened = {(obj, a) for obj, a in observed_starts}
+
+    def by_observation(obj, at):
+        # 1.116.1: a repeat counts as a signal only inside a span the watch opened (no loss event dates it); a root an event
+        # took down and the watch keeps seeing down does not stretch the outage window to the review
+        return any((obj, a) in opened and a <= at and (not b or at <= b) for a, b in history.get(obj, []))
+    observations = {at for obj, c in incident["roots"].items() for at in c["observations"]
+                    if begin <= at <= end and ((obj, at) in opened or by_observation(obj, at))}
+    since_times = (_time(c.get("since")) for c in incident["roots"].values())
+    watch_dates = observations | {at for at in since_times if at and begin <= at <= end}
+    event_start = start
+    start = min(watch_dates | ({event_start} if event_start else set()), default=None)
+    observed_start = any(at == start for _, at in observed_starts) and start != event_start
+    last_signal = max(watch_dates | {e["t"] for e in clean if e["level"] in BAD + ("ok",)}, default=None)
+    open_observation = any(at <= end and history[obj][-1] == [at, None] for obj, at in observed_starts)
     end_recovery = recovered[-1][0] if recovered and not open_observation else None
-    return dict(observed_starts=observed_starts, unknown_start=unknown_start, open_observation=open_observation,
+    return dict(observed_starts=observed_starts, observed_start=observed_start, open_observation=open_observation,
                 title=title if meta or affected else "", basename=kind + " " + subject, head_name=kind + ", " + scope,
                 went=went, went_note=note, affected=aff_rows, affected_note=count_line, now=down, at_risk=[],
                 recovered=[row for _, row in recovered], issues=issues, affected_keys=affected, host_count=host_count,
                 first_signal=first["t"] if first else None,
                 last_signal=last_signal,
+                # the context read (What else saw it) covers every in-window watch observation of a root (1.116.1)
+                last_seen=max(seen | ({last_signal} if last_signal else set()), default=None),
                 start=start, finish=end_recovery, first_back=next((e["t"] for e in clean if start and e["t"] >= start and
                 e["role"] in ("up", "clear") and e["lane"] == "host"), min(back_times, default=end_recovery)), still=still, unread=unread,
                 down_times=down_times, infra_count=", ".join(_count(len(xs), word) for xs, word in ((hosts, "host"), (stores, "datastore"))),
@@ -2092,7 +2150,7 @@ def _story_episode(events, parts, history, loc):
             durations = {}
             for x in group:
                 for a, b in history.get((x["vcenter"], "host", x["host"]), []):
-                    if b and a <= x["t"] <= b and ((x["vcenter"], "host", x["host"]), a) not in parts["observed_starts"]:
+                    if b and a <= x["t"] <= b:
                         durations[x["host"]] = _span((b - a).total_seconds())
             duration = "; ".join(h + " " + length for h, length in durations.items()) if len(durations) > 1 else next(iter(durations.values()), "")
         elif typ.startswith("VmDasBeingReset"):
@@ -2124,15 +2182,15 @@ def _story_episode(events, parts, history, loc):
 
 def _story(events, parts, history, read, loc, episode_starts):
     rows, episode = [], []
-    observations = [dict(t=t, observed_host=obj) for obj, t in sorted(parts["observed_starts"])
+    observations = [dict(t=t, observed_root=obj) for obj, t in sorted(parts["observed_starts"])
                     if t < read or obj[2] not in parts["still"]]
     for e in sorted(events + observations, key=lambda e: e["t"]):
-        if "observed_host" in e:
+        if "observed_root" in e:
             rows.extend(_story_episode(episode, parts, history, loc))
             episode = []
-            host = e["observed_host"][2]
-            rows.append(dict(t=e["t"], level="critical", text="Watch observed " + host + " not responding",
-                             objects=host, duration="onset unknown", extra=None, after="", ticket=False, role="observation"))
+            name = e["observed_root"][2]
+            rows.append(dict(t=e["t"], level="critical", text=name + " " + _down_by(loc(e["t"]).strftime("%H:%M")),
+                             objects=name, duration="", extra=None, after="", ticket=False, role="observation"))
             continue
         if id(e) in episode_starts:
             rows.extend(_story_episode(episode, parts, history, loc))
@@ -2144,7 +2202,7 @@ def _story(events, parts, history, read, loc, episode_starts):
     finish = parts["last_signal"] if start else None
     window = {}
     if start and finish:
-        duration = "onset unknown" if parts["unknown_start"] else _span((finish - start).total_seconds())
+        duration = _span((finish - start).total_seconds())
         window = dict(start=_moment(start, loc), end=_moment(finish, loc), duration=duration, still=_compact(parts["still"]))
     if parts["still"]:
         detail = _compact(parts["still"])
@@ -2433,7 +2491,7 @@ def outage_timeline(events, tickets=None, opts=None):
         if chain or incident["current"]:
             alarm_events = story_events
         stamp_review = lambda t: loc(t).strftime("%d %b %H:%M:%S %Z")
-        parts = _review_parts(incident, o, end, stamp_review)
+        parts = _review_parts(incident, o, begin, end, stamp_review)  # the window with its look-back
         general = parts["title"]
         vm_count, host_count = len(parts["affected_keys"]), parts["host_count"]
         start_at, finish_at = parts["start"], parts["finish"]
@@ -2512,7 +2570,12 @@ def outage_timeline(events, tickets=None, opts=None):
     current_hosts = {(vc, name) for vc, typ, name in incident["current"] if typ == "host"} if review else set()
     unknown_duration = {d for d in downs if review and d[2] is None and (d[3], d[0]) not in current_hosts}
     still = [d for d in downs if d[2] is None and d not in unknown_duration]
-    unknown_onset = {d for d in downs if ((d[3], "host", d[0]), d[1]) in incident["observed_starts"]} if review else set()
+    observed_downs = {d for d in downs if ((d[3], "host", d[0]), d[1]) in incident["observed_starts"]}
+
+    def host_loss(d):
+        when = hm(d[1], True)
+        return _down_by(when) if d in observed_downs else "not responding " + when
+
     cleared_runs = [r for r in runs if r["cleared"] is not None]
     open_alarms = [r for r in runs if r["cleared"] is None]
     fallback = set((r["vcenter"], r["vm"] or r["where"]) for r in cleared_runs if r["vm"] or r["where"])
@@ -2541,7 +2604,7 @@ def outage_timeline(events, tickets=None, opts=None):
                 crit["where"] or subject["text"], _span(LEAD_S), word, crit["num"], loc(crit["t"]).strftime("%H:%M"))
     dup = set(w for w, _a, _b, v in downs if len(set(x[3] for x in downs if x[0] == w)) > 1)       # one name on two vCenters: told apart
     shown = lambda d: "%s (%s)" % (d[0], (d[3] or "?").split(".")[0]) if d[0] in dup else d[0]      # noqa: E731
-    spans = [(shown(d), d[1], d[2] or end, d[2] is None) for d in downs if d not in unknown_duration and d not in unknown_onset]
+    spans = [(shown(d), d[1], d[2] or end, d[2] is None) for d in downs if d not in unknown_duration and d[1] <= end]
     longest = max(spans, key=lambda d: (d[2] - d[1]).total_seconds()) if spans else None
     down_s = (longest[2] - longest[1]).total_seconds() if longest else 0
     hosts_down = sorted({shown(d) for d in downs})
@@ -2589,10 +2652,11 @@ def outage_timeline(events, tickets=None, opts=None):
     if review and not trig and not general and noise:
         trig = ["The review was asked for. Alarm changes and short flaps are counted below."]
     if not trig and review and parts["open_observation"]:
-        trig.append("The watch recorded a host loss whose recovery time is unknown.")
+        trig.append("The watch recorded a loss whose recovery time is unknown.")
     if not trig and (cleared_runs or (spans and not still)):
-        for h, a_, b_, _hv in [d for d in downs if d[2] is not None and d not in unknown_onset][:3]:
-            trig.append("%s: not responding %s to %s (%s), back before the review" % (h, hm(a_, True), hm(b_, True), _span((b_ - a_).total_seconds())))
+        for d in [d for d in downs if d[2] is not None][:3]:
+            trig.append("%s: %s to %s (%s), back before the review" % (
+                d[0], host_loss(d), hm(d[2], True), _span((d[2] - d[1]).total_seconds())))
         for r in sorted((r for r in cleared_runs if not review or not r["usage"]), key=lambda x: x["raised"])[:6]:
             trig.append("%s on %s: raised %s, cleared %s (%s later)" % (r["alarm"], r["vm"] or r["where"] or "?", hm(r["raised"], True), hm(r["cleared"], True),
                                                                         _span((r["cleared"] - r["raised"]).total_seconds())))
@@ -2602,7 +2666,8 @@ def outage_timeline(events, tickets=None, opts=None):
     numbers = {
         "events": len(evs), "first_signal": first["t"].strftime("%Y-%m-%dT%H:%M:%SZ") if first else "",
         "ticket": opened["ticket"] if opened else "", "signal_to_ticket_s": int(to_ticket) if to_ticket is not None else -1,
-        "down_s": -1 if unknown_onset and not spans else int(down_s), "hosts_down": hosts_down, "still_down": sorted(shown(d) for d in still), "ha_restarted": restarted,
+        "down_s": -1 if unknown_duration & observed_downs and not spans else int(down_s), "hosts_down": hosts_down,
+        "still_down": sorted(shown(d) for d in still), "ha_restarted": restarted,
         "back": back["t"].strftime("%Y-%m-%dT%H:%M:%SZ") if back else ""}
 
     window_text = "%s to %s" % (full(begin), full(end) if days else loc(end).strftime("%H:%M ") + zname(end))
@@ -2958,15 +3023,14 @@ def outage_timeline(events, tickets=None, opts=None):
         start = first_bad or first
         where_name = (head or start)["where"] or (hosts_down[0] if hosts_down else "")
         impact = []
-        for h, a_, b_ in [(shown(d), d[1], d[2]) for d in downs if d not in unknown_duration and d not in unknown_onset]:
-            impact.append("%s down %s (%s to %s)" % (h, _span(((b_ or end) - a_).total_seconds()), stamp(a_),
-                                                     stamp(b_) if b_ else "still down at the end of the window"))
+        for d in downs:
+            if d[1] <= end and d not in unknown_duration:
+                impact.append("%s down %s (%s to %s)" % (shown(d), _span(((d[2] or end) - d[1]).total_seconds()),
+                              host_loss(d), stamp(d[2]) if d[2] else "still down at the end of the window"))
         if restarted:
             impact.append("vSphere HA restarted %d VM%s" % (restarted, "" if restarted == 1 else "s"))
-        for d in sorted(unknown_duration - unknown_onset, key=lambda x: x[1]):
-            impact.append("%s lost connection %s (recovery time unknown)" % (shown(d), stamp(d[1])))
-        impact.extend("%s observed down %s (onset unknown)" % (shown(d), stamp(d[1]))
-                      for d in sorted(unknown_onset, key=lambda d: d[1]))
+        for d in sorted(unknown_duration, key=lambda x: x[1]):
+            impact.append("%s %s (recovery time unknown)" % (shown(d), host_loss(d)))
         if not impact and review and general:
             impact.append(general)
         if not impact:
@@ -3005,7 +3069,7 @@ def outage_timeline(events, tickets=None, opts=None):
                 return [loc(e["t"]).strftime("%d %b %H:%M:%S") + ("" if len(zones) == 1 else " " + zname(e["t"])),
                         LANE[e["lane"]], WORD[e["level"]], e["what"], e["where"]]
         # 1.112.0 (Codex P1): "still down" only for the stretch whose minutes are shown; another one still open is said apart
-        time_down = "onset unknown" if unknown_onset else "recovery time unknown" if unknown_duration else "no host lost in the window"
+        time_down = "recovery time unknown" if unknown_duration else "no host lost in the window"
         if longest:
             time_down = "%s down %s (%s to %s)" % (longest[0], _span(down_s), stamp(longest[1]),
                                                   "still down at the end of the window" if longest[3] else stamp(longest[2]))
@@ -3025,7 +3089,7 @@ def outage_timeline(events, tickets=None, opts=None):
                                  first["what"], (" on " + first["where"]) if first["where"] else "", LANE[first["lane"]])],
                              ["First signal to ticket", _span(to_ticket) if to_ticket is not None else "-",
                               ("%s opened %s" % (opened["ticket"], stamp(opened["t"]))) if to_ticket is not None else "no ticket measured"],
-                             ["Time down", (_span(down_s) + (", still down" if longest and longest[3] else "")) if spans else "unknown" if unknown_duration or unknown_onset else "0", time_down]],
+                             ["Time down", (_span(down_s) + (", still down" if longest and longest[3] else "")) if spans else "unknown" if unknown_duration else "0", time_down]],
                  "tickets": tk_rows, "ticket_hint": cause, "follow_up": follow[0][len("Follow-up: "):] if follow else ""}
         if not review:
             draft.update(key=[old_row(e) for e in evs if id(e) in key_ids], events=[old_row(e) for e in evs[:DRAFT_EVENTS]],
@@ -3079,7 +3143,7 @@ def outage_timeline(events, tickets=None, opts=None):
         if aar_section or general or noise or empty_reason:
             email.append(aar_section or {"title": "For the after-action report"})
             web.append(email[-1])
-        draft.update(v=2, name=name, title=title, empty_read=empty_read, outage_ops_center=ops_center,
+        draft.update(v=2, what_else=[], name=name, title=title, empty_read=empty_read, outage_ops_center=ops_center,
                      start=draft.get("start", ""), end=draft.get("end", ""),
                      impact=general or title, actions=draft.get("actions", []), detection=draft.get("detection", []),
                      tickets=tk_rows, ticket_hint=cause,
@@ -3087,12 +3151,11 @@ def outage_timeline(events, tickets=None, opts=None):
                      noise=noise_rows, noise_columns=NOISE_COLUMNS, full_list=note, read_note=read_line, unread=parts["unread"],
                      part_columns=PART_COLUMNS, recovery=["%s - %s: %s (down %s)" % (r[2], r[0], r[1], r[3]) for r in parts["recovered"]])
         draft.update({k: parts[k] for k in ("went", "affected", "now", "recovered", "at_risk", "went_note", "affected_note")})
-        if parts["unknown_start"]:
-            draft["start"] = "unknown (watch observed the host down at %s)" % full(parts["start"])
+        if parts["observed_start"]:
+            draft["start"] = _down_by(full(parts["start"]))
         elif parts["start"]:
             e = next((e for e in facts if e["t"] == parts["start"]), None)
-            if e:
-                draft["start"] = "%s - %s" % (full(e["t"]), e["label"])
+            draft["start"] = full(parts["start"]) + (" - " + e["label"] if e else "")
         if parts["still"]:
             draft["end"] = "not yet: %s still down at the review" % ", ".join(parts["still"])
         elif back:
@@ -3108,10 +3171,13 @@ def outage_timeline(events, tickets=None, opts=None):
         summary_rows.extend([[labels[3]] + row for row in parts["recovered"]])
         sheets = [sheet, dict(name="Outage summary", columns=["Part", "Object", "What", "When", "Down for / Now"], rows=summary_rows),
                   dict(name="Noise", columns=NOISE_COLUMNS, rows=noise_rows)]
+        down_note = read_line
+        if parts["now"]:
+            _, obj, _, when, _ = parts["now"][0]
+            down_note = obj + (" · " if when == "time not recorded" else " " if when.startswith("down by ") else " since ") + when
         boxes = [box("Went down", parts["infra_count"], "critical" if parts["went"] else "info", ", ".join(r[0] for r in parts["went"])),
                  box("VMs affected", vm_count, "warning" if vm_count else "ok", parts["affected_note"]),
-                 box("Down now", parts["now_count"], now_severity,
-                     parts["now"][0][1] + " since " + parts["now"][0][3] if parts["now"] else read_line),
+                 box("Down now", parts["now_count"], now_severity, down_note),
                  box("Recovered", loc(parts["finish"]).strftime("%H:%M") if parts["finish"] else "-", "ok",
                      "Last recorded recovery " + stamp_review(parts["finish"]) if parts["finish"] else
                      "Recovery not recorded for the latest host loss." if parts["open_observation"] else "No recovery recorded."),
@@ -3127,11 +3193,40 @@ def outage_timeline(events, tickets=None, opts=None):
         out[2:2] = ([empty_reason] if empty_reason else []) + [parts["went_note"]] + [s["title"] + ": " + " | ".join(", ".join(row) for row in s["rows"]) for s in summary] + noise_lines + [note]
     return _unsafe({"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
             "head_name": parts["head_name"] if review and general else None, "issues": issues if review else [], "root_judgments": judged,
+            "context_scope": _context_scope(incident, o, window_start, max(filter(None, (window_end, parts.get("last_seen"))), default=None)),
             "sheets": sheets if review else [sheet], "workbook_stem": stem if review else "", "events_file": filename if review else "", "lines": out, "aar": aar, "window": window_text, "events": len(evs), "act_in": act_in,
             "skip": bool(blip and o.get("skip_blips") and not unread_centers),
             "cleared_before_review": cleared_only, "blip": blip,
             "alarm_window": [r_from.strftime("%Y-%m-%dT%H:%M:%SZ"), r_to.strftime("%Y-%m-%dT%H:%M:%SZ")] if cleared_runs else [],
             "trigger": trig, "trigger_line": "Triggered by: " + trig[0] + ((" (and %d more)" % (len(trig) - 1)) if len(trig) > 1 else "")})
+
+
+def outage_review_context(timeline, context=None, reason=""):
+    """Attach the same observations to both reports and the saved v2 draft, after the review-only read."""
+    out = dict(timeline)
+    result = context or _context.unavailable(reason or _context.DB_ERROR)
+    cards = result["cards"]
+    sites = (out.get("context_scope") or {}).get("sites") or []
+    extra = [dict(r, group=sites[0] + " · " + r["group"]) if len(sites) == 1 and r["group"] == "SolarWinds (storage path)"
+             else r for r in result["issues"]]
+    extra = sorted(extra, key=lambda r: (r["group"], ISSUE_STATES.index(r["state"]), r["name"]))
+    out["issues"] = list(out["issues"]) + extra
+    section = dict(title=_context.TITLE, text=result.get("window", ""), cards=cards)
+    for key, after in (("web_sections", "review_chart"), ("sections", "4. Recovered")):
+        sections = []
+        for s in out[key]:
+            if s.get("kind") == "by_kind":
+                s = dict(s, issues=out["issues"], network_note=result.get("network_note", ""), issue_count=s["issue_count"] + len(extra))
+            sections.append(s)
+            if s.get("kind") == after or s.get("title") == after:
+                sections.append(section)
+        out[key] = sections
+    if out["draft"].get("v") == 2:
+        out["draft"] = dict(out["draft"], what_else=cards, context_window=result.get("window", ""))
+    out["context_judged"] = result["judged"]
+    out["lines"] = list(out["lines"]) + [_context.TITLE] + [
+        " · ".join(filter(None, (c["chip"], c["meta"], c["title"], c["subject"], c["next"]))) for c in cards]
+    return _unsafe(out)
 
 
 def _with_act(sections, act, web):
@@ -3148,6 +3243,12 @@ def _with_act(sections, act, web):
     return out
 
 
+def _context_judged(sections, line):
+    if not line:
+        return sections
+    return [dict(s, lines=list(s.get("lines") or []) + [line]) if s.get("title") == "How it judged" else s for s in sections]
+
+
 def outage_timeline_doc(doc, timeline, web=False, review=False):
     """The watch's report with the time line. A review (vm_watch_review): its title and its tiles, the cards, the time
     line, the events and the lines for the after-action report, then the watch's own sections as they are. A normal
@@ -3157,10 +3258,15 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
         return _v1184.outage_timeline_doc(doc, timeline, web, review)
     if review:
         doc = _redact(doc)
-    if not doc or not timeline:
+    if not doc:
         return _unsafe(doc)
     out = dict(doc)
     own = list(doc.get("sections") or [])
+    if not timeline:
+        result = _context.unavailable("the outage timeline could not be made")
+        at = next((i for i, s in enumerate(own) if s.get("title") == "How it judged"), len(own))
+        own.insert(at, dict(title=_context.TITLE, cards=result["cards"]))
+        return _unsafe(dict(out, sections=_context_judged(own, result["judged"])))
     mine = list(timeline["web_sections" if web else "sections"])
     if review:
         out["title"] = ("Outage review: " if web and timeline.get("head_name") else "") + timeline["title"]
@@ -3177,6 +3283,7 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
             at = next((i for i, s in enumerate(own) if s.get("title") == "How it judged"), len(own))
             section = own[at] if at < len(own) else {"title": "How it judged"}
             own[at:at + 1] = [dict(section, lines=list(section.get("lines") or []) + timeline["root_judgments"])]
+        own = _context_judged(own, timeline.get("context_judged"))
         out["sections"] = _with_act(mine + own, timeline.get("act") or {}, web)
         out["outage_ops_center"] = (timeline.get("draft") or {}).get("outage_ops_center", "NOC")
         out["status_prefix"] = "Now: "                      # 1.90.0: the verdict is the watch's state now, not the outage's
@@ -3240,4 +3347,5 @@ def outage_review_aar(doc, info=None, web=False):
 class FilterModule(object):
     def filters(self):
         return {"outage_timeline": outage_timeline, "outage_timeline_doc": outage_timeline_doc, "outage_window": outage_window,
-                "outage_review_aar": outage_review_aar, "outage_events_csv": outage_events_csv, "outage_redact": outage_redact}
+                "outage_review_aar": outage_review_aar, "outage_review_context": outage_review_context,
+                "outage_events_csv": outage_events_csv, "outage_redact": outage_redact}

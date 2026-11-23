@@ -192,6 +192,8 @@ jobs:
           python tests/test_patch_age.py
           python tests/test_cert_timeline.py
           python tests/test_outage_timeline.py
+          python tests/test_outage_context.py
+          python tests/test_watch_frozen.py
           python tests/test_portal.py
           python tests/test_findings_artifact.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_findings_artifact.py

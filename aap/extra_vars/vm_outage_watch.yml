@@ -155,6 +155,18 @@
 ## is down; the watch runs first, as always
 # vm_watch_review: false
 
+## 1.116.1: read other sources for the outage review's What else saw it cards.
+# vm_watch_review_context: true
+
+## Minutes to include before and after the dated outage window.
+# vm_watch_review_context_minutes: 15
+
+## Storage switch and array node names or patterns (* and ?) when SolarWinds topology has no path.
+# vm_watch_review_storage_nodes: []
+
+## Read Log Analyzer once for the storage path and window with the SolarWinds read-only credential.
+# vm_watch_review_syslog: true
+
 ## fold a problem and its clear within this many seconds; 0 = keep short changes
 # vm_watch_review_low_seconds: 120
 
@@ -283,6 +295,21 @@
 
 ## the SOP attachment's first part
 # incident_docs_sop_file: SOP
+
+# ---- netmap_report -------------------------------------------------------------------------------
+## SolarWinds' address, e.g. orion.yoursite.mil (https:// and the SWIS port 17774 are added; an
+## Orion older than 2023.1: https://orion.yoursite.mil:17778). The credential's SolarWinds URL, when
+## set, wins.
+# netmap_solarwinds_url: ""
+
+## Check SolarWinds' HTTPS certificate. Orion's own is self-signed: put the CA that signed yours in
+## netmap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/orion-ca.pem"), or set
+## false. The credential's own settings win.
+# netmap_validate_certs: true
+
+## the CA file (PEM) SolarWinds' certificate is checked with; "" = the execution environment's own
+## trust
+# netmap_ca_path: ""
 
 # ---- site_portal_stack ---------------------------------------------------------------------------
 ## the portal's path on the proxy

@@ -649,6 +649,15 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
         elif lab == "Recovery:" and "patterns" in d:
             out.append(b)
             out.extend(_pattern_blocks(d["patterns"], d.get("outage_ops_center") or "NOC"))
+        elif v2 and d.get("what_else") and b.get("type") == "heading" and b.get("text") == "Lessons Learned & Action Plan":
+            # 1.116.1: the review's source cards, before the AAR author's lessons.
+            out.append(dict(type="heading", text="What else saw it (same time, not cause)"))
+            if d.get("context_window"):
+                out.append(dict(type="note", text=d["context_window"]))
+            for c in d["what_else"]:
+                out.append(dict(type="labelled", items=[dict(label="%s (%s):" % (c["chip"], c["meta"]),
+                                text=" ".join(filter(None, (c["title"], c.get("subject"), c.get("next")))))]))
+            out.append(b)
         elif lab == "Root Cause:":
             if _lines(r.get("root_cause")):
                 out.append(b)

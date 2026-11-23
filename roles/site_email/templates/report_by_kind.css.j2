@@ -8,14 +8,15 @@
   border:1px solid var(--line);background:var(--card-strong);color:var(--ink)}
 .ibk-chip span{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:700}
 #ibk-all:checked~.ibk-chips [for=ibk-all],#ibk-ds:checked~.ibk-chips [for=ibk-ds],#ibk-vm:checked~.ibk-chips [for=ibk-vm],
-#ibk-host:checked~.ibk-chips [for=ibk-host]
+#ibk-host:checked~.ibk-chips [for=ibk-host],#ibk-net:checked~.ibk-chips [for=ibk-net],#ibk-dc:checked~.ibk-chips [for=ibk-dc]
   {background:var(--accent);border-color:var(--accent);color:var(--accent-ink,#fff)}
 #ibk-all:checked~.ibk-chips [for=ibk-all] span,#ibk-ds:checked~.ibk-chips [for=ibk-ds] span,#ibk-vm:checked~.ibk-chips [for=ibk-vm] span,
-#ibk-host:checked~.ibk-chips [for=ibk-host] span{color:inherit}
+#ibk-host:checked~.ibk-chips [for=ibk-host] span,#ibk-net:checked~.ibk-chips [for=ibk-net] span,#ibk-dc:checked~.ibk-chips [for=ibk-dc] span{color:inherit}
 #ibk-all:focus-visible~.ibk-chips [for=ibk-all],#ibk-ds:focus-visible~.ibk-chips [for=ibk-ds],#ibk-vm:focus-visible~.ibk-chips [for=ibk-vm],
-#ibk-host:focus-visible~.ibk-chips [for=ibk-host]
+#ibk-host:focus-visible~.ibk-chips [for=ibk-host],#ibk-net:focus-visible~.ibk-chips [for=ibk-net],#ibk-dc:focus-visible~.ibk-chips [for=ibk-dc]
   {outline:2px solid var(--accent);outline-offset:2px}
-#ibk-ds:checked~.ibk-kinds .ibk-kind:not(.k-ds),#ibk-vm:checked~.ibk-kinds .ibk-kind:not(.k-vm),#ibk-host:checked~.ibk-kinds .ibk-kind:not(.k-host){display:none}
+#ibk-ds:checked~.ibk-kinds .ibk-kind:not(.k-ds),#ibk-vm:checked~.ibk-kinds .ibk-kind:not(.k-vm),#ibk-host:checked~.ibk-kinds .ibk-kind:not(.k-host),
+#ibk-net:checked~.ibk-kinds .ibk-kind:not(.k-net),#ibk-dc:checked~.ibk-kinds .ibk-kind:not(.k-dc){display:none}
 .ibk-key{margin:0 0 12px;color:var(--muted);font-size:13px}
 .ibk-kind{margin-top:14px}
 .ibk-kind h3{font-size:15px;margin:0 0 6px}

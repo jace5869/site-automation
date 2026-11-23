@@ -361,7 +361,8 @@ class ReviewCutB(unittest.TestCase):
         later = watch_run(1980, [self.host])
         r = self.review([loss, back], [later, observed])
         self.assertEqual(r["numbers"]["back"], "")
-        self.assertEqual(r["draft"]["went"][0][2:], ["unknown", "unknown", "recovery not recorded"])
+        self.assertEqual(r["draft"]["went"][0][2:],
+                         ["down by 01 Jan 00:33:00 UTC (the watch's run)", "unknown", "recovery not recorded"])
         self.assertEqual(r["draft"]["now"], [])
         self.assertEqual(r["boxes"][3]["value"], "-")
         self.assertEqual(r["draft"]["end"], "")
@@ -370,9 +371,61 @@ class ReviewCutB(unittest.TestCase):
         restart = self.event(1200, "VmRestartedOnAlternateHostEvent", host="destination", vm="example-vm")
         r = self.review([dict(loss, time=50), restart, back], [observed])
         self.assertEqual(r["numbers"]["ha_restarted"], 1)
-        self.assertEqual(r["draft"]["recovered"], [["esx1", "host connected again", "01 Jan 00:25:00 UTC", "unknown"]])
-        self.assertEqual(r["draft"]["went"][0][2:4], ["unknown", "unknown"])
-        self.assertTrue(r["draft"]["start"].startswith("unknown"))
+        when = "down by 01 Jan 00:16:30 UTC (the watch's run)"
+        self.assertIn(["esx1", "host connected again", "01 Jan 00:25:00 UTC", "8 min"], r["draft"]["recovered"])
+        self.assertEqual(r["draft"]["went"][0][2:4], [when, "8 min"])
+        self.assertEqual(r["numbers"]["down_s"], 510)
+        self.assertIn("down by 00:16 (the watch's run)", str(r["draft"]["story"]["rows"]))
+        self.assertIn("the watch's run", r["draft"]["start"])
+
+    def test_cluster_lost_by_recorded_observations(self):
+        peer = dict(self.host, name="esx2.east.example", moid="host-2")
+        hosts = [self.host, peer]
+        runs = [watch_run(900, hosts[:1]), watch_run(1500, hosts[1:])]
+        for back, overlap in ((1200, False), (2100, True)):
+            events = [self.event(back, "HostConnectedEvent")]
+            note = self.review(events, runs, hosts=hosts)["draft"]["went_note"]
+            self.assertEqual("Cluster production lost all hosts" in note, overlap)
+            if overlap:
+                self.assertIn("down by 01 Jan 00:25:00 UTC (the watch's run) for 10 min", note)
+        earlier = self.event(1200, "HostConnectionLostEvent", host=peer["name"])
+        r = self.review(events + [earlier], runs, hosts=hosts)
+        self.assertIn("lost all hosts at 01 Jan 00:20:00 UTC for 15 min", r["draft"]["went_note"])
+
+    def test_cluster_loss_respects_window_and_connected_inventory(self):
+        from vmware_watch_filters import vm_watch_conditions
+        peer = dict(self.host, name="esx2.east.example", moid="host-2", connection="notResponding")
+        hosts = [dict(self.host, connection="connected"), peer]
+        runs = [watch_run(900, [self.host])]
+        for read_at in (90000, 1500):
+            with self.subTest(read_at=read_at):
+                result = self.review([], runs, hosts=hosts, triggers=vm_watch_conditions(dict(hosts=hosts)), read_at=read_at)
+                self.assertNotIn("Cluster production lost all hosts", result["draft"]["went_note"])
+        result = self.review([], runs + [watch_run(1200, [peer])], hosts=hosts, read_at=1500)
+        self.assertIn("down by 01 Jan 00:20:00 UTC (the watch's run) for 5 min", result["draft"]["went_note"])
+
+    def test_context_window_uses_first_and_last_root_observations(self):
+        runs = [watch_run(t, [self.host]) for t in (1500, 900, 6100)]
+        for events, onset in (([], 900), ([self.event(600, "HostConnectionLostEvent")], 600)):
+            with self.subTest(onset=onset):
+                scope = self.review(events, runs)["context_scope"]
+                self.assertEqual((scope["begin"], scope["end"]), (onset, 1500))
+
+    def test_down_now_dates_only_the_current_root_episode(self):
+        from vmware_watch_filters import vm_watch_conditions
+        down = vm_watch_conditions(dict(hosts=[dict(self.host, connection="notResponding")]))
+        loss = self.event(900, "HostConnectionLostEvent")
+        opts = dict(hosts=[self.host], triggers=down, read_at=2100)
+        r = self.review([loss], **opts)
+        self.assertEqual(r["draft"]["now"][0][3:], ["01 Jan 00:15:00 UTC", "20 min"])
+        self.assertIn("since 01 Jan 00:15:00 UTC", r["boxes"][2]["note"])
+        r = self.review([loss, self.event(1500, "HostConnectedEvent")], **opts)
+        self.assertEqual(r["boxes"][2]["note"], "Host esx1 · time not recorded")
+        r = self.review([], [watch_run(1500, [self.host])], **opts)
+        self.assertIn("down by 01 Jan 00:25:00 UTC (the watch's run)", r["boxes"][2]["note"])
+        r = self.review([], triggers=[dict(kind="question", object_type="vm", object="example-vm")])
+        self.assertEqual(r["draft"]["now"][0][3], "time not recorded")
+        self.assertEqual(r["boxes"][2]["note"], "VM example-vm · time not recorded")
 
     def test_ha_cluster_identity(self):
         loss = self.event(600, "HostConnectionLostEvent", cluster_moid="domain-c1")
@@ -697,6 +750,10 @@ class SmartReview(unittest.TestCase):
         self.assertEqual(r["head_counts"][0][:2], ["2 d 12 h", "ds-sitea-09 still down"])
         self.assertEqual(r["numbers"]["signal_to_ticket_s"], 32 * 60 + 20)
         self.assertEqual(len(d["now"]), 1)
+        since = next(row[2] for row in d["went"] if row[0] == "ds-sitea-09")
+        self.assertIn("23:09:", since)
+        self.assertEqual(d["now"][0][3], since)
+        self.assertIn("since " + since, r["boxes"][2]["note"])
         self.assertIn("sitea-db04", str(d["affected"]))
         self.assertIn("on the lost datastore (state not read)", str(d["affected"]))
         self.assertEqual({x[0] for x in d["recovered"] if x[0].startswith("ds-")}, {"ds-sitea-07", "ds-sitea-08"})
@@ -740,7 +797,8 @@ class SmartReview(unittest.TestCase):
         self.assertIn("example-prod (vc-prod)", r["numbers"]["still_down"])
         one = ot.outage_timeline(rows, [], dict(opts, review_object="example-prod"))
         self.assertEqual([row[0] for row in one["draft"]["went"]], ["example-prod"])
-        self.assertEqual(one["draft"]["now"], r["draft"]["now"])
+        self.assertEqual([row[:3] for row in one["draft"]["now"]], [row[:3] for row in r["draft"]["now"]])
+        self.assertTrue(all(row[3] == "time not recorded" for row in one["draft"]["now"] if "vc-lab" in row[1]))
         self.assertIn("named by vm_watch_review_object", one["draft"]["went_note"])
         self.assertNotIn("lab1", str(one["draft"]["story"]))
 
@@ -1850,7 +1908,10 @@ class Doc(unittest.TestCase):
         self.assertEqual([s["title"] for s in d["sections"]], ["Down or hung now", "The events", "How it judged"])
 
     def test_nothing_to_add(self):
-        self.assertEqual(ot.outage_timeline_doc(WATCH, {}, True, True), WATCH)
+        # 1.116.1: a review whose time line could not be made says so on every What else saw it card (as reviewed in r7)
+        missing = ot.outage_timeline_doc(WATCH, {}, True, True)["sections"][-2]
+        self.assertEqual(len(missing["cards"]), 7)
+        self.assertTrue(all("not read: the outage timeline could not be made" in c["title"] for c in missing["cards"]))
         self.assertEqual(ot.outage_timeline_doc(WATCH, None), WATCH)
         self.assertEqual(ot.outage_timeline_doc({}, made()), {})
         before = copy.deepcopy(WATCH)
