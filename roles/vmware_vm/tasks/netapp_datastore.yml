@@ -1,0 +1,15 @@
+---
+# NetApp - expand a volume (1.123.0), the vCenter side - called by roles/ontap_report/tasks/expand*.yml. Input:
+# _vm_nd_action (map: which datastore is on each NetApp LUN or NFS export, read only; grow: rescan the hosts that see the
+# LUN and expand its VMFS datastore, or refresh an NFS datastore), _vm_nd_keys [{naa, nfs_path, nfs_ips}], _vm_nd_lun_bytes
+# (grow: the LUN's new size). Output: _vm_nd {found, steps, vcenters} - failed with msg when no vCenter could be read.
+- name: VMware | the datastore on the NetApp volume{{ ' - rescan and expand' if _vm_nd_action == 'grow' else '' }}
+  site_vmware_netapp_ds:
+    action: "{{ _vm_nd_action }}"
+    keys: "{{ _vm_nd_keys }}"
+    lun_bytes: "{{ _vm_nd_lun_bytes | default(0) | int }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_nd
+  ignore_errors: true                   # the job says it and gives the steps by hand
+  check_mode: "{{ _vm_nd_action == 'grow' and ansible_check_mode }}"

@@ -1,0 +1,450 @@
+#!/usr/bin/env python3
+"""1.123.0: NetApp - expand a volume - the arithmetic and the rules (plugins/module_utils/site_ontap_expand.py): the default
+growth (10 %, at least 1 GB, at most 512 GB), the aggregate's limit (97 %) and the largest size that fits, the Size box,
+the exclusions, the NetApp NAA id of a LUN, the survey choice and its key, the volume comment, the re-check.
+    python3 tests/test_ontap_expand.py"""
+import os
+import sys
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
+sys.path[:0] = [os.path.join(REPO, "plugins", "module_utils")]
+import site_ontap_expand as X  # noqa: E402
+
+GB, TB, MB = X.GB, X.TB, X.MB
+AGGR = {"name": "aggr1", "size": 20 * TB, "used": int(14.24 * TB)}
+
+
+def vol(size=10 * GB, used=int(8.8 * GB), **kw):
+    v = {"name": "vol_ds01", "svm": "svm_vmware", "size": size, "used": used, "state": "online", "type": "rw", "style": "flexvol"}
+    v.update(kw)
+    return v
+
+
+class Sizes(unittest.TestCase):
+    def test_default_growth(self):
+        self.assertEqual(X.default_growth(10 * GB), 1 * GB)                 # 10 % of 10 GB = 1 GB
+        self.assertEqual(X.default_growth(5 * GB), 1 * GB)                  # 0.5 GB -> at least 1 GB
+        self.assertEqual(X.default_growth(2 * TB), int(204.8 * GB) // MB * MB + MB)   # 204.8 GB, whole MB up
+        self.assertEqual(X.default_growth(8 * TB), 512 * GB)                # 819 GB -> at most 512 GB
+        self.assertEqual(X.default_growth(100 * GB, 20, 1, 512), 20 * GB)
+
+    def test_size_box(self):
+        self.assertEqual(X.parse_size("150GB"), 150 * GB)
+        self.assertEqual(X.parse_size(" 150 gb "), 150 * GB)
+        self.assertEqual(X.parse_size("1TB"), TB)
+        self.assertEqual(X.parse_size("1.5 TiB"), int(1.5 * TB))
+        self.assertEqual(X.parse_size("200"), 200 * GB)
+        for bad in ("", "0", "0GB", "-5GB", "150MB", "lots", "1e3GB"):
+            with self.assertRaises(ValueError, msg=bad):
+                X.parse_size(bad)
+
+    def test_room_and_human(self):
+        self.assertEqual(X.room(100 * GB, 90 * GB, 97), 7 * GB)
+        self.assertEqual(X.room(100 * GB, 98 * GB, 97), 0)
+        self.assertEqual(X.human(10 * GB), "10.0 GB")
+        self.assertEqual(X.human(2 * TB), "2.00 TB")
+
+
+class Plans(unittest.TestCase):
+    def test_lun_volume_default(self):
+        p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/lun_ds01", "size": 9 * GB}, lun_listed=9 * GB)
+        self.assertEqual(p["status"], "grow", p["why"])
+        self.assertEqual((p["growth"], p["target"], p["lun"]["target"]), (GB, 11 * GB, 10 * GB))
+        self.assertEqual(p["used_pct_after"], 80.0)
+        self.assertEqual(p["by"], "default")
+
+    def test_default_over_the_limit_says_what_fits(self):
+        aggr2 = {"name": "aggr2", "size": 30 * TB, "used": int(30 * TB * 0.97) - 180 * GB}
+        p = X.plan(vol(2 * TB, int(1.82 * TB), name="vol_sql01", svm="svm1"), aggr2, 2 * TB, {})
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("Default 204.8 GB would put aggr2 at 97.", p["why"])
+        self.assertIn("up to 180.0 GB fits", p["why"])
+        self.assertEqual(p["room"], 180 * GB)
+        ok = X.plan(vol(2 * TB, int(1.82 * TB), name="vol_sql01", svm="svm1"), aggr2, 2 * TB, {}, size_text="180GB")
+        self.assertEqual(ok["status"], "grow", ok["why"])                  # exactly the largest that fits
+        big = X.plan(vol(2 * TB, int(1.82 * TB), name="vol_sql01", svm="svm1"), aggr2, 2 * TB, {}, size_text="181GB")
+        self.assertTrue(big["why"].startswith("181.0 GB would put aggr2 at"), big["why"])
+
+    def test_the_limit_is_a_setting(self):
+        self.assertEqual(X.plan(vol(), {"name": "aggr1", "size": 100 * GB, "used": 96 * GB}, 10 * GB, {})["status"], "grow")   # 97 % exactly: at the limit
+        aggr = {"name": "aggr1", "size": 100 * GB, "used": int(96.5 * GB)}
+        self.assertEqual(X.plan(vol(), aggr, 10 * GB, {})["status"], "refused")                   # 97.5 % after 1 GB: over 97
+        self.assertEqual(X.plan(vol(), aggr, 10 * GB, {"max_pct": 99})["status"], "grow")
+
+    def test_nothing_fits(self):
+        p = X.plan(vol(), {"name": "aggr1", "size": 100 * GB, "used": 98 * GB}, 10 * GB, {})
+        self.assertIn("nothing fits", p["why"])
+
+    def test_size_box_beats_max_but_not_the_aggregate(self):
+        p = X.plan(vol(2 * TB), AGGR, 2 * TB, {}, size_text="1TB")        # over ontap_expand_max_gb: the box wins
+        self.assertEqual((p["status"], p["growth"], p["by"]), ("grow", TB, "size"))
+
+    def test_bad_size_box(self):
+        p = X.plan(vol(), AGGR, 10 * GB, {}, size_text="ten gigs")
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("not understood", p["why"])
+
+    def test_again_is_nothing_to_do(self):
+        p = X.plan(vol(11 * GB), AGGR, 10 * GB, {})                         # the second run of the same choice
+        self.assertEqual(p["status"], "nothing")
+        self.assertIn("nothing to do", p["why"])
+        self.assertEqual(p["growth"], 0)
+
+    def test_changed_since_the_list(self):
+        p = X.plan(vol(12 * GB), AGGR, 10 * GB, {}, size_text="5GB")
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("changed since the list", p["why"])
+        p = X.plan(vol(9 * GB), AGGR, 10 * GB, {})                          # smaller now: never grown to a stale target
+        self.assertIn("changed since the list", p["why"])
+
+    def test_lun_never_bigger_than_its_volume(self):
+        p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": int(10.5 * GB)}, lun_listed=int(10.5 * GB))
+        self.assertIn("bigger than its volume", p["why"])
+
+    def test_recheck(self):
+        p = X.plan(vol(), AGGR, 10 * GB, {})
+        self.assertEqual(X.recheck(p, vol(), AGGR), "")
+        self.assertIn("changed between the plan", X.recheck(p, vol(10 * GB + 2 * MB), AGGR))
+        full = dict(AGGR, used=int(20 * TB * 0.97) - 512 * MB)
+        self.assertIn("got fuller", X.recheck(p, vol(), full))
+
+
+class Review1123(unittest.TestCase):
+    """Codex's review: the aggregate's space not read, the live size within the list's rounding, a LUN left behind, a LUN
+    changed since the list, a volume moved or excluded between the plan and the change, a size to type that fits."""
+
+    def test_aggregate_space_not_read(self):
+        p = X.plan(vol(), {"name": "aggr1", "size": 20 * TB, "used": None}, 10 * GB, {})
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("could not be read", p["why"])
+
+    def test_the_change_is_what_was_checked(self):
+        p = X.plan(vol(10 * GB - MB // 2), AGGR, 10 * GB, {}, size_text="1GB")
+        self.assertEqual(p["target"] - p["size"], GB)                       # never more than the aggregate was checked for
+
+    def test_a_lun_left_behind_is_not_nothing_to_do(self):
+        lun = {"name": "/vol/vol_ds01/lun_ds01", "size": 9 * GB}
+        p = X.plan(vol(11 * GB), AGGR, 10 * GB, {}, lun=lun, lun_listed=9 * GB)
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("its LUN is 9.0 GB, not 10.0 GB", p["why"])
+        done = X.plan(vol(11 * GB), AGGR, 10 * GB, {}, lun=dict(lun, size=10 * GB), lun_listed=9 * GB)
+        self.assertEqual(done["status"], "nothing")
+        self.assertIn("and its LUN too", done["why"])
+
+    def test_a_lun_changed_since_the_list(self):
+        p = X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": int(9.5 * GB)}, lun_listed=9 * GB)
+        self.assertIn("the LUN changed since the list", p["why"])
+
+    def test_moved_or_excluded_before_the_change(self):
+        p = X.plan(vol(), AGGR, 10 * GB, {})
+        self.assertIn("moved to aggregate aggr9", X.recheck(p, dict(vol(), aggregates=["aggr9"]), AGGR))
+        self.assertIn("now excluded", X.recheck(p, dict(vol(), name="old_root", aggregates=["aggr1"]), AGGR, ["*_root"]))
+        self.assertIn("could not be read again", X.recheck(p, dict(vol(), aggregates=["aggr1"]), dict(AGGR, used=None)))
+        self.assertEqual(X.recheck(p, dict(vol(), aggregates=["aggr1"]), AGGR), "")
+
+    def test_pass2(self):
+        """the second pass: a size below 0.1 GB, a size that could not be read, a datastore already over the whole LUN"""
+        with self.assertRaises(ValueError):
+            X.parse_size("0.0009765625GB")
+        self.assertEqual(X.parse_size("0.1GB"), int(X.math.ceil(GB / 10 / MB) * MB))
+        self.assertIn("could not be read", X.plan(vol(size=0), AGGR, 10 * GB, {})["why"])
+        tight = {"name": "aggr1", "size": 100 * GB, "used": int(97 * GB) - 64 * MB}
+        self.assertIn("nothing fits", X.plan(vol(), tight, 10 * GB, {})["why"])                      # 64 MB: nothing to type
+        again = X.plan(vol(11 * GB), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 10 * GB}, lun_listed=9 * GB)
+        self.assertEqual((again["status"], again["lun"]["target"]), ("nothing", 10 * GB))           # the datastore's step runs again
+        self.assertTrue(again["retry_ok"])
+        more = X.plan(vol(111 * GB), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 110 * GB}, lun_listed=9 * GB)
+        self.assertEqual((more["status"], more["lun"], more["retry_ok"]), ("nothing", None, False))   # grown more by someone else: vCenter left alone
+        vol_more = X.plan(vol(130 * GB), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 10 * GB}, lun_listed=9 * GB)
+        self.assertFalse(vol_more["retry_ok"])                                     # the volume grown more: no retry either
+        self.assertIn("did not have the size of LUN", X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 9 * GB})["why"])
+        self.assertIn("could not be read", X.plan(vol(), AGGR, 10 * GB, {}, lun={"name": "/vol/vol_ds01/l", "size": 0}, lun_listed=9 * GB)["why"])
+
+    def test_a_size_to_type_fits(self):
+        self.assertEqual(X.human(1023 * MB, floor=True), "0.9 GB")
+        self.assertEqual(X.human(int(1.999 * TB), floor=True), "1.99 TB")
+
+
+class Exclusions(unittest.TestCase):
+    def rec(self, **kw):
+        r = {"name": "vol_a", "svm": {"name": "svm1"}, "state": "online", "type": "rw", "style": "flexvol"}
+        r.update(kw)
+        return r
+
+    def test_always(self):
+        self.assertIn("SVM root", X.excluded(self.rec(is_svm_root=True)))
+        self.assertIn("SVM root", X.excluded(self.rec(name="svm1_root")))
+        self.assertIn("node", X.excluded(self.rec(name="vol0")))
+        self.assertIn("node", X.excluded(self.rec(svm={})))
+        self.assertIn("SnapMirror", X.excluded(self.rec(type="dp")))
+        self.assertIn("LS", X.excluded(self.rec(type="ls")))
+        self.assertIn("offline", X.excluded(self.rec(state="offline")))
+        self.assertIn("restricted", X.excluded(self.rec(state="restricted")))
+        self.assertIn("FlexGroup", X.excluded(self.rec(style="flexgroup")))
+        self.assertEqual(X.excluded(self.rec()), "")
+
+    def test_patterns(self):
+        pats = ["*_root", "vol0", "svm_backup:*", "SVM2:Logs_?"]
+        self.assertEqual(X.excluded(self.rec(name="app_root"), pats), "ontap_expand_exclude: *_root")
+        self.assertEqual(X.excluded(self.rec(svm={"name": "svm_backup"}, name="vol_bk01"), pats), "ontap_expand_exclude: svm_backup:*")
+        self.assertEqual(X.excluded(self.rec(svm={"name": "svm2"}, name="logs_1"), pats), "ontap_expand_exclude: SVM2:Logs_?")
+        self.assertEqual(X.excluded(self.rec(svm={"name": "svm3"}, name="logs_1"), pats), "")
+        self.assertEqual(X.excluded(self.rec(name="vol_ok"), pats), "")
+
+    def test_excluded_by_hand_is_refused(self):
+        p = X.plan(vol(name="vol_bk01", svm="svm_backup"), AGGR, 10 * GB, {"exclude": ["svm_backup:*"]})
+        self.assertEqual(p["status"], "refused")
+        self.assertIn("svm_backup:*", p["why"])
+
+
+class Naa(unittest.TestCase):
+    def test_naa(self):
+        self.assertEqual(X.naa("80Ab1DmT5zXq"), "naa.600a09803830416231446d54357a5871")
+        self.assertEqual(X.serial_of("naa.600a09803830416231446d54357a5871"), "80Ab1DmT5zXq")
+        self.assertEqual(X.serial_of("NAA.600A09803830416231446D54357A5871"), "80Ab1DmT5zXq")
+        self.assertEqual(X.serial_of("naa.6000c29a1b2c3d4e5f60718293a4b5c6"), "")     # not NetApp
+        self.assertEqual(X.naa(""), "")
+
+
+class Choices(unittest.TestCase):
+    E = {"cluster": "cluster1", "address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03", "lun": "/vol/vol_ds03/lun_a",
+         "luns": 2, "size": 2 * TB, "used": int(1.58 * TB), "aggr": "aggr1", "aggr_free": int(5.76 * TB), "datastore": "DS-SITEA-03A",
+         "lun_size": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"}
+
+    def test_text_and_key(self):
+        t = X.choice_text(self.E)
+        self.assertTrue(t.startswith("vol_ds03/lun_a (svm_vmware, cluster1) - 2.00 TB, 79% used, aggr1 free 5.76 TB "
+                                     "[LUN lun_a of 2: datastore DS-SITEA-03A] [vol|cluster1.example.mil|svm_vmware|vol_ds03|"), t)
+        self.assertEqual(X.parse_choice(t), {"address": "cluster1.example.mil", "svm": "svm_vmware", "volume": "vol_ds03",
+                                             "lun": "/vol/vol_ds03/lun_a", "listed": 2 * TB, "lun_listed": 900 * GB, "uuid": "v-ds03", "lun_uuid": "l-a"})
+
+    def test_plain_and_nfs(self):
+        e = dict(self.E, lun="", luns=0, volume="vol_nfs02", size=500 * GB, used=470 * GB, datastore="NFS-DS02")
+        t = X.choice_text(e)
+        self.assertIn("[NFS: datastore NFS-DS02]", t)
+        self.assertEqual(X.parse_choice(t)["lun"], "")
+        self.assertNotIn("[LUN", X.choice_text(dict(e, datastore="")))
+        self.assertIsNone(X.parse_choice("vol_nfs02 (svm1, cluster1)"))     # typed by hand without the key: refused by the job
+
+    def test_comment(self):
+        self.assertEqual(X.comment_with("", "XINC0001234: +1.0 GB"), "XINC0001234: +1.0 GB")
+        self.assertEqual(X.comment_with("app team", "XINC0001234: +1.0 GB"), "app team | XINC0001234: +1.0 GB")
+        c = X.comment_with("x" * 1020, "XINC0001234: +1.0 GB")
+        self.assertEqual(len(c), 1023)
+        self.assertTrue(c.endswith("XINC0001234: +1.0 GB"))
+
+
+# ---------------------------------------------------------------- the vCenter side, with fake pyVmomi objects (vcsim v0.52.0 has
+# no NetApp LUN, no VMFS extent and answers MethodNotFound to QueryVmfsDatastoreExpandOptions and RefreshDatastoreStorageInfo)
+import importlib.util  # noqa: E402
+import types  # noqa: E402
+
+for _n in ("site_ontap_expand",):
+    _s = importlib.util.spec_from_file_location("ansible.module_utils." + _n, os.path.join(REPO, "plugins", "module_utils", _n + ".py"))
+    _m = importlib.util.module_from_spec(_s)
+    sys.modules["ansible.module_utils." + _n] = _m
+    _s.loader.exec_module(_m)
+sys.path.insert(0, os.path.join(REPO, "roles", "vmware_vm", "library"))
+import site_vmware_netapp_ds as V  # noqa: E402
+
+NAA = X.naa("80Ab1DmT5zXq")
+NS = types.SimpleNamespace
+
+
+class FakeLun(NS):
+    pass
+
+
+def lun(naa, gb):
+    return FakeLun(canonicalName=naa, capacity=NS(block=int(gb * GB / 512), blockSize=512))
+
+
+class FakeHost(object):
+    def __init__(self, name, luns, after=None, fail=None):
+        self.name, self.luns, self.after, self.fail, self.calls = name, luns, after, fail, []
+        ss = NS(RescanAllHba=self.rescan_hba, RescanVmfs=lambda: self.calls.append("vmfs"), storageDeviceInfo=NS(scsiLun=luns))
+        self.configManager = NS(storageSystem=ss, datastoreSystem=None)
+        self.config = NS(storageDevice=NS(scsiLun=luns))
+
+    def rescan_hba(self):
+        if self.fail:
+            raise RuntimeError(self.fail)
+        self.calls.append("hba")
+        if self.after is not None:
+            for x in self.luns:
+                x.capacity = NS(block=int(self.after * GB / 512), blockSize=512)
+
+
+class FakeDs(object):
+    def __init__(self, name, cap_gb, vmfs=None, nas=None, hosts=()):
+        self.name = name
+        self.summary = NS(capacity=int(cap_gb * GB))
+        self.info = NS(vmfs=NS(extent=[NS(diskName=vmfs)]) if vmfs else None, nas=nas)
+        self.host = [NS(key=h) for h in hosts]
+        self.refreshed = False
+
+    def RefreshDatastore(self):
+        pass
+
+    def RefreshDatastoreStorageInfo(self):
+        self.refreshed = True
+        self.summary.capacity = int(550 * GB)
+
+
+class FakeDss(object):
+    def __init__(self, ds, opts=True):
+        self.ds, self.opts, self.expanded = ds, opts, False
+
+    def QueryVmfsDatastoreExpandOptions(self, datastore):
+        # another extent's free space first: only the option on the grown LUN may be taken (a multi-extent datastore)
+        other = NS(spec=NS(extent=NS(diskName="naa.6000c29aaaaaaaaaaaaaaaaaaaaaaaa"), name="spec-other"))
+        return [other, NS(spec=NS(extent=NS(diskName=NAA), name="spec-1"))] if self.opts else [other]
+
+    def ExpandVmfsDatastore(self, datastore, spec):
+        self.expanded = spec
+        datastore.summary.capacity = int(9.75 * GB)
+
+
+def content(hosts, dss):
+    def view(_root, kinds, _rec):
+        return NS(view=hosts if kinds == ["H"] else dss, Destroy=lambda: None)
+    return NS(rootFolder=None, viewManager=NS(CreateContainerView=view))
+
+
+class Vcenter(unittest.TestCase):
+    def setUp(self):
+        self.hosts = [FakeHost("esx0%d.corp.example.mil" % i, [lun(NAA, 9), lun("naa.6000c29aaaaaaaaaaaaaaaaaaaaaaaa", 50)], after=10)
+                      for i in range(1, 5)]
+        self.ds = FakeDs("DS-SITEA-01", 8.75, vmfs=NAA, hosts=self.hosts)
+        self.nfs = FakeDs("NFS-DS02", 500, nas=NS(remoteHost="192.0.2.21", remotePath="/vol_nfs02/", remoteHostNames=None), hosts=self.hosts[:2])
+        self.nfs_other = FakeDs("NFS-OTHER", 500, nas=NS(remoteHost="192.0.2.99", remotePath="/vol_nfs02", remoteHostNames=None))
+        self.c = content(self.hosts, [self.ds, self.nfs])
+
+    def found(self, key, dss=None):
+        seen, vmfs, nfs = V.scan(content(self.hosts, dss or [self.ds, self.nfs]), "H", "D")
+        f = V.match(key, seen, vmfs, nfs)
+        if f:
+            f["seen"] = seen.get(str(key.get("naa") or "").lower(), [])
+        return f
+
+    def test_vmfs_by_naa(self):
+        f = self.found({"naa": NAA})
+        self.assertEqual((f["datastore"], f["kind"], len(f["hosts"]), f["serial"]), ("DS-SITEA-01", "VMFS", 4, "80Ab1DmT5zXq"))
+        self.assertEqual(self.found({"naa": X.naa("XXXXXXXXXXXX")}), {})
+
+    def test_nfs_by_path_and_address(self):
+        ip = ["192.0.2.21"]
+        self.assertEqual(self.found({"nfs_path": "/vol_nfs02", "nfs_ips": ip})["datastore"], "NFS-DS02")   # a trailing / is the same path
+        self.assertEqual(self.found({"nfs_path": "/vol_nfs02"}), {})               # the SVM's addresses unknown: never a guess
+        self.assertEqual(self.found({"nfs_path": "/vol_nfs02"}, [self.nfs, self.nfs_other]), {})  # two, no address: none
+        f = self.found({"nfs_path": "/vol_nfs02", "nfs_ips": ["192.0.2.21"]}, [self.nfs, self.nfs_other])
+        self.assertEqual(f["datastore"], "NFS-DS02")
+        # the same path, mounted from another SVM only: never taken for this one
+        seen, vmfs, nfs = V.scan(content(self.hosts, [self.nfs_other]), "H", "D")
+        self.assertEqual(V.match({"nfs_path": "/vol_nfs02", "nfs_ips": ["192.0.2.21"]}, seen, vmfs, nfs, resolve=set), {})
+        # the datastore's server given by name: its address counts
+        named = FakeDs("NFS-NAMED", 500, nas=NS(remoteHost="svm-vmware.corp.example.mil", remotePath="/vol_nfs02", remoteHostNames=None))
+        seen, vmfs, nfs = V.scan(content(self.hosts, [named]), "H", "D")
+        f = V.match({"nfs_path": "/vol_nfs02", "nfs_ips": ["192.0.2.21"]}, seen, vmfs, nfs,
+                    resolve=lambda names: set(names) | {"192.0.2.21"})
+        self.assertEqual(f["datastore"], "NFS-NAMED")
+        self.assertEqual(self.found({"nfs_path": "/", "nfs_ips": ip}), {})
+
+    def test_grow_vmfs(self):
+        dss = FakeDss(self.ds)
+        for h in self.hosts:
+            h.configManager.datastoreSystem = dss
+        steps = V.grow_vmfs(self.found({"naa": NAA}), NAA, 10 * GB)
+        self.assertEqual([s["ok"] for s in steps], [True, True], steps)
+        self.assertEqual(steps[0]["result"], "Done - 4 of 4 hosts see 10.0 GB")
+        self.assertEqual(steps[1]["result"], "Done - DS-SITEA-01 is 9.8 GB (was 8.8 GB)")
+        self.assertEqual(dss.expanded.name, "spec-1")
+        self.assertTrue(all(h.calls == ["hba", "vmfs"] for h in self.hosts))
+
+    def test_a_host_that_still_sees_it_small_stops_the_expand(self):
+        self.hosts[2].after = None                   # its rescan finds nothing new
+        dss = FakeDss(self.ds)
+        for h in self.hosts:
+            h.configManager.datastoreSystem = dss
+        steps = V.grow_vmfs(self.found({"naa": NAA}), NAA, 10 * GB)
+        self.assertEqual(len(steps), 1)
+        self.assertIn("esx03.corp.example.mil sees 9.0 GB", steps[0]["result"])
+        self.assertFalse(dss.expanded)
+
+    def test_no_expand_option_and_a_failed_rescan(self):
+        dss = FakeDss(self.ds, opts=False)
+        for h in self.hosts:
+            h.configManager.datastoreSystem = dss
+        steps = V.grow_vmfs(self.found({"naa": NAA}), NAA, 10 * GB)
+        self.assertFalse(steps[1]["ok"])
+        self.assertIn("offers no way to expand", steps[1]["result"])
+        self.hosts[0].fail = "no permission Host.Config.Storage"
+        steps = V.grow_vmfs(self.found({"naa": NAA}), NAA, 10 * GB)
+        self.assertIn("no permission", steps[0]["result"])
+
+    def test_no_host_sees_it_and_a_second_vcenter_refreshes(self):
+        f = self.found({"naa": NAA})
+        f["seen"] = []
+        steps = V.grow_vmfs(f, NAA, 10 * GB)
+        self.assertEqual((len(steps), steps[0]["ok"]), (1, False))
+        self.assertIn("no connected host sees the LUN", steps[0]["result"])
+        refreshed = []
+        self.ds.RefreshDatastore = lambda: refreshed.append(1)
+        steps = V.grow_vmfs(self.found({"naa": NAA}), NAA, 10 * GB, expand=False, where=" (vCenter vc02)")
+        self.assertEqual([s["step"] for s in steps], ["Rescan the hosts that see the LUN", "Refresh the VMFS datastore"])
+        self.assertTrue(refreshed and all(s["ok"] for s in steps))
+
+    def test_a_lun_grown_more_since_stops_the_expand(self):
+        for h in self.hosts:
+            h.after = 30                             # someone grew it to 30 GB since this run's 10 GB
+        steps = V.grow_vmfs(self.found({"naa": NAA}), NAA, 10 * GB)
+        self.assertEqual(len(steps), 1)
+        self.assertIn("more than this run made it", steps[0]["result"])
+
+    def test_two_vcenters_check_all_before_the_expand(self):
+        """Codex pass 5: vCenter A sees the LUN bigger than this run made it, B has the datastore - B must not expand it"""
+        def run(a_after):
+            vc_a = content([FakeHost("esx-a", [lun(NAA, 9)], after=a_after)], [])
+            h = FakeHost("esx-b", [lun(NAA, 9)], after=10)
+            ds = FakeDs("DS", 9, vmfs=NAA, hosts=[h])
+            h.configManager.datastoreSystem = FakeDss(ds)
+            vc_b = content([h], [ds])
+            out = {}
+            saved = (V.HAS, V.vim, getattr(V, "each_vcenter", None), V.AnsibleModule)
+            V.HAS, V.vim = True, NS(HostSystem="H", Datastore="D")
+            V.each_vcenter = lambda m, read, **kw: ([(n, read(None, c, n)) for n, c in (("vc-a", vc_a), ("vc-b", vc_b))], [])
+            V.AnsibleModule = lambda **kw: NS(params=dict(action="grow", keys=[{"naa": NAA}], lun_bytes=10 * GB, vcenters=[],
+                                                          validate_certs=True), check_mode=False, exit_json=lambda **k: out.update(k))
+            try:
+                V.main()
+            finally:
+                V.HAS, V.vim, V.each_vcenter, V.AnsibleModule = saved
+            return out, h.configManager.datastoreSystem
+        out, dss = run(12)
+        self.assertFalse(dss.expanded)
+        self.assertIn("more than this run made it", out["steps"][0]["result"])
+        out, dss = run(10)
+        self.assertEqual(dss.expanded.name, "spec-1")
+        self.assertEqual([s["step"] for s in out["steps"]], ["Rescan the hosts that see the LUN", "Rescan the hosts that see the LUN",
+                                                              "Expand the VMFS datastore"])      # both vCenters checked, then the expand
+
+    def test_already_expanded_is_fine(self):
+        dss = FakeDss(self.ds, opts=False)
+        for h in self.hosts:
+            h.configManager.datastoreSystem = dss
+        self.ds.summary.capacity = int(9.9 * GB)                   # VMFS over the whole 10 GB LUN, less its own space
+        steps = V.grow_vmfs(self.found({"naa": NAA}), NAA, 10 * GB)
+        self.assertTrue(steps[1]["ok"], steps)
+        self.assertIn("Nothing to do", steps[1]["result"])
+
+    def test_nfs_refresh(self):
+        steps = V.grow_nfs(self.found({"nfs_path": "/vol_nfs02", "nfs_ips": ["192.0.2.21"]}))
+        self.assertTrue(steps[0]["ok"])
+        self.assertTrue(self.nfs.refreshed)
+        self.assertEqual(steps[0]["result"], "Done - NFS-DS02 shows 550.0 GB")
+
+
+if __name__ == "__main__":
+    unittest.main()

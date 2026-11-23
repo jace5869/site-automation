@@ -1,0 +1,19 @@
+---
+# NETAPP - EXPAND A VOLUME (1.123.0). Grows one NetApp volume picked from the survey's list (ontap_expand_volume, written by
+# playbooks/ontap_volume_list.yml) - by 10 % (at least 1 GB, at most 512 GB) or the size typed in ontap_expand_size - when its
+# aggregate stays at or under ontap_expand_aggr_max_pct (97 %) used; then its LUN by the same size, a rescan of the hosts
+# that see the LUN and the VMFS datastore's expand (or an NFS datastore's refresh). No approval: the person running it
+# decides. Check = the plan only. ontap_expand_incident_number goes in the volume's comment and the report.
+# Runs on the AAP side: attach a "NetApp ONTAP" credential whose ONTAP role may modify volumes and LUNs; a "VMware vCenter"
+# credential for the datastore (optional: without it the report gives the steps by hand); a "ServiceNow API" credential
+# with ontap_expand_incident: create. No Limit. docs/NETAPP.md, "Expand a volume"
+#   ansible-playbook playbooks/ontap_volume_expand.yml -e '{"ontap_expand_volume": "vol_ds01 (...) [vol|cluster1.example.mil|svm1|vol_ds01||10737418240]"}'
+- name: NetApp - expand a volume
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: NetApp - expand a volume
+      ansible.builtin.include_role:
+        name: ontap_report
+        tasks_from: expand.yml

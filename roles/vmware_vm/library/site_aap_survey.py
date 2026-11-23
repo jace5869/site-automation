@@ -22,8 +22,9 @@ description:
     multiselect=true makes a single-select one multiple select. Anything else is refused.
   - No choices at all - AAP needs at least one - writes empty_choice instead, which the pick jobs ignore.
   - A survey that has no question of that variable (another job added a survey first) gets it added, when the target
-    gives add_question (the question's text): Multiple choice (multiple select), required, after the survey's own
-    questions, which are left as they are. A template with no survey at all is still refused.
+    gives add_question (the question's text): Multiple choice (multiple select; single select with multiselect=false,
+    1.123.0), required, after the survey's own questions, which are left as they are. A template with no survey at all is
+    still refused.
   - In check mode it only reads, and says what it would change.
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform"
     credential sets it (CONTROLLER_HOST, CONTROLLER_OAUTH_TOKEN or CONTROLLER_USERNAME and
@@ -83,7 +84,8 @@ def _like(value, items):
 def set_choices(spec, question, choices, multiselect=True, note="", empty_choice="", add_question=""):
     """The survey with the question's choices replaced. Pure: no AAP, so it can be tested on its own.
     add_question: the question's text - a survey without the question gets it, after its own questions (they are kept
-    as they are): Multiple choice (multiple select), required; '' = refused, as before 1.118.3.
+    as they are): Multiple choice (multiple select; 1.123.0: single select when multiselect is false), required; '' = refused,
+    as before 1.118.3.
     -> (new survey, error text or '', [what changed]); the survey is unchanged when there is an error."""
     spec = copy.deepcopy(spec or {})
     qs = spec.get("spec") or []
@@ -91,7 +93,7 @@ def set_choices(spec, question, choices, multiselect=True, note="", empty_choice
     added = []
     if q is None and str(add_question or "").strip() and isinstance(spec.get("spec"), list):
         q = {"question_name": " ".join(str(add_question).split()), "question_description": "", "required": True,
-             "type": "multiselect", "variable": question, "choices": [], "default": "", "min": None, "max": None,
+             "type": "multiselect" if multiselect else "multiplechoice", "variable": question, "choices": [], "default": "", "min": None, "max": None,
              "new_question": True}
         spec["spec"].append(q)
         added = ["added the question %s" % question]
@@ -118,6 +120,9 @@ def set_choices(spec, question, choices, multiselect=True, note="", empty_choice
     if multiselect and kind == "multiplechoice":
         q["type"] = "multiselect"
         changes.append("made multiple select")
+    elif multiselect is False and kind == "multiselect":           # 1.123.0: one pick per run (NetApp - expand a volume)
+        q["type"] = "multiplechoice"
+        changes.append("made single select")
     old = q.get("choices")
     if _list(old) != out:
         q["choices"] = _like(old, out)

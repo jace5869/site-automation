@@ -1,0 +1,18 @@
+---
+# NETAPP - REFRESH VOLUME LIST (1.123.0). Read-only on NetApp and vCenter: the volumes "NetApp - expand a volume" may grow,
+# one per LUN when a volume holds several, each with its VMware datastore, written as the choices of its survey's Volume
+# question (ontap_expand_templates, ontap_expand_question); the ones never offered are listed with their reason. Schedule
+# it (e.g. every 30 minutes): whoever launches the expand job picks from that list, and the job reads the volume live again.
+# Runs on the AAP side: attach a "NetApp ONTAP" credential, a "Red Hat Ansible Automation Platform" credential (its user:
+# the Admin role on those templates) and, for the datastore names, a "VMware vCenter" credential. No Limit.
+# docs/NETAPP.md, "Expand a volume"
+#   ansible-playbook playbooks/ontap_volume_list.yml
+- name: NetApp - refresh volume list
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: NetApp - refresh volume list
+      ansible.builtin.include_role:
+        name: ontap_report
+        tasks_from: expand_list.yml

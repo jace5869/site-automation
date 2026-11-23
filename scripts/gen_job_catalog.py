@@ -70,7 +70,8 @@ KINDS = [("Machine (Windows)", "machine_windows"), ("Red Hat Ansible Automation 
          ("Network config git repository", "net_git"), ("MariaDB monitor", "mariadb"), ("TLS certificate", "tls_certificate"),
          ("SQL Server (certificate inventory)", "sqlserver"), ("Keystore password", "keystore"), ("Report database (reader)", "report_db_reader"),
          ("Report database", "report_db"),
-         ("Teams webhook", "teams"), ("STIG Manager API (writer)", "stigman_api_writer"), ("Machine", "machine")]   # writer: 1.83.0, CREDS
+         ("Teams webhook", "teams"), ("STIG Manager API (writer)", "stigman_api_writer"), ("NetApp ONTAP (write)", "ontap_write"),
+         ("Machine", "machine")]   # writer: 1.83.0, CREDS; ontap_write: 1.123.0, CREDS
 OPTIONAL = re.compile(r"optional|\bwith\b|\bonly\b", re.I)
 
 
@@ -93,6 +94,7 @@ LAUNCH_DOCS = {
     # docs/VM_DEPLOY_GUIDE.md, 6: Job type for the dry run
     "VM - deploy placement change": {"ask_variables": True, "portal": True},
     "VM - deploy from ServiceNow ticket": {"ask_job_type": True},
+    "NetApp - expand a volume": {"ask_job_type": True},              # docs/NETAPP.md, Expand a volume: Check = the plan only
 }
 # 1.107.0: the survey questions "AAP - set up job templates" adds to a template when they are missing (never one changed
 # or taken off): the answers the catalog's workflows give its steps, as each guide names the question
@@ -119,6 +121,13 @@ SURVEYS = {
         {"question_name": "host:port it cannot reach (for area = network)", "variable": "ts_target", "type": "text", "required": False},
         {"question_name": "How far back to read logs", "variable": "ts_since", "type": "text", "default": "-2h", "required": False}]
         + _ACT_QUESTIONS,
+    "NetApp - expand a volume": [   # docs/NETAPP.md, Expand a volume (1.123.0): the Volume list comes from NetApp - refresh volume list
+        {"question_name": "Which volume to grow?", "variable": "ontap_expand_volume", "type": "multiplechoice",
+         "choices": ["(run NetApp - refresh volume list first)"], "required": True},
+        {"question_name": "Size to add (optional: empty = 10 % of the volume, at least 1 GB, at most 512 GB), e.g. 150GB or 1TB",
+         "variable": "ontap_expand_size", "type": "text", "max": 20, "required": False},
+        {"question_name": "Incident number (optional: written in the volume's comment and the report)",
+         "variable": "ontap_expand_incident_number", "type": "text", "max": 40, "required": False}],
     "Windows health check": [   # docs/WINDOWS.md, Windows health check
         {"question_name": "Which checks?", "variable": "health_checks", "type": "multiselect",
          "choices": ["daily", "weekly", "all", "disk", "services", "performance", "time", "network", "eventlog", "security", "audit",
@@ -126,7 +135,9 @@ SURVEYS = {
 }
 # 1.83.0: the credential kind a template needs whatever its Variables file says - STIG Manager - update writes, so its
 # client is the writer (the same kind as portal_setup_credentials')
-CREDS = {"STIG Manager - update": ["stigman_api_writer"]}
+CREDS = {"STIG Manager - update": ["stigman_api_writer"],
+         # 1.123.0: the expand changes volumes - its own credential kind, never the reports' read-only one by mistake
+         "NetApp - expand a volume": ["ontap_write"]}
 
 
 def doc_rows():
@@ -213,6 +224,8 @@ def area_of(name, playbook):
         return "fapolicyd"
     if n.startswith(("vm ", "vm -", "vmware", "esxi", "horizon")):
         return "VMware"
+    if n.startswith("netapp - "):
+        return "VMware"                                  # 1.123.0: grow a volume and its VMware datastore - with the VMware jobs
     if n.startswith(("servicenow", "site portal - open ticket")) or "ticket" in n:
         return "Tickets"
     if re.match(r"^act\b", n) or re.search(r"\bact fix\b", n):

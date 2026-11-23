@@ -1,0 +1,9 @@
+---
+# Write the choices of one question in AAP surveys (site_aap_survey) for another role's pick list (1.123.0: NetApp -
+# refresh volume list). Input: _vm_survey_targets (site_aap_survey's targets). Output: _vm_survey_set {results, problems}.
+# As Check it only reads and says what it would change.
+- name: "AAP | write the choices into the surveys{{ ' - read only, what it would change' if ansible_check_mode else '' }}"
+  site_aap_survey:
+    targets: "{{ _vm_survey_targets }}"
+    ca_path: "{{ vm_pick_aap_ca_path }}"
+  register: _vm_survey_set

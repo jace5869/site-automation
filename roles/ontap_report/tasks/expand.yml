@@ -1,0 +1,229 @@
+---
+# NETAPP - EXPAND A VOLUME (playbooks/ontap_volume_expand.yml, 1.123.0). One volume per run, picked from the survey's list
+# (ontap_expand_volume - playbooks/ontap_volume_list.yml writes it); an optional size (ontap_expand_size) and incident number
+# (ontap_expand_incident_number). Read live, planned (plugins/module_utils/site_ontap_expand.py), read again right before the
+# change, then the volume, its LUN (by the same size), the hosts' rescan and the VMFS datastore (or an NFS datastore's
+# refresh) - each read back. Check = the plan only. Never shrinks; an excluded volume is refused, even named by hand.
+- name: NetApp | the launch's answers and the settings
+  ansible.builtin.set_fact:
+    # the answer of the survey question the list writes (ontap_expand_question); a list of one (a multiple-select question) is taken
+    _ox_answer: "{{ lookup('ansible.builtin.vars', ontap_expand_question, default='') }}"
+    _ox_size: "{{ ontap_expand_size | default('', true) | string | trim }}"
+    _ox_number: "{{ ontap_expand_incident_number | default('', true) | string | trim | upper }}"
+    _ox_clusters: "{{ (ontap_clusters | replace(',', ' ')).split() if ontap_clusters is string else ontap_clusters }}"
+    _ox_vmware: "{{ lookup('ansible.builtin.env', 'VMWARE_HOST') | trim | length > 0 }}"
+    _ox_create: "{{ ontap_expand_incident | string | lower == 'create' }}"
+
+- name: NetApp | one volume
+  ansible.builtin.set_fact:
+    _ox_choice: >-
+      {{ (_ox_answer | first | string) if _ox_answer is not string and _ox_answer is iterable and _ox_answer | length == 1
+         else ('' if _ox_answer is not string else _ox_answer) }}
+    _ox_many: "{{ _ox_answer is not string and _ox_answer is iterable and _ox_answer | length > 1 }}"
+
+- name: NetApp | the settings make sense
+  ansible.builtin.assert:
+    that:
+      - ontap_expand_incident | string | lower in ['off', 'create', 'false']
+      - not _ox_many | bool
+      - not _ox_create | bool or _ox_number | length > 0 or ontap_expand_incident_group | default('', true) | string | trim | length > 0
+      - ontap_expand_lun | string == 'same'
+      - ontap_expand_aggr_max_pct | float > 0 and ontap_expand_aggr_max_pct | float <= 100
+      - _ox_number is match('^[A-Z0-9_-]{0,40}$')
+    fail_msg: >-
+      Nothing was read or changed: {{ 'pick one volume per run (' ~ _ox_answer | length ~ ' were picked); ' if _ox_many | bool else '' }}ontap_expand_incident is off or create{{ '' if not _ox_create | bool else
+      ' - and create needs ontap_expand_incident_group (the assignment group of the incident)' }}; ontap_expand_lun is same;
+      ontap_expand_aggr_max_pct is a % (default 97); the incident number is letters, digits, - and _ only (e.g. INC0012345).
+      docs/NETAPP.md, "Expand a volume".
+    quiet: true
+
+- name: NetApp | read the volume live and plan (GET only)
+  site_ontap_volume:
+    action: plan
+    clusters: "{{ _ox_clusters }}"
+    choice: "{{ _ox_choice }}"
+    size: "{{ _ox_size }}"
+    pct: "{{ ontap_expand_pct | float }}"
+    min_gb: "{{ ontap_expand_min_gb | float }}"
+    max_gb: "{{ ontap_expand_max_gb | float }}"
+    max_pct: "{{ ontap_expand_aggr_max_pct | float }}"
+    exclude: "{{ ontap_expand_exclude | default([], true) }}"
+    validate_certs: "{{ ontap_validate_certs | bool }}"
+    ca_path: "{{ ontap_ca_path }}"
+    timeout: "{{ ontap_timeout | int }}"
+    tls_legacy: "{{ ontap_tls_legacy | bool }}"
+  register: _ox_plan
+  check_mode: false                     # it only reads
+  ignore_errors: true                   # the report says why; the job fails at its end
+
+- name: NetApp | the datastore on it (vCenter, read only)
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: netapp_datastore.yml
+  vars:
+    _vm_nd_action: map
+    _vm_nd_keys: [{naa: "{{ _ox_plan.plan.naa }}", nfs_path: "{{ '' if _ox_plan.plan.naa else _ox_plan.plan.nfs_path }}",
+                   nfs_ips: "{{ _ox_plan.plan.nfs_ips | default([]) }}"}]
+  when:
+    - _ox_vmware | bool
+    - not _ox_plan.failed | default(false)
+    - (_ox_plan.plan.naa | default('') ~ _ox_plan.plan.nfs_path | default('')) | length > 0
+
+- name: NetApp | what vCenter said
+  ansible.builtin.set_fact:
+    _ox_ds: "{{ (_vm_nd.found | default([{}]))[0] | default({}, true) if _vm_nd is defined and not _vm_nd.failed | default(false) else {} }}"
+    # a vCenter not read while the datastore was not found in the others: it may be that one's - said, never taken as "none"
+    _ox_vc_error: >-
+      {{ (_vm_nd.msg | default('vCenter could not be read')) | truncate(200) if _vm_nd is defined and _vm_nd.failed | default(false)
+         else ((_vm_nd.vcenters | default([]) | selectattr('error') | map(attribute='error') | join('; ')) | truncate(200)
+               if _vm_nd is defined and _vm_nd is not skipped and not ((_vm_nd.found | default([{}]))[0] | default({}, true))
+               else '') }}
+    _ox_do: "{{ not _ox_plan.failed | default(false) and _ox_plan.plan.status == 'grow' and not ansible_check_mode }}"
+
+- name: NetApp | open the incident (ontap_expand_incident create, no number typed)
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: incident_open.yml
+  vars:
+    _sn_inc_group: "{{ ontap_expand_incident_group }}"
+    _sn_inc_short: "NetApp: grow volume {{ _ox_plan.plan.volume }} ({{ _ox_plan.plan.svm }}, {{ _ox_plan.plan.cluster }}) by {{ _ox_plan.plan.growth | ontap_human }}"
+    _sn_inc_desc: >-
+      NetApp - expand a volume (AAP job {{ awx_job_id | default(tower_job_id | default('-')) }}, started by
+      {{ awx_user_name | default(tower_user_name | default('the person running it')) }}):
+      volume {{ _ox_plan.plan.volume }} on SVM {{ _ox_plan.plan.svm }}, cluster {{ _ox_plan.plan.cluster }},
+      from {{ _ox_plan.plan.size | ontap_human }} to {{ _ox_plan.plan.target | ontap_human }}{{
+      (' with LUN ' ~ _ox_plan.plan.lun.name) if _ox_plan.plan.lun else '' }}. The result follows in this incident.
+  when: _ox_do | bool and _ox_create | bool and _ox_number | length == 0
+
+- name: NetApp | the ticket
+  ansible.builtin.set_fact:
+    _ox_incident: >-
+      {%- if _ox_number -%}{{ {'number': _ox_number, 'typed': true} }}
+      {%- elif _sn_incident is defined -%}{{ {'number': _sn_incident.number, 'sys_id': _sn_incident.sys_id, 'opened': true,
+                                                'error': _sn_incident.error, 'group': ontap_expand_incident_group} }}
+      {%- else -%}{{ {} }}{%- endif -%}
+
+- name: NetApp | grow the volume{{ ' and its LUN' if _ox_plan.plan.lun | default(none) else '' }}
+  site_ontap_volume:
+    action: grow
+    clusters: "{{ _ox_clusters }}"
+    choice: "{{ _ox_choice }}"
+    size: "{{ _ox_size }}"
+    comment_line: >-
+      {{ ((_ox_incident.number ~ ': ') if _ox_incident.number | default('') else '')
+         ~ '+' ~ _ox_plan.plan.growth | ontap_human ~ ' ' ~ now(utc=true).strftime('%Y-%m-%d')
+         ~ ' (AAP job ' ~ awx_job_id | default(tower_job_id | default('-')) ~ ')' }}
+    pct: "{{ ontap_expand_pct | float }}"
+    min_gb: "{{ ontap_expand_min_gb | float }}"
+    max_gb: "{{ ontap_expand_max_gb | float }}"
+    max_pct: "{{ ontap_expand_aggr_max_pct | float }}"
+    exclude: "{{ ontap_expand_exclude | default([], true) }}"
+    wait_seconds: "{{ ontap_expand_wait_seconds | int }}"
+    expect_volume_uuid: "{{ _ox_plan.plan.volume_uuid }}"
+    expect_lun_uuid: "{{ _ox_plan.plan.lun_uuid }}"
+    validate_certs: "{{ ontap_validate_certs | bool }}"
+    ca_path: "{{ ontap_ca_path }}"
+    timeout: "{{ ontap_timeout | int }}"
+    tls_legacy: "{{ ontap_tls_legacy | bool }}"
+  register: _ox_grow
+  ignore_errors: true
+  when: _ox_do | bool and not (_ox_create | bool and _ox_number | length == 0 and _ox_incident.error | default('') | length > 0)
+
+- name: NetApp | the volume and LUN grew
+  ansible.builtin.set_fact:
+    # the grow's own plan when it ran (it read the volume again): a refusal there is the one to report
+    _ox_final: "{{ _ox_grow.plan if _ox_grow is defined and _ox_grow is not skipped and _ox_grow.plan is defined else _ox_plan.plan | default({}) }}"
+    _ox_steps: "{{ _ox_grow.steps | default([]) if _ox_grow is defined and _ox_grow is not skipped else [] }}"
+    _ox_grow_error: >-
+      {{ '' if _ox_grow is not defined or _ox_grow is skipped or _ox_grow.steps | default([])
+            or (_ox_grow.plan.status | default('')) in ['refused', 'nothing'] else (_ox_grow.msg | default('?')) }}
+
+- name: NetApp | rescan the hosts and expand the datastore (vCenter)
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: netapp_datastore.yml
+  vars:
+    _vm_nd_action: grow
+    _vm_nd_keys: [{naa: "{{ _ox_final.naa }}", nfs_path: "{{ '' if _ox_final.naa else _ox_final.nfs_path }}",
+                   nfs_ips: "{{ _ox_final.nfs_ips | default([]) }}"}]
+    _vm_nd_lun_bytes: "{{ (_ox_final.lun | default({}, true)).target | default(0) }}"
+  # after the volume and LUN grew - or on a run that finds them grown already (a rescan or an expand that failed before)
+  when:
+    - not ansible_check_mode
+    - (_ox_steps | length > 0 and _ox_steps | rejectattr('ok') | list | length == 0) or
+      ((_ox_final.status | default('')) == 'nothing' and _ox_final.retry_ok | default(false) | bool)
+    - _ox_ds.datastore | default('') | length > 0 or _ox_ds.hosts | default([]) | length > 0
+
+- name: NetApp | the steps in vCenter
+  ansible.builtin.set_fact:
+    _ox_vc_steps: "{{ _vm_nd.steps | default([]) if _vm_nd is defined and _vm_nd is not skipped and not _vm_nd.failed | default(false) else [] }}"
+    _ox_vc_error: >-
+      {{ _ox_vc_error if _ox_vc_error else ((_vm_nd.msg | default('?')) | truncate(200)
+         if _vm_nd is defined and _vm_nd is not skipped and _vm_nd.failed | default(false) else '') }}
+
+- name: NetApp | the report
+  ansible.builtin.set_fact:
+    _ox_doc: >-
+      {{ {'plan': _ox_final, 'error': (_ox_plan.msg | default('?')) if _ox_plan.failed | default(false) else _ox_grow_error | trim, 'choice': _ox_choice,
+          'ontap_steps': _ox_steps, 'vc_steps': _ox_vc_steps, 'ds': _ox_ds, 'vmware': _ox_vmware | bool, 'vc_error': _ox_vc_error | trim,
+          'incident': _ox_incident, 'check': ansible_check_mode, 'size': _ox_size,
+          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else ''} | ontap_expand_doc }}
+
+- name: NetApp | the report as the incident will say it (resolved when every step went well)
+  ansible.builtin.set_fact:
+    _ox_doc: >-
+      {{ {'plan': _ox_final, 'error': (_ox_plan.msg | default('?')) if _ox_plan.failed | default(false) else _ox_grow_error | trim, 'choice': _ox_choice,
+          'ontap_steps': _ox_steps, 'vc_steps': _ox_vc_steps, 'ds': _ox_ds, 'vmware': _ox_vmware | bool, 'vc_error': _ox_vc_error | trim,
+          'incident': _ox_incident | combine({'resolved': _ox_doc.status == 'ok'}), 'check': ansible_check_mode, 'size': _ox_size,
+          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else ''} | ontap_expand_doc }}
+  when: _ox_incident.opened | default(false) | bool
+
+- name: NetApp | the result on the incident (resolved when every step went well)
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: incident_close.yml
+  vars:
+    _sn_inc_sys_id: "{{ _ox_incident.sys_id }}"
+    _sn_inc_resolve: "{{ _ox_incident.opened | default(false) and _ox_doc.status == 'ok' }}"
+    _sn_nl: "\n"
+    _sn_inc_notes: >-
+      {{ ([_ox_doc.title] + ((_ox_doc.sections | selectattr('title', 'match', '^Steps') | list | first | default({'rows': []})).rows
+                             | map('join', ' | ') | list)
+          + ((_ox_doc.sections | selectattr('title', 'equalto', 'Why it stopped') | list | first | default({'lines': []})).lines))
+         | join(_sn_nl) }}
+  when: _ox_incident.opened | default(false) | bool and _ox_incident.error | default('') | length == 0
+
+- name: NetApp | the report, with the incident's last word
+  ansible.builtin.set_fact:
+    _ox_doc: >-
+      {{ {'plan': _ox_final, 'error': (_ox_plan.msg | default('?')) if _ox_plan.failed | default(false) else _ox_grow_error | trim, 'choice': _ox_choice,
+          'ontap_steps': _ox_steps, 'vc_steps': _ox_vc_steps, 'ds': _ox_ds, 'vmware': _ox_vmware | bool, 'vc_error': _ox_vc_error | trim,
+          'incident': _ox_incident | combine({'close_error': _sn_incident_closed.error | default(''), 'resolved': _ox_doc.status == 'ok'}),
+          'check': ansible_check_mode, 'size': _ox_size,
+          'cluster': _ox_choice.split('[vol|')[-1].split('|')[0] if '[vol|' in _ox_choice else ''} | ontap_expand_doc }}
+  when: _ox_incident.opened | default(false) | bool
+
+- name: "NetApp | {{ _ox_doc.title }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ [_ox_doc.title] + ((_ox_doc.sections | selectattr('title', 'match', '^Steps') | list | first | default({'rows': []})).rows
+                            | map('join', ' | ') | list) + (_ox_doc.sections | selectattr('lines', 'defined') | map(attribute='lines') | flatten | list) }}
+
+- name: NetApp | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ox_doc }}"
+
+- name: NetApp | the result as job artifacts (ontap_expand)
+  ansible.builtin.set_stats:
+    data:
+      ontap_expand: >-
+        {{ {'title': _ox_doc.title, 'status': _ox_doc.status, 'plan': _ox_final, 'steps': _ox_steps + _ox_vc_steps,
+            'datastore': _ox_ds, 'incident': _ox_incident, 'dry_run': ansible_check_mode} }}
+
+- name: NetApp | the job fails when nothing could be grown or a step failed
+  ansible.builtin.assert:
+    that: _ox_doc.status in ['ok', 'info'] or (_ox_doc.status == 'warning' and (_ox_final.status | default('')) in ['grow', 'nothing'])
+    fail_msg: "{{ _ox_doc.title }}"
+    quiet: true

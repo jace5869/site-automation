@@ -205,6 +205,8 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | Report | [NETAPP.md](NETAPP.md#set-it-up) |
 | NetApp ONTAP hardware inventory | `playbooks/ontap_hardware_report.yml` | Report | [NETAPP.md](NETAPP.md#the-hardware-inventory) |
 | NetApp ONTAP - capacity trends | `playbooks/ontap_capacity_trends.yml` | Report | [NETAPP.md](NETAPP.md#capacity-trends) |
+| NetApp - refresh volume list | `playbooks/ontap_volume_list.yml` | Watch (every 30 minutes) | [NETAPP.md](NETAPP.md#expand-a-volume) |
+| NetApp - expand a volume | `playbooks/ontap_volume_expand.yml` | On demand (the survey's list; Check = the plan) | [NETAPP.md](NETAPP.md#expand-a-volume) |
 | Cisco UCS inventory | `playbooks/ucs_inventory_report.yml` | Report | [UCS.md](UCS.md#set-it-up) |
 | Network map | `playbooks/netmap_report.yml` | Report | [NETWORK_MAP.md](NETWORK_MAP.md#set-it-up) |
 | SolarWinds - snapshot | `playbooks/solarwinds_snapshot.yml` | Watch (every 10 minutes) | [REPORT_DATABASE.md](REPORT_DATABASE.md#the-solarwinds-snapshot-1960) |

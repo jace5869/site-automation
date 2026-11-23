@@ -1,0 +1,25 @@
+---
+# Write a job's result on the incident incident_open.yml opened (1.123.0): resolved with the result as its close notes
+# (_sn_inc_resolve: true), or the result as a work note and left open. Input: _sn_inc_sys_id, _sn_inc_notes.
+# Output: _sn_incident_closed {error}.
+- name: ServiceNow | the result on the incident
+  ansible.builtin.uri:
+    url: "{{ _sn_inc_url }}/api/now/table/{{ servicenow_table }}/{{ _sn_inc_sys_id }}?sysparm_input_display_value=true"
+    method: PATCH
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: >-
+      {{ ({'state': servicenow_resolved_state, 'close_code': servicenow_close_code, 'close_notes': _sn_inc_notes}
+          | combine(servicenow_resolve_fields)) if _sn_inc_resolve | bool else {'work_notes': _sn_inc_notes} }}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _sn_inc_done
+  ignore_errors: true
+
+- name: ServiceNow | the incident updated (or why not)
+  ansible.builtin.set_fact:
+    _sn_incident_closed: "{{ {'error': ('ServiceNow refused the update: ' ~ _sn_inc_done.msg | default('?')) | truncate(200) if _sn_inc_done.failed | default(false) else ''} }}"

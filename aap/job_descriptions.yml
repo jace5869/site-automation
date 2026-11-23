@@ -740,6 +740,16 @@ templates:
     targets: "ONTAP clusters via REST API, GET only; AAP's job history via its API (AAP credential); the report database optional. AAP side, no Limit."
     produces: "The trends report emailed with an Excel workbook of the points, and on the report website with a trend line per row, when set."
     supports: "Run constraint=Reads only (no hosts); writes the report database (with its credential, ontap_capacity_db), report email and website when set"
+  "NetApp - refresh volume list":
+    does: "Writes the NetApp volumes that may be grown (one per LUN, with their VMware datastore) as the expand job's survey list; run on a schedule."
+    targets: "ONTAP clusters via REST API, GET only (NetApp ONTAP credential); vCenter read only, optional; AAP's API (AAP credential). AAP side, no Limit."
+    produces: "The Volume list in the survey of ontap_expand_templates, the excluded volumes with their reason; a report on the website; artifact."
+    supports: "Run constraint=Reads only (no hosts); writes AAP (that template's survey) and the report website when set; Check = dry run"
+  "NetApp - expand a volume":
+    does: "Grows the NetApp volume picked in its survey (10 %, 1-512 GB, or the size typed), its LUN, and the VMware datastore on it; no approval."
+    targets: "One ONTAP volume via REST API (NetApp ONTAP credential with write); vCenter via its API (optional); ServiceNow (optional). No Limit."
+    produces: "A plan (Check) or result report: email and report website, each step's result; the incident number in the volume's comment."
+    supports: "Run constraint=Changes NetApp (grows one volume and LUN, never shrinks; aggregate stays at or under 97 %); vCenter datastore; Check = plan"
   "Cisco UCS inventory":
     does: "Lists each Cisco UCS domain's fabric interconnects, chassis, servers, firmware and critical/major faults, for inventory and firmware tracking."
     targets: "Cisco UCS Manager domains (ucs_domains) via the XML API over HTTPS (Cisco UCS Manager credential); the AAP side, no Limit."

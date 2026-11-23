@@ -136,6 +136,8 @@ aap_templates_credentials:
   stigman_api: STIG Manager API
   # report_db: Report database                  # the report jobs' (writes their tables)
   # report_db_reader: Report database (reader)  # 1.101.2: the read-only account report_reader, for the portal's deploy
+  # ontap: NetApp ONTAP read-only               # the NetApp reports and the volume list
+  # ontap_write: NetApp ONTAP write             # 1.123.0: NetApp - expand a volume (an account that may grow volumes and LUNs)
 ## The execution environment of each kind (all, windows, network); a kind left out: the project's
 # aap_templates_ee: {all: "All-in-one EE", windows: "Windows EE", network: "Network EE"}
 ## Only some templates (* and ?, any case)
@@ -372,6 +374,16 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
     "ontap_capacity_trends.yml": ("NetApp ONTAP - capacity trends",
                                   "NetApp ONTAP, Red Hat Ansible Automation Platform (optional: Report database)", "", """\
 ## Run it every day on a schedule: each run adds one point, a trend needs 3 (docs/NETAPP.md, "Capacity trends")
+"""),
+    "ontap_volume_expand.yml": ("NetApp - expand a volume",
+                                "NetApp ONTAP (a role that may modify volumes and LUNs) (optional: VMware vCenter, ServiceNow API)", "", """\
+## One volume per run, picked from the survey's list ("NetApp - refresh volume list" writes it); no approval
+## Check = the plan only. The VMware vCenter credential lets it rescan the hosts and expand the datastore (else: steps by hand)
+## ontap_expand_incident: create needs the ServiceNow API credential and ontap_expand_incident_group
+"""),
+    "ontap_volume_list.yml": ("NetApp - refresh volume list",
+                              "NetApp ONTAP, Red Hat Ansible Automation Platform (optional: VMware vCenter, for the datastore names)", "", """\
+## Run it on a schedule (e.g. every 30 minutes); it writes the Volume list of ontap_expand_templates' survey
 """),
     "ucs_inventory_report.yml": ("Cisco UCS inventory", "Cisco UCS Manager", "", """\
 ## Each domain's UCS Manager address (the fabric interconnects' cluster address); put it in all.yml if you like

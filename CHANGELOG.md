@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.123.0 — 2026-11-23
+
+**To set up:**
+- A NetApp ONTAP credential whose cluster account may modify volumes and LUNs (docs/NETAPP.md, "Expand a volume",
+  step 1).
+- Name it as the new credential kind `ontap_write` in `aap_templates_credentials` (e.g. `ontap_write: NetApp ONTAP
+  write`; `ontap` stays the read-only one). Without it, AAP - set up job templates skips *NetApp - expand a volume*.
+- AAP - set up job templates makes *NetApp - refresh volume list* and *NetApp - expand a volume*. Leave Concurrent jobs
+  off on the expand (AAP's default), and keep one expand template.
+- Schedule the list every 30 minutes and run it once.
+- Optionally `ontap_expand_exclude`, and `ontap_expand_incident: create` with `ontap_expand_incident_group`.
+
+- **New job: NetApp - expand a volume.** Grows one NetApp volume picked from its survey's list. There is no approval:
+  the person running it decides. Check = the plan only.
+  - The growth: 10 % of the volume, at least 1 GB, at most 512 GB (`ontap_expand_pct`, `_min_gb`, `_max_gb`). Or the
+    optional Size box (e.g. `150GB`), which `ontap_expand_max_gb` does not limit.
+  - The aggregate stays **at or under 97 % used** after the growth (`ontap_expand_aggr_max_pct`). If the growth does
+    not fit, nothing is changed, and the report says the largest size that fits.
+  - The volume is read live first, and again right before the change: anything that moved against the plan stops it.
+    Each change is read back. It never shrinks a volume, and grows one volume per run.
+  - **A LUN** in the volume grows by the same size (`ontap_expand_lun: same`).
+  - **The VMware datastore**, with a VMware vCenter credential:
+    - VMFS: found by the LUN's NAA id (`naa.600a0980` + its serial). Every host that sees the LUN is rescanned and
+      checked at the new size, then the datastore is expanded.
+    - NFS: refreshed.
+    - Without the credential, the report gives the steps to do it by hand.
+  - **Never grown,** even when named by hand: SVM and node roots, SnapMirror destinations (DP), offline volumes,
+    FlexGroups (a later version), and `ontap_expand_exclude` (patterns or `svm:volume`).
+  - The same choice again: "already at the size - nothing to do"; with exactly this choice's sizes, the vCenter step runs
+    again (a rescan or expand that failed before).
+  - A volume changed since the list, or a volume or LUN made again under its name: refused, refresh the list.
+  - The Size box takes at least 0.1 GB.
+  - **Incident:** the optional Incident number box goes in the volume's comment (added to what is there) and the
+    report. `ontap_expand_incident: create` (default `off`) opens one through the ServiceNow API credential,
+    assigned to `ontap_expand_incident_group`, when the live plan says the run will grow the volume. Afterwards it is
+    resolved with the steps, or gets a work note and stays open when a step failed, the re-check stopped the run, or
+    vCenter is left by hand. A number typed in the box wins.
+  - The report (email and website): At a glance, now and after, then each step with its result.
+- **New job: NetApp - refresh volume list** (schedule it). Read only. It writes the volumes that may be grown as the
+  expand job's survey list, with their size, used %, aggregate free space and datastore:
+  - A volume with several LUNs gets one choice per LUN.
+  - A survey without the question gets it added, as single select.
+  - When a cluster cannot be read, the survey keeps its last good list.
+  - The volumes never offered are listed in its report, each with its reason.
+- `site_aap_survey` can add a single-select question (`multiselect: false`). `site_ontap_collect`'s connection helpers
+  moved to `plugins/module_utils/site_ontap.py`; it still sends GET requests only.
+- Tested: unit tests (the size math, 97 %, the largest that fits, the Size box, the exclusions, the NAA id, the
+  choices); an e2e against a fake ONTAP that takes changes, a fake AAP and a fake ServiceNow, on ansible-core 2.16
+  and 2.21. The vCenter side (rescan, VMFS expand, NFS refresh) is tested with fake vSphere objects: vcsim has no
+  NetApp LUN or VMFS extent and does not offer the expand calls.
+
 ## 1.117.0 — 2026-11-23
 
 **To set up:** in the VM deploy workflow (VM_DEPLOY_GUIDE step 8), set the approval node's description to

@@ -97,6 +97,23 @@ class AddQuestion(unittest.TestCase):
         self.assertEqual(new["spec"], [email])
 
 
+    def test_single_select_added(self):
+        """1.123.0: NetApp - expand a volume - one volume per run, so its question is added single select"""
+        spec = {"name": "", "description": "", "spec": [q("ontap_expand_size", "text")]}
+        new, err, _ = m.set_choices(spec, "ontap_expand_volume", ["vol_ds01 (svm1, cluster1) [vol|c|s|v||1]"], multiselect=False,
+                                    add_question="Which volume to grow?")
+        self.assertEqual(err, "")
+        self.assertEqual((new["spec"][1]["type"], new["spec"][1]["variable"]), ("multiplechoice", "ontap_expand_volume"))
+        again, err, changes = m.set_choices(new, "ontap_expand_volume", ["x [vol|c|s|v||2]"], multiselect=False)
+        self.assertEqual(again["spec"][1]["type"], "multiplechoice")                  # never made multiple select
+        self.assertNotIn("made multiple select", changes)
+        # a multiple-select question someone made by hand becomes single select: one volume per run
+        multi = {"spec": [q("ontap_expand_volume", "multiselect")]}
+        new, err, changes = m.set_choices(multi, "ontap_expand_volume", ["x [vol|c|s|v||2]"], multiselect=False)
+        self.assertEqual((err, new["spec"][0]["type"]), ("", "multiplechoice"))
+        self.assertIn("made single select", changes)
+
+
 class Redirects(unittest.TestCase):
     """A redirect from AAP's address is an answer, not a path: the login must never travel on to where it points."""
     def test_not_followed(self):

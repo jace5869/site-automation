@@ -20,7 +20,8 @@ Surveys (the pick lists, vm_pick_refresh.yml; each survey written appended to $A
   per line - older AAP - and a default), 52 "VM - restart picked VMs" (vm_reboot_picks: single select, and
   vm_power_mode), 53 "Text question" (vm_snapshot_picks is a text box), 54 "No survey", 55 "Survey off" (a
   survey that is turned off), 56 "Both" (a workflow is named so too), 57 "Read only" (the user may not change
-  it); workflow job templates 61 "VM - delete picked snapshots (workflow)" (vm_snapshot_picks: multiple select,
+  it), 58 "NetApp - expand a volume" (ontap_expand_size and ontap_expand_incident_number, no volume question yet:
+  1.123.0's list adds it); workflow job templates 61 "VM - delete picked snapshots (workflow)" (vm_snapshot_picks: multiple select,
   a list), 62 "Both" and 63 "Email question only" (a survey with report_email_also only). AAPMOCK_SURVEY_FAIL=1: writing a survey answers 400.
 
 Jobs (the reports' strip of past runs, roles/site_email site_report_history): job template 71 "Snapshot cleanup"
@@ -82,7 +83,7 @@ def _q(var, kind, choices=None, default="", required=False):
 
 TPLS = {"job": [_tpl("job", 51, "VM - delete picked snapshots"), _tpl("job", 52, "VM - restart picked VMs"),
                 _tpl("job", 53, "Text question"), _tpl("job", 54, "No survey", enabled=False), _tpl("job", 55, "Survey off", enabled=False),
-                _tpl("job", 56, "Both"), _tpl("job", 57, "Read only", edit=False)],
+                _tpl("job", 56, "Both"), _tpl("job", 57, "Read only", edit=False), _tpl("job", 58, "NetApp - expand a volume")],
         "workflow": [_tpl("workflow", 61, "VM - delete picked snapshots (workflow)"), _tpl("workflow", 62, "Both"),
                      _tpl("workflow", 63, "Email question only")]}
 SPECS = {("job", 51): {"name": "", "description": "", "spec": [_q("vm_snapshot_picks", "multiselect", "old one\nold two", "old two", True)]},
@@ -93,6 +94,8 @@ SPECS = {("job", 51): {"name": "", "description": "", "spec": [_q("vm_snapshot_p
          ("job", 55): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
          ("job", 56): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
          ("job", 57): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
+         # 1.123.0: the expand job's own questions, not yet the volume (NetApp - refresh volume list adds it, single select)
+         ("job", 58): {"name": "", "description": "", "spec": [_q("ontap_expand_size", "text"), _q("ontap_expand_incident_number", "text")]},
          ("workflow", 61): {"name": "", "description": "", "spec": [_q("vm_snapshot_picks", "multiselect", [], "")]},
          ("workflow", 62): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
          # another job's survey came first: only the email question, no pick list question (1.118.3: the refresh adds it)

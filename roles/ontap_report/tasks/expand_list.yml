@@ -1,0 +1,92 @@
+---
+# NETAPP - REFRESH VOLUME LIST (playbooks/ontap_volume_list.yml, 1.123.0; schedule it). Reads every cluster of ontap_clusters
+# (GET only) and writes the volumes that may be grown - one per LUN when a volume holds several, each with its datastore
+# when a VMware vCenter credential is attached - as the choices of the survey question ontap_expand_question of the
+# templates of ontap_expand_templates (added, single select, when missing). Changes nothing on NetApp or in vCenter.
+# As Check it writes no survey. The report goes to the website only (it runs often).
+- name: NetApp | the volumes that may be grown, and the ones that may not (GET only)
+  site_ontap_volume:
+    action: list
+    clusters: "{{ (ontap_clusters | replace(',', ' ')).split() if ontap_clusters is string else ontap_clusters }}"
+    exclude: "{{ ontap_expand_exclude | default([], true) }}"
+    validate_certs: "{{ ontap_validate_certs | bool }}"
+    ca_path: "{{ ontap_ca_path }}"
+    timeout: "{{ ontap_timeout | int }}"
+    tls_legacy: "{{ ontap_tls_legacy | bool }}"
+  register: _ol_list
+  check_mode: false                     # it only reads
+
+- name: NetApp | the datastores on them (vCenter, read only)
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: netapp_datastore.yml
+  vars:
+    _vm_nd_action: map
+    _vm_nd_keys: >-
+      {{ _ol_list.choices | map('ontap_expand_key') | list }}
+  when:
+    - lookup('ansible.builtin.env', 'VMWARE_HOST') | trim | length > 0
+    - _ol_list.choices | length > 0
+
+- name: NetApp | the choices
+  ansible.builtin.set_fact:
+    _ol_found: "{{ _vm_nd.found | default([]) if _vm_nd is defined and _vm_nd is not skipped and not _vm_nd.failed | default(false) else [] }}"
+    _ol_vc_error: "{{ (_vm_nd.msg | default('?')) | truncate(200) if _vm_nd is defined and _vm_nd is not skipped and _vm_nd.failed | default(false) else '' }}"
+    _ol_when: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M') }} UTC"
+
+- name: NetApp | the survey's list
+  ansible.builtin.set_fact:
+    _ol_choices: "{{ _ol_list.choices | ontap_expand_choices(_ol_found, ontap_expand_max_choices | int) }}"
+
+# a cluster not read would drop its volumes from the list until the next run: the survey keeps its last good list instead
+- name: NetApp | write the list into the surveys (only when every cluster was read)
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: aap_survey.yml
+  when: _ol_list.clusters | selectattr('error') | list | length == 0
+  vars:
+    _vm_survey_targets: >-
+      {%- set out = [] -%}
+      {%- for t in ([ontap_expand_templates] if ontap_expand_templates is string else ontap_expand_templates) -%}
+      {%-   set d = t if t is mapping else {'template': t | string | trim} -%}
+      {%-   set _ = out.append({'template': d.template | string, 'kind': d.kind | default('') | string, 'question': ontap_expand_question,
+                                'multiselect': false, 'add_question': 'Which volume to grow?', 'choices': _ol_choices.choices,
+                                'note': 'of ' ~ _ol_when ~ ': ' ~ _ol_choices.choices | length ~ ' volume(s) that may be grown',
+                                'empty_choice': '(nothing to pick: no volume may be grown - list of ' ~ _ol_when ~ ')'}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: NetApp | the volume list
+  ansible.builtin.set_fact:
+    _ol_doc: >-
+      {{ {'clusters': _ol_list.clusters, 'choices': _ol_choices.choices, 'entries': _ol_list.choices, 'found': _ol_found,
+          'excluded': _ol_list.excluded, 'surveys': _vm_survey_set.results | default([]),
+          'problems': (_vm_survey_set.problems | default([])) + ([] if _vm_survey_set is defined and _vm_survey_set is not skipped
+                       else ['not written: a cluster could not be read, so the survey keeps its last list']),
+          'vmware': lookup('ansible.builtin.env', 'VMWARE_HOST') | trim | length > 0, 'vc_error': _ol_vc_error, 'more': _ol_choices.more, 'check': ansible_check_mode,
+          'template': (ontap_expand_templates | first) if ontap_expand_templates is not string else ontap_expand_templates} | ontap_expand_list_doc }}
+
+- name: "NetApp | {{ _ol_doc.title }}"
+  ansible.builtin.debug:
+    msg: "{{ [_ol_doc.title] + (_ol_doc.sections | selectattr('lines', 'defined') | map(attribute='lines') | flatten | list) }}"
+
+- name: NetApp | publish it (report_web_dest; never emailed - it runs often)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ol_doc }}"
+    _report_email_skip: true
+
+- name: NetApp | the list as job artifacts (ontap_volume_list)
+  ansible.builtin.set_stats:
+    data:
+      ontap_volume_list: "{{ {'at': _ol_when, 'choices': _ol_choices.choices, 'excluded': _ol_list.excluded, 'clusters': _ol_list.clusters} }}"
+
+- name: NetApp | every cluster was read and every survey written
+  ansible.builtin.assert:
+    that:
+      - _ol_list.clusters | selectattr('error') | list | length == 0
+      - _vm_survey_set.problems | default([]) | length == 0
+      - _vm_survey_set.results | default([]) | rejectattr('ok') | list | length == 0
+    fail_msg: "{{ _ol_doc.title }} - {{ (_ol_doc.sections | selectattr('title', 'equalto', 'Problems') | first | default({'lines': []})).lines | join('; ') }}"
+    quiet: true

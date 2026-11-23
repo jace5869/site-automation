@@ -10,6 +10,11 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "ontap_report", "library"))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
+import importlib.util  # noqa: E402
+_spec = importlib.util.spec_from_file_location("ansible.module_utils.site_ontap", os.path.join(HERE, "..", "plugins", "module_utils", "site_ontap.py"))
+_mod = importlib.util.module_from_spec(_spec)
+sys.modules["ansible.module_utils.site_ontap"] = _mod       # 1.123.0: the shared ONTAP helpers
+_spec.loader.exec_module(_mod)
 import site_ontap_collect as oc  # noqa: E402
 import ontap_filters as of  # noqa: E402
 

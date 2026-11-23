@@ -1559,6 +1559,7 @@ never their schedules: add them as below.
 | Snapshot cleanup | Monday 07:00 | workflow 19 ([VMWARE.md](VMWARE.md), "Snapshots") |
 | ESXi security settings | every day 00:00 | template *ESXi - security settings* (20) |
 | NetApp ONTAP health | every day 06:00 | template *NetApp ONTAP health report* (21) |
+| NetApp volume list (the survey of *NetApp - expand a volume*) | every 30 minutes | template *NetApp - refresh volume list* ([NETAPP.md](NETAPP.md#expand-a-volume)) |
 | vSphere capacity planning / VMs created | Monday 07:00 / Friday 12:00 | templates (22, 23) |
 | Certificate install | every day 07:00 | workflow 29 |
 | DoD PKI bundle check (the CA bundle the certificate installs complete a chain from) | Monday 06:00 | template *PKI - DoD bundle check* ([CERT_INSTALL.md](CERT_INSTALL.md#keeping-the-ca-bundle-current)) |

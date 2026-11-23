@@ -1,0 +1,45 @@
+---
+# Open one incident for a job that changes something and tracks it in ServiceNow (1.123.0: NetApp - expand a volume with
+# ontap_expand_incident: create). Input: _sn_inc_short (its short description), _sn_inc_desc, _sn_inc_group (the
+# assignment group). Output: _sn_incident {number, sys_id, error} - error says why none was opened (the job decides what
+# then). The connection is the ServiceNow API credential's (SN_HOST, SN_USERNAME, SN_PASSWORD), as tickets.yml uses it.
+- name: ServiceNow | connection (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _sn_inc_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+
+- name: ServiceNow | open the incident
+  ansible.builtin.uri:
+    url: "{{ _sn_inc_url }}/api/now/table/{{ servicenow_table }}?sysparm_input_display_value=true&sysparm_fields=sys_id,number"
+    method: POST
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: >-
+      {%- set b = {'short_description': _sn_inc_short | truncate(158), 'description': _sn_inc_desc,
+                   'urgency': servicenow_urgency.warning | default('2'), 'impact': servicenow_impact.warning | default('3'),
+                   'assignment_group': _sn_inc_group} -%}
+      {%- if servicenow_caller -%}{%- set _ = b.update({'caller_id': servicenow_caller}) -%}{%- endif -%}
+      {%- if servicenow_category -%}{%- set _ = b.update({'category': servicenow_category}) -%}{%- endif -%}
+      {{ b | combine(servicenow_fields) | to_json }}
+    status_code: [200, 201]
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _sn_inc_new
+  ignore_errors: true                   # said in _sn_incident.error; the job decides
+  when: _sn_inc_url | length > 0
+
+- name: ServiceNow | the incident opened (or why not)
+  ansible.builtin.set_fact:
+    _sn_incident: >-
+      {%- if not _sn_inc_url -%}
+      {{ {'number': '', 'sys_id': '', 'error': 'no ServiceNow API credential on this job template (SN_HOST is empty)'} }}
+      {%- elif _sn_inc_new.failed | default(false) or not (_sn_inc_new.json.result.number | default('')) -%}
+      {{ {'number': '', 'sys_id': '', 'error': 'ServiceNow did not open it: ' ~ (_sn_inc_new.msg | default('no number came back')) | truncate(200)} }}
+      {%- else -%}
+      {{ {'number': _sn_inc_new.json.result.number, 'sys_id': _sn_inc_new.json.result.sys_id, 'error': ''} }}
+      {%- endif -%}

@@ -4,10 +4,11 @@ One job, `playbooks/ontap_health_report.yml`, reads every NetApp ONTAP cluster y
 one report: what is broken first, then capacity, protection and services. A second, *NetApp ONTAP hardware inventory*,
 lists their hardware - models, serial numbers, firmware ([The hardware inventory](#the-hardware-inventory)). A third,
 *NetApp ONTAP - capacity trends*, says how fast the aggregates and volumes fill and which fill again
-([Capacity trends](#capacity-trends)). Each row is coloured: red
+([Capacity trends](#capacity-trends)). A fourth, *NetApp - expand a volume*, grows one volume picked from a list - the
+only NetApp job that changes anything ([Expand a volume](#expand-a-volume)). Each row is coloured: red
 = critical, amber = warning, green = OK, blue = for your information.
 
-**It only reads.** It sends GET requests to each cluster's REST API (the same API System Manager
+**The reports only read.** They send GET requests to each cluster's REST API (the same API System Manager
 uses) and nothing else: the code refuses any other kind of request. It runs on the AAP side, like
 the VMware jobs: no inventory of the clusters is needed, no SSH, no Limit.
 
@@ -334,6 +335,99 @@ table. So are the connection settings (`ontap_clusters`, `ontap_validate_certs`,
 
 **What it is not.** A rate is a straight line through the used space of the runs. It does not know about a monthly
 job, a migration next week or a quota. Read the days to full as "at this rate", and look at the trend line beside it.
+
+## Expand a volume
+
+*NetApp - expand a volume* (`playbooks/ontap_volume_expand.yml`, 1.123.0) grows one volume. The person running it picks
+the volume from a list, and may type a size and an incident number. **No approval:** whoever launches it decides.
+*NetApp - refresh volume list* (`playbooks/ontap_volume_list.yml`) writes that list on a schedule.
+
+### What a run does
+
+1. Reads the picked volume **live**: its size, used space, aggregate and LUNs.
+2. Works out the growth:
+   - **Default:** 10 % of the volume (`ontap_expand_pct`), at least 1 GB (`ontap_expand_min_gb`), at most 512 GB (`ontap_expand_max_gb`).
+   - **Or the Size box,** e.g. `150GB` or `1TB`. `ontap_expand_max_gb` does not limit a typed size; the aggregate does.
+3. Checks the aggregate. After the growth it must stay **at or under 97 % used** (`ontap_expand_aggr_max_pct`). The
+   growth counts as used, even on a thin volume. When it does not fit, nothing is changed. The report says the
+   largest size that fits: *"Default 204.8 GB would put aggr2 at 97.1 %; up to 180.0 GB fits"*.
+4. Reads the volume and the aggregate again, right before the change. If anything moved against the plan, it stops.
+5. Grows the volume, then reads it back. The incident number and the growth are added to the volume's comment
+   (what was there is kept).
+6. **A LUN in the volume** grows by the same size (`ontap_expand_lun: same`), then is read back.
+7. **The VMware datastore on it**, with a *VMware vCenter* credential on the template:
+   - **VMFS:** the job finds the datastore by the LUN's NAA id (`naa.600a0980` + the LUN's serial number as hex). It
+     rescans every host that sees the LUN, checks each one sees the new size, and expands the datastore over the
+     LUN's free space.
+   - **NFS:** the datastore whose remote path is the volume's junction path is refreshed.
+   - **Without the credential,** or when vCenter cannot be read, the report gives the steps to do it by hand.
+8. Sends the report (email and website): At a glance, then each step with its result.
+
+**Check** (Job type Check at the launch) is the plan only: nothing is changed. The report shows each step as "Not run".
+
+### What is never grown
+
+- Never offered, and refused even when named by hand:
+  - a node's root volume (vol0) or an SVM's root volume;
+  - a DP volume (a SnapMirror destination);
+  - an offline or restricted volume;
+  - a FlexGroup (a later version).
+- `ontap_expand_exclude`: name patterns, or `svm:volume`, with `*` and `?`. Example:
+  `["*_root", "vol0", "svm_backup:*"]`.
+- One volume per run. The job never shrinks a volume.
+- **A volume with several LUNs:** each LUN is its own choice in the list. Picking one grows the volume and that LUN,
+  then its datastore; the other LUNs are left as they are.
+- **The same choice again:** the volume is already at its new size, so there is nothing to do and the job ends green.
+  To grow it more, wait for the next list.
+- **The volume changed since the list was made:** refused. Run the list again and pick it again.
+
+### Incidents
+
+- **The Incident number box** goes in the volume's comment and the report.
+- `ontap_expand_incident: create` (default `off`) opens an incident through the *ServiceNow API* credential:
+  - It is assigned to `ontap_expand_incident_group`, which must be set.
+  - It is opened when the live plan says the run will grow the volume, before the change. If the re-check right
+    before the change then stops the run, the incident gets the reason as a work note and stays open.
+  - After the change it is resolved, with the steps as its close notes. When a step failed or vCenter is left by
+    hand, the steps go in as a work note instead and the incident stays open.
+  - A number typed in the box wins: no new incident is opened.
+
+### Set it up
+
+1. **A cluster account that may change volumes:** a custom cluster role with `all` on `/api/storage/volumes` and
+   `/api/storage/luns`, and `readonly` on the rest (the job reads aggregates and network interfaces too; an SVM
+   account cannot). Use a second *NetApp ONTAP* credential, e.g. `NetApp ONTAP write`. The read-only one of the
+   reports stays as it is.
+2. **AAP - set up job templates** makes both templates: *NetApp - refresh volume list* and *NetApp - expand a volume*
+   (its survey: Volume, Size, Incident number; Prompt on launch for Job type). The expand needs its own credential kind:
+   add `ontap_write: NetApp ONTAP write` to `aap_templates_credentials` (`ontap` stays the read-only one). Or by hand:
+   the playbooks above, the credentials below, no Limit.
+   - *NetApp - refresh volume list*: NetApp ONTAP (read-only is enough), Red Hat Ansible Automation Platform (its
+     user needs the Admin role on the expand template), and VMware vCenter (optional, for the datastore names).
+   - *NetApp - expand a volume*: NetApp ONTAP write, and optionally VMware vCenter and ServiceNow API.
+   - Leave **Concurrent jobs** off on *NetApp - expand a volume* (AAP's default): two runs at the same time on volumes of
+     one aggregate could each pass the 97 % check. AAP then runs them one after the other. Keep one expand template:
+     two templates are two queues. ONTAP takes a size, not "this much more": an autosize growth in the second between the
+     job's last read and its change is lost (the report shows the size read back).
+   - Several vCenters: the datastore is expanded in the first that has it, then the others rescan and refresh it.
+3. Put `ontap_clusters` (and `ontap_expand_exclude`) in `playbooks/group_vars/all.yml`, so both jobs read the same.
+4. **Schedule** *NetApp - refresh volume list*, e.g. every 30 minutes. Run it once now: the expand template's Volume
+   question gets its choices. A survey without that question gets it added, as single select.
+5. **Try it on a test volume** (e.g. 10 GB): launch with Job type **Check** first, read the plan, then launch again
+   with Job type Run.
+
+### Settings of the expand
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ontap_expand_pct` / `_min_gb` / `_max_gb` | `10` / `1` / `512` | the default growth: this % of the volume, at least / at most this many GB |
+| `ontap_expand_aggr_max_pct` | `97` | the aggregate stays at or under this % used after the growth, or nothing is changed |
+| `ontap_expand_exclude` | `[]` | volumes never offered or grown: name patterns or `svm:volume` |
+| `ontap_expand_lun` | `same` | a LUN grows by the same size as its volume |
+| `ontap_expand_incident` / `_incident_group` | `off` / (none) | `create` = open an incident for a change, assigned to this group |
+| `ontap_expand_templates` / `ontap_expand_question` | the expand template / `ontap_expand_volume` | whose survey the list writes, and its question |
+| `ontap_expand_max_choices` | `500` | the most volumes in the list (the report says how many more) |
+| `ontap_expand_wait_seconds` | `300` | how long to wait for ONTAP's job of each change |
 
 ## Settings
 
