@@ -211,6 +211,80 @@ class ApprovalPlan(unittest.TestCase):
         self.assertEqual(d.vm_deploy_checked_placement(self.journal(two, one.replace("4813", "4812")), self.digest).keys(), {"vm-app02"})
         self.assertEqual(set(d.vm_deploy_checked_placement(self.journal(other.replace("4813", "4814"), note), self.digest)), {"vm-app02"})
 
+    def test_changed_placement_round_trip_and_journal_order(self):
+        checked = self.note()
+        old = d.vm_deploy_checked_placement(self.journal(checked), self.digest)["vm-app01"]
+        vm = dict(name="vm-app01", vcenter="vc02.corp.example.mil", datacenter="SITB0201-DC", cluster="SITB0201-CL01",
+                  datastore="SITB0201-DS01", folder="Servers/App", fit=dict(cluster=dict(pct_after=58, down=1, target=80),
+                                                                            datastore=dict(pct_after=41, max=85)))
+        changed = "\n".join(d.vm_deploy_change_lines(vm, old, "AAP job 4820 by admin", "DOE.JANE.Q.1234567890", "4813", self.digest))
+        self.assertIn("(changed by the approver: was vc01.corp.example.mil)", changed)
+        self.assertIn("58.0% memory used with this VM and 1 host down (target 80%)", changed)
+
+        def read(*notes, job="4813", digest=self.digest):
+            return d.vm_deploy_checked_placement(self.journal(*notes), digest, job)
+
+        place = read(changed, checked)["vm-app01"]
+        self.assertEqual({k: place[k] for k in old}, {**old, **{k: vm[k] for k in old if k != "warned"}, "warned": []})
+        self.assertEqual(read(changed, checked, job=""), {"vm-app01": place})
+        self.assertEqual(read(checked, changed), {"vm-app01": old})
+        self.assertEqual(read(changed.replace("for AAP job 4813", "for AAP job 4812"), checked), {"vm-app01": old})
+        self.assertEqual(read(changed.replace("DS01", "DS02"), changed, checked)["vm-app01"]["datastore"], "SITB0201-DS02")
+        for bad in (changed.replace("- Cluster:", "- Old cluster:"), changed.replace("asked by", "requested by"), changed + "\n- extra row",
+                    changed.replace("for AAP job 4813, ", ""), changed.replace("ticket text ", "missing digest "),
+                    changed.replace("Placement changed - VM", "Placement changed VM")):
+            self.assertEqual(read(bad, changed, checked), {})
+            self.assertEqual(read(changed, bad, checked), {"vm-app01": place})
+        self.assertEqual(read(changed, checked, digest="sha256:0022"), {})
+        self.assertEqual(d.vm_deploy_ticket_text(self.journal(changed, checked)), d.vm_deploy_ticket_text(self.journal(checked)))
+
+    def test_placement_request_only_accepts_named_placement_fields(self):
+        old = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest)
+        row = dict(vm_name="vm-app01", **{k: old["vm-app01"][k] for k in d._PLACES})
+        self.assertEqual(d.vm_deploy_requested_places([row], old)["vm-app01"]["warned"], [])
+        for invalid in ([], [dict(row, memory_gb=8)], [dict(row, vm_name="vm-app02")], [dict(row, cluster="")],
+                        [dict(row, folder="Servers\nApp")], [row, row]):
+            with self.assertRaises(ValueError):
+                d.vm_deploy_requested_places(invalid, old)
+
+    def test_placement_job_uses_the_measured_destination_in_its_note_and_artifact(self):
+        import jinja2.nativetypes
+
+        tasks = os.path.join(HERE, "..", "roles", "vmware_vm", "tasks")
+        with open(os.path.join(tasks, "deploy_placement.yml")) as f:
+            block = yaml.safe_load(f)[0]
+        facts = {k: expr for task in block["block"] for k, expr in task.get("ansible.builtin.set_fact", {}).items()}
+        env = jinja2.nativetypes.NativeEnvironment(undefined=jinja2.StrictUndefined)
+        env.filters.update(d.FilterModule().filters())
+        render = lambda expr, **values: env.from_string(expr).render(**values)
+        old = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest, self.job.split()[-1], with_spec=True)
+        vm = dict(self.vm, name="vm-app01", datastore="SITA0101-DS01")
+        vm["fit"]["cluster"].update(fits=True, pct_after=58.0)
+        vm["fit"]["datastore"]["fits"] = False
+        with self.assertRaisesRegex(ValueError, "datastore SITA0101-DS01"):
+            render(facts["_vd_new_places"], _vd_pre_res=[dict(vm=vm)])
+        vm["fit"]["datastore"]["fits"] = True
+        places = render(facts["_vd_new_places"], _vd_pre_res=[dict(vm=vm)])
+        self.assertEqual(places[0]["folder"], "Servers/App")
+        bodies = render(facts["_vd_bodies"], _vd_new_places=places, _vd_old=old, _vd_job="AAP job 4820 by admin",
+                        vm_deploy_placement_by="DOE.JANE.Q.1234567890", vm_deploy_checked_job="4813", _vd_digest=self.digest, _vd_nl="\n")
+        self.assertEqual(d.vm_deploy_checked_placement(self.journal(bodies[0]["work_notes"], self.note()), self.digest)["vm-app01"]["datastore"],
+                         "SITA0101-DS01")
+        stats = block["always"][0]["ansible.builtin.set_stats"]["data"]["vm_deploy_placement_change"]
+        inputs = dict(vm_deploy_ticket=self.ticket["number"], vm_deploy_checked_job="4813", _vd_new_places=places)
+        self.assertEqual(render(stats, **inputs), dict(ok=True, error="", ticket=self.ticket["number"], checked_job="4813", vms=places))
+        self.assertFalse(render(stats, **inputs, _vd_change_error="refused")["ok"])
+
+    def test_placement_change_reserves_other_unbuilt_vms(self):
+        old = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest, with_spec=True)
+        old["vm-app02"] = old["vm-app01"]
+        changes = {"vm-app01": old["vm-app01"]}
+        self.assertEqual(d.vm_deploy_unchanged_space(old, changes, []), {"vc01.corp.example.mil|SITA0101-DC|SITA0101-DS02": 336})
+        self.assertEqual(d.vm_deploy_unchanged_space(old, changes, ["vm-app02"]), {})
+        self.parsed["spec"]["vm_name"] = "vm-app01, vm-app02"
+        checked = d.vm_deploy_check(self.parsed, self.record, dict(self.rules, only_names=list(changes), approved=changes))
+        self.assertEqual((checked["names"], checked["problems"]), (["vm-app01"], []))
+
     def test_only_one_runs_notes_count(self):
         # review 1.117 a1: a second check of the same ticket text that chose another datastore neither blocks the
         # build forever nor replaces the run that was approved: the workflow's own run (its job) is the one read

@@ -15,10 +15,15 @@
     template: "{{ _vd_i.spec.template }}"
     vcenter: "{{ _vd_i.spec.vcenter | default('') }}"
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
-    datacenter: "{{ _vd_i.spec.datacenter | default(vmware_datacenter | default('', true)) }}"
+    datacenter: "{{ '' if _vd_resolve_dc | default(false) else _vd_i.spec.datacenter | default(vmware_datacenter | default('', true)) }}"
     cluster: "{{ _vd_i.spec.cluster | default('') }}"
     datastore: "{{ _vd_i.spec.datastore | default('') }}"
     folder: "{{ _vd_i.spec.folder | default('') }}"
+    shortlist: "{{ _vd_phase == 'propose' }}"
+    clusters_allowed: "{{ vm_deploy_clusters }}"
+    datastores_allowed: "{{ vm_deploy_datastores }}"
+    datastore_rule: "{{ _vd_i.spec._datastore_allow | default([]) }}"
+    checked_spec: "{{ _vd_pin.checked_spec if _vd_pin.changed | default(false) else {} }}"
     pinned: "{{ _vd_pinned }}"
     pinned_ok: "{{ _vd_approved.get(_vd_i.spec.vm_name | lower, {}).get('warned', []) }}"
     folders_allowed: "{{ vm_deploy_folders }}"
@@ -64,6 +69,7 @@
   check_mode: "{{ _vd_dry | bool or _vd_pre | default(false) | bool }}"  # the propose step resolves the placement (read-only) like a dry run
   ignore_errors: true                 # the failure is written on the ticket and reported; the job fails at the end
   vars:
+    _vd_pin: "{{ _vd_approved.get(_vd_i.spec.vm_name | lower, {}) }}"
     _vd_nl: "\n"                       # a real newline: '\n' inside {{ }} in a >- block stays a backslash and n
 
 - name: VMware | {{ _vd_i.spec.vm_name }} - checked
@@ -80,7 +86,8 @@
   ansible.builtin.set_fact:
     _vd_ds_planned: >-
       {%- set v = _vd_one.vm | default({}) -%}
-      {{ _vd_ds_planned | combine({v.datastore: (_vd_ds_planned[v.datastore] | default(0) | float) + (v.need_gb | default(0) | float)})
+      {%- set key = [v.vcenter, v.datacenter, v.datastore] | join('|') if v.datastore | default('') else '' -%}
+      {{ _vd_ds_planned | combine({key: (_vd_ds_planned[key] | default(0) | float) + (v.need_gb | default(0) | float)})
          if v.datastore | default('') and v.need_gb | default(0) | float > 0 and not _vd_one.failed | default(false) else _vd_ds_planned }}
 
 # its service's AAP inventory (vm_deploy_services): it joins right after its build - before its note, which says so

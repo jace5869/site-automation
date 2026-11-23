@@ -47,3 +47,16 @@
     data:
       vm_deploy_checked_job: "{{ awx_job_id | default('') | string }}"
   when: _vd_plan_only | default(false) | bool and _vd_plan.state == 'ready'
+
+- name: VMware | publish the placement shortlist
+  ansible.builtin.set_stats:
+    per_host: false
+    aggregate: false
+    data:
+      vm_deploy_shortlist: >-
+        {%- set vms = {} -%}
+        {%- for r in _vd_results | default([]) if r.vm.shortlist is defined -%}
+        {%-   set _ = vms.update({r.vm.name: r.vm.shortlist}) -%}
+        {%- endfor -%}
+        {{ {'version': 1, 'ticket': _vd_number, 'digest': _vd_digest, 'job': awx_job_id | default('') | string, 'vms': vms} }}
+  when: (vm_deploy_phase | default('') | string | lower | trim) == 'propose'

@@ -56,6 +56,9 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## datacenter, vcenter, domain, customization_spec, notes: optional). docs/VM_DEPLOY_GUIDE.md
 # vm_deploy_ticket: ""
 
+## The propose job whose Checked notes authorize the placement.
+# vm_deploy_checked_job: ""
+
 ## leave it empty (the job finds each ticket's table); a table of your own, e.g. u_vm_request: for
 ## numbers whose prefix the job does not know (CTASK stays change_task)
 # vm_deploy_ticket_table: ""

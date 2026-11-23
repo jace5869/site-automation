@@ -294,6 +294,10 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 - **Variables:** the standard setup (chapter 1) with your names - or a configuration from *Ready-made
   configurations*. `aap/extra_vars/vm_deploy_from_ticket.yml` has every setting, commented, ready to paste.
 
+**VM - deploy placement change** uses `playbooks/vm_deploy_placement.yml` and prompts for Variables.
+Run **AAP - set up job templates** again. Give the portal’s AAP account **Execute** on the new template.
+Use the same deploy settings, VMware vCenter credential, ServiceNow API credential and `report_email_to` as the deploy job.
+
 **The survey** (**Survey > Create question**, then switch the survey **on**):
 
 | Question | Variable | Answer type | Required | What it is |
@@ -376,6 +380,19 @@ refusal stop the workflow. The requester gets a comment and the stopped plan ide
   The job reads the display value from the change, including when launched with its CTASK.
   Without a parent change it reads the task. An empty configured field stops the request.
   Leave the setting empty to omit the owner.
+
+### Changing the placement before the approval
+
+Portal approvers can choose a different cluster, one of its mounted datastores, and a VM folder in its datacenter.
+Clusters outside the plan’s vCenter or datacenter form a separate group. The same template must exist there in an allowed template folder.
+The network stays on the template’s staging VLAN with DHCP.
+
+The placement change job checks the allow-lists and the VM’s datastore rule. By default, memory use must stay at or below 80% with one host down.
+The datastore must stay at or below 85% with the VM at full size. The limits come from `vm_deploy_mem_target_pct`,
+`vm_deploy_failover_hosts` and `vm_deploy_datastore_max_used_pct`.
+
+The job records each accepted placement in an `[AAP] Placement changed` work note on the change and the CTASKs that receive Checked notes.
+The note names the approver and the propose job. The build checks the ticket digest, the allow-lists and the fit again before cloning.
 
 ## 9. The scheduled pickup
 

@@ -1,0 +1,274 @@
+---
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | the ticket and the ServiceNow connection
+  ansible.builtin.set_fact:
+    _vd_number: "{{ vm_deploy_ticket | default('', true) | string | trim | upper }}"
+    # the table: the number's prefix (the standard ones and vm_deploy_ticket_prefixes: a CTASK is a change task
+    # whatever vm_deploy_ticket_table says), else vm_deploy_ticket_table (TASK... too: a table of your own may
+    # number its tickets so); any other prefix (e.g. INCN, CHGN): ServiceNow's task table says (below)
+    _vd_table: >-
+      {%- set by_prefix = vm_deploy_ticket | default('', true) | string | vm_deploy_table(vm_deploy_ticket_prefixes | default({}, true), false) -%}
+      {{ by_prefix if by_prefix not in ['', 'task'] else (vm_deploy_ticket_table | default('', true) | vm_deploy_table_name or by_prefix) }}
+    _vd_sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _vd_sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    _vd_job: "{{ ('AAP job ' ~ awx_job_id) if awx_job_id is defined else 'AAP' }}{{ (' by ' ~ awx_user_name) if awx_user_name is defined else '' }}"
+    _vd_job_note: "{{ ('AAP job ' ~ awx_job_id) if awx_job_id is defined else 'ansible-playbook' }}{{ (' (' ~ awx_user_name ~ ')') if awx_user_name is defined else '' }}"
+    # the plain-words rules (vm_deploy_plain_words), one dict expression (ansible-core 2.16 keeps its types)
+    _vd_words: >-
+      {{ {'on': vm_deploy_plain_words | bool, 'templates': vm_deploy_plain_templates | default({}, true),
+          'sizes': vm_deploy_plain_sizes | default({}, true), 'allowed': vm_deploy_templates,
+          'aliases': vm_deploy_template_aliases | default({}, true), 'name_rules': vm_deploy_name_rules | default([], true),
+          'sites': (vm_deploy_sites | default({}, true)).keys() | list, 'site_words': vm_deploy_plain_sites | default({}, true),
+          'max_disk_gb': vm_deploy_max_disk_gb | float} }}
+
+- name: VMware | the plain-words settings have their shape (words -> a template; a size word -> CPU and memory)
+  ansible.builtin.assert:
+    that:
+      - vm_deploy_plain_templates | default({}, true) is mapping
+      - vm_deploy_plain_sizes | default({}, true) is mapping
+      - vm_deploy_plain_sites | default({}, true) is mapping
+      - vm_deploy_assignment_group_by_table | default({}, true) is mapping
+      - vm_deploy_templates | default([], true) is not string and vm_deploy_templates | default([], true) is not mapping
+    fail_msg: >-
+      {{ ('vm_deploy_plain_templates maps words to a template - e.g. {"server 2022": "' ~ (vm_deploy_templates | default(['<template name>'], true) | first)
+          ~ '"} - not a list of words. It is rarely needed: with the exact template names in vm_deploy_templates, "Windows Server 2022",'
+          ~ ' "Server 2022", "RHEL 9" ... find the template by themselves - delete it.')
+         if vm_deploy_plain_templates | default({}, true) is not mapping else
+         ('vm_deploy_plain_sizes maps a size word to CPU and memory - e.g. {small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}}.')
+         if vm_deploy_plain_sizes | default({}, true) is not mapping else
+         ('vm_deploy_plain_sites maps the words for a place to a site of vm_deploy_sites - e.g. {"site two": SiteB, "north campus": SiteA}.')
+         if vm_deploy_plain_sites | default({}, true) is not mapping else
+         ('vm_deploy_assignment_group_by_table maps a table to its groups - e.g. {change_request: ""}: a change may be assigned to any group.')
+         if vm_deploy_assignment_group_by_table | default({}, true) is not mapping else
+         'vm_deploy_templates is a list of template names (one per line, each starting with "- "), e.g. ["Windows 2022 Template", rhel9-gold].' }}
+    quiet: true
+
+- name: VMware | the service picked at launch - its words for the VM's notes, its AAP inventory (vm_deploy_service)
+  ansible.builtin.include_tasks: deploy_service.yml
+  when: _vd_check_service | default(true) | bool
+
+# a prefix the job does not know (a site's own, like INCN or CHGN): every ticket is a task, and the
+# task table names its real table (sys_class_name). Read-only, so also in a dry run.
+- name: VMware | which table is {{ _vd_number }} in? (ServiceNow's task table says)
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/task?sysparm_limit=2&sysparm_fields=number,sys_class_name&sysparm_query={{
+      ('number=' ~ _vd_number) | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_class
+  check_mode: false
+  when:
+    - _vd_table | length == 0
+    - _vd_number is match('^[A-Z]{2,8}[0-9]{4,}$')
+    - _vd_sn_url | length > 0 and _vd_sn_user | length > 0
+
+# what the task table said; when it would not say (no read access to task), a prefix that starts with
+# a known one (INCN -> incident)
+- name: VMware | the ticket's table
+  ansible.builtin.set_fact:
+    _vd_table: >-
+      {%- set found = (_vd_class.json.result | default([]) | map(attribute='sys_class_name', default='') | select | list)
+                      if (_vd_class.status | default(0)) == 200 else [] -%}
+      {{ found[0] if found | length == 1
+         else (_vd_number | vm_deploy_table(vm_deploy_ticket_prefixes | default({}, true), true)) }}
+    _vd_class_why: >-
+      {{ '' if _vd_class.skipped | default(false) or _vd_class.status is not defined
+         else ('ServiceNow has no ticket ' ~ _vd_number if (_vd_class.status == 200 and (_vd_class.json.result | default([])) | length == 0)
+               else ('the task table could not be read (HTTP ' ~ _vd_class.status ~ ')' if _vd_class.status != 200 else '')) }}
+  when: _vd_table | length == 0
+
+- name: VMware | a ticket number, and a ServiceNow API credential
+  ansible.builtin.assert:
+    that:
+      - _vd_number is match('^[A-Z]{2,8}[0-9]{4,}$')
+      - _vd_table | length > 0
+      - _vd_sn_url | length > 0 and _vd_sn_user | length > 0
+    fail_msg: >-
+      {{ ('Give the ticket number: the job got none. The template needs its survey - Survey tab: question "Ticket number", '
+          ~ 'answer variable name vm_deploy_ticket, text, required - and the survey switched on; then Launch asks for it. '
+          ~ 'A quick test without a survey: tick Prompt on launch for Variables and launch with vm_deploy_ticket: INC0012345.')
+         if not _vd_number else
+         ('Give the ticket number: vm_deploy_ticket (e.g. INC0012345 or SCTASK0012345), not "' ~ _vd_number ~ '".')
+         if _vd_number is not match('^[A-Z]{2,8}[0-9]{4,}$') else
+         ('Which table is ' ~ _vd_number ~ ' in? ' ~ (_vd_class_why | default('', true) ~ '. ' if _vd_class_why | default('', true) else '')
+          ~ 'Set vm_deploy_ticket_prefixes on the template, e.g. {INCN: incident, CHGN: change_request}: each prefix its table.')
+         if not _vd_table else
+         'No ServiceNow connection: attach the "ServiceNow API" credential to this job template (it gives SN_HOST, SN_USERNAME, SN_PASSWORD).' }}
+    quiet: true
+
+# display values: the state, group and location as people see them; exclude_reference_link: a reference
+# field (group, location) as its name, not {"display_value": ..., "link": ...}
+- name: VMware | read ticket {{ _vd_number }}
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
+      (['sys_id', 'number', 'state', 'active', 'assignment_group', 'location', 'short_description', 'description', 'comments', 'work_notes']
+       + ([vm_deploy_owner_field] if vm_deploy_owner_field else [])
+       + vm_deploy_parent_fields | default([]) + ((vm_deploy_ready_by_table | default({}, true))[_vd_table] | default({}, true)).keys() | list)
+      | unique | join(',') }}&sysparm_query={{
+      ('number=' ~ _vd_number) | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_get
+  check_mode: false
+
+- name: VMware | the ticket was found
+  ansible.builtin.assert:
+    that:
+      - _vd_get.status == 200
+      - (_vd_get.json.result | default([])) | length == 1
+    fail_msg: >-
+      {%- set own = 'vm_deploy_ticket_table' if vm_deploy_ticket_table | default('', true) and _vd_table == (vm_deploy_ticket_table | vm_deploy_table_name)
+                    else ('vm_deploy_ticket_prefixes' if vm_deploy_ticket_prefixes | default({}, true) else '') -%}
+      {{ ('ServiceNow has no table "' ~ _vd_table ~ '" (' ~ (_vd_get.json.error.message | default('HTTP 400')) ~ ').'
+          ~ ((' It comes from ' ~ own ~ ': leave it empty - the job asks ServiceNow which table a ticket is in. Or name the table'
+              ~ ' as ServiceNow does: change_request (a change), change_task (a change task), incident, sc_task, sc_req_item.') if own else ''))
+         if _vd_get.status == 400 else
+         ('ServiceNow refused the read (HTTP ' ~ _vd_get.status ~ '): the ServiceNow API account needs read access to the '
+          ~ _vd_table ~ ' table. ' ~ (_vd_get.json.error.message | default('')))
+         if _vd_get.status != 200 else
+         ('No ' ~ _vd_table ~ ' ticket ' ~ _vd_number ~ ' in ServiceNow.'
+          ~ (' vm_deploy_ticket_table (' ~ _vd_table ~ ') is set on the template: a number whose prefix the job does not know'
+             ~ ' (like this one) is looked up there - leave it empty, the job finds the table of each ticket by itself.'
+             if vm_deploy_ticket_table | default('', true) and _vd_table == (vm_deploy_ticket_table | vm_deploy_table_name) else '')) }}
+    quiet: true
+
+# the parent (e.g. the change a task belongs to): more of the request, under the ticket's own lines
+- name: VMware | the ticket's parent (vm_deploy_parent_tables, vm_deploy_parent_fields)
+  ansible.builtin.set_fact:
+    _vd_pref: >-
+      {{ _vd_get.json.result[0] | vm_deploy_parent_ref({'fields': vm_deploy_parent_fields | default([]),
+           'tables': vm_deploy_parent_tables | default([]), 'prefixes': vm_deploy_ticket_prefixes | default({}, true)}) }}
+
+- name: VMware | read the parent ticket {{ _vd_pref.number | default('') }}
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/{{ _vd_pref.table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
+      (['sys_id', 'number', 'state', 'active', 'short_description'] + vm_deploy_parent_text_fields
+       + ([vm_deploy_owner_field] if vm_deploy_owner_field else [])
+       + ((vm_deploy_ready_by_table | default({}, true))[_vd_pref.table] | default({}, true)).keys() | list) | unique | join(',') }}&sysparm_query={{
+      ('number=' ~ _vd_pref.number) | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_pget
+  check_mode: false
+  when: _vd_pref.read | bool
+
+- name: VMware | which other tickets get the notes (vm_deploy_notes_also, vm_deploy_close_tasks)
+  ansible.builtin.set_fact:
+    # closing the change's tasks finds them the same way, and gives them the notes too
+    _vd_also_want: >-
+      {{ ((vm_deploy_notes_also | default([], true)) if vm_deploy_notes_also | default([], true) is not string else [vm_deploy_notes_also])
+         + (['tasks'] if vm_deploy_close_tasks | default(false) | bool else []) }}
+
+- name: VMware | the ticket, its parent, and a GenAI proposal on it (vm_deploy_genai)
+  ansible.builtin.set_fact:
+    _vd_rec: "{{ _vd_get.json.result[0] }}"
+    _vd_read_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    _vd_owner: >-
+      {%- set parent = _vd_pget.json.result | default([]) if _vd_pref.table | default('') == 'change_request' else [] -%}
+      {{ _vd_get.json.result[0] | vm_deploy_owner(vm_deploy_owner_field, vm_deploy_owner_label,
+                                                  parent[0] if parent and _vd_table == 'change_task' else none) }}
+    # the groups the ticket launched must be assigned to: its table's in vm_deploy_assignment_group_by_table
+    # (e.g. a change: any group), else vm_deploy_assignment_group - which still finds the change's tasks
+    _vd_grp: "{{ _vd_table | vm_deploy_group_for(vm_deploy_assignment_group_by_table | default({}, true), vm_deploy_assignment_group) }}"
+    _vd_parent: >-
+      {{ _vd_pref | vm_deploy_parent_read(_vd_pget, vm_deploy_parent_text_fields, vm_deploy_ready_by_table | default({}, true),
+                                          vm_deploy_parent_wins | default(false) | bool) }}
+    _vd_prop: "{{ _vd_get.json.result[0] | vm_deploy_find_proposal }}"
+    _vd_tasks_q: >-
+      {{ (_vd_get.json.result[0].sys_id | vm_deploy_tasks_query({'assignment_group': vm_deploy_assignment_group,
+                                                                 'query': vm_deploy_notes_tasks_query | default('', true)}))
+         if _vd_table == 'change_request' and 'tasks' in _vd_also_want else '' }}
+
+# a change launched by itself (e.g. from a web front end): its own open tasks of the group get the notes too
+- name: VMware | the change's tasks that get the notes too (vm_deploy_notes_also - tasks)
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/change_task?sysparm_exclude_reference_link=true&sysparm_limit={{ vm_deploy_notes_tasks_limit | int
+      }}&sysparm_fields=sys_id,number&sysparm_query={{
+      _vd_tasks_q | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_tasks_get
+  check_mode: false
+  when: _vd_tasks_q | length > 0
+
+- name: VMware | where the notes go (the ticket; vm_deploy_notes_also - its change, or the change's tasks)
+  ansible.builtin.set_fact:
+    _vd_also: >-
+      {{ _vd_also_want | vm_deploy_note_also(_vd_get.json.result[0], _vd_parent,
+                                                                        _vd_tasks_get if _vd_tasks_q | length > 0 else {}) }}
+
+- name: VMware | the notes go to {{ ([_vd_number] + _vd_also | map(attribute='number') | list) | join(', ') }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Notes on ' ~ _vd_number ~ ((' and ' ~ _vd_also | map(attribute='number') | join(', ')) if _vd_also else '') ~ '. '
+          ~ _vd_number ~ (' is closed when every VM is built' if _vd_own_close | length > 0 else ' is never closed (no close values for ' ~ _vd_table ~ ')')
+          ~ ('; its tasks found are closed too (vm_deploy_close_tasks)' if vm_deploy_close_tasks | default(false) | bool and _vd_table == 'change_request'
+             else ('; its tasks found are left open (vm_deploy_close_tasks: false)' if _vd_table == 'change_request' and 'tasks' in _vd_also_want else ''))
+          ~ '.']
+         + (['The tasks of ' ~ _vd_number ~ ' could not be read (HTTP ' ~ _vd_tasks_get.status | default('?') ~ '): the notes are on the change only.']
+            if _vd_tasks_q | length > 0 and (_vd_tasks_get.status | default(0)) != 200 else [])
+         + (['No open task of ' ~ _vd_number ~ ' matches '
+             ~ ([('group ' ~ (vm_deploy_assignment_group if vm_deploy_assignment_group is string else vm_deploy_assignment_group | join(', ')))
+                 if vm_deploy_assignment_group | default('', true) | length > 0 else '',
+                 (vm_deploy_notes_tasks_query | default('', true)) | trim] | select | join(' and '))
+             ~ ': the notes are on the change only' ~ (', no task is closed' if vm_deploy_close_tasks | default(false) | bool else '') ~ '.']
+            if _vd_tasks_q | length > 0 and (_vd_tasks_get.status | default(0)) == 200 and (_vd_tasks_get.json.result | default([])) | length == 0 else [])
+         + (["vm_deploy_notes_also asks for the change's tasks, but there is no vm_deploy_assignment_group or vm_deploy_notes_tasks_query"
+             ~ ' to find them by: the notes are on the change only.']
+            if _vd_table == 'change_request' and 'tasks' in _vd_also_want and _vd_tasks_q | length == 0 else [])
+         + (['WARNING: the change has ' ~ vm_deploy_notes_tasks_limit ~ ' or more matching tasks: only the first '
+             ~ vm_deploy_notes_tasks_limit ~ ' get the notes (and are closed) - vm_deploy_notes_tasks_limit']
+            if _vd_tasks_q | length > 0 and (_vd_tasks_get.json.result | default([])) | length >= vm_deploy_notes_tasks_limit | int else []) }}
+  vars:
+    # what closes the ticket launched: its table's entry, else vm_deploy_done_fields (deploy_build.yml, _vd_done)
+    _vd_own_close: >-
+      {{ ((vm_deploy_done_fields_by_table | default({}, true))[_vd_table] if _vd_table in (vm_deploy_done_fields_by_table | default({}, true))
+          else vm_deploy_done_fields) | default({}, true) }}
+  when: _vd_also_want | length > 0
+
+- name: VMware | what GenAI would read, and the ticket's own lines (its parent's under them)
+  ansible.builtin.set_fact:
+    _vd_not_ready: >-
+      {{ _vd_rec | vm_deploy_ready(_vd_table, vm_deploy_ready_by_table, 'this ticket (' ~ _vd_number ~ ')')
+         or _vd_parent.problem | default('') }}
+    _vd_plan_ticket: >-
+      {{ {'number': _vd_number, 'table': _vd_table, 'tasks': ([_vd_number] if _vd_table == 'change_task' else [])
+           + (_vd_also | selectattr('table', 'equalto', 'change_task') | map(attribute='number') | list)} }}
+    _vd_text: "{{ _vd_rec | vm_deploy_ticket_text(_vd_parent) }}"
+    _vd_digest: "{{ 'sha256:' ~ (((_vd_rec | vm_deploy_ticket_text(_vd_parent)) ~ (_vd_owner | to_json if _vd_owner else '')) | hash('sha256'))[:16] }}"

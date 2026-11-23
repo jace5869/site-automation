@@ -1274,6 +1274,9 @@ def vm_deploy_check(parsed, record=None, opts=None):
     p = parsed or {}
     spec = dict(p.get("spec") or {})
     names = _names(spec.get("vm_name")) if spec.get("vm_name") else []
+    only_names = (opts or {}).get("only_names")
+    if only_names:
+        names = [n for n in names if n.lower() in only_names]
     own = p.get("vms") or {}
 
     def mine(n):
@@ -1345,6 +1348,7 @@ def _datastore_rules(spec, sources, o, problems):
     own = spec.get("datastore") and not str(sources.get("datastore", "")).startswith(_CONFIG_SRC)
     if rule:
         pats, src = _pats(rule["datastores"]), "datastore rule %s" % ", ".join(_pats(rule["match"]))
+        spec["_datastore_allow"] = pats
         if own and not _allowed(spec["datastore"], pats):
             problems.append("%s goes on a datastore %s (vm_deploy_datastore_rules: %s): %s is not one"
                             % (name, " or ".join(pats), ", ".join(_pats(rule["match"])), spec["datastore"]))
@@ -1952,7 +1956,7 @@ CHECKED = "[AAP] Checked - "          # the propose step's note: what the approv
 _PLAN_LABELS = {"vm_name": "VM name", "template": "Template / OS", "cpu": "CPU", "memory_gb": "RAM", "disks_gb": "Disks",
                 "owner": "Owner", "vcenter": "vCenter", "cluster": "Cluster", "datastore": "Datastore", "folder": "Folder", "network": "Network"}
 _PLACES = ("vcenter", "cluster", "datastore", "folder")
-_SOURCE_WORD = {"ticket": "from the ticket", "default": "default", "job": "chosen by the job", "stop": "stop"}
+_SOURCE_WORD = {"ticket": "from the ticket", "default": "default", "job": "chosen by the job", "approver": "changed by the approver", "stop": "stop"}
 
 
 def vm_deploy_source_kind(where):
@@ -2139,10 +2143,78 @@ def vm_deploy_plan_note_lines(plan, vm_name):
 
 _CHECK_HEADER = re.compile(r"^\[AAP\] Checked - (?:VM (\S+) - (\d+) of (\d+) - )?ready to build after the approval "
                            r"\((.+), ticket text (sha256:[0-9a-f]+)\):$")
-_CHECK_ROW = re.compile(r"^(.+?)   \((?:from the ticket|default|chosen by the job): .+?\)( - WARNING: .+)?$")
+_CHECK_ROW = re.compile(r"^(.+?)   \((from the ticket|default|chosen by the job|changed by the approver): .+?\)( - WARNING: .+)?$")
+_CHECKED_SPEC = ("template", "cpu", "memory_gb", "disks_gb")
+_CHANGE = "[AAP] Placement changed - VM "
+_CHANGE_HEADER = re.compile(r"^\[AAP\] Placement changed - VM (\S+) \(AAP job \d+(?: by .+?)?, asked by .+?, "
+                            r"for AAP job (\d+), ticket text (sha256:[0-9a-f]+)\):$")
 
 
-def _checked_place(lines):
+def vm_deploy_change_results(results):
+    """Only measured and fitting placements can become journal entries."""
+    vms = []
+    for result in results:
+        if result.get("failed"):
+            raise ValueError("%s: %s" % (result["_vd_i"]["spec"]["vm_name"], result["msg"]))
+        vm = result["vm"]
+        for key in ("cluster", "datastore"):
+            fit = vm.get("fit", {}).get(key, {})
+            if not fit.get("fits"):
+                raise ValueError("%s: %s %s: %s" % (vm["name"], key, vm[key], fit.get("why") or "fit could not be measured"))
+        place = {k: vm[k] for k in ("name", "datacenter", *_PLACES, "fit")}
+        root = "/%s/vm" % vm["datacenter"]
+        if vm["folder"] != root and not vm["folder"].startswith(root + "/"):
+            raise ValueError("%s: vCenter returned an unexpected VM folder %s" % (vm["name"], vm["folder"]))
+        place["folder"] = vm["folder"][len(root):].strip("/") or "/"
+        vms.append(place)
+    return vms
+
+
+def vm_deploy_change_lines(vm, old, job, asked_by, checked_job, digest):
+    cluster, ds = vm["fit"]["cluster"], vm["fit"]["datastore"]
+    reasons = {"vcenter": "was " + old["vcenter"], "folder": "vm_deploy_folders",
+               "cluster": "%.1f%% memory used with this VM and %d host%s down (target %g%%)" %
+                          (cluster["pct_after"], cluster["down"], "" if cluster["down"] == 1 else "s", cluster["target"]),
+               "datastore": "%.1f%% used with this VM at full size (at most %g%%)" % (ds["pct_after"], ds["max"])}
+    values = dict(vm, vcenter=vm["vcenter"] + ", datacenter " + vm["datacenter"])
+    return [("%s%s (%s, asked by %s, for AAP job %s, ticket text %s):" %
+             (_CHANGE, vm["name"], job, asked_by, checked_job, digest)), "It would go to:"] + [
+        "- %s: %s   (%s: %s)" % (_PLAN_LABELS[k], values[k], _SOURCE_WORD["approver"], reasons[k]) for k in _PLACES]
+
+
+def vm_deploy_requested_places(request, old):
+    if not isinstance(request, list) or not request:
+        raise ValueError("vm_deploy_placement needs a list of VMs to change")
+    changes = {}
+    for row in request:
+        if not isinstance(row, dict) or set(row) != {"vm_name", *_PLACES}:
+            raise ValueError("each placement needs only vm_name, vcenter, cluster, datastore and folder")
+        if any(not isinstance(v, str) or not v.strip() or v != v.strip() or not v.isprintable() for v in row.values()):
+            raise ValueError("each placement value must be nonempty single-line text")
+        name = row["vm_name"].lower()
+        if name in changes:
+            raise ValueError("duplicate placement for VM " + name)
+        if name not in old:
+            raise ValueError("VM %s: the change was changed after the check, or that check is not this change's: "
+                             "run the workflow from the start" % name)
+        changes[name] = dict(old[name], **{k: row[k] for k in _PLACES}, warned=[], changed=True)
+    return changes
+
+
+def vm_deploy_unchanged_space(checked, changes, built):
+    """Reserve the full size of other VMs on this change before checking the requested moves."""
+    reserved = {}
+    for name, place in checked.items():
+        if name in changes or name in built:
+            continue
+        spec = place["checked_spec"]
+        gb = float(spec["memory_gb"]) + sum(float(disk) for disk in spec["disks_gb"].split(" + ") if disk)
+        ds = "|".join(place[k] for k in ("vcenter", "datacenter", "datastore"))
+        reserved[ds] = reserved.get(ds, 0) + gb
+    return reserved
+
+
+def _checked_place(lines, changed=False):
     if lines.count("It would go to:") != 1:
         return None
     start = lines.index("It would go to:") + 1
@@ -2152,10 +2224,10 @@ def _checked_place(lines):
         if i >= len(lines) or not lines[i].startswith(prefix):
             return None
         match = _CHECK_ROW.fullmatch(lines[i][len(prefix):])
-        if not match:
+        if not match or not match[1].strip() or (changed and (match[2] != _SOURCE_WORD["approver"] or match[3])):
             return None
         place[key] = match[1]
-        if key in ("cluster", "datastore") and match[2]:
+        if key in ("cluster", "datastore") and match[3]:
             place["warned"].append(key)
     vc, sep, dc = place["vcenter"].partition(", datacenter ")
     if not sep or not dc or not vc:
@@ -2168,16 +2240,30 @@ def _same_job(text, job):
     return text == want or text.startswith(want + " by ")
 
 
-def vm_deploy_checked_placement(record, digest, job=""):
+def vm_deploy_checked_placement(record, digest, job="", with_spec=False):
     """The placements the approval is for: one propose run's check notes, under the ticket text's digest.
     job: the propose job's id (vm_deploy_checked_job, from the workflow): only that run's notes count. Without
     it, the newest run's. Other runs never count, so an older check cannot block or replace the approved one.
     A VM whose note is missing or unreadable, or noted twice in that run with different places, gets none."""
     found, latest, invalid = {}, set(), set()
+    checked_specs = {}
     batch = None
     next_index = 0
     job = str(job or "").strip()
+    changes = {}
     for _, body in reversed(journal_entries((record or {}).get("work_notes"))):
+        if body.startswith("[AAP] Placement changed"):
+            lines = body.splitlines()
+            header = _CHANGE_HEADER.fullmatch(lines[0])
+            # An identifiable but damaged edit cannot authorize a fallback to the previous destination.
+            # Keep the last job/digest in the header because the requester is free text.
+            vm = re.match(r"^\[AAP\] Placement changed\b.*?\bVM\s+([^\s(]+)", lines[0])
+            jobs = re.findall(r"\bfor AAP job (\d+)\b", lines[0])
+            digests = re.findall(r"\bticket text (sha256:[0-9a-f]+)\b", lines[0])
+            if vm and vm[1].lower() not in latest and (not digests or digests[-1] == digest):
+                place = _checked_place(lines, changed=True) if header and len(lines) == 6 else None
+                changes.setdefault(vm[1].lower(), []).append((jobs[-1] if jobs else "", place))
+            continue
         if not body.startswith(CHECKED):
             continue
         lines = body.splitlines()
@@ -2205,13 +2291,29 @@ def vm_deploy_checked_placement(record, digest, job=""):
         place = _checked_place(lines)
         if in_latest:
             latest.add(name)
+            checked_specs[name] = {k: line[len(k) + 2:].split("   (", 1)[0] for line in lines
+                                   for k in _CHECKED_SPEC if line.startswith(k + ": ")}
             if place is None:
                 invalid.add(name)
         if place is not None:
             if name in found and any(found[name][k] != place[k] for k in (*_PLACES, "datacenter")):
                 invalid.add(name)
             found.setdefault(name, place)
-    return {n: p for n, p in found.items() if n in latest and n not in invalid}
+    result = {}
+    run_id = re.match(r"AAP job (\d+)(?: by .+)?$", batch[0]) if batch else None
+    for name in latest - invalid:
+        place = found.get(name)
+        for for_job, new_place in changes.get(name, []):
+            if run_id and (not for_job or for_job == run_id[1]):
+                place = dict(new_place, changed=True) if new_place else None
+                break
+        if place:
+            if with_spec or place.get("changed"):
+                if set(checked_specs[name]) != set(_CHECKED_SPEC):
+                    continue
+                place = dict(place, checked_spec=checked_specs[name])
+            result[name] = place
+    return result
 
 
 def vm_deploy_checked_digest(record):
@@ -2502,7 +2604,9 @@ def vm_deploy_inventory_text(r):
 
 class FilterModule(object):
     def filters(self):
-        return {"vm_deploy_plan_artifact": _plan_artifact,
+        return {"vm_deploy_change_results": vm_deploy_change_results, "vm_deploy_unchanged_space": vm_deploy_unchanged_space,
+                "vm_deploy_change_lines": vm_deploy_change_lines, "vm_deploy_requested_places": vm_deploy_requested_places,
+                "vm_deploy_plan_artifact": _plan_artifact,
                 "vm_deploy_plan": vm_deploy_plan, "vm_deploy_plan_note_lines": vm_deploy_plan_note_lines,
                 "vm_deploy_source_kind": vm_deploy_source_kind, "vm_deploy_checked_placement": vm_deploy_checked_placement,
                 "vm_deploy_owner": vm_deploy_owner, "vm_deploy_ready": vm_deploy_ready,

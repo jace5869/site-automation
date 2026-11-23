@@ -157,6 +157,7 @@ VMware collection ([VMWARE.md](VMWARE.md#before-you-start)).
 | ESXi - security settings | `playbooks/esxi_security.yml` | Watch | [VMWARE.md](VMWARE.md#set-it-up-1) |
 | ESXi - network check | `playbooks/esxi_network_check.yml` | Report | [VMWARE.md](VMWARE.md#the-esxi-network-check-vmkping-vmotion-mtu-storage-latency) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | Setup or test | [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md#5-find-the-names-the-deploy-settings-finder) |
+| VM - deploy placement change | `playbooks/vm_deploy_placement.yml` | Portal approvers | [VM deploy guide, step 8](VM_DEPLOY_GUIDE.md#changing-the-placement-before-the-approval) |
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | Workflow step | [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md#6-the-deploy-job-template), the approval workflow: [step 8](VM_DEPLOY_GUIDE.md#8-the-approval-workflow-propose-approve-build) |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | Watch | [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md#9-the-scheduled-pickup) |
 

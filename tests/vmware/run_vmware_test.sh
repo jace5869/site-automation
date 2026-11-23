@@ -2116,6 +2116,62 @@ vm = next(v for v in content.viewManager.CreateContainerView(content.rootFolder,
 assert [ds.name for ds in vm.datastore] == ["LocalDS_0"]
 assert vm.config.annotation.splitlines()[1:3] == ["Template: rhel9-gold", "Owner: APP-TEAM-1"]
 EOPY
+# Reuse the change and its CTASK with a fresh inventory. The earlier build already owns this VM name.
+name="$name3" port="$plan_port" fresh 2
+make_deploy_template "$plan_port"
+setrec change_request "$plan_chg" '{"description":"vm_name: vm-app01\ntemplate: rhel9-gold\ncluster: DC0_C0\ndatastore: LocalDS_0\nmemory_gb: 1"}'
+plan_run "propose with both mounted datastores in the shortlist" ok -e vm_deploy_phase=propose -e awx_job_id=4813 \
+    -e vm_deploy_mem_target_pct=80 -- '"vm_deploy_shortlist"'
+"$py" - "$work/out.txt" "$work/placement.json" <<'EOPY' || { echo "FAIL - placement shortlist"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+short = stats["vm_deploy_shortlist"]
+assert short["version"] == 1 and str(short["job"]) == "4813" and short["ticket"] == "CHG0030001"
+assert short["digest"] == stats["vm_deploy_plan"]["digest"]
+vm = short["vms"]["vm-app01"]
+cluster = next(c for c in vm["clusters"] if c["group"] == "plan" and c["name"] == "DC0_C0")
+key = "|".join(cluster[k] for k in ("vcenter", "datacenter", "name"))
+assert {d["name"] for d in vm["datastores"][key] if d["fits"]} == {"LocalDS_0", "LocalDS_1"}
+folder = next(r["value"] for r in stats["vm_deploy_plan"]["vms"][0]["rows"] if r["key"] == "folder")
+change = dict(vm_name="vm-app01", vcenter=cluster["vcenter"], cluster=cluster["name"], datastore="LocalDS_1", folder=folder)
+with open(sys.argv[2], "w") as f:
+    json.dump(dict(vm_deploy_placement=[change], vm_deploy_placement_by="DOE.JANE.Q.1234567890", vm_deploy_checked_job="4813"), f)
+EOPY
+placement_run() {
+    RUN_PORT=$plan_port run "$1" "$2" vm_deploy_placement.yml -e vm_deploy_ticket="$plan_chg" -e "$plan_opts" \
+        -e vm_deploy_mem_target_pct=80 -e awx_job_id=4820 -e "@$work/placement.json" "${@:3}"
+}
+nplan=$(nsn)
+placement_run "refuse LocalDS_1 outside the datastore allow-list" fail -e '{"vm_deploy_datastores":["LocalDS_0"]}' -- "not in vm_deploy_datastores"
+[ "$(patches_since "$nplan")" = 0 ] || { echo "FAIL - refused placement wrote a note"; fails=$((fails + 1)); }
+"$py" - "$work/out.txt" <<'EOPY' || { echo "FAIL - refused placement artifact"; fails=$((fails + 1)); }
+import json, sys
+result = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))["vm_deploy_placement_change"]
+assert result["ok"] is False and "vm_deploy_datastores" in result["error"]
+EOPY
+nplan=$(nsn)
+placement_run "change to LocalDS_1 before approval" ok -- '"vm_deploy_placement_change"'
+"$py" - "$work/sn.jsonl" "$nplan" "$work/out.txt" <<'EOPY' || { echo "FAIL - changed placement notes or artifact"; fails=$((fails + 1)); }
+import json, sys
+writes = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):] if '"PATCH"' in l]
+assert sorted(w["path"].split("/")[-2] for w in writes) == ["change_request", "change_task"]
+notes = [w["body"]["work_notes"] for w in writes]
+assert notes[0] == notes[1] and notes[0].startswith("[AAP] Placement changed - VM vm-app01")
+assert "for AAP job 4813" in notes[0] and "- Datastore: LocalDS_1   (changed by the approver:" in notes[0]
+result = next(json.loads(l.strip()[5:]) for l in open(sys.argv[3]) if l.strip().startswith("RUN: {"))["vm_deploy_placement_change"]
+assert result["ok"] is True and result["vms"][0]["datastore"] == "LocalDS_1"
+EOPY
+plan_run "build on the datastore recorded by the placement change" ok -e vm_deploy_phase=build -e vm_deploy_checked_job=4813 \
+    -e vm_deploy_mem_target_pct=80 -- "vm-app01 deployed"
+VMWARE_PORT=$plan_port "$py" - <<'EOPY' || { echo "FAIL - VM built on the wrong datastore"; fails=$((fails + 1)); }
+import os
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+vm = next(v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "vm-app01")
+assert [d.name for d in vm.datastore] == ["LocalDS_1"]
+EOPY
 "$engine" rm -f "$name3" >/dev/null
 
 unset SN_HOST SN_USERNAME SN_PASSWORD

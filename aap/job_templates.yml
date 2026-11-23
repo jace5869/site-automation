@@ -2216,6 +2216,22 @@ job_templates:
       produces: A settings report in the job output, emailed when report_email_to is set and on the report website when set.
       supports: Run constraint=Reads only (no hosts); writes the report email (report_email_to) and the report website (report_web_dest)
         when set
+  - name: VM - deploy placement change
+    playbook: playbooks/vm_deploy_placement.yml
+    credentials: [vmware, servicenow]
+    optional_credentials: []
+    ask_limit: false
+    ask_variables: true
+    ask_inventory: false
+    ee: all
+    variables_file: aap/extra_vars/vm_deploy_placement.yml
+    area: VMware
+    portal: true
+    description:
+      does: Checks a portal approver's placement against the deploy rules and the current capacity in vCenter.
+      targets: vCenter and ServiceNow through the VMware vCenter and ServiceNow API credentials. Runs on the AAP side.
+      produces: Placement notes on the change and its tasks, a report and the vm_deploy_placement_change artifact.
+      supports: Run constraint=Reads vCenter. Writes ServiceNow work notes and emails the report when report_email_to is set.
   - name: VM - deploy from ServiceNow ticket
     playbook: playbooks/vm_deploy_from_ticket.yml
     credentials: [vmware, servicenow, act_model_key]

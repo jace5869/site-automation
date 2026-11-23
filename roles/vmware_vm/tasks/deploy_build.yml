@@ -5,28 +5,8 @@
 # ticket text as it is now), _vd_plan_only (the workflow's propose step, or a GenAI proposal waiting
 # for a person: check everything, find where it would go, write that on the ticket - build nothing).
 
-- name: VMware | the VM the ticket asks for, checked against the rules
-  ansible.builtin.set_fact:
-    _vd_dry: "{{ ansible_check_mode or _vd_plan_only | default(false) | bool }}"
-    _vd_parsed: "{{ _vd_rec | vm_deploy_spec(vm_deploy_defaults, _vd_prop if _vd_prop_ok | bool else none, _vd_words, _vd_parent) }}"
-    # the VMs an earlier run built for this ticket (its own notes): left as they are when the job runs again
-    _vd_built: "{{ _vd_rec | vm_deploy_built }}"
-
-- name: VMware | check every VM against the rules
-  ansible.builtin.set_fact:
-    _vd: >-
-      {{ _vd_parsed | vm_deploy_check(_vd_rec, {
-           'owner': _vd_owner, 'approved': _vd_approved if _vd_pinned | bool else none,
-           'templates': vm_deploy_templates, 'clusters': vm_deploy_clusters, 'datastores': vm_deploy_datastores,
-           'folders': vm_deploy_folders, 'max_cpu': vm_deploy_max_cpu | int, 'max_memory_gb': vm_deploy_max_memory_gb | float,
-           'name_regex': vm_deploy_name_regex, 'assignment_group': _vd_grp.groups, 'assignment_group_setting': _vd_grp.setting,
-           'sites': vm_deploy_sites, 'site_words': vm_deploy_plain_sites | default({}, true), 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
-           'name_rules': vm_deploy_name_rules,
-           'template_aliases': vm_deploy_template_aliases, 'template_specs': vm_deploy_template_specs,
-           'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
-           'max_total_disk_gb': vm_deploy_max_total_disk_gb | float, 'parent': _vd_parent,
-           'datastore_rules': vm_deploy_datastore_rules | default([], true), 'datastore_balance': vm_deploy_datastore_balance | bool,
-           'ready': vm_deploy_ready_by_table | default({}, true), 'table': _vd_table, 'max_vms': vm_deploy_max_vms | int}) }}
+- name: VMware | read the VM specification and check the deploy rules
+  ansible.builtin.include_tasks: deploy_check.yml
 
 - name: VMware | record a changed request before checking placement
   ansible.builtin.set_fact:

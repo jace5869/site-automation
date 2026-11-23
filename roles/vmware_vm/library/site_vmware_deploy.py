@@ -38,6 +38,11 @@ options:
   datastore: {description: A datastore or datastore cluster (the datastore with the most free space); empty = the template's., type: str, default: ''}
   folder: {description: The VM folder, a path below the datacenter's VM folder (Linux/App); empty = the template's., type: str, default: ''}
   pinned: {description: Recheck the exact placement recorded before approval., type: bool, default: false}
+  shortlist: {description: Read alternative placements in check mode., type: bool, default: false}
+  clusters_allowed: {description: Allowed cluster names or patterns for the shortlist., type: list, elements: str, default: []}
+  datastores_allowed: {description: Allowed datastore names or patterns for the shortlist., type: list, elements: str, default: []}
+  datastore_rule: {description: Datastore patterns of the rule matching this VM., type: list, elements: str, default: []}
+  checked_spec: {description: Template and size recorded before a placement change. Requires a fitting pinned placement., type: dict, default: {}}
   pinned_ok: {description: Capacity warnings recorded for this VM before approval., type: list, elements: str, choices: [cluster, datastore], default: []}
   cluster_candidates: {description: With no cluster - choose among these (names; * and ?) the one with the most memory left with failover_hosts host(s) down, staying under mem_target_pct. Empty = the template's cluster., type: list, elements: str, default: []}
   datastore_candidates: {description: With no datastore - choose among these (names; * and ?) a shared, accessible datastore of the chosen cluster that stays under datastore_max_used_pct with the VM's full size. Empty = the template's datastore., type: list, elements: str, default: []}
@@ -54,7 +59,7 @@ options:
   folders_allowed: {description: "The folders a VM may go in (vm_deploy_folders; * and ?): the folder found is checked against them - a path below the VM folder, or a name for a pattern without /.", type: list, elements: str, default: []}
   template_folders: {description: "The folders a template may be taken from (vm_deploy_template_folders; * and ?, as folders_allowed): a template of that name elsewhere is not used - only elsewhere, refused. Empty = anywhere.", type: list, elements: str, default: []}
   datastore_exclude: {description: "Datastores never chosen for this VM (names; * and ?) - e.g. the ones kept for SQL servers.", type: list, elements: str, default: []}
-  datastore_planned: {description: "GB already planned on datastores by the VMs before this one in the same run ({name: GB}): counted as used, so the VMs of one ticket spread out.", type: dict, default: {}}
+  datastore_planned: {description: "GB reserved for earlier VMs by vCenter|datacenter|datastore. A bare datastore name also works.", type: dict, default: {}}
   hostname: {description: The guest's host name; empty = name., type: str, default: ''}
   domain: {description: The DNS domain for Linux customization., type: str, default: localdomain}
   customization_spec: {description: A customization specification in vCenter (needed for Windows templates)., type: str, default: ''}
@@ -88,6 +93,7 @@ issues:
   returned: success
 '''
 
+from contextlib import contextmanager
 import fnmatch
 import re
 import time
@@ -256,12 +262,13 @@ def cluster_info(cluster):
         for h in cluster.host or []]}
 
 
-def datastore_info(ds, cluster, planned):
+def datastore_info(ds, cluster, planned, vc="", dc="", require_shared=False):
     summary = ds.summary
+    reserved = planned.get("|".join((vc, dc, ds.name)).lower(), planned.get(ds.name.lower(), 0))
     return {"name": ds.name, "capacity": summary.capacity,
-            "free": (summary.freeSpace or 0) - planned.get(ds.name.lower(), 0),
+            "free": (summary.freeSpace or 0) - reserved,
             "ok": bool(summary.accessible) and str(summary.maintenanceMode or "normal") == "normal",
-            "shared": bool(summary.multipleHostAccess) or len(ds.host or []) >= 2 or len(cluster.host or []) == 1}
+            "shared": bool(summary.multipleHostAccess) or len(ds.host or []) >= 2 or (not require_shared and len(cluster.host or []) == 1)}
 
 
 def pinned_problem(fit, need_disk, warned):
@@ -410,6 +417,70 @@ def _folder_path(f):
     return "/" + "/".join(([f.name] if f is not None else []) + list(reversed(names)))
 
 
+def placement_shortlist(copies, vm, p, need_mem, need_disk, planned, notes):
+    """Measure candidates independently. A failed optional inventory read must not lose the plan."""
+    out = {"clusters": [], "datastores": {}, "folders": {}}
+    clusters, locations = [], {}
+    failures = set()
+
+    @contextmanager
+    def reading(vc):
+        try:
+            yield
+        except Exception as exc:
+            failures.add("%s: %s" % (vc, fault_text(exc)))
+
+    for vc, content, template, name in copies:
+        if name != vm["template"]:
+            continue
+        with reading(vc):
+            dc = _datacenter(template)
+            key = (vc, dc.name)
+            rel = _folder_path(template.parent)[len("/%s/vm" % dc.name):].strip("/")
+            if key in locations or not folder_ok(rel, template.parent.name, p["template_folders"]):
+                continue
+            locations[key] = (content, dc)
+            for cr in _all(content, vim.ComputeResource, dc.hostFolder):
+                with reading(vc):
+                    if p["clusters_allowed"] and not _match(cr.name, p["clusters_allowed"]):
+                        continue
+                    row = rank_clusters([cluster_info(cr)], need_mem, p["mem_target_pct"], p["failover_hosts"])[0]
+                    row.update(vcenter=vc, datacenter=dc.name,
+                               group="plan" if key == (vm["vcenter"], vm["datacenter"]) else "outside")
+                    clusters.append((row, cr))
+
+    def order(item):
+        r = item[0]
+        return (not r["fits"], r["pct_after"] if r["pct_after"] is not None else float("inf"),
+                r["vcenter"], r["datacenter"], r["name"])
+
+    for row, cr in sorted(clusters, key=order)[:40]:
+        out["clusters"].append(row)
+        vc, dc_name = row["vcenter"], row["datacenter"]
+        content, dc = locations[(vc, dc_name)]
+        key = "|".join((vc, dc_name))
+        if key not in out["folders"]:
+            folders = []
+            with reading(vc):
+                for folder in [dc.vmFolder] + _all(content, vim.Folder, dc.vmFolder):
+                    with reading(vc):
+                        rel = _folder_path(folder)[len("/%s/vm" % dc_name):].strip("/")
+                        if folder_ok(rel, folder.name, p["folders_allowed"]):
+                            folders.append(rel or "/")
+            out["folders"][key] = sorted(set(folders))[:60]
+        datastores = []
+        with reading(vc):
+            for ds in cr.datastore or []:
+                with reading(vc):
+                    if (all(not pats or _match(ds.name, pats) for pats in (p["datastores_allowed"], p["datastore_rule"]))
+                            and not _match(ds.name, p["datastore_exclude"])):
+                        datastores.append(datastore_info(ds, cr, planned, vc, dc_name))
+        out["datastores"][key + "|" + row["name"]] = rank_datastores(datastores, need_disk, p["datastore_max_used_pct"])[:15]
+    if failures:
+        notes.append("Placement shortlist omitted unreadable inventory: " + ", ".join(sorted(failures)))
+    return out
+
+
 def _existing(vc, v, p):
     """What a VM built earlier is, read from vCenter (the result of a run that builds nothing)."""
     host = v.runtime.host
@@ -422,7 +493,7 @@ def _existing(vc, v, p):
         fit["cluster"] = rank_clusters([cluster_info(cluster)], 0, p["mem_target_pct"], p["failover_hosts"])[0]
         if v.datastore:
             planned = {str(k).lower(): float(gb) * 1073741824 for k, gb in p["datastore_planned"].items()}
-            fit["datastore"] = rank_datastores([datastore_info(v.datastore[0], cluster, planned)], 0, p["datastore_max_used_pct"])[0]
+            fit["datastore"] = rank_datastores([datastore_info(v.datastore[0], cluster, planned, vc, _datacenter(v).name)], 0, p["datastore_max_used_pct"])[0]
     return {"name": v.name, "existing": True, "created": False, "template": p["template"], "fit": fit,
             "chosen": dict.fromkeys(("cluster", "datastore", "folder"), "named"), "networks": network_names(nics, v), "vcenter": vc, "datacenter": getattr(_datacenter(v), "name", ""),
             "cluster": host.parent.name if host is not None and host.parent is not None else "", "host": host.name if host is not None else "",
@@ -488,6 +559,10 @@ def main():
                            domain=dict(type="str", default="localdomain"), customization_spec=dict(type="str", default=""),
                            customize=dict(type="bool", default=True), power_on=dict(type="bool", default=True),
                            boot_from_network=dict(type="bool", default=False), guestinfo=dict(type="dict", default={}),
+                           shortlist=dict(type="bool", default=False), checked_spec=dict(type="dict", default={}),
+                           clusters_allowed=dict(type="list", elements="str", default=[]),
+                           datastores_allowed=dict(type="list", elements="str", default=[]),
+                           datastore_rule=dict(type="list", elements="str", default=[]),
                            pinned=dict(type="bool", default=False),
                            pinned_ok=dict(type="list", elements="str", choices=["cluster", "datastore"], default=[]),
                            cluster_candidates=dict(type="list", elements="str", default=[]),
@@ -502,7 +577,10 @@ def main():
     if not HAS_PYVMOMI:
         module.fail_json(msg="pyVmomi is not installed in the execution environment (the vmware.vmware collection needs it too)")
     p = module.params
-    if p["pinned"] and not all(p[key] for key in ("vcenter", "datacenter", "cluster", "datastore", "folder")):
+    shortlist = module.check_mode and p["shortlist"]
+    resolve_dc = module.check_mode and p["checked_spec"] and not p["datacenter"]
+    if p["pinned"] and (not all(p[key] for key in ("vcenter", "cluster", "datastore", "folder"))
+                        or not (p["datacenter"] or resolve_dc)):
         module.fail_json(msg="the approved placement is incomplete: run the workflow again: it is checked and approved again")
     names = vcenter_list(p["vcenters"])
     if not names:
@@ -522,16 +600,18 @@ def main():
     again, again_vc = None, ""                  # a VM an earlier run of this ticket started and did not finish
     try:
         # 1. the name is free in every vCenter - or it is this ticket's VM (its mark); the template is in exactly one
-        templates, loose, outside = [], [], []
+        templates, loose, outside, copies = [], [], [], []
+        already_built = None
         for n in names:
             try:
                 si = connect(n, p["validate_certs"])
-            except RuntimeError as e:
+                sessions[n] = si
+                content = si.RetrieveContent()
+                props = vm_properties(content, ["name", "config.template", "config.annotation", "runtime.powerState"])
+            except Exception as e:             # the name is checked in every vCenter: the shortlist never skips one
                 module.fail_json(msg="%s - the new VM's name could not be checked there, so nothing was built" % e, vm=vm, notes=notes)
-            sessions[n] = si
-            content = si.RetrieveContent()
             # every VM's name, notes and power state in one call; a VM itself is read further only when its name matches
-            for v, pr in vm_properties(content, ["name", "config.template", "config.annotation", "runtime.powerState"]):
+            for v, pr in props:
                 vname, is_t = str(pr.get("name") or ""), bool(pr.get("config.template"))
                 if not vname:
                     continue
@@ -546,14 +626,19 @@ def main():
                                          "and run the job again" % (vname, n), vm=vm, notes=notes)
                 if st == "built" or (st == "legacy" and (p["existing_ok"] or on)):
                     built = _existing(n, v, p)
+                    if resolve_dc:
+                        module.fail_json(msg="VM %s was already built and its placement cannot be changed" % vname)
                     if p["pinned"]:
                         folder = _find_folder(_datacenter(v), p["folder"])
                         if folder != v.parent or any(built[k] != p[k] for k in ("cluster", "datastore", "vcenter", "datacenter")):
                             module.fail_json(msg="the existing VM has moved: run the workflow again: it is checked and approved again")
                         # built already: it adds nothing to its cluster or datastore, so its fit is not checked again
-                    module.exit_json(changed=False, vm=built,
-                                     notes=["built by an earlier run for this ticket (%s): left as it is"
-                                            % ("the VM's notes say so" if st == "built" else "the VM's notes name the ticket")], issues=[])
+                    note = ("built by an earlier run for this ticket (%s): left as it is"
+                            % ("the VM's notes say so" if st == "built" else "the VM's notes name the ticket"))
+                    if shortlist:
+                        already_built = built, note, v
+                        continue
+                    module.exit_json(changed=False, vm=built, notes=[note], issues=[])
                 if st == "legacy":
                     # an older release's notes (no mark) on a VM that is off: built and later powered off, or not finished -
                     # it cannot be told, so it is neither finished again (a built server customized again) nor taken as built
@@ -567,6 +652,8 @@ def main():
                 if same:
                     module.fail_json(msg="a VM named %s already exists in vCenter %s (%s): nothing was built"
                                          % (vname, n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
+                if shortlist and is_t and _tnorm(vname) == _tnorm(p["template"]):
+                    copies.append((n, content, v, vname))
                 if is_t and _tnorm(vname) == _tnorm(p["template"]) and (not want_vc or n.lower() == want_vc.lower()):
                     if not p["datacenter"] or _datacenter(v).name == p["datacenter"]:
                         # only from vm_deploy_template_folders (e.g. the staging folder): a copy elsewhere is not used
@@ -574,11 +661,22 @@ def main():
                         if not folder_ok(rel, getattr(v.parent, "name", ""), p["template_folders"]):
                             outside.append("%s / %s" % (n, _folder_path(v.parent)))
                             continue
+                        if resolve_dc and not any(c.name == p["cluster"] for c in _all(content, vim.ComputeResource, _datacenter(v).hostFolder)):
+                            continue
                         (templates if vname == p["template"] else loose).append((n, v))
+        planned = {str(k).lower(): float(v or 0) * 1073741824 for k, v in p["datastore_planned"].items()}
+        if already_built:
+            built, note, v = already_built
+            memory = v.config.hardware.memoryMB * 1048576
+            disks = sum(d.capacityInKB * 1024 for d in v.config.hardware.device if isinstance(d, vim.vm.device.VirtualDisk))
+            built["shortlist"] = placement_shortlist(copies, built, p, memory, disks + memory, planned, notes)
+            module.exit_json(changed=False, vm=built, notes=[note] + notes, issues=[])
         # the exact name first; else the one written in other case or spacing (when only one is)
         if not templates and len({t.name for _, t in loose}) == 1:
             templates = loose
             notes.append("template %s is written %r in vCenter" % (p["template"], loose[0][1].name))
+        if resolve_dc and not templates and not outside:
+            module.fail_json(msg="no datacenter in %s has both cluster %s and template %s" % (want_vc, p["cluster"], p["template"]))
         if not templates and outside:
             module.fail_json(msg="template %s is not in vm_deploy_template_folders (%s) - only there: %s. Nothing was built: move the "
                                  "template into one of those folders (or add its folder to vm_deploy_template_folders)"
@@ -589,6 +687,9 @@ def main():
         if outside:
             notes.append("template %s also in %s: not used (not in vm_deploy_template_folders)" % (p["template"], "; ".join(outside)))
         if len(templates) > 1:
+            if resolve_dc:
+                module.fail_json(msg="cluster %s and template %s have more than one matching destination in %s"
+                                     % (p["cluster"], p["template"], want_vc))
             module.fail_json(msg="template %s is in %s: name the vCenter (vcenter: ...) or the datacenter in the ticket"
                                  % (p["template"], ", ".join("%s / %s" % (n, _datacenter(t).name) for n, t in templates)), vm=vm, notes=notes)
         vc, tpl = templates[0]
@@ -624,7 +725,6 @@ def main():
         placement = {}
         fit = {}
         chosen = {key: "named" if p[key] else "template" for key in ("cluster", "datastore", "folder")}
-        planned = {str(k).lower(): float(v or 0) * 1073741824 for k, v in p["datastore_planned"].items()}
         target = None
         if again is not None:                   # an earlier run's VM: finished where it is
             host = again.runtime.host
@@ -702,7 +802,7 @@ def main():
                 cands = [d for d in _all(content, vim.Datastore, dc.datastoreFolder) if _match(d.name, ds_cands)
                          and not _match(d.name, excl) and any(m.key in mine for m in (d.host or []))]
                 # the space the VMs before this one in the same run take there counts as used: they spread out
-                info = [datastore_info(d, cr, planned) for d in cands]
+                info = [datastore_info(d, cr, planned, vc, dc.name) for d in cands]
                 ranked = rank_datastores(info, need_disk, p["datastore_max_used_pct"])
                 placement["datastores"] = ["%s: %s%s" % (r["name"], r["why"], "" if r["fits"] else " - does not fit") for r in ranked[:5]]
                 if not ranked or not ranked[0]["fits"]:
@@ -758,10 +858,20 @@ def main():
         if "cluster" not in fit:
             fit["cluster"] = rank_clusters([cluster_info(cr)], need_mem, p["mem_target_pct"], p["failover_hosts"])[0]
         if "datastore" not in fit:
-            fit["datastore"] = rank_datastores([datastore_info(ds, cr, planned)], need_disk, p["datastore_max_used_pct"])[0]
+            info = datastore_info(ds, cr, planned, vc, dc.name)
+            fit["datastore"] = rank_datastores([info], need_disk, p["datastore_max_used_pct"])[0]
         vm.update(fit=fit, chosen=chosen)
         if p["pinned"]:
             why = pinned_problem(fit, need_disk, p["pinned_ok"])
+            if p["checked_spec"]:
+                for key in ("cluster", "datastore"):
+                    if not fit[key]["fits"]:
+                        why = "%s %s: %s" % (key, fit[key]["name"], fit[key]["why"])
+                        break
+                actual = {"template": vm["template"], "cpu": str(vm["cpu"]), "memory_gb": "%g" % vm["memory_gb"],
+                          "disks_gb": " + ".join(str(gb) for gb in vm["disks_gb"])}
+                if actual != p["checked_spec"]:
+                    why = "the template or VM size differs from the checked plan"
             if cr.name != p["cluster"] or ds.name != p["datastore"] or folder != _find_folder(dc, p["folder"]):
                 why = "placement has changed: run the workflow again: it is checked and approved again"
             if why:
@@ -821,6 +931,8 @@ def main():
                     nicSettingMap=[vim.vm.customization.AdapterMapping(
                         adapter=vim.vm.customization.IPSettings(ip=vim.vm.customization.DhcpIpGenerator())) for _ in nics])
         vm["customization"] = "planned" if cspec is not None else ("none: the template installs its operating system (network boot or CD)" if pxe else "none")
+        if shortlist:
+            vm["shortlist"] = placement_shortlist(copies, vm, p, need_mem, need_disk, planned, notes)
         if module.check_mode:
             module.exit_json(changed=True, vm=vm, notes=notes, issues=issues)
 

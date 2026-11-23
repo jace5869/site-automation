@@ -91,6 +91,7 @@ LAUNCH_DOCS = {
     "STIG Manager - deploy": {"ask_job_type": True, "ask_diff_mode": True},   # WORKFLOWS_AND_SCHEDULES.md 10: Job type, Show changes
     "Network config load": {"ask_job_type": True},                    # docs/NETWORK_CONFIG.md, A load, with an approval, step 1
     # docs/VM_DEPLOY_GUIDE.md, 6: Job type for the dry run
+    "VM - deploy placement change": {"ask_variables": True, "portal": True},
     "VM - deploy from ServiceNow ticket": {"ask_job_type": True},
 }
 # 1.107.0: the survey questions "AAP - set up job templates" adds to a template when they are missing (never one changed

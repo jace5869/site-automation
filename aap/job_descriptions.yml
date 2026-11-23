@@ -575,6 +575,11 @@ templates:
     targets: "vCenter and ServiceNow via their APIs (VMware vCenter and ServiceNow API credentials); runs on the AAP side, no Limit."
     produces: "New VMs, ticket work notes (IP included), a report emailed (report_email_to) and on the report website, artifact vm_deploy."
     supports: "Run constraint=Changes target hosts (builds and powers on VMs); writes vCenter, ServiceNow, AAP inventory (vm_deploy_services), email"
+  "VM - deploy placement change":
+    does: "Checks a portal approver's placement against the deploy rules and the current capacity in vCenter."
+    targets: "vCenter and ServiceNow through the VMware vCenter and ServiceNow API credentials. Runs on the AAP side."
+    produces: "Placement notes on the change and its tasks, a report and the vm_deploy_placement_change artifact."
+    supports: "Run constraint=Reads vCenter. Writes ServiceNow work notes and emails the report when report_email_to is set."
   "VM - pick up deploy tickets":
     does: "On a schedule, finds new VM request tickets in ServiceNow, notes '[AAP] Picked up' on each, and starts the deploy workflow for it."
     targets: "ServiceNow and AAP via their APIs (ServiceNow API and Red Hat Ansible Automation Platform credentials); no Limit."

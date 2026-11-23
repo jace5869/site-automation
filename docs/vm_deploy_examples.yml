@@ -12,6 +12,18 @@ vm_deploy_ticket:
   level: standard
   example: CHG0001234
   when: the survey's one question - the operator types the change's number at launch; never set on the template
+vm_deploy_checked_job:
+  level: rarely
+  example: "4813"
+  when: the portal or workflow identifies the propose job that checked the change
+vm_deploy_placement:
+  level: rarely
+  example: [{vm_name: vm-app01, vcenter: vc02.corp.example.mil, cluster: SITB0201-CL01, datastore: SITB0201-DS01, folder: Servers/App}]
+  when: the portal submits the approver's new destinations
+vm_deploy_placement_by:
+  level: rarely
+  example: DOE.JANE.Q.1234567890
+  when: the portal names the approver who requested the placement change
 vm_deploy_ticket_table:
   level: rarely
   example: u_vm_request

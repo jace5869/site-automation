@@ -1,0 +1,10 @@
+---
+- name: Change the placement of a checked VM before approval
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check the selected placement and record it on the change
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: deploy_placement.yml

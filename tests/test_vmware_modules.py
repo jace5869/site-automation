@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the pure parts of roles/vmware_vm/library (needs ansible-core importable, not
 pyVmomi or a vCenter): python3 tests/test_vmware_modules.py"""
+from copy import copy
 import json
 import os
 import sys
@@ -59,6 +60,9 @@ class DeployFit(unittest.TestCase):
         self.tpl = Object(name="rhel9-gold", runtime=NS(host=self.cr.host[0]), parent=self.dc.vmFolder, datastore=[self.ds],
                           config=NS(guestId="linux", hardware=NS(device=devices, memoryMB=16 * 1024, numCPU=4)),
                           network=[NS(key="1", name="SITA0101")], CloneVM_Task=Mock(side_effect=AssertionError("unexpected clone")))
+        self.cr.datastore = [self.ds]
+        self.objects = {self.vim.ComputeResource: [self.cr], self.vim.Datastore: [self.ds], self.vim.StoragePod: [self.pod],
+                        self.vim.Folder: []}
         self.vc = "vc01.corp.example.mil"
         self.params = dict(name="vm-app01", template=self.tpl.name, cluster=self.cr.name, datastore=self.ds.name, folder="/",
                            ticket="CHG0030001", vcenter=self.vc, datacenter=self.dc.name, customize=False)
@@ -72,12 +76,13 @@ class DeployFit(unittest.TestCase):
             return NS(params={**defaults, **self.params, **params}, check_mode=check,
                       exit_json=lambda **kw: self.finish(Result, False, kw), fail_json=lambda **kw: self.finish(Result, True, kw))
 
-        objects = {self.vim.ComputeResource: [self.cr], self.vim.Datastore: [self.ds], self.vim.StoragePod: [self.pod]}
+        objects = {self.vc: self.objects, **getattr(self, "outside_objects", {})}
         props = [(self.tpl, {"name": self.tpl.name, "config.template": True})] + getattr(self, "others", [])
         with patch.object(deploy, "vim", self.vim, create=True), patch.multiple(
-                deploy, AnsibleModule=module, HAS_PYVMOMI=True, connect=lambda *a: NS(RetrieveContent=lambda: object()),
-                disconnect=lambda si: None, vm_properties=lambda *a: props,
-                vcenter_list=lambda names: [self.vc], _all=lambda content, kind, root: objects[kind]), self.assertRaises(Result) as result:
+                deploy, AnsibleModule=module, HAS_PYVMOMI=True,
+                connect=getattr(self, "connect", None) or (lambda name, certs: NS(RetrieveContent=lambda: name)),
+                disconnect=lambda si: None, vm_properties=lambda vc, paths: props if vc == self.vc else self.copies,
+                vcenter_list=lambda names: list(objects), _all=lambda content, kind, root: objects[content][kind]), self.assertRaises(Result) as result:
             deploy.main()
         self.tpl.CloneVM_Task.assert_not_called()
         return result.exception.args[0]
@@ -98,6 +103,151 @@ class DeployFit(unittest.TestCase):
         self.assertFalse(vm["fit"]["cluster"]["fits"])
         self.assertTrue(vm["fit"]["datastore"]["fits"])
         self.assertEqual(vm["networks"], ["VM Network", "SITA0101", ""])
+
+    def test_shortlist_measures_each_allowed_destination(self):
+        outside = "vc02.corp.example.mil"
+        dc = self.vim.Datacenter(name="SITB0201-DC", hostFolder=NS())
+        dc.vmFolder = self.vim.Folder(name="vm", parent=dc)
+        tpl = copy(self.tpl)
+        tpl.parent = dc.vmFolder
+        other = copy(self.cr)
+        other.name = "SITB0201-CL01"
+        other.host = [self.cr.host[0]] * 3
+        self.outside_objects = {outside: {self.vim.ComputeResource: [other], self.vim.Folder: []}}
+        self.copies = [(tpl, {"name": tpl.name, "config.template": True})]
+        app = self.vim.Folder(name="App", parent=self.vim.Folder(name="Servers", parent=self.dc.vmFolder))
+        self.objects[self.vim.Folder] = [app.parent, app]
+        busy = copy(self.cr)
+        busy.name = "SITA0101-CL02"
+        busy.host = [self.cr.host[0]] * 2
+        busy.host[0] = copy(busy.host[0])
+        busy.host[0].summary = NS(hardware=NS(memorySize=100 * G), quickStats=NS(overallMemoryUsage=60 * 1024))
+        self.objects[self.vim.ComputeResource].append(busy)
+        for i in range(3, 8):
+            ds = copy(self.ds)
+            ds.name = "SITA0101-DS0%d" % i
+            ds.summary = copy(ds.summary)
+            self.cr.datastore.append(ds)
+        self.cr.datastore[1].summary.freeSpace = 30 * G
+        self.cr.datastore[2].summary.accessible = False
+        self.cr.datastore[3].summary.maintenanceMode = "inMaintenance"
+        self.cr.datastore[4].summary.multipleHostAccess = False
+        self.cr.datastore[4].host = [NS(key=self.cr.host[0])]
+        args = dict(shortlist=True, datastores_allowed=["SITA0101-*"], datastore_rule=["*-DS0[2-6]"],
+                    template_folders=["vm"], folders_allowed=["App"], folder="Servers/App")
+        self.dc.vmFolder.childEntity = [app.parent]
+        app.parent.childEntity = [app]
+        result = self.run_module(**args)
+        self.assertFalse(result["failed"], result)
+        shortlist = result["vm"]["shortlist"]
+        clusters = {c["name"]: c for c in shortlist["clusters"]}
+        self.assertEqual((clusters[self.cr.name]["group"], clusters[self.cr.name]["fits"]), ("plan", True))
+        self.assertEqual((clusters[other.name]["vcenter"], clusters[other.name]["group"]), (outside, "outside"))
+        self.assertFalse(clusters[busy.name]["fits"])
+        key = self.vc + "|" + self.dc.name
+        self.assertEqual(shortlist["folders"][key], ["Servers/App"])
+        stores = {d["name"]: d for d in shortlist["datastores"][key + "|" + self.cr.name]}
+        self.assertEqual(set(stores), {ds.name for ds in self.cr.datastore[:-1]})
+        self.assertTrue(stores[self.ds.name]["fits"])
+        self.assertEqual(stores["SITA0101-DS03"]["pct_after"], 96)
+        self.assertIn("not shared", stores["SITA0101-DS06"]["why"])
+        self.assertFalse(any(stores["SITA0101-DS0%d" % i]["fits"] for i in range(3, 7)))
+        reserved = {key + "|" + self.ds.name: 10}
+        stores = self.run_module(**args, datastore_planned=reserved)["vm"]["shortlist"]["datastores"]
+        outside_key = "|".join((outside, dc.name, other.name))
+        self.assertEqual(next(d for d in stores[key + "|" + self.cr.name] if d["name"] == self.ds.name)["pct_after"], 86)
+        self.assertEqual(next(d for d in stores[outside_key] if d["name"] == self.ds.name)["pct_after"], 76)
+        allowed = self.run_module(**args, clusters_allowed=[self.cr.name])["vm"]["shortlist"]
+        self.assertEqual([c["name"] for c in allowed["clusters"]], [self.cr.name])
+        tpl.parent = self.vim.Folder(name="App", parent=dc.vmFolder)
+        self.assertTrue(all(c["vcenter"] == self.vc for c in self.run_module(**args)["vm"]["shortlist"]["clusters"]))
+        self.copies = []
+        rows = self.run_module(**args)["vm"]["shortlist"]["clusters"]
+        self.assertTrue(all(c["vcenter"] == self.vc for c in rows))
+
+    def test_change_resolves_the_datacenter_from_the_selected_cluster(self):
+        outside = "vc02.corp.example.mil"
+        dc = self.vim.Datacenter(name="SITB0201-DC", hostFolder=NS(), datastoreFolder=NS())
+        dc.vmFolder = self.vim.Folder(name="vm", parent=dc, childEntity=[])
+        cr = copy(self.cr)
+        cr.name = "SITB0201-CL01"
+        ds = copy(self.ds)
+        ds.name = "SITB0201-DS01"
+        cr.datastore = [ds]
+        tpl = copy(self.tpl)
+        tpl.parent = dc.vmFolder
+        self.outside_objects = {outside: {self.vim.ComputeResource: [cr], self.vim.Datastore: [ds], self.vim.StoragePod: []}}
+        self.copies = [(tpl, {"name": tpl.name, "config.template": True})]
+        request = dict(pinned=True, vcenter=outside, datacenter="", cluster=cr.name, datastore=ds.name, folder="/",
+                       checked_spec=dict(template=self.tpl.name, cpu="4", memory_gb="16", disks_gb="10"))
+        vm = self.run_module(**request)["vm"]
+        self.assertEqual((vm["vcenter"], vm["datacenter"], vm["cluster"], vm["datastore"]), (outside, dc.name, cr.name, ds.name))
+        self.copies *= 2
+        self.assertIn("more than one matching destination", self.run_module(**request)["msg"])
+        self.copies = []
+        self.assertTrue(self.run_module(**request)["failed"])
+
+    def test_shortlist_bounds_and_unreadable_object(self):
+        for i in range(50):
+            cr = copy(self.cr)
+            cr.name = "SITA0101-CL%03d" % i
+            self.objects[self.vim.ComputeResource].append(cr)
+        for i in range(20):
+            ds = copy(self.ds)
+            ds.name = "SITA0101-DS%03d" % i
+            self.cr.datastore.append(ds)
+        self.objects[self.vim.Folder] = [self.vim.Folder(name="App%02d" % i, parent=self.dc.vmFolder) for i in range(65)]
+        self.cr.datastore.append(NS(name="SITA0101-DS99"))
+        result = self.run_module(shortlist=True, clusters_allowed=["*-CL0*"])
+        self.assertFalse(result["failed"], result)
+        self.assertEqual(len([n for n in result["notes"] if "omitted unreadable inventory" in n]), 1)
+        short = result["vm"]["shortlist"]
+        self.assertEqual(len(short["clusters"]), 40)
+        self.assertEqual(len(short["datastores"]), 40)
+        self.assertEqual({len(d) for d in short["datastores"].values()}, {15})
+        self.assertEqual(len(next(iter(short["folders"].values()))), 60)
+
+    def test_the_shortlist_never_skips_a_vcenter_it_cannot_read(self):
+        # review 1.117 b1: the VM's name must be free in every vCenter. The propose step (shortlist on) skipped an
+        # unreadable vCenter with a note and could show a ready plan the build then refuses
+        outside = "vc02.corp.example.mil"
+        self.outside_objects = {outside: {self.vim.ComputeResource: [], self.vim.Folder: []}}
+        self.copies = []
+
+        def connect(name, certs):
+            if name == outside:
+                raise RuntimeError("cannot log in to %s" % outside)
+            return NS(RetrieveContent=lambda: name)
+        self.connect = connect
+        for vcenter in (self.vc, ""):
+            result = self.run_module(shortlist=True, vcenter=vcenter)
+            self.assertTrue(result["failed"], result)
+            self.assertIn("could not be checked there", result["msg"])
+
+    def test_a_single_hosts_own_datastore_counts_as_for_automatic_placement(self):
+        # review 1.117 b1: one rule for "shared". A standalone host's local datastore is a place the job itself may
+        # choose, so the shortlist and a changed placement measure it the same way
+        self.cr.host = self.cr.host[:1]
+        self.ds.summary.multipleHostAccess = False
+        self.ds.host = [NS(key=self.cr.host[0])]
+        self.ds.summary.freeSpace = 80 * G
+        short = self.run_module(shortlist=True, mem_target_pct=100)["vm"]["shortlist"]
+        stores = short["datastores"]["|".join((self.vc, self.dc.name, self.cr.name))]
+        self.assertTrue(stores[0]["fits"], stores)
+        args = dict(pinned=True, datacenter="", mem_target_pct=100,
+                    checked_spec=dict(template=self.tpl.name, cpu="4", memory_gb="16", disks_gb="10"))
+        result = self.run_module(**args)
+        self.assertFalse(result["failed"], result)
+
+    def test_changed_placement_requires_fit_and_checked_size(self):
+        args = dict(pinned=True, datacenter="", checked_spec=dict(template=self.tpl.name, cpu="4", memory_gb="16", disks_gb="10"))
+        self.assertFalse(self.run_module(**args)["failed"])
+        self.ds.summary.multipleHostAccess = False
+        self.ds.host.pop()
+        self.assertIn("not shared", self.run_module(**args)["msg"])
+        self.assertIn("not shared", self.run_module(**dict(args, datacenter=self.dc.name), check=False)["msg"])
+        self.ds.summary.multipleHostAccess = True
+        self.assertIn("VM size differs", self.run_module(**args, memory_mb=1024)["msg"])
 
     def test_pod_template_and_automatic_placement(self):
         vm = self.run_module(datastore=self.pod.name)["vm"]
