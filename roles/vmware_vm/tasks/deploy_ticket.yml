@@ -115,6 +115,7 @@
     url: >-
       {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
       (['sys_id', 'number', 'state', 'active', 'assignment_group', 'location', 'short_description', 'description', 'comments', 'work_notes']
+       + (['approval'] if _vd_phase | default('') == 'no_touch' and _vd_table == 'change_request' else [])
        + ([vm_deploy_owner_field] if vm_deploy_owner_field else [])
        + vm_deploy_parent_fields | default([]) + ((vm_deploy_ready_by_table | default({}, true))[_vd_table] | default({}, true)).keys() | list)
       | unique | join(',') }}&sysparm_query={{
@@ -185,7 +186,7 @@
     # closing the change's tasks finds them the same way, and gives them the notes too
     _vd_also_want: >-
       {{ ((vm_deploy_notes_also | default([], true)) if vm_deploy_notes_also | default([], true) is not string else [vm_deploy_notes_also])
-         + (['tasks'] if vm_deploy_close_tasks | default(false) | bool else []) }}
+         + (['tasks'] if vm_deploy_close_tasks | default(false) | bool or _vd_phase | default('') == 'no_touch' else []) }}
 
 - name: VMware | the ticket, its parent, and a GenAI proposal on it (vm_deploy_genai)
   ansible.builtin.set_fact:
@@ -203,8 +204,12 @@
                                           vm_deploy_parent_wins | default(false) | bool) }}
     _vd_prop: "{{ _vd_get.json.result[0] | vm_deploy_find_proposal }}"
     _vd_tasks_q: >-
-      {{ (_vd_get.json.result[0].sys_id | vm_deploy_tasks_query({'assignment_group': vm_deploy_assignment_group,
-                                                                 'query': vm_deploy_notes_tasks_query | default('', true)}))
+      {{ _vd_selected_tasks_q }}
+    _vd_close_matching_tasks: "{{ vm_deploy_close_tasks | default(false) | bool and _vd_selected_tasks_q | length > 0 }}"
+  vars:
+    _vd_selected_tasks_q: >-
+      {{ _vd_get.json.result[0].sys_id | vm_deploy_tasks_query({'assignment_group': vm_deploy_assignment_group,
+                                                                'query': vm_deploy_notes_tasks_query | default('', true)})
          if _vd_table == 'change_request' and 'tasks' in _vd_also_want else '' }}
 
 # a change launched by itself (e.g. from a web front end): its own open tasks of the group get the notes too
@@ -238,7 +243,7 @@
     msg: >-
       {{ ['Notes on ' ~ _vd_number ~ ((' and ' ~ _vd_also | map(attribute='number') | join(', ')) if _vd_also else '') ~ '. '
           ~ _vd_number ~ (' is closed when every VM is built' if _vd_own_close | length > 0 else ' is never closed (no close values for ' ~ _vd_table ~ ')')
-          ~ ('; its tasks found are closed too (vm_deploy_close_tasks)' if vm_deploy_close_tasks | default(false) | bool and _vd_table == 'change_request'
+          ~ ('; its tasks found are closed too (vm_deploy_close_tasks)' if _vd_close_matching_tasks | bool
              else ('; its tasks found are left open (vm_deploy_close_tasks: false)' if _vd_table == 'change_request' and 'tasks' in _vd_also_want else ''))
           ~ '.']
          + (['The tasks of ' ~ _vd_number ~ ' could not be read (HTTP ' ~ _vd_tasks_get.status | default('?') ~ '): the notes are on the change only.']
@@ -265,10 +270,16 @@
 - name: VMware | what GenAI would read, and the ticket's own lines (its parent's under them)
   ansible.builtin.set_fact:
     _vd_not_ready: >-
-      {{ _vd_rec | vm_deploy_ready(_vd_table, vm_deploy_ready_by_table, 'this ticket (' ~ _vd_number ~ ')')
+      {{ _vd_change_required or _vd_rec | vm_deploy_ready(_vd_table, vm_deploy_ready_by_table, 'this ticket (' ~ _vd_number ~ ')')
          or _vd_parent.problem | default('') }}
     _vd_plan_ticket: >-
       {{ {'number': _vd_number, 'table': _vd_table, 'tasks': ([_vd_number] if _vd_table == 'change_task' else [])
            + (_vd_also | selectattr('table', 'equalto', 'change_task') | map(attribute='number') | list)} }}
     _vd_text: "{{ _vd_rec | vm_deploy_ticket_text(_vd_parent) }}"
     _vd_digest: "{{ 'sha256:' ~ (((_vd_rec | vm_deploy_ticket_text(_vd_parent)) ~ (_vd_owner | to_json if _vd_owner else '')) | hash('sha256'))[:16] }}"
+  vars:
+    _vd_change_required: >-
+      {{ '' if _vd_phase | default('') != 'no_touch' else
+         'Launch no touch with an approved change in Implement.' if _vd_table != 'change_request' else
+         _vd_rec | vm_deploy_ready(_vd_table, {'change_request': (vm_deploy_ready_by_table | default({}, true)).change_request
+                                                                  | default({'approval': 'Approved', 'state': 'Implement'}, true)}, _vd_number) }}

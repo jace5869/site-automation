@@ -294,7 +294,11 @@ vm_deploy_genai_approval:
 vm_deploy_phase:
   level: rarely
   example: propose
-  when: set by the approval workflow's nodes (propose, then build) - never on the template
+  when: the workflow node sets the phase to propose, build or no_touch
+vm_deploy_approval_workflow:
+  level: rarely
+  example: "APP-TEAM-1 VM approval"
+  when: the approval workflow for a no-touch change has another name
 vm_deploy_genai_model_timeout:
   level: rarely
   example: 900

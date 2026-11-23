@@ -6,6 +6,17 @@
                                     _vd_plan_ticket, _vd_digest, _vd_read_at, _vd_job, _vd_owner, _vd_state,
                                     _vd_not_ready, _vd_comment | default(''), report=true) }}
 
+- name: VMware | the phase of the checked plan
+  ansible.builtin.set_fact:
+    _vd_plan: "{{ _vd_plan | combine({'phase': _vd_phase}) }}"
+
+- name: VMware | record why no touch stopped
+  ansible.builtin.include_tasks: deploy_no_touch_outcome.yml
+  vars:
+    _vd_outcome: stopped
+    _vd_why: "{{ (_vd_plan | vm_deploy_no_touch).why }}"
+  when: _vd_plan.phase == 'no_touch' and _vd_plan.state != 'ready'
+
 - name: VMware | the plan in the report and approval summary
   ansible.builtin.set_fact:
     _vd_plan_lines: >-
@@ -34,7 +45,7 @@
     aggregate: false
     data:
       # phase: the portal tells a plan stopped before the approval from a build that refused the approved one
-      vm_deploy_plan: "{{ _vd_plan | combine({'phase': vm_deploy_phase | default('', true) | string | lower | trim}) | vm_deploy_plan_artifact }}"
+      vm_deploy_plan: "{{ _vd_plan | vm_deploy_plan_artifact }}"
       site_approval_summary: >-
         {{ _vd_summary_items | site_approval_summary('VM deploy ' ~ _vd_number ~ ': ' ~ _vd_plan.counts.vms
                                                      ~ (' VM' if _vd_plan.counts.vms == 1 else ' VMs')) }}
@@ -59,4 +70,4 @@
         {%-   set _ = vms.update({r.vm.name: r.vm.shortlist}) -%}
         {%- endfor -%}
         {{ {'version': 1, 'ticket': _vd_number, 'digest': _vd_digest, 'job': awx_job_id | default('') | string, 'vms': vms} }}
-  when: (vm_deploy_phase | default('') | string | lower | trim) == 'propose'
+  when: _vd_phase == 'propose'

@@ -1125,6 +1125,17 @@ workflows:
     targets: "vCenter and the ServiceNow ticket, from the AAP side."
     produces: "The plan on the ticket and in an email, the approval, the new VMs, and the result (IP included) on the ticket."
     supports: "Run constraint=Writes vCenter (new VMs) after an approval; writes ServiceNow ticket notes (before and after), email."
+  - name: "VM - deploy from change (no touch)"
+    source: "docs/VM_DEPLOY_GUIDE.md No touch: a clean change builds without an approval"
+    playbooks: [playbooks/vm_deploy_from_ticket.yml]
+    survey:
+      - {question_name: "Approved change in Implement (CHG0030001)", variable: vm_deploy_ticket, type: text, required: true}
+    nodes:
+      - {id: deploy, template: "VM - deploy from ServiceNow ticket", extra_data: {vm_deploy_phase: no_touch}}
+    does: "Checks the change and builds a clean plan. Sends a plan with warnings to the approval workflow."
+    targets: "vCenter and the approved ServiceNow change in Implement."
+    produces: "The checked plan, notes on the change and its CTASKs, and a report with the build or approval workflow result."
+    supports: "Run constraint=Builds VMs or launches the approval workflow. Check previews the decision."
   - name: "Network config load (workflow)"
     source: "docs/NETWORK_CONFIG.md A load, with an approval"
     playbooks: [playbooks/net_config_load.yml, playbooks/net_config_load.yml]

@@ -1,0 +1,13 @@
+---
+- name: VMware | the outcome of the no-touch decision
+  ansible.builtin.set_fact:
+    _vd_plan: >-
+      {{ _vd_plan | combine({'no_touch': {'outcome': _vd_outcome, 'why': _vd_why,
+                                          'workflow_job': _vd_workflow_job | default(0) | int or none}}) }}
+
+- name: VMware | publish the no-touch outcome
+  ansible.builtin.set_stats:
+    per_host: false
+    aggregate: false
+    data:
+      vm_deploy_plan: "{{ _vd_plan | vm_deploy_plan_artifact }}"

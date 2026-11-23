@@ -95,6 +95,18 @@ class DeployPlan(unittest.TestCase):
         for bad in (None, [], {}, dict(plan, version=2), dict(plan, state="unknown")):
             self.assertIsNone(sp.deploy_plan(bad))
 
+    def test_no_touch_artifact_fields(self):
+        plan = dict(vm_plan(), phase="no_touch")
+        for outcome in ("built", "sent_to_approval", "stopped", "failed"):
+            plan["no_touch"] = dict(outcome=outcome, why=["Needs approval.", {}, "x" * 500], workflow_job="4820", unexpected=True)
+            self.assertEqual(sp.deploy_plan(plan)["no_touch"],
+                             dict(outcome=outcome, why=["Needs approval.", "x" * 240], workflow_job=4820))
+        for bad in (True, -1, "4/2", 2.5):
+            plan["no_touch"]["workflow_job"] = bad
+            self.assertIsNone(sp.deploy_plan(plan)["no_touch"]["workflow_job"])
+        plan["no_touch"]["outcome"] = "other"
+        self.assertNotIn("no_touch", sp.deploy_plan(plan))
+
     def test_bounds_types_and_unexpected_fields(self):
         plan = vm_plan()
         row = dict(plan["vms"][0]["rows"][0], kind="unknown", level=["warning"], editable="yes", value="x" * 250, extra="omit")
@@ -2638,6 +2650,21 @@ class DeployPlanPages(unittest.TestCase):
             fake_aap.STATE["approvals"][aid] = dict(jobs[aid], workflow=wid, expires=now + 3600)
         self.portal.log.add({"event": "launch", "action": "deploy", "job_id": wid, "kind": "workflow", "user": sp.who(cert())[0]})
         return wid, jid
+
+    def test_read_only_no_touch_job_shows_the_outcome(self):
+        plan = dict(vm_plan(), phase="no_touch", no_touch=dict(outcome="built", why=[], workflow_job=None))
+        wid, jid = self._vm_workflow(plan)
+        page = "/jobs/%d?via=%d" % (jid, wid)
+        self.assertIn("Built without an approval: the plan was clean.", self.get(page))
+        target, _ = self._vm_workflow(vm_plan())
+        plan["no_touch"] = dict(outcome="sent_to_approval", why=["Check <capacity>.", "Second reason."], workflow_job=target)
+        html = self.get(page)
+        self.assertIn('Sent to approval: Check &lt;capacity&gt;. <a href="/portal/jobs/%d">Workflow job %d</a>.' % (target, target), html)
+        plan["no_touch"]["workflow_job"] = target + 10000
+        html = self.get(page)
+        self.assertIn("Workflow job %d." % (target + 10000), html)
+        self.assertNotIn('href="/portal/jobs/%d"' % (target + 10000), html)
+        self.assertNotIn('data-d="approve"', html)
 
     def placement_workflow(self):
         plan = vm_plan()

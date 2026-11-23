@@ -2106,6 +2106,32 @@ def vm_deploy_plan(checked, questions=None, results=None, ticket=None, digest=""
     return plan if report else _plan_artifact(plan)
 
 
+def vm_deploy_no_touch(plan):
+    """Decide on the full checked plan before the artifact limits its rows and text."""
+    reasons = [s or "The plan has a stop." for s in plan.get("stops", [])]
+    reasons.extend(w or "The plan has a warning." for w in plan.get("warnings", []))
+    if plan.get("state") != "ready":
+        if plan.get("reason") or not reasons:
+            reasons.insert(0, plan.get("reason") or "The plan is not ready to build.")
+    elif not plan.get("vms"):
+        reasons.append("The plan has no VMs to build.")
+    for vm in plan.get("vms", []):
+        if not vm.get("rows"):
+            reasons.append("%s has no checked values." % vm["name"])
+        for row in vm.get("rows", []):
+            if row.get("level") == "warning":
+                reasons.append("%s: %s" % (row["value"], row["why"]))
+            elif row.get("kind") == "stop" or row.get("level") == "stop":
+                reasons.append("%s: %s" % (vm["name"], row.get("why") or "The plan stopped."))
+            elif row.get("kind") not in ("ticket", "default", "job"):
+                reasons.append("%s: %s needs a person's approval." % (vm["name"], row["label"]))
+            elif str(row.get("where") or "").startswith("GenAI proposal"):
+                # the change was approved for its words, not for GenAI's reading of them: a person reads that
+                reasons.append("%s: GenAI read the request. A person approves GenAI's reading." % vm["name"])
+    reasons = list(dict.fromkeys(reasons))
+    return {"build": not reasons, "why": reasons}
+
+
 def _plan_artifact(plan):
     # Notes and email keep complete paths, even when the artifact needs to abbreviate them.
     def bound(value):
@@ -2264,7 +2290,7 @@ def vm_deploy_checked_placement(record, digest, job="", with_spec=False):
                 place = _checked_place(lines, changed=True) if header and len(lines) == 6 else None
                 changes.setdefault(vm[1].lower(), []).append((jobs[-1] if jobs else "", place))
             continue
-        if not body.startswith(CHECKED):
+        if not body.startswith(CHECKED) or body.startswith(CHECKED + "building without an approval ("):
             continue
         lines = body.splitlines()
         header = _CHECK_HEADER.fullmatch(lines[0])
@@ -2322,7 +2348,7 @@ def vm_deploy_checked_digest(record):
     step builds only that: a ticket changed after it (a new comment, an edited description) is checked again."""
     found = ""
     for _, body in journal_entries((record or {}).get("work_notes")):
-        if body.startswith(CHECKED):
+        if body.startswith(CHECKED) and not body.startswith(CHECKED + "building without an approval ("):
             m = re.search(r"ticket text ([\w:]+)", body.splitlines()[0])
             found = m.group(1) if m else ""
     return found
@@ -2607,7 +2633,7 @@ class FilterModule(object):
         return {"vm_deploy_change_results": vm_deploy_change_results, "vm_deploy_unchanged_space": vm_deploy_unchanged_space,
                 "vm_deploy_change_lines": vm_deploy_change_lines, "vm_deploy_requested_places": vm_deploy_requested_places,
                 "vm_deploy_plan_artifact": _plan_artifact,
-                "vm_deploy_plan": vm_deploy_plan, "vm_deploy_plan_note_lines": vm_deploy_plan_note_lines,
+                "vm_deploy_no_touch": vm_deploy_no_touch, "vm_deploy_plan": vm_deploy_plan, "vm_deploy_plan_note_lines": vm_deploy_plan_note_lines,
                 "vm_deploy_source_kind": vm_deploy_source_kind, "vm_deploy_checked_placement": vm_deploy_checked_placement,
                 "vm_deploy_owner": vm_deploy_owner, "vm_deploy_ready": vm_deploy_ready,
                 "vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_group_for": vm_deploy_group_for, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,

@@ -43,7 +43,7 @@ NO_TIMEOUT = {("Horizon - host maintenance (workflow)", "back")}
 # Templates whose node gives Variables they take from the survey the guides tell you to make (docs/SETUP_AAP.md step 6,
 # ADDING_ACT.md step 3, WINDOWS.md) - never Prompt on launch for Variables (anyone could then set any variable)
 SURVEY_TEMPLATES = {"Health check": {"health_checks", "use_act", "site_act_level"}, "Troubleshoot": {"ts_area", "use_act", "site_act_level"},
-                    "Windows health check": {"health_checks"}}
+                    "Windows health check": {"health_checks"}, "VM - deploy from ServiceNow ticket": {"vm_deploy_phase"}}
 
 
 def docs_text():
@@ -85,8 +85,8 @@ class Catalog(unittest.TestCase):
             else:
                 self.assertIn(w["name"], REPLACED, "%s: no nodes, not the portal's, not replaced - say why" % w["name"])
                 left.append(w["name"])
-        self.assertEqual(len(WFS), 52)
-        self.assertEqual(len(built), 40)
+        self.assertEqual(len(WFS), 53)
+        self.assertEqual(len(built), 41)
         self.assertEqual(deferred, ["VM - deploy from ServiceNow ticket (workflow)"])
         self.assertEqual(sorted(REPLACED & set(left)), ["STIG Manager updated, with an approval",
                                                          "STIG Manager updated, with an approval (Windows)"])
@@ -453,7 +453,10 @@ class Review(unittest.TestCase):
     def test_no_prompt_for_any_variable(self):
         """P1: a workflow's steps get their answers from a survey question, never Prompt on launch for Variables."""
         self.assertFalse(TPL["VM - deploy from ServiceNow ticket"].get("ask_variables"))
-        self.assertNotIn("survey", TPL["VM - deploy from ServiceNow ticket"])
+        deploy = next(w for w in WFS if w["name"] == "VM - deploy from change (no touch)")
+        self.assertEqual([q["variable"] for q in deploy["survey"]], ["vm_deploy_ticket"])
+        self.assertEqual(deploy["nodes"], [{"id": "deploy", "template": "VM - deploy from ServiceNow ticket",
+                                          "extra_data": {"vm_deploy_phase": "no_touch"}}])
         for w in WFS:
             self.assertFalse((w.get("prompts") or {}).get("variables"), w["name"])
         net = next(w for w in WFS if w["name"] == "Network config load (workflow)")

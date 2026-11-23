@@ -2061,7 +2061,7 @@ svc4="$(newticket $'vm_name: svc04\ntemplate: rhel9-gold')"
     -e vm_deploy_ticket="$svc4" -e "$rules" -e "$svcs" -e vm_deploy_service=test -- "VM deploy $svc4: svc04 deployed" 'Service: test - in the VM notes: \"Test box.\"') \
     || fails=$((fails + 1))
 check "  ...its notes have the service's words on their own line, last" svc04 "v['annotation'].split('\\n')[1:]" "['Template: rhel9-gold', 'AAP job 4711 (operator1)', 'Service: Test box.']"
-kill "$aap_pid" "$aap_pid2" 2>/dev/null
+kill "$aap_pid2" 2>/dev/null
 unset CONTROLLER_HOST CONTROLLER_USERNAME CONTROLLER_PASSWORD
 
 # A second datastore lets the standalone and approved builds choose different destinations.
@@ -2172,6 +2172,62 @@ c = si.RetrieveContent()
 vm = next(v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "vm-app01")
 assert [d.name for d in vm.datastore] == ["LocalDS_1"]
 EOPY
+# Check the same approved change against an empty destination again.
+name="$name3" port="$plan_port" fresh 2
+make_deploy_template "$plan_port"
+no_touch() { plan_run "$1" "$2" -e vm_deploy_phase=no_touch "${@:3}"; }
+nplan=$(nsn)
+no_touch "preview the clean change" ok --check -e vm_deploy_mem_target_pct=80 -- "would build"
+no_touch "preview the change above the target" ok --check -- "would send to approval:"
+[ "$(patches_since "$nplan")" = 0 ] || { echo "FAIL - preview wrote to ServiceNow"; fails=$((fails + 1)); }
+
+no_touch "the warning needs approval but the deploy has no AAP connection" fail -- "vm_deploy_approval_workflow"
+"$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" <<'EOPY' || { echo "FAIL - missing credential was not recorded"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+result = stats["vm_deploy_plan"]["no_touch"]
+assert result["outcome"] == "failed" and result["workflow_job"] is None
+writes = [json.loads(l) for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
+assert any("/change_request/" in w["path"] and "vm_deploy_approval_workflow" in w["body"]["work_notes"] for w in writes)
+EOPY
+STATE_PORT=$plan_port state vm-app01 "1" >/dev/null 2>&1 && { echo "FAIL - built without the fallback credential"; fails=$((fails + 1)); }
+
+nplan=$(nsn)
+CONTROLLER_HOST="http://127.0.0.1:$aap_port" CONTROLLER_OAUTH_TOKEN=goodtoken no_touch "send the warning to approval" ok -- "Sent to approval"
+"$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" "$work/aap.jsonl" <<'EOPY' || { echo "FAIL - approval handoff"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+plan = stats["vm_deploy_plan"]
+result = plan["no_touch"]
+assert plan["phase"] == "no_touch" and result["outcome"] == "sent_to_approval"
+assert result["why"] == plan["warnings"] and "target 0%" in result["why"][0]
+launch, = [json.loads(l) for l in open(sys.argv[4])]
+assert launch["workflow"] == 42 and launch["extra_vars"] == {"vm_deploy_ticket": "CHG0030001"}
+assert result["workflow_job"] == launch["job"]
+writes = [json.loads(l) for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
+assert sorted(w["path"].split("/")[-2] for w in writes) == ["change_request", "change_task"]
+note = writes[0]["body"]["work_notes"]
+assert note == writes[1]["body"]["work_notes"] and note.startswith("[AAP] Not built without a person (AAP job 4711):")
+assert result["why"][0] in note and note.endswith("The approval workflow was started: AAP job %d." % launch["job"])
+assert result["why"][0] in stats["vm_report"]["lines"] and "Sent to approval" in stats["vm_report"]["subject"]
+EOPY
+STATE_PORT=$plan_port state vm-app01 "1" >/dev/null 2>&1 && { echo "FAIL - built a VM sent to approval"; fails=$((fails + 1)); }
+
+nplan=$(nsn)
+no_touch "build a clean change without approval" ok -e vm_deploy_mem_target_pct=80 -- "vm-app01 deployed"
+STATE_PORT=$plan_port state vm-app01 "1" >/dev/null || { echo "FAIL - no VM after clean no-touch run"; fails=$((fails + 1)); }
+"$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" <<'EOPY' || { echo "FAIL - clean build plan or notes"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+plan = stats["vm_deploy_plan"]
+assert plan["no_touch"] == {"outcome": "built", "why": [], "workflow_job": None} and stats["vm_deploy"]["built"]
+writes = [json.loads(l) for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
+for table in ("change_request", "change_task"):
+    notes = [w["body"]["work_notes"] for w in writes if "/" + table + "/" in w["path"] and "work_notes" in w["body"]]
+    assert notes[0].startswith("[AAP] Checked - building without an approval (AAP job 4711, ticket text %s): the plan is clean" % plan["digest"])
+    assert "vm_name: vm-app01" in notes[0] and notes[1].startswith("[AAP] VM vm-app01 deployed")
+EOPY
+kill "$aap_pid" 2>/dev/null
 "$engine" rm -f "$name3" >/dev/null
 
 unset SN_HOST SN_USERNAME SN_PASSWORD

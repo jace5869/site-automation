@@ -1,0 +1,45 @@
+---
+- name: VMware | the plan checked for every VM
+  ansible.builtin.include_tasks: deploy_plan.yml
+  vars:
+    _vd_check: "{{ _vd }}"
+    _vd_results: "{{ _vd_pre_res }}"
+    _vd_state: ready
+
+- name: VMware | send a stopped plan to the requester
+  ansible.builtin.include_tasks: deploy_refused.yml
+  vars:
+    _vd_check: "{{ _vd }}"
+    _vd_results: "{{ _vd_pre_res }}"
+    _vd_state: stopped
+    _vd_refusals: "{{ _vd_plan.stops }}"
+  when: _vd_plan.state != 'ready'
+
+- name: VMware | does the plan need an approval?
+  ansible.builtin.set_fact:
+    _vd_decision: "{{ _vd_plan | vm_deploy_no_touch }}"
+    _vd_no_touch_job: "{{ 'AAP job ' ~ awx_job_id if awx_job_id is defined else 'AAP' }}"
+
+- name: VMware | preview the no-touch decision
+  ansible.builtin.debug:
+    msg: "{{ 'would build' if _vd_decision.build else 'would send to approval: ' ~ _vd_decision.why | join(_vd_nl) }}"
+  vars:
+    _vd_nl: "\n"
+  when: ansible_check_mode
+
+- name: VMware | finish the preview
+  ansible.builtin.meta: end_play
+  when: ansible_check_mode
+
+- name: VMware | hand this change to the approval workflow
+  ansible.builtin.include_tasks: deploy_send_to_approval.yml
+  when: not _vd_decision.build
+
+- name: VMware | the checked note to write before the first clone
+  ansible.builtin.set_fact:
+    _vd_b_deploying:
+      work_notes: >-
+        {{ (['[AAP] Checked - building without an approval (' ~ _vd_no_touch_job ~ ', ticket text ' ~ _vd_digest ~ '): the plan is clean']
+            + _vd_plan_lines) | join(_vd_nl) }}
+  vars:
+    _vd_nl: "\n"

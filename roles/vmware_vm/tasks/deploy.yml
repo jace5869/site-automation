@@ -7,6 +7,16 @@
 # memory, customize the guest (host name, DHCP), power it on, and write the result on the ticket.
 # Check (a dry run) reads the ticket, checks everything, says where the VM would go: it builds
 # nothing and writes nothing on the ticket. Printed, emailed (report_email_to), artifacts (vm_deploy).
+- name: VMware | the deploy phase for this run
+  ansible.builtin.set_fact:
+    _vd_phase: "{{ vm_deploy_phase | default('', true) | string | lower | trim }}"
+
+- name: VMware | a step this job knows
+  ansible.builtin.assert:
+    that: _vd_phase in ['', 'propose', 'build', 'no_touch']
+    fail_msg: "vm_deploy_phase must be propose, build, no_touch or empty, not {{ _vd_phase }}"
+    quiet: true
+
 - name: VMware | read the ticket and compute its digest
   ansible.builtin.include_tasks: deploy_ticket.yml
 
@@ -33,9 +43,9 @@
 #                              it would go, write it all on the ticket - build nothing
 #                    build     the workflow's step after the approval: build what the ticket (and its
 #                              proposal) says - never ask GenAI
-- name: VMware | which step this is, and is GenAI needed?
+#                    no_touch  build a clean plan or send the same change to the approval workflow
+- name: VMware | is GenAI needed?
   ansible.builtin.set_fact:
-    _vd_phase: "{{ vm_deploy_phase | default('', true) | string | lower | trim }}"
     _vd_prop_ok: "{{ vm_deploy_genai | bool and (_vd_prop.digest | default('')) == _vd_digest }}"
     _vd_genai_needed: >-
       {{ vm_deploy_genai | bool and site_act_enabled | default(true) | bool
@@ -47,12 +57,6 @@
   ansible.builtin.set_fact:
     _site_act_off: true
   when: vm_deploy_genai | bool and not site_act_enabled | default(true) | bool
-
-- name: VMware | a step this job knows
-  ansible.builtin.assert:
-    that: _vd_phase in ['', 'propose', 'build']
-    fail_msg: "vm_deploy_phase must be propose, build or empty, not {{ _vd_phase }}"
-    quiet: true
 
 - name: VMware | the placements approved for this build
   ansible.builtin.set_fact:
@@ -83,4 +87,23 @@
   vars:
     _vd_plan_only: >-
       {{ _vd_phase == 'propose' or (_vd_genai_needed | bool and _vd_phase == '' and vm_deploy_genai_approval | bool) }}
-  when: _vd_phase == 'build' or not _vd_genai_needed | bool or _vd_g_clean | bool
+  when: _vd_phase != 'no_touch' and (_vd_phase == 'build' or not _vd_genai_needed | bool or _vd_g_clean | bool)
+
+- name: VMware | check the change and build only a clean plan
+  when: _vd_phase == 'no_touch' and (not _vd_genai_needed | bool or _vd_g_clean | bool)
+  vars:
+    _vd_plan_only: false
+  block:
+    - name: VMware | run the deploy with the no-touch check
+      ansible.builtin.include_tasks: deploy_build.yml
+  rescue:
+    - name: VMware | record a build or handoff failure
+      ansible.builtin.include_tasks: deploy_no_touch_outcome.yml
+      vars:
+        _vd_outcome: failed
+        _vd_why: "{{ _vd_decision.why + [ansible_failed_result.msg | default('The deploy failed.')] }}"
+      when: _vd_decision is defined and _vd_plan.no_touch is not defined
+
+    - name: VMware | report the failed deploy
+      ansible.builtin.fail:
+        msg: "{{ ansible_failed_result.msg | default('The deploy failed.') }}"

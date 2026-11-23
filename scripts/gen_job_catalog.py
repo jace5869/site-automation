@@ -102,6 +102,10 @@ _ACT_QUESTIONS = [   # docs/ADDING_ACT.md, 3. Survey questions
     {"question_name": "What may ACT do?", "variable": "site_act_level", "type": "multiplechoice",
      "choices": ["explain", "diagnose", "self-heal"], "default": "explain", "required": False}]
 SURVEYS = {
+    "VM - deploy from ServiceNow ticket": [
+        {"question_name": "Ticket number", "variable": "vm_deploy_ticket", "type": "text", "required": True},
+        {"question_name": "Workflow phase (leave empty for a plain run)", "variable": "vm_deploy_phase",
+         "type": "multiplechoice", "choices": ["propose", "build", "no_touch"], "required": False}],
     "Health check": [   # docs/SETUP_AAP.md, Step 6
         {"question_name": "Which checks?", "variable": "health_checks", "type": "multiselect",
          "choices": ["daily", "weekly", "all", "disk", "mounts", "services", "performance", "time", "network", "logging", "selinux",

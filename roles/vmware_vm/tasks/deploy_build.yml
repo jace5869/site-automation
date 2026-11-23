@@ -52,7 +52,11 @@
     loop_var: _vd_i
     index_var: _vd_n
     label: "{{ _vd_i.spec.vm_name }}"
-  when: (_vd_multi | bool or _vd_pinned | bool) and not _vd_dry | bool
+  when: _vd_phase == 'no_touch' or ((_vd_multi | bool or _vd_pinned | bool) and not _vd_dry | bool)
+
+- name: VMware | decide whether this change can build without approval
+  ansible.builtin.include_tasks: deploy_no_touch.yml
+  when: _vd_phase == 'no_touch'
 
 - name: VMware | what the check in vCenter found
   ansible.builtin.set_fact:
@@ -128,7 +132,7 @@
                if (_vd_pre_built + _vd_pre_resumed) | length > 0 else [])) | join(_vd_nl) }}
   vars:
     _vd_nl: "\n"
-  when: not ansible_check_mode and not _vd_plan_only | bool
+  when: not ansible_check_mode and not _vd_plan_only | bool and _vd_phase != 'no_touch'
 
 - name: VMware | the ticket records what is being built, before anything is built
   ansible.builtin.uri:
@@ -193,6 +197,13 @@
     _vd_all_ok: "{{ _vd_res | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0 }}"
     # built, but something did not finish (no IP in time, no customization result ...): the module's issues
     _vd_issues: "{{ _vd_res | map(attribute='issues', default=[]) | flatten }}"
+
+- name: VMware | record the completed no-touch build
+  ansible.builtin.include_tasks: deploy_no_touch_outcome.yml
+  vars:
+    _vd_outcome: built
+    _vd_why: []
+  when: _vd_phase == 'no_touch' and _vd_all_ok | bool
 
 - name: VMware | publish every VM's checked placement
   ansible.builtin.include_tasks: deploy_plan.yml
@@ -360,7 +371,7 @@
   ansible.builtin.set_fact:
     _vd_tclose: >-
       {{ _vd_also | default([]) | selectattr('table', 'equalto', 'change_task') | list
-         if vm_deploy_close_tasks | default(false) | bool and _vd_table == 'change_request' else [] }}
+         if _vd_close_matching_tasks | bool else [] }}
     _vd_tdone: >-
       {%- set base = (vm_deploy_done_fields_by_table | default({}, true))['change_task'] | default({}, true) -%}
       {%- set extra = (vm_deploy_done_fields_issues_by_table | default({}, true))['change_task'] | default({}, true)

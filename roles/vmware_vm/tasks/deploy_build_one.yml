@@ -19,7 +19,7 @@
     cluster: "{{ _vd_i.spec.cluster | default('') }}"
     datastore: "{{ _vd_i.spec.datastore | default('') }}"
     folder: "{{ _vd_i.spec.folder | default('') }}"
-    shortlist: "{{ _vd_phase == 'propose' }}"
+    shortlist: "{{ _vd_phase in ['propose', 'no_touch'] }}"
     clusters_allowed: "{{ vm_deploy_clusters }}"
     datastores_allowed: "{{ vm_deploy_datastores }}"
     datastore_rule: "{{ _vd_i.spec._datastore_allow | default([]) }}"

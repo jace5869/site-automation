@@ -5,7 +5,8 @@
 **To set up:** in the VM deploy workflow (VM_DEPLOY_GUIDE step 8), set the approval node's description to
 *Read the plan on the portal or in the propose job's output before approving*. Optionally set
 `vm_deploy_owner_field` in AAP to show the change's owner. Run **AAP - set up job templates** again and give the portal’s AAP account
-**Execute** on **VM - deploy placement change**.
+**Execute** on **VM - deploy placement change**. For no touch, attach an AAP credential to the deploy template.
+Give its account **Execute** on the approval workflow.
 
 - The VM deploy plan shows each VM's values, sources, template network and capacity warnings before approval.
   The propose job publishes the plan in its output, email, change notes and job artifacts.
@@ -14,6 +15,7 @@
 - The portal shows VM values, sources and warnings on Jobs and Approvals. Stopped plans show what needs an answer.
 - The propose job lists eligible placements. **VM - deploy placement change** checks an approver’s selection and records it on the change and its CTASKs.
 - Approvers can change VM placement on the portal and review the saved plan before approving the build.
+- **VM - deploy from change (no touch)** builds a clean plan from an approved change in Implement. A plan that needs a person goes to the approval workflow.
 
 ## 1.112.1 — 2026-11-23
 

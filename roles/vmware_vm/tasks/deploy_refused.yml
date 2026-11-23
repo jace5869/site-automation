@@ -6,7 +6,7 @@
       {{ {'comments': (['[AAP] We cannot build this VM yet (' ~ _vd_job ~ '):'] + items
                        + ['Please answer with a comment on this ticket.']) | join(_vd_nl)}
          if vm_deploy_plain_words | bool or (_vd_state == 'stopped' and
-             (_vd_plan_only | default(false) | bool or _vd_own_q | length > 0 or (_vd_owner and not _vd_owner.value)
+             (_vd_phase | default('') == 'no_touch' or _vd_plan_only | default(false) | bool or _vd_own_q | length > 0 or (_vd_owner and not _vd_owner.value)
               or _vd_refusals | select('search', 'ticket does not say') | list)) else
          {'work_notes': (['[AAP] VM not deployed (' ~ _vd_job ~ '):'] + items
                          + ["To fix it: add a comment with the corrected values (e.g. 'memory_gb: 32') and run the job again."]) | join(_vd_nl)} }}

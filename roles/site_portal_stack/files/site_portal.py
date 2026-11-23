@@ -1759,9 +1759,15 @@ def deploy_plan(v):
 
     plan = {key: deploy_text(v.get(key)) for key in ("digest", "read_at", "job", "reason")}
     plan["comment"] = deploy_text(v.get("comment"), 2000)          # what the requester was sent, whole
-    plan.update(version=1, state=v["state"], phase=v.get("phase") if v.get("phase") in ("propose", "build") else "",
+    plan.update(version=1, state=v["state"], phase=v.get("phase") if v.get("phase") in ("propose", "build", "no_touch") else "",
                 ticket=deploy_text(v.get("ticket"), 120), table=deploy_text(v.get("table"), 120),
                 tasks=[deploy_text(t, 120) for t in deploy_entries(v, "tasks")], counts={}, vms=[])
+    handoff = deploy_mapping(v.get("no_touch"))
+    if plan["phase"] == "no_touch" and handoff.get("outcome") in ("built", "sent_to_approval", "stopped", "failed"):
+        job = deploy_text(handoff.get("workflow_job"))
+        plan["no_touch"] = {"outcome": handoff["outcome"],
+                            "why": [reason for t in deploy_entries(handoff, "why") if (reason := deploy_text(t))],
+                            "workflow_job": int(job) if re.fullmatch(r"[1-9][0-9]*", job) else None}
     for key in ("warnings", "stops"):
         plan[key] = [deploy_text(t) for t in deploy_entries(v, key)]
     counts = v.get("counts") if isinstance(v.get("counts"), dict) else {}
@@ -3806,7 +3812,7 @@ def deploy_table(vm, show_name, may_change=False):
             '</tr></thead><tbody>%s</tbody></table></div></div>' % (esc(vm["name"]), ("<h3>%s</h3>" % esc(vm["name"])) if show_name else "", "".join(rows)))
 
 
-def deploy_card(cfg, plan, left="", actions="", editable_vms=()):
+def deploy_card(cfg, plan, left="", actions="", editable_vms=(), workflow_visible=False):
     stopped = deploy_stopped(plan)
     refused = deploy_refused(plan)
     title = ("The build stopped after the approval" if refused else "The plan stopped before the approval") if stopped else "The plan - what will be built"
@@ -3821,6 +3827,16 @@ def deploy_card(cfg, plan, left="", actions="", editable_vms=()):
     legend = "".join(deploy_chip(k) for k in ("ticket", "default", "job") + (("approver",) if changed else ()))
     parts = ['<div class="dtop"><span class="eyebrow2">%s</span>%s</div>' % (title, left),
              '<div class="deploy-meta">%s<span class="deploy-legend">%s</span></div>' % (" · ".join(meta), legend)]
+    decision = plan.get("no_touch", {})
+    if decision.get("outcome") == "built":
+        parts.insert(1, "<p>Built without an approval: the plan was clean.</p>")
+    elif decision.get("outcome") == "sent_to_approval":
+        why = next(iter(decision["why"]), "").rstrip(".")
+        job = decision["workflow_job"]
+        label = "Workflow job %d" % job if job else ""
+        if workflow_visible and job:
+            label = '<a href="%sjobs/%d">%s</a>' % (cfg.path, job, label)
+        parts.insert(1, "<p>Sent to approval%s.%s</p>" % ((": " + esc(why)) if why else "", (" " + label + ".") if label else ""))
     c = plan["counts"]
     if stopped:
         reasons = list(dict.fromkeys([plan["reason"]] + plan["stops"]))
@@ -3960,7 +3976,9 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
         step = pg.get("now", "").split(" - ")[0].lower()
         msg, cls, ik = "<b>Running</b>%s%s" % ((" - " + esc(step)) if step else "", (" \u00b7 " + esc(pg["hosts_line"])) if pg.get("hosts_line") else ""), "run", "run"
     if vm_plan and not decide:
-        decide = deploy_card(cfg, vm_plan)
+        handoff = vm_plan.get("no_touch", {})
+        job = handoff.get("workflow_job") if handoff.get("outcome") == "sent_to_approval" else None
+        decide = deploy_card(cfg, vm_plan, workflow_visible=job and portal.visible(cn, job))
     ring = ring_html(pg, done, approval_wait)
     banner = '<div class="banner2 %s%s">%s<span>%s</span></div>' % (cls, " has-ring" if ring else "", ring or icon(ik), msg)
     nowbox = ""

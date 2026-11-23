@@ -285,10 +285,10 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
   `playbooks/vm_deploy_from_ticket.yml`
 - **Execution environment:** your VMware one (step 1)
 - **Credentials:** **VMware vCenter** and **ServiceNow API** (step 4) - and, only when you use them, the
-  ACT model key (GenAI) and the Red Hat Ansible Automation Platform one (a service's AAP inventory)
+  ACT model key (GenAI) and the Red Hat Ansible Automation Platform credential (a service inventory or no-touch handoff)
 - **Limit:** empty, and not prompted (a Limit would make the job skip without doing anything)
 - **Prompt on launch** ticked next to **Job type** (for the dry run) and next to **Variables** (the
-  approval workflow hands each step its `vm_deploy_phase`)
+  approval workflow hands each step its `vm_deploy_phase`). The catalog uses an optional phase survey question for this.
 - **Timeout:** room for every VM of a ticket: a template with guest customization may wait up to 25
   minutes per VM (`vm_deploy_wait_customization` 900 s + `vm_deploy_wait_ip` 600 s); `0` = none
 - **Variables:** the standard setup (chapter 1) with your names - or a configuration from *Ready-made
@@ -365,9 +365,9 @@ refusal stop the workflow. The requester gets a comment and the stopped plan ide
    go to ..."* on the ticket and in the email; approve in **Automation Execution > Workflow Approvals**;
    the VMs are built.
 
-- **The change's approval can stand in** for AAP's: for changes read by `key: value` lines or plain
-  words, a workflow with the deploy job alone (no approval node) is enough - the change was approved
-  for its words. With GenAI on, keep AAP's approval: the change was not approved for GenAI's reading.
+- **Use the no-touch workflow** to let an approved change build automatically when the plan is clean.
+  The change was approved for its words. With GenAI on, a person approves GenAI's reading: no touch sends
+  such a plan to the approval workflow.
 - **Who can change the request:** anyone who can comment on the ticket can change it, and an incident or
   a task has no approval of its own. The person who launches the job is the control, and the
   "Deploying" note records exactly what was built. When a schedule picks tickets up (step 9), the
@@ -395,6 +395,23 @@ The datastore must stay at or below 85% with the VM at full size. The limits com
 
 The job records each accepted placement in an `[AAP] Placement changed` work note on the change and the CTASKs that receive Checked notes.
 The note names the approver and the propose job. The build checks the ticket digest, the allow-lists and the fit again before cloning.
+
+### No touch: a clean change builds without an approval
+
+Launch **VM - deploy from change (no touch)** with `vm_deploy_ticket: CHG0030001`. The change must be approved and in Implement.
+Its single deploy node runs with `vm_deploy_phase: no_touch`. A clean plan is ready, has no stops or warnings,
+and every value comes from the ticket, a default or the job. The job may choose the least used datastore or cluster.
+A value GenAI read is never clean: the change was approved for its words, not for GenAI's reading.
+It records the plan before building in the same run.
+
+A stopped plan follows the propose step. The requester sees what needs an answer.
+A ready plan that needs a person starts the approval workflow for the same change. The change and its CTASKs
+get the reasons and workflow job number. If the workflow cannot start, the change records what to fix and the job fails.
+Job type **Check** previews the decision without writing notes, starting a workflow or building a VM.
+
+Run **AAP - set up job templates** again to create the workflow. Attach a **Red Hat Ansible Automation Platform**
+credential to the deploy template. Give its account **Execute** on **VM - deploy from ServiceNow ticket (workflow)**.
+Set `vm_deploy_approval_workflow` if your approval workflow has another name. It must accept `vm_deploy_ticket`.
 
 ## 9. The scheduled pickup
 

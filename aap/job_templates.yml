@@ -2243,6 +2243,19 @@ job_templates:
     variables_file: aap/extra_vars/vm_deploy_from_ticket.yml
     area: VMware
     ask_job_type: true
+    survey:
+      - question_name: Ticket number
+        variable: vm_deploy_ticket
+        type: text
+        required: true
+      - question_name: Workflow phase (leave empty for a plain run)
+        variable: vm_deploy_phase
+        type: multiplechoice
+        choices:
+          - propose
+          - build
+          - no_touch
+        required: false
     description:
       does: Reads a ServiceNow ticket (vm_deploy_ticket), checks the VM request against the rules, clones the template, and
         notes the result on it.
@@ -3734,6 +3747,23 @@ workflows:
       supports: Run constraint=Writes vCenter (new VMs) after an approval; writes ServiceNow ticket notes (before and after),
         email.
     deferred: 'left by hand for now: the build''s binding to what was approved is being reviewed'
+  - name: VM - deploy from change (no touch)
+    playbooks:
+      - playbooks/vm_deploy_from_ticket.yml
+    description:
+      does: Checks the change and builds a clean plan. Sends a plan with warnings to the approval workflow.
+      targets: vCenter and the approved ServiceNow change in Implement.
+      produces: The checked plan, notes on the change and its CTASKs, and a report with the build or approval workflow result.
+      supports: Run constraint=Builds VMs or launches the approval workflow. Check previews the decision.
+    survey:
+      - question_name: Approved change in Implement (CHG0030001)
+        variable: vm_deploy_ticket
+        type: text
+        required: true
+    nodes:
+      - id: deploy
+        template: VM - deploy from ServiceNow ticket
+        extra_data: {vm_deploy_phase: no_touch}
   - name: Network config load (workflow)
     playbooks:
       - playbooks/net_config_load.yml

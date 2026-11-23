@@ -102,6 +102,57 @@ class ApprovalPlan(unittest.TestCase):
         self.assertIn("- Size: 4 vCPU, 16 GB memory, disks 120 + 200 GB", lines)
         self.assertIn("- Cluster: SITA0101-CL01   (chosen by the job: the template's cluster) - WARNING: " + rows["cluster"]["why"], lines)
 
+    def test_no_touch_clean_and_job_chosen_datastore(self):
+        self.vm["fit"]["cluster"]["pct_after"] = 76
+        for choice in ("named", "auto"):
+            with self.subTest(choice=choice):
+                self.vm["chosen"]["datastore"] = choice
+                plan = self.plan()
+                if choice == "auto":
+                    self.assertEqual(self.rows(plan)["datastore"]["kind"], "job")
+                self.assertEqual(d.vm_deploy_no_touch(plan), {"build": True, "why": []})
+
+    def test_no_touch_warning_and_stop(self):
+        plan = self.plan()
+        self.assertEqual(d.vm_deploy_no_touch(plan), {"build": False, "why": plan["warnings"]})
+        self.vm["datacenter"] = ""
+        stopped = self.plan()
+        decision = d.vm_deploy_no_touch(stopped)
+        self.assertFalse(decision["build"])
+        self.assertIn(stopped["stops"][0], decision["why"])
+
+    def test_no_touch_not_ready(self):
+        plan = self.plan(state="not_ready", reason="The change must be in Implement.")
+        self.assertEqual(d.vm_deploy_no_touch(plan), {"build": False, "why": [plan["reason"]]})
+
+    def test_no_touch_checks_each_vm_for_approver_changes(self):
+        self.vm["fit"]["cluster"]["pct_after"] = 76
+        plan = self.plan()
+        plan["vms"].append({"name": "vm-app01", "rows": [dict(self.rows(plan)["folder"], kind="approver")]})
+        self.assertEqual(d.vm_deploy_no_touch(plan), {"build": False, "why": ["vm-app01: Folder needs a person's approval."]})
+
+    def test_no_touch_requires_the_change_itself_even_with_relaxed_site_rules(self):
+        import jinja2.nativetypes
+
+        with open(os.path.join(HERE, "..", "roles", "vmware_vm", "tasks", "deploy_ticket.yml")) as f:
+            tasks = yaml.safe_load(f)
+        gate = next(task["vars"]["_vd_change_required"] for task in tasks if "_vd_change_required" in task.get("vars", {}))
+        env = jinja2.nativetypes.NativeEnvironment(undefined=jinja2.StrictUndefined)
+        env.filters.update(d.FilterModule().filters())
+        check = env.from_string(gate)
+        values = dict(_vd_number=self.ticket["number"], _vd_phase="no_touch", _vd_rec=self.record, _vd_table="change_request")
+        self.assertFalse(check.render(**values))
+        self.assertTrue(check.render(**dict(values, _vd_table="change_task")))
+        for change in (dict(approval="Requested"), dict(state="Scheduled")):
+            self.assertTrue(check.render(**dict(values, _vd_rec=dict(self.record, **change))))
+        self.assertFalse(check.render(**dict(values, _vd_table="change_task", _vd_phase="propose")))
+
+    def test_no_touch_note_is_not_an_approval_workflow_check(self):
+        note = "[AAP] Checked - building without an approval (AAP job 7, ticket text sha256:0022): the plan is clean"
+        rec = self.journal(note, self.note())
+        self.assertEqual(d.vm_deploy_checked_digest(rec), self.digest)
+        self.assertIn("vm-app01", d.vm_deploy_checked_placement(rec, self.digest, "4813"))
+
     def test_named_datastore_warning_and_site_source(self):
         self.vm["chosen"]["datastore"] = "named"
         self.vm["fit"]["datastore"].update(pct_after=87.5)
@@ -308,6 +359,47 @@ class ApprovalPlan(unittest.TestCase):
             self.assertTrue(any("vm_deploy_" + setting in problem for problem in checked["problems"]))
         rules = dict(self.rules, approved=pin, datastore_rules=[{"match": "vm-*", "datastores": ["*-DS01"]}])
         self.assertTrue(any("is not one" in q for q in d.vm_deploy_check(self.parsed, self.record, rules)["problems"]))
+
+
+class NoTouchReview(unittest.TestCase):
+    """review 1.117 c: no touch keeps the rules every other run keeps."""
+    SID = "0123456789abcdef0123456789abcdef"
+
+    def test_never_every_task_of_the_change(self):
+        # the notes go only to the tasks the settings select (a group or a query) - never all open tasks of the change
+        self.assertEqual(d.vm_deploy_tasks_query(self.SID, {"all_open": True}), "")
+        self.assertEqual(d.vm_deploy_tasks_query(self.SID, {}), "")
+        self.assertIn("change_request=" + self.SID, d.vm_deploy_tasks_query(self.SID, {"assignment_group": "linux operations"}))
+
+    def test_a_genai_reading_is_never_clean(self):
+        # the change was approved for its words, not GenAI's reading: such a plan goes to a person
+        row = {"key": "cpu", "label": "CPU", "value": "4", "kind": "ticket", "level": "", "why": "",
+               "where": "GenAI proposal (this run)"}
+        plan = {"state": "ready", "stops": [], "warnings": [], "vms": [{"name": "vm-app01", "rows": [row]}]}
+        got = d.vm_deploy_no_touch(plan)
+        self.assertFalse(got["build"])
+        self.assertIn("GenAI", got["why"][0])
+        row["where"] = "description"
+        self.assertTrue(d.vm_deploy_no_touch(plan)["build"])
+
+    def test_the_sites_own_labels_for_a_ready_change(self):
+        # no touch reads vm_deploy_ready_by_table's change entry (the site's labels), the default only without one
+        import jinja2
+        import yaml
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "..", "roles", "vmware_vm", "tasks", "deploy_ticket.yml")) as f:
+            task = next(t for t in yaml.safe_load(f) if "_vd_change_required" in (t.get("vars") or {}))
+        env = jinja2.Environment()
+        env.filters.update(d.FilterModule().filters())
+        tpl = env.from_string(task["vars"]["_vd_change_required"])
+        site = {"change_request": {"approval": "Approved", "state": ["Implement", "Scheduled"]}}
+        rec = {"number": "CHG0030001", "approval": "Approved", "state": "Scheduled"}
+        render = lambda ready, record: tpl.render(_vd_phase="no_touch", _vd_table="change_request", _vd_rec=record,      # noqa: E731
+                                                  _vd_number="CHG0030001", vm_deploy_ready_by_table=ready).strip()
+        self.assertEqual(render(site, rec), "")
+        self.assertIn("Implement", render({}, rec))
+        self.assertEqual(render({}, dict(rec, state="Implement")), "")
+        self.assertIn("Launch no touch with an approved change", tpl.render(_vd_phase="no_touch", _vd_table="change_task"))
 
 
 class Tables(unittest.TestCase):

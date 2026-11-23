@@ -735,7 +735,7 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
 #   - {vm_name: vm-app01, vcenter: vc02.corp.example.mil, cluster: SITB0201-CL01, datastore: SITB0201-DS01, folder: Servers/App}
 """),
     "vm_deploy_from_ticket.yml": ("VM - deploy from ServiceNow ticket", "VMware vCenter, ServiceNow API, ACT model key "
-                                  "(Red Hat Ansible Automation Platform with vm_deploy_services inventories)", "", """\
+                                  "(Red Hat Ansible Automation Platform for no-touch approval or vm_deploy_services inventories)", "", """\
 # ---- fill these in first (the CAPITALS) ------------------------------------------------------
 vm_deploy_templates: [TEMPLATE-NAME]              # REQUIRED: only these templates are ever deployed
 vm_deploy_pxe_templates: [TEMPLATE-NAME]          # empty ones (MECM network boot or a kickstart CD); [] for none

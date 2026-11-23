@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "VM - deploy from ServiceNow ticket"
 #   playbook:    playbooks/vm_deploy_from_ticket.yml
-#   credentials: VMware vCenter, ServiceNow API, ACT model key (Red Hat Ansible Automation Platform with vm_deploy_services inventories)
+#   credentials: VMware vCenter, ServiceNow API, ACT model key (Red Hat Ansible Automation Platform for no-touch approval or vm_deploy_services inventories)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -341,10 +341,12 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## within the rules (questions or a refusal still stop it).
 # vm_deploy_genai_approval: true
 
-## Which step this run is: "" = one job does it all; propose = the workflow's first step (read, ask
-## GenAI if needed, check, write where it would go on the ticket - build nothing); build = the step
-## after the approval (build what the ticket and its proposal say - never ask GenAI).
+## Leave empty for a plain run. The approval workflow uses propose to check and build to apply the
+## approved plan. The no_touch phase builds a clean plan from an approved change in Implement.
 # vm_deploy_phase: ""
+
+## Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket.
+# vm_deploy_approval_workflow: "VM - deploy from ServiceNow ticket (workflow)"
 
 ## seconds the model may take for its answer
 # vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"

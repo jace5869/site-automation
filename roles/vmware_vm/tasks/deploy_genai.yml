@@ -113,6 +113,12 @@
     _vd_also_bodies: "{{ [_vd_b_questions] }}"
   when: _vd_also | default([]) | length > 0 and (_vd_requester_questions | length > 0 and not ansible_check_mode)
 
+- name: VMware | does this run need a separate GenAI proposal note?
+  ansible.builtin.set_fact:
+    _vd_post_proposal: >-
+      {{ _ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode
+         and (_vd_phase != 'no_touch' or not _vd_g_clean | bool) }}
+
 - name: VMware | the proposal on the ticket (a work note, read back by the build run) - the note
   ansible.builtin.set_fact:
     _vd_b_proposal:
@@ -124,7 +130,7 @@
               if _vd_gc.problems else '') }}
   vars:
     _vd_nl: "\n"
-  when: _ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode
+  when: _vd_post_proposal | bool
 
 - name: VMware | the proposal on the ticket (a work note, read back by the build run)
   ansible.builtin.uri:
@@ -143,13 +149,13 @@
   vars:
     _vd_nl: "\n"
   register: _vd_gnote_p
-  when: _ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode
+  when: _vd_post_proposal | bool
 
 - name: VMware | the proposal on the ticket (a work note, read back by the build run) - the same on the other tickets (vm_deploy_notes_also)
   ansible.builtin.include_tasks: deploy_note_also.yml
   vars:
     _vd_also_bodies: "{{ [_vd_b_proposal] }}"
-  when: _vd_also | default([]) | length > 0 and (_ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode)
+  when: _vd_also | default([]) | length > 0 and _vd_post_proposal | bool
 
 - name: VMware | publish a stopped GenAI plan
   ansible.builtin.include_tasks: deploy_plan.yml

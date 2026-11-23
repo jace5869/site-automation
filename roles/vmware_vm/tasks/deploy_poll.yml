@@ -24,20 +24,6 @@
     _vp_q: >-
       {{ {'assignment_group': vm_deploy_assignment_group, 'prefix': vm_deploy_poll_prefix, 'query': vm_deploy_poll_query,
           'states': vm_deploy_poll_states} | vm_deploy_poll_query }}
-    # the "Red Hat Ansible Automation Platform" credential: its variables' NAMES (never their values) -
-    # CONTROLLER_* (AAP 2.4 and later), AAP_* (2.5 and later), TOWER_* (older)
-    _vp_aap_vars: >-
-      {%- set out = {} -%}
-      {%- for k, names in {'host': ['CONTROLLER_HOST', 'AAP_HOSTNAME', 'TOWER_HOST'],
-                           'token': ['CONTROLLER_OAUTH_TOKEN', 'AAP_TOKEN', 'TOWER_OAUTH_TOKEN'],
-                           'user': ['CONTROLLER_USERNAME', 'AAP_USERNAME', 'TOWER_USERNAME'],
-                           'password': ['CONTROLLER_PASSWORD', 'AAP_PASSWORD', 'TOWER_PASSWORD'],
-                           'verify': ['CONTROLLER_VERIFY_SSL', 'AAP_VALIDATE_CERTS', 'TOWER_VERIFY_SSL']}.items() -%}
-      {%-   set found = [] -%}
-      {%-   for n in names if lookup('ansible.builtin.env', n) | trim | length > 0 -%}{%- set _ = found.append(n) -%}{%- endfor -%}
-      {%-   set _ = out.update({k: found[0] | default('')}) -%}
-      {%- endfor -%}
-      {{ out }}
 
 - name: VMware | the off switch (vm_deploy_poll_enabled)
   ansible.builtin.debug:
@@ -48,13 +34,8 @@
   ansible.builtin.meta: end_play
   when: not vm_deploy_poll_enabled | bool
 
-- name: VMware | where AAP is, and how to log in to it
-  ansible.builtin.set_fact:
-    _vp_aap_host: >-
-      {%- set h = lookup('ansible.builtin.env', _vp_aap_vars.host) | trim if _vp_aap_vars.host else '' -%}
-      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
-    _vp_aap_login: "{{ 'token' if _vp_aap_vars.token else ('password' if _vp_aap_vars.user and _vp_aap_vars.password else '') }}"
-    _vp_aap_verify: "{{ (lookup('ansible.builtin.env', _vp_aap_vars.verify) if _vp_aap_vars.verify else 'true') | bool }}"
+- name: VMware | read the AAP connection
+  ansible.builtin.include_tasks: deploy_workflow_connection.yml
 
 - name: VMware | a ServiceNow credential, an AAP credential, and settings that mark a VM request
   ansible.builtin.assert:
@@ -73,102 +54,11 @@
           ~ vm_deploy_poll_workflow ~ '"). Nothing was picked up. vm_deploy_poll_dry_run: true lists the tickets without it.') }}
     quiet: true
 
-# ---- AAP: the workflow to start (the AAP 2.5+ API path first, then the older one) ------------------
-- name: VMware | find the workflow in AAP ({{ _vp_aap_api }})
-  ansible.builtin.uri:
-    url: "{{ _vp_aap_host }}/{{ _vp_aap_api }}workflow_job_templates/?name={{ vm_deploy_poll_workflow | urlencode }}"
-    method: GET
-    headers: >-
-      {{ {'Accept': 'application/json'} | combine({'Authorization': 'Bearer ' ~ lookup('ansible.builtin.env', _vp_aap_vars.token)}
-                                                  if _vp_aap_login == 'token' else {}) }}
-    url_username: "{{ lookup('ansible.builtin.env', _vp_aap_vars.user) if _vp_aap_login == 'password' else omit }}"
-    url_password: "{{ lookup('ansible.builtin.env', _vp_aap_vars.password) if _vp_aap_login == 'password' else omit }}"
-    force_basic_auth: "{{ _vp_aap_login == 'password' }}"
-    validate_certs: "{{ _vp_aap_verify }}"
-    ca_path: "{{ vm_deploy_poll_aap_ca_path | default(omit, true) }}"
-    timeout: 30
-    status_code: [200, 401, 403, 404]
+- name: VMware | find and check the pickup workflow
+  ansible.builtin.include_tasks: deploy_workflow_find.yml
   vars:
-    _vp_aap_api: api/controller/v2/
-  register: _vp_wf_find1
-  when: _vp_aap_host | length > 0 and _vp_aap_login | length > 0
-  failed_when: false
-  check_mode: false
-  no_log: true                           # the request carries the token or password
-
-- name: VMware | find the workflow in AAP ({{ _vp_aap_api }}, before AAP 2.5)
-  ansible.builtin.uri:
-    url: "{{ _vp_aap_host }}/{{ _vp_aap_api }}workflow_job_templates/?name={{ vm_deploy_poll_workflow | urlencode }}"
-    method: GET
-    headers: >-
-      {{ {'Accept': 'application/json'} | combine({'Authorization': 'Bearer ' ~ lookup('ansible.builtin.env', _vp_aap_vars.token)}
-                                                  if _vp_aap_login == 'token' else {}) }}
-    url_username: "{{ lookup('ansible.builtin.env', _vp_aap_vars.user) if _vp_aap_login == 'password' else omit }}"
-    url_password: "{{ lookup('ansible.builtin.env', _vp_aap_vars.password) if _vp_aap_login == 'password' else omit }}"
-    force_basic_auth: "{{ _vp_aap_login == 'password' }}"
-    validate_certs: "{{ _vp_aap_verify }}"
-    ca_path: "{{ vm_deploy_poll_aap_ca_path | default(omit, true) }}"
-    timeout: 30
-    status_code: [200, 401, 403, 404]
-  vars:
-    _vp_aap_api: api/v2/
-  register: _vp_wf_find2
-  when: _vp_wf_find1.status | default(0) == 404
-  failed_when: false
-  check_mode: false
-  no_log: true
-
-- name: VMware | the workflow AAP found
-  ansible.builtin.set_fact:
-    _vp_wf: >-
-      {%- set rs = [_vp_wf_find1, _vp_wf_find2] | selectattr('status', 'defined') | list -%}
-      {%- set r = rs[-1] if rs else {} -%}
-      {%- set found = (r.json.results | default([])) if r.status | default(0) == 200 else [] -%}
-      {{ {'api': ('api/controller/v2/' if rs | length == 1 else 'api/v2/') if rs else '', 'status': r.status | default(0), 'id': found[0].id | default(0) if found else 0,
-          'error': '' if found else
-                   ('not checked: no AAP credential (a dry run does without it)' if not rs else
-                    ('AAP did not answer at ' ~ _vp_aap_host ~ ': ' ~ (r.msg | default('') | truncate(160)) ~ ' (the address, a firewall, or its certificate'
-                     ~ ' - vm_deploy_poll_aap_ca_path)') if r.status | default(-1) <= 0 else
-                    ('AAP refused the login (HTTP ' ~ r.status ~ "): the credential's user name and password, or its token, are wrong or expired")
-                    if r.status in [401, 403] else
-                    ('AAP has no API at ' ~ _vp_aap_host ~ "/api/controller/v2/ or /api/v2/ (HTTP 404): the credential's URL must be AAP's own address")
-                    if r.status == 404 else
-                    ('no workflow named "' ~ vm_deploy_poll_workflow ~ '" that the AAP user may see: check vm_deploy_poll_workflow, and give the user'
-                     ~ ' the Execute role on that workflow'))} }}
-
-- name: VMware | can the workflow take the ticket number? (its survey, or Prompt on launch for Variables)
-  ansible.builtin.uri:
-    url: "{{ _vp_aap_host }}/{{ _vp_wf.api }}workflow_job_templates/{{ _vp_wf.id }}/launch/"
-    method: GET
-    headers: >-
-      {{ {'Accept': 'application/json'} | combine({'Authorization': 'Bearer ' ~ lookup('ansible.builtin.env', _vp_aap_vars.token)}
-                                                  if _vp_aap_login == 'token' else {}) }}
-    url_username: "{{ lookup('ansible.builtin.env', _vp_aap_vars.user) if _vp_aap_login == 'password' else omit }}"
-    url_password: "{{ lookup('ansible.builtin.env', _vp_aap_vars.password) if _vp_aap_login == 'password' else omit }}"
-    force_basic_auth: "{{ _vp_aap_login == 'password' }}"
-    validate_certs: "{{ _vp_aap_verify }}"
-    ca_path: "{{ vm_deploy_poll_aap_ca_path | default(omit, true) }}"
-    timeout: 30
-    status_code: [200, 401, 403, 404]
-  register: _vp_wf_launch
-  when: _vp_wf.id | int > 0
-  failed_when: false
-  check_mode: false
-  no_log: true
-
-- name: VMware | the workflow can be started with a ticket number
-  ansible.builtin.set_fact:
-    _vp_wf: >-
-      {%- set l = _vp_wf_launch.json | default({}) if _vp_wf_launch.status | default(0) == 200 else {} -%}
-      {{ _vp_wf | combine({'error': _vp_wf.error or
-          ('AAP did not say whether the workflow may be started (HTTP ' ~ _vp_wf_launch.status | default('?')
-           ~ '): the AAP user needs the Execute role on "' ~ vm_deploy_poll_workflow ~ '"') if not l else
-          ('the workflow "' ~ vm_deploy_poll_workflow ~ '" takes no ticket number: give it the survey question vm_deploy_ticket (or tick'
-           ~ ' Prompt on launch next to its Variables)') if not l.survey_enabled | default(false) and not l.ask_variables_on_launch | default(false) else
-          ('the workflow also needs ' ~ (l.variables_needed_to_start | reject('equalto', 'vm_deploy_ticket') | join(', '))
-           ~ ' to start: its survey may only ask for vm_deploy_ticket')
-          if l.variables_needed_to_start | default([]) | reject('equalto', 'vm_deploy_ticket') | list | length > 0 else ''}) }}
-  when: _vp_wf.id | int > 0
+    _vp_workflow: "{{ vm_deploy_poll_workflow }}"
+    _vp_workflow_setting: vm_deploy_poll_workflow
 
 - name: VMware | AAP can start the workflow (nothing is picked up otherwise)
   ansible.builtin.assert:

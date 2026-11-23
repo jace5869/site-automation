@@ -849,10 +849,11 @@ vm_deploy_template_catalog: {}
 # built. false: one run reads, checks and builds, when every value is traced to the ticket and within
 # the rules (questions or a refusal still stop it).
 vm_deploy_genai_approval: true
-# Which step this run is: "" = one job does it all; propose = the workflow's first step (read, ask
-# GenAI if needed, check, write where it would go on the ticket - build nothing); build = the step
-# after the approval (build what the ticket and its proposal say - never ask GenAI).
+# Leave empty for a plain run. The approval workflow uses propose to check and build to apply the approved plan.
+# The no_touch phase builds a clean plan from an approved change in Implement.
 vm_deploy_phase: ""
+# Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket.
+vm_deploy_approval_workflow: "VM - deploy from ServiceNow ticket (workflow)"
 vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer
 # ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ----
 # Every run (an AAP schedule, e.g. every 15 minutes) asks ServiceNow for NEW VM requests - active,
