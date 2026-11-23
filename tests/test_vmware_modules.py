@@ -929,6 +929,7 @@ class LostVMs1124(unittest.TestCase):
                 vm("vm-6", "web01", "poweredOn", "disconnected", [ds2], host=h2),   # its host is disconnected
                 vm("vm-7", "web02", "poweredOn", "connected", [ds2], **ok),         # fine
                 vm("vm-8", "web03", "poweredOff", "connected", [ds2]),              # off, its files fine: not listed
+                vm("vm-10", "app03", "poweredOn", "connected", [ds2], host=h2, **ok),
                 vm("vm-9", "tpl01", "poweredOff", "inaccessible", [ds7], **{"config.template": True})])}
         saved = (getattr(wt, "vim", None), wt._props, wt._folder, wt._datacenter_of, wt._objs_props)
         try:
@@ -955,9 +956,17 @@ class LostVMs1124(unittest.TestCase):
         self.assertEqual(lost["test01"]["not_judged"], "vm_watch_skip_vms")
         self.assertEqual([v["name"] for v in r["vms_disconnected"]], ["web01"])
         self.assertEqual(r["vms_disconnected"][0]["esxi_host"], "esx02.example.mil")
-        self.assertEqual((r["vms_read"], r["vms_checked"], r["vms_skipped"]), (8, 1, 0))
+        self.assertEqual((r["vms_read"], r["vms_checked"], r["vms_skipped"]), (9, 1, 0))
         self.assertEqual(r["suspects"], [])
         self.assertEqual(dict((x["name"], x["devices"]) for x in r["datastores"]), {"ds-07": ["naa.600a07"], "ds-02": []})   # its devices
+
+    def test_down_host_lists_connected_vm(self):
+        r = self.read()
+        down = next(h for h in r["hosts"] if h["moid"] == "host-2")
+        self.assertEqual(sorted(v["name"] for v in down["vms"]), ["app03", "web01"])
+        self.assertFalse(any(v["name"] == "app03" for v in r["suspects"] + r["vms_lost"] + r["vms_disconnected"]))
+        vm = next(v for v in r["vms_lost"] if v["moid"] == "vm-3")
+        self.assertEqual((vm["host_moid"], vm["datastore_moids"]), ("host-1", ["ds-2", "ds-7"]))
 
 
 class OutageWatch(unittest.TestCase):

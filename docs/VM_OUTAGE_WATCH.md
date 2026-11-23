@@ -26,12 +26,12 @@ Every vCenter of the job (the credential's, and `vmware_vcenters`), or one datac
 
 | Condition | Severity |
 |---|---|
-| An ESXi host not responding or disconnected, and not in maintenance mode (its condition names the VMs on it) | critical |
+| An ESXi host not responding or disconnected, and not in maintenance mode (its row lists all VMs assigned to it by `runtime.host` as potentially affected, even with a green last heartbeat) | critical |
 | A host's vSphere HA agent isolated, partitioned from the primary, host down, or in error | critical |
 | A host's HA agent unreachable, or it failed to uninitialize | warning |
 | A datastore not accessible (and not in maintenance mode); its condition names the VMs vCenter shows as inaccessible on it | critical |
 | A VM vCenter shows as **inaccessible**, **invalid** or **orphaned** (its files cannot be reached, or its host lost it), whatever its power state. Listed under its datastore. Never remove it from the inventory: it comes back when its files can be reached (1.112.4) | critical (a VM of `vm_watch_skip_vms` / `vm_watch_skip_folders`: info, "not judged", still listed; a protected VM is marked "protected") |
-| All paths down, a permanent device loss, or a VMFS heartbeat timeout in the window, **not cleared** since. A device of a datastore that is not accessible: folded into that datastore's row ("Datastore ds-07 NOT ACCESSIBLE on 3 hosts ...", first, the report's headline; each host's line in its detail). The same device on 2 or more hosts: one row (1.112.4) | critical |
+| All paths down, a permanent device loss, or a VMFS heartbeat timeout in the window, **not cleared** since. A device of a datastore that is not accessible: folded into that datastore's row ("Datastore ds-07 NOT ACCESSIBLE on 3 hosts ...", first, the report's headline; each host's line in its detail). While the datastore is accessible, the same naa or eui lost on two or more hosts in the same vCenter gives one row. Each extent must qualify separately. Host-local mpx events stay per host (1.112.4) | critical |
 | The same, cleared since (the clear event came later, on the same host and device) | warning |
 | HA could not restart a VM, or found a host failed or isolated (events of the window) | critical |
 | HA restarted or reset a VM, or started a failover (events of the window) | warning |
@@ -129,8 +129,12 @@ Job artifacts, for the next step of a workflow:
    name and the object's, e.g. `[site-health] vc01.yoursite.mil: VM app01 is hung: ...`.
    `servicenow_min_severity: critical` keeps the one-signal warnings out of ServiceNow.
    Since 1.112.4 the incidents fold to their root: a datastore that is not accessible, or a host that is down, is one
-   incident that lists its inaccessible, hung and off VMs, and is noted as that list changes. A VM is its own incident
-   only when no lost datastore or down host explains it. A storage loss with 20 VMs is 1 incident, not 21.
+   incident that lists every VM it affects (by name and object ID), in full, in its description and repeat work
+   notes. A VM is matched to its datastore and host by vCenter and object ID. A datastore with path loss only (still
+   accessible) covers its VMs on the hosts that lost the paths. A VM nothing explains is its own incident
+   (`vm-watch:lost:<vcenter>:<moid>` for an inaccessible one). A storage loss with 20 VMs is 1 incident, not 21.
+   Open incidents keep their ids across the upgrade (`vm-watch:datastore:<name>` from path loss to not accessible;
+   `:<moid>` is added only when two datastores in one vCenter share a name).
 4. **The schedule.** Put it on the workflow, every 5 to 15 minutes, with **Concurrent jobs off** on the
    workflow so that a slow run never overlaps the next. Set `vm_watch_window_minutes` to the interval.
    Leave the daily health and alarms reports as they are.
