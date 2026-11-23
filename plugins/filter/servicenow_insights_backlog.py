@@ -37,6 +37,14 @@ AI_LABELS = ("Development-Assist", "Runtime-Integrated", "None")
 LIMITS = {"strategy": 240, "summary": 300, "problem": 300, "approach": 200, "need": 60, "ai_note": 160}
 NEEDS_MAX = 4
 OFF_TEXT = "not drafted (ACT off)"
+# 1.118.2: with ACT off the backlog says so once (the page's top, the .md's and the Word file's): no "not drafted" on every row
+OFF_LINE = ("ACT is off - servicenow_insights_act: true (and the ACT model key credential on the template) writes the strategy, "
+            "summary and each phase's approach")
+
+
+def act_off(c):
+    """A cluster without words because ACT is off (not one ACT left out: outside the top N, no usable answer - those say why)."""
+    return not (c or {}).get("text") and (c or {}).get("why_not", OFF_TEXT) == OFF_TEXT
 PROMPT_VERSION = "backlog-1"
 
 
@@ -513,16 +521,21 @@ def backlog_model(tickets, issues_of, since, until, state, opts=None, vip=None, 
 def proposal_md(c, bm):
     t = c.get("text") or {}
     miss = c.get("why_not") or OFF_TEXT
-    L = ["# %s" % c["label"], "", "Category: %s · AI: %s" % (c["cat"] or "none", t.get("ai_label") or "not drafted"), "",
+    off = act_off(c)
+    L = ["# %s" % c["label"], ""] + (["_%s._" % OFF_LINE, ""] if off else []) + [
+         "Category: %s%s" % (c["cat"] or "none", "" if off else " · AI: %s" % (t.get("ai_label") or "not drafted")), "",
          "| Tickets | Per month | Hours saved / yr | VIP | Score |", "|---:|---:|---:|---:|---:|",
-         "| %s | %.1f | %s | %s | %d |" % (_fmt(c["n"]), c["rate"], _fmt(c["saved"]), _fmt(c["vip"]) if bm.get("vip_on") else "n/a", c["score"]), "",
-         "## AI strategy", "", t.get("strategy") or miss, "", "## Executive summary", "", t.get("summary") or miss, "", "## Problem", "", t.get("problem") or miss, ""]
+         "| %s | %.1f | %s | %s | %d |" % (_fmt(c["n"]), c["rate"], _fmt(c["saved"]), _fmt(c["vip"]) if bm.get("vip_on") else "n/a", c["score"]), ""]
+    if not off:
+        L += ["## AI strategy", "", t.get("strategy") or miss, "", "## Executive summary", "", t.get("summary") or miss, "", "## Problem", "", t.get("problem") or miss, ""]
     for i, p in enumerate(c["ph"]):
         d = (t.get("phases") or [None, None, None])[i] or {}
         L += ["## Phase %d: %s%s" % (i + 1, p["name"], " (best)" if c["best"] == i + 1 else ""), "",
               "- Complexity %d/5 · impact %d/5 · effort %d day%s · deflection %d%% · score %d" % (
-                  p["complexity"], p["impact"], p["effort"], "" if p["effort"] == 1 else "s", p["defl"], p["score"]),
-              "- Approach: %s" % (d.get("approach") or miss), "- Needs: %s" % (", ".join(d.get("needs") or []) or miss), "- AI: %s" % (d.get("ai_note") or miss), ""]
+                  p["complexity"], p["impact"], p["effort"], "" if p["effort"] == 1 else "s", p["defl"], p["score"])]
+        if not off:
+            L += ["- Approach: %s" % (d.get("approach") or miss), "- Needs: %s" % (", ".join(d.get("needs") or []) or miss), "- AI: %s" % (d.get("ai_note") or miss)]
+        L.append("")
     return "\n".join(L)
 
 
@@ -543,24 +556,28 @@ def backlog_docx(model, opts=None, key="all"):
                "widths": [8, 44, 12, 14, 8, 8],
                "rows": [["P%d" % r["prio"], r["label"], "%.1f" % r["rate"], _fmt(r["saved"]), _fmt(r["vip"]) if bm.get("vip_on") else "n/a", str(r["score"])]
                         for r in rows]}]
+    if not bm.get("act_on"):
+        blocks.insert(2, {"type": "para", "text": OFF_LINE + "."})                 # 1.118.2: said once, not in each proposal
     for c in rows[:n]:
         t = c.get("text") or {}
         miss = c.get("why_not") or OFF_TEXT
+        off = act_off(c)
         blocks += [{"type": "heading", "text": c["label"]},
-                   {"type": "para", "text": "Category %s · AI %s · %s tickets, %.1f a month · %s hours saved a year · VIP %s · score %d (P%d)" % (
-                       c["cat"] or "none", t.get("ai_label") or "not drafted", _fmt(c["n"]), c["rate"], _fmt(c["saved"]),
-                       _fmt(c["vip"]) if bm.get("vip_on") else "n/a", c["score"], c["prio"])},
-                   {"type": "field", "label": "AI strategy", "text": t.get("strategy") or miss},
-                   {"type": "field", "label": "Executive summary", "text": t.get("summary") or miss},
-                   {"type": "field", "label": "Problem", "text": t.get("problem") or miss}]
+                   {"type": "para", "text": "Category %s%s · %s tickets, %.1f a month · %s hours saved a year · VIP %s · score %d (P%d)" % (
+                       c["cat"] or "none", "" if off else " · AI %s" % (t.get("ai_label") or "not drafted"), _fmt(c["n"]), c["rate"], _fmt(c["saved"]),
+                       _fmt(c["vip"]) if bm.get("vip_on") else "n/a", c["score"], c["prio"])}]
+        if not off:
+            blocks += [{"type": "field", "label": "AI strategy", "text": t.get("strategy") or miss},
+                       {"type": "field", "label": "Executive summary", "text": t.get("summary") or miss},
+                       {"type": "field", "label": "Problem", "text": t.get("problem") or miss}]
         for i, p in enumerate(c["ph"]):
             d = (t.get("phases") or [None, None, None])[i] or {}
             blocks.append({"type": "labelled", "items": [
                 {"label": "Phase %d: %s%s" % (i + 1, p["name"], " (best)" if c["best"] == i + 1 else ""),
                  "text": "complexity %d/5, impact %d/5, effort %d day%s, deflection %d%%, score %d" % (
-                     p["complexity"], p["impact"], p["effort"], "" if p["effort"] == 1 else "s", p["defl"], p["score"])},
+                     p["complexity"], p["impact"], p["effort"], "" if p["effort"] == 1 else "s", p["defl"], p["score"])}] + ([] if off else [
                 {"label": "Approach", "text": d.get("approach") or miss}, {"label": "Needs", "text": ", ".join(d.get("needs") or []) or miss},
-                {"label": "AI", "text": d.get("ai_note") or miss}]})
+                {"label": "AI", "text": d.get("ai_note") or miss}])})
     return {"banner": str(o.get("banner") or ""), "banner_color": str(o.get("banner_color") or ""), "logo": str(o.get("logo") or ""),
             "logo_height": int(o.get("logo_height") or 64), "blocks": blocks}
 
@@ -583,7 +600,7 @@ def backlog_sheet(bm):
         for i, p in enumerate(r["ph"]):
             d = (t.get("phases") or [None, None, None])[i] or {}
             line += [p["complexity"], p["impact"], p["effort"], p["defl"], p["score"], d.get("approach") or "", ", ".join(d.get("needs") or []), d.get("ai_note") or ""]
-        line += [t.get("strategy") or r.get("why_not") or "", t.get("summary") or "", t.get("problem") or ""]
+        line += [t.get("strategy") or ("" if act_off(r) else r.get("why_not") or ""), t.get("summary") or "", t.get("problem") or ""]
         rows.append(line)
     cols = ["Priority", "Issue", "Category", "AI", "Tickets", "Per month", "Share %", "Hours saved / yr", "VIP", "Score", "Best phase", "Handoffs"]
     for i in (1, 2, 3):

@@ -8,6 +8,7 @@ the P filter, sorting, paging, the row that opens, the priority kept in the brow
 under script-src 'self' (no inline script). Needs ansible-core importable.
     python3 tests/test_insights_backlog.py"""
 import datetime
+import html
 import json
 import os
 import re
@@ -647,6 +648,59 @@ class Cache(unittest.TestCase):
         self.assertNotRegex(row["text"], r"XINC|sys_id")
 
 
+class ActOffOnce1182(unittest.TestCase):
+    """1.118.2: with ACT off (the default) the backlog says so ONCE - the page's top, the .md's and the Word file's - with no
+    empty strategy, summary, problem or phase words on each cluster; the code's figures stay. With ACT on, a cluster ACT
+    left out still says why."""
+    OFF = "ACT is off - servicenow_insights_act: true (and the ACT model key credential on the template) writes the strategy, summary and each phase's approach"
+
+    def setUp(self):
+        t, i = made()
+        self.off = B.backlog_model(t, i, SINCE, UNTIL, F.servicenow_insights_state(), dict(OPTS, act=False), VIP)
+        st = B.backlog_merge(F.servicenow_insights_state(), answer([draft()]), batch_of(), OPTS, True, "", "m")
+        st["asked"] = 1
+        self.on = B.backlog_model(t, i, SINCE, UNTIL, st, dict(OPTS, backlog_issues=1), VIP)
+
+    def test_1_the_page(self):
+        h = html.unescape(re.sub(r'<script type="application/json".*?</script>', "", P.backlog_section(self.off, {}), flags=re.S))   # what shows
+        self.assertEqual(h.count("ACT is off - <code>servicenow_insights_act: true</code> (and the ACT model key credential on the template)"), 1)
+        self.assertLess(h.index("ACT is off"), h.index('class="bk"'))                                  # at the top of the backlog
+        for gone in ("not drafted", "AI strategy", "Executive summary", "<h4>Problem</h4>", "<b>Approach</b>", "<b>Needs</b>", "<b>AI</b>"):
+            self.assertNotIn(gone, h)
+        for kept in ("<dt>Complexity</dt>", "<dt>Impact</dt>", "<dt>Effort</dt>", "<dt>Deflection</dt>", "Figures filled in by code · examples:", 'class="sc"'):
+            self.assertIn(kept, h)
+        on = html.unescape(P.backlog_section(self.on, {}))
+        self.assertNotIn("ACT is off", on)
+        self.assertIn("AI strategy", on)                                                                # the drafted one
+        self.assertIn("not drafted (outside the top 1)", on)                                            # the other says why
+
+    def test_2_the_proposal_md(self):
+        md = B.proposal_md(self.off["rows"][0], self.off)
+        self.assertEqual(md.count(self.OFF), 1)
+        for gone in ("not drafted", "## AI strategy", "## Executive summary", "## Problem", "- Approach:", "- Needs:", "- AI:", "· AI:"):
+            self.assertNotIn(gone, md)
+        self.assertIn("## Phase 1: Self-service and KB", md)
+        self.assertRegex(md, r"- Complexity \d/5 · impact \d/5 · effort \d+ days? · deflection \d+% · score \d+")
+        self.assertIn("not drafted (outside the top 1)", B.proposal_md(self.on["rows"][1], self.on))
+        self.assertNotIn("ACT is off", B.proposal_md(self.on["rows"][1], self.on))
+
+    def test_3_the_word_file_and_the_sheet(self):
+        doc = B.backlog_docx({"scopes": {"all": {"autobl": self.off}}}, OPTS)
+        texts = [b.get("text", "") for b in doc["blocks"]] + [i.get("label", "") + " " + i.get("text", "") for b in doc["blocks"] for i in b.get("items") or []]
+        self.assertEqual(sum(t.count("ACT is off") for t in texts), 1)
+        self.assertFalse([b for b in doc["blocks"] if b.get("type") == "field"])                       # no empty strategy / summary / problem
+        self.assertFalse([t for t in texts if t.startswith(("Approach ", "Needs ", "AI "))])
+        self.assertFalse([t for t in texts if "not drafted" in t])
+        self.assertTrue([t for t in texts if "complexity" in t and "deflection" in t])                  # the figures stay
+        on = B.backlog_docx({"scopes": {"all": {"autobl": self.on}}}, dict(OPTS, backlog_issues=2))
+        self.assertFalse([b for b in on["blocks"] if "ACT is off" in b.get("text", "")])
+        self.assertIn("not drafted (outside the top 1)", json.dumps(on))
+        none = B.backlog_docx({"scopes": {"all": {"autobl": self.off}}}, dict(OPTS, backlog_issues=0))       # the table only: still said (review)
+        self.assertEqual(sum(b.get("text", "").count("ACT is off") for b in none["blocks"]), 1)
+        sheet = json.dumps(B.backlog_sheet(self.off))
+        self.assertNotIn("not drafted", sheet)
+
+
 class Outputs(unittest.TestCase):
     def setUp(self):
         t, i = made()
@@ -731,7 +785,8 @@ class PageHtml(unittest.TestCase):
         for w in ("Priority", "Issue", "Tickets / month", "Hours saved / yr", "VIP", "Score"):
             self.assertIn(">%s</span>" % w, h)
         self.assertIn("Download proposal (.md)", h)
-        self.assertIn("not drafted (ACT off)", h)
+        self.assertNotIn("not drafted (ACT off)", h)                                            # 1.118.2: ACT off said once (ActOffOnce1182)
+        self.assertEqual(h.count("ACT is off - <code>servicenow_insights_act: true</code>"), 1)
 
     def test_every_number_has_its_formula(self):
         a = self.m["scopes"]["all"]["autobl"]["rows"][0]

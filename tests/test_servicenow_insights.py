@@ -2844,7 +2844,10 @@ class History(unittest.TestCase):
         h = P.servicenow_insights_page(self.m, "all", {"links": page_links(self.m)})
         self.assertEqual(h.count("ACT is off: the issues are grouped by category, the fixes come from the close notes."), 1)
         self.assertIn("<code>servicenow_insights_act: true</code>", h)
-        on = dict(self.m, act=dict(self.m["act"], on=True, ran=True))
+        on = json.loads(json.dumps(dict(self.m, act=dict(self.m["act"], on=True, ran=True))))
+        on["scopes"]["all"]["autobl"]["act_on"] = True                     # 1.118.2: the backlog's own ACT-off line goes with it (as
+        for r in on["scopes"]["all"]["autobl"]["rows"]:                     # backlog_model makes it with ACT on: a reason per cluster)
+            r["why_not"] = "not drafted (ACT gave no usable answer)"
         self.assertNotIn("ACT is off", P.servicenow_insights_page(on, "all", {"links": page_links(self.m)}))
 
     def test_the_tasks(self):

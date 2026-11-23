@@ -1964,7 +1964,10 @@ def backlog_section(bm, o=None, url="", pre=None):
                 '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="bks" placeholder="Search clusters" aria-label="Search clusters"></label>'
                 '<span class="bkn mut" role="status"></span><span class="bkpg js"><button type="button" class="btn bkprev">‹ Previous</button>'
                 '<button type="button" class="btn bknext">Next ›</button></span></div></div>') % (quads, qsel, presets, filt)
-    out = [matrix + controls + '<div class="bkw"><table class="bk" id="bktable"><thead><tr>%s</thead>' % (th + "</tr>")]
+    # 1.118.2: ACT off - said once, here, not on every row
+    off_line = ('<p class="mut sm bkoff">ACT is off - <code>servicenow_insights_act: true</code> (and the ACT model key credential on the template) '
+                'writes the strategy, summary and each phase&#39;s approach.</p>') if not bm.get("act_on") else ""
+    out = [off_line + matrix + controls + '<div class="bkw"><table class="bk" id="bktable"><thead><tr>%s</thead>' % (th + "</tr>")]
     data = {}
     files = []                          # what this report really carries: the Word file only when it was made, the sheet only with the workbook
     if (o or {}).get("backlog_docx"):
@@ -1982,21 +1985,23 @@ def backlog_section(bm, o=None, url="", pre=None):
         pbtn = "".join('<button type="button" class="pb%s" data-p="%d" aria-pressed="%s" title="%s">P%d</button>' % (
             " on" if k == sug else "", k, "true" if k == sug else "false",
             ("Suggested from the score %d" % r["score"]) if k == sug else "Set P%d for this browser" % k, k) for k in (1, 2, 3))
+        off = B.act_off(r)                  # 1.118.2: ACT off - no empty words on the row (said once, at the backlog's top)
         phases = []
         for i, p in enumerate(r["ph"]):
             d = cx[i] or {}
+            words = "" if off else ('<div class="phl"><b>Approach</b> %s</div><div class="phl"><b>Needs</b> %s</div><div class="phl"><b>AI</b> %s</div>' % (
+                e(d.get("approach") or miss), e(", ".join(d.get("needs") or []) or miss), e(d.get("ai_note") or miss)))
             phases.append(
                 '<div class="phc%s"><div class="phh"><b>Phase %d · %s</b>%s<span class="phs"><span class="lab">score</span> %d%s</span></div>'
                 '<dl class="phk"><dt>Complexity</dt><dd>%d/5</dd><dt>Impact</dt><dd>%d/5</dd><dt>Effort</dt><dd>%d day%s</dd><dt>Deflection</dt><dd>%d%%</dd></dl>'
-                '<div class="phl"><b>Approach</b> %s</div><div class="phl"><b>Needs</b> %s</div><div class="phl"><b>AI</b> %s</div></div>' % (
+                '%s</div>' % (
                     " isbest" if r["best"] == i + 1 else "", i + 1, e(p["name"]), ' <span class="chip kb">best</span>' if r["best"] == i + 1 else "",
-                    p["score"], _bq(B.tip_phase(p, r)), p["complexity"], p["impact"], p["effort"], "" if p["effort"] == 1 else "s", p["defl"],
-                    e(d.get("approach") or miss), e(", ".join(d.get("needs") or []) or miss), e(d.get("ai_note") or miss)))
+                    p["score"], _bq(B.tip_phase(p, r)), p["complexity"], p["impact"], p["effort"], "" if p["effort"] == 1 else "s", p["defl"], words))
         ai_badge = ('<span class="aibadge %s">%s</span>' % ("ai2" if ai == B.AI_LABELS[1] else "ai1" if ai == B.AI_LABELS[0] else "", e(ai))) if ai else ""
-        left = ('<div class="aib"><div class="aih"><span class="src ai">ACT</span> <b>AI strategy</b> %s</div><p>%s</p></div>'
-                '<h4>Executive summary</h4><p class="lim">%s</p><h4>Problem</h4><p class="lim">%s</p>'
+        left = ('' if off else '<div class="aib"><div class="aih"><span class="src ai">ACT</span> <b>AI strategy</b> %s</div><p>%s</p></div>'
+                '<h4>Executive summary</h4><p class="lim">%s</p><h4>Problem</h4><p class="lim">%s</p>' % (
+                    ai_badge, e((t or {}).get("strategy") or miss), e((t or {}).get("summary") or miss), e((t or {}).get("problem") or miss))) + (
                 '<div class="from">%s · examples: %s</div>' % (
-                    ai_badge, e((t or {}).get("strategy") or miss), e((t or {}).get("summary") or miss), e((t or {}).get("problem") or miss),
                     "Text by ACT%s · figures filled in by code" % (" (kept from an earlier run)" if (t or {}).get("cached") else "") if t else
                     "Figures filled in by code", ex))
         out.append(
@@ -2024,8 +2029,8 @@ def backlog_section(bm, o=None, url="", pre=None):
         out.append('<p class="mut sm bklo">%s cluster%s with fewer than %d tickets in the window (%s ticket%s in all) %s left out: <code>servicenow_insights_backlog_min_tickets</code> sets the limit.</p>' % (
             n(bm["left_out"]), "" if bm["left_out"] == 1 else "s", bm["min_n"], n(bm["left_out_tickets"]), "" if bm["left_out_tickets"] == 1 else "s", "is" if bm["left_out"] == 1 else "are"))
     if not bm.get("act_on"):
-        out.append('<div class="fair">ACT wrote no words: the numbers and the phases come from the formulas; the words read "%s". To have it write them, set '
-                   '<code>servicenow_insights_act: true</code> on a launch.</div>' % e(B.OFF_TEXT))
+        out.append('<div class="fair">The numbers and the phases come from the formulas, worked out by code from the tickets - hover a ? or a cell '
+                   'for its formula. The deflection of each phase is an estimate from the close notes.</div>')
     else:
         out.append('<div class="fair">ACT wrote the words for %d of the top %d clusters (<code>servicenow_insights_backlog_issues</code>); the figures are worked out by code '
                    'from the tickets - hover a ? or a cell for its formula. The deflection of each phase is an estimate from the close notes.</div>' % (

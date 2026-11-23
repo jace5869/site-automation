@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.118.2 — 2026-11-23
+
+**To set up:** nothing.
+
+- **Ticket insights, Automation backlog: ACT off is said once.** With ACT off (the default), each cluster said *not drafted
+  (ACT off)* for its AI strategy, executive summary, problem and each phase's approach, needs and AI - about 12 times on a
+  screen. Now one muted line at the top of the backlog says *ACT is off - servicenow_insights_act: true (and the ACT model
+  key credential on the template) writes the strategy, summary and each phase's approach*, and those empty parts are left
+  out. The figures worked out by code stay: complexity, impact, effort, deflection, score, the examples.
+- The same in the Word file (one line under its intro), each proposal's .md (one line at its top) and the workbook's
+  Automation backlog sheet (no "not drafted" in every row).
+- With ACT on, a cluster ACT did not draft still says why (*outside the top N*, *no usable answer*).
+- Tests: tests/test_insights_backlog.py ActOffOnce1182 (the page, the .md, the Word file and the sheet; ACT on keeps the reason).
+
 ## 1.118.1 — 2026-11-23
 
 **To set up:** nothing.

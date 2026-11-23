@@ -591,8 +591,10 @@ Hover a cell for its figures; click it to show its clusters in the table (*Clear
 `servicenow_insights_backlog_issues` (15) by score: a strategy, an AI label (Development-Assist, Runtime-Integrated or None), a
 two-sentence summary and problem, and for each phase an approach, what it needs and an AI note. Each field is cut (summary 300
 characters, strategy 240, and so on); an answer that is not JSON, or lacks a field, is dropped and the card reads *not
-drafted (ACT gave no usable answer)*. A cluster beyond the top N reads *not drafted (outside the top N)*; with ACT off, *not
-drafted (ACT off)* - the numbers and the phase cards are there either way.
+drafted (ACT gave no usable answer)*. A cluster beyond the top N reads *not drafted (outside the top N)*. With ACT off (1.118.2) the backlog says so
+once, at its top (and at the top of the Word file and of each .md): *ACT is off - servicenow_insights_act: true (and the ACT
+model key credential on the template) writes the strategy, summary and each phase's approach*; the clusters show no empty
+strategy, summary, problem or phase words. The numbers and the phase cards are there either way.
 
 **What reaches ACT and what is kept.** The question has the cluster's masked close notes and short descriptions and the figures, with
 any ticket number in a note replaced by `[ticket]`. ACT's answer goes through the same masking before it is shown or kept: a person,
