@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.112.2 — 2026-11-23
+
+**To set up:** make the job template **AAP - site setup** once by hand (Red Hat Ansible Automation Platform credential,
+Job type Prompt on launch), or let **AAP - set up job templates** make it. Paste `aap/extra_vars/aap_site_setup.yml` into
+its Variables and fill in the lines at the top; delete the credential lines you have none for (a name AAP does not have
+stops the job before it writes, and Check names it). Check, then Run.
+
+- **AAP - site setup: one job, one paste of Variables.** `playbooks/aap_site_setup.yml` runs, in this order,
+  *AAP - set up job templates* (the templates and workflows, your credentials attached by kind) and *AAP - incident
+  document surveys* (the AAR and SOP questions, `incident_docs_draft_credential` attached, its user's Read role on
+  *VM - outage watch*). The same Variables apply to both; Check = both only read. Nothing else changes in behavior.
+  Its Variables file starts with the lines to fill in: `aap_templates_credentials` (every kind, placeholders),
+  `aap_templates_match: [credentials]`, `incident_docs_draft_credential`, `aap_templates_organization`,
+  `aap_templates_project`, `aap_templates_inventory`. docs/SETUP_AAP.md, "One job for the setup (1.112.2)".
+- Tests: tests/test_aap_site_setup.py (the two imports in order, the catalog entry, Check against the stand-in AAP).
+
 ## 1.112.1 — 2026-11-23
 
 **To set up:** run **AAP - incident document surveys** again (with `incident_docs_draft_credential` set). Nothing by hand.

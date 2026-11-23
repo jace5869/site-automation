@@ -169,6 +169,7 @@ jobs:
           python tests/test_portal_workflows.py
           python tests/test_solarwinds_snapshot.py
           python tests/test_incident_docs.py
+          python tests/test_aap_site_setup.py
           python tests/test_evaluate_stig_update.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_evaluate_stig_update.py
           python tests/test_limit_localhost.py

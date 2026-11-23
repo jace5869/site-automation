@@ -755,6 +755,25 @@ the catalog does not name (a Teams webhook you added stays). A template takes on
 one of a type it already has (your Windows Machine credential beside the Linux one) is left off, and said. A new
 template gets its Variables file with every setting switched off - switch on what you need.
 
+### One job for the setup (1.112.2)
+
+One template - `AAP - site setup` (`playbooks/aap_site_setup.yml`), with only the **Red Hat Ansible Automation
+Platform** credential (its user: **Admin** on the organization), any inventory, no Limit, Job type **Prompt on
+launch**. You paste your settings into its Variables once; it runs **AAP - set up job templates** and then
+**AAP - incident document surveys** ([INCIDENT_DOCS.md](INCIDENT_DOCS.md#set-it-up)) with those same Variables.
+Nothing else is changed.
+
+1. Make this one template by hand, or let **AAP - set up job templates** make it (it is in the catalog).
+2. Copy `aap/extra_vars/aap_site_setup.yml` into its Variables box. Fill in the lines at the top: your credential of
+   each kind (`aap_templates_credentials`; delete the kinds you do not have), `aap_templates_match: [credentials]`,
+   `incident_docs_draft_credential`, `aap_templates_organization`, `aap_templates_project`, `aap_templates_inventory`.
+   Every credential line you keep must name a credential AAP has: a name not found stops the job before it writes,
+   and Check names each one. Delete the kinds you do not have, and `incident_docs_draft_credential` when you have no
+   SOP draft credential. Any other setting of the two jobs can go in the same box.
+3. Launch it with Job type **Check**: both parts only read and list what they would do. On the first Check the AAR
+   and SOP templates are not made yet: part 2 says *no job template runs ...* - that is expected.
+4. Launch it with Job type **Run**. Then Check again: part 2 now lists the questions it would add, or none.
+
 ### Describe the templates
 
 Every job template and workflow of the project can carry a short description in AAP (1.79.11): what it does, what it

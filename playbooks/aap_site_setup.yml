@@ -1,0 +1,14 @@
+---
+# AAP - SITE SETUP (1.112.2). One job, one paste of Variables: runs, in this order, AAP - set up job templates
+# (playbooks/aap_templates_setup.yml: the catalog's templates and workflows, your credentials attached by kind) and then
+# AAP - incident document surveys (playbooks/incident_docs_survey.yml: the AAR and SOP questions, the draft credential
+# attached, its user's Read role on VM - outage watch). The same Variables apply to both; nothing else is changed.
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: Admin on the organization);
+# no Limit. Run it with Check first: both parts then only read, and say what they would do. On a first Check the AAR
+# and SOP templates are not made yet: part 2 says so - Run, then Check again. docs/SETUP_AAP.md, "One job for the setup".
+#   ansible-playbook playbooks/aap_site_setup.yml --check -e @aap/extra_vars/aap_site_setup.yml
+- name: AAP - set up job templates
+  ansible.builtin.import_playbook: aap_templates_setup.yml
+
+- name: AAP - incident document surveys
+  ansible.builtin.import_playbook: incident_docs_survey.yml

@@ -147,6 +147,46 @@ aap_templates_credentials:
 ## The site portal's labels, so it finds the templates: portal-actions or all
 # aap_templates_label_portal: portal-actions
 """),
+    "aap_site_setup.yml": ("AAP - site setup", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
+## 1.112.2: one paste for the setup - runs AAP - set up job templates, then AAP - incident document surveys, with these
+## same Variables. Run it with Check first: both then only read. Fill in these lines; every other setting of the two:
+## aap/extra_vars/aap_templates_setup.yml and aap/extra_vars/incident_docs_survey.yml (add the line here).
+## Your credential of each kind (its name in AAP). Delete the kinds you do not have (a template needing one is skipped):
+## a name AAP does not have stops the job before any write, and Check names each one
+aap_templates_credentials:
+  machine: "<your Linux Machine credential>"
+  machine_windows: "<your Windows Machine credential>"
+  aap: "<your Red Hat Ansible Automation Platform credential>"
+  report_db: "<your Report database credential>"
+  report_db_reader: "<your Report database (reader) credential>"
+  solarwinds: "<your SolarWinds (read-only) credential>"
+  act_model_key: "<your ACT model key credential>"
+  servicenow: "<your ServiceNow API credential>"
+  vmware: "<your VMware vCenter credential>"
+  horizon: "<your Horizon API credential>"
+  stigman_api: "<your STIG Manager API credential>"
+  stigman_api_writer: "<your STIG Manager API (writer) credential>"
+  stigman_db: "<your STIG Manager database credential>"
+  windows_share: "<your Windows file share credential>"
+  ontap: "<your NetApp ONTAP credential>"
+  tenable: "<your Tenable.sc API credential>"
+  ucs: "<your Cisco UCS Manager credential>"
+  panos: "<your Palo Alto PAN-OS API credential>"
+  net_git: "<your Network config git repository credential>"
+  mariadb: "<your MariaDB monitor credential>"
+  sqlserver: "<your SQL Server (certificate inventory) credential>"
+  tls_certificate: "<your TLS certificate credential>"
+  keystore: "<your Keystore password credential>"
+  teams: "<your Teams webhook credential>"
+## Your templates already there get the missing credential kinds added (none taken off)
+aap_templates_match: [credentials]
+## The AAP credential the AAR job writes the SOP draft with (attached to the AAR and SOP templates); none: delete the line
+incident_docs_draft_credential: "<your Red Hat Ansible Automation Platform credential for the SOP draft>"
+## Your organization, site-automation project and the inventory new templates get (their names in AAP)
+aap_templates_organization: "<your organization>"
+aap_templates_project: "<your site-automation project>"
+aap_templates_inventory: "<your inventory>"
+"""),
     "aap_credentials_setup.yml": ("AAP - set up credentials", "Red Hat Ansible Automation Platform (Admin on the organization)", "", """\
 ## Run it with Check first: it then only reads, and lists what it would rename, attach or take off. It never deletes a
 ## credential and never reads a secret. A name that matches nothing or more than one, or a clash, changes nothing at all.

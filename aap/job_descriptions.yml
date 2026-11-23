@@ -810,6 +810,11 @@ templates:
     targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."
     produces: "The portal's templates and workflows in AAP; the job output says field by field what was made, changed or left as it is."
     supports: "Run constraint=Reads only (no hosts); writes AAP templates, workflows (nodes rebuilt), roles, schedules, labels; deletes no template or workflow"
+  "AAP - site setup":
+    does: "One paste of Variables: runs AAP - set up job templates, then AAP - incident document surveys, with the same Variables."
+    targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."
+    produces: "The catalog's templates and workflows, then the AAR and SOP surveys; the job output lists each change, as the two jobs do."
+    supports: "Run constraint=Reads only (no hosts); writes AAP templates and their credentials, workflows, roles, surveys (absent: removed); deletes no template"
   "AAP - set up job templates":
     does: "Makes the catalog's job templates in AAP or checks them; can rename yours to the catalog's names and match their fields."
     targets: "AAP via its API (AAP credential, Admin on the organization); the AAP side only, no Limit."
