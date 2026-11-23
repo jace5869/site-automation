@@ -1,0 +1,73 @@
+---
+- name: VMware | the plan for the person approving the change
+  ansible.builtin.set_fact:
+    _vd_plan: >-
+      {{ _vd_check | vm_deploy_plan(_vd_questions | default(_vd_parsed.question_fields | default({})), _vd_results | default([]),
+                                    _vd_plan_ticket, _vd_digest, _vd_read_at, _vd_job, _vd_owner, _vd_state,
+                                    _vd_not_ready, _vd_comment | default(''), report=true) }}
+
+- name: VMware | the phase of the checked plan
+  ansible.builtin.set_fact:
+    _vd_plan: "{{ _vd_plan | combine({'phase': _vd_phase}) }}"
+
+- name: VMware | record why no touch stopped
+  ansible.builtin.include_tasks: deploy_no_touch_outcome.yml
+  vars:
+    _vd_outcome: stopped
+    _vd_why: "{{ (_vd_plan | vm_deploy_no_touch(_vd_results | default([]) | map(attribute='issues', default=[]) | flatten)).why }}"
+  when: _vd_plan.phase == 'no_touch' and _vd_plan.state != 'ready'
+
+- name: VMware | the plan in the report and approval summary
+  ansible.builtin.set_fact:
+    _vd_plan_lines: >-
+      {%- set lines = [] -%}
+      {%- for vm in _vd_plan.vms -%}
+      {%-   set _ = lines.extend(_vd_plan | vm_deploy_plan_note_lines(vm.name)) -%}
+      {%- endfor -%}
+      {{ lines + (_vd_plan.stops | map('regex_replace', '^', 'STOP: ') | list) }}
+    _vd_summary_items: >-
+      {%- set items = [] -%}
+      {%- for vm in _vd_plan.vms -%}
+      {%-   set v = dict(vm.rows | map(attribute='key') | zip(vm.rows | map(attribute='value'))) -%}
+      {%-   if _vd_plan.state == 'ready' -%}
+      {%-     set _ = items.append({'host': vm.name, 'level': 'info', 'what': 'build ' ~ vm.name ~ ': ' ~ v.template ~ ', '
+                 ~ v.cpu ~ ' vCPU, ' ~ v.memory_gb ~ ' GB, disks ' ~ v.disks_gb ~ ' GB, cluster ' ~ v.cluster ~ ', datastore ' ~ v.datastore}) -%}
+      {%-   endif -%}
+      {%-   for row in vm.rows if row.level == 'warning' -%}
+      {%-     set _ = items.append({'host': vm.name, 'level': 'warning', 'what': row.value ~ ': ' ~ row.why}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ items }}
+
+- name: VMware | publish the deploy plan and the approval summary
+  ansible.builtin.set_stats:
+    per_host: false
+    aggregate: false
+    data:
+      # phase: the portal tells a plan stopped before the approval from a build that refused the approved one
+      vm_deploy_plan: "{{ _vd_plan | vm_deploy_plan_artifact }}"
+      site_approval_summary: >-
+        {{ _vd_summary_items | site_approval_summary('VM deploy ' ~ _vd_number ~ ': ' ~ _vd_plan.counts.vms
+                                                     ~ (' VM' if _vd_plan.counts.vms == 1 else ' VMs')) }}
+
+# the build step after the approval takes its placement from this run's check notes only (vm_deploy_checked_job)
+- name: VMware | publish which run checked the plan
+  ansible.builtin.set_stats:
+    per_host: false
+    aggregate: false
+    data:
+      vm_deploy_checked_job: "{{ awx_job_id | default('') | string }}"
+  when: _vd_plan_only | default(false) | bool and _vd_plan.state == 'ready'
+
+- name: VMware | publish the placement shortlist
+  ansible.builtin.set_stats:
+    per_host: false
+    aggregate: false
+    data:
+      vm_deploy_shortlist: >-
+        {%- set vms = {} -%}
+        {%- for r in _vd_results | default([]) if r.vm.shortlist is defined -%}
+        {%-   set _ = vms.update({r.vm.name: r.vm.shortlist}) -%}
+        {%- endfor -%}
+        {{ {'version': 1, 'ticket': _vd_number, 'digest': _vd_digest, 'job': awx_job_id | default('') | string, 'vms': vms} }}
+  when: _vd_phase == 'propose'

@@ -62,6 +62,7 @@ portal_reports_mount: ro,z
 portal_requesters: []                               # who may run the actions (an action's own who overrides); [] = any person with a verified card
 portal_approvers: []                                # who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works)
 portal_launches_per_hour: 20                        # one person's launches in an hour, at most
+portal_vm_deploy_placement_template: "VM - deploy placement change"  # AAP job that checks and records a placement before approval
 portal_allow_self_approval: false                   # true = an approver may approve or deny a run they started themselves
 # 1.120.0: approvers and requesters from AD groups too (each person still needs a verified card). A group's name (its cn or
 # sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind

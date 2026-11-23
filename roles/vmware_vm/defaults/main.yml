@@ -647,6 +647,12 @@ vm_capacity_act_check_url: true          # first check that the AAP node can rea
 #   vm_name: app01   template: rhel9-gold   cpu: 4   memory_gb: 16   (cluster, datastore, folder,
 #   datacenter, vcenter, domain, customization_spec, notes: optional). docs/VM_DEPLOY_GUIDE.md
 vm_deploy_ticket: ""
+# The propose job whose Checked notes authorize the placement.
+vm_deploy_checked_job: ""
+# One VM per placement save.
+vm_deploy_placement: []
+# The portal approver requesting the change. Single-line text of at most 120 characters.
+vm_deploy_placement_by: ""
 vm_deploy_ticket_table: ""               # leave it empty (the job finds each ticket's table); a table of your own, e.g. u_vm_request: for numbers whose prefix the job does not know (CTASK stays change_task)
 # Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}.
 # Rarely needed: for a prefix it does not know, the job asks ServiceNow's task table (and takes INCN
@@ -691,6 +697,10 @@ vm_deploy_close_tasks: false
 # labels, e.g. {change_request: {approval: Approved, state: [Implement, Scheduled]}}; {} = no check.
 vm_deploy_ready_by_table:
   change_request: {approval: Approved, state: Implement}
+# The change field to read as the VM owner. Empty leaves the owner out of the plan and notes.
+vm_deploy_owner_field: ""
+# The display label for that field in the plan, requester questions and VM notes.
+vm_deploy_owner_label: Owner
 # What a ticket may ask for (names; * and ? allowed). Templates MUST be listed: nothing else is
 # deployed. The others: [] = any.
 vm_deploy_templates: []                  # e.g. [rhel9-gold, win2022-gold]
@@ -874,10 +884,11 @@ vm_deploy_template_catalog: {}
 # built. false: one run reads, checks and builds, when every value is traced to the ticket and within
 # the rules (questions or a refusal still stop it).
 vm_deploy_genai_approval: true
-# Which step this run is: "" = one job does it all; propose = the workflow's first step (read, ask
-# GenAI if needed, check, write where it would go on the ticket - build nothing); build = the step
-# after the approval (build what the ticket and its proposal say - never ask GenAI).
+# Leave empty for a plain run. The approval workflow uses propose to check and build to apply the approved plan.
+# The no_touch phase builds a clean plan from an approved change in Implement.
 vm_deploy_phase: ""
+# Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket and vm_deploy_handoff_from.
+vm_deploy_approval_workflow: "VM - deploy from ServiceNow ticket (workflow)"
 vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer
 # ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ----
 # Every run (an AAP schedule, e.g. every 15 minutes) asks ServiceNow for NEW VM requests - active,

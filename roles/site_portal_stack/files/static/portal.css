@@ -554,3 +554,73 @@ html.toasting main{padding-right:calc(340px + 40px)}
 .toasts.ti{position:static;width:auto;display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;margin:0 0 14px}
 .toasts.ti .toast{flex:0 1 340px}
 html.moves main{transition:padding-right .3s cubic-bezier(.3,.7,.2,1)}
+
+/* VM deploy plan on Jobs and Approvals */
+.deploy-card{grid-template-columns:minmax(0,1fr);gap:14px;overflow-wrap:anywhere}
+.banner2:has(+ .deploy-card){overflow-wrap:anywhere}
+.deploy-card.stopped{border-color:var(--critical-bd);border-left-color:var(--critical)}
+.deploy-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13.5px}
+.deploy-meta .mono{color:var(--muted)}
+.deploy-legend{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.deploy-tiles{grid-template-columns:repeat(3,minmax(0,1fr));margin:0}
+.deploy-tiles .tile{border:0;border-left:1px solid var(--line)}
+.deploy-tiles .tile:nth-child(3n+1){border-left:0}
+.deploy-tiles .tile:nth-child(n+4){border-top:1px solid var(--line)}
+.deploy-fields{table-layout:fixed}
+.deploy-fields th:first-child{width:20%}
+.deploy-fields thead th:last-child{width:26%}
+.deploy-fields :is(td,th){vertical-align:top;overflow-wrap:anywhere}
+.deploy-fields .chip,.deploy-list .chip{max-width:100%;white-space:normal}
+.deploy-card .chip .ic,.deploy-list .chip .ic{flex:none}
+.as-read{display:flex;align-items:center;gap:3px;font:500 11.5px var(--sans);text-transform:none;letter-spacing:normal;color:var(--muted)}
+.as-read .ic{width:12px;height:12px}
+.deploy-fields .sub,.deploy-list .sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+.deploy-why{margin-top:4px;font-size:12.5px;font-weight:650}
+.deploy-fields .deploy-warning>*,.deploy-list .deploy-warning{background:var(--warning-row)}
+.deploy-fields .deploy-stop>*,.deploy-list .deploy-stop{background:var(--critical-row)}
+.deploy-warning .deploy-why{color:var(--warning)}
+.deploy-stop .deploy-why{color:var(--critical)}
+.deploy-fields .deploy-warning th,.deploy-list li.deploy-warning{box-shadow:inset 3px 0 var(--warning)}
+.deploy-fields .deploy-stop th,.deploy-list li.deploy-stop{box-shadow:inset 3px 0 var(--critical)}
+.deploy-card blockquote{margin:0;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card);font:13px/1.5 var(--mono);white-space:pre-wrap}
+.deploy-list{overflow-wrap:anywhere}
+.deploy-list ul{gap:0;border:1px solid var(--line);border-radius:10px}
+.deploy-list li{grid-template-columns:20% minmax(0,1fr) 26%;gap:8px;padding:7px 12px;align-items:start}
+.deploy-list li+li{border-top:1px solid var(--line)}
+.deploy-list li .chip{justify-self:end}
+.deploy-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+@media (max-width:900px){
+  .deploy-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .deploy-tiles .tile:nth-child(n){border:0}
+  .deploy-tiles .tile:nth-child(even){border-left:1px solid var(--line)}
+  .deploy-tiles .tile:nth-child(n+3){border-top:1px solid var(--line)}
+}
+
+.placement-hint{display:block;font:600 11.5px var(--sans);color:var(--accent)}
+.placement-editor{display:grid;gap:12px;padding:14px;border:1px solid var(--accent);border-radius:var(--r);background:var(--card-strong);overflow-wrap:anywhere}
+.placement-editor :is(h3,h4,p,pre){margin:0}
+.placement-lists{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.placement-lists fieldset{min-width:0;margin:0;padding:5px 10px 10px;border:1px solid var(--line);border-radius:10px}
+.placement-lists legend{font-weight:700;padding:0 5px}
+.placement-lists h4,.placement-note h4{font-size:12px;color:var(--muted);margin:6px 0}
+.placement-option{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start;gap:3px 8px;padding:7px 2px;border-top:1px solid var(--line);cursor:pointer}
+.placement-option input{margin:4px 0;width:auto;accent-color:var(--accent)}
+.placement-option small{display:block;font:12px/1.5 var(--sans);color:var(--muted)}
+.placement-fit,.placement-option .placement-reason{grid-column:2;font:12.5px/1.45 var(--sans)}
+.placement-fit{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.placement-fit meter{width:3.4em;flex:none}
+.placement-option.off{color:var(--muted);background:var(--bg);cursor:not-allowed}
+.placement-option .placement-reason{color:var(--critical)}
+.placement-pick{grid-column:2;justify-self:start}
+.placement-folder .placement-pick{grid-column:1}
+.placement-folder{display:grid;gap:4px;font-weight:650;min-width:0}
+.placement-folder select{min-width:0;max-width:100%;white-space:normal}
+.placement-note{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px 12px}
+.placement-note pre{white-space:pre-wrap;font:12.5px/1.55 var(--mono)}
+.deploy-fields tr.placement-draft>*{background:var(--accent-soft)}
+.placement-draft td>:not(.draft){display:none}
+@supports (appearance:base-select){
+  .placement-folder select,.placement-folder select::picker(select){appearance:base-select;max-width:100%;overflow-wrap:anywhere}
+  .placement-folder option{white-space:normal}
+}
+@media(max-width:900px){.placement-lists{grid-template-columns:minmax(0,1fr)}}

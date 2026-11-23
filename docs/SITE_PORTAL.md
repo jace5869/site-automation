@@ -672,6 +672,28 @@ Each of our checks that waits for an approval leaves a short summary of its plan
   until both are over (1.110.0). It never stays with one half.
 - At most 50 items are kept. Only short words of the check's own: no command output, no secret.
 
+### The VM deploy plan
+
+Open the waiting workflow on **Jobs** to see what approval will build. The card shows the change, its CTASKs,
+the read time and the ticket digest. Each VM has a table of values and where the job found them.
+
+**From the ticket** means the change or task supplied the value. **Default** means a configured rule or the template supplied it.
+**Chosen by the job** identifies a placement the job selected. A warning explains the capacity concern beside the affected value.
+An approver can approve the plan with that warning or deny it.
+
+Choose **Change placement...** to select a VM, its cluster, a datastore mounted by that cluster and a folder in its datacenter.
+The propose job lists the candidates and explains why a greyed-out choice cannot fit.
+Only a member of `portal_approvers` who can decide this approval can save a placement.
+The portal account needs Approve on the workflow. Someone else must decide your run unless `portal_allow_self_approval` is enabled.
+
+Review the work note and choose **Save the new placement**. The portal launches **VM - deploy placement change** with its AAP account.
+The job rechecks the ticket and the fit before writing the `[AAP] Placement changed` note on the change and its CTASKs.
+If the job refuses the placement, the card shows its reason. After success, review the rows marked **Changed by the approver**
+and choose **Approve with the new placement** to continue the workflow.
+
+On **Approvals**, expand **What will be built** to read the values before deciding. The propose job also shows a read-only copy.
+If the plan stops before approval, the job page shows the reason, the affected fields and any comment sent to the requester.
+
 ### Fewer AAP calls (1.92.0)
 
 The pending approvals are read **once for everyone**, every 10 seconds at most: the page, the job page and every

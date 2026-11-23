@@ -23,6 +23,9 @@ account of the deploy's "SolarWinds (read-only)" credential (a podman secret too
 and only the listed actions can be launched. Every launch, refusal and decision is a JSON line in
 PORTAL_DATA/portal-log.jsonl and in the journal. Standard library only."""
 import collections
+import copy
+from itertools import islice
+import math
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import datetime
@@ -276,6 +279,7 @@ class Config(object):
         self.season = self.season if self.season in site_festive.SEASONS else "none"
         self.season_style = site_festive.style_of(g("PORTAL_SEASON_STYLE", "16bit"))
         self.season_parts = site_festive.allowed(g("PORTAL_SEASON_LIGHTS", "1"), g("PORTAL_SEASON_TWINKLE", "1"), g("PORTAL_SEASON_SNOW", "1"))
+        self.placement_template = g("PORTAL_VM_DEPLOY_PLACEMENT_TEMPLATE", "VM - deploy placement change")
         self.self_approval = flag(g("PORTAL_SELF_APPROVAL", "0"))
         # 1.120.0: approvers and requesters from AD groups (portal_approver_groups, portal_requester_groups: names or DNs), read
         # over LDAP with the "LDAP Bind Account" login (the secret site-portal-ldap: JSON {user, password}) every
@@ -808,6 +812,8 @@ class Aap(object):
     def _read_labelled(self, typ, kind, r, have, tname, labels):
         """_read_template's part for a template that carries the label."""
         cfg = self.cfg
+        if typ == "job" and (tname == cfg.placement_template or r.get("playbook") == "playbooks/vm_deploy_placement.yml"):
+            return TemplateRead(skipped="Choose the placement on the waiting workflow's plan.")
         if (typ, tname) in have:
             return TemplateRead(clash=have[(typ, tname)])
         tid = int(r["id"])
@@ -1691,6 +1697,204 @@ def approval_summary(v):
             "shown": len(items), "left_out": max(0, counts["changes"] - len(items))}
 
 
+DEPLOY_SOURCES = {"ticket": ("s-ok", "ok", "From the ticket"), "default": ("s-info", "skip", "Default"),
+                  "approver": ("s-plan", "ok", "Changed by the approver"), "job": ("s-low", "wait", "Chosen by the job"), "stop": ("s-critical", "bad", "Stop")}
+
+
+def deploy_text(value, limit=240):
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        return ""
+    return clean(str(value)).strip()[:limit]
+
+
+def deploy_entries(obj, key, limit=None):
+    values = obj.get(key)
+    return values[:limit] if isinstance(values, list) else []
+
+
+def deploy_mapping(value):
+    return value if isinstance(value, dict) else {}
+
+
+def deploy_fit(raw, kind):
+    fields = ("hosts", "down", "target") if kind == "cluster" else ("free_gb", "capacity_gb", "max")
+    fit = {"fits": raw.get("fits") is True, "why": deploy_text(raw.get("why"))}
+    if "name" in raw:
+        fit["name"] = deploy_text(raw["name"], 120)
+    for key in ("pct_after", *fields):
+        value = raw.get(key)
+        try:
+            number = float(value) if type(value) in (int, float, str) else None
+        except (ValueError, OverflowError):
+            number = None
+        fit[key] = number if number is not None and math.isfinite(number) else None
+    return fit
+
+
+def placement_name(value):
+    """A value submitted to AAP must identify the exact inventory object the job measured."""
+    return isinstance(value, str) and 0 < len(value) <= 120 and value.isprintable() and value == value.strip()
+
+
+def shortlist_candidate(raw, kind, names):
+    row = deploy_fit(raw, kind)
+    for key in names:
+        row[key] = deploy_text(raw.get(key), 120)
+        if not placement_name(raw.get(key)):
+            row.update(fits=False, why="The full inventory name cannot be selected here.")
+    return row
+
+
+def deploy_shortlist(v):
+    """Bound all collections, including destination maps, to the candidates the propose job published."""
+    if not isinstance(v, dict) or type(v.get("version")) is not int or v["version"] != 1:
+        return None
+    out = {k: deploy_text(v.get(k), 120) for k in ("ticket", "job", "digest")}
+    out.update(version=1, vms={})
+    for name, vm in islice(deploy_mapping(v.get("vms")).items(), 10):
+        if not placement_name(name) or not isinstance(vm, dict):
+            continue
+        lists = {"clusters": [], "datastores": {}, "folders": {}}
+        folders = deploy_mapping(vm.get("folders"))
+        stores = deploy_mapping(vm.get("datastores"))
+        for raw in deploy_entries(vm, "clusters", 40):
+            if not isinstance(raw, dict) or raw.get("group") not in ("plan", "outside"):
+                continue
+            row = shortlist_candidate(raw, "cluster", ("vcenter", "datacenter", "name"))
+            if not (row["vcenter"] and row["datacenter"] and row["name"]):
+                continue
+            dc = row["vcenter"] + "|" + row["datacenter"]
+            lists["clusters"].append(dict(row, group=raw["group"]))
+            lists["folders"][dc] = [f for f in deploy_entries(folders, dc, 60) if placement_name(f)]
+            lists["datastores"][dc + "|" + row["name"]] = [
+                shortlist_candidate(d, "datastore", ("name",))
+                for d in deploy_entries(stores, dc + "|" + row["name"], 15) if isinstance(d, dict) and d.get("name")]
+        if lists["clusters"]:
+            out["vms"][name] = lists
+    return out if out["vms"] else None
+
+
+def deploy_artifacts(art, jid):
+    plan = deploy_plan(art.get("vm_deploy_plan"))
+    shortlist = None
+    if (plan and plan["state"] == "ready" and plan["phase"] == "propose" and plan["digest"] and plan["ticket"]
+            and re.fullmatch(r"AAP job %d(?: by .+)?" % jid, plan["job"])):
+        shortlist = deploy_shortlist(art.get("vm_deploy_shortlist"))
+        if shortlist:
+            names = {vm["name"] for vm in plan["vms"]}
+            shortlist["vms"] = {name: vm for name, vm in shortlist["vms"].items() if name in names}
+            if not shortlist["vms"] or (shortlist["job"], shortlist["digest"], shortlist["ticket"]) != (str(jid), plan["digest"], plan["ticket"]):
+                shortlist = None
+    return {"deploy_plan": plan, "deploy_shortlist": shortlist}
+
+
+PLACEMENT_KEYS = ("vcenter", "cluster", "datastore", "folder")
+
+
+def placement_error(plan, shortlist, vms):
+    if not plan or not shortlist:
+        return "This approval has no matching placement shortlist."
+    if not isinstance(vms, list) or len(vms) != 1:
+        return "Save one VM at a time."
+    names = {vm["name"] for vm in plan["vms"]}
+    for vm in vms:
+        if not isinstance(vm, dict) or set(vm) != {"vm_name", *PLACEMENT_KEYS}:
+            return "Each placement needs only vm_name, vcenter, cluster, datastore and folder."
+        if not all(placement_name(v) for v in vm.values()):
+            return "Each placement value must be a name in the shortlist."
+        name = vm["vm_name"]
+        lists = shortlist["vms"].get(name)
+        if name not in names or not lists:
+            return "Choose each VM once from the plan and its shortlist."
+        clusters = [c for c in lists["clusters"] if (c["vcenter"], c["name"]) == (vm["vcenter"], vm["cluster"])]
+        if len(clusters) != 1:
+            return "Choose a cluster identified by its name and vCenter in the shortlist."
+        cluster = clusters[0]
+        if not cluster["fits"]:
+            return cluster["why"] or "The cluster does not fit."
+        dc = cluster["vcenter"] + "|" + cluster["datacenter"]
+        stores = lists["datastores"][dc + "|" + cluster["name"]]
+        store = next((s for s in stores if s["name"] == vm["datastore"]), None)
+        if not store or not store["fits"]:
+            return (store or {}).get("why") or "Choose a fitting datastore under this cluster."
+        if vm["folder"] not in lists["folders"][dc]:
+            return "Choose a folder in this vCenter and datacenter."
+    return ""
+
+
+def deploy_plan(v):
+    """Keep the display fields of a version 1 vm_deploy_plan. Escape text at the HTML boundary."""
+    if not isinstance(v, dict) or type(v.get("version")) is not int or v["version"] != 1:
+        return None
+    if v.get("state") not in ("ready", "stopped", "not_ready"):
+        return None
+
+    plan = {key: deploy_text(v.get(key)) for key in ("digest", "read_at", "job", "reason")}
+    plan["comment"] = deploy_text(v.get("comment"), 2000)          # what the requester was sent, whole
+    plan.update(version=1, state=v["state"], phase=v.get("phase") if v.get("phase") in ("propose", "build", "no_touch") else "",
+                ticket=deploy_text(v.get("ticket"), 120), table=deploy_text(v.get("table"), 120),
+                tasks=[deploy_text(t, 120) for t in deploy_entries(v, "tasks")], counts={}, vms=[])
+    handoff = deploy_mapping(v.get("no_touch"))
+    if plan["phase"] == "no_touch" and handoff.get("outcome") in ("built", "sent_to_approval", "stopped", "failed"):
+        job = deploy_text(handoff.get("workflow_job"))
+        plan["no_touch"] = {"outcome": handoff["outcome"],
+                            "why": [reason for t in deploy_entries(handoff, "why") if (reason := deploy_text(t))],
+                            "workflow_job": int(job) if re.fullmatch(r"[1-9][0-9]*", job) else None}
+    for key in ("warnings", "stops"):
+        plan[key] = [deploy_text(t) for t in deploy_entries(v, key)]
+    counts = v.get("counts") if isinstance(v.get("counts"), dict) else {}
+    for key in ("vms", "fields", "ticket", "default", "job", "stops", "warnings"):
+        try:
+            plan["counts"][key] = max(0, int(counts.get(key, 0)))
+        except (TypeError, ValueError, OverflowError):
+            plan["counts"][key] = 0
+    for vm in deploy_entries(v, "vms", 25):
+        if not isinstance(vm, dict):
+            continue
+        rows = []
+        for row in deploy_entries(vm, "rows", 12):
+            if not isinstance(row, dict):
+                continue
+            kind = deploy_text(row.get("kind"))
+            level = deploy_text(row.get("level"))
+            key, value, why = deploy_text(row.get("key"), 120), deploy_text(row.get("value")), deploy_text(row.get("why"))
+            if kind == "stop" and value == why:
+                value = "Needs an answer"               # the question is the row's why: never the same words twice
+            rows.append({"key": key, "label": deploy_text(row.get("label"), 120),
+                         "value": deploy_value(key, value) or "not read", "where": deploy_text(row.get("where")), "why": why,
+                         "kind": kind if kind in DEPLOY_SOURCES else "default", "level": level if level in ("stop", "warning") else "",
+                         "editable": row.get("editable") is True})
+        plan["vms"].append({"name": deploy_text(vm.get("name"), 120), "rows": rows})
+    if type(v.get("vm_count")) is int:
+        plan["vm_count"] = v["vm_count"]
+    count = plan.get("vm_count", plan["counts"]["vms"] if "vms" in counts else len(plan["vms"]))
+    if count != len(plan["vms"]):
+        plan["approve_error"] = ("This plan has %d VMs and the portal shows %d: approve it in AAP after reading "
+                                 "the propose job's output." % (count, len(plan["vms"])))
+    return plan
+
+
+DEPLOY_UNITS = {"cpu": "%s vCPU", "memory_gb": "%s GB"}
+
+
+def deploy_value(key, value):
+    """A plan value as the reader reads it: 4 vCPU, 16 GB, disks 120 GB + 200 GB (the job writes the bare numbers)."""
+    if key in DEPLOY_UNITS and re.fullmatch(r"\d+(\.\d+)?", value):
+        return DEPLOY_UNITS[key] % value
+    if key == "disks_gb" and re.fullmatch(r"\d+(\.\d+)?( \+ \d+(\.\d+)?)*", value):
+        return " + ".join("%s GB" % x for x in value.split(" + "))
+    return value
+
+
+def deploy_stopped(plan):
+    return bool(plan and plan["state"] in ("stopped", "not_ready"))
+
+
+def deploy_refused(plan):
+    """A plan the build step stopped: approved, then refused at the build (the change or the placement changed since)."""
+    return deploy_stopped(plan) and plan.get("phase") == "build"
+
+
 def run_order(steps):
     """1.92.0: a workflow job's steps in the order they run - from the first (no link leads to it) along the success, failure and always links,
     a level at a time - never by AAP's node ids (a node added later gets a higher id wherever it sits). A step no link reaches, or a
@@ -1716,7 +1920,7 @@ def run_order(steps):
 def plan_ready(step, by_node):
     """1.92.0: a check that failed on purpose with a plan for the approval: it left site_approval_summary, or the step its failure leads to
     (the workflow gate) succeeded. A check that really failed (the gate failed after it, or nothing followed) stays Failed."""
-    if step.get("type") != "job" or step.get("status") not in ("failed", "error"):
+    if deploy_stopped(step.get("deploy_plan")) or step.get("type") != "job" or step.get("status") not in ("failed", "error"):
         return False
     if step.get("has_plan"):
         return True
@@ -1797,8 +2001,9 @@ class Portal(object):
         self.summaries = {}                             # 1.78.4: person -> (when, the answer of summary)
         self.pend = None                                # 1.92.0: (when, (code, the pending approvals)) - every viewer's, kept PENDING_TTL
         self.pend_lock = threading.Lock()
-        self.wf_info = {}                               # 1.92.0: waiting workflow job id -> {wj, report, plan}: read once while it waits
+        self.wf_info = {}                               # 1.92.0: waiting workflow job id -> workflow, report and plans: read once while it waits
         self.wf_tmp = {}                                # 1.92.0 review: one not fully read (or a check still running): this cycle only
+        self.handoffs = {}                              # 1.117.0: handed-off workflow -> its verified portal workflow (a fact that never changes)
         self.found_at = 0.0
         self.whole_at = 0.0
         self.found_fails = 0                            # failed reads in a row (the back-off)
@@ -1810,6 +2015,12 @@ class Portal(object):
         self.aap = aap or Aap(cfg)
         self.key = self._key()
         self.lock = threading.Lock()
+        self.decision_lock = threading.Lock()       # serialize the fresh approval check and the AAP write
+        self.placement_jobs = {r["job"]: r for r in self.log.read("placement", limit=0)}
+        self.workflow_placements = collections.defaultdict(list)
+        for record in self.placement_jobs.values():
+            self.workflow_placements[record["workflow_job"]].append(record)
+        self.placement_results = {r["job"]: r["result"] for r in self.log.read("placement_result", limit=0)}
         self.recent = {}                # CN -> [launch times]
         self.prog = collections.OrderedDict()           # 1.78.0: job id -> Progress (the last 60 jobs followed)
         self.polls = {}                 # CN -> [times of its progress calls]
@@ -1829,7 +2040,7 @@ class Portal(object):
                 except OSError:
                     self.catalog_file = None
                     return
-            scope = [2, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
+            scope = [3, cfg.placement_template, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
                      cfg.label, cfg.label_approval, cfg.label_area,
                      cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.limit_max,
                      cfg.inventories_max, cfg.requesters, cfg.approvers, doc, cfg.approver_groups, cfg.requester_groups]
@@ -2085,6 +2296,10 @@ class Portal(object):
         if not a:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": str(name)[:64], "why": "not a listed action"})
             return 404, {"error": "There is no action %s here." % str(name)[:64]}
+        if a["aap"] == {"type": "job", "name": self.cfg.placement_template}:
+            reason = "Change the placement from its waiting workflow approval."
+            self.log.add({"event": "placement_refused", "user": cn, "ip": ip, "action": name, "why": reason})
+            return 403, {"error": reason}
         if not rules.may_run(a, cn, self.cfg.requesters):
             self.log.add({"event": "refused", "user": cn, "ip": ip, "action": name, "why": "not on the action's list of people"})
             return 403, {"error": "You are not on the list of people who may run %s." % a["title"]}
@@ -2290,7 +2505,11 @@ class Portal(object):
                 approval = s.get("type") == "workflow_approval"
                 word = "Waiting for approval" if approval and s.get("status") in ("pending", "running") else STEP_WORD.get(s.get("status"), "Pending")
                 note = "Must be approved by an approver of the portal" if word == "Waiting for approval" else ""
-                if plan_ready(s, by_node):              # 1.92.0: failed on purpose, with a plan - not a red Failed
+                if deploy_stopped(s.get("deploy_plan")):
+                    word = "Stopped"
+                elif s.get("deploy_plan") and s.get("status") == "successful":
+                    word = "Plan ready"
+                elif plan_ready(s, by_node):              # 1.92.0: failed on purpose, with a plan - not a red Failed
                     word = "Plan ready"
                     c = (s.get("plan") or {}).get("counts") or {}
                     note = ("Stopped on purpose: %d change%s wait%s for a decision" % (c["changes"], "" if c["changes"] == 1 else "s", "s" if c["changes"] == 1 else "")
@@ -2299,7 +2518,7 @@ class Portal(object):
                         plan_ready(x, by_node) and s.get("node") in (x.get("failure") or []) for x in raw):
                     note = "The plan needs an approval"
                 steps.append({"name": s.get("name") or "", "type": "Approval" if approval else "Job", "status": s.get("status"), "word": word, "job": s.get("job"),
-                              "note": note})
+                              "note": note, "deploy_plan": s.get("deploy_plan"), "deploy_shortlist": s.get("deploy_shortlist")})
             out["steps"] = steps
             n, finished = len(steps), len([s for s in steps if s["word"] in ("Done", "Skipped", "Plan ready")])
             cur = next((s for s in steps if s["word"] not in ("Done", "Skipped", "Plan ready")), None)
@@ -2313,6 +2532,8 @@ class Portal(object):
             return 200, out
         if view.get("type") != "job":
             return 200, out
+        out["deploy_plan"] = view.get("deploy_plan")
+        out["deploy_shortlist"] = view.get("deploy_shortlist")
         with self.lock:
             pr = self.prog.get(jid)
             if pr is None:
@@ -2416,31 +2637,44 @@ class Portal(object):
         a = self.actions.get(rec.get("action"))
         return bool(cn) and a is not None and rules.may_run(a, cn, self.cfg.requesters)
 
+    def _workflow_record(self, mine, wid):
+        if wid in mine:
+            return mine[wid]
+        with self.pend_lock:
+            info = self.wf_info.get(wid) or self.wf_tmp.get(wid)
+            # Direct links also work before the approvals page is opened and after the decision.
+            parent = info.get("handoff_from") if info else self.handoffs.get(wid)
+            if parent is None and not info:
+                parent = self._learn([wid], handoff_only=True)
+            if parent:
+                self.handoffs[wid] = parent             # a job page polls: verified once, not on every look
+        return mine.get(parent)
+
     def visible(self, cn, jid, via=None):
-        """The launch record that lets this person see job jid (itself, or the workflow it is a step of - checked against
-        AAP by job()), or None. None for a job the portal did not start and for one this person may not see alike: the
-        answer never says which (404 for both)."""
+        """The launch or verified hand-off that allows this view. job() checks step membership in AAP."""
         mine = self.launched()
-        rec = mine.get(jid) if jid in mine else (mine.get(via) if via is not None else None)
+        rec = mine.get(jid) or self._workflow_record(mine, via if via is not None else jid)
         return rec if self.may_see(cn, rec) else None
 
     def job(self, jid, via=None, cn=None):
-        """-> (HTTP code, the job's view). Only what the portal started (or a step of it), and only for the people who
-        may see it (may_see) - for anyone else 404, as for a job the portal did not start."""
+        """The job or a verified workflow step, visible to the people who may see the portal launch."""
         mine = self.launched()
         rec = mine.get(jid)
         parent = None
+        if via is None and not rec:
+            rec = self._workflow_record(mine, jid)
+        elif via is not None and not rec:
+            parent = self._workflow_record(mine, via)
         nope = (404, {"error": "There is no job %d here." % jid})
-        if cn is not None and not self.visible(cn, jid, via):
+        if cn is not None and not self.may_see(cn, rec or parent):
             return nope
         if rec is None:
-            if via is None or via not in mine or mine[via].get("kind") != "workflow":
+            if not parent or parent.get("kind") != "workflow":
                 return nope
             code, nodes = self.aap.call("GET", "workflow_jobs/%d/workflow_nodes/?page_size=200" % via)
             ids = [((n.get("summary_fields") or {}).get("job") or {}).get("id") for n in (nodes.get("results") or [])] if code == 200 else []
             if jid not in ids:
                 return nope
-            parent = mine[via]
         code, uj = self.aap.call("GET", "unified_jobs/?id=%d" % jid)
         rows = uj.get("results") or [] if code == 200 else []
         if not rows:
@@ -2477,17 +2711,25 @@ class Portal(object):
                 if s["job"] and s["type"] == "job" and s["status"] in DONE:
                     code, jd = self.aap.call("GET", "jobs/%d/" % s["job"])
                     if code == 200:
-                        links += links_in(jd.get("artifacts") or {})
-                        arts.append(jd.get("artifacts") or {})
-                        s["plan"] = approval_summary((jd.get("artifacts") or {}).get("site_approval_summary"))
-                        s["has_plan"] = isinstance((jd.get("artifacts") or {}).get("site_approval_summary"), dict)
+                        art = jd.get("artifacts") or {}
+                        links += links_in(art)
+                        arts.append(art)
+                        s["plan"] = approval_summary(art.get("site_approval_summary"))
+                        s["has_plan"] = isinstance(art.get("site_approval_summary"), dict)
+                        s.update(deploy_artifacts(art, s["job"]))
+                        s["deploy_plan"] = self.placed_plan(jid, s["deploy_plan"])
             view["links"] = [{"label": k, "url": v} for k, v in links]
             view["buttons"] = result_buttons(arts)
             self.outcome(view, arts, rec or parent or {})
         elif kind == "job":
             code, jd = self.aap.call("GET", "jobs/%d/" % jid)
             art = jd.get("artifacts") or {} if code == 200 else {}
-            view["artifacts"] = art
+            view.update(deploy_artifacts(art, jid))
+            view["artifacts"] = {key: value for key, value in art.items() if key != "vm_deploy_shortlist"}
+            if view["deploy_shortlist"]:
+                view["artifacts"]["vm_deploy_shortlist"] = view["deploy_shortlist"]
+            if parent:
+                view["deploy_plan"] = self.placed_plan(via, view["deploy_plan"])
             view["links"] = [{"label": k, "url": v} for k, v in links_in(art)]
             view["buttons"] = result_buttons([art])
             self.outcome(view, [art], rec or parent or {})
@@ -2566,19 +2808,35 @@ class Portal(object):
             self.pend = (time.time(), res)
             return res
 
-    def _learn(self, wids):
-        """What the approvals page and the job page show of a waiting workflow, read once for all the new ones (three calls, whatever their number):
-        the workflow jobs, their nodes, their finished check jobs' artifacts - the report (site_report_url ...) and site_approval_summary."""
+    def _learn(self, wids, handoff_only=False):
+        """Read workflow nodes and finished jobs in batches, including the jobs that can verify a hand-off.
+        A direct job lookup needs only the verified origin. Pending approvals also cache their report and plans."""
         ids = ",".join(str(w) for w in wids)
         wjs, why = self.aap._paged("workflow_jobs/?id__in=%s&page_size=200" % ids, 5)
         wjs = dict((int(x["id"]), x) for x in (wjs if not why else []))
+        # Only a portal workflow whose finished job names this child can pass on its launch record.
+        parents = {}
+        mine = None
+        for w, wj in wjs.items():
+            extra = wj.get("extra_vars")
+            if isinstance(extra, str):
+                extra = site_aap.vars_of(extra)
+            parent = str(deploy_mapping(extra).get("vm_deploy_handoff_from", ""))
+            if re.fullmatch(r"[1-9][0-9]{0,11}", parent):
+                if mine is None:
+                    mine = self.launched()
+                if w not in mine and mine.get(int(parent), {}).get("kind") == "workflow":
+                    parents[w] = int(parent)
+        if handoff_only and not parents:
+            return None
+        ids = ",".join(str(w) for w in sorted(set(wids) | set(parents.values())))
         nodes, why = self.aap._paged("workflow_job_nodes/?workflow_job__in=%s&order_by=id&page_size=200" % ids, 10)
         nodes_ok = not why
         by_wf, jobs = {}, []
         for n in nodes if not why else []:
             j = (n.get("summary_fields") or {}).get("job") or {}
             if j.get("id") and j.get("type") == "job" and j.get("status") in DONE:
-                by_wf.setdefault(int(n.get("workflow_job") or 0), []).append(int(j["id"]))
+                by_wf.setdefault(int(n.get("workflow_job") or 0), []).append((n.get("id"), int(j["id"])))
                 jobs.append(int(j["id"]))
         arts = {}
         if jobs:
@@ -2589,29 +2847,42 @@ class Portal(object):
                     arts[int(r["id"])] = r.get("artifacts") or {}
             for jid in sorted(set(jobs) - set(arts)):          # an AAP whose list leaves the artifacts out: each check job once
                 c2, jd = self.aap.call("GET", "jobs/%d/" % jid)
-                arts[jid] = (jd.get("artifacts") or {}) if c2 == 200 and isinstance(jd, dict) else {}
+                if c2 == 200 and isinstance(jd, dict):
+                    arts[jid] = jd.get("artifacts") or {}
         after = after_approval(nodes if nodes_ok else [])
         for w in wids:
             # 1.92.0 review: a workflow whose reads failed, or whose checks are not all over yet (Linux and Windows side by side),
             # is read again next cycle - never kept half known. 1.110.0 (1.92.0 review): a check still new, pending or waiting (a Windows
             # check queued beside the Linux one) is not over either: its plan would be left out of "What it will change". A job after
             # an approval (the apply) is not a check: it waits for the decision, and would have the workflow read every cycle (Codex)
-            if w not in wjs or not nodes_ok or any(n.get("workflow_job") == w and n.get("id") not in after
-                                                    and ((n.get("summary_fields") or {}).get("job") or {}).get("type") == "job"
-                                                    and ((n.get("summary_fields") or {}).get("job") or {}).get("status") not in DONE
-                                                    for n in nodes or []):
-                if w in wjs and nodes_ok:
-                    al = [arts.get(j) or {} for j in by_wf.get(w, [])]
-                    b = [x for x in result_buttons(al) if x["primary"]]
-                    self.wf_tmp[w] = {"wj": wjs.get(w), "report": {"label": b[-1]["label"], "url": b[-1]["url"]} if b else None,
-                                      "plan": approval_summary(merge_summaries([a.get("site_approval_summary") for a in al]))}
+            parent = parents.get(w)
+            finished = by_wf.get(w, [])
+            origin_jobs = by_wf.get(parent, [])
+            if w not in wjs or not nodes_ok or any(j not in arts for _, j in finished + origin_jobs):
                 continue
-            al = [arts.get(j) or {} for j in by_wf.get(w, [])]
+            verified = None
+            if parent:
+                for _, j in origin_jobs:
+                    outcome = deploy_mapping(deploy_mapping(arts[j].get("vm_deploy_plan")).get("no_touch"))
+                    if str(outcome.get("workflow_job")) == str(w):
+                        verified = parent
+                        break
+            if handoff_only:
+                return verified
+            # An unfinished origin can still publish the hand-off. Recheck it next cycle.
+            unfinished = any((n.get("workflow_job") == w and n.get("id") not in after
+                              or parent and not verified and n.get("workflow_job") == parent)
+                             and (job := (n.get("summary_fields") or {}).get("job") or {}).get("type") == "job"
+                             and job.get("status") not in DONE for n in nodes)
+            al = [arts.get(j) or {} for _, j in finished]
             b = [x for x in result_buttons(al) if x["primary"]]
-            plan = approval_summary(merge_summaries([a.get("site_approval_summary") for a in al]))
-            self.wf_info[w] = {"wj": wjs.get(w), "report": {"label": b[-1]["label"], "url": b[-1]["url"]} if b else None, "plan": plan}
+            cache = self.wf_tmp if unfinished else self.wf_info
+            plans = (deploy_artifacts(arts.get(j, {}), j) for node, j in reversed(finished) if node not in after)
+            cache[w] = {"wj": wjs[w], "handoff_from": verified, "report": {"label": b[-1]["label"], "url": b[-1]["url"]} if b else None,
+                        "plan": approval_summary(merge_summaries([a.get("site_approval_summary") for a in al])),
+                        **next((p for p in plans if p["deploy_plan"]), {})}
 
-    def approvals(self, cn="", fresh=False):
+    def approvals(self, cn="", fresh=False, with_placements=True):
         """1.78.4: EVERY pending workflow approval in AAP that the portal's account can see, the expired ones left out -> (code, {approvals}). Each has its workflow,
         who or what started it (a person in the portal, a schedule, a person in AAP), its own name and description, the time left, the report the steps
         before it left and (1.92.0) the check's plan (site_approval_summary), and whether this person may decide it here: an approver (portal_approvers),
@@ -2638,7 +2909,7 @@ class Portal(object):
             if exp is not None and exp < now:                   # timed out since the shared read: AAP will not take a decision on it
                 continue
             a = wf_ids.get(int(wj.get("workflow_job_template") or 0))
-            rec = mine.get(wid) or {}
+            rec = mine.get(wid) or mine.get(info.get("handoff_from")) or {}
             if cn and cn not in self.cfg.approvers and not (self.may_see(cn, rec) if rec else (a is not None and rules.may_run(a, cn, self.cfg.requesters))):
                 continue
             sf = wj.get("summary_fields") or {}
@@ -2649,12 +2920,16 @@ class Portal(object):
             else:
                 started, by = "AAP: %s" % (((sf.get("created_by") or {}).get("username")) or "a person there"), ""
             left = (exp - now) if exp is not None else None
+            plan = info.get("deploy_plan") if cn else None
+            if plan and with_placements:
+                plan = self.placed_plan(wid, plan)
             out.append({"id": ap.get("id"), "name": ap.get("name") or "", "description": str(ap.get("description") or "")[:300], "created": ap.get("created") or "",
                         "timeout": ap.get("approval_expiration") or "", "workflow_job": wid, "workflow": wj.get("name", ""),
                         "action": a["name"] if a else "", "title": a["title"] if a else (wj.get("name") or ""),
                         "requested_by": by, "values": rec.get("values") or {}, "launched_in": started,
                         "time_left": dur_text(left) if left is not None else "", "report": info.get("report") if cn else None,
-                        "plan": info.get("plan") if cn else None,
+                        "plan": info.get("plan") if cn else None, "deploy_plan": plan,
+                        "deploy_shortlist": info.get("deploy_shortlist") if cn else None,
                         "can_approve": self._can_approve(ap),
                         "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
         for a in out:
@@ -2673,23 +2948,217 @@ class Portal(object):
         code, data = self.approvals(cn)
         return next((a for a in data.get("approvals", []) if a["workflow_job"] == wid), None) if code == 200 else None
 
-    def decide(self, cn, ip, aid, decision):
+    def _placement_result(self, record):
+        jid = record["job"]
+        with self.key_lock(("placement_result", jid)):
+            if jid in self.placement_results:
+                return 200, self.placement_results[jid]
+            code, job = self.aap.call("GET", "jobs/%d/" % jid)
+            if code != 200:
+                return 502, {"error": "Could not read AAP job %d: %s" % (jid, site_aap.error_text(job))}
+            status = job.get("status", "")
+            art = deploy_mapping(deploy_mapping(job.get("artifacts")).get("vm_deploy_placement_change"))
+            ok = status == "successful" and art.get("ok") is True and not record.get("launch_error")
+            measured = []
+            for vm in deploy_entries(art, "vms", 10) if ok else []:
+                if not isinstance(vm, dict):
+                    continue
+                place = {k: deploy_text(vm.get(k), 120) for k in ("name", "datacenter", *PLACEMENT_KEYS)}
+                fits = deploy_mapping(vm.get("fit"))
+                place["fit"] = {k: deploy_fit(deploy_mapping(fits.get(k)), k) for k in ("cluster", "datastore")}
+                if all(place[k] for k in ("name", "datacenter", *PLACEMENT_KEYS)) and all(f["fits"] for f in place["fit"].values()):
+                    measured.append(place)
+            ok = ok and bool(measured) and sorted(vm["name"] for vm in measured) == sorted(vm["vm_name"] for vm in record["vms"])
+            error = deploy_text(art.get("error") or record.get("launch_error") or job.get("job_explanation"), 2000)
+            result = {"status": status, "done": status in DONE, "ok": ok, "vms": measured if ok else [], "error": error}
+            if art.get("launch_note") in ("written", "not written"):
+                result["launch_note"] = art["launch_note"]
+            if result["done"]:
+                if not ok and not error:
+                    result["error"] = "AAP job %d ended %s without a saved placement." % (jid, status)
+                self.log.add({"event": "placement_result", "job": jid, "result": result})
+                self.placement_results[jid] = result
+            return 200, result
+
+    def placement(self, cn, jid):
+        record = self.placement_jobs.get(jid)
+        if not record:
+            return 404, {"error": "There is no placement job %d here." % jid}
+        wid = record["workflow_job"]
+        if cn not in self.cfg.approvers and not self.visible(cn, wid) and not self.approval_of(wid, cn):
+            return 403, {"error": "You may not see this workflow."}
+        return self._placement_result(record)
+
+    def _placement_states(self, wid):
+        with self.lock:
+            records = list(self.workflow_placements.get(wid, ()))
+        return [(rec, self._placement_result(rec)[1]) for rec in records]
+
+    @staticmethod
+    def _placement_block(states):
+        """A running job blocks all saves. Only a successful save can resolve an uncertain note for its VM."""
+        uncertain = {}
+        for rec, result in states:
+            if not result.get("done"):
+                return {"job": rec["job"], "done": False, "ok": False, "error": "Wait for placement job %d to finish." % rec["job"]}
+            for vm in rec["vms"]:
+                name = vm["vm_name"]
+                if result["ok"]:
+                    uncertain.pop(name, None)
+                elif result.get("launch_note") != "not written":
+                    uncertain[name] = rec
+        for name, rec in uncertain.items():
+            error = ("Placement job %d did not finish after it may have changed VM %s on the change: "
+                     "save that VM's placement again, then approve." % (rec["job"], name))
+            return {"job": rec["job"], "done": True, "ok": False, "error": error}
+        return None
+
+    def placed_plan(self, wid, plan, states=None):
+        if not plan or plan["phase"] != "propose":
+            return plan
+        if states is None:
+            states = self._placement_states(wid)
+        if not states:
+            return plan
+        plan = copy.deepcopy(plan)                 # approvals share the original propose artifact
+        latest = {}
+        for rec, result in states:
+            if rec["checked_job"] != plan["job"] or rec["digest"] != plan["digest"]:
+                continue
+            plan["placement"] = {"job": rec["job"], "done": result.get("done", False), "ok": result.get("ok", False),
+                                 "error": result.get("error", "")}
+            if result.get("ok"):
+                plan["saved_job"] = rec["job"]
+                for vm in result["vms"]:
+                    latest[vm["name"]] = (rec, vm)
+        block = self._placement_block(states)
+        if block:
+            plan["placement"] = block
+            if block["done"]:
+                plan["approve_error"] = block["error"]
+        if not latest:
+            return plan
+        for vm in plan["vms"]:
+            if vm["name"] not in latest:
+                continue
+            rec, place = latest[vm["name"]]
+            where = "changed by %s (AAP job %d)" % (rec["user"], rec["job"])
+            for row in vm["rows"]:
+                key = row["key"]
+                if key in PLACEMENT_KEYS:
+                    value = place[key]
+                    if key == "vcenter":
+                        value += ", datacenter " + place["datacenter"]
+                    if row["level"] == "warning":
+                        for warning in ((row["value"] + ": " + row["why"])[:240], row["why"]):
+                            if warning in plan["warnings"]:
+                                plan["warnings"].remove(warning)
+                                break
+                        plan["counts"]["warnings"] = max(0, plan["counts"]["warnings"] - 1)
+                    row.update(value=value, where=where, kind="approver", level="", why=place["fit"].get(key, {}).get("why", ""))
+        rows = [r for vm in plan["vms"] for r in vm["rows"]]
+        counts = plan["counts"]
+        counts["fields"] = len(rows)
+        for kind in ("ticket", "default", "job", "approver"):
+            counts[kind] = sum(row["kind"] == kind for row in rows)
+        return plan
+
+    def change_placement(self, cn, ip, aid, vms):
+        with self.decision_lock:
+            code, ap = self._decision_approval(cn, ip, aid, "placement")
+            if code != 200:
+                return code, ap
+            plan, shortlist = ap.get("deploy_plan"), ap.get("deploy_shortlist")
+            reason = placement_error(plan, shortlist, vms)
+            if reason:
+                self.log.add({"event": "placement_refused", "user": cn, "ip": ip, "approval": aid, "why": reason})
+                return 400, {"error": reason}
+            extra = {"vm_deploy_ticket": plan["ticket"], "vm_deploy_checked_job": shortlist["job"],
+                     "vm_deploy_placement": vms, "vm_deploy_placement_by": cn}
+            jid, error = self._launch_placement(extra)
+            if not jid:
+                self.log.add({"event": "placement_refused", "user": cn, "ip": ip, "approval": aid, "why": error})
+                return 502, {"error": error}
+            rec = {"event": "placement", "user": cn, "ip": ip, "approval": aid, "workflow_job": ap["workflow_job"],
+                   "job": jid, "vms": vms, "checked_job": plan["job"], "digest": plan["digest"]}
+            if error:
+                rec["launch_error"] = error
+            self.log.add(rec)
+            with self.lock:
+                self.placement_jobs[jid] = rec
+                self.workflow_placements[ap["workflow_job"]].append(rec)
+            return 200, {"job": jid}
+
+    def _launch_placement(self, extra):
+        name = self.cfg.placement_template
+        setting = "portal_vm_deploy_placement_template (%s)" % name
+        code, data = self.aap.call("GET", "job_templates/?name=" + urllib.parse.quote(name, safe=""))
+        if code != 200:
+            return None, "%s: %s" % (setting, site_aap.error_text(data))
+        matches = [t for t in data.get("results", []) if t.get("name") == name]
+        if len(matches) != 1:
+            return None, "%s: AAP must have one visible job template with this name." % setting
+        template = matches[0]
+        path = "job_templates/%d/" % template["id"]
+        if template.get("ask_variables_on_launch") is False:
+            questions = set()
+            if template.get("survey_enabled"):
+                code, survey = self.aap.call("GET", path + "survey_spec/")
+                if code == 200:
+                    questions = {q.get("variable") for q in survey.get("spec", [])}
+            if not extra.keys() <= questions:
+                return None, "%s must accept the placement variables at launch." % setting
+        code, data = self.aap.call("POST", path + "launch/", {"extra_vars": extra})
+        jid = data.get("job") or data.get("id")
+        if code not in (200, 201, 202) or type(jid) is not int:
+            return None, "%s: check Execute for the portal account. %s" % (setting, site_aap.error_text(data))
+        # The controller may have changed since the lookup. Keep tracking any job it actually started.
+        return jid, ("%s ignored the placement variables." % setting if data.get("ignored_fields") else "")
+
+    def _decision_approval(self, cn, ip, aid, decision):
+        audit = {"event": "placement_refused" if decision == "placement" else "refused", "user": cn, "ip": ip, "approval": aid}
+        if decision != "placement":
+            audit["decision"] = decision
+
+        def refused(reason, message, code=403):
+            self.log.add(dict(audit, why=reason))
+            return code, {"error": message}
+
         if cn not in self.cfg.approvers:
-            self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision, "why": "not an approver"})
-            return 403, {"error": "You are not an approver (portal_approvers, portal_approver_groups)."}
-        code, listing = self.approvals(fresh=True)          # 1.92.0 review: never the shared 10 s read for a decision
+            return refused("not an approver", "You are not an approver (portal_approvers, portal_approver_groups).")
+        code, listing = self.approvals(cn, fresh=True, with_placements=False)   # 1.92.0 review: never the shared 10 s read for a decision
         if code != 200:
             return code, listing
         ap = next((x for x in listing["approvals"] if x["id"] == aid), None)
         if not ap:
-            return 404, {"error": "Approval %d is not pending any more (decided already, or timed out)." % aid}
+            reason = "Approval %d is not pending any more (decided already, or timed out)." % aid
+            if decision == "placement":
+                return refused("approval is no longer pending", reason, 404)
+            return 404, {"error": reason}
         if not ap.get("can_approve", True):
-            self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision, "why": "the portal's account has no Approve role on it"})
-            return 403, {"error": "The portal's account has no Approve role on this approval: decide it in AAP."}
-        if same_person(ap["requested_by"], cn) and not self.cfg.self_approval:
-            self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision,
-                          "why": "self-approval: the person started this run"})
-            return 403, {"error": "You started this run: another approver decides (portal_allow_self_approval: false)."}
+            return refused("the portal's account has no Approve role on it", "The portal's account has no Approve role on this approval: decide it in AAP.")
+        if same_person(ap["requested_by"], cn) and not self.cfg.self_approval:   # 1.120.0: one person, any of their cards
+            return refused("self-approval: the person started this run", "You started this run: another approver decides (portal_allow_self_approval: false).")
+        if decision != "deny":
+            states = self._placement_states(ap["workflow_job"])
+            block = self._placement_block(states)
+            if block and (decision == "approve" or not block["done"]):
+                return refused("placement uncertain" if block["done"] else "placement in progress", block["error"], 409)
+            if decision == "approve" and (ap.get("deploy_plan") or {}).get("approve_error"):
+                return refused("incomplete plan", ap["deploy_plan"]["approve_error"], 409)
+            ap["deploy_plan"] = self.placed_plan(ap["workflow_job"], ap.get("deploy_plan"), states)
+        return 200, ap
+
+    def decide(self, cn, ip, aid, decision, plan=None):
+        with self.decision_lock:
+            code, ap = self._decision_approval(cn, ip, aid, decision)
+            if code != 200:
+                return code, ap
+            if decision == "approve" and ap.get("deploy_plan") and str(plan) != str(ap["deploy_plan"].get("saved_job", "")):
+                return 409, {"error": "The plan changed since you opened it: read it again."}
+            return self._post_decision(cn, ip, aid, decision, ap)
+
+    def _post_decision(self, cn, ip, aid, decision, ap):
         code, data = self.aap.call("POST", "workflow_approvals/%d/%s/" % (aid, decision), {})
         with self.pend_lock:
             self.pend = None                            # 1.92.0 review: taken or not, the next look reads AAP again
@@ -3499,20 +3968,136 @@ def report_btn(report, cls="btn"):
     return '<a class="%s" href="%s" target="_blank" rel="noopener">Open the full report %s</a>' % (cls, esc(report["url"]), icon("arrow"))
 
 
+def deploy_chip(kind):
+    cls, mark, label = DEPLOY_SOURCES[kind]
+    return '<span class="chip %s">%s%s</span>' % (cls, icon(mark), label)
+
+
+def counted(n, noun):
+    return "%d %s%s" % (n, noun, "" if n == 1 else "s")
+
+
+def deploy_table(vm, show_name, may_change=False):
+    rows = []
+    for row in vm["rows"]:
+        level = "stop" if row["kind"] == "stop" else row["level"]
+        note = ""
+        if (level or row["kind"] == "approver") and row["why"]:
+            prefix = "Warning: " if level == "warning" else "Stop: " if level else ""
+            note = '<div class="deploy-why">%s</div>' % esc(prefix + row["why"])
+        hint = ""
+        if row["editable"] and may_change:
+            hint = '<small class="placement-hint">approver may change</small>'
+        elif not row["editable"] and row["kind"] != "approver":
+            hint = '<small class="as-read">%sas read</small>' % icon("lock")
+        rows.append('<tr%s data-field="%s"><th scope="row">%s%s</th><td><b>%s</b><div class="sub">%s</div>%s</td><td>%s</td></tr>' % (
+            (' class="deploy-%s"' % level) if level else "", esc(row["key"]), esc(row["label"]),
+            hint,
+            esc(row["value"]), esc(row["where"]), note, deploy_chip(row["kind"])))
+    return ('<div data-vm="%s">%s<div class="tw"><table class="deploy-fields"><thead><tr><th>Field</th><th>Value · where exactly</th><th>Came from</th>'
+            '</tr></thead><tbody>%s</tbody></table></div></div>' % (esc(vm["name"]), ("<h3>%s</h3>" % esc(vm["name"])) if show_name else "", "".join(rows)))
+
+
+def deploy_card(cfg, plan, left="", actions="", editable_vms=(), workflow_visible=False):
+    stopped = deploy_stopped(plan)
+    refused = deploy_refused(plan)
+    title = ("The build stopped after the approval" if refused else "The plan stopped before the approval") if stopped else "The plan - what will be built"
+    meta = ["<b>%s</b>" % esc(plan["ticket"])] if plan["ticket"] else []
+    meta.extend("<b>%s</b>" % esc(t) for t in plan["tasks"] if t)
+    read = shown(cfg, plan["read_at"])
+    if read:
+        meta.append('<span title="%s">read %s</span>' % (esc(read), esc(read.split()[1])))
+    if plan["digest"]:
+        meta.append('<span class="mono">%s</span>' % esc(plan["digest"]))
+    changed = (plan.get("counts") or {}).get("approver", 0)
+    legend = "".join(deploy_chip(k) for k in ("ticket", "default", "job") + (("approver",) if changed else ()))
+    parts = ['<div class="dtop"><span class="eyebrow2">%s</span>%s</div>' % (title, left),
+             '<div class="deploy-meta">%s<span class="deploy-legend">%s</span></div>' % (" · ".join(meta), legend)]
+    decision = plan.get("no_touch", {})
+    if decision.get("outcome") == "built":
+        parts.insert(1, "<p>Built without an approval: the plan was clean.</p>")
+    elif decision.get("outcome") == "sent_to_approval":
+        why = next(iter(decision["why"]), "").rstrip(".")
+        job = decision["workflow_job"]
+        label = "Workflow job %d" % job if job else ""
+        if workflow_visible and job:
+            label = '<a href="%sjobs/%d">%s</a>' % (cfg.path, job, label)
+        parts.insert(1, "<p>Sent to approval%s.%s</p>" % ((": " + esc(why)) if why else "", (" " + label + ".") if label else ""))
+    c = plan["counts"]
+    if plan.get("approve_error"):
+        parts.append('<p role="status">%s</p>' % esc(plan["approve_error"]))
+    if stopped:
+        reasons = list(dict.fromkeys([plan["reason"]] + plan["stops"]))
+        if any(reasons):
+            parts.append("<ul>%s</ul>" % "".join("<li>%s</li>" % esc(r) for r in reasons if r))
+    if plan["vms"]:
+        rows = plan["vms"][0]["rows"]
+
+        def labels(kind):
+            return ", ".join(row["label"] for row in rows if row["kind"] == kind)
+
+        tiles = [("To build", "Nothing" if stopped else counted(c["vms"], "VM"), ", ".join(vm["name"] for vm in plan["vms"])),
+                 ("From the ticket", "%d of %d" % (c["ticket"], c["fields"]), labels("ticket")),
+                 ("Defaults", c["default"], labels("default")), ("Chosen by the job", c["job"], labels("job"))]
+        if changed:             # a saved placement: its fields are counted too, so the tiles add up to the fields
+            tiles.append(("Changed by the approver", changed, labels("approver")))
+        tiles += [("Stops · warnings", "%d · %d" % (c["stops"], c["warnings"]), next(iter(plan["warnings"]), ""))]
+        parts.append('<div class="tiles deploy-tiles">%s</div>' % "".join(
+            '<div class="tile"><div class="k">%s</div><div class="v">%s</div>%s</div>' %
+            (label, esc(value), ('<div class="n">%s</div>' % esc(note)) if note else "") for label, value, note in tiles))
+    parts.extend(deploy_table(vm, len(plan["vms"]) > 1, vm["name"] in editable_vms) for vm in plan["vms"] if vm["rows"])
+    if stopped:
+        if plan["comment"]:
+            parts.append('<div><h3>Sent to the requester as a comment</h3><blockquote>%s</blockquote></div>' % esc(plan["comment"]))
+        parts.append("<strong>Nothing was built. Run the workflow again: the plan is checked and approved again.</strong>" if refused
+                     else "<strong>Approval and build: not reached</strong>")
+    else:
+        result = plan.get("placement")
+        if result and result.get("error") != plan.get("approve_error"):
+            if result["ok"]:
+                message = "Placement saved on %s by AAP job %d" % (plan["ticket"], result["job"])
+            elif result["done"]:
+                message = "%s Nothing was changed." % result["error"]
+            else:
+                message = "Checking placement in AAP job %d." % result["job"]
+            parts.append('<p class="placement-status" role="status">%s</p>' % esc(message))
+        if actions:
+            parts.append(actions)
+    return '<div class="decide deploy-card%s"%s>%s</div>' % (
+        " stopped" if stopped else "", ' id="decide"' if actions and not stopped else "", "".join(parts))
+
+
 def decide_box_html(cfg, a):
     """1.92.0: on the job page of a workflow waiting for approval - the check's plan and the decision, with the same rules and code as /portal/approvals
     (portal_approvers, the Approve role, not one's own run unless portal_allow_self_approval; Sure?; logged). Someone who may not decide sees why and a
     link to Approvals."""
     left = ('<span class="left">Times out in %s</span>' % esc(a["time_left"])) if a.get("time_left") else ""
-    plan = plan_html(a.get("plan"))
+    vm_plan = a.get("deploy_plan")
+    if deploy_stopped(vm_plan):
+        return deploy_card(cfg, vm_plan)
+    approve = "Approve - build as shown" if vm_plan else "Approve"
+    result = (vm_plan or {}).get("placement") or {}
+    pending_job = result.get("job") if not result.get("done") else None
+    if vm_plan and vm_plan.get("saved_job"):
+        approve = "Approve with the new placement"
+    editable_vms = (a.get("deploy_shortlist") or {}).get("vms", {}) if a.get("may_decide") and not pending_job else {}
     rep = report_btn(a.get("report"))
     if a.get("may_decide"):
-        act = ('<div class="dbtns" data-aid="%d"><button type="button" class="pri" data-d="approve">Approve</button><button type="button" class="deny" data-d="deny">Deny</button>'
-               '<span class="sp"></span>%s<span class="state" aria-live="polite"></span>'
-               '<span class="log">Logged with your name, the decision and the time. AAP records it as the portal\'s account.</span></div>' % (int(a["id"]), rep))
+        blocked = (vm_plan or {}).get("approve_error")
+        buttons = [] if pending_job or blocked else ['<button type="button" class="pri" data-d="approve">%s</button>' % approve]
+        buttons.append('<button type="button" class="deny" data-d="deny">Deny</button>')
+        if vm_plan and editable_vms:
+            buttons.append('<button type="button" data-change-placement>Change placement...</button>')
+        act = ('<div class="dbtns" data-aid="%d" data-viewer="%s" data-saved-job="%s"%s%s>%s<span class="sp"></span>%s<span class="state" aria-live="polite"></span>'
+               '<span class="log">Logged with your name, the decision and the time. AAP records it as the portal\'s account.</span></div>' %
+               (int(a["id"]), esc(a.get("viewer", "")), esc((vm_plan or {}).get("saved_job")), (' data-pending-job="%d"' % pending_job) if pending_job else "",
+                ' data-approve-blocked="1"' if blocked else "", "".join(buttons), rep))
     else:
         act = ('<div class="dwhy">%s<span>%s They decide on <a href="%sapprovals">Approvals</a>.</span></div>%s'
                % (icon("lock"), WHY_HTML.get(a.get("why"), esc(a.get("reason", ""))), cfg.path, ('<div class="dbtns">%s</div>' % rep) if rep else ""))
+    if vm_plan:
+        return deploy_card(cfg, vm_plan, left, act, editable_vms)
+    plan = plan_html(a.get("plan"))
     nothing = "" if plan or rep else '<p class="muted-line">The check left no summary and no report: open the check\'s job below.</p>'
     return ('<div class="decide" id="decide"><div class="dtop"><span class="eyebrow2">The check\'s plan</span>%s</div>%s%s%s</div>'
             % (left, ('<div>%s</div>' % plan) if plan else "", nothing, act))
@@ -3532,7 +4117,17 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
     wf = j.get("type") == "workflow_job"
     title = j.get("action_title") or j.get("name") or "Job %d" % jid
     decide = ""                                         # 1.92.0: the decision box, while it waits for an approval
-    if done:
+    vm_plan = pg.get("deploy_plan") or next((s["deploy_plan"] for s in reversed(pg.get("steps") or []) if s.get("deploy_plan")), None)
+    appr = portal.approval_of(jid, cn) if wf and approval_wait and not done else None
+    if appr:
+        vm_plan = appr.get("deploy_plan") or vm_plan
+        appr = dict(appr, deploy_plan=vm_plan, viewer=cn)
+    if deploy_stopped(vm_plan):
+        decide = deploy_card(cfg, vm_plan)
+        msg = ("<b>Stopped</b> - the build refused the approved plan. Nothing was built." if deploy_refused(vm_plan)
+               else "<b>Stopped</b> - the plan needs an answer before the approval.")
+        cls, ik = "wait", "wait"
+    elif done:
         ok = st == "successful"
         if wf:
             msg = ("<b>Succeeded</b> - AAP reports the workflow successful: %d of %d steps succeeded." % (pg.get("steps_done", 0), pg.get("steps_n", 0))) if ok else \
@@ -3543,18 +4138,37 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
         cls, ik = ("ok", "ok") if ok else ("bad", "bad")
     elif approval_wait:
         # 1.92.0: the decision here, in the banner's box - the approval as approvals() gives it to this person
-        appr = portal.approval_of(jid, cn) if wf else None
-        c = ((appr or {}).get("plan") or {}).get("counts") or {}
-        what = (" - the check planned %d change%s on %d host%s." % (c["changes"], "" if c["changes"] == 1 else "s", c["hosts"], "" if c["hosts"] == 1 else "s")) if c.get("changes") else "."
-        if appr and appr.get("may_decide"):
-            msg = "<b>Waiting for your decision</b>%s Approve to apply %s, Deny to stop here." % (esc(what), "them" if c.get("changes") else "it")
+        may_decide = appr and appr.get("may_decide")
+        if vm_plan:
+            c = vm_plan["counts"]
+            who = "Waiting for your decision" if may_decide else "Waiting for an approver"
+            state = ("has %s" % counted(c["warnings"], "warning")) if c["warnings"] else "is ready"
+            plan_word = "the plan with the new placement" if vm_plan.get("saved_job") else "the plan"
+            msg = "<b>%s</b> - %s for %s on %s %s." % (who, plan_word, counted(c["vms"], "VM"), esc(vm_plan["ticket"]), state)
+            saving = vm_plan.get("placement")
+            if saving and not saving["done"]:
+                msg += " AAP is checking the requested placement."
+            elif may_decide and not vm_plan.get("approve_error"):
+                msg += " Approve to build it as shown, or Deny."
         else:
-            msg = "<b>Waiting for an approver</b>%s Nothing changes until an approver approves." % esc(what)
+            c = ((appr or {}).get("plan") or {}).get("counts") or {}
+            what = (" - the check planned %d change%s on %d host%s." % (c["changes"], "" if c["changes"] == 1 else "s", c["hosts"], "" if c["hosts"] == 1 else "s")) if c.get("changes") else "."
+            if may_decide:
+                msg = "<b>Waiting for your decision</b>%s Approve to apply %s, Deny to stop here." % (esc(what), "them" if c.get("changes") else "it")
+            else:
+                msg = "<b>Waiting for an approver</b>%s Nothing changes until an approver approves." % esc(what)
         cls, ik = "wait", "wait"
-        decide = decide_box_html(cfg, appr) if appr else ""
+        if appr:
+            decide = decide_box_html(cfg, appr)
+        elif vm_plan:
+            decide = deploy_card(cfg, vm_plan)
     else:
         step = pg.get("now", "").split(" - ")[0].lower()
         msg, cls, ik = "<b>Running</b>%s%s" % ((" - " + esc(step)) if step else "", (" \u00b7 " + esc(pg["hosts_line"])) if pg.get("hosts_line") else ""), "run", "run"
+    if vm_plan and not decide:
+        handoff = vm_plan.get("no_touch", {})
+        job = handoff.get("workflow_job") if handoff.get("outcome") == "sent_to_approval" else None
+        decide = deploy_card(cfg, vm_plan, workflow_visible=job and portal.visible(cn, job))
     ring = ring_html(pg, done, approval_wait)
     banner = '<div class="banner2 %s%s">%s<span>%s</span></div>' % (cls, " has-ring" if ring else "", ring or icon(ik), msg)
     nowbox = ""
@@ -3575,6 +4189,7 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
         rows = "".join('<tr%s><td class="ord">%d</td><td>%s</td><td>%s</td><td>%s%s</td><td class="mono">%s</td></tr>' % (
             ' class="now-row"' if s_["word"] == "Waiting for approval" and not done else "", k + 1, esc(s_["name"]), esc(s_["type"]),
             # 1.92.0: a check that failed on purpose with its plan - Plan ready, never a red Failed
+            ('<span class="chip s-warning">%sStopped</span>' % icon("wait")) if s_["word"] == "Stopped" else
             ('<span class="chip s-plan">%sPlan ready</span>' % icon("job")) if s_["word"] == "Plan ready" else
             # 1.79.5: a step still running or waiting in a workflow that is over is not finished - no turning mark
             ('<span class="chip s-info">%sNot finished</span>' % icon("skip")) if done and s_["status"] in ("running", "pending", "waiting", "new") else
@@ -3615,7 +4230,9 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
             % (jid, (' data-via="%d"' % via) if via else "", 1 if done else 0, esc(st),
                # 1.92.0: waiting for a person - asked again every 10 s, not 3
                ' data-wait="10000"' if approval_wait and not done else "",
-               esc(title), "Workflow" if wf else "Job template", status_chip(st, approval_wait and not done),
+               esc(title), "Workflow" if wf else "Job template",
+               # 1.117.0: a VM deploy plan that stopped is a stop, amber as its banner, never a red Failed
+               ('<span class="chip s-warning">%sStopped</span>' % icon("wait")) if deploy_stopped(vm_plan) else status_chip(st, approval_wait and not done),
                banner, decide, nowbox, hosts, steps, happened, nxt, result, facts, answers, links, tech, foot))
 
 
@@ -4758,6 +5375,11 @@ def make_handler(cfg, portal, static_dir):
                 return self._send(200, job_page(cfg, portal, cn, int(m.group(2)), via, (q.get("scope") or ["mine"])[-1]), "text/html; charset=utf-8")
             if path == "/approvals":
                 return self._send(200, approvals_page(cfg, portal, cn), "text/html; charset=utf-8")
+            placement = re.fullmatch(r"/api/placement/(\d{1,12})", path)
+            if placement:
+                if not portal.poll_ok(cn):
+                    return self._send(429, {"error": "Too many updates: wait a few seconds."})
+                return self._send(*portal.placement(cn, int(placement[1])))
             if path == "/api/approvals":
                 code, data = portal.approvals(cn)
                 return self._send(code, data)
@@ -4884,7 +5506,7 @@ def make_handler(cfg, portal, static_dir):
             if path == "/refresh":                      # 1.78.0: read AAP again now (the Actions page's Refresh)
                 return self._refresh_post()
             m_act = re.match(r"^/api/actions/([A-Za-z0-9_]{1,64})$", path)
-            m_dec = re.match(r"^/api/approvals/(\d{1,12})/(approve|deny)$", path)
+            m_dec = re.match(r"^/api/approvals/(\d{1,12})/(approve|deny|placement)$", path)
             if not m_act and not m_dec:
                 return self._send(404, {"error": "not found"})
             cn = self._who(api=True)
@@ -4893,7 +5515,8 @@ def make_handler(cfg, portal, static_dir):
             # CSRF: a page of this site sent it (same origin), with this person's token, as JSON
             if not self._same_origin() or not portal.token_ok(cn, self.headers.get("X-Portal-Token")) \
                     or (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
-                portal.log.add({"event": "refused", "user": cn, "ip": self._ip(), "path": path, "why": "not from a portal page (CSRF check)"})
+                event = "placement_refused" if m_dec and m_dec.group(2) == "placement" else "refused"
+                portal.log.add({"event": event, "user": cn, "ip": self._ip(), "path": path, "why": "not from a portal page (CSRF check)"})
                 return self._send(403, {"error": "Refused: send it from the portal's page (reload the page and try again)."})
             try:
                 n = int(self.headers.get("Content-Length") or 0)
@@ -4912,7 +5535,9 @@ def make_handler(cfg, portal, static_dir):
                 sig = body.get("sig")
                 code, out = portal.launch(cn, self._ip(), m_act.group(1), sent if isinstance(sent, dict) else None, sig if isinstance(sig, str) else None)
                 return self._send(code, out)
-            code, out = portal.decide(cn, self._ip(), int(m_dec.group(1)), m_dec.group(2))
+            if m_dec.group(2) == "placement":
+                return self._send(*portal.change_placement(cn, self._ip(), int(m_dec.group(1)), body.get("vms") if set(body) == {"vms"} else None))
+            code, out = portal.decide(cn, self._ip(), int(m_dec.group(1)), m_dec.group(2), body.get("plan"))
             return self._send(code, out)
 
     return Handler

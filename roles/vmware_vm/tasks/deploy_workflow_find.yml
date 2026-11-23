@@ -1,0 +1,106 @@
+---
+- name: VMware | find the workflow and check its launch requirements
+  module_defaults:
+    ansible.builtin.uri:
+      headers: >-
+        {{ {'Accept': 'application/json'} | combine({'Authorization': 'Bearer ' ~ lookup('ansible.builtin.env', _vp_aap_vars.token)}
+                                                    if _vp_aap_login == 'token' else {}) }}
+      url_username: "{{ lookup('ansible.builtin.env', _vp_aap_vars.user) if _vp_aap_login == 'password' else omit }}"
+      url_password: "{{ lookup('ansible.builtin.env', _vp_aap_vars.password) if _vp_aap_login == 'password' else omit }}"
+      force_basic_auth: "{{ _vp_aap_login == 'password' }}"
+      validate_certs: "{{ _vp_aap_verify }}"
+      ca_path: "{{ _vp_aap_ca | default(omit, true) }}"
+      timeout: 30
+  block:
+    - name: VMware | find the workflow in AAP ({{ _vp_aap_api }})
+      ansible.builtin.uri:
+        url: "{{ _vp_aap_host }}/{{ _vp_aap_api }}workflow_job_templates/?name={{ _vp_workflow | urlencode }}"
+        method: GET
+        status_code: [200, 401, 403, 404]
+      vars:
+        _vp_aap_api: api/controller/v2/
+      register: _vp_wf_find1
+      when: _vp_aap_host | length > 0 and _vp_aap_login | length > 0
+      failed_when: false
+      check_mode: false
+      no_log: true                           # the request carries the token or password
+
+    - name: VMware | find the workflow in AAP ({{ _vp_aap_api }}, before AAP 2.5)
+      ansible.builtin.uri:
+        url: "{{ _vp_aap_host }}/{{ _vp_aap_api }}workflow_job_templates/?name={{ _vp_workflow | urlencode }}"
+        method: GET
+        status_code: [200, 401, 403, 404]
+      vars:
+        _vp_aap_api: api/v2/
+      register: _vp_wf_find2
+      when: _vp_wf_find1.status | default(0) == 404
+      failed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: VMware | the workflow AAP found
+      ansible.builtin.set_fact:
+        _vp_wf: >-
+          {%- set rs = [_vp_wf_find1, _vp_wf_find2] | selectattr('status', 'defined') | list -%}
+          {%- set r = rs[-1] if rs else {} -%}
+          {%- set found = (r.json.results | default([])) if r.status | default(0) == 200 else [] -%}
+          {%- if _vp_verify_ticket | default(false) | bool -%}
+          {%-   set found = found | selectattr('name', 'equalto', _vp_workflow) | list -%}
+          {%-   set found = found if _vp_workflow | trim and found | length == 1 else [] -%}
+          {%- endif -%}
+          {{ {'api': ('api/controller/v2/' if rs | length == 1 else 'api/v2/') if rs else '', 'status': r.status | default(0), 'id': found[0].id | default(0) if found else 0,
+              'error': '' if found else
+                       ('not checked: no AAP credential (a dry run does without it)' if not rs else
+                        ('AAP did not answer at ' ~ _vp_aap_host ~ ': ' ~ (r.msg | default('') | truncate(160)) ~ ' (the address, a firewall, or its certificate'
+                         ~ ' - vm_deploy_poll_aap_ca_path)') if r.status | default(-1) <= 0 else
+                        ('AAP refused the login (HTTP ' ~ r.status ~ "): the credential's user name and password, or its token, are wrong or expired")
+                        if r.status in [401, 403] else
+                        ('AAP has no API at ' ~ _vp_aap_host ~ "/api/controller/v2/ or /api/v2/ (HTTP 404): the credential's URL must be AAP's own address")
+                        if r.status == 404 else
+                        ('no workflow named "' ~ _vp_workflow ~ '" that the AAP user may see: check ' ~ _vp_workflow_setting ~ ', and give the user'
+                         ~ ' the Execute role on that workflow'))} }}
+
+    - name: VMware | can the workflow take the ticket number? (its survey, or Prompt on launch for Variables)
+      ansible.builtin.uri:
+        url: "{{ _vp_aap_host }}/{{ _vp_wf.api }}workflow_job_templates/{{ _vp_wf.id }}/launch/"
+        method: GET
+        status_code: [200, 401, 403, 404]
+      register: _vp_wf_launch
+      when: _vp_wf.id | int > 0
+      failed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: VMware | the workflow can be started with a ticket number
+      ansible.builtin.set_fact:
+        _vp_wf: >-
+          {%- set l = _vp_wf_launch.json | default({}) if _vp_wf_launch.status | default(0) == 200 else {} -%}
+          {{ _vp_wf | combine({'error': _vp_wf.error or
+              ('AAP did not say whether the workflow may be started (HTTP ' ~ _vp_wf_launch.status | default('?')
+               ~ '): the AAP user needs the Execute role on "' ~ _vp_workflow ~ '"') if not l else
+              _vd_handoff_fix if _vp_verify_ticket | default(false) and not l.survey_enabled | default(false) and not l.ask_variables_on_launch | default(false) else
+              ('the workflow "' ~ _vp_workflow ~ '" takes no ticket number: give it the survey question vm_deploy_ticket (or tick'
+               ~ ' Prompt on launch next to its Variables)') if not l.survey_enabled | default(false) and not l.ask_variables_on_launch | default(false) else
+              ('the workflow also needs ' ~ (l.variables_needed_to_start | reject('equalto', 'vm_deploy_ticket') | join(', '))
+               ~ ' to start: its survey may only ask for vm_deploy_ticket')
+              if l.variables_needed_to_start | default([]) | reject('equalto', 'vm_deploy_ticket') | list | length > 0 else ''}) }}
+      when: _vp_wf.id | int > 0
+
+    - name: VMware | read the approval workflow survey
+      ansible.builtin.uri:
+        url: "{{ _vp_aap_host }}/{{ _vp_wf.api }}workflow_job_templates/{{ _vp_wf.id }}/survey_spec/"
+      register: _vp_survey
+      when:
+        - _vp_verify_ticket | default(false) | bool and not _vp_wf.error
+        - not _vp_wf_launch.json.ask_variables_on_launch | default(false)
+      failed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: VMware | the approval workflow accepts the ticket and the no-touch workflow ID
+      ansible.builtin.set_fact:
+        _vp_wf: >-
+          {%- set questions = _vp_survey.json.spec | default([]) | map(attribute='variable') | list -%}
+          {{ _vp_wf | combine({'error': _vd_handoff_fix if _vp_survey.status | default(0) != 200 or 'vm_deploy_handoff_from' not in questions else
+                               'Give the approval workflow a survey question named vm_deploy_ticket.' if 'vm_deploy_ticket' not in questions else ''}) }}
+      when: not _vp_survey.skipped | default(false)

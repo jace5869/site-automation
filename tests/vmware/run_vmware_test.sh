@@ -74,7 +74,7 @@ fresh() {  # a new simulator with the test VMs (tests/vmware/vcsim.py setup)
     # the removed simulator's port is freed a moment later (rootless podman): wait for it, 60 s at most - else the new one
     # met "Address already in use" and the run stopped half way
     for _ in $(seq 1 60); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null || break; sleep 1; done
-    "$engine" run -d --name "$name" -p "127.0.0.1:$port:8989" "$image" -l 0.0.0.0:8989 -api-version 8.0 -pg 2 >/dev/null \
+    "$engine" run -d --name "$name" -p "127.0.0.1:$port:8989" "$image" -l 0.0.0.0:8989 -api-version 8.0 -pg 2 -ds "${1:-1}" >/dev/null \
         || { echo "ABORT - could not start $image"; exit 1; }
     VMWARE_PORT=$port "$py" "$here/vcsim.py" setup || { echo "ABORT - vcsim setup"; exit 1; }
 }
@@ -963,7 +963,8 @@ sn_port=$((port + 41))
 SNMOCK_LOG="$work/sn.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$sn_port" >/dev/null 2>&1 &
 sn_pid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$sn_port") 2>/dev/null && break; sleep 0.1; done
-VMWARE_PORT=$port "$py" - <<'EOPY' || { echo "ABORT - template"; exit 1; }
+make_deploy_template() {
+    VMWARE_PORT=$1 "$py" - <<'EOPY' || { echo "ABORT - template"; exit 1; }
 import os, time
 from pyVim.connect import SmartConnect
 from pyVmomi import vim
@@ -976,6 +977,8 @@ while t.info.state not in ("success", "error"):
     time.sleep(0.1)
 assert t.info.state == "success", t.info.error
 EOPY
+}
+make_deploy_template "$port"
 newticket() {  # newticket DESCRIPTION [COMMENT] -> the incident number
     "$py" - "$sn_port" "$1" "${2:-}" <<'EOPY'
 import base64, json, sys, urllib.request
@@ -1524,14 +1527,13 @@ run "two VMs, workflow step 1 (propose): each checked and placed, a note each, n
     -e vm_deploy_ticket="$incw" -e "$rules" -e "$words" -e vm_deploy_phase=propose -e "$mail" \
     -- "2 VMs (wfl01, wfl02) ready to build - waiting for the approval" "wfl01: ready to build" "wfl02: ready to build" "emailed"
 "$py" - "$work/sn.jsonl" "$nw" <<'EOPY' && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"wfl01"' \
-    && echo "ok   -   ...'Checked - VM wfl01 - 1 of 2' and '- 2 of 2' (with the placement caveat) on the ticket; nothing built" \
+    && echo "ok   -   ...'Checked - VM wfl01 - 1 of 2' and '- 2 of 2' (with their plan rows) on the ticket; nothing built" \
     || { echo "FAIL -   ...two-VM propose notes"; fails=$((fails + 1)); }
 import json, sys
 notes = [json.loads(l)["body"].get("work_notes", "") for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):] if '"PATCH"' in l]
 a = [n for n in notes if n.startswith("[AAP] Checked - VM wfl01 - 1 of 2 - ready to build after the approval (")]
 b = [n for n in notes if n.startswith("[AAP] Checked - VM wfl02 - 2 of 2 - ready to build after the approval (")]
-sys.exit(0 if a and b and "\nvm_name: wfl01\n" in a[0] and "\n- Cluster: " in a[0] and "Each VM is placed at the build" in b[0]
-         and "Each VM is placed" not in a[0] else 1)
+sys.exit(0 if a and b and "\nvm_name: wfl01   (from the ticket:" in a[0] and all("\n- Network: " in n for n in (a[0], b[0])) else 1)
 EOPY
 getpart html "$(lastmail)" | grep -q "Checked: nothing is built yet. Approve the workflow to build them" \
     && echo "ok   -   ...the approver's email: both VMs, nothing built yet" || { echo "FAIL -   ...two-VM approval email"; fails=$((fails + 1)); }
@@ -2088,8 +2090,198 @@ svc4="$(newticket $'vm_name: svc04\ntemplate: rhel9-gold')"
     -e vm_deploy_ticket="$svc4" -e "$rules" -e "$svcs" -e vm_deploy_service=test -- "VM deploy $svc4: svc04 deployed" 'Service: test - in the VM notes: \"Test box.\"') \
     || fails=$((fails + 1))
 check "  ...its notes have the service's words on their own line, last" svc04 "v['annotation'].split('\\n')[1:]" "['Template: rhel9-gold', 'AAP job 4711 (operator1)', 'Service: Test box.']"
-kill "$aap_pid" "$aap_pid2" 2>/dev/null
+kill "$aap_pid2" 2>/dev/null
 unset CONTROLLER_HOST CONTROLLER_USERNAME CONTROLLER_PASSWORD
+
+# A second datastore lets the standalone and approved builds choose different destinations.
+plan_port=$((port + 8))
+name="$name3" port="$plan_port" fresh 2
+make_deploy_template "$plan_port"
+plan_chg="$(newrec change_request '{"number":"CHG0030001","description":"named vm-app01, RHEL 9 or Windows Server 2022","state":"-1","approval":"approved","u_owner_group":"APP-TEAM-1"}')"
+plan_ct="$(newrec change_task "{\"number\":\"CTASK0030002\",\"change_request\":\"$plan_chg\",\"short_description\":\"to deploy\"}")"
+plan_opts='{"vm_deploy_plain_words":true,"vm_deploy_templates":["rhel9-gold","Windows Server 2022"],
+            "vm_deploy_owner_field":"u_owner_group","vm_deploy_notes_also":["tasks"],"vm_deploy_notes_tasks_query":"short_descriptionLIKEto deploy",
+            "vm_deploy_mem_target_pct":0,"vm_deploy_datastores":["LocalDS_0","LocalDS_1"],"vm_deploy_customize":false,"vm_deploy_wait_ip":0}'
+plan_run() { RUN_PORT=$plan_port run "$1" "$2" vm_deploy_from_ticket.yml -e vm_deploy_ticket="$plan_chg" -e "$plan_opts" "${@:3}"; }
+plan_run "two OS answers stop the change before approval" fail -e vm_deploy_phase=propose -- "more than one operating system"
+"$py" - "$work/out.txt" "$work/sn.jsonl" <<'EOPY' || { echo "FAIL - stopped change plan"; fails=$((fails + 1)); }
+import json, sys
+plan = next(json.loads(l.strip()[5:])["vm_deploy_plan"] for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+assert plan["state"] == "stopped" and plan["counts"]["stops"] > 0 and plan["phase"] == "propose"
+assert any(r["key"] == "template" and r["kind"] == "stop" for r in plan["vms"][0]["rows"])
+assert plan["comment"].startswith("[AAP] We cannot build this VM yet")
+assert any(json.loads(l).get("body", {}).get("comments", "").startswith(plan["comment"]) for l in open(sys.argv[2]) if '"PATCH"' in l)
+EOPY
+setrec change_request "$plan_chg" '{"description":"vm_name: vm-app01\ntemplate: rhel9-gold\ncluster: DC0_C0\nmemory_gb: 16"}'
+plan_run "no approved placement means no build" fail -e vm_deploy_phase=build -- "the approved plan has no placement for VM vm-app01"
+STATE_PORT=$plan_port state vm-app01 "1" >/dev/null 2>&1 && { echo "FAIL - built without placement"; fails=$((fails + 1)); }
+nplan=$(wc -l < "$work/sn.jsonl")
+plan_run "publish the checked change with its memory warning" ok -e vm_deploy_phase=propose \
+    -e '{"vm_deploy_datastores":["LocalDS_0"]}' -- "WARNING:" "IP by DHCP" "from the ticket: description"
+"$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" "$plan_ct" <<'EOPY' || { echo "FAIL - checked change plan"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+p = stats["vm_deploy_plan"]
+assert p["state"] == "ready" and p["ticket"] == "CHG0030001" and p["tasks"] == [sys.argv[4]]
+assert p["counts"]["warnings"] == stats["site_approval_summary"]["counts"]["warning"] == 1
+rows = {r["key"]: r for r in p["vms"][0]["rows"]}
+assert rows["cluster"]["level"] == "warning" and rows["datastore"]["kind"] == "job"
+assert rows["datastore"]["value"] == "LocalDS_0" and rows["owner"]["value"] == "APP-TEAM-1"
+notes = [json.loads(l)["body"].get("work_notes", "") for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
+assert len(notes) == 2 and notes[0] == notes[1] and notes[0].startswith("[AAP] Checked - ready to build")
+assert " - WARNING: " in notes[0] and "- Datastore: LocalDS_0   (chosen by the job:" in notes[0]
+assert any("IP by DHCP" in line for line in stats["vm_report"]["lines"])
+EOPY
+other_ds='{"vm_deploy_defaults":{"datastore":"LocalDS_1"}}'
+plan_run "a standalone dry run would now use the other datastore" ok --check -e "$other_ds" -- "- Datastore: LocalDS_1"
+plan_run "build in the approved place with the approved warning" ok -e vm_deploy_phase=build -e "$other_ds" -- "vm-app01 deployed"
+VMWARE_PORT=$plan_port "$py" - <<'EOPY' || { echo "FAIL - approved VM placement or owner"; fails=$((fails + 1)); }
+import os
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+vc = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+content = vc.RetrieveContent()
+vm = next(v for v in content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True).view if v.name == "vm-app01")
+assert [ds.name for ds in vm.datastore] == ["LocalDS_0"]
+assert vm.config.annotation.splitlines()[1:3] == ["Template: rhel9-gold", "Owner: APP-TEAM-1"]
+EOPY
+# Reuse the change and its CTASK with a fresh inventory. The earlier build already owns this VM name.
+name="$name3" port="$plan_port" fresh 2
+make_deploy_template "$plan_port"
+setrec change_request "$plan_chg" '{"description":"vm_name: vm-app01\ntemplate: rhel9-gold\ncluster: DC0_C0\ndatastore: LocalDS_0\nmemory_gb: 1"}'
+plan_run "propose with both mounted datastores in the shortlist" ok -e vm_deploy_phase=propose -e awx_job_id=4813 \
+    -e vm_deploy_mem_target_pct=80 -- '"vm_deploy_shortlist"'
+"$py" - "$work/out.txt" "$work/placement.json" <<'EOPY' || { echo "FAIL - placement shortlist"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+short = stats["vm_deploy_shortlist"]
+assert short["version"] == 1 and str(short["job"]) == "4813" and short["ticket"] == "CHG0030001"
+assert short["digest"] == stats["vm_deploy_plan"]["digest"]
+vm = short["vms"]["vm-app01"]
+cluster = next(c for c in vm["clusters"] if c["group"] == "plan" and c["name"] == "DC0_C0")
+key = "|".join(cluster[k] for k in ("vcenter", "datacenter", "name"))
+assert {d["name"] for d in vm["datastores"][key] if d["fits"]} == {"LocalDS_0", "LocalDS_1"}
+folder = next(r["value"] for r in stats["vm_deploy_plan"]["vms"][0]["rows"] if r["key"] == "folder")
+change = dict(vm_name="vm-app01", vcenter=cluster["vcenter"], cluster=cluster["name"], datastore="LocalDS_1", folder=folder)
+with open(sys.argv[2], "w") as f:
+    json.dump(dict(vm_deploy_placement=[change], vm_deploy_placement_by="DOE.JANE.Q.1234567890", vm_deploy_checked_job="4813"), f)
+EOPY
+placement_run() {
+    RUN_PORT=$plan_port run "$1" "$2" vm_deploy_placement.yml -e vm_deploy_ticket="$plan_chg" -e "$plan_opts" \
+        -e vm_deploy_mem_target_pct=80 -e awx_job_id=4820 -e "@$work/placement.json" "${@:3}"
+}
+nplan=$(nsn)
+"$py" - "$work/placement.json" "$work/two-placements.json" <<'EOPY'
+import json, sys
+with open(sys.argv[1]) as f:
+    first, = json.load(f)["vm_deploy_placement"]
+with open(sys.argv[2], "w") as f:
+    json.dump({"vm_deploy_placement": [first, dict(first, vm_name="vm-app02")]}, f)
+EOPY
+placement_run "refuse two VMs in one placement job" fail -e "@$work/two-placements.json" -- "Save one VM at a time"
+[ "$(patches_since "$nplan")" = 0 ] || { echo "FAIL - two-VM placement wrote a note"; fails=$((fails + 1)); }
+placement_run "refuse LocalDS_1 outside the datastore allow-list" fail -e '{"vm_deploy_datastores":["LocalDS_0"]}' -- "not in vm_deploy_datastores"
+[ "$(patches_since "$nplan")" = 0 ] || { echo "FAIL - refused placement wrote a note"; fails=$((fails + 1)); }
+"$py" - "$work/out.txt" <<'EOPY' || { echo "FAIL - refused placement artifact"; fails=$((fails + 1)); }
+import json, sys
+result = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))["vm_deploy_placement_change"]
+assert result["ok"] is False and result["launch_note"] == "not written" and "vm_deploy_datastores" in result["error"]
+EOPY
+nplan=$(nsn)
+placement_run "change to LocalDS_1 before approval" ok -- '"vm_deploy_placement_change"'
+"$py" - "$work/sn.jsonl" "$nplan" "$work/out.txt" <<'EOPY' || { echo "FAIL - changed placement notes or artifact"; fails=$((fails + 1)); }
+import json, sys
+writes = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):] if '"PATCH"' in l]
+assert [w["path"].split("/")[-2] for w in writes] == ["change_request", "change_task"]
+notes = [w["body"]["work_notes"] for w in writes]
+assert notes[0] == notes[1] and notes[0].startswith("[AAP] Placement changed - VM vm-app01")
+assert "for AAP job 4813" in notes[0] and "- Datastore: LocalDS_1   (changed by the approver:" in notes[0]
+result = next(json.loads(l.strip()[5:]) for l in open(sys.argv[3]) if l.strip().startswith("RUN: {"))["vm_deploy_placement_change"]
+assert result["ok"] is True and result["launch_note"] == "written" and result["vms"][0]["datastore"] == "LocalDS_1"
+EOPY
+plan_run "build on the datastore recorded by the placement change" ok -e vm_deploy_phase=build -e vm_deploy_checked_job=4813 \
+    -e vm_deploy_mem_target_pct=80 -- "vm-app01 deployed"
+VMWARE_PORT=$plan_port "$py" - <<'EOPY' || { echo "FAIL - VM built on the wrong datastore"; fails=$((fails + 1)); }
+import os
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+vm = next(v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "vm-app01")
+assert [d.name for d in vm.datastore] == ["LocalDS_1"]
+EOPY
+# Check the same approved change against an empty destination again.
+name="$name3" port="$plan_port" fresh 2
+make_deploy_template "$plan_port"
+no_touch() { plan_run "$1" "$2" -e vm_deploy_phase=no_touch "${@:3}"; }
+nplan=$(nsn)
+no_touch "preview the clean change" ok --check -e vm_deploy_mem_target_pct=80 -- "would build"
+no_touch "preview the change above the target" ok --check -- "would send to approval:"
+[ "$(patches_since "$nplan")" = 0 ] || { echo "FAIL - preview wrote to ServiceNow"; fails=$((fails + 1)); }
+
+no_touch "the warning needs approval but the deploy has no AAP connection" fail -- "vm_deploy_approval_workflow"
+"$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" <<'EOPY' || { echo "FAIL - missing credential was not recorded"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+result = stats["vm_deploy_plan"]["no_touch"]
+assert result["outcome"] == "failed" and result["workflow_job"] is None
+writes = [json.loads(l) for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
+assert any("/change_request/" in w["path"] and "vm_deploy_approval_workflow" in w["body"]["work_notes"] for w in writes)
+EOPY
+STATE_PORT=$plan_port state vm-app01 "1" >/dev/null 2>&1 && { echo "FAIL - built without the fallback credential"; fails=$((fails + 1)); }
+
+nplan=$(nsn)
+CONTROLLER_HOST="http://127.0.0.1:$aap_port" CONTROLLER_OAUTH_TOKEN=goodtoken no_touch "send the warning to approval" ok -e awx_workflow_job_id=4813 -- "Sent to approval"
+"$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" "$work/aap.jsonl" <<'EOPY' || { echo "FAIL - approval handoff"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+plan = stats["vm_deploy_plan"]
+result = plan["no_touch"]
+assert plan["phase"] == "no_touch" and result["outcome"] == "sent_to_approval"
+assert result["why"] == plan["warnings"] and "target 0%" in result["why"][0]
+launch, = [json.loads(l) for l in open(sys.argv[4])]
+assert launch["workflow"] == 42 and launch["extra_vars"] == {"vm_deploy_ticket": "CHG0030001", "vm_deploy_handoff_from": "4813"}
+assert result["workflow_job"] == launch["job"]
+writes = [json.loads(l) for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
+assert sorted(w["path"].split("/")[-2] for w in writes) == ["change_request", "change_task"]
+note = writes[0]["body"]["work_notes"]
+assert note == writes[1]["body"]["work_notes"] and note.startswith("[AAP] Not built without a person (AAP job 4711):")
+assert result["why"][0] in note and note.endswith("The approval workflow was started: AAP job %d." % launch["job"])
+assert result["why"][0] in stats["vm_report"]["lines"] and "Sent to approval" in stats["vm_report"]["subject"]
+EOPY
+STATE_PORT=$plan_port state vm-app01 "1" >/dev/null 2>&1 && { echo "FAIL - built a VM sent to approval"; fails=$((fails + 1)); }
+
+# its own fake AAP: one that starts the workflow but ignores vm_deploy_handoff_from (the second one stopped after the service cases)
+aap_port3=$((port + 48))
+AAPMOCK_IGNORE_ORIGIN=1 AAPMOCK_LOG="$work/aap3.jsonl" "$py" "$repo/tests/servicenow/aapmock.py" "$aap_port3" >/dev/null 2>&1 &
+aap_pid3=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$aap_port3") 2>/dev/null && break; sleep 0.1; done
+CONTROLLER_HOST="http://127.0.0.1:$aap_port3" CONTROLLER_OAUTH_TOKEN=goodtoken no_touch "cancel a child started without its origin" fail \
+    -e awx_workflow_job_id=4813 -- "was started without its origin and was canceled"
+kill "$aap_pid3" 2>/dev/null
+"$py" - "$work/aap3.jsonl" <<'EOPY' || { echo "FAIL - handoff cancellation"; fails=$((fails + 1)); }
+import json, sys
+launch, cancel = [json.loads(line) for line in open(sys.argv[1])][-2:]
+assert launch["extra_vars"] == {"vm_deploy_ticket": "CHG0030001"}
+assert cancel == {"canceled": launch["job"]}
+EOPY
+
+nplan=$(nsn)
+no_touch "build a clean change without approval" ok -e vm_deploy_mem_target_pct=80 -- "vm-app01 deployed"
+STATE_PORT=$plan_port state vm-app01 "1" >/dev/null || { echo "FAIL - no VM after clean no-touch run"; fails=$((fails + 1)); }
+"$py" - "$work/out.txt" "$work/sn.jsonl" "$nplan" <<'EOPY' || { echo "FAIL - clean build plan or notes"; fails=$((fails + 1)); }
+import json, sys
+stats = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))
+plan = stats["vm_deploy_plan"]
+assert plan["no_touch"] == {"outcome": "built", "why": [], "workflow_job": None} and stats["vm_deploy"]["built"]
+writes = [json.loads(l) for l in open(sys.argv[2]).readlines()[int(sys.argv[3]):] if '"PATCH"' in l]
+for table in ("change_request", "change_task"):
+    notes = [w["body"]["work_notes"] for w in writes if "/" + table + "/" in w["path"] and "work_notes" in w["body"]]
+    assert notes[0].startswith("[AAP] Checked - building without an approval (AAP job 4711, ticket text %s): the plan is clean" % plan["digest"])
+    assert "vm_name: vm-app01" in notes[0] and notes[1].startswith("[AAP] VM vm-app01 deployed")
+EOPY
+kill "$aap_pid" 2>/dev/null
+"$engine" rm -f "$name3" >/dev/null
 
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$sn_pid" 2>/dev/null

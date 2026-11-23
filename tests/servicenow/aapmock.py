@@ -155,6 +155,12 @@ class H(BaseHTTPRequestHandler):
         if rest == ["workflow_job_templates"] and method == "GET":
             found = [WF] if q.get("name") == WF["name"] else []
             return self._send(200, {"count": len(found), "results": found})
+        if rest == ["workflow_job_templates", str(WF["id"]), "survey_spec"] and method == "GET":
+            return self._send(200, {"spec": [] if no_survey else [{"variable": "vm_deploy_ticket"}, {"variable": "vm_deploy_handoff_from"}]})
+        if rest == ["workflow_jobs", str(JOBS[0]), "cancel"] and method == "POST":
+            with open(LOG, "a") as f:
+                f.write(json.dumps({"canceled": JOBS[0]}) + "\n")
+            return self._send(202, {})
         if rest == ["workflow_job_templates", str(WF["id"]), "launch"]:
             if method == "GET":
                 return self._send(200, {"survey_enabled": not no_survey, "ask_variables_on_launch": False,
@@ -164,11 +170,13 @@ class H(BaseHTTPRequestHandler):
                 return self._send(400, {"resources_needed_to_start": ["Job Template 'VM - deploy' is missing or undefined."]})
             JOBS[0] += 1
             ev = body.get("extra_vars") or {}
-            with open(LOG, "a") as f:
-                f.write(json.dumps({"workflow": WF["id"], "extra_vars": ev, "job": JOBS[0], "api": base}) + "\n")
             out = {"workflow_job": JOBS[0], "id": JOBS[0], "url": "%sworkflow_jobs/%d/" % (base, JOBS[0])}
             if no_survey:
                 out["ignored_fields"] = {"extra_vars": ev}
+            elif os.environ.get("AAPMOCK_IGNORE_ORIGIN") and "vm_deploy_handoff_from" in ev:
+                out["ignored_fields"] = {"extra_vars": {"vm_deploy_handoff_from": ev.pop("vm_deploy_handoff_from")}}
+            with open(LOG, "a") as f:
+                f.write(json.dumps({"workflow": WF["id"], "extra_vars": ev, "job": JOBS[0], "api": base}) + "\n")
             return self._send(201, out)
         return self._send(404, {"detail": "Not found."})
 

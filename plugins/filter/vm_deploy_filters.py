@@ -78,11 +78,22 @@ _TICKET_KIND = {"change_request": "the change", "change_task": "the change task"
                 "sc_req_item": "the requested item", "incident": "the incident"}
 
 
-def vm_deploy_ready(record, table, ready=None, what=""):
+def vm_deploy_owner(record, field, label="Owner", change=None):
+    if not field:
+        return {}
+    source = change if change is not None else record
+    label = str(label or "Owner")
+    item = "task" if change is None and vm_deploy_table(source.get("number", "")) == "change_task" else "change"
+    return {"label": label, "value": _ref(source.get(field)).strip(), "where": "the %s's %s field" % (item, label)}
+
+
+def vm_deploy_ready(record, table, ready=None, what="", no_touch=False):
     """Is the ticket ready to build? ready: vm_deploy_ready_by_table ({table: {field: value or [values]}});
     the entry for the ticket's table, matched to the fields as the form shows them (display values;
     upper / lower case ignored) -> '' or why not. A field that is not there counts as empty."""
     rules = (ready or {}).get(str(table or "")) if isinstance(ready, dict) else None
+    if no_touch:
+        rules = {"approval": "Approved", "state": "Implement", **(rules or {})}
     if not isinstance(rules, dict) or not rules:
         return ""
     r = record or {}
@@ -90,6 +101,8 @@ def vm_deploy_ready(record, table, ready=None, what=""):
     for field, want in rules.items():
         wants = [str(x).strip() for x in (want if isinstance(want, (list, tuple)) else [want]) if str(x if x is not None else "").strip()]
         if not wants:
+            if no_touch and field in ("approval", "state"):
+                return "vm_deploy_ready_by_table: change_request needs both approval and state for no touch"
             continue
         have = _ref(r.get(field)).strip()
         if have.lower() not in [w.lower() for w in wants]:
@@ -1177,13 +1190,14 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
         got = set(_os_asked(spec["template"]))
         if got and not got & set(x.strip() for x in wq["_template_none"].split(",")):
             keep = ("template",)
-    questions = [q for k, q in wq.items() if not k.startswith("_") and (k not in spec or k in keep)]
+    question_fields = {k: q for k, q in wq.items() if not k.startswith("_") and (k not in spec or k in keep)}
+    questions = list(question_fields.values())
     if words is not None and not spec.get("template") and wq.get("_template_hint") and "template" not in wq:
         questions.append("the ticket does not say which operating system: " + wq["_template_hint"])
     # names from a line or GenAI: still as many as the words ask for ("2 VMs")
     if count and spec.get("vm_name") and len(_names(spec["vm_name"])) != count["n"]:
         questions.append(_count_question(count, _names(spec["vm_name"])))
-    return {"spec": spec, "sources": sources, "questions": questions, "words": words is not None, "count": count, "vms": vms}
+    return {"spec": spec, "sources": sources, "questions": questions, "question_fields": question_fields, "words": words is not None, "count": count, "vms": vms}
 
 
 def _num(v):
@@ -1264,6 +1278,9 @@ def vm_deploy_check(parsed, record=None, opts=None):
     p = parsed or {}
     spec = dict(p.get("spec") or {})
     names = _names(spec.get("vm_name")) if spec.get("vm_name") else []
+    only_names = (opts or {}).get("only_names")
+    if only_names:
+        names = [n for n in names if n.lower() in only_names]
     own = p.get("vms") or {}
 
     def mine(n):
@@ -1285,7 +1302,7 @@ def vm_deploy_check(parsed, record=None, opts=None):
                         % (len(names), ", ".join(names), most, most))
     for n in names:
         one = _check_one(mine(n), record, opts)
-        vms.append({"spec": one["spec"], "sources": one["sources"]})
+        vms.append(one)
         problems += [q for q in one["problems"] if q not in problems]
     shown, src = _together(vms)
     return {"spec": shown, "sources": src, "problems": problems, "vms": vms, "names": names}
@@ -1335,6 +1352,7 @@ def _datastore_rules(spec, sources, o, problems):
     own = spec.get("datastore") and not str(sources.get("datastore", "")).startswith(_CONFIG_SRC)
     if rule:
         pats, src = _pats(rule["datastores"]), "datastore rule %s" % ", ".join(_pats(rule["match"]))
+        spec["_datastore_allow"] = pats
         if own and not _allowed(spec["datastore"], pats):
             problems.append("%s goes on a datastore %s (vm_deploy_datastore_rules: %s): %s is not one"
                             % (name, " or ".join(pats), ", ".join(_pats(rule["match"])), spec["datastore"]))
@@ -1358,9 +1376,22 @@ def _datastore_rules(spec, sources, o, problems):
 def _check_one(parsed, record=None, opts=None):
     """vm_deploy_check for one VM (its name in spec.vm_name)."""
     o, r = opts or {}, record or {}
+    pin = {}
     spec = dict((parsed or {}).get("spec") or {})
     sources = dict((parsed or {}).get("sources") or {})
     problems = []
+    if o.get("approved") is not None:
+        name = str(spec.get("vm_name") or "")
+        pin = o["approved"].get(name.lower(), {})
+        keys = ("vcenter", "datacenter", "cluster", "datastore", "folder")
+        if not all(pin.get(k) for k in keys):
+            problems.append("the approved plan has no placement for VM %s: run the workflow from the start" % name)
+        else:
+            for k in keys:
+                spec[k], sources[k] = pin[k], "the approved plan"
+    owner = o.get("owner") or {}
+    if owner and not owner.get("value"):
+        problems.append("the change does not say the owner: its %s field is empty" % owner["label"])
     # a name rule: the VM's name picks the placement (e.g. every name like ??AB01* to one cluster).
     # It fills what the ticket and its site do not say; a value the ticket gives itself wins.
     rule = vm_deploy_name_rule(spec.get("vm_name"), o.get("name_rules"))
@@ -1444,6 +1475,13 @@ def _check_one(parsed, record=None, opts=None):
             problems.append("template %r is not in vm_deploy_templates (%s)" % (spec["template"], ", ".join(o["templates"])))
     _datastore_rules(spec, sources, o, problems)
     for k, lk in (("cluster", "clusters"), ("datastore", "datastores"), ("folder", "folders")):
+        if k == "folder" and sources.get(k) == "the approved plan":
+            # The approved folder is resolved. Also accept its leaf when the allowed pattern is a bare name,
+            # as the module does when checking a folder found from a ticket's bare name.
+            if _allowed(spec[k].split("/")[-1], [pat for pat in o.get(lk) or [] if "/" not in pat]):
+                continue
+        if k == "datastore" and sources.get(k) == "the approved plan" and pin.get("datastore_pod") and _allowed(pin["datastore_pod"], o.get(lk) or []):
+            continue
         if spec.get(k) and o.get(lk) and not _allowed(spec[k], o[lk]):
             problems.append("%s %r is not in vm_deploy_%s (%s)" % (k, spec[k], lk, ", ".join(o[lk])))
     if "disks_gb" in spec:
@@ -1922,13 +1960,441 @@ def vm_deploy_find_proposal(record):
 CHECKED = "[AAP] Checked - "          # the propose step's note: what the approval is for (its ticket text's digest)
 
 
+_PLAN_LABELS = {"vm_name": "VM name", "template": "Template / OS", "cpu": "CPU", "memory_gb": "RAM", "disks_gb": "Disks",
+                "owner": "Owner", "vcenter": "vCenter", "cluster": "Cluster", "datastore": "Datastore", "folder": "Folder", "network": "Network"}
+_PLACES = ("vcenter", "cluster", "datastore", "folder")
+_SOURCE_WORD = {"ticket": "from the ticket", "default": "default", "job": "chosen by the job", "approver": "changed by the approver", "stop": "stop"}
+
+
+def vm_deploy_source_kind(where):
+    source = str(where or "")
+    if source.startswith(("the least used", "the template's cluster", "the template's datastore", "the template's folder")):
+        return "job"
+    if source.startswith("GenAI proposal"):
+        return "ticket"
+    if re.fullmatch(r"the (?:change|task)'s .+ field", source):
+        return "ticket"
+    if "; short name " in source or source.startswith(("short name ", "site ", "name rule ", "datastore rule ")):
+        return "default"
+    if source == "the ticket" or source.startswith(("size '", "the words ")) or re.match(r"^(description|work note|comment|parent)\b", source):
+        return "ticket"
+    return "default"
+
+
+def _plan_text(value):
+    if isinstance(value, (list, tuple)):
+        return " + ".join(_plan_text(x) for x in value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return " ".join(str(value if value is not None else "").splitlines()).strip()
+
+
+def _problem_field(question):
+    # Parser questions carry keys. These also attach validation errors and GenAI questions to the relevant row.
+    for key, pattern in (("owner", "owner"), ("disks_gb", "disk|storage"), ("template", "operating system|template|\\bOS\\b"),
+                         ("cpu", "cpu|socket"), ("memory_gb", r"memory|\bram\b"), ("folder", "folder"),
+                         ("datastore", "datastore"), ("cluster", "cluster"), ("vcenter", r"\bsite\b|vcenter|datacenter"),
+                         ("vm_name", "vm_name|name")):
+        if re.search(pattern, question, re.I):
+            return key
+    return ""
+
+
+def _plan_row(key, spec, sources, vm, owner, problem):
+    value = vm.get(key, spec.get(key, ""))
+    where = sources.get(key, "the template")
+    choice = vm.get("chosen", {}).get(key)
+    fit = vm.get("fit", {}).get(key, {})
+    why = ""
+    if where == "default (vm_deploy_defaults)":
+        where = "vm_deploy_defaults"
+    if vm.get("existing") and key in _PLACES:
+        where = "the existing VM"
+    if key == "network":
+        ports = ", ".join(n or "(unknown)" for n in vm.get("networks", []))
+        value = "the template's - " + (ports + ", " if ports else "") + "IP by DHCP"
+        where = "the template"
+    elif key == "owner":
+        value, where = owner["value"], owner.get("where") or "the change's %s field" % owner["label"]
+    elif key == "vcenter":
+        if not sources.get("vcenter") and sources.get("datacenter"):
+            where = sources["datacenter"]
+        dc = vm.get("datacenter") or spec.get("datacenter")
+        if dc:
+            value = "%s, datacenter %s" % (value, dc)
+        if where.startswith("site ") and sources.get("site"):
+            where += ", " + sources["site"]
+    elif key == "folder" and vm.get("folder"):
+        prefix = "/%s/vm" % vm.get("datacenter")
+        if value == prefix or value.startswith(prefix + "/"):
+            value = value[len(prefix):].strip("/") or "/"
+    if choice == "auto":
+        cands = vm.get(key + "_candidates") or spec.get(key + "s") or []
+        where = "the least used of " + (", ".join(cands) or "the allowed %ss" % key)
+        if fit.get("why"):
+            where += ", " + fit["why"]
+    elif choice == "template":
+        where = "the template's " + key
+    elif choice == "pod":
+        where += ", datastore cluster " + str(spec.get("datastore") or "")
+    limit = fit.get("target" if key == "cluster" else "max")
+    # a datastore not shared by the cluster's hosts (one host's own disk, named by the ticket) is a warning: the person
+    # approving it sees it, and the pinned build then accepts it (no touch and a placement change never do)
+    unshared = key == "datastore" and fit.get("shared") is False
+    if key in ("cluster", "datastore") and fit.get("fits") is False and fit.get("pct_after") is None:
+        why = fit["why"]
+    elif limit is not None and fit.get("pct_after") is not None and (fit["pct_after"] > limit or unshared):
+        if key == "cluster":
+            down = fit["down"]
+            why = "%g%% memory used with this VM and %d host%s down (target %g%%)" % (fit["pct_after"], down, "" if down == 1 else "s", limit)
+        else:
+            why = "%g%% used with this VM at full size (at most %g%%)%s" % (fit["pct_after"], limit,
+                                                                            ", not shared by the cluster's hosts" if unshared else "")
+    kind = "ticket" if key == "owner" else vm_deploy_source_kind(where)
+    value = _plan_text(value)
+    return {"key": key, "label": _plan_text(owner["label"] if key == "owner" else _PLAN_LABELS[key]),
+            "value": problem or value, "where": _plan_text(where), "kind": "stop" if problem else kind,
+            "level": "stop" if problem else "warning" if why else "", "why": _plan_text(problem or why),
+            "editable": key in ("cluster", "datastore", "folder")}
+
+
+def vm_deploy_plan(checked, questions=None, results=None, ticket=None, digest="", read_at="", job="", owner=None,
+                   state="ready", reason="", comment="", report=False):
+    """Build artifact v1. The report uses the same rows, with all VMs and full paths for the approval notes."""
+    ticket = ticket or {}
+    counts = dict.fromkeys(("vms", "fields", "ticket", "default", "job", "stops", "warnings"), 0)
+    plan = {"version": 1, "state": state, "ticket": _plan_text(ticket.get("number")),
+            "table": _plan_text(ticket.get("table")), "tasks": [_plan_text(t) for t in ticket.get("tasks", [])],
+            "digest": _plan_text(digest), "read_at": _plan_text(read_at), "job": _plan_text(job),
+            "reason": _plan_text(reason), "comment": str(comment or "") if state != "not_ready" else "", "vms": [], "warnings": [], "stops": [], "counts": counts}
+    if state == "not_ready":
+        return plan if report else _plan_artifact(plan)
+    problems = list(checked.get("problems") or [])
+    keyed = questions if isinstance(questions, dict) else {}
+    problems.extend(q for q in (keyed.values() if keyed else questions or []) if q not in problems)
+    vms = checked.get("vms") or [checked]
+    per_vm_problems = {q for entry in vms for q in entry.get("problems", [])}
+    for index, entry in enumerate(vms):
+        spec, sources = entry.get("spec", {}), entry.get("sources", {})
+        name = str(spec.get("vm_name") or "")
+        result = results[index] if results and index < len(results) else {}
+        vm = result.get("vm") or {}
+        failure = result.get("msg", "") if result.get("failed") else ""
+        issues = {}
+        stops = []
+        for q in problems:
+            if q in per_vm_problems and q not in entry.get("problems", []):
+                continue
+            if q.startswith("for ") and not q.lower().startswith("for " + name.lower() + ":"):
+                continue
+            key = next((k.split(":")[-1] for k, v in keyed.items() if v == q), "") or _problem_field(q)
+            issues.setdefault("vcenter" if key == "site" else key, q)
+            stops.append(q)
+        if owner and not owner.get("value") and "owner" not in issues:
+            issues["owner"] = "the change does not say the owner: its %s field is empty" % owner["label"]
+            stops.append(issues["owner"])
+        if failure:
+            stops.append(failure)
+            issues.update(dict.fromkeys(_PLACES, failure))
+        if result and not failure:
+            for key in (*_PLACES, "datacenter"):
+                if not vm.get(key):
+                    q = "vCenter did not return the %s for this VM" % key
+                    issues["vcenter" if key == "datacenter" else key] = q
+                    stops.append(q)
+        rows = [_plan_row(k, spec, sources, vm, owner, issues.get(k, "")) for k in _PLAN_LABELS if k != "owner" or owner]
+        for row in rows:
+            if row["level"] == "warning":
+                plan["warnings"].append(("%s: %s" % (row["value"], row["why"])))
+        plan["stops"].extend(_plan_text(name + ": " + q if name else q) for q in stops)
+        plan["vms"].append({"name": _plan_text(name), "rows": rows})
+        if index == 0:
+            counts["fields"] = len(rows)
+            for row in rows:
+                if row["kind"] != "stop":
+                    counts[row["kind"]] += 1
+    counts.update(vms=len(vms), stops=len(plan["stops"]), warnings=len(plan["warnings"]))
+    if plan["stops"]:
+        plan["state"] = "stopped"
+    return plan if report else _plan_artifact(plan)
+
+
+def vm_deploy_no_touch(plan, issues=(), entries=()):
+    """Decide on the full checked plan before the artifact limits its rows and text."""
+    reasons = [s or "The plan has a stop." for s in plan.get("stops", [])]
+    reasons.extend(issues)
+    reasons.extend(w or "The plan has a warning." for w in plan.get("warnings", []))
+    if plan.get("state") != "ready":
+        if plan.get("reason") or not reasons:
+            reasons.insert(0, plan.get("reason") or "The plan is not ready to build.")
+    elif not plan.get("vms"):
+        reasons.append("The plan has no VMs to build.")
+    for vm in plan.get("vms", []):
+        if not vm.get("rows"):
+            reasons.append("%s has no checked values." % vm["name"])
+        for row in vm.get("rows", []):
+            if row.get("level") == "warning":
+                reasons.append("%s: %s" % (row["value"], row["why"]))
+            elif row.get("kind") == "stop" or row.get("level") == "stop":
+                reasons.append("%s: %s" % (vm["name"], row.get("why") or "The plan stopped."))
+            elif row.get("kind") not in ("ticket", "default", "job"):
+                reasons.append("%s: %s needs a person's approval." % (vm["name"], row["label"]))
+            elif "GenAI" in str(row.get("where") or ""):
+                # the change was approved for its words, not for GenAI's reading of them: a person reads that
+                reasons.append("%s: GenAI read the request. A person approves GenAI's reading." % vm["name"])
+    for entry in entries:
+        if any("GenAI" in str(source) for source in entry.get("sources", {}).values()):
+            reasons.append("%s: GenAI read the request. A person approves GenAI's reading." % entry["spec"]["vm_name"])
+    reasons = list(dict.fromkeys(reasons))
+    return {"build": not reasons, "why": reasons}
+
+
+def _plan_artifact(plan):
+    # Notes and email keep complete paths, even when the artifact needs to abbreviate them.
+    def bound(value):
+        if isinstance(value, str):
+            return value[:240]
+        if isinstance(value, list):
+            return [bound(v) for v in value]
+        if isinstance(value, dict):
+            return {k: bound(v) for k, v in value.items()}
+        return value
+
+    # the comment sent to the requester is shown whole on the portal: kept up to 2000 characters
+    return dict(bound(dict(plan, vm_count=len(plan["vms"]), vms=plan["vms"][:25])), comment=str(plan.get("comment") or "")[:2000])
+
+
+def vm_deploy_plan_note_lines(plan, vm_name):
+    entry = next((v for v in plan["vms"] if v["name"].lower() == vm_name.lower()), None)
+    if not entry:
+        return []
+    rows = {r["key"]: r for r in entry["rows"]}
+    lines = []
+    for key, row in rows.items():
+        if key == "vcenter":
+            lines.append("It would go to:")
+        label = "- " + row["label"] if key in _PLACES or key == "network" else key
+        source = _SOURCE_WORD[row["kind"]]
+        where = row["label"] if key == "owner" and row["kind"] == "ticket" else row["where"]
+        line = "%s: %s   (%s: %s)" % (label, row["value"], source, where)
+        if row["level"] == "warning":
+            line += " - WARNING: " + row["why"]
+        lines.append(line)
+    lines.append("- Size: %s vCPU, %s GB memory, disks %s GB" % tuple(rows[k]["value"] for k in ("cpu", "memory_gb", "disks_gb")))
+    return lines
+
+
+_CHECK_HEADER = re.compile(r"^\[AAP\] Checked - (?:VM (\S+) - (\d+) of (\d+) - )?ready to build after the approval "
+                           r"\((.+), ticket text (sha256:[0-9a-f]+)\):$")
+_CHECK_ROW = re.compile(r"^(.+?)   \((from the ticket|default|chosen by the job|changed by the approver): (.+?)\)( - WARNING: .+)?$")
+_CHECKED_SPEC = ("template", "cpu", "memory_gb", "disks_gb", "networks")
+_CHANGE = "[AAP] Placement changed - VM "
+_CHANGE_HEADER = re.compile(r"^\[AAP\] Placement changed - VM (\S+) \(AAP job \d+(?: by .+?)?, asked by .+?, "
+                            r"for AAP job (\d+), ticket text (sha256:[0-9a-f]+)\):$")
+
+
+def _measured_place(vm):
+    place = {k: vm[k] for k in ("datacenter", *_PLACES)}
+    if vm.get("datastore_pod"):
+        place["datastore_pod"] = vm["datastore_pod"]
+    root = "/%s/vm" % vm["datacenter"]
+    if vm["folder"] != root and not vm["folder"].startswith(root + "/"):
+        raise ValueError("%s: vCenter returned an unexpected VM folder %s" % (vm["name"], vm["folder"]))
+    place["folder"] = vm["folder"][len(root):].strip("/") or "/"
+    return place
+
+
+def vm_deploy_preflight_pins(results):
+    pins = {}
+    for result in results:
+        vm = result["vm"]
+        place = _measured_place(vm)
+        place["warned"] = []
+        place["checked_spec"] = {k: ", ".join(vm[k]) if k == "networks" else _plan_text(vm[k]) for k in _CHECKED_SPEC}
+        pins[vm["name"].lower()] = place
+    return pins
+
+
+def vm_deploy_change_results(results):
+    """Only measured and fitting placements can become journal entries."""
+    vms = []
+    for result in results:
+        if result.get("failed"):
+            raise ValueError("%s: %s" % (result["_vd_i"]["spec"]["vm_name"], result["msg"]))
+        vm = result["vm"]
+        for key in ("cluster", "datastore"):
+            fit = vm.get("fit", {}).get(key, {})
+            if not fit.get("fits"):
+                raise ValueError("%s: %s %s: %s" % (vm["name"], key, vm[key], fit.get("why") or "fit could not be measured"))
+        vms.append(dict(_measured_place(vm), name=vm["name"], fit=vm["fit"]))
+    return vms
+
+
+def vm_deploy_change_lines(vm, old, job, asked_by, checked_job, digest):
+    cluster, ds = vm["fit"]["cluster"], vm["fit"]["datastore"]
+    reasons = {"vcenter": "was " + old["vcenter"], "folder": "vm_deploy_folders",
+               "cluster": "%.1f%% memory used with this VM and %d host%s down (target %g%%)" %
+                          (cluster["pct_after"], cluster["down"], "" if cluster["down"] == 1 else "s", cluster["target"]),
+               "datastore": "%.1f%% used with this VM at full size (at most %g%%)" % (ds["pct_after"], ds["max"])}
+    if vm.get("datastore_pod"):
+        reasons["datastore"] += ", datastore cluster " + vm["datastore_pod"]
+    values = dict(vm, vcenter=vm["vcenter"] + ", datacenter " + vm["datacenter"])
+    return [("%s%s (%s, asked by %s, for AAP job %s, ticket text %s):" %
+             (_CHANGE, vm["name"], job, asked_by, checked_job, digest)), "It would go to:"] + [
+        "- %s: %s   (%s: %s)" % (_PLAN_LABELS[k], values[k], _SOURCE_WORD["approver"], reasons[k]) for k in _PLACES]
+
+
+def vm_deploy_requested_places(request, old):
+    if not isinstance(request, list) or not request:
+        raise ValueError("vm_deploy_placement needs a list of VMs to change")
+    changes = {}
+    for row in request:
+        if not isinstance(row, dict) or set(row) != {"vm_name", *_PLACES}:
+            raise ValueError("each placement needs only vm_name, vcenter, cluster, datastore and folder")
+        if any(not isinstance(v, str) or not v.strip() or v != v.strip() or not v.isprintable() for v in row.values()):
+            raise ValueError("each placement value must be nonempty single-line text")
+        name = row["vm_name"].lower()
+        if name in changes:
+            raise ValueError("duplicate placement for VM " + name)
+        if name not in old:
+            raise ValueError("VM %s: the change was changed after the check, or that check is not this change's: "
+                             "run the workflow from the start" % name)
+        changes[name] = dict(old[name], **{k: row[k] for k in _PLACES}, warned=[], warned_pct={}, changed=True)
+        if any(row[k] != old[name][k] for k in ("vcenter", "datastore")):
+            changes[name].pop("datastore_pod", None)
+    return changes
+
+
+def vm_deploy_unchanged_space(checked, changes, built):
+    """Reserve the full size of other VMs on this change before checking the requested moves."""
+    reserved = {}
+    for name, place in checked.items():
+        if name in changes or name in built:
+            continue
+        spec = place["checked_spec"]
+        gb = float(spec["memory_gb"]) + sum(float(disk) for disk in spec["disks_gb"].split(" + ") if disk)
+        ds = "|".join(place[k] for k in ("vcenter", "datacenter", "datastore"))
+        reserved[ds] = reserved.get(ds, 0) + gb
+    return reserved
+
+
+def _checked_place(lines, changed=False):
+    if lines.count("It would go to:") != 1:
+        return None
+    start = lines.index("It would go to:") + 1
+    place = {"warned": [], "warned_pct": {}}
+    for i, key in enumerate(_PLACES, start):
+        prefix = "- %s: " % _PLAN_LABELS[key]
+        if i >= len(lines) or not lines[i].startswith(prefix):
+            return None
+        match = _CHECK_ROW.fullmatch(lines[i][len(prefix):])
+        if not match or not match[1].strip() or (changed and (match[2] != _SOURCE_WORD["approver"] or match[4])):
+            return None
+        place[key] = match[1]
+        if key == "datastore" and ", datastore cluster " in match[3]:
+            place["datastore_pod"] = match[3].rsplit(", datastore cluster ", 1)[1]
+        if key in ("cluster", "datastore") and match[4]:
+            pct = re.match(r" - WARNING: (\d+(?:\.\d+)?)%", match[4])
+            if not pct:
+                continue
+            place["warned"].append(key)
+            place["warned_pct"][key] = float(pct[1])
+            if key == "datastore" and "not shared" in match[4]:
+                place["warned"].append("unshared")          # the approval saw a datastore not shared: only then is one accepted
+    vc, sep, dc = place["vcenter"].partition(", datacenter ")
+    if not sep or not dc or not vc:
+        return None
+    return dict(place, vcenter=vc, datacenter=dc)
+
+
+def _same_job(text, job):
+    want = "AAP job %s" % job
+    return text == want or text.startswith(want + " by ")
+
+
+def vm_deploy_checked_placement(record, digest, job="", with_spec=False):
+    """The placements the approval is for: one propose run's check notes, under the ticket text's digest.
+    job: the propose job's id (vm_deploy_checked_job, from the workflow): only that run's notes count. Without
+    it, the newest run's. Other runs never count, so an older check cannot block or replace the approved one.
+    A VM whose note is missing or unreadable, or noted twice in that run with different places, gets none."""
+    found, latest, invalid = {}, set(), set()
+    checked_specs = {}
+    batch = None
+    next_index = 0
+    job = str(job or "").strip()
+    changes = {}
+    for _, body in reversed(journal_entries((record or {}).get("work_notes"))):
+        if body.startswith("[AAP] Placement changed"):
+            lines = body.splitlines()
+            header = _CHANGE_HEADER.fullmatch(lines[0])
+            # An identifiable but damaged edit cannot authorize a fallback to the previous destination.
+            # Keep the last job/digest in the header because the requester is free text.
+            vm = re.match(r"^\[AAP\] Placement changed\b.*?\bVM\s+([^\s(]+)", lines[0])
+            jobs = re.findall(r"\bfor AAP job (\d+)\b", lines[0])
+            digests = re.findall(r"\bticket text (sha256:[0-9a-f]+)\b", lines[0])
+            if vm and vm[1].lower() not in latest and (not digests or digests[-1] == digest):
+                place = _checked_place(lines, changed=True) if header and len(lines) == 6 else None
+                changes.setdefault(vm[1].lower(), []).append((jobs[-1] if jobs else "", place))
+            continue
+        if not body.startswith(CHECKED) or body.startswith(CHECKED + "building without an approval ("):
+            continue
+        lines = body.splitlines()
+        header = _CHECK_HEADER.fullmatch(lines[0])
+        if not header or header[5] != digest or lines[0].count(", ticket text ") != 1:
+            break
+        if job and not _same_job(header[4], job):
+            continue
+        index = int(header[2] or 1)
+        run = (header[4], int(header[3] or 1))
+        if batch is None:
+            batch, next_index = run, index
+        if run != batch:
+            continue
+        in_latest = index == next_index and 0 < index <= run[1]
+        next_index = index - 1 if in_latest else 0
+        name_line = lines[1] if len(lines) > 1 else ""
+        name = name_line[9:].split("   (", 1)[0].lower() if name_line.startswith("vm_name: ") else ""
+        if header[1] and header[1].lower() != name:
+            if in_latest:
+                invalid.add(header[1].lower())
+            continue
+        if not name:
+            continue
+        place = _checked_place(lines)
+        if in_latest:
+            latest.add(name)
+            checked_specs[name] = {k: line[len(k) + 2:].split("   (", 1)[0] for line in lines
+                                   for k in _CHECKED_SPEC if line.startswith(k + ": ")}
+            if place is None:
+                invalid.add(name)
+        if place is not None:
+            if name in found and any(found[name][k] != place[k] for k in (*_PLACES, "datacenter")):
+                invalid.add(name)
+            found.setdefault(name, place)
+    result = {}
+    run_id = re.match(r"AAP job (\d+)(?: by .+)?$", batch[0]) if batch else None
+    for name in latest - invalid:
+        place = found.get(name)
+        for for_job, new_place in changes.get(name, []):
+            if run_id and (not for_job or for_job == run_id[1]):
+                place = dict(new_place, changed=True) if new_place else None
+                break
+        if place:
+            if with_spec or place.get("changed"):
+                if not all(k in checked_specs[name] for k in _CHECKED_SPEC if k != "networks"):
+                    continue
+                place = dict(place, checked_spec=checked_specs[name])
+            result[name] = place
+    return result
+
+
 def vm_deploy_checked_digest(record):
     """The digest of the ticket text the newest 'Checked - ready to build after the approval' note was written for
     (the workflow's propose step) -> 'sha256:...', or '' (none, or one from an older release without it). The build
     step builds only that: a ticket changed after it (a new comment, an edited description) is checked again."""
     found = ""
     for _, body in journal_entries((record or {}).get("work_notes")):
-        if body.startswith(CHECKED):
+        if body.startswith(CHECKED) and not body.startswith(CHECKED + "building without an approval ("):
             m = re.search(r"ticket text ([\w:]+)", body.splitlines()[0])
             found = m.group(1) if m else ""
     return found
@@ -2210,7 +2676,14 @@ def vm_deploy_inventory_text(r):
 
 class FilterModule(object):
     def filters(self):
-        return {"vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_group_for": vm_deploy_group_for, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
+        return {"vm_deploy_preflight_pins": vm_deploy_preflight_pins,
+                "vm_deploy_change_results": vm_deploy_change_results, "vm_deploy_unchanged_space": vm_deploy_unchanged_space,
+                "vm_deploy_change_lines": vm_deploy_change_lines, "vm_deploy_requested_places": vm_deploy_requested_places,
+                "vm_deploy_plan_artifact": _plan_artifact,
+                "vm_deploy_no_touch": vm_deploy_no_touch, "vm_deploy_plan": vm_deploy_plan, "vm_deploy_plan_note_lines": vm_deploy_plan_note_lines,
+                "vm_deploy_source_kind": vm_deploy_source_kind, "vm_deploy_checked_placement": vm_deploy_checked_placement,
+                "vm_deploy_owner": vm_deploy_owner, "vm_deploy_ready": vm_deploy_ready,
+                "vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_group_for": vm_deploy_group_for, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
                 "vm_deploy_spec_text": vm_deploy_spec_text, "vm_deploy_ticket_text": vm_deploy_ticket_text,
                 "vm_deploy_genai_task": vm_deploy_genai_task, "vm_deploy_genai_parse": vm_deploy_genai_parse,
                 "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal,

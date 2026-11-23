@@ -12,6 +12,18 @@ vm_deploy_ticket:
   level: standard
   example: CHG0001234
   when: the survey's one question - the operator types the change's number at launch; never set on the template
+vm_deploy_checked_job:
+  level: rarely
+  example: "4813"
+  when: the portal or workflow identifies the propose job that checked the change
+vm_deploy_placement:
+  level: rarely
+  example: [{vm_name: vm-app01, vcenter: vc02.corp.example.mil, cluster: SITB0201-CL01, datastore: SITB0201-DS01, folder: Servers/App}]
+  when: the portal submits the approver's new destinations
+vm_deploy_placement_by:
+  level: rarely
+  example: DOE.JANE.Q.1234567890
+  when: the portal names the approver who requested the placement change
 vm_deploy_ticket_table:
   level: rarely
   example: u_vm_request
@@ -56,6 +68,15 @@ vm_deploy_ready_by_table:
   level: rarely
   example: {change_request: {approval: Approved, state: [Implement, Scheduled]}}
   when: your change states have other labels, or a scheduled change may be built too
+
+vm_deploy_owner_field:
+  level: rarely
+  example: u_owner_group
+  when: the change records who owns the VM
+vm_deploy_owner_label:
+  level: rarely
+  example: Owning team
+  when: the change form uses this label for the owner
 
 # ---- what a ticket may ask for ----
 vm_deploy_templates:
@@ -273,7 +294,11 @@ vm_deploy_genai_approval:
 vm_deploy_phase:
   level: rarely
   example: propose
-  when: set by the approval workflow's nodes (propose, then build) - never on the template
+  when: the workflow node sets the phase to propose, build or no_touch
+vm_deploy_approval_workflow:
+  level: rarely
+  example: "APP-TEAM-1 VM approval"
+  when: the approval workflow for a no-touch change has another name
 vm_deploy_genai_model_timeout:
   level: rarely
   example: 900

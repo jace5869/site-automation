@@ -91,6 +91,7 @@ LAUNCH_DOCS = {
     "STIG Manager - deploy": {"ask_job_type": True, "ask_diff_mode": True},   # WORKFLOWS_AND_SCHEDULES.md 10: Job type, Show changes
     "Network config load": {"ask_job_type": True},                    # docs/NETWORK_CONFIG.md, A load, with an approval, step 1
     # docs/VM_DEPLOY_GUIDE.md, 6: Job type for the dry run
+    "VM - deploy placement change": {"ask_variables": True, "portal": True},
     "VM - deploy from ServiceNow ticket": {"ask_job_type": True},
 }
 # 1.107.0: the survey questions "AAP - set up job templates" adds to a template when they are missing (never one changed
@@ -101,6 +102,10 @@ _ACT_QUESTIONS = [   # docs/ADDING_ACT.md, 3. Survey questions
     {"question_name": "What may ACT do?", "variable": "site_act_level", "type": "multiplechoice",
      "choices": ["explain", "diagnose", "self-heal"], "default": "explain", "required": False}]
 SURVEYS = {
+    "VM - deploy from ServiceNow ticket": [
+        {"question_name": "Ticket number", "variable": "vm_deploy_ticket", "type": "text", "required": True},
+        {"question_name": "Workflow phase (leave empty for a plain run)", "variable": "vm_deploy_phase",
+         "type": "multiplechoice", "choices": ["propose", "build", "no_touch"], "required": False}],
     "Health check": [   # docs/SETUP_AAP.md, Step 6
         {"question_name": "Which checks?", "variable": "health_checks", "type": "multiselect",
          "choices": ["daily", "weekly", "all", "disk", "mounts", "services", "performance", "time", "network", "logging", "selinux",

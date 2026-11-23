@@ -129,6 +129,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - delete picked snapshots | `playbooks/vm_snapshot_delete_picked.yml` | [vm_snapshot_delete_picked.yml](vm_snapshot_delete_picked.yml) |
 | VM - delete snapshot | `playbooks/vm_snapshot_delete.yml` | [vm_snapshot_delete.yml](vm_snapshot_delete.yml) |
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | [vm_deploy_from_ticket.yml](vm_deploy_from_ticket.yml) |
+| VM - deploy placement change | `playbooks/vm_deploy_placement.yml` | [vm_deploy_placement.yml](vm_deploy_placement.yml) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | [vm_deploy_inventory.yml](vm_deploy_inventory.yml) |
 | VM - health report | `playbooks/vm_health_report.yml` | [vm_health_report.yml](vm_health_report.yml) |
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | [vm_inventory_report.yml](vm_inventory_report.yml) |

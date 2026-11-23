@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.117.0 — 2026-11-23
+
+**To set up:** in the VM deploy workflow (VM_DEPLOY_GUIDE step 8), set the approval node's description to
+*Read the plan on the portal or in the propose job's output before approving*. Optionally set
+`vm_deploy_owner_field` in AAP to show the change's owner. Run **AAP - set up job templates** again and give the portal’s AAP account
+**Execute** on **VM - deploy placement change**. For no touch, attach an AAP credential to the deploy template.
+Give its account **Execute** on the approval workflow. The setup rerun adds the optional `vm_deploy_handoff_from` question to that workflow.
+
+- The VM deploy plan shows each VM's values, sources, template network and capacity warnings before approval.
+  The propose job publishes the plan in its output, email, change notes and job artifacts.
+- The build pins the approved placement. A newly exceeded capacity target or a datastore without room
+  for the VM requires a new check and approval. A stopped plan records the questions for the requester.
+- The portal shows VM values, sources and warnings on Jobs and Approvals. Stopped plans show what needs an answer.
+- The propose job lists eligible placements. **VM - deploy placement change** checks an approver’s selection and records it on the change and its CTASKs.
+- Approvers can change VM placement on the portal and review the saved plan before approving the build.
+- **VM - deploy from change (no touch)** builds a clean plan from an approved change in Implement. A plan that needs a person goes to the approval workflow.
+
 ## 1.116.1 — 2026-11-23
 
 **To set up:** attach the **Report database** reader credential to the outage watch template for the cards, and the

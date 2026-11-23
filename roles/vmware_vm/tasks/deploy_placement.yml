@@ -1,0 +1,144 @@
+---
+- name: VMware | check every destination before recording a placement change
+  block:
+    - name: VMware | save one VM at a time
+      ansible.builtin.assert:
+        that: vm_deploy_placement is sequence and vm_deploy_placement | length == 1
+        fail_msg: Save one VM at a time.
+
+    - name: VMware | read the ticket and compute its digest
+      ansible.builtin.include_tasks: deploy_ticket.yml
+      vars:
+        _vd_check_service: false
+
+    - name: VMware | the change is ready
+      ansible.builtin.assert:
+        that:
+          - _vd_not_ready | length == 0
+          - _vd_table == 'change_request' or (_vd_table == 'change_task' and _vd_parent.table | default('') == 'change_request' and _vd_parent.sys_id is defined)
+          - not _vd_tasks_q or _vd_tasks_get.status == 200
+        fail_msg: "{{ _vd_not_ready or 'The change or its tasks could not be read.' }}"
+
+    - name: VMware | the placement change identifies both jobs and its requester
+      ansible.builtin.assert:
+        that:
+          - not ansible_check_mode
+          - awx_job_id | default('') | string is match('^[0-9]+$')
+          - vm_deploy_checked_job | default('') | string is match('^[0-9]+$')
+          - vm_deploy_placement_by is string
+          - vm_deploy_placement_by | trim | length > 0
+          - vm_deploy_placement_by | length <= 120 and vm_deploy_placement_by.isprintable()
+        fail_msg: Give the propose job ID and a single-line requester name of at most 120 characters. Launch as Run.
+
+    - name: VMware | read the placements for this check and ticket text
+      ansible.builtin.set_fact:
+        _vd_old: "{{ _vd_rec | vm_deploy_checked_placement(_vd_digest, vm_deploy_checked_job, with_spec=true) }}"
+        _vd_prop_ok: "{{ _vd_prop.digest | default('') == _vd_digest and vm_deploy_genai | bool }}"
+        _vd_phase: placement
+        _vd_pinned: true
+        _vd_pre_res: []
+
+    - name: VMware | match the requested VMs to the checked plan
+      ansible.builtin.set_fact:
+        _vd_changes: "{{ vm_deploy_placement | vm_deploy_requested_places(_vd_old) }}"
+
+    - name: VMware | check the new placements against the deploy rules
+      ansible.builtin.include_tasks: deploy_check.yml
+      vars:
+        _vd_only_names: "{{ _vd_changes.keys() | list }}"
+        _vd_approved: "{{ _vd_changes }}"
+
+    - name: VMware | every requested VM is in the plan and passes the rules
+      ansible.builtin.assert:
+        that:
+          - _vd_changes.keys() | difference(_vd.names | map('lower') | list) | length == 0
+          - _vd.problems | length == 0
+        fail_msg: "{{ _vd.problems | join('. ') or 'A requested VM is missing from the plan.' }}"
+
+    - name: VMware | reserve the space of unchanged VMs in the checked plan
+      ansible.builtin.set_fact:
+        _vd_ds_planned: "{{ _vd_old | vm_deploy_unchanged_space(_vd_changes, _vd_built) }}"
+
+    - name: VMware | check the full size and destination of each changed VM
+      ansible.builtin.include_tasks: deploy_build_one.yml
+      vars:
+        _vd_pre: true
+        _vd_approved: "{{ _vd_changes }}"
+        _vd_resolve_dc: true
+      loop: "{{ _vd.vms }}"
+      loop_control:
+        loop_var: _vd_i
+        label: "{{ _vd_i.spec.vm_name }}"
+
+    - name: VMware | keep the measured destinations only if every change fits
+      ansible.builtin.set_fact:
+        _vd_new_places: "{{ _vd_pre_res | vm_deploy_change_results }}"
+
+    - name: VMware | the notes for the change and its tasks
+      ansible.builtin.set_fact:
+        _vd_bodies: >-
+          {%- set notes = [] -%}
+          {%- for v in _vd_new_places -%}
+          {%-   set lines = v | vm_deploy_change_lines(_vd_old[v.name | lower], _vd_job, vm_deploy_placement_by, vm_deploy_checked_job, _vd_digest) -%}
+          {%-   set _ = notes.append({'work_notes': lines | join(_vd_nl)}) -%}
+          {%- endfor -%}
+          {{ notes }}
+      vars:
+        _vd_nl: "\n"
+
+    - name: VMware | write the placement on the launch ticket
+      ansible.builtin.include_tasks: deploy_placement_note.yml
+
+    - name: VMware | copy the saved placement to the related tickets
+      ansible.builtin.include_tasks: deploy_note_also.yml
+      vars:
+        _vd_also_bodies: "{{ _vd_bodies }}"
+
+  rescue:
+    - name: VMware | keep the reason for refusal
+      ansible.builtin.set_fact:
+        _vd_change_error: "{{ ansible_failed_result.msg | default(ansible_failed_task.name) }}"
+
+  always:
+    - name: VMware | publish the outcome of the placement change
+      ansible.builtin.set_stats:
+        aggregate: false
+        per_host: false
+        data:
+          vm_deploy_placement_change: >-
+            {{ {'ok': _vd_change_error is undefined, 'ticket': vm_deploy_ticket | default(''), 'checked_job': vm_deploy_checked_job | default('') | string,
+                'launch_note': 'not written' if _vd_launch_patch is undefined or (_vd_launch_patch.status | default(-1) | int) >= 400 else 'written',
+                'vms': _vd_new_places | default([]), 'error': _vd_change_error | default('')} }}
+
+    - name: VMware | report the placement change
+      ansible.builtin.include_tasks: report.yml
+      vars:
+        _vm_report_subject: "VM placement change for {{ vm_deploy_ticket | default('') }}"
+        _vm_report_sections: >-
+          {%- set sections = [] -%}
+          {%- set vms = _vd_new_places | default([]) -%}
+          {%- set measured = dict(vms | map(attribute='name') | map('lower') | zip(vms)) -%}
+          {%- for name, request in (_vd_changes | default({})).items() -%}
+          {%-   set found = measured.get(name) -%}
+          {%-   set fields = ['vcenter', 'datacenter', 'cluster', 'datastore', 'folder'] -%}
+          {%-   set old = _vd_old[name] -%}
+          {%-   set after = (fields | map('extract', found)) if found else (['vcenter', 'cluster', 'datastore', 'folder'] | map('extract', request)) -%}
+          {%-   set _ = sections.append({'title': name, 'lines': ['Before: ' ~ fields | map('extract', old) | join(', '),
+                                                                  'Requested: ' ~ after | join(', ')]}) -%}
+          {%- endfor -%}
+          {%- for copy in _vd_also_res.results | default([]) if copy.status | default(0) != 200 -%}
+          {%-   set _ = sections.append({'title': 'Warning', 'status': 'warning', 'lines': ['ServiceNow did not take the note on ' ~ copy._vd_x.1.number]}) -%}
+          {%- endfor -%}
+          {{ sections + ([{'title': 'Refused', 'lines': [_vd_change_error]}] if _vd_change_error is defined else []) }}
+        _vm_report_lines: >-
+          {%- set lines = [] -%}
+          {%- for section in _vm_report_sections -%}
+          {%-   set _ = lines.extend([section.title] + section.lines) -%}
+          {%- endfor -%}
+          {{ lines }}
+        _vm_report_doc: "{{ {'title': _vm_report_subject, 'sections': _vm_report_sections, 'status': 'critical' if _vd_change_error is defined else 'ok'} }}"
+
+- name: VMware | refuse the placement change
+  ansible.builtin.fail:
+    msg: "{{ _vd_change_error }}"
+  when: _vd_change_error is defined

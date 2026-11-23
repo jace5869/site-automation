@@ -3,7 +3,7 @@
 # change a task belongs to, or a change's own tasks (_vd_also, deploy.yml). Input: _vd_also_bodies, a
 # list of the bodies just sent to the ticket ({work_notes: ...} or {comments: ...}). Only notes and
 # comments are copied, never a close. A refusal there is a warning: the ticket itself has the note.
-- name: VMware | the same note on {{ _vd_also | map(attribute='number') | join(', ') }}
+- name: VMware | the same note on {{ _vd_note_targets | default(_vd_also) | map(attribute='number') | join(', ') }}
   ansible.builtin.uri:
     url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_x.1.table }}/{{ _vd_x.1.sys_id }}"
     method: PATCH
@@ -17,7 +17,7 @@
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
     status_code: [200, 400, 401, 403, 404]
-  loop: "{{ _vd_also_bodies | product(_vd_also) | list }}"
+  loop: "{{ _vd_also_bodies | product(_vd_note_targets | default(_vd_also)) | list }}"
   loop_control:
     loop_var: _vd_x
     label: "{{ _vd_x.1.number }}"

@@ -2147,6 +2147,7 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_requesters` | `[]` | ---- who may do what: the CN of each person's card certificate (LAST.FIRST.MI.1234567890) ------------------------------- who may run the actions (an action's own who overrides); [] = any person with a verified card |
 | `portal_approvers` | `[]` | who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works) |
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
+| `portal_vm_deploy_placement_template` | `"VM - deploy placement change"` | AAP job that checks and records a placement before approval |
 | `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
 | `portal_approver_groups` | `[]` | 1.120.0: approvers and requesters from AD groups too (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_a… (all of it: the role file) |
 | `portal_requester_groups` | `[]` | the same for who may run the actions (with portal_requesters); [] = none |
@@ -2820,6 +2821,9 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_capacity_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 | `vm_deploy_ticket` | (empty) | ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... - or your instance's own prefixes (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to build in 'key: value' lines - in… (all of it: the role file) |
+| `vm_deploy_checked_job` | (empty) | The propose job whose Checked notes authorize the placement. |
+| `vm_deploy_placement` | `[]` | One VM per placement save. |
+| `vm_deploy_placement_by` | (empty) | The portal approver requesting the change. Single-line text of at most 120 characters. |
 | `vm_deploy_ticket_table` | (empty) | leave it empty (the job finds each ticket's table); a table of your own, e.g. u_vm_request: for numbers whose prefix the job does not know (CTASK stays change_task) |
 | `vm_deploy_ticket_prefixes` | `{}` | Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}. Rarely needed: for a prefix it does not know, the job asks ServiceNow's task table (and takes INCN as INC, CHGN as CHG when it may not read that table). A table as people say it is understood: change / change request ->… (all of it: the role file) |
 | `vm_deploy_parent_tables` | `[change_request]` | The request may also be on the ticket's parent - e.g. a task (SCTASK, CTASK) whose change holds the requirements: the parent's 'key: value' lines (and, with vm_deploy_plain_words, its plain words) are read too, under the ticket's own (what the ticket says wins). A parent that cannot be read, is closed, or is not ready… (all of it: the role file) |
@@ -2831,6 +2835,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_notes_tasks_limit` | `50` | the change's tasks that get the notes (and are closed), at most - more is a warning |
 | `vm_deploy_close_tasks` | `false` | Launched with a change: also close its tasks found that way (with vm_deploy_done_fields_by_table's change_task entry, when every VM is built) - the change itself is not closed by this. They get the notes too. |
 | `vm_deploy_ready_by_table` | `change_request: {approval: Approved, state: Implement}` | Before anything is built, a ticket of these tables - the ticket itself, or the parent it belongs to (a change task's change) - must have these fields: one value or a list (any of them), written as the ticket's form shows them (upper / lower case ignored). Checked by the dry run, the propose step AND right before the b… (all of it: the role file) |
+| `vm_deploy_owner_field` | (empty) | The change field to read as the VM owner. Empty leaves the owner out of the plan and notes. |
+| `vm_deploy_owner_label` | `Owner` | The display label for that field in the plan, requester questions and VM notes. |
 | `vm_deploy_templates` | `[]` | What a ticket may ask for (names; * and ? allowed). Templates MUST be listed: nothing else is deployed. The others: [] = any. e.g. [rhel9-gold, win2022-gold] |
 | `vm_deploy_clusters` | `[]` | clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement |
 | `vm_deploy_datastores` | `[]` | datastores (or datastore clusters) a ticket may use; also the candidates of automatic placement |
@@ -2881,7 +2887,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_genai_in_check` | `false` | A dry run (Check) asks GenAI too (true): it shows GenAI's proposal and where the VM would go, and writes nothing on the ticket - no proposal note, no questions to the requester. false = Check only says GenAI would be asked. |
 | `vm_deploy_template_catalog` | `{}` | Optional: templates GenAI may name by key, each with a plain description (the key: the template's exact name). Not needed when the templates' names say their OS: the job finds the template from the OS the ticket names. A key for another version than the ticket asks for is dropped. e.g. {win2022-pxe: "Windows Server 20… (all of it: the role file) |
 | `vm_deploy_genai_approval` | `true` | true: a GenAI proposal waits for a person - the workflow's approval (or a second run) - before it is built. false: one run reads, checks and builds, when every value is traced to the ticket and within the rules (questions or a refusal still stop it). |
-| `vm_deploy_phase` | (empty) | Which step this run is: "" = one job does it all; propose = the workflow's first step (read, ask GenAI if needed, check, write where it would go on the ticket - build nothing); build = the step after the approval (build what the ticket and its proposal say - never ask GenAI). |
+| `vm_deploy_phase` | (empty) | Leave empty for a plain run. The approval workflow uses propose to check and build to apply the approved plan. The no_touch phase builds a clean plan from an approved change in Implement. |
+| `vm_deploy_approval_workflow` | `"VM - deploy from ServiceNow ticket (workflow)"` | Workflow started for a no-touch plan that needs a person. Its survey accepts vm_deploy_ticket and vm_deploy_handoff_from. |
 | `vm_deploy_genai_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_deploy_poll_enabled` | `true` | ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ---- Every run (an AAP schedule, e.g. every 15 minutes) asks ServiceNow for NEW VM requests - active, assigned to vm_deploy_assignment_group (required), marked by vm_deploy_poll_prefix and/or vm_deploy_poll_query - and starts the deploy workf… (all of it: the role file) |
 | `vm_deploy_poll_tables` | `[incident]` | the ServiceNow tables to look in: incident, sc_task, task ... |

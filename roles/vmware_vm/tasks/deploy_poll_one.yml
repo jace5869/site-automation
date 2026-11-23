@@ -50,40 +50,22 @@
                    and (_vp_back.json.result | default([{}]) | first | default({}, true)) | vm_deploy_poll_claimed)) }}"
   when: not _vp_blind | bool
 
-- name: VMware | {{ _vp_t.number }} - start the workflow
-  ansible.builtin.uri:
-    url: "{{ _vp_aap_host }}/{{ _vp_wf.api }}workflow_job_templates/{{ _vp_wf.id }}/launch/"
-    method: POST
-    headers: >-
-      {{ {'Accept': 'application/json'} | combine({'Authorization': 'Bearer ' ~ lookup('ansible.builtin.env', _vp_aap_vars.token)}
-                                                  if _vp_aap_login == 'token' else {}) }}
-    url_username: "{{ lookup('ansible.builtin.env', _vp_aap_vars.user) if _vp_aap_login == 'password' else omit }}"
-    url_password: "{{ lookup('ansible.builtin.env', _vp_aap_vars.password) if _vp_aap_login == 'password' else omit }}"
-    force_basic_auth: "{{ _vp_aap_login == 'password' }}"
-    validate_certs: "{{ _vp_aap_verify }}"
-    ca_path: "{{ vm_deploy_poll_aap_ca_path | default(omit, true) }}"
-    body_format: json
-    body: {extra_vars: {vm_deploy_ticket: "{{ _vp_t.number }}"}}
-    timeout: 60
-    status_code: [200, 201, 400, 401, 403, 404, 405]
-  register: _vp_launch
-  failed_when: false
-  no_log: true                           # the request carries the token or password
+- name: VMware | start the workflow for the claimed ticket
+  ansible.builtin.include_tasks: deploy_workflow_launch.yml
+  vars:
+    _vp_ticket: "{{ _vp_t.number }}"
   when: _vp_claimed | default(false) | bool
 
 - name: VMware | {{ _vp_t.number }} - what happened
   ansible.builtin.set_fact:
     _vp_r: >-
-      {%- set l = _vp_launch if _vp_launch.status is defined else {} -%}
-      {%- set jid = l.json.workflow_job | default(l.json.id | default(0)) if l.status | default(0) in [200, 201] else 0 -%}
-      {%- set ign = (l.json.ignored_fields | default({})).extra_vars | default({}) if jid else {} -%}
-      {%- set url = (_vp_aap_host ~ ('/execution/jobs/workflow/' if _vp_wf.api == 'api/controller/v2/' else '/#/jobs/workflow/') ~ jid ~ '/output') if jid else '' -%}
-      {%- set err = '' if jid and not ign else
-            ('started as workflow job ' ~ jid ~ ', but it ignored vm_deploy_ticket: give the workflow its survey question vm_deploy_ticket') if jid else
+      {%- set started = _vp_started if _vp_claimed | default(false) | bool else {} -%}
+      {%- set jid, url = started.job | default(0), started.url | default('') -%}
+      {%- set err =
             ('the "Picked up" note was not written (HTTP ' ~ _vp_claim.status | default('?') ~ ': ' ~ (_vp_claim.json.error.message | default(_vp_claim.msg | default('')))
              ~ ')') if _vp_claim.status | default(0) != 200 else
             'the "Picked up" note does not show when the ticket is read back' if not _vp_claimed | default(false) | bool else
-            ('AAP did not start it (HTTP ' ~ l.status | default('?') ~ ': ' ~ ((l.json | default({})) | to_json | truncate(200)) ~ ')') -%}
+            started.error -%}
       {{ {'number': _vp_t.number, 'ok': not err, 'job': jid, 'url': url, 'error': err,
           'text': _vp_t.number ~ ((' - workflow job ' ~ jid ~ ' ' ~ url) if not err else (' - ' ~ err)),
           'row': [_vp_t.number, _vp_t.short_description, ('job ' ~ jid ~ ': ' ~ url) if not err else 'NOT STARTED: ' ~ err],

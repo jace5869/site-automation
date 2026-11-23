@@ -1,0 +1,26 @@
+---
+- name: VMware | the AAP credential variables
+  ansible.builtin.set_fact:
+    # the "Red Hat Ansible Automation Platform" credential: its variables' NAMES (never their values) -
+    # CONTROLLER_* (AAP 2.4 and later), AAP_* (2.5 and later), TOWER_* (older)
+    _vp_aap_vars: >-
+      {%- set out = {} -%}
+      {%- for k, names in {'host': ['CONTROLLER_HOST', 'AAP_HOSTNAME', 'TOWER_HOST'],
+                           'token': ['CONTROLLER_OAUTH_TOKEN', 'AAP_TOKEN', 'TOWER_OAUTH_TOKEN'],
+                           'user': ['CONTROLLER_USERNAME', 'AAP_USERNAME', 'TOWER_USERNAME'],
+                           'password': ['CONTROLLER_PASSWORD', 'AAP_PASSWORD', 'TOWER_PASSWORD'],
+                           'verify': ['CONTROLLER_VERIFY_SSL', 'AAP_VALIDATE_CERTS', 'TOWER_VERIFY_SSL']}.items() -%}
+      {%-   set found = [] -%}
+      {%-   for n in names if lookup('ansible.builtin.env', n) | trim | length > 0 -%}{%- set _ = found.append(n) -%}{%- endfor -%}
+      {%-   set _ = out.update({k: found[0] | default('')}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware | where AAP is, and how to log in to it
+  ansible.builtin.set_fact:
+    _vp_aap_ca: "{{ _vp_workflow_ca | default(vm_deploy_poll_aap_ca_path, true) }}"
+    _vp_aap_host: >-
+      {%- set h = lookup('ansible.builtin.env', _vp_aap_vars.host) | trim if _vp_aap_vars.host else '' -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _vp_aap_login: "{{ 'token' if _vp_aap_vars.token else ('password' if _vp_aap_vars.user and _vp_aap_vars.password else '') }}"
+    _vp_aap_verify: "{{ (lookup('ansible.builtin.env', _vp_aap_vars.verify) if _vp_aap_vars.verify else 'true') | bool }}"

@@ -1,0 +1,69 @@
+---
+- name: VMware | read the AAP connection
+  ansible.builtin.include_tasks: deploy_workflow_connection.yml
+  vars:
+    _vp_workflow_ca: "{{ vm_deploy_aap_ca_path }}"
+
+- name: VMware | find and check the approval workflow
+  ansible.builtin.include_tasks: deploy_workflow_find.yml
+  vars:
+    _vp_workflow: "{{ vm_deploy_approval_workflow }}"
+    _vp_workflow_setting: vm_deploy_approval_workflow
+    _vp_verify_ticket: true
+
+- name: VMware | start the approval workflow for this change
+  ansible.builtin.include_tasks: deploy_workflow_launch.yml
+  vars:
+    _vp_ticket: "{{ _vd_number }}"
+    _vp_handoff_from: "{{ awx_workflow_job_id | default('') | string }}"
+  when: not _vp_wf.error and vm_deploy_approval_workflow != 'VM - deploy from change (no touch)'
+
+- name: VMware | the approval workflow result
+  ansible.builtin.set_fact:
+    _vd_launch_problem: >-
+      {{ 'Attach a Red Hat Ansible Automation Platform credential to the deploy template.'
+         if not _vp_aap_host or not _vp_aap_login else
+         'Choose the workflow with the approval node.' if vm_deploy_approval_workflow == 'VM - deploy from change (no touch)' else
+         _vp_wf.error or _vp_started.error }}
+    _vd_workflow_job: "{{ _vp_started.job | default(0) | int }}"
+
+- name: VMware | the note for the change and its tasks
+  ansible.builtin.set_fact:
+    _vd_handoff: >-
+      {{ _vd_launch_problem if _vd_workflow_job and _vd_launch_problem else
+         ('The approval workflow could not start for this change. ' ~ _vd_launch_problem
+          ~ ' Check vm_deploy_approval_workflow and the credential’s Execute role on that workflow.')
+         if _vd_launch_problem else 'The approval workflow was started: AAP job ' ~ _vd_workflow_job ~ '.' }}
+
+- name: VMware | publish the handoff outcome
+  ansible.builtin.include_tasks: deploy_no_touch_outcome.yml
+  vars:
+    _vd_outcome: "{{ 'failed' if _vd_launch_problem else 'sent_to_approval' }}"
+    _vd_why: "{{ _vd_decision.why + ([_vd_handoff] if _vd_launch_problem else []) }}"
+
+- name: VMware | record the handoff on the change and its tasks
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_note_targets: "{{ [{'number': _vd_number, 'table': _vd_table, 'sys_id': _vd_rec.sys_id}] + _vd_also }}"
+    _vd_also_bodies:
+      - work_notes: >-
+          {{ '[AAP] Not built without a person (' ~ _vd_no_touch_job ~ '): ' ~
+             (_vd_decision.why + [_vd_handoff]) | join(_vd_nl) }}
+    _vd_nl: "\n"
+
+- name: VMware | report the approval handoff
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "VM deploy {{ _vd_number }}: {{ 'Approval workflow failed' if _vd_launch_problem else 'Sent to approval' }}"
+    _vm_report_lines: "{{ [_vm_report_subject] + _vd_decision.why + [_vd_handoff] }}"
+
+- name: VMware | the approval handoff completed
+  ansible.builtin.assert:
+    that:
+      - not _vd_launch_problem
+      - _vd_also_res.results | rejectattr('status', 'equalto', 200) | list | length == 0
+    fail_msg: "{{ _vd_handoff }}{{ ' ServiceNow did not save every handoff note.' if _vd_also_res.results | rejectattr('status', 'equalto', 200) | list else '' }}"
+    quiet: true
+
+- name: VMware | finish the job after the handoff
+  ansible.builtin.meta: end_play

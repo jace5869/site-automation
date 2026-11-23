@@ -43,7 +43,7 @@ NO_TIMEOUT = {("Horizon - host maintenance (workflow)", "back")}
 # Templates whose node gives Variables they take from the survey the guides tell you to make (docs/SETUP_AAP.md step 6,
 # ADDING_ACT.md step 3, WINDOWS.md) - never Prompt on launch for Variables (anyone could then set any variable)
 SURVEY_TEMPLATES = {"Health check": {"health_checks", "use_act", "site_act_level"}, "Troubleshoot": {"ts_area", "use_act", "site_act_level"},
-                    "Windows health check": {"health_checks"}}
+                    "Windows health check": {"health_checks"}, "VM - deploy from ServiceNow ticket": {"vm_deploy_phase"}}
 
 
 def docs_text():
@@ -85,8 +85,8 @@ class Catalog(unittest.TestCase):
             else:
                 self.assertIn(w["name"], REPLACED, "%s: no nodes, not the portal's, not replaced - say why" % w["name"])
                 left.append(w["name"])
-        self.assertEqual(len(WFS), 52)
-        self.assertEqual(len(built), 40)
+        self.assertEqual(len(WFS), 53)
+        self.assertEqual(len(built), 41)
         self.assertEqual(deferred, ["VM - deploy from ServiceNow ticket (workflow)"])
         self.assertEqual(sorted(REPLACED & set(left)), ["STIG Manager updated, with an approval",
                                                          "STIG Manager updated, with an approval (Windows)"])
@@ -374,6 +374,20 @@ class Builder(unittest.TestCase):
         w.catalog = TPL
         return w, api
 
+    def test_setup_adds_the_handoff_question_to_the_existing_survey(self):
+        w, api = self.wf(check=False)
+        workflow = next(entry for entry in WFS if entry["name"] == "VM - deploy from ServiceNow ticket (workflow)")
+        existing = {"variable": "vm_deploy_ticket", "question_name": "Ticket", "required": True, "type": "text"}
+        survey = {"name": "Deploy", "description": "", "spec": [existing]}
+        api.call.side_effect = [(200, {"results": [{"id": 7, "organization": 1, "name": workflow["name"], "survey_enabled": True}]}),
+                                (200, survey), (200, {})]
+        w.one(workflow, {}, {}, {})
+        api.call.assert_called()
+        method, path, body = api.call.call_args.args
+        self.assertEqual((method, path), ("POST", "workflow_job_templates/7/survey_spec/"))
+        question = next(q for q in workflow["survey"] if q["variable"] == "vm_deploy_handoff_from")
+        self.assertEqual(body, dict(survey, spec=[existing, SW.survey_question(question)]))
+
     def test_node_why(self):
         w, api = self.wf()
         hc = {"id": 5, "name": "Health check", "ask_variables_on_launch": False, "survey_enabled": True}
@@ -453,7 +467,10 @@ class Review(unittest.TestCase):
     def test_no_prompt_for_any_variable(self):
         """P1: a workflow's steps get their answers from a survey question, never Prompt on launch for Variables."""
         self.assertFalse(TPL["VM - deploy from ServiceNow ticket"].get("ask_variables"))
-        self.assertNotIn("survey", TPL["VM - deploy from ServiceNow ticket"])
+        deploy = next(w for w in WFS if w["name"] == "VM - deploy from change (no touch)")
+        self.assertEqual([q["variable"] for q in deploy["survey"]], ["vm_deploy_ticket"])
+        self.assertEqual(deploy["nodes"], [{"id": "deploy", "template": "VM - deploy from ServiceNow ticket",
+                                          "extra_data": {"vm_deploy_phase": "no_touch"}}])
         for w in WFS:
             self.assertFalse((w.get("prompts") or {}).get("variables"), w["name"])
         net = next(w for w in WFS if w["name"] == "Network config load (workflow)")
@@ -518,10 +535,15 @@ class Review2(unittest.TestCase):
         self.assertGreaterEqual(n_dry, 5)
         self.assertTrue(TPL["STIG Manager - deploy (dry run)"].get("diff_mode"))
 
+    def test_approval_workflow_has_optional_handoff_question(self):
+        w = next(w for w in WFS if w["name"] == "VM - deploy from ServiceNow ticket (workflow)")
+        self.assertIn("survey", w)
+        q = next(q for q in w["survey"] if q["variable"] == "vm_deploy_handoff_from")
+        self.assertEqual((q["type"], q["required"]), ("text", False))
+
     def test_vm_deploy_workflow_is_deferred(self):
         w = next(w for w in WFS if w["name"] == "VM - deploy from ServiceNow ticket (workflow)")
         self.assertNotIn("nodes", w)
-        self.assertNotIn("survey", w)
         self.assertEqual(w["deferred"], "left by hand for now: the build's binding to what was approved is being reviewed")
         # the deferred build binding left nothing behind in the deploy tasks (no git history needed: CI and zips have none)
         with open(os.path.join(REPO, "roles/vmware_vm/tasks/deploy.yml")) as f:

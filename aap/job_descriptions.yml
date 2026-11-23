@@ -580,6 +580,11 @@ templates:
     targets: "vCenter and ServiceNow via their APIs (VMware vCenter and ServiceNow API credentials); runs on the AAP side, no Limit."
     produces: "New VMs, ticket work notes (IP included), a report emailed (report_email_to) and on the report website, artifact vm_deploy."
     supports: "Run constraint=Changes target hosts (builds and powers on VMs); writes vCenter, ServiceNow, AAP inventory (vm_deploy_services), email"
+  "VM - deploy placement change":
+    does: "Checks a portal approver's placement against the deploy rules and the current capacity in vCenter."
+    targets: "vCenter and ServiceNow through the VMware vCenter and ServiceNow API credentials. Runs on the AAP side."
+    produces: "Placement notes on the change and its tasks, a report and the vm_deploy_placement_change artifact."
+    supports: "Run constraint=Reads vCenter. Writes ServiceNow work notes and emails the report when report_email_to is set."
   "VM - pick up deploy tickets":
     does: "On a schedule, finds new VM request tickets in ServiceNow, notes '[AAP] Picked up' on each, and starts the deploy workflow for it."
     targets: "ServiceNow and AAP via their APIs (ServiceNow API and Red Hat Ansible Automation Platform credentials); no Limit."
@@ -1120,11 +1125,25 @@ workflows:
   - name: "VM - deploy from ServiceNow ticket (workflow)"
     source: "docs/VM_DEPLOY_GUIDE.md 8. The approval workflow"
     playbooks: [playbooks/vm_deploy_from_ticket.yml, playbooks/vm_deploy_from_ticket.yml]
+    survey:
+      - {question_name: "Ticket number", variable: vm_deploy_ticket, type: text, required: true}
+      - {question_name: "Originating no-touch workflow job ID", variable: vm_deploy_handoff_from, type: text, required: false, min: 0}
     deferred: "left by hand for now: the build's binding to what was approved is being reviewed"
     does: "Builds the VMs a ServiceNow ticket asks for: the first run checks and places them, a person approves, the second run builds them."
     targets: "vCenter and the ServiceNow ticket, from the AAP side."
     produces: "The plan on the ticket and in an email, the approval, the new VMs, and the result (IP included) on the ticket."
     supports: "Run constraint=Writes vCenter (new VMs) after an approval; writes ServiceNow ticket notes (before and after), email."
+  - name: "VM - deploy from change (no touch)"
+    source: "docs/VM_DEPLOY_GUIDE.md No touch: a clean change builds without an approval"
+    playbooks: [playbooks/vm_deploy_from_ticket.yml]
+    survey:
+      - {question_name: "Approved change in Implement (CHG0030001)", variable: vm_deploy_ticket, type: text, required: true}
+    nodes:
+      - {id: deploy, template: "VM - deploy from ServiceNow ticket", extra_data: {vm_deploy_phase: no_touch}}
+    does: "Checks the change and builds a clean plan. Sends a plan with warnings to the approval workflow."
+    targets: "vCenter and the approved ServiceNow change in Implement."
+    produces: "The checked plan, notes on the change and its CTASKs, and a report with the build or approval workflow result."
+    supports: "Run constraint=Builds VMs or launches the approval workflow. Check previews the decision."
   - name: "Network config load (workflow)"
     source: "docs/NETWORK_CONFIG.md A load, with an approval"
     playbooks: [playbooks/net_config_load.yml, playbooks/net_config_load.yml]

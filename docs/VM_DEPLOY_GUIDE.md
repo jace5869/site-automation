@@ -285,14 +285,18 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
   `playbooks/vm_deploy_from_ticket.yml`
 - **Execution environment:** your VMware one (step 1)
 - **Credentials:** **VMware vCenter** and **ServiceNow API** (step 4) - and, only when you use them, the
-  ACT model key (GenAI) and the Red Hat Ansible Automation Platform one (a service's AAP inventory)
+  ACT model key (GenAI) and the Red Hat Ansible Automation Platform credential (a service inventory or no-touch handoff)
 - **Limit:** empty, and not prompted (a Limit would make the job skip without doing anything)
 - **Prompt on launch** ticked next to **Job type** (for the dry run) and next to **Variables** (the
-  approval workflow hands each step its `vm_deploy_phase`)
+  approval workflow hands each step its `vm_deploy_phase`). The catalog uses an optional phase survey question for this.
 - **Timeout:** room for every VM of a ticket: a template with guest customization may wait up to 25
   minutes per VM (`vm_deploy_wait_customization` 900 s + `vm_deploy_wait_ip` 600 s); `0` = none
 - **Variables:** the standard setup (chapter 1) with your names - or a configuration from *Ready-made
   configurations*. `aap/extra_vars/vm_deploy_from_ticket.yml` has every setting, commented, ready to paste.
+
+**VM - deploy placement change** uses `playbooks/vm_deploy_placement.yml` and prompts for Variables.
+Run **AAP - set up job templates** again. Give the portal’s AAP account **Execute** on the new template.
+Use the same deploy settings, VMware vCenter credential, ServiceNow API credential and `report_email_to` as the deploy job.
 
 **The survey** (**Survey > Create question**, then switch the survey **on**):
 
@@ -332,11 +336,19 @@ Run a dry run first for every new kind of request - a new template, a new site, 
 
 ## 8. The approval workflow: propose, approve, build
 
-**AAP - set up job templates does not make this workflow yet (1.107.0)**: it is left by hand for now, while the build's binding to what was approved is reviewed. The steps below are the way.
+Create this workflow by hand in AAP. Launch it with the approved change in Implement, for example
+`vm_deploy_ticket: CHG0030001`. Before approval, read the plan in the propose job's output or email,
+in the work note on the change, or on the portal. Every VM value says **from the ticket**, **default**,
+or **chosen by the job**. The network row shows the template's staging port groups and DHCP.
+A named customization specification (`customization_spec`, `vm_deploy_template_specs`) keeps its own IP settings.
+The plan's DHCP then holds only when that specification uses DHCP. Blank PXE or ISO templates
+(`vm_deploy_pxe_templates`) have no specification, so this does not apply to them.
 
-One launch: the deploy job checks and places (*propose*) and writes the plan on the ticket, a person
-approves it in AAP, then the deploy job builds (*build*) - *Report first, then build* in the next chapter
-says what each step does.
+For the job page and the Approvals view, see [The VM deploy plan](SITE_PORTAL.md#the-vm-deploy-plan).
+
+The plan warns when it cannot measure a cluster or datastore and gives the reason.
+A capacity warning goes to the approver. Conflicting answers, missing required fields or a placement
+refusal stop the workflow. The requester gets a comment and the stopped plan identifies the affected rows.
 
 1. **The deploy template** (step 6) has **Prompt on launch** ticked next to **Variables**.
 2. **Templates > Create template > Create workflow job template:** name
@@ -345,8 +357,9 @@ says what each step does.
    passes the answers to every step. Save, then open the **Workflow Visualizer**:
    - **Start → node 1:** job template `VM - deploy from ServiceNow ticket`; its prompt, Variables:
      `vm_deploy_phase: propose`
-   - **node 1 → (On success) → node 2:** **Approval**, name `Build the VM on the ticket?`, a timeout of,
-     e.g., 8 hours
+   - **node 1 → (On success) → node 2:** **Approval**, name `Build the VM on the ticket?`.
+     Set its description to `Read the plan on the portal or in the propose job's output before approving`.
+     Set a timeout, for example 8 hours.
    - **node 2 → (On success = approved) → node 3:** job template `VM - deploy from ServiceNow ticket`;
      Variables: `vm_deploy_phase: build`
    - Nothing on *On failure*: a question for the requester, a refusal or a denied approval ends it.
@@ -356,16 +369,55 @@ says what each step does.
    go to ..."* on the ticket and in the email; approve in **Automation Execution > Workflow Approvals**;
    the VMs are built.
 
-- **The change's approval can stand in** for AAP's: for changes read by `key: value` lines or plain
-  words, a workflow with the deploy job alone (no approval node) is enough - the change was approved
-  for its words. With GenAI on, keep AAP's approval: the change was not approved for GenAI's reading.
+- **Use the no-touch workflow** to let an approved change build automatically when the plan is clean.
+  The change was approved for its words. With GenAI on, a person approves GenAI's reading: no touch sends
+  such a plan to the approval workflow.
 - **Who can change the request:** anyone who can comment on the ticket can change it, and an incident or
   a task has no approval of its own. The person who launches the job is the control, and the
   "Deploying" note records exactly what was built. When a schedule picks tickets up (step 9), the
   workflow's approval is that control.
-- **The plan the person approved is what is built:** the propose step's note carries a hash of the
-  ticket's text (and its change's); a ticket edited while the approval waited is not built (*"was changed
-  after the approval"*) - run the workflow from the start.
+- **The approval builds exactly the plan.** The build step pins each VM's vCenter, datacenter, cluster,
+  datastore and folder. It refuses a placement that crossed a capacity target while approval was pending.
+  Run the workflow again to check and approve the new plan.
+- **Owner is optional.** Set `vm_deploy_owner_field` in AAP to the change field, for example
+  `u_owner_group`. Set `vm_deploy_owner_label` if the form uses a different label than *Owner*.
+  The job reads the display value from the change, including when launched with its CTASK.
+  Without a parent change it reads the task. An empty configured field stops the request.
+  Leave the setting empty to omit the owner.
+
+### Changing the placement before the approval
+
+For the portal steps, see [Changing placement on the VM deploy plan](SITE_PORTAL.md#the-vm-deploy-plan).
+
+Portal approvers can choose a different cluster, one of its mounted datastores, and a VM folder in its datacenter.
+Clusters outside the plan’s vCenter or datacenter form a separate group. The same template must exist there in an allowed template folder.
+The network stays on the template’s staging VLAN with DHCP.
+
+The placement change job checks the allow-lists and the VM’s datastore rule. By default, memory use must stay at or below 80% with one host down.
+The datastore must stay at or below 85% with the VM at full size. The limits come from `vm_deploy_mem_target_pct`,
+`vm_deploy_failover_hosts` and `vm_deploy_datastore_max_used_pct`.
+
+If a stopped job may have written the note, the portal asks you to save that VM again.
+Save one VM at a time. The job writes the `[AAP] Placement changed` note on the launch ticket first. Its report names any related ticket that refused the copy.
+For a datastore cluster request, the approved datastore must still belong to that cluster at build time.
+The note names the approver and the propose job. The build checks the ticket digest, the allow-lists and the fit again before cloning.
+
+### No touch: a clean change builds without an approval
+
+Launch **VM - deploy from change (no touch)** with `vm_deploy_ticket: CHG0030001`. The change must be approved and in Implement.
+Its single deploy node runs with `vm_deploy_phase: no_touch`. A clean plan is ready, has no stops or warnings,
+and every value comes from the ticket, a default or the job. The job may choose the least used datastore or cluster.
+A value GenAI read is never clean: the change was approved for its words, not for GenAI's reading.
+It records the plan before building in the same run.
+
+A stopped plan follows the propose step. The requester sees what needs an answer.
+A ready plan that needs a person starts the approval workflow for the same change. The change and its CTASKs
+get the reasons and workflow job number. If the workflow cannot start, the change records what to fix and the job fails.
+Job type **Check** previews the decision without writing notes, starting a workflow or building a VM.
+
+Run **AAP - set up job templates** again to create the workflow. Attach a **Red Hat Ansible Automation Platform**
+credential to the deploy template. Give its account **Execute** on **VM - deploy from ServiceNow ticket (workflow)**.
+Set `vm_deploy_approval_workflow` if your approval workflow has another name. Its survey must accept `vm_deploy_ticket` and the optional text question `vm_deploy_handoff_from`.
 
 ## 9. The scheduled pickup
 
@@ -611,16 +663,21 @@ Three ways to see what would be built before anything is:
 1. **Check (a dry run)** - the simplest. Launch the deploy template with *Job type* **Check**. It reads the
    change, checks everything, chooses where each VM would go, and prints it all with where each value
    came from. It **writes nothing** on the ticket. Then launch it again as **Run** to build.
-2. **The approval workflow** (`VM - deploy from ServiceNow ticket (workflow)`, set up in step 8) - one
-   launch:
-   - step 1 (`vm_deploy_phase: propose`) checks and places, and writes *"[AAP] Checked - ready to build
-     after the approval ... It would go to ..."* on the change and its task, and emails it;
-   - a person clicks **Approve** in AAP (*Deny* = nothing built);
-   - step 3 (`vm_deploy_phase: build`) reads the ticket again, checks again, and builds;
-   - step 3 builds **only what was approved**: the propose step's note carries a hash of the ticket's
-     text (and its change's). A ticket edited while the approval waited - a new comment, an edited
-     description, its change - is not built: *"was changed after the approval"*. Run the workflow from
-     the start: it is checked and approved again.
+2. **The approval workflow** runs the deploy job twice.
+   - The propose step checks every VM. Its plan lists the name, template, CPU, RAM, disks, optional
+     owner and placement. Each row identifies its source as **from the ticket**, **default** or
+     **chosen by the job**. Network always shows the template's port groups and DHCP.
+   - Read the plan in the propose job's output or email, on the change and its selected CTASKs,
+     or on the portal. A cluster warning gives the projected memory use with a host down
+     (default target 80%). A datastore warning counts the VM at full size (default maximum 85%).
+     You can approve a plan with a warning.
+   - If the change is awaiting approval or outside Implement, the artifact gives the reason and has no rows.
+     A missing or conflicting answer, an empty configured owner or a failed placement stops the workflow
+     before approval. The plan shows why and the requester gets a comment.
+   - Approval pins the recorded placement for each VM. The build reads only the notes of its own
+     propose job: the workflow passes it on as `vm_deploy_checked_job`. An older check of the same change
+     never counts. The build checks the ticket digest, placement rules and capacity again. A new capacity warning or insufficient space for the full VM requires
+     a new workflow run and approval. An already approved threshold warning can proceed.
 3. **GenAI without the workflow** - with `vm_deploy_genai: true`, the first run posts GenAI's proposal and
    stops; the next run builds that proposal.
 
@@ -829,7 +886,7 @@ Always:
 
 | Note | Where it is written | Who reads it |
 |---|---|---|
-| `[AAP] Checked - ready to build ... it would go to ...` | work note (the propose step, or a GenAI proposal waiting for a person) | the approver |
+| `[AAP] Checked - ready to build ... it would go to ...` | work note on the change and its selected CTASKs, one per VM with sources, warnings and pinned placement | the approver |
 | `[AAP] GenAI proposal ...` | work note: each value with the ticket words it came from | the approver |
 | `[AAP] We cannot build this VM yet: ...` - the questions | **comment** (requesters see comments, not work notes) | the requester |
 | `[AAP] Deploying ...` | work note, before anything is built | the record |
@@ -849,12 +906,15 @@ Always:
 - **In vCenter**, each VM's notes say which ticket built it, one line each:
 
   ```
-  CHG0001234 - built 2026-10-18
+  CHG0030001 - built 2026-11-23
   Template: rhel9-gold
-  AAP job 812 (operator1)
+  Owner: APP-TEAM-1
+  AAP job 4813
   Service: SQL Server
   Notes: the ticket's VM notes
   ```
+
+  The optional owner also appears in the deploying and result notes.
 
   The first line is the ticket's mark: a run of the ticket again finds its VMs by it (*Run it again*,
   below), and the *VM - VMs created* report reads the ticket and the template from it. *building* while
@@ -893,9 +953,8 @@ web03`, `2 VMs: web01 and web02`.
   `web01-05`) is never expanded: a question too - every name is written out.
 - **At most `vm_deploy_max_vms` (10) per ticket.** More: refused, nothing built (split the ticket, or
   raise the setting).
-- **Built one after the other.** Each VM is placed after the ones before it are there, so automatic
-  placement sees them. The dry run and the propose step show where each would go as if alone: the
-  build may place them differently.
+- **Built one after the other.** Each placement check counts the datastore space planned for earlier VMs.
+  The approval workflow builds each VM in its approved location.
 - **On the ticket:** "[AAP] Deploying 2 VMs, one after the other", then one note per VM, written as
   soon as that VM is done ("[AAP] VM web01 deployed (...) - 1 of 2."). The ticket is **closed only when
   every VM is built**. With a service, every VM of the ticket gets the same one.
