@@ -245,17 +245,24 @@ event's type in the summary and its time in the timeline. If there are none, it 
 establish that its datastore lost access. When no root is found, the page, email and AAR say how many watch runs were
 read and what the vCenter event read showed.
 
-1. **What went down** gives the roots, their hosts, down spans and recoveries. Overlapping datastore losses
-   on the same host in the same vCenter share a chain. Separate roots keep their own entries.
-   A span with only a watch observation starts at that run (*down by 23:40 (the watch's run)*).
-   Cluster-wide loss and overlaps count from there. An earlier recorded loss dates the span when available.
-2. **What it affected** lists datastore and host members and the watch's findings on those VMs. It counts
-   HA restarts in a failed host's cluster during its down span. A VM known only from membership reads
-   *on the lost datastore (state not read)* or *on the down host (state not read)*.
-3. **Down now** gives every current watch condition across all vCenters, worst first. If the condition has no time,
-   it uses the story's dated loss for that root's current span, or says *time not recorded*. Each down VM is also
-   listed under **Issues by type > VMs**, with its datastores when known.
-4. **Recovered** lists each recovered object once, with the hosts that regained access and the duration when known.
+- **Likely causes** opens the page and email. Each pattern card describes what the signal means, what usually causes
+  it, which objects showed it, when, what to check and whom to call.
+- **What went down** gives the roots, their hosts, down spans and recoveries. Overlapping datastore losses
+  on the same host in the same vCenter share a chain. Separate roots keep their own entries.
+  A span with only a watch observation starts at that run (*down by 23:40 (the watch's run)*).
+  Cluster-wide loss and overlaps count from there. An earlier recorded loss dates the span when available.
+- **Order of events** groups changes of the same kind and direction within 15 minutes of the previous change.
+  Each line gives the count, time span and names. Open **and N more** after the first ten names. Alarms join the
+  change they describe. Tickets and work notes each have their own line. **See the card** links to the matching
+  pattern above. The timeline chart follows immediately, open on the page.
+- **What it affected** gives the VM count in the heading and lists datastore and host members and the watch's
+  findings on those VMs. It counts HA restarts in a failed host's cluster during its down span. A VM known only
+  from membership reads *on the lost datastore (state not read)* or *on the down host (state not read)*.
+- **Down now** lists current conditions worst first. When the watch read falls after the selected window, it lists only
+  current conditions for that window's roots. If the condition has no time,
+  it uses the story's dated loss for that root's current span, or says *time not recorded*. Each down VM is also
+  listed under **Issues by type > VMs**, with its datastores when known.
+- **Back to normal** lists each recovered object once, with the hosts that regained access and the duration when known.
 
 With `vm_watch_review_noise: true`, usage alarms, gray transitions, unpaired greens and brief flaps
 are counted by alarm and scope. A brief loss the watch observed during that span stays in the outage chain.
@@ -264,15 +271,8 @@ Each noise line gives every change, the number of objects, the time span and fin
 at least ten changes during the outage and more than three times the outside rate indicate a rise at the
 same time. Set `vm_watch_review_noise: false` to include these changes in the detailed event list. The story always omits noise.
 
-The page and email put *What this usually means* immediately after the four parts. Each pattern card describes
-what the signal means, what usually causes it, which objects showed it, when, what to check and whom to call.
-
-*The outage, in order* groups changes of the same kind and direction within 15 minutes of the previous change.
-Each line gives the count, time span and names. Open **and N more** after the first ten names. Alarms join the change
-they describe. Tickets and work notes each have their own line. Matching patterns link to their cards.
-
 *Issues by type* gives the objects and their states, worst first within each group. Follow an object's link to its
-timeline entry. The chart, summed noise, *What else saw it* and *How it judged* follow.
+timeline entry. Summed noise, *What else saw it* and *How it judged* follow.
 The last section, *Every event, grouped (each single event is in the workbook)*, starts folded: the same grouped rows as the AAR's Appendix A.
 The workbook and matching CSV include every source event returned by the read. The configured vCenter event cap applies.
 
@@ -301,7 +301,7 @@ Green rows mark recoveries. The final red row gives the watch's observation at r
 Hover over a time or focus it with Tab for its full local date, time, zone and UTC equivalent. The email prints the same
 chain in local time under day headings. Its window border and recovery shading depend on the mail client.
 
-The chart starts folded. **Outage only** zooms in on the chain. **Everything** spans the event read and rings events
+The chart opens on **Outage only**, which zooms in on the chain. **Everything** spans the event read and rings events
 about the lost datastores, their hosts or affected VMs. A ring on a usage or gray-alarm bar means it contains an affected VM.
 The first tick and each midnight carry a date. A solid red outline covers the window across the lanes and a dashed
 extension identifies objects still down. Nearby events share a numbered mark. Hover or focus it for its events and times.
@@ -310,9 +310,9 @@ The workbook and CSV preserve every source event. The scheduled watch retains it
 `outage_ops_center` sets the operations center name on the review cards, email, handoff and AAR (default `NOC`).
 The Word handoff filename uses letters, digits, hyphens and underscores in that name.
 
-The NOC cards use fixed entries in `roles/vmware_vm/files/outage_patterns.yml`. Each entry names its event types or
+The cards in **Likely causes** use fixed entries in `roles/vmware_vm/files/outage_patterns.yml`. Each entry names its event types or
 raised alarm names and the teams to call. Configure the four `outage_escalate_*` settings below to print site contacts.
-The **Hand this to the NOC** Word link appears with the cards when the handoff has been written.
+The Word link beside the cards says **Hand this to the NOC** by default and uses the configured operations center name.
 
 - **What triggered it** is the first line under the title, always. It is the first of these:
   1. the watch's own findings ("CRITICAL: VM web07 is hung ...");
@@ -322,7 +322,7 @@ The **Hand this to the NOC** Word link appears with the cards when the handoff h
 - **The verdict chip** of a review is the watch's state now, and it says so: *Now: All good* (1.90.0). It is not a verdict on the outage.
 - **Alarm history:** `vm_watch_review_lookback_hours` reads earlier raises for alarms that clear in the window.
   Short usage blips can still be skipped with `vm_watch_review_skip_blips` and `vm_watch_review_min_seconds`.
-- **The email** has the outage chain, four parts, noise, workbook and CSV. When Word output is enabled it attaches the AAR and NOC handoff.
+- **The email** follows the page order and includes the workbook and CSV. When Word output is enabled it attaches the AAR and operations handoff.
 - **The review workbook** has *Timeline* (every event), *Outage summary* and *Noise*.
 - **The job artifact** `vm_outage_review`: the numbers (first signal, ticket, seconds from signal to ticket, seconds
   down, hosts down, VMs restarted by HA), for a later workflow step. A review (1.112.0) also keeps `review: true` and its
@@ -381,10 +381,11 @@ someone opens it, checks it and writes the rest.
   The file is `AAR-<outage-name>.docx`.
 - **The layout** is the AAR job's own ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)): the marking banner, the logo, the font, the site's
   instructions before the appendices.
-- **Overview** gives the incident date and time, impact and four parts. The pattern cards follow immediately.
-- **Event Response** prints the grouped timeline with every name, tickets with resolution and close notes,
-  first signal to ticket and time down. Actions contains the team's work notes or a red prompt to complete.
-- **RFO & Recovery** points to *4. Recovered*. Lessons Learned keeps its fields and task table.
+- **Overview** gives the incident date, time and impact. **Likely causes**, **What went down** and **Order of events**
+  follow. The timeline prints every name. **What it affected**, **Down now** and **Back to normal** come next.
+- **Event Response** keeps the tickets with resolution and close notes, the two measures (first signal to ticket and
+  time down), and Actions for the team's account of its response.
+- **RFO & Recovery** points to *Back to normal*. Lessons Learned keeps its fields and task table.
 - **Appendix A** groups matching events within three minutes by phase and sums noise separately. By default it lists
   all grouped outage rows. A positive `outage_aar_appendix_max` limits them and gives the number omitted.
 - **Appendix B** contains the operations handoff with Down now, the objects that went down and their durations,
@@ -451,10 +452,10 @@ type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-
 | `vm_watch_review_noise` | `true` | Group usage alarms, gray transitions and short flaps in the review. |
 | `vm_watch_review_noise_alarms` | `[CPU usage, memory usage, disk usage]` | Alarm name fragments counted as noise (case-insensitive). |
 | `outage_ops_center` | `NOC` | What your site calls its operations center in the outage review. |
-| `outage_escalate_storage` | `""` | NOC escalation contact. Empty uses "your storage team". |
-| `outage_escalate_network` | `""` | NOC escalation contact. Empty uses "your network team". |
-| `outage_escalate_vmware` | `""` | NOC escalation contact. Empty uses "your VMware team". |
-| `outage_escalate_backup` | `""` | NOC escalation contact. Empty uses "your backup team". |
+| `outage_escalate_storage` | `""` | Escalation contact. Empty uses "your storage team". |
+| `outage_escalate_network` | `""` | Escalation contact. Empty uses "your network team". |
+| `outage_escalate_vmware` | `""` | Escalation contact. Empty uses "your VMware team". |
+| `outage_escalate_backup` | `""` | Escalation contact. Empty uses "your backup team". |
 | `outage_aar_appendix_max` | `0` | Maximum grouped outage rows in Appendix A (0 includes all). |
 | `vm_watch_review_context` | `true` | Read other sources for the outage review's What else saw it cards. |
 | `vm_watch_review_context_minutes` | `15` | Minutes to include before and after the dated outage window. |
@@ -470,7 +471,7 @@ type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-
 | `vm_watch_review_tickets` | [] | more tickets to show, by number |
 | `vm_watch_review_event_types` | [] | vCenter event types to read; empty = the built-in list |
 | `vm_watch_review_max_events` | 2000 | the most events per vCenter (the newest are kept) |
-| `vm_watch_review_docx` | true | attach the AAR draft and NOC handoff as Word documents and link both on the review page |
+| `vm_watch_review_docx` | true | attach the AAR draft and operations handoff as Word documents and link both on the review page |
 | `vm_outage_act` | false | true, at launch with `vm_watch_review`: ACT's possible causes and fixes on the review (needs the ACT model key credential) |
 | `vm_outage_act_max_events` | 120 | the most events ACT reads: the lead-up, the first critical event, then the nearest in time |
 | `vm_outage_act_model_timeout` | 180 | seconds the model may take for its answer; the whole ACT run gets twice that and a minute (`site_act_timeout` at most) |

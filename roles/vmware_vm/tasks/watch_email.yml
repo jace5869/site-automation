@@ -21,9 +21,10 @@
 
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: VMware | does this run email (vm_watch_email_on_change, vm_watch_email_every_hours)
+  no_log: "{{ vm_watch_review | bool }}"
   ansible.builtin.set_fact:
     _vm_w_mail: >-
-      {{ _vm_w_cond | vm_watch_email_decision((_site_hist_runs | default([]) | outage_redact) if vm_watch_review | bool else _site_hist_runs | default([]),
+      {{ _vm_w_cond | vm_watch_email_decision(_site_hist_runs | default([]),
            {'now': (_vm_now | default(now().timestamp())) | float, 'on_change': vm_watch_email_on_change | bool,
             'every_hours': vm_watch_email_every_hours | float, 'report_on': vm_watch_report_on | name_list,
             'review': vm_watch_review | bool,
@@ -37,5 +38,5 @@
 
 - name: VMware | the watch's email
   ansible.builtin.debug:
-    msg: "{{ _vm_w_mail.lines }}"
+    msg: "{{ _vm_w_mail.lines | outage_redact if vm_watch_review | bool else _vm_w_mail.lines }}"
   when: _vm_w_mail.lines | length > 0

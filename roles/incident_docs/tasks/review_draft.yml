@@ -17,6 +17,7 @@
         path: "{{ _rd_dir }}/{{ _rd_record | incident_file_name('aar', _inc_names) }}"
         doc: >-
           {{ _rd_record | incident_aar_docx(_inc_opts | combine({'instructions': incident_aar_instructions}), [], false, _rd_draft) }}
+      no_log: true
       register: _rd_written
       check_mode: false                # only a file in the run's own temporary folder
 
@@ -28,7 +29,7 @@
     - name: Incident docs | the AAR draft was not made (the review goes on without it)
       ansible.builtin.set_fact:
         _rd_file: {}
-        _rd_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | truncate(200) }}"
+        _rd_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | outage_redact | truncate(200) }}"
 
 - name: Incident docs | write the operations center handoff
   block:
@@ -36,6 +37,7 @@
       site_docx:
         path: "{{ _rd_dir }}/{{ _rd_record | incident_file_name('noc') }}"
         doc: "{{ _rd_draft | incident_noc_docx(_inc_opts) }}"
+      no_log: true
       register: _rd_noc_written
       check_mode: false
 
@@ -47,4 +49,4 @@
     - name: Incident docs | record the handoff write error
       ansible.builtin.set_fact:
         _rd_noc_file: {}
-        _rd_noc_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | truncate(200) }}"
+        _rd_noc_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | outage_redact | truncate(200) }}"

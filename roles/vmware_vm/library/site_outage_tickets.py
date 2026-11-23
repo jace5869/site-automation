@@ -116,7 +116,14 @@ class Api(object):
             raise SnError("GET %s: %s" % (path, e))
         if not isinstance(rows, list):
             raise SnError("GET %s: no result list in the answer" % path)
-        return self.scrub(rows) if self.scrub else rows
+        if self.scrub:
+            # Only prose with a length limit is masked here, before it is cut. The short description's
+            # hostname and the API's identifiers are still needed for ticket and journal correlation.
+            for row in rows:
+                for field in ("description", "close_notes", "value"):
+                    if field in row:
+                        row[field] = self.scrub(row[field])
+        return rows
 
 
 def instance_url(host):
@@ -218,20 +225,22 @@ def main():
         supports_check_mode=True,
     )
     p = module.params
-    scrub = redact_all if p["review"] else None
+    scrub = (lambda value: redact_all(value, review=True)) if p["review"] else None
     out = {"changed": False, "tickets": [], "asked": False, "error": "", "notes_error": "", "instance": instance_url(p["host"]) if p["host"] else ""}
     if not (p["host"] and p["username"] and p["password"]):
         out["error"] = "not read: attach the ServiceNow API credential to the job template"
-        module.exit_json(**(scrub(out) if scrub else out))
+        module.exit_json(**out)
     out["asked"] = True
     api = Api(base_url(p["host"]), p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"], scrub)
     try:
         out["tickets"] = read_tickets(api, p["table"], p["prefix"], p["numbers"], p["begin"], p["end"], max(1, p["max_tickets"]))
     except SnError as e:
-        out["error"] = "not read: %s" % e
-        module.exit_json(**(scrub(out) if scrub else out))
+        out["error"] = "not read: %s" % (scrub(str(e)) if scrub else e)
+        module.exit_json(**out)
     out["notes_error"] = read_notes(api, p["table"], out["tickets"])
-    module.exit_json(**(scrub(out) if scrub else out))
+    if scrub:
+        out["notes_error"] = scrub(out["notes_error"])
+    module.exit_json(**out)
 
 
 if __name__ == "__main__":

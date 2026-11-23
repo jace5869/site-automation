@@ -220,11 +220,11 @@ def incident_file_name(record, kind="aar", names=None):
     """The attachment's name: AAR.docx, or AAR-<outage>.docx when the outage is named; SOP-<title>.docx.
     names: {'aar': 'AAR', 'sop': 'SOP'} - the first part (incident_docs_aar_file, incident_docs_sop_file)."""
     r = record or {}
-    n = dict({"aar": "AAR", "sop": "SOP", "noc": "NOC-handoff"}, **(names or {}))
+    n = dict({"aar": "AAR", "sop": "SOP"}, **(names or {}))
     base = _slug(n.get(kind) or kind.upper(), 40) or kind.upper()
-    if kind == "noc" and r.get("outage_ops_center") and not (names or {}).get("noc"):
-        center = re.sub(r"[^A-Za-z0-9_-]+", "-", _text(r["outage_ops_center"])).strip("-_")
-        base = (center[:40].rstrip("-_") or "NOC") + "-handoff"
+    if kind == "noc" and not n.get("noc"):
+        center = re.sub(r"[^A-Za-z0-9_-]+", "-", _text(r.get("outage_ops_center")) or "NOC").strip("-_")
+        base = "-".join(filter(None, [center[:40].rstrip("-_"), "handoff"]))
     extra = _slug(r.get("name")) if kind in ("aar", "noc") else _slug(r.get("sop_title") or r.get("name"))
     return "%s%s.docx" % (base, ("-" + extra) if extra else "")
 
@@ -405,7 +405,7 @@ def incident_review_draft(draft, act=None, meta=None):
     """The review's AAR draft (outage_timeline's "draft") with ACT's causes and where it came from - what the review run
     writes as "AAR (Word)" and keeps in its artifact (vm_outage_review.aar) for the AAR job. meta: job (the AAP job id),
     made (when, as text). {} when the review has nothing to draft from."""
-    d = _redactor.redact_all(draft or {})
+    d = _redactor.redact_all(draft or {}, review=True)
     if not d.get("v"):
         return {}
     m = _redactor.redact_all(meta or {})
@@ -428,6 +428,8 @@ def incident_review_fill(record, draft):
         r["outage_ops_center"] = d["outage_ops_center"]
     for k in incident_review_filled(r, d):
         r[k] = _text(d[k])
+        if k == "recovery" and d.get("v") == 2 and r[k] == "See 4. Recovered.":
+            r[k] = "See Back to normal."
         if k == "detection" and d.get("story", {}).get("grouped"):
             r["review_auto_detection"] = r[k]
     if not _text(r.get("name")) and d.get("name"):
@@ -450,13 +452,18 @@ def _red(label, text):
             {"type": "bullets", "level": 1, "color": TO_WRITE, "items": [text]}]
 
 
-def _review_impact(d):
-    blocks = [{"type": "space"}, {"type": "para", "text": "The outage in four parts", "bold": True, "keep": True, "color": "1F2D86"}]
+def _review_impact(d, time_column):
+    # Earlier v2 drafts have the VM count at the start of the impact note.
+    affected_title = d.get("affected_title")
+    if not affected_title:
+        count = re.match(r"^(\d+ VMs?):", d["affected_note"])
+        affected_title = "What it affected" + (": " + count[1] if count else "")
+    blocks = []
     for i, (key, title, widths) in enumerate((
-            ("went", "1. What went down", [1.3, 2, 1.5, 1.1, 1.4]),
-            ("affected", "2. What it affected", [1.1, 1.1, 2.6, 1.6, 0.9]),
-            ("now", "3. Down now", []), ("recovered", "4. Recovered", [1.2, 3, 1.9, 1]))):
-        blocks.append({"type": "para", "text": title, "bold": True, "keep": True})
+            ("went", "What went down", [1.3, 2, 1.5, 1.1, 1.4]),
+            ("affected", affected_title, [1.1, 1.1, 2.6, 1.6, 0.9]),
+            ("now", "Down now", []), ("recovered", "Back to normal", [1.2, 3, 1.9, 1]))):
+        blocks.append({"type": "heading", "text": title})
         if key == "affected":
             blocks.append({"type": "para", "text": d["affected_note"]})
         if key == "now":
@@ -479,6 +486,8 @@ def _review_impact(d):
             blocks.append({"type": "para", "text": "None recorded."})
         if key == "went":
             blocks.append({"type": "note", "text": d["went_note"]})
+            if "story" in d:
+                blocks.extend(_story_blocks(d["story"], time_column))
     if d.get("lookback_note"):
         blocks.append({"type": "note", "text": d["lookback_note"]})
     return blocks
@@ -504,7 +513,7 @@ def _review_appendix(d, cols, widths):
 
 
 def _story_blocks(story, time_column):
-    blocks = [{"type": "para", "text": "The outage, in order", "bold": True, "keep": True}]
+    blocks = [{"type": "heading", "text": "Order of events"}]
     active = False
     table = None
     window = story["window"]
@@ -543,8 +552,8 @@ def _story_blocks(story, time_column):
     return blocks
 
 
-def _pattern_blocks(cards, ops_center):
-    out = [dict(type="heading", text="What this usually means (for the %s)" % ops_center)]
+def _pattern_blocks(cards):
+    out = [dict(type="heading", text="Likely causes")]
     if not cards:
         out.append(dict(type="para", text="No matching pattern in this review."))
     for i, c in enumerate(cards, 1):
@@ -560,7 +569,7 @@ def _pattern_blocks(cards, ops_center):
 
 def incident_noc_docx(review, opts=None):
     """The standalone handoff and Appendix B share the same compact paragraphs and type size."""
-    d = _redactor.redact_all(review)
+    d = _redactor.redact_all(review, review=True)
     cards = d.get("patterns", [])
     size = 9 if len(cards) <= 8 else 8
     doc = _common(dict(opts or {}, size=size, logo=""))
@@ -581,7 +590,7 @@ def incident_noc_docx(review, opts=None):
     blocks.append(dict(type="para", text="What went down: " + brief("; ".join(losses) or "No infrastructure loss recorded.", 155), size=size))
     blocks.append(dict(type="para", text="What it affected: " + brief(d.get("affected_note", ""), 100), size=size))
     if cards:
-        blocks.append(dict(type="para", text="What this usually means", bold=True, size=size))
+        blocks.append(dict(type="para", text="Likely causes", bold=True, size=size))
     for i, c in enumerate(cards[:8], 1):
         blocks.extend([dict(type="para", bold=True, size=size, text="%d. %s" % (i, brief(c["title"], 64))),
                        dict(type="para", size=size, text="Seen: %s. Check: %s. Escalate: %s." % (
@@ -635,9 +644,9 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
                 out += [{"type": "bullets", "level": 1, "color": TO_WRITE,
                          "items": ["To write: the impact level (MINOR, MODERATE, MAJOR or CRITICAL) and who was affected."]}]
             if v2:
-                out.extend(_review_impact(d))
-                if grouped:
-                    out.extend(_pattern_blocks(d["patterns"], d.get("outage_ops_center") or "NOC"))
+                if "patterns" in d:
+                    out.extend(_pattern_blocks(d["patterns"]))
+                out.extend(_review_impact(d, tcol))
         elif lab == "Detection:":
             if grouped:
                 if b["lines"] and r.get("detection") != r.get("review_auto_detection"):
@@ -649,9 +658,9 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
         elif lab == "Actions:":
             if not grouped:
                 out.append(b)
-            if "story" in d:
+            if not v2 and "story" in d:
                 out.extend(_story_blocks(d["story"], tcol))
-            elif d.get("key"):
+            elif "story" not in d and d.get("key"):
                 heading = "Key events (the outage's own chain, grouped by phase in Appendix A):" if v2 else "Key events (from the review; every event: Appendix A):"
                 out += [{"type": "para", "text": heading, "bold": True, "keep": True},
                         {"type": "table", "columns": ev_cols, "rows": d["key"], "widths": ev_w}]
@@ -671,10 +680,10 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
                 out += [{"type": "para", "text": "Tickets:", "bold": True, "keep": True},
                         {"type": "table", "columns": ["Number", "Opened", "Resolved", "What", "Close notes"], "rows": d["tickets"],
                          "widths": [1.3, 1.1, 1.1, 2.4, 2.3]}]
-        elif lab == "Recovery:" and "patterns" in d:
+        elif lab == "Recovery:" and not v2 and "patterns" in d:
             out.append(b)
             if not grouped:
-                out.extend(_pattern_blocks(d["patterns"], d.get("outage_ops_center") or "NOC"))
+                out.extend(_pattern_blocks(d["patterns"]))
         elif v2 and d.get("what_else") and b.get("type") == "heading" and b.get("text") == "Lessons Learned & Action Plan":
             # 1.116.1: the review's source cards, before the AAR author's lessons.
             out.append(dict(type="heading", text="What else saw it (same time, not cause)"))

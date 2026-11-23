@@ -105,6 +105,12 @@ class VcenterSso(unittest.TestCase):
         self.assertEqual((c["vcenter"], c["object_type"], c["severity"]), ("vc01.example.mil", "OCSP responder", "critical"))
         self.assertEqual(vf.vcenter_sso_problems(s, {"ocsp_severity": "warning"})[0]["severity"], "warning")
 
+    def test_login_ends_at_the_last_at_in_the_authority(self):
+        path = "ocsp.example.mil:8443/status/@issuer"
+        self.assertEqual(vf._url_shown("https://example:p@ss@" + path + "?q=x#frag"),
+                         "https://...@" + path + "?...#...")
+        self.assertEqual(vf._url_shown("https://" + path), "https://" + path)
+
     def test_no_url_secret_in_a_condition_its_ticket_or_the_report(self):
         # 1.118.6: an OCSP responder's token (?token=) or login (user:password@) never reaches a condition, the ticket the
         # watch hands over, the job artifact or the report; an address without either keys its condition as before

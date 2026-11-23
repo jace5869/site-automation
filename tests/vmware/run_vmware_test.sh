@@ -3014,9 +3014,9 @@ noc, = [p for p in m.walk() if (p.get_filename() or "").startswith("NOC-handoff-
 noc_body = zipfile.ZipFile(io.BytesIO(noc.get_payload(decode=True))).read("word/document.xml").decode()
 assert "Hand this to the NOC" in noc_body and "Down now" in noc_body
 mail_html = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/html")
-assert "The outage, in order" in mail_html and 'class="st-ev ' in mail_html
+assert "Order of events" in mail_html and 'class="st-ev ' in mail_html
 plain = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/plain")
-chain = plain.split("The outage, in order", 1)[1].split("Issues by type", 1)[0]
+chain = plain.split("Order of events", 1)[1].split("All events (", 1)[0]
 assert "Outage window from" in chain and " UTC)" in chain, chain
 text = zipfile.ZipFile(io.BytesIO(docs[0].get_payload(decode=True))).read("word/document.xml").decode()
 for want in ("Filled from the outage review, AAP job 4711", "Appendix A - the events by phase", "Appendix B - Hand this to the NOC", csvname, "To write: the confirmed cause",
@@ -3065,8 +3065,8 @@ import email, pathlib, re, sys
 m = email.message_from_binary_file(open(sys.argv[1], "rb"))
 assert not any((p.get_filename() or "").endswith((".csv", ".xlsx", ".docx")) for p in m.walk())
 body = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/plain")
-assert "The outage, in order" in body and "attached workbook" not in body
-pages = [p.read_text() for p in pathlib.Path(sys.argv[2]).rglob("*.html") if "The outage, in order" in p.read_text()]
+assert "Order of events" in body and "attached workbook" not in body
+pages = [p.read_text() for p in pathlib.Path(sys.argv[2]).rglob("*.html") if "Order of events" in p.read_text()]
 assert pages and not any(re.search(r'href="[^"]+\.(csv|xlsx|docx)"', page) for page in pages)
 EOPY
 grep -vq '"method": "GET"' "$work/wsn.jsonl" && { echo "FAIL -   ...the review wrote to ServiceNow"; fails=$((fails + 1)); } \

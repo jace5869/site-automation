@@ -124,11 +124,8 @@ def record(e, review=False, review_storage_events=False):
     for a in getattr(e, "arguments", None) or []:
         args[str(getattr(a, "key", ""))] = str(getattr(a, "value", ""))
     message = str(getattr(e, "fullFormattedMessage", "") or getattr(e, "message", "") or "")
-    if review:
-        from ansible.module_utils.site_redact import redact
-        message = redact(message)
     row = {"key": e.key, "time": _iso(e.createdTime), "type": getattr(e, "eventTypeId", "") or type(e).__name__.split(".")[-1],
-            "message": " ".join(message.split()), "args": args,
+            "message": message if review else " ".join(message.split()), "args": args,
             "host": _name(getattr(e, "host", None)), "vm": _name(getattr(e, "vm", None)),
             "cluster": _name(getattr(e, "computeResource", None)), "datacenter": _name(getattr(e, "datacenter", None)),
             "alarm": _name(getattr(e, "alarm", None)), "entity": _name(getattr(e, "entity", None)),
@@ -138,6 +135,7 @@ def record(e, review=False, review_storage_events=False):
     if review:
         row.update({"host_moid": _event_moid(e, "host", "host"), "vm_moid": _event_moid(e, "vm", "vm"),
             "datastore": _name(getattr(e, "ds", None)), "datastore_moid": _event_moid(e, "ds", "datastore"),
+            "cluster_moid": _event_moid(e, "computeResource", "computeResource"),
             "entity_moid": _event_moid(e, "entity", "entity")})
         if review_storage_events and row["type"] in NFS_EVENTS and not row["datastore"]:
             # NFS EventEx arguments are server, export, UUID and volume name (Broadcom KB 404260).

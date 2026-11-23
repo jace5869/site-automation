@@ -866,7 +866,7 @@ footer{margin-top:32px}
     bar's list of sections, which stays at the top #}
 {%- if secs | length > 2 %}
 {%- set hot = [] %}{% set rest = [] %}
-{%- for s in secs %}{% if s.rail | default(true) %}{% set _ = (hot if s.status | default('') in ['critical', 'warning'] else rest).append(loop.index) %}{% endif %}{% endfor %}
+{%- for s in secs %}{% if s.rail | default(true) %}{% set _ = (hot if not r.review_order | default(false) and s.status | default('') in ['critical', 'warning'] else rest).append(loop.index) %}{% endif %}{% endfor %}
 <nav class="card rail" aria-label="Sections of this report">
 <div class="top"><div class="lbl">Sections</div><input type="checkbox" id="rail-hide" aria-label="Put the sections away (wider tables)"><label class="railx" for="rail-hide" title="Put the sections away - the tables get the width; again to bring them back"><svg class="ic ic-hide" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 3.5L5 8l4.5 4.5M13 3.5L8.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="ic ic-show" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5L11 8l-4.5 4.5M3 3.5L7.5 8 3 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></label></div>
 <a class="up" href="#top"><span class="t">&uarr; Top</span></a>
@@ -1051,9 +1051,10 @@ footer{margin-top:32px}
     report that gives no cards of its own and is Critical or Warning - its worst rows, Critical before Warning, each
     in the order the report lists them. A STIG report (cat_cells): its CAT I rules, then CAT II (the report lists them
     by hosts open). Each card: the row's first value, one line (the cells that are Critical or Warning, else its
-    longest value), Open item (that row) and View details (the row's other values) #}
+    longest value), Open item (that row) and View details (the row's other values). 1.116.4: none on an outage review
+    (review_order): its Likely causes come first and its events are in one place #}
 {%- set auto = [] %}
-{%- if st in ['critical', 'warning'] and not (secs | selectattr('cards', 'defined') | selectattr('cards') | list) and not r.dashboard | default({}) and r.teams is not defined %}
+{%- if st in ['critical', 'warning'] and not (secs | selectattr('cards', 'defined') | selectattr('cards') | list) and not r.dashboard | default({}) and r.teams is not defined and not r.review_order | default(false) %}
 {%- set catrep = secs | selectattr('cat_cells', 'defined') | selectattr('cat_cells') | list %}
 {%- for s in secs %}
 {%- set si = loop.index %}

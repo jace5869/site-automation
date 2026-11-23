@@ -7,7 +7,8 @@
   ansible.builtin.assert:
     that: _vm_vcenters | default([]) | selectattr('error') | list | length == 0
     fail_msg: >-
-      Not read: {{ _vm_vcenters | default([]) | selectattr('error') | map(attribute='error') | join('; ') }}.
+      {%- set errors = _vm_vcenters | default([]) | selectattr('error') | map(attribute='error') | list -%}
+      Not read: {{ (errors | outage_redact if _vm_redact_errors | default(false) | bool else errors) | join('; ') }}.
       The report above (and the email) covers the other vCenters. vmware_vcenter_fail_unread: false
       (the default) keeps the job green.
     quiet: true

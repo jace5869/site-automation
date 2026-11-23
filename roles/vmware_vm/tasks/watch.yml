@@ -35,18 +35,12 @@
   no_log: "{{ vm_watch_review | bool }}"
   check_mode: false                      # read-only: a dry run (Check) reads and reports the same
 
-- name: VMware | redact a copy of the watch read for the review (the conditions and their ticket ids come from the read itself)
-  ansible.builtin.set_fact:
-    _vm_w_red: "{{ _vm_w | outage_redact }}"
-  vars:
-    _vm_w_review: "{{ vm_watch_review | bool }}"   # before the mail decision, protect the requested review
-  when: _vm_w_review | bool
-
 - name: VMware | the protected VMs (the same list as a restart's)
   ansible.builtin.include_tasks: protected.yml
 
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: VMware | what was found, and what phase 2 would restart (nothing is restarted)
+  no_log: "{{ vm_watch_review | bool }}"
   ansible.builtin.set_fact:
     _vm_w_cond: >-
       {{ _vm_w | vm_watch_conditions({'one_signal_severity': vm_watch_one_signal_severity,
@@ -63,13 +57,16 @@
     - name: VMware | single sign-on and OCSP - read
       ansible.builtin.include_tasks: sso_read.yml
       vars:
+        _vm_sso_review: "{{ vm_watch_review | bool }}"
         _vm_sso_crl: false               # the CRL (tens of MB) is the health report's, not every watch run's
 
     - name: VMware | single sign-on and OCSP - what is down now
+      no_log: "{{ vm_watch_review | bool }}"
       ansible.builtin.set_fact:
         _vm_w_cond: "{{ _vm_w_cond + (_vm_sso | vcenter_sso_conditions(_vm_sso_opts)) }}"
 
 - name: VMware | phase 2's decision (made, not carried out)
+  no_log: "{{ vm_watch_review | bool }}"
   ansible.builtin.set_fact:
     _vm_w_actions: "{{ _vm_w_cond | vm_watch_actions(_vm_w_opts) }}"
     _vm_w_report_it: "{{ _vm_w_cond | selectattr('severity', 'in', vm_watch_report_on | name_list) | list | length > 0 }}"
@@ -77,10 +74,11 @@
 - name: VMware | {{ _vm_w | vm_watch_clean_line(_vm_w_cond) if _vm_w_cond | length == 0 else 'below the report threshold (vm_watch_report_on)' }}
   ansible.builtin.debug:
     msg: >-
-      {{ [_vm_w | vm_watch_clean_line(_vm_w_cond)]
+      {%- set lines = [_vm_w | vm_watch_clean_line(_vm_w_cond)]
          + (_vm_w_cond | map(attribute='severity') | map('upper') | zip(_vm_w_cond | map(attribute='summary')) | map('join', ' ') | list)
          + ((_vm_w | vm_watch_not_judged) | map(attribute='name') | zip((_vm_w | vm_watch_not_judged) | map(attribute='why'))
-            | map('join', ' - not judged: ') | list) }}
+            | map('join', ' - not judged: ') | list) -%}
+      {{ lines | outage_redact if vm_watch_review | bool else lines }}
   when: not _vm_w_report_it | bool
 
 # 1.112.5: the email only when something changed since the last one (vm_watch_email_on_change); a review on a schedule at most
@@ -128,10 +126,10 @@
         - name: VMware | the watch inventory and recorded roots for this review
           ansible.builtin.set_fact:
             _vm_w_review_opts: >-
-              {{ {'hosts': _vm_w_red.hosts, 'datastores': _vm_w_red.datastores, 'read_at': _vm_w_red.read_at,
-                  'questions': _vm_w_red.questions | default([]),
+              {{ {'hosts': _vm_w.hosts, 'datastores': _vm_w.datastores, 'read_at': _vm_w.read_at,
+                  'questions': _vm_w.questions | default([]), 'review_tickets': vm_watch_review_tickets | name_list,
                   'watch_runs': _site_hist_runs, 'history_why': _site_hist_why, 'review_object': vm_watch_review_object,
-                  'vcenters': _vm_w_red.vcenters, 'noise': vm_watch_review_noise | bool,
+                  'vcenters': _vm_w.vcenters, 'noise': vm_watch_review_noise | bool,
                   'noise_alarms': vm_watch_review_noise_alarms | name_list, 'appendix_max': outage_aar_appendix_max | int,
                   'correlation_prefix': servicenow_correlation_prefix | default('site-health', true),
                   'outage_escalate_storage': outage_escalate_storage, 'outage_escalate_network': outage_escalate_network,
@@ -150,6 +148,7 @@
         max_events: "{{ vm_watch_review_max_events | int }}"
         lookback_hours: "{{ vm_watch_review_lookback_hours | float }}"
       register: _vm_w_ev
+      no_log: "{{ vm_watch_review | bool }}"
       check_mode: false                  # read-only: a dry run (Check) reads and reports the same
 
     - name: VMware | the review's event read
@@ -179,18 +178,19 @@
         validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
         ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
         timeout: "{{ servicenow_timeout | default(30) | int }}"
-      no_log: "{{ _vm_w_review | bool }}"
+      no_log: "{{ vm_watch_review | bool }}"
       register: _vm_w_tk
       check_mode: false                  # GET only
       when: lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0
 
     # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
     - name: VMware | the time line
+      no_log: "{{ vm_watch_review | bool }}"
       vars:
         _vm_w_read: "{{ _vm_w_review_ev if _vm_w_review | bool else _vm_w_ev }}"
       ansible.builtin.set_fact:
         _vm_w_tl: >-
-          {{ _vm_w_read.events | outage_timeline(_vm_w_tk.tickets | default([]),
+          {%- set timeline = _vm_w_read.events | outage_timeline(_vm_w_tk.tickets | default([]),
                {'begin': _vm_w_win.begin, 'end': _vm_w_win.end, 'fixed': _vm_w_review | bool and vm_watch_review_from | string | trim | length > 0,
                 'time_zone': report_time_zone | default('', true) | string,
                 'low_seconds': vm_watch_review_low_seconds | float,
@@ -204,13 +204,14 @@
                 'min_severity': servicenow_min_severity | default('warning', true)}
                | combine((_vm_w_review_opts | combine({'job': awx_job_id | default('') | string, 'outage_ops_center': outage_ops_center,
                    'event_vcenters': _vm_w_read.vcenters, 'events_not_read': _vm_w_read.events_not_read | default(false)}))
-                         if _vm_w_review | bool else {})) }}
+                         if _vm_w_review | bool else {})) -%}
+          {{ timeline | outage_redact if vm_watch_review | bool and not _vm_w_review | bool else timeline }}
   rescue:
     - name: VMware | the time line was not made (the watch goes on without it)
       ansible.builtin.debug:
         msg: >-
           The outage time line was not made: {{ (ansible_failed_result.msg | default('the read failed') | outage_redact)
-             if _vm_w_review | bool else ansible_failed_result.msg | default('the read failed') }}
+             if vm_watch_review | bool else ansible_failed_result.msg | default('the read failed') }}
 
 # 1.116.1: only the review that passed the mail throttle reads the other sources. The reader has no write path.
 - name: VMware | what else saw the outage
@@ -344,7 +345,7 @@
       rescue:
         - name: VMware | the AAR draft was not made (the review goes on without it)
           ansible.builtin.set_fact:
-            _vm_w_aar_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | truncate(200) }}"
+            _vm_w_aar_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | outage_redact | truncate(200) }}"
 
     - name: VMware | the outage report
       when: (_vm_w_report_it | bool or _vm_w_review | bool or _vm_w_mail.kind == 'recovered') and not (_vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool)
@@ -356,8 +357,9 @@
               {%- set d = _vm_w | vm_watch_report(_vm_w_cond, _vm_w_actions, {'time_zone': report_time_zone | default('', true) | string}) -%}
               {%- set d = d | combine({'title': 'Recovered - ' ~ d.title})
                           if _vm_w_mail.kind == 'recovered' else d -%}
-              {{ d | combine({'sections': [{'title': 'Since the last email', 'status': 'info', 'top': true, 'lines': _vm_w_mail.changed}]
-                                          + d.sections | default([])}) if _vm_w_mail.send and _vm_w_mail.changed else d }}
+              {%- set d = d | combine({'sections': [{'title': 'Since the last email', 'status': 'info', 'top': true, 'lines': _vm_w_mail.changed}]
+                                          + d.sections | default([])}) if _vm_w_mail.send and _vm_w_mail.changed else d -%}
+              {{ d | outage_redact if vm_watch_review | bool else d }}
             # 1.112.5 (Codex review): the email state is kept as sent only when this email has somewhere to go
             _vm_w_mail_out: >-
               {{ _vm_w_mail.send | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0) }}
@@ -371,9 +373,11 @@
         - name: VMware | outage report
           ansible.builtin.include_tasks: report.yml
           vars:
-            _vm_vcenters: "{{ _vm_w.vcenters }}"
+            _vm_vcenters: "{{ _vm_w.vcenters | outage_redact if vm_watch_review | bool else _vm_w.vcenters }}"
             _vm_report_subject: "{{ _vm_w_tl.title if _vm_w_review | bool and _vm_w_tl else _vm_w_doc.title }}"
-            _vm_report_lines: "{{ ((_vm_w_tl.lines + ['']) if _vm_w_tl else []) + (_vm_w_doc | report_text).splitlines() }}"
+            _vm_report_lines: >-
+              {{ _vm_w_tl.lines if _vm_w_review | bool and _vm_w_tl.closed_window | default(false) else
+                 ((_vm_w_tl.lines + ['']) if _vm_w_tl else []) + (_vm_w_doc | report_text).splitlines() }}
             _vm_report_doc: "{{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, false) }}"
             _vm_report_web_doc: >-
               {{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, true, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, true) if _vm_w_tl else {} }}
@@ -426,6 +430,7 @@
 
 # always (clean or not): the tickets job after this one in a workflow opens, updates and clears the tickets
 - name: VMware | the result as job artifacts (vm_watch; site_health for the ServiceNow tickets job)
+  no_log: "{{ vm_watch_review | bool }}"
   ansible.builtin.set_stats:
     data:
       vm_watch: "{{ _vm_w | vm_watch_artifact(_vm_w_cond, _vm_w_actions) }}"
@@ -435,6 +440,7 @@
 # 1.112.5: every run keeps the watch's email state (the last email, its conditions) - the next run reads it back from AAP.
 # Never in a dry run (Check): a Check run sends nothing, so it must not look like an email to the real runs after it.
 - name: VMware | the watch's email state as a job artifact (vm_watch_email_state)
+  no_log: "{{ vm_watch_review | bool }}"
   ansible.builtin.set_stats:
     data:
       vm_watch_email_state: "{{ _vm_w_mail_keep }}"
@@ -447,6 +453,7 @@
   ansible.builtin.include_tasks: vcenters_read.yml
   vars:
     _vm_vcenters: "{{ _vm_w.vcenters }}"
+    _vm_redact_errors: "{{ vm_watch_review | bool }}"
 
 - name: VMware | nothing down or hung (vm_watch_fail_on)
   ansible.builtin.assert:
@@ -454,6 +461,7 @@
     fail_msg: >-
       {{ _vm_w_cond | selectattr('severity', 'in', vm_watch_fail_on | name_list) | list | length }} condition(s) at
       {{ vm_watch_fail_on | name_list | join(' / ') }}:
-      {{ _vm_w_cond | selectattr('severity', 'in', vm_watch_fail_on | name_list) | map(attribute='summary') | join('; ') }}.
+      {%- set summaries = _vm_w_cond | selectattr('severity', 'in', vm_watch_fail_on | name_list) | map(attribute='summary') | list %}
+      {{ (summaries | outage_redact if vm_watch_review | bool else summaries) | join('; ') }}.
       Nothing was restarted (watch only). The report is above.
     quiet: true

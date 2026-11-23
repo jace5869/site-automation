@@ -426,6 +426,33 @@ class ReviewCutB(unittest.TestCase):
         self.assertEqual(r["draft"]["now"][0][3], "time not recorded")
         self.assertEqual(r["boxes"][2]["note"], "VM example-vm · time not recorded")
 
+    def test_ha_cluster_without_datacenter(self):
+        loss = self.event(600, "HostConnectionLostEvent", datacenter="")
+        restart = self.event(900, "VmRestartedOnAlternateHostEvent", host="destination", vm="member", datacenter="")
+        other = dict(restart, vm="other", vcenter="another-vc")
+        result = self.review([loss, restart, other])
+        self.assertEqual(result["numbers"]["ha_restarted"], 1)
+        self.assertIn("member", str(result["draft"]["affected"]))
+        self.assertNotIn("other", str(result["draft"]["affected"]))
+
+    def test_vmfs_restore_is_on_storage_lane(self):
+        loss = self.event(600, "esx.problem.vmfs.nfs.server.disconnect", datastore="example-store")
+        back = dict(loss, time=1000, type="esx.clear.vmfs.nfs.server.restored")
+        result = self.review([loss, back])
+        views = next(s["views"] for s in result["web_sections"] if s.get("kind") == "review_chart")
+        for view in views:
+            storage = next(lane for lane in view["lanes"] if lane["key"] == "storage")
+            self.assertEqual(storage["count"], 2)
+
+    def test_storage_precursor_matches_hex_device_case(self):
+        loss = self.event(600, "HostConnectionLostEvent")
+        path = self.event(800, "esx.problem.storage.redundancy.lost", device="naa.600A")
+        clear = dict(path, time=830, type="esx.clear.storage.redundancy.restored")
+        apd = dict(path, time=900, type="esx.problem.storage.apd.start", device="naa.600a")
+        result = self.review([loss, path, clear, apd])
+        self.assertEqual(result["draft"]["noise"], [])
+        self.assertTrue(any("back after" in g["row"][1] for g in result["draft"]["groups"]))
+
     def test_ha_cluster_identity(self):
         loss = self.event(600, "HostConnectionLostEvent", cluster_moid="domain-c1")
         restart = self.event(1200, "VmRestartedOnAlternateHostEvent", host="destination")
@@ -510,6 +537,62 @@ class ReviewCutB(unittest.TestCase):
                 ambiguous = self.review([], triggers=triggers)["draft"]["affected"]
                 self.assertTrue(all("state not read" in row[-1] for row in ambiguous))
 
+    def test_cookie_session_in_headers_and_maps(self):
+        shared = ot._load("site_redact", "../module_utils")
+        for scrub in (shared.redact_all, ot.outage_redact):
+            for value in ("Cookie: session=DEMO", "Set-Cookie: session=DEMO; Path=/",
+                          '{"cookies":{"session":"DEMO"},"session":"ordinary prose"}',
+                          {"headers": {"Cookie": "other=1; session=DEMO"}},
+                          {"cookies": {"session": "DEMO"}}):
+                with self.subTest(value=value, scrub=scrub):
+                    self.assertNotIn("DEMO", str(scrub(value)))
+            prose = {"session": "iSCSI session: target iqn.example disconnected"}
+            self.assertEqual(scrub(prose), prose)
+
+    def test_shared_and_review_prose_table(self):
+        shared = ot._load("site_redact", "../module_utils")
+        for text, evidence, note in (
+                ("password reset requested", "password reset <removed>", "password reset requested"),
+                ("password reset requested by the user", "password reset <removed>", "password reset requested by the user"),
+                ("The token refresh succeeded", shared.DROPPED, "The token refresh succeeded"),
+                ("the secret was rotated", shared.DROPPED, "the secret was rotated"),
+                ("key findings", "key findings", "key findings"),
+                ("password operator DEMO", "password operator <removed>", "password operator <removed>")):
+            with self.subTest(text=text):
+                self.assertEqual(shared.redact(text), evidence)
+                self.assertEqual(ot.outage_redact(text), note)
+
+    def test_review_notes_survive_in_saved_draft(self):
+        import incident_doc_filters as docs
+        incident, = tickets()
+        notes = ["The token refresh succeeded", "password reset requested by the user"]
+        incident["notes"] = [[DAY + "02:25:00Z", note] for note in notes]
+        result = reviewed(None, [incident])
+        draft = docs.incident_review_draft(result["draft"])
+        for note in notes:
+            self.assertIn(note, str(result["sheet"]["rows"]))
+            self.assertIn(note, str(draft["story"]["rows"]))
+
+    def test_operator_prose_and_secret_forms(self):
+        prose = ["iSCSI session dropped", "iSCSI session: target iqn.example disconnected",
+                 "iSCSI session:\n  target disconnected", "a token ring", "the token expired at 10:02",
+                 "key findings", "the key events", "no secret here", "the secret was rotated",
+                 "password reset requested by the user"]
+        for sentence in prose:
+            with self.subTest(sentence=sentence):
+                self.assertEqual(ot.outage_redact(sentence), sentence)
+                self.assertEqual(ot.outage_redact({"session": sentence}), {"session": sentence})
+        for name in ("vmware_soap_session", "session id", "session cookie", "session-id", "session_cookie",
+                     "sessionid", "PHPSESSID", "example_session", "example-session"):
+            self.assertEqual(ot._redact({name: "EXAMPLE_VALUE"}), {name: "<removed>"})
+            self.assertNotIn("EXAMPLE_VALUE", ot._redact(name + "=EXAMPLE_VALUE"))
+        for line in ("password=EXAMPLE_VALUE", "api_key: EXAMPLE_VALUE", "Authorization: Bearer EXAMPLE_VALUE",
+                     "https://operator:EXAMPLE_VALUE@example.mil", "the token expired. password=EXAMPLE_VALUE",
+                     "password reset requested-EXAMPLE_VALUE", "password expired EXAMPLE_VALUE"):
+            self.assertNotIn("EXAMPLE_VALUE", ot._redact(line))
+        self.assertEqual(ot._redact("password reset requested by the user via SN_PASSWORD"),
+                         "<line removed: may hold a secret>")
+
     def test_csv_session_redaction(self):
         import csv
         import io
@@ -551,6 +634,33 @@ class Review1162(unittest.TestCase):
 
     def store(self, moid="datastore-1", **fields):
         return dict(name=self.ds, vcenter=self.vc, moid=moid, **fields)
+
+    def test_current_conditions_only_date_roots_inside_the_window(self):
+        ds = dict(self.condition("datastore", self.ds, "datastore offline again"), inaccessible=True, since=3000)
+        other = self.condition("host", "esx99", "unrelated host down today")
+        vm = dict(self.condition("lost", self.vm, "VM down today"), datastores=["other-store"])
+        loss = self.event("DatastoreInaccessibleEvent", datastore=self.ds)
+        back = dict(loss, time=1600, type="DatastoreAccessibleEvent")
+        for runs in ([], [self.run_artifact(dict(ds, summary="datastore %s is not accessible: lost" % self.ds))]):
+            opts = dict(watch_runs=runs, triggers=[ds, other, vm], read_at=3600)
+            result = self.review([loss, back], **opts)
+            draft = result["draft"]
+            self.assertEqual([r[0] for r in draft["went"]], [self.ds])
+            self.assertEqual([r[1] for r in draft["now"]], ["Datastore " + self.ds])
+            self.assertEqual(draft["went"][0][-1], "Back")
+            self.assertEqual([r[0] for r in draft["recovered"]], [self.ds])
+            self.assertEqual(result["numbers"]["still_down"], [])
+            self.assertNotIn("esx99", str(result))
+            self.assertNotIn("VM down today", str(result))
+            for web in (False, True):
+                today = dict(WATCH, title="esx99 down today", sections=[dict(title="Not judged this run", lines=["esx99"])])
+                self.assertNotIn("esx99", str(ot.outage_timeline_doc(today, result, web, True)))
+        for read_at in (99, 100, 2400, 2401):
+            in_window = 100 <= read_at <= 2400
+            for condition in (other, vm):
+                draft = self.review([], triggers=[condition], read_at=read_at)["draft"]
+                self.assertEqual(bool(draft["went"]), in_window)
+                self.assertEqual(bool(draft["now"]), in_window)
 
     def test_compact_watch_runs(self):
         path = self.event("esx.problem.storage.apd.start", host=self.host, datastore=self.ds)
@@ -602,6 +712,53 @@ class Review1162(unittest.TestCase):
             r = self.review([], watch_runs=[self.run_artifact(c)], datastores=[self.store(), self.store("datastore-2")])
             self.assertEqual(r["draft"]["went"][0][0], self.ds + " [datastore-2]")
             self.assertFalse(r["root_judgments"])
+
+    def test_short_host_scope_across_sources_and_collisions(self):
+        names = ("esx01.east.example.mil", "esx01.west.example.mil")
+        hosts = [self.condition("host", name, "host down") for name in names]
+        events = [self.event("HostConnectionLostEvent", host=name) for name in names]
+        for n in (1, 2):
+            for rows, opts in (([], dict(triggers=hosts[:n])), ([], dict(watch_runs=[self.run_artifact(*hosts[:n])])),
+                               (events[:n], {})):
+                with self.subTest(n=n, source=opts.keys()):
+                    result = self.review(rows, review_object="EsX01", **opts)
+                    draft = result["draft"]
+                    if n == 1:
+                        self.assertEqual([r[0] for r in draft["went"]], [names[0]])
+                    else:
+                        self.assertEqual(draft["went"], [])
+                        self.assertEqual(draft["now"], [])
+                        self.assertIn("ambiguous", result["sections"][0]["lines"][0].lower())
+        inventory = [dict(name=name, vcenter=self.vc, moid="host-%d" % i) for i, name in enumerate(names)]
+        result = self.review(events[:1], review_object="esx01", hosts=inventory)
+        self.assertEqual(result["draft"]["went"], [])
+        self.assertIn("ambiguous", str(result["draft"]["empty_read"]))
+        exact = self.review(events, review_object=names[0].upper(), hosts=inventory)
+        self.assertEqual(len(exact["draft"]["went"]), 1)
+
+    def test_exact_datastore_with_ambiguous_host_label(self):
+        hosts = [dict(name="esx01." + site, vcenter=self.vc) for site in ("east", "west")]
+        events = [self.event("HostConnectionLostEvent", host=h["name"]) for h in hosts]
+        events.append(self.event("DatastoreInaccessibleEvent", datastore="esx01"))
+        result = self.review(events, review_object="esx01", hosts=hosts)
+        self.assertEqual([row[:2] for row in result["draft"]["went"]], [["esx01", "Datastore, not accessible"]])
+
+    def test_missing_ticket_reader_instructions_survive_output_masking(self):
+        result = self.review([self.event("HostConnectionLostEvent", host=self.host)])
+        line = "ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ot.ATTACH
+        self.assertIn(line, result["lines"])
+        card = next(c for c in result["cards"] if c["title"] == "No ticket to measure")
+        self.assertEqual(card["next"], line)
+
+    def test_correlates_ticket_before_masking_host_for_display(self):
+        host = "esx-token-01"
+        cid = ot._correlation_id("vm-watch:host:" + host, self.vc, "vm_watch", "site-health")
+        ticket = dict(number="INC0001", opened=750, short="Example incident", correlation_id=cid)
+        result = ot.outage_timeline([self.event("HostConnectionLostEvent", host=host)], [ticket],
+                                    dict(begin=100, end=2400, review=True))
+        self.assertEqual(result["numbers"]["ticket"], "INC0001")
+        self.assertNotIn(host, str(result["draft"]))
+        self.assertEqual(result["context_scope"]["hosts"][0]["name"], host)
 
     def test_requested_current_datastore_name(self):
         old = "SITEA-old"
@@ -706,30 +863,43 @@ class Review1162(unittest.TestCase):
                 self.assertIn("vCenter has no loss event in the window", line)
 
     def test_ops_center_on_page_email_handoff_and_appendix(self):
-        from jinja2 import Environment, FileSystemLoader
+        from test_report_hover import render
+        from site_filters import report_text
         import incident_doc_filters as docs
-        templates = Environment(loader=FileSystemLoader(os.path.join(REPO, "roles/site_email/templates")))
-        handoff_section = templates.get_template("report_outage_noc.html.j2")
         event = self.event("esx.problem.storage.apd.start", host=self.host, datastore=self.ds)
+        from test_watch_frozen import _render_context, _tasks
+        expr = _tasks("roles/vmware_vm/tasks/watch.yml")["VMware | outage report"]["vars"]["_vm_report_attachments"]
+        env, ctx = _render_context(True)
         for options, center, stem in (({}, "NOC", "NOC"), (dict(outage_ops_center="Ops"), "Ops", "Ops"),
-                                      (dict(outage_ops_center="SITEA_Ops / Duty"), "SITEA_Ops / Duty", "SITEA_Ops-Duty")):
+                                      (dict(outage_ops_center="Ops_Team / Duty"), "Ops_Team / Duty", "Ops_Team-Duty")):
             result = self.review([event], **options)
             draft = docs.incident_review_draft(result["draft"])
             record = docs.incident_review_fill(docs.incident_record(dict(kind="aar")), draft)
             name = docs.incident_file_name(record, "noc")
             self.assertTrue(name.startswith(stem + "-handoff-"))
             self.assertRegex(name, r"^[A-Za-z0-9_-]+\.docx$")
-            title = "What this usually means (for the %s)" % center
+            title = "Likely causes"
             handoff = "Hand this to the " + center
             info = dict(review=True, noc_file=name)
             web = ot.outage_review_aar(ot.outage_timeline_doc(WATCH, result, True, True), info, True)
             cards = next(s for s in web["sections"] if s.get("kind") == "noc")
             self.assertEqual((cards["title"], cards["ops_center"], cards["noc_file"]), (title, center, name))
-            self.assertIn(handoff + ":", handoff_section.render(s=cards))
+            page_html = render("report_atlas.html.j2", web)
+            self.assertIn(handoff + ":", page_html)
             email = ot.outage_review_aar(ot.outage_timeline_doc(WATCH, result, False, True), info)
             self.assertIn(handoff + ": " + name + " is attached.", str(email["sections"]))
-            self.assertEqual(docs.incident_noc_docx(draft)["blocks"][0]["text"], handoff)
-            headings = [b["text"] for b in docs.incident_aar_docx(record, review=draft)["blocks"] if b["type"] == "heading"]
+            handoff_blocks = docs.incident_noc_docx(draft)["blocks"]
+            self.assertEqual(handoff_blocks[0]["text"], handoff)
+            ctx.update(_vm_w_tl=result, _vm_w_noc_file=dict(path=name, filename=name), _vm_w_csv_file={})
+            attachment, = env.from_string(expr).render(ctx)
+            self.assertIn(handoff + ":", attachment["desc"])
+            self.assertEqual(attachment["filename"], name)
+            aar = docs.incident_aar_docx(record, review=draft)["blocks"]
+            headings = [b["text"] for b in aar if b["type"] == "heading"]
+            if center != "NOC":
+                for output in (name, page_html, render("report.html.j2", email), report_text(email),
+                               str(aar), str(handoff_blocks), attachment["desc"]):
+                    self.assertNotIn("NOC", output)
             self.assertIn(title, headings)
             self.assertIn("Appendix B - " + handoff, headings)
 
@@ -742,18 +912,19 @@ class SmartReview(unittest.TestCase):
         self.assertEqual(d["v"], 2)
         self.assertEqual(d["name"], "Storage outage cl-sitea-01 2026-11-20")
         self.assertEqual(r["title"], "Storage outage - 3 datastores not accessible (ds-sitea-07, ds-sitea-08, ds-sitea-09): "
-                                     "18 VMs, 3 hosts; 2 hosts down; ds-sitea-09 still down")
+                                     "18 VMs, 3 hosts; 2 hosts down")
         self.assertEqual(len(d["went"]), 5)
         self.assertIn("Storage paths were lost on esx-sitea-02", d["went_note"])
         self.assertIn("9 restarted by HA, 5 reset by HA", d["affected_note"])
-        self.assertEqual(r["head_counts"][0][:2], ["2 d 12 h", "ds-sitea-09 still down"])
+        self.assertEqual(d["now"][0][-1], "2 d 12 h")
+        self.assertEqual(r["numbers"]["still_down"], [])
         self.assertEqual(r["numbers"]["signal_to_ticket_s"], 32 * 60 + 20)
         self.assertEqual(len(d["now"]), 1)
         since = d["now"][0][3]
         self.assertIn("23:09:", since)
         self.assertIn("since " + since, r["boxes"][2]["note"])
         self.assertIn("sitea-db04", str(d["affected"]))
-        self.assertIn("on the lost datastore (state not read)", str(d["affected"]))
+        self.assertIn("current state not read", str(d["affected"]))
         self.assertEqual({x[0] for x in d["recovered"] if x[0].startswith("ds-")}, {"ds-sitea-07", "ds-sitea-08"})
         self.assertEqual(sum(row[2] for row in d["noise"]), 394)
         self.assertEqual(sum(row[2] for row in d["noise"] if "(affected)" in row[1]), 74)
@@ -775,7 +946,8 @@ class SmartReview(unittest.TestCase):
         import io
         self.assertEqual(len(list(csv.reader(io.StringIO(ot.outage_events_csv(r["sheet"]))))), len(r["sheet"]["rows"]) + 1)
         self.assertEqual([b["label"] for b in r["boxes"]], ["Went down", "VMs affected", "Down now", "Recovered", "Signal to ticket", "Noise"])
-        self.assertEqual([s["kind"] for s in r["web_sections"][5:7]], ["story", "by_kind"])
+        self.assertEqual([s["kind"] for s in r["web_sections"] if "kind" in s],
+                         ["noc", "story", "review_chart", "by_kind", "raw_events"])
         self.assertTrue(next(s for s in r["web_sections"] if s["title"] == ot.RAW_TITLE)["collapsed"])
         self.assertNotIn("What else saw it", str(r["web_sections"]))
 
@@ -860,6 +1032,22 @@ class SmartReview(unittest.TestCase):
         self.assertEqual((r["numbers"]["affected_vms"], r["numbers"]["ha_restarted"]), (14, 14))
         self.assertNotIn("other", str(r["draft"]["affected"]))
         self.assertIn("restarted by HA on destination", str(r["draft"]["affected"]))
+
+    def test_manual_ticket_is_kept_and_correlated_ticket_measures_first(self):
+        event = dict(time=500, type="HostConnectionLostEvent", vcenter="vc", host="esx01")
+        manual = dict(number="Inc0001", opened=600, notes=[[650, "Example manual note"]])
+        correlated = dict(number="INC0002", opened=900, short="[site-health] esx01: host not responding",
+                          correlation_id=legacy_ticket_id("vc"))
+        opts = dict(begin=100, end=1200, review_tickets=["iNC0001"])
+        for other, measured, seconds in (([], "Inc0001", 100), ([correlated], "INC0002", 400),
+                                         ([dict(correlated, opened=50)], "", -1)):
+            result = ot.outage_timeline([event], [manual, dict(manual, number="INC0003", notes=[])] + other, opts)
+            self.assertEqual((result["numbers"]["ticket"], result["numbers"]["signal_to_ticket_s"]), (measured, seconds))
+            draft = result["draft"]
+            self.assertEqual({r[0] for r in draft["tickets"]}, {"Inc0001"} | {r["number"] for r in other})
+            self.assertIn("Ticket Inc0001 opened", str(draft["story"]))
+            self.assertIn("Example manual note", str(draft["story"]))
+            self.assertNotIn("INC0003", str(draft["groups"]))
 
     def test_recovered_outage_reconstructs_writer_ticket(self):
         from site_filters import site_correlation_id
@@ -963,7 +1151,7 @@ class SmartReview(unittest.TestCase):
                    opened="2026-11-20T22:01:00Z", description="ACT analysis:\nExample lab analysis.")
         folded = next(fid for fid in ids if fid.startswith("vm-watch:storage:"))
         for cid in (own["correlation_id"], ids[folded]):
-            r = ot.outage_timeline(events, [lab, dict(own, correlation_id=cid)], dict(opts, triggers=cond))
+            r = ot.outage_timeline(events, [lab, dict(own, correlation_id=cid)], dict(opts, triggers=cond, read_at=opts["end"]))
             self.assertEqual((r["numbers"]["ticket"], r["numbers"]["signal_to_ticket_s"]), (own["number"], 1940))
             self.assertNotIn("INC-LAB", str(r["draft"]["story"]))
             self.assertIn(own["number"], r["draft"]["ticket_hint"])
@@ -1093,6 +1281,27 @@ class SmartReview(unittest.TestCase):
         self.assertIn("app", str(result["draft"]["affected"]))
         self.assertNotIn("vm-2", finding["summary"])
 
+    def test_noise_off_unfolds_only_root_events(self):
+        host = dict(vcenter="vc", moid="host-1", name="esx01", vms=[dict(name="member", moid="vm-1")])
+        loss = dict(time=600, type="HostConnectionLostEvent", host="esx01", vcenter="vc")
+        alarm = dict(time=700, type="AlarmStatusChangedEvent", vcenter="vc", host="esx01", entity_type="vm",
+                     vm="member", entity="member", alarm="CPU usage", to="yellow")
+        other = dict(alarm, host="esx99", vm="outside", entity="outside")
+        events = [loss, alarm, other, dict(alarm, time=730, to="green"), dict(loss, time=1200, type="HostConnectedEvent"),
+                  dict(alarm, time=1300, alarm="memory usage")]
+        opts = dict(begin=100, end=1500, hosts=[host], watch_runs=[watch_run(650, [host])])
+        for summarize in (True, False):
+            review = ot.outage_timeline(events, [], dict(opts, noise=summarize))
+            draft = review["draft"]
+            for field in ("story", "groups", "key"):
+                self.assertEqual("CPU usage" in str(draft[field]), not summarize, field)
+                self.assertNotIn("outside", str(draft[field]), field)
+            self.assertEqual("memory usage" in str(draft["story"]), not summarize)
+            self.assertEqual(bool(draft["noise"]), summarize)
+            self.assertIn("outside", ot.outage_events_csv(review["sheet"]))
+            views = next(s["views"] for s in review["web_sections"] if s.get("kind") == "review_chart")
+            self.assertEqual("CPU usage" in str(views[0]), not summarize)
+
     def test_noise_opt_out_and_unmatched_green(self):
         rows = [dict(type="AlarmStatusChangedEvent", alarm="Guest heartbeat", vm="db01", entity="db01",
                      entity_type="vm", time=t, to=c) for t, c in ((1010, "green"), (1020, "red"), (1500, "green"), (1510, "green"))]
@@ -1114,6 +1323,7 @@ class SmartReview(unittest.TestCase):
     def test_issue_rows_in_each_look(self):
         from test_report_fit import render
         events, tickets_, opts = director_outage()
+        opts["read_at"] = opts["end"]  # Exercise the live Down now issue row.
         doc = ot.outage_timeline_doc(WATCH, ot.outage_timeline(events, tickets_, opts), True, True)
         for look in ("atlas", "brief", "ops"):
             html = render(look, doc)
@@ -1129,7 +1339,7 @@ class SmartReview(unittest.TestCase):
             row = rest.partition("</div>")[0]
             self.assertIn(">Down now</span>", row)
             self.assertIn(">ds-sitea-09</span>", row)
-            link = re.search(r'href="#([^"]+)">in The outage, in order at 23:09</a>', row)
+            link = re.search(r'href="#([^"]+)">in Order of events at 23:09</a>', row)
             self.assertIsNotNone(link)
             self.assertIn('id="' + link.group(1) + '"', html)
             self.assertIn("on the lost datastore (state not read)", html)
@@ -1196,7 +1406,7 @@ class ReviewEmailAcceptance(unittest.TestCase):
 
     def test_plain_text_mail_has_the_dated_chain(self):
         from site_filters import report_text
-        body = report_text(self.email).split("The outage, in order", 1)[1].split("Issues by type", 1)[0]
+        body = report_text(self.email).split("Order of events", 1)[1].split("All events (", 1)[0]
         story = self.review["draft"]["story"]
         self.assertIn("Outage window from " + story["window"]["start"]["tip"], body)
         self.assertIn(story["window"]["end"]["tip"], body)
@@ -1206,9 +1416,11 @@ class ReviewEmailAcceptance(unittest.TestCase):
         self.assertIn("Still down:", body)
 
     def test_four_parts_and_current_triggers(self):
-        went, affected, down, recovered = self.email["sections"][:4]
+        sections = self.email["sections"]
+        went = sections[1]
+        affected, down, recovered = sections[4:7]
         self.assertEqual([s["title"] for s in (went, affected, down, recovered)],
-                         ["1. What went down", "2. What it affected: 18 VMs", "3. Down now", "4. Recovered"])
+                         ["What went down", "What it affected: 18 VMs", "Down now", "Back to normal"])
         trigger, = self.opts["triggers"]
         datastore = "Datastore " + trigger["object"]
         self.assertCountEqual([row[1] for row in down["rows"]],
@@ -1246,7 +1458,7 @@ class ReviewEmailAcceptance(unittest.TestCase):
         self.assertEqual(rows[-1]["text"] + ", ".join(rows[-1]["names"]) + rows[-1]["suffix"], "Still down: ds-sitea-09 - see Down now")
         self.assertIn(["sitea-app%02d" % i for i in range(6, 15)], [r["names"] for r in rows])
         self.assertFalse(any("usage" in r["text"].lower() or r["text"].startswith("Alarm") for r in rows))
-        self.assertEqual(self.email["sections"][5]["story"], story)
+        self.assertEqual(self.email["sections"][2]["story"], story)
         env = EmailTiles()._env()
         for template in ("report", "report_command", "report_glass", "report_portal"):
             mail = env.get_template(template + ".html.j2").render(_report=self.email, _email_footer="", report_email_header_text="Review")
@@ -1342,7 +1554,7 @@ class ReviewEmailAcceptance(unittest.TestCase):
         changed = ot.outage_timeline(self.events, self.tickets, dict(self.opts, outage_escalate_storage="Storage duty (placeholder)"))
         self.assertEqual(changed["draft"]["patterns"][2]["escalate"], "Storage duty (placeholder)")
         chart = next(s for s in self.review["web_sections"] if s.get("kind") == "review_chart")
-        self.assertTrue(chart["collapsed"])
+        self.assertFalse(chart["collapsed"])
         for view in chart["views"]:
             for lane in view["lanes"]:
                 for mark in lane["marks"]:
@@ -1900,9 +2112,9 @@ class Doc(unittest.TestCase):
             self.assertTrue(d["subtitle"].endswith("Review of 2026-11-11 21:45 CET to 2026-11-12 03:45 CET. Now: VM outage watch: nothing down now"))
             self.assertEqual(d["summary"], r["boxes"])
             self.assertEqual((d["status"], d["footer"]), ("ok", WATCH["footer"]))   # the watch's own status: what is down now
-            want = ["1. What went down", "2. What it affected: 14 VMs", "3. Down now", "4. Recovered",
-                    "What this usually means (for the NOC)", "The outage, in order", "Issues by type",
-                    "All events (%d) - chart" % r["numbers"]["full_events"], "Noise: summed up, not rows", "How it judged", ot.RAW_TITLE]
+            want = ["Likely causes", "What went down", "Order of events", "All events (%d) - chart" % r["numbers"]["full_events"],
+                    "What it affected: 14 VMs", "Down now", "Back to normal", "Issues by type",
+                    "Noise: summed up, not rows", "How it judged", ot.RAW_TITLE]
             self.assertEqual([s["title"] for s in d["sections"]], want)
 
     def test_a_normal_run(self):

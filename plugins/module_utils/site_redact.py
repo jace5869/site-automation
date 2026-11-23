@@ -59,7 +59,9 @@ Standard library only; Python 3.6 too (RHEL 8's platform-python)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import json
 import re
+from functools import lru_cache, partial
 
 HASH_MARK = "<hash removed>"
 MARK = "<removed>"
@@ -92,7 +94,7 @@ _NAME_ENDS = ("password", "passwd", "passphrase", "pwd", "pw", "secret", "token"
               # 1.77.0g: camelCase - Pass after a small letter or a digit (authPass, dbPASS); bypass is no name
               "(?-i:[a-z0-9]P(?:ass|ASS))")
 # 1.77.0f: and one or two digits after it (NetworkManager's wep-key0 .. wep-key3, psk1)
-_NAMES = r"(?:(?:session|[A-Za-z0-9_.-]+(?:" + "|".join("(?<=%s)" % e for e in _NAME_ENDS) + r"))\d{0,2}(?![A-Za-z0-9_.-]))"
+_NAMES = r"(?:(?:session(?=\d)|session[ \t]+(?:id|cookie)|[A-Za-z0-9_.-]+(?:" + "|".join("(?<=%s)" % e for e in _NAME_ENDS) + r"))\d{0,2}(?![A-Za-z0-9_.-]))"
 _NAME_WORD = re.compile(r"(?i)" + _NAMES)
 # a name starts a word: not inside a word, and not after a / (/etc/passwd: is a file, not a name) - unless an = follows
 # it (/opt/app/config-7-password=x)
@@ -109,8 +111,19 @@ _OPTION = re.compile(r"(?im)(?<!\S)(-" + _NAMES + r"[ \t]+)(?!-|(?:required|requ
 _BLOCK = re.compile(r"(?i)([ \t]*(?:-[ \t]+)?)[\"']?" + _NAMES + r"[\"']?[ \t]*:(?P<tail>[^\n]*)$")
 _INDICATOR = re.compile(r"[|>][+-]?[0-9]?[+-]?")
 # a GRUB password: plain, or password_pbkdf2 USER HASH (not PAM's "password <control> module" line)
-_GRUB_PLAIN = re.compile(r"(?m)^(" + _GREP + r"[ \t]*password(?:_pbkdf2)?[ \t]+(?!(?:required|requisite|sufficient|optional|include|substack)\b|\[)"
-                         r"\S+[ \t]+)(?!#(?:[ \t]|$))" + _REST)     # 1.77.0h: not "password x # a comment" (#x is a value)
+# A password reset request in an operator note can otherwise look like a GRUB user and passphrase.
+_RESET_NOTE = r"reset[ \t]+(?:requested|completed|failed|pending|required)\b"
+_STATUS_NOTE = r"(?:(?:has|had|was|is)[ \t]+)?(?:expired|rotated|revoked|expires)\b"
+_PASSWORD_NOTE = r"(?:" + _RESET_NOTE + "|" + _STATUS_NOTE + ")"
+_GRUB_ARGS = ("(" + _GREP + r"[ \t]*password(?:_pbkdf2)?[ \t]+(?!(?:required|requisite|sufficient|optional|include|substack)\b|\[)"
+              r"\S+[ \t]+)(?!#(?:[ \t]|$))" + _REST)
+_GRUB_PLAIN = re.compile(r"(?m)^" + _GRUB_ARGS)
+_REVIEW_GRUB = re.compile(r"(?m)^(?![ \t]*password[ \t]+(?i:" + _PASSWORD_NOTE +
+                          r")(?=[.!]?[ \t]*$|[ \t]+(?:by|at|on|for|from)\b))" + _GRUB_ARGS)
+_COOKIE_HEADER = re.compile(r"(?i)\b(?:set-)?cookie[ \t]*:[^\n]*")
+_COOKIE_SESSION = re.compile(r"(?i)(?<![\w.-])(session[ \t]*=[ \t]*)([^\n]+)")
+_COOKIE_OBJECT = re.compile(r'(?i)"(?:cookies?|set-cookie)"\s*:\s*\{')
+_JSON_PART = re.compile(r'("(?:[^"\\]|\\.)*")(\s*:\s*)?|[{}\[\]]|[^\s"{}\[\]]+')
 _DIRECTIVE = re.compile(r"(?im)^(" + _GREP + r"[ \t]*(?:bindpw|rootpw|ldap_default_authtok|r[ow]community6?|trapcommunity)[ \t]+)(?![=:](?:[ \t]|$))" + _REST)
 _COM2SEC = re.compile(r"(?im)^(" + _GREP + r"[ \t]*com2sec6?[ \t]+(?:-Cn[ \t]+\S+[ \t]+)?\S+[ \t]+\S+[ \t]+)" + _REST)
 _CREATEUSER = re.compile(r"(?im)^(" + _GREP + r"[ \t]*createUser[ \t]+(?:-e[ \t]+\S+[ \t]+)?\S+)([ \t][^\n]*)$")
@@ -204,6 +217,9 @@ _SECRET_WORD = re.compile(r"(?i)password|passwd|passphrase|pwd|secret|token|auth
                           # db-pass x, pw x)
                           r"|[-.]key\d{0,2}(?![a-z0-9])|apikey|(?<=[a-z0-9])[-._]pass(?![a-z0-9])|(?<![a-z0-9])pw(?![a-z0-9])")
 _MARKQ = r"(?:[\"']?(?:grub\.pbkdf2\.<hash removed>|\$<hash removed>|<hash removed>|<removed>)[\"']?|\"\"|'')"
+# These noun phrases describe operations. Consume only the phrase, so another secret on the line is still checked.
+_OPERATOR_PHRASE = re.compile(r"(?i:(?<![\w.-])(?:token[ \t]+(?:ring|refresh[ \t]+(?:succeeded|failed))|(?:token|secret)[ \t]+" + _STATUS_NOTE +
+                    r"|password[ \t]+" + _PASSWORD_NOTE + r"|no[ \t]+secret)(?![\w-]))")
 _UNDERSTOOD = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?----- <removed> -----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"
     r"|<[^<>\s/]+(?:[ \t][^<>]*)?>" + _MARKQ + r"</[^<>\s]+[ \t]*>"
@@ -758,10 +774,12 @@ def _sudo(r):
     return r
 
 
-def _understood(rest):
+def _understood(rest, review):
     """Whether every secret's word on a line (after its grep prefix) is one the first layer understood, a file's path
     holds, or the line is a known evidence shape. 1.77.0h: an evidence line with a comment after it - the setting read
     without it, the comment holding no secret's word (PasswordAuthentication no # policy)."""
+    if review:
+        rest = _OPERATOR_PHRASE.sub(" ", rest)
     if _understood_line(rest):
         return True
     c = _COMMENT.search(rest) if len(rest) <= 1024 else None
@@ -803,7 +821,7 @@ def _snmp_bare(ln):
     return _snmp_kind(ln) and any(m.group(2) not in _DONE for m in _SNMP_OPT.finditer(ln))
 
 
-def _backstop(s):
+def _backstop(s, review):
     """Every line that still holds a secret's word and is not understood: replaced as a whole (DROPPED), its grep prefix
     kept when that is a path or a line number."""
     out = []
@@ -816,7 +834,7 @@ def _backstop(s):
             readings = [pres[0]]              # grep's prefix, plainly (a path or a line number): read the line after it
         else:                                 # or any reading - a prefix holding a secret's word is none
             readings = [p for p in pres if not _SECRET_WORD.search(p)]
-        if not _snmp_bare(ln) and any(_understood(ln[len(p):]) for p in readings):
+        if not _snmp_bare(ln) and any(_understood(ln[len(p):], review) for p in readings):
             out.append(ln)
             continue
         out.append((pres[0] if pres[0] and _KEEP_PRE.fullmatch(pres[0]) else "") + DROPPED)
@@ -827,7 +845,7 @@ def _shadow(m):
     return "%s:%s%s:%s:" % (m.group(1), m.group(2), HASH_MARK, m.group(4))
 
 
-def redact(text, backstop=True):
+def redact(text, backstop=True, review=False):
     """A text with every secret value this module knows replaced (see the module's notes). Not a string: str() of it.
     backstop=False: the first layer only (a command line - DISA's text, not what a host printed)."""
     if text is None:
@@ -845,7 +863,11 @@ def redact(text, backstop=True):
     s = _urls(s)
     s = _AUTH_HEADER.sub(lambda m: m.group(1) + (m.group(2) if m.group(2).strip() in _DONE else MARK), s)
     s = _BEARER.sub(lambda m: m.group(1) + MARK, s)
-    s = _GRUB_PLAIN.sub(lambda m: m.group(1) + _value(m.group(2)), s)
+    if "cookie" in s.lower():
+        s = _json_cookie_sessions(s)
+        s = _COOKIE_HEADER.sub(lambda m: _cookie_sessions(m.group()), s)
+    grub = _REVIEW_GRUB if review else _GRUB_PLAIN
+    s = grub.sub(lambda m: m.group(1) + _value(m.group(2)), s)
     s = _DIRECTIVE.sub(lambda m: m.group(1) + _value(m.group(2)), s)
     s = _COM2SEC.sub(lambda m: m.group(1) + _value(m.group(2)), s)
     s = _CREATEUSER.sub(lambda m: m.group(1) + " " + MARK, s)
@@ -865,7 +887,7 @@ def redact(text, backstop=True):
     s = _KLIST_KEY.sub("(0x" + MARK + ")", s)
     s = _HEXKEY.sub("0x" + MARK, s)
     s = _CHRONY_HEX.sub("HEX:" + MARK, s)
-    return _backstop(s) if backstop else s
+    return _backstop(s, review) if backstop else s
 
 
 def head(text, limit):
@@ -908,16 +930,67 @@ def run_main(main):
         sys.exit(1)
 
 
-def redact_all(value):
-    """redact() over every string of a value (dicts, lists): what a module returns or a filter shows."""
+def _json_cookie_sessions(text):
+    """Mask a session member of a serialized cookie jar, preserving the surrounding evidence verbatim."""
+    if not _COOKIE_OBJECT.search(text):
+        return text
+    out, copied, containers = [], 0, []
+    cookie_next = False
+    decoder = json.JSONDecoder()
+    for part in _JSON_PART.finditer(text):
+        if part.start() < copied:
+            continue
+        token = part.group()
+        if part[2]:
+            field = part[1].lower()
+            cookie_next = field in ('"cookie"', '"cookies"', '"set-cookie"')
+            if containers and containers[-1] and field == '"session"':
+                try:
+                    value, end = decoder.raw_decode(text, part.end())
+                except (ValueError, RecursionError):
+                    continue
+                if value is not None and value != "" and not isinstance(value, bool):
+                    out.extend((text[copied:part.end()], '"' + MARK + '"'))
+                    copied = end
+        elif token in ("{", "["):
+            containers.append(cookie_next and token == "{")
+            cookie_next = False
+        elif token in ("}", "]") and containers:
+            containers.pop()
+        else:
+            cookie_next = False
+    return "".join(out) + text[copied:] if out else text
+
+
+def _cookie_sessions(header):
+    return _COOKIE_SESSION.sub(lambda m: m[1] + _value(m[2]), header)
+
+
+def redact_all(value, review=False):
+    """Mask nested values. Only review output opts into the operator-note prose exceptions."""
+    if review and isinstance(value, (dict, list, tuple)):
+        # The chart, workbook, Word draft and email repeat the same strings. Cache only for this copy.
+        scrub = lru_cache(maxsize=2048)(partial(redact, review=True))
+    else:
+        scrub = partial(redact, review=True) if review else redact
+    return _redact_all(value, scrub)
+
+
+def _redact_all(value, scrub, cookie_map=False):
     if isinstance(value, dict):
-        # 1.77.0h: a value under a secret's name goes whole (its name is what said it is one); empty or yes/no stays
-        # 1.77.0h: by type - 1 == True in Python, and a number under a secret's name is a value; a key is text too
-        return dict((redact(k, backstop=False) if isinstance(k, str) else k,     # a key is a name, not a line
-                     MARK if isinstance(k, str) and _NAME_WORD.fullmatch(k) and not (v is None or v == "" or isinstance(v, bool))
-                     else redact_all(v)) for k, v in value.items())
+        out = {}
+        for k, v in value.items():
+            key = scrub(k, backstop=False) if isinstance(k, str) else k
+            name = k.lower() if isinstance(k, str) else ""
+            secret = isinstance(k, str) and (_NAME_WORD.fullmatch(k) or (cookie_map and name == "session"))
+            if secret and not (v is None or v == "" or isinstance(v, bool)):
+                out[key] = MARK
+            else:
+                cookie = name in ("cookie", "cookies", "set-cookie")
+                out[key] = _redact_all(v, scrub, cookie)
+        return out
     if isinstance(value, (list, tuple)):
-        return [redact_all(v) for v in value]
+        return [_redact_all(v, scrub, cookie_map) for v in value]
     if isinstance(value, str):
-        return redact(value)
+        return scrub(_cookie_sessions(value) if cookie_map else value)
     return value

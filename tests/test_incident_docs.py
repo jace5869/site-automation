@@ -711,7 +711,7 @@ class AarFromReview(unittest.TestCase):
         self.assertEqual(d["impact"], _review()["title"])
         self.assertEqual(d["detection"][1], "Ticket INC0012345 opened 12 Nov 03:14 CET, 54 min after the first signal")
         self.assertEqual([x[0] for x in d["numbers"]], ["First signal to ticket", "Time down"])
-        self.assertEqual(d["recovery"], ["See 4. Recovered."])
+        self.assertEqual(d["recovery"], ["See Back to normal."])
         self.assertEqual(d["events"], [])
         self.assertTrue(d["groups"])
         self.assertLessEqual(len(d["key"]), 15)
@@ -797,9 +797,10 @@ class AarFromReview(unittest.TestCase):
         self.assertEqual(f.incident_file_name(record), "AAR-Storage-outage-cl-sitea-01-2026-11-20.docx")
         blocks = f.incident_aar_docx(record, {}, [], False, dict(d, appendix_max=3))["blocks"]
         impact = next(i for i, b in enumerate(blocks) if b.get("label") == "Impact:")
-        headings = [b["text"] for b in blocks[impact:] if re.match(r"^[1-4]\. ", b.get("text", ""))]
-        self.assertEqual(headings[:4], ["1. What went down", "2. What it affected", "3. Down now", "4. Recovered"])
-        down = next(i for i, b in enumerate(blocks) if b.get("text") == "3. Down now")
+        headings = [b["text"] for b in blocks[impact:] if b["type"] == "heading"]
+        self.assertEqual(headings[:7], ["Likely causes", "What went down", "Order of events", "What it affected: 18 VMs",
+                                        "Down now", "Back to normal", "Event Response"])
+        down = next(i for i, b in enumerate(blocks) if b.get("text") == "Down now")
         self.assertEqual(blocks[down]["color"], "C00000")
         self.assertIn("ds-sitea-09", str(blocks[down + 2]["items"]))
         self.assertNotIn("sitea-db01", str(blocks[down + 2]["items"]))
@@ -851,6 +852,17 @@ class AarFromReview(unittest.TestCase):
             info = subprocess.check_output(["pdfinfo", str(path.with_suffix(".pdf"))], text=True)
             self.assertRegex(info, r"(?m)^Pages:\s+1$")
 
+    def test_saved_v2_draft_uses_current_section_names(self):
+        draft = self.draft()
+        del draft["affected_title"]
+        draft["recovery"] = ["See 4. Recovered."]
+        for typed in ("", "Example recovery action"):
+            record = f.incident_review_fill({"recovery": typed}, draft)
+            blocks = f.incident_aar_docx(record, review=draft)["blocks"]
+            self.assertIn("What it affected: 14 VMs", [b["text"] for b in blocks if b["type"] == "heading"])
+            self.assertEqual(next(b["lines"] for b in blocks if b.get("label") == "Recovery:"),
+                             [typed or "See Back to normal."])
+
     def test_archived_v1_layout(self):
         import hashlib
         draft = {"v": 1, "name": "Example outage", "start": "20 Nov 23:10", "impact": "One host",
@@ -869,9 +881,14 @@ class AarFromReview(unittest.TestCase):
         doc = f.incident_aar_docx(r, {"banner": "CUI", "instructions": ["Save it."]}, [], False, d)
         t = _doc_text(doc)
         heads = [b["text"] for b in doc["blocks"] if b.get("type") == "heading"]
-        self.assertEqual(heads, ["OVERVIEW", "What this usually means (for the NOC)", "Event Response", "Reason for Outage (RFO) & Recovery",
+        self.assertEqual(heads, ["OVERVIEW", "Likely causes", "What went down", "Order of events", "What it affected: 14 VMs",
+                                 "Down now", "Back to normal", "Event Response", "Reason for Outage (RFO) & Recovery",
                                  "Lessons Learned & Action Plan", "Appendix A - the events by phase", "Appendix B - Hand this to the NOC"])
-        for want in ("Filled from the outage review, AAP job 4714, made 2026-11-12 02:45 UTC", "The outage, in order",
+        response = doc["blocks"][next(i for i, b in enumerate(doc["blocks"]) if b.get("text") == "Event Response"):
+                                 next(i for i, b in enumerate(doc["blocks"]) if b.get("text") == "Reason for Outage (RFO) & Recovery")]
+        self.assertEqual([b["rows"] for b in response if b["type"] == "table"], [d["tickets"], d["numbers"]])
+        self.assertIn("To write: what the team did.", _doc_text({"blocks": response}))
+        for want in ("Filled from the outage review, AAP job 4714, made 2026-11-12 02:45 UTC", "Order of events",
                      "Suggested - confirm: A fibre channel path went down (ACT, 80% high). Evidence: 01:58:02 esx03 Lost path redundancy. "
                      "Check: Check the switch port (esxcli storage core path list).", "Suggested - confirm: ACT in INC0012345",
                      "To write: the confirmed cause", "To write: what went well.", "To write: each task - owner - due date.",

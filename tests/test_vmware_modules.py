@@ -1959,6 +1959,9 @@ class OutageEntityType(unittest.TestCase):
                 rows = oev._read(content, dict(params, **options), "vc.example.mil")["events"]
                 self.assertEqual(set(vim.event.EventFilterSpec.call_args.kwargs["eventTypeId"]), expected)
                 self.assertEqual([r["datastore"] for r in rows], ["Example store"] * len(collector.latestPage))
+            event.computeResource = _Obj(name="example-cluster", computeResource=_Obj(_moId="domain-c7"))
+            self.assertEqual(oev.record(event, review=True)["cluster_moid"], "domain-c7")
+            self.assertNotIn("cluster_moid", oev.record(event))
             self.assertNotIn("datastore", oev.record(event))
             self.assertEqual(oev.record(event, review=True)["datastore"], "")
 

@@ -1009,12 +1009,19 @@ def vm_vcenter_report(doc, statuses):
         return doc
     doc["title"] = "%s - %d vCenter(s) not read" % (doc.get("title", ""), len(bad))
     doc["status"] = "critical"
+    review = bool(doc.get("review_order"))  # set by outage_timeline_doc for reviews
+    scope = "Nothing in this review" if review else "Nothing below"
     sec = {"title": "vCenters not read", "status": "critical", "columns": ["vCenter", "Why"],
            "rows": [[s.get("name", ""), s.get("error", "")] for s in bad],
            "row_status": ["critical"] * len(bad), "cell_status": [["critical", ""]] * len(bad),
-           "text": "Nothing below comes from these: the report covers the other vCenters only. The account is the "
+           "text": scope + " comes from these: the report covers the other vCenters only. The account is the "
                    "same for every vCenter (the VMware vCenter credential); docs/VMWARE.md, \"Several vCenters\"."}
-    doc["sections"] = [sec] + list(doc.get("sections") or [])
+    sections = list(doc.get("sections") or [])
+    at = 0
+    if review:
+        at = next((i + 1 for i, section in enumerate(sections) if section.get("title") == "Back to normal"), len(sections))
+    sections.insert(at, sec)
+    doc["sections"] = sections
     return doc
 
 

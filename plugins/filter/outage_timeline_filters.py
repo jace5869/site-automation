@@ -37,6 +37,10 @@ def _unsafe(v):
     return _wrap(v) if _OLD else v
 
 
+def _redact(value):
+    return _site_redact.redact_all(value, review=True)
+
+
 def outage_redact(value):
     return _unsafe(_redact(value))
 
@@ -49,7 +53,7 @@ def _load(name, folder):
 
 
 _context = _load("site_outage_context", "../module_utils")
-_redact = _load("site_redact", "../module_utils").redact_all
+_site_redact = _load("site_redact", "../module_utils")
 _review_text = _load("outage_review_text", "../module_utils")
 _tm = _load("site_time", "../module_utils")
 _lk = _load("site_link", "../module_utils")
@@ -120,6 +124,7 @@ ROWS = 3
 LEAD_S = 1800              # 1.90.0: the lead-up looks back at most this far before the first critical event
 RAW_TITLE = "Every event, grouped (each single event is in the workbook)"
 ATTACH = "Attach the ServiceNow API credential to the outage watch template to see and link its incidents (read only)."
+TICKETS_NOT_READ = "ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH
 
 
 def _short(name):
@@ -174,7 +179,9 @@ def _vcenter_events(events, datastores=None):
         typ = str(e.get("type") or "")
         lane, level, label, kind, role = TYPES.get(typ, ("vcenter" if not e.get("host") else "host", "info", "", "", ""))
         host, vm, cluster = _short(e.get("host")), str(e.get("vm") or ""), str(e.get("cluster") or "")
-        message = " ".join(str(e.get("message") or "").split())
+        source_message = str(e.get("message") or "")
+        message = " ".join(source_message.split())
+        display_message = " ".join(_site_redact.redact(source_message).split())
         args = e.get("args") or {}
         ds = str(e.get("datastore") or next((args[k] for k in ("datastore", "datastoreName", "volumeName", "dsName") if args.get(k)), ""))
         if not ds and typ == "esx.problem.vmfs.nfs.volume.no.space":
@@ -207,9 +214,9 @@ def _vcenter_events(events, datastores=None):
         elif kind == "power":
             where = vm or where
         elif not label:
-            label = message[:120] or typ
+            label = display_message[:120] or typ
         out.append({"t": t, "lane": lane, "level": level, "label": label, "where": where, "kind": kind, "role": role,
-                    "type": typ, "message": message, "vcenter": str(e.get("vcenter") or ""), "vm": vm, "cluster": cluster,
+                    "type": typ, "message": message, "display_message": display_message, "vcenter": str(e.get("vcenter") or ""), "vm": vm, "cluster": cluster,
                     "host": host, "host_full": str(e.get("host") or ""), "datastore": ds, "device": device, "datacenter": str(e.get("datacenter") or ""), "entity": str(e.get("entity") or "").strip(), "entity_type": str(e.get("entity_type") or "").lower(),
                     "device_raw": _watch._device_raw(e) if typ in _watch.STORAGE else "",
                     "cluster_moid": e.get("cluster_moid") or (e.get("entity_moid") if e.get("entity_type") == "cluster" else ""),
@@ -366,7 +373,7 @@ def _act_block(description):
 
 
 def _cut(text, n=160):
-    t = " ".join(str(text or "").split())
+    t = " ".join(_redact(str(text or "")).split())
     return t if len(t) <= n else t[:n - 1].rstrip() + "…"
 
 
@@ -411,7 +418,7 @@ def _incident_ticket_ids(triggers, events, prefix):
     return ids
 
 
-def _review_ticket_numbers(tickets, incident, opts):
+def _correlated_ticket_numbers(tickets, incident, opts):
     # Legacy IDs end after the check. The title identifies the object within that vCenter.
     prefix = opts.get("correlation_prefix") or "site-health"
     legacy_ids = defaultdict(set)
@@ -858,7 +865,34 @@ def _event_loss(e):
     return None
 
 
-def _review_roots(opts, events, begin, end):
+def _ambiguous_host(wanted, hosts, conditions, events):
+    """Count distinct hosts sharing this DNS label, joining a name-only reference to a known ID when possible."""
+    by_name = defaultdict(set)
+
+    def record(vc, name, moid):
+        if name and _short(name).casefold() == wanted.casefold():
+            ids = by_name[vc, name.casefold()]
+            if moid:
+                ids.add(moid)
+
+    for h in hosts:
+        record(h.get("vcenter"), h["name"], h.get("moid"))
+    for c in conditions:
+        if c.get("kind") == "host" and c.get("object") and c.get("vcenter"):
+            record(c["vcenter"], c["object"], _condition_moid(c))
+    for e in events:
+        record(e["vcenter"], e["host_full"], e["host_moid"])
+        if _scope(e) == "host":
+            record(e["vcenter"], e["entity"], e["entity_moid"] or e["host_moid"])
+    identities = defaultdict(set)
+    for (vc, name), ids in by_name.items():
+        identities[vc].update(ids)
+        if not ids and "." in name:
+            identities[vc].add("name:" + name)
+    return sum(max(1, len(keys)) for keys in identities.values()) > 1
+
+
+def _review_roots(opts, events, begin, end, read_in_window):
     """Select scoped roots before applying display labels. Keep an unresolved name apart from every inventory ID."""
     roots, inventory, inventory_names = {}, defaultdict(dict), {}
     wanted = str(opts.get("review_object") or "").strip()
@@ -870,9 +904,18 @@ def _review_roots(opts, events, begin, end):
             if moid:
                 inventory_names[vc, kind, moid] = obj["name"]
 
+    ambiguous_host = False
+
+    def matches(kind, name):
+        if not wanted:
+            return True
+        if kind == "host":
+            return not ambiguous_host and wanted.casefold() in (name.casefold(), _short(name).casefold())
+        return name == wanted
+
     def add(vc, kind, name, moid="", condition=None, source="", when=None):
         current_name = inventory_names.get((vc, kind, moid), name)
-        if not vc or not name or wanted and wanted not in (name, current_name):
+        if not vc or not name or not (matches(kind, name) or matches(kind, current_name)):
             return
         candidates = inventory[vc, kind, current_name]
         if not moid and len(candidates) == 1:
@@ -890,16 +933,23 @@ def _review_roots(opts, events, begin, end):
             ticket_names[key].add(name)
         return key
 
-    read_runs = 0
+    runs = []
     recorded_vms, recorded_members = set(), defaultdict(set)
     for run in opts.get("watch_runs") or []:
         artifact = (run.get("artifacts") or {}).get("vm_watch") or {}
         when = _time(artifact.get("read_at") or run.get("finished"))
         if not artifact or not when or not begin <= when <= end:
             continue
-        read_runs += 1
+        runs.append((when, artifact.get("conditions") or []))
+    window = [e for e in events if begin <= e["t"] <= end]
+    window_triggers = opts["triggers"] if read_in_window else []
+    if wanted and "." not in wanted:
+        conditions = window_triggers + [c for _, rows in runs for c in rows]
+        ambiguous_host = _ambiguous_host(wanted, opts.get("hosts") or [], conditions, window)
+
+    for when, conditions in runs:
         stores, vm_findings = defaultdict(set), []
-        for c in artifact.get("conditions") or []:
+        for c in conditions:
             vc, name = c.get("vcenter"), c.get("object")
             if not vc or not name:
                 continue
@@ -921,7 +971,7 @@ def _review_roots(opts, events, begin, end):
                     keys = stores.get((vc, ds), ())
                     if len(keys) == 1:
                         recorded_members[next(iter(keys))].add((vm, moid))
-    for c in opts["triggers"]:
+    for c in window_triggers:
         if c.get("vcenter") and _watch_root(c):
             add(c["vcenter"], c["kind"], c["object"], _condition_moid(c), c, when=_time(opts.get("read_at")) or end)
 
@@ -932,7 +982,6 @@ def _review_roots(opts, events, begin, end):
             name, moid = e["entity"] or name, e["entity_moid"] or moid
         return name or inventory_names.get((e["vcenter"], kind, moid)), moid
 
-    window = [e for e in events if begin <= e["t"] <= end]
     unnamed_loss = False
     if not roots:
         for e in window:
@@ -947,7 +996,7 @@ def _review_roots(opts, events, begin, end):
                 if key:
                     e["root_event"] = True
     if not roots:
-        for c in opts["triggers"]:
+        for c in window_triggers:
             if not c.get("vcenter") or c.get("object_type") != "vm" or c.get("kind") not in DOWN_VM_KINDS:
                 continue
             vm = c.get("vm") or {}
@@ -961,9 +1010,9 @@ def _review_roots(opts, events, begin, end):
             for kind in ("host", "datastore"):
                 name, moid = event_object(e, kind)
                 add(e["vcenter"], kind, name, moid)
-        if not roots:
+        if not roots and read_in_window:
             for (vc, kind, name), candidates in inventory.items():
-                if name == wanted:
+                if matches(kind, name):
                     for moid in candidates:
                         add(vc, kind, name, moid)
     for key, c in roots.items():
@@ -971,8 +1020,10 @@ def _review_roots(opts, events, begin, end):
             c["members"] = list(c.get("members") or []) + [dict(name=name, moid=moid)
                 for name, moid in sorted(recorded_members[key])]
         c.update(ticket_names=sorted(ticket_names[key]), observations=sorted(observations[key]))
-    empty_read = {} if roots else dict(runs=read_runs, object=wanted, unnamed_loss=unnamed_loss,
+    empty_read = {} if roots else dict(runs=len(runs), object=wanted, unnamed_loss=unnamed_loss,
         partial=bool(opts.get("events_not_read") or opts.get("capped") or any(vc.get("error") for vc in opts.get("event_vcenters") or [])))
+    if empty_read and ambiguous_host:
+        empty_read["ambiguous_host"] = True
     if empty_read and opts.get("events_not_read"):
         empty_read["events_not_read"] = True
     return list(roots.values()), empty_read, recorded_vms
@@ -992,7 +1043,7 @@ def _review_clusters(rows):
         moid = r.get("cluster_moid")
         if moid:
             r["cluster_key"] = (vc, moid)
-        elif name and (dc or len(sites[vc, name]) == 1):
+        elif name and (dc or len(sites[vc, name]) <= 1):
             dc = dc or next(iter(sites[vc, name]), "")
             candidates = refs[vc, name, dc]
             if len(sites[vc, name]) <= 1:
@@ -1250,7 +1301,7 @@ def _review_rows(events, seconds, alarms, roots):
     last_reconnect = {}
     for e in events:
         if e["level"] == "critical" and e["type"].startswith("esx.problem.storage"):
-            outages[e["vcenter"], e["host"], e["datastore"] or e["device"]].append(e["t"])
+            outages[e["vcenter"], e["host"], e["datastore"] or e["device"].lower()].append(e["t"])
     for e in events:
         alarm = e["kind"].startswith("alarm:")
         k = _pair_key(e)
@@ -1282,7 +1333,7 @@ def _review_rows(events, seconds, alarms, roots):
                     clean.append(e)  # Keep the evidence for a reviewed root.
                     continue
                 precursor = e["kind"] == "sred" and any(0 < (t - e["t"]).total_seconds() <= LEAD_S
-                    for t in outages[first["vcenter"], first["host"], first["datastore"] or first["device"]])
+                    for t in outages[first["vcenter"], first["host"], first["datastore"] or first["device"].lower()])
                 if precursor:
                     hidden[id(first)] = dict(first, level="low", label="%s, back after %s" % (
                         first["label"], _span((e["t"] - first["t"]).total_seconds())))
@@ -1829,8 +1880,8 @@ def _review_parts(incident, opts, begin, end, stamp):
                else "host connected again" if interval[1] else "storage paths")
         host_info = meta.get(obj) or next((e for e, _, _, _ in chain if e["vcenter"] == vc and e["host"] == h), {})
         issues.append(issue(obj, "host", group(vc, host_info, h), state, why))
-    many_centers = len({c.get("vcenter") for c in opts["triggers"]} | {o[0] for o in incident["roots"]}) > 1
-    for c in opts["triggers"]:
+    many_centers = len({c.get("vcenter") for c in opts["down_now"]} | {o[0] for o in incident["roots"]}) > 1
+    for c in opts["down_now"]:
         obj = _finding_object(c)
         since = _time(c.get("since"))
         # 1.116.1: use only this root's still-open loss. A closed episode cannot date a new finding.
@@ -1900,7 +1951,7 @@ def _review_parts(incident, opts, begin, end, stamp):
             " for " + duration(lost, back) if back else " and is still down" if live else " (recovery not recorded)")
     reviewed = ", ".join("%s %s (%s)%s" % (kind, name, vc, " " + c["root_source"] if c["root_source"] else "")
                          for (vc, kind, name), c in sorted(incident["roots"].items()))
-    reason = "named by vm_watch_review_object" if opts.get("review_object") else "from the watch's conditions of this run and of the runs in the window"
+    reason = "named by vm_watch_review_object" if opts.get("review_object") else "from the watch's conditions in the window"
     if not opts.get("review_object") and any(c["root_source"] for c in incident["roots"].values()):
         reason = ""
     note = ("Reviewed: %s%s. " % (reviewed, " - " + reason if reason else "") if reviewed else
@@ -2107,7 +2158,7 @@ def _story(events, parts, incident, read, loc, card_matches):
                     text += ", %s after the first signal" % _span((e["t"] - onset).total_seconds())
                 rows.append(dict(single(e, text, "info"), word="Ticket"))
             elif e["label"].startswith("Work note in "):
-                rows.append(single(e, "Work note: " + e["message"], "info"))
+                rows.append(single(e, "Work note: " + _redact(e["message"]), "info"))
             continue
         for kind, name, back in _story_changes(e):
             ends = closed.get((e["vcenter"], kind, name), ())
@@ -2246,7 +2297,7 @@ def _story(events, parts, incident, read, loc, card_matches):
             row = next((references[root] for root in sorted(incident["vm_roots"].get((obj[0], obj[2]), ()))
                         if root in references), None)
         issue["anchor"] = row["anchor"] if row else ""
-        issue["since"] = "in The outage, in order at " + row["time"]["clock"][:5] if row else ""
+        issue["since"] = "in Order of events at " + row["time"]["clock"][:5] if row else ""
     return dict(rows=rows, window=window, grouped=True), start, finish
 
 
@@ -2259,12 +2310,12 @@ def _chart_lane(e):
     if e["lane"] in ("servicenow", "act"):
         return "tickets"
     if e["type"].startswith(("esx.problem.storage", "esx.clear.storage", "esx.problem.scsi",
-                              "esx.clear.scsi", "esx.problem.vmfs")) or any(s in e["kind"].lower() for s in ("storage", "datastore")):
+                              "esx.clear.scsi", "esx.problem.vmfs", "esx.clear.vmfs")) or any(s in e["kind"].lower() for s in ("storage", "datastore")):
         return "storage"
     return "hosts" if e["lane"] == "host" or _scope(e) == "host" else "vms"
 
 
-def _chart_view(events, related, affected, alarms, left, right, start, finish, still, loc, everything):
+def _chart_view(events, related, affected, alarms, left, right, start, finish, still, loc, everything, summarize_noise=True):
     """Build each view on its own scale, with local calendar ticks and accessible mark descriptions."""
     def pos(t):
         return _pct(t, left, right)
@@ -2306,7 +2357,7 @@ def _chart_view(events, related, affected, alarms, left, right, start, finish, s
         t = e["t"]
         if not left <= t <= right:
             continue
-        if _usage_or_gray(e, alarms):
+        if summarize_noise and _usage_or_gray(e, alarms):
             if everything:
                 bins[t.replace(minute=t.minute // 10 * 10, second=0, microsecond=0)].append(e)
             continue
@@ -2415,8 +2466,6 @@ def outage_timeline(events, tickets=None, opts=None):
     review = o.get("review", True)
     if not review:                           # 1.116.0: a scheduled run's time line is 1.118.4's, word for word
         return _v1184.outage_timeline(events, tickets, opts)
-    if review:
-        events, tickets, o = _redact(events), _redact(tickets), _redact(o)
     unread_centers = [s["name"] for s in o.get("vcenters") or [] if s.get("incomplete") or s.get("error")]
     o["triggers"] = _review_triggers(o)
     begin, end = _time(o.get("begin")), _time(o.get("end"))
@@ -2438,9 +2487,19 @@ def outage_timeline(events, tickets=None, opts=None):
     # vm_watch_review_lookback_hours): the window then starts at the raise
     all_vc = _vcenter_events(events, o.get("datastores") if review else None)
     if review:
-        o["roots"], empty_read, o["recorded_vms"] = _review_roots(o, all_vc, begin, end)
+        read = _time(o.get("read_at")) or end
+        read_in_window = begin <= read <= end
+        o["roots"], empty_read, o["recorded_vms"] = _review_roots(o, all_vc, begin, end, read_in_window)
         o = _review_inventory(o, all_vc)
-        empty_reason = _review_text.no_root_reason(empty_read)
+        if empty_read.get("ambiguous_host"):
+            o["triggers"] = []
+        if read_in_window:
+            o["down_now"] = o["triggers"]
+        else:
+            # Compare the live read with the window's roots after resolving inventory identities.
+            root_objects = {_finding_object(c) for c in o["roots"]}
+            o["down_now"] = [c for c in o["triggers"] if _finding_object(c) in root_objects]
+            o["triggers"] = []
         ops_center = str(o.get("outage_ops_center") or "").strip() or "NOC"
         by_name = "" if o.get("events_not_read") else " Its event history is read by name."
         judged = ["%s %s (%s): not matched to a current object.%s" %
@@ -2471,22 +2530,39 @@ def outage_timeline(events, tickets=None, opts=None):
             event["source_row"] = n
         tk = [e for e in tk if not e.get("repeat")]
         alarms = [str(a).lower() for a in o.get("noise_alarms", ["CPU usage", "memory usage", "disk usage"]) if a]
+        summarize_noise = o.get("noise", True)
         narrative, noise = _review_rows(vc, low_seconds, alarms, o["roots"])
-        if o.get("noise", True):
+        if summarize_noise:
             vc = narrative
-        else:
-            noise = []
-        incident = _root_history(narrative, o)
+        incident = _root_history(vc, o)
         history, chain = incident["history"], incident["chain"]
         facts, story_events = incident["facts"], incident["events"]
+        if not summarize_noise:
+            # The noise summary counts affected objects throughout the window, including after recovery.
+            # Use the source row because a short flap's noise records carry an added label.
+            folded = {e["source_row"] for e in noise}
+            selected = {e["source_row"] for e in story_events}
+            for e in vc:
+                if e["source_row"] not in folded or e["source_row"] in selected:
+                    continue
+                vm = _vm_key(e)
+                if vm:
+                    belongs = vm in incident["affected"]
+                else:
+                    kind = _scope(e)
+                    name = e["entity"] or e.get(kind)
+                    belongs = (e["vcenter"], kind, name) in incident["roots"]
+                if belongs:
+                    story_events.append(e)
+            story_events.sort(key=lambda e: e["t"])
+            noise = []
         selected_ids = {id(e) for e in story_events}
         if pre and incident["roots"]:
             begin = min([begin_asked] + [e["t"].replace(second=0, microsecond=0) for e in pre if id(e) in selected_ids])
             days = loc(begin).date() != loc(end).date()
-        narrative_ids = {id(e) for e in narrative}
         # Keep the matching closure of a root signal in the event appendix even after the host reconnected.
         appendix_ids, pending = selected_ids.copy(), set()
-        for e in narrative:
+        for e in vc:
             key = _pair_key(e)
             if e["role"] in ("problem", "down"):
                 if id(e) in selected_ids:
@@ -2496,8 +2572,7 @@ def outage_timeline(events, tickets=None, opts=None):
             elif e["role"] in ("up", "clear") and key in pending:
                 appendix_ids.add(id(e))
                 pending.remove(key)
-        appendix = [e for e in vc if id(e) in appendix_ids
-                    or not o.get("noise", True) and id(e) not in narrative_ids]
+        appendix = [e for e in vc if id(e) in appendix_ids]
         vc = story_events
         if chain or incident["current"]:
             alarm_events = story_events
@@ -2508,7 +2583,10 @@ def outage_timeline(events, tickets=None, opts=None):
         start_at, finish_at = parts["start"], parts["finish"]
         noise_rows = _noise_rows(noise, raw, parts["affected_keys"], start_at, finish_at or end, begin, end, stamp_review)
         vm_keys = incident["affected"]
-        own_numbers = _review_ticket_numbers(tickets, incident, o)
+        correlated = _correlated_ticket_numbers(tickets, incident, o)
+        requested = {str(n).strip().casefold() for n in o.get("review_tickets") or []}
+        own_numbers = correlated | {k["number"] for k in tickets or [] if isinstance(k, dict)
+                                    and k.get("number") and k["number"].casefold() in requested}
 
         def related_event(e):
             if e.get("ticket"):
@@ -2522,8 +2600,8 @@ def outage_timeline(events, tickets=None, opts=None):
         before = [n for n in before if n in own_numbers]
         read = _time(o.get("read_at")) or end
         card_matches = {}
-        # A capacity alarm on a reviewed store during its loss can supply a NOC card from the noise bars.
-        usage_raises = [e for e in raw if e["kind"].startswith("alarm:") and e["role"] == "problem"
+        # A capacity alarm on a reviewed store during its loss can supply a pattern card from the noise bars.
+        usage_raises = [e for e in raw if id(e) not in selected_ids and e["kind"].startswith("alarm:") and e["role"] == "problem"
                         and _usage_alarm(e["kind"][6:], alarms)
                         and any(a <= e["t"] and (not b or e["t"] <= b)
                                 for a, b in history.get((e["vcenter"], "datastore", e["datastore"]), ()))
@@ -2535,16 +2613,13 @@ def outage_timeline(events, tickets=None, opts=None):
         left = max(begin, first_signal - datetime.timedelta(minutes=12))
         right = min(end, (window_end or end) + datetime.timedelta(minutes=18))
         views = [_chart_view(story_events + tk, related_event, vm_keys, alarms, left, max(right, left + datetime.timedelta(seconds=1)),
-                             window_start, window_end, _compact(parts["still"]), loc, False),
-                 _chart_view(raw, related_event, vm_keys, alarms, begin, end, window_start, window_end, _compact(parts["still"]), loc, True)]
+                             window_start, window_end, _compact(parts["still"]), loc, False, summarize_noise),
+                 _chart_view(raw, related_event, vm_keys, alarms, begin, end, window_start, window_end, _compact(parts["still"]), loc, True, summarize_noise)]
     runs, unmatched = _alarm_runs(alarm_events)
     if review:
         for r in runs:
             r["usage"] = _usage_alarm(r["alarm"], alarms)
     vc, restarted = _restarts(vc)
-    if review and not o.get("noise", True):
-        recorded = {id(e) for e, obj, _, clear in chain if clear and obj[1] in ("host", "datastore")}
-        vc, _ = _pairs([dict(e, recorded_clear=id(e) in recorded) for e in vc], low_seconds)
     if review:
         downs = sorted(((name, a, b, vc_name) for (vc_name, typ, name), intervals in history.items() if typ == "host"
                         for a, b in intervals), key=lambda d: d[1])
@@ -2570,6 +2645,8 @@ def outage_timeline(events, tickets=None, opts=None):
         first_source = "the watch's run"
     first_bad = next((e for e in signals if e["level"] in ("critical", "warning")), None)
     tickets_opened = [e for e in evs if e["role"] == "ticket" and (not review or e["ticket"] in own_numbers)]
+    if correlated:
+        tickets_opened = [e for e in tickets_opened if e["ticket"] in correlated]
     # the outage's ticket: the first one opened after the first signal (one added by number may be older)
     opened = next((e for e in tickets_opened if first and e["t"] >= first["t"]), tickets_opened[0] if tickets_opened else None)
     resolved = [e for e in evs if e["role"] == "resolved" and (not review or opened and e["ticket"] == opened["ticket"])]
@@ -2660,6 +2737,8 @@ def outage_timeline(events, tickets=None, opts=None):
         if str(e.get("kind") or "").startswith("alarm:") and e["role"] in ("problem", "clear"):
             last_state[_alarm_key(e)] = e
     standing = [e for e in last_state.values() if e["role"] == "problem" and e["level"] == "critical"]
+    if not read_in_window:
+        trig = ["The review was requested for the selected window."]
     if review and not trig and incident["current"]:
         trig = [r[0] + ": " + r[1] + " " + r[2] for r in parts["now"][:8]]
     if not trig and standing:
@@ -2778,7 +2857,7 @@ def outage_timeline(events, tickets=None, opts=None):
             cards[-1].update(url=opened["url"], url_text=opened["ticket"])
     elif first:
         why = (str(o.get("tickets_error")) if o.get("tickets_error") else "No ticket of the health workflows was opened in the window."
-               if o.get("tickets_asked") else "ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
+               if o.get("tickets_asked") else TICKETS_NOT_READ)
         cards.append({"status": "info", "chip": "First signal to ticket", "meta": "-", "title": "No ticket to measure", "next": why})
     if first:
         if still:
@@ -2841,7 +2920,7 @@ def outage_timeline(events, tickets=None, opts=None):
     # 1.104.0: what ACT reads when asked (vm_outage_act; plugins/filter/outage_act_filters.py): each event as the page knows it
     # lead: one of the lead-up's own problems (the subject's, a warning or worse) - not every event in its time span (Neon)
     act_in = {"events": [dict(evd(e), lane=LANE[e["lane"]], s=e["t"].timestamp(),
-                              at=loc(e["t"]).strftime("%Y-%m-%d %H:%M:%S ") + zname(e["t"]), msg=_cut(e.get("message") or "", 200),
+                              at=loc(e["t"]).strftime("%Y-%m-%d %H:%M:%S ") + zname(e["t"]), msg=_cut(e.get("display_message", e.get("message")), 200),
                               count=e.get("count") or e["n"], **({"lead": 1} if e["num"] in lead_ns else {})) for e in evs],
               "first": lead_up[1]["num"] if lead_up is not None else (crit["num"] if crit is not None else 0),
               "subject": subject["text"], "window": window_text}
@@ -2944,7 +3023,7 @@ def outage_timeline(events, tickets=None, opts=None):
     if review:
         sheet["columns"] += ["Host", "Datastore", "VM", "Cluster", "Entity", "Event key", "From", "To"]
     for n, e in enumerate(raw if review else evs, 1):
-        msg = e.get("message", "")
+        msg = e.get("display_message", e.get("message", ""))
         if not review and e.get("names"):
             msg = ", ".join(e["names"]) + ": " + msg
         row = [n, e["t"].strftime("%Y-%m-%d %H:%M:%S"), loc(e["t"]).strftime("%Y-%m-%d %H:%M:%S ") + zname(e["t"]),
@@ -2962,9 +3041,6 @@ def outage_timeline(events, tickets=None, opts=None):
     if len(evs) > 60:
         out.append("  ... and %d more event(s): see the full event list." % (len(evs) - 60) if review else
                    "  ... and %d more event(s): the report's table and the workbook have every one." % (len(evs) - 60))
-    if not o.get("tickets_asked"):
-        out.append("ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
-    out += notes
 
     # 1.112.0: the AAR draft - what the review knows, for the after action report (incident_doc_filters: incident_review_fill,
     # incident_aar_docx). The review run writes it as "AAR (Word)", and the AAR job reads it back from the job's artifact
@@ -2979,7 +3055,8 @@ def outage_timeline(events, tickets=None, opts=None):
     if review:
         date = loc(parts["start"] or (first["t"] if first else _time(o.get("read_at")) or end)).strftime("%Y-%m-%d")
         name = (parts["basename"] if general else "Outage review") + " " + date
-        stem = ("outage-review-" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"))[:95].rstrip("-")
+        file_label = name if _redact(name) == name else date
+        stem = ("outage-review-" + re.sub(r"[^a-z0-9]+", "-", file_label.lower()).strip("-"))[:95].rstrip("-")
         filename = stem + ".csv"
         note = "The source timeline contains %d events, including noise." % len(raw)
         if o.get("capped"):
@@ -2992,7 +3069,7 @@ def outage_timeline(events, tickets=None, opts=None):
             read_line += " Ticket %s is still open%s." % (measured_ticket["number"], " (on hold)" if str(measured_ticket.get("state")) == "3" else "")
         if parts["unread"]:
             read_line += " " + parts["unread"] + "."
-        labels = ["1. What went down", "2. What it affected: " + _count(vm_count, "VM"), "3. Down now", "4. Recovered"]
+        labels = ["What went down", "What it affected: " + _count(vm_count, "VM"), "Down now", "Back to normal"]
         summary = [dict(title=label, columns=list(columns), rows=parts[k]) for label, columns, k in zip(
             labels, PART_COLUMNS, ("went", "affected", "now", "recovered"))]
         summary[0].update(status="critical" if parts["went"] else "info", lines=[parts["went_note"]],
@@ -3003,10 +3080,10 @@ def outage_timeline(events, tickets=None, opts=None):
         summary[2].update(text=read_line, status=now_severity, row_status=[r[0].lower() for r in parts["now"]],
                           lines=([risk_line] if risk_line else []) + ([] if parts["now"] or parts["unread"] else ["Nothing is down now."]))
         summary[3].update(status="ok", lines=[] if parts["recovered"] else ["No recovery recorded."])
-        story_section = dict(kind="story", title="The outage, in order", story=story, issue_count=len(story["rows"]))
-        noc_section = dict(kind="noc", title="What this usually means (for the %s)" % ops_center,
+        story_section = dict(kind="story", title="Order of events", story=story, issue_count=len(story["rows"]))
+        noc_section = dict(kind="noc", title="Likely causes",
                            ops_center=ops_center, patterns=patterns, issue_count=len(patterns))
-        chart_section = dict(kind="review_chart", title="All events (%d) - chart" % len(raw), issue_count=len(raw), views=views, collapsed=True)
+        chart_section = dict(kind="review_chart", title="All events (%d) - chart" % len(raw), issue_count=len(raw), views=views, collapsed=False)
         noise_lines = ["%s: %s changes on %s, %s; %s." % (alarm, n, who, when, verdict)
                        for alarm, who, n, when, verdict in noise_rows]
         noise_section = {"title": "Noise: summed up, not rows", "lines": noise_lines or ["No noise changes recorded."]}
@@ -3023,9 +3100,8 @@ def outage_timeline(events, tickets=None, opts=None):
         if any(g["url"] for g in groups):
             raw_section["cell_links"] = dict(column=1, urls=[g["url"] for g in groups],
                                              title="Open the incident in ServiceNow", https_only=True)
-        sections = summary + [noc_section, story_section, issue_section, chart_section]
-        if empty_reason:
-            summary[0]["lines"].insert(0, empty_reason)
+        went, affected, down, recovered = summary
+        sections = [noc_section, went, story_section, chart_section, affected, down, recovered, issue_section]
         if o.get("noise", True):
             sections.append(noise_section)
         email = sections + [raw_section]
@@ -3055,7 +3131,7 @@ def outage_timeline(events, tickets=None, opts=None):
                      groups=[{k: g[k] for k in ("row", "phase", "n")} for g in groups[:limit or None]],
                      appendix_max=limit, group_total=len(groups), events=[], events_total=len(raw),
                      noise=noise_rows, noise_columns=NOISE_COLUMNS, full_list=note, read_note=read_line, unread=parts["unread"],
-                     part_columns=PART_COLUMNS, recovery=["See 4. Recovered."])
+                     part_columns=PART_COLUMNS, affected_title=affected["title"], recovery=["See Back to normal."])
         draft.update({k: parts[k] for k in ("went", "affected", "now", "recovered", "at_risk", "went_note", "affected_note")})
         if parts["observed_start"]:
             draft["start"] = _down_by(full(parts["start"]))
@@ -3094,15 +3170,29 @@ def outage_timeline(events, tickets=None, opts=None):
             h_counts.append([_span(down_s), "hosts down", "warning"])
         if to_ticket is not None:
             h_counts.append([_span(to_ticket), "to the ticket", "ok"])
-        out[2:2] = ([empty_reason] if empty_reason else []) + [parts["went_note"]] + [s["title"] + ": " + " | ".join(", ".join(row) for row in s["rows"]) for s in summary] + noise_lines + [note]
-    return _unsafe({"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
+        out[2:2] = [parts["went_note"]] + [s["title"] + ": " + " | ".join(", ".join(row) for row in s["rows"]) for s in summary] + noise_lines + [note]
+    display = _redact({"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
             "head_name": parts["head_name"] if review and general else None, "issues": issues if review else [], "root_judgments": judged,
-            "context_scope": _context_scope(incident, o, window_start, max(filter(None, (window_end, parts.get("last_seen"))), default=None)),
             "sheets": sheets if review else [sheet], "workbook_stem": stem if review else "", "events_file": filename if review else "", "lines": out, "aar": aar, "window": window_text, "events": len(evs), "act_in": act_in, "act_groups": act_groups,
-            "skip": bool(blip and o.get("skip_blips") and not unread_centers),
+            "closed_window": not read_in_window, "skip": bool(blip and o.get("skip_blips") and not unread_centers),
             "cleared_before_review": cleared_only, "blip": blip,
             "alarm_window": [r_from.strftime("%Y-%m-%dT%H:%M:%SZ"), r_to.strftime("%Y-%m-%dT%H:%M:%SZ")] if cleared_runs else [],
             "trigger": trig, "trigger_line": "Triggered by: " + trig[0] + ((" (and %d more)" % (len(trig) - 1)) if len(trig) > 1 else "")})
+    # These instructions are written by the report. Mask only the external facts they describe.
+    if not o.get("tickets_asked"):
+        display["lines"].append(TICKETS_NOT_READ)
+        for card, shown in zip(cards, display["cards"]):
+            if card.get("next") == TICKETS_NOT_READ:
+                shown["next"] = TICKETS_NOT_READ
+    display["lines"].extend(_redact(notes))
+    empty_reason = _review_text.no_root_reason(display["draft"]["empty_read"])
+    if empty_reason:
+        for key in ("sections", "web_sections"):
+            display[key][0]["lines"] = [empty_reason]
+        display["lines"].insert(2, empty_reason)
+    # The context reader joins inventory names. Keep its private query input outside the display redaction.
+    display["context_scope"] = _context_scope(incident, o, window_start, max(filter(None, (window_end, parts.get("last_seen"))), default=None))
+    return _unsafe(display)
 
 
 def outage_review_context(timeline, context=None, reason=""):
@@ -3110,7 +3200,7 @@ def outage_review_context(timeline, context=None, reason=""):
     out = dict(timeline)
     result = context or _context.unavailable(reason or _context.DB_ERROR)
     cards = result["cards"]
-    sites = (out.get("context_scope") or {}).get("sites") or []
+    sites = _redact((out.pop("context_scope", {}) or {}).get("sites") or [])
     extra = [dict(r, group=sites[0] + " · " + r["group"]) if len(sites) == 1 and r["group"] == "SolarWinds (storage path)"
              else r for r in result["issues"]]
     objects = {}
@@ -3165,7 +3255,7 @@ def _context_judged(sections, line):
 
 
 def outage_timeline_doc(doc, timeline, web=False, review=False):
-    """Build a review with the four parts and pattern cards first and the raw record last.
+    """Build a review with the likely causes first and the grouped record last.
     Scheduled reports use the frozen renderer."""
     if not review:                           # 1.116.0: a scheduled run is 1.118.4's, word for word
         return _v1184.outage_timeline_doc(doc, timeline, web, review)
@@ -3190,7 +3280,12 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
         out["subtitle"] = "%s Review of %s. Now: %s" % (timeline.get("trigger_line", "").rstrip(".") + "." if timeline.get("trigger_line") else "",
                                                        timeline.get("window", ""), doc.get("title", ""))
         out["subtitle"] = out["subtitle"].strip()
-        if any(s.get("title") == "3. Down now" for s in mine):
+        if timeline.get("closed_window"):
+            # The watch document describes today's whole inventory. Only the reviewed roots' Down now rows belong here.
+            out["subtitle"] = "Review of %s." % timeline["window"]
+            out["status"] = next(s["status"] for s in mine if s["title"] == "Down now")
+            own = [{"title": "How it judged", "lines": []}] if timeline.get("context_judged") else []
+        if any(s.get("title") == "Down now" for s in mine):
             own = [s for s in own if s.get("title") != "Down or hung now" and not s.get("title", "").startswith("VMs with files on ")]
         if timeline.get("root_judgments"):
             at = next((i for i, s in enumerate(own) if s.get("title") == "How it judged"), len(own))
@@ -3202,6 +3297,7 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
         mine = [s for s in mine if s.get("kind") != "raw_events"]
         out["sections"] = _with_act(mine + own, timeline.get("act") or {}, web) + raw_record
         out["outage_ops_center"] = (timeline.get("draft") or {}).get("outage_ops_center", "NOC")
+        out["review_order"] = True     # 1.116.4: the review's own section order (the shared looks keep it; a neutral key)
         out["status_prefix"] = "Now: "                      # 1.90.0: the verdict is the watch's state now, not the outage's
     else:
         mine = [s for s in mine if s.get("title") in ("What happened, in order", "The events")]

@@ -29,14 +29,16 @@ RANK = {"critical": 0, "warning": 1, "low": 2, "info": 3}
 # 1.118.6: an OCSP responder or CRL address can carry a secret - a token in its query (?token=..., ?key=...) or a login
 # (user:password@). Neither ever reaches a condition, its ticket, the job artifact or a report: the query is shown as "?..."
 # and the login as "...@". An address with neither is shown, and keys its condition, exactly as before.
-_URL_SECRET = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)(?:[^/@\s?#]*@)?([^/\s?#]*)([^\s?#]*)(\?[^\s#]*)?(#\S*)?")
+_URL_SECRET = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/\s?#]*)([^\s?#]*)(\?[^\s#]*)?(#\S*)?")
 
 
 def _url_shown(text):
     """text with every URL's login and query (and fragment) masked."""
     def mask(m):
-        login = "...@" if re.match(r"(?i)[a-z][a-z0-9+.-]*://[^/@\s?#]*@", m.group(0)) else ""
-        return m.group(1) + login + m.group(2) + m.group(3) + ("?..." if m.group(4) else "") + ("#..." if m.group(5) else "")
+        authority = m.group(2)
+        if "@" in authority:
+            authority = "...@" + authority.rsplit("@", 1)[1]
+        return m.group(1) + authority + m.group(3) + ("?..." if m.group(4) else "") + ("#..." if m.group(5) else "")
     return _URL_SECRET.sub(mask, str(text or ""))
 
 

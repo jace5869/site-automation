@@ -1,0 +1,14 @@
+---
+# The last step of the VMware reports and the ESXi security settings: with vmware_vcenter_fail_unread
+# (default false: a report that completes is green), fail when a vCenter could not be read. The report - covering the other vCenters, with the ones not
+# read in red on top - and the artifacts are out before this. Input: _vm_vcenters (a site_vmware_*
+# module's 'vcenters').
+- name: VMware | every vCenter was read
+  ansible.builtin.assert:
+    that: _vm_vcenters | default([]) | selectattr('error') | list | length == 0
+    fail_msg: >-
+      Not read: {{ _vm_vcenters | default([]) | selectattr('error') | map(attribute='error') | join('; ') }}.
+      The report above (and the email) covers the other vCenters. vmware_vcenter_fail_unread: false
+      (the default) keeps the job green.
+    quiet: true
+  when: vmware_vcenter_fail_unread | bool

@@ -12,7 +12,7 @@ import incident_doc_filters as docs
 from test_report_hover import render
 
 
-STORY = "The outage, in order"
+STORY = "Order of events"
 RAW = "Every event, grouped (each single event is in the workbook)"
 PAGE_LOOKS = ("report_atlas", "report_brief", "report_ops", "report", "report_glass", "report_portal", "report_command")
 EMAIL_LOOKS = PAGE_LOOKS[3:]
@@ -28,17 +28,39 @@ class SectionText(HTMLParser):
         self.section = None
         self.tag = self.href = ""
         self.ids, self.refs = set(), []
+        self.heading_tag = ""
+        self.details = []
+        self.charts = []
+        self.rail = []
+        self.in_rail = False
         self.feed(html)
 
     def handle_starttag(self, tag, attrs):
         self.tag = tag
         attrs = dict(attrs)
+        if tag == "nav":
+            self.in_rail = attrs.get("aria-label") == "Sections of this report"
+        if tag == "details":
+            self.details.append("open" in attrs)
+        if attrs.get("class") == "review-chart":
+            self.charts.append((self.section, all(self.details)))
+        style = attrs.get("style", "")
+        # HTML mail uses inline-styled cells and divs for its section headings.
+        if (tag == "h2" or (tag == "td" and style.startswith("font-size:") and "font-weight:700" in style)
+                or (tag == "div" and "border-bottom:" in style and "font-weight:bold" in style)):
+            self.heading_tag = tag
         if attrs.get("id"):
             self.ids.add(attrs["id"])
         if tag == "a":
             self.href = attrs.get("href", "")
 
     def handle_endtag(self, tag):
+        if tag == self.heading_tag:
+            self.heading_tag = ""
+        if tag == "nav":
+            self.in_rail = False
+        if tag == "details":
+            self.details.pop()
         if tag == "a":
             self.href = ""
         self.tag = ""
@@ -47,7 +69,9 @@ class SectionText(HTMLParser):
         data = data.strip()
         if not data or self.tag in ("style", "script"):
             return
-        if data in self.titles and self.tag in ("h2", "td", "div", "") and not self.href:
+        if self.in_rail and data in self.titles and self.href.startswith("#s"):
+            self.rail.append((self.href[1:], data))
+        if data in self.titles and self.heading_tag and not self.href:
             self.section = data
             self.sections.setdefault(data, [])
         elif self.section:
@@ -85,10 +109,10 @@ def event_places(review, sections):
     places = defaultdict(set)
     for place, pieces in sections.items():
         title = place[0] if isinstance(place, tuple) else place
-        if title.startswith(("Every event", "The events", "All events", "Appendix A", "What this usually means", "What else saw it")):
+        if title.startswith(("Every event", "The events", "All events", "Appendix A", "Likely causes", "What else saw it")):
             continue
         body = " ".join(pieces)
-        if title in ("3. Down now", "OVERVIEW"):
+        if title in ("Down now", "OVERVIEW"):
             for row in draft["now"]:
                 body = body.replace(row[3], "")
             body = body.replace(draft["read_note"], "")
@@ -145,23 +169,48 @@ def vm_review():
 
 
 class OnePlace(unittest.TestCase):
+    def test_partial_read_warning_after_recovery(self):
+        from site_filters import vm_vcenter_report
+        review, _ = vm_review()
+        bad = [dict(name="vc.example.mil", error="example read error")]
+        for web in (True, False):
+            doc = fixtures.ot.outage_timeline_doc(fixtures.WATCH, review, web, True)
+            doc = vm_vcenter_report(doc, bad)
+            titles = [s["title"] for s in doc["sections"]]
+            look = "report_atlas.html.j2" if web else "report.html.j2"
+            self.assertEqual(list(SectionText(titles, render(look, doc)).sections), titles)
+            self.assertEqual(titles[0], "Likely causes")
+            self.assertEqual(titles[titles.index("Back to normal") + 1], "vCenters not read")
+        scheduled = vm_vcenter_report(fixtures.WATCH, bad)
+        self.assertEqual(scheduled["sections"][0]["title"], "vCenters not read")
+
+    def test_documented_down_now_scope(self):
+        from pathlib import Path
+        guide = (Path(fixtures.REPO) / "docs/VM_OUTAGE_WATCH.md").read_text()
+        section = guide.split("- **Down now**", 1)[1].split("- **Back to normal**", 1)[0]
+        self.assertIn("window's roots", " ".join(section.split()))
+
     def test_narrative_and_section_order(self):
         for case, timeline in reviews():
             review = fixtures.ot.outage_review_context(timeline)
             for web, looks in ((True, PAGE_LOOKS), (False, EMAIL_LOOKS)):
                 doc = fixtures.ot.outage_timeline_doc(fixtures.WATCH, review, web, True)
                 titles = [s["title"] for s in doc["sections"]]
-                expected = ["1. What went down", "2. What it affected", "3. Down now", "4. Recovered",
-                            "What this usually means", STORY, "Issues by type", "All events", "Noise"]
-                expected.extend(["What else saw it", "How it judged", RAW])
-                self.assertEqual(len(titles), len(expected), case)
-                for title, prefix in zip(titles, expected):
-                    self.assertTrue(title.startswith(prefix), (case, title, prefix))
+                count = review["numbers"]["affected_vms"]
+                affected = "What it affected: %d VM%s" % (count, "" if count == 1 else "s")
+                chart = "All events (%d) - chart" % review["numbers"]["full_events"]
+                self.assertEqual(titles, ["Likely causes", "What went down", STORY, chart, affected, "Down now",
+                                          "Back to normal", "Issues by type", "Noise: summed up, not rows",
+                                          "What else saw it (same time, not cause)", "How it judged", RAW], case)
                 for look in looks:
                     with self.subTest(case=case, web=web, look=look):
                         html = render(look + ".html.j2", doc)
                         parsed = SectionText(titles, html)
                         self.assertEqual(list(parsed.sections), titles)
+                        self.assertEqual(parsed.charts, [(chart, True)])
+                        if look in PAGE_LOOKS[:3]:
+                            self.assertEqual(parsed.rail, [("s%d" % i, title) for i, title in enumerate(titles, 1)])
+                            self.assertTrue(all(anchor in parsed.ids for anchor, _ in parsed.rail))
                         seen = event_places(review, parsed.sections)
                         self.assertEqual(set(seen), {n for row in review["draft"]["story"]["rows"] for n in row["source_rows"]})
                         self.assertTrue(all(places == {STORY} for places in seen.values()), seen)
@@ -169,23 +218,24 @@ class OnePlace(unittest.TestCase):
                         self.assertTrue(parsed.refs)
                         for anchor, label in parsed.refs:
                             self.assertIn(anchor, parsed.ids)
-                            self.assertRegex(label, r"^(in The outage, in order at |See the card: )")
+                            self.assertRegex(label, r"^(in Order of events at |See the card: )")
                         for removed in ("The outage in short", "For the after-action report"):
                             self.assertNotIn(removed, html)
             aar, handoff = word(review)
             sections = word_places(aar)
-            self.assertEqual(list(dict.fromkeys(title for title, _ in sections)), ["OVERVIEW", "What this usually means (for the NOC)", "Event Response",
+            self.assertEqual(list(dict.fromkeys(title for title, _ in sections)), ["OVERVIEW", "Likely causes",
+                "What went down", STORY, affected, "Down now", "Back to normal", "Event Response",
                 "Reason for Outage (RFO) & Recovery", "What else saw it (same time, not cause)",
                 "Lessons Learned & Action Plan", "Appendix A - the events by phase", "Appendix B - Hand this to the NOC"])
             seen = event_places(review, sections)
             self.assertEqual(set(seen), {n for row in review["draft"]["story"]["rows"] for n in row["source_rows"]})
             for n, places in seen.items():
                 self.assertEqual(len(places), 1, (case, n, places))
-                self.assertEqual(next(iter(places))[0], "Event Response", (case, n, places))
+                self.assertEqual(next(iter(places))[0], STORY, (case, n, places))
             self.assertFalse(event_places(review, word_places(handoff)), case)
             self.assertFalse(CLOCK.search(" ".join(piece for block in word_places(handoff).values() for piece in block)), case)
             self.assertNotIn("Detection:", [b.get("label") for b in aar])
-            self.assertEqual(next(b["lines"] for b in aar if b.get("label") == "Recovery:"), ["See 4. Recovered."])
+            self.assertEqual(next(b["lines"] for b in aar if b.get("label") == "Recovery:"), ["See Back to normal."])
             self.assertEqual(review["draft"]["actions"], [])
             self.assertTrue(any(b.get("color") == docs.TO_WRITE and "To write: what the team did." in b.get("items", [])
                                 for b in aar))
@@ -219,8 +269,7 @@ class OnePlace(unittest.TestCase):
             "5 VMs reset by HA again (23:52-23:53): " + reset,
             "4 VMs HA could not restart (23:55-23:56): sitea-db01, sitea-db02, sitea-db03, sitea-db04 (on ds-sitea-09)",
             "2 hosts connected again (23:58-00:12): esx-sitea-04 (23:58), esx-sitea-05 (00:12); alarms green",
-            "Work note: ds-sitea-07 and -08 back; ds-sitea-09 LUN lost on controller B. Vendor case open; on hold.",
-            "Still down: ds-sitea-09 - see Down now"]
+            "Work note: ds-sitea-07 and -08 back; ds-sitea-09 LUN lost on controller B. Vendor case open; on hold."]
         # All matching kinds now get the same pointer that the mockup spelled out on APD and PDL.
         for i, card in [(0, "Storage path redundancy lost"), (1, "All paths down (APD)"),
                         (3, "Host not responding or disconnected"), (4, "HA reset a VM"),
@@ -349,14 +398,14 @@ class OnePlace(unittest.TestCase):
             self.assertEqual(fields["Actions:"]["lines"], ["Typed action"])
 
     def test_duplicate_work_note_is_detected(self):
-        review = fixtures.ot.outage_timeline(*fixtures.director_outage())
+        review = fixtures.ot.outage_review_context(fixtures.ot.outage_timeline(*fixtures.director_outage()))
         source = next(row for row in review["sheet"]["rows"] if row[5].startswith("Work note in "))
         aar, _ = word(review)
         at = next(i for i, block in enumerate(aar) if block.get("text") == "Reason for Outage (RFO) & Recovery")
         duplicate = dict(type="field", label="Actions:", lines=[source[11]])
         seen = repeated_events(review, word_places(aar[:at] + [duplicate] + aar[at:]))
         self.assertEqual(set(seen), {source[0]})
-        self.assertEqual({title for title, _ in seen[source[0]]}, {"Event Response"})
+        self.assertEqual({title for title, _ in seen[source[0]]}, {STORY, "Event Response"})
         self.assertEqual(len(seen[source[0]]), 2)
         self.assertFalse(repeated_events(review, word_places(aar)))
 
@@ -391,6 +440,22 @@ class OnePlace(unittest.TestCase):
         self.assertEqual([r["names"] for r in rows if "reported down" in r["text"]], [names[:3], names[3:]])
         self.assertEqual([r["names"] for r in rows if "back up" in r["text"]], [[names[1]]])
 
+
+class OpsLookStart1164(unittest.TestCase):
+    def test_no_start_here_strip_on_a_review_in_the_ops_look(self):
+        """1.116.4: the ops look's Start here strip ranked the grouped record's rows above Likely causes; a review has none,
+        another report keeps it."""
+        import copy as _copy
+        import test_outage_timeline as tot
+        from test_report_hover import render
+        review = tot.ot.outage_timeline(*tot.director_outage())
+        doc = tot.ot.outage_timeline_doc(_copy.deepcopy(tot.WATCH), review, True, True)
+        html = render("report_ops.html.j2", doc)
+        self.assertNotIn('aria-label="Start here"', html)
+        self.assertLess(html.index("Likely causes"), html.index("What went down</"))
+        other = dict(title="Disk report", status="critical", sections=[dict(title="Disks", columns=["Host", "Used"],
+                     rows=[["host01", "99%"]], row_status=["critical"])])
+        self.assertIn('aria-label="Start here"', render("report_ops.html.j2", other))
 
 if __name__ == "__main__":
     unittest.main()

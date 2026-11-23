@@ -4,6 +4,8 @@
 def no_root_reason(read):
     if not read:
         return ""
+    if read.get("ambiguous_host"):
+        return "Host short name %s is ambiguous. Enter the full host name." % read["object"]
     count = read["runs"]
     scope = " for %s" % read["object"] if read.get("object") else ""
     watch = ("%d watch run%s read, none recorded a lost datastore or a down host%s" %

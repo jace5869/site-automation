@@ -1,0 +1,39 @@
+---
+# 1.112.5, the VM outage watch's email only when something changes (vm_watch_email_on_change): a run emails when the
+# conditions of vm_watch_report_on changed since the last email - a new one, a worse severity, one cleared -, again every
+# vm_watch_email_every_hours while they last (a reminder; 0 = none), and once when all have cleared (recovered). A review
+# (vm_watch_review) always emails; on a schedule it is made at most once per vm_watch_email_every_hours. The web page and
+# the tickets keep updating every run. The last email: this template's newest run's job artifact vm_watch_email_state,
+# read from AAP with the "Red Hat Ansible Automation Platform" credential (as the report history). Not readable: every
+# report is emailed, as before, and the job output says why. Read only (also in a dry run, Check).
+# Output: _vm_w_mail (vm_watch_email_decision, plugins/filter/vmware_watch_filters.py).
+- name: VMware | the watch's last email, from AAP (vm_watch_email_state)
+  ansible.builtin.include_role:
+    name: site_email
+    tasks_from: history_artifacts.yml
+  vars:
+    _hist_artifacts: [vm_watch_email_state]
+    _hist_runs: 15                       # the newest run that kept the state: runs that stopped early (or a Check) keep none
+    _hist_always: true                   # read also with report_history: false (that is the strip of past runs only)
+  when: vm_watch_email_on_change | bool
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: VMware | does this run email (vm_watch_email_on_change, vm_watch_email_every_hours)
+  ansible.builtin.set_fact:
+    _vm_w_mail: >-
+      {{ _vm_w_cond | vm_watch_email_decision(_site_hist_runs | default([]),
+           {'now': (_vm_now | default(now().timestamp())) | float, 'on_change': vm_watch_email_on_change | bool,
+            'every_hours': vm_watch_email_every_hours | float, 'report_on': vm_watch_report_on | name_list,
+            'review': vm_watch_review | bool,
+            'scheduled': (awx_job_launch_type | default('')) == 'scheduled' or (awx_schedule_id | default('') | string | length > 0)
+                         or (awx_parent_job_schedule_id | default('') | string | length > 0),
+            'why': _site_hist_why | default('') if vm_watch_email_on_change | bool else '',
+            'unread': (_vm_w.vcenters | default([]) | selectattr('error') | list | length > 0)
+                      or (_vm_w.vcenters | default([]) | selectattr('incomplete', 'defined') | list | length > 0)
+                      or (_vm_w.suspects | default([]) | selectattr('verdict', 'equalto', 'busy') | list | length > 0),
+            'time_zone': report_time_zone | default('', true) | string}) }}
+
+- name: VMware | the watch's email
+  ansible.builtin.debug:
+    msg: "{{ _vm_w_mail.lines }}"
+  when: _vm_w_mail.lines | length > 0

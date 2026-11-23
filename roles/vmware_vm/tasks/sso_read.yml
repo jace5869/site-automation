@@ -26,6 +26,7 @@
     crl_timeout: "{{ vm_sso_crl_timeout | int }}"
     crl_max_mb: "{{ vm_sso_crl_max_mb | int }}"
     now: "{{ _vm_now | default(omit) }}"
+  no_log: "{{ _vm_sso_review | default(false) | bool }}"
   register: _vm_sso
   check_mode: false                      # read-only
 

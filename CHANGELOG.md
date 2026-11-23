@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.116.4 — 2026-11-24
+
+**To set up:** nothing.
+
+- The review opens with Likely causes, What went down and Order of events. The chart follows the timeline and opens
+  on the page. What it affected gives the VM count, followed by Down now and Back to normal. The AAR follows the same
+  order after Overview, before Event Response.
+- Today's watch could replace yesterday's outage. A review now takes its roots from the selected window.
+  A later read updates Down now for those roots. A recovery recorded in the window stays in the story.
+- Review output could expose credentials in watch summaries, vCenter errors and document write failures.
+  The job output, report artifacts, email and web page now use masked text.
+- Reviews use the original watch conditions and email history for the throttle, ticket correlation and artifact IDs.
+  Raw watch and SSO task results are hidden in review job output.
+- An exact datastore name still matches when hosts share its short name. On a partial read, the page and email put
+  **vCenters not read** immediately after **Back to normal**.
+- OCSP and CRL addresses could expose part of a password containing an @ sign. The complete login is now masked.
+- Redaction could erase iSCSI session details and operator notes about tokens, secrets and password resets.
+  Those details survive in review notes and the AAR. Shared evidence masking still covers GRUB password directives.
+  A bare session in a cookie header or cookie map is masked.
+- Reviews dropped tickets entered by number. They now appear in the timeline and AAR, with case ignored on lookup.
+  A correlated ticket takes precedence when measuring the time from the first signal.
+- A host's short name could miss its inventory, watch or event record. Reviews now match it regardless of case
+  and report an ambiguous short name when more than one host shares it.
+- Turning off noise summaries hid relevant changes from the story and added unrelated alarms to Appendix A.
+  The story, focused chart and appendix now show the changes for the reviewed objects.
+- Missing datacenter names could hide HA restarts. Reviews now use the cluster ID or an unambiguous cluster name.
+- VMFS restoration events appeared on the Hosts chart lane. They now appear with the loss on the Storage lane.
+- A change of case in a device ID could hide the redundancy loss before an outage. Both spellings now match.
+
+Known: An OCSP URL with an @ in its login gets a new masked ticket ID once more (rare, as in 1.118.6).
+A loss event for another host is not merged with recorded roots (the 1.116.2 fallback design, deferred to 1.125.0).
+The Word AAR keeps its existing layout without a chart.
+
+- The scheduled watch stays 1.118.4's, now provably for the task files it includes too: sso_read.yml, vcenters_read.yml
+  and watch_email.yml are compared with 1.118.4's and their changed values rendered for a scheduled run
+  (tests/test_watch_frozen.py).
+Tests: tests/test_site_redact.py, tests/test_site_redact_table.py, tests/test_watch_frozen.py,
+tests/test_outage_timeline.py, tests/test_sso.py,
+tests/test_outage_one_place.py, tests/test_incident_docs.py and tests/test_vmware_modules.py.
+
 ## 1.116.3 — 2026-11-23
 
 **To set up:** nothing. `outage_aar_appendix_max` now defaults to 0 for all grouped outage rows.

@@ -4,6 +4,7 @@ own conditions and never changes how a scheduled run reads vCenter, judges a VM,
 tickets. Changing what is pinned here is a watch release of its own (with its own tests), not part of the review.
   python3 tests/test_watch_frozen.py"""
 import copy
+import datetime
 import hashlib
 import importlib.util
 import os
@@ -21,6 +22,10 @@ FROZEN = {   # sha256 of 1.118.4 (084e5931)
     "plugins/module_utils/outage_timeline_1184.py": "245830afda1069456ca5301ae551de68bbbf13b3ce9ad95aa792d8e7e6c3cdb1",
     # 1.118.4's roles/vmware_vm/tasks/watch.yml, the reference the task comparison below reads
     "tests/fixtures/watch_1184.yml": "66889c040b95d9749d8fcb768c9e82e1941698ee30b6cfc10668b799d11c25bd",
+    # 1.116.4: the task files watch.yml includes on every run, as 1.118.4 had them
+    "tests/fixtures/sso_read_1184.yml": "93fb2c6f1e3dfc46827d134872d13ea75600b2986d02b6790a4bd81dbea4de0a",
+    "tests/fixtures/vcenters_read_1184.yml": "db6a64f3b95abd15dd769a951d6a5b3f814d818e6ed71ebb1fe148511617069c",
+    "tests/fixtures/watch_email_1184.yml": "59c67935b401b3c85285e364a7f5293b9366b27c0be1f2d4d5f0d1296baec242",
 }
 # The tasks of 1.118.4's watch.yml that differ at 1.116.0, each with why a scheduled run (vm_watch_review false) does exactly
 # what it did. Any other difference fails.
@@ -35,7 +40,20 @@ ALLOWED = {
     "VMware | the AAR draft's facts (vm_outage_review.aar)": "inside the review-only AAR block",
     "VMware | a temporary folder for the AAR draft": "renamed inside the review-only AAR block",
     "VMware | the AAR draft - {{ _rd_file.filename | default('not made') }}": "inside the review-only AAR block",
-    "VMware | the report": "the report info adds attachment keys only for a review",
+    "VMware | {{ _vm_w | vm_watch_clean_line(_vm_w_cond) if _vm_w_cond | length == 0 else 'below the report threshold (vm_watch_report_on)' }}":
+        "only a requested review redacts the debug lines",
+    "VMware | single sign-on and OCSP - read": "passes the review-only no_log flag to the shared reader",
+    "VMware | phase 2's decision (made, not carried out)": "no_log only on a requested review",
+    "VMware | the watch's email state as a job artifact (vm_watch_email_state)": "no_log only on a requested review",
+    "VMware | nothing down or hung (vm_watch_fail_on)": "only a requested review masks the failure message",
+    "VMware | what was found, and what phase 2 would restart (nothing is restarted)":
+        "no_log only on a requested review",
+    "VMware | single sign-on and OCSP - what is down now": "no_log only on a requested review",
+    "VMware | the result as job artifacts (vm_watch; site_health for the ServiceNow tickets job)":
+        "raw machine artifacts; no_log only on a requested review",
+    "VMware | every vCenter was read": "only a review passes the redacted read to the final error message",
+    "VMware | the AAR draft was not made (the review goes on without it)": "redact a write failure inside the review-only AAR block",
+    "VMware | the report": "only a review redacts the finished document; the report info adds attachment keys only for a review",
     "VMware | outage report": "every new value is guarded by _vm_w_review, or is '' / false, which site_email treats as unset",
 }
 
@@ -89,14 +107,101 @@ class Frozen(unittest.TestCase):
         with open(os.path.join(ROOT, "tests", "fixtures", "watch_1184.yml")) as fh:
             old = _flat(yaml.safe_load(fh), [])
         with open(os.path.join(ROOT, "roles", "vmware_vm", "tasks", "watch.yml")) as fh:
-            new = dict((t.get("name"), t) for t in _flat(yaml.safe_load(fh), []))
+            tasks = yaml.safe_load(fh)
+        self.assert_watch_tasks(old, tasks)
+
+    def assert_watch_tasks(self, old, tasks):
+        from jinja2 import Environment, nodes
+
+        def requires_review(expr):
+            if isinstance(expr, nodes.Filter) and expr.name == "bool":
+                return requires_review(expr.node)
+            if isinstance(expr, nodes.And):
+                return requires_review(expr.left) or requires_review(expr.right)
+            if isinstance(expr, nodes.Or):
+                return requires_review(expr.left) and requires_review(expr.right)
+            return isinstance(expr, nodes.Name) and expr.name in ("_vm_w_review", "vm_watch_review")
+
+        old_names = {t["name"] for t in old}
+        env = Environment()
+
+        def check_added(tasks, guarded=False):
+            for task in tasks:
+                when = task.get("when", [])
+                expressions = when if isinstance(when, list) else [when]
+                guarded_here = guarded or any(requires_review(env.parse("{{ " + str(expr) + " }}").body[0].nodes[0])
+                                              for expr in expressions)
+                if task.get("name") not in old_names:
+                    self.assertTrue(guarded_here, "missing review guard: %s" % task.get("name", task))
+                for branch in ("block", "rescue", "always"):
+                    check_added(task.get(branch, []), guarded_here)
+
+        check_added(tasks)
+        new = {t.get("name"): t for t in _flat(tasks, [])}
+        self.assertEqual(len(new), len(_flat(tasks, [])), "duplicate watch task name")
         strip = lambda t: dict((k, v) for k, v in t.items() if k not in ("block", "rescue", "always"))   # noqa: E731
         changed = set(t.get("name") for t in old if t.get("name") not in new or strip(new[t["name"]]) != strip(t))
         self.assertEqual(sorted(changed - set(ALLOWED)), [], "a scheduled-path task of watch.yml changed")
         # the order of 1.118.4's tasks is kept
-        names = [n for n in (t.get("name") for t in _flat(yaml.safe_load(open(os.path.join(ROOT, "roles", "vmware_vm", "tasks", "watch.yml"))), []))
-                 if n in set(t.get("name") for t in old)]
+        names = [t.get("name") for t in _flat(tasks, []) if t.get("name") in old_names]
         self.assertEqual(names, [t.get("name") for t in old if t.get("name") in names])
+
+    def test_added_task_probe(self):
+        with open(os.path.join(ROOT, "tests/fixtures/watch_1184.yml")) as fh:
+            old = _flat(yaml.safe_load(fh), [])
+        with open(os.path.join(ROOT, "roles/vmware_vm/tasks/watch.yml")) as fh:
+            tasks = yaml.safe_load(fh)
+        probe = {"name": "unguarded probe", "ansible.builtin.debug": {"msg": "example"}}
+        for guard in (None, "not vm_watch_review | bool", "_vm_w_review | bool or other"):
+            with self.subTest(guard=guard), self.assertRaisesRegex(AssertionError, "unguarded probe"):
+                self.assert_watch_tasks(old, tasks + [dict(probe, when=guard) if guard else probe])
+
+    def test_raw_review_ids_through_throttle_and_artifacts(self):
+        import outage_timeline_filters as ot
+        from vmware_watch_filters import FilterModule
+
+        tasks = _tasks("roles/vmware_vm/tasks/watch.yml")
+        mail = _tasks("roles/vmware_vm/tasks/watch_email.yml")
+        env, ctx = _render_context(True)
+        env.filters.update(FilterModule().filters(), outage_redact=ot.outage_redact)
+        vc, host = "vc.example.mil", "esx-token-01"
+        cid = "vm-watch:host:" + host
+        state = dict(ids={cid + "@" + vc: "critical"}, review_ts=1000, sent_ts=1000)
+        raw = dict(hosts=[dict(name=host, vcenter=vc, connection="disconnected")], vcenters=[dict(name=vc, ok=True, error="")])
+        ctx.update(_vm_w=raw, _vm_w_actions={}, _vm_prot=dict(ids=[], names=[]),
+                   vm_watch_protect=[], vm_watch_one_signal_severity="warning", _vm_now=1100,
+                   vm_watch_email_on_change=True, vm_watch_email_every_hours=4,
+                   _site_hist_runs=[dict(artifacts=dict(vm_watch_email_state=state))])
+        ctx["now"] = lambda: datetime.datetime.fromtimestamp(1100, datetime.timezone.utc)
+        conditions = tasks["VMware | what was found, and what phase 2 would restart (nothing is restarted)"]
+        ctx["_vm_w_cond"] = _render_fact(conditions, "_vm_w_cond", env, ctx)
+        decision = next(t for t in mail.values() if "_vm_w_mail" in t.get("ansible.builtin.set_fact", {}))
+        stats = next(t["ansible.builtin.set_stats"]["data"] for t in tasks.values() if "site_health for" in t["name"])
+        for scheduled in (True, False):
+            with self.subTest(scheduled=scheduled):
+                ctx["awx_job_launch_type"] = "scheduled" if scheduled else "manual"
+                result = _render_fact(decision, "_vm_w_mail", env, ctx)
+                ctx["_vm_w_review"] = result["review"]
+                self.assertEqual(result["review"], not scheduled)
+                self.assertEqual(result["state"]["ids"], state["ids"])
+                self.assertEqual(result["send"], not scheduled)
+                health = env.from_string(stats["site_health"]).render(ctx)
+                artifact = env.from_string(stats["vm_watch"]).render(ctx)
+                self.assertEqual(health[vc]["findings"][0]["id"], cid)
+                self.assertEqual(artifact["conditions"][0]["id"], cid)
+
+    def test_raw_sso_read_hidden_on_watch_review(self):
+        tasks = _tasks("roles/vmware_vm/tasks/sso_read.yml")
+        read = next(t for t in tasks.values() if t.get("register") == "_vm_sso")
+        guard = read.get("no_log", False)
+        env, ctx = _render_context(True)
+        watch = _tasks("roles/vmware_vm/tasks/watch.yml")
+        include = next(t for t in watch.values() if t.get("ansible.builtin.include_tasks") == "sso_read.yml")
+        for review in (True, False):
+            ctx["vm_watch_review"] = review
+            for key, expr in include.get("vars", {}).items():
+                ctx[key] = env.from_string(expr).render(ctx) if isinstance(expr, str) else expr
+            self.assertEqual(env.from_string(str(guard)).render(ctx), review)
 
     def test_3_a_scheduled_time_line_is_1_118_4s(self):
         import outage_timeline_filters as ot
@@ -136,6 +241,7 @@ class Frozen(unittest.TestCase):
         name = "VMware | vCenter's events of the window"
         scheduled = dict(new[name])
         self.assertTrue(env.compile_expression(scheduled.pop("when"))(**context))
+        self.assertFalse(env.from_string(scheduled.pop("no_log")).render(context))
         self.assertEqual(scheduled, old[name])
         block = "VMware | the outage time line (vm_watch_review, vm_watch_timeline)"
         self.assertIn(new[name], new[block]["block"])
@@ -145,6 +251,57 @@ class Frozen(unittest.TestCase):
             task, = tasks[block]["rescue"]
             return env.from_string(task["ansible.builtin.debug"]["msg"]).render(context)
         self.assertEqual(rescue_message(new), rescue_message(old))
+
+    def test_watch_output_redaction(self):
+        import outage_timeline_filters as ot
+        from vmware_watch_filters import FilterModule
+
+        tasks = _tasks("roles/vmware_vm/tasks/watch.yml")
+        attachments = _tasks("roles/incident_docs/tasks/review_draft.yml")
+        raw = "password=EXAMPLE_VALUE"
+        report = tasks["VMware | outage report"]["vars"]
+        make = tasks["VMware | the report"]["ansible.builtin.set_fact"]["_vm_w_doc"]
+        below = next(t for name, t in tasks.items() if "below the report threshold" in name)
+        for review in (False, True):
+            env, ctx = _render_context(review)
+            env.filters.update(FilterModule().filters())
+            env.filters.update(outage_redact=ot._redact, report_text=lambda d: d["title"])
+            env.filters["vm_watch_report"] = lambda *args: dict(title=raw, sections=[])
+            env.filters["vm_watch_not_judged"] = lambda _: [dict(name="example-vm", why=raw)]
+            env.filters["zip"] = zip
+            ctx.update(_vm_w=dict(vcenters=[dict(name="vc", error=raw)]), _vm_w_actions={},
+                       _vm_w_cond=[dict(summary=raw, severity="warning")], _vm_w_tl={},
+                       _vm_w_mail=dict(kind="review", send=False), ansible_failed_result=dict(msg=raw))
+            def render(expr):
+                return env.from_string(expr).render(ctx)
+            ctx["_vm_w_doc"] = render(make)
+            expected = "password=<removed>" if review else raw
+            for key in ("_vm_vcenters", "_vm_report_subject", "_vm_report_lines"):
+                with self.subTest(review=review, key=key):
+                    self.assertIn(expected, str(render(report[key])))
+            if review:
+                ctx["_vm_w_tl"] = dict(closed_window=True, lines=["historical review"])
+                self.assertEqual(render(report["_vm_report_lines"]), ["historical review"])
+            self.assertIn(expected, str(render(below["ansible.builtin.debug"]["msg"])))
+            if review:
+                self.assertNotIn("EXAMPLE_VALUE", str(render(below["ansible.builtin.debug"]["msg"])))
+                for group, name, key in ((tasks, "VMware | the AAR draft was not made (the review goes on without it)", "_vm_w_aar_error"),
+                        (attachments, "Incident docs | the AAR draft was not made (the review goes on without it)", "_rd_error"),
+                        (attachments, "Incident docs | record the handoff write error", "_rd_noc_error")):
+                    self.assertEqual(render(group[name]["ansible.builtin.set_fact"][key]), expected)
+
+    def test_requested_numbers_reach_the_review_filter(self):
+        tasks = _tasks("roles/vmware_vm/tasks/watch.yml")
+        env, ctx = _render_context(True)
+        ctx.update(_vm_w=dict(hosts=[], datastores=[], vcenters=[], read_at=2400), _site_hist_runs=[],
+                   _site_hist_why="", vm_watch_review_object="", vm_watch_review_tickets="inc0001, INC0002",
+                   vm_watch_review_noise=True, vm_watch_review_noise_alarms=[], outage_aar_appendix_max=0,
+                   outage_escalate_storage="", outage_escalate_network="", outage_escalate_vmware="",
+                   outage_escalate_backup="", outage_ops_center="NOC", _vm_w_review_ev=dict(events=[], capped=[], vcenters=[]))
+        inventory = tasks["VMware | the watch inventory and recorded roots for this review"]
+        ctx["_vm_w_review_opts"] = _render_fact(inventory, "_vm_w_review_opts", env, ctx)
+        _, _, opts = _render_fact(tasks["VMware | the time line"], "_vm_w_tl", env, ctx)
+        self.assertEqual(opts["review_tickets"], ["inc0001", "INC0002"])
 
     def test_review_event_read_rescue(self):
         import outage_timeline_filters as ot
@@ -186,6 +343,74 @@ class Frozen(unittest.TestCase):
                 if not runs:
                     self.assertIn("events not read", sections[0]["lines"][0])
 
+
+# 1.116.4: the task files watch.yml includes on every run. Each task that differs from 1.118.4 is listed with why a
+# scheduled run (no review) does exactly what it did; every differing value is rendered for a scheduled run and must
+# equal 1.118.4's (an absent no_log is false).
+INCLUDED = {
+    "roles/vmware_vm/tasks/sso_read.yml": ("tests/fixtures/sso_read_1184.yml", {
+        "VMware | single sign-on - services, STS certificate, identity providers, a test login - and the OCSP responders":
+            "no_log from _vm_sso_review, which only a review sets: false on a scheduled run"}),
+    "roles/vmware_vm/tasks/vcenters_read.yml": ("tests/fixtures/vcenters_read_1184.yml", {
+        "VMware | every vCenter was read": "the errors are masked only when _vm_redact_errors (a review) is set"}),
+    "roles/vmware_vm/tasks/watch_email.yml": ("tests/fixtures/watch_email_1184.yml", {
+        "VMware | the watch's last email, from AAP (vm_watch_email_state)": "apply: no_log from vm_watch_review",
+        "VMware | does this run email (vm_watch_email_on_change, vm_watch_email_every_hours)": "no_log from vm_watch_review",
+        "VMware | the watch's email": "the lines are masked only on a review"}),
+}
+
+
+def _leaves(d, path=()):
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if k not in ("block", "rescue", "always"):
+                yield from _leaves(v, path + (k,))
+    else:
+        yield path, d
+
+
+class Included1164(unittest.TestCase):
+    def _env(self):
+        import jinja2
+        from ansible.plugins.filter.core import FilterModule
+        env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+        core = FilterModule().filters()
+        env.filters.update(bool=core["bool"], combine=core["combine"])
+        env.filters["outage_redact"] = lambda *_: self.fail("a scheduled run called outage_redact")
+        return env
+
+    def _render(self, env, value, ctx):
+        if not isinstance(value, str) or "{" not in value:
+            return value
+        out = env.from_string(value).render(ctx)
+        return {"True": True, "False": False}.get(out.strip(), out)
+
+    def test_included_files_differ_only_where_allowed_and_render_as_1_118_4(self):
+        ctx = dict(vm_watch_review=False, vm_watch_email_on_change=True, _vm_w_mail=dict(lines=["password=EXAMPLE_VALUE"]),
+                   _vm_vcenters=[dict(name="vc", error="password=EXAMPLE_VALUE")])
+        env = self._env()
+        for path, (fixture, allowed) in INCLUDED.items():
+            with open(os.path.join(ROOT, fixture)) as fh:
+                old = dict((t.get("name"), t) for t in _flat(yaml.safe_load(fh), []))
+            with open(os.path.join(ROOT, path)) as fh:
+                new = dict((t.get("name"), t) for t in _flat(yaml.safe_load(fh), []))
+            self.assertEqual(sorted(new), sorted(old), "%s: a task added, removed or renamed" % path)
+            for name, task in new.items():
+                was = dict(_leaves(old[name]))
+                now = dict(_leaves(task))
+                differ = sorted(k for k in set(was) | set(now) if was.get(k) != now.get(k))
+                if not differ:
+                    continue
+                self.assertIn(name, allowed, "%s: %s changed" % (path, name))
+                for key in differ:
+                    want = self._render(env, was.get(key, False if key[-1] == "no_log" else None), ctx)
+                    got = self._render(env, now.get(key, False if key[-1] == "no_log" else None), ctx)
+                    self.assertEqual(got, want, "%s: %s %s renders differently on a scheduled run" % (path, name, "/".join(key)))
+
+    def test_an_unguarded_change_fails(self):
+        env = self._env()
+        self.assertTrue(self._render(env, "{{ true }}", {}))           # what an unguarded no_log would give: not 1.118.4's
+        self.assertFalse(self._render(env, "{{ vm_watch_review | bool }}", dict(vm_watch_review=False)))
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
