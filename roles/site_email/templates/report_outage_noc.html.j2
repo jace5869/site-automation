@@ -1,6 +1,6 @@
 <p>One card per pattern this outage showed, in the order it appeared. The checks below are read-only.</p>
 {% if s.noc_file | default('') %}
-<p class="kb-hand"><b>Hand this to the NOC:</b> <a class="dl" href="site-report-file:{{ s.noc_file | urlencode }}" download>{{ s.noc_file | e }}</a> &middot; one page, also attached to the email.</p>
+<p class="kb-hand"><b>Hand this to the {{ s.ops_center | default('NOC') | e }}:</b> <a class="dl" href="site-report-file:{{ s.noc_file | urlencode }}" download>{{ s.noc_file | e }}</a> &middot; one page, also attached to the email.</p>
 {% endif %}
 {% if s.noc_error | default('') %}<p>{{ s.noc_error | e }}</p>{% endif %}
 <div class="kb-grid">

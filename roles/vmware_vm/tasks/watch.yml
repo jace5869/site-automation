@@ -139,19 +139,34 @@
           no_log: true
 
     - name: VMware | vCenter's events of the window
-      site_vmware_outage_events:
+      when: not _vm_w_review | bool
+      site_vmware_outage_events: &watch_event_args
         datacenter: "{{ vmware_datacenter | default(omit, true) }}"
         vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
         validate_certs: "{{ vmware_validate_certs | bool }}"
         begin: "{{ _vm_w_win.begin | float }}"
         end: "{{ _vm_w_win.end | float }}"
-        review: "{{ true if _vm_w_review | bool else omit }}"
         event_types: "{{ vm_watch_review_event_types | name_list }}"
         max_events: "{{ vm_watch_review_max_events | int }}"
         lookback_hours: "{{ vm_watch_review_lookback_hours | float }}"
-      no_log: "{{ _vm_w_review | bool }}"
       register: _vm_w_ev
       check_mode: false                  # read-only: a dry run (Check) reads and reports the same
+
+    - name: VMware | the review's event read
+      when: _vm_w_review | bool
+      block:
+        - name: VMware | read the review's vCenter events
+          site_vmware_outage_events:
+            <<: *watch_event_args
+            review: true
+            review_storage_events: true
+          register: _vm_w_review_ev
+          no_log: true
+          check_mode: false
+      rescue:
+        - name: VMware | keep the watch history when the review's event read failed
+          ansible.builtin.set_fact:
+            _vm_w_review_ev: {events: [], capped: [], vcenters: [], events_not_read: true}
 
     - name: VMware | the tickets of the window (ServiceNow, GET only; skipped without the ServiceNow API credential)
       site_outage_tickets:
@@ -171,20 +186,25 @@
 
     # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
     - name: VMware | the time line
+      vars:
+        _vm_w_read: "{{ _vm_w_review_ev if _vm_w_review | bool else _vm_w_ev }}"
       ansible.builtin.set_fact:
         _vm_w_tl: >-
-          {{ _vm_w_ev.events | outage_timeline(_vm_w_tk.tickets | default([]),
+          {{ _vm_w_read.events | outage_timeline(_vm_w_tk.tickets | default([]),
                {'begin': _vm_w_win.begin, 'end': _vm_w_win.end, 'fixed': _vm_w_review | bool and vm_watch_review_from | string | trim | length > 0,
                 'time_zone': report_time_zone | default('', true) | string,
                 'low_seconds': vm_watch_review_low_seconds | float,
                 'min_seconds': vm_watch_review_min_seconds | float, 'skip_blips': vm_watch_review_skip_blips | bool,
-                'job': awx_job_id | default('') | string, 'review': _vm_w_review | bool,
+                'review': _vm_w_review | bool,
                 'triggers': _vm_w_cond | default([]),
                 'tickets_asked': _vm_w_tk.asked | default(false), 'tickets_error': _vm_w_tk.error | default(''),
-                'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_ev.capped, 'instance': _vm_w_tk.instance | default(''),
+                'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_read.capped, 'instance': _vm_w_tk.instance | default(''),
                 'table': servicenow_table | default('incident', true) | string,
                 'report_on': vm_watch_report_on | name_list,
-                'min_severity': servicenow_min_severity | default('warning', true)} | combine(_vm_w_review_opts if _vm_w_review | bool else {})) }}
+                'min_severity': servicenow_min_severity | default('warning', true)}
+               | combine((_vm_w_review_opts | combine({'job': awx_job_id | default('') | string, 'outage_ops_center': outage_ops_center,
+                   'event_vcenters': _vm_w_read.vcenters, 'events_not_read': _vm_w_read.events_not_read | default(false)}))
+                         if _vm_w_review | bool else {})) }}
   rescue:
     - name: VMware | the time line was not made (the watch goes on without it)
       ansible.builtin.debug:
@@ -304,9 +324,10 @@
               {{ _vm_w_mail.send | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0) }}
             _vm_w_aar_info: >-
               {{ {'file': _vm_w_aar_file.filename | default(''), 'error': _vm_w_aar_error, 'job': awx_job_id | default('') | string,
-                  'csv_file': _vm_w_csv_file.filename | default(''), 'noc_file': _vm_w_noc_file.filename | default(''), 'noc_error': _vm_w_noc_error | default(''),
-                  'asked': _vm_w_aar | length > 0 and vm_watch_review_docx | bool, 'draft': _vm_w_aar | length > 0,
-                  'review': _vm_w_review | bool} }}
+                  'asked': _vm_w_aar | length > 0 and vm_watch_review_docx | bool, 'draft': _vm_w_aar | length > 0}
+                  | combine({'review': true, 'csv_file': _vm_w_csv_file.filename | default(''),
+                             'noc_file': _vm_w_noc_file.filename | default(''), 'noc_error': _vm_w_noc_error | default('')}
+                            if _vm_w_review | bool else {}) }}
 
         - name: VMware | outage report
           ansible.builtin.include_tasks: report.yml
@@ -320,7 +341,8 @@
             _vm_report_attachments: >-
               {{ ([_vm_w_aar_file | combine({'desc': 'Word document - the after action report (AAR) draft, filled from this outage review: '
                                                     ~ 'check it and finish it before you send it'})] if _vm_w_review | bool and _vm_w_aar_file.path | default('') else [])
-                 + ([_vm_w_noc_file | combine({'desc': 'Word document - Hand this to the NOC: one page, what is down now, what went down and '
+                 + ([_vm_w_noc_file | combine({'desc': 'Word document - Hand this to the ' ~ _vm_w_tl.draft.outage_ops_center
+                                                      ~ ': one page, what is down now, what went down and '
                                                       ~ 'what it affected, and what each pattern usually means'})]
                     if _vm_w_review | bool and _vm_w_noc_file.path | default('') else [])
                  + ([_vm_w_csv_file] if _vm_w_review | bool and _vm_w_csv_file.path | default('') else []) }}

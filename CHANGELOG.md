@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.116.2 — 2026-11-23
+
+**To set up:** nothing. Optional: `outage_ops_center`, what your site calls its operations center (default `NOC`).
+
+- **VM outage review: an outage the watch recorded is reviewed again.** The 1.116.0 review read a datastore or host
+  from the watch's runs only when the condition carried vCenter's object id. The watch (1.112 to 1.118) records them by
+  name, so a review over a real outage could show nothing: "No outage event in the chain" and 0/0/0 in Issues by type.
+  Now every form the watch has written is read. A name is matched to the one object of that name in the same vCenter;
+  one that is gone, renamed or not unique is kept by its name and marked "not matched to a current object".
+- **When the watch recorded nothing**, vCenter's own loss events of the window start the review (datastore not
+  accessible, lost access, APD, PDL, NFS server lost; host disconnected or not responding), each named with its event.
+  Then the datastores of the VMs down now. A review that still finds nothing says at the top what was read and found
+  empty, never only zeros. A failed event read keeps what the watch recorded and says "vCenter events not read".
+- **A VM down now** is always in Down now and in Issues by type > VMs, with its datastores.
+- **Not a datastore outage:** a VM's own APD event, and the alarm "Datastore connectivity redundancy degraded".
+- `vm_watch_review_object` also takes a name that is no longer in vCenter (from the watch's runs or vCenter's events).
+- `outage_ops_center` names the operations center in the review's cards, the email, the handoff, its file name and the
+  AAR's Appendix B.
+- The scheduled watch is still 1.118.4's: tests/test_watch_frozen.py now also renders the scheduled tasks' expressions
+  and compares them with 1.118.4's.
+- Tests: tests/test_outage_timeline.py Review1162, tests/test_watch_frozen.py, tests/test_vmware_modules.py (the
+  review's storage events).
+
 ## 1.122.0 — 2026-11-23
 
 **To set up:** AAP - set up job templates makes the template (or by hand: playbook playbooks/win_local_groups.yml, the

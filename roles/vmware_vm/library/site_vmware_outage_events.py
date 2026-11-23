@@ -22,6 +22,7 @@ options:
   begin: {description: The start of the stretch (seconds since 1970)., type: float, required: true}
   end: {description: Its end (seconds since 1970)., type: float, required: true}
   review: {description: Include the inventory references carried by the event in a requested review., type: bool, default: false}
+  review_storage_events: {description: Include datastore access and NFS connection changes in the built-in review list and read their volume names., type: bool, default: false}
   event_types: {description: "The event types read (vCenter's event type names); none = the built-in list.", type: list, elements: str}
   max_events: {description: At most this many events per vCenter (the newest are kept)., type: int, default: 2000}
   lookback_hours: {description: "Also read the alarms' status changes (AlarmStatusChangedEvent) this many hours before I(begin): the raise of an alarm that goes back to normal in the stretch, whenever it was raised. 0 = not.", type: float, default: 0}
@@ -47,6 +48,7 @@ vcenters:
 '''
 
 import datetime
+import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_vcenters import each_vcenter
@@ -81,6 +83,10 @@ EVENT_TYPES = [
     # every alarm that changed its colour
     "AlarmStatusChangedEvent"]
 
+NFS_EVENTS = ["esx.problem.vmfs.nfs.server.disconnect", "esx.clear.vmfs.nfs.server.restored",
+              "esx.problem.vmfs.nfs.server.restored"]
+REVIEW_STORAGE_EVENTS = ["DatastoreInaccessibleEvent", "DatastoreAccessibleEvent"] + NFS_EVENTS
+
 
 def _iso(t):
     if t is None:
@@ -112,7 +118,7 @@ def _event_moid(event, argument, ref):
     return getattr(getattr(getattr(event, argument, None), ref, None), "_moId", "")
 
 
-def record(e, review=False):
+def record(e, review=False, review_storage_events=False):
     """One event as the time line reads it."""
     args = {}
     for a in getattr(e, "arguments", None) or []:
@@ -133,10 +139,14 @@ def record(e, review=False):
         row.update({"host_moid": _event_moid(e, "host", "host"), "vm_moid": _event_moid(e, "vm", "vm"),
             "datastore": _name(getattr(e, "ds", None)), "datastore_moid": _event_moid(e, "ds", "datastore"),
             "entity_moid": _event_moid(e, "entity", "entity")})
+        if review_storage_events and row["type"] in NFS_EVENTS and not row["datastore"]:
+            # NFS EventEx arguments are server, export, UUID and volume name (Broadcom KB 404260).
+            named = re.search(r'\bmounted as\s+\S+\s+\("([^"]+)"\)', message, re.I)
+            row["datastore"] = args.get("volumeName") or args.get("volume-name") or args.get("4") or (named[1] if named else "")
     return row
 
 
-def _events(content, root, begin, end, types, cap, review=False):
+def _events(content, root, begin, end, types, cap, review=False, review_storage_events=False):
     """-> (the events between begin and end, oldest first; True when there were more than cap)."""
     spec = vim.event.EventFilterSpec(time=vim.event.EventFilterSpec.ByTime(beginTime=begin, endTime=end), eventTypeId=list(types))
     if root is not None:
@@ -164,7 +174,7 @@ def _events(content, root, begin, end, types, cap, review=False):
     # a simulator (and an old vCenter) may ignore the end time: keep to the stretch here too
     keep = [e for e in found.values() if e.createdTime is not None and _iso(begin) <= _iso(e.createdTime) <= _iso(end)]
     keep.sort(key=lambda x: (x.createdTime, x.key))
-    return [record(e, review) for e in keep[-cap:]], more or len(keep) > cap
+    return [record(e, review, review_storage_events) for e in keep[-cap:]], more or len(keep) > cap
 
 
 def _read(content, p, name):
@@ -176,7 +186,10 @@ def _read(content, p, name):
         root = dcs[0]
     begin = datetime.datetime.fromtimestamp(p["begin"], tz=datetime.timezone.utc)
     end = datetime.datetime.fromtimestamp(p["end"], tz=datetime.timezone.utc)
-    events, capped = _events(content, root, begin, end, p["event_types"], max(1, int(p["max_events"])), p.get("review", False))
+    review = p.get("review", False)
+    storage = review and p.get("review_storage_events", False)
+    types = p["event_types"] or (EVENT_TYPES + REVIEW_STORAGE_EVENTS if storage else EVENT_TYPES)
+    events, capped = _events(content, root, begin, end, types, max(1, int(p["max_events"])), review, storage)
     if p["lookback_hours"] > 0:                  # 1.79.12: the alarms raised before the stretch (the time line keeps those that clear in it)
         back = begin - datetime.timedelta(hours=float(p["lookback_hours"]))
         before, more = _events(content, root, back, begin, ["AlarmStatusChangedEvent"], max(1, int(p["max_events"])), p.get("review", False))
@@ -193,15 +206,14 @@ def main():
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
                            vcenters=dict(type="list", elements="str", default=[]),
                            begin=dict(type="float", required=True), end=dict(type="float", required=True),
-                           review=dict(type="bool", default=False), event_types=dict(type="list", elements="str"), max_events=dict(type="int", default=2000),
+                           review=dict(type="bool", default=False), review_storage_events=dict(type="bool", default=False),
+                           event_types=dict(type="list", elements="str"), max_events=dict(type="int", default=2000),
                            lookback_hours=dict(type="float", default=0)),
         supports_check_mode=True,
     )
     if not HAS_PYVMOMI:
         module.fail_json(msg="pyVmomi is not installed in the execution environment (the vmware.vmware collection needs it too)")
     p = module.params
-    if not p["event_types"]:
-        p["event_types"] = EVENT_TYPES
     if p["end"] <= p["begin"]:
         module.fail_json(msg="The outage review's stretch of time ends before it starts (vm_watch_review_from, vm_watch_review_to).")
     done, statuses = each_vcenter(module, lambda si, content, name: _read(content, p, name), p["vcenters"],

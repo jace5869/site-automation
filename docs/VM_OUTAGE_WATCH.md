@@ -236,15 +236,22 @@ Leave `vm_watch_review` off on the schedule. A scheduled run that finds somethin
 The review names the inaccessible datastores and down hosts recorded by the watch. It combines this
 run's conditions with this job template's `vm_watch` artifacts in the requested window, using the AAP
 credential already used for email history. The Reviewed line lists each root with its vCenter.
-To review a particular datastore or host, set `vm_watch_review_object` to its inventory name.
-When AAP history is unavailable, the review says so and uses the available roots.
+Older runs can identify a datastore or host by name. The review matches it against the current read of the same vCenter.
+If there is no unique match, *How it judged* says so and the review follows events under the recorded name.
+Set `vm_watch_review_object` to a current name, a recorded name or the object name in a vCenter event.
+
+If the watch supplies no roots, the review uses datastore or host loss events in the requested window and shows each
+event's type and time. If there are none, it reviews the datastores of VMs down now. A VM's placement alone does not
+establish that its datastore lost access. When no root is found, the page, email and AAR say how many watch runs were
+read and what the vCenter event read showed.
 
 1. **What went down** gives the roots, their hosts, down spans and recoveries. Overlapping datastore losses
    on the same host in the same vCenter share a chain. Separate roots keep their own entries.
 2. **What it affected** lists datastore and host members and the watch's findings on those VMs. It counts
    HA restarts in a failed host's cluster during its down span. A VM known only from membership reads
    *on the lost datastore (state not read)* or *on the down host (state not read)*.
-3. **Down now** gives every current watch condition across all vCenters, worst first.
+3. **Down now** gives every current watch condition across all vCenters, worst first. Each down VM is also listed
+   under **Issues by type > VMs**, with its datastores when known.
 4. **Recovered** gives the object, recovery event, time and duration when recorded.
 
 With `vm_watch_review_noise: true`, usage alarms, gray transitions, unpaired greens and brief flaps
@@ -287,6 +294,9 @@ about the lost datastores, their hosts or affected VMs. A ring on a usage or gra
 The first tick and each midnight carry a date. A solid red outline covers the window across the lanes and a dashed
 extension identifies objects still down. Nearby events share a numbered mark. Hover or focus it for its events and times.
 The workbook and CSV preserve every source event. The scheduled watch retains its detailed four-lane timeline.
+
+`outage_ops_center` sets the operations center name on the review cards, email, handoff and AAR (default `NOC`).
+The Word handoff filename uses letters, digits, hyphens and underscores in that name.
 
 The NOC cards use fixed entries in `roles/vmware_vm/files/outage_patterns.yml`. Each entry names its event types or
 raised alarm names and the teams to call. Configure the four `outage_escalate_*` settings below to print site contacts.
@@ -425,9 +435,10 @@ the ticket, not a finding.
 | `vm_watch_email_every_hours` | 4 | a reminder while the conditions last, this long after the last email; 0 = never. Also the most one scheduled review is made |
 | `vm_watch_review` | false | true, at launch: make the outage review now, also when nothing is down |
 | `vm_watch_review_hours` | 6 | how far back the review looks (0.25 to 744) |
-| `vm_watch_review_object` | "" | name of a datastore or host to review; empty reviews all watch roots |
+| `vm_watch_review_object` | "" | current or historical datastore or host name. Leave empty to review all roots |
 | `vm_watch_review_noise` | `true` | Group usage alarms, gray transitions and short flaps in the review. |
 | `vm_watch_review_noise_alarms` | `[CPU usage, memory usage, disk usage]` | Alarm name fragments counted as noise (case-insensitive). |
+| `outage_ops_center` | `NOC` | What your site calls its operations center in the outage review. |
 | `outage_escalate_storage` | `""` | NOC escalation contact. Empty uses "your storage team". |
 | `outage_escalate_network` | `""` | NOC escalation contact. Empty uses "your network team". |
 | `outage_escalate_vmware` | `""` | NOC escalation contact. Empty uses "your VMware team". |

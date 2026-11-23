@@ -1547,6 +1547,33 @@ class VmSecurity(unittest.TestCase):
 class OutageEntityType(unittest.TestCase):
     """1.90.2: an alarm's entity says what it is (host, VM, cluster), from its managed object's type - no call to vCenter."""
 
+    def test_review_storage_event_query_and_volume_name(self):
+        from datetime import datetime, timezone
+        from unittest.mock import Mock, patch
+        import ansible.module_utils
+        params = dict(datacenter="", begin=100, end=2400, event_types=[], max_events=99, lookback_hours=0)
+        disconnect = "esx.problem.vmfs.nfs.server.disconnect"
+        restored = "esx.clear.vmfs.nfs.server.restored"
+        extras = {disconnect, restored, "esx.problem.vmfs.nfs.server.restored", "DatastoreInaccessibleEvent", "DatastoreAccessibleEvent"}
+        message = 'Lost connection to the server nfs.example.mil mount point /export, mounted as example-uuid ("Example store")'
+        event = _Obj(key=1, createdTime=datetime.fromtimestamp(700, timezone.utc), eventTypeId=disconnect, message=message)
+        back = _Obj(key=2, createdTime=datetime.fromtimestamp(1200, timezone.utc), eventTypeId=restored,
+                    arguments=[_Obj(key="4", value="Example store")])
+        content = Mock()
+        collector = content.eventManager.CreateCollectorForEvents.return_value
+        collector.ReadPreviousEvents.return_value = []
+        utils = os.path.join(os.path.dirname(__file__), "..", "plugins", "module_utils")
+        with patch.object(ansible.module_utils, "__path__", [*ansible.module_utils.__path__, utils]), patch.object(oev, "vim", create=True) as vim:
+            for options, expected in (({}, set(oev.EVENT_TYPES)), (dict(review=True), set(oev.EVENT_TYPES)),
+                                      (dict(review=True, review_storage_events=True), set(oev.EVENT_TYPES) | extras),
+                                      (dict(review=True, review_storage_events=True, event_types=[disconnect]), {disconnect})):
+                collector.latestPage = [e for e in (event, back) if e.eventTypeId in expected]
+                rows = oev._read(content, dict(params, **options), "vc.example.mil")["events"]
+                self.assertEqual(set(vim.event.EventFilterSpec.call_args.kwargs["eventTypeId"]), expected)
+                self.assertEqual([r["datastore"] for r in rows], ["Example store"] * len(collector.latestPage))
+            self.assertNotIn("datastore", oev.record(event))
+            self.assertEqual(oev.record(event, review=True)["datastore"], "")
+
     def test_the_entity_type_of_an_alarm(self):
         try:
             from pyVmomi import vim

@@ -470,6 +470,218 @@ class ReviewCutB(unittest.TestCase):
                 self.assertIn("<removed>", str(rows))
 
 
+class Review1162(unittest.TestCase):
+    vc = "vc.example.mil"
+    ds = "SITEA-store"
+    vm = "SITEA-app"
+    host = "esx.example.mil"
+
+    def review(self, events=(), **opts):
+        return ot.outage_timeline(events, [], dict(begin=100, end=2400, review=True, **opts))
+
+    def event(self, typ, at=600, **fields):
+        return dict(time=at, type=typ, vcenter=self.vc, **fields)
+
+    def condition(self, kind, name, summary):
+        return dict(id="vm-watch:%s:%s" % (kind, name), severity="critical", kind=kind,
+                    object_type="vm" if kind in ("lost", "hung") else kind, object=name,
+                    vcenter=self.vc, datacenter="SITEA", cluster="", summary=summary)
+
+    def run_artifact(self, *conditions, **opts):
+        # Both releases kept these nine condition fields. Neither stored membership or inaccessible.
+        from datetime import datetime, timezone
+        at = datetime.fromtimestamp(opts.get("at", 700), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        artifact = dict(read_at=at, vcenters=[self.vc], checked=dict(hosts=1, datastores=1, vms=2),
+                        critical=len(conditions), warning=0, conditions=list(conditions),
+                        would_restart=[], protected=[], over_limit=[], not_judged=[])
+        finished = datetime.fromtimestamp(opts.get("finished", 2500), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return dict(finished=finished, artifacts=dict(vm_watch=artifact))
+
+    def store(self, moid="datastore-1", **fields):
+        return dict(name=self.ds, vcenter=self.vc, moid=moid, **fields)
+
+    def test_compact_watch_runs(self):
+        path = self.event("esx.problem.storage.apd.start", host=self.host, datastore=self.ds)
+        reset = self.event("VmDasBeingResetEvent", 800, vm=self.vm, host=self.host, datastore=self.ds)
+        clear = dict(path, time=1500, type="esx.clear.storage.apd.exit")
+        summaries = {"1.112.0": "datastore %s is not accessible: the VMs on it are hung or down",
+                     "1.118.4": "Datastore %s NOT ACCESSIBLE on 1 host (esx): all paths down since 00:10"}
+        for version, summary in summaries.items():
+            with self.subTest(version=version):
+                condition = self.condition("datastore", self.ds, summary % self.ds)
+                run = self.run_artifact(condition)
+                # Another host loss would be a root if the review silently fell back to events.
+                other = self.event("HostConnectionLostEvent", host="other.example.mil")
+                before = self.run_artifact(self.condition("host", self.host, "Host disconnected"), at=99, finished=700)
+                result = self.review([other, path, reset, clear], watch_runs=[before, run], datastores=[self.store()])
+                draft = result["draft"]
+                self.assertEqual([r[0] for r in draft["went"]], [self.ds])
+                self.assertIn("from the watch's conditions", draft["went_note"])
+                self.assertFalse(result["root_judgments"])
+                self.assertIn(self.vm, str(draft["affected"]))
+                self.assertEqual([r["time"]["clock"] for r in draft["story"]["rows"]],
+                                 ["00:10:00", "00:13:20", "00:25:00"])
+
+    def test_recorded_vm_and_root_without_current_inventory(self):
+        root = self.condition("datastore", self.ds, "datastore %s is not accessible: the VMs on it are hung or down" % self.ds)
+        vm = self.condition("lost", self.vm, "VM %s is inaccessible in vCenter: its files cannot be reached (datastore %s)"
+                            % (self.vm, self.ds))
+        path = self.event("esx.problem.storage.apd.start", host=self.host, datastore=self.ds, datastore_moid="datastore-9")
+        other_center = dict(self.store(), vcenter="other.example.mil")
+        for inventory in ([other_center], [self.store(), self.store("datastore-2")]):
+            with self.subTest(inventory=inventory):
+                result = self.review([path], watch_runs=[self.run_artifact(root, vm)], datastores=inventory, review_object=self.ds)
+                self.assertEqual([r[0] for r in result["draft"]["went"]], [self.ds])
+                self.assertIn(self.vm, str(result["draft"]["affected"]))
+                self.assertIn("All paths down", str(result["draft"]["story"]))
+                for web in (True, False):
+                    doc = ot.outage_timeline_doc(WATCH, result, web, True)
+                    judged = next(s for s in doc["sections"] if s["title"] == "How it judged")
+                    self.assertIn("%s (%s): not matched to a current object" % (self.ds, self.vc), str(judged["lines"]))
+
+    def test_name_and_qualified_ids(self):
+        host = self.condition("host", self.host, "ESXi host %s is disconnected" % self.host)
+        r = self.review([], watch_runs=[self.run_artifact(host)], hosts=[dict(name=self.host, moid="host-1", vcenter=self.vc)])
+        self.assertEqual(r["draft"]["went"][0][0], "esx")
+        self.assertFalse(r["root_judgments"])
+        root = self.condition("datastore", self.ds, "datastore %s is not accessible: the VMs on it are hung or down" % self.ds)
+        for qualifier in (self.ds, self.vc):
+            c = dict(root, id="vm-watch:datastore:%s:datastore-2" % qualifier)
+            r = self.review([], watch_runs=[self.run_artifact(c)], datastores=[self.store(), self.store("datastore-2")])
+            self.assertEqual(r["draft"]["went"][0][0], self.ds + " [datastore-2]")
+            self.assertFalse(r["root_judgments"])
+
+    def test_requested_current_datastore_name(self):
+        old = "SITEA-old"
+        root = self.condition("datastore", old, "datastore %s is not accessible: its files cannot be reached" % old)
+        for qualifier in (old, self.vc):
+            with self.subTest(qualifier=qualifier):
+                run = self.run_artifact(dict(root, id="vm-watch:datastore:%s:datastore-1" % qualifier))
+                result = self.review(watch_runs=[run], review_object=self.ds, datastores=[self.store()])
+                row, = result["draft"]["went"]
+                self.assertEqual(row[:2], [self.ds, "Datastore, not accessible"])
+                self.assertNotIn("no loss recorded", result["title"])
+
+    def test_member_vm_apd_during_host_outage(self):
+        host = dict(name=self.host, vcenter=self.vc, moid="host-1", vms=[dict(name=self.vm, moid="vm-1")])
+        events = [self.event("HostDisconnectedEvent", host=self.host),
+                  self.event("esx.problem.storage.apd.start", 800, host=self.host, vm=self.vm, datastore=self.ds)]
+        result = self.review(events, hosts=[host])
+        self.assertEqual([row[0] for row in result["draft"]["went"]], ["esx"])
+        self.assertEqual([row[2] for row in result["draft"]["affected"]], ["1: " + self.vm])
+        self.assertIn("All paths down", ot.outage_events_csv(result["sheet"]))
+
+    def test_datastore_alarm_requires_loss(self):
+        event = self.event("AlarmStatusChangedEvent", entity_type="datastore", entity=self.ds, to="yellow")
+        for alarm in ("Datastore connectivity redundancy degraded", "Datastore connectivity redundancy lost",
+                      "Datastore accessibility", "Datastore connectivity"):
+            with self.subTest(alarm=alarm):
+                self.assertEqual(self.review([dict(event, alarm=alarm)])["draft"]["went"], [])
+        loss = dict(event, alarm="Datastore connectivity lost")
+        clear = dict(loss, time=1200, to="green")
+        draft = self.review([loss, clear])["draft"]
+        self.assertEqual([r[0] for r in draft["went"]], [self.ds])
+        self.assertEqual([r[0] for r in draft["recovered"]], [self.ds])
+
+    def test_events_only_roots_and_named_event(self):
+        cases = [(self.event("esx.problem.storage.apd.start", datastore=self.ds), self.ds),
+                 (self.event("esx.problem.vmfs.heartbeat.timedout", host=self.host,
+                             message="Lost access to volume abc1 (%s) due to connectivity issues." % self.ds), self.ds),
+                 (self.event("esx.problem.scsi.device.state.permanentloss", datastore=self.ds), self.ds),
+                 (self.event("AlarmStatusChangedEvent", alarm="Datastore inaccessible",
+                             entity_type="datastore", entity=self.ds, to="red"), self.ds),
+                 (self.event("HostDisconnectedEvent", host=self.host), self.host),
+                 (self.event("HostConnectionLostEvent", host=self.host), self.host)]
+        for event, name in cases:
+            for scope in ("", name):
+                with self.subTest(typ=event["type"], scope=scope):
+                    draft = self.review([event], review_object=scope)["draft"]
+                    self.assertEqual([r[0] for r in draft["went"]], [name])
+                    self.assertIn("from vCenter's event %s at 1970-01-01 00:10:00 UTC" % event["type"], draft["went_note"])
+                    self.assertEqual(draft["story"]["rows"][0]["time"]["clock"], "00:10:00")
+        clear = self.event("HostConnectedEvent", host=self.host)
+        self.assertEqual(self.review([clear], review_object=self.host)["draft"]["went"][0][0], self.host)
+        self.assertEqual(self.review([clear])["draft"]["went"], [])
+
+    def test_named_storage_events_with_uuid_only_apd(self):
+        apd = self.event("esx.problem.storage.apd.start", host=self.host, message="Device or filesystem with identifier [example-uuid]")
+        for loss, back in (("DatastoreInaccessibleEvent", "DatastoreAccessibleEvent"),
+                           ("esx.problem.vmfs.nfs.server.disconnect", "esx.clear.vmfs.nfs.server.restored"),
+                           ("esx.problem.vmfs.nfs.server.disconnect", "esx.problem.vmfs.nfs.server.restored")):
+            with self.subTest(loss=loss, back=back):
+                named = self.event(loss, 700, host=self.host, datastore=self.ds)
+                draft = self.review([apd, named, dict(named, type=back, time=1600)])["draft"]
+                self.assertEqual([r[0] for r in draft["went"]], [self.ds])
+                self.assertIn("from vCenter's event " + loss, draft["went_note"])
+                self.assertEqual([r[0] for r in draft["recovered"]], [self.ds])
+
+    def test_vm_down_now_and_datastore_fallback(self):
+        from vmware_watch_filters import vm_watch_conditions
+        stores = [self.store(), dict(self.store("datastore-2"), name="SITEA-backup")]
+        vm = dict(name=self.vm, vcenter=self.vc, moid="vm-1", verdict="hung",
+                  datastores=[d["name"] for d in stores], datastore_moids=[d["moid"] for d in stores])
+        triggers = vm_watch_conditions(dict(suspects=[vm]))
+        for events in ([], [self.event("HostConnectionLostEvent", host=self.host)]):
+            result = self.review(events, triggers=triggers, datastores=stores)
+            draft = result["draft"]
+            expected = [self.host] if events else [d["name"] for d in stores]
+            self.assertCountEqual([r[0] for r in draft["went"]], expected)
+            now, = draft["now"]
+            self.assertEqual(now[1], "VM " + self.vm)
+            by_type = next(s for s in result["web_sections"] if s.get("kind") == "by_kind")
+            item, = [v for i in by_type["issues"] if i["kind"] == "vm" for v in i["items"]]
+            self.assertEqual((item["name"], item["state"]), (self.vm, "Down now"))
+            for ds in vm["datastores"]:
+                self.assertIn(ds, now[2])
+                self.assertIn(ds, item["datastore"])
+            if not events:
+                self.assertIn("VM %s down now" % self.vm, draft["went_note"])
+                self.assertNotIn("not accessible", result["title"])
+
+    def test_empty_read_reason_on_page_email_and_aar(self):
+        import incident_doc_filters as docs
+        cpu = self.event("AlarmStatusChangedEvent", entity=self.vm, entity_type="vm", alarm="VM CPU usage", to="red")
+        cases = [([], [], "no watch runs were read for the window (is the AAP credential on the template?)"),
+                 ([self.run_artifact(), self.run_artifact(at=99)], [], "1 watch run read, none recorded"),
+                 ([self.run_artifact(), self.run_artifact(at=1000)], [cpu], "2 watch runs read, none recorded")]
+        for runs, events, expected in cases:
+            result = self.review(events, watch_runs=runs)
+            draft = docs.incident_review_draft(result["draft"])
+            aar = docs.incident_aar_docx({}, review=draft)["blocks"]
+            for line in [aar[1]["text"]] + [ot.outage_timeline_doc(WATCH, result, web, True)["sections"][0]["lines"][0]
+                                             for web in (False, True)]:
+                self.assertIn(expected, line)
+                self.assertIn("vCenter has no loss event in the window", line)
+
+    def test_ops_center_on_page_email_handoff_and_appendix(self):
+        from jinja2 import Environment, FileSystemLoader
+        import incident_doc_filters as docs
+        templates = Environment(loader=FileSystemLoader(os.path.join(REPO, "roles/site_email/templates")))
+        handoff_section = templates.get_template("report_outage_noc.html.j2")
+        event = self.event("esx.problem.storage.apd.start", host=self.host, datastore=self.ds)
+        for options, center, stem in (({}, "NOC", "NOC"), (dict(outage_ops_center="Ops"), "Ops", "Ops"),
+                                      (dict(outage_ops_center="SITEA_Ops / Duty"), "SITEA_Ops / Duty", "SITEA_Ops-Duty")):
+            result = self.review([event], **options)
+            draft = docs.incident_review_draft(result["draft"])
+            record = docs.incident_review_fill(docs.incident_record(dict(kind="aar")), draft)
+            name = docs.incident_file_name(record, "noc")
+            self.assertTrue(name.startswith(stem + "-handoff-"))
+            self.assertRegex(name, r"^[A-Za-z0-9_-]+\.docx$")
+            title = "What this usually means (for the %s)" % center
+            handoff = "Hand this to the " + center
+            info = dict(review=True, noc_file=name)
+            web = ot.outage_review_aar(ot.outage_timeline_doc(WATCH, result, True, True), info, True)
+            cards = next(s for s in web["sections"] if s.get("kind") == "noc")
+            self.assertEqual((cards["title"], cards["ops_center"], cards["noc_file"]), (title, center, name))
+            self.assertIn(handoff + ":", handoff_section.render(s=cards))
+            email = ot.outage_review_aar(ot.outage_timeline_doc(WATCH, result, False, True), info)
+            self.assertIn(handoff + ": " + name + " is attached.", str(email["sections"]))
+            self.assertEqual(docs.incident_noc_docx(draft)["blocks"][0]["text"], handoff)
+            headings = [b["text"] for b in docs.incident_aar_docx(record, review=draft)["blocks"] if b["type"] == "heading"]
+            self.assertIn(title, headings)
+            self.assertIn("Appendix B - " + handoff, headings)
+
+
 class SmartReview(unittest.TestCase):
     def test_director_outage(self):
         events, tickets_, opts = director_outage()
@@ -560,9 +772,9 @@ class SmartReview(unittest.TestCase):
         h = dict(name="host-example", moid="host-1")
         rows = [dict(type="HostConnectionLostEvent", time=1000, host=h["name"], vcenter="vc")]
         opts = dict(begin=500, end=6000, watch_runs=[watch_run(499, [h]), watch_run(6001, [h])])
-        r = ot.outage_timeline(rows, [], opts)
+        r = ot.outage_timeline([], [], opts)
         self.assertFalse(r["numbers"]["hosts_down"])
-        self.assertIn("No matching", r["sections"][1]["lines"][0])
+        self.assertIn("no watch runs were read", r["sections"][0]["lines"][0])
         store = dict(name="ds-1", moid="datastore-1")
         run = watch_run(1500, [h], [store])
         path = next(c for c in run["artifacts"]["vm_watch"]["conditions"] if c["kind"] == "datastore")
@@ -800,6 +1012,8 @@ class SmartReview(unittest.TestCase):
         items = next(i["items"] for i in r["issues"] if i["kind"] == "ds")
         self.assertEqual({i["name"]: i["what"] for i in items},
                          {"app0": "on the lost datastore (state not read)", "app1": "invalid", "app2": "hung", "app3": "no heartbeat"})
+        one_signal, = [i for i in r["issues"] if i["kind"] == "vm" and i["what"] == "no heartbeat"]
+        self.assertEqual((one_signal["state"], one_signal["items"][0]["state"]), ("Not judged", "Not judged"))
         self.assertEqual(len(r["draft"]["now"]), len(cond))
         h = dict(name="example-host", moid="host-1", connection="notResponding", vcenter="vc", vms=members)
         cond = vm_watch_conditions(dict(hosts=[h]))
@@ -1143,7 +1357,8 @@ class Parts(unittest.TestCase):
         node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign) and n.targets[0].id == "EVENT_TYPES")
         types = ast.literal_eval(node.value)
         self.assertEqual(len(types), len(set(types)))
-        self.assertEqual(set(types), set(ot.TYPES) - {"VmPoweredOffEvent", "VmPoweredOnEvent", "esx.problem.vmfs.nfs.volume.no.space"})
+        self.assertEqual(set(types), set(ot._v1184.TYPES))
+        self.assertTrue(set(types).issubset(ot.TYPES))
         for typ, (lane, level, label, kind, role) in ot.TYPES.items():
             self.assertIn(lane, ot.LANE, typ)
             self.assertIn(level, ot.WORD, typ)
@@ -2671,7 +2886,7 @@ class AarDraft1120(unittest.TestCase):
         self.assertTrue(d["follow_up"].startswith("the ticket came 54 min after the first signal"))
         self.assertEqual(d["ticket_hint"], "ACT in INC0012345: " + ACT)
         self.assertNotIn("root_cause", d)
-        self.assertEqual(reviewed([], [])["draft"], {})                                   # nothing to draft from
+        self.assertEqual(reviewed([], [])["draft"]["empty_read"]["runs"], 0)
         many = [ev("01:%02d:%02d" % (i // 60, i % 60), "VmFailoverFailed", vm="app%03d" % i) for i in range(400)]
         host = ev("00:59:00", "HostConnectionLostEvent", H)
         d = reviewed([host] + [dict(e, host=H) for e in many], [], watch_runs=[

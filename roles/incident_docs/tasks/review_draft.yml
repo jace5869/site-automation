@@ -30,7 +30,7 @@
         _rd_file: {}
         _rd_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | truncate(200) }}"
 
-- name: Incident docs | write the NOC handoff
+- name: Incident docs | write the operations center handoff
   block:
     - name: Incident docs | write {{ _rd_record | incident_file_name('noc') }}
       site_docx:
@@ -39,7 +39,7 @@
       register: _rd_noc_written
       check_mode: false
 
-    - name: Incident docs | the NOC attachment
+    - name: Incident docs | the handoff attachment
       ansible.builtin.set_fact:
         _rd_noc_file: {path: "{{ _rd_noc_written.path }}", filename: "{{ _rd_noc_written.path | basename }}"}
         _rd_noc_error: ""

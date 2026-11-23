@@ -20,9 +20,10 @@
 # vm_watch_protect: []                           # e.g. [DC*, SQL*]: a ticket only, never a restart (phase 2)
 ## The outage review (the time line): launch this job by hand with vm_watch_review: true - see docs/VM_OUTAGE_WATCH.md
 # vm_watch_review_hours: 6                       # the review looks back this many hours
-# vm_watch_review_object: ""                     # a datastore or host name; empty = every watch root
+# vm_watch_review_object: ""                     # a datastore or host name; empty = every review root
 # vm_watch_review_noise: true  # Group usage alarms, gray transitions and short flaps in the review.
 # vm_watch_review_noise_alarms: [CPU usage, memory usage, disk usage]  # Alarm name fragments counted as noise (case-insensitive).
+# outage_ops_center: "NOC"  # What your site calls its operations center in the outage review.
 # outage_escalate_storage: ""  # NOC escalation contact. Empty uses "your storage team".
 # outage_escalate_network: ""  # NOC escalation contact. Empty uses "your network team".
 # outage_escalate_vmware: ""  # NOC escalation contact. Empty uses "your VMware team".

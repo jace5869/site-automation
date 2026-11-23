@@ -37,6 +37,11 @@ _spec = importlib.util.spec_from_file_location(
 _redactor = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_redactor)
 
+_spec = importlib.util.spec_from_file_location(
+    "outage_review_text", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "outage_review_text.py"))
+_review_text = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_review_text)
+
 MARK_BEGIN, MARK_END = "BEGIN_ACT_ANALYSIS", "END_ACT_ANALYSIS"
 
 # the boxes ACT may tidy, with their labels: the AAR's, then the SOP's
@@ -217,6 +222,9 @@ def incident_file_name(record, kind="aar", names=None):
     r = record or {}
     n = dict({"aar": "AAR", "sop": "SOP", "noc": "NOC-handoff"}, **(names or {}))
     base = _slug(n.get(kind) or kind.upper(), 40) or kind.upper()
+    if kind == "noc" and r.get("outage_ops_center") and not (names or {}).get("noc"):
+        center = re.sub(r"[^A-Za-z0-9_-]+", "-", _text(r["outage_ops_center"])).strip("-_")
+        base = (center[:40].rstrip("-_") or "NOC") + "-handoff"
     extra = _slug(r.get("name")) if kind in ("aar", "noc") else _slug(r.get("sop_title") or r.get("name"))
     return "%s%s.docx" % (base, ("-" + extra) if extra else "")
 
@@ -416,6 +424,8 @@ def incident_review_fill(record, draft):
     d = draft or {}
     if not d.get("v"):
         return r
+    if d.get("outage_ops_center"):
+        r["outage_ops_center"] = d["outage_ops_center"]
     for k in REVIEW_FILLS:
         if not _text(r.get(k)) and d.get(k):
             v = d[k]
@@ -517,8 +527,8 @@ def _story_blocks(story, time_column):
     return blocks
 
 
-def _pattern_blocks(cards):
-    out = [dict(type="heading", text="What this usually means (for the NOC)")]
+def _pattern_blocks(cards, ops_center):
+    out = [dict(type="heading", text="What this usually means (for the %s)" % ops_center)]
     if not cards:
         out.append(dict(type="para", text="No matching pattern in this review."))
     for i, c in enumerate(cards, 1):
@@ -542,7 +552,7 @@ def incident_noc_docx(review, opts=None):
         text = " ".join(text.split())
         return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
-    blocks = [dict(type="para", text="Hand this to the NOC", bold=True, size=12),
+    blocks = [dict(type="para", text="Hand this to the %s" % (d.get("outage_ops_center") or "NOC"), bold=True, size=12),
               dict(type="para", text=brief(d["title"], 110), bold=True, size=size)]
     source = "AAP job " + str(d["job"]) if d.get("job") else "Outage review"
     blocks.append(dict(type="para", text=brief("%s · %s" % (source, d.get("window", "")), 100), italic=True, size=size))
@@ -592,7 +602,10 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
         if b.get("type") == "heading" and b.get("text") == "OVERVIEW":
             note = "Filled from %s. Check each line before it is posted. " % src
             note += "Complete the red To write items." if v2 else "The red lines are yours to write."
-            out += [b, {"type": "note", "text": note}]
+            out.append(b)
+            if d.get("empty_read"):
+                out.append({"type": "note", "text": _review_text.no_root_reason(d["empty_read"])})
+            out.append({"type": "note", "text": note})
         elif lab == "Impact:":
             # 1.116.0: the same four parts as the review, before the response and key events.
             if not v2 and d.get("summary"):
@@ -635,7 +648,7 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
                          "widths": [1.3, 1.1, 1.1, 2.4, 2.3]}]
         elif lab == "Recovery:" and "patterns" in d:
             out.append(b)
-            out.extend(_pattern_blocks(d["patterns"]))
+            out.extend(_pattern_blocks(d["patterns"], d.get("outage_ops_center") or "NOC"))
         elif lab == "Root Cause:":
             if _lines(r.get("root_cause")):
                 out.append(b)
@@ -684,7 +697,7 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
                                                                         d.get("window") and "Window: " + d["window"] + "." or "")},
                 {"type": "table", "columns": ev_cols, "rows": d["events"], "widths": ev_w}]
     if "story" in d:
-        out.extend([{"type": "page_break"}, {"type": "heading", "text": "Appendix B - Hand this to the NOC"}])
+        out.extend([{"type": "page_break"}, {"type": "heading", "text": "Appendix B - Hand this to the %s" % (d.get("outage_ops_center") or "NOC")}])
         out.extend(incident_noc_docx(d, o)["blocks"][1:])
     else:
         out += _instructions(o.get("instructions"), o.get("instructions_color") or o.get("heading_color") or "1F2D86")

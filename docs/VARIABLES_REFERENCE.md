@@ -2724,9 +2724,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_sso` | `true` | the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked |
 | `vm_watch_review` | `false` | The outage review (1.66.0): one time line of what vCenter and ServiceNow recorded - alarms, host events, tickets, ACT's notes - with the first signal, the time from it to the ticket, and how long a host was down. Read-only. true (a launch choice) = make the review now, also when nothing is down; the watch runs first,… (all of it: the role file) |
 | `vm_watch_review_hours` | `6` | the review looks back this many hours (0.25 to 744) |
-| `vm_watch_review_object` | (empty) | review a named datastore or host; empty = all roots reported by the watch |
+| `vm_watch_review_object` | (empty) | current or historical datastore or host name. Leave empty to review all roots. |
 | `vm_watch_review_noise` | `true` | Group usage alarms, gray transitions and short flaps in the review. |
 | `vm_watch_review_noise_alarms` | `[CPU usage, memory usage, disk usage]` | Alarm name fragments counted as noise (case-insensitive). |
+| `outage_ops_center` | `"NOC"` | What your site calls its operations center in the outage review. |
 | `outage_escalate_storage` | (empty) | NOC escalation contact. Empty uses "your storage team". |
 | `outage_escalate_network` | (empty) | NOC escalation contact. Empty uses "your network team". |
 | `outage_escalate_vmware` | (empty) | NOC escalation contact. Empty uses "your VMware team". |

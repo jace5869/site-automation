@@ -2722,11 +2722,11 @@ run "outage watch with vm_watch_window_minutes: 0 - no events read" ok vm_outage
 # 1.66.0, the outage review (vm_watch_review): the time line of what vCenter and ServiceNow recorded. vcsim dates a posted
 # event at the moment it is posted: DC0_C0_H1 is lost for 2 s (tests/test_outage_timeline.py has the times of a real night)
 VMWARE_PORT=$port "$py" "$here/vcsim.py" outage 2
-run "outage review, nothing down now: a report all the same - the short loss folds, the job is green" ok vm_outage_watch.yml -e "$wt" \
+run "outage review, nothing down now: vCenter supplies the loss and the job is green" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e vm_watch_review=true \
-    -- "What went down:" "Host not responding: 2 changes" "all back to normal" "No matching host or inaccessible datastore" \
+    -- "What went down:" "from vCenter's event" "Host not responding" \
        '"VM outage watch",' '"nothing down",' \
-       '"vm_outage_review": {' '"hosts_down": []' '"site_health_targets": []'
+       '"vm_outage_review": {' '"site_health_targets": []'
 run "outage review with vm_watch_review_low_seconds: 0 - the loss counts as time down, with its end" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 \
     -- "Host outage -" "DC0_C0_H1 down: 2 s" "Host not responding  [Critical]" "Host connected again  [Back to normal]" '"down_s": 2'
