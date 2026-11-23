@@ -479,6 +479,7 @@ def _read(content, p, now, vcenter):
         ext = getattr(getattr(info, "vmfs", None), "extent", None) or []
         rec["devices"] = sorted(set(str(getattr(x, "diskName", "") or "") for x in ext) - {""})
 
+    lost_ds = dict((rec["moid"], rec) for rec in res["datastores"] if not rec["accessible"])
     folders = {}
     vms = _props(content, root, vim.VirtualMachine, VM_PROPS)
     suspects = []
@@ -495,6 +496,10 @@ def _read(content, p, now, vcenter):
              "cluster": h.get("cluster", ""), "esxi_host": h.get("name", ""), "host_moid": host_moid, "hostname": pr.get("guest.hostName") or ""}
         v["datastore_moids"] = sorted(set(getattr(x, "_moId", "") for x in pr.get("datastore") or []) - {""})
         v["datastores"] = sorted(set(ds_name.get(ds, "") for ds in v["datastore_moids"]) - {""})
+        # 1.112.4c: an inaccessible datastore lists every VM with files on it, by inventory, whatever its guest state
+        for dm in v["datastore_moids"]:
+            if dm in lost_ds:
+                lost_ds[dm].setdefault("vms", []).append({"name": v["name"], "moid": m})
         # 1.112.4: runtime.host still lists the VM when its last guest readings look healthy.
         down_host = h.get("connection") in ("notResponding", "disconnected")
         if down_host:

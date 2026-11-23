@@ -81,13 +81,19 @@ def _matches(name, patterns):
     return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in _names(patterns))
 
 
-def _device(e):
+def _device_raw(e):
+    """The device as vCenter spells it (naa.600A0980...): the ticket id keeps this spelling (1.112.4c)."""
     for v in list((e.get("args") or {}).values()) + [e.get("message", "")]:
         m = DEVICE_RE.search(str(v or ""))
         if m:
-            dev = m.group(1)
-            return dev.lower() if dev.startswith(("naa.", "eui.")) else dev
+            return m.group(1)
     return ""
+
+
+def _device(e):
+    """The device for matching: naa / eui in lower case (an extent and an event may differ in case)."""
+    dev = _device_raw(e)
+    return dev.lower() if dev.startswith(("naa.", "eui.")) else dev
 
 
 def _cond(sev, kind, otype, obj, x, summary, todo, detail=""):
@@ -120,10 +126,9 @@ def _ticket_id(c, d):
     if kind == "host":
         return "vm-watch:host:%s" % c["object"]
     if kind == "storage":
-        return "vm-watch:storage:%s:%s" % (c.get("host") or c["object"], c.get("device") or c.get("event_type") or "")
+        return "vm-watch:storage:%s:%s" % (c.get("host") or c["object"], c.get("device_raw") or c.get("device") or c.get("event_type") or "")
     if kind == "datastore" and c.get("object_type") == "datastore":
-        same = [x for x in d.get("datastores") or [] if x.get("vcenter") == c.get("vcenter") and x.get("name") == c["object"]]
-        return "vm-watch:datastore:%s" % c["object"] + ((":%s" % c["moid"]) if len(same) > 1 and c.get("moid") else "")
+        return "vm-watch:datastore:%s" % c["object"]          # 1.112.4c: always by name; two of one name share it (merged)
     if kind == "datastore":
         return "vm-watch:paths:%s" % c["object"]
     return c["id"]
@@ -185,6 +190,7 @@ def vm_watch_conditions(data, opts=None):
                       "datastore %s is not accessible: the VMs on it are hung or down" % ds["name"],
                       "Check the storage array and the paths (Storage > Devices > Paths on a host); rescan the storage adapters.")
             c["inaccessible"] = True
+            c["members"] = list(ds.get("vms") or [])          # 1.112.4c: every VM with files on it (the read), whatever its guest
             if ds.get("moid"):
                 c.update(id=_inventory_id("datastore", ds), moid=ds["moid"])
             out.append(c)
@@ -204,7 +210,8 @@ def vm_watch_conditions(data, opts=None):
                   "%s on host %s%s at %s%s" % (what, e.get("host") or "?", (" (device %s)" % dev) if dev else "", e.get("time", ""),
                                              (", cleared at %s" % cleared.get("time", "")) if cleared else ", not cleared"),
                   "Check the array and the SAN / storage network for the device; the VMs on its datastore may be hung.", e.get("message", ""))
-        c.update(device=dev, host=host, host_moid=e.get("host_moid") or "", since=e.get("time", ""), what=what, event_type=e["type"])
+        c.update(device=dev, device_raw=_device_raw(e), host=host, host_moid=e.get("host_moid") or "", since=e.get("time", ""), what=what,
+                 event_type=e["type"])
         key = (c["vcenter"], c["host_moid"] or host, dev or e["type"])
         if c["host_moid"]:
             c["id"] = "vm-watch:storage:%s:%s:%s" % key
@@ -280,8 +287,12 @@ def vm_watch_conditions(data, opts=None):
         if "root_id" in c:
             continue
         children = sorted(under.get(c["id"], []), key=lambda x: (RANK.get(x["severity"], 9), x["object"], x["vm"]["moid"]))
-        if children:
-            names = ["%s (%s)" % (_member(x["vm"]), x.get("connection") or VM_WORD[x["kind"]]) for x in children]
+        # 1.112.4c: a VM on an inaccessible datastore with no finding of its own (no Tools, its host connected) is listed too
+        known = set(x["vm"]["moid"] for x in children)
+        quiet = sorted((v for v in c.get("members") or [] if v.get("moid") not in known), key=lambda v: (v["name"], v["moid"]))
+        if children or quiet:
+            names = (["%s (%s)" % (_member(x["vm"]), x.get("connection") or VM_WORD[x["kind"]]) for x in children]
+                     + ["%s (potentially affected)" % _member(v) for v in quiet])
             listed = "%d VM%s: %s" % (len(names), "" if len(names) == 1 else "s", ", ".join(names))
             c["membership"] = ". ".join(filter(None, [c.get("membership"), listed]))
             mine = [x["object"] for x in children if x["kind"] == "lost"]
@@ -358,6 +369,7 @@ def _fold_paths(seen, out, d):
         else:
             head = "Datastore %s NOT ACCESSIBLE %s" % (ds["name"], where)
         paths = ["%s: %s" % (c["host"], c["summary"]) for c in cs]
+        root["folded"] = root.get("folded", []) + cs           # 1.112.4c: each host's path ticket lives on (vm_watch_health)
         root.update(headline=head, hosts=names, paths=paths, since=first["since"], detail="Per host: " + "; ".join(paths),
                     summary="%s: %s since %s" % (head, first["what"], first["since"]))
         if not active and not root.get("inaccessible"):
@@ -585,10 +597,17 @@ def vm_watch_health(data, conditions, opts=None):
     vCenter: {vcenter: {status, checks: [vm_watch], findings, reach: false, ...}}. Each condition is a finding
     (check vm_watch), so a ticket per condition, noted (or resolved) once the watch no longer finds it.
     A vCenter not read lists vm_watch as failed: its open tickets are left alone.
-    1.112.4: each root finding carries the full VM list in its summary for the incident and repeat work notes."""
+    1.112.4: one ticket per root - a datastore that is NOT accessible, or a host that is down - with the full VM list in its
+    summary (the incident's description and repeat work notes). 1.112.4c, so that nothing reads as cleared while it lasts:
+    - a VM (or a host's path) a root covers is still a finding, at severity "info" ("covered by ..."): the tickets job opens
+      no ticket for it, but an incident already open under its id stays open (it clears only when no finding has its id);
+    - a path loss on a datastore that is still accessible is grouped in the report only: each host's path is its own ticket
+      as long as that host's paths are down, whether 1, 2 or more hosts;
+    - a datastore's ticket id is its name, always; two datastores of one name down in one vCenter share that ticket."""
     d, o = data or {}, opts or {}
     conditions = list(conditions or [])
-    root_ids = {c["id"] for c in conditions if c.get("kind") in ("datastore", "host")}
+    roots = dict(((c["kind"], c["vcenter"], c["moid"]), c) for c in conditions
+                 if c.get("moid") and c["severity"] == "critical" and (c.get("inaccessible") or c["kind"] == "host"))
     out = {}
     for s in d.get("vcenters") or []:
         name = s.get("name", "")
@@ -596,18 +615,39 @@ def vm_watch_health(data, conditions, opts=None):
             continue
         out[name] = {"status": "healthy", "checks": ["vm_watch"], "checks_failed": ["vm_watch"] if s.get("error") else [],
                      "findings": [], "act": {}, "time": d.get("read_at", ""), "job": str(o.get("job", "")), "reach": False}
-    for c in conditions:
-        if c.get("root_id") in root_ids:
-            continue
+    by_id = {}
+
+    def add(c, severity=None, covered=None):
         vc = c.get("vcenter") or ""
         h = out.setdefault(vc, {"status": "healthy", "checks": ["vm_watch"], "checks_failed": [], "findings": [], "act": {},
                                 "time": d.get("read_at", ""), "job": str(o.get("job", "")), "reach": False})
-        # 1.112.4: repeat work notes send the finding's summary, including its full VM list.
-        listed = "; " + c["membership"] if c.get("membership") else ""
-        h["findings"].append({"check": "vm_watch", "id": _ticket_id(c, d), "severity": c["severity"],
-                              "summary": "%s%s%s" % (c["summary"], listed, (" [%s]" % _where(c, False)) if _where(c, False) else ""),
-                              "hint": c.get("todo", "")})
+        fid = _ticket_id(c, d)
+        listed = "; " + c["membership"] if c.get("membership") and not covered else ""
+        where = (" [%s]" % _where(c, False)) if _where(c, False) else ""
+        text = ("covered by %s: " % covered if covered else "") + c["summary"] + listed + where
+        f = by_id.get((vc, fid))
+        if f is not None:                                     # two datastores of one name, down: one ticket, both said
+            f["summary"] += " | " + text
+            if RANK.get(c["severity"], 9) < RANK.get(f["severity"], 9):
+                f["severity"] = c["severity"]
+            return
+        f = {"check": "vm_watch", "id": fid, "severity": severity or c["severity"], "summary": text, "hint": c.get("todo", "")}
+        by_id[(vc, fid)] = f
+        h["findings"].append(f)
         h["status"] = "findings"
+
+    for c in conditions:
+        mine = [r for r in _vm_roots(c, roots) if r.get("inaccessible") or r["kind"] == "host"]
+        if mine:                                              # under a root: its id stays alive, no ticket of its own
+            add(c, "info", _ticket_id(mine[0], d))
+            continue
+        if c.get("kind") == "datastore" and not c.get("inaccessible"):
+            for p in c.get("folded") or []:                  # path loss only: each host's path is its own ticket
+                add(p)
+            continue
+        add(c)
+        for p in c.get("folded") or []:                      # an inaccessible datastore: its hosts' paths covered by it
+            add(p, "info", _ticket_id(c, d))
     return out
 
 

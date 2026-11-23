@@ -103,6 +103,11 @@ class Lost1124(unittest.TestCase):
         self.assertFalse(any(l.startswith("VMs read") for l in how["lines"]))
 
 
+def tickets(findings):
+    """1.112.4c: the findings the tickets job opens or notes (critical, warning); "info" ones only keep an open one alive."""
+    return [f for f in findings if f["severity"] in ("critical", "warning")]
+
+
 def apd(key, t, host_, dev, typ="esx.problem.storage.apd.start"):
     return {"key": key, "time": t, "type": typ, "host": host_, "host_moid": host_moid(host_), "vcenter": VC, "args": {},
             "message": "Device %s has %s the All Paths Down state." % (dev, "exited" if "clear" in typ else "entered")}
@@ -177,7 +182,10 @@ class Tickets1124(unittest.TestCase):
         cs = w.vm_watch_conditions(d)
         self.assertEqual(len([c for c in cs if c["kind"] in ("lost", "hung")]), 24)    # the report still has every VM
         f = w.vm_watch_health(d, cs)[VC]["findings"]
-        by = dict((x["id"], x) for x in f)
+        by = dict((x["id"], x) for x in tickets(f))
+        covered = sorted(x["id"] for x in f if x["severity"] == "info")
+        self.assertEqual(len(covered), 22)                                             # 20 + db01 + app99: open ones stay open
+        self.assertTrue(all(x["summary"].startswith("covered by vm-watch:") for x in f if x["severity"] == "info"))
         self.assertEqual(sorted(by), ["vm-watch:datastore:ds-07", "vm-watch:host:esx02.example.mil", "vm-watch:hung:web09",
                                       "vm-watch:lost:%s:vm-old01" % VC])
         ds = by["vm-watch:datastore:ds-07"]["summary"]
@@ -217,9 +225,9 @@ class Review1124(unittest.TestCase):
         cs = w.vm_watch_conditions(d)
         findings = w.vm_watch_health(d, cs)
         self.assertEqual(len(findings[self.other_vc]["findings"]), 1)
-        local = {f["id"]: f["summary"] for f in findings[VC]["findings"]}
-        self.assertIn("app01", local["vm-watch:datastore:DS1:datastore-1"])
-        self.assertIn("app05", local["vm-watch:datastore:DS1:datastore-2"])
+        local = {f["id"]: f["summary"] for f in tickets(findings[VC]["findings"])}
+        self.assertIn("app01", local["vm-watch:datastore:DS1"])                       # 1.112.4c: two DS1 down = one ticket
+        self.assertIn("app05", local["vm-watch:datastore:DS1"])
         self.assertIn("app04", local["vm-watch:host:esx01"])
         self.assertIn("vm-watch:lost:%s:vm-3" % VC, local)
         rows = w.vm_watch_report(d, cs)["sections"][0]["rows"]
@@ -253,9 +261,10 @@ class Review1124(unittest.TestCase):
                            dict(vm, name="app03", moid="vm-3", host_moid="host-4", esxi_host="esx04")])
         d["events"].append(self.path("esx03", typ="esx.clear.storage.apd.exit", key=2))
         cs = w.vm_watch_conditions(d)
-        findings = w.vm_watch_health(d, cs)[VC]["findings"]
+        findings = tickets(w.vm_watch_health(d, cs)[VC]["findings"])
+        # 1.112.4c: path loss on an accessible datastore is grouped in the report only - no ticket covers a VM
         self.assertEqual({f["id"] for f in findings if f["id"].startswith("vm-watch:hung:")},
-                         {"vm-watch:hung:app02", "vm-watch:hung:app03"})
+                         {"vm-watch:hung:app01", "vm-watch:hung:app02", "vm-watch:hung:app03"})
         row = w.vm_watch_report(d, cs)["sections"][0]["rows"][0]
         self.assertIn("app01", row[3])
         self.assertNotIn("app02", row[3])
@@ -283,14 +292,19 @@ class Review1124(unittest.TestCase):
         self.assertEqual(len(ds["paths"]), 4)
 
     def test_datastore_correlation_survives_inaccessibility(self):
+        # 1.112.4c: path loss on 2 hosts = each host's path ticket; then not accessible = the datastore's ticket, and the
+        # hosts' path ids stay (covered): nothing that is still failing reads as cleared
         d = data(datastores=[self.datastore()], events=[self.path("esx01"), self.path("esx02")])
-        ids = []
+        runs = []
         for accessible in (True, False):
             d["datastores"][0]["accessible"] = accessible
-            finding, = w.vm_watch_health(d, w.vm_watch_conditions(d))[VC]["findings"]
-            ids.append(site_correlation_id(finding["id"], VC, finding["check"]))
-        expected = site_correlation_id("vm-watch:datastore:DS1", VC, "vm_watch")      # the legacy id: an open incident stays open
-        self.assertEqual(ids, [expected, expected])
+            runs.append(w.vm_watch_health(d, w.vm_watch_conditions(d))[VC]["findings"])
+        paths = {"vm-watch:storage:esx01:naa.1111", "vm-watch:storage:esx02:naa.1111"}
+        self.assertEqual({f["id"] for f in tickets(runs[0])}, paths)
+        self.assertEqual({f["id"] for f in tickets(runs[1])}, {"vm-watch:datastore:DS1"})
+        self.assertTrue(paths <= {f["id"] for f in runs[1]})
+        self.assertEqual(site_correlation_id(tickets(runs[1])[0]["id"], VC, "vm_watch"),
+                         site_correlation_id("vm-watch:datastore:DS1", VC, "vm_watch"))           # the legacy id
 
     def test_full_vm_lists_in_report_and_ticket_updates(self):
         members = [lost("app%02d" % i, conn="disconnected", esxi_host="esx01", dss=(), moid="vm-%d" % i) for i in range(1, 10)]
@@ -301,10 +315,10 @@ class Review1124(unittest.TestCase):
         def summaries():
             cs = w.vm_watch_conditions(d)
             rows = {r[1]: r[3] for r in w.vm_watch_report(d, cs)["sections"][0]["rows"]}
-            tickets = [f["summary"] for f in w.vm_watch_health(d, cs)[VC]["findings"]]
-            self.assertEqual(len(tickets), 2)
-            host_ticket, = [s for s in tickets if s.startswith("ESXi host ")]
-            ds_ticket, = [s for s in tickets if s.startswith("datastore ")]
+            opened = [f["summary"] for f in tickets(w.vm_watch_health(d, cs)[VC]["findings"])]
+            self.assertEqual(len(opened), 2)
+            host_ticket, = [s for s in opened if s.startswith("ESXi host ")]
+            ds_ticket, = [s for s in opened if s.startswith("datastore ")]
             for text in (rows["host esx01"], host_ticket):
                 for vm in members:
                     self.assertIn(vm["name"], text)
@@ -340,15 +354,74 @@ class TicketIds1124(unittest.TestCase):
         hs = [host("esx01"), host("esx02"), host("esx03"), host("esx09", connection="notResponding")]
         before = self.ids(data(hosts=hs, datastores=[self.ds(True)], events=ev))
         after = self.ids(data(hosts=hs, datastores=[self.ds(False)], events=ev))
-        self.assertIn("vm-watch:datastore:DS1", before)                       # path loss on 2 hosts ...
-        self.assertIn("vm-watch:datastore:DS1", after)                        # ... then not accessible: the same incident
+        self.assertIn("vm-watch:storage:esx01:naa.1111", before)              # path loss on 2 hosts: each host's ticket ...
+        self.assertIn("vm-watch:datastore:DS1", after)                        # ... then not accessible: the datastore's
+        self.assertIn("vm-watch:storage:esx01:naa.1111", after)               # and the host's path id stays (covered)
         for ids in (before, after):
             self.assertIn("vm-watch:host:esx09", ids)                         # as before 1.112.4
             self.assertIn("vm-watch:storage:esx03:naa.9999", ids)            # one host's path: as before 1.112.4
 
     def test_same_name_in_one_vcenter(self):
-        ids = self.ids(data(datastores=[self.ds(False), self.ds(False, "datastore-2", devices=("naa.2222",))]))
-        self.assertEqual(ids, ["vm-watch:datastore:DS1:datastore-1", "vm-watch:datastore:DS1:datastore-2"])
+        one = self.ids(data(datastores=[self.ds(False)]))
+        two = self.ids(data(datastores=[self.ds(False), self.ds(False, "datastore-2", devices=("naa.2222",))]))
+        self.assertEqual(one, ["vm-watch:datastore:DS1"])
+        self.assertEqual(two, ["vm-watch:datastore:DS1"])                     # a second DS1 never changes the open id
+
+
+class Transitions1124c(unittest.TestCase):
+    """1.112.4c: run 1 to run 2, no false clear. The tickets job resolves (or notes as cleared) an open incident only when no
+    finding of the next run has its id, at any severity (roles/servicenow/tasks/tickets.yml, _sn_cleared)."""
+
+    def ds(self, accessible=True, moid="datastore-1", name="DS1", devices=("naa.1111",), **kw):
+        return dict({"name": name, "vcenter": VC, "datacenter": "DC1", "moid": moid, "accessible": accessible, "maintenance": "normal",
+                     "devices": list(devices)}, **kw)
+
+    def health(self, d):
+        return w.vm_watch_health(d, w.vm_watch_conditions(d))[VC]["findings"]
+
+    def false_clears(self, d1, d2):
+        opened = set(f["id"] for f in tickets(self.health(d1)))
+        still = set(f["id"] for f in self.health(d2))
+        return sorted(opened - still)
+
+    def test_1_a_quiet_vm_on_a_lost_datastore_is_listed(self):
+        d = data(datastores=[self.ds(False, vms=[{"name": "db07", "moid": "vm-7"}])])      # no Tools, host connected: no finding
+        ticket, = tickets(self.health(d))
+        self.assertIn("db07 [vm-7] (potentially affected)", ticket["summary"])
+        row = w.vm_watch_report(d, w.vm_watch_conditions(d))["sections"][0]["rows"][0]
+        self.assertIn("db07 [vm-7] (potentially affected)", row[3])
+
+    def test_2_a_root_appearing_does_not_clear_its_vms(self):
+        vm = lost("app01", conn="orphaned", dss=("DS1",), datastore_moids=["datastore-1"])
+        d1 = data(datastores=[self.ds(True)], vms_lost=[vm])
+        d2 = data(datastores=[self.ds(False)], vms_lost=[vm])
+        self.assertEqual([f["id"] for f in tickets(self.health(d1))], ["vm-watch:lost:%s:vm-app01" % VC])
+        self.assertEqual(self.false_clears(d1, d2), [])
+        covered, = [f for f in self.health(d2) if f["severity"] == "info"]
+        self.assertTrue(covered["summary"].startswith("covered by vm-watch:datastore:DS1: VM app01"))
+
+    def test_3_path_loss_across_the_two_host_line(self):
+        one = data(datastores=[self.ds()], events=[apd(1, "2026-11-23T10:00:00Z", "esx01", "naa.1111")])
+        two = data(datastores=[self.ds()], events=[apd(1, "2026-11-23T10:00:00Z", "esx01", "naa.1111"),
+                                                   apd(2, "2026-11-23T10:01:00Z", "esx02", "naa.1111")])
+        self.assertEqual(self.false_clears(one, two), [])
+        self.assertEqual(self.false_clears(two, one), ["vm-watch:storage:esx02:naa.1111"])   # esx02 back: only its own ticket goes
+        self.assertEqual(sorted(f["id"] for f in tickets(self.health(two))),
+                         ["vm-watch:storage:esx01:naa.1111", "vm-watch:storage:esx02:naa.1111"])
+
+    def test_4_a_second_datastore_of_one_name(self):
+        d1 = data(datastores=[self.ds(False)])
+        d2 = data(datastores=[self.ds(False), self.ds(False, "datastore-9", devices=("naa.9999",))])
+        self.assertEqual(self.false_clears(d1, d2), [])
+        self.assertEqual([f["id"] for f in tickets(self.health(d2))], ["vm-watch:datastore:DS1"])
+
+    def test_5_the_device_keeps_its_spelling(self):
+        ev = [dict(apd(1, "2026-11-23T10:00:00Z", "esx01", "naa.600A0980"))]
+        f, = tickets(self.health(data(datastores=[self.ds(devices=("naa.600a0980",))], events=ev)))
+        self.assertEqual(f["id"], "vm-watch:storage:esx01:naa.600A0980")             # as before 1.112.4: the open ticket matches
+        ev.append(apd(2, "2026-11-23T10:00:00Z", "esx02", "naa.600A0980"))
+        cs = w.vm_watch_conditions(data(datastores=[self.ds(devices=("naa.600a0980",))], events=ev))
+        self.assertEqual([c["object"] for c in cs if c["kind"] == "datastore"], ["DS1"])  # matched in any case
 
 
 class Conditions(unittest.TestCase):

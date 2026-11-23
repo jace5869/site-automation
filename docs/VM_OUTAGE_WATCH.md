@@ -130,11 +130,13 @@ Job artifacts, for the next step of a workflow:
    `servicenow_min_severity: critical` keeps the one-signal warnings out of ServiceNow.
    Since 1.112.4 the incidents fold to their root: a datastore that is not accessible, or a host that is down, is one
    incident that lists every VM it affects (by name and object ID), in full, in its description and repeat work
-   notes. A VM is matched to its datastore and host by vCenter and object ID. A datastore with path loss only (still
-   accessible) covers its VMs on the hosts that lost the paths. A VM nothing explains is its own incident
+   notes - every VM with files on a lost datastore, even one with no finding of its own. A VM is matched to its
+   datastore and host by vCenter and object ID. A VM nothing explains is its own incident
    (`vm-watch:lost:<vcenter>:<moid>` for an inaccessible one). A storage loss with 20 VMs is 1 incident, not 21.
-   Open incidents keep their ids across the upgrade (`vm-watch:datastore:<name>` from path loss to not accessible;
-   `:<moid>` is added only when two datastores in one vCenter share a name).
+   A VM or a host's path that such an incident covers is still sent, as "covered by ..." at severity info: no incident
+   is opened for it, but one already open stays open - nothing still failing reads as cleared. Path loss on a datastore
+   that is still accessible keeps one incident per host's path. Open incidents keep their ids across the upgrade
+   (`vm-watch:datastore:<name>`, always by name; `vm-watch:host:<name>`; `vm-watch:storage:<host>:<device>`).
 4. **The schedule.** Put it on the workflow, every 5 to 15 minutes, with **Concurrent jobs off** on the
    workflow so that a slow run never overlaps the next. Set `vm_watch_window_minutes` to the interval.
    Leave the daily health and alarms reports as they are.

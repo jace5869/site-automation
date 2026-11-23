@@ -53,19 +53,25 @@
   host. The watch reads each VMFS datastore's devices (its extents) to tell which datastore a device is.
 - *How it judged* says how many VMs were read, judged, listed as inaccessible, and on a disconnected host.
 - **One ServiceNow ticket per lost datastore or down host, not per VM.** That ticket lists every VM it affects
-  (inaccessible, hung, off, potentially affected), in full, in its description and repeat work notes, so it changes as
-  they do. A VM is matched to its datastore and host by vCenter and object ID, never by name alone. A datastore that is
-  not accessible covers its VMs on every host. A datastore with path loss only covers its VMs on the hosts that lost
-  the paths. A VM nothing explains keeps its own ticket. A storage loss with 20 VMs is 1 ticket. The report still
-  lists every VM.
-- **Open tickets keep their ids.** A datastore's ticket stays the same from path loss to not accessible. Its id is the
-  one tickets already had (`vm-watch:datastore:<name>`; the object ID is added only when two datastores in one vCenter
-  share a name), and hosts and single host paths keep theirs too. So an incident open at the upgrade stays open; none
-  is resolved and opened again.
+  (inaccessible, hung, off, potentially affected - every VM with files on the datastore, by inventory, even one with
+  no finding of its own), in full, in its description and repeat work notes, so it changes as they do. A VM is matched
+  to its datastore and host by vCenter and object ID, never by name alone. A VM nothing explains keeps its own ticket.
+  A storage loss with 20 VMs is 1 ticket. The report still lists every VM.
+- **Nothing still failing reads as cleared.** A VM (or a host's path) that a datastore or host ticket covers is still
+  sent to the tickets job, as "covered by ..." at severity info: no ticket is opened for it, but one already open under
+  its id stays open (an incident is cleared only when no finding has its id). Path loss on a datastore that is still
+  accessible is grouped in the report only: each host's path keeps its own ticket while that host's paths are down,
+  whether 1, 2 or more hosts.
+- **Open tickets keep their ids.** The ids are the ones tickets already had: `vm-watch:datastore:<name>` (always by
+  name; two datastores of one name down in one vCenter share that ticket), `vm-watch:host:<name>`,
+  `vm-watch:storage:<host>:<device>` with the device spelled as vCenter does. So an incident open at the upgrade stays
+  open; none is resolved and opened again.
 - Tests: tests/test_vmware_modules.py LostVMs1124 (the read, on stand-ins: 3 inaccessible VMs powered off or of
   unknown power and 1 orphaned on a lost datastore, a skipped one, a template, a disconnected host, the devices, a
   down host's VMs); tests/test_vm_watch.py Lost1124, Fold1124, Tickets1124 (20 VMs = 1 ticket), Review1124 (two
-  vCenters, same names, path loss on some hosts, shared devices only, full lists) and TicketIds1124 (the ids).
+  vCenters, same names, path loss on some hosts, shared devices only, full lists), TicketIds1124 (the ids) and
+  Transitions1124c (run 1 to run 2, no false clear: a root appearing, crossing two hosts, a second datastore of one
+  name, the device's spelling, a quiet VM on a lost datastore).
 
 ## 1.112.3 — 2026-11-23
 

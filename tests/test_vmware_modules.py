@@ -930,6 +930,7 @@ class LostVMs1124(unittest.TestCase):
                 vm("vm-7", "web02", "poweredOn", "connected", [ds2], **ok),         # fine
                 vm("vm-8", "web03", "poweredOff", "connected", [ds2]),              # off, its files fine: not listed
                 vm("vm-10", "app03", "poweredOn", "connected", [ds2], host=h2, **ok),
+                vm("vm-11", "quiet01", "poweredOn", "connected", [ds7]),           # 1.112.4c: no Tools, host up: no finding of its own
                 vm("vm-9", "tpl01", "poweredOff", "inaccessible", [ds7], **{"config.template": True})])}
         saved = (getattr(wt, "vim", None), wt._props, wt._folder, wt._datacenter_of, wt._objs_props)
         try:
@@ -956,7 +957,9 @@ class LostVMs1124(unittest.TestCase):
         self.assertEqual(lost["test01"]["not_judged"], "vm_watch_skip_vms")
         self.assertEqual([v["name"] for v in r["vms_disconnected"]], ["web01"])
         self.assertEqual(r["vms_disconnected"][0]["esxi_host"], "esx02.example.mil")
-        self.assertEqual((r["vms_read"], r["vms_checked"], r["vms_skipped"]), (9, 1, 0))
+        self.assertEqual((r["vms_read"], r["vms_checked"], r["vms_skipped"]), (10, 2, 0))
+        ds7 = next(x for x in r["datastores"] if x["name"] == "ds-07")              # 1.112.4c: every VM with files on it
+        self.assertEqual(sorted(v["name"] for v in ds7["vms"]), ["app01", "app02", "db01", "old01", "quiet01", "test01"])
         self.assertEqual(r["suspects"], [])
         self.assertEqual(dict((x["name"], x["devices"]) for x in r["datastores"]), {"ds-07": ["naa.600a07"], "ds-02": []})   # its devices
 
