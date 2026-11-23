@@ -222,9 +222,9 @@ run "ACT on, no model key: said, the report by category" ok "{$NOW, \"servicenow
     'ACT: did not run (This job has no API key for provider genai' 'Account / Password'
 
 mkdir -p "$work/site9"
-INS_ENV="GENAI_KEY=test-key" run "  ... servicenow_insights_act false: the Automation backlog from the formulas, the words 'not drafted (ACT off)'" ok \
+INS_ENV="GENAI_KEY=test-key" run "  ... servicenow_insights_act false: the Automation backlog from the formulas, ACT off said once at the top (1.118.2)" ok \
     "{$NOW, $NOACT, \"report_web_dest\": \"$work/site9\"}" 'Ticket insights for All assignment groups:'
-check "  ... the numbers and the phase cards are there without ACT" "$work/site9/servicenow-ticket-insights/latest.html" 'id="backlog"' 'not drafted (ACT off)' \
+check "  ... the numbers and the phase cards are there without ACT" "$work/site9/servicenow-ticket-insights/latest.html" 'id="backlog"' 'class="mut sm bkoff">ACT is off' '!not drafted (ACT off)' \
     'Deflection = tickets this phase settles' '!Fake strategy'
 # ACT answers the backlog question with something that is no draft: dropped, said, the clusters read "not drafted", the report whole
 : > "$work/bad-backlog"
