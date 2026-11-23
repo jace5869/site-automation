@@ -702,6 +702,17 @@
               echo "Run the playbook again without j4s_fix: its report reads the running JVM and says MITIGATED or not."; exit 1
           register: _j4s_after
           changed_when: false
+          failed_when: false           # 1.112.3: its reason in plain lines below, not the whole script
+
+        - name: Java4Shell | the flag after the restart, as read
+          ansible.builtin.debug:
+            msg: "{{ (_j4s_after.stdout_lines | default([]))[-12:] + (_j4s_after.stderr_lines | default([]))[-8:] }}"
+
+        - name: Java4Shell | the flag is live after the restart
+          ansible.builtin.assert:
+            that: _j4s_after.rc | default(1) | int == 0
+            fail_msg: "Not confirmed - the lines above say why. Keycloak was restarted; run the playbook again without j4s_fix (check only): it reads the running JVM from the host."
+            quiet: true
 
         - name: Java4Shell | after the restart
           ansible.builtin.debug:
