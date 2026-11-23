@@ -128,6 +128,9 @@ Job artifacts, for the next step of a workflow:
    longer finds it. That only works when the clean runs reach it too. The incidents carry the vCenter's
    name and the object's, e.g. `[site-health] vc01.yoursite.mil: VM app01 is hung: ...`.
    `servicenow_min_severity: critical` keeps the one-signal warnings out of ServiceNow.
+   Since 1.112.4 the incidents fold to their root: a datastore that is not accessible, or a host that is down, is one
+   incident that lists its inaccessible, hung and off VMs, and is noted as that list changes. A VM is its own incident
+   only when no lost datastore or down host explains it. A storage loss with 20 VMs is 1 incident, not 21.
 4. **The schedule.** Put it on the workflow, every 5 to 15 minutes, with **Concurrent jobs off** on the
    workflow so that a slow run never overlaps the next. Set `vm_watch_window_minutes` to the interval.
    Leave the daily health and alarms reports as they are.

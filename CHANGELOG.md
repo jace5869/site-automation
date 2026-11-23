@@ -51,10 +51,14 @@
   still accessible, is one row too. A path problem on one host, of no lost datastore, stays as it was. The watch reads
   each VMFS datastore's devices (its extents) to tell which datastore a device is.
 - *How it judged* says how many VMs were read, judged, listed as inaccessible, and on a disconnected host.
+- **One ServiceNow ticket per root, not per VM.** A datastore that is not accessible, or a host that is down, is one
+  ticket that lists its inaccessible, hung and off VMs, and is noted as that list changes. A VM gets its own ticket only
+  when no lost datastore or down host explains it. A storage loss with 20 VMs is 1 ticket. The report still lists every
+  VM.
 - Tests: tests/test_vmware_modules.py (the read, on stand-ins: 3 inaccessible VMs powered off or of unknown power and 1
   orphaned on a lost datastore, a skipped one, a template, a disconnected host); tests/test_vm_watch.py (the conditions,
   their order, the marks, no restart, the counts; Fold1124: the lost datastore's line, the device on 2 hosts, the
-  headline, cleared on every host).
+  headline, cleared on every host; Tickets1124: 20 VMs on a lost datastore = 1 ticket).
 
 ## 1.112.3 — 2026-11-23
 

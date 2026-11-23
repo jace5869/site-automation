@@ -224,7 +224,7 @@ def vm_watch_conditions(data, opts=None):
                       "(vmtoolsd / VMware Tools), or update Tools.")
         else:
             continue
-        c.update({"vm": _vm_ids(v), "signals": signals, "detail": "checked %s" % _span(v)})
+        c.update({"vm": _vm_ids(v), "signals": signals, "detail": "checked %s" % _span(v), "datastores": list(v.get("datastores") or [])})
         out.append(c)
     out.sort(key=lambda c: (RANK.get(c["severity"], 9), c["kind"], c["object"]))
     # 1.112.4: a lost VM right under its datastore's condition (the first of its datastores that is down)
@@ -496,12 +496,38 @@ def _num(v):
         return str(v or "")
 
 
+VM_KINDS = ("lost", "hung", "no-heartbeat")
+VM_WORD = {"lost": "inaccessible", "hung": "hung", "no-heartbeat": "no heartbeat"}
+
+
+def _root(c, roots):
+    """1.112.4: the lost datastore or the down host that explains a VM's condition (None: the VM is its own ticket)."""
+    if c.get("kind") not in VM_KINDS:
+        return None
+    for ds in c.get("datastores") or []:
+        if ("datastore", ds) in roots:
+            return roots[("datastore", ds)]
+    return roots.get(("host", (c.get("vm") or {}).get("esxi_host") or ""))
+
+
 def vm_watch_health(data, conditions, opts=None):
     """The check results the ServiceNow tickets job reads (roles/servicenow/tasks/tickets.yml), one 'host' per
     vCenter: {vcenter: {status, checks: [vm_watch], findings, reach: false, ...}}. Each condition is a finding
     (check vm_watch), so a ticket per condition, noted (or resolved) once the watch no longer finds it.
-    A vCenter not read lists vm_watch as failed: its open tickets are left alone."""
+    A vCenter not read lists vm_watch as failed: its open tickets are left alone.
+    1.112.4: tickets fold to their root - one per lost datastore or down host, listing its inaccessible, hung and off VMs
+    (its summary changes as they do, so the ticket is noted); a VM is its own ticket only when no lost datastore or down
+    host explains it."""
     d, o = data or {}, opts or {}
+    conditions = list(conditions or [])
+    roots = dict(((c["object_type"], c["object"]), c) for c in conditions
+                 if c.get("severity") == "critical" and ((c.get("kind") == "datastore" and c.get("object_type") == "datastore")
+                                                         or c.get("kind") == "host"))
+    under = {}
+    for c in conditions:
+        r = _root(c, roots)
+        if r is not None:
+            under.setdefault(id(r), []).append(c)
     out = {}
     for s in d.get("vcenters") or []:
         name = s.get("name", "")
@@ -509,12 +535,18 @@ def vm_watch_health(data, conditions, opts=None):
             continue
         out[name] = {"status": "healthy", "checks": ["vm_watch"], "checks_failed": ["vm_watch"] if s.get("error") else [],
                      "findings": [], "act": {}, "time": d.get("read_at", ""), "job": str(o.get("job", "")), "reach": False}
-    for c in conditions or []:
+    folded = set(id(x) for cs in under.values() for x in cs)
+    for c in conditions:
+        if id(c) in folded:
+            continue
         vc = c.get("vcenter") or ""
         h = out.setdefault(vc, {"status": "healthy", "checks": ["vm_watch"], "checks_failed": [], "findings": [], "act": {},
                                 "time": d.get("read_at", ""), "job": str(o.get("job", "")), "reach": False})
+        vms = sorted(under.get(id(c), []), key=lambda x: (RANK.get(x["severity"], 9), x["object"]))
+        listed = ("; %d VM%s: %s" % (len(vms), "" if len(vms) == 1 else "s",
+                                     _shown_names(["%s (%s)" % (x["object"], VM_WORD.get(x["kind"], x["kind"])) for x in vms], 30))) if vms else ""
         h["findings"].append({"check": "vm_watch", "id": c["id"], "severity": c["severity"],
-                              "summary": "%s%s" % (c["summary"], (" [%s]" % _where(c, False)) if _where(c, False) else ""),
+                              "summary": "%s%s%s" % (c["summary"], listed, (" [%s]" % _where(c, False)) if _where(c, False) else ""),
                               "hint": c.get("todo", "")})
         h["status"] = "findings"
     return out

@@ -501,9 +501,9 @@ def _read(content, p, now, vcenter):
         res["vms_read"] += 1
         conn = str(pr.get("runtime.connectionState") or "connected")
         skip = name_skipped(v, p["skip_vms"], p["skip_folders"])
+        v["datastores"] = sorted(set(ds_name.get(getattr(x, "_moId", None), "") for x in pr.get("datastore") or []) - {""})
         if conn in LOST or conn == "disconnected":
-            v.update({"connection": conn, "not_judged": skip,
-                      "datastores": sorted(set(ds_name.get(getattr(x, "_moId", None), "") for x in pr.get("datastore") or []) - {""})})
+            v.update({"connection": conn, "not_judged": skip})
             res["vms_lost" if conn in LOST else "vms_disconnected"].append(v)
             continue
         if v["power"] != "poweredOn":
