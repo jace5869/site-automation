@@ -1,0 +1,20 @@
+{%- macro moment(t) -%}
+<time class="tip" tabindex="0" datetime="{{ t.iso | e }}" data-tip="{{ t.tip | e }}" aria-label="{{ t.tip | e }}">{{ t.clock | e }}</time>
+{%- endmacro %}
+{%- set w = s.story.window %}
+{% if s.story.rows %}
+<p>The outage's own chain only: {{ s.story.rows | length }} rows. Noise and repeats are in the workbook. Point at or tab to a time for its full date and zone.</p>
+<ol class="story">
+{% for r in s.story.rows %}
+{% if r.window and (loop.first or not loop.previtem.window) %}
+<li class="st-win"><div class="st-win-l"><b>Outage window</b> {{ moment(w.start) }} to {{ moment(w.end) }} &middot; {{ w.duration | e }}{% if w.still %}<span>{{ w.still | e }} still down after it</span>{% endif %}</div><ol>
+{% endif %}
+{% if r.divider %}<li class="st-day">{{ r.divider | e }}</li>{% endif %}
+<li class="st-ev lv-{{ r.level | e }}">{{ moment(r.time) }}
+<span class="st-sev lv-{{ r.level | e }}">{{ icon('critical' if r.level == 'down' else r.level) }}{{ r.word | e }}</span>
+<span class="st-txt">{{ r.text | e }}{% if r.extra %}{{ moment(r.extra) }}{{ r.after | e }}{% endif %}</span>
+<span class="st-obj">{{ r.objects | e }}</span><span class="st-dur">{{ r.duration | e }}</span></li>
+{% if r.window and (loop.last or not loop.nextitem.window) %}</ol></li>{% endif %}
+{% endfor %}
+</ol>
+{% else %}<p>No outage event in the chain.</p>{% endif %}

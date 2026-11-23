@@ -642,6 +642,14 @@ def core_meta(snap):
 
 def to_rows(snap, snap_id):
     """{table: [tuple in COLS order]} for a read that reached SolarWinds."""
+    try:
+        from ansible.module_utils.site_redact import redact
+    except ImportError:
+        from site_redact import redact
+
+    def text(value, limit):
+        return None if value is None else redact(value)[:limit]
+
     raw, ex = snap["raw"], snap.get("extra") or {}
     orion = orion_key(raw.get("url"))
     # the events' key: this Orion's, or its new count's after its EventIDs started again (1.96.2, review P1-2)
@@ -654,7 +662,7 @@ def to_rows(snap, snap_id):
     for i, n in enumerate(raw.get("nodes") or []):
         m = more.get(n["id"]) or {}
         wm = n.get("wm") or [None, None]
-        out["sw_node"].append((snap_id, n["id"], i, _cut(n["name"], 512), name_key(n.get("dns"), n.get("name")), _cut(n.get("dns"), 512),
+        out["sw_node"].append((snap_id, n["id"], i, text(n["name"], 512), name_key(redact(n.get("dns")), redact(n.get("name"))), text(n.get("dns"), 512),
                                _cut(n.get("ip"), 64), json.dumps(ips[n["id"]]) if n["id"] in ips else None, _int(n.get("status_code")),
                                _cut(n.get("status_text"), 512), 1 if n.get("unmanaged") else 0, _cut(n.get("vendor"), 255),
                                _cut(n.get("model"), 255), _cut(n.get("location"), 512), _float(n.get("resp")), _float(n.get("loss")),
@@ -671,45 +679,45 @@ def to_rows(snap, snap_id):
             continue
         seen.add(fid)
         e = errs.get(f.get("InterfaceID")) or {}
-        out["sw_interface"].append((snap_id, fid, i, _int(f.get("NodeID")), _cut(f.get("Name"), 512), _cut(f.get("Caption"), 512),
+        out["sw_interface"].append((snap_id, fid, i, _int(f.get("NodeID")), text(f.get("Name"), 512), text(f.get("Caption"), 512),
                                     _float(f.get("Speed")), _float(f.get("InPercentUtil")), _float(f.get("OutPercentUtil")),
                                     _float(f.get("Inbps")), _float(f.get("Outbps")), _int(f.get("Status")), _int(f.get("OperStatus")),
                                     _int(e.get("admin_status")), _float(e.get("in_errors_hour")), _float(e.get("out_errors_hour")),
                                     _float(e.get("in_discards_hour")), _float(e.get("out_discards_hour")),
                                     _float(e.get("in_errors_today")), _float(e.get("out_errors_today"))))
     for a in ex.get("alert") or []:
-        out["sw_alert_active"].append((snap_id, _int(a.get("alert_active_id")), _int(a.get("alert_id")), _cut(a.get("name"), 512),
-                                       _int(a.get("severity")), stamp(a.get("triggered_at")), _cut(a.get("message"), 1000),
-                                       _flag(a.get("acknowledged")), _cut(a.get("entity_type"), 255), _cut(a.get("entity_caption"), 512),
-                                       _int(a.get("node_id")), _cut(a.get("node_caption"), 512)))
+        out["sw_alert_active"].append((snap_id, _int(a.get("alert_active_id")), _int(a.get("alert_id")), text(a.get("name"), 512),
+                                       _int(a.get("severity")), stamp(a.get("triggered_at")), text(a.get("message"), 1000),
+                                       _flag(a.get("acknowledged")), _cut(a.get("entity_type"), 255), text(a.get("entity_caption"), 512),
+                                       _int(a.get("node_id")), text(a.get("node_caption"), 512)))
     for e in ex.get("event") or []:
         t = stamp(e.get("event_time"))
         if t is None or _int(e.get("event_id")) is None:
             continue
         out["sw_event"].append((ev_key, _int(e["event_id"]), t, _int(e.get("node_id")), _cut(e.get("net_object_type"), 32),
-                                _int(e.get("net_object_id")), _int(e.get("event_type")), _cut(e.get("type_name"), 255),
-                                _cut(e.get("message"), 1000), _flag(e.get("acknowledged")), snap_id))
+                                _int(e.get("net_object_id")), _int(e.get("event_type")), text(e.get("type_name"), 255),
+                                text(e.get("message"), 1000), _flag(e.get("acknowledged")), snap_id))
     for a in ex.get("app") or []:
-        out["sw_app"].append((snap_id, _int(a.get("app_id")), _int(a.get("node_id")), _cut(a.get("name"), 512), _int(a.get("status")),
+        out["sw_app"].append((snap_id, _int(a.get("app_id")), _int(a.get("node_id")), text(a.get("name"), 512), _int(a.get("status")),
                               _cut(a.get("status_text"), 512), _flag(a.get("unmanaged")), _int(a.get("components")),
                               _int(a.get("components_not_up"))))
     for c in ex.get("component") or []:
-        out["sw_component"].append((snap_id, _int(c.get("component_id")), _int(c.get("app_id")), _cut(c.get("name"), 512),
+        out["sw_component"].append((snap_id, _int(c.get("component_id")), _int(c.get("app_id")), text(c.get("name"), 512),
                                     _cut(c.get("kind"), 255), _int(c.get("status")), _cut(c.get("status_text"), 512),
-                                    _float(c.get("value")), _cut(c.get("message"), 1000)))
+                                    _float(c.get("value")), text(c.get("message"), 1000)))
     for v in ex.get("volume") or []:
-        out["sw_volume"].append((snap_id, _int(v.get("volume_id")), _int(v.get("node_id")), _cut(v.get("caption"), 512),
+        out["sw_volume"].append((snap_id, _int(v.get("volume_id")), _int(v.get("node_id")), text(v.get("caption"), 512),
                                  _cut(v.get("kind"), 255), _float(v.get("size_bytes")), _float(v.get("used_bytes")),
                                  _float(v.get("used_pct")), _int(v.get("status"))))
     for h in ex.get("vim_host") or []:
-        out["sw_vim_host"].append((snap_id, _int(h.get("host_id")), _int(h.get("node_id")), _cut(h.get("name"), 512), name_key(h.get("name")),
+        out["sw_vim_host"].append((snap_id, _int(h.get("host_id")), _int(h.get("node_id")), text(h.get("name"), 512), name_key(redact(h.get("name"))),
                                    _cut(h.get("cluster"), 512), _int(h.get("status")), _cut(h.get("connection_state"), 64),
                                    _cut(h.get("power_state"), 64), _float(h.get("cpu_pct")), _float(h.get("mem_pct")),
                                    _int(h.get("vm_count")), _int(h.get("vm_running")), _cut(h.get("product"), 255),
                                    _cut(h.get("vcenter"), 512)))
     for v in ex.get("vim_vm") or []:
-        out["sw_vim_vm"].append((snap_id, _int(v.get("vm_id")), _int(v.get("host_id")), _int(v.get("node_id")), _cut(v.get("name"), 512),
-                                 name_key(v.get("name")), _cut(v.get("power_state"), 64), _int(v.get("status")), _float(v.get("cpu_pct")),
+        out["sw_vim_vm"].append((snap_id, _int(v.get("vm_id")), _int(v.get("host_id")), _int(v.get("node_id")), text(v.get("name"), 512),
+                                 name_key(redact(v.get("name"))), _cut(v.get("power_state"), 64), _int(v.get("status")), _float(v.get("cpu_pct")),
                                  _float(v.get("mem_pct")), _cut(v.get("ip"), 64), _cut(v.get("guest_state"), 64)))
     for t in out:                        # a row without its key (SolarWinds gave none) is never written
         ix = [COLS[t].index(c) for c in PKEY[t]]

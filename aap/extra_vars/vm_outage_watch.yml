@@ -20,6 +20,14 @@
 # vm_watch_protect: []                           # e.g. [DC*, SQL*]: a ticket only, never a restart (phase 2)
 ## The outage review (the time line): launch this job by hand with vm_watch_review: true - see docs/VM_OUTAGE_WATCH.md
 # vm_watch_review_hours: 6                       # the review looks back this many hours
+# vm_watch_review_object: ""                     # a datastore or host name; empty = every watch root
+# vm_watch_review_noise: true  # Group usage alarms, gray transitions and short flaps in the review.
+# vm_watch_review_noise_alarms: [CPU usage, memory usage, disk usage]  # Alarm name fragments counted as noise (case-insensitive).
+# outage_escalate_storage: ""  # NOC escalation contact. Empty uses "your storage team".
+# outage_escalate_network: ""  # NOC escalation contact. Empty uses "your network team".
+# outage_escalate_vmware: ""  # NOC escalation contact. Empty uses "your VMware team".
+# outage_escalate_backup: ""  # NOC escalation contact. Empty uses "your backup team".
+# outage_aar_appendix_max: 40  # Maximum grouped event rows in Appendix A.
 # vm_watch_review_from: "2026-11-12 01:00"       # an older outage: the window starts here (report_time_zone) ...
 # vm_watch_review_to: "2026-11-12 05:00"         # ... and ends here
 # vm_watch_review_tickets: [INC0012345]          # a ticket opened by hand, shown too
@@ -146,8 +154,7 @@
 ## is down; the watch runs first, as always
 # vm_watch_review: false
 
-## a problem that cleared within this many seconds is one Low event ("back after 40 s"), not two; 0
-## = never joined
+## fold a problem and its clear within this many seconds; 0 = keep short changes
 # vm_watch_review_low_seconds: 120
 
 ## 1.79.12: an alarm that goes back to normal in the window is shown with its raise, whenever it was
@@ -155,8 +162,8 @@
 ## not), and the window then starts at the first raise
 # vm_watch_review_lookback_hours: 6
 
-## A trigger that was only usage alarms (CPU, memory) which cleared within this many seconds is said
-## plainly as a blip: Low
+## A trigger that was only usage alarms (CPU, memory or disk) which cleared within this many seconds
+## is said plainly as a blip: Low
 # vm_watch_review_min_seconds: 300
 
 ## true = such a blip sends no report at all (the job's output says so); false = it is sent, titled
@@ -169,11 +176,8 @@
 ## at most this many events per vCenter (the newest are kept)
 # vm_watch_review_max_events: 2000
 
-## 1.112.0, the AAR draft: a review (vm_watch_review) also writes the after action report as a Word
-## document, filled from the review - "Download AAR (Word)" on its web page, attached to its email
-## (like the workbook). The marking, logo and font are the AAR job's (incident_docs_banner,
-## report_logo_file ...). The job artifact vm_outage_review.aar keeps the same draft for the AAR job
-## (incident_review). false = no Word document (the artifact keeps the draft).
+## Attach the AAR draft and one-page NOC handoff to the review email and link both on its page. The
+## job artifact keeps the draft when Word output is off.
 # vm_watch_review_docx: true
 
 ## the events ACT reads at most: the lead-up, the first critical event, then the nearest in time

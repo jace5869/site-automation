@@ -2722,27 +2722,24 @@ run "outage watch with vm_watch_window_minutes: 0 - no events read" ok vm_outage
 # 1.66.0, the outage review (vm_watch_review): the time line of what vCenter and ServiceNow recorded. vcsim dates a posted
 # event at the moment it is posted: DC0_C0_H1 is lost for 2 s (tests/test_outage_timeline.py has the times of a real night)
 VMWARE_PORT=$port "$py" "$here/vcsim.py" outage 2
-run "outage review, nothing down now: a report all the same - the short loss is one Low row, the job is green" ok vm_outage_watch.yml -e "$wt" \
+run "outage review, nothing down now: a report all the same - the short loss folds, the job is green" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e vm_watch_review=true \
-    -- "Outage review: DC0_C0_H0: all paths down to a storage device" "Host not responding, back after 2 s  [Low]" "HA restarted 1 VM  [Warning]" \
-       "ServiceNow was not read: attach the ServiceNow API credential to the job template." '"VM outage watch",' '"nothing down",' \
+    -- "What went down:" "Host not responding: 2 changes" "all back to normal" "No matching host or inaccessible datastore" \
+       '"VM outage watch",' '"nothing down",' \
        '"vm_outage_review": {' '"hosts_down": []' '"site_health_targets": []'
 run "outage review with vm_watch_review_low_seconds: 0 - the loss counts as time down, with its end" ok vm_outage_watch.yml -e "$wt" \
-    -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_low_seconds=0 \
-    -- "Outage review: DC0_C0_H0: all paths down to a storage device; 2 s down" "DC0_C0_H1 down: 2 s" "Host not responding  [Critical]" "Host connected again  [Back to normal]" '"down_s": 2'
+    -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 \
+    -- "Host outage -" "DC0_C0_H1 down: 2 s" "Host not responding  [Critical]" "Host connected again  [Back to normal]" '"down_s": 2'
 # 1.79.12: a usage alarm that had already cleared. The windows start at a whole minute (vm_watch_review_from), after the events above,
-# so only these are in them. A: raised and cleared inside the window - the review says what triggered it, the VM is the subject,
-# the title says it cleared before the review. B: raised in the minute before the window, cleared in it - the raise is read back
-# (vm_watch_review_lookback_hours) and shown, the window starting at it.
+# 1.116.0: the review folds the usage alarm, including a raise read back from before the window.
 sleep $((61 - 10#$(date -u +%S)))
 min_a=$(date -u '+%Y-%m-%d %H:%M')
 VMWARE_PORT=$port "$py" "$here/vcsim.py" usage raise
 sleep 2
 VMWARE_PORT=$port "$py" "$here/vcsim.py" usage clear
-run "outage review, a usage alarm raised and cleared: cleared before the review, the VM is the subject, what triggered it said" ok vm_outage_watch.yml -e "$wt" \
+run "outage review, a usage alarm raised and cleared: one folded line" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
-    -- "Outage review: cleared before the review - DC0_C0_RP0_VM0" "a short usage blip, Low" "Triggered by: " "Virtual machine CPU usage" \
-       "Alarm red: Virtual machine CPU usage" "Alarm back to green: Virtual machine CPU usage"
+    -- "a short usage blip, Low" "Triggered by: " "Virtual machine CPU usage:" "all back to normal"
 run "  ... vm_watch_review_skip_blips: a blip sends no report, said" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_a\", \"vm_watch_review_low_seconds\": 0, \"vm_watch_review_skip_blips\": true}" -e report_time_zone=UTC \
     -- "not sent (vm_watch_review_skip_blips)" '!"aar": {'      # 1.112.0 (Neon P1): a skipped blip keeps no AAR draft
@@ -2753,10 +2750,10 @@ min_b=$(date -u '+%Y-%m-%d %H:%M')
 VMWARE_PORT=$port "$py" "$here/vcsim.py" usage clear
 run "outage review: the raise is before the window, the clear in it - read back, shown, the window starts at the raise" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
-    -- "Outage review: cleared before the review - DC0_C0_RP0_VM0" "Alarm red: Virtual machine CPU usage" "Alarm back to green: Virtual machine CPU usage" "Triggered by: "
+    -- "Virtual machine CPU usage:" "all back to normal" "Triggered by: "
 run "  ... vm_watch_review_lookback_hours: 0 - no raise read back: only the clear, nothing marked as related, said" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e "{\"vm_watch_review\": true, \"vm_watch_review_from\": \"$min_b\", \"vm_watch_review_lookback_hours\": 0, \"vm_watch_review_low_seconds\": 0}" -e report_time_zone=UTC \
-    -- "Alarm back to green: Virtual machine CPU usage" "!Alarm red: Virtual machine CPU usage" "!cleared before the review"
+    -- "Virtual machine CPU usage:" "no outage rate comparison available"
 run "outage review of a named window with nothing in it (vm_watch_review_from, vm_watch_review_to)" ok vm_outage_watch.yml -e "$wt" \
     -e vm_watch_window_minutes=0 -e '{"vm_watch_review": true, "vm_watch_review_from": "2026-11-12 01:00", "vm_watch_review_to": "2026-11-12 03:00"}' \
     -e report_time_zone=Europe/Berlin -- "Outage review: no outage event in the window" "2026-11-12 01:00 CET to 03:00 CET: 0 event(s)"
@@ -2771,16 +2768,18 @@ grep -qF "Outage time line" "$work/out.txt" && { echo "FAIL -   ...no time line 
 # the tickets of the window, from a fake ServiceNow (GET only): the health workflows' ticket with its ACT analysis and a
 # work note, and one added by number; a ticket resolved two days ago and one of no health workflow are left out
 "$py" - "$work/review-seed.json" <<'EOPY'
-import datetime, json, sys
+import datetime, hashlib, json, sys
 now = datetime.datetime.now(datetime.timezone.utc)
+def digest(value):
+    return hashlib.sha1(value.encode()).hexdigest()
 def t(minutes):
     return (now - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 json.dump([
-    {"sys_id": "a1a1", "number": "INC0012345", "short_description": "[site-health] DC0_C0_H1: host not responding",
+    {"sys_id": "a1a1", "number": "INC0012345", "short_description": "[site-health] 127.0.0.1: host DC0_C0_H1 not responding",
      "description": "Host: DC0_C0_H1\nCheck: vm_watch\nSeverity: critical\n\nACT (GenAI) analysis - level 2, status ok:\n"
                     "The host lost its storage paths before vCenter lost the host.\n",
      "opened_at": t(0), "sys_created_on": t(0), "sys_updated_on": t(0), "state": "2", "active": "true",
-     "correlation_id": "site-health:1a2b3c4d:vm_watch"},
+     "correlation_id": "site-health:%s:vm_watch:%s" % (digest("127.0.0.1")[:8], digest("vm-watch:host:DC0_C0_H1")[:12])},
     {"sys_id": "b3b3", "number": "INC0012300", "short_description": "users report slow logins", "opened_at": t(30),
      "sys_created_on": t(30), "sys_updated_on": t(20), "state": "1", "active": "true", "correlation_id": ""},
     {"sys_id": "c4c4", "number": "INC0012301", "short_description": "printer out of toner", "opened_at": t(30),
@@ -2799,25 +2798,36 @@ wsn_pid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$wsn_port") 2>/dev/null && break; sleep 0.1; done
 export SN_HOST="http://127.0.0.1:$wsn_port" SN_USERNAME=api SN_PASSWORD=goodpw
 run "outage review with the ServiceNow API credential: the ticket, its ACT analysis and its work note on the time line" ok vm_outage_watch.yml \
-    -e "$wt" -e vm_watch_window_minutes=0 -e '{"vm_watch_review": true, "vm_watch_review_tickets": ["INC0012300"]}' \
+    -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 -e '{"vm_watch_review": true, "vm_watch_review_tickets": ["INC0012300"]}' \
     -- "Ticket INC0012345 opened  [Critical]" "ACT analysis in INC0012345: The host lost its storage paths before vCenter lost the host.  [Note]" \
-       "Work note in INC0012345: On site, checking the cabling.  [Note]" "Ticket INC0012300 opened  [Warning]" '"ticket": "INC0012345"' "; ticket after "
+       "Work note in INC0012345: On site, checking the cabling.  [Note]" '"ticket": "INC0012345"'
 grep -qE "INC0012301|INC0011000" "$work/out.txt" && { echo "FAIL -   ...a ticket that is not the window's"; fails=$((fails + 1)); } \
     || echo "ok   -   ...the other tickets are left out"
 # 1.112.0: the review's AAR draft (Word) - attached to the email, "Download AAR (Word)" on the page beside its file, the draft in
 # the job artifact for the AAR job (incident_review); vm_watch_review_docx: false - no Word document, the artifact keeps the draft
 before=$(nmail)
 mkdir -p "$work/aarweb"
-run "outage review: the AAR draft (Word) - attached, on the page, in the artifact" ok vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 \
-    -e vm_watch_review=true -e "$mail" -e "{\"report_web_dest\": \"$work/aarweb\"}" \
-    -- "the AAR draft - AAR-DC0-C0-H0-" '"aar": {' '"review": true' '"job": "4711"' "!was not made"
+run "outage review: the AAR draft (Word) - attached, on the page, in the artifact" ok vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 \
+    -e vm_watch_review=true -e report_email_xlsx=true -e "$mail" -e "{\"report_web_dest\": \"$work/aarweb\"}" \
+    -- "the AAR draft - AAR-" '"aar": {' '"review": true' '"job": "4711"' "!was not made"
 "$py" - "$(lastmail)" "$work/aarweb" <<'EOPY' && echo "ok   -   ...the email's .docx and the page's link to the same file" || { echo "FAIL -   ...the AAR draft's email or page"; fails=$((fails + 1)); }
 import email, glob, io, re, sys, zipfile
 m = email.message_from_binary_file(open(sys.argv[1], "rb"))
-docs = [p for p in m.walk() if (p.get_filename() or "").startswith("AAR-DC0-C0-H0-") and p.get_filename().endswith(".docx")]
+docs = [p for p in m.walk() if (p.get_filename() or "").startswith("AAR-") and p.get_filename().endswith(".docx")]
 assert len(docs) == 1, [p.get_filename() for p in m.walk()]
+names = [p.get_filename() for p in m.walk() if p.get_filename()]
+csvname, = [n for n in names if n.startswith("outage-review-") and n.endswith(".csv")]
+assert csvname[:-4] + ".xlsx" in names
+noc, = [p for p in m.walk() if (p.get_filename() or "").startswith("NOC-handoff-") and p.get_filename().endswith(".docx")]
+noc_body = zipfile.ZipFile(io.BytesIO(noc.get_payload(decode=True))).read("word/document.xml").decode()
+assert "Hand this to the NOC" in noc_body and "Down now" in noc_body
+mail_html = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/html")
+assert "The outage, in order" in mail_html and 'class="st-ev ' in mail_html
+plain = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/plain")
+chain = plain.split("The outage, in order", 1)[1].split("1. What went down", 1)[0]
+assert "Outage window from" in chain and " UTC)" in chain, chain
 text = zipfile.ZipFile(io.BytesIO(docs[0].get_payload(decode=True))).read("word/document.xml").decode()
-for want in ("Filled from the outage review, AAP job 4711", "Appendix A - every event of the review", "To write: the confirmed cause",
+for want in ("Filled from the outage review, AAP job 4711", "Appendix A - the events by phase", "Appendix B - Hand this to the NOC", csvname, "To write: the confirmed cause",
              "Suggested - confirm: ACT in INC0012345", "OVERVIEW",
              "Template error: {{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"):      # Neon P1: text stays text
     assert want in text, want
@@ -2825,13 +2835,45 @@ assert "goodpw" not in text, "a secret in the AAR"
 pages = [p for p in glob.glob(sys.argv[2] + "/**/*.html", recursive=True) if "Download AAR (Word)" in open(p).read()]
 assert pages, "no page with the link"
 h = open(pages[0]).read()
-link = re.search(r'<a class="hf-a" href="([^"]+AAR-DC0-C0-H0-[^"]+\.docx)" download=', h)
+link = re.search(r'<a class="hf-a" href="([^"]+AAR-[^"]+\.docx)" download=', h)
+assert re.search(r'<a class="dl" href="[^"]+/' + re.escape(noc.get_filename()) + '" download', h), "the NOC handoff link"
 assert link and "site-report-file:" not in h, "the head's link"
+assert re.search(r'<a class="dl" href="[^"]+/' + re.escape(csvname) + '" download', h), "the full CSV link"
 assert glob.glob(sys.argv[2] + "/**/" + link.group(1).rsplit("/", 1)[-1], recursive=True), "the file beside the page"
 EOPY
 [ "$(nmail)" -gt "$before" ] || { echo "FAIL -   ...no email"; fails=$((fails + 1)); }
-run "outage review with vm_watch_review_docx: false - no Word document, the artifact keeps the draft" ok vm_outage_watch.yml -e "$wt" \
-    -e vm_watch_window_minutes=0 -e vm_watch_review=true -e vm_watch_review_docx=false -- '"aar": {' "!the AAR draft - AAR-"
+run "outage review with Word and Excel off: the CSV is attached and the artifact keeps the draft" ok vm_outage_watch.yml -e "$wt" \
+    -e vm_watch_window_minutes=0 -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 -e vm_watch_review=true -e vm_watch_review_docx=false -e report_email_xlsx=false -e "$mail" \
+    -- '"aar": {' "!the AAR draft - AAR-"
+"$py" - "$(lastmail)" <<'EOPY' && echo "ok   -   ...the full CSV without Word or Excel" || { echo "FAIL -   ...the full CSV"; fails=$((fails + 1)); }
+import csv, email, io, sys
+m = email.message_from_binary_file(open(sys.argv[1], "rb"))
+files = {p.get_filename(): p for p in m.walk() if p.get_filename()}
+csvname, = [n for n in files if n.startswith("outage-review-") and n.endswith(".csv")]
+assert not any(name.endswith(".xlsx") for name in files)
+rows = list(csv.reader(io.StringIO(files[csvname].get_payload(decode=True).decode())))
+assert len(rows) > 1 and "Event type" in rows[0]
+assert not any(name.endswith(".docx") for name in files)
+EOPY
+# Inject independent write failures: a missing parent for the CSV, a non-directory for Word, and an invalid Excel sheet.
+# Run the real report, mail and reconciliation artifact tasks after the failed writes.
+mkdir -p "$work/failed-attachments" "$work/attachment-tmp"
+before=$(nmail)
+TMPDIR="$work/attachment-tmp" run "review_attachment_failures_keep_delivery" ok vm_outage_watch.yml -e "$wt" -e "$mail" \
+    -e vm_watch_window_minutes=0 -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 -e vm_watch_review=true -e report_email_xlsx=true \
+    -e "{\"report_web_dest\": \"$work/failed-attachments\", \"_vm_w_csv_dir\": {\"path\": \"$work/missing/csv\"}, \"_rd_dir\": \"/dev/null/example\"}" \
+    -e '{"_report_xlsx": [{"name": "Example", "columns": 1, "rows": [[1]]}]}' \
+    -- "The full event CSV could not be written" '"site_health": {' '"vm_outage_review": {'
+"$py" - "$(lastmail)" "$work/failed-attachments" <<'EOPY' && [ "$(nmail)" -gt "$before" ] \
+    && echo "ok   -   ...the review was published and mailed without failed files" || { echo "FAIL -   ...attachment failure suppressed delivery"; fails=$((fails + 1)); }
+import email, pathlib, re, sys
+m = email.message_from_binary_file(open(sys.argv[1], "rb"))
+assert not any((p.get_filename() or "").endswith((".csv", ".xlsx", ".docx")) for p in m.walk())
+body = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/plain")
+assert "The outage, in order" in body and "attached workbook" not in body
+pages = [p.read_text() for p in pathlib.Path(sys.argv[2]).rglob("*.html") if "The outage, in order" in p.read_text()]
+assert pages and not any(re.search(r'href="[^"]+\.(csv|xlsx|docx)"', page) for page in pages)
+EOPY
 grep -vq '"method": "GET"' "$work/wsn.jsonl" && { echo "FAIL -   ...the review wrote to ServiceNow"; fails=$((fails + 1)); } \
     || echo "ok   -   ...ServiceNow was only read (GET)"
 kill "$wsn_pid" 2>/dev/null; wait "$wsn_pid" 2>/dev/null
@@ -2839,11 +2881,11 @@ SNMOCK_SEED="$work/review-seed.json" SNMOCK_LOG="$work/wsn2.jsonl" SNMOCK_NO_TAB
 wsn_pid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$wsn_port") 2>/dev/null && break; sleep 0.1; done
 SN_USERNAME=ro run "outage review, a read-only account that may not read the work notes: the ticket, and what is missing" ok vm_outage_watch.yml \
-    -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review=true \
+    -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 -e vm_watch_review=true \
     -- "Ticket INC0012345 opened  [Critical]" "ServiceNow work notes: GET api/now/table/sys_journal_field: HTTP 403" \
        "the account needs read on sys_journal_field (the work notes)"
 SN_PASSWORD=wrongpw run "outage review, ServiceNow refuses the login: the review is made without the tickets, and says why" ok vm_outage_watch.yml \
-    -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review=true -- "ServiceNow: not read: GET api/now/table/incident: HTTP 401" "Outage review: "
+    -e "$wt" -e vm_watch_window_minutes=0 -e vm_watch_review_object=DC0_C0_H1 -e vm_watch_review_low_seconds=0 -e vm_watch_review=true -- "ServiceNow: not read: GET api/now/table/incident: HTTP 401" "What went down:"
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$wsn_pid" 2>/dev/null
 VMWARE_PORT=$port "$py" "$here/vcsim.py" events >/dev/null

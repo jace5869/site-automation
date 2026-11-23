@@ -27,6 +27,7 @@ options:
   job_id: {description: This job's ID (awx_job_id) - only runs before it are listed., type: int, required: true}
   template_id: {description: Its job template's ID (awx_job_template_id)., type: int, required: true}
   runs: {description: How many past runs (at most 50)., type: int, default: 13}
+  window: {description: Read all earlier runs overlapping this time range (begin and end in UTC epoch seconds)., type: dict}
   artifacts: {description: "Other job artifacts to return with each run, by name (1.61.0: patch_age, vm_versions) - in its artifacts.", type: list, elements: str, default: []}
   template_name: {description: "1.102.0: another job template's runs instead, by its name (the network map reads the AD job's ad_repl) - its successful and failed runs before this job.", type: str, default: ''}
   ca_path: {description: A CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)., type: str, default: ''}
@@ -44,6 +45,8 @@ runs:
   sample: [{id: 4180, status: successful, finished: "2026-10-21T06:01:12.5Z", report: {status: ok, value: 3, label: Deleted}}]
 '''
 
+import datetime
+
 try:
     from urllib.parse import quote
 except ImportError:                                       # pragma: no cover - Python 2
@@ -57,7 +60,7 @@ NO_CREDENTIAL = ('no AAP connection: attach a credential of type "Red Hat Ansibl
 DONE = "successful,failed,error,canceled"
 
 
-def history(api, job_id, template_id, runs, names=(), template_name=""):
+def history(api, job_id, template_id, runs, names=(), template_name="", window=None):
     """(runs oldest first, why): why is '' when AAP answered. template_name: another template's successful runs instead."""
     why = api.probe()
     if why:
@@ -78,12 +81,25 @@ def history(api, job_id, template_id, runs, names=(), template_name=""):
                 return [], ("%d job templates are named \"%s\" (IDs %s) - set it to the one's ID, the layer is off until then"
                             % (len(ids), tid, ", ".join(str(i) for i in sorted(ids))))
             tid = str(ids[0])
-        code, data = api.call("GET", "jobs/?job_template=%s&id__lt=%d&status__in=%s&order_by=-id&page_size=%d"
-                              % (tid, job_id, DONE, max(1, min(runs, 50))))
     else:
-        code, data = api.call("GET", "jobs/?job_template=%d&id__lt=%d&status__in=%s&order_by=-id&page_size=%d"
-                              % (template_id, job_id, DONE, max(1, min(runs, 50))))
-    if template_name and code == 200 and not (data.get("results") or []):
+        tid = template_id
+    query = "jobs/?job_template=%s&id__lt=%d&status__in=%s&order_by=-id&page_size=%d" % (
+        tid, job_id, DONE, max(1, min(runs, 50)))
+    if window:
+        def utc(key):
+            return datetime.datetime.utcfromtimestamp(float(window[key])).strftime("%Y-%m-%dT%H:%M:%SZ")
+        query += "&started__lte=%s&finished__gte=%s" % (utc("end"), utc("begin"))
+    code, data = api.call("GET", query)
+    jobs = list(data.get("results") or []) if code == 200 else []
+    if not window:
+        jobs = jobs[:runs]
+    page = 1
+    while window and code == 200 and data.get("next"):
+        page += 1
+        code, data = api.call("GET", query + "&page=%d" % page)
+        if code == 200:
+            jobs.extend(data.get("results") or [])
+    if template_name and code == 200 and not jobs:
         return [], ("no finished run of the job template \"%s\" that the AAP user can see (it has not run, it has another "
                     "name, or the user needs Organization Auditor on its organization)" % template_name)
     if code != 200:
@@ -91,7 +107,7 @@ def history(api, job_id, template_id, runs, names=(), template_name=""):
                     % (code, error_text(data)) if code in (401, 403) else
                     "AAP answered HTTP %d for this template's jobs: %s" % (code, error_text(data)))
     out = []
-    for j in (data.get("results") or [])[:runs]:
+    for j in jobs:
         if not isinstance(j, dict) or not isinstance(j.get("id"), int):
             continue
         report = None
@@ -134,14 +150,14 @@ def hidden(api, job_id, template_id):
 def main():
     module = AnsibleModule(argument_spec=dict(job_id=dict(type="int", required=True), template_id=dict(type="int", required=True),
                                               runs=dict(type="int", default=13), ca_path=dict(type="str", default=""),
-                                              artifacts=dict(type="list", elements="str", default=[]),
+                                              window=dict(type="dict"), artifacts=dict(type="list", elements="str", default=[]),
                                               template_name=dict(type="str", default=""),
                                               timeout=dict(type="int", default=15)),
                            supports_check_mode=True)
     p = module.params
     api = Api(connection(), p["ca_path"], p["timeout"], ca_setting="report_history_aap_ca_path", no_credential=NO_CREDENTIAL)
     try:
-        runs, why = history(api, p["job_id"], p["template_id"], p["runs"], p["artifacts"], p["template_name"])
+        runs, why = history(api, p["job_id"], p["template_id"], p["runs"], p["artifacts"], p["template_name"], p.get("window"))
     except Exception as e:                                # noqa: BLE001 - never fail the job: the report goes out without the strip
         runs, why = [], "reading the past runs from AAP failed: %s: %s" % (e.__class__.__name__, e)
     module.exit_json(changed=False, ok=not why, why=why, runs=runs,

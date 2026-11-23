@@ -223,14 +223,7 @@ nothing in either, opens no ticket and restarts nothing. There is no new job tem
 
 4. For the tickets and ACT's notes: attach the **ServiceNow API** credential to the job template. Without it the two
    lanes say *not read* and the rest is made as usual.
-5. Launch. The watch runs first, as always. Then the job output shows the review:
-
-   ```
-   Outage time line, 2026-11-11 21:45 CET to 2026-11-12 03:45 CET: 18 event(s);
-   first signal 12 Nov 01:41:10; esx03 down: 46 min; ticket after 93 min
-    1  12 Nov 01:41:10  Host events  esx03  Storage path redundancy lost  [Warning]
-    2  12 Nov 02:19:40  Host events  esx03  Host not responding  [Critical]
-   ```
+5. Launch. The watch reads the current conditions first. The job output includes the outage summary.
 
 6. Read it by email (`report_email_to`) or on the report website (`report_web_dest`). A review is always reported,
    also when nothing is down now.
@@ -240,139 +233,75 @@ Leave `vm_watch_review` off on the schedule. A scheduled run that finds somethin
 
 ### What the review shows
 
+The review names the inaccessible datastores and down hosts recorded by the watch. It combines this
+run's conditions with this job template's `vm_watch` artifacts in the requested window, using the AAP
+credential already used for email history. The Reviewed line lists each root with its vCenter.
+To review a particular datastore or host, set `vm_watch_review_object` to its inventory name.
+When AAP history is unavailable, the review says so and uses the available roots.
+
+1. **What went down** gives the roots, their hosts, down spans and recoveries. Overlapping datastore losses
+   on the same host in the same vCenter share a chain. Separate roots keep their own entries.
+2. **What it affected** lists datastore and host members and the watch's findings on those VMs. It counts
+   HA restarts in a failed host's cluster during its down span. A VM known only from membership reads
+   *on the lost datastore (state not read)* or *on the down host (state not read)*.
+3. **Down now** gives every current watch condition across all vCenters, worst first.
+4. **Recovered** gives the object, recovery event, time and duration when recorded.
+
+With `vm_watch_review_noise: true`, usage alarms, gray transitions, unpaired greens and brief flaps
+are counted by alarm and scope. A brief loss the watch observed during that span stays in the outage chain.
+A short storage-path flap that leads into the loss is the first signal.
+Each noise line gives every change, the number of objects, the time span and final state. On other VMs,
+at least ten changes during the outage and more than three times the outside rate indicate a rise at the
+same time. Set `vm_watch_review_noise: false` to include these changes in the detailed event list. The story always omits noise.
+
+*The outage, in order* shows up to 15 milestones. Appendix A groups matching events within three minutes by
+lead-up, outage, recovery and after, with up to `outage_aar_appendix_max` rows and a separate noise table.
+The review email attaches a workbook and matching CSV named for the outage. Both include every source event.
+
+The configured vCenter event cap still applies.
+
 | Part | What |
 |---|---|
-| The boxes | Window, Events, Host down, VMs restarted by HA, Signal to ticket |
-| The outage in short | the first signal, the ticket, the time down, when it was back - one line each |
-| What happened, in order (website: atlas, brief) | the time line: four lanes, a mark per event, a band while a host was down |
-| The events | every event as a table row: time, lane, where, what, level. **This table is the source**; the chart only draws it |
+| The boxes | Went down, VMs affected, Down now, Recovered, Signal to ticket, Noise |
+| The outage, in order | The outage chain by day, including lead-up, recoveries and the watch's current read. |
+| Issues by type (website) | Filter Datastores, VMs or Hosts. Open a row to see its members and state. |
+| The four parts | What went down, what it affected, down now and recovered. |
+| What this usually means (for the NOC) | Patterns actually seen, in order of first evidence, with causes, read-only first checks, contacts and the objects and times seen here. |
+| All events (N) - chart | Open to see Storage, Hosts, HA and VMs, and Tickets. Choose Everything to see usage and gray alarms in ten-minute bars. |
+| The outage in short | The first signal, the ticket, the time down and when it was back. |
+| The events (website) | the numbered rows behind the chart and ACT links, initially folded, and the CSV download |
 | Download AAR (Word) (1.112.0) | in the page's head: the after action report, filled from this review ([The AAR draft](#the-aar-draft-word)) |
 | For the after-action report | where the AAR draft is, the job number for the AAR job, and the lines to paste into its survey |
 | From ACT - possible causes and fixes (1.104.0, with `vm_outage_act: true`) | ACT's suggestions, as cards that open: see below |
 | The watch's own sections | *Down or hung now* and the rest, below, as in every watch report |
 
-### The list, the related events and the filters
+### Reading the chain and chart
 
-The time line is easier to read when you know what it is about. The review works out the outage's **subject** from its own events: the hosts that
-went down, and the VMs with a critical event of their own.
+The red outline encloses the outage from the first critical event through the last recorded loss or recovery.
+Green rows mark recoveries. The final red row gives the watch's observation at review time, which may be days later.
+Hover over a time or focus it with Tab for its full local date, time, zone and UTC equivalent. The email prints the same
+chain in local time under day headings. Its window border and recovery shading depend on the mail client.
 
-When nothing went down and no VM has a critical event, the subject is what has a critical event of its own. That is a host's red alarm, or a
-VM's red alarm known by its entity only (1.90.0). An alarm that went back to normal in the window does not count here.
+The chart starts folded. **Outage only** zooms in on the chain. **Everything** spans the event read and rings events
+about the lost datastores, their hosts or affected VMs. A ring on a usage or gray-alarm bar means it contains an affected VM.
+The first tick and each midnight carry a date. A solid red outline covers the window across the lanes and a dashed
+extension identifies objects still down. Nearby events share a numbered mark. Hover or focus it for its events and times.
+The workbook and CSV preserve every source event. The scheduled watch retains its detailed four-lane timeline.
 
-**The lead-up (1.90.0).** A box outlined in red marks the lead-up to the subject's first critical event:
+The NOC cards use fixed entries in `roles/vmware_vm/files/outage_patterns.yml`. Each entry names its event types or
+raised alarm names and the teams to call. Configure the four `outage_escalate_*` settings below to print site contacts.
+The **Hand this to the NOC** Word link appears with the cards when the handoff has been written.
 
-- It starts at the first problem about the subject itself in the 30 minutes before. Its cluster and datastores do not count here.
-- It ends at that critical event.
-- The legend says what it spans, for example *Outlined red: Lead-up to #27: 10:48 to 10:58 CET (10 min)*.
-- The box has a tab, *Lead-up · 10 min*, and a solid edge at the critical event (1.90.1). Its tint deepens towards that event.
-- The red shade is something else: it is a host's down stretch.
-
-When there is no lead-up to draw, one muted line says why. For example: *No lead-up drawn: nothing about esx07 came in the 30 min before its first
-critical alarm (#26, 10:58).* The time zone is under the lane names, for example *Time (CET)*.
-
-**The list.** Hover a mark, or Tab to it. The tip is a list:
-
-1. A header, for example *26 events · 17:20-17:24*.
-2. One line per event: time, level icon, what, and where. The critical ones come first, then by time.
-3. Click a line to go to its row in *The events*.
-
-**Open a mark (1.90.1).** Click a mark, or press Enter or Space on it, or tap it. Its events open under its lane:
-
-1. The header: the mark, what happened, its time and level. Tags say *Ends the lead-up* or *In the lead-up*, and *About esx07* when it is about
-   the subject.
-2. A mark of several events lists them by time. The worst is picked; click another line (or press Enter on it) to see its facts.
-3. The facts of the picked event: where, host, VM, cluster, vCenter, the alarm, the kind, whether it is about the outage, its place in the
-   lead-up, the incident link, and a button to its row in *The events*.
-4. Esc, *Close*, a second click or a click elsewhere closes it. One mark is open at a time.
-
-**Motion** (`report_motion`). When the time line scrolls into view:
-
-- the marks come in left to right;
-- the lead-up box draws in back from its critical event, and that event pings once;
-- an opened mark slides open, and a mark the filters leave out shrinks away.
-
-With `report_motion: false`, or when the system asks for less motion, everything is simply there. Print is always still.
-
-**Related.** A mark about the subject, its ESXi host, its cluster, or the datastores and port groups that events of its host name has an outline ring
-and full colour. The other marks are dimmed but stay there and can be hovered. The legend says what is outlined, and *The events* gets a
-*Related* column. A snapshot is related only when it is on a subject VM itself, because a snapshot commit can stun a VM. If no subject can be worked out,
-nothing is marked and a muted line says why.
-
-**Filters.** Above the chart, in two rows, then the host, vCenter and VM row:
-
-| Control | What it does |
-|---|---|
-| Show: All / Related only | hides the unrelated marks and rows |
-| Kinds | ticks for Host, HA, Datastore and storage, Network, VM power and heartbeat, CPU and memory usage, Snapshots, Other; the kind comes from the event's type and words |
-| Show every repeat | lists every row of a repeat (below) |
-| Host, vCenter, VM (1.90.1) | two lists and a search box; the choices are only the hosts, vCenters and VMs of the page's own events. *Clear* puts them back |
-
-The controls filter the chart and *The events* together:
-
-- A lane's count follows them: *4 of 29 events*. So does the row's *5 of 32 events*.
-- With a host, vCenter or VM chosen, the kinds' counts are that host's (vCenter's, VM's).
-- An opened mark that the controls leave out closes.
-- Show, Kinds and Show every repeat are kept in this browser. The host, vCenter and VM are not kept, and none of it goes into the page's address.
-- A list with only one choice is left out. With one host, one vCenter and one VM, there is no row.
-
-**What host, vCenter and VM match (1.90.2).**
-
-- **Host:** the event's own host. That is its ESXi host, or the host a ServiceNow ticket names, or the host an alarm
-  is on. A VM's alarm counts under its host, never under the place it happened.
-- **vCenter:** its full name. The list shows the short name (*vc01*) unless two vCenters share it. An address
-  (*192.0.2.14*) always shows whole.
-- **VM:** every VM the event is about, by its full name. That includes a VM's alarm known only by the alarm's entity,
-  and each VM of a grouped row (*HA restarted 14 VMs*, or the same event again on several VMs).
-- **A grouped row** matches when one of its events matches both boxes: *HA restarted 2 VMs* (db on esx03, web on
-  esx07) shows for esx07 and web, not for esx03 and web. It counts once.
-- **An alarm's entity** is a host, a VM or neither (a cluster, a datastore) as vCenter says. When vCenter does not
-  say, the review goes by the names it knows on that vCenter, then by the alarm's name (*Virtual machine ...*,
-  *Host ...*). A VM found so counts for every alarm on it.
-- **A ticket** counts under the host it names. Only a name the review knows as a VM, and not as a host, counts as
-  that VM.
-
-**Repeats.** Identical events one after another (the same lane, what, where and level, and since 1.90.2 the same host and VMs) fold into one row, for example *×4, 17:21-17:40*; the times
-are in the row's title. *Show every repeat* lists them all. Without the script every row shows. The email and the workbook are unchanged.
-
-**Incidents are links.** With the ServiceNow credential attached, every incident number opens the incident in ServiceNow (a new tab, read only): in the list's lines
-of the ServiceNow and ACT lanes, in *The events*, and in the card *First signal to ticket*. The email's table and card link the same numbers. The link is
-`https://<instance>/nav_to.do?uri=incident.do%3Fsys_id%3D<sys_id>`; the instance is the credential's `SN_HOST` (https only). If the instance is not
-known, the number shows without a link. Without the credential the review says so and how to fix it: *Attach the ServiceNow API credential to the
-outage watch template to see and link its incidents (read only).*
-
-The four lanes:
-
-| Lane | What it holds |
-|---|---|
-| vCenter alarms | every alarm that changed its colour, and vSphere HA's cluster events (VMs restarted) |
-| Host events | a host lost and back, HA on the host, storage paths, device loss, VMFS heartbeat, uplinks, maintenance mode |
-| ServiceNow | the tickets the health workflows opened (`servicenow_correlation_prefix`), their work notes, when each was resolved |
-| ACT | ACT's analysis and review notes in those tickets |
-
-- **Hover a mark**, or Tab to it: a list of its events. Marks that would overlap share one mark with their count ("11+3").
-  See *The list, the related events and the filters* below.
-- **Levels** are words and icons, never colour alone: Critical, Warning, Low, Note, Back to normal.
-- **Low:** a problem that cleared within `vm_watch_review_low_seconds` (120) is one Low event, "back after 40 s".
-- **The title** leads with the first critical event when there is one (1.90.0). A warning before it is its lead-up.
 - **What triggered it** is the first line under the title, always. It is the first of these:
   1. the watch's own findings ("CRITICAL: VM web07 is hung ...");
   2. a red alarm still raised at the end of the window (1.90.0), for example "CRITICAL: vSphere HA host status on esx07: red since 11:00:10";
   3. when nothing was down by the time the watch read vCenter, the alarms or the host that had already cleared;
   4. *the review was asked for*.
 - **The verdict chip** of a review is the watch's state now, and it says so: *Now: All good* (1.90.0). It is not a verdict on the outage.
-- **An alarm that went back to normal** is shown with its raise, whenever it was raised: the review also reads the alarms'
-  status changes `vm_watch_review_lookback_hours` (6) before the window, and the window then starts at the raise. The raise
-  gives the subject (the VM) and the red stretch, so the events are marked as related to it.
-- **Cleared before the review.** When the only problems are alarms and every one has cleared, the title says *cleared before the
-  review* with the VM and the time from the first raise to the last clear, the tile reads *Cleared before the review*, and the
-  chart has one band for that stretch. A host that was lost, an HA restart or a storage problem is the window's own story
-  and keeps the usual title.
-- **A short usage blip.** If those alarms are only CPU or memory usage and each cleared within `vm_watch_review_min_seconds`
-  (300), the title says so (*a short usage blip, Low*). It is still sent; `vm_watch_review_skip_blips: true` sends nothing
-  and the job says so.
-- **The email** and the other looks have no chart: the boxes, the short list and the events table. A review's email has the
-  AAR draft attached (`AAR-<host>-<date>.docx`, 1.112.0), like the workbook.
-- **The workbook** (`report_email_xlsx: true`): a *Timeline* sheet with every event.
+- **Alarm history:** `vm_watch_review_lookback_hours` reads earlier raises for alarms that clear in the window.
+  Short usage blips can still be skipped with `vm_watch_review_skip_blips` and `vm_watch_review_min_seconds`.
+- **The email** has the outage chain, four parts, noise, workbook and CSV. When Word output is enabled it attaches the AAR and NOC handoff.
+- **The review workbook** has *Timeline* (every event), *Outage summary* and *Noise*.
 - **The job artifact** `vm_outage_review`: the numbers (first signal, ticket, seconds from signal to ticket, seconds
   down, hosts down, VMs restarted by HA), for a later workflow step. A review (1.112.0) also keeps `review: true` and its
   AAR draft (`aar`), which the AAR job reads back by this job's number.
@@ -397,8 +326,7 @@ off by default. Each suggestion is a guess to check, never a finding.
    - **What to check**: read-only checks that confirm the cause, numbered;
    - **Possible fix**: what could fix it, numbered, each command with a **Copy** button (a step ACT gave no kind is
      under **Other steps**);
-   - **The events it read**: each number goes to its row in *The events*;
-   - **Show these on the time line**: rings the events' marks and fades the others. Press it again to undo.
+   - **The events it read**: each number goes to its row in *The events*.
 5. Check before you act. The tag *Suggestion - check before acting* is on every card.
 
 What ACT reads and does:
@@ -428,13 +356,13 @@ A review also writes the **after action report** as a Word document, filled from
 someone opens it, checks it and writes the rest.
 
 - **Where:** *Download AAR (Word)* in the head of the review's web page, and attached to the review's email.
-  The file is `AAR-<host>-<date>.docx`, for example `AAR-esx03-2026-11-12.docx`.
+  The file is `AAR-<outage-name>.docx`.
 - **The layout** is the AAR job's own ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)): the marking banner, the logo, the font, the site's
-  instructions at the end.
+  instructions before the appendices.
 - **Filled from the review:** the start and end, the impact (the hosts down and for how long, the VMs HA restarted), the
   detection (the first signal, the ticket and the time between), the actions (HA's restarts, the tickets' work notes), the
   recovery (the host back, the ticket's close notes, all back to normal).
-- **Tables:** the three numbers, the key events (at most 15), the tickets. Every event is in *Appendix A* (at most 300).
+- **Tables:** the three numbers, the outage chain by day (at most 15 rows), the tickets. Full NOC cards follow Recovery. *Appendix B* starts a new page with the compact handoff. *Appendix A* groups matching events by phase, summarizes noise and names the complete workbook and CSV.
 - **ACT's possible causes** (`vm_outage_act`, when it is on) are under the root cause as *Suggested - confirm*. So is what
   a ticket's own ACT analysis said. They are suggestions, not findings. Without them the document says *ACT was not asked*.
 - **Left to write, in red:** the root cause (never filled from ACT), the impact level, the successes, the improvements, and
@@ -497,17 +425,25 @@ the ticket, not a finding.
 | `vm_watch_email_every_hours` | 4 | a reminder while the conditions last, this long after the last email; 0 = never. Also the most one scheduled review is made |
 | `vm_watch_review` | false | true, at launch: make the outage review now, also when nothing is down |
 | `vm_watch_review_hours` | 6 | how far back the review looks (0.25 to 744) |
+| `vm_watch_review_object` | "" | name of a datastore or host to review; empty reviews all watch roots |
+| `vm_watch_review_noise` | `true` | Group usage alarms, gray transitions and short flaps in the review. |
+| `vm_watch_review_noise_alarms` | `[CPU usage, memory usage, disk usage]` | Alarm name fragments counted as noise (case-insensitive). |
+| `outage_escalate_storage` | `""` | NOC escalation contact. Empty uses "your storage team". |
+| `outage_escalate_network` | `""` | NOC escalation contact. Empty uses "your network team". |
+| `outage_escalate_vmware` | `""` | NOC escalation contact. Empty uses "your VMware team". |
+| `outage_escalate_backup` | `""` | NOC escalation contact. Empty uses "your backup team". |
+| `outage_aar_appendix_max` | `40` | Maximum grouped event rows in Appendix A. |
 | `vm_watch_review_from` | "" | an older outage: the window's start, in `report_time_zone`, e.g. `2026-11-12 01:00` |
 | `vm_watch_review_to` | "" | its end; empty = `vm_watch_review_hours` after the start, at most now |
 | `vm_watch_timeline` | true | the time line also in the report of a normal run that finds something down |
-| `vm_watch_review_low_seconds` | 120 | a problem cleared within this is one Low event; 0 = never joined |
+| `vm_watch_review_low_seconds` | 120 | fold a short problem and its clear into a count; 0 = keep short changes |
 | `vm_watch_review_lookback_hours` | 6 | read the alarms' status changes this long before the window, to show the raise of an alarm that clears in it; 0 = not |
 | `vm_watch_review_min_seconds` | 300 | usage alarms that all cleared within this are a short blip (Low) |
 | `vm_watch_review_skip_blips` | false | true = a blip sends no report |
 | `vm_watch_review_tickets` | [] | more tickets to show, by number |
 | `vm_watch_review_event_types` | [] | vCenter event types to read; empty = the built-in list |
 | `vm_watch_review_max_events` | 2000 | the most events per vCenter (the newest are kept) |
-| `vm_watch_review_docx` | true | a review also writes the AAR draft as Word: on its page and attached to its email (1.112.0) |
+| `vm_watch_review_docx` | true | attach the AAR draft and NOC handoff as Word documents and link both on the review page |
 | `vm_outage_act` | false | true, at launch with `vm_watch_review`: ACT's possible causes and fixes on the review (needs the ACT model key credential) |
 | `vm_outage_act_max_events` | 120 | the most events ACT reads: the lead-up, the first critical event, then the nearest in time |
 | `vm_outage_act_model_timeout` | 180 | seconds the model may take for its answer; the whole ACT run gets twice that and a minute (`site_act_timeout` at most) |

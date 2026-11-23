@@ -123,6 +123,7 @@
 <div style="padding:6px 0;color:#374151;">{{ s.text | e }}</div>
 {%- endif %}
 {%- if s.cards is defined %}{{ s.cards | report_cards_html('#111827', '#4b5563', '#0f6b4f') }}{% endif %}
+{%- if s.kind | default('') == 'story' %}{% include 'report_story_email.html.j2' %}{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
 {%- set k = fit.k[loop.index0] %}

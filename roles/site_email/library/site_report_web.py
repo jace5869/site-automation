@@ -1032,6 +1032,64 @@ def json_block(value):
     return json.dumps(value, separators=(',', ':')).replace('<', r'\u003c')
 
 
+def review_page_assets(html, rel):
+    """Publish the look's stylesheet and use the existing external house script under strict CSP."""
+    # The template includes a script source for the publisher and a theme bootstrap for standalone previews.
+    html = INLINE_RE.sub('', html, count=1)
+    head, body = html.split('</head>', 1)
+    head = re.sub(r'<script>.*?</script>', '', head, flags=re.S)
+    head = re.sub(r'<!--\[if mso\]>.*?<!\[endif\]-->', '', head, flags=re.S)
+    sheets = re.findall(r'<style>(.*?)</style>', head, re.S)
+    head = re.sub(r'<style>.*?</style>', '', head, flags=re.S)
+    # The shared banner, back link and history bars may carry presentation attributes.
+    # Parse actual elements so quoted event text and file-ledger comments survive byte-for-byte.
+    styles = {}
+    edits = []
+    lines = body.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+
+    class Styles(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            value = dict(attrs).get('style')
+            if value is None:
+                return
+            # Inline declarations cannot introduce a selector or an at-rule in the external sheet.
+            safe = not re.search(r'[{}<>@\\]|/\*', value)
+            index = styles.setdefault(value, len(styles)) if safe else None
+            rendered = []
+            for key, val in attrs:
+                if key == 'style':
+                    if safe:
+                        rendered.append(' data-review-style="%d"' % index)
+                elif val is None:
+                    rendered.append(' ' + key)
+                else:
+                    rendered.append(' %s="%s"' % (key, htmllib.escape(val, quote=True)))
+            line, col = self.getpos()
+            start = offsets[line - 1] + col
+            original = self.get_starttag_text()
+            end = '/>' if original.endswith('/>') else '>'
+            edits.append((start, start + len(original), '<' + tag + ''.join(rendered) + end))
+
+    if ' style=' in body:
+        parser = Styles()
+        parser.feed(body)
+        parser.close()
+        chunks = []
+        last = 0
+        for start, end, replacement in edits:
+            chunks.extend([body[last:start], replacement])
+            last = end
+        body = ''.join(chunks) + body[last:]
+    sheets.extend('[data-review-style="%d"]{%s}' % (index, value) for value, index in styles.items())
+    css = '\n'.join(sheets)
+    name = 'site-review.%s.css' % hashlib.sha256(css.encode('utf-8')).hexdigest()
+    link = '<link rel="stylesheet" href="%s">' % _href(rel, name)
+    return head + link + '</head>' + body, name, css
+
+
 def deferred_page(html, rel, js, name):
     """Finish the website copy after file links have been resolved and the external script extracted."""
     if not js:
@@ -2556,6 +2614,10 @@ def main():
             return verified[name]
 
         def publish_page(h, rel, source, name, soft=False):
+            if '<div class="review-chart">' in h or '<div class="review-story">' in h:
+                h, css_name, css = review_page_assets(h, rel)
+                if css_name not in written and target.read(css_name) != css:
+                    put(css_name, css, 'text/css; charset=utf-8')
             if source and name == SCRIPT:
                 fallback = h.replace(SCRIPT_TAG, '', 1)
                 if not ready(source):

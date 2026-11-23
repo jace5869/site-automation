@@ -314,12 +314,14 @@ def main():
         module.exit_json(changed=False, path="", sheets=[[n, len(s.get("rows") or [])] for n, s in
                                                           zip(sheet_names([s.get("name") for s in p["sheets"]]), p["sheets"])])
     path = p["path"]
-    if not path:
-        fd, path = tempfile.mkstemp(prefix="site_report_", suffix=".xlsx")
-        os.close(fd)
     try:
+        if not path:
+            fd, path = tempfile.mkstemp(prefix="site_report_", suffix=".xlsx")
+            os.close(fd)
         done = write_xlsx(path, p["sheets"], p["banner"] if p["banner"].get("on", True) else None)
-    except (IOError, OSError) as e:
+    except (IOError, OSError, ValueError, TypeError) as e:
+        if path and not p["path"] and os.path.exists(path):
+            os.unlink(path)
         module.fail_json(msg="the workbook %s could not be written: %s" % (path, e))
     module.exit_json(changed=True, path=path, sheets=done)
 

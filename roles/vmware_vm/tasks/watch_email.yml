@@ -11,6 +11,8 @@
   ansible.builtin.include_role:
     name: site_email
     tasks_from: history_artifacts.yml
+    apply:
+      no_log: "{{ vm_watch_review | bool }}"
   vars:
     _hist_artifacts: [vm_watch_email_state]
     _hist_runs: 15                       # the newest run that kept the state: runs that stopped early (or a Check) keep none
@@ -21,7 +23,7 @@
 - name: VMware | does this run email (vm_watch_email_on_change, vm_watch_email_every_hours)
   ansible.builtin.set_fact:
     _vm_w_mail: >-
-      {{ _vm_w_cond | vm_watch_email_decision(_site_hist_runs | default([]),
+      {{ _vm_w_cond | vm_watch_email_decision((_site_hist_runs | default([]) | outage_redact) if vm_watch_review | bool else _site_hist_runs | default([]),
            {'now': (_vm_now | default(now().timestamp())) | float, 'on_change': vm_watch_email_on_change | bool,
             'every_hours': vm_watch_email_every_hours | float, 'report_on': vm_watch_report_on | name_list,
             'review': vm_watch_review | bool,

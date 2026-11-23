@@ -1,0 +1,326 @@
+# Match event type IDs or case-insensitive fragments of raised alarm names.
+- key: sred
+  title: Storage path redundancy lost
+  types:
+    - esx.problem.storage.redundancy.lost
+    - esx.problem.storage.redundancy.degraded
+  means: A host lost one of its paths to a storage device. Remaining paths may still carry I/O.
+  causes:
+    - A SAN or iSCSI switch port, cable or SFP
+    - An HBA or NIC fault, or its driver or firmware
+    - An array port or controller going offline
+    - A zoning change
+  checks:
+    - 'vSphere Client: the host > Configure > Storage Devices > Paths: which path is dead'
+    - esxcli storage core path list -d <naa ID> (read only)
+    - 'SolarWinds: the switch port facing that HBA (errors, down events)'
+    - Did other hosts lose a path at the same minute? Then it is the array or fabric side
+  esc:
+    - storage
+    - network
+  alarms:
+    - storage path redundancy
+- key: apd
+  title: All paths down (APD)
+  types:
+    - esx.problem.storage.apd.start
+    - esx.problem.storage.apd.timeout
+  means: A host lost every path to a storage device. It retries I/O until the APD timeout, after which I/O can fail and
+    guests can hang.
+  causes:
+    - Array controller failure or failover
+    - SAN switch or fabric outage
+    - Zoning or LUN masking change
+    - iSCSI network down
+    - HBA firmware or driver fault
+  checks:
+    - How many hosts and datastores, at which minute? All hosts at once = array or fabric; one host = that host's HBA or
+      cable
+    - 'The array''s console: controller state and events at that time'
+    - 'SolarWinds: the ports to the array and to the hosts'
+    - 'esxcli storage core device list -d <naa ID>: its Status (read only)'
+    - Do not reboot or repeatedly rescan hosts during APD.
+  esc:
+    - storage
+    - vmware
+  alarms:
+    - all paths down
+- key: dsna
+  current: datastore
+  title: Datastore not accessible
+  types:
+    - esx.problem.vmfs.heartbeat.timedout
+    - esx.problem.vmfs.heartbeat.unrecoverable
+  means: The datastore cannot be used on some or all hosts. VMs with files on it may hang or fail to power on.
+  causes:
+    - APD or PDL of its device (see those cards)
+    - The LUN unmapped from the hosts
+    - VMFS heartbeat lost
+    - An NFS server or export down
+  checks:
+    - 'Storage > the datastore > Hosts: on which hosts is it inaccessible'
+    - 'The datastore > VMs: every VM with files on it'
+    - 'Its device: APD or PDL on the hosts'' events'
+    - 'For NFS: can the host reach the server (vmkping)'
+  esc:
+    - storage
+  alarms:
+    - datastore not accessible
+    - datastore inaccessible
+- key: hnr
+  current: host
+  title: Host not responding or disconnected
+  types:
+    - HostConnectionLostEvent
+    - HostDisconnectedEvent
+  means: vCenter lost contact with the host's agents. The host may still run its VMs, or be down.
+  causes:
+    - hostd hung, often on APD storage
+    - The management network down
+    - The host crashed (purple screen)
+    - Power or hardware
+  checks:
+    - Ping the host's management address
+    - 'The iDRAC / iLO console: is it running, or a purple screen?'
+    - Do its VMs still answer (ping)?
+    - 'Check APD on that host first: hostd often hangs on lost storage'
+    - Do not remove it from the inventory or reconnect by force until storage is known
+  esc:
+    - vmware
+    - network
+  alarms:
+    - host connection and power state
+    - host not responding
+- key: hafail
+  title: HA host failure or isolation
+  types:
+    - com.vmware.vc.HA.DasHostFailedEvent
+    - DasHostFailedEvent
+    - DasHostIsolatedEvent
+    - com.vmware.vc.HA.DasHostIsolatedEvent
+  means: vSphere HA declared the host failed (or isolated) and may attempt to restart its VMs on other hosts.
+  causes:
+    - The host down
+    - The management network partitioned
+    - The datastore heartbeats lost
+  checks:
+    - 'The cluster > Monitor > vSphere HA: each host''s state'
+    - Which VMs were restarted and which failed (VmFailoverFailed events)
+    - Admission control and free capacity on the other hosts
+  esc:
+    - vmware
+  alarms:
+    - ha host failure
+    - ha host isolation
+- key: hung
+  current: hung
+  title: VM hung (no heartbeat, no network answer)
+  types: []
+  means: The guest sends no VMware Tools heartbeat and does not answer on the network. HA's VM monitoring may reset it.
+  causes:
+    - Its disk I/O stalled on a lost datastore (APD)
+    - A guest crash (blue screen, kernel panic)
+    - CPU or memory starvation
+  checks:
+    - 'Its console: frozen, or a crash screen?'
+    - Was its datastore in APD at that time? Then fix storage first; a reset does not help
+    - Read the guest and HA event logs for a crash or resource exhaustion at that time.
+  esc:
+    - owner
+    - vmware
+- key: heartbeat
+  title: VM heartbeat alarm raised
+  types: []
+  alarms:
+    - heartbeat status
+    - virtual machine heartbeat
+    - guest heartbeat
+  means: vCenter reported a guest heartbeat alarm. Check guest and network responsiveness separately.
+  causes:
+    - VMware Tools stopped
+    - Guest or storage latency
+  checks:
+    - Read the guest heartbeat and Tools status.
+    - Check the VM console.
+    - Compare storage latency with the alarm time.
+  esc:
+    - owner
+    - vmware
+- key: reset
+  title: HA reset a VM
+  types:
+    - VmDasBeingResetEvent
+    - VmDasBeingResetWithScreenshotEvent
+  means: HA recorded a reset. Check its reason and whether the VM subsequently came back.
+  causes:
+    - VM monitoring detected a missed heartbeat
+    - Guest or storage latency
+  checks:
+    - Read the reason in the HA event.
+    - Check for a later power-on and guest heartbeat.
+    - Compare datastore access at the time of the reset.
+  esc:
+    - owner
+    - vmware
+- key: pdl
+  title: Permanent device loss (PDL)
+  types:
+    - esx.problem.scsi.device.state.permanentloss
+    - esx.problem.scsi.device.state.permanentloss.noopens
+  means: The array told the host the device is gone (removed or unmapped). VMs using that device may lose access to their
+    files.
+  causes:
+    - The LUN unmapped or deleted
+    - The array lost the LUN (a controller or RAID group fault)
+    - A masking or zoning change
+  checks:
+    - 'The array''s console: does the LUN exist, and is it mapped to these hosts?'
+    - Change records for storage in the window
+    - 'esxcli storage core device list -d <naa ID>: Status dead or not connected (read only)'
+    - Do not detach or unmount until the storage team confirms; recovery may need a restore
+  esc:
+    - storage
+    - backup
+  alarms:
+    - permanent device loss
+- key: failover
+  title: HA could not restart a VM
+  types:
+    - VmFailoverFailed
+  means: HA tried to restart the VM and failed. Check later power events and current power state.
+  causes:
+    - Its files are on a datastore that is not accessible
+    - Not enough capacity (admission control)
+    - Its network (port group) is missing
+  checks:
+    - 'The VM''s summary: where are its files, and is that datastore accessible?'
+    - 'The event''s message: the reason HA gives'
+    - Check free capacity, admission control and the required port group on the destination hosts.
+  esc:
+    - vmware
+    - storage
+  alarms:
+    - failover failed
+- key: inaccessible
+  current: lost
+  title: VM inaccessible or orphaned
+  types:
+    - VmOrphanedEvent
+    - VmInaccessibleEvent
+  alarms:
+    - vm inaccessible
+    - vm orphaned
+    - virtual machine is inaccessible
+    - virtual machine is orphaned
+    - virtual machine orphaned
+  means: The inventory cannot reach the VM configuration or associate it with a host.
+  causes:
+    - Datastore access lost
+    - Host disconnected
+    - Inventory registration stale
+  checks:
+    - Read the VM connection state in its summary.
+    - Check access to its configuration datastore on each host.
+    - Compare host connection and datastore events at the first loss.
+  esc:
+    - vmware
+    - storage
+- key: space
+  title: Datastore full / thin provisioning out of space
+  types:
+    - DatastoreOutOfSpaceEvent
+    - esx.problem.vmfs.nfs.volume.no.space
+  means: vCenter recorded an out-of-space event. Check the datastore and its backing pool for exhausted capacity.
+  causes:
+    - Growing virtual disks
+    - Snapshots consuming space
+    - Array pool exhausted
+  checks:
+    - Read free and provisioned space in the datastore summary.
+    - Check free capacity on the backing pool.
+    - Review snapshot sizes and recent growth.
+  esc:
+    - storage
+    - vmware
+- key: capacity
+  title: Datastore capacity threshold raised
+  types: []
+  alarms:
+    - datastore disk usage
+    - datastore usage on disk
+    - thin provisioning threshold
+    - datastore full
+    - out of space
+  means: A capacity alarm crossed its configured threshold. Read the remaining space on the datastore and its backing pool.
+  causes:
+    - Growing virtual disks
+    - Snapshot growth
+  checks:
+    - Read the threshold and measured free space.
+    - Check free capacity on the backing pool.
+    - Compare usage with recent growth.
+  esc:
+    - storage
+- key: snapshot
+  title: Snapshot consolidation needed
+  types:
+    - VmConsolidationNeededEvent
+  alarms:
+    - consolidation needed
+    - consolidation required
+  means: vCenter reports that snapshot delta disks still need consolidation.
+  causes:
+    - Interrupted backup
+    - File lock
+    - Insufficient free space
+  checks:
+    - Read the VM's consolidation status and recent tasks.
+    - Check datastore free space and disk latency.
+    - Compare the last backup session with the consolidation alarm.
+  esc:
+    - backup
+    - vmware
+- key: network
+  title: Network uplink or vMotion network warning
+  types:
+    - esx.problem.net.connectivity.lost
+    - esx.problem.net.redundancy.lost
+    - esx.problem.net.redundancy.degraded
+  alarms:
+    - network connectivity lost
+    - uplink redundancy
+    - network uplink
+    - vmotion network
+  means: vCenter reported an uplink or migration network problem. Check which paths are still available.
+  causes:
+    - Switch port or cable fault
+    - VLAN mismatch
+    - NIC or driver fault
+  checks:
+    - Check uplink state and errors on the host.
+    - Compare the switch port state and VLAN assignment.
+    - Inspect the vMotion VMkernel interface and recent migration errors.
+  esc:
+    - network
+    - vmware
+- key: clock_cert
+  title: NTP or certificate problems on hosts
+  types: []
+  alarms:
+    - ntp
+    - time synchronization
+    - time synchronisation
+    - host certificate
+    - esxi host certificate
+  means: Host time or certificate validation can interrupt trusted management connections.
+  causes:
+    - Time source unreachable
+    - Host clock drift
+    - Expired or untrusted certificate
+  checks:
+    - Compare the host clock and configured time sources.
+    - Read the certificate validity dates, subject and issuer.
+    - Review vCenter connection errors around the first alarm.
+  esc:
+    - vmware
+    - network

@@ -1,0 +1,11 @@
+{%- set w = s.story.window %}
+<div class="review-story">
+{% for r in s.story.rows %}
+{% if r.window and (loop.first or not loop.previtem.window) %}
+<table class="st-win" role="presentation" cellpadding="6" cellspacing="0" width="100%" style="border:2px solid #b42318;border-collapse:collapse"><tr><td bgcolor="#fdeceb"><b>Outage window {{ w.start.clock | e }} to {{ w.end.clock | e }} &middot; {{ w.duration | e }}</b>{% if w.still %} &middot; {{ w.still | e }} still down after it{% endif %}</td></tr><tr><td>
+{% endif %}
+{% if r.divider %}<p><b>{{ r.divider | e }} ({{ r.time.zone | e }})</b></p>{% endif %}
+<div class="st-ev lv-{{ r.level | e }}" style="padding:5px 8px;{% if r.level == 'ok' %}background:#e6f4ea;color:#175c37;{% elif r.level == 'down' %}background:#fdeceb;color:#a1251a;{% endif %}"><b>{{ r.time.clock | e }} &nbsp; {{ {'down':'✖','critical':'✖','ok':'✓','info':'ⓘ','low':'●','warning':'⚠'}[r.level] }} {{ r.word | e }}</b> &nbsp; {{ r.text | e }}{% if r.extra %}{{ r.extra.clock | e }}{{ r.after | e }}{% endif %}{% if r.objects %} &middot; {{ r.objects | e }}{% endif %}{% if r.duration %} &middot; {{ r.duration | e }}{% endif %}</div>
+{% if r.window and (loop.last or not loop.nextitem.window) %}</td></tr></table>{% endif %}
+{% else %}<p>No outage event in the chain.</p>{% endfor %}
+</div>

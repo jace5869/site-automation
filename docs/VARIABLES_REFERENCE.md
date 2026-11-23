@@ -2724,17 +2724,25 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_sso` | `true` | the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked |
 | `vm_watch_review` | `false` | The outage review (1.66.0): one time line of what vCenter and ServiceNow recorded - alarms, host events, tickets, ACT's notes - with the first signal, the time from it to the ticket, and how long a host was down. Read-only. true (a launch choice) = make the review now, also when nothing is down; the watch runs first,… (all of it: the role file) |
 | `vm_watch_review_hours` | `6` | the review looks back this many hours (0.25 to 744) |
+| `vm_watch_review_object` | (empty) | review a named datastore or host; empty = all roots reported by the watch |
+| `vm_watch_review_noise` | `true` | Group usage alarms, gray transitions and short flaps in the review. |
+| `vm_watch_review_noise_alarms` | `[CPU usage, memory usage, disk usage]` | Alarm name fragments counted as noise (case-insensitive). |
+| `outage_escalate_storage` | (empty) | NOC escalation contact. Empty uses "your storage team". |
+| `outage_escalate_network` | (empty) | NOC escalation contact. Empty uses "your network team". |
+| `outage_escalate_vmware` | (empty) | NOC escalation contact. Empty uses "your VMware team". |
+| `outage_escalate_backup` | (empty) | NOC escalation contact. Empty uses "your backup team". |
+| `outage_aar_appendix_max` | `40` | Maximum grouped event rows in Appendix A. |
 | `vm_watch_review_from` | (empty) | a review of an older outage: its window starts here, in report_time_zone (e.g. "2026-11-12 01:00") ... |
 | `vm_watch_review_to` | (empty) | ... and ends here ("" = vm_watch_review_hours after vm_watch_review_from, at most now) |
 | `vm_watch_timeline` | `true` | the time line also in the report a normal run sends when something is down; false = that report as before |
-| `vm_watch_review_low_seconds` | `120` | a problem that cleared within this many seconds is one Low event ("back after 40 s"), not two; 0 = never joined |
+| `vm_watch_review_low_seconds` | `120` | fold a problem and its clear within this many seconds; 0 = keep short changes |
 | `vm_watch_review_lookback_hours` | `6` | 1.79.12: an alarm that goes back to normal in the window is shown with its raise, whenever it was raised: the review reads the alarms' status changes this many hours before the window too (0 = not), and the window then starts at the first raise |
-| `vm_watch_review_min_seconds` | `300` | A trigger that was only usage alarms (CPU, memory) which cleared within this many seconds is said plainly as a blip: Low |
+| `vm_watch_review_min_seconds` | `300` | A trigger that was only usage alarms (CPU, memory or disk) which cleared within this many seconds is said plainly as a blip: Low |
 | `vm_watch_review_skip_blips` | `false` | true = such a blip sends no report at all (the job's output says so); false = it is sent, titled as a blip |
 | `vm_watch_review_tickets` | `[]` | more tickets to show by number (e.g. [INC0012345]: one opened by hand); the health workflows' tickets are found by themselves |
 | `vm_watch_review_event_types` | `[]` | vCenter event types to read; [] = the built-in list (hosts, HA, storage, uplinks, alarms) |
 | `vm_watch_review_max_events` | `2000` | at most this many events per vCenter (the newest are kept) |
-| `vm_watch_review_docx` | `true` | 1.112.0, the AAR draft: a review (vm_watch_review) also writes the after action report as a Word document, filled from the review - "Download AAR (Word)" on its web page, attached to its email (like the workbook). The marking, logo and font are the AAR job's (incident_docs_banner, report_logo_file ...). The job artifa… (all of it: the role file) |
+| `vm_watch_review_docx` | `true` | Attach the AAR draft and one-page NOC handoff to the review email and link both on its page. The job artifact keeps the draft when Word output is off. |
 | `vm_outage_act` | `false` | 1.104.0, ACT on the outage review: ACT reads the review's time line and suggests possible causes, read-only checks and a possible fix - cards that fold at the bottom of the review page, marked as suggestions. Only for a review (vm_watch_review), never on the watch's own runs. Needs the "ACT model key" credential on th… (all of it: the role file) |
 | `vm_outage_act_max_events` | `120` | the events ACT reads at most: the lead-up, the first critical event, then the nearest in time |
 | `vm_outage_act_model_timeout` | `180` | seconds the model may take for its answer; the whole ACT run is held to twice that and a minute (site_act_timeout at most): the review's report waits for it, so a stalled model costs minutes, not site_act_timeout (1200 s) |

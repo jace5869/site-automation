@@ -4,6 +4,7 @@
 # same "Red Hat Ansible Automation Platform" credential as the strip of past runs (report_history). Never fails the job.
 # Input: _hist_artifacts (names), _hist_runs (how many runs, at most 50). Output: _site_hist_runs (oldest first; [] without
 # AAP, outside AAP or with report_history: false) and _site_hist_why (why there are none, '' when AAP answered).
+# _hist_window (optional): read every run overlapping begin and end; _hist_runs then sets the page size.
 # 1.112.5: _hist_always: true = read also with report_history: false (the VM outage watch's email state).
 - name: History | this job's earlier runs, from AAP ({{ _hist_artifacts | join(', ') }})
   site_report_history:
@@ -12,6 +13,7 @@
     runs: "{{ _hist_runs | default(50) | int }}"
     ca_path: "{{ report_history_aap_ca_path }}"
     artifacts: "{{ _hist_artifacts }}"
+    window: "{{ _hist_window | default(omit) }}"
   register: _site_hist
   check_mode: false                      # read only
   delegate_to: localhost

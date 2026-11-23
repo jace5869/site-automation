@@ -973,6 +973,26 @@ class Unread1184(unittest.TestCase):
         self.assertEqual([v["name"] for v in r["suspects"]], ["app07"])
         self.assertEqual(r["vms_unread"], [])
 
+    def test_5_a_vm_deleted_between_the_reads_is_gone(self):
+        # pinned (290e4fa7 and 1.118.4): an object vCenter no longer has is gone (recovered), never "incomplete"
+        import types
+        v = {"name": "tmp01", "moid": "vm-9", "vcenter": "vc01.example.mil",
+             "checks": [{"reason": "no guest heartbeat (red)", "busy": "", "probe": "no answer"}]}
+        saved = (getattr(wt, "vim", None), wt._objs_props)
+        try:
+            wt.vim = self.fake()
+            wt._objs_props = lambda content, objs, objtype, paths: {}
+            got = wt._recheck(types.SimpleNamespace(rootFolder=types.SimpleNamespace(_stub=None)), "vc01.example.mil", [v],
+                              {"min_up_minutes": 15}, 1763900100.0)
+        finally:
+            wt.vim, wt._objs_props = saved
+        self.assertTrue(got["vm-9"]["gone"])
+        self.assertFalse(got["vm-9"].get("unread"))
+        v["checks"].append(got["vm-9"])
+        self.assertEqual(wt.verdict(v["checks"]), "recovered")
+        res = wt.mark_incomplete({"vcenters": [{"name": "vc01.example.mil", "ok": True}], "suspects": [v], "vms_unread": []})
+        self.assertNotIn("incomplete", res["vcenters"][0])
+
     def test_3_no_ticket_cleared_and_no_recovered_email(self):
         here = os.path.dirname(os.path.abspath(__file__))
         sys.path.insert(0, os.path.join(here, "..", "plugins", "filter"))

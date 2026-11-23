@@ -264,8 +264,10 @@ class Cdp(object):
 
 
 class Csp(http.server.SimpleHTTPRequestHandler):
+    policy = "script-src 'self'"
+
     def end_headers(self):
-        self.send_header("Content-Security-Policy", "script-src 'self'")
+        self.send_header("Content-Security-Policy", self.policy)
         super().end_headers()
 
     def log_message(self, *a):
@@ -281,19 +283,24 @@ TIP = "(() => {const t = document.getElementById('site-tip'); return t && !t.hid
 @unittest.skipUnless(_browser(), "no headless browser here")
 class RealChrome(unittest.TestCase):
     TPL = "report_atlas.html.j2"
+    handler = Csp
 
     @classmethod
     def web(cls):
         return doc()[0]
 
     @classmethod
+    def page(cls):
+        return render(cls.TPL, cls.web())
+
+    @classmethod
     def setUpClass(cls):
         cls.dir = tempfile.mkdtemp()
-        h = render(cls.TPL, cls.web())
+        h = cls.page()
         with open(os.path.join(cls.dir, "page.html"), "w") as f:
             f.write(h)
         shutil.copy(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), os.path.join(cls.dir, "site-report.js"))
-        handler = lambda *a, **k: Csp(*a, directory=cls.dir, **k)          # noqa: E731
+        handler = lambda *a, **k: cls.handler(*a, directory=cls.dir, **k)  # noqa: E731
         cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
         cls.c = Cdp(_browser(), 1366, 1000)
@@ -408,6 +415,57 @@ class RealChrome(unittest.TestCase):
 class RealChromeBrief(RealChrome):
     """The brief look: the same script and board."""
     TPL = "report_brief.html.j2"
+
+
+class RealChromeReview(RealChrome):
+    """The requested review uses the ordinary focus/hover tip for times and grouped SVG marks."""
+    test_2_hovering_a_sparkline_shows_the_day_and_value = test_3_keyboard_focus_shows_it_too = None
+    test_4_a_runway_bar_and_a_tile = test_5_a_trend_column_line = None
+
+    class handler(Csp):
+        policy = "script-src 'self'; style-src 'self'"
+
+    @classmethod
+    def page(cls):
+        from test_report_web import rw
+        html, name, css = rw.review_page_assets(super().page(), "page.html")
+        with open(os.path.join(cls.dir, name), "w") as output:
+            output.write(css)
+        return html
+
+    @classmethod
+    def web(cls):
+        timeline = tot.ot.outage_timeline(*tot.director_outage())
+        return tot.ot.outage_timeline_doc(tot.WATCH, timeline, True, True)
+
+    def test_print_chart_in_both_radio_states(self):
+        self.c.js("document.querySelector('.review-chart').closest('details').open=true")
+        try:
+            for radio in ("tlv-out", "tlv-all"):
+                self.c.js("document.getElementById('%s').checked=true" % radio)
+                self.c.call("Emulation.setEmulatedMedia", media="print")
+                self.assertTrue(self.c.js("document.querySelector('.v-out').offsetWidth > 0"), radio)
+                self.assertTrue(self.c.js("document.querySelector('.v-all').offsetWidth === 0"), radio)
+        finally:
+            self.c.call("Emulation.setEmulatedMedia", media="")
+            self.c.js("document.getElementById('tlv-out').checked=true")
+
+    def test_story_and_group_tip(self):
+        self.c.key("Tab", "Tab", 9)
+        self.c.js("document.querySelector('.st-win .st-ev time').focus()")
+        self.assertEqual(self.c.js(TIP), ["Fri 20 Nov 2026, 23:09:55 CET (22:09:55 UTC)"])
+        self.c.js("document.querySelector('.review-chart').closest('details').open=true")
+        self.assertTrue(self.c.js("document.querySelector('.v-all').offsetWidth===0"))
+        self.c.js("document.querySelector('label[for=tlv-all]').click()")
+        self.assertTrue(self.c.js("document.querySelector('.v-out').offsetWidth===0"))
+        selector = ".v-all .mk.many circle:last-of-type"
+        x, y = self.at(selector)
+        self.c.mouse(5, 5)
+        self.c.mouse(x, y)
+        tip = self.c.js(TIP)
+        self.assertTrue(tip)
+        self.assertRegex(tip[0], r"Nov 2026, .* CET \(.* UTC\)")
+        self.assertGreater(len(tip), 2)
 
 
 @unittest.skipUnless(_browser(), "no headless browser here")

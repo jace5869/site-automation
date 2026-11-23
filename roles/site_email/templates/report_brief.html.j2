@@ -523,6 +523,7 @@ table.fx td .lw,table.fx :is(td.k-mid,td.k-long,td.k-wrap) .cv .lw{overflow-wrap
 {%- include 'report_pop.css.j2' %}
 {%- include 'report_head.css.j2' %}
 {%- include 'report_causes.css.j2' %}
+{%- if r.sections | default([]) | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'by_kind') | list %}{% include 'report_by_kind.css.j2' %}{% include 'report_outage.css.j2' %}{% endif %}
 {%- include 'report_matrix.css.j2' %}
 {%- if r.sections | default([]) | selectattr('links', 'defined') | list or r.sections | default([]) | selectattr('actions', 'defined') | list or r.sections | default([]) | selectattr('cell_links', 'defined') | list or r.sections | default([]) | selectattr('buttons', 'defined') | list %}
 {% include 'report_portal.css.j2' %}
@@ -770,7 +771,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
 <details class="sec{{ ' band' if s.cards | default([]) and s.columns is not defined else '' }}" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
-<summary><h2>{{ s.title | e }}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
+<summary><h2>{{ s.title | e }}{% if s.issue_count is defined %}<span class="count">{{ s.issue_count | int }}</span>{% endif %}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
 <button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
@@ -787,6 +788,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- elif s.text | default('') %}
 <p>{{ s.text | e }}</p>
 {%- endif %}
+{%- if s.download_file | default('') %}<a class="dl" href="site-report-file:{{ s.download_file | urlencode }}" download>Download {{ s.download_file | e }}</a>{% endif %}
 {%- if s.cards | default([]) %}
 <div class="cards">
 {%- for c in s.cards %}
@@ -829,8 +831,12 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {% include 'report_heat.html.j2' %}
 {%- endif %}
 {#- 1.66.0: an outage time line (the VM outage watch's review) -#}
+{%- if s.kind | default('') == 'by_kind' %}{%- include 'report_by_kind.html.j2' %}{%- endif %}
+{%- if s.kind | default('') == 'story' %}{% include 'report_story.html.j2' %}
+{%- elif s.kind | default('') == 'review_chart' %}{% include 'report_outage.html.j2' %}
+{%- elif s.kind | default('') == 'noc' %}{% include 'report_outage_noc.html.j2' %}{% endif %}
 {%- if s.outage is defined %}
-{% include 'report_outage.html.j2' %}
+{% include 'report_watch_timeline.html.j2' %}
 {%- endif %}
 {#- 1.68.0: at a glance - a line each: a chip (its word and icon), the name (a link to its row), its numbers #}
 {%- if s.glance | default([]) %}

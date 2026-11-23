@@ -318,8 +318,9 @@
       ansible.builtin.set_fact:
         # vm-inventory-report_2026-10-27.xlsx
         _email_xlsx_name: >-
-          {{ (_report_xlsx_name | default(_report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true)))
-             | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}_{{ now(utc=true, fmt='%Y-%m-%d') }}.xlsx
+          {{ (_report_workbook_stem ~ '.xlsx') if (_report_workbook_stem | default('') is match('^[a-z0-9][a-z0-9-]*$')) else
+             ((_report_xlsx_name | default(_report_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))), true)))
+             | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') ~ '_' ~ now(utc=true, fmt='%Y-%m-%d') ~ '.xlsx') }}
       when: _email_any | bool
 
     - name: Email | the report's tables as a workbook - attached, and on the website (report_email_xlsx, or the report's own _report_xlsx)
@@ -327,6 +328,7 @@
         sheets: "{{ _report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets }}"
         banner: "{{ _banner if _banner.on else {} }}"
       register: _email_xlsx
+      ignore_errors: "{{ _report_xlsx_optional | default(false) | bool }}"
       when: >-
         _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not _email_dry
         and (_email_to | length > 0 or (_web_on | bool and report_web_files | default(true) | bool))
@@ -402,7 +404,7 @@
         downloads: >-
           {{ (_report_files if _report_files is defined else
               _report_attachments | default([]) + ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name,
-                                                      'desc': _report_xlsx_desc | default('', true) if _report_xlsx | default([]) | length > 0 else ''}] if _email_xlsx.path | default('') else []))
+                                                      'desc': _report_xlsx_desc | default('', true) if _report_xlsx | default([]) | length > 0 else ''}] if _email_xlsx is succeeded and _email_xlsx.path | default('') else []))
              if report_web_files | default(true) | bool else [] }}
         files_max_mb: "{{ report_web_files_max_mb | default(20) | int }}"
         files_types: "{{ report_web_files_types | default(['.xml', '.docx', '.xlsx', '.csv', '.md', '.txt', '.pdf']) }}"
@@ -558,7 +560,7 @@
             html: "{{ lookup('ansible.builtin.template', _email_template) | report_banner_html(_banner) if _email_html | bool else omit }}"
             images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
             # the workbook, and the files the job hands over (_report_attachments: [{path, filename}] - the outage AAR's Word documents)
-            attachments: "{{ ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else []) + _report_attachments | default([]) }}"
+            attachments: "{{ ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx is succeeded and _email_xlsx.path | default('') else []) + _report_attachments | default([]) }}"
             ca_path: "{{ report_email_ca_path | default(omit, true) }}"
           when: _email_to | length > 0
           vars:

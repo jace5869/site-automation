@@ -756,6 +756,14 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 # vm_watch_protect: []                           # e.g. [DC*, SQL*]: a ticket only, never a restart (phase 2)
 ## The outage review (the time line): launch this job by hand with vm_watch_review: true - see docs/VM_OUTAGE_WATCH.md
 # vm_watch_review_hours: 6                       # the review looks back this many hours
+# vm_watch_review_object: ""                     # a datastore or host name; empty = every watch root
+# vm_watch_review_noise: true  # Group usage alarms, gray transitions and short flaps in the review.
+# vm_watch_review_noise_alarms: [CPU usage, memory usage, disk usage]  # Alarm name fragments counted as noise (case-insensitive).
+# outage_escalate_storage: ""  # NOC escalation contact. Empty uses "your storage team".
+# outage_escalate_network: ""  # NOC escalation contact. Empty uses "your network team".
+# outage_escalate_vmware: ""  # NOC escalation contact. Empty uses "your VMware team".
+# outage_escalate_backup: ""  # NOC escalation contact. Empty uses "your backup team".
+# outage_aar_appendix_max: 40  # Maximum grouped event rows in Appendix A.
 # vm_watch_review_from: "2026-11-12 01:00"       # an older outage: the window starts here (report_time_zone) ...
 # vm_watch_review_to: "2026-11-12 05:00"         # ... and ends here
 # vm_watch_review_tickets: [INC0012345]          # a ticket opened by hand, shown too

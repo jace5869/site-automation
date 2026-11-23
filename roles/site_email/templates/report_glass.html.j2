@@ -327,6 +327,7 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 {%- endif %}
 </tr></table>
 {%- if s.cards is defined %}{{ s.cards | report_cards_html(ink, muted, accent) }}{% endif %}
+{%- if s.kind | default('') == 'story' %}{% include 'report_story_email.html.j2' %}{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
 <div class="g-scroll" style="margin-top:12px;">

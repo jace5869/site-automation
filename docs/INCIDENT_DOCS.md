@@ -199,10 +199,19 @@ The VM outage watch's review (`vm_watch_review: true`) writes the AAR as a Word 
    cannot know: the impact level, the root cause, the lessons learned. **What you type wins.**
 4. Launch. The job output says *Filled from the outage review of AAP job 4714 ...* and which boxes came from it.
 
+The review fills the outage name and impact from the watch's current and recorded datastore and host
+conditions. Down now lists every current condition, including those on other vCenters. A VM known only
+from datastore or host membership has state not read. The draft and NOC handoff use the same redacted evidence.
+
 What the AAR then has:
 
 - A line under OVERVIEW: *Filled from the outage review, AAP job 4714 ... Check each line before it is posted.*
-- The review's numbers under Detection; the key events and the tickets under Actions; every event in **Appendix A**.
+- The outage summary under Impact, the numbers under Detection, and the dated tables of **The outage, in order** and tickets under Actions. Red lines mark both ends of the outage window.
+  **What this usually means (for the NOC)** follows Recovery. Each seen pattern has typical causes,
+  read-only checks, escalation contacts and the supporting objects and times.
+- **Appendix A** starts a new page and groups events by phase and object. **Appendix B** starts another page
+  with **Hand this to the NOC**. The review also attaches that compact handoff as `NOC-handoff-<outage>.docx`,
+  alongside the AAR, workbook and CSV. The four `outage_escalate_*` settings in the outage watch supply contacts.
 - **ACT's possible causes** (the review's `vm_outage_act`, and a ticket's own ACT analysis) under the root cause as
   *Suggested - confirm*. The root cause itself is never filled from ACT.
 - **Red "To write" lines** for each box still empty: the root cause, the impact level, successes, improvements, tasks (with an

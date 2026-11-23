@@ -18,6 +18,7 @@ __metaclass__ = type
 
 from collections import defaultdict
 import datetime
+import os
 import re
 
 try:
@@ -468,9 +469,28 @@ def norm(message):
     return t.lower()[:300]
 
 
+def client_of(p, why, retries=1):
+    env = os.environ
+    user, password = env.get("SOLARWINDS_USERNAME", ""), env.get("SOLARWINDS_PASSWORD", "")
+    url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
+    if not (user and password and url):
+        return None
+    verify = p["validate_certs"]
+    if str(env.get("SOLARWINDS_VERIFY", "")).strip():
+        verify = str(env["SOLARWINDS_VERIFY"]).strip().lower() not in ("0", "false", "no", "off")
+    ca = (env.get("SOLARWINDS_CA_PATH") or p["ca_path"] or "").strip()
+    try:
+        return sw.Client(url, user, password, verify=verify, ca_path=ca if ca and os.path.isfile(ca) else "", timeout=p["timeout"], retries=retries)
+    except sw.SwisError as e:
+        why.append("the SolarWinds credential's address: %s" % e)
+    except (OSError, ValueError) as e:                  # the CA file: fixed words, never its text
+        why.append("the SolarWinds credential's CA file could not be used (%s)" % e.__class__.__name__)
+    return None
+
+
 def syslog_live(client, node_ids, opts=None):
     """Log Analyzer's entries of these nodes at the levels asked, in the last hours: one query (one per 500 nodes), capped
-    at max_rows in all.
+    at max_rows in all. An explicit UTC window reads all levels between its two bounds.
     -> {ok, why, capped, max_rows, hours, levels, by_node: {node_id: {count, top: [{message, count, last}]}}}.
     An Orion without Log Analyzer (no Orion.OLM.LogEntry), or one without a column it needs: ok False, why says so."""
     o = dict(opts or {})
@@ -496,17 +516,26 @@ def syslog_live(client, node_ids, opts=None):
                 res["why"] = "Log Analyzer's %s has no %s column on this SolarWinds" % (OLM, " or ".join(choices))
                 return res
             cols[key] = c
-        since = _now(o) - datetime.timedelta(hours=hours)
+        # A historical review supplies both UTC bounds and asks for every level.
+        window = o.get("window")
+        since = window[0] if window else _now(o) - datetime.timedelta(hours=hours)
         rows = []
         for i in range(0, len(ids), CHUNK):
             left = cap - len(rows)
             if left <= 0:
                 break
-            q = ("SELECT TOP %d %s, %s, %s, %s FROM %s WHERE %s IN @ids AND %s >= @since AND %s IN @levels ORDER BY %s DESC"
-                 % (left, cols["node_id"], cols["time"], cols["level"], cols["message"], OLM, cols["node_id"], cols["time"], cols["level"],
-                    cols["time"]))
-            got = client.query(q, {"ids": ids[i:i + CHUNK], "since": since.strftime("%Y-%m-%dT%H:%M:%S"), "levels": levels})
-            rows.extend(got)
+            where = "%s IN @ids AND %s >= @since" % (cols["node_id"], cols["time"])
+            params = {"ids": ids[i:i + CHUNK], "since": since.strftime("%Y-%m-%dT%H:%M:%S")}
+            if window:
+                where += " AND %s <= @until" % cols["time"]
+                params["until"] = window[1].strftime("%Y-%m-%dT%H:%M:%S")
+            else:
+                where += " AND %s IN @levels" % cols["level"]
+                params["levels"] = levels
+            q = ("SELECT TOP %d %s, %s, %s, %s FROM %s WHERE %s ORDER BY %s DESC"
+                 % (left, cols["node_id"], cols["time"], cols["level"], cols["message"], OLM, where, cols["time"]))
+            got = client.query(q, params)
+            rows.extend(got[:left])
             res["queried"].extend(ids[i:i + CHUNK])     # review P2-2: a node never asked is "?", never 0
             if len(got) >= left:
                 break
@@ -530,7 +559,8 @@ def syslog_live(client, node_ids, opts=None):
             g["last"], g["message"] = t, msg[:300]
     for nid, n in by.items():
         top = sorted(n["groups"].values(), key=lambda g: (g["count"], g["last"] or datetime.datetime(1, 1, 1)), reverse=True)
-        res["by_node"][nid] = {"count": n["count"], "top": [{"message": g["message"], "count": g["count"], "last": ad._hm(g["last"])}
+        res["by_node"][nid] = {"count": n["count"], "top": [{"message": g["message"], "count": g["count"], "last": g["last"].strftime("%Y-%m-%d %H:%M:%S")
+                                                             if window and g["last"] else ad._hm(g["last"])}
                                                             for g in top[:3]]}
     res["ok"] = True
     return res

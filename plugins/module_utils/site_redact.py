@@ -87,11 +87,12 @@ _BLANK = re.compile(r"\s*$")
 # a secret's name: a word that ends like one. The word is read once, then its end is looked at (a lookbehind for each
 # ending) - never tried again from each of its characters, so a long word costs its length, not its square
 _NAME_ENDS = ("password", "passwd", "passphrase", "pwd", "pw", "secret", "token", "authtok", "credential", "credentials",
+              "[_-]session", "sessionid", "session[_-]id", "session[_-]cookie", "phpsessid",
               "community", "psk", "[_.-]pass", "[A-Za-z0-9][_-]key", "apikey",
               # 1.77.0g: camelCase - Pass after a small letter or a digit (authPass, dbPASS); bypass is no name
               "(?-i:[a-z0-9]P(?:ass|ASS))")
 # 1.77.0f: and one or two digits after it (NetworkManager's wep-key0 .. wep-key3, psk1)
-_NAMES = r"(?:[A-Za-z0-9_.-]+(?:" + "|".join("(?<=%s)" % e for e in _NAME_ENDS) + r")\d{0,2}(?![A-Za-z0-9_.-]))"
+_NAMES = r"(?:(?:session|[A-Za-z0-9_.-]+(?:" + "|".join("(?<=%s)" % e for e in _NAME_ENDS) + r"))\d{0,2}(?![A-Za-z0-9_.-]))"
 _NAME_WORD = re.compile(r"(?i)" + _NAMES)
 # a name starts a word: not inside a word, and not after a / (/etc/passwd: is a file, not a name) - unless an = follows
 # it (/opt/app/config-7-password=x)
@@ -196,6 +197,7 @@ _DONE = frozenset(_WRITTEN + ['"%s"' % w for w in _WRITTEN] + ["'%s'" % w for w 
 
 # the backstop: a secret's word, and what the first layer understood
 _SECRET_WORD = re.compile(r"(?i)password|passwd|passphrase|pwd|secret|token|authtok|credential|community|bindpw|rootpw|pbkdf2|keytab|psk"
+                          r"|vmware[_-]soap[_-]session|session[_-]?id|session[_-]cookie|phpsessid"
                           r"|_key|private key|\$(?:1|2[abxy]?|5|6|y|7|gy|md5|sha1)\$|\$argon2|\$scrypt"
                           r"|(?-i:(?<=[a-z0-9])P(?:ass|ASS)(?![a-z]))"
                           # 1.77.0h: a name's ending the first layer knows, in a line it did not understand (api-key x,

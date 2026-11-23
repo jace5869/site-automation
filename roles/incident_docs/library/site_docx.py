@@ -22,7 +22,7 @@ options:
       logo_height (pixels), font, size (points), heading_color and note_color (hex RRGGBB), blocks - each a dict
       with type: heading (text), field (label, text or lines: a bullet with the label in bold; several lines become
       bullets under it; empty: the empty text in grey), bullets (items, level), steps (items: numbered from 1),
-      labelled (items of label and text), para (text, bold, italic, color, size, align), note (text: small, grey, italic), table
+      page_break (start a new page), labelled (items of label and text), para (text, bold, italic, color, size, align), note (text: small, grey, italic), table
       (columns, rows, widths: their shares, bold_first: the first column bold), title (text: large, bold), space;
       keep: true keeps a para or steps block with what follows it on the page.
     type: dict
@@ -197,6 +197,8 @@ class Doc(object):
                                       self.run(it.get("text"), italic=bool(b.get("italic")))], num=1))
         elif t == "note":
             out.append(self.para([self.run(b.get("text"), italic=True, color=b.get("color") or self.note_color, size=b.get("size") or self.size - 2)]))
+        elif t == "page_break":
+            out.append(self.para(['<w:r><w:br w:type="page"/></w:r>'], after=0))
         elif t == "space":
             out.append(self.para([]))
         elif t == "table":
@@ -205,7 +207,7 @@ class Doc(object):
         else:
             out.append(self.para([self.run(b.get("text"), bold=bool(b.get("bold")), italic=bool(b.get("italic")),
                                            color=b.get("color") or "", size=b.get("size") or 0)], align=b.get("align") or "",
-                                 keep_next=bool(b.get("keep"))))
+                                 after=b.get("after"), keep_next=bool(b.get("keep"))))
 
     def table(self, columns, rows, widths=(), bold_first=False):
         n = max([len(columns)] + [len(r) for r in rows]) or 1

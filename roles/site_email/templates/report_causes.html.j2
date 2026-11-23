@@ -63,7 +63,8 @@
 {%- for e in k.evidence %}<li>{% if e.n %}<a class="n" href="#ot-row-{{ e.n | e }}" data-ot="{{ e.n | e }}" title="Its row in The events">#{{ e.n | e }}</a>{% endif %}{% if e.t %}<span class="t">{{ e.t | e }}</span>{% endif %}{% if e.h %}<span class="h">{{ e.h | e }}</span>{% endif %}<span class="m">{{ e.m | e }}</span></li>{% endfor %}
 </ul>{% if k.more %}<p class="more">+{{ k.more }} more event{{ '' if k.more == 1 else 's' }}: {% for p in k.patterns[k.evidence | length:] %}<a class="pp" href="#ot-row-{{ p | replace('#', '') | e }}" data-ot="{{ p | replace('#', '') | e }}">{{ p | e }}</a>{{ ' ' if not loop.last else '' }}{% endfor %}</p>{% endif %}
 {%- else %}<p class="cz-none">No event was named.</p>{% endif %}
-<button class="cz-show" type="button" hidden data-ots="{{ k.patterns | map('replace', '#', '') | join(' ') | e }}" aria-pressed="false">Show {{ 'it' if k.patterns | length == 1 else 'these ' ~ k.patterns | length }} on the time line</button></div>
+{% if not (r.sections | default([]) | selectattr('kind','defined') | selectattr('kind','equalto','review_chart') | list) %}
+<button class="cz-show" type="button" hidden data-ots="{{ k.patterns | map('replace', '#', '') | join(' ') | e }}" aria-pressed="false">Show {{ 'it' if k.patterns | length == 1 else 'these ' ~ k.patterns | length }} on the time line</button>{% endif %}</div>
 </div>
 </div>
 </details>

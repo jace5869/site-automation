@@ -18,27 +18,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_host_swis as hs
 from ansible.module_utils import site_ad_swis as ad
 from ansible.module_utils import site_report_db as db
-from ansible.module_utils import site_swis
 from ansible.module_utils import site_swis_db
-
-
-def client_of(p, why):
-    env = os.environ
-    user, password = env.get("SOLARWINDS_USERNAME", ""), env.get("SOLARWINDS_PASSWORD", "")
-    url = (env.get("SOLARWINDS_URL") or p["url"] or "").strip()
-    if not (user and password and url):
-        return None
-    verify = p["validate_certs"]
-    if str(env.get("SOLARWINDS_VERIFY", "")).strip():
-        verify = str(env["SOLARWINDS_VERIFY"]).strip().lower() not in ("0", "false", "no", "off")
-    ca = (env.get("SOLARWINDS_CA_PATH") or p["ca_path"] or "").strip()
-    try:
-        return site_swis.Client(url, user, password, verify=verify, ca_path=ca if ca and os.path.isfile(ca) else "", timeout=p["timeout"])
-    except site_swis.SwisError as e:
-        why.append("the SolarWinds credential's address: %s" % e)
-    except (OSError, ValueError) as e:                  # the CA file: fixed words, never its text
-        why.append("the SolarWinds credential's CA file could not be used (%s)" % e.__class__.__name__)
-    return None
 
 
 def main():
@@ -77,7 +57,7 @@ def main():
     res["syslog"] = None
     if p["syslog"] and res["ok"]:
         cw = []
-        client = client_of(p, cw)
+        client = hs.client_of(p, cw)
         if client is None:
             res["syslog"] = {"ok": False, "why": cw[0] if cw else 'this job has no "SolarWinds (read-only)" credential', "by_node": {}}
         else:

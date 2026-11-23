@@ -689,12 +689,12 @@ def _doc_text(desc):
 def _review():
     sys.path.insert(0, HERE)
     import test_outage_timeline as T
-    return T.made()
+    return T.reviewed(job="4714")
 
 
 class AarFromReview(unittest.TestCase):
     """1.112.0: the AAR draft of an outage review - the facts from the review, ACT's causes as suggestions, the root cause and
-    the lessons learned left to write (red), every event in Appendix A; the same draft for the AAR job (incident_review)."""
+    the lessons learned left to write (red), the grouped events in Appendix A; the same draft for the AAR job (incident_review)."""
     CARDS = {"web": {"causes": [{"title": "A fibre channel path went down", "confidence": 80, "conf_text": "80% high",
                                  "evidence": [{"t": "01:58:02", "h": "esx03", "m": "Lost path redundancy"}],
                                  "steps": [{"do": "Check the switch port.", "cmd": "esxcli storage core path list"}]},
@@ -706,16 +706,17 @@ class AarFromReview(unittest.TestCase):
 
     def test_the_draft(self):
         d = self.draft()
-        self.assertEqual((d["job"], d["made"], d["name"]), ("4714", "2026-11-12 02:45 UTC", "esx03 2026-11-12"))
-        self.assertEqual(d["start"], "2026-11-12 01:58 CET - Storage path redundancy lost on esx03")
-        self.assertEqual(d["impact"], "esx03 down 46 min (12 Nov 02:19 CET to 12 Nov 03:05 CET); vSphere HA restarted 14 VMs")
-        self.assertEqual(d["detection"][1], "Ticket INC0012345 opened 12 Nov 03:14 CET, 93 min after the first signal")
+        self.assertEqual((d["job"], d["made"], d["name"]), ("4714", "2026-11-12 02:45 UTC", "Host outage cluster1 2026-11-12"))
+        self.assertEqual(d["start"], "2026-11-12 02:19 CET - Host not responding")
+        self.assertEqual(d["impact"], _review()["title"])
+        self.assertEqual(d["detection"][1], "Ticket INC0012345 opened 12 Nov 03:14 CET, 54 min after the first signal")
         self.assertEqual([x[0] for x in d["numbers"]], ["First signal", "First signal to ticket", "Time down"])
-        self.assertEqual(d["recovery"][0], "12 Nov 03:05 CET - Host connected again (esx03)")
+        self.assertIn("12 Nov 03:05:12 CET - esx03: host connected again (down 46 min)", d["recovery"])
         self.assertEqual(d["recovery"], sorted(d["recovery"]))                       # in time order
-        self.assertEqual(len(d["events"]), d["events_total"])
+        self.assertEqual(d["events"], [])
+        self.assertTrue(d["groups"])
         self.assertLessEqual(len(d["key"]), 15)
-        self.assertIn(["12 Nov 02:21:05", "vCenter alarms", "Warning", "HA restarted 14 VMs", "cluster1"], d["key"])
+        self.assertTrue(any(row[1] == "HA restarted a VM (x14)" and "app23" in row[2] for row in d["key"]))
         self.assertEqual(f.incident_review_filled({"start": "typed"}, d), ["end", "impact", "detection", "actions", "recovery"])
         self.assertEqual(f.incident_review_filled({}, dict(d, end="", actions=[])), ["start", "impact", "detection", "recovery"])
         self.assertEqual(f.incident_review_filled({}, {}), [])
@@ -742,13 +743,127 @@ class AarFromReview(unittest.TestCase):
     def test_fill_typed_wins(self):
         d = self.draft()
         r = f.incident_review_fill(f.incident_record({"kind": "aar", "start": "typed start", "recovery": "typed fix", "name": ""}), d)
-        self.assertEqual((r["start"], r["recovery"], r["name"]), ("typed start", "typed fix", "esx03 2026-11-12"))
-        self.assertEqual(r["end"], "2026-11-12 03:06 CET - Alarm back to green: Host storage path redundancy")
+        self.assertEqual((r["start"], r["recovery"], r["name"]), ("typed start", "typed fix", "Host outage cluster1 2026-11-12"))
+        self.assertEqual(r["end"], d["end"])
         self.assertEqual(r["detection"].splitlines(), d["detection"])
         self.assertEqual(r["root_cause"], "")                                         # never from the review
         self.assertEqual(f.incident_problems(r), [])
         self.assertEqual(f.incident_review_fill({"start": ""}, {}), {"start": ""})
         self.assertIn("incident_review", f.incident_problems(f.incident_record({"kind": "aar"}))[0])
+
+    def test_redaction_in_review_outputs(self):
+        from test_outage_timeline import WATCH, events, ot, reviewed, tickets, watch_run, H, DAY
+        from test_report_fit import EmailTiles, render
+        from site_filters import report_text
+
+        marker = "placeholder-review-secret"
+        secret = "password=" + marker
+        rows, incidents = events(), tickets()
+        center = rows[0]["vcenter"]
+        for e in rows:
+            if e.get("message"):
+                e["message"] += " " + secret
+            if e.get("alarm"):
+                e["alarm"] += " " + secret
+        incidents[0]["description"] += "\n" + secret
+        incidents[0]["notes"].append([DAY + "02:30:00Z", "Example note " + secret])
+        incidents[0]["close_notes"] += " " + secret
+        timeline = reviewed(rows, incidents, watch_runs=[watch_run(
+            DAY + "01:20:00Z", [dict(name=H, moid="host-3")], vc=center)])
+        self.assertIn("<removed>", str(timeline["sheet"]))
+        draft = f.incident_review_draft(dict(timeline["draft"], read_note="Example watch note " + secret))
+        self.assertIn("<removed>", draft["read_note"])
+        watch = dict(WATCH, title="Example watch " + secret)
+        email = ot.outage_timeline_doc(watch, timeline, False, True)
+        page = ot.outage_timeline_doc(watch, timeline, True, True)
+        html = EmailTiles()._env().get_template("report.html.j2").render(_report=email, _email_footer="", report_email_header_text="Review")
+        for output in (json.dumps(draft), render("atlas", page), html, report_text(email),
+                       "\n".join(timeline["lines"]), ot.outage_events_csv(timeline["sheet"])):
+            self.assertNotIn(marker, output)
+        with tempfile.TemporaryDirectory() as tmp:
+            record = f.incident_review_fill(f.incident_record({"kind": "aar"}), draft)
+            for name, doc in (("noc", f.incident_noc_docx(draft)), ("aar", f.incident_aar_docx(record, {}, [], False, draft))):
+                path = os.path.join(tmp, name + ".docx")
+                d.write_docx(path, doc)
+                with zipfile.ZipFile(path) as zipped:
+                    xml = zipped.read("word/document.xml").decode()
+                    self.assertIn("esx03", xml)
+                    self.assertNotIn(marker, xml)
+
+    def test_storage_summary_under_impact(self):
+        from test_outage_timeline import director_outage, ot
+        events, tickets, opts = director_outage()
+        d = f.incident_review_draft(ot.outage_timeline(events, tickets, opts)["draft"], None, {"job": "5120"})
+        record = f.incident_review_fill(f.incident_record({"kind": "aar"}), d)
+        self.assertEqual(f.incident_file_name(record), "AAR-Storage-outage-cl-sitea-01-2026-11-20.docx")
+        blocks = f.incident_aar_docx(record, {}, [], False, dict(d, appendix_max=3))["blocks"]
+        impact = next(i for i, b in enumerate(blocks) if b.get("label") == "Impact:")
+        headings = [b["text"] for b in blocks[impact:] if re.match(r"^[1-4]\. ", b.get("text", ""))]
+        self.assertEqual(headings[:4], ["1. What went down", "2. What it affected", "3. Down now", "4. Recovered"])
+        down = next(i for i, b in enumerate(blocks) if b.get("text") == "3. Down now")
+        self.assertEqual(blocks[down]["color"], "C00000")
+        self.assertIn("ds-sitea-09", str(blocks[down + 2]["items"]))
+        self.assertNotIn("sitea-db01", str(blocks[down + 2]["items"]))
+        appendix = next(i for i, b in enumerate(blocks) if b.get("text", "").startswith("Appendix A"))
+        self.assertIn("496 events, including noise", blocks[appendix + 1]["text"])
+        cols = ["Time (CET)", "What", "Objects", "Level"]
+        self.assertEqual(sum(len(b["rows"]) for b in blocks[appendix:] if b.get("columns") == cols), 3)
+        tables = [b for b in blocks[:appendix] if b.get("columns", [])[-1:] == ["How long"]]
+        self.assertEqual([row[0] for b in tables for row in b["rows"]], [r["time"]["clock"] for r in d["story"]["rows"]])
+        self.assertEqual(blocks[appendix - 1], {"type": "page_break"})
+        red_lines = [b["text"] for b in blocks if b.get("type") == "para" and b.get("color") == "B42318"]
+        self.assertTrue(any(t.startswith("Outage window from ") for t in red_lines))
+        self.assertIn("End of the outage window", red_lines)
+        appendix_b = next(i for i, b in enumerate(blocks) if b.get("text", "").startswith("Appendix B"))
+        self.assertEqual(blocks[appendix_b - 1], {"type": "page_break"})
+        handoff = f.incident_noc_docx(d)
+        self.assertEqual(blocks[appendix_b + 1:], handoff["blocks"][1:])
+        self.assertEqual(handoff["blocks"][0]["text"], "Hand this to the NOC")
+        self.assertLessEqual(len(handoff["blocks"]), 30)
+        for card in d["patterns"]:
+            self.assertIn(card["title"], _doc_text(handoff))
+            for detail in (card["seen"], card["when"], card["escalate"], *card["checks"]):
+                self.assertIn(detail.rstrip("."), _doc_text({"blocks": blocks[:appendix]}))
+        self.assertIn(d["noise"], [b["rows"] for b in blocks[appendix:] if b.get("type") == "table"])
+
+    def test_long_handoff_paginates_as_one_page(self):
+        import shutil
+        import subprocess
+        from pathlib import Path
+        from test_outage_timeline import director_outage, ot
+
+        events, tickets, opts = director_outage()
+        contact = "Example duty contact " * 35
+        opts.update(outage_escalate_storage=contact, outage_escalate_vmware=contact)
+        draft = f.incident_review_draft(ot.outage_timeline(events, tickets, opts)["draft"], meta={"job": "5120"})
+        names = ["example-datastore-%03d-%s" % (i, "long-name-" * 10) for i in range(40)]
+        draft["title"] = "Storage outage - " + ", ".join(names) + " still down"
+        draft["went"] = [[n, "Datastore", "unknown", "unknown", "DOWN NOW"] for n in names]
+        draft["story"]["rows"][-1]["objects"] = ", ".join(names)
+        handoff = f.incident_noc_docx(draft, {"banner": "Example marking"})
+        self.assertLessEqual(max(len(b["text"]) for b in handoff["blocks"]), 200)
+        self.assertIn(contact.strip(), str(f.incident_aar_docx(f.incident_record({"kind": "aar"}), {}, [], False, draft)))
+        if not shutil.which("libreoffice") or not shutil.which("pdfinfo"):
+            self.skipTest("pagination needs LibreOffice and pdfinfo")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "NOC.docx"
+            d.write_docx(str(path), handoff)
+            subprocess.run(["libreoffice", "-env:UserInstallation=" + (Path(tmp) / "profile").as_uri(), "--headless",
+                            "--convert-to", "pdf", "--outdir", tmp, str(path)], check=True, timeout=60, capture_output=True)
+            info = subprocess.check_output(["pdfinfo", str(path.with_suffix(".pdf"))], text=True)
+            self.assertRegex(info, r"(?m)^Pages:\s+1$")
+
+    def test_archived_v1_layout(self):
+        import hashlib
+        draft = {"v": 1, "name": "Example outage", "start": "20 Nov 23:10", "impact": "One host",
+                 "detection": ["vCenter"], "actions": [], "recovery": ["Host connected"],
+                 "key": [["23:10", "Host events", "Critical", "Host not responding", "esx01"]],
+                 "events": [["23:10", "Host events", "Critical", "Host not responding", "esx01"]]}
+        record = f.incident_review_fill(f.incident_record({"kind": "aar"}), draft)
+        blocks = f.incident_aar_docx(record, {}, [], False, draft)["blocks"]
+        # Snapshot of every block, cell, label and style from the v1 renderer.
+        digest = hashlib.sha256(json.dumps(blocks, sort_keys=True).encode()).hexdigest()
+        self.assertEqual(digest, "d1d7cc6071a483efcaae6a9218223b16d63b55c6be786eb7f4be1a1b3556e87c")
 
     def test_the_document(self):
         d = self.draft(self.CARDS)
@@ -756,18 +871,18 @@ class AarFromReview(unittest.TestCase):
         doc = f.incident_aar_docx(r, {"banner": "CUI", "instructions": ["Save it."]}, [], False, d)
         t = _doc_text(doc)
         heads = [b["text"] for b in doc["blocks"] if b.get("type") == "heading"]
-        self.assertEqual(heads, ["OVERVIEW", "Event Response", "Reason for Outage (RFO) & Recovery", "Lessons Learned & Action Plan",
-                                 "Appendix A - every event of the review"])
-        for want in ("Filled from the outage review, AAP job 4714, made 2026-11-12 02:45 UTC", "Key events (from the review",
+        self.assertEqual(heads, ["OVERVIEW", "Event Response", "Reason for Outage (RFO) & Recovery", "What this usually means (for the NOC)",
+                                 "Lessons Learned & Action Plan", "Appendix A - the events by phase", "Appendix B - Hand this to the NOC"])
+        for want in ("Filled from the outage review, AAP job 4714, made 2026-11-12 02:45 UTC", "The outage, in order",
                      "Suggested - confirm: A fibre channel path went down (ACT, 80% high). Evidence: 01:58:02 esx03 Lost path redundancy. "
                      "Check: Check the switch port (esxcli storage core path list).", "Suggested - confirm: ACT in INC0012345",
                      "To write: the confirmed cause", "To write: what went well.", "To write: each task - owner - due date.",
-                     "The review saw: the ticket came 93 min", "To write: the impact level", "Save it.", "INC0012345 | 12 Nov 03:14 CET"):
+                     "The review saw: the ticket came 54 min", "To write: the impact level", "Save it.", "INC0012345 | 12 Nov 03:14 CET"):
             self.assertIn(want, t)
-        red = [b for b in doc["blocks"] if b.get("color") == f.TO_WRITE]
+        red = [b for b in doc["blocks"] if b.get("color") == f.TO_WRITE and b["type"] == "bullets"]
         self.assertTrue(red and all(str(x).startswith("To write:") for b in red for x in b["items"]))
         self.assertEqual(sum(1 for b in doc["blocks"] if b.get("columns") == ["Task", "Owner", "Due"]), 1)
-        self.assertEqual(t.index("Appendix A") < t.index("Save it."), True)          # the site's instructions last
+        self.assertLess(t.index("Save it."), t.index("Appendix A - the events by phase"))
         # typed boxes win, and are not red
         r2 = dict(r, root_cause="A cable.", successes="Fast failover", tasks="Label the cables - ops", impact_level="MAJOR")
         t2 = _doc_text(f.incident_aar_docx(r2, {}, [], False, d))
@@ -794,6 +909,7 @@ class AarFromReview(unittest.TestCase):
             body = z.read("word/document.xml").decode()
             self.assertIn('w:val="C00000"', body)                                      # the red lines
             self.assertIn("Appendix A", body)
+            self.assertEqual(body.count('<w:br w:type="page"/>'), 2)
 
 
 class ReviewReader(unittest.TestCase):

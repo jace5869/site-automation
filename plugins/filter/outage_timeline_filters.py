@@ -8,7 +8,10 @@ every rule. The events table is the source: the chart only places its rows on a 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import csv
 import datetime
+import io
+from collections import defaultdict
 import importlib.util
 import json
 import os
@@ -21,17 +24,35 @@ except ImportError:                        # the unit tests, without Ansible
     _OLD = False
 
 
+
+# 1.116.0: the scheduled watch is frozen at 1.118.4. A run that is not a review (vm_watch_timeline on a scheduled run) gets
+# 1.118.4's own time line, word for word: plugins/module_utils/outage_timeline_1184.py is that release's
+# outage_timeline_filters.py, byte-identical (tests/test_watch_frozen.py pins its sha256). Only a review uses the code below.
+_fspec = importlib.util.spec_from_file_location(
+    "outage_timeline_1184", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "outage_timeline_1184.py"))
+_v1184 = importlib.util.module_from_spec(_fspec)
+_fspec.loader.exec_module(_v1184)
+
 def _unsafe(v):
     return _wrap(v) if _OLD else v
 
-_spec = importlib.util.spec_from_file_location(
-    "site_time", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_time.py"))
-_tm = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_tm)
-_spec = importlib.util.spec_from_file_location(
-    "site_link", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_link.py"))
-_lk = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_lk)
+
+def outage_redact(value):
+    return _unsafe(_redact(value))
+
+
+def _load(name, folder):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.path.dirname(__file__), folder, name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_redact = _load("site_redact", "../module_utils").redact_all
+_tm = _load("site_time", "../module_utils")
+_lk = _load("site_link", "../module_utils")
+_watch = _load("vmware_watch_filters", ".")
+_correlation_id = _load("site_filters", ".").site_correlation_id
 
 UTC = datetime.timezone.utc
 LANES = [("vcenter", "vCenter alarms"), ("host", "Host events"), ("servicenow", "ServiceNow"), ("act", "ACT")]
@@ -44,6 +65,8 @@ BAD = ("critical", "warning", "low")
 # a "back after ..." (a short one is one Low event); down and up bound the time a host was down. The types are the list
 # roles/vmware_vm/library/site_vmware_outage_events.py reads (the test holds the two together).
 TYPES = {
+    "VmPoweredOffEvent": ("vcenter", "warning", "VM powered off", "power", "problem"),
+    "VmPoweredOnEvent": ("vcenter", "ok", "VM powered on", "power", "clear"),
     "HostConnectionLostEvent": ("host", "critical", "Host not responding", "conn", "down"),
     "HostDisconnectedEvent": ("host", "warning", "Host disconnected from vCenter", "conn", "down"),
     "HostConnectedEvent": ("host", "ok", "Host connected again", "conn", "up"),
@@ -54,8 +77,8 @@ TYPES = {
     "com.vmware.vc.ha.VmRestartedByHAEvent": ("vcenter", "warning", "HA restarted a VM", "", "restart"),
     "VmRestartedOnAlternateHostEvent": ("vcenter", "warning", "HA restarted a VM", "", "restart"),
     "VmFailoverFailed": ("vcenter", "critical", "HA could not restart a VM", "", ""),
-    "VmDasBeingResetEvent": ("vcenter", "warning", "HA reset a VM without a heartbeat", "", ""),
-    "VmDasBeingResetWithScreenshotEvent": ("vcenter", "warning", "HA reset a VM without a heartbeat", "", ""),
+    "VmDasBeingResetEvent": ("vcenter", "warning", "HA reset a VM", "", ""),
+    "VmDasBeingResetWithScreenshotEvent": ("vcenter", "warning", "HA reset a VM", "", ""),
     "DasHostFailedEvent": ("host", "critical", "HA: host failed", "conn", "down"),
     "com.vmware.vc.HA.DasHostFailedEvent": ("host", "critical", "HA: host failed", "conn", "down"),
     "DasHostIsolatedEvent": ("host", "critical", "HA: host isolated from the network", "", ""),
@@ -67,6 +90,7 @@ TYPES = {
     "esx.problem.scsi.device.state.permanentloss": ("host", "critical", "Storage device lost for good", "pdl", "problem"),
     "esx.problem.scsi.device.state.permanentloss.noopens": ("host", "critical", "Storage device lost for good", "pdl", "problem"),
     "esx.clear.scsi.device.state.permanentloss.deviceonline": ("host", "ok", "Storage device is online again", "pdl", "clear"),
+    "esx.problem.vmfs.nfs.volume.no.space": ("host", "critical", "NFS datastore out of space", "", ""),
     "esx.problem.vmfs.heartbeat.timedout": ("host", "warning", "Datastore heartbeat timed out", "hb", "problem"),
     "esx.problem.vmfs.heartbeat.unrecoverable": ("host", "critical", "Datastore heartbeat lost for good", "", ""),
     "esx.problem.vmfs.heartbeat.recovered": ("host", "ok", "Datastore heartbeat is back", "hb", "clear"),
@@ -82,13 +106,14 @@ TYPES = {
     "esx.clear.net.connectivity.restored": ("host", "ok", "Network connection is back", "nconn", "clear"),
     "AlarmStatusChangedEvent": ("vcenter", "info", "Alarm changed", "alarm", ""),
 }
-ALARM = {"red": ("critical", "problem"), "yellow": ("warning", "problem"), "green": ("ok", "clear"), "gray": ("info", "")}
+ALARM = {"red": ("critical", "problem"), "yellow": ("warning", "problem"), "green": ("ok", "clear"), "normal": ("ok", "clear"), "gray": ("info", "")}
 RESTART_GROUP_S = 300      # HA restarts of one cluster within this many seconds are one event, "HA restarted 14 VMs"
 SAME_S = 60                # the same event at the same place again within this many seconds: one row, "x3"
 STEPS_MIN = (1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 10080)
 TRACK_PX = 580.0           # the narrowest track the marks must fit (the 800 px window)
 ROWS = 3
 LEAD_S = 1800              # 1.90.0: the lead-up looks back at most this far before the first critical event
+STORY_LIMIT = 15
 DRAFT_EVENTS = 300         # 1.112.0: the AAR draft holds at most this many events (its Appendix A; the artifact stays small)
 ATTACH = "Attach the ServiceNow API credential to the outage watch template to see and link its incidents (read only)."
 
@@ -131,44 +156,10 @@ def _span(seconds):
 
 
 def outage_window(now, hours=6, start="", end="", time_zone=""):
-    """The stretch of time a review reads -> {begin, end (seconds since 1970), error}. Without start: the last hours
-    before now. start and end (vm_watch_review_from, vm_watch_review_to) are times in report_time_zone, as
-    2026-11-12 01:00; end alone is an error; start alone runs for hours, at most until now."""
-    now = float(now)
-    try:
-        hours = float(hours)
-    except (TypeError, ValueError):
-        hours = 6.0
-    hours = min(max(hours, 0.25), 24.0 * 31)
-    tz, _note = _tm.zone(time_zone)
-
-    def at(text, name):
-        m = re.match(r"^(\d{4})-(\d\d)-(\d\d)(?:[ T](\d\d):(\d\d)(?::(\d\d))?)?$", str(text).strip())
-        if not m:
-            raise ValueError("%s is not a time like 2026-11-12 01:00: %s" % (name, text))
-        try:
-            return datetime.datetime(*[int(x or 0) for x in m.groups()], tzinfo=tz or UTC).timestamp()
-        except ValueError:
-            raise ValueError("%s is not a time like 2026-11-12 01:00: %s" % (name, text))
-
-    try:
-        if not str(start or "").strip():
-            if str(end or "").strip():
-                raise ValueError("vm_watch_review_to needs vm_watch_review_from (the start of the window)")
-            return {"begin": now - hours * 3600, "end": now, "error": ""}
-        b = at(start, "vm_watch_review_from")
-        e = at(end, "vm_watch_review_to") if str(end or "").strip() else min(now, b + hours * 3600)
-    except ValueError as x:
-        return {"begin": now - hours * 3600, "end": now, "error": str(x)}
-    if e <= b:
-        return {"begin": now - hours * 3600, "end": now,
-                "error": "vm_watch_review_to is not after vm_watch_review_from (or vm_watch_review_from is not in the past)"}
-    return {"begin": b, "end": e, "error": ""}
+    return _v1184.outage_window(now, hours, start, end, time_zone)     # 1.116.0: the same window as 1.118.4, for every run
 
 
-# ---- the events -------------------------------------------------------------------------------------------
-
-def _vcenter_events(events):
+def _vcenter_events(events, datastores=None):
     out = []
     for e in events or []:
         if not isinstance(e, dict):
@@ -180,6 +171,20 @@ def _vcenter_events(events):
         lane, level, label, kind, role = TYPES.get(typ, ("vcenter" if not e.get("host") else "host", "info", "", "", ""))
         host, vm, cluster = _short(e.get("host")), str(e.get("vm") or ""), str(e.get("cluster") or "")
         message = " ".join(str(e.get("message") or "").split())
+        args = e.get("args") or {}
+        ds = str(e.get("datastore") or next((args[k] for k in ("datastore", "datastoreName", "volumeName", "dsName") if args.get(k)), ""))
+        if not ds and typ == "esx.problem.vmfs.nfs.volume.no.space":
+            ds = str(args.get("1") or "")  # EventEx names the NFS volume in its first argument (Broadcom KB 428302).
+        if not ds and typ.startswith(("esx.problem", "esx.clear")):
+            volume = re.search(r"\bvolume [\w:-]+ \(([^)]+)\)", message, re.I)
+            named = re.search(r"(?:affected )?datastores?:\s*([^,)]+?)(?:\.(?:\s|$)|\)|$)", message, re.I)
+            ds = volume.group(1) if volume else named.group(1).strip() if named else ""
+        if not ds and (e.get("entity_type") == "datastore" or str(e.get("alarm") or "").lower().startswith("datastore ")):
+            ds = str(e.get("entity") or "")
+        device = str(e.get("device") or "")
+        if not device and typ.startswith(("esx.problem", "esx.clear")):
+            found = re.search(r"\b(?:naa\.[0-9a-f]+|eui\.[0-9a-f]+|t10\.\S+|mpx\.\S+)", " ".join(str(v) for v in args.values()) + " " + message, re.I)
+            device = found.group(0) if found else ""
         where = host or vm or cluster or str(e.get("datacenter") or "") or str(e.get("vcenter") or "")
         if typ == "AlarmStatusChangedEvent":
             alarm, to = str(e.get("alarm") or "an alarm"), str(e.get("to") or "").lower()
@@ -187,14 +192,39 @@ def _vcenter_events(events):
             label = "Alarm %s: %s" % ({"red": "red", "yellow": "yellow", "green": "back to green", "gray": "gray"}.get(to, to or "changed"), alarm)
             where = _short(e.get("entity")) or where           # the Where label: short (1.90.2: the VM's identity keeps the raw entity)
             kind = "alarm:" + alarm
+        elif kind == "power":
+            where = vm or where
         elif not label:
             label = message[:120] or typ
         out.append({"t": t, "lane": lane, "level": level, "label": label, "where": where, "kind": kind, "role": role,
                     "type": typ, "message": message, "vcenter": str(e.get("vcenter") or ""), "vm": vm, "cluster": cluster,
-                    "host": host, "entity": str(e.get("entity") or "").strip(), "entity_type": str(e.get("entity_type") or "").lower(),
-                    "n": 1, "names": []})
+                    "host": host, "host_full": str(e.get("host") or ""), "datastore": ds, "device": device, "datacenter": str(e.get("datacenter") or ""), "entity": str(e.get("entity") or "").strip(), "entity_type": str(e.get("entity_type") or "").lower(),
+                    "device_raw": _watch._device_raw(e) if typ in _watch.STORAGE else "",
+                    "cluster_moid": e.get("cluster_moid") or (e.get("entity_moid") if e.get("entity_type") == "cluster" else ""),
+                    "host_moid": e.get("host_moid", ""), "vm_moid": e.get("vm_moid", ""),
+                    "datastore_moid": e.get("datastore_moid", ""), "entity_moid": e.get("entity_moid", ""),
+                    "key": e.get("key", ""), "from": e.get("from", ""), "to": e.get("to", ""), "n": 1, "names": []})
+    # APD events often identify only the device. Resolve it from this vCenter's named path events.
+    def device_key(e):
+        host = "" if e["device"].lower().startswith(("naa.", "eui.")) else e["host_moid"] or e["host"]
+        return e["vcenter"], host, e["device"].lower()
+    extents = defaultdict(set)
+    for ds in datastores or []:
+        for device in ds.get("devices") or []:
+            extents[ds.get("vcenter", ""), device.lower()].add((ds["name"], ds.get("moid", "")))
+    devices = defaultdict(set)
+    for e in out:
+        if e["device"] and e["datastore"]:
+            devices[device_key(e)].add((e["datastore"], e["datastore_moid"]))
+    for e in out:
+        names = extents.get((e["vcenter"], e["device"].lower())) or devices.get(device_key(e))
+        if names and len(names) == 1:
+            name, moid = next(iter(names))
+            if e["datastore"] in ("", name) and (not e["datastore_moid"] or e["datastore_moid"] == moid):
+                e["datastore"], e["datastore_moid"] = name, moid
     out.sort(key=lambda x: x["t"])
     return out
+
 
 
 def _restarts(evs):
@@ -205,7 +235,8 @@ def _restarts(evs):
             out.append(e)
             continue
         vms.add((e["vcenter"], e["vm"] or id(e)))
-        g = open_.get((e["vcenter"], e["cluster"]))
+        cluster = e.get("cluster_key") or (e["vcenter"], id(e))
+        g = open_.get(cluster)
         if g is not None and (e["t"] - g["last"]).total_seconds() <= RESTART_GROUP_S:
             g["last"] = e["t"]
             if e["vm"] and e["vm"] not in g["names"]:
@@ -215,7 +246,7 @@ def _restarts(evs):
             g["n"] += 1
             continue
         g = dict(e, last=e["t"], names=[e["vm"]] if e["vm"] else [], where=e["cluster"] or e["where"], members=[(e["host"], e["vm"])])
-        open_[(e["vcenter"], e["cluster"])] = g
+        open_[cluster] = g
         out.append(g)
     for e in out:
         if e["role"] == "restart":
@@ -230,28 +261,50 @@ def _pairs(evs, low_seconds):
     """A problem and its clear at the same place: cleared within low_seconds -> one Low event, '..., back after 40 s'
     (the clear is not a row of its own); low_seconds 0 = never. -> (events, the hosts' down stretches [(host, from, to or None, vCenter)])."""
     gone, downs, open_down = set(), [], {}
+    host_ids, full_names = defaultdict(set), defaultdict(set)
+    for e in evs:
+        key = (e.get("vcenter"), e.get("host"))
+        if e.get("host_moid"):
+            host_ids[key].add(e["host_moid"])
+        if "." in (e.get("host_full") or ""):
+            full_names[key].add(e["host_full"])
+    def host_key(e):
+        key = (e.get("vcenter"), e.get("host"))
+        if e.get("host_moid"):
+            return e["host_moid"]
+        if len(host_ids[key]) > 1 or len(full_names[key]) > 1:
+            return None
+        return next(iter(host_ids[key]), e.get("host") or e["where"])
+
     for i, e in enumerate(evs):
-        if e["role"] not in ("problem", "down"):
+        if low_seconds <= 0 or e["role"] not in ("problem", "down"):
             continue
         want = "clear" if e["role"] == "problem" else "up"
         for j in range(i + 1, len(evs)):
             c = evs[j]
-            if j in gone or c["role"] != want or c["kind"] != e["kind"] or c["where"] != e["where"] or c.get("vcenter", "") != e.get("vcenter", ""):
+            if j in gone or c["role"] != want or c["kind"] != e["kind"] or c.get("vcenter") != e.get("vcenter"):
+                continue
+            if not host_key(e) or host_key(e) != host_key(c):
+                continue
+            if e["role"] != "down" and e["where"] != c["where"]:
+                continue
+            if e.get("device") and c.get("device") and e["device"] != c["device"]:
                 continue
             took = (c["t"] - e["t"]).total_seconds()
-            if low_seconds > 0 and took <= low_seconds:
+            if low_seconds > 0 and took <= low_seconds and not c.get("recorded_clear"):
                 e["level"], e["label"] = "low", "%s, back after %s" % (e["label"], _span(took))
                 e["flap"] = True
                 gone.add(j)
             break
     kept = [e for i, e in enumerate(evs) if i not in gone]
     for e in kept:
-        dk = (e.get("vcenter", ""), e["where"])               # the same name on two vCenters is two hosts
+        dk = (e.get("vcenter", ""), host_key(e) or id(e))
         if e["role"] == "down" and not e.get("flap") and dk not in open_down:
-            open_down[dk] = e["t"]
+            open_down[dk] = (e["where"], e["t"])
         elif e["role"] == "up" and dk in open_down:
-            downs.append((e["where"], open_down.pop(dk), e["t"], dk[0]))
-    downs += [(h[1], t, None, h[0]) for h, t in open_down.items()]
+            name, start = open_down.pop(dk)
+            downs.append((name, start, e["t"], dk[0]))
+    downs += [(name, start, None, vc) for (vc, _), (name, start) in open_down.items()]
     downs.sort(key=lambda d: d[1])
     return kept, downs
 
@@ -261,6 +314,8 @@ def _same(evs):
     out, last = [], {}
     for e in evs:
         k = (e["lane"], e["level"], e["label"], e["where"], e.get("vcenter", ""), e["kind"])
+        if e["role"] == "up" or e["role"] == "clear" and e["type"].startswith("esx."):
+            k += (e["t"],)
         p = last.get(k)
         if p is not None and (e["t"] - p["seen"]).total_seconds() <= SAME_S and not e.get("count"):
             p["n"] += 1
@@ -277,9 +332,9 @@ def _same(evs):
     return out
 
 
-def _ticket_host(short):
+def _ticket_host(short, shorten=True):
     m = re.match(r"^\s*(?:\[[^\]]*\]\s*)?([^\s:]+):", str(short or ""))
-    return _short(m.group(1)) if m else ""
+    return (_short(m.group(1)) if shorten else m.group(1)) if m else ""
 
 
 def _act_block(description):
@@ -307,7 +362,62 @@ def _lower_first(text):
     return text[:1].lower() + text[1:] if text[1:2].islower() else text
 
 
-def _ticket_events(tickets, begin, end, instance="", table=""):
+def _incident_ticket_ids(triggers, events, prefix):
+    """Use the watch writer's identities, before names were shortened for the review."""
+    ids = set()
+
+    def add(vc, finding_id):
+        if vc and finding_id:
+            ids.add(_correlation_id(finding_id, vc, "vm_watch", prefix))
+
+    for c in triggers:
+        if c.get("ticket_id"):
+            add(c.get("vcenter"), c.get("ticket_id"))
+        for name in c.get("ticket_names") or []:
+            add(c["vcenter"], _watch._ticket_id(dict(c, object=name), {}))
+        for path in c.get("folded") or []:
+            add(path.get("vcenter") or c.get("vcenter"), _watch._ticket_id(path, {}))
+    for e in events:
+        if e["role"] in ("clear", "up"):
+            continue
+        signal = _change(e)
+        scope = signal[0][1] if signal else ""
+        vc = e["vcenter"]
+        source = e.get("source_names", e)
+        host = e["host_full"] or source["entity"]
+        if scope == "host" and host:
+            add(vc, _watch._ticket_id(dict(kind="host", object=host), {}))
+        if scope == "datastore":
+            ds = source["datastore"] or source["entity"]
+            add(vc, _watch._ticket_id(dict(kind="datastore", object_type="datastore", object=ds), {}))
+        if e["type"] in _watch.STORAGE and host:
+            add(vc, _watch._ticket_id(dict(kind="storage", object=host, device=e["device_raw"] or e["device"], event_type=e["type"]), {}))
+        if e["type"] in _watch.EVENT_SEVERITY:
+            name = source["vm"] or host or e["cluster"]
+            add(vc, "vm-watch:event:%s:%s" % (e["type"], name))
+    return ids
+
+
+def _review_ticket_numbers(tickets, incident, opts):
+    # Legacy IDs end after the check. The title identifies the object within that vCenter.
+    prefix = opts.get("correlation_prefix") or "site-health"
+    legacy_ids = defaultdict(set)
+    for vc, name in incident["hosts"] | incident["affected"]:
+        cid = _correlation_id("", vc, "vm_watch", prefix).rsplit(":", 1)[0]
+        legacy_ids[cid].add(name)
+        legacy_ids[cid].update(opts["host_aliases"].get((vc, name), ()))
+    result = set()
+    for k in tickets or []:
+        if not isinstance(k, dict):
+            continue
+        cid = str(k.get("correlation_id") or "")
+        legacy = _ticket_host(k.get("short"), shorten=False) in legacy_ids.get(cid, ())
+        if cid in incident["ticket_ids"] or legacy:
+            result.add(k.get("number"))
+    return result
+
+
+def _ticket_events(tickets, begin, end, instance="", table="", repeats=False):
     """-> (events, tickets opened before the stretch and still open in it, {ticket: its root-cause text} - an ACT analysis
     first, else its close notes; only for tickets of the stretch (1.112.0: the outage's own is picked later)). Each event of a ticket carries
     its link ("url", when the instance is known)."""
@@ -336,9 +446,11 @@ def _ticket_events(tickets, begin, end, instance="", table=""):
             if not isinstance(note, (list, tuple)) or len(note) < 2:
                 continue
             t, text = _time(note[0]), " ".join(str(note[1] or "").split())
-            if t is None or not text or not begin <= t <= end or text.startswith("Still failing at"):
+            if t is None or not text or not begin <= t <= end or (not repeats and text.startswith("Still failing at")):
                 continue
-            if text.startswith("The automated check passes again"):
+            if text.startswith("Still failing at"):
+                out.append(dict(base, t=t, lane="servicenow", level="info", label="Work note in %s: %s" % (num, text), message=text, repeat=True))
+            elif text.startswith("The automated check passes again"):
                 out.append(dict(base, t=t, lane="servicenow", level="ok", label="%s: the check passes again" % num, message=text))
             elif re.match(r"^ACT\b", text):
                 out.append(dict(base, t=t, lane="act", level="info", label="ACT note in %s: %s" % (num, _cut(text)), message=text))
@@ -583,7 +695,7 @@ def _relate(evs, downs, fallback=None, cleared=None):
 
 
 def _alarm_key(e):
-    return (e.get("vcenter", ""), e["kind"], e["where"])
+    return (e.get("vcenter", ""), e["kind"], e.get("entity") or e["where"])
 
 
 def _pre_raises(allv, begin, end):
@@ -615,7 +727,7 @@ def _alarm_runs(evs):
             continue
         k = _alarm_key(e)
         if e["role"] == "problem" and k not in open_:
-            r = {"vm": e.get("vm") or "", "where": e["where"], "alarm": e["kind"][6:], "level": e["level"],
+            r = {"key": k, "vm": e.get("vm") or "", "where": e["where"], "alarm": e["kind"][6:], "level": e["level"],
                  "usage": bool(USAGE_ALARM.search(e["kind"][6:])), "raised": e["t"], "cleared": None, "vcenter": e.get("vcenter", "")}
             open_[k] = r
             runs.append(r)
@@ -644,7 +756,1399 @@ def _fold(evs):
     return runs
 
 
+# 1.116.0: a review counts the objects named by the outage and by the watch's current read.
+DISK_USAGE = re.compile(r"\bdisk (?:space )?(?:usage|utili[sz]ation)\b|\busage on disk\b", re.I)
+DOWN_KIND = {"host": "not responding", "datastore": "not accessible", "hung": "hung",
+             "no-heartbeat": "no heartbeat", "lost": "Inaccessible in vCenter", "question": "waiting for an answer", "powered-off": "powered off", "storage": "storage paths unavailable"}
+OBJECT_WORD = {"host": "Host", "datastore": "Datastore", "vm": "VM", "path": "Storage on host"}
+
+
+def _review_roots(opts, begin, end):
+    """Recover the identity the frozen watch keeps in each artifact's inventory id.
+    The compact artifact omits inaccessible. Its summary distinguishes inaccessible stores
+    (including ones with folded paths) from stores with only a path finding."""
+    roots = {}
+    wanted = str(opts.get("review_object") or "").strip()
+    ticket_names, observations = defaultdict(set), defaultdict(set)
+    for run in opts.get("watch_runs") or []:
+        artifact = (run.get("artifacts") or {}).get("vm_watch") or {}
+        when = _time(artifact.get("read_at") or run.get("finished"))
+        if not when or not begin <= when <= end:
+            continue
+        for c in artifact.get("conditions") or []:
+            kind, vc, name = c.get("kind"), c.get("vcenter"), c.get("object")
+            if kind not in ("datastore", "host") or not name or not vc or kind != c.get("object_type"):
+                continue
+            if kind == "datastore" and not (c.get("inaccessible") or (c.get("summary") or "").startswith((
+                    "datastore %s is not accessible:" % name, "Datastore %s NOT ACCESSIBLE " % name))):
+                continue
+            prefix = "vm-watch:%s:%s:" % (kind, vc)
+            cid = c.get("id") or ""
+            moid = c.get("moid") or (cid[len(prefix):] if cid.startswith(prefix) else "")
+            if moid:
+                roots[vc, kind, moid] = dict(c, moid=moid)
+                ticket_names[vc, kind, moid].add(name)
+                observations[vc, kind, moid].add(when)
+    for c in opts["triggers"]:
+        kind = c.get("kind")
+        if kind == "host" or kind == "datastore" and c.get("inaccessible"):
+            if c.get("moid") and c.get("vcenter"):
+                key = c["vcenter"], kind, c["moid"]
+                roots[key] = c
+                observations[key].add(_time(opts.get("read_at")) or end)
+    if wanted:
+        for kind, rows in (("host", opts.get("hosts")), ("datastore", opts.get("datastores"))):
+            for obj in rows or []:
+                if obj["name"] == wanted and obj.get("moid"):
+                    roots.setdefault((obj["vcenter"], kind, obj["moid"]), dict(
+                        obj, object=wanted, object_type=kind, kind=kind))
+        roots = {k: c for k, c in roots.items() if c["object"] == wanted}
+    return [dict(c, ticket_names=sorted(ticket_names[k]), observations=sorted(observations[k])) for k, c in roots.items()]
+
+
+def _review_clusters(rows):
+    """Resolve name-only references within a datacenter, declining ambiguous aliases."""
+    sites, refs = defaultdict(set), defaultdict(set)
+    for r in rows:
+        vc, name, dc = r.get("vcenter"), r.get("cluster"), r.get("datacenter")
+        if name and dc:
+            sites[vc, name].add(dc)
+        if name and r.get("cluster_moid"):
+            refs[vc, name, dc or ""].add(r["cluster_moid"])
+    for r in rows:
+        vc, name, dc = r.get("vcenter"), r.get("cluster"), r.get("datacenter")
+        moid = r.get("cluster_moid")
+        if moid:
+            r["cluster_key"] = (vc, moid)
+        elif name and (dc or len(sites[vc, name]) == 1):
+            dc = dc or next(iter(sites[vc, name]), "")
+            candidates = refs[vc, name, dc]
+            if len(sites[vc, name]) <= 1:
+                candidates = candidates | refs[vc, name, ""]
+            if len(candidates) == 1:
+                r["cluster_key"] = (vc, next(iter(candidates)))
+            elif not candidates:
+                r["cluster_key"] = (vc, dc, name)
+
+
+def _review_inventory(opts, events):
+    """Join current inventory by vCenter and MoID. Historical events can have just a name.
+    Give colliding inventory names distinct review labels so a name-only event cannot select either object."""
+    names, ids = {}, defaultdict(set)
+    full_hosts = defaultdict(set)
+
+    def register(vc, kind, moid, name):
+        if kind == "host" and name and _short(name) != name:
+            full_hosts[vc, _short(name)].add(name)
+            if moid:
+                ids[vc, kind, name].add(moid)
+        if moid and name:
+            name = _short(name) if kind == "host" else name
+            names.setdefault((vc, kind, moid), name)
+            ids[vc, kind, name].add(moid)
+
+    def label(vc, kind, moid, name):
+        if kind == "host" and name:
+            short = _short(name)
+            if name != short and not moid:
+                exact = ids[vc, kind, name]
+                if len(exact) == 1:
+                    moid = next(iter(exact))
+                elif len(full_hosts[vc, short]) > 1:
+                    return name
+            if len(full_hosts[vc, short]) > 1 and not moid:
+                return short
+            name = short
+        name = name or moid or ""
+        if not moid and len(ids[vc, kind, name]) == 1:
+            moid = next(iter(ids[vc, kind, name]))
+        name = names.get((vc, kind, moid), name)
+        collision = len(ids[vc, kind, name]) > 1 or kind == "host" and len(full_hosts[vc, name]) > 1
+        return "%s [%s]" % (name, moid) if moid and collision else name
+
+    def condition_moid(c):
+        kind = c.get("object_type")
+        return c.get("moid") or c.get((kind or "") + "_moid") or (c.get("vm") or {}).get("moid")
+
+    vms = list(opts.get("questions") or [])
+    for kind, rows in (("host", opts.get("hosts")), ("datastore", opts.get("datastores"))):
+        for r in rows or []:
+            vms.extend(dict(v, vcenter=r.get("vcenter", "")) for v in r.get("vms") or [])
+            register(r.get("vcenter", ""), kind, r.get("moid"), r["name"])
+    host_members = {(h.get("vcenter"), h.get("moid")): h.get("vms") or [] for h in opts.get("hosts") or []}
+    conditions = opts["triggers"] + opts["roots"]
+    for c in conditions:
+        vc = c.get("vcenter", "")
+        kind = c.get("object_type")
+        register(vc, kind, condition_moid(c), c.get("object"))
+        if kind == "host":
+            for name in c.get("ticket_names") or []:
+                register(vc, kind, condition_moid(c), name)
+        for path in c.get("path_devices") or []:
+            register(vc, "host", path.get("host_moid"), path["host"])
+        vms.extend(dict(v, vcenter=vc) for v in c.get("members") or [])
+        if c.get("vm"):
+            vms.append(c["vm"])
+    for v in vms:
+        vc = v.get("vcenter", "")
+        register(vc, "vm", v.get("moid"), v.get("name"))
+        register(vc, "host", v.get("host_moid"), v.get("esxi_host") or v.get("host"))
+        stores, refs = v.get("datastores") or [], v.get("datastore_moids") or []
+        if len(stores) == len(refs) == 1:
+            register(vc, "datastore", refs[0], stores[0])
+    for e in events:
+        for kind in ("host", "vm", "datastore"):
+            register(e["vcenter"], kind, e[kind + "_moid"], e["host_full"] if kind == "host" else e[kind])
+        register(e["vcenter"], e["entity_type"], e["entity_moid"], e["entity"])
+
+    def vm_row(v, vc):
+        host = label(vc, "host", v.get("host_moid"), v.get("esxi_host") or v.get("host"))
+        files = v.get("datastores") or []
+        if v.get("datastore_moids"):
+            # The two lists are sorted independently. Resolve each ID from the datastore inventory.
+            files = sorted({label(vc, "datastore", ds, ds) for ds in v["datastore_moids"]})
+        return dict(v, vcenter=vc, name=label(vc, "vm", v.get("moid"), v["name"]), esxi_host=host, datastores=files)
+
+    # The frozen question condition drops the VM MoID. Its inventory row retains it.
+    questions = defaultdict(list)
+    for q in opts.get("questions") or []:
+        questions[q.get("vcenter"), q["name"], q.get("datacenter", ""), q.get("cluster", "")].append(q)
+    triggers = []
+    for original in conditions:
+        c = dict(original)
+        if c.get("id") and c.get("object"):
+            c["ticket_id"] = _watch._ticket_id(original, {})  # writer uses inventory names, before review labels
+        vc, kind = c.get("vcenter", ""), c.get("object_type")
+        if c.get("kind") == "question" and not condition_moid(c):
+            candidates = questions[vc, c["object"], c.get("datacenter", ""), c.get("cluster", "")]
+            for q in candidates:
+                if len(candidates) == 1 or c.get("summary", "").endswith(": " + (q.get("question") or "(no text)")):
+                    c.update(vm=q, datastores=q.get("datastores") or [])
+                    candidates.remove(q)
+                    break
+        if c.get("object"):
+            c["object"] = label(vc, kind, condition_moid(c), c["object"])
+        if kind == "host" and c.get("kind") == "host":
+            c["members"] = host_members.get((vc, c.get("moid")), [])
+        if "members" in c:
+            c["members"] = [vm_row(v, vc) for v in c["members"]]
+            if kind == "host":
+                for v in c["members"]:
+                    v["esxi_host"] = c["object"]
+        if c.get("folded"):
+            c["folded"] = [dict(path, host_label=label(vc, "host", path.get("host_moid"), path.get("host")))
+                           for path in c["folded"]]
+        if c.get("hosts"):
+            c["hosts"] = [label(vc, "host", None, h) for h in c["hosts"]]
+        if c.get("host_moids") and not c.get("paths"):
+            c["hosts"] = [label(vc, "host", moid, moid) for moid in c["host_moids"]]
+        if c.get("vm"):
+            c["vm"] = vm_row(dict(c["vm"], datastores=c.get("datastores", [])), vc)
+            c["datastores"] = c["vm"]["datastores"]
+        triggers.append(c)
+    for e in events:
+        vc = e["vcenter"]
+        original = {k: e[k] for k in ("where", "host", "datastore", "vm", "entity")}
+        for kind in ("host", "vm", "datastore"):
+            e[kind] = label(vc, kind, e[kind + "_moid"], e["host_full"] if kind == "host" else e[kind])
+        entity_kind = e["entity_type"] or _scope(e)
+        if e["entity"] and entity_kind in ("host", "datastore", "vm"):
+            e["entity"] = label(vc, entity_kind, e["entity_moid"] or e[entity_kind + "_moid"], e["entity"])
+        elif e["entity_moid"]:
+            e["entity"] = label(vc, entity_kind, e["entity_moid"], e["entity"])
+        if e["kind"] == "power":
+            e["where"] = e["vm"] or e["where"]
+        elif original["host"] and original["where"] == original["host"]:
+            e["where"] = e["host"]
+        if any(e[k] != val for k, val in original.items()):
+            e["source_names"] = original  # the workbook and CSV show the source event
+    _match_path_clears(events)
+    n = len(opts["triggers"])
+    hosts = [dict(h, name=label(h.get("vcenter", ""), "host", h.get("moid"), h["name"])) for h in opts.get("hosts") or []]
+    _review_clusters(events + hosts + triggers)
+    host_aliases = defaultdict(set)
+    for (vc, _), names_seen in full_hosts.items():
+        for fqdn in names_seen:
+            host_aliases[vc, label(vc, "host", None, fqdn)].add(fqdn)
+    return dict(opts, host_aliases=host_aliases, triggers=triggers[:n], roots=triggers[n:], hosts=hosts)
+
+
+def _scope(e):
+    alarm = e["kind"][6:] if e["kind"].startswith("alarm:") else ""
+    return (e.get("entity_type") or ("datastore" if "datastore" in alarm.lower() else _entity_words(e))
+            or ("vm" if e.get("vm") else "host" if e.get("host") else "object"))
+
+
+def _usage_alarm(name, alarms):
+    name = name.lower()
+    # vCenter uses both "usage" and "utilization" in its stock alarm names.
+    normalized = re.sub(r"utili[sz]ation", "usage", name)
+    return any(a in normalized for a in alarms) or ("disk usage" in alarms and bool(DISK_USAGE.search(name)))
+
+
+def _change(e):
+    """An outage signal -> (object key, condition, clear). Host storage trouble need not mean the host went down."""
+    typ, kind, role = e["type"], e["kind"], e["role"]
+    alarm = kind[6:].lower() if kind.startswith("alarm:") else ""
+    scope, name = "", ""
+    if alarm:
+        if role not in ("problem", "clear"):
+            return None
+        scope = _scope(e)
+        if scope == "datastore" and re.search(r"access|connect|paths down|permanent device loss", alarm):
+            name = e["entity"] or e["datastore"]
+        elif scope == "host" and re.search(r"connection and power|not responding|host isolation", alarm):
+            name = e["entity"] or e["host"]
+        elif scope == "vm" and re.search(r"heartbeat|failover failed|power state|hung", alarm):
+            name = e["entity"] or e["vm"]
+        else:
+            return None
+    elif kind == "conn" or "DasHostIsolated" in typ or typ == "HostReconnectionFailedEvent":
+        scope, name, kind = "host", e["host"], "conn"
+    elif kind == "power" or role == "restart" or typ in ("VmFailoverFailed", "VmDasBeingResetEvent", "VmDasBeingResetWithScreenshotEvent"):
+        scope, name = "vm", e["vm"]
+        kind = kind or ("restart" if role == "restart" else "HA restart failed" if typ == "VmFailoverFailed" else "HA reset")
+    elif typ == "esx.problem.vmfs.nfs.volume.no.space":
+        return None  # a failed allocation does not establish that the datastore became inaccessible
+    elif kind == "sred":
+        return None  # redundancy is a lead-up signal, not datastore unavailability
+    elif e.get("opening"):
+        signal = _change(e["opening"])
+        return (signal[0], signal[1], True) if signal else None
+    elif typ.startswith(("esx.problem.storage", "esx.clear.storage", "esx.problem.scsi", "esx.clear.scsi", "esx.problem.vmfs")):
+        name = e["datastore"] or e["host"]
+        scope = "datastore" if e["datastore"] else "path"
+        kind = kind or ("apd" if ".apd." in typ else "hb" if ".heartbeat." in typ else typ)
+    if scope == "path" and e["device"]:
+        name = "%s (%s)" % (name, e["device"].lower())
+    if name and not e.get("unmatched_clear"):
+        return (e["vcenter"], scope, name), kind, role in ("up", "clear")
+    return None
+
+
+def _match_path_clears(events):
+    """vCenter may omit both device and datastore on a clear. Resolve the open condition on this host first."""
+    opened = defaultdict(dict)
+    for e in events:
+        if not e["type"].startswith("esx."):
+            continue
+        kind = e["kind"] or ("apd" if ".apd." in e["type"] else "hb" if ".heartbeat." in e["type"] else "")
+        if not kind:
+            continue
+        paths = opened[e["vcenter"], e["host"], kind]
+        key = (e["datastore"], e["device"].lower())
+        if e["type"].startswith("esx.clear.") or e["role"] == "clear":
+            matches = [k for k in paths if all(not a or not b or a == b for a, b in zip(key, k))]
+            if len(matches) == 1:
+                source = paths.pop(matches[0])
+                e["opening"] = source
+                if not e["datastore"] and source["datastore"]:
+                    e.setdefault("source_names", {k: e[k] for k in ("where", "host", "datastore", "vm", "entity")})
+                    e["datastore"] = source["datastore"]
+                    e["datastore_moid"] = source["datastore_moid"]
+                e["device"] = e["device"] or source["device"]
+            else:
+                e["unmatched_clear"] = True
+        else:
+            paths.setdefault(key, e)
+
+
+def _pair_key(e):
+    e = e.get("opening", e)
+    if e["kind"].startswith("alarm:"):
+        return _alarm_key(e) + (_scope(e),)
+    if e["kind"] == "power":
+        return (e["vcenter"], "power", e["vm"])
+    return (e["vcenter"], e["kind"], e["host"] or e["where"], e["datastore"], e["device"].lower())
+
+
+def _review_rows(events, seconds, alarms, roots):
+    """Partition source changes once, before timeline folding. An alarm clear consumes its raise."""
+    pending, hidden, noise = {}, {}, []
+    clean = []
+    observed = {_finding_object(c): c["observations"] for c in roots}
+    outages = defaultdict(list)
+    last_reconnect = {}
+    for e in events:
+        if e["level"] == "critical" and e["type"].startswith("esx.problem.storage"):
+            outages[e["vcenter"], e["host"], e["datastore"] or e["device"]].append(e["t"])
+    for e in events:
+        alarm = e["kind"].startswith("alarm:")
+        k = _pair_key(e)
+        colors = {str(e.get(c) or "").lower() for c in ("from", "to")}
+        if alarm and ({"gray", "grey"} & colors or _usage_alarm(e["kind"][6:], alarms)):
+            pending.pop(k, None)
+            noise.append(e)
+            continue
+        if e["role"] in ("problem", "down"):
+            pending.setdefault(k, []).append(e)
+        elif e["role"] in ("clear", "up"):
+            raises = pending.pop(k, [])
+            if e["role"] == "up":
+                host = (e["vcenter"], "host", e["host"])
+                previous = last_reconnect.get(host)
+                last_reconnect[host] = e["t"]
+                if any((not previous or previous < at) and at <= e["t"] for at in observed.get(host, ())):
+                    clean.append(e)
+                    continue
+            if alarm and not raises:
+                noise.append(e)
+                continue
+            if raises and (e["t"] - raises[0]["t"]).total_seconds() <= seconds and seconds:
+                # A brief loss of storage redundancy on the same path as the ensuing
+                # outage is its lead-up signal (one Low row in the director's example).
+                first = raises[0]
+                change = _change(first)
+                if change and any(first["t"] <= at <= e["t"] for at in observed.get(change[0], ())):
+                    clean.append(e)  # The watch actually saw the loss during this short span.
+                    continue
+                precursor = e["kind"] == "sred" and any(0 < (t - e["t"]).total_seconds() <= LEAD_S
+                    for t in outages[first["vcenter"], first["host"], first["datastore"] or first["device"]])
+                if precursor:
+                    hidden[id(first)] = dict(first, level="low", label="%s, back after %s" % (
+                        first["label"], _span((e["t"] - first["t"]).total_seconds())))
+                    hidden[id(e)] = None
+                else:
+                    noise.extend(dict(row, flap_label=raises[0]["label"]) for row in raises + [e])
+                    hidden.update((id(row), None) for row in raises)
+                    continue
+        clean.append(e)
+    return [hidden.get(id(e), e) for e in clean if hidden.get(id(e), e) is not None], noise
+
+
+def _noise_rows(noise, raw, affected, start, finish, begin, end, stamp):
+    groups, last = defaultdict(list), {}
+    def identity(e):
+        return (e["vcenter"], e.get("vm") or e.get("entity") or e["where"])
+    for e in raw:
+        last[identity(e), e["kind"]] = str(e.get("to") or e["role"]).lower()
+    for e in noise:
+        gray = any(str(e.get(k)).lower() in ("gray", "grey") for k in ("to", "from"))
+        alarm = "Gray (vCenter could not judge the alarm)" if gray else (e["kind"][6:] if e["kind"].startswith("alarm:") else e.get("flap_label", e["label"]))
+        groups[identity(e) in affected, alarm or e["label"]].append(e)
+    inside = max(0, (finish - start).total_seconds() / 3600) if start else 0
+    outside = max(0, (end - begin).total_seconds() / 3600 - inside)
+    rows = []
+    for (own, alarm), events in sorted(groups.items(), key=lambda item: (not item[0][0], item[0][1])):
+        es = sorted(events, key=lambda e: e["t"])
+        objects = {identity(e) for e in es}
+        count = sum(1 for e in es if start and start <= e["t"] <= finish)
+        hot = count / inside if inside else 0
+        cold = (len(es) - count) / outside if outside else 0
+        if own and inside and outside and count and hot > cold:
+            verdict = "rose with the outage: these are the affected VMs"
+        elif own:
+            verdict = "%d during the outage, %d outside it on affected VMs" % (count, len(es) - count)
+        elif outside and count >= 10 and hot > 3 * cold:
+            verdict = "rose with the outage (%.0f an hour during it, %.0f before and after) - same time, not a cause" % (hot, cold)
+        elif not start or not inside or not outside:
+            verdict = "no outage rate comparison available"
+        elif len(es) < 10 or not count or not (es[0]["t"] < start and es[-1]["t"] > finish):
+            verdict = "not part of the outage: %d during the outage, %d outside it" % (count, len(es) - count)
+        else:
+            verdict = "not part of the outage: it ran all evening (%.0f an hour before and after the outage, %.0f during it)" % (cold, hot)
+        states = defaultdict(set)
+        for e in es:
+            state = last[identity(e), e["kind"]]
+            if state in ("gray", "grey", "red", "yellow", "problem", "down"):
+                states["gray" if state in ("gray", "grey") else "raised"].add(identity(e)[1])
+        state = "; ".join("still %s: %s" % (k, ", ".join(sorted(v))) for k, v in sorted(states.items())) or "all back to normal"
+        rows.append([alarm, "%s (%s)" % (_count(len(objects), "VM" if all(_scope(e) == "vm" for e in es) else "object"), "affected" if own else "outside the outage"), len(es),
+                     "%s to %s" % (stamp(es[0]["t"]), stamp(es[-1]["t"])), state + " - " + verdict])
+    return rows
+
+
+def _listed(names, limit=10):
+    names = sorted(names)
+    return ", ".join(names[:limit]) + (" and %d more" % (len(names) - limit) if len(names) > limit else "")
+
+
+def _count(n, word):
+    return "%d %s%s" % (n, word, "" if n == 1 else "s")
+
+
+def _finding_object(c):
+    return c.get("vcenter", ""), c.get("object_type"), c.get("object")
+
+
+def _vm_key(e):
+    name = e["vm"] or (e["entity"] if _scope(e) == "vm" else "")
+    return (e["vcenter"], name) if name else None
+
+
+def _root_history(events, opts):
+    roots = {_finding_object(c): c for c in opts["roots"]}
+    current = {_finding_object(c): c for c in opts["triggers"]
+               if _finding_object(c) in roots and (c.get("inaccessible") or c.get("kind") == "host")}
+    path_spans = defaultdict(list)
+    infrastructure = [e for e in events if not _vm_key(e) and
+                      ((e["vcenter"], "datastore", e["datastore"]) in roots or _scope(e) == "host")]
+    # A watch read establishes that the host was down at that instant. Only a loss event
+    # (or an explicit "since") can date the onset. Keep observations out of the event export.
+    observed_starts = set()
+    for obj, c in roots.items():
+        if obj[1] == "host":
+            since = _time(current.get(obj, {}).get("since"))
+            for at in sorted(set(c["observations"]) | ({since} if since else set())):
+                infrastructure.append(dict(t=at, observed_host=obj, onset_known=at == since))
+    infrastructure.sort(key=lambda e: e["t"])
+    spans, chain, starts = _history(infrastructure, path_spans, observed_starts)
+    paths = {obj: set() for obj in roots}
+    host_spans = defaultdict(list)
+    for obj, c in roots.items():
+        if obj[1] == "host":
+            paths[obj].add(obj[2])
+        for path in c.get("folded") or []:
+            host = path["host_label"]
+            if host:
+                paths[obj].add(host)
+                since = _time(path.get("since"))
+                if since and path.get("severity") == "critical" and not path_spans.get((obj, host)):
+                    path_spans[obj, host].append([since, None])
+        for host in c.get("hosts") or []:
+            paths[obj].add(host)
+        since = _time(current.get(obj, {}).get("since"))
+        if since and not spans[obj]:
+            spans[obj].append([since, None])
+    def during(intervals, t):
+        return any(a <= t and (not b or t <= b) for a, b in intervals)
+
+    def overlap(left, right):
+        return any((not b or c <= b) and (not d or a <= d) for a, b in left for c, d in right)
+
+    groups = {obj: {obj} for obj in roots}
+    per_host = defaultdict(list)
+    for (obj, host), intervals in path_spans.items():
+        if obj in roots:
+            paths[obj].add(host)
+            host_spans[obj[0], host].extend(intervals)
+            for other, earlier in per_host[obj[0], host]:
+                if overlap(earlier, intervals):
+                    joined = groups[obj] | groups[other]
+                    for root in joined:
+                        groups[root] = joined
+            per_host[obj[0], host].append((obj, intervals))
+
+    history = {obj: spans[obj] for obj in roots}
+    for (vc, host), intervals in host_spans.items():
+        obj = vc, "host", host
+        if obj not in roots:
+            related = [span for span in spans[obj] if overlap([span], intervals)]
+            if related:
+                history[obj] = related
+    chain = [row for row in chain if during(history.get(row[1], ()), row[0]["t"])]
+    cluster_spans = defaultdict(list)
+    clusters = {(h.get("vcenter"), h["name"]): h.get("cluster_key") for h in opts.get("hosts") or []}
+    observed_clusters = defaultdict(list)
+    for e, obj, _, _ in chain:
+        if obj[1] == "host" and e.get("cluster_key"):
+            observed_clusters[obj].append((e["t"], e["cluster_key"]))
+    for obj, intervals in history.items():
+        if obj[1] == "host":
+            for span in intervals:
+                cluster = next((cl for t, cl in observed_clusters[obj] if during([span], t)),
+                               roots.get(obj, {}).get("cluster_key") or clusters.get((obj[0], obj[2])))
+                if cluster:
+                    cluster_spans[cluster].append((span, obj))
+    locations, members = {}, defaultdict(set)
+    for obj, c in current.items():
+        for v in c.get("members") or []:
+            key = obj[0], v["name"]
+            members[key].add(obj)
+            locations.setdefault(key, {}).update(name=v["name"])
+            if obj[1] == "host":
+                locations[key]["esxi_host"] = obj[2]
+    watch_vms = {}
+    for c in opts["triggers"]:
+        if c.get("object_type") == "vm" and (c.get("vm") or c.get("kind") in DOWN_KIND):
+            key = c.get("vcenter"), c["object"]
+            watch_vms[key] = c
+            if not c.get("vm"):
+                continue
+            v = c["vm"]
+            for obj in current:
+                if obj[0] == key[0] and (obj[2] == v["esxi_host"] if obj[1] == "host" else obj[2] in v["datastores"]):
+                    members[key].add(obj)
+            if members.get(key):
+                locations.setdefault(key, {}).update(v)
+    lost_files = defaultdict(set)
+    on_down_host = set()
+    for key, objects in members.items():
+        lost_files[key].update(obj for obj in objects if obj[1] == "datastore")
+        if any(obj[1] == "host" for obj in objects):
+            on_down_host.add(key)
+        locations[key]["datastores"] = sorted({obj[2] for obj in lost_files[key]} | set(locations[key].get("datastores") or []))
+
+    vm_roots = defaultdict(set, {key: set(objects) for key, objects in members.items()})
+    signals = {id(e) for e, _, _, _ in chain}
+    selected, facts, vm_events, source_hosts = [], [], [], {}
+    leads = defaultdict(list)
+    for e, obj, _, clear in chain:
+        if obj[1] == "datastore" and not clear:
+            leads[obj, e["host"]].append(e["t"])
+    for e in events:
+        vc, t = e["vcenter"], e["t"]
+        host = e["host"] or (e["entity"] if _scope(e) == "host" else "")
+        ds = vc, "datastore", e["datastore"]
+        host_obj = vc, "host", host
+        key = _vm_key(e)
+        active_host = during(history.get(host_obj, ()), t) or during(host_spans.get((vc, host), ()), t)
+        if key:
+            if e["role"] == "restart":
+                # The event's host is the destination. Only the cluster and time identify the outage.
+                source = [obj for span, obj in cluster_spans.get(e.get("cluster_key"), ()) if during([span], t)]
+                if not source:
+                    continue
+                related = {obj for obj in source if obj in roots}
+                for obj in source:
+                    related.update(store for store, intervals in per_host[obj[0], obj[2]]
+                                   if overlap(intervals, [span for span in history[obj] if during([span], t)]))
+            else:
+                related = {obj for obj in members.get(key, ()) if during(history.get(obj, ()), t)}
+                if host_obj in roots and during(history[host_obj], t):
+                    related.add(host_obj)
+                if ds[2]:
+                    intervals = path_spans.get((ds, host), ()) if host and paths.get(ds) else history.get(ds, ())
+                    if ds in roots and during(intervals, t):
+                        related.add(ds)
+                else:
+                    related.update(store for store, intervals in per_host[vc, host] if during(intervals, t))
+                if not related:
+                    continue
+            if not _change(e) and key not in members:
+                continue
+            vm_roots[key].update(related)
+            vm_events.append(e)
+            if host and e["role"] != "restart":
+                source_hosts.setdefault(key, host)
+        else:
+            lead = e["kind"] == "sred" and any(0 <= (at - t).total_seconds() <= LEAD_S for at in leads[ds, host])
+            if id(e) in signals or lead:
+                facts.append(e)
+            elif e.get("unmatched_clear") or (_change(e) and e["role"] in ("up", "clear")):
+                continue
+            elif not (during(history.get(ds, ()), t) if ds[2] else active_host):
+                continue
+        if ds in roots:
+            e["root_group"] = min(groups[ds])
+        selected.append(e)
+    # Power and alarm events can describe an affected VM. Only the watch or an HA action identifies one.
+    known_vms = set(members) | set(watch_vms) | {_vm_key(e) for e in vm_events
+                if e["role"] == "restart" or e["type"] in ("VmFailoverFailed", "VmDasBeingResetEvent", "VmDasBeingResetWithScreenshotEvent")}
+    vm_events = [e for e in vm_events if _vm_key(e) in known_vms]
+    selected = [e for e in selected if not _vm_key(e) or _vm_key(e) in known_vms]
+    vm_history, vm_chain, vm_starts = _history(vm_events)
+    history.update(vm_history)
+    chain = sorted(chain + vm_chain, key=lambda row: row[0]["t"])
+    facts = sorted(facts + [e for e, _, _, _ in vm_chain], key=lambda e: e["t"])
+    affected = set(members) | {(obj[0], obj[2]) for _, obj, _, _ in vm_chain}
+    for key in affected:
+        c = watch_vms.get(key)
+        if c:
+            location = locations.setdefault(key, {})
+            for field, value in (c.get("vm") or {}).items():
+                location.setdefault(field, value)
+            current[_finding_object(c)] = c
+    hosts = {(obj[0], h) for obj, names in paths.items() for h in names}
+    findings = list(roots.values()) + list(current.values())
+    ids = _incident_ticket_ids(findings, selected, opts.get("correlation_prefix") or "site-health")
+    return dict(roots=roots, vm_roots=vm_roots, paths=paths, current=current, locations=locations,
+                affected=affected, lost_files=lost_files, on_down_host=on_down_host, source_hosts=source_hosts,
+                history=history, path_spans=path_spans, observed_starts=observed_starts, chain=chain, starts=starts | vm_starts, facts=facts, events=selected,
+                hosts=hosts, ticket_ids=ids)
+
+
+def _history(events, path_spans=None, observed_starts=None):
+    """Each object's down stretches. A clear must close its own condition."""
+    opened, spans, chain = defaultdict(set), defaultdict(list), []
+    restarts, closed, episode_starts = set(), set(), set()
+    for e in events:
+        if "observed_host" in e:
+            obj = e["observed_host"]
+            if not opened[obj]:
+                spans[obj].append([e["t"], None])
+                if not e["onset_known"]:
+                    observed_starts.add((obj, e["t"]))
+            opened[obj].difference_update([k for k in opened[obj] if k[0].startswith("alarm:")])
+            opened[obj].add(("conn", "", ""))
+            continue
+        signal = _change(e)
+        if not signal:
+            continue
+        obj, kind, clear = signal
+        active = opened[obj]
+        path = e["type"].startswith(("esx.problem", "esx.clear"))
+        condition = (kind, e["host"], e.get("opening", e)["device"].lower()) if path else (kind, "", "")
+        host_path = path and e["host"] and path_spans is not None
+        if obj[1] == "host" and kind.startswith("alarm:") and ("conn", "", "") in active and not clear:
+            # The host already has a direct connection-loss event. Its alarm is corroboration.
+            continue
+        if clear:
+            closes = {condition} & active
+            if kind == "power":
+                closes.update(k for k in active if k[0] in ("HA restart failed", "HA reset"))
+            if not closes:
+                if kind == "power" and obj in restarts:
+                    chain.append((e, obj, kind, clear))
+                    restarts.discard(obj)
+                continue
+            if kind == "power":
+                restarts.discard(obj)
+            closed.update((obj, k) for k in closes)
+            active.difference_update(closes)
+            if host_path and not any(k[1] == e["host"] for k in active):
+                path_spans[obj, e["host"]][-1][1] = e["t"]
+            if not active:
+                spans[obj][-1][1] = e["t"]
+        elif kind == "restart":
+            restarts.add(obj)
+        else:
+            if (obj, condition) in closed:
+                closed.remove((obj, condition))
+                episode_starts.add(id(e))
+            if not active:
+                if spans[obj]:
+                    episode_starts.add(id(e))
+                spans[obj].append([e["t"], None])
+            if host_path and not any(k[1] == e["host"] for k in active):
+                path_spans[obj, e["host"]].append([e["t"], None])
+            active.add(condition)
+        chain.append((e, obj, kind, clear))
+    return spans, chain, episode_starts
+
+
+def outage_events_csv(sheet):
+    """1.116.0: one source row per event, even when the review folds it."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_redact(sheet["columns"]))
+    for row in sheet["rows"]:
+        writer.writerow(["'" + v if isinstance(v, str) and v.lstrip().startswith(("=", "+", "-", "@")) else v for v in _redact(row)])
+    return _unsafe(buf.getvalue())
+
+
+def _cluster_spans(hosts, spans, current, observed_starts):
+    members = defaultdict(set)
+    for h in hosts:
+        # the cluster's MoID when the read gives it, else the cluster within its vCenter and datacenter (1.118.4's watch read
+        # gives cluster and datacenter, no cluster MoID)
+        key = h.get("cluster_key") or ((h.get("vcenter", ""), h.get("datacenter", ""), h["cluster"]) if h.get("cluster") else None)
+        if key and h.get("cluster") and h.get("name"):
+            members[key, h["cluster"]].add((h.get("vcenter", ""), "host", h["name"]))
+    found = []
+    for (_, name), group in sorted(members.items()):
+        changes = defaultdict(int)
+        observations = set()
+        for obj in group:
+            for a, b in spans.get(obj, []):
+                changes[a] += 1
+                if (obj, a) in observed_starts:
+                    observations.add(a)
+                if b:
+                    changes[b] -= 1
+        n, since = 0, None
+        for at, delta in sorted(changes.items()):
+            n += delta
+            if n == len(group) and since is None:
+                since = at
+            elif n < len(group) and since:
+                found.append((name, None if since in observations else since, at, False))
+                since = None
+        live = group <= current.keys()
+        if since or live:
+            found.append((name, None if since in observations else since, None, live))
+    return found
+
+
+ISSUE_STATES = ("Down now", "Inaccessible in vCenter", "At risk", "Not judged", "Recovered")
+PART_COLUMNS = (["Object", "What", "First signal", "Down for", "Now"],
+                ["Ran on", "Datastore", "VMs", "What happened", "Now"],
+                ["Severity", "Object", "What", "Since", "Down for"], ["What", "How", "Back at", "Down for"])
+NOISE_COLUMNS = ["Alarm", "VMs", "Changes", "When", "Verdict"]
+
+
+def _review_parts(incident, opts, end, stamp):
+    clean, history, chain = incident["facts"], incident["history"], incident["chain"]
+    current, locations = incident["current"], incident["locations"]
+    read = _time(opts.get("read_at")) or end
+    inventory = {(h.get("vcenter", ""), _short(h["name"])): h for h in opts.get("hosts") or []}
+    signals = defaultdict(list)
+    meta, ds_hosts = dict(incident["roots"]), incident["paths"]
+    for e, obj, kind, clear in chain:
+        signals[obj].append((e, kind, clear))
+        meta[obj] = e
+    for obj, c in current.items():
+        meta[obj] = dict(meta.get(obj, {}), **{k: v for k, v in c.items() if v})
+    stores = sorted(o for o in meta if o[1] == "datastore")
+    hosts = sorted(o for o in meta if o[1] == "host")
+    affected, lost_files = incident["affected"], incident["lost_files"]
+    on_down_host, ran_on = incident["on_down_host"], incident["source_hosts"]
+    unread = "VM power state not read" if affected else ""
+    observed_starts = incident["observed_starts"]
+    multi = len({obj[0] for obj in incident["roots"]}) > 1
+
+    def display(vc, name):
+        return "%s (%s)" % (name, vc) if multi else name
+
+    def group(vc, data, host=""):
+        h = inventory.get((vc, host), {})
+        dc, cl = data.get("datacenter") or h.get("datacenter"), data.get("cluster") or h.get("cluster")
+        return " · ".join(x for x in (vc if multi and dc and dc != vc else "", dc or vc, "cluster " + cl if cl else "") if x) or "Location unknown"
+
+    def duration(a, b):
+        return _span((b - a).total_seconds()) if a and b and b >= a else "unknown"
+
+    def issue(kind, group_name, state, name, what, since, items):
+        return dict(kind=kind, group=group_name, state=state, name=name, what=what, since=since, n=len(items), items=items)
+
+    issues, went, recovered, down = [], [], [], []
+    changed = [e for e in clean if e["level"] == "critical"]
+    start = next((e["t"] for e in changed), next((e["t"] for e in clean if e["level"] in BAD), None))
+    vm_groups, affected_rows, destinations = defaultdict(list), defaultdict(list), defaultdict(set)
+    vm_items, outcomes = {}, defaultdict(set)
+    for key in sorted(affected):
+        vc, vm = key
+        obj = (vc, "vm", vm)
+        p, c = locations.get(key, {}), current.get(obj, {})
+        sig = signals[obj]
+        info = dict(meta.get(obj, {}), **p)
+        host = ran_on.get(key) or _short(p.get("esxi_host") or (c.get("vm") or {}).get("esxi_host"))
+        ds = sorted(set(p.get("datastores") or c.get("datastores") or [e["datastore"] for e, _, _ in sig if e["datastore"]]))
+        restart = next((e for e, k, _ in reversed(sig) if k == "restart"), None)
+        reset = next((e for e, k, _ in reversed(sig) if k == "HA reset"), None)
+        failure = next((e for e, k, _ in reversed(sig) if k == "HA restart failed"), None)
+        back = history[obj][-1][1] if history.get(obj) else None
+        if restart and (not back or back < restart["t"]):
+            last, condition, clear = sig[-1]
+            back = last["t"] if condition == "power" and clear else None
+        since = sig[-1][0]["t"] if sig else None
+        if c and c.get("kind") == "lost":
+            state, word = "Inaccessible in vCenter", c.get("connection") or "inaccessible"
+        elif c:
+            state, word = "Down now", DOWN_KIND.get(c["kind"], c["kind"])
+            if c["kind"] == "question" and c.get("summary"):
+                word = c["summary"]
+        elif lost_files[key]:
+            state, word = "Not judged", "on the lost datastore (state not read)"
+        elif key in on_down_host:
+            state, word = "Not judged", "on the down host (state not read)"
+        elif back:
+            state, word = "Recovered", "powered on" if sig[-1][1] == "power" else sig[-1][0]["label"]
+        else:
+            state, word = "Not judged", "current state not read"
+        how = word
+        if restart:
+            how = "restarted by HA"
+        elif reset:
+            how = "reset by HA"
+        elif failure:
+            how = "HA could not restart it"
+        if restart:
+            outcomes["restart"].add(key)
+        elif reset:
+            outcomes["reset"].add(key)
+        since_text = stamp(since) if since else "unknown"
+        item = dict(name=vm, state=state, what=word, host=host or "not read", datastore=", ".join(ds) or "not read",
+                    protected=bool(p.get("protected") or c.get("protected")), since=since_text)
+        vm_items[key] = (item, ds)
+        vm_groups[group(vc, info, host), state, word].append(item)
+        if state == "Recovered" and back:
+            origin = next((a for a, b in history.get((vc, "host", host), []) if a <= back and (not b or b >= back)), None)
+            if ((vc, "host", host), origin) in observed_starts:
+                origin = None
+            origin = origin or (history[obj][-1][0] if history.get(obj) and history[obj][-1][1] == back else None)
+            recovered.append((back, [display(vc, vm), word, stamp(back), duration(origin, back)]))
+        now_word = word if state != "Recovered" else "not read"
+        if len(incident["roots"]) > 1 and incident["vm_roots"][key]:
+            how += " (reviewed: %s)" % ", ".join(obj[2] for obj in sorted(incident["vm_roots"][key]))
+        row_key = (vc, item["host"], item["datastore"], how, now_word)
+        affected_rows[row_key].append(vm)
+        if restart and restart["host"]:
+            destinations[row_key].add(restart["host"])
+    if affected and all((vc, "vm", vm) in current for vc, vm in affected):
+        unread = ""
+    for (where, state, word), items in vm_groups.items():
+        times = list(dict.fromkeys(v["since"] for v in items))
+        issues.append(issue("vm", where, state, _count(len(items), "VM"), word, times[0] if len(times) == 1 else "See individual times", items))
+    host_keys = incident["hosts"]
+    ds_items = defaultdict(list)
+    back_times, down_times = [], []
+    for obj in stores + hosts:
+        vc, typ, name = obj
+        c = current.get(obj)
+        intervals = history.get(obj) or [(None, None)]
+        a, b = intervals[-1]
+        if (obj, a) in observed_starts:
+            a = None
+        live = c is not None
+        if live and b:
+            a, b = None, None  # the historical stretch closed before this observation
+        state = "Down now" if live else "Recovered" if b else "Not judged"
+        observed = live or a or incident["roots"].get(obj, {}).get("observations")
+        hs = sorted(ds_hosts.get(obj, ()))
+        what = ("Datastore, lost on " + ", ".join(hs) if hs else "Datastore, not accessible") if typ == "datastore" else (
+            "ESXi host, not responding" if typ == "host" else "Lost storage paths")
+        now_word = "DOWN NOW" if live else "Back " + stamp(b) if b else "recovery not recorded"
+        if not observed:
+            what, now_word = OBJECT_WORD[typ], "no loss recorded"
+        length = duration(a, read if live else b)
+        shown = display(vc, name)
+        went.append([shown, what, stamp(a) if a else "unknown", length, now_word])
+        if live:
+            down_times.append((a, shown, length))
+        # Each host regains access independently. A datastore alarm can also close
+        # the aggregate outage after the last path has cleared.
+        clearances = [(lost, back, "datastore back on " + h) for h in hs
+                      for lost, back in incident["path_spans"].get((obj, h), ()) if back]
+        path_ends = {back for _, back, _ in clearances}
+        for lost, back in intervals:
+            if back and back not in path_ends:
+                how = next((e["label"] for e, k, clear in signals[obj] if clear and e["t"] == back and k.startswith("alarm:")),
+                           "host connected again" if typ == "host" else "access restored")
+                clearances.append((lost, back, how))
+        for lost, back, how in clearances:
+            recovered.append((back, [shown, how, stamp(back), duration(None if (obj, lost) in observed_starts else lost, back)]))
+            back_times.append(back)
+        since_text = ("since " + stamp(a) if a and live else now_word) + " · " + length
+        if typ == "datastore":
+            items = [item for key, (item, ds) in vm_items.items()
+                     if (obj in lost_files[key] if live else key[0] == vc and name in ds)]
+            items.sort(key=lambda v: (ISSUE_STATES.index(v["state"]), v["name"]))
+            issues.append(issue("ds", group(vc, meta[obj], hs[0] if hs else ""), state, name, what, since_text, items))
+            for h in hs:
+                paths = incident["path_spans"].get((obj, h))
+                if paths and paths[-1][1]:
+                    lost, back = paths[-1]
+                    ds_items[vc, h].append(dict(name=name, state="Recovered", what="Back " + stamp(back),
+                                                since=stamp(back) + " · " + duration(lost, back)))
+                else:
+                    ds_items[vc, h].append(dict(name=name, state=state, what=now_word, since=since_text))
+    for vc, h in sorted(host_keys):
+        obj = (vc, "host", h)
+        details = ds_items[vc, h]
+        host_members = {v["name"] for v in current.get(obj, {}).get("members") or []}
+        items = [item for (center, vm), (item, _) in vm_items.items()
+                 if center == vc and (vm in host_members if obj in current else item["host"] == h)]
+        at_risk = [d["name"] for d in details if d["state"] == "Down now"]
+        interval = (history.get(obj) or [(None, None)])[-1]
+        state = "Down now" if obj in current else "At risk" if at_risk else "Recovered" if interval[1] or details and all(
+            d["state"] == "Recovered" for d in details) else "Not judged"
+        why = ", ".join(at_risk) + " not accessible" if at_risk else "host connected again" if interval[1] else "storage paths"
+        at = interval[1] or (None if (obj, interval[0]) in observed_starts else interval[0])
+        since = stamp(at) if at else "unknown"
+        if state == "Down now":
+            why = current[obj].get("summary") or "host not responding"
+        elif state == "At risk":
+            since = next(d["since"] for d in details if d["state"] == "Down now")
+        host_info = meta.get(obj) or next((e for e, _, _, _ in chain if e["vcenter"] == vc and e["host"] == h), {})
+        issues.append(issue("host", group(vc, host_info, h), state, h, why, since, details + items))
+    many_centers = len({c.get("vcenter") for c in opts["triggers"]} | {o[0] for o in incident["roots"]}) > 1
+    for c in opts["triggers"]:
+        obj = _finding_object(c)
+        since = _time(c.get("since"))
+        name = " ".join(filter(None, [OBJECT_WORD.get(obj[1], obj[1]), obj[2]])) or "Watch"
+        if many_centers and obj[0]:
+            name += " (%s)" % obj[0]
+        down.append([(c.get("severity") or "info").title(), name, c.get("summary") or c.get("kind", ""),
+                     stamp(since) if since else "unknown", duration(since, read)])
+    issues.sort(key=lambda v: (v["group"], ISSUE_STATES.index(v["state"]), v["name"]))
+    down.sort(key=lambda r: (-RANK.get(r[0].lower(), 0), r[1]))
+    recovered.sort(key=lambda r: (r[0], r[1][0]))
+    where = [e for e, _, _, _ in chain] + list(meta.values()) + [inventory[k] for k in host_keys if k in inventory]
+    where.extend(locations[k] for k in affected if k in locations)
+    clusters = sorted({v["cluster"] for v in where if v.get("cluster")} | {cl for v in where for cl in v.get("clusters", [])})
+    sites = sorted({v["datacenter"] for v in where if v.get("datacenter")})
+    site = ", ".join(sites) or ", ".join(sorted({vc for vc, _, _ in meta if vc})) or "site unknown"
+    scope = ("cluster " + clusters[0]) if len(clusters) == 1 else "site " + site
+    root_hosts = [obj for obj in hosts if obj in incident["roots"]]
+    kind = "Storage outage" if stores else "Host outage" if root_hosts else "Outage review"
+    vm_count, host_count = len(affected), len(host_keys)
+    counts = _count(vm_count, "VM") + ", " + _count(host_count, "host")
+    if stores:
+        names = ", ".join(o[2] for o in stores)
+        what = ("datastore %s not accessible" % names if len(stores) == 1 else "%s not accessible (%s)" % (_count(len(stores), "datastore"), names))
+    elif hosts:
+        what = _count(len(root_hosts), "host") + " not responding"
+    else:
+        what = next(iter(affected))[1] if vm_count == 1 else _count(vm_count, "VM")
+    subject = (stores[0][2] if len(stores) == 1 else what if not stores and not hosts
+               else clusters[0] if len(clusters) == 1 else site)
+    title = "%s - %s: %s" % (kind, what, counts)
+    if root_hosts and stores:
+        title += "; %s down" % _count(len(root_hosts), "host")
+    if opts.get("review_object") and not chain and not current and not any(r.get("ticket_names") for r in incident["roots"].values()):
+        title = "Outage review - %s: no loss recorded" % opts["review_object"]
+    if multi:
+        title += " (%s)" % _count(len({o[0] for o in incident["roots"]}), "vCenter")
+    still = [x[1] for x in down_times]
+    if still:
+        title += "; %s still down" % ", ".join(still)
+    first = next((e for e in clean if e["level"] in BAD), None)
+    note = "All in %s (%s)." % (scope, site) if not multi else "Across %s." % site
+    if not stores and not hosts:
+        note = "No host or datastore loss recorded." + (" " + note if affected else "")
+    if first:
+        note += " First signal %s: %s on %s." % (stamp(first["t"]), first["label"], first["where"])
+    connected = sorted(h for vc, h in host_keys if (vc, "host", h) not in hosts)
+    if connected:
+        note += " Storage paths were lost on %s." % ", ".join(connected)
+    for cluster, lost, back, live in _cluster_spans(opts.get("hosts") or [], history, current, observed_starts):
+        note += " Cluster %s lost all hosts%s%s." % (cluster, " at " + stamp(lost) if lost else "",
+            " for " + duration(lost, back) if back else " and is still down" if live else " (recovery not recorded)")
+    reviewed = ", ".join("%s %s (%s)" % (kind, name, vc) for vc, kind, name in sorted(incident["roots"]))
+    reason = "named by vm_watch_review_object" if opts.get("review_object") else "from the watch's conditions of this run and of the runs in the window"
+    note = ("Reviewed: %s - %s. " % (reviewed, reason) if reviewed else
+            "No matching host or inaccessible datastore in the watch's conditions. ") + note
+    if not reviewed and opts.get("review_object"):
+        note += " Requested object: %s." % opts["review_object"]
+    if opts.get("history_why"):
+        note += " Watch history unavailable: " + opts["history_why"]
+    count_line = "%s: %d restarted by HA, %d reset by HA." % (_count(vm_count, "VM"), len(outcomes["restart"]), len(outcomes["reset"]))
+    aff_rows = []
+    for row_key, vms in sorted(affected_rows.items()):
+        vc, h, ds, how, nw = row_key
+        if multi:
+            h = "%s / %s" % (vc, h)
+        if destinations[row_key]:
+            how += " on " + ", ".join(sorted(destinations[row_key]))
+        aff_rows.append([h, ds, "%d: %s" % (len(vms), ", ".join(vms)), how, nw])
+    observations = sorted(at for _, at in observed_starts if at <= end)
+    unknown_start = bool(observations and (not start or observations[0] < start))
+    if unknown_start:
+        start = observations[0]
+    last_signal = max(observations + [e["t"] for e in clean if e["level"] in BAD + ("ok",)], default=None)
+    open_observation = any(history[obj][-1] == [at, None] for obj, at in observed_starts)
+    end_recovery = recovered[-1][0] if recovered and not open_observation else None
+    return dict(observed_starts=observed_starts, unknown_start=unknown_start, open_observation=open_observation,
+                title=title if meta or affected else "", basename=kind + " " + subject, head_name=kind + ", " + scope,
+                went=went, went_note=note, affected=aff_rows, affected_note=count_line, now=down, at_risk=[],
+                recovered=[row for _, row in recovered], issues=issues, affected_keys=affected, host_count=host_count,
+                first_signal=first["t"] if first else None,
+                last_signal=last_signal,
+                start=start, finish=end_recovery, first_back=next((e["t"] for e in clean if start and e["t"] >= start and
+                e["role"] in ("up", "clear") and e["lane"] == "host"), min(back_times, default=end_recovery)), still=still, unread=unread,
+                down_times=down_times, infra_count=", ".join(_count(len(xs), word) for xs, word in ((hosts, "host"), (stores, "datastore"))),
+                now_count=_count(len(down), "condition") if down else "nothing")
+
+
+
+def _event_groups(events, start, first_back, finish, stamp, key=False):
+    groups, latest = [], {}
+    for e in sorted(events, key=lambda row: row["t"]):
+        t = e["t"]
+        phase = ("Lead-up" if start and t < start else "After" if finish and t > finish + datetime.timedelta(minutes=5)
+                 else "Recovery" if first_back and t >= first_back else "Outage")
+        identity = (phase, e["vcenter"], e["lane"], e["level"], e["label"])
+        g = latest.get(identity)
+        if not g or not key and (t - g["first"]).total_seconds() > 180:
+            g = dict(first=t, last=t, phase=phase, label=e["label"], n=0, level=e["level"], objects=set(), type=e["type"], lane=e["lane"])
+            latest[identity] = g
+            groups.append(g)
+        g["last"], g["n"] = t, g["n"] + 1
+        g["objects"].update(e[k] for k in ("datastore", "host", "vm", "ticket") if e.get(k))
+        if e.get("entity") and _short(e["entity"]) != e.get("host"):
+            g["objects"].add(e["entity"])
+        if not g["objects"] and e.get("where"):
+            g["objects"].add(e["where"])
+    if key:
+        groups = [g for i, g in enumerate(groups) if i == 0 or g["level"] != "info" or g["label"].startswith("Ticket ")]
+        host_objects = set().union(*(g["objects"] for g in groups if g["lane"] == "host"))
+        for drop in (lambda g: g["type"] == "AlarmStatusChangedEvent" and bool(host_objects & g["objects"]), lambda g: g["type"] in ("esx.clear.storage.redundancy.restored",
+                    "esx.clear.storage.connectivity.restored"), lambda g: g["type"].endswith(".apd.timeout"),
+                    lambda g: g["type"].endswith("DasHostFailedEvent")):
+            for g in list(reversed(groups)):
+                if len(groups) <= 15:
+                    break
+                if drop(g):
+                    groups.remove(g)
+        groups = groups[:15]
+    rows = []
+    for g in groups:
+        when = stamp(g["first"])
+        if g["last"] != g["first"]:
+            end_stamp = stamp(g["last"])
+            day, clock, zone = end_stamp.rsplit(" ", 2)
+            first_day, _, first_zone = when.rsplit(" ", 2)
+            when += " to " + (clock if (day, zone) == (first_day, first_zone) else end_stamp)
+        what = g["label"] + (" (x%d)" % g["n"] if g["n"] > 1 else "")
+        rows.append(dict(phase=g["phase"], n=g["n"], row=[when, what, ", ".join(sorted(g["objects"])), WORD[g["level"]]]))
+    return rows
+
+
 # ---- the review -------------------------------------------------------------------------------------------
+
+def _compact(names, limit=8):
+    """Abbreviate a common hyphenated stem. Only contiguous numbered names form a range."""
+    names = sorted(set(filter(None, names)))
+    if not names:
+        return ""
+    parts = [name.rpartition("-") for name in names]
+    if len(names) > 1 and parts[0][1] and len({p[0] for p in parts}) == 1:
+        tails = [p[2] for p in parts]
+        matches = [re.fullmatch(r"(\D*)(\d+)", tail) for tail in tails]
+        if len(names) > 3 and all(matches) and len({m[1] for m in matches}) == 1:
+            numbers = [int(m[2]) for m in matches]
+            if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
+                return "%s to -%s (%d)" % (names[0], tails[-1], len(names))
+        names = names[:1] + ["-" + tail for tail in tails[1:]]
+    return ", ".join(names[:limit]) + (" and %d more" % (len(names) - limit) if len(names) > limit else "")
+
+
+def _moment(t, loc):
+    local = loc(t)
+    return dict(clock=local.strftime("%H:%M:%S"), day=local.strftime("%a %d %b"),
+                iso=t.astimezone(UTC).isoformat(), zone=local.strftime("%Z"),
+                tip="%s (%s UTC)" % (local.strftime("%a %d %b %Y, %H:%M:%S %Z"), t.astimezone(UTC).strftime("%H:%M:%S")))
+
+
+def _objects(events, *keys):
+    return "; ".join(filter(None, (_compact(e.get(k) for e in events) for k in keys)))
+
+
+def _story_episode(events, parts, history, loc):
+    """Fold developments from one episode. A later return to the same condition starts a new one."""
+    by_type = defaultdict(list)
+    for e in events:
+        by_type[e["type"]].append(e)
+    storage = by_type["esx.problem.storage.apd.start"]
+    returns = by_type["esx.clear.storage.apd.exit"]
+    timeouts = by_type["esx.problem.storage.apd.timeout"]
+    failures = [e for e in events if e["type"].endswith("DasHostFailedEvent")]
+    disconnected = {(e["vcenter"], e["host"]) for e in by_type["HostConnectionLostEvent"] + by_type["HostDisconnectedEvent"]}
+    def path_key(e):
+        e = e.get("opening", e)
+        return e["vcenter"], e.get("host"), e.get("datastore"), (e.get("device") or "").lower()
+
+    apd_paths = {path_key(e) for e in storage}
+    restored_paths = {(path_key(e), e["t"]) for e in returns}
+    host_signals = defaultdict(set)
+    for e in events:
+        if e.get("host"):
+            host_signals[e["vcenter"], e["host"]].add(e["kind"])
+    groups = {}
+    connected = set()
+    for e in events:
+        typ, kind = e["type"], e["kind"]
+        if e["lane"] in ("servicenow", "act") and e["role"] not in ("ticket", "resolved"):
+            continue
+        if kind.startswith("alarm:"):
+            kinds = host_signals[e["vcenter"], e.get("host") or _short(e.get("entity"))]
+            alarm = kind[6:].lower()
+            if (("connection and power" in alarm or "not responding" in alarm) and "conn" in kinds or
+                    ("storage" in alarm or "datastore" in alarm) and kinds & {"sred", "sconn", "apd", "hb", "pdl"}
+                    and any(w in alarm for w in ("connect", "path", "access", "redundancy"))):
+                continue
+        if path_key(e) in apd_paths and typ in ("esx.problem.storage.apd.timeout", "esx.problem.vmfs.heartbeat.timedout"):
+            continue
+        if (path_key(e), e["t"]) in restored_paths and typ in ("esx.clear.storage.connectivity.restored", "esx.problem.vmfs.heartbeat.recovered",
+                                "esx.clear.storage.redundancy.restored"):
+            continue
+        if typ.endswith("DasHostFailedEvent") and (e["vcenter"], e["host"]) in disconnected:
+            continue
+        key = e["label"]
+        host = (e["vcenter"], e.get("host"))
+        if e["role"] == "down":
+            connected.discard(host)
+        if e["role"] == "up":
+            if host in connected:
+                continue
+            connected.add(host)
+            key = (key, e["t"])
+        elif e["role"] == "restart":
+            key = (key, e.get("cluster_key"))
+        elif e["role"] == "clear" and typ.startswith("esx."):
+            key = (key, e["t"], e.get("opening", e)["t"])
+        elif typ.startswith("VmDasBeingReset"):
+            key = (key, bool(parts["first_back"] and e["t"] >= parts["first_back"]))
+        groups.setdefault((e["vcenter"], e.get("root_group"), key), []).append(e)
+
+    rows = []
+    for group in groups.values():
+        e = group[0]
+        t, typ, level, sentence = e["t"], e["type"], e["level"], e["label"]
+        hosts = _objects(group, "host")
+        ds = _objects(group, "datastore")
+        vms = _objects(group, "vm")
+        hc = _count(len({x["host"] for x in group if x.get("host")}), "host")
+        vc = _count(len({x["vm"] for x in group if x.get("vm")}), "VM")
+        objs = _objects(group, "datastore", "host", "vm") or _objects(group, "where")
+        duration, extra, after = "", None, ""
+        if e["kind"] == "sred" and ds and hosts and e["role"] == "problem":
+            sentence = "Path redundancy to %s %s on %s" % (ds, "degraded" if typ.endswith("degraded") else "lost", hosts)
+            if ", back after " in e["label"]:
+                sentence += ", back after " + e["label"].split(", back after ")[1]
+            objs = hosts
+        elif e["kind"] == "sconn" and e["role"] == "problem" and ds:
+            sentence = "%s lost on %s: the connection to storage dropped" % (_count(len({x["datastore"] for x in group}), "datastore"), hc)
+        elif typ.endswith(".apd.start"):
+            sentence = "All paths down (APD)" + (" on " + hc if hosts else "")
+            group_paths = {path_key(x) for x in group}
+            timeout = next((x for x in timeouts if path_key(x) in group_paths and x["t"] >= t), None)
+            if timeout:
+                sentence += "; I/O fails from "
+                extra, after = _moment(timeout["t"], loc), " (APD timeout)"
+            objs = ds or hosts
+            same_returns = [x for x in returns if path_key(x) in group_paths and x["t"] >= t]
+            if same_returns and {path_key(x) for x in same_returns} == group_paths:
+                duration = _span((same_returns[-1]["t"] - t).total_seconds()) + " for " + (_objects(same_returns, "datastore") or hosts)
+            missing = set(x["datastore"] for x in group) & set(parts["still"])
+            if missing:
+                duration = "; ".join(filter(None, [duration, _compact(missing) + " still down"]))
+        elif typ in ("HostConnectionLostEvent", "HostDisconnectedEvent", "HostConnectedEvent"):
+            sentence = hosts + (" connected again" if e["role"] == "up" else " not responding" if typ == "HostConnectionLostEvent" else " disconnected")
+            failed = next((x for x in failures if x["vcenter"] == e["vcenter"] and x["host"] in {h["host"] for h in group} and x["t"] >= t), None)
+            if failed and e["role"] != "up":
+                sentence += "; HA declared a host failure at "
+                extra = _moment(failed["t"], loc)
+            durations = {}
+            for x in group:
+                for a, b in history.get((x["vcenter"], "host", x["host"]), []):
+                    if b and a <= x["t"] <= b and ((x["vcenter"], "host", x["host"]), a) not in parts["observed_starts"]:
+                        durations[x["host"]] = _span((b - a).total_seconds())
+            duration = "; ".join(h + " " + length for h, length in durations.items()) if len(durations) > 1 else next(iter(durations.values()), "")
+        elif typ.startswith("VmDasBeingReset"):
+            again = bool(parts["first_back"] and t >= parts["first_back"] and any(
+                x.get("vm") == e.get("vm") and x["t"] < parts["first_back"] for x in by_type[typ]))
+            sentence = "HA reset %s%s%s" % (vc, " on " + hosts if hosts else "", " again" if again else "")
+            objs = vms
+        elif e["role"] == "restart":
+            sentence, objs = "HA restarted %s%s" % (vc, " on " + hosts if hosts else ""), vms
+        elif typ == "VmFailoverFailed":
+            sentence, objs = "HA could not restart " + vc, vms
+        elif typ.endswith(".apd.exit"):
+            sentence = (ds or "Storage paths") + " back" + (" on " + hc if hosts else "")
+            onset = e.get("opening")
+            duration = "APD " + _span((t - onset["t"]).total_seconds()) if onset else ""
+            objs = hosts
+        elif e["kind"] == "pdl" and e["role"] == "problem":
+            sentence = (ds or "Storage device") + " lost for good (permanent device loss, PDL)" + (" on " + hc if hosts else "")
+            objs = hosts
+        elif e["role"] == "ticket":
+            level = "info"
+            onset = parts["first_signal"]
+            if onset and t >= onset:
+                sentence += ", %s after the first signal" % _span((t - onset).total_seconds())
+        rows.append(dict(t=t, level=level, text=sentence, extra=extra, after=after, objects=objs, duration=duration,
+                         ticket=e["lane"] == "servicenow", role=e["role"]))
+    return rows
+
+
+def _story(events, parts, history, read, loc, episode_starts):
+    rows, episode = [], []
+    observations = [dict(t=t, observed_host=obj) for obj, t in sorted(parts["observed_starts"])
+                    if t < read or obj[2] not in parts["still"]]
+    for e in sorted(events + observations, key=lambda e: e["t"]):
+        if "observed_host" in e:
+            rows.extend(_story_episode(episode, parts, history, loc))
+            episode = []
+            host = e["observed_host"][2]
+            rows.append(dict(t=e["t"], level="critical", text="Watch observed " + host + " not responding",
+                             objects=host, duration="onset unknown", extra=None, after="", ticket=False, role="observation"))
+            continue
+        if id(e) in episode_starts:
+            rows.extend(_story_episode(episode, parts, history, loc))
+            episode = []
+        episode.append(e)
+    rows.extend(_story_episode(episode, parts, history, loc))
+    rows.sort(key=lambda row: row["t"])
+    start = parts["start"] or parts["first_signal"]
+    finish = parts["last_signal"] if start else None
+    window = {}
+    if start and finish:
+        duration = "onset unknown" if parts["unknown_start"] else _span((finish - start).total_seconds())
+        window = dict(start=_moment(start, loc), end=_moment(finish, loc), duration=duration, still=_compact(parts["still"]))
+    if parts["still"]:
+        detail = _compact(parts["still"])
+        duration = next((x[2] for x in sorted(parts["down_times"], key=lambda x: x[0] or read) if x[0]), "")
+        rows.append(dict(t=read, level="down", text="Still down at the review: " + detail, objects=detail,
+                         duration=duration + " so far" if duration else "", extra=None, after="", ticket=False, role="observation"))
+    # Preserve both window boundaries, the lead-up and the observation when a busier chain exceeds the budget.
+    if len(rows) > STORY_LIMIT:
+        keep = {0, len(rows) - 1}
+        for boundary in (start, finish):
+            if boundary:
+                closest = min(range(len(rows)), key=lambda i: abs((rows[i]["t"] - boundary).total_seconds()))
+                keep.add(closest)
+        for role in ("restart", "ticket", "up", "clear", "resolved"):
+            milestone = next((i for i, r in enumerate(rows) if r["role"] == role), None)
+            if milestone is not None:
+                keep.add(milestone)
+        for i in sorted(range(len(rows)), key=lambda i: -RANK.get(rows[i]["level"], 0)):
+            if len(keep) >= STORY_LIMIT:
+                break
+            keep.add(i)
+        rows = [rows[i] for i in sorted(keep)]
+    day = ""
+    for row in rows:
+        t = row.pop("t")
+        level = row["level"]
+        role = row.pop("role")
+        is_ticket = row.pop("ticket")
+        row["word"] = {"ok": "Recovered", "down": "Down now", "info": "Ticket" if is_ticket else "Info"}.get(level, WORD.get(level))
+        if role == "resolved":
+            row["word"] = "Resolved"
+        elif level == "ok" and row["text"].startswith("Alarm "):
+            row["word"] = "Alarm cleared"
+        row["time"] = _moment(t, loc)
+        divider = row["time"]["day"]
+        row["divider"] = (divider + (" - the review" if level == "down" else "")) if day != divider or level == "down" else ""
+        row["window"] = bool(window and start <= t <= finish and level != "down")
+        day = divider
+    return dict(rows=rows, window=window), start, finish
+
+
+def _usage_or_gray(e, alarms):
+    return e["kind"].startswith("alarm:") and (
+        _usage_alarm(e["kind"][6:], alarms) or any(str(e.get(k)).lower() in ("gray", "grey") for k in ("from", "to")))
+
+
+def _chart_lane(e):
+    if e["lane"] in ("servicenow", "act"):
+        return "tickets"
+    if e["type"].startswith(("esx.problem.storage", "esx.clear.storage", "esx.problem.scsi",
+                              "esx.clear.scsi", "esx.problem.vmfs")) or any(s in e["kind"].lower() for s in ("storage", "datastore")):
+        return "storage"
+    return "hosts" if e["lane"] == "host" or _scope(e) == "host" else "vms"
+
+
+def _chart_view(events, related, affected, alarms, left, right, start, finish, still, loc, everything):
+    """Build each view on its own scale, with local calendar ticks and accessible mark descriptions."""
+    def pos(t):
+        return _pct(t, left, right)
+
+    span = (right - left).total_seconds()
+    step = next((m for m in STEPS_MIN if m >= max(10 if not everything else 30, span / (60 * 13))), STEPS_MIN[-1])
+    # Align ticks to the local clock. Walk in UTC through clock changes and insert each actual local midnight.
+    tick = left.replace(second=0, microsecond=0)
+    tick += datetime.timedelta(minutes=(-int(loc(tick).utcoffset().total_seconds() / 60 + tick.timestamp() / 60)) % step)
+    moments = {left}
+    while tick <= right:
+        if tick >= left:
+            moments.add(tick)
+        tick += datetime.timedelta(minutes=step)
+    midnight = loc(left).replace(hour=0, minute=0, second=0, microsecond=0)
+    while midnight.astimezone(UTC) <= right:
+        if midnight.astimezone(UTC) >= left:
+            moments.add(midnight.astimezone(UTC))
+        midnight += datetime.timedelta(days=1)
+    ticks = []
+    for t in sorted(moments):
+        local = loc(t)
+        new_day = (local.hour, local.minute) == (0, 0)
+        if ticks and pos(t) - ticks[-1]["x"] < 5:
+            if not new_day:
+                continue
+            if len(ticks) == 1:
+                ticks.append(dict(x=pos(t), clock="", date="", midnight=True))
+                continue
+            ticks.pop()
+        ticks.append(dict(x=pos(t), clock=local.strftime("%H:%M"), date=local.strftime("%a %d %b") if not ticks or new_day else "", midnight=new_day))
+
+    def region(t):
+        return -1 if start and t < start else 1 if finish and t > finish else 0
+
+    bins, groups = defaultdict(list), defaultdict(list)
+    latest = {}
+    for e in sorted(events, key=lambda e: e["t"]):
+        t = e["t"]
+        if not left <= t <= right:
+            continue
+        if _usage_or_gray(e, alarms):
+            if everything:
+                bins[t.replace(minute=t.minute // 10 * 10, second=0, microsecond=0)].append(e)
+            continue
+        lane = _chart_lane(e)
+        identity = (lane, e["vcenter"], e["label"], region(t))
+        group = latest.get(identity)
+        if group is None or (t - group[-1]["t"]).total_seconds() > 120:
+            group = latest[identity] = []
+            groups[lane].append(group)
+        group.append(e)
+
+    lanes = []
+    for lane, name in (("storage", "Storage"), ("hosts", "Hosts"), ("vms", "HA and VMs"), ("tickets", "Tickets")):
+        marks = []
+        last_label, last_region = -100, None
+        for group in groups[lane]:
+            e = group[0]
+            t = e["t"]
+            x = pos(t)
+            about = any(related(event) for event in group)
+            objs = _objects(group, "datastore", "host", "vm") or _objects(group, "where")
+            line = "%s %s: %s%s%s" % (loc(t).strftime("%H:%M:%S"), WORD[e["level"]], e["label"],
+                                        " (x%d)" % len(group) if len(group) > 1 else "", " - " + objs if objs else "")
+            if marks and last_region == region(t) and x - marks[-1]["x"] < 1.8:
+                m = marks[-1]
+                m["count"] += 1
+                m["tip"] += "\n" + line
+                m["rel"] |= everything and about
+                if RANK[e["level"]] > RANK[m["level"]]:
+                    m["level"] = e["level"]
+            else:
+                label = loc(t).strftime("%H:%M") if x - last_label >= 7.5 else ""
+                if label:
+                    last_label = x
+                marks.append(dict(x=x, count=1, level=e["level"], rel=everything and about,
+                                  tip=_moment(t, loc)["tip"] + "\n" + line, label=label))
+            last_region = region(t)
+        lanes.append(dict(key=lane, name=name, marks=marks, count=len(groups[lane])))
+    if everything:
+        marks = []
+        top = max(map(len, bins.values()), default=1)
+        for t, group in sorted(bins.items()):
+            names = {(e["vcenter"], e["vm"] or e["entity"]) for e in group}
+            n = len(names & affected)
+            until = t + datetime.timedelta(minutes=10)
+            tip = "%s\nUntil %s: %d usage or gray alarm changes, %d affected VMs." % (
+                _moment(t, loc)["tip"], loc(until).strftime("%H:%M %Z"), len(group), n)
+            marks.append(dict(x=pos(t), width=(pos(until) - pos(t)) * .92, height=4 + int(22 * len(group) / top), rel=bool(n), tip=tip))
+        lanes.append(dict(key="noise", name="Usage and gray alarms", count=sum(map(len, bins.values())), marks=marks))
+    box = {}
+    if start and finish and start <= right and finish >= left:
+        box = dict(x=pos(start), end=pos(finish), width=pos(finish) - pos(start), still=still,
+                   label="Outage %s to %s" % (loc(start).strftime("%H:%M"), loc(finish).strftime("%H:%M")))
+    return dict(key="all" if everything else "out", ticks=ticks, lanes=lanes, window=box,
+                range="%s to %s" % (loc(left).strftime("%a %H:%M"), loc(right).strftime("%a %H:%M")))
+
+
+def _pattern_cards(events, current, opts, read, loc):
+    import yaml
+    path = os.path.join(os.path.dirname(__file__), "../../roles/vmware_vm/files/outage_patterns.yml")
+    with open(path, encoding="utf-8") as source:
+        patterns = yaml.safe_load(source)
+    cards = []
+    teams = {"storage": "your storage team", "network": "your network team", "vmware": "your VMware team",
+             "backup": "your backup team", "owner": "the VM's owner"}
+    for pattern in patterns:
+        matches = [e for e in events if e["type"] in pattern["types"] or
+                   (e["kind"].startswith("alarm:") and e["role"] == "problem" and
+                    any(term in e["kind"][6:].lower() for term in pattern.get("alarms", [])))]
+        live = []
+        if pattern.get("current"):
+            live = [obj[2] for obj, c in current.items() if c["kind"] == pattern["current"]]
+
+        if not matches and not live:
+            continue
+        first = matches[0]["t"] if matches else read
+        last = matches[-1]["t"] if matches else read
+        seen_objects = []
+        for event in matches:
+            obj = dict(event)
+            scope = _scope(event)
+            if event.get("entity") and not obj.get(scope):
+                obj[scope] = event["entity"]
+            seen_objects.append(obj)
+        seen = _objects(seen_objects, "datastore", "vm", "host", "object") or _objects(matches, "where")
+        when = loc(first).strftime("%d %b %H:%M:%S %Z")
+        if last > first:
+            when += " to " + loc(last).strftime("%d %b %H:%M:%S %Z")
+        if live:
+            seen = "; ".join(filter(None, [seen, _compact(live) + " at the review (" + loc(read).strftime("%d %b %H:%M %Z") + ")"]))
+        escalate = ", then ".join(str(opts.get("outage_escalate_" + team) or "").strip() or teams[team] for team in pattern["esc"])
+        cards.append((first, dict(title=pattern["title"], means=pattern["means"], causes=pattern["causes"],
+                                  checks=pattern["checks"], seen=seen, when=when, escalate=escalate)))
+    return [card for _, card in sorted(cards, key=lambda pair: pair[0])]
+
 
 def outage_timeline(events, tickets=None, opts=None):
     """What vCenter (events: site_vmware_outage_events) and ServiceNow (tickets: site_outage_tickets) recorded between
@@ -652,9 +2156,16 @@ def outage_timeline(events, tickets=None, opts=None):
     chart), sheet (the workbook), lines (the job's output), aar}. opts: begin, end, instance and table (the ServiceNow address and table, for the links to the incidents), time_zone, low_seconds, review,
     tickets_asked, tickets_error, notes_error, capped, report_on, min_severity, job."""
     o = dict(opts or {})
+    review = o.get("review", True)
+    if not review:                           # 1.116.0: a scheduled run's time line is 1.118.4's, word for word
+        return _v1184.outage_timeline(events, tickets, opts)
+    if review:
+        events, tickets, o = _redact(events), _redact(tickets), _redact(o)
+    unread_centers = [s["name"] for s in o.get("vcenters") or [] if s.get("incomplete") or s.get("error")]
+    o["triggers"] = [c for c in o.get("triggers") or [] if isinstance(c, dict)]
     begin, end = _time(o.get("begin")), _time(o.get("end"))
     if begin is None or end is None or end <= begin:
-        return {}
+        return _unsafe({})
     tz, _note = _tm.zone(o.get("time_zone") or "")
     try:
         low_seconds = max(0.0, float(o.get("low_seconds", 120)))
@@ -669,7 +2180,10 @@ def outage_timeline(events, tickets=None, opts=None):
 
     # 1.79.12: an alarm that went back to normal in the window is shown with its raise, whenever it was raised (the read looks back
     # vm_watch_review_lookback_hours): the window then starts at the raise
-    all_vc = _vcenter_events(events)
+    all_vc = _vcenter_events(events, o.get("datastores") if review else None)
+    if review:
+        o["roots"] = _review_roots(o, begin, end)
+        o = _review_inventory(o, all_vc)
     begin_asked = begin
     pre = _pre_raises(all_vc, begin, end)
     if pre:
@@ -682,12 +2196,93 @@ def outage_timeline(events, tickets=None, opts=None):
     def full(t):
         return loc(t).strftime("%Y-%m-%d %H:%M ") + zname(t)
 
-    vc = [e for e in all_vc if begin <= e["t"] <= end and (e["t"] >= begin_asked or any(e is p for p in pre))]
-    runs, unmatched = _alarm_runs(vc)                       # before a quick clear is folded into its raise
-    vc, restarted = _restarts(vc)
-    vc, downs = _pairs(vc, low_seconds)
+    pre_ids = {id(e) for e in pre}
+    vc = [e for e in all_vc if begin <= e["t"] <= end and (e["t"] >= begin_asked or id(e) in pre_ids)]
+    alarm_events = vc
     instance = o.get("instance") or ""
-    tk, before, causes = _ticket_events(tickets, begin_asked, end, instance, o.get("table") or "")
+    tk, before, causes = _ticket_events(tickets, begin_asked, end, instance, o.get("table") or "", repeats=review)
+    if review:
+        # 1.116.0: export the source before folding restarts, repeat events or short alarms.
+        raw = sorted(vc + tk, key=lambda e: e["t"])
+        tk = [e for e in tk if not e.get("repeat")]
+        alarms = [str(a).lower() for a in o.get("noise_alarms", ["CPU usage", "memory usage", "disk usage"]) if a]
+        narrative, noise = _review_rows(vc, low_seconds, alarms, o["roots"])
+        if o.get("noise", True):
+            vc = narrative
+        else:
+            noise = []
+        incident = _root_history(narrative, o)
+        history, chain = incident["history"], incident["chain"]
+        facts, story_events = incident["facts"], incident["events"]
+        selected_ids = {id(e) for e in story_events}
+        if pre and incident["roots"]:
+            begin = min([begin_asked] + [e["t"].replace(second=0, microsecond=0) for e in pre if id(e) in selected_ids])
+            days = loc(begin).date() != loc(end).date()
+        narrative_ids = {id(e) for e in narrative}
+        # Keep the matching closure of a root signal in the event appendix even after the host reconnected.
+        appendix_ids, pending = selected_ids.copy(), set()
+        for e in narrative:
+            key = _pair_key(e)
+            if e["role"] in ("problem", "down"):
+                if id(e) in selected_ids:
+                    pending.add(key)
+                else:
+                    pending.discard(key)
+            elif e["role"] in ("up", "clear") and key in pending:
+                appendix_ids.add(id(e))
+                pending.remove(key)
+        appendix = [e for e in vc if id(e) in appendix_ids
+                    or not o.get("noise", True) and id(e) not in narrative_ids]
+        vc = story_events
+        if chain or incident["current"]:
+            alarm_events = story_events
+        stamp_review = lambda t: loc(t).strftime("%d %b %H:%M:%S %Z")
+        parts = _review_parts(incident, o, end, stamp_review)
+        general = parts["title"]
+        vm_count, host_count = len(parts["affected_keys"]), parts["host_count"]
+        start_at, finish_at = parts["start"], parts["finish"]
+        noise_rows = _noise_rows(noise, raw, parts["affected_keys"], start_at, finish_at or end, begin, end, stamp_review)
+        vm_keys = incident["affected"]
+        own_numbers = _review_ticket_numbers(tickets, incident, o)
+
+        def related_event(e):
+            if e.get("ticket"):
+                return e["ticket"] in own_numbers
+            return id(e) in selected_ids
+
+        tk = [e for e in tk if related_event(e)]
+        groups = _event_groups(appendix + tk, start_at, parts["first_back"], finish_at, stamp_review)
+        key_events = story_events + [e for e in tk if e["role"] in ("ticket", "resolved")]
+        key_rows = [g["row"] for g in _event_groups(key_events, start_at, parts["first_back"], finish_at, stamp_review, key=True)]
+        before = [n for n in before if n in own_numbers]
+        read = _time(o.get("read_at")) or end
+        story, window_start, window_end = _story(story_events + tk, parts, history, read, loc, incident["starts"])
+        # A capacity alarm on a reviewed store during its loss can supply a NOC card from the noise bars.
+        usage_raises = [e for e in raw if e["kind"].startswith("alarm:") and e["role"] == "problem"
+                        and _usage_alarm(e["kind"][6:], alarms)
+                        and any(a <= e["t"] and (not b or e["t"] <= b)
+                                for a, b in history.get((e["vcenter"], "datastore", e["datastore"]), ()))
+                        and not any(str(e.get(k)).lower() in ("gray", "grey") for k in ("from", "to"))]
+        patterns = _pattern_cards(sorted(story_events + usage_raises, key=lambda e: e["t"]), incident["current"], o, read, loc)
+        first_signal = parts["first_signal"] or window_start or begin
+        left = max(begin, first_signal - datetime.timedelta(minutes=12))
+        right = min(end, (window_end or end) + datetime.timedelta(minutes=18))
+        views = [_chart_view(story_events + tk, related_event, vm_keys, alarms, left, max(right, left + datetime.timedelta(seconds=1)),
+                             window_start, window_end, _compact(parts["still"]), loc, False),
+                 _chart_view(raw, related_event, vm_keys, alarms, begin, end, window_start, window_end, _compact(parts["still"]), loc, True)]
+    runs, unmatched = _alarm_runs(alarm_events)
+    if review:
+        for r in runs:
+            r["usage"] = _usage_alarm(r["alarm"], alarms)
+    vc, restarted = _restarts(vc)
+    if review and not o.get("noise", True):
+        recorded = {id(e) for e, obj, _, clear in chain if clear and obj[1] in ("host", "datastore")}
+        vc, _ = _pairs([dict(e, recorded_clear=id(e) in recorded) for e in vc], low_seconds)
+    if review:
+        downs = sorted(((name, a, b, vc_name) for (vc_name, typ, name), intervals in history.items() if typ == "host"
+                        for a, b in intervals), key=lambda d: d[1])
+    else:
+        vc, downs = _pairs(vc, low_seconds)
     evs = _same(sorted(vc + tk, key=lambda e: (e["t"], [x[0] for x in LANES].index(e["lane"]))))
     for i, e in enumerate(evs):
         e["num"] = i + 1
@@ -696,24 +2291,43 @@ def outage_timeline(events, tickets=None, opts=None):
 
     # the numbers
     signals = [e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] in BAD]
+    if review:
+        # The detailed display may fold or expand the same source event. Keep its
+        # row number for navigation, and take its severity and label from the scoped chain.
+        def source(e):
+            return e["vcenter"], e.get("key"), e["t"], e["type"], e.get("host"), e.get("vm"), e.get("entity")
+        displayed = {source(e): e for e in evs if e["lane"] in ("vcenter", "host")}
+        signals = [dict(e, num=displayed.get(source(e), {}).get("num"), what=e["label"]) for e in facts if e["level"] in BAD]
     first = signals[0] if signals else None
     first_bad = next((e for e in signals if e["level"] in ("critical", "warning")), None)
-    tickets_opened = [e for e in evs if e["role"] == "ticket"]
+    tickets_opened = [e for e in evs if e["role"] == "ticket" and (not review or e["ticket"] in own_numbers)]
     # the outage's ticket: the first one opened after the first signal (one added by number may be older)
     opened = next((e for e in tickets_opened if first and e["t"] >= first["t"]), tickets_opened[0] if tickets_opened else None)
-    resolved = [e for e in evs if e["role"] == "resolved"]
+    resolved = [e for e in evs if e["role"] == "resolved" and (not review or opened and e["ticket"] == opened["ticket"])]
     to_ticket = (opened["t"] - first["t"]).total_seconds() if first and opened and opened["t"] >= first["t"] else None
     # 1.112.0 (Codex P1): the root-cause text of the outage's own ticket - the one measured, else one about a host of the outage's
     # signals; another ticket of the window (another host's disk) never gives it
     own_hosts = set(e["where"] for e in signals if e["where"])
     own_tickets = [e["ticket"] for e in ([opened] if opened else []) + tickets_opened if e["where"] in own_hosts or
                    (e is opened and not e["where"])]          # a ticket that names no host: only the measured one
+    if review:
+        own_tickets = [e["ticket"] for e in ([opened] if opened else []) + tk]
     cause = next((causes[n] for n in own_tickets if n in causes), "")
-    still = [d for d in downs if d[2] is None]
+    current_hosts = {(vc, name) for vc, typ, name in incident["current"] if typ == "host"} if review else set()
+    unknown_duration = {d for d in downs if review and d[2] is None and (d[3], d[0]) not in current_hosts}
+    still = [d for d in downs if d[2] is None and d not in unknown_duration]
+    unknown_onset = {d for d in downs if ((d[3], "host", d[0]), d[1]) in incident["observed_starts"]} if review else set()
     cleared_runs = [r for r in runs if r["cleared"] is not None]
     open_alarms = [r for r in runs if r["cleared"] is None]
     fallback = set((r["vcenter"], r["vm"] or r["where"]) for r in cleared_runs if r["vm"] or r["where"])
-    subject = _relate(evs, downs, fallback, set((r["vcenter"], "alarm:" + r["alarm"], r["where"]) for r in cleared_runs))
+    if review:
+        focus = {(vc, name) for vc, _, name in incident["roots"]}
+        for e in evs:
+            e["cls"], e["related"] = _classify(e), True
+        names = sorted({name for _, name in focus})
+        subject = {"names": names, "keys": focus, "text": _listed(names, 4), "note": ""}
+    else:
+        subject = _relate(evs, downs, fallback, set(r["key"] for r in cleared_runs))
     # 1.90.0: the lead-up - from the first problem about the subject itself (a host or VM of it: not its cluster or datastores) in the
     # LEAD_S before its first critical event, to that event
     own = lambda e: bool(_about(e) & subject["keys"])      # noqa: E731
@@ -731,18 +2345,24 @@ def outage_timeline(events, tickets=None, opts=None):
                 crit["where"] or subject["text"], _span(LEAD_S), word, crit["num"], loc(crit["t"]).strftime("%H:%M"))
     dup = set(w for w, _a, _b, v in downs if len(set(x[3] for x in downs if x[0] == w)) > 1)       # one name on two vCenters: told apart
     shown = lambda d: "%s (%s)" % (d[0], (d[3] or "?").split(".")[0]) if d[0] in dup else d[0]      # noqa: E731
-    spans = [(shown(d), d[1], d[2] or end, d[2] is None) for d in downs]
+    spans = [(shown(d), d[1], d[2] or end, d[2] is None) for d in downs if d not in unknown_duration and d not in unknown_onset]
     longest = max(spans, key=lambda d: (d[2] - d[1]).total_seconds()) if spans else None
     down_s = (longest[2] - longest[1]).total_seconds() if longest else 0
-    hosts_down = sorted({d[0] for d in spans})
+    hosts_down = sorted({shown(d) for d in downs})
     last_bad = max([e["t"] for e in evs if e["lane"] in ("vcenter", "host") and e["level"] in ("critical", "warning")] or [begin])
     goods = [e for e in evs if e["lane"] in ("vcenter", "host") and e["level"] == "ok" and e["t"] >= last_bad]
     back = None if still or not signals else (goods[-1] if goods else None)
+    if review and general:
+        back = next((e for e in evs if e["t"] == parts["finish"] and e["level"] == "ok"), None)
+    if review and (incident["current"] or any(r[-1][1] is None for r in history.values() if r)):
+        back = None
     # 1.79.12: everything had already cleared at the review - the alarms that raised it went back to normal and nothing is down
     # (alarms only: a host that was lost, an HA restart or a storage problem is the window's own story, not this one)
     live = [c for c in (o.get("triggers") or []) if isinstance(c, dict) and c.get("summary")]      # what the watch found now: it comes first
     cleared_only = (bool(cleared_runs) and not open_alarms and not spans and not live
                     and all(str(e.get("kind") or "").startswith("alarm:") for e in signals))
+    if review:
+        cleared_only = cleared_only and not general and not chain and not any(not e["kind"].startswith("alarm:") for e in raw if e["lane"] in ("host", "vcenter") and e["level"] in BAD)
     try:
         blip_s = max(0.0, float(o.get("min_seconds", 300)))
     except (TypeError, ValueError):
@@ -765,13 +2385,19 @@ def outage_timeline(events, tickets=None, opts=None):
         if str(e.get("kind") or "").startswith("alarm:") and e["role"] in ("problem", "clear"):
             last_state[_alarm_key(e)] = e
     standing = [e for e in last_state.values() if e["role"] == "problem" and e["level"] == "critical"]
+    if review and not trig and incident["current"]:
+        trig = [r[0] + ": " + r[1] + " " + r[2] for r in parts["now"][:8]]
     if not trig and standing:
         for e in sorted(standing, key=lambda x: x["t"])[:6]:
             trig.append("CRITICAL: %s on %s: red since %s, still red at the end of the window" % (e["kind"][6:], e["where"] or "?", hm(e["t"], True)))
+    if review and not trig and not general and noise:
+        trig = ["The review was asked for. Alarm changes and short flaps are counted below."]
+    if not trig and review and parts["open_observation"]:
+        trig.append("The watch recorded a host loss whose recovery time is unknown.")
     if not trig and (cleared_runs or (spans and not still)):
-        for h, a_, b_, _hv in [d for d in downs if d[2] is not None][:3]:
+        for h, a_, b_, _hv in [d for d in downs if d[2] is not None and d not in unknown_onset][:3]:
             trig.append("%s: not responding %s to %s (%s), back before the review" % (h, hm(a_, True), hm(b_, True), _span((b_ - a_).total_seconds())))
-        for r in sorted(cleared_runs, key=lambda x: x["raised"])[:6]:
+        for r in sorted((r for r in cleared_runs if not review or not r["usage"]), key=lambda x: x["raised"])[:6]:
             trig.append("%s on %s: raised %s, cleared %s (%s later)" % (r["alarm"], r["vm"] or r["where"] or "?", hm(r["raised"], True), hm(r["cleared"], True),
                                                                         _span((r["cleared"] - r["raised"]).total_seconds())))
         trig.insert(0, "Nothing was down when the watch read vCenter: what raised it had already cleared.")
@@ -780,7 +2406,7 @@ def outage_timeline(events, tickets=None, opts=None):
     numbers = {
         "events": len(evs), "first_signal": first["t"].strftime("%Y-%m-%dT%H:%M:%SZ") if first else "",
         "ticket": opened["ticket"] if opened else "", "signal_to_ticket_s": int(to_ticket) if to_ticket is not None else -1,
-        "down_s": int(down_s), "hosts_down": hosts_down, "still_down": sorted(shown(d) for d in still), "ha_restarted": restarted,
+        "down_s": -1 if unknown_onset and not spans else int(down_s), "hosts_down": hosts_down, "still_down": sorted(shown(d) for d in still), "ha_restarted": restarted,
         "back": back["t"].strftime("%Y-%m-%dT%H:%M:%SZ") if back else ""}
 
     window_text = "%s to %s" % (full(begin), full(end) if days else loc(end).strftime("%H:%M ") + zname(end))
@@ -801,25 +2427,36 @@ def outage_timeline(events, tickets=None, opts=None):
     if not evs:
         title = "Outage review: no outage event in the last %s" % length if not o.get("fixed") else "Outage review: no outage event in the window"
     else:
-        parts = []
+        headline_parts = []
         if spans:
-            parts.append("%s down%s" % (_span(down_s), ", still down" if still else ""))
+            headline_parts.append("%s down%s" % (_span(down_s), ", still down" if still else ""))
         if to_ticket is not None:
-            parts.append("ticket after %s" % _span(to_ticket))
+            headline_parts.append("ticket after %s" % _span(to_ticket))
         elif head and o.get("tickets_asked") and not o.get("tickets_error") and not before:
-            parts.append("no ticket")
+            headline_parts.append("no ticket")
         lead = ("%s: %s" % (head["where"], _lower_first(head["label"])) if head["where"] else head["label"]) if head else \
             "%d event%s, none a problem" % (len(evs), "" if len(evs) == 1 else "s")
-        title = "Outage review: %s%s" % (_cut(lead, 90), ("; " + ", ".join(parts)) if parts else "")
+        title = "Outage review: %s%s" % (_cut(lead, 90), ("; " + ", ".join(headline_parts)) if headline_parts else "")
         h_counts = ([[_span(down_s), "down, still down" if still else "down", "critical"]] if spans else []) + \
                    ([[_span(to_ticket), "to the ticket", "warning" if to_ticket > 3600 else "ok"]] if to_ticket is not None else
-                    ([["", "no ticket", "warning"]] if "no ticket" in parts else []))
+                    ([["", "no ticket", "warning"]] if "no ticket" in headline_parts else []))
         h_scope = [_cut(lead, 120)]
         h_subject = "Outage review: %s" % _cut(lead, 40)
         if cleared_only:
             title = "Outage review: cleared before the review - %s: %s, raised %s, cleared %s%s" % (
                 _cut(c_text or "alarms", 40), _cut(", ".join(c_alarms[:2]), 60), hm(r_from), hm(r_to), " (a short usage blip, Low)" if blip else "")
 
+    if review:
+        if general:
+            title = general
+        elif (raw or o["triggers"] or o.get("review_object")) and not noise:
+            title = "Outage review - no matching watch root"
+        elif not first and noise:
+            title = "Outage review - " + ("a short usage blip, Low" if blip else "folded alarms and short changes")
+        elif first and not general:
+            title = "Outage review - no confirmed host, datastore or VM outage"
+        h_subject, h_scope = title, [window_text]
+        numbers.update(still_down=parts["still"], affected_vms=vm_count, affected_hosts=host_count, full_events=len(raw))
     # tiles
     def box(label, value, status, text):
         return {"label": label, "value": value, "status": status, "note": text}
@@ -841,6 +2478,8 @@ def outage_timeline(events, tickets=None, opts=None):
                   "ticket %s was open before the window" % before[0] if before else
                   "ticket opened before the first signal" if opened else "no ticket in the window"))]
 
+    if unknown_duration and not spans:
+        boxes[2] = box("Host down", "Unknown", "warning", "Host recovery time unknown: %s" % _listed(hosts_down))
     # cards
     cards = []
     if cleared_only:
@@ -852,7 +2491,7 @@ def outage_timeline(events, tickets=None, opts=None):
     if first:
         cards.append({"status": first["level"], "chip": "First signal", "meta": "%s %s" % (hm(first["t"], True), zname(first["t"])),
                       "title": first["what"], "subject": first["where"],
-                      "next": "Row %d of the events. %s lane." % (first["num"], LANE[first["lane"]])})
+                      "next": ("Row %d of the events. " % first["num"] if first["num"] else "") + LANE[first["lane"]] + " lane."})
     if to_ticket is not None:
         cards.append({"status": "warning" if to_ticket > 900 else "ok", "chip": "First signal to ticket", "meta": _span(to_ticket),
                       "title": "%s opened at %s %s" % (opened["ticket"], hm(opened["t"]), zname(opened["t"])), "subject": opened["where"],
@@ -878,15 +2517,12 @@ def outage_timeline(events, tickets=None, opts=None):
                           "title": "No clearing event after the last problem in the window",
                           "next": "Check the alarms in vCenter, or widen the window with vm_watch_review_hours."})
 
+    if review:
+        for card in cards:
+            if card.get("next", "").startswith("Row "):
+                card["next"] = card["next"].replace("of the events", "of The events on the web page", 1)
+
     # the chart (the website)
-    z0, z1 = _zoom(evs, downs, begin, end, tz)
-    _step, tks = _ticks(z0, z1, tz)
-    ticks = []
-    for i, t in enumerate(tks):
-        text = t.strftime("%H:%M")
-        if days and (i == 0 or t.date() != tks[i - 1].date()):
-            text = t.strftime("%d %b %H:%M")
-        ticks.append({"at": _pct(t, z0, z1), "text": text, "wide": len(tks) > 5 and i % 2 == 1})
     k_hosts, k_vms, ent_kind = _idents(evs)                                    # 1.90.2: what the page's host and VM filters know
     host_names, vm_names = set(k[1] for k in k_hosts), set(k[1] for k in k_vms)
 
@@ -931,54 +2567,64 @@ def outage_timeline(events, tickets=None, opts=None):
                               count=e.get("count") or e["n"], **({"lead": 1} if e["num"] in lead_ns else {})) for e in evs],
               "first": lead_up[1]["num"] if lead_up is not None else (crit["num"] if crit is not None else 0),
               "subject": subject["text"], "window": window_text}
-    lanes = []
-    for key, name in LANES:
-        mine = [e for e in evs if e["lane"] == key]
-        marks = _place([{"at": _pct(e["t"], z0, z1), "level": e["level"], "label": str(e["num"]), "nums": [e["num"]],
-                         "ev": [evd(e)],
-                         "tip": "%d  %s %s  %s\n%s%s" % (e["num"], hm(e["t"], True), zname(e["t"]), WORD[e["level"]], e["what"],
-                                                         (" - " + e["where"]) if e["where"] else "")} for e in mine])
-        for m in marks:
-            m["rel"] = 2 if all(x["r"] for x in m["ev"]) else 1 if any(x["r"] for x in m["ev"]) else 0
-            m["lead_end"] = any(x.get("lu") == 2 for x in m["ev"])
-            m["data"] = json.dumps(m["ev"], ensure_ascii=False, separators=(",", ":"))
-        sub = "%d event%s" % (len(mine), "" if len(mine) == 1 else "s") if mine else "nothing"
-        if key in ("servicenow", "act"):
-            if not o.get("tickets_asked"):
-                sub = "not read: attach the ServiceNow API credential"
-            elif o.get("tickets_error"):
-                sub = _cut(o.get("tickets_error"), 70)
-            elif o.get("notes_error") and not mine:
-                sub = "work notes not read"
-        lanes.append({"key": key, "name": name, "sub": sub, "marks": marks, "rows": max([m["row"] for m in marks] or [0]) + 1})
-    bands = []
-    for h, a, b, open_ in spans:
-        if b < z0 or a > z1:
-            continue
-        bands.append({"from": _pct(a, z0, z1), "to": _pct(b, z0, z1),
-                      "text": "%s down: %s%s" % (h, _span((b - a).total_seconds()), ", still down" if open_ else "")})
-    if cleared_only and not (r_to < z0 or r_from > z1):
-        bands.append({"from": _pct(r_from, z0, z1), "to": _pct(r_to, z0, z1),
-                      "text": "%s: alarms raised %s, cleared %s" % (c_text, hm(r_from), hm(r_to))})
-    lead_band = None
-    if lead_up is not None:
-        l0, lc = lead_up
-        lead_band = {"from": _pct(l0, z0, z1), "to": _pct(lc["t"], z0, z1), "num": lc["num"], "span": _span((lc["t"] - l0).total_seconds()),
-                     "text": "Lead-up to #%d: %s to %s %s (%s)" % (lc["num"], hm(l0), loc(lc["t"]).strftime("%H:%M") if loc(l0).date() == loc(lc["t"]).date() else hm(lc["t"]), zname(lc["t"]), _span((lc["t"] - l0).total_seconds()))}
-    whole = (end - begin).total_seconds()
-    overview = None
-    if evs and (z1 - z0).total_seconds() < 0.6 * whole:
-        overview = {"from": _pct(z0, begin, end), "to": _pct(z1, begin, end), "begin": hm(begin), "end": hm(end),
-                    "marks": [{"at": _pct(e["t"], begin, end), "level": e["level"]} for e in evs],
-                    "text": "The whole window, %s. The box is the part shown below: %s to %s." % (window_text, hm(z0), hm(z1))}
-    chart = {"label": "Outage time line, %s to %s %s" % (hm(z0), hm(z1), zname(z1)), "lanes": lanes, "ticks": ticks, "bands": bands,
-             "overview": overview, "zone": zname(z0),
-             "legend": [{"level": k, "word": WORD[k]} for k in ("critical", "warning", "low", "info", "ok")],
-             "band_word": down_word, "lead": lead_band, "lead_note": lead_note,
-             "subject": subject["text"], "related_note": subject["note"],
-             "legend_rel": ("Outlined: about %s or its host, cluster, datastores" % subject["text"]) if subject["text"] else "",
-             "kinds": [{"key": k, "name": n, "count": len([e for e in evs if e["cls"] == k])} for k, n in CLASSES if any(e["cls"] == k for e in evs)],
-             "none": "" if evs else "No outage event in vCenter between %s. Nothing to draw." % window_text}
+    chart = {}
+    if not review:
+        z0, z1 = _zoom(evs, downs, begin, end, tz)
+        _step, tks = _ticks(z0, z1, tz)
+        ticks = []
+        for i, t in enumerate(tks):
+            text = t.strftime("%H:%M")
+            if days and (i == 0 or t.date() != tks[i - 1].date()):
+                text = t.strftime("%d %b %H:%M")
+            ticks.append({"at": _pct(t, z0, z1), "text": text, "wide": len(tks) > 5 and i % 2 == 1})
+        lanes = []
+        for key, name in LANES:
+            mine = [e for e in evs if e["lane"] == key]
+            marks = _place([{"at": _pct(e["t"], z0, z1), "level": e["level"], "label": str(e["num"]), "nums": [e["num"]],
+                             "ev": [evd(e)],
+                             "tip": "%d  %s %s  %s\n%s%s" % (e["num"], hm(e["t"], True), zname(e["t"]), WORD[e["level"]], e["what"],
+                                                             (" - " + e["where"]) if e["where"] else "")} for e in mine])
+            for m in marks:
+                m["rel"] = 2 if all(x["r"] for x in m["ev"]) else 1 if any(x["r"] for x in m["ev"]) else 0
+                m["lead_end"] = any(x.get("lu") == 2 for x in m["ev"])
+                m["data"] = json.dumps(m["ev"], ensure_ascii=False, separators=(",", ":"))
+            sub = "%d event%s" % (len(mine), "" if len(mine) == 1 else "s") if mine else "nothing"
+            if key in ("servicenow", "act"):
+                if not o.get("tickets_asked"):
+                    sub = "not read: attach the ServiceNow API credential"
+                elif o.get("tickets_error"):
+                    sub = _cut(o.get("tickets_error"), 70)
+                elif o.get("notes_error") and not mine:
+                    sub = "work notes not read"
+            lanes.append({"key": key, "name": name, "sub": sub, "marks": marks, "rows": max([m["row"] for m in marks] or [0]) + 1})
+        bands = []
+        for h, a, b, open_ in spans:
+            if b < z0 or a > z1:
+                continue
+            bands.append({"from": _pct(a, z0, z1), "to": _pct(b, z0, z1),
+                          "text": "%s down: %s%s" % (h, _span((b - a).total_seconds()), ", still down" if open_ else "")})
+        if cleared_only and not (r_to < z0 or r_from > z1):
+            bands.append({"from": _pct(r_from, z0, z1), "to": _pct(r_to, z0, z1),
+                          "text": "%s: alarms raised %s, cleared %s" % (c_text, hm(r_from), hm(r_to))})
+        lead_band = None
+        if lead_up is not None:
+            l0, lc = lead_up
+            lead_band = {"from": _pct(l0, z0, z1), "to": _pct(lc["t"], z0, z1), "num": lc["num"], "span": _span((lc["t"] - l0).total_seconds()),
+                         "text": "Lead-up to #%d: %s to %s %s (%s)" % (lc["num"], hm(l0), loc(lc["t"]).strftime("%H:%M") if loc(l0).date() == loc(lc["t"]).date() else hm(lc["t"]), zname(lc["t"]), _span((lc["t"] - l0).total_seconds()))}
+        whole = (end - begin).total_seconds()
+        overview = None
+        if evs and (z1 - z0).total_seconds() < 0.6 * whole:
+            overview = {"from": _pct(z0, begin, end), "to": _pct(z1, begin, end), "begin": hm(begin), "end": hm(end),
+                        "marks": [{"at": _pct(e["t"], begin, end), "level": e["level"]} for e in evs],
+                        "text": "The whole window, %s. The box is the part shown below: %s to %s." % (window_text, hm(z0), hm(z1))}
+        chart = {"label": "Outage time line, %s to %s %s" % (hm(z0), hm(z1), zname(z1)), "lanes": lanes, "ticks": ticks, "bands": bands,
+                 "overview": overview, "zone": zname(z0),
+                 "legend": [{"level": k, "word": WORD[k]} for k in ("critical", "warning", "low", "info", "ok")],
+                 "band_word": down_word, "lead": lead_band, "lead_note": lead_note,
+                 "subject": subject["text"], "related_note": subject["note"],
+                 "legend_rel": ("Outlined: about %s or its host, cluster, datastores" % subject["text"]) if subject["text"] else "",
+                 "kinds": [{"key": k, "name": n, "count": len([e for e in evs if e["cls"] == k])} for k, n in CLASSES if any(e["cls"] == k for e in evs)],
+                 "none": "" if evs else "No outage event in vCenter between %s. Nothing to draw." % window_text}
 
     # the events table: the source
     zones = sorted({zname(e["t"]) for e in evs}) or [zname(begin)]
@@ -1011,7 +2657,9 @@ def outage_timeline(events, tickets=None, opts=None):
     # the website's table: the same rows with a "Related" column, and the data the page's script folds and filters by (the rows stay
     # complete without it); the email keeps the table above
     web_table = table
-    if evs:
+    if review and evs:
+        web_table = dict(table, row_tags=[{"id": "ot-row-%d" % e["num"], "data": {}} for e in evs])
+    elif evs:
         folds = dict((i, idx) for i, idx in _fold(evs))
         heads = {}
         for head_i, idx in folds.items():
@@ -1062,16 +2710,25 @@ def outage_timeline(events, tickets=None, opts=None):
                    "text": "Lines for the survey of the after-action report (Docs - incident documents). Each names its setting."} if aar else None
 
     line = {"title": "What happened, in order", "outage": chart,
-            "text": "" if evs else chart["none"]}
+            "text": "" if evs else chart.get("none", "")}
     card_section = {"title": "The outage in short", "cards": cards} if cards else None
     email = [s for s in (card_section, table, aar_section) if s]
     web = [s for s in (card_section, line if evs else None, web_table, aar_section) if s]
     sheet = {"name": "Timeline",
              "columns": ["#", "Time (UTC)", "Time (%s)" % (o.get("time_zone") or "UTC"), "Source", "Where", "What happened", "Level", "Count",
-                         "Ticket", "vCenter", "Event type", "Message"],
-             "rows": [[e["num"], e["t"].strftime("%Y-%m-%d %H:%M:%S"), loc(e["t"]).strftime("%Y-%m-%d %H:%M:%S ") + zname(e["t"]),
-                       LANE[e["lane"]], e["where"], e["label"], WORD[e["level"]], e.get("count") or e["n"], e.get("ticket", ""),
-                       e["vcenter"], e["type"], (", ".join(e["names"]) + ": " if e["names"] else "") + e.get("message", "")] for e in evs]}
+                         "Ticket", "vCenter", "Event type", "Message"], "rows": []}
+    if review:
+        sheet["columns"] += ["Host", "Datastore", "VM", "Cluster", "Entity", "Event key", "From", "To"]
+    for n, e in enumerate(raw if review else evs, 1):
+        msg = e.get("message", "")
+        if not review and e.get("names"):
+            msg = ", ".join(e["names"]) + ": " + msg
+        row = [n, e["t"].strftime("%Y-%m-%d %H:%M:%S"), loc(e["t"]).strftime("%Y-%m-%d %H:%M:%S ") + zname(e["t"]),
+               LANE[e["lane"]], e.get("source_names", e)["where"], e["label"], WORD[e["level"]], 1 if review else e.get("count") or e["n"],
+               e.get("ticket", ""), e["vcenter"], e["type"], msg]
+        if review:
+            row.extend(e.get("source_names", {}).get(k, e.get(k, "")) for k in ("host", "datastore", "vm", "cluster", "entity", "key", "from", "to"))
+        sheet["rows"].append(row)
     out = ["Outage time line, %s: %d event(s)%s%s%s" % (
         window_text, len(evs), ("; first signal %s" % hm(first["t"], True)) if first else "",
         ("; " + down_word) if down_word else "", ("; ticket after %s" % _span(to_ticket)) if to_ticket is not None else "")]
@@ -1079,7 +2736,8 @@ def outage_timeline(events, tickets=None, opts=None):
     out += ["  %2d  %s  %-14s %-16s %s  [%s]" % (e["num"], hm(e["t"], True), LANE[e["lane"]], e["where"], e["what"], WORD[e["level"]])
             for e in evs[:60]]
     if len(evs) > 60:
-        out.append("  ... and %d more event(s): the report's table and the workbook have every one." % (len(evs) - 60))
+        out.append("  ... and %d more event(s): see the full event list." % (len(evs) - 60) if review else
+                   "  ... and %d more event(s): the report's table and the workbook have every one." % (len(evs) - 60))
     if not o.get("tickets_asked"):
         out.append("ServiceNow was not read: attach the ServiceNow API credential to the job template. " + ATTACH)
     out += notes
@@ -1088,18 +2746,33 @@ def outage_timeline(events, tickets=None, opts=None):
     # incident_aar_docx). The review run writes it as "AAR (Word)", and the AAR job reads it back from the job's artifact
     # (vm_outage_review.aar). Facts only: the root cause is never in it; ACT's causes go beside it as suggestions.
     draft = {}
+
+    def stamp(t, sec=False):
+        return loc(t).strftime("%d %b %H:%M" + (":%S" if sec else "")) + " " + zname(t)
+
+    ticket_numbers = own_numbers if review else {e["ticket"] for e in evs if e.get("ticket")}
+    tk_rows = []
+    for k in tickets or []:
+        if not isinstance(k, dict) or k.get("number") not in ticket_numbers:
+            continue
+        op, rs = _time(k.get("opened")), _time(k.get("resolved")) or _time(k.get("closed"))
+        tk_rows.append([k["number"], stamp(op) if op else "", stamp(rs) if rs else "not yet",
+                        _cut(k.get("short"), 120), _cut(k.get("close_notes"), 200)])
     if first:
         start = first_bad or first
-
-        def stamp(t, sec=False):               # 1.112.0 (Neon P1): always the day, the time and the time zone
-            return loc(t).strftime("%d %b %H:%M" + (":%S" if sec else "")) + " " + zname(t)
         where_name = (head or start)["where"] or (hosts_down[0] if hosts_down else "")
         impact = []
-        for h, a_, b_ in [(shown(d), d[1], d[2]) for d in downs]:
+        for h, a_, b_ in [(shown(d), d[1], d[2]) for d in downs if d not in unknown_duration and d not in unknown_onset]:
             impact.append("%s down %s (%s to %s)" % (h, _span(((b_ or end) - a_).total_seconds()), stamp(a_),
                                                      stamp(b_) if b_ else "still down at the end of the window"))
         if restarted:
             impact.append("vSphere HA restarted %d VM%s" % (restarted, "" if restarted == 1 else "s"))
+        for d in sorted(unknown_duration - unknown_onset, key=lambda x: x[1]):
+            impact.append("%s lost connection %s (recovery time unknown)" % (shown(d), stamp(d[1])))
+        impact.extend("%s observed down %s (onset unknown)" % (shown(d), stamp(d[1]))
+                      for d in sorted(unknown_onset, key=lambda d: d[1]))
+        if not impact and review and general:
+            impact.append(general)
         if not impact:
             impact.append("no host was lost: %s%s" % (_lower_first(start["what"]), (" on " + start["where"]) if start["where"] else ""))
         detection = ["First signal %s: %s%s (%s)" % (stamp(first["t"], True), first["what"],
@@ -1113,6 +2786,10 @@ def outage_timeline(events, tickets=None, opts=None):
             at = stamp(e["t"]) + " - "
             if e["role"] == "restart":
                 actions.append(at + e["label"] + ((" (" + e["where"] + ")") if e["where"] else ""))
+            elif review and e["type"].startswith("VmDasBeingReset"):
+                actions.append(at + "HA reset " + (e.get("vm") or "a VM"))
+            elif review and e.get("ticket") and e["ticket"] not in own_numbers:
+                continue
             elif e["lane"] == "servicenow" and e["level"] == "info":
                 actions.append(at + e["what"])
             elif e["role"] == "resolved":
@@ -1122,25 +2799,17 @@ def outage_timeline(events, tickets=None, opts=None):
         if back:
             recovery.append((back["t"], "%s - all back to normal: %s" % (stamp(back["t"]), back["what"])))
         recovery = [x[1] for x in sorted(recovery, key=lambda x: x[0])]
-        # the milestones always (Neon P2: a burst of critical events never pushes them out), then the critical events, at most 15
-        key_ids = set(id(x) for x in (first, start, back, opened) if x is not None)
-        must = [e for e in evs if id(e) in key_ids or e["role"] in ("restart", "resolved", "up")][:15]
-        more = [e for e in evs if e["level"] == "critical" and not any(e is m for m in must)][:max(0, 15 - len(must))]
-        key = [e for e in evs if any(e is x for x in must + more)]
+        if not review:
+            key_ids = {id(x) for x in (first, start, back, opened) if x is not None}
+            must = [e for e in evs if id(e) in key_ids or e["role"] in ("restart", "resolved", "up")][:15]
+            more = [e for e in evs if e["level"] == "critical" and e not in must][:15 - len(must)]
+            key_ids = {id(e) for e in must + more}
 
-        def row(e):
-            return [loc(e["t"]).strftime("%d %b %H:%M:%S") + ("" if len(zones) == 1 else " " + zname(e["t"])), LANE[e["lane"]],
-                    WORD[e["level"]], e["what"], e["where"]]
-        tk_rows = []
-        for k in tickets or []:
-            num = str((k or {}).get("number") or "") if isinstance(k, dict) else ""
-            if not num or not any(e.get("ticket") == num for e in evs):
-                continue
-            op, rs = _time(k.get("opened")), _time(k.get("resolved")) or _time(k.get("closed"))
-            tk_rows.append([num, stamp(op) if op else "", stamp(rs) if rs else "not yet",
-                            _cut(k.get("short"), 120), _cut(k.get("close_notes"), 200)])
+            def old_row(e):
+                return [loc(e["t"]).strftime("%d %b %H:%M:%S") + ("" if len(zones) == 1 else " " + zname(e["t"])),
+                        LANE[e["lane"]], WORD[e["level"]], e["what"], e["where"]]
         # 1.112.0 (Codex P1): "still down" only for the stretch whose minutes are shown; another one still open is said apart
-        time_down = "no host lost in the window"
+        time_down = "onset unknown" if unknown_onset else "recovery time unknown" if unknown_duration else "no host lost in the window"
         if longest:
             time_down = "%s down %s (%s to %s)" % (longest[0], _span(down_s), stamp(longest[1]),
                                                   "still down at the end of the window" if longest[3] else stamp(longest[2]))
@@ -1160,12 +2829,106 @@ def outage_timeline(events, tickets=None, opts=None):
                                  first["what"], (" on " + first["where"]) if first["where"] else "", LANE[first["lane"]])],
                              ["First signal to ticket", _span(to_ticket) if to_ticket is not None else "-",
                               ("%s opened %s" % (opened["ticket"], stamp(opened["t"]))) if to_ticket is not None else "no ticket measured"],
-                             ["Time down", (_span(down_s) + (", still down" if longest and longest[3] else "")) if spans else "0", time_down]],
-                 "key": [row(e) for e in key], "events": [row(e) for e in evs[:DRAFT_EVENTS]], "events_total": len(evs),
+                             ["Time down", (_span(down_s) + (", still down" if longest and longest[3] else "")) if spans else "unknown" if unknown_duration or unknown_onset else "0", time_down]],
                  "tickets": tk_rows, "ticket_hint": cause, "follow_up": follow[0][len("Follow-up: "):] if follow else ""}
+        if not review:
+            draft.update(key=[old_row(e) for e in evs if id(e) in key_ids], events=[old_row(e) for e in evs[:DRAFT_EVENTS]],
+                         events_total=len(evs))
+    if review:
+        date = loc(parts["start"] or (first["t"] if first else _time(o.get("read_at")) or end)).strftime("%Y-%m-%d")
+        name = (parts["basename"] if general else "Outage review") + " " + date
+        stem = ("outage-review-" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-"))[:95].rstrip("-")
+        filename = stem + ".csv"
+        note = "The source timeline contains %d events, including noise." % len(raw)
+        if o.get("capped"):
+            note += " The vCenter read reached its event cap."
+        limit = max(0, int(o.get("appendix_max", 40)))
+        risk_line = "At risk: " + ", ".join(parts["at_risk"]) if parts["at_risk"] else ""
+        read_line = "The watch's read at the review, %s." % stamp_review(_time(o.get("read_at")) or end)
+        measured_ticket = next((k for k in tickets or [] if isinstance(k, dict) and opened and k.get("number") == opened.get("ticket")), {})
+        if measured_ticket.get("active") and not (measured_ticket.get("resolved") or measured_ticket.get("closed")):
+            read_line += " Ticket %s is still open%s." % (measured_ticket["number"], " (on hold)" if str(measured_ticket.get("state")) == "3" else "")
+        if parts["unread"]:
+            read_line += " " + parts["unread"] + "."
+        labels = ["1. What went down", "2. What it affected: " + _count(vm_count, "VM"), "3. Down now", "4. Recovered"]
+        summary = [dict(title=label, columns=list(columns), rows=parts[k]) for label, columns, k in zip(
+            labels, PART_COLUMNS, ("went", "affected", "now", "recovered"))]
+        summary[0].update(status="critical" if parts["went"] else "info", lines=[parts["went_note"]],
+                          cell_status=[["", "", "", "", "critical" if r[4] == "DOWN NOW" else "ok" if r[4].startswith("Back") else ""] for r in parts["went"]])
+        summary[1].update(text=parts["affected_note"], status="warning" if vm_count else "info",
+                          lines=[parts["unread"]] if parts["unread"] else [])
+        now_severity = parts["now"][0][0].lower() if parts["now"] else "ok"
+        summary[2].update(text=read_line, status=now_severity, row_status=[r[0].lower() for r in parts["now"]],
+                          lines=([risk_line] if risk_line else []) + ([] if parts["now"] or parts["unread"] else ["Nothing is down now."]))
+        summary[3].update(status="ok", lines=[] if parts["recovered"] else ["No recovery recorded."])
+        story_section = dict(kind="story", title="The outage, in order", story=story, issue_count=len(story["rows"]))
+        noc_section = dict(kind="noc", title="What this usually means (for the NOC)", patterns=patterns, issue_count=len(patterns))
+        chart_section = dict(kind="review_chart", title="All events (%d) - chart" % len(raw), issue_count=len(raw), views=views, collapsed=True)
+        noise_lines = ["%s: %s changes on %s, %s; %s." % (alarm, n, who, when, verdict)
+                       for alarm, who, n, when, verdict in noise_rows]
+        noise_section = {"title": "Noise: summed up, not rows", "lines": noise_lines}
+        sections = [story_section] + summary + ([card_section] if card_section else [])
+        email = sections + ([noise_section] if noise_rows else [])
+        issues = parts["issues"]
+        issue_count = sum(v["n"] if v["kind"] == "vm" else 1 for v in issues)
+        web = [story_section, {"kind": "by_kind", "title": "Issues by type", "issue_count": issue_count, "issues": issues}] + summary
+        web.extend(s for s in (noc_section, chart_section, card_section) if s)
+        web.append(dict(web_table, title="The events", collapsed=True, text=note))
+        if noise_rows:
+            web.append(noise_section)
+        if aar_section or general or noise:
+            email.append(aar_section or {"title": "For the after-action report"})
+            web.append(email[-1])
+        if general or noise or draft or parts["now"] or patterns:
+            draft.update(v=2, name=name, title=title, start=draft.get("start", ""), end=draft.get("end", ""),
+                         impact=general or title, actions=draft.get("actions", []), detection=draft.get("detection", []),
+                         tickets=tk_rows, ticket_hint=cause,
+                         key=key_rows, story=story, patterns=patterns, window=window_text, groups=groups[:limit], appendix_max=limit, group_total=len(groups), events=[], events_total=len(raw),
+                         noise=noise_rows, noise_columns=NOISE_COLUMNS, full_list=note, read_note=read_line, unread=parts["unread"],
+                         part_columns=PART_COLUMNS, recovery=["%s - %s: %s (down %s)" % (r[2], r[0], r[1], r[3]) for r in parts["recovered"]])
+            draft.update({k: parts[k] for k in ("went", "affected", "now", "recovered", "at_risk", "went_note", "affected_note")})
+            if parts["unknown_start"]:
+                draft["start"] = "unknown (watch observed the host down at %s)" % full(parts["start"])
+            elif parts["start"]:
+                e = next((e for e in facts if e["t"] == parts["start"]), None)
+                if e:
+                    draft["start"] = "%s - %s" % (full(e["t"]), e["label"])
+            if parts["still"]:
+                draft["end"] = "not yet: %s still down at the review" % ", ".join(parts["still"])
+            elif back:
+                draft["end"] = full(back["t"])
+            else:
+                draft["end"] = ""
+        summary_rows = [[labels[0]] + row[:3] + [" / ".join(row[3:])] for row in parts["went"]]
+        summary_rows.append([labels[0], "", parts["went_note"], "", ""])
+        summary_rows.append([labels[1], "", parts["affected_note"], "", ""])
+        summary_rows.extend([[labels[1], row[0] + " / " + row[1]] + row[2:] for row in parts["affected"]])
+        summary_rows.extend([[labels[2]] + row[1:] for row in parts["now"]])
+        summary_rows.extend([[labels[2], "", msg, "", ""] for msg in (risk_line, parts["unread"]) if msg])
+        summary_rows.extend([[labels[3]] + row for row in parts["recovered"]])
+        sheets = [sheet, dict(name="Outage summary", columns=["Part", "Object", "What", "When", "Down for / Now"], rows=summary_rows),
+                  dict(name="Noise", columns=NOISE_COLUMNS, rows=noise_rows)]
+        boxes = [box("Went down", parts["infra_count"], "critical" if parts["went"] else "info", ", ".join(r[0] for r in parts["went"])),
+                 box("VMs affected", vm_count, "warning" if vm_count else "ok", parts["affected_note"]),
+                 box("Down now", parts["now_count"], now_severity,
+                     parts["now"][0][1] + " since " + parts["now"][0][3] if parts["now"] else read_line),
+                 box("Recovered", loc(parts["finish"]).strftime("%H:%M") if parts["finish"] else "-", "ok",
+                     "Last recorded recovery " + stamp_review(parts["finish"]) if parts["finish"] else
+                     "Recovery not recorded for the latest host loss." if parts["open_observation"] else "No recovery recorded."),
+                 boxes[-1], box("Noise", len(noise), "info", "Changes on %s, summed up by scope" % _count(
+                     len({(e["vcenter"], e["vm"] or e["entity"]) for e in noise if _scope(e) == "vm"}), "VM"))]
+        if general:
+            h_subject, h_scope = "Outage review: " + parts["head_name"], [general.partition(" - ")[2]]
+        h_counts = [[length, obj + " still down", "critical"] for t, obj, length in parts["down_times"] if t][:1]
+        if down_s:
+            h_counts.append([_span(down_s), "hosts down", "warning"])
+        if to_ticket is not None:
+            h_counts.append([_span(to_ticket), "to the ticket", "ok"])
+        out[2:2] = [parts["went_note"]] + [s["title"] + ": " + " | ".join(", ".join(row) for row in s["rows"]) for s in summary] + noise_lines + [note]
     return _unsafe({"title": title, "head_counts": h_counts, "draft": draft, "head_scope": h_scope, "head_subject": h_subject, "numbers": numbers, "boxes": boxes, "cards": cards, "sections": email, "web_sections": web, "sheet": sheet,
-            "lines": out, "aar": aar, "window": window_text, "events": len(evs), "act_in": act_in,
-            "skip": bool(blip and o.get("skip_blips")),
+            "head_name": parts["head_name"] if review and general else None, "issues": issues if review else [],
+            "sheets": sheets if review else [sheet], "workbook_stem": stem if review else "", "events_file": filename if review else "", "lines": out, "aar": aar, "window": window_text, "events": len(evs), "act_in": act_in,
+            "skip": bool(blip and o.get("skip_blips") and not unread_centers),
             "cleared_before_review": cleared_only, "blip": blip,
             "alarm_window": [r_from.strftime("%Y-%m-%dT%H:%M:%SZ"), r_to.strftime("%Y-%m-%dT%H:%M:%SZ")] if cleared_runs else [],
             "trigger": trig, "trigger_line": "Triggered by: " + trig[0] + ((" (and %d more)" % (len(trig) - 1)) if len(trig) > 1 else "")})
@@ -1189,21 +2952,27 @@ def outage_timeline_doc(doc, timeline, web=False, review=False):
     """The watch's report with the time line. A review (vm_watch_review): its title and its tiles, the cards, the time
     line, the events and the lines for the after-action report, then the watch's own sections as they are. A normal
     run that found something down (vm_watch_timeline): the watch's report as it is, with the time line and the events
-    after its first section. An empty timeline: the document as it is."""
-    if not timeline or not doc:
-        return doc
-    out = dict(doc)
-    mine = list(timeline["web_sections" if web else "sections"])
-    own = list(doc.get("sections") or [])
+    after its first section."""
+    if not review:                           # 1.116.0: a scheduled run is 1.118.4's, word for word
+        return _v1184.outage_timeline_doc(doc, timeline, web, review)
     if review:
-        out["title"] = timeline["title"]
-        for k in ("head_counts", "head_scope", "head_subject"):       # 1.82.0
+        doc = _redact(doc)
+    if not doc or not timeline:
+        return _unsafe(doc)
+    out = dict(doc)
+    own = list(doc.get("sections") or [])
+    mine = list(timeline["web_sections" if web else "sections"])
+    if review:
+        out["title"] = ("Outage review: " if web and timeline.get("head_name") else "") + timeline["title"]
+        for k in ("head_name", "head_counts", "head_scope", "head_subject"):       # 1.82.0
             if timeline.get(k) is not None:
                 out[k] = timeline[k]
         out["summary"] = list(timeline.get("boxes") or [])
         out["subtitle"] = "%s Review of %s. Now: %s" % (timeline.get("trigger_line", "").rstrip(".") + "." if timeline.get("trigger_line") else "",
                                                        timeline.get("window", ""), doc.get("title", ""))
         out["subtitle"] = out["subtitle"].strip()
+        if any(s.get("title") == "3. Down now" for s in mine):
+            own = [s for s in own if s.get("title") != "Down or hung now" and not s.get("title", "").startswith("VMs with files on ")]
         out["sections"] = _with_act(mine + own, timeline.get("act") or {}, web)
         out["status_prefix"] = "Now: "                      # 1.90.0: the verdict is the watch's state now, not the outage's
     else:
@@ -1217,8 +2986,10 @@ def outage_review_aar(doc, info=None, web=False):
     was not made), job (this AAP job's number), asked (a review with a draft, vm_watch_review_docx on). The web page gets
     head_file - "Download AAR (Word)" in its head (report_head_file.html.j2) -, and "For the after-action report" says
     where the draft is and how the AAR job fills from it; the lines to paste stay, for an AAR job without its AAP credential."""
-    if not doc or not isinstance(info, dict):
-        return doc
+    if not isinstance(info, dict) or not info.get("review"):      # 1.116.0: a scheduled run is 1.118.4's, word for word
+        return _v1184.outage_review_aar(doc, info, web)
+    if not doc:
+        return _unsafe(doc)
     out = dict(doc)
     name, err, job = str(info.get("file") or ""), str(info.get("error") or ""), str(info.get("job") or "")
     if web and info.get("asked") and (name or err):
@@ -1235,10 +3006,22 @@ def outage_review_aar(doc, info=None, web=False):
     if job and info.get("draft"):
         lines.append("Or launch Outage AAR - Word document with Fill from an outage review (incident_review): %s - or latest. "
                      "It makes the same draft with what you type in its survey." % job)
-    if not lines:
-        return out
+    noc_file, noc_error = info.get("noc_file"), info.get("noc_error")
+    if noc_file and not web:
+        lines.append("Hand this to the NOC: %s is attached." % noc_file)
+    if noc_error:
+        lines.append("The NOC handoff was not made: %s." % noc_error.rstrip("."))
+    csv_file = info.get("csv_file")
+    if csv_file and not web:
+        lines.append("Full event list: %s." % csv_file)
+    if not lines and not noc_file and not csv_file:
+        return _unsafe(out)
     secs = []
     for sec in out.get("sections") or []:
+        if web and csv_file and sec.get("title") == "The events":
+            sec = dict(sec, download_file=csv_file)
+        if web and sec.get("kind") == "noc":
+            sec = dict(sec, noc_file=noc_file or "", noc_error=("The NOC handoff was not made: " + noc_error) if noc_error else "")
         if sec.get("title") == "For the after-action report":
             sec = dict(sec, lines=lines + (["Without the AAP credential on the AAR job, paste these into its survey instead:"] +
                                            list(sec.get("lines") or []) if sec.get("lines") else []),
@@ -1251,4 +3034,4 @@ def outage_review_aar(doc, info=None, web=False):
 class FilterModule(object):
     def filters(self):
         return {"outage_timeline": outage_timeline, "outage_timeline_doc": outage_timeline_doc, "outage_window": outage_window,
-                "outage_review_aar": outage_review_aar}
+                "outage_review_aar": outage_review_aar, "outage_events_csv": outage_events_csv, "outage_redact": outage_redact}

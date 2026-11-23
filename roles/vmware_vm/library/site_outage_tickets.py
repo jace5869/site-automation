@@ -24,6 +24,7 @@ options:
   numbers: {description: More tickets to add by number (a ticket opened by hand)., type: list, elements: str, default: []}
   begin: {description: The start of the stretch (seconds since 1970)., type: float, required: true}
   end: {description: Its end (seconds since 1970)., type: float, required: true}
+  review: {description: Redact review evidence before limiting field lengths., type: bool, default: false}
   max_tickets: {description: At most this many tickets., type: int, default: 200}
   validate_certs: {description: Check the instance's certificate., type: bool, default: true}
   ca_path: {description: A CA bundle to check it against., type: str}
@@ -64,7 +65,7 @@ class SnError(Exception):
     pass
 
 
-def error_text(e):
+def error_text(e, scrub=None):
     body = ""
     try:
         body = e.read().decode("utf-8", "replace")
@@ -74,7 +75,7 @@ def error_text(e):
         err = json.loads(body).get("error") or {}
         text = ": ".join(x for x in (str(err.get("message") or ""), str(err.get("detail") or "")) if x)
     except (ValueError, AttributeError):
-        text = " ".join(body.split())[:200]
+        text = " ".join((scrub(body) if scrub else body).split())[:200]
     return "HTTP %s%s" % (getattr(e, "code", "?"), (": " + text) if text else "")
 
 
@@ -92,7 +93,8 @@ def net_reason(e, timeout):
 class Api(object):
     """The Table API with basic authentication (GET only)."""
 
-    def __init__(self, url, username, password, validate_certs=True, ca_path=None, timeout=30):
+    def __init__(self, url, username, password, validate_certs=True, ca_path=None, timeout=30, scrub=None):
+        self.scrub = scrub
         self.url = url.rstrip("/")
         self.username, self.password = username, password
         self.validate_certs, self.ca_path, self.timeout = validate_certs, ca_path or None, timeout
@@ -105,7 +107,7 @@ class Api(object):
                          timeout=self.timeout)
             rows = json.loads(r.read().decode("utf-8", "replace")).get("result")
         except HTTPError as e:
-            raise SnError("GET %s: %s" % (path, error_text(e)))
+            raise SnError("GET %s: %s" % (path, error_text(e, self.scrub)))
         except URLError as e:
             raise SnError("GET %s: %s" % (path, net_reason(e, self.timeout)))
         except (OSError, HTTPException) as e:           # a read timeout, a dropped connection: outside URLError
@@ -114,7 +116,7 @@ class Api(object):
             raise SnError("GET %s: %s" % (path, e))
         if not isinstance(rows, list):
             raise SnError("GET %s: no result list in the answer" % path)
-        return rows
+        return self.scrub(rows) if self.scrub else rows
 
 
 def instance_url(host):
@@ -202,6 +204,7 @@ def read_notes(api, table, tickets, per_ticket=30, chars=1500):
 
 
 def main():
+    from ansible.module_utils.site_redact import redact_all
     module = AnsibleModule(
         argument_spec=dict(
             host=dict(type="str", fallback=(env_fallback, ["SN_HOST"])),
@@ -210,24 +213,25 @@ def main():
             table=dict(type="str", default="incident"), prefix=dict(type="str", default="site-health"),
             numbers=dict(type="list", elements="str", default=[]),
             begin=dict(type="float", required=True), end=dict(type="float", required=True),
-            max_tickets=dict(type="int", default=200), validate_certs=dict(type="bool", default=True),
+            review=dict(type="bool", default=False), max_tickets=dict(type="int", default=200), validate_certs=dict(type="bool", default=True),
             ca_path=dict(type="str"), timeout=dict(type="int", default=30)),
         supports_check_mode=True,
     )
     p = module.params
+    scrub = redact_all if p["review"] else None
     out = {"changed": False, "tickets": [], "asked": False, "error": "", "notes_error": "", "instance": instance_url(p["host"]) if p["host"] else ""}
     if not (p["host"] and p["username"] and p["password"]):
         out["error"] = "not read: attach the ServiceNow API credential to the job template"
-        module.exit_json(**out)
+        module.exit_json(**(scrub(out) if scrub else out))
     out["asked"] = True
-    api = Api(base_url(p["host"]), p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
+    api = Api(base_url(p["host"]), p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"], scrub)
     try:
         out["tickets"] = read_tickets(api, p["table"], p["prefix"], p["numbers"], p["begin"], p["end"], max(1, p["max_tickets"]))
     except SnError as e:
         out["error"] = "not read: %s" % e
-        module.exit_json(**out)
+        module.exit_json(**(scrub(out) if scrub else out))
     out["notes_error"] = read_notes(api, p["table"], out["tickets"])
-    module.exit_json(**out)
+    module.exit_json(**(scrub(out) if scrub else out))
 
 
 if __name__ == "__main__":

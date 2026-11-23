@@ -53,6 +53,7 @@
          ~ (' - DRY RUN (Check): nothing was changed.' if ansible_check_mode else '') }}
     _report_xlsx: "{{ _vm_report_xlsx | default([]) }}"
     _report_attachments: "{{ _vm_report_attachments | default([]) }}"     # 1.112.0: the outage review's AAR draft (Word)
+    _report_workbook_stem: "{{ _vm_report_workbook_stem | default('') }}"
     _report_xlsx_name: "{{ _vm_report_xlsx_name | default(awx_job_template_name | default(ansible_play_name)) }}"
     _report_xlsx_desc: "{{ _vm_report_xlsx_desc | default('') }}"          # 1.118.1: what the workbook is (the website's Files line)
     # the website gets every run; the email only when the job wants one (_vm_report_no_email)

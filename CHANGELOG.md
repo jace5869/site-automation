@@ -160,6 +160,39 @@ set `report_portal_link: ""` for none, or an address or `/portal/` to choose it 
   late line stays hidden, as before.
 - Tests: tests/test_report_web.py (LookFirst1180: the late rule, the box's lines and cap, red only when worse, the portal link
   in every look and on a report page, the role's `_web_launch` and `_web_portal_link`; the browser test fills the late line).
+## 1.116.0 — 2026-11-23
+
+**To set up:** nothing is required. For a review to see the outage's earlier watch runs, the outage watch template needs
+its AAP credential (as for 1.112.5's email). Optional: `outage_escalate_storage`, `outage_escalate_network`,
+`outage_escalate_vmware`, `outage_escalate_backup` (who the NOC cards name; empty = "your storage team" ...),
+`vm_watch_review_object` (review one datastore or host by name), `vm_watch_review_noise` /
+`vm_watch_review_noise_alarms` (what counts as noise), `outage_aar_appendix_max` (40).
+
+**VM outage watch: a review you can read and hand on.** The scheduled watch is unchanged: it is 1.118.4's, word for
+word (a test pins it).
+
+- **What the review is about:** the datastores and hosts the watch itself reported down, in this run and in the watch
+  runs of the review window. A review names them ("Reviewed: datastore ds-07 ..."). Nothing else is ever picked as the
+  outage. Several of them are each shown; none is ranked by size.
+- **A general title and name** from those objects ("Storage outage - 3 datastores not accessible: 18 VMs, 3 hosts"), not
+  one VM's name.
+- **The outage in four parts:** what went down (when, for how long), what it affected (VMs by host and datastore), down
+  now (every current watch condition, worst first) and recovered (each object, when).
+- **The outage, in order:** up to 15 rows of the outage's own chain, with dates, a tip with the full date and time on
+  every time, a red box around the outage window and a last row for what is still down.
+- **Noise is not rows:** usage alarms, gray changes and short flaps are summed up per alarm (their counts add up).
+- **What this usually means (for the NOC):** a card for each pattern seen, with first checks and who to escalate to.
+  The one-page "Hand this to the NOC" Word file is attached to the email and is Appendix B of the AAR.
+- **Issues by type** (Datastores, VMs, Hosts) and the folded event chart (Outage only / Everything).
+- Every event is in the attached CSV and the workbook. Appendix A of the AAR groups events by phase.
+- A VM on a lost datastore that the watch said nothing else about reads "on the lost datastore (state not read)".
+  Its finer state needs a new vCenter read: a later watch release. *What else saw it* (SolarWinds, network map, AD)
+  comes in 1.116.1.
+- Text from vCenter events, tickets and alarms is redacted before it reaches the page, the email, the Word files, the
+  CSV or the job output (now also VMware session cookies).
+- Tests: tests/test_watch_frozen.py (the scheduled path is 1.118.4's); tests/test_outage_timeline.py (the review: the
+  director's fixture, the shape of a real review email, an independent reviewer's four probes, recorded roots, two
+  vCenters, recovery per span, tickets, redaction); tests/test_incident_docs.py (the AAR and NOC Word files).
 
 ## 1.115.0 — 2026-11-23
 

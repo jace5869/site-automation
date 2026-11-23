@@ -200,6 +200,37 @@ def measure(browser, folder, pages, width):
 
 
 class Fit(unittest.TestCase):
+    def test_outage_review_issue_rows_fit(self):
+        browser = _browser()
+        if not browser:
+            self.skipTest("no headless browser here")
+        from test_outage_timeline import WATCH, director_outage, ot
+        events, tickets, opts = director_outage()
+        page = ot.outage_timeline_doc(WATCH, ot.outage_timeline(events, tickets, opts), True, True)
+        with tempfile.TemporaryDirectory() as folder:
+            pages = []
+            from test_report_web import rw
+            shutil.copyfile(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"),
+                            os.path.join(folder, "site-report.js"))
+            for look in ("atlas", "brief", "ops"):
+                html, css_name, css = rw.review_page_assets(render(look, page), "review.html")
+                with open(os.path.join(folder, css_name), "w") as output:
+                    output.write(css)
+                for view in ("out", "all"):
+                    name = "%s-%s-outage.html" % (look, view)
+                    selected = html
+                    if view == "all":
+                        selected = selected.replace('id="tlv-out" class="ibk-r" checked', 'id="tlv-out" class="ibk-r"')
+                        selected = selected.replace('id="tlv-all" class="ibk-r"', 'id="tlv-all" class="ibk-r" checked')
+                    with open(os.path.join(folder, name), "w") as output:
+                        output.write(selected)
+                    pages.append(name)
+            for width in (1280, 800):
+                results = measure(browser, folder, pages, width)
+                self.assertEqual(set(results), {name + " " + theme for name in pages for theme in ("light", "dark")})
+                for name, result in results.items():
+                    self.assertEqual(result["page"], 0, (name, width, result))
+
     def test_every_report_fits(self):
         b = _browser()
         if not b:

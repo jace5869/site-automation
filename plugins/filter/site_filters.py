@@ -2092,7 +2092,7 @@ def report_tidy(report, notes=True, raw_keys=False):
         if not isinstance(sec, dict):
             keep.append(sec)
             continue
-        if sec.get("rows") or any(sec.get(k) for k in _TIDY_CONTENT if k not in ("rows", "lines", "text")):
+        if sec.get("kind") in ("by_kind", "story", "review_chart", "noc") or sec.get("rows") or any(sec.get(k) for k in _TIDY_CONTENT if k not in ("rows", "lines", "text")):
             keep.append(sec)
             continue
         said = [str(x).strip() for x in (sec.get("lines") or [])] + ([str(sec["text"]).strip()] if sec.get("text") else [])
@@ -2425,6 +2425,16 @@ def report_text(report, footer="", runs=None):
         out += ["", "", head, "-" * len(head)]
         if s.get("text"):
             out.append(str(s["text"]))
+        if s.get("story"):
+            story = s["story"]
+            window = story["window"]
+            if window:
+                out.append("Outage window from %s to %s (%s)" % (window["start"]["tip"], window["end"]["tip"], window["duration"]))
+            for row in story["rows"]:
+                what = row["text"] + (row["extra"]["clock"] + row["after"] if row["extra"] else "")
+                out.append(" - ".join(filter(None, [row["time"]["tip"], row["word"], what, row["objects"], row["duration"]])))
+            if not story["rows"]:
+                out.append("No outage event in the chain.")
         if s.get("cards"):
             out += [""] + report_cards_text(s["cards"])
         if "columns" in s:

@@ -136,7 +136,7 @@ The commands under each step are what the script does, for doing it by hand.
 
    - **report_writer**: the job's account. It makes the tables and views on the first run, then adds and replaces rows.
      DELETE is needed because a newer run replaces a month's rows.
-   - **report_reader**: for people and, later, dashboards. It only reads.
+   - **report_reader**: the read-only account for reports (including the VM outage review), the portal and dashboards.
 
    Both use MySQL 8.4's default login, `caching_sha2_password`. The script keeps their passwords in `/root/report-db.env`.
 
@@ -1190,7 +1190,7 @@ from here: each DC now, since when, its last runs, the replication links that ne
 | What a run deletes | its own template's runs older than `ad_db_keep_days`, with their rows (another forest's job keeps its own) |
 | When the database is down | one warning in the job output. The report goes on, the job stays green. The portal's page shows the run before |
 | A dry run (Check) | logs in and looks at the tables, writes nothing |
-| Who reads it | the portal, as `report_reader` (SELECT only). A writer's login works too: the portal's deploy says so in a warning |
+| Who reads it | the portal and the VM outage review, as `report_reader` (SELECT only). A writer's login works too: the portal's deploy says so in a warning |
 | Turning it off | `ad_db: false`, or take the credential off the template |
 | Removing it | `DROP TABLE ad_link, ad_dc, ad_run;` and `DELETE FROM schema_version WHERE component = 'ad_run';` |
 

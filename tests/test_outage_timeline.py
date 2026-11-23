@@ -67,23 +67,44 @@ ACT = ("The host lost every path to its storage device before vCenter lost the h
        "host's second adapter.")
 
 
+def legacy_ticket_id(vc, check="vm_watch", prefix="site-health"):
+    from site_filters import site_correlation_id
+    return site_correlation_id("", vc, check, prefix).rsplit(":", 1)[0]
+
+
 def tickets():
     return [{"sys_id": "a1", "number": "INC0012345", "short": "[site-health] esx03.example.mil: host not responding",
              "description": "Host: esx03.example.mil\nCheck: vm_watch\nSeverity: critical\nFinding: host not responding\n\n"
                             "ACT (GenAI) analysis - level 2, status ok:\n%s\n" % ACT,
              "opened": DAY + "02:14:00Z", "resolved": DAY + "02:40:00Z", "closed": "",
              "close_notes": "Fibre channel cable of the second adapter reseated; paths back.", "state": "6", "active": True,
-             "correlation_id": "site-health:1a2b3c4d:vm_watch",
+             "correlation_id": legacy_ticket_id("vc01.example.mil"),
              "notes": [[DAY + "02:22:00Z", "Still failing at 02:22"], [DAY + "02:25:00Z", "On site, checking the cabling of esx03."],
                        [DAY + "02:35:00Z", "The automated check passes again at 02:35 UTC."]]}]
 
 
-OPTS = {"begin": "2026-11-11T20:45:00Z", "end": DAY + "02:45:00Z", "time_zone": "Europe/Berlin", "low_seconds": 120,
+# The scheduled watch still uses the detailed time line. A requested review passes review=True.
+OPTS = {"review": False, "begin": "2026-11-11T20:45:00Z", "end": DAY + "02:45:00Z", "time_zone": "Europe/Berlin", "low_seconds": 120,
         "tickets_asked": True, "report_on": ["critical"], "min_severity": "warning"}
 
 
 def made(evs=None, tks=None, **kw):
     return ot.outage_timeline(events() if evs is None else evs, tickets() if tks is None else tks, dict(OPTS, **kw))
+
+
+def watch_run(when, hosts=(), datastores=(), vc="vc"):
+    """A finished job in history_artifacts.yml, using the released artifact writer."""
+    from vmware_watch_filters import vm_watch_artifact, vm_watch_conditions
+    data = dict(read_at=when, vcenters=[dict(name=vc, ok=True)],
+                hosts=[dict(h, vcenter=vc, connection="notResponding") for h in hosts],
+                datastores=[dict(d, vcenter=vc, accessible=False) for d in datastores])
+    return dict(finished=when, artifacts=dict(vm_watch=vm_watch_artifact(data, vm_watch_conditions(data))))
+
+
+def reviewed(evs=None, tks=None, **kw):
+    if evs is None:
+        kw.setdefault("watch_runs", [watch_run(DAY + "01:20:00Z", [dict(name=H, moid="host-3")], vc="vc01.example.mil")])
+    return made(evs, tks, review=True, **kw)
 
 
 def whats(r):
@@ -132,6 +153,970 @@ class Window(unittest.TestCase):
             self.assertEqual((w["begin"], w["end"]), (self.NOW - 6 * 3600, self.NOW))          # still a window: nothing breaks
 
 
+def director_outage():
+    """The director's deterministic, six-hour placeholder event window, reviewed 60 hours later."""
+    import datetime as dt
+    import random
+    from vmware_watch_filters import vm_watch_conditions
+    UTC = dt.timezone.utc
+    rng = random.Random(1116)
+    VC = "vc-sitea.corp.example.mil"
+    CL = "cl-sitea-01"
+    DCN = "SITEA"
+    DSS = ["ds-sitea-07", "ds-sitea-08", "ds-sitea-09"]          # all three on the array san-sitea-01
+    DS = DSS[0]
+    NAAS = dict((d, "naa.6000d31000aa07000000000000000%d" % (17 + i)) for i, d in enumerate(DSS))
+    NAA = NAAS[DS]
+    UUIDS = dict((d, "6555f0a2-1c0e4b7a-77d1-0050569a01%02d" % (7 + i)) for i, d in enumerate(DSS))
+    H = dict((n, "esx-sitea-%02d.corp.example.mil" % n) for n in range(1, 7))
+    BAD = [H[2], H[4], H[5]]                     # lost the paths; esx-sitea-04 and -05 also went not responding
+    DOWN_HOSTS = [H[4], H[5]]
+    HUNG = ["sitea-app%02d" % i for i in range(1, 15)]
+    HUNG_HOST = dict((v, BAD[0] if i < 5 else BAD[1] if i < 10 else BAD[2]) for i, v in enumerate(HUNG))
+    OFF = ["sitea-db01", "sitea-db02", "sitea-db03", "sitea-db04"]          # their files are on ds-sitea-09: off since
+    OFF_HOST = {"sitea-db01": H[2], "sitea-db02": H[4], "sitea-db03": H[5], "sitea-db04": H[5]}
+    NOW = dt.datetime(2026, 11, 23, 10, 10, tzinfo=dt.timezone.utc)       # the review run: 60 h after the first critical event
+    NOISE_VMS = ["sitea-vm%02d" % i for i in range(1, 27)]
+    NOISE_HOST = dict((v, H[1 + i % 6]) for i, v in enumerate(NOISE_VMS))
+    DAY = dt.datetime(2026, 11, 20, tzinfo=UTC)
+    BEGIN, END = DAY + dt.timedelta(hours=19), DAY + dt.timedelta(hours=25)      # 20:00 to 02:00 CET
+    CPU, MEM = "Virtual machine CPU usage", "Virtual machine memory usage"
+    _k = [9000]
+
+
+    def at(hms, day=0):
+        h, m, s = [int(x) for x in hms.split(":")]
+        return DAY + dt.timedelta(days=day, hours=h, minutes=m, seconds=s)
+
+
+    def iso(t):
+        return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+    def ev(t, typ, host="", vm="", msg="", **kw):
+        """One event exactly as roles/vmware_vm/library/site_vmware_outage_events.record() returns it."""
+        _k[0] += 1
+        d = {"key": _k[0], "time": iso(t), "type": typ, "message": msg, "args": {}, "host": host, "vm": vm, "cluster": CL,
+             "datacenter": DCN, "vcenter": VC, "alarm": "", "entity": "", "entity_type": "", "from": "", "to": ""}
+        d.update(kw)
+        return d
+
+
+    def alarm(t, name, entity, etype, to, was, host="", vm=""):
+        return ev(t, "AlarmStatusChangedEvent", host=host, vm=vm, alarm=name, entity=entity, entity_type=etype, to=to,
+                  msg="Alarm '%s' on %s changed from %s to %s" % (name, entity, was.title(), to.title()), **{"from": was})
+
+
+    def plus(t, s):
+        return t + dt.timedelta(seconds=s)
+
+
+    def outage_events():
+        e = []
+        p7 = "Path vmhba64:C0:T3:L17 is down. Affected datastores: %s." % DS
+        e.append(ev(at("21:58:40"), "esx.problem.storage.redundancy.degraded", H[4], msg="Path redundancy to storage device %s degraded. %s" % (NAA, p7)))
+        e.append(ev(at("21:59:30"), "esx.clear.storage.redundancy.restored", H[4], msg="Path redundancy to storage device %s restored." % NAA))
+        e.append(ev(at("22:06:12"), "esx.problem.storage.redundancy.lost", H[4], msg="Lost path redundancy to storage device %s. %s" % (NAA, p7)))
+        for i, h in enumerate(BAD):
+            for j, d in enumerate(DSS):
+                n, s0 = NAAS[d], 3 * i + j
+                e.append(ev(plus(at("22:09:55"), s0), "esx.problem.storage.connectivity.lost", h,
+                            msg="Lost connectivity to storage device %s. Path vmhba64:C0:T2:L%d is down. Affected datastores: %s." % (n, 17 + j, d)))
+                e.append(ev(plus(at("22:10:02"), s0), "esx.problem.storage.apd.start", h, msg="Device %s has entered the All Paths Down state." % n))
+                e.append(ev(plus(at("22:10:31"), s0), "esx.problem.vmfs.heartbeat.timedout", h,
+                            msg="Lost access to volume %s (%s) due to connectivity issues. Recovery attempt is in progress and outcome will be "
+                                "reported shortly." % (UUIDS[d], d)))
+                e.append(ev(plus(at("22:12:20"), s0), "esx.problem.storage.apd.timeout", h,
+                            msg="Device %s has entered the All Paths Down Timeout state after being in the All Paths Down state for 140 seconds. "
+                                "I/Os will now be fast failed." % n))
+            e.append(alarm(plus(at("22:10:20"), 2 * i), "Cannot connect to storage", h, "host", "red", "green", host=h))
+        for i, h in enumerate(DOWN_HOSTS):            # hostd hangs on the APD: vCenter loses both hosts
+            t = plus(at("22:13:40"), 25 * i)
+            e.append(ev(t, "HostConnectionLostEvent", h, msg="Host %s in %s is not responding" % (h, DCN)))
+            e.append(alarm(plus(t, 15), "Host connection and power state", h, "host", "red", "green", host=h))
+            e.append(ev(plus(t, 50), "com.vmware.vc.HA.DasHostFailedEvent", h, msg="vSphere HA detected a possible host failure of host %s in cluster %s" % (h, CL)))
+        for i, v in enumerate(HUNG[:5]):              # the hung guests on esx-sitea-02 (still connected): HA resets them, in vain
+            e.append(ev(plus(at("22:16:00"), 15 * i), "VmDasBeingResetEvent", H[2], vm=v,
+                        msg="%s on host %s in cluster %s in %s is reset by vSphere HA. Reason: VMware Tools heartbeat failure." % (v, H[2], CL, DCN)))
+        for i, h in enumerate(BAD):
+            for j, d in enumerate(DSS[:2]):           # ds-sitea-07 and -08 come back
+                n, s0 = NAAS[d], 3 * i + j
+                e.append(ev(plus(at("22:48:50"), s0), "esx.clear.storage.apd.exit", h, msg="Device %s has exited the All Paths Down state." % n))
+                e.append(ev(plus(at("22:49:00"), s0), "esx.clear.storage.connectivity.restored", h,
+                            msg="Connectivity to storage device %s (Datastores: %s) restored. Path vmhba64:C0:T2:L%d is active again." % (n, d, 17 + j)))
+                e.append(ev(plus(at("22:49:20"), s0), "esx.problem.vmfs.heartbeat.recovered", h,
+                            msg="Successfully restored access to volume %s (%s) following connectivity issues." % (UUIDS[d], d)))
+            e.append(ev(plus(at("22:49:05"), 3 * i), "esx.problem.scsi.device.state.permanentloss", h,          # ds-sitea-09 does not
+                        msg="Device %s has been removed or is permanently inaccessible. Affected datastores: %s." % (NAAS[DSS[2]], DSS[2])))
+        e.append(ev(at("22:50:10"), "esx.clear.storage.redundancy.restored", H[4], msg="Path redundancy to storage device %s restored." % NAA))
+        good = [H[1], H[3], H[6]]
+        for i, v in enumerate(HUNG[5:]):              # the VMs of the two lost hosts: HA restarts them elsewhere
+            e.append(ev(plus(at("22:51:00"), 17 * i), "com.vmware.vc.ha.VmRestartedByHAEvent", good[i % 3], vm=v,
+                        msg="vSphere HA restarted virtual machine %s on host %s in cluster %s" % (v, good[i % 3], CL)))
+        for i, v in enumerate(HUNG[:5]):
+            e.append(ev(plus(at("22:52:30"), 12 * i), "VmDasBeingResetEvent", H[2], vm=v,
+                        msg="%s on host %s in cluster %s in %s is reset by vSphere HA. Reason: VMware Tools heartbeat failure." % (v, H[2], CL, DCN)))
+        for i, v in enumerate(OFF):                   # their files are on ds-sitea-09
+            e.append(ev(plus(at("22:55:00"), 20 * i), "VmFailoverFailed", OFF_HOST[v], vm=v,
+                        msg="vSphere HA unsuccessfully failed over %s in cluster %s in %s. The datastore %s is not accessible." % (v, CL, DCN, DSS[2])))
+        for i, h in enumerate(DOWN_HOSTS):
+            t = at("22:58:10") if i == 0 else at("23:12:30")
+            e.append(ev(t, "HostConnectedEvent", h, msg="Connected to %s in %s" % (h, DCN)))
+            e.append(alarm(plus(t, 20), "Host connection and power state", h, "host", "green", "red", host=h))
+        return e
+
+
+    def noise_events():
+        """~400 usage-alarm changes on 40 VMs: the background (26 VMs, all evening) and the hung VMs' own (gray when their
+        host lost the datastore, red when they spun after the restart, then green)."""
+        e, busy, n = [], {}, 0
+        windows = [(at("19:02:00"), at("00:25:00", 1))]
+        while n < 318:
+            a, b = windows[0]
+            t = a + dt.timedelta(seconds=rng.randint(0, int((b - a).total_seconds())))
+            v = rng.choice(NOISE_VMS)
+            name = CPU if rng.random() < 0.6 else MEM
+            long = rng.random() > 0.12
+            dur = rng.randint(180, 1800) if long else rng.randint(30, 110)
+            if busy.get((v, name), BEGIN) > t:
+                continue
+            busy[(v, name)] = plus(t, dur + 60)
+            h = NOISE_HOST[v]
+            e.append(alarm(t, name, v, "vm", "yellow", "green", host=h, vm=v))
+            n += 1
+            if long and rng.random() < 0.1:
+                e.append(alarm(plus(t, dur // 2), name, v, "vm", "red", "yellow", host=h, vm=v))
+                n += 1
+            e.append(alarm(plus(t, dur), name, v, "vm", "green", "red" if e[-1]["to"] == "red" else "yellow", host=h, vm=v))
+            n += 1
+        # the evening's one red CPU usage alarm before the outage (the VM today's draft names the outage after)
+        e += [alarm(at("20:47:12"), CPU, "sitea-vm17", "vm", "red", "green", host=NOISE_HOST["sitea-vm17"], vm="sitea-vm17"),
+              alarm(at("21:09:40"), CPU, "sitea-vm17", "vm", "green", "red", host=NOISE_HOST["sitea-vm17"], vm="sitea-vm17")]
+        for i, v in enumerate(HUNG):
+            h = HUNG_HOST[v]
+            for j, name in enumerate((CPU, MEM)):
+                e.append(alarm(at("22:12:40") + dt.timedelta(seconds=6 * i + j), name, v, "vm", "gray", "green", host=h, vm=v))
+                if not (name == CPU and i < 10):
+                    e.append(alarm(at("22:56:10") + dt.timedelta(seconds=6 * i + j), name, v, "vm", "green", "gray", host=h, vm=v))
+            if i < 10:
+                e.append(alarm(at("22:56:30") + dt.timedelta(seconds=6 * i), CPU, v, "vm", "red", "gray", host=h, vm=v))
+                e.append(alarm(at("23:04:30") + dt.timedelta(seconds=9 * i), CPU, v, "vm", "green", "red", host=h, vm=v))
+        for i, v in enumerate(OFF):                   # off since: vCenter cannot judge them (gray), never green in the window
+            for j, name in enumerate((CPU, MEM)):
+                e.append(alarm(plus(at("22:12:50"), 6 * i + j), name, v, "vm", "gray", "green", host=OFF_HOST[v], vm=v))
+        return e
+
+
+    TICKET = "XINC0045678"
+    ACT_TEXT = ("Every host lost its paths to three datastores of one array at once; the array or its storage switch is more likely "
+                "than one host's adapter.")
+
+
+    def tickets():
+        return [{"sys_id": "b7", "number": TICKET, "short": "[site-health] %s: storage connectivity lost" % H[4],
+                 "description": "Host: %s\nCheck: vm_watch\nSeverity: critical\nFinding: storage connectivity lost\n\n"
+                                "ACT (GenAI) analysis - level 2, status ok:\n%s\n" % (H[4], ACT_TEXT),
+                 "opened": iso(at("22:31:00")), "resolved": "", "closed": "", "close_notes": "",
+                 "state": "3", "active": True, "correlation_id": legacy_ticket_id(VC),
+                 "notes": [[iso(at("22:38:00")), "Storage team engaged: controller B of san-sitea-01 shows a fault."],
+                           [iso(at("22:47:00")), "Controller B failed over to controller A; paths are coming back."],
+                           [iso(at("23:30:00")), "ds-sitea-07 and -08 back; ds-sitea-09 LUN lost on controller B. Vendor case open; on hold."]]}]
+
+
+    host_ids = {h: "host-%d" % n for n, h in H.items()}
+    store_ids = {ds: "datastore-%d" % (7 + i) for i, ds in enumerate(DSS)}
+
+    def watch_now():
+        """What the watch read from vCenter at the review run (vm_watch_conditions' input, roles/vmware_vm/tasks/watch.yml):
+        ds-sitea-09 still not accessible. Membership gives each VM's name and MoID."""
+        return {"read_at": iso(NOW), "window_minutes": 15, "confirm": {"checks": 2, "seconds": 60}, "vms_checked": 212,
+                "vcenters": [{"name": VC, "ok": True}], "hosts": [{"name": h, "moid": host_ids[h], "connection": "connected", "cluster": CL, "vcenter": VC} for h in H.values()],
+                "datastores": [{"name": DSS[2], "moid": store_ids[DSS[2]], "accessible": False, "maintenance": "normal", "vcenter": VC, "datacenter": DCN, "cluster": CL,
+                                "hosts": [ot._short(h) for h in BAD]}],
+                "events": [], "questions": [], "suspects": []}
+    events = sorted(outage_events() + noise_events(), key=lambda e: e["time"])
+    live = watch_now()
+    live["datastores"][0]["vms"] = [dict(name=vm, moid="vm-%d" % i) for i, vm in enumerate(OFF, 1)]
+    recorded = watch_run(iso(at("22:20:00")), [dict(name=h, moid=host_ids[h]) for h in DOWN_HOSTS],
+                         [dict(name=ds, moid=store_ids[ds]) for ds in DSS], VC)
+    opts = dict(begin=iso(BEGIN), end=iso(END), time_zone="Europe/Berlin", read_at=iso(NOW), watch_runs=[recorded],
+                hosts=live["hosts"], datastores=live["datastores"], triggers=vm_watch_conditions(live), low_seconds=120, job="5120", tickets_asked=True)
+    return events, tickets(), opts
+
+
+class ReviewCutB(unittest.TestCase):
+    host = dict(vcenter="vc", name="esx1.east.example", moid="host-1", datacenter="East", cluster="production")
+
+    def event(self, t, typ, **fields):
+        row = dict(time=t, type=typ, vcenter="vc", host=self.host["name"], cluster="production", datacenter="East")
+        return dict(row, **fields)
+
+    def review(self, events, runs=(), tickets=(), **opts):
+        return ot.outage_timeline(events, tickets, dict(begin=100, end=6000, watch_runs=runs, review=True, **opts))
+
+    def test_recorded_host_spans(self):
+        observed = watch_run(990, [self.host])
+        loss = self.event(600, "HostConnectionLostEvent")
+        back = self.event(1500, "HostConnectedEvent")
+        later = watch_run(1980, [self.host])
+        r = self.review([loss, back], [later, observed])
+        self.assertEqual(r["numbers"]["back"], "")
+        self.assertEqual(r["draft"]["went"][0][2:], ["unknown", "unknown", "recovery not recorded"])
+        self.assertEqual(r["draft"]["now"], [])
+        self.assertEqual(r["boxes"][3]["value"], "-")
+        self.assertEqual(r["draft"]["end"], "")
+        self.assertIn("00:33:00", [row["time"]["clock"] for row in r["draft"]["story"]["rows"]])
+
+        restart = self.event(1200, "VmRestartedOnAlternateHostEvent", host="destination", vm="example-vm")
+        r = self.review([dict(loss, time=50), restart, back], [observed])
+        self.assertEqual(r["numbers"]["ha_restarted"], 1)
+        self.assertEqual(r["draft"]["recovered"], [["esx1", "host connected again", "01 Jan 00:25:00 UTC", "unknown"]])
+        self.assertEqual(r["draft"]["went"][0][2:4], ["unknown", "unknown"])
+        self.assertTrue(r["draft"]["start"].startswith("unknown"))
+
+    def test_ha_cluster_identity(self):
+        loss = self.event(600, "HostConnectionLostEvent", cluster_moid="domain-c1")
+        restart = self.event(1200, "VmRestartedOnAlternateHostEvent", host="destination")
+        events = [loss, dict(restart, vm="east-by-id", cluster_moid="domain-c1", cluster="renamed"),
+                  dict(restart, vm="west-by-id", cluster_moid="domain-c2"),
+                  dict(restart, vm="west-by-name", datacenter="West"), dict(restart, vm="ambiguous", datacenter="")]
+        r = self.review(events, [watch_run(990, [self.host])])
+        self.assertEqual(r["numbers"]["ha_restarted"], 1)
+        self.assertIn("east-by-id", str(r["draft"]["affected"]))
+        events = [self.event(600, "HostConnectionLostEvent"), dict(restart, vm="east"),
+                  dict(restart, vm="west", datacenter="West"), dict(restart, vm="ambiguous", datacenter="")]
+        r = self.review(events, [watch_run(990, [self.host])])
+        self.assertEqual(r["numbers"]["ha_restarted"], 1)
+        self.assertIn("1: east", str(r["draft"]["affected"]))
+
+    def test_exact_host_reconnect(self):
+        west = dict(self.host, name="esx1.west.example", moid="host-2", datacenter="West")
+        events = [self.event(600, "HostConnectionLostEvent"), self.event(750, "HostConnectionLostEvent", host=west["name"]),
+                  self.event(1200, "HostConnectedEvent", host="esx1"), self.event(1500, "HostConnectedEvent"),
+                  self.event(3960, "HostConnectedEvent", host=west["name"])]
+        r = self.review(events, [watch_run(990, [self.host, west])], hosts=[self.host, west])
+        self.assertEqual([(row[0], row[2]) for row in r["draft"]["recovered"]],
+                         [("esx1 [host-1]", "01 Jan 00:25:00 UTC"), ("esx1 [host-2]", "01 Jan 01:06:00 UTC")])
+
+    def test_storage_clearances(self):
+        store = dict(name="example-store", moid="ds-1")
+        for second_start in (900, 2200):  # overlapping and separate spans on the same datastore
+            with self.subTest(second_start=second_start):
+                events = [self.event(t, "esx." + typ, host=h, datastore=store["name"], message="Device naa.A123")
+                          for t, h, typ in [(600, "esx-a", "problem.storage.apd.start"),
+                                            (second_start, "esx-b", "problem.storage.apd.start"),
+                                            (1680, "esx-a", "clear.storage.apd.exit"), (3960, "esx-b", "clear.storage.apd.exit")]]
+                r = self.review(events, [watch_run(990, datastores=[store])])
+                clears = [row for row in r["draft"]["story"]["rows"] if row["word"] == "Recovered"]
+                self.assertEqual([(row["objects"], row["time"]["clock"]) for row in clears],
+                                 [("esx-a", "00:28:00"), ("esx-b", "01:06:00")])
+                self.assertEqual([(row[1], row[2], row[3]) for row in r["draft"]["recovered"]],
+                                 [("datastore back on esx-a", "01 Jan 00:28:00 UTC", "18 min"),
+                                  ("datastore back on esx-b", "01 Jan 01:06:00 UTC", "51 min" if second_start == 900 else "29 min")])
+                self.assertEqual(r["numbers"]["back"], "1970-01-01T01:06:00Z")
+
+    def test_device_and_legacy_tickets(self):
+        from site_filters import site_correlation_id
+        from vmware_watch_filters import vm_watch_conditions, vm_watch_health
+        apd = self.event(700, "esx.problem.storage.apd.start", message="Device naa.A123")
+        data = dict(events=[apd])
+        finding, = vm_watch_health(data, vm_watch_conditions(data))["vc"]["findings"]
+        prefix = "example-health"
+        cid = site_correlation_id(finding["id"], "vc", finding["check"], prefix)
+        ticket = dict(number="INC-APD", opened=1000, short="Device path lost", correlation_id=cid)
+        def legacy(number, vc, check):
+            return dict(ticket, number=number, opened=900, resolved=1100, short="esx1: example",
+                        correlation_id=legacy_ticket_id(vc, check, prefix))
+        tickets = [legacy("INC-BACKUP", "vc", "backup"), legacy("INC-OTHER-VC", "vc-west", "vm_watch"), ticket,
+                   dict(legacy("INC-LEGACY", "vc", "vm_watch"), opened=1800, resolved=2000)]
+        r = self.review([self.event(600, "HostConnectionLostEvent"), apd], [watch_run(990, [self.host])],
+                        tickets, correlation_prefix=prefix)
+        self.assertEqual(r["numbers"]["ticket"], "INC-APD")
+        self.assertEqual([row[0] for row in r["draft"]["tickets"]], ["INC-APD", "INC-LEGACY"])
+        self.assertIn("All paths down", str(r["draft"]["story"]))
+        self.assertNotIn("INC-BACKUP", str(r["draft"]["story"]))
+
+    def test_member_question(self):
+        from vmware_watch_filters import vm_watch_conditions
+        vm = dict(name="example-vm", moid="vm-1")
+        q = dict(vm, vcenter="vc", question="Example question")
+        ds = dict(name="ds", moid="ds-1", vcenter="vc", accessible=False)
+        for duplicate in (False, True):
+            members = [vm, dict(vm, moid="vm-2")] if duplicate else [vm]
+            triggers = vm_watch_conditions(dict(datastores=[dict(ds, vms=members)], questions=[q]))
+            opts = dict(triggers=triggers)
+            if duplicate:
+                opts["questions"] = [q]
+            r = self.review([], **opts)
+            rows = r["draft"]["affected"]
+            states = {row[2]: row[-1] for row in rows}
+            self.assertIn("waiting for an answer", states["1: example-vm [vm-1]" if duplicate else "1: example-vm"])
+            self.assertIn("Example question", str(states))
+            self.assertTrue(all(row[1] == "ds" for row in rows))
+            if duplicate:
+                self.assertIn("state not read", states["1: example-vm [vm-2]"])
+                ambiguous = self.review([], triggers=triggers)["draft"]["affected"]
+                self.assertTrue(all("state not read" in row[-1] for row in ambiguous))
+
+    def test_csv_session_redaction(self):
+        import csv
+        import io
+        for key in ("vmware_soap_session", "vmware-api-session-id", "JSESSIONID"):
+            message = 'Cookie: %s="EXAMPLE_VALUE"' % key
+            sheet = self.review([self.event(600, "HostConnectionLostEvent", message=message)])["sheet"]
+            for source in (sheet, dict(columns=["Message"], rows=[[message]])):
+                rows = list(csv.reader(io.StringIO(ot.outage_events_csv(source))))
+                self.assertNotIn("EXAMPLE_VALUE", str(rows))
+                self.assertIn("<removed>", str(rows))
+
+
+class SmartReview(unittest.TestCase):
+    def test_director_outage(self):
+        events, tickets_, opts = director_outage()
+        r = ot.outage_timeline(events, tickets_, opts)
+        d = r["draft"]
+        self.assertEqual(d["v"], 2)
+        self.assertEqual(d["name"], "Storage outage cl-sitea-01 2026-11-20")
+        self.assertEqual(r["title"], "Storage outage - 3 datastores not accessible (ds-sitea-07, ds-sitea-08, ds-sitea-09): "
+                                     "18 VMs, 3 hosts; 2 hosts down; ds-sitea-09 still down")
+        self.assertEqual(len(d["went"]), 5)
+        self.assertIn("Storage paths were lost on esx-sitea-02", d["went_note"])
+        self.assertIn("9 restarted by HA, 5 reset by HA", d["affected_note"])
+        self.assertEqual(r["head_counts"][0][:2], ["2 d 12 h", "ds-sitea-09 still down"])
+        self.assertEqual(r["numbers"]["signal_to_ticket_s"], 32 * 60 + 20)
+        self.assertEqual(len(d["now"]), 1)
+        self.assertIn("sitea-db04", str(d["affected"]))
+        self.assertIn("on the lost datastore (state not read)", str(d["affected"]))
+        self.assertEqual({x[0] for x in d["recovered"] if x[0].startswith("ds-")}, {"ds-sitea-07", "ds-sitea-08"})
+        self.assertEqual(sum(row[2] for row in d["noise"]), 394)
+        self.assertEqual(sum(row[2] for row in d["noise"] if "(affected)" in row[1]), 74)
+        self.assertEqual(sum(row[2] for row in d["noise"] if "(outside the outage)" in row[1]), 320)
+        self.assertEqual(len({e["vm"] for e in events if "usage" in e["alarm"]}), 44)
+        self.assertTrue(all("rose with the outage" in row[-1] for row in d["noise"] if "(affected)" in row[1]))
+        self.assertTrue(all("it ran all evening" in row[-1] for row in d["noise"] if "outside" in row[1]))
+        self.assertIn("still gray", str(d["noise"]))
+        self.assertLessEqual(len(d["key"]), 15)
+        paths = next(row for row in d["key"] if "Lost the connection to a storage device (x9)" in row[1])
+        for obj in ("ds-sitea-07", "ds-sitea-08", "ds-sitea-09", "esx-sitea-02", "esx-sitea-04", "esx-sitea-05"):
+            self.assertIn(obj, paths[2])
+        self.assertEqual(d["events"], [])
+        self.assertEqual(len(d["groups"]), 28)
+        self.assertLessEqual(len(d["groups"]), 40)
+        self.assertEqual([s["name"] for s in r["sheets"]], ["Timeline", "Outage summary", "Noise"])
+        self.assertEqual(sorted(row[17] for row in r["sheet"]["rows"] if row[9]), sorted(e["key"] for e in events))
+        import csv
+        import io
+        self.assertEqual(len(list(csv.reader(io.StringIO(ot.outage_events_csv(r["sheet"]))))), len(r["sheet"]["rows"]) + 1)
+        self.assertEqual([b["label"] for b in r["boxes"]], ["Went down", "VMs affected", "Down now", "Recovered", "Signal to ticket", "Noise"])
+        self.assertEqual([s["kind"] for s in r["web_sections"][:2]], ["story", "by_kind"])
+        self.assertTrue(next(s for s in r["web_sections"] if s["title"] == "The events")["collapsed"])
+        self.assertNotIn("What else saw it", str(r["web_sections"]))
+
+    def test_all_current_roots_in_two_vcenters(self):
+        from vmware_watch_filters import vm_watch_conditions
+        stores = [dict(name="example-prod", moid="ds-1", accessible=False, vcenter="vc-prod")]
+        hosts = [dict(name=h, moid="host-" + h, connection="notResponding", vcenter="vc-lab") for h in ("lab1", "lab2")]
+        conditions = vm_watch_conditions(dict(datastores=stores, hosts=hosts))
+        conditions.append(dict(kind="no-heartbeat", object_type="vm", object="example-vm", severity="warning", vcenter="vc-lab"))
+        rows = [dict(type="HostConnectionLostEvent", time=1500, vcenter=h["vcenter"], host=h["name"]) for h in hosts]
+        opts = dict(begin=500, end=6000, hosts=hosts, datastores=stores, triggers=conditions)
+        r = ot.outage_timeline(rows, [], opts)
+        self.assertIn("2 vCenters", r["title"])
+        self.assertIn("2 hosts down", r["title"])
+        self.assertEqual(len(r["draft"]["went"]), 3)
+        self.assertEqual([row[0] for row in r["draft"]["now"]], ["Critical"] * 3 + ["Warning"])
+        self.assertIn("example-prod (vc-prod)", r["numbers"]["still_down"])
+        one = ot.outage_timeline(rows, [], dict(opts, review_object="example-prod"))
+        self.assertEqual([row[0] for row in one["draft"]["went"]], ["example-prod"])
+        self.assertEqual(one["draft"]["now"], r["draft"]["now"])
+        self.assertIn("named by vm_watch_review_object", one["draft"]["went_note"])
+        self.assertNotIn("lab1", str(one["draft"]["story"]))
+
+    def test_short_host_span_observed_by_the_watch(self):
+        host = dict(name="example-host", moid="host-1")
+        lost = dict(type="HostConnectionLostEvent", time=1000, vcenter="vc", host=host["name"], cluster="cl", datacenter="example-dc")
+        restart = dict(type="com.vmware.vc.ha.VmRestartedByHAEvent", time=1020, vcenter="vc",
+                       host="destination", vm="example-vm", cluster="cl", datacenter="example-dc")
+        events = [lost, restart, dict(lost, time=1078, type="HostConnectedEvent")]
+        r = ot.outage_timeline(events, [], dict(begin=900, end=2000, watch_runs=[watch_run(1010, [host])]))
+        self.assertEqual((r["numbers"]["down_s"], r["numbers"]["ha_restarted"]), (78, 1))
+        self.assertEqual(r["draft"]["noise"], [])
+
+    def test_shared_host_overlapping_datastore_spans(self):
+        stores = [dict(name="ds-%d" % i, moid="datastore-%d" % i, devices=["naa.%d" % i], vcenter="vc") for i in (1, 2)]
+        runs = [watch_run(1500, datastores=stores)]
+        def path(t, i, clear=False):
+            return dict(time=t, vcenter="vc", host="esx", message="Device naa.%d" % i,
+                        type="esx.clear.storage.apd.exit" if clear else "esx.problem.storage.apd.start")
+        for start, grouped in ((1120, True), (4500, False)):
+            events = [path(1000, 1), path(start, 2), path(4000, 1, True), path(5000, 2, True)]
+            opts = dict(begin=500, end=6000, watch_runs=runs, datastores=stores)
+            d = ot.outage_timeline(events, [], opts)["draft"]
+            self.assertEqual([row[0] for row in d["recovered"]], ["ds-1", "ds-2"])
+            self.assertEqual(sum("All paths down (APD)" in r["text"] for r in d["story"]["rows"]), 1 if grouped else 2)
+            self.assertEqual(d["now"], [])
+
+    def test_only_artifacts_in_the_window_supply_roots(self):
+        h = dict(name="host-example", moid="host-1")
+        rows = [dict(type="HostConnectionLostEvent", time=1000, host=h["name"], vcenter="vc")]
+        opts = dict(begin=500, end=6000, watch_runs=[watch_run(499, [h]), watch_run(6001, [h])])
+        r = ot.outage_timeline(rows, [], opts)
+        self.assertFalse(r["numbers"]["hosts_down"])
+        self.assertIn("No matching", r["sections"][1]["lines"][0])
+        store = dict(name="ds-1", moid="datastore-1")
+        run = watch_run(1500, [h], [store])
+        path = next(c for c in run["artifacts"]["vm_watch"]["conditions"] if c["kind"] == "datastore")
+        path["summary"] = "Datastore ds-1 lost its paths on 2 hosts"
+        r = ot.outage_timeline(rows, [], dict(opts, watch_runs=[run]))
+        self.assertEqual([row[0] for row in r["draft"]["went"]], ["host-example"])
+        self.assertIn("host host-example (vc)", r["draft"]["went_note"])
+
+    def test_host_only_clears_of_inventory_extents(self):
+        ds = dict(vcenter="example-vc", name="example-store", moid="ds-1", devices=["naa.1234"])
+        base = dict(vcenter=ds["vcenter"], host="example-host", host_moid="host-1")
+        rows = [dict(base, time=t, type="esx.clear.storage.apd.exit" if clear else "esx.problem.storage.apd.start",
+                     message="" if clear else "Device naa.1234") for t, clear in ((1000, False), (2000, True), (8200, False), (9200, True))]
+        d = ot.outage_timeline(rows, [], dict(begin=100, end=10000, datastores=[ds], watch_runs=[watch_run(1500, datastores=[ds], vc=ds["vcenter"])]))["draft"]
+        self.assertEqual([r[0] for r in d["recovered"]], [ds["name"], ds["name"]])
+        self.assertEqual([x["time"]["clock"] for x in d["story"]["rows"]], ["00:16:40", "00:33:20", "02:16:40", "02:33:20"])
+        self.assertEqual(d["story"]["window"]["end"]["clock"], "02:33:20")
+
+    def test_ha_destination_host_in_the_failed_hosts_cluster(self):
+        run = watch_run(1500, [dict(name="source", moid="host-1")])
+        host = dict(type="HostConnectionLostEvent", time=1000, vcenter="vc", host="source", host_moid="host-1", cluster="cl", datacenter="example-dc")
+        restart = dict(type="com.vmware.vc.ha.VmRestartedByHAEvent", time=1400, vcenter="vc", host="destination", cluster="cl", datacenter="example-dc")
+        events = [host, dict(host, type="HostConnectedEvent", time=2500)]
+        events += [dict(restart, vm="app%02d" % i, vm_moid="vm-%d" % i) for i in range(14)]
+        events += [dict(restart, vm="other", **change) for change in (dict(cluster="other"), dict(vcenter="lab"), dict(time=2501))]
+        r = ot.outage_timeline(events, [], dict(begin=500, end=4000, watch_runs=[run]))
+        self.assertEqual((r["numbers"]["affected_vms"], r["numbers"]["ha_restarted"]), (14, 14))
+        self.assertNotIn("other", str(r["draft"]["affected"]))
+        self.assertIn("restarted by HA on destination", str(r["draft"]["affected"]))
+
+    def test_recovered_outage_reconstructs_writer_ticket(self):
+        from site_filters import site_correlation_id
+        from vmware_watch_filters import vm_watch_health, vm_watch_conditions
+        host = dict(name="example-host", moid="host-1", vcenter="example-vc", connection="notResponding")
+        finding, = vm_watch_health({}, vm_watch_conditions(dict(hosts=[host])))[host["vcenter"]]["findings"]
+        ticket = dict(number="INC001", opened=1200, short="Example watch finding",
+                      correlation_id=site_correlation_id(finding["id"], host["vcenter"], finding["check"]))
+        down = dict(time=1000, type="HostConnectionLostEvent", host=host["name"], host_moid=host["moid"], vcenter=host["vcenter"])
+        r = ot.outage_timeline([down, dict(down, time=1500, type="HostConnectedEvent")], [ticket], dict(begin=800, end=2000, watch_runs=[watch_run(1100, [host], vc=host["vcenter"])]))
+        self.assertEqual((r["numbers"]["ticket"], r["numbers"]["signal_to_ticket_s"]), ("INC001", 200))
+        self.assertIn("INC001", str(r["draft"]["story"]))
+        self.assertTrue(r["draft"]["end"])
+
+    def test_outage_dates_ignore_unrelated_alarms_in_both_modes(self):
+        events, tickets_, opts = director_outage()
+        lab = dict(events[0], time="2026-11-19T22:00:00Z", key=12, type="AlarmStatusChangedEvent",
+                   vm="lab", host="lab-host", entity="lab", entity_type="vm", alarm="Snapshot consolidation needed", to="red")
+        for noise in (True, False):
+            r = ot.outage_timeline([lab] + events, tickets_, dict(opts, begin="2026-11-19T21:00:00Z", noise=noise))
+            self.assertEqual(r["draft"]["name"], "Storage outage cl-sitea-01 2026-11-20")
+            self.assertIn("23:09", r["draft"]["start"])
+            self.assertEqual(r["numbers"]["first_signal"], "2026-11-20T21:58:40Z")
+            self.assertEqual(r["numbers"]["signal_to_ticket_s"], 1940)
+            self.assertIn("22:58:40", r["draft"]["detection"][0])
+            self.assertNotIn("lab", str(r["draft"]["story"]))
+
+    def test_current_datastore_also_measures_the_historical_host_ticket(self):
+        from site_filters import site_correlation_id
+        from vmware_watch_filters import vm_watch_conditions, vm_watch_health
+        store = dict(name="ds-example", moid="ds-1", accessible=False, vcenter="vc", devices=["naa.1"])
+        host = dict(name="esx", moid="host-1", connection="notResponding", vcenter="vc")
+        cond = vm_watch_conditions(dict(datastores=[store]))
+        hc = vm_watch_conditions(dict(hosts=[host]))
+        finding, = vm_watch_health({}, hc)["vc"]["findings"]
+        ticket = dict(number="INC-HOST", opened=1100, correlation_id=site_correlation_id(finding["id"], "vc", finding["check"]))
+        apd = dict(type="esx.problem.storage.apd.start", time=1000, vcenter="vc", host="esx", message="Device naa.1")
+        down = dict(apd, type="HostConnectionLostEvent", time=1010)
+        r = ot.outage_timeline([apd, down, dict(down, type="HostConnectedEvent", time=3000)], [ticket],
+                               dict(begin=500, end=6000, triggers=cond, datastores=[store]))
+        self.assertEqual((r["numbers"]["ticket"], r["numbers"]["signal_to_ticket_s"]), ("INC-HOST", 100))
+        self.assertEqual(r["numbers"]["still_down"], ["ds-example"])
+        self.assertIn("INC-HOST", str(r["draft"]["detection"]))
+
+    def test_prior_day_heartbeat_cannot_date_the_outage(self):
+        events, tickets_, opts = director_outage()
+        lab = dict(type="AlarmStatusChangedEvent", time="2026-11-19T22:00:00Z", vcenter="example-lab",
+                   entity="example-vm", entity_type="vm", alarm="Virtual machine heartbeat", to="red")
+        for noise in (True, False):
+            r = ot.outage_timeline([lab] + events, tickets_, dict(opts, begin="2026-11-19T21:00:00Z", noise=noise))
+            self.assertEqual(r["draft"]["name"], "Storage outage cl-sitea-01 2026-11-20")
+            self.assertEqual(r["numbers"]["first_signal"], "2026-11-20T21:58:40Z")
+            self.assertEqual(r["numbers"]["affected_vms"], 18)
+            self.assertNotIn("example-vm", str(r["draft"]["story"]))
+            self.assertIn("example-vm", ot.outage_events_csv(r["sheet"]))
+
+    def test_two_apd_episodes_with_device_only_on_raises(self):
+        base = dict(vcenter="vc", host="esx", datastore="ds")
+        events = [dict(base, time=t, type="esx.clear.storage.apd.exit" if back else "esx.problem.storage.apd.start",
+                       message="" if back else "Device naa.1234")
+                  for t, back in ((1000, False), (2000, True), (8200, False), (9200, True))]
+        d = ot.outage_timeline(events, [], dict(begin=100, end=10000, watch_runs=[watch_run(1500, datastores=[dict(name="ds", moid="ds-1")])]))["draft"]
+        self.assertEqual(len(d["recovered"]), 2)
+        self.assertEqual([x["time"]["clock"] for x in d["story"]["rows"]], ["00:16:40", "00:33:20", "02:16:40", "02:33:20"])
+
+    def test_all_vm_signals_require_episode_and_placement(self):
+        apd = dict(type="esx.problem.storage.apd.start", time=1000, host="esx", datastore="ds", vcenter="vc")
+        clear = dict(apd, time=2000, type="esx.clear.storage.apd.exit")
+        for typ in ("VmPoweredOffEvent", "VmDasBeingResetEvent", "VmFailoverFailed",
+                    "AlarmStatusChangedEvent"):
+            event = dict(type=typ, time=1500, entity_type="vm", alarm="Virtual machine heartbeat", to="red")
+            def signal(name, **changes):
+                row = dict(event, vm=name, entity=name, vcenter="vc", host="esx", datastore="ds")
+                row.update(changes)
+                return row
+            events = [apd, clear, signal("affected"), signal("lab", vcenter="lab-vc"), signal("early", time=700),
+                      signal("late", time=2300), signal("other", host="other-host", datastore="other-store")]
+            with self.subTest(typ=typ):
+                r = ot.outage_timeline(events, [], dict(begin=500, end=3000, watch_runs=[watch_run(1200, datastores=[dict(name="ds", moid="ds-1")])]))
+                observed = typ in ("VmDasBeingResetEvent", "VmFailoverFailed")
+                self.assertEqual(r["numbers"]["affected_vms"], int(observed))
+                self.assertEqual("affected" in str(r["draft"]["affected"]), observed)
+                csv = ot.outage_events_csv(r["sheet"])
+                for name in ("lab", "early", "late", "other"):
+                    self.assertNotIn(name, str(r["draft"]["affected"]))
+                    self.assertIn(name, csv)
+
+    def test_ticket_ids_from_two_actual_watch_findings(self):
+        from site_filters import site_correlation_id
+        from vmware_watch_filters import vm_watch_conditions, vm_watch_health
+        events, tickets_, opts = director_outage()
+        vc = opts["triggers"][0]["vcenter"]
+        suspects = [dict(name="example-lab", moid="vm-lab", vcenter=vc, esxi_host="example-host", verdict="one-signal")]
+        store, = opts["datastores"]
+        path = dict(type="esx.problem.storage.apd.start", time="2026-11-20T22:10:00Z", key=100,
+                    vcenter=vc, host="esx-sitea-04.corp.example.mil", host_moid="host-4", message="Device naa.1234")
+        cond = vm_watch_conditions(dict(suspects=suspects, datastores=[dict(store, devices=["naa.1234"])], events=[path]))
+        ids = {f["id"]: site_correlation_id(f["id"], vc, f["check"]) for f in vm_watch_health({}, cond)[vc]["findings"]}
+        own = dict(tickets_[0], correlation_id=ids["vm-watch:datastore:ds-sitea-09"])
+        lab = dict(own, number="INC-LAB", correlation_id=ids["vm-watch:no-heartbeat:example-lab"], notes=[],
+                   opened="2026-11-20T22:01:00Z", description="ACT analysis:\nExample lab analysis.")
+        folded = next(fid for fid in ids if fid.startswith("vm-watch:storage:"))
+        for cid in (own["correlation_id"], ids[folded]):
+            r = ot.outage_timeline(events, [lab, dict(own, correlation_id=cid)], dict(opts, triggers=cond))
+            self.assertEqual((r["numbers"]["ticket"], r["numbers"]["signal_to_ticket_s"]), (own["number"], 1940))
+            self.assertNotIn("INC-LAB", str(r["draft"]["story"]))
+            self.assertIn(own["number"], r["draft"]["ticket_hint"])
+            self.assertNotIn("Example lab analysis", r["draft"]["ticket_hint"])
+            self.assertIn("INC-LAB", ot.outage_events_csv(r["sheet"]))
+
+    def test_alarm_clear_does_not_recover_infrastructure(self):
+        from incident_doc_filters import incident_aar_docx, incident_noc_docx, incident_record, incident_review_fill
+        data = [ev("01:00:00", "HostConnectionLostEvent", H),
+                ev("01:01:00", "esx.problem.storage.apd.start", H, datastore="ds"),
+                alarm("01:02:00", "Host connection and power state", "red", "green"),
+                alarm("01:08:00", "Host connection and power state", "green", "red"),
+                alarm("01:09:00", "Host example alarm", "yellow", "green"),
+                alarm("01:15:00", "Host example alarm", "green", "yellow")]
+        draft = reviewed(data, [], watch_runs=[watch_run(DAY + "01:05:00Z", [dict(name=H, moid="host-3")], vc="vc01.example.mil")])["draft"]
+        self.assertEqual(draft["recovered"], [])
+        noc = incident_noc_docx(draft)["blocks"]
+        aar = incident_aar_docx(incident_review_fill(incident_record({"kind": "aar"}), draft), {}, [], False, draft)["blocks"]
+        for blocks in (noc, aar):
+            lines = [b.get("text") for b in blocks if b.get("text", "").startswith("Recovered:")]
+            self.assertEqual(lines, ["Recovered: No recovery recorded."])
+
+    def test_two_apd_episodes_and_chart_boundaries(self):
+        base = dict(vcenter="vc", host="esx", datastore="ds")
+        events = [dict(base, time=t, type="esx.clear.storage.apd.exit" if back else "esx.problem.storage.apd.start")
+                  for t, back in ((1000, False), (2000, True), (8200, False), (9200, True))]
+        r = ot.outage_timeline(events, [], dict(begin=100, end=10000, watch_runs=[watch_run(1500, datastores=[dict(name="ds", moid="ds-1")])]))
+        story = r["draft"]["story"]
+        self.assertEqual([x["time"]["clock"] for x in story["rows"]], ["00:16:40", "00:33:20", "02:16:40", "02:33:20"])
+        self.assertEqual(story["window"]["end"]["clock"], "02:33:20")
+        self.assertEqual(story["rows"][1]["duration"], story["rows"][3]["duration"])
+        review = ot.outage_timeline(*director_outage())
+        for view in next(s["views"] for s in review["web_sections"] if s.get("kind") == "review_chart"):
+            start = view["window"]["x"]
+            marks = next(l["marks"] for l in view["lanes"] if l["key"] == "storage")
+            first_loss = next(m for m in marks if "Lost the connection to a storage device" in m["tip"])
+            self.assertEqual(first_loss["x"], start, view["key"])
+
+    def test_power_alone_does_not_identify_an_affected_vm(self):
+        apd = dict(type="esx.problem.storage.apd.start", time=1000, host="esx", datastore="ds", vcenter="vc1")
+        clear = dict(apd, time=2000, type="esx.clear.storage.apd.exit")
+        vm = dict(type="VmPoweredOffEvent", time=1500, host="esx", datastore="ds", vm="app", vcenter="vc1")
+        rows = [apd, clear, vm, dict(vm, time=900, vm="early"), dict(vm, time=2100, vm="late"),
+                dict(vm, vm="lab", vcenter="vc2", host="lab-host")]
+        r = ot.outage_timeline(rows, [], dict(begin=500, end=2500, watch_runs=[watch_run(1200, datastores=[dict(name="ds", moid="ds-1")], vc="vc1")]))
+        self.assertEqual((r["numbers"]["affected_vms"], r["numbers"]["affected_hosts"]), (0, 1))
+        for name in ("app", "early", "late", "lab"):
+            self.assertNotIn(name, str(r["draft"]["story"]))
+            self.assertIn(name, str(r["sheet"]["rows"]))
+
+    def test_watch_ticket_matches_the_finding_correlation_id(self):
+        from site_filters import site_correlation_id
+        from vmware_watch_filters import vm_watch_health
+        events, tickets_, opts = director_outage()
+        center = opts["triggers"][0]["vcenter"]
+        finding, = vm_watch_health({}, opts["triggers"])[center]["findings"]
+        cid = site_correlation_id(finding["id"], center, finding["check"], "example-watch")
+        own = dict(tickets_[0], correlation_id=cid, short="[example-watch] %s: datastore inaccessible" % center)
+        other = dict(own, correlation_id=site_correlation_id("other", center, "vm_watch", "example-watch"),
+                     number="INC-OTHER", opened="2026-11-20T22:11:00Z", resolved="2026-11-20T22:56:00Z")
+        r = ot.outage_timeline(events, [other, own], dict(opts, correlation_prefix="example-watch"))
+        self.assertEqual(r["numbers"]["ticket"], own["number"])
+        self.assertEqual(r["numbers"]["signal_to_ticket_s"], 1940)
+        self.assertIn(own["number"], str(r["draft"]["story"]))
+        self.assertNotIn(other["number"], str(r["draft"]["story"]))
+        self.assertEqual([row[0] for row in r["draft"]["tickets"]], [own["number"]])
+        self.assertIn("not resolved", next(b["note"] for b in r["boxes"] if b["label"] == "Signal to ticket"))
+        self.assertIn(other["number"], str(r["sheet"]["rows"]))
+
+    def test_sparse_outside_noise_only_during_outage(self):
+        host = dict(type="HostConnectionLostEvent", host="example-host", time=1000, vcenter="vc")
+        alarm = dict(type="AlarmStatusChangedEvent", entity="example-vm", entity_type="vm", alarm="CPU usage", to="red", time=1500)
+        r = ot.outage_timeline([host, alarm, dict(host, type="HostConnectedEvent", time=4600)], [], dict(begin=100, end=8000, watch_runs=[watch_run(1500, [dict(name="example-host", moid="host-1")])]))
+        row, = r["draft"]["noise"]
+        self.assertEqual(row[2], 1)
+        self.assertIn("1 during the outage, 0 outside", row[-1])
+        self.assertNotIn("ran all evening", row[-1])
+
+    def test_scheduled_flap_with_partial_moid(self):
+        # 1.116.0 cut: a scheduled run (review false) is 1.118.4's time line, word for word (tests/test_watch_frozen.py)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ot1184", os.path.join(REPO, "plugins", "module_utils", "outage_timeline_1184.py"))
+        old = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(old)
+        down = ev("01:00:00", "HostConnectionLostEvent", H, host_moid="host-1")
+        up = ev("01:00:40", "HostConnectedEvent", H)
+        other = dict(up, host_moid="host-2")
+        for evs in ([down, up], [down, other, up]):
+            got = made(copy.deepcopy(evs), [], review=False)
+            self.assertEqual(got, old.outage_timeline(copy.deepcopy(evs), [], dict(OPTS, review=False)))
+        self.assertEqual(whats(made([down, up], [], review=False)), ["Host not responding, back after 40 s"])
+
+    def test_membership_and_watch_vm_states(self):
+        from vmware_watch_filters import vm_watch_conditions
+        members = [dict(name="app%d" % i, moid="vm-%d" % i) for i in range(4)]
+        ds = dict(name="example-store", moid="ds-1", vcenter="vc", accessible=False, vms=members)
+        def vm(i, **fields):
+            return dict(members[i], vcenter="vc", datastores=[ds["name"]], datastore_moids=[ds["moid"]], **fields)
+        cond = vm_watch_conditions(dict(datastores=[ds], vms_lost=[vm(1, connection="invalid")],
+                                        suspects=[vm(2, verdict="hung"), vm(3, verdict="one-signal")]))
+        r = ot.outage_timeline([], [], dict(begin=1000, end=2000, triggers=cond))
+        items = next(i["items"] for i in r["issues"] if i["kind"] == "ds")
+        self.assertEqual({i["name"]: i["what"] for i in items},
+                         {"app0": "on the lost datastore (state not read)", "app1": "invalid", "app2": "hung", "app3": "no heartbeat"})
+        self.assertEqual(len(r["draft"]["now"]), len(cond))
+        h = dict(name="example-host", moid="host-1", connection="notResponding", vcenter="vc", vms=members)
+        cond = vm_watch_conditions(dict(hosts=[h]))
+        r = ot.outage_timeline([], [], dict(begin=1000, end=2000, hosts=[h], triggers=cond))
+        self.assertEqual(r["numbers"]["affected_vms"], 4)
+        self.assertIn("on the down host (state not read)", str(r["draft"]["affected"]))
+
+    def test_same_names_on_different_inventory_objects(self):
+        from vmware_watch_filters import vm_watch_conditions, vm_watch_health
+        vm = dict(name="app", moid="vm-1", vcenter="vc", datastore_moids=["ds-1"], datastores=["DS"],
+                  esxi_host="esx", host_moid="host-1", power="poweredOn")
+        stores = [dict(name="DS", moid="ds-1", accessible=False, vcenter="vc", vms=[vm]),
+                  dict(name="DS", moid="ds-2", accessible=True, vcenter="vc")]
+        data = dict(datastores=stores)
+        cond = vm_watch_conditions(data)
+        result = ot.outage_timeline([], [], dict(begin=100, end=200, triggers=cond, datastores=stores))
+        self.assertEqual(result["numbers"]["affected_vms"], 1)
+        self.assertEqual(result["draft"]["went"][0][0], "DS [ds-1]")
+        finding, = vm_watch_health(data, cond)["vc"]["findings"]
+        self.assertEqual(finding["id"], "vm-watch:datastore:DS")             # 1.112.4c: a datastore ticket is by name
+        self.assertIn("app", str(result["draft"]["affected"]))
+        self.assertNotIn("vm-2", finding["summary"])
+
+    def test_noise_opt_out_and_unmatched_green(self):
+        rows = [dict(type="AlarmStatusChangedEvent", alarm="Guest heartbeat", vm="db01", entity="db01",
+                     entity_type="vm", time=t, to=c) for t, c in ((1010, "green"), (1020, "red"), (1500, "green"), (1510, "green"))]
+        opts = dict(begin=1000, end=2000)
+        r = ot.outage_timeline(rows, [], opts)
+        self.assertEqual(sum(row[2] for row in r["draft"]["noise"]), 2)
+        self.assertEqual(ot.outage_timeline(rows, [], dict(opts, noise=False))["numbers"]["full_events"], 4)
+
+    def test_noise_rate_boundary(self):
+        origin = dict(type="HostConnectionLostEvent", time=1000, host="esx01", vcenter="vc")
+        clear = dict(origin, type="HostConnectedEvent", time=1600)
+        for count, verdict in ((9, "not part of the outage"), (10, "same time, not a cause")):
+            usage = [dict(type="AlarmStatusChangedEvent", vm="other", entity="other", entity_type="vm", alarm="CPU usage",
+                          time=1050 + i, to="yellow") for i in range(count)]
+            d = ot.outage_timeline([origin, clear] + usage, [], dict(begin=500, end=2500, watch_runs=[watch_run(1100, [dict(name="esx01", moid="host-1")])]))["draft"]
+            self.assertEqual(d["noise"][0][2], count)
+            self.assertIn(verdict, d["noise"][0][-1])
+
+    def test_issue_rows_in_each_look(self):
+        from test_report_fit import render
+        events, tickets_, opts = director_outage()
+        doc = ot.outage_timeline_doc(WATCH, ot.outage_timeline(events, tickets_, opts), True, True)
+        for look in ("atlas", "brief", "ops"):
+            html = render(look, doc)
+            self.assertIn("Issues by type", html)
+            self.assertIn('<legend class="vh">Filter issues by type</legend>', html)
+            for kind in ("all", "ds", "vm", "host"):
+                self.assertIn('type="radio" id="ibk-' + kind + '"', html)
+                self.assertIn('for="ibk-' + kind + '"', html)
+            self.assertNotIn('id="ibk-net"', html)
+            self.assertNotIn('id="ibk-dc"', html)
+            self.assertIn('<details class="ibk-row st-down" open>', html)
+            self.assertIn("on the lost datastore (state not read)", html)
+            self.assertIn("#ibk-vm:focus-visible", html)
+            self.assertIn(".ibk-kind{display:block!important}", html)
+
+    def test_cluster_needs_all_members_down_together(self):
+        hosts = [dict(name=name, cluster="SITEA", moid="host-" + name, vcenter="vc") for name in ("esx01", "esx02")]
+        # each host recorded by the watch while it was down (esx01 lost at 200, esx02 at 400): consistent with the events
+        opts = dict(begin=100, end=5000, hosts=hosts, low_seconds=0, watch_runs=[watch_run(250, hosts[:1]), watch_run(450, hosts[1:])])
+        data = [dict(type="HostConnectionLostEvent", time=t, host=h["name"], vcenter="vc") for h, t in zip(hosts, (200, 400))]
+        for at, overlap in ((300, False), (600, True)):
+            r = ot.outage_timeline(data + [dict(type="HostConnectedEvent", time=at, host="esx01", vcenter="vc")], [], opts)
+            self.assertEqual("Cluster SITEA lost all hosts" in r["draft"]["went_note"], overlap)
+
+class ReviewEmailAcceptance(unittest.TestCase):
+    """The 52-hour review email, reconstructed entirely from placeholder events."""
+
+    @classmethod
+    def setUpClass(cls):
+        from datetime import datetime, timedelta
+
+        events, tickets, opts = director_outage()
+        begin = datetime.strptime(opts["begin"], "%Y-%m-%dT%H:%M:%SZ")
+        end = (begin + timedelta(hours=52)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        opts.update(review=True, end=end, read_at=end, appendix_max=10)
+        location = {k: events[0][k] for k in ("vcenter", "cluster", "datacenter")}
+        host = "esx-sitea-04.corp.example.mil"
+        next_key = max(e["key"] for e in events) + 1
+
+        def add(offset, typ, **fields):
+            nonlocal next_key
+            events.append(dict(location, time=(begin + offset).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                               key=next_key, type=typ, host=host, **fields))
+            next_key += 1
+
+        add(timedelta(minutes=1), "HostConnectionLostEvent")
+        add(timedelta(minutes=1, seconds=78), "HostConnectedEvent")
+        # Memory keeps changing after the storage recoveries, right into the final hour.
+        for hours in range(9, 52, 6):
+            for minutes, was, to in ((0, "green", "yellow"), (20, "yellow", "green")):
+                add(timedelta(hours=hours, minutes=minutes), "AlarmStatusChangedEvent", vm="sitea-vm10",
+                    entity="sitea-vm10", entity_type="vm", alarm="Virtual machine memory usage", to=to, **{"from": was})
+
+        cls.events, cls.tickets, cls.opts = events, tickets, opts
+        cls.review = ot.outage_timeline(events, tickets, opts)
+        watch = dict(WATCH, title="VM outage watch: ds-sitea-09 is not accessible", status="critical")
+        cls.email = ot.outage_timeline_doc(watch, cls.review, web=False, review=True)
+
+    def test_subject_first_signal_and_recovery(self):
+        from head_of import head
+
+        r, email = self.review, self.email
+        self.assertEqual(head(email)["subject"], "Outage review: Storage outage, cluster cl-sitea-01")
+        self.assertTrue(email["title"].startswith("Storage outage - "), email["title"])
+        self.assertEqual(r["draft"]["name"], "Storage outage cl-sitea-01 2026-11-20")
+        flap, = [row for row in r["draft"]["noise"] if row[0] == "Host not responding"]
+        self.assertEqual(flap[2:4], [2, "20 Nov 20:01:00 CET to 20 Nov 20:02:18 CET"])
+        cards = next(s["cards"] for s in email["sections"] if s["title"] == "The outage in short")
+        by_chip = {card["chip"]: card for card in cards}
+        self.assertIn("Storage path redundancy degraded", by_chip["First signal"]["title"])
+        self.assertEqual(r["numbers"]["first_signal"], "2026-11-20T21:58:40Z")
+        self.assertEqual(by_chip["Back to normal"]["meta"], "not seen")
+        self.assertEqual(r["numbers"]["back"], "")
+
+    def test_plain_text_mail_has_the_dated_chain(self):
+        from site_filters import report_text
+        body = report_text(self.email).split("The outage, in order", 1)[1].split("1. What went down", 1)[0]
+        story = self.review["draft"]["story"]
+        self.assertIn("Outage window from " + story["window"]["start"]["tip"], body)
+        self.assertIn(story["window"]["end"]["tip"], body)
+        for row in story["rows"]:
+            self.assertIn(row["time"]["tip"], body)
+            self.assertIn(row["text"], body)
+        self.assertIn("Still down at the review", body)
+
+    def test_four_parts_and_current_triggers(self):
+        went, affected, down, recovered = self.email["sections"][1:5]
+        self.assertEqual([s["title"] for s in (went, affected, down, recovered)],
+                         ["1. What went down", "2. What it affected: 18 VMs", "3. Down now", "4. Recovered"])
+        trigger, = self.opts["triggers"]
+        datastore = "Datastore " + trigger["object"]
+        self.assertCountEqual([row[1] for row in down["rows"]],
+                              [datastore])
+        self.assertIn("ds-sitea-07", [row[0] for row in recovered["rows"]])
+        self.assertNotIn("usage", str(recovered["rows"]).lower())
+        # Same historical losses, but a live read with no datastore trigger.
+        cleared = ot.outage_timeline(self.events, self.tickets, dict(self.opts, triggers=[]))
+        self.assertNotIn(datastore, [row[1] for row in cleared["draft"]["now"]])
+
+    def test_key_events_and_word_appendix(self):
+        import incident_doc_filters as docs
+
+        draft = docs.incident_review_draft(self.review["draft"])
+        record = docs.incident_review_fill(docs.incident_record({"kind": "aar"}), draft)
+        blocks = docs.incident_aar_docx(record, {}, [], False, draft)["blocks"]
+        appendix = next(i for i, b in enumerate(blocks) if b.get("text", "").startswith("Appendix A"))
+        count = sum(len(b["rows"]) for b in blocks[appendix:] if b.get("columns") == [draft["time_column"], "What", "Objects", "Level"])
+        self.assertGreater(draft["group_total"], self.opts["appendix_max"])
+        self.assertEqual(count, self.opts["appendix_max"])
+
+    def test_chain_and_date_axis_in_the_delivered_looks(self):
+        from test_report_fit import EmailTiles, render
+        from test_report_web import rw
+
+        story = self.review["draft"]["story"]
+        rows = story["rows"]
+        self.assertEqual(len(rows), 15)
+        self.assertEqual([r["divider"] for r in rows if r["divider"]], ["Fri 20 Nov", "Sat 21 Nov", "Mon 23 Nov - the review"])
+        inside = [r for r in rows if r["window"]]
+        self.assertEqual((inside[0]["time"]["clock"], inside[-1]["time"]["clock"]), ("23:09:55", "00:12:30"))
+        self.assertEqual(story["window"]["duration"], "63 min")
+        self.assertEqual(inside[0]["time"]["tip"], "Fri 20 Nov 2026, 23:09:55 CET (22:09:55 UTC)")
+        self.assertEqual(rows[-1]["level"], "down")
+        self.assertIn("Still down at the review: ds-sitea-09", rows[-1]["text"])
+        self.assertIn("sitea-app06 to -app14 (9)", [r["objects"] for r in rows])
+        self.assertFalse(any("usage" in r["text"].lower() or r["text"].startswith(("Alarm", "Work note")) for r in rows))
+        self.assertEqual(self.email["sections"][0]["story"], story)
+        env = EmailTiles()._env()
+        for template in ("report", "report_command", "report_glass", "report_portal"):
+            mail = env.get_template(template + ".html.j2").render(_report=self.email, _email_footer="", report_email_header_text="Review")
+            window = mail.split('<table class="st-win"', 1)[1].split("</table>", 1)[0]
+            self.assertEqual(window.count('class="st-ev '), len(inside), template)
+            self.assertEqual(re.findall(r'<b>(\d\d:\d\d:\d\d) &nbsp;', window), [r["time"]["clock"] for r in inside])
+            self.assertIn("border:2px solid #b42318", window)
+            self.assertIn('class="st-ev lv-ok"', window)
+            self.assertNotIn("Still down at the review", window)
+        doc = ot.outage_timeline_doc(WATCH, self.review, True, True)
+        for look in ("atlas", "brief", "ops"):
+            page = render(look, doc)
+            published, css_name, css = rw.review_page_assets(page, "reviews/report.html")
+            self.assertIn('href="../' + css_name + '"', published)
+            self.assertIn(".st-win{", css)
+            self.assertNotRegex(published, r"<style\b|<script(?![^>]*\bsrc=)[^>]*>|<[^>]+\sstyle=")
+            body = page.split('<ol class="story">', 1)[1].split("</details>", 1)[0]
+            window = body.split('<li class="st-win">', 1)[1].split("</ol></li>", 1)[0]
+            self.assertEqual(window.count('class="st-ev '), len(inside))
+            self.assertIn('class="st-ev lv-ok"', window)
+            self.assertNotIn("Still down at the review", window)
+            times = re.findall("<time [^>]+>", body)
+            self.assertGreaterEqual(len(times), len(rows) + 2)
+            for tag in times:
+                for attr in ('tabindex="0"', 'datetime="', 'data-tip="'):
+                    self.assertIn(attr, tag)
+            chart = page.split('<div class="review-chart">', 1)[1].split("</details>", 1)[0]
+            self.assertEqual(chart.count('type="radio"'), 2)
+            self.assertIn('id="tlv-out" class="ibk-r" checked', chart)
+            for gone in ('type="checkbox"', 'ot-kind', 'ot-rep', 'ot-over', 'style=', '<script'):
+                self.assertNotIn(gone, chart)
+            out, all_events = chart.split('<div class="tl-v v-all">')
+            self.assertNotIn('class="ring"', out)
+            self.assertNotIn('lt-noise', out)
+            self.assertIn('class="ring"', all_events)
+            self.assertIn('class="nb rel"', all_events)
+            self.assertIn('class="mc"', all_events)
+            for view in (out, all_events):
+                self.assertIn('class="dayline"', view)
+                self.assertIn('class="obox"', view)
+                self.assertIn('class="obox still"', view)
+                self.assertIn("Fri 20 Nov</text>", view)
+                self.assertIn("Sat 21 Nov</text>", view)
+            self.assertIn("Sun 22 Nov</text>", all_events)
+
+    def test_everything_axis_starts_on_opening_day(self):
+        views = next(s["views"] for s in self.review["web_sections"] if s.get("kind") == "review_chart")
+        ticks = next(v["ticks"] for v in views if v["key"] == "all")
+        self.assertEqual((ticks[0]["x"], ticks[0]["date"], ticks[0]["clock"]), (0, "Fri 20 Nov", "20:00"))
+        self.assertTrue(all(b["x"] - a["x"] >= 5 for a, b in zip(ticks, ticks[1:])))
+
+    def test_published_story_styles_in_all_themes(self):
+        from html.parser import HTMLParser
+        from pathlib import Path
+        import tempfile
+        from test_report_fit import EmailTiles, render
+        from test_report_web import run_module, web_args
+
+        class InlineStyles(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                if tag == "style" or "style" in dict(attrs):
+                    raise AssertionError("inline style on " + tag)
+
+        doc = ot.outage_timeline_doc(WATCH, self.review, True, True)
+        env = EmailTiles()._env()
+        for look in ("standard", "command", "portal", "glass", "atlas", "brief", "ops"):
+            with self.subTest(look=look), tempfile.TemporaryDirectory() as dest:
+                if look in ("atlas", "brief", "ops"):
+                    html = render(look, doc)
+                else:
+                    template = "report" if look == "standard" else "report_" + look
+                    html = env.get_template(template + ".html.j2").render(_report=doc, _email_footer="", report_email_header_text="Review")
+                args = web_args(dest, html=html, theme=look)
+                result = run_module(args)
+                self.assertTrue(result.get("published"), result)
+                for rel in (args["files"]["page"], args["files"]["latest"]):
+                    page = Path(dest) / rel
+                    published = page.read_text()
+                    InlineStyles().feed(published)
+                    asset = re.search(r'<link rel="stylesheet" href="([^"]*site-review\.[^"]+\.css)">', published)
+                    self.assertIsNotNone(asset)
+                    css = (page.parent / asset[1]).read_text()
+                    self.assertIn(".st-win{" if look in ("atlas", "brief", "ops") else "border:2px solid #b42318", css)
+
+    def test_patterns_and_clustered_mark_evidence(self):
+        cards = self.review["draft"]["patterns"]
+        self.assertEqual([c["title"].split(" (")[0] for c in cards], [
+            "Storage path redundancy lost", "All paths down", "Datastore not accessible",
+            "Host not responding or disconnected", "HA host failure or isolation", "HA reset a VM",
+            "Permanent device loss", "HA could not restart a VM"])
+        self.assertEqual(cards[2]["escalate"], "your storage team")
+        self.assertTrue(all(3 <= len(c["checks"]) <= 5 and c["causes"] and c["when"] and c["seen"] for c in cards))
+        changed = ot.outage_timeline(self.events, self.tickets, dict(self.opts, outage_escalate_storage="Storage duty (placeholder)"))
+        self.assertEqual(changed["draft"]["patterns"][2]["escalate"], "Storage duty (placeholder)")
+        chart = next(s for s in self.review["web_sections"] if s.get("kind") == "review_chart")
+        self.assertTrue(chart["collapsed"])
+        for view in chart["views"]:
+            for lane in view["lanes"]:
+                for mark in lane["marks"]:
+                    lines = mark["tip"].splitlines()
+                    self.assertRegex(lines[0], r"\d{4}, \d\d:\d\d:\d\d CET \(\d\d:\d\d:\d\d UTC\)")
+                    if lane["key"] != "noise":
+                        self.assertEqual(len(lines) - 1, mark["count"])
+        for name, expected in (("Virtual machine is orphaned", "VM inaccessible or orphaned"),
+                               ("Datastore usage on disk", "Datastore capacity threshold"),
+                               ("Time until datastore full", "Datastore capacity threshold"),
+                               ("Virtual machine heartbeat", "VM heartbeat alarm raised"),
+                               ("VM snapshot consolidation needed", "Snapshot consolidation"),
+                               ("Network uplink redundancy lost", "Network uplink"),
+                               ("Host certificate status", "NTP or certificate")):
+            event, = ot._vcenter_events([dict(time=1200, type="AlarmStatusChangedEvent", alarm=name, entity="object-01", to="red")])
+            cards = ot._pattern_cards([event], {}, {}, event["t"], lambda t: t)
+            self.assertEqual(len(cards), 1)
+            self.assertTrue(cards[0]["title"].startswith(expected), name)
+
+    def test_confirmed_hang_and_exhaustion_cards(self):
+        from vmware_watch_filters import vm_watch_conditions
+        ds = dict(name="example-ds", moid="ds-1", accessible=False, vcenter="vc")
+        vm = dict(name="example-vm", moid="vm-1", datastore_moids=["ds-1"], verdict="hung", vcenter="vc")
+        cond = vm_watch_conditions(dict(datastores=[ds], suspects=[vm]))
+        space = dict(type="DatastoreOutOfSpaceEvent", time=1200, datastore=ds["name"], vcenter="vc")
+        apd = dict(space, type="esx.problem.storage.apd.start", time=1100)
+        review = ot.outage_timeline([apd, space], [], dict(begin=1000, end=2000, triggers=cond, datastores=[ds]))
+        titles = [c["title"] for c in review["draft"]["patterns"]]
+        self.assertIn("VM hung (no heartbeat, no network answer)", titles)
+        self.assertIn("Datastore full / thin provisioning out of space", titles)
+
+    def test_every_source_event_in_workbook_and_csv(self):
+        import csv
+        import io
+
+        sheet = next(s for s in self.review["sheets"] if s["name"] == "Timeline")
+        rows = [dict(zip(sheet["columns"], row)) for row in sheet["rows"]]
+        self.assertEqual(len(rows), 514)
+        self.assertEqual(sum("usage" in e.get("alarm", "") for e in self.events), 410)
+        self.assertEqual(rows[-1]["What happened"], "Alarm back to green: Virtual machine memory usage")
+        self.assertCountEqual([row["Event key"] for row in rows if row["vCenter"]], [e["key"] for e in self.events])
+        ticket, = self.tickets
+        ticket_rows = [(row["Time (UTC)"], row["Source"]) for row in rows if row["Ticket"] == ticket["number"]]
+        expected = [(ticket["opened"], "ServiceNow"), (ticket["opened"], "ACT")] + [(t, "ServiceNow") for t, _ in ticket["notes"]]
+        self.assertCountEqual(ticket_rows, [(t.replace("T", " ").rstrip("Z"), source) for t, source in expected])
+        exported = list(csv.reader(io.StringIO(ot.outage_events_csv(self.review["sheet"]))))
+        self.assertEqual(exported[0], sheet["columns"])
+        self.assertEqual(exported[1:], [[str(value) for value in row] for row in sheet["rows"]])
+
+
 class Parts(unittest.TestCase):
     def test_a_length_of_time(self):
         self.assertEqual([ot._span(s) for s in (0, 40, 89, 90, 2732, 7200, 7500, 100000, 3 * 86400 + 4 * 3600)],
@@ -158,7 +1143,7 @@ class Parts(unittest.TestCase):
         node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign) and n.targets[0].id == "EVENT_TYPES")
         types = ast.literal_eval(node.value)
         self.assertEqual(len(types), len(set(types)))
-        self.assertEqual(sorted(types), sorted(ot.TYPES))
+        self.assertEqual(set(types), set(ot.TYPES) - {"VmPoweredOffEvent", "VmPoweredOnEvent", "esx.problem.vmfs.nfs.volume.no.space"})
         for typ, (lane, level, label, kind, role) in ot.TYPES.items():
             self.assertIn(lane, ot.LANE, typ)
             self.assertIn(level, ot.WORD, typ)
@@ -191,51 +1176,47 @@ class ClearedBeforeTheReview(unittest.TestCase):
                 vm_alarm("21:05:00", self.CPU, "green", "red", YDAY), vm_alarm("21:07:00", self.MEM, "green", "yellow", YDAY)]
 
     def test_a_raise_before_the_window_is_shown_with_its_clear(self):
-        r = made(self.raised_before(), [], min_seconds=300)
-        self.assertEqual(len(whats(r)), 4)
-        self.assertEqual(whats(r)[0], "Alarm red: " + self.CPU)                        # the raise first
+        r = reviewed(self.raised_before(), [], min_seconds=300)
+        self.assertEqual(len(r["sheet"]["rows"]), 4)
+        self.assertEqual(r["sheet"]["rows"][0][5], "Alarm red: " + self.CPU)
         self.assertIn("2026-11-11 21:10 CET", r["window"])                              # the window starts at the first raise (20:10 UTC)
         self.assertTrue(r["cleared_before_review"])
         self.assertEqual(r["alarm_window"], ["2026-11-11T20:10:00Z", "2026-11-11T21:07:00Z"])
 
-    def test_the_subject_is_the_vm_and_the_events_are_related(self):
-        r = made(self.raised_before(), [])
-        web = next(s for s in r["web_sections"] if s.get("title") == "The events")
-        self.assertEqual(web["columns"][-1], "Related")                                 # a subject was worked out
-        self.assertEqual({row[-1] for row in web["rows"]}, {"Related"})
-        chart = next(x for x in r["web_sections"] if x.get("outage"))["outage"]
-        self.assertIn("web07", chart["subject"])
-        self.assertNotIn("could not be worked out", chart["related_note"])
+    def test_usage_alone_has_no_outage_subject(self):
+        r = reviewed(self.raised_before(), [])
+        self.assertEqual(r["numbers"]["affected_vms"], 0)
+        self.assertEqual(r["act_in"]["events"], [])
+        self.assertNotIn(VMX, r["title"])
+        noise = next(s for s in r["sections"] if s["title"].startswith("Noise"))
+        self.assertEqual(len(noise["lines"]), 2)
+        self.assertTrue(all("all back to normal" in line for line in noise["lines"]))
 
-    def test_the_title_the_tile_the_band_and_the_card(self):
-        r = made(self.raised_before(), [])
-        self.assertTrue(r["title"].startswith("Outage review: cleared before the review - web07"), r["title"])
-        tile = r["boxes"][2]
-        self.assertEqual((tile["label"], tile["value"], tile["status"]), ("Outage", "Cleared before the review", "ok"))
-        self.assertIn("web07", tile["note"])
+    def test_the_title_the_tile_and_the_card(self):
+        r = reviewed(self.raised_before(), [])
+        self.assertIn("folded alarms", r["title"])
+        tile = r["boxes"][-1]
+        self.assertEqual((tile["label"], tile["value"], tile["status"]), ("Noise", 4, "info"))
         self.assertEqual(r["cards"][0]["chip"], "Cleared before the review")
-        bands = next(x for x in r["web_sections"] if x.get("outage"))["outage"]["bands"]
-        self.assertEqual(len(bands), 1)
-        self.assertIn("alarms raised", bands[0]["text"])
 
     def test_a_raise_before_the_window_without_a_clear_in_it_is_left_out(self):
         e = [vm_alarm("20:10:00", self.CPU, "red", "green", YDAY)]                      # still raised: the host events are the window's
-        r = made(e + events(), [])
-        self.assertNotIn("Alarm red: " + self.CPU, whats(r))
+        r = reviewed(e + events(), [])
+        self.assertNotIn("Alarm red: " + self.CPU, [row[5] for row in r["sheet"]["rows"]])
         self.assertFalse(r["cleared_before_review"])                                    # the host went down: that story is the window's
         self.assertIn("2026-11-11 21:45 CET", r["window"])                              # the window as asked
 
     def test_other_problems_are_the_windows_own_story(self):
         # a host that flapped, an HA restart, a storage problem next to a cleared usage alarm: not "cleared before the review"
-        r = made(self.raised_before() + [ev("01:30:00", "esx.problem.storage.apd.start", H, msg="all paths down")], [])
+        r = reviewed(self.raised_before() + [ev("01:30:00", "esx.problem.storage.apd.start", H, msg="all paths down")], [])
         self.assertFalse(r["cleared_before_review"])
-        r = made(self.raised_before() + [ev("01:30:00", "HostConnectionLostEvent", H, msg="lost"), ev("01:30:01", "HostConnectedEvent", H, msg="back")], [], low_seconds=120)
+        r = reviewed(self.raised_before() + [ev("01:30:00", "HostConnectionLostEvent", H, msg="lost"), ev("01:30:01", "HostConnectedEvent", H, msg="back")], [], low_seconds=120)
         self.assertFalse(r["cleared_before_review"])
 
     def test_the_watchs_own_findings_come_first(self):
         # a hung VM now and a cleared CPU blip: the review is not "cleared before the review" and nothing is skipped
         e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:03:00", self.CPU, "green", "red", YDAY)]
-        r = made(e, [], skip_blips=True, triggers=[{"severity": "critical", "summary": "VM web09 is hung: no heartbeat"}])
+        r = reviewed(e, [], skip_blips=True, triggers=[{"severity": "critical", "summary": "VM web09 is hung: no heartbeat"}])
         self.assertFalse(r["cleared_before_review"])
         self.assertFalse(r["blip"])
         self.assertFalse(r["skip"])
@@ -245,7 +1226,7 @@ class ClearedBeforeTheReview(unittest.TestCase):
         # yellow for hours, red a minute before the window, cleared in it: not a blip
         e = [vm_alarm("17:00:00", self.CPU, "yellow", "green", YDAY), vm_alarm("20:44:00", self.CPU, "red", "yellow", YDAY),
              vm_alarm("20:50:00", self.CPU, "green", "red", YDAY)]
-        r = made(e, [], skip_blips=True)
+        r = reviewed(e, [], skip_blips=True)
         self.assertTrue(r["cleared_before_review"])
         self.assertFalse(r["blip"])
         self.assertEqual(r["alarm_window"][0], "2026-11-11T17:00:00Z")
@@ -254,87 +1235,78 @@ class ClearedBeforeTheReview(unittest.TestCase):
     def test_a_clear_without_its_raise_is_never_a_blip(self):
         e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:01:00", self.CPU, "green", "red", YDAY),
              alarm("00:10:00", "Host storage path redundancy", "green", "yellow")]            # its raise was not read
-        r = made(e, [], skip_blips=True)
+        r = reviewed(e, [], skip_blips=True)
         self.assertFalse(r["blip"])
         self.assertFalse(r["skip"])
 
-    def test_only_cpu_and_memory_usage_alarms_are_usage(self):
+    def test_cpu_memory_and_disk_usage_alarms_are_usage(self):
         for name, usage in (("Virtual machine CPU usage", True), ("Host memory usage", True), ("VM memory utilization", True),
-                            ("Host memory status", False), ("Virtual machine error", False), ("Datastore usage on disk", False)):
+                            ("Host memory status", False), ("Virtual machine error", False), ("Datastore usage on disk", True)):
             e = [vm_alarm("22:00:00", name, "red", "green", YDAY), vm_alarm("22:01:00", name, "green", "red", YDAY)]
-            r = made(e, [], skip_blips=True)
+            r = reviewed(e, [], skip_blips=True)
             self.assertEqual(r["blip"], usage, name)
             self.assertEqual(r["skip"], usage, name)
 
     def test_without_the_raise_the_clear_is_all_there_is(self):
         # what 1.79.11 and the read without a lookback gave: only the clears
-        r = made([vm_alarm("21:05:00", self.CPU, "green", "red", YDAY)], [])
+        r = reviewed([vm_alarm("21:05:00", self.CPU, "green", "red", YDAY)], [])
         self.assertFalse(r["cleared_before_review"])
-        self.assertIn("could not be worked out", next(x for x in r["web_sections"] if x.get("outage"))["outage"]["related_note"])
+        self.assertEqual(r["act_in"]["events"], [])
 
     def test_everything_cleared_inside_the_window_too(self):
         e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:40:00", self.CPU, "green", "red", YDAY)]
-        r = made(e, [])
+        r = reviewed(e, [])
         self.assertTrue(r["cleared_before_review"])
-        self.assertIn("web07", r["title"])
+        self.assertNotIn("web07", r["title"])
         self.assertFalse(r["blip"])                                                     # 40 minutes is not a blip
 
     def test_only_usage_alarms_that_cleared_fast_is_a_blip(self):
         e = [vm_alarm("22:00:00", self.CPU, "red", "green", YDAY), vm_alarm("22:03:00", self.CPU, "green", "red", YDAY)]
-        r = made(e, [], min_seconds=300)
+        r = reviewed(e, [], min_seconds=300)
         self.assertTrue(r["blip"])
         self.assertIn("a short usage blip, Low", r["title"])
-        self.assertIn("blip (Low)", r["boxes"][2]["note"])
+        self.assertEqual(r["boxes"][-1]["value"], 2)
         self.assertFalse(r["skip"])                                                     # sent anyway by default
-        self.assertTrue(made(e, [], min_seconds=300, skip_blips=True)["skip"])          # vm_watch_review_skip_blips
-        self.assertFalse(made(e, [], min_seconds=60, skip_blips=True)["skip"])          # three minutes is longer than 60 s: no blip
+        self.assertTrue(reviewed(e, [], min_seconds=300, skip_blips=True)["skip"])          # vm_watch_review_skip_blips
+        self.assertFalse(reviewed(e, [], min_seconds=60, skip_blips=True)["skip"])          # three minutes is longer than 60 s: no blip
+        partial = dict(name="example", ok=True, error="", incomplete="web07 (recentTask not read)")
+        self.assertFalse(reviewed(e, [], min_seconds=300, skip_blips=True, vcenters=[partial])["skip"])
         # a host alarm is no usage alarm
         h = [alarm("22:00:00", "Host connection and power state", "red", "green"), alarm("22:03:00", "Host connection and power state", "green", "red")]
-        self.assertFalse(made(h, [], skip_blips=True)["skip"])
+        self.assertFalse(reviewed(h, [], skip_blips=True)["skip"])
 
     def test_what_triggered_it_is_said_always(self):
         trig = [{"severity": "critical", "summary": "VM web07 is hung: no heartbeat"}, {"severity": "warning", "summary": "datastore ds1 is slow"}]
-        r = made(self.raised_before(), [], triggers=trig)
+        r = reviewed(self.raised_before(), [], triggers=trig)
         self.assertEqual(r["trigger"][0], "CRITICAL: VM web07 is hung: no heartbeat")
         self.assertEqual(r["trigger_line"], "Triggered by: CRITICAL: VM web07 is hung: no heartbeat (and 1 more)")
         self.assertEqual(r["lines"][1][:13], "Triggered by:")
         d = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, False, True)
         self.assertTrue(d["subtitle"].startswith("Triggered by: CRITICAL: VM web07 is hung"))
         # no conditions, alarms that had cleared: said so, with the VM and the times
-        r = made(self.raised_before(), [])
-        self.assertTrue(r["trigger"][0].startswith("Nothing was down when the watch read vCenter"))
-        self.assertTrue(any("web07" in t and "raised" in t and "cleared" in t for t in r["trigger"][1:]), r["trigger"])
+        r = reviewed(self.raised_before(), [])
+        self.assertIn("counted below", r["trigger"][0])
         # nothing found, asked for by hand
-        r = made([], [])
+        r = reviewed([], [])
         self.assertTrue(r["trigger"][0].startswith("Nothing triggered it"))
         self.assertTrue(ot.outage_timeline_doc(copy.deepcopy(WATCH), r, False, True)["subtitle"].startswith("Triggered by: Nothing triggered it"))
 
 
 class Review(unittest.TestCase):
     def test_the_night_of_the_fixture(self):
-        r = made()
-        self.assertEqual(r["title"], "Outage review: esx03: all paths down to a storage device; 46 min down, ticket after 93 min")
+        r = reviewed()
+        self.assertEqual(r["title"], "Host outage - 1 host not responding: 14 VMs, 1 host")
         self.assertEqual(r["numbers"], {
-            "events": 18, "first_signal": DAY + "00:41:10Z", "ticket": "INC0012345", "signal_to_ticket_s": 5570, "down_s": 2732,
-            "hosts_down": ["esx03"], "still_down": [], "ha_restarted": 14, "back": DAY + "02:06:45Z"})
+            "events": 10, "first_signal": DAY + "01:19:40Z", "ticket": "INC0012345", "signal_to_ticket_s": 3260, "down_s": 2732,
+            "hosts_down": ["esx03"], "still_down": [], "ha_restarted": 14, "back": DAY + "02:05:12Z",
+            "affected_hosts": 1, "affected_vms": 14, "full_events": 33})
         self.assertEqual(r["window"], "2026-11-11 21:45 CET to 2026-11-12 03:45 CET")
-        self.assertEqual(whats(r), [
-            "Storage path redundancy degraded, back after 40 s", "Storage path redundancy lost",
-            "Alarm yellow: Host storage path redundancy", "All paths down to a storage device", "Host not responding",
-            "Alarm red: Host connection and power state", "HA: host failed", "HA restarted 14 VMs", "Host connected again",
-            "Storage paths are back", "Storage path redundancy is back", "Alarm back to green: Host connection and power state",
-            "Alarm back to green: Host storage path redundancy", "Ticket INC0012345 opened", "ACT analysis in INC0012345: " + ACT,
-            "Work note in INC0012345: On site, checking the cabling of esx03.", "INC0012345: the check passes again",
-            "Ticket INC0012345 resolved: Fibre channel cable of the second adapter reseated; paths back."])
-        t = r["sections"][1]
-        self.assertEqual(t["columns"], ["#", "Time (CET)", "Source", "Where", "What happened", "Level"])
-        self.assertEqual(t["rows"][0], [1, "12 Nov 01:41:10", "Host events", "esx03", whats(r)[0], "Low"])
-        self.assertEqual(t["rows"][7][:4], [8, "12 Nov 02:21:05", "vCenter alarms", "cluster1"])
-        self.assertEqual([x[2] for x in t["rows"][13:]], ["ServiceNow", "ACT", "ServiceNow", "ServiceNow", "ServiceNow"])
-        self.assertEqual(t["row_status"][:8], ["low", "warning", "warning", "critical", "critical", "critical", "critical", "warning"])
-        self.assertEqual(t["row_status"][8:13], [""] * 5)                    # status never by colour alone: the word is a cell
-        self.assertEqual([c[5] for c in t["cell_status"]][:2], ["low", "warning"])
-        self.assertIn("A problem that cleared within 2 min is one Low row (vm_watch_review_low_seconds).", t["text"])
+        t = next(s for s in r["web_sections"] if s["title"] == "The events")
+        self.assertEqual(t["rows"][0][:6], [1, "12 Nov 02:19:40", "Host events", "esx03", "Host not responding", "Critical"])
+        self.assertEqual(t["row_status"][0], "critical")
+        self.assertEqual([x[2] for x in t["rows"][-5:]], ["ServiceNow", "ACT", "ServiceNow", "ServiceNow", "ServiceNow"])
+        self.assertEqual(r["draft"]["key"][0][1], "Host not responding")
+        self.assertIn("back to normal", str(next(s for s in r["sections"] if s["title"].startswith("Noise"))))
 
     def test_the_flap_rule(self):
         e = [ev("01:00:00", "esx.problem.net.redundancy.lost", H), ev("01:02:00", "esx.clear.net.redundancy.restored", H),
@@ -581,18 +1553,15 @@ class Chart(unittest.TestCase):
 
 class Outputs(unittest.TestCase):
     def test_the_sheet(self):
-        s = made()["sheet"]
+        s = reviewed()["sheet"]
         self.assertEqual(s["name"], "Timeline")
-        self.assertEqual(s["columns"], ["#", "Time (UTC)", "Time (Europe/Berlin)", "Source", "Where", "What happened", "Level",
-                                        "Count", "Ticket", "vCenter", "Event type", "Message"])
-        self.assertEqual(len(s["rows"]), 18)
-        self.assertEqual(s["rows"][0], [1, "2026-11-12 00:41:10", "2026-11-12 01:41:10 CET", "Host events", "esx03",
-                                        "Storage path redundancy degraded, back after 40 s", "Low", 1, "", "vc01.example.mil",
-                                        "esx.problem.storage.redundancy.degraded", "Path redundancy to storage device naa.600a degraded"])
-        self.assertEqual(s["rows"][7][7], 14)
-        self.assertTrue(s["rows"][7][11].startswith("app10, app11, "))
-        self.assertEqual(s["rows"][14][8:12], ["INC0012345", "", "", ACT])    # the whole analysis, not the cut one
-        self.assertEqual(made(time_zone="")["sheet"]["columns"][2], "Time (UTC)")
+        self.assertEqual(s["columns"][1:4], ["Time (UTC)", "Time (Europe/Berlin)", "Source"])
+        self.assertEqual(len(s["rows"]), 33)
+        self.assertEqual(s["rows"][0][4:8], ["esx03", "Storage path redundancy degraded", "Warning", 1])
+        self.assertEqual(s["rows"][1][5], "Storage path redundancy is back")
+        self.assertEqual(len([r for r in s["rows"] if r[5] == "HA restarted a VM" and r[14]]), 14)
+        self.assertTrue(any(r[8] == "INC0012345" and r[11] == ACT for r in s["rows"]))
+        self.assertEqual(reviewed(time_zone="")["sheet"]["columns"][2], "Time (UTC)")
 
     def test_the_job_output(self):
         out = made()["lines"]
@@ -641,16 +1610,20 @@ class Outputs(unittest.TestCase):
 
 class Doc(unittest.TestCase):
     def test_a_review(self):
-        r = made()
+        r = reviewed()
         for web in (False, True):
             d = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, web, True)
-            self.assertEqual(d["title"], r["title"])
+            self.assertEqual(d["title"], ("Outage review: " if web else "") + r["title"])
             self.assertTrue(d["subtitle"].startswith("Triggered by: "), d["subtitle"])          # 1.79.12: what triggered it, first
             self.assertTrue(d["subtitle"].endswith("Review of 2026-11-11 21:45 CET to 2026-11-12 03:45 CET. Now: VM outage watch: nothing down now"))
             self.assertEqual(d["summary"], r["boxes"])
             self.assertEqual((d["status"], d["footer"]), ("ok", WATCH["footer"]))   # the watch's own status: what is down now
-            want = ["The outage in short"] + (["What happened, in order"] if web else []) + [
-                "The events", "For the after-action report", "Down or hung now", "How it judged"]
+            want = ["The outage, in order"] + (["Issues by type"] if web else []) + ["1. What went down", "2. What it affected: 14 VMs", "3. Down now",
+                    "4. Recovered"]
+            if web:
+                want += ["What this usually means (for the NOC)", "All events (%d) - chart" % r["numbers"]["full_events"]]
+            want += ["The outage in short"]
+            want += (["The events"] if web else []) + ["Noise: summed up, not rows", "For the after-action report", "How it judged"]
             self.assertEqual([s["title"] for s in d["sections"]], want)
 
     def test_a_normal_run(self):
@@ -1689,34 +2662,40 @@ class AarDraft1120(unittest.TestCase):
     """1.112.0: the review's AAR draft (outage_timeline's "draft") and the page / email with it (outage_review_aar)."""
 
     def test_the_draft(self):
-        d = made()["draft"]
-        self.assertEqual((d["v"], d["name"], d["time_column"]), (1, "esx03 2026-11-12", "Time (CET)"))
-        self.assertEqual(d["detection"][0], "First signal 12 Nov 01:41:10 CET: Storage path redundancy degraded, back after 40 s on "
-                                            "esx03 (Host events)")
+        d = reviewed()["draft"]
+        self.assertEqual((d["v"], d["name"], d["time_column"]), (2, "Host outage cluster1 2026-11-12", "Time (CET)"))
+        self.assertEqual(d["detection"][0], "First signal 12 Nov 02:19:40 CET: Host not responding on esx03 (Host events)")
         self.assertEqual(d["actions"], ["12 Nov 02:21 CET - HA restarted 14 VMs (cluster1)",
                                         "12 Nov 03:25 CET - Work note in INC0012345: On site, checking the cabling of esx03."])
         self.assertEqual(d["numbers"][2], ["Time down", "46 min", "esx03 down 46 min (12 Nov 02:19 CET to 12 Nov 03:05 CET)"])
-        self.assertTrue(d["follow_up"].startswith("the ticket came 93 min after the first signal"))
+        self.assertTrue(d["follow_up"].startswith("the ticket came 54 min after the first signal"))
         self.assertEqual(d["ticket_hint"], "ACT in INC0012345: " + ACT)
         self.assertNotIn("root_cause", d)
-        self.assertEqual(made([], [])["draft"], {})                                   # nothing to draft from
+        self.assertEqual(reviewed([], [])["draft"], {})                                   # nothing to draft from
         many = [ev("01:%02d:%02d" % (i // 60, i % 60), "VmFailoverFailed", vm="app%03d" % i) for i in range(400)]
-        d = made(many, [])["draft"]
-        self.assertEqual((len(d["events"]), d["events_total"]), (ot.DRAFT_EVENTS, 400))
-        self.assertEqual(len(d["key"]), 15)
+        host = ev("00:59:00", "HostConnectionLostEvent", H)
+        d = reviewed([host] + [dict(e, host=H) for e in many], [], watch_runs=[
+            watch_run(DAY + "01:01:00Z", [dict(name=H, moid="host-3")], vc=host["vcenter"])])["draft"]
+        self.assertEqual(d["events"], [])
+        self.assertEqual(sum(g["n"] for g in d["groups"]), 401)
+        self.assertEqual(len(d["key"]), 2)
         self.assertLess(len(json.dumps(d)), 100000)                                   # a job artifact stays small
 
     def test_still_down(self):
-        e = [x for x in events() if x["type"] != "HostConnectedEvent"]
-        d = made(e, [])["draft"]
-        self.assertIn("esx03 down", d["impact"])
+        e = [x for x in events() if x["type"] != "HostConnectedEvent" and not (x["to"] == "green" and "connection" in x["alarm"])]
+        r = reviewed(e, [], watch_runs=[watch_run(DAY + "01:20:00Z", [dict(name=H, moid="host-3")], vc=e[0]["vcenter"])])
+        self.assertIn("recovery not recorded", str(r["draft"]["went"]))
+        self.assertEqual(r["draft"]["now"], [])
+        current = dict(kind="host", object_type="host", object=H, moid="host-3", vcenter=e[0]["vcenter"], severity="critical")
+        d = reviewed(e, [], triggers=[current])["draft"]
+        self.assertIn("esx03 still down", d["impact"])
         self.assertIn("still down", d["impact"])
-        self.assertEqual(d["end"], "not yet: esx03 still down at the end of the window (2026-11-12 03:45 CET)")
+        self.assertEqual(d["end"], "not yet: esx03 still down at the review")
         self.assertEqual(d["numbers"][2][1], "85 min, still down")                     # Neon P1: never as if it had ended
         self.assertIn("still down at the end of the window", d["numbers"][2][2])
 
     def test_the_page_and_the_email(self):
-        r = made()
+        r = reviewed()
         web = ot.outage_timeline_doc(copy.deepcopy(WATCH), r, True, True)
         info = {"file": "AAR-esx03-2026-11-12.docx", "error": "", "job": "4714", "asked": True, "draft": True}
         w = ot.outage_review_aar(web, info, True)
@@ -1745,32 +2724,41 @@ class AarDraft1120(unittest.TestCase):
                "description": "Severity: warning\n\nACT (GenAI) analysis - level 2, status ok:\nThe log volume of sql02 is full.\n",
                "opened": "2026-11-09T08:00:00Z", "resolved": "", "closed": "", "close_notes": "", "state": "2", "active": True,
                "correlation_id": "site-health:9:disk", "notes": [[DAY + "01:00:00Z", "Still failing at 01:00"]]}
-        d = made(None, [old] + tickets())["draft"]
+        d = reviewed(None, [old] + tickets())["draft"]
         self.assertEqual(d["ticket_hint"], "ACT in INC0012345: " + ACT)
-        self.assertEqual(made(None, [old])["draft"]["ticket_hint"], "")
+        self.assertEqual(reviewed(None, [old])["draft"]["ticket_hint"], "")
         self.assertEqual([t[0] for t in d["tickets"]], ["INC0012345"])
 
     def test_neon_p1_dates_with_day_and_zone(self):
         """A same-day window: the ticket resolved the next day still says which day, every time has its zone."""
         t = tickets()
         t[0]["resolved"] = "2026-11-13T00:05:00Z"
-        d = made(None, t, begin="2026-11-12T00:00:00Z", end="2026-11-12T06:00:00Z")["draft"]
+        d = reviewed(None, t, begin="2026-11-12T00:00:00Z", end="2026-11-12T06:00:00Z")["draft"]
         self.assertEqual(d["tickets"][0][1:3], ["12 Nov 03:14 CET", "13 Nov 01:05 CET"])
-        self.assertEqual(d["impact"], "esx03 down 46 min (12 Nov 02:19 CET to 12 Nov 03:05 CET); vSphere HA restarted 14 VMs")
+        self.assertIn("46 min", str(d["went"]))
         self.assertEqual(d["numbers"][1][2], "INC0012345 opened 12 Nov 03:14 CET")
-        self.assertTrue(all(re.match(r"\d\d \w{3} \d\d:\d\d:\d\d$", r[0]) for r in d["events"]), d["events"][:2])
-        self.assertTrue(all(re.match(r"\d\d \w{3} \d\d:\d\d \w+ - ", x) for x in d["actions"] + d["recovery"]))
+        self.assertTrue(all(len(g["row"]) == 4 for g in d["groups"]))
+        self.assertTrue(all(re.match(r"\d\d \w{3} \d\d:\d\d(?::\d\d)? \w+ - ", x) for x in d["actions"] + d["recovery"]))
 
     def test_neon_p2_milestones_survive_a_burst(self):
-        burst = [ev("01:%02d:%02d" % (20 + i // 60, i % 60), "esx.problem.storage.apd.start", "esx%02d.example.mil" % (i + 10))
-                 for i in range(20)]
-        d = made(events() + burst, tickets())["draft"]
-        whats = [r[3] for r in d["key"]]
-        self.assertEqual(len(d["key"]), 15)
-        for want in ("Ticket INC0012345 opened", "HA restarted 14 VMs", "Host connected again"):
-            self.assertIn(want, whats)
-        self.assertTrue(any(w.startswith("Ticket INC0012345 resolved") for w in whats))
-        self.assertEqual([r[0] for r in d["key"]], sorted(r[0] for r in d["key"]))         # in time order
+        from unittest.mock import patch
+        from incident_doc_filters import incident_aar_docx, incident_record, incident_review_fill
+
+        burst = [alarm("01:20:%02d" % i, "Example host alarm %02d" % i, "red", "green") for i in range(20)]
+        source = events() + burst
+        current = dict(kind="host", object_type="host", object=H, severity="critical", moid="host-3", vcenter=source[0]["vcenter"])
+        with patch.object(ot, "STORY_LIMIT", 100, create=True):
+            candidates = reviewed(source, tickets(), triggers=[current])["draft"]["story"]["rows"]
+        self.assertGreater(len({row["text"] for row in candidates}), 15)
+        d = reviewed(source, tickets(), triggers=[current])["draft"]
+        record = incident_review_fill(incident_record({"kind": "aar"}), d)
+        blocks = incident_aar_docx(record, {}, [], False, d)["blocks"]
+        body = [r for b in blocks if b.get("columns", [])[-1:] == ["How long"] for r in b["rows"]]
+        self.assertEqual(len(body), 15)
+        self.assertEqual([r[0] for r in body], [r["time"]["clock"] for r in d["story"]["rows"]])
+        for want in ("not responding", "HA restarted", "Ticket INC0012345 opened",
+                     "connected again", "Ticket INC0012345 resolved", "Still down at the review"):
+            self.assertTrue(any(want in r[2] for r in body), want)
 
     def test_neon_p1_text_stays_text(self):
         """Ticket text is handed on as data Ansible never templates again (ansible-core 2.16: AnsibleUnsafeText)."""
@@ -1782,7 +2770,7 @@ class AarDraft1120(unittest.TestCase):
             self.skipTest("this ansible-core never templates a filter's result")
         t = tickets()
         t[0]["notes"].append([DAY + "02:30:00Z", "Template error: {{ lookup('ansible.builtin.env', 'HOME') }}"])
-        r = made(None, t)
+        r = reviewed(None, t)
         self.assertTrue(any("lookup(" in a for a in r["draft"]["actions"]))
         self.assertTrue(all(isinstance(a, AnsibleUnsafeText) for a in r["draft"]["actions"]))
         self.assertIsInstance(r["title"], AnsibleUnsafeText)
@@ -1793,21 +2781,22 @@ class AarDraft1120(unittest.TestCase):
                  "description": "Severity: warning\n\nACT (GenAI) analysis - level 2, status ok:\nThe log volume of sql02 is full.\n",
                  "opened": DAY + "00:11:00Z", "resolved": "", "closed": "", "close_notes": "", "state": "2", "active": True,
                  "correlation_id": "site-health:9:disk", "notes": []}
-        r = made(None, [other] + tickets())
+        r = reviewed(None, [other] + tickets())
         self.assertEqual(r["numbers"]["ticket"], "INC0012345")
         self.assertEqual(r["draft"]["ticket_hint"], "ACT in INC0012345: " + ACT)
         self.assertIn("ACT in INC0012345", r["aar"][3])
-        self.assertEqual(made(None, [other])["draft"]["ticket_hint"], "")                   # no ticket of the outage: none
+        self.assertEqual(reviewed(None, [other])["draft"]["ticket_hint"], "")                   # no ticket of the outage: none
 
     def test_codex_p1_still_down_belongs_to_its_stretch(self):
         """Down 2 h and back, then down again 5 min before the end: the 2 h are over, the 5 min are still going on."""
         e = [ev("00:00:00", "HostConnectionLostEvent", H, msg="lost"), ev("02:00:00", "HostConnectedEvent", H, msg="back"),
              ev("02:40:00", "HostConnectionLostEvent", H, msg="lost again")]
-        d = made(e, [])["draft"]
+        current = dict(kind="host", object_type="host", object=H, moid="host-3", vcenter=e[0]["vcenter"], severity="critical")
+        d = reviewed(e, [], triggers=[current])["draft"]
         self.assertEqual(d["numbers"][2][1], "2 h")
         self.assertEqual(d["numbers"][2][2], "esx03 down 2 h (12 Nov 01:00 CET to 12 Nov 03:00 CET); esx03 down again since "
                                              "12 Nov 03:40 CET, still down at the end of the window (5 min)")
-        d = made([ev("02:40:00", "HostConnectionLostEvent", H, msg="lost")], [])["draft"]
+        d = reviewed([ev("02:40:00", "HostConnectionLostEvent", H, msg="lost")], [], triggers=[current])["draft"]
         self.assertEqual(d["numbers"][2][1], "5 min, still down")
 
 

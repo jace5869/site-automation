@@ -32,6 +32,11 @@ _spec = importlib.util.spec_from_file_location(
 _banner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_banner)
 
+_spec = importlib.util.spec_from_file_location(
+    "site_redact", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "module_utils", "site_redact.py"))
+_redactor = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_redactor)
+
 MARK_BEGIN, MARK_END = "BEGIN_ACT_ANALYSIS", "END_ACT_ANALYSIS"
 
 # the boxes ACT may tidy, with their labels: the AAR's, then the SOP's
@@ -210,9 +215,9 @@ def incident_file_name(record, kind="aar", names=None):
     """The attachment's name: AAR.docx, or AAR-<outage>.docx when the outage is named; SOP-<title>.docx.
     names: {'aar': 'AAR', 'sop': 'SOP'} - the first part (incident_docs_aar_file, incident_docs_sop_file)."""
     r = record or {}
-    n = dict({"aar": "AAR", "sop": "SOP"}, **(names or {}))
+    n = dict({"aar": "AAR", "sop": "SOP", "noc": "NOC-handoff"}, **(names or {}))
     base = _slug(n.get(kind) or kind.upper(), 40) or kind.upper()
-    extra = _slug(r.get("name")) if kind == "aar" else _slug(r.get("sop_title") or r.get("name"))
+    extra = _slug(r.get("name")) if kind in ("aar", "noc") else _slug(r.get("sop_title") or r.get("name"))
     return "%s%s.docx" % (base, ("-" + extra) if extra else "")
 
 
@@ -296,7 +301,7 @@ def incident_aar_docx(record, opts=None, suggestions=None, tidied=False, review=
     Learned & Action Plan, then (optional) the suggestions from ACT and the site's instructions. review (1.112.0): the
     outage review's draft (incident_review_draft) - the AAR then also has the review's line under OVERVIEW, its numbers,
     key events and tickets, ACT's possible causes as "Suggested - confirm", red "To write" lines for what only a person
-    can write, an empty task table, and every event in Appendix A."""
+    can write, an empty task table, and the events grouped in Appendix A."""
     if review:
         return _unsafe(_aar_from_review(record, opts, suggestions, tidied, review))
     r, o = record or {}, opts or {}
@@ -392,11 +397,13 @@ def incident_review_draft(draft, act=None, meta=None):
     """The review's AAR draft (outage_timeline's "draft") with ACT's causes and where it came from - what the review run
     writes as "AAR (Word)" and keeps in its artifact (vm_outage_review.aar) for the AAR job. meta: job (the AAP job id),
     made (when, as text). {} when the review has nothing to draft from."""
-    d = dict(draft or {})
+    d = _redactor.redact_all(draft or {})
     if not d.get("v"):
         return {}
-    m = meta or {}
-    d["causes"] = incident_review_causes(act, d.pop("ticket_hint", ""))
+    m = _redactor.redact_all(meta or {})
+    if m.get("csv_file"):
+        d["full_list"] = d.get("full_list", "") + " Full event CSV: " + m["csv_file"] + "."
+    d["causes"] = incident_review_causes(_redactor.redact_all(act), d.pop("ticket_hint", ""))
     d["job"] = str(m.get("job") or "").strip()
     d["made"] = str(m.get("made") or "").strip()
     return _unsafe(d)
@@ -431,36 +438,204 @@ def _red(label, text):
             {"type": "bullets", "level": 1, "color": TO_WRITE, "items": [text]}]
 
 
+def _review_impact(d):
+    blocks = [{"type": "space"}, {"type": "para", "text": "The outage in four parts", "bold": True, "keep": True, "color": "1F2D86"}]
+    for i, (key, title, widths) in enumerate((
+            ("went", "1. What went down", [1.3, 2, 1.5, 1.1, 1.4]),
+            ("affected", "2. What it affected", [1.1, 1.1, 2.6, 1.6, 0.9]),
+            ("now", "3. Down now", []), ("recovered", "4. Recovered", [1.2, 3, 1.9, 1]))):
+        blocks.append({"type": "para", "text": title, "bold": True, "keep": True})
+        if key == "affected":
+            blocks.append({"type": "para", "text": d["affected_note"]})
+        if key == "now":
+            blocks[-1]["color"] = "C00000"
+            blocks.append({"type": "note", "text": d.get("read_note", "")})
+            if d[key]:
+                blocks.append({"type": "bullets", "color": "C00000", "items": [
+                    "%s: %s - %s, since %s (%s)" % tuple(row) for row in d[key]]})
+            else:
+                blocks.append({"type": "para", "text": "No current down condition recorded."})
+            if d.get("at_risk"):
+                blocks.append({"type": "para", "text": "At risk: " + ", ".join(d["at_risk"])})
+        elif d[key]:
+            blocks.append({"type": "table", "columns": d["part_columns"][i], "rows": d[key], "widths": widths})
+        else:
+            blocks.append({"type": "para", "text": "None recorded."})
+        if key == "went":
+            blocks.append({"type": "note", "text": d["went_note"]})
+    if d.get("lookback_note"):
+        blocks.append({"type": "note", "text": d["lookback_note"]})
+    return blocks
+
+
+def _review_appendix(d, cols, widths):
+    blocks = [{"type": "heading", "text": "Appendix A - the events by phase"},
+              {"type": "note", "text": "The same event within 3 minutes is one row with its count. " + d["full_list"]}]
+    groups = d["groups"][:max(0, int(d.get("appendix_max", 40)))]
+    for phase in ("Lead-up", "Outage", "Recovery", "After"):
+        rows = [g["row"] for g in groups if g["phase"] == phase]
+        if rows:
+            blocks.extend([{"type": "para", "text": phase, "bold": True, "keep": True},
+                           {"type": "table", "columns": cols, "rows": rows, "widths": widths}])
+    if d.get("group_total", len(groups)) > len(groups):
+        blocks.append({"type": "note", "text": "%d further grouped rows omitted from this appendix." %
+                       (d["group_total"] - len(groups))})
+    if d.get("noise"):
+        blocks.extend([{"type": "para", "text": "Noise - left out of the rows above (%d changes)" % sum(r[2] for r in d["noise"]),
+                        "bold": True, "keep": True},
+                       {"type": "table", "columns": d["noise_columns"], "rows": d["noise"], "widths": [1.7, 1.3, 0.8, 1.6, 2]}])
+    return blocks
+
+
+def _story_blocks(story, time_column):
+    blocks = [{"type": "para", "text": "The outage, in order", "bold": True, "keep": True}]
+    active = False
+    table = None
+    window = story["window"]
+    for row in story["rows"]:
+        if row["window"] != active:
+            active = row["window"]
+            line = "End of the outage window"
+            if active:
+                line = "Outage window from %s to %s · %s" % (window["start"]["tip"], window["end"]["tip"], window["duration"])
+                if window["still"]:
+                    line += " · %s still down after it" % window["still"]
+            blocks.append(dict(type="para", text=line, bold=True, color="B42318", keep=active))
+            table = None
+        if row["divider"]:
+            blocks.append(dict(type="para", text=row["divider"], bold=True, keep=True))
+            table = None
+        if table is None:
+            table = dict(type="table", columns=[time_column, "Level", "What happened", "Objects", "How long"],
+                         widths=[1, 1.2, 3, 1.8, 1.1], rows=[])
+            blocks.append(table)
+        sentence = row["text"] + (row["extra"]["clock"] + row["after"] if row["extra"] else "")
+        table["rows"].append([row["time"]["clock"] + (" " + row["time"]["zone"] if time_column == "Time" else ""),
+                              row["word"], sentence, row["objects"], row["duration"]])
+    if active:
+        blocks.append(dict(type="para", text="End of the outage window", bold=True, color="B42318"))
+    return blocks
+
+
+def _pattern_blocks(cards):
+    out = [dict(type="heading", text="What this usually means (for the NOC)")]
+    if not cards:
+        out.append(dict(type="para", text="No matching pattern in this review."))
+    for i, c in enumerate(cards, 1):
+        out.extend([dict(type="para", text="%d. %s" % (i, c["title"]), bold=True, keep=True),
+                    dict(type="para", text=c["means"]),
+                    dict(type="labelled", items=[dict(label="Typical causes:", text="; ".join(c["causes"]))]),
+                    dict(type="para", text="Check first (read only)", italic=True, keep=True),
+                    dict(type="steps", items=c["checks"]),
+                    dict(type="labelled", items=[dict(label="Escalate to:", text=c["escalate"]),
+                                                 dict(label="Seen here:", text=c["seen"] + " · " + c["when"])])])
+    return out
+
+
+def incident_noc_docx(review, opts=None):
+    """The standalone handoff and Appendix B share the same compact paragraphs and type size."""
+    d = _redactor.redact_all(review)
+    cards = d.get("patterns", [])
+    size = 9 if len(cards) <= 8 else 8
+    doc = _common(dict(opts or {}, size=size, logo=""))
+    def brief(text, limit):
+        text = " ".join(text.split())
+        return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+    blocks = [dict(type="para", text="Hand this to the NOC", bold=True, size=12),
+              dict(type="para", text=brief(d["title"], 110), bold=True, size=size)]
+    source = "AAP job " + str(d["job"]) if d.get("job") else "Outage review"
+    blocks.append(dict(type="para", text=brief("%s · %s" % (source, d.get("window", "")), 100), italic=True, size=size))
+    # The handoff names affected objects in groups. Per-object evidence is in the four full tables.
+    now = next((r for r in d.get("story", {}).get("rows", []) if r["level"] == "down"), {})
+    down = ", ".join(r[1] for r in d.get("now") or []) or "Nothing reported down."
+    if now.get("duration"):
+        down += " · " + now["duration"]
+    if now:
+        down += " (" + now["time"]["day"] + " " + now["time"]["clock"] + " " + now["time"]["zone"] + ")"
+    blocks.append(dict(type="para", text="Down now: " + brief(down, 160), bold=True, color="B42318", size=size))
+    went = d.get("went", [])
+    losses = ["%s (%s from %s)" % (r[0], r[3], r[2]) for r in went[:6]]
+    if len(went) > 6:
+        losses.append("%d further objects in the review" % (len(went) - 6))
+    blocks.append(dict(type="para", text="What went down: " + brief("; ".join(losses) or "No infrastructure loss recorded.", 155), size=size))
+    blocks.append(dict(type="para", text="What it affected: " + brief(d.get("affected_note", ""), 100), size=size))
+    recovered = ["%s: %s at %s" % (r[0], r[1], r[2]) for r in d.get("recovered", [])]
+    blocks.append(dict(type="para", text="Recovered: " + brief("; ".join(recovered) or "No recovery recorded.", 155), size=size))
+    if cards:
+        blocks.append(dict(type="para", text="What this usually means", bold=True, size=size))
+    for i, c in enumerate(cards[:8], 1):
+        blocks.extend([dict(type="para", bold=True, size=size, text="%d. %s" % (i, brief(c["title"], 64))),
+                       dict(type="para", size=size, text="Seen: %s. Check: %s. Escalate: %s." % (
+                           brief(c["seen"], 42), brief(c["checks"][0], 72), brief(c["escalate"], 52)))])
+    if cards:
+        blocks.append(dict(type="para", text="Full pattern details and escalation contacts are in the AAR.", size=size))
+    for block in blocks:
+        block["after"] = 0
+    doc["blocks"] = blocks
+    return _unsafe(doc)
+
+
 def _aar_from_review(record, opts, suggestions, tidied, review):
     r, o, d = record or {}, opts or {}, review or {}
     base = incident_aar_docx(r, dict(o, instructions=[]), suggestions, tidied)
     tcol = d.get("time_column") or "Time"
     ev_cols, ev_w = [tcol, "Lane", "Level", "What", "Where"], [1.6, 1.25, 1.15, 4.0, 0.9]
+    v2 = d.get("v") == 2
+    if v2:
+        ev_cols, ev_w = [tcol, "What", "Objects", "Level"], [1.6, 2.9, 2, 0.8]
     src = "the outage review%s%s" % ((", AAP job " + d["job"]) if d.get("job") else "", (", made " + d["made"]) if d.get("made") else "")
     cz = d.get("causes") or {}
     out = []
     for b in base["blocks"]:
         lab = b.get("label", "")
         if b.get("type") == "heading" and b.get("text") == "OVERVIEW":
-            out += [b, {"type": "note", "text": "Filled from %s. Check each line before it is posted. The red lines are yours to write." % src}]
+            note = "Filled from %s. Check each line before it is posted. " % src
+            note += "Complete the red To write items." if v2 else "The red lines are yours to write."
+            out += [b, {"type": "note", "text": note}]
         elif lab == "Impact:":
-            out.append(b)
+            # 1.116.0: the same four parts as the review, before the response and key events.
+            if not v2 and d.get("summary"):
+                out.append(dict(b, text="Outage summary"))
+                for part in d["summary"]:
+                    out.append({"type": "para", "text": part["title"], "bold": True, "keep": True})
+                    bullets = {"type": "bullets", "level": 1, "items": part["lines"]}
+                    if part.get("status") == "critical":
+                        bullets["color"] = "B42318"
+                    out.append(bullets)
+                if b.get("text") and (r.get("impact_level") or r.get("impact") != d.get("impact")):
+                    out.append({"type": "para", "text": b["text"]})
+                if d.get("lookback_note"):
+                    out.append({"type": "note", "text": d["lookback_note"]})
+            else:
+                out.append(b)
             if not r.get("impact_level"):
                 out += [{"type": "bullets", "level": 1, "color": TO_WRITE,
                          "items": ["To write: the impact level (MINOR, MODERATE, MAJOR or CRITICAL) and who was affected."]}]
+            if v2:
+                out.extend(_review_impact(d))
         elif lab == "Detection:":
             out.append(b)
             if d.get("numbers"):
                 out.append({"type": "table", "columns": ["", "Value", "Detail"], "rows": d["numbers"], "widths": [1.6, 1.0, 4.4], "bold_first": True})
         elif lab == "Actions:":
             out.append(b)
-            if d.get("key"):
-                out += [{"type": "para", "text": "Key events (from the review; every event: Appendix A):", "bold": True, "keep": True},
+            if "story" in d:
+                out.extend(_story_blocks(d["story"], tcol))
+            elif d.get("key"):
+                heading = "Key events (the outage's own chain, grouped by phase in Appendix A):" if v2 else "Key events (from the review; every event: Appendix A):"
+                out += [{"type": "para", "text": heading, "bold": True, "keep": True},
                         {"type": "table", "columns": ev_cols, "rows": d["key"], "widths": ev_w}]
+                if v2 and d.get("noise"):
+                    out.append({"type": "note", "text": "%d noise changes are summarized in Appendix A." %
+                                sum(row[2] for row in d["noise"])})
             if d.get("tickets"):
                 out += [{"type": "para", "text": "Tickets:", "bold": True, "keep": True},
                         {"type": "table", "columns": ["Number", "Opened", "Resolved", "What", "Close notes"], "rows": d["tickets"],
                          "widths": [1.3, 1.1, 1.1, 2.4, 2.3]}]
+        elif lab == "Recovery:" and "patterns" in d:
+            out.append(b)
+            out.extend(_pattern_blocks(d["patterns"]))
         elif lab == "Root Cause:":
             if _lines(r.get("root_cause")):
                 out.append(b)
@@ -492,14 +667,27 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
                 out.append({"type": "table", "columns": ["Task", "Owner", "Due"], "rows": [["", "", ""]] * 3, "widths": [4.6, 1.6, 1.0]})
         else:
             out.append(b)
-    if d.get("events"):
+    if "story" in d:
+        out.extend(_instructions(o.get("instructions"), o.get("instructions_color") or o.get("heading_color") or "1F2D86"))
+        out.append({"type": "page_break"})
+    if v2:
+        out.extend(_review_appendix(d, ev_cols, ev_w))
+    elif d.get("event_columns"):
+        out += [{"type": "heading", "text": "Appendix A - events by phase and object"},
+                {"type": "note", "text": d["full_list"]},
+                {"type": "table", "columns": d["event_columns"], "rows": d["events"], "widths": [1.0, 2.5, 0.7, 1.3, 1.3]}]
+    elif d.get("events"):                      # drafts saved by older reviews
         total = int(d.get("events_total") or len(d["events"]))
         out += [{"type": "heading", "text": "Appendix A - every event of the review"},
                 {"type": "note", "text": "From %s: %d event%s%s. %s" % (src, total, "" if total == 1 else "s",
                                                                         (" (the first %d here)" % len(d["events"])) if total > len(d["events"]) else "",
                                                                         d.get("window") and "Window: " + d["window"] + "." or "")},
                 {"type": "table", "columns": ev_cols, "rows": d["events"], "widths": ev_w}]
-    out += _instructions(o.get("instructions"), o.get("instructions_color") or o.get("heading_color") or "1F2D86")
+    if "story" in d:
+        out.extend([{"type": "page_break"}, {"type": "heading", "text": "Appendix B - Hand this to the NOC"}])
+        out.extend(incident_noc_docx(d, o)["blocks"][1:])
+    else:
+        out += _instructions(o.get("instructions"), o.get("instructions_color") or o.get("heading_color") or "1F2D86")
     base["blocks"] = out
     return base
 
@@ -887,7 +1075,7 @@ class FilterModule(object):
                 "incident_sop_on": incident_sop_on, "incident_sop_from_aar": incident_sop_from_aar,
                 "incident_sop_tidied": incident_sop_tidied, "incident_sop_what": incident_sop_what, "incident_sop_draft": incident_sop_draft,
                 "incident_sop_draft_empty": incident_sop_draft_empty, "incident_file_name": incident_file_name, "incident_aar_docx": incident_aar_docx,
-                "incident_sop_docx": incident_sop_docx, "incident_act_evidence": incident_act_evidence,
+                "incident_sop_docx": incident_sop_docx, "incident_noc_docx": incident_noc_docx, "incident_act_evidence": incident_act_evidence,
                 "incident_act_task": incident_act_task, "incident_act_apply": incident_act_apply, "incident_email": incident_email,
                 "incident_survey": incident_survey, "incident_review_causes": incident_review_causes,
                 "incident_review_draft": incident_review_draft, "incident_review_fill": incident_review_fill,

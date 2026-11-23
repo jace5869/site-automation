@@ -32,7 +32,15 @@
     confirm_seconds: "{{ vm_watch_confirm_seconds | float }}"
     now: "{{ _vm_now | default(omit) }}"
   register: _vm_w
+  no_log: "{{ vm_watch_review | bool }}"
   check_mode: false                      # read-only: a dry run (Check) reads and reports the same
+
+- name: VMware | redact a copy of the watch read for the review (the conditions and their ticket ids come from the read itself)
+  ansible.builtin.set_fact:
+    _vm_w_red: "{{ _vm_w | outage_redact }}"
+  vars:
+    _vm_w_review: "{{ vm_watch_review | bool }}"   # before the mail decision, protect the requested review
+  when: _vm_w_review | bool
 
 - name: VMware | the protected VMs (the same list as a restart's)
   ansible.builtin.include_tasks: protected.yml
@@ -103,6 +111,33 @@
 - name: VMware | the outage time line (vm_watch_review, vm_watch_timeline)
   when: _vm_w_review | bool or (_vm_w_report_it | bool and vm_watch_timeline | bool)
   block:
+    - name: VMware | the watch conditions recorded in the review window
+      when: _vm_w_review | bool
+      block:
+        - name: VMware | this template's vm_watch artifacts
+          ansible.builtin.include_role:
+            name: site_email
+            tasks_from: history_artifacts.yml
+            apply:
+              no_log: true
+          vars:
+            _hist_artifacts: [vm_watch]
+            _hist_window: "{{ _vm_w_win }}"
+            _hist_always: true
+
+        - name: VMware | the watch inventory and recorded roots for this review
+          ansible.builtin.set_fact:
+            _vm_w_review_opts: >-
+              {{ {'hosts': _vm_w_red.hosts, 'datastores': _vm_w_red.datastores, 'read_at': _vm_w_red.read_at,
+                  'questions': _vm_w_red.questions | default([]),
+                  'watch_runs': _site_hist_runs, 'history_why': _site_hist_why, 'review_object': vm_watch_review_object,
+                  'vcenters': _vm_w_red.vcenters, 'noise': vm_watch_review_noise | bool,
+                  'noise_alarms': vm_watch_review_noise_alarms | name_list, 'appendix_max': outage_aar_appendix_max | int,
+                  'correlation_prefix': servicenow_correlation_prefix | default('site-health', true),
+                  'outage_escalate_storage': outage_escalate_storage, 'outage_escalate_network': outage_escalate_network,
+                  'outage_escalate_vmware': outage_escalate_vmware, 'outage_escalate_backup': outage_escalate_backup} }}
+          no_log: true
+
     - name: VMware | vCenter's events of the window
       site_vmware_outage_events:
         datacenter: "{{ vmware_datacenter | default(omit, true) }}"
@@ -110,14 +145,17 @@
         validate_certs: "{{ vmware_validate_certs | bool }}"
         begin: "{{ _vm_w_win.begin | float }}"
         end: "{{ _vm_w_win.end | float }}"
+        review: "{{ true if _vm_w_review | bool else omit }}"
         event_types: "{{ vm_watch_review_event_types | name_list }}"
         max_events: "{{ vm_watch_review_max_events | int }}"
         lookback_hours: "{{ vm_watch_review_lookback_hours | float }}"
+      no_log: "{{ _vm_w_review | bool }}"
       register: _vm_w_ev
       check_mode: false                  # read-only: a dry run (Check) reads and reports the same
 
     - name: VMware | the tickets of the window (ServiceNow, GET only; skipped without the ServiceNow API credential)
       site_outage_tickets:
+        review: "{{ true if _vm_w_review | bool else omit }}"
         table: "{{ servicenow_table | default('incident', true) }}"
         prefix: "{{ servicenow_correlation_prefix | default('site-health', true) }}"
         numbers: "{{ vm_watch_review_tickets | name_list }}"
@@ -126,6 +164,7 @@
         validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
         ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
         timeout: "{{ servicenow_timeout | default(30) | int }}"
+      no_log: "{{ _vm_w_review | bool }}"
       register: _vm_w_tk
       check_mode: false                  # GET only
       when: lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0
@@ -139,16 +178,19 @@
                 'time_zone': report_time_zone | default('', true) | string,
                 'low_seconds': vm_watch_review_low_seconds | float,
                 'min_seconds': vm_watch_review_min_seconds | float, 'skip_blips': vm_watch_review_skip_blips | bool,
+                'job': awx_job_id | default('') | string, 'review': _vm_w_review | bool,
                 'triggers': _vm_w_cond | default([]),
                 'tickets_asked': _vm_w_tk.asked | default(false), 'tickets_error': _vm_w_tk.error | default(''),
                 'notes_error': _vm_w_tk.notes_error | default(''), 'capped': _vm_w_ev.capped, 'instance': _vm_w_tk.instance | default(''),
                 'table': servicenow_table | default('incident', true) | string,
                 'report_on': vm_watch_report_on | name_list,
-                'min_severity': servicenow_min_severity | default('warning', true)}) }}
+                'min_severity': servicenow_min_severity | default('warning', true)} | combine(_vm_w_review_opts if _vm_w_review | bool else {})) }}
   rescue:
     - name: VMware | the time line was not made (the watch goes on without it)
       ansible.builtin.debug:
-        msg: "The outage time line was not made: {{ ansible_failed_result.msg | default('the read failed') }}"
+        msg: >-
+          The outage time line was not made: {{ (ansible_failed_result.msg | default('the read failed') | outage_redact)
+             if _vm_w_review | bool else ansible_failed_result.msg | default('the read failed') }}
 
 # 1.104.0, ACT on the outage review (vm_outage_act): ACT's possible causes and fixes, as cards (outage_act.yml). A review
 # only (vm_watch_review), never on the watch's own runs.
@@ -176,6 +218,37 @@
         _vm_w_aar_file: {}
         _vm_w_aar_error: ""
 
+    # Each optional attachment can fail independently of the report.
+    - name: VMware | the full event list of the review
+      when: _vm_w_review | bool and _vm_w_tl.events_file | default('') | length > 0 and not _vm_w_tl.skip | bool
+      block:
+        - name: VMware | a temporary folder for the review files
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: .csv
+          register: _vm_w_csv_dir
+          check_mode: false
+
+        - name: VMware | write the full event list
+          ansible.builtin.copy:
+            content: "{{ _vm_w_tl.sheet | outage_events_csv }}"
+            dest: "{{ _vm_w_csv_dir.path }}/{{ _vm_w_tl.events_file }}"
+            mode: "0600"
+          check_mode: false
+          diff: false
+          no_log: true
+
+        - name: VMware | the CSV attachment
+          ansible.builtin.set_fact:
+            _vm_w_csv_file:
+              path: "{{ _vm_w_csv_dir.path }}/{{ _vm_w_tl.events_file }}"
+              filename: "{{ _vm_w_tl.events_file }}"
+              desc: CSV - every event of this outage review, in time order
+      rescue:
+        - name: VMware | the review goes on without the CSV
+          ansible.builtin.debug:
+            msg: The full event CSV could not be written.
+
     - name: VMware | the AAR draft of the review
       when: _vm_w_review | bool and _vm_w_tl | default({}) | length > 0 and not _vm_w_tl.skip | default(false) | bool
       block:
@@ -183,9 +256,9 @@
           ansible.builtin.set_fact:
             _vm_w_aar: >-
               {{ (_vm_w_tl.draft | default({})) | incident_review_draft(_vm_w_tl.act | default(none),
-                   {'job': awx_job_id | default('') | string, 'made': now(utc=true, fmt='%Y-%m-%d %H:%M UTC')}) }}
+                   {'csv_file': _vm_w_csv_file.filename | default(''), 'job': awx_job_id | default('') | string, 'made': now(utc=true, fmt='%Y-%m-%d %H:%M UTC')}) }}
 
-        - name: VMware | a temporary folder for the AAR draft
+        - name: VMware | a temporary folder for the Word files
           ansible.builtin.tempfile:
             state: directory
             suffix: .aar
@@ -204,6 +277,8 @@
 
         - name: "VMware | the AAR draft - {{ _rd_file.filename | default('not made') }}"
           ansible.builtin.set_fact:
+            _vm_w_noc_file: "{{ _rd_noc_file | default({}) }}"
+            _vm_w_noc_error: "{{ _rd_noc_error | default('') }}"
             _vm_w_aar_file: "{{ _rd_file | default({}) }}"
             _vm_w_aar_error: "{{ _rd_error | default('') }}"
           when: _vm_w_aar | length > 0 and vm_watch_review_docx | bool
@@ -229,7 +304,9 @@
               {{ _vm_w_mail.send | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0) }}
             _vm_w_aar_info: >-
               {{ {'file': _vm_w_aar_file.filename | default(''), 'error': _vm_w_aar_error, 'job': awx_job_id | default('') | string,
-                  'asked': _vm_w_aar | length > 0 and vm_watch_review_docx | bool, 'draft': _vm_w_aar | length > 0} }}
+                  'csv_file': _vm_w_csv_file.filename | default(''), 'noc_file': _vm_w_noc_file.filename | default(''), 'noc_error': _vm_w_noc_error | default(''),
+                  'asked': _vm_w_aar | length > 0 and vm_watch_review_docx | bool, 'draft': _vm_w_aar | length > 0,
+                  'review': _vm_w_review | bool} }}
 
         - name: VMware | outage report
           ansible.builtin.include_tasks: report.yml
@@ -241,16 +318,23 @@
             _vm_report_web_doc: >-
               {{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, true, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, true) if _vm_w_tl else {} }}
             _vm_report_attachments: >-
-              {{ [_vm_w_aar_file | combine({'desc': 'Word document - the after action report (AAR) draft, filled from this outage review: '
-                                                    ~ 'check it and finish it before you send it'})] if _vm_w_review | bool and _vm_w_aar_file.path | default('') else [] }}
+              {{ ([_vm_w_aar_file | combine({'desc': 'Word document - the after action report (AAR) draft, filled from this outage review: '
+                                                    ~ 'check it and finish it before you send it'})] if _vm_w_review | bool and _vm_w_aar_file.path | default('') else [])
+                 + ([_vm_w_noc_file | combine({'desc': 'Word document - Hand this to the NOC: one page, what is down now, what went down and '
+                                                      ~ 'what it affected, and what each pattern usually means'})]
+                    if _vm_w_review | bool and _vm_w_noc_file.path | default('') else [])
+                 + ([_vm_w_csv_file] if _vm_w_review | bool and _vm_w_csv_file.path | default('') else []) }}
             _vm_report_xlsx_desc: >-
               Excel workbook - this outage review's tables, a sheet each, and the whole time line (sheet Timeline: every event in
               time order, with its source, host, level and message)
             # 1.112.5: no email when nothing changed since the last (vm_watch_email_on_change); the web page is updated as always
             _vm_report_no_email: "{{ not _vm_w_mail.send | bool }}"
             _vm_report_no_email_why: "{{ _vm_w_mail.why }}"
+            _report_xlsx_optional: "{{ _vm_w_review | bool }}"
+            _vm_report_workbook_stem: "{{ _vm_w_tl.workbook_stem | default('') }}"
             _vm_report_xlsx: >-
-              {{ (_vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | report_xlsx_sheets) + [_vm_w_tl.sheet]
+              {{ _vm_w_tl.sheets if _vm_w_tl and _vm_w_review | bool and report_email_xlsx | default(false) | bool else
+                 (_vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | report_xlsx_sheets) + [_vm_w_tl.sheet]
                  if _vm_w_tl and report_email_xlsx | default(false) | bool else [] }}
 
   always:
@@ -261,6 +345,14 @@
       check_mode: false
       failed_when: false
       when: _vm_w_aar_dir.path is defined
+
+    - name: VMware | the CSV temporary folder, deleted
+      ansible.builtin.file:
+        path: "{{ _vm_w_csv_dir.path }}"
+        state: absent
+      check_mode: false
+      failed_when: false
+      when: _vm_w_review | bool and _vm_w_csv_dir.path is defined
 
 # 1.112.0: a review also keeps its AAR draft (aar) - the AAR job reads it back by this job's number (incident_review)
 - name: VMware | the review's numbers as a job artifact (vm_outage_review)

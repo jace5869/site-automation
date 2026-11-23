@@ -122,6 +122,23 @@ class ImageSize(unittest.TestCase):
         self.assertEqual(sf.image_size(os.path.join(self.tmp, "none.png")), [0, 0])
 
 
+class WindowHistory(unittest.TestCase):
+    def test_all_pages_of_the_templates_watch_artifacts(self):
+        from unittest.mock import Mock
+        api = Mock()
+        api.probe.return_value = ""
+        api.call.side_effect = [(200, {"results": [{"id": 8}, {"id": 7}], "next": "page2"}),
+                                (200, {"results": [{"id": 6}]}),
+                                *[(200, {"artifacts": {"vm_watch": {"conditions": [i]}}}) for i in (8, 7, 6)]]
+        runs, why = rh.history(api, 9, 71, 2, ["vm_watch"], window={"begin": 60, "end": 120})
+        self.assertEqual(why, "")
+        self.assertEqual([r["artifacts"]["vm_watch"]["conditions"] for r in runs], [[6], [7], [8]])
+        query = api.call.call_args_list[0][0][1]
+        self.assertIn("job_template=71&id__lt=9", query)
+        self.assertIn("started__lte=1970-01-01T00:02:00Z&finished__gte=1970-01-01T00:01:00Z", query)
+        self.assertEqual(api.call.call_args_list[1][0], ("GET", query + "&page=2"))
+
+
 class History(unittest.TestCase):
     """site_report_history against the fake AAP: job template 71 has jobs 901-918."""
 
