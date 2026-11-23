@@ -56,6 +56,8 @@ class ReportDB(Lite):
         def run(sql, args=()):
             if "information_schema.columns" in sql:      # 1.113.0's writer checks its added columns: SQLite's own answer
                 return execute("SELECT COUNT(*) FROM pragma_table_info(%s) WHERE name = %s", args)
+            if "information_schema.tables" in sql:       # 1.118.7's writer checks sw_link_day: SQLite's own tables
+                return execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sw_link_day'")
             if sql == "ROLLBACK AND NO CHAIN":
                 self.db.rollback()
                 return
