@@ -358,7 +358,7 @@ latest "$work/site" | "$py" -c '
 import json, sys
 r = json.load(sys.stdin)
 s = [x for x in r["sections"] if x["title"].startswith("Slow or not read")]
-assert s and s[0]["lines"] == ["Rules too slow (stigman_scorecard_rules_timeout), counts complete: SITEA - RHEL 9."], s
+assert s and s[0]["lines"] == ["Rules too slow, counts complete: SITEA - RHEL 9. To fix: raise stigman_scorecard_rules_timeout (now 1 s)."], s
 c = [x for x in r["sections"] if x["title"].startswith("By collection")][0]
 assert "lines" not in c, c.get("lines")                      # no lines under the table
 assert [x for x in r["sections"] if x["title"].startswith("Hosts")][0]["rows"], "no Hosts view"' \
@@ -404,7 +404,7 @@ latest "$work/site" | "$py" -c '
 import json, re, sys
 r = json.load(sys.stdin)
 s = [x for x in r["sections"] if x["title"].startswith("Slow or not read")]
-assert s and re.match(r"Check and fix text too slow \(stigman_scorecard_text_timeout\): \d+ of 10 rules without it\.$", s[0]["lines"][0]), s' \
+assert s and re.match(r"Check and fix text too slow: \d+ of 10 rules without it\. To fix: raise stigman_scorecard_text_timeout \(now 3 s\)\.$", s[0]["lines"][0]), s' \
     && [ $(( $(date +%s) - t0 )) -lt 60 ] && ok "  ...said in one line; the job did not wait for every rule" || bad "  ...the slow texts on the page"
 cp "$work/sm.keep" "$work/sm.json"
 # the stand-in answers one request at a time: the slow run's text requests it was still given (2 s each, after that job
