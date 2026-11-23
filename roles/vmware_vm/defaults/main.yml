@@ -392,6 +392,15 @@ vm_watch_fail_on: [critical]
 # The report is emailed (report_email_to) and published (report_web_dest) only when it finds a condition
 # of these severities; a clean run is one line in the job output.
 vm_watch_report_on: [critical]
+# 1.112.5, the email only when something changes: a run emails when the conditions of vm_watch_report_on changed since the
+# last email - a new one, a worse severity, one cleared (a lost datastore's or a down host's VMs count as that datastore or
+# host, as the tickets do) -, again every vm_watch_email_every_hours while they last, and once when all have cleared
+# ("Recovered"). The web page and the tickets are updated every run. A review (vm_watch_review) always emails; on a schedule
+# it is made at most once per vm_watch_email_every_hours (4 h when that is 0). The last email is read back from this
+# template's runs in AAP (the "Red Hat Ansible Automation Platform" credential, as report_history); without it every report
+# is emailed, as before, and the job output says why.
+vm_watch_email_on_change: true           # false = every run that finds a condition of vm_watch_report_on emails (as before 1.112.5)
+vm_watch_email_every_hours: 4            # a reminder while the conditions last, this many hours after the last email; 0 = never
 vm_watch_sso: true                       # the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked
 # The outage review (1.66.0): one time line of what vCenter and ServiceNow recorded - alarms, host events, tickets,
 # ACT's notes - with the first signal, the time from it to the ticket, and how long a host was down. Read-only.

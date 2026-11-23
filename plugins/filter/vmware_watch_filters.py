@@ -663,8 +663,162 @@ def vm_watch_artifact(data, conditions, actions=None):
             "not_judged": vm_watch_not_judged(d)}
 
 
+# ---- 1.112.5: the watch's email only when something changes (vm_watch_email_on_change) ----
+EMAIL_STATE = "vm_watch_email_state"
+
+
+def vm_watch_email_ids(conditions, report_on=None):
+    """{id: severity} of the conditions an email is about: those of vm_watch_report_on, folded to their root as the tickets
+    are (vm_watch_health) - a VM under a lost datastore or a down host is that datastore's or host's id, not its own.
+    Each id is its vCenter's (id@vcenter): two vCenters may each have a datastore1 (Codex review)."""
+    want = [str(x) for x in (report_on if report_on is not None else ["critical"])]
+    conditions = [c for c in conditions or [] if isinstance(c, dict) and c.get("id")]
+    roots = dict(((c.get("vcenter") or "", c["object_type"], c["object"]), c) for c in conditions
+                 if c.get("severity") == "critical" and ((c.get("kind") == "datastore" and c.get("object_type") == "datastore")
+                                                         or c.get("kind") == "host"))
+
+    def root(c):
+        if c.get("kind") not in VM_KINDS:
+            return None
+        vc = c.get("vcenter") or ""
+        for ds in c.get("datastores") or []:
+            if (vc, "datastore", ds) in roots:
+                return roots[(vc, "datastore", ds)]
+        return roots.get((vc, "host", (c.get("vm") or {}).get("esxi_host") or ""))
+
+    def key(c):
+        return "%s@%s" % (c["id"], c["vcenter"]) if c.get("vcenter") else c["id"]
+
+    out = {}
+    for c in conditions:
+        if c.get("severity") not in want:
+            continue
+        r = root(c)
+        cid, sev = (key(r), r["severity"]) if r is not None else (key(c), c["severity"])
+        if cid not in out or RANK.get(sev, 9) < RANK.get(out[cid], 9):
+            out[cid] = sev
+    return out
+
+
+def _email_state(runs):
+    """The newest run's vm_watch_email_state (runs oldest first, as site_report_history returns them), or None."""
+    for r in reversed(list(runs or [])):
+        st = ((r or {}).get("artifacts") or {}).get(EMAIL_STATE) if isinstance(r, dict) else None
+        if isinstance(st, dict) and isinstance(st.get("ids", {}), dict):
+            return st
+    return None
+
+
+def _utc(ts):
+    import datetime
+    return datetime.datetime.fromtimestamp(float(ts), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _shown_id(i):
+    i, _, vc = str(i).partition("@")
+    i = i[len("vm-watch:"):] if i.startswith("vm-watch:") else i
+    return "%s in %s" % (i, vc) if vc else i
+
+
+# conditions made from an event of the window (HA, storage, paths): they age out after vm_watch_window_minutes - no recovery
+WINDOW_IDS = ("vm-watch:event:", "vm-watch:storage:", "vm-watch:paths:")
+
+
+def _windowed(i):
+    return str(i).startswith(WINDOW_IDS)
+
+
+def vm_watch_email_decision(conditions, runs=None, opts=None):
+    """Does this run of the watch email? (1.112.5) Only when the conditions of vm_watch_report_on changed since the last
+    email - a new one, a worse severity, one cleared - plus a reminder every every_hours (0 = none) while they last, and
+    one 'recovered' email when all have cleared. The last email's state is this template's newest run's job artifact
+    vm_watch_email_state ({sent_at, sent_ts, ids: {id: severity}, review_ts}), from runs (site_report_history, oldest
+    first). Pure: opts = {now (epoch s), on_change, every_hours, report_on, review (asked), scheduled, why (why AAP could
+    not be read, '' = it was), unread (a vCenter was not read: nothing missing counts as cleared), time_zone}.
+    -> {send, kind (first, change, reminder, recovered, review, always, unknown, quiet, none), review (made this run),
+        report (make the report: something to report, a review, or the recovered email), why (the job output's line when
+        no email; '' otherwise), lines (what to print), changed (the email's lines: new, worse, cleared), state (to keep)}"""
+    o = opts or {}
+    now = float(o.get("now") or 0)
+    every = float(o.get("every_hours") or 0)
+    tz = _tm.zone(o.get("time_zone"))[0]
+    ids = vm_watch_email_ids(conditions, o.get("report_on"))
+    asked = bool(o.get("review"))
+    why = str(o.get("why") or "")
+    prev = None if why else _email_state(runs)
+    prev_ids = dict((prev or {}).get("ids") or {})
+
+    def shown(ts):
+        return _tm.local(_utc(ts), tz) if tz is not None else _utc(ts)
+
+    lines = []
+    review = asked
+    review_ts = float((prev or {}).get("review_ts") or 0)
+    if asked and o.get("scheduled") and o.get("on_change", True):
+        hours = every if every > 0 else 4.0
+        lines.append("vm_watch_review on a schedule: a review every %s h at most - launch it by hand for an AAR" % _num(hours))
+        if review_ts and now - review_ts < hours * 3600:
+            review = False
+            lines.append("No review this run: the last was at %s, the next from %s." % (shown(review_ts), shown(review_ts + hours * 3600)))
+    if review:
+        review_ts = now
+
+    keep = [prev]
+
+    def out(send, kind, state, why_line="", changed=None):
+        if state is not None:
+            state = dict(state, review_ts=review_ts)
+        # carry: the state to keep when this email does not go out after all (no recipient, a skipped blip) - Codex review
+        carry = dict(keep[0], review_ts=review_ts) if keep[0] else None
+        return {"send": bool(send), "kind": kind, "review": review, "report": bool(ids) or review or kind == "recovered",
+                "why": why_line, "lines": lines, "changed": changed or [], "state": state, "carry": carry if send else state}
+
+    sent = {"sent_at": _utc(now), "sent_ts": now, "ids": ids}
+    if not o.get("on_change", True):
+        return out(bool(ids) or review, "always", None)
+    if why:
+        if ids or review:
+            lines.append("Email on every report this run: the last email could not be read from AAP - %s." % why.rstrip("."))
+        # nothing sent: nothing kept either - the next run reads the last state AAP has (its recovered email is not lost)
+        return out(bool(ids) or review, "unknown", sent if (ids or review) else None)
+    unread = bool(o.get("unread"))
+    new = sorted(i for i in ids if i not in prev_ids)
+    worse = sorted(i for i in ids if i in prev_ids and RANK.get(ids[i], 9) < RANK.get(prev_ids[i], 9))
+    # a window's event that ages out is no recovery; nothing counts as cleared while a vCenter (or a suspect) was not read -
+    # and what could not be seen stays in the state until a full read settles it (Codex review)
+    cleared = [] if unread else sorted(i for i in prev_ids if i not in ids and not _windowed(i))
+    if unread:
+        seen, ids = ids, dict(prev_ids)
+        ids.update(seen)
+        sent["ids"] = ids
+    # the events that aged out leave the state without an email, so the same event again is new (Codex review)
+    prev = dict(prev, ids=dict((i, v) for i, v in prev_ids.items() if unread or i in ids or not _windowed(i))) if prev else prev
+    keep[0] = prev
+    changed = (["New: %s (%s)" % (_shown_id(i), ids[i]) for i in new]
+               + ["Worse: %s (%s, was %s)" % (_shown_id(i), ids[i], prev_ids[i]) for i in worse]
+               + ["Cleared: %s (was %s)" % (_shown_id(i), prev_ids[i]) for i in cleared])
+    if review:
+        return out(True, "review", sent, changed=changed)
+    if prev is None:
+        return out(bool(ids), "first" if ids else "none", sent if ids else {"sent_at": "", "sent_ts": 0, "ids": {}})
+    if not ids:
+        if prev_ids and not unread:
+            return out(True, "recovered", dict(sent, ids={}),
+                       changed=["Cleared: %s (was %s)" % (_shown_id(i), prev_ids[i]) for i in sorted(prev_ids)])
+        return out(False, "none", prev)
+    if new or worse or cleared:
+        return out(True, "change", sent, changed=changed)
+    last = float(prev.get("sent_ts") or 0)
+    if every > 0 and now - last >= every * 3600:
+        return out(True, "reminder", sent, changed=["Reminder: no change since the email of %s" % shown(last)])
+    nxt = (" - next reminder at %s" % shown(last + every * 3600)) if every > 0 else " - no reminder"
+    return out(False, "quiet", prev,
+               "nothing changed since the email of %s (vm_watch_email_every_hours: %s%s)." % (shown(last), _num(every), nxt))
+
+
 class FilterModule(object):
     def filters(self):
         return {"vm_watch_conditions": vm_watch_conditions, "vm_watch_actions": vm_watch_actions, "vm_watch_report": vm_watch_report,
                 "vm_watch_health": vm_watch_health, "vm_watch_artifact": vm_watch_artifact, "vm_watch_clean_line": vm_watch_clean_line,
-                "vm_watch_not_judged": vm_watch_not_judged}
+                "vm_watch_not_judged": vm_watch_not_judged, "vm_watch_email_ids": vm_watch_email_ids,
+                "vm_watch_email_decision": vm_watch_email_decision}

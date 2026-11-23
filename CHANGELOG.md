@@ -72,6 +72,31 @@ set `report_portal_link: ""` for none, or an address or `/portal/` to choose it 
   content styles unchanged and no sideways scroll on atlas, brief, ops and their index and on the portal's Jobs page, the
   sticky table heads in all three looks; the portal's files).
 
+## 1.112.5 — 2026-11-23
+
+**To set up:** nothing - the watch needs its Red Hat Ansible Automation Platform credential to read its last email (as
+report history); without it, it emails as before.
+
+- **VM outage watch: email only when something changes.** During an outage every run (every 10 to 15 minutes) emailed
+  the same report. Now a run emails when something changed since the last email - a new condition, a worse severity,
+  one that cleared - with a box on top, *Since the last email*. While nothing changes, a reminder every
+  `vm_watch_email_every_hours` (4; 0 = none). When everything has cleared, one *Recovered* email. Other runs say why in
+  the job output: "No email: nothing changed since the email of ... (vm_watch_email_every_hours: 4 - next reminder at
+  ...)". The web page and the tickets are updated every run, as before.
+- A VM on a lost datastore or a down host counts as that datastore or host (as the tickets). An HA or storage event that
+  ages out of the window is no change (the same event again is new). A vCenter that was not read is no recovery, and
+  its conditions stay in the state. Each condition is its vCenter's (a datastore1 in two vCenters is two). An email with
+  no recipient is not kept as sent.
+- The last email is kept as each run's job artifact `vm_watch_email_state` and read back from the template's last runs
+  in AAP (failed runs too). No credential, or AAP not readable: every report is emailed, and the output says why.
+- **A review always emails**, with its AAR (Word). The watch's own emails never carry the AAR.
+- **`vm_watch_review` on a schedule** is made at most once per `vm_watch_email_every_hours`; the output says so. Launch a
+  review by hand for an AAR.
+- Settings: `vm_watch_email_on_change` (true; false = every report emails, as before), `vm_watch_email_every_hours` (4).
+- Tests: tests/test_vm_watch_email.py (the decision: same conditions = no email, new / worse / cleared = email, the
+  reminder, one recovered email then quiet, the first run, no AAP; the scheduled review; watch_email.yml with
+  ansible-playbook against the fake AAP: two runs, one email).
+
 ## 1.112.4 — 2026-11-23
 
 **To set up:** nothing to set up.

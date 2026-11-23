@@ -143,6 +143,51 @@ Job artifacts, for the next step of a workflow:
 5. **Email** (optional): `report_email_to` on the job template. Only runs that find something at
    `vm_watch_report_on` (critical) send it.
 
+## Email: only when something changes
+
+Since 1.112.5 the watch does not email every run while an outage lasts. A run emails when:
+
+- **something changed** since the last email: a new condition (a new host, datastore or VM down), a worse severity, or
+  one that cleared. The email has a box on top, *Since the last email*: `New: ...`, `Worse: ...`, `Cleared: ...`.
+- **a reminder** is due: `vm_watch_email_every_hours` (4) after the last email, while the conditions last
+  (`Reminder: no change since the email of ...`). `0` = no reminder.
+- **everything has cleared**: one email, titled *Recovered - ...*. Then the runs are quiet again.
+
+Any other run sends no email. The job output says why:
+
+```
+No email: nothing changed since the email of 2026-11-23 07:10 CET (vm_watch_email_every_hours: 4 - next reminder at 2026-11-23 11:10 CET).
+```
+
+What stays the same: **the web page and the tickets are updated every run.** Only the email waits.
+
+- **What counts as one condition.** The conditions of `vm_watch_report_on`, folded as the tickets are: a VM on a lost
+  datastore, or on a host that is down, counts as that datastore or host. More VMs lost on the same datastore is no new
+  email; the reminder and the web page have them.
+- **An event of the window** (an HA restart or failure, a storage or path event) drops out after
+  `vm_watch_window_minutes`. That alone is not "cleared" and sends nothing; the same event again later is new. When nothing at all is left, the recovered email goes.
+- **A vCenter that was not read** this run (or a suspect vCenter could not check) is no recovery: nothing missing
+  counts as cleared, and the last email's conditions are kept, until a full read settles them. A new condition still
+  emails. Each condition is its vCenter's: a `datastore1` lost in a second vCenter is new.
+- **An email that did not go out** (no `report_email_to`, or a review that was only a blip) is not kept as sent: the next
+  run compares with the last email that did.
+- **A review** (`vm_watch_review: true`) always emails. It is asked for. Its AAR (Word) is attached only to the review's
+  email, never to the watch's own.
+- **A review on a schedule.** With `vm_watch_review: true` on a scheduled launch, the review is made at most once per
+  `vm_watch_email_every_hours` (4 h when that is 0). The output says: *vm_watch_review on a schedule: a review every 4 h
+  at most - launch it by hand for an AAR*. The other runs are normal watch runs. Better: leave `vm_watch_review` off in
+  the scheduled template and launch a review by hand.
+
+**Where the last email is kept.** Each run keeps the state as its job artifact `vm_watch_email_state` (when the last
+email went, and its conditions). The next run reads it back from this template's last runs in AAP, failed runs too (the
+watch fails on a critical condition by design; the last 15 runs), also with `report_history: false`. That needs the template's **"Red Hat Ansible Automation Platform"
+credential**, the same one as the report history, and its user must see the template's jobs (Organization Auditor on its
+organization, or a role on the template). Without it, or when AAP cannot be read, every report is emailed as before,
+and the job output says why: *Email on every report this run: the last email could not be read from AAP - ...*.
+A dry run (Check) reads but keeps nothing.
+
+`vm_watch_email_on_change: false` = the old way: every run that finds something emails.
+
 ## Review an outage (the time line)
 
 After an outage, the same job draws what vCenter and ServiceNow recorded on one time line (1.66.0). It answers three
@@ -445,6 +490,8 @@ the ticket, not a finding.
 | `vm_watch_max_actions` | 5 | the most VMs one run would restart; beyond it, ticket only |
 | `vm_watch_fail_on` | [critical] | severities that make the job red; `[]` = always green |
 | `vm_watch_report_on` | [critical] | severities that make a report (email, web page); `[critical, warning]` for the warnings too |
+| `vm_watch_email_on_change` | true | email only when something changed since the last email, a reminder, and one recovered email (1.112.5); false = every report |
+| `vm_watch_email_every_hours` | 4 | a reminder while the conditions last, this long after the last email; 0 = never. Also the most one scheduled review is made |
 | `vm_watch_review` | false | true, at launch: make the outage review now, also when nothing is down |
 | `vm_watch_review_hours` | 6 | how far back the review looks (0.25 to 744) |
 | `vm_watch_review_from` | "" | an older outage: the window's start, in `report_time_zone`, e.g. `2026-11-12 01:00` |

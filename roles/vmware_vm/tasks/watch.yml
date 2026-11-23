@@ -75,17 +75,22 @@
             | map('join', ' - not judged: ') | list) }}
   when: not _vm_w_report_it | bool
 
+# 1.112.5: the email only when something changed since the last one (vm_watch_email_on_change); a review on a schedule at most
+# once per vm_watch_email_every_hours. _vm_w_mail.review is the review this run makes (watch_email.yml)
+- name: VMware | the watch's email - only when something changed (vm_watch_email_on_change)
+  ansible.builtin.include_tasks: watch_email.yml
+
 # 1.66.0, the outage review's time line: what vCenter and ServiceNow recorded, in order. Read only when a report is
 # made anyway (vm_watch_timeline) or a review is asked for (vm_watch_review): a clean run stays one read and one line.
 # Read-only (vCenter's events; ServiceNow GET only, and only with its credential attached). A read that fails never
 # stops the watch: the report then goes out without the time line.
 - name: VMware | the outage review's window (vm_watch_review_hours, vm_watch_review_from, vm_watch_review_to)
   ansible.builtin.set_fact:
-    _vm_w_review: "{{ vm_watch_review | bool }}"
+    _vm_w_review: "{{ _vm_w_mail.review | bool }}"
     _vm_w_tl: {}
     _vm_w_win: >-
       {{ (_vm_now | default(now().timestamp())) | outage_window(vm_watch_review_hours,
-           vm_watch_review_from if vm_watch_review | bool else '', vm_watch_review_to if vm_watch_review | bool else '',
+           vm_watch_review_from if _vm_w_mail.review | bool else '', vm_watch_review_to if _vm_w_mail.review | bool else '',
            report_time_zone | default('', true) | string) }}
 
 - name: VMware | the outage review's window is a stretch of time
@@ -130,7 +135,7 @@
       ansible.builtin.set_fact:
         _vm_w_tl: >-
           {{ _vm_w_ev.events | outage_timeline(_vm_w_tk.tickets | default([]),
-               {'begin': _vm_w_win.begin, 'end': _vm_w_win.end, 'fixed': vm_watch_review_from | string | trim | length > 0,
+               {'begin': _vm_w_win.begin, 'end': _vm_w_win.end, 'fixed': _vm_w_review | bool and vm_watch_review_from | string | trim | length > 0,
                 'time_zone': report_time_zone | default('', true) | string,
                 'low_seconds': vm_watch_review_low_seconds | float,
                 'min_seconds': vm_watch_review_min_seconds | float, 'skip_blips': vm_watch_review_skip_blips | bool,
@@ -208,11 +213,20 @@
             _vm_w_aar_error: "{{ ansible_failed_result.msg | default('it could not be written') | string | truncate(200) }}"
 
     - name: VMware | the outage report
-      when: (_vm_w_report_it | bool or _vm_w_review | bool) and not (_vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool)
+      when: (_vm_w_report_it | bool or _vm_w_review | bool or _vm_w_mail.kind == 'recovered') and not (_vm_w_tl | default({}) | length > 0 and _vm_w_tl.skip | default(false) | bool)
       block:
         - name: VMware | the report
           ansible.builtin.set_fact:
-            _vm_w_doc: "{{ _vm_w | vm_watch_report(_vm_w_cond, _vm_w_actions, {'time_zone': report_time_zone | default('', true) | string}) }}"
+            # 1.112.5: the email says what changed since the last one (a section on top); the recovered email is titled so
+            _vm_w_doc: >-
+              {%- set d = _vm_w | vm_watch_report(_vm_w_cond, _vm_w_actions, {'time_zone': report_time_zone | default('', true) | string}) -%}
+              {%- set d = d | combine({'title': 'Recovered - ' ~ d.title})
+                          if _vm_w_mail.kind == 'recovered' else d -%}
+              {{ d | combine({'sections': [{'title': 'Since the last email', 'status': 'info', 'top': true, 'lines': _vm_w_mail.changed}]
+                                          + d.sections | default([])}) if _vm_w_mail.send and _vm_w_mail.changed else d }}
+            # 1.112.5 (Codex review): the email state is kept as sent only when this email has somewhere to go
+            _vm_w_mail_out: >-
+              {{ _vm_w_mail.send | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0) }}
             _vm_w_aar_info: >-
               {{ {'file': _vm_w_aar_file.filename | default(''), 'error': _vm_w_aar_error, 'job': awx_job_id | default('') | string,
                   'asked': _vm_w_aar | length > 0 and vm_watch_review_docx | bool, 'draft': _vm_w_aar | length > 0} }}
@@ -228,10 +242,13 @@
               {{ _vm_w_doc | outage_timeline_doc(_vm_w_tl, true, _vm_w_review | bool) | outage_review_aar(_vm_w_aar_info, true) if _vm_w_tl else {} }}
             _vm_report_attachments: >-
               {{ [_vm_w_aar_file | combine({'desc': 'Word document - the after action report (AAR) draft, filled from this outage review: '
-                                                    ~ 'check it and finish it before you send it'})] if _vm_w_aar_file.path | default('') else [] }}
+                                                    ~ 'check it and finish it before you send it'})] if _vm_w_review | bool and _vm_w_aar_file.path | default('') else [] }}
             _vm_report_xlsx_desc: >-
               Excel workbook - this outage review's tables, a sheet each, and the whole time line (sheet Timeline: every event in
               time order, with its source, host, level and message)
+            # 1.112.5: no email when nothing changed since the last (vm_watch_email_on_change); the web page is updated as always
+            _vm_report_no_email: "{{ not _vm_w_mail.send | bool }}"
+            _vm_report_no_email_why: "{{ _vm_w_mail.why }}"
             _vm_report_xlsx: >-
               {{ (_vm_w_doc | outage_timeline_doc(_vm_w_tl, false, _vm_w_review | bool) | report_xlsx_sheets) + [_vm_w_tl.sheet]
                  if _vm_w_tl and report_email_xlsx | default(false) | bool else [] }}
@@ -261,6 +278,17 @@
       vm_watch: "{{ _vm_w | vm_watch_artifact(_vm_w_cond, _vm_w_actions) }}"
       site_health: "{{ _vm_w | vm_watch_health(_vm_w_cond, {'job': awx_job_id | default('')}) }}"
       site_health_targets: []
+
+# 1.112.5: every run keeps the watch's email state (the last email, its conditions) - the next run reads it back from AAP.
+# Never in a dry run (Check): a Check run sends nothing, so it must not look like an email to the real runs after it.
+- name: VMware | the watch's email state as a job artifact (vm_watch_email_state)
+  ansible.builtin.set_stats:
+    data:
+      vm_watch_email_state: "{{ _vm_w_mail_keep }}"
+  vars:
+    # an email that did not go out (no recipient, a review that was only a blip): the last state, as it was
+    _vm_w_mail_keep: "{{ _vm_w_mail.state if _vm_w_mail_out | default(false) | bool or not _vm_w_mail.send | bool else _vm_w_mail.carry }}"
+  when: _vm_w_mail_keep is not none and not ansible_check_mode
 
 - name: VMware | every vCenter was read
   ansible.builtin.include_tasks: vcenters_read.yml
