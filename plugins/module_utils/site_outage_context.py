@@ -158,8 +158,14 @@ def issue(kind, group, name, state, what, since, details):
                 items=[dict(name=label, state=state, what=line) for label, line in details])
 
 
-def summary(lines, capped=False):
-    return " · ".join(lines[:5] + (["more rows in the window"] if capped or len(lines) > 5 else []))
+def observed(objects, times, stamp, capped=False):
+    """The objects and span of the returned observations, including bounded reads."""
+    names = ", ".join(sorted(set(filter(None, objects))))
+    if times:
+        names += " · " + stamp(min(times))
+        if max(times) != min(times):
+            names += " to " + stamp(max(times))
+    return names + (" (read limit reached)" if capped else "")
 
 
 def solar_events(cur, sid, orion, hosts, patterns, topologies, window, stamp, clean):
@@ -191,31 +197,29 @@ def solar_events(cur, sid, orion, hosts, patterns, topologies, window, stamp, cl
     elsewhere = "%d event%s elsewhere in the window left out." % (total - mine, "" if total - mine == 1 else "s")
     rows = select(cur, "SELECT node_id, net_object_type, net_object_id, event_time, type_name, message, snap_id, orion" + where +
                   " AND " + inside + " ORDER BY event_time, orion, event_id", args + params)
-    lines, groups, types = [], defaultdict(list), Counter()
+    objects, groups, types = set(), defaultdict(list), Counter()
     latest = {}
-    for nid, typ, oid, at, name, msg, snap, epoch in rows:
+    for index, (nid, typ, oid, at, name, msg, snap, epoch) in enumerate(rows):
         node = topologies[snap][0][nid]
         name, msg = clean(name or "Event"), clean(msg or node)[:300]
         types[name] += 1
-        line = "%s · %s · %s" % (stamp(at), name, msg)
-        lines.append(line)
+        objects.add(node)
         if name.lower() in ("node down", "node up", "interface down", "interface up"):
             # Some Orions give only the interface caption in the transition message. Match it verbatim.
             key = (nid, typ, oid if typ != "N" else nid)
             if typ == "I" and oid is None:
                 caption = re.fullmatch(r"(.+?) is " + name.split()[-1], msg, re.I)
-                key += (caption.group(1) if caption else len(lines),)
+                key += (caption.group(1) if caption else index,)
             identity = (epoch, node, key)
-            groups[identity].append((name.lower(), stamp(at), line))
+            groups[identity].append(name.lower())
             latest[identity] = max(latest.get(identity, snap), snap)
     title = EMPTY
     if rows:
-        title = "%d events on the storage path" % mine
-        if mine == len(rows):
-            title += ", %s to %s: %s" % (stamp(rows[0][3]), stamp(rows[-1][3]), ", ".join("%d %s" % (v, k) for k, v in types.items()))
+        title = "%d event%s on the storage path" % (mine, "" if mine == 1 else "s")
+        title += " (%s%s)" % ("sample: " if mine > len(rows) else "", ", ".join("%d %s" % (v, k) for k, v in types.items()))
     c = card(EVENTS, title,
              "critical" if any("down" in (r[4] or "").lower() for r in rows) else "info",
-             elsewhere, summary(lines, mine > len(rows)))
+             elsewhere, observed(objects, [r[3] for r in rows], stamp, mine > len(rows)))
     by_snapshot = defaultdict(dict)
     for identity, changes in groups.items():
         by_snapshot[latest[identity]][identity[2]] = changes
@@ -227,18 +231,19 @@ def solar_alerts(cur, sid, nodes, window, stamp, clean):
     rows = select(cur, "SELECT node_id, name, triggered_at, acknowledged, message, severity, entity_caption FROM sw_alert_active WHERE snap_id = %s "
                   "AND triggered_at BETWEEN %s AND %s AND node_id IN (" + marks(ids) + ") ORDER BY triggered_at, alert_active_id",
                   [sid] + list(window) + ids, ROW_LIMIT + 1)
-    lines, issues = [], []
+    counts, issues, entities = Counter(), [], set()
     critical = False
     for nid, name, at, ack, msg, severity, entity in rows[:ROW_LIMIT]:
         name, entity = clean(name or "Alert"), clean(entity or nodes[nid])
-        line = "%s on %s, raised %s, %s" % (name, entity, stamp(at),
-                "acknowledged" if ack else "acknowledgement unknown" if ack is None else "not acknowledged")
+        status = "acknowledged" if ack else "acknowledgement unknown" if ack is None else "not acknowledged"
+        counts[name + " (" + status + ")"] += 1
+        entities.add(entity)
         critical = critical or severity == 2
-        lines.append(line)
-        issues.append((nid, issue("net", "SolarWinds (storage path)", entity, "At risk", name + " still active",
-                                  stamp(at), [("Active alert", line + ". " + clean(msg or "")[:300])])))
-    return card(ALERTS, summary(lines, len(rows) > ROW_LIMIT) or EMPTY,
-                "critical" if critical else "warning" if rows else "info"), issues
+        issues.append((nid, issue("net", "SolarWinds (storage path)", entity, "At risk", name + " still active", "",
+                                  [("Active alert", name + ", " + status)])))
+    title = ", ".join("%d %s" % (v, k) for k, v in counts.items())
+    return card(ALERTS, title or EMPTY, "critical" if critical else "warning" if rows else "info",
+                detail=observed(entities, [r[2] for r in rows[:ROW_LIMIT]], stamp, len(rows) > ROW_LIMIT)), issues
 
 
 def network_issues(cur, sid, nodes, events, alerts, capped, neighbours, clean):
@@ -268,12 +273,12 @@ def network_issues(cur, sid, nodes, events, alerts, capped, neighbours, clean):
         by_node[nid].append(i)
     for key, changes in events.items():
         nid, typ, oid = key[:3]
-        down = next((c for c in changes if c[0].endswith(" down")), None)
+        down = next((c for c in changes if c.endswith(" down")), None)
         if not down:
             continue
-        back = changes[-1][0].endswith(" up") and not capped
+        back = changes[-1].endswith(" up") and not capped
         state = "Recovered" if back else "Not judged"
-        details = [dict(name=c[0], state=state, what=c[2]) for c in changes]
+        details = []
         if typ == "N" and nid in by_node:
             for i in by_node[nid]:
                 i["items"].extend(details)
@@ -290,8 +295,7 @@ def network_issues(cur, sid, nodes, events, alerts, capped, neighbours, clean):
             details.append(dict(name="Interface at the snapshot", state=state,
                                 what="%s%s" % ({1: "Up", 2: "Down"}.get(oper, "State unknown"),
                                                ", %d input errors today" % errors if errors is not None else "")))
-        i = issue("net", "SolarWinds (storage path)", name, state, down[0] + ("; back " + changes[-1][1] if back else "; recovery not established"),
-                  down[1], [])
+        i = issue("net", "SolarWinds (storage path)", name, state, down + ("; back" if back else "; recovery not established"), "", [])
         details.extend(path_item(nid))
         i.update(items=details, n=len(details))
         issues.append(i)
@@ -307,22 +311,22 @@ def network_map(cur, window, stamp, clean):
                    "THEN x.read_at END) IS NOT NULL ORDER BY site_a, site_b, link_key", window, ROW_LIMIT + 1)
     sites = select(cur, "SELECT site, MAX(down), MIN(x.read_at), MAX(x.read_at) FROM netmap_site x" + good +
                    " AND (down > 0 OR LOWER(status) = 'down') GROUP BY r.source, site, site_key ORDER BY site, site_key", window, ROW_LIMIT + 1)
-    observed = select(cur, "SELECT COUNT(*) FROM netmap_link x" + good, window, 1)[0][0]
-    lines, issues = [], []
+    link_reads = select(cur, "SELECT COUNT(*) FROM netmap_link x" + good, window, 1)[0][0]
+    names, times, issues = [], [], []
     for a, b, first, last, up in links[:ROW_LIMIT]:
         name = "%s - %s" % (clean(a), clean(b))
-        detail = "WAN link seen down %s to %s" % (stamp(first), stamp(last))
         back = up and up > last
-        if back:
-            detail += ", seen up " + stamp(up)
-        lines.append(name + ": " + detail)
-        issues.append(issue("net", "Network map", name, "Recovered" if back else "Not judged", detail, stamp(first), [("WAN link", detail)]))
+        names.append(name)
+        times.extend([first, up if back else last])
+        issues.append(issue("net", "Network map", name, "Recovered" if back else "Not judged",
+                            "WAN link seen down" + ("; seen up again" if back else ""), "", []))
     for site, down, first, last in sites[:ROW_LIMIT]:
-        count = "%d node%s down" % (down, "" if down == 1 else "s") if down else "site down"
-        lines.append("%s: %s, first seen %s, last seen %s" % (clean(site), count, stamp(first), stamp(last)))
-    title = "WAN links seen down" if links else "No WAN link seen down" if observed else "No WAN link readings"
+        names.append(clean(site) + (" (%d node%s down)" % (down, "" if down == 1 else "s") if down else " (site down)"))
+        times.extend([first, last])
+    title = ("%d WAN link%s seen down" % (min(len(links), ROW_LIMIT), "" if len(links) == 1 else "s") if links else
+             "No WAN link seen down" if link_reads else "No WAN link readings")
     return card(MAP, title if reads else EMPTY, "critical" if links else "warning" if sites else "info",
-                "%d successful map reads" % reads, summary(lines, max(len(links), len(sites)) > ROW_LIMIT)), issues
+                "%d successful map reads" % reads, observed(names, times, stamp, max(len(links), len(sites)) > ROW_LIMIT)), issues
 
 
 def directory(cur, window, stamp, clean):
@@ -336,7 +340,7 @@ def directory(cur, window, stamp, clean):
                   "JOIN ad_run history ON history.run_id = retained.run_id WHERE retained.last_failure BETWEEN %s AND %s) pick "
                   "ON pick.latest = 1 AND pick.run_id = l.run_id AND pick.link_key = l.link_key ORDER BY l.last_failure, l.link_key",
                   window, ROW_LIMIT + 1)
-    lines, controllers, link_states = [], {}, defaultdict(dict)
+    controllers, link_states, links = {}, defaultdict(dict), {}
     # Site labels are optional. A link remains evidence even without the DC inventory.
     sites = {}
     pairs = sorted({(r[-1], r[0]) for r in rows[:ROW_LIMIT]})
@@ -355,30 +359,42 @@ def directory(cur, window, stamp, clean):
         frm, to, nc = (clean(v) for v in (frm, to, nc))
         back = not failures and success and success > at
         what = "Replication to %s (%s) failed: %s" % (to, nc, clean(error or "no error recorded"))
-        detail = "%s · %s · %s. %s (AD read %s)." % (stamp(at), frm, what, "Worked again at " + stamp(success) if back else
-                                                      "%d consecutive failures" % failures, stamp(read_at))
-        lines.append(detail)
+        detail = what.rstrip(".") + (". Worked again." if back else ". %d consecutive failures." % failures)
         state = "Recovered" if back else "At risk" if failures else "Not judged"
-        since = "last success " + stamp(success) if back else stamp(at)
         previous = link_states[key].get(link_key)
         observation = (read_at, rid)
         if previous is None or observation > previous[0]:
             link_states[key][link_key] = (observation, state)
+            links[key, link_key] = dict(name="%s → %s, %s" % (frm, to, nc), state=state, what=detail)
         if key not in controllers:
-            controllers[key] = issue("dc", group, frm, state, what, since, [])
-        controller = controllers[key]
-        controller["items"].append(dict(name="%s → %s, %s" % (frm, to, nc), state=state, what=detail + " Same time, not cause."))
+            controllers[key] = issue("dc", group, frm, state, what, "", [])
+        controllers[key]["observations"] = controllers[key].get("observations", 0) + 1
+        controllers[key]["total"] = total
+    for key, controller in controllers.items():
+        controller["items"] = [links[key, link] for link in link_states[key]]
         controller["n"] = len(controller["items"])
-        if controller["n"] > 1:
-            controller["what"] = "%d replication failures in the window" % controller["n"]
-            controller["since"] = "See individual links"
-            # A controller is recovered only when every affected link has a later success.
-            states = {value[1] for value in link_states[key].values()}
+        total = controller.pop("total")
+        n = controller.pop("observations")
+        if n < total:
+            controller.update(state="Not judged", what="%d of %d replication failures shown" % (n, total))
+        else:
+            states = {item["state"] for item in controller["items"]}
             controller["state"] = "At risk" if "At risk" in states else "Not judged" if "Not judged" in states else "Recovered"
-        if controller["n"] < total:
-            controller.update(state="Not judged", since="See individual links",
-                              what="%d of %d replication failures shown" % (controller["n"], total))
-    return card(AD, summary(lines, len(rows) > ROW_LIMIT) or EMPTY, "warning" if rows else "info", detail=LAST), list(controllers.values())
+            if n > 1:
+                controller["what"] = "%d replication failures in the window" % n
+    sampled = rows[:ROW_LIMIT]
+    states = Counter(item["state"] for item in links.values())
+    title = EMPTY
+    if sampled:
+        title = "%d replication failure%s." % (len(sampled), "" if len(sampled) == 1 else "s")
+        for state, outcome in (("Recovered", "Worked again on"), ("At risk", "At risk on"), ("Not judged", "Not judged on")):
+            count = states[state]
+            if count:
+                title += " %s %d link%s." % (outcome, count, "" if count == 1 else "s")
+    names = [item["name"] for item in links.values()]
+    return card(AD, title, "warning" if sampled else "info",
+                observed(names, [r[3] for r in sampled], stamp, len(rows) > ROW_LIMIT),
+                " ".join(filter(None, (", ".join(sorted({clean(r[6]) for r in sampled if r[6]})), LAST)))), list(controllers.values())
 
 
 def syslog_card(live, nodes, orion, window, stamp, clean):
@@ -386,14 +402,12 @@ def syslog_card(live, nodes, orion, window, stamp, clean):
         result = live(orion, sorted(nodes), window)
         if not result["ok"]:
             return card(SYSLOG, "not read: " + clean(result["why"]))
-        lines, total = [], 0
-        for nid, data in result["by_node"].items():
-            total += data["count"]
-            for entry in data["top"]:
-                lines.append("%s · %s · %s (×%d)" % (stamp(entry["last"]), nodes[nid], clean(entry["message"]), entry["count"]))
+        total = sum(data["count"] for data in result["by_node"].values())
+        names = ["%s (%d)" % (nodes[nid], data["count"]) for nid, data in result["by_node"].items() if data["count"]]
         return card(SYSLOG, ("%d entries on the storage path" % total) if total else EMPTY,
                     subject="Log Analyzer, capped at %d entries%s." % (LOG_LIMIT, " (cap reached)" if result["capped"] else ""),
-                    detail=summary(lines))
+                    detail=" · ".join(filter(None, (observed(names, result.get("span", []), stamp),
+                        ", ".join("%d %s" % (v, k) for k, v in result.get("levels_seen", {}).items())))) if total else "")
     except NoData as e:
         return card(SYSLOG, "not read: " + str(e))
     except Exception:

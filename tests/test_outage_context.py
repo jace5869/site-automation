@@ -148,7 +148,7 @@ class OutageContext(unittest.TestCase):
         self.assertIn("Only alerts still active", c[ctx.ALERTS]["next"])
         self.assertIn("2 successful map reads", str(c[ctx.MAP]))
         self.assertIn("SITEA - HUB", c[ctx.MAP]["next"])
-        self.assertIn("Worked again", c[ctx.AD]["title"])
+        self.assertEqual(c[ctx.AD]["title"], "1 replication failure. Worked again on 1 link.")
         self.assertEqual([(v["group"], v["state"]) for v in r["issues"] if v["kind"] == "dc"], [("AD site SITEA", "Recovered")])
         self.assertEqual({(v["name"], v["state"]) for v in r["issues"] if v["kind"] == "net"},
                          {("sitea-array01", "At risk"), ("sitea-fc-sw01 · Ethernet1/29", "Recovered"), ("SITEA - HUB", "Recovered")})
@@ -214,8 +214,8 @@ class OutageContext(unittest.TestCase):
         result = cards(ctx.read(self.db, self.scope))[ctx.EVENTS]
         self.assertIn("5 events on the storage path", result["title"])
         self.assertIn("1 event elsewhere", result["subject"])
-        self.assertIn("new fabric event", result["next"])
-        self.assertIn("controller down", result["next"])
+        self.assertIn("sitea-fc-sw02", result["next"])
+        self.assertIn("sitea-array01", result["next"])
         self.assertNotIn("third hop at another site", str(result))
         self.db.db.execute("DELETE FROM sw_link WHERE snap_id=1")
         self.db.commit()
@@ -233,9 +233,9 @@ class OutageContext(unittest.TestCase):
             adb.write(self.db, at(when), job, 7, dict(dcs=[], links=[row]))
         self.db.commit()
         controller, = [i for i in ctx.read(self.db, self.scope)["issues"] if i["kind"] == "dc"]
-        self.assertEqual([i["state"] for i in controller["items"]], ["Recovered", "At risk"])
+        self.assertEqual([i["state"] for i in controller["items"]], ["At risk"])
         self.assertEqual(controller["state"], "At risk")
-        self.assertIn("23:00:00 UTC", controller["items"][1]["what"])
+        self.assertIn("1 consecutive failure", controller["items"][0]["what"])
 
     def test_controller_with_unread_link_is_not_recovered(self):
         self.db.db.execute("DELETE FROM ad_link")
@@ -424,7 +424,7 @@ class OutageContext(unittest.TestCase):
             doc = ot.outage_timeline_doc(WATCH, enriched, web, True)
             titles = [s["title"] for s in doc["sections"]]
             previous = titles[titles.index(ctx.TITLE) - 1]
-            self.assertTrue(previous.endswith(" - chart") if web else previous == "4. Recovered")
+            self.assertEqual(previous, "Noise: summed up, not rows")
             html = env.get_template("report%s.html.j2" % look).render(_report=doc, _email_footer="AAP job 1",
                        _page_logo_cid="", _page_runs=[], report_email_header_text="Outage review")
             for source in ctx.SOURCES:
@@ -473,8 +473,9 @@ class OutageContext(unittest.TestCase):
                 client.url = ORION
                 with patch.object(reader.db, "connect", return_value=(self.db, "none")), patch.object(reader.hs, "client_of", return_value=client):
                     context = reader.review(self.params)
+                self.assertEqual(ctx.clean_source(url, str), "https://example.invalid/path")
                 for source in (ctx.EVENTS, ctx.SYSLOG):
-                    self.assertIn("https://example.invalid/path", cards(context)[source]["next"])
+                    self.assertNotIn("example.invalid/path", cards(context)[source]["next"])
                 review = ot.outage_review_context(ot.outage_timeline(*director_outage()), context)
                 job = "\n".join(review["lines"])
                 for fragment in (user, "example-value", "@example.invalid"):
@@ -498,8 +499,10 @@ class OutageContext(unittest.TestCase):
         client.url = ORION
         with patch.object(reader.db, "connect", return_value=(self.db, "none")), patch.object(reader.hs, "client_of", return_value=client):
             result = reader.review(self.params)
-        for field in fields:
+        for field in ("caption", "interface", "node"):
             self.assertIn("example.invalid/" + field, str(result))
+        for field in ("alert", "message", "syslog"):
+            self.assertNotIn("example.invalid/" + field, str(result))
         review = ot.outage_review_context(ot.outage_timeline(*director_outage()), result)
         outputs = {"job": "\n".join(review["lines"]), "reader": str(result)}
         env = EmailTiles()._env()

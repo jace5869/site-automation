@@ -5,7 +5,7 @@
 {% if s.noc_error | default('') %}<p>{{ s.noc_error | e }}</p>{% endif %}
 <div class="kb-grid">
 {% for c in s.patterns %}
-<article class="kb"><header><span class="kb-n">{{ loop.index }}</span><h3>{{ c.title | e }}</h3></header>
+<article class="kb" id="outage-card-{{ c.title | replace(' ', '-') | e }}"><header><span class="kb-n">{{ loop.index }}</span><h3>{{ c.title | e }}</h3></header>
 <p class="kb-what">{{ c.means | e }}</p>
 <div class="kb-cols"><div><h4>Typical causes</h4><ul>{% for x in c.causes %}<li>{{ x | e }}</li>{% endfor %}</ul></div>
 <div><h4>Check first (read only)</h4><ol>{% for x in c.checks %}<li>{{ x | e }}</li>{% endfor %}</ol></div></div>

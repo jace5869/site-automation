@@ -26,12 +26,9 @@
 .ibk-row.st-down{border-left-color:var(--critical);background:var(--critical-row,var(--card))}
 .ibk-row.st-risk{border-left-color:var(--warning)}
 .ibk-row.st-ok{border-left-color:var(--ok)}
-.ibk-row>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:7.4em 11.5em minmax(0,1fr) auto auto;gap:4px 12px;align-items:baseline;padding:9px 12px}
-.ibk-row>summary::-webkit-details-marker{display:none}
-.ibk-row>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
-.ibk-row>summary:before{content:"";grid-column:1;display:none}
+.ibk-line{display:grid;grid-template-columns:7.4em 11.5em minmax(0,1fr) auto auto;gap:4px 12px;align-items:baseline;padding:9px 12px}
 .ibk-name{font-weight:700;overflow-wrap:anywhere}
-.ibk-row>summary .ibk-pill{justify-self:start}
+.ibk-line .ibk-pill{justify-self:start}
 .ibk-what{color:var(--ink);min-width:0;overflow-wrap:anywhere}
 .ibk-since{color:var(--muted);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .ibk-n{font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 8px;white-space:nowrap}
@@ -49,7 +46,7 @@
 .ibk-pill.st-ok{color:var(--ok);background:var(--card-strong);border-color:var(--line)}
 .ibk-pill.st-skip,.ibk-pill.st-quiet{color:var(--muted);background:var(--card-strong);border-color:var(--line)}
 .ibk-tag{font-size:11.5px;font-weight:700;color:var(--info);background:var(--info-bg);border:1px solid var(--info-bd);border-radius:6px;padding:0 6px}
-@media (max-width:900px){.ibk-row>summary{grid-template-columns:7.4em minmax(0,1fr) auto}.ibk-what{grid-column:1/-1;grid-row:2}.ibk-since{grid-column:1/-1;grid-row:3;white-space:normal}.ibk-n{grid-column:3;grid-row:1}}
+@media (max-width:900px){.ibk-line{grid-template-columns:7.4em minmax(0,1fr) auto}.ibk-what{grid-column:1/-1;grid-row:2}.ibk-since{grid-column:1/-1;grid-row:3;white-space:normal}.ibk-n{grid-column:3;grid-row:1}}
 @media print{.ibk-chips,.ibk-key{display:none}.ibk-kind{display:block!important}}
 .ibk .ibk-pill,.ibk .ibk-sub,.ibk .ibk-since,.ibk .ibk-vm{white-space:normal;overflow-wrap:anywhere}
 .ibk .ibk-since{max-width:16em}

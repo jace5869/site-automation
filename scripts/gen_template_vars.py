@@ -784,7 +784,7 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 # outage_escalate_network: ""  # NOC escalation contact. Empty uses "your network team".
 # outage_escalate_vmware: ""  # NOC escalation contact. Empty uses "your VMware team".
 # outage_escalate_backup: ""  # NOC escalation contact. Empty uses "your backup team".
-# outage_aar_appendix_max: 40  # Maximum grouped event rows in Appendix A.
+# outage_aar_appendix_max: 0  # Maximum grouped outage rows in Appendix A (0 includes all).
 # vm_watch_review_from: "2026-11-12 01:00"       # an older outage: the window starts here (report_time_zone) ...
 # vm_watch_review_to: "2026-11-12 05:00"         # ... and ends here
 # vm_watch_review_tickets: [INC0012345]          # a ticket opened by hand, shown too

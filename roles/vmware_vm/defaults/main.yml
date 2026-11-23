@@ -429,7 +429,7 @@ outage_escalate_storage: ""  # NOC escalation contact. Empty uses "your storage 
 outage_escalate_network: ""  # NOC escalation contact. Empty uses "your network team".
 outage_escalate_vmware: ""  # NOC escalation contact. Empty uses "your VMware team".
 outage_escalate_backup: ""  # NOC escalation contact. Empty uses "your backup team".
-outage_aar_appendix_max: 40  # Maximum grouped event rows in Appendix A.
+outage_aar_appendix_max: 0  # Maximum grouped outage rows in Appendix A (0 includes all).
 vm_watch_review_context: true  # 1.116.1: read other sources for the outage review's What else saw it cards.
 vm_watch_review_context_minutes: 15  # Minutes to include before and after the dated outage window.
 vm_watch_review_storage_nodes: []  # Storage switch and array node names or patterns (* and ?) when SolarWinds topology has no path.

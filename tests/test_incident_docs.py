@@ -710,14 +710,13 @@ class AarFromReview(unittest.TestCase):
         self.assertEqual(d["start"], "2026-11-12 02:19 CET - Host not responding")
         self.assertEqual(d["impact"], _review()["title"])
         self.assertEqual(d["detection"][1], "Ticket INC0012345 opened 12 Nov 03:14 CET, 54 min after the first signal")
-        self.assertEqual([x[0] for x in d["numbers"]], ["First signal", "First signal to ticket", "Time down"])
-        self.assertIn("12 Nov 03:05:12 CET - esx03: host connected again (down 46 min)", d["recovery"])
-        self.assertEqual(d["recovery"], sorted(d["recovery"]))                       # in time order
+        self.assertEqual([x[0] for x in d["numbers"]], ["First signal to ticket", "Time down"])
+        self.assertEqual(d["recovery"], ["See 4. Recovered."])
         self.assertEqual(d["events"], [])
         self.assertTrue(d["groups"])
         self.assertLessEqual(len(d["key"]), 15)
         self.assertTrue(any(row[1] == "HA restarted a VM (x14)" and "app23" in row[2] for row in d["key"]))
-        self.assertEqual(f.incident_review_filled({"start": "typed"}, d), ["end", "impact", "detection", "actions", "recovery"])
+        self.assertEqual(f.incident_review_filled({"start": "typed"}, d), ["end", "impact", "detection", "recovery"])
         self.assertEqual(f.incident_review_filled({}, dict(d, end="", actions=[])), ["start", "impact", "detection", "recovery"])
         self.assertEqual(f.incident_review_filled({}, {}), [])
         self.assertEqual(d["tickets"][0][0], "INC0012345")
@@ -808,8 +807,8 @@ class AarFromReview(unittest.TestCase):
         self.assertIn("496 events, including noise", blocks[appendix + 1]["text"])
         cols = ["Time (CET)", "What", "Objects", "Level"]
         self.assertEqual(sum(len(b["rows"]) for b in blocks[appendix:] if b.get("columns") == cols), 3)
-        tables = [b for b in blocks[:appendix] if b.get("columns", [])[-1:] == ["How long"]]
-        self.assertEqual([row[0] for b in tables for row in b["rows"]], [r["time"]["clock"] for r in d["story"]["rows"]])
+        tables = [b for b in blocks[:appendix] if b.get("columns", [])[-1:] == ["What happened"]]
+        self.assertEqual([row[0] for b in tables for row in b["rows"]], [r["span"] for r in d["story"]["rows"]])
         self.assertEqual(blocks[appendix - 1], {"type": "page_break"})
         red_lines = [b["text"] for b in blocks if b.get("type") == "para" and b.get("color") == "B42318"]
         self.assertTrue(any(t.startswith("Outage window from ") for t in red_lines))
@@ -839,7 +838,6 @@ class AarFromReview(unittest.TestCase):
         names = ["example-datastore-%03d-%s" % (i, "long-name-" * 10) for i in range(40)]
         draft["title"] = "Storage outage - " + ", ".join(names) + " still down"
         draft["went"] = [[n, "Datastore", "unknown", "unknown", "DOWN NOW"] for n in names]
-        draft["story"]["rows"][-1]["objects"] = ", ".join(names)
         handoff = f.incident_noc_docx(draft, {"banner": "Example marking"})
         self.assertLessEqual(max(len(b["text"]) for b in handoff["blocks"]), 200)
         self.assertIn(contact.strip(), str(f.incident_aar_docx(f.incident_record({"kind": "aar"}), {}, [], False, draft)))
@@ -871,13 +869,13 @@ class AarFromReview(unittest.TestCase):
         doc = f.incident_aar_docx(r, {"banner": "CUI", "instructions": ["Save it."]}, [], False, d)
         t = _doc_text(doc)
         heads = [b["text"] for b in doc["blocks"] if b.get("type") == "heading"]
-        self.assertEqual(heads, ["OVERVIEW", "Event Response", "Reason for Outage (RFO) & Recovery", "What this usually means (for the NOC)",
+        self.assertEqual(heads, ["OVERVIEW", "What this usually means (for the NOC)", "Event Response", "Reason for Outage (RFO) & Recovery",
                                  "Lessons Learned & Action Plan", "Appendix A - the events by phase", "Appendix B - Hand this to the NOC"])
         for want in ("Filled from the outage review, AAP job 4714, made 2026-11-12 02:45 UTC", "The outage, in order",
                      "Suggested - confirm: A fibre channel path went down (ACT, 80% high). Evidence: 01:58:02 esx03 Lost path redundancy. "
                      "Check: Check the switch port (esxcli storage core path list).", "Suggested - confirm: ACT in INC0012345",
                      "To write: the confirmed cause", "To write: what went well.", "To write: each task - owner - due date.",
-                     "The review saw: the ticket came 54 min", "To write: the impact level", "Save it.", "INC0012345 | 12 Nov 03:14 CET"):
+                     "The review saw: the ticket came 54 min", "To write: the impact level", "Save it.", "INC0012345 | 12 Nov 03:40 CET"):
             self.assertIn(want, t)
         red = [b for b in doc["blocks"] if b.get("color") == f.TO_WRITE and b["type"] == "bullets"]
         self.assertTrue(red and all(str(x).startswith("To write:") for b in red for x in b["items"]))

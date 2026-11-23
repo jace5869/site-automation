@@ -13,27 +13,22 @@
 <div class="ibk-chips"><label class="ibk-chip" for="ibk-all">All <span>{{ counts.values() | sum }}</span></label>
 {%- for key, label in kinds if key in counts %}<label class="ibk-chip" for="ibk-{{ key }}">{{ label }} <span>{{ counts[key] }}</span></label>{% endfor %}
 </div>
-<p class="ibk-key">{% for state, cls in words_by_state.items() %}<span class="ibk-pill st-{{ cls }}">{{ state }}</span> {% endfor %} Worst first. Open a row to see what it holds.</p>
+<p class="ibk-key">{% for state, cls in words_by_state.items() %}<span class="ibk-pill st-{{ cls }}">{{ state }}</span> {% endfor %} Worst first.</p>
 <div class="ibk-kinds">
 {%- for key, label in kinds if key in counts %}
 <section class="ibk-kind k-{{ key }}"><h3>{{ label }} <span class="count">{{ counts[key] }}</span></h3>
-{%- for group, rows in s.issues | selectattr('kind','equalto',key) | groupby('group') %}
-<div class="ibk-grp"><h4>{{ group | e }}</h4>
-{%- for r in rows %}
-<details class="ibk-row st-{{ words_by_state.get(r.state, 'skip') }}"{{ ' open' if key == 'ds' and r.state == 'Down now' else '' }}>
-<summary><span class="ibk-pill st-{{ words_by_state.get(r.state, 'skip') }}">{{ r.state | e }}</span>
-<span class="ibk-name">{{ r.name | e }}</span><span class="ibk-what">{{ r.what | e }}</span>
-<span class="ibk-since">{{ r.since | e }}</span>{% if key == 'ds' %}<span class="ibk-n">{{ r.n }} VMs</span>{% endif %}</summary>
-<div class="ibk-in">
-{% if key == 'ds' %}<p class="ibk-note">{{ r.n }} VMs with files on {{ r.name | e }}.</p>{% endif %}
-{% for section in (['Datastores','VMs that ran on it'] if key == 'host' else ['']) %}
-{% if section %}<h5>{{ section }}</h5>{% endif %}<ul class="ibk-vms">
-{%- for item in r['items'] if not section or ((item.host is defined) == (section == 'VMs that ran on it')) %}
-<li><span class="ibk-pill st-{{ words_by_state.get(item.state, 'skip') }}">{{ (item.what if item.host is defined else item.state) | e }}</span>
-<span class="ibk-vm">{{ item.name | e }}</span>{% if item.protected | default(false) %}<span class="ibk-tag">Protected</span>{% endif %}
-<span class="ibk-sub">{% if item.host is defined %}{{ item.host | e }} / {{ item.datastore | e }}{% if item.since | default('unknown') != 'unknown' %} · {{ item.since | e }}{% endif %}{% else %}{{ item.what | e }}{% endif %}</span></li>
-{%- endfor %}</ul>{% endfor %}</div></details>
+<div class="ibk-grp">
+{%- for r in s.issues | selectattr('kind','equalto',key) %}
+{% if loop.changed(r.group) %}<h4>{{ r.group | e }}</h4>{% endif %}
+<div class="ibk-row st-{{ words_by_state.get(r.state, 'skip') }}">
+<div class="ibk-line"><span class="ibk-pill st-{{ words_by_state.get(r.state, 'skip') }}">{{ r.state | e }}</span>
+<span class="ibk-name">{{ r.name | e }}</span> <span class="ibk-what">{{ r.what | e }}</span>
+{% if r.host is defined %}<span>{{ r.host | e }} / {{ r.datastore | e }}</span>{% endif %}
+{% if r.protected | default(false) %}<span class="ibk-tag">Protected</span>{% endif %}
+{% if r.anchor | default('') %}<a class="ibk-since" href="#{{ r.anchor | e }}">{{ r.since | e }}</a>{% endif %}
+{% if key == 'ds' %}<span class="ibk-n">{{ r.n }} VMs</span>{% endif %}</div>
+{% if r['items'] %}<ul>{% for item in r['items'] %}<li>{{ item.name | e }} · {{ item.state | e }} · {{ item.what | e }}</li>{% endfor %}</ul>{% endif %}
+</div>
 {%- endfor %}</div>
-{%- endfor %}
 {% if key == 'net' and s.network_note | default('') %}<p class="ibk-note">{{ s.network_note | e }}</p>{% endif %}</section>
 {%- endfor %}</div></fieldset></div>

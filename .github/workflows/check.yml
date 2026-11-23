@@ -193,6 +193,7 @@ jobs:
           python tests/test_patch_age.py
           python tests/test_cert_timeline.py
           python tests/test_outage_timeline.py
+          python tests/test_outage_one_place.py
           python tests/test_outage_context.py
           python tests/test_watch_frozen.py
           python tests/test_portal.py

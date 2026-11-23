@@ -1,0 +1,5 @@
+{%- macro sentence(r) -%}
+{{ r.text | e }}{{ r.names[:10] | join(', ') | e }}
+{%- if r.names | length > 10 %} <details class="st-more"><summary>and {{ r.names | length - 10 }} more</summary>{{ r.names[10:] | join(', ') | e }}</details>{% endif -%}
+{{ r.suffix | e }}{% if r.card %}. <a href="#outage-card-{{ r.card | replace(' ', '-') | e }}">See the card: {{ r.card | e }}</a>{% endif %}
+{%- endmacro -%}

@@ -426,10 +426,10 @@ def incident_review_fill(record, draft):
         return r
     if d.get("outage_ops_center"):
         r["outage_ops_center"] = d["outage_ops_center"]
-    for k in REVIEW_FILLS:
-        if not _text(r.get(k)) and d.get(k):
-            v = d[k]
-            r[k] = _text("\n".join(v) if isinstance(v, (list, tuple)) else v)
+    for k in incident_review_filled(r, d):
+        r[k] = _text(d[k])
+        if k == "detection" and d.get("story", {}).get("grouped"):
+            r["review_auto_detection"] = r[k]
     if not _text(r.get("name")) and d.get("name"):
         r["name"] = _text(d["name"])
     return _unsafe(r)
@@ -440,7 +440,9 @@ def incident_review_filled(record, draft):
     r, d = record or {}, draft or {}
     if not d.get("v"):
         return []
-    return [k for k in REVIEW_FILLS if not _text(r.get(k)) and _text("\n".join(d[k]) if isinstance(d.get(k), (list, tuple)) else d.get(k))]
+    # Older grouped drafts copied timeline work notes into Actions.
+    return [k for k in REVIEW_FILLS if not _text(r.get(k)) and _text(d.get(k))
+            and not (k == "actions" and d.get("story", {}).get("grouped"))]
 
 
 def _red(label, text):
@@ -468,6 +470,10 @@ def _review_impact(d):
             if d.get("at_risk"):
                 blocks.append({"type": "para", "text": "At risk: " + ", ".join(d["at_risk"])})
         elif d[key]:
+            if key == "went" and len(d["part_columns"][i]) == 4:
+                widths = [1.5, 3, 1, 1]
+            if key == "recovered" and len(d["part_columns"][i]) == 3:
+                widths = [1.5, 4, 1]
             blocks.append({"type": "table", "columns": d["part_columns"][i], "rows": d[key], "widths": widths})
         else:
             blocks.append({"type": "para", "text": "None recorded."})
@@ -481,7 +487,7 @@ def _review_impact(d):
 def _review_appendix(d, cols, widths):
     blocks = [{"type": "heading", "text": "Appendix A - the events by phase"},
               {"type": "note", "text": "The same event within 3 minutes is one row with its count. " + d["full_list"]}]
-    groups = d["groups"][:max(0, int(d.get("appendix_max", 40)))]
+    groups = d["groups"][:max(0, int(d.get("appendix_max", 0))) or None]
     for phase in ("Lead-up", "Outage", "Recovery", "After"):
         rows = [g["row"] for g in groups if g["phase"] == phase]
         if rows:
@@ -515,6 +521,16 @@ def _story_blocks(story, time_column):
         if row["divider"]:
             blocks.append(dict(type="para", text=row["divider"], bold=True, keep=True))
             table = None
+        if story.get("grouped"):
+            if table is None:
+                table = dict(type="table", columns=[time_column, "Level", "What happened"], widths=[1.1, 1, 5], rows=[])
+                blocks.append(table)
+            sentence = row["text"] + ", ".join(row["names"]) + row["suffix"]
+            if row["card"]:
+                sentence += ". See the card: " + row["card"]
+            table["rows"].append([row["span"] + (" " + row["time"]["zone"] if time_column == "Time" else ""),
+                                  row["word"], sentence])
+            continue
         if table is None:
             table = dict(type="table", columns=[time_column, "Level", "What happened", "Objects", "How long"],
                          widths=[1, 1.2, 3, 1.8, 1.1], rows=[])
@@ -555,23 +571,15 @@ def incident_noc_docx(review, opts=None):
     blocks = [dict(type="para", text="Hand this to the %s" % (d.get("outage_ops_center") or "NOC"), bold=True, size=12),
               dict(type="para", text=brief(d["title"], 110), bold=True, size=size)]
     source = "AAP job " + str(d["job"]) if d.get("job") else "Outage review"
-    blocks.append(dict(type="para", text=brief("%s · %s" % (source, d.get("window", "")), 100), italic=True, size=size))
-    # The handoff names affected objects in groups. Per-object evidence is in the four full tables.
-    now = next((r for r in d.get("story", {}).get("rows", []) if r["level"] == "down"), {})
+    blocks.append(dict(type="para", text=source, italic=True, size=size))
     down = ", ".join(r[1] for r in d.get("now") or []) or "Nothing reported down."
-    if now.get("duration"):
-        down += " · " + now["duration"]
-    if now:
-        down += " (" + now["time"]["day"] + " " + now["time"]["clock"] + " " + now["time"]["zone"] + ")"
     blocks.append(dict(type="para", text="Down now: " + brief(down, 160), bold=True, color="B42318", size=size))
     went = d.get("went", [])
-    losses = ["%s (%s from %s)" % (r[0], r[3], r[2]) for r in went[:6]]
+    losses = ["%s (%s)" % (r[0], r[-2]) for r in went[:6]]
     if len(went) > 6:
         losses.append("%d further objects in the review" % (len(went) - 6))
     blocks.append(dict(type="para", text="What went down: " + brief("; ".join(losses) or "No infrastructure loss recorded.", 155), size=size))
     blocks.append(dict(type="para", text="What it affected: " + brief(d.get("affected_note", ""), 100), size=size))
-    recovered = ["%s: %s at %s" % (r[0], r[1], r[2]) for r in d.get("recovered", [])]
-    blocks.append(dict(type="para", text="Recovered: " + brief("; ".join(recovered) or "No recovery recorded.", 155), size=size))
     if cards:
         blocks.append(dict(type="para", text="What this usually means", bold=True, size=size))
     for i, c in enumerate(cards[:8], 1):
@@ -592,6 +600,7 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
     tcol = d.get("time_column") or "Time"
     ev_cols, ev_w = [tcol, "Lane", "Level", "What", "Where"], [1.6, 1.25, 1.15, 4.0, 0.9]
     v2 = d.get("v") == 2
+    grouped = d.get("story", {}).get("grouped")
     if v2:
         ev_cols, ev_w = [tcol, "What", "Objects", "Level"], [1.6, 2.9, 2, 0.8]
     src = "the outage review%s%s" % ((", AAP job " + d["job"]) if d.get("job") else "", (", made " + d["made"]) if d.get("made") else "")
@@ -627,12 +636,19 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
                          "items": ["To write: the impact level (MINOR, MODERATE, MAJOR or CRITICAL) and who was affected."]}]
             if v2:
                 out.extend(_review_impact(d))
+                if grouped:
+                    out.extend(_pattern_blocks(d["patterns"], d.get("outage_ops_center") or "NOC"))
         elif lab == "Detection:":
+            if grouped:
+                if b["lines"] and r.get("detection") != r.get("review_auto_detection"):
+                    out.append(b)
+                continue
             out.append(b)
             if d.get("numbers"):
                 out.append({"type": "table", "columns": ["", "Value", "Detail"], "rows": d["numbers"], "widths": [1.6, 1.0, 4.4], "bold_first": True})
         elif lab == "Actions:":
-            out.append(b)
+            if not grouped:
+                out.append(b)
             if "story" in d:
                 out.extend(_story_blocks(d["story"], tcol))
             elif d.get("key"):
@@ -642,13 +658,23 @@ def _aar_from_review(record, opts, suggestions, tidied, review):
                 if v2 and d.get("noise"):
                     out.append({"type": "note", "text": "%d noise changes are summarized in Appendix A." %
                                 sum(row[2] for row in d["noise"])})
-            if d.get("tickets"):
+            if grouped:
+                if d["tickets"]:
+                    out.append(dict(type="table", columns=["Number", "Resolved", "What", "Close notes"],
+                                    rows=d["tickets"], widths=[1.2, 1.4, 2.2, 2.2]))
+                out.append(dict(type="table", columns=["", "Value", "Detail"], rows=d["numbers"],
+                                widths=[1.6, 1, 4.4], bold_first=True))
+                notes = {row["text"] for row in d["story"]["rows"] if row["text"].startswith("Work note: ")}
+                actions = [line for line in b["lines"] if line not in notes and "Work note: " + line not in notes]
+                out.extend([dict(b, lines=actions)] if actions else _red("Actions:", "To write: what the team did."))
+            elif d.get("tickets"):
                 out += [{"type": "para", "text": "Tickets:", "bold": True, "keep": True},
                         {"type": "table", "columns": ["Number", "Opened", "Resolved", "What", "Close notes"], "rows": d["tickets"],
                          "widths": [1.3, 1.1, 1.1, 2.4, 2.3]}]
         elif lab == "Recovery:" and "patterns" in d:
             out.append(b)
-            out.extend(_pattern_blocks(d["patterns"], d.get("outage_ops_center") or "NOC"))
+            if not grouped:
+                out.extend(_pattern_blocks(d["patterns"], d.get("outage_ops_center") or "NOC"))
         elif v2 and d.get("what_else") and b.get("type") == "heading" and b.get("text") == "Lessons Learned & Action Plan":
             # 1.116.1: the review's source cards, before the AAR author's lessons.
             out.append(dict(type="heading", text="What else saw it (same time, not cause)"))
@@ -950,6 +976,8 @@ def incident_act_apply(record, raw, opts=None):
             elif k in STEP_FIELDS and len(_lines(new)) < len(_lines(old)):
                 out["kept"].append("%s: ACT's wording had fewer steps than were typed - kept as typed" % given[k])
             elif new != old:
+                if k == "detection" and r[k] == r.get("review_auto_detection"):
+                    r["review_auto_detection"] = new
                 r[k] = new
                 out["tidied"].append(k)
         if not tidy:

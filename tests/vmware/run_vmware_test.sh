@@ -3016,13 +3016,16 @@ assert "Hand this to the NOC" in noc_body and "Down now" in noc_body
 mail_html = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/html")
 assert "The outage, in order" in mail_html and 'class="st-ev ' in mail_html
 plain = next(p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8") for p in m.walk() if p.get_content_type() == "text/plain")
-chain = plain.split("The outage, in order", 1)[1].split("1. What went down", 1)[0]
+chain = plain.split("The outage, in order", 1)[1].split("Issues by type", 1)[0]
 assert "Outage window from" in chain and " UTC)" in chain, chain
 text = zipfile.ZipFile(io.BytesIO(docs[0].get_payload(decode=True))).read("word/document.xml").decode()
 for want in ("Filled from the outage review, AAP job 4711", "Appendix A - the events by phase", "Appendix B - Hand this to the NOC", csvname, "To write: the confirmed cause",
-             "Suggested - confirm: ACT in INC0012345", "OVERVIEW",
-             "Template error: {{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"):      # Neon P1: text stays text
+             "Suggested - confirm: ACT in INC0012345", "OVERVIEW"):
     assert want in text, want
+# Neon P1, text stays text: the work note naming SN_PASSWORD is never templated (no goodpw below). Since 1.116.0 the review
+# masks ticket text before any output, and a line naming a password variable is removed whole (1.116.3: either is right)
+assert ("Template error: {{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}" in text
+        or "Work note: &lt;line removed: may hold a secret&gt;" in text), "the second work note"
 assert "goodpw" not in text, "a secret in the AAR"
 pages = [p for p in glob.glob(sys.argv[2] + "/**/*.html", recursive=True) if "Download AAR (Word)" in open(p).read()]
 assert pages, "no page with the link"

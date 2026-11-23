@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.116.3 — 2026-11-23
+
+**To set up:** nothing. `outage_aar_appendix_max` now defaults to 0 for all grouped outage rows.
+
+- The four-part summary opens the review, followed by the pattern cards. Down now keeps its since time.
+- The outage timeline groups changes of the same kind and direction within 15 minutes of the previous change.
+  Open “and N more” for the rest of the names. The AAR prints them all. Tickets and work notes keep their own lines.
+- Issues by type links each object to its timeline entry. Recovered lists each object once, with its duration.
+- Other sources summarize their observations, objects, counts and time spans. The last, folded section holds the same
+  grouped rows as the AAR's Appendix A; every single event is in the workbook and the CSV.
+- An event is shown in one place: the timeline. The other sections give names, states and how long, or link to it.
+- The AAR puts the cards after Overview. Event Response keeps the timeline, tickets and two measures. Actions records
+  the team’s work. Appendix A groups the outage events and sums noise. Appendix B is the operations handoff.
+
+- A work note that names a password variable is removed whole from the review, as since 1.116.0; the VMware end-to-end
+  test now accepts that form of its "text stays text" note.
+
+Tests: tests/test_outage_one_place.py, tests/test_outage_timeline.py, tests/test_outage_context.py,
+tests/test_incident_docs.py and tests/test_watch_frozen.py.
+
 ## 1.122.2 — 2026-11-24
 
 **To set up:** nothing (redeploy the site portal for the AD-group fixes)

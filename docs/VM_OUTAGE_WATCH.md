@@ -241,7 +241,7 @@ If there is no unique match, *How it judged* says so and the review follows even
 Set `vm_watch_review_object` to a current name, a recorded name or the object name in a vCenter event.
 
 If the watch supplies no roots, the review uses datastore or host loss events in the requested window and shows each
-event's type and time. If there are none, it reviews the datastores of VMs down now. A VM's placement alone does not
+event's type in the summary and its time in the timeline. If there are none, it reviews the datastores of VMs down now. A VM's placement alone does not
 establish that its datastore lost access. When no root is found, the page, email and AAR say how many watch runs were
 read and what the vCenter event read showed.
 
@@ -255,7 +255,7 @@ read and what the vCenter event read showed.
 3. **Down now** gives every current watch condition across all vCenters, worst first. If the condition has no time,
    it uses the story's dated loss for that root's current span, or says *time not recorded*. Each down VM is also
    listed under **Issues by type > VMs**, with its datastores when known.
-4. **Recovered** gives the object, recovery event, time and duration when recorded.
+4. **Recovered** lists each recovered object once, with the hosts that regained access and the duration when known.
 
 With `vm_watch_review_noise: true`, usage alarms, gray transitions, unpaired greens and brief flaps
 are counted by alarm and scope. A brief loss the watch observed during that span stays in the outage chain.
@@ -264,32 +264,22 @@ Each noise line gives every change, the number of objects, the time span and fin
 at least ten changes during the outage and more than three times the outside rate indicate a rise at the
 same time. Set `vm_watch_review_noise: false` to include these changes in the detailed event list. The story always omits noise.
 
-*The outage, in order* shows up to 15 milestones. Appendix A groups matching events within three minutes by
-lead-up, outage, recovery and after, with up to `outage_aar_appendix_max` rows and a separate noise table.
-The review email attaches a workbook and matching CSV named for the outage. Both include every source event.
+The page and email put *What this usually means* immediately after the four parts. Each pattern card describes
+what the signal means, what usually causes it, which objects showed it, when, what to check and whom to call.
 
-The configured vCenter event cap still applies.
+*The outage, in order* groups changes of the same kind and direction within 15 minutes of the previous change.
+Each line gives the count, time span and names. Open **and N more** after the first ten names. Alarms join the change
+they describe. Tickets and work notes each have their own line. Matching patterns link to their cards.
 
-| Part | What |
-|---|---|
-| The boxes | Went down, VMs affected, Down now, Recovered, Signal to ticket, Noise |
-| The outage, in order | The outage chain by day, including lead-up, recoveries and the watch's current read. |
-| Issues by type (website) | Filter Datastores, VMs or Hosts. Network and Domain controllers appear when those sources have rows. |
-| The four parts | What went down, what it affected, down now and recovered. |
-| What this usually means (for the NOC) | Patterns actually seen, in order of first evidence, with causes, read-only first checks, contacts and the objects and times seen here. |
-| All events (N) - chart | Open to see Storage, Hosts, HA and VMs, and Tickets. Choose Everything to see usage and gray alarms in ten-minute bars. |
-| What else saw it | SolarWinds, network map and AD observations in the outage window, on the page, in the email and before Lessons Learned in the AAR. |
-| The outage in short | The first signal, the ticket, the time down and when it was back. |
-| The events (website) | the numbered rows behind the chart and ACT links, initially folded, and the CSV download |
-| Download AAR (Word) (1.112.0) | in the page's head: the after action report, filled from this review ([The AAR draft](#the-aar-draft-word)) |
-| For the after-action report | where the AAR draft is, the job number for the AAR job, and the lines to paste into its survey |
-| From ACT - possible causes and fixes (1.104.0, with `vm_outage_act: true`) | ACT's suggestions, as cards that open: see below |
-| The watch's own sections | *Down or hung now* and the rest, below, as in every watch report |
+*Issues by type* gives the objects and their states, worst first within each group. Follow an object's link to its
+timeline entry. The chart, summed noise, *What else saw it* and *How it judged* follow.
+The last section, *Every event, grouped (each single event is in the workbook)*, starts folded: the same grouped rows as the AAR's Appendix A.
+The workbook and matching CSV include every source event returned by the read. The configured vCenter event cap applies.
 
 ### What else saw it
 
 Attach the **Report database** reader credential to the outage watch template (1.116.1). Only a review that passes the
-email throttle reads context. Each card says *same time, not cause*. The window follows the dated outage in
+email throttle reads context. Each card summarizes the source, objects, counts and time span and says *same time, not cause*. The window follows the dated outage in
 the story, with 15 minutes on each side by default. A missing table says *no data yet*. A disabled read,
 missing credential or database failure gives a reason on the cards and the review continues.
 
@@ -358,7 +348,7 @@ off by default. Each suggestion is a guess to check, never a finding.
    - **What to check**: read-only checks that confirm the cause, numbered;
    - **Possible fix**: what could fix it, numbered, each command with a **Copy** button (a step ACT gave no kind is
      under **Other steps**);
-   - **The events it read**: each number goes to its row in *The events*.
+   - **The events it read**: each number goes to its source row in *Every event*.
 5. Check before you act. The tag *Suggestion - check before acting* is on every card.
 
 What ACT reads and does:
@@ -391,10 +381,14 @@ someone opens it, checks it and writes the rest.
   The file is `AAR-<outage-name>.docx`.
 - **The layout** is the AAR job's own ([INCIDENT_DOCS.md](INCIDENT_DOCS.md)): the marking banner, the logo, the font, the site's
   instructions before the appendices.
-- **Filled from the review:** the start and end, the impact (the hosts down and for how long, the VMs HA restarted), the
-  detection (the first signal, the ticket and the time between), the actions (HA's restarts, the tickets' work notes), the
-  recovery (the host back, the ticket's close notes, all back to normal).
-- **Tables:** the three numbers, the outage chain by day (at most 15 rows), the tickets. Full NOC cards follow Recovery. *Appendix B* starts a new page with the compact handoff. *Appendix A* groups matching events by phase, summarizes noise and names the complete workbook and CSV.
+- **Overview** gives the incident date and time, impact and four parts. The pattern cards follow immediately.
+- **Event Response** prints the grouped timeline with every name, tickets with resolution and close notes,
+  first signal to ticket and time down. Actions contains the team's work notes or a red prompt to complete.
+- **RFO & Recovery** points to *4. Recovered*. Lessons Learned keeps its fields and task table.
+- **Appendix A** groups matching events within three minutes by phase and sums noise separately. By default it lists
+  all grouped outage rows. A positive `outage_aar_appendix_max` limits them and gives the number omitted.
+- **Appendix B** contains the operations handoff with Down now, the objects that went down and their durations,
+  the impact and the compact pattern cards. The same handoff is available as a separate Word file.
 - **ACT's possible causes** (`vm_outage_act`, when it is on) are under the root cause as *Suggested - confirm*. So is what
   a ticket's own ACT analysis said. They are suggestions, not findings. Without them the document says *ACT was not asked*.
 - **Left to write, in red:** the root cause (never filled from ACT), the impact level, the successes, the improvements, and
@@ -414,10 +408,6 @@ someone opens it, checks it and writes the rest.
 **The same draft from the AAR job.** Launch *Outage AAR - Word document* and answer *Fill from an outage review*
 (`incident_review`) with this job's number, or `latest`. The AAR job reads the review from this job's artifact. A box you
 type wins over the review. See [INCIDENT_DOCS.md](INCIDENT_DOCS.md#the-aar-from-an-outage-review).
-
-**By hand.** The section *For the after-action report* still has the lines to paste into the AAR job's survey (`incident_start`,
-`incident_end`, `incident_detection`, `incident_root_cause`). Check the root cause before you paste it. It is ACT's reading of
-the ticket, not a finding.
 
 ### When a part is missing
 
@@ -465,7 +455,7 @@ the ticket, not a finding.
 | `outage_escalate_network` | `""` | NOC escalation contact. Empty uses "your network team". |
 | `outage_escalate_vmware` | `""` | NOC escalation contact. Empty uses "your VMware team". |
 | `outage_escalate_backup` | `""` | NOC escalation contact. Empty uses "your backup team". |
-| `outage_aar_appendix_max` | `40` | Maximum grouped event rows in Appendix A. |
+| `outage_aar_appendix_max` | `0` | Maximum grouped outage rows in Appendix A (0 includes all). |
 | `vm_watch_review_context` | `true` | Read other sources for the outage review's What else saw it cards. |
 | `vm_watch_review_context_minutes` | `15` | Minutes to include before and after the dated outage window. |
 | `vm_watch_review_storage_nodes` | `[]` | Storage switch and array node names or patterns (`*` and `?`) when SolarWinds topology has no path. |

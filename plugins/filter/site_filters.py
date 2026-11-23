@@ -2087,6 +2087,10 @@ def report_tidy(report, notes=True, raw_keys=False):
     in them, stay as they are. -> the report with its sections tidied (a copy; the report itself is not changed). notes false (the ops look, which has its own two-line description and Explore): the descriptions stay where they are."""
     if not isinstance(report, dict) or not isinstance(report.get("sections"), list):
         return report
+    if any(s.get("kind") == "raw_events" for s in report["sections"] if isinstance(s, dict)):
+        # The four review parts, including empty ones, and the final raw record have fixed places.
+        sections = [s for s in report["sections"] if s.get("kind") != "raw_events"]
+        return dict(report, sections=sections + [s for s in report["sections"] if s.get("kind") == "raw_events"])
     keep, clear = [], []
     for sec in report["sections"]:
         if not isinstance(sec, dict):
@@ -2431,10 +2435,24 @@ def report_text(report, footer="", runs=None):
             if window:
                 out.append("Outage window from %s to %s (%s)" % (window["start"]["tip"], window["end"]["tip"], window["duration"]))
             for row in story["rows"]:
+                if story.get("grouped"):
+                    what = row["text"] + ", ".join(row["names"]) + row["suffix"]
+                    if row["card"]:
+                        what += ". See the card: " + row["card"]
+                    out.append(" - ".join([row["time"]["tip"], row["word"], what]))
+                    continue
                 what = row["text"] + (row["extra"]["clock"] + row["after"] if row["extra"] else "")
                 out.append(" - ".join(filter(None, [row["time"]["tip"], row["word"], what, row["objects"], row["duration"]])))
             if not story["rows"]:
                 out.append("No outage event in the chain.")
+        if s.get("kind") == "noc":
+            for card in s["patterns"]:
+                out.extend([card["title"], card["means"], "Typical causes: " + "; ".join(card["causes"]),
+                            "Check first: " + "; ".join(card["checks"]), "Escalate to: " + card["escalate"],
+                            "Seen here: " + card["seen"] + " · " + card["when"]])
+        if s.get("kind") == "by_kind":
+            for issue in s["issues"]:
+                out.append(" · ".join(filter(None, [issue["name"], issue["state"], issue["what"], issue.get("since")])))
         if s.get("cards"):
             out += [""] + report_cards_text(s["cards"])
         if "columns" in s:

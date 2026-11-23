@@ -1,5 +1,6 @@
-{%- macro moment(t) -%}
-<time class="tip" tabindex="0" datetime="{{ t.iso | e }}" data-tip="{{ t.tip | e }}" aria-label="{{ t.tip | e }}">{{ t.clock | e }}</time>
+{%- from 'report_story_line.html.j2' import sentence -%}
+{%- macro moment(t, display='') -%}
+<time class="tip" tabindex="0" datetime="{{ t.iso | e }}" data-tip="{{ t.tip | e }}" aria-label="{{ t.tip | e }}">{{ (display or t.clock) | e }}</time>
 {%- endmacro %}
 {%- set w = s.story.window %}
 {% if s.story.rows %}
@@ -10,10 +11,10 @@
 <li class="st-win"><div class="st-win-l"><b>Outage window</b> {{ moment(w.start) }} to {{ moment(w.end) }} &middot; {{ w.duration | e }}{% if w.still %}<span>{{ w.still | e }} still down after it</span>{% endif %}</div><ol>
 {% endif %}
 {% if r.divider %}<li class="st-day">{{ r.divider | e }}</li>{% endif %}
-<li class="st-ev lv-{{ r.level | e }}">{{ moment(r.time) }}
+<li class="st-ev lv-{{ r.level | e }}"{% if r.anchor is defined %} id="{{ r.anchor | e }}"{% endif %}>{{ moment(r.time, r.span | default('')) }}
 <span class="st-sev lv-{{ r.level | e }}">{{ icon('critical' if r.level == 'down' else r.level) }}{{ r.word | e }}</span>
-<span class="st-txt">{{ r.text | e }}{% if r.extra %}{{ moment(r.extra) }}{{ r.after | e }}{% endif %}</span>
-<span class="st-obj">{{ r.objects | e }}</span><span class="st-dur">{{ r.duration | e }}</span></li>
+{% if r.names is defined %}<div class="st-txt st-group">{{ sentence(r) }}</div>{% else %}<span class="st-txt">{{ r.text | e }}{% if r.extra %}{{ moment(r.extra) }}{{ r.after | e }}{% endif %}</span>
+<span class="st-obj">{{ r.objects | e }}</span><span class="st-dur">{{ r.duration | e }}</span>{% endif %}</li>
 {% if r.window and (loop.last or not loop.nextitem.window) %}</ol></li>{% endif %}
 {% endfor %}
 </ol>

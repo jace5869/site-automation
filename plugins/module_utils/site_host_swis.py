@@ -543,7 +543,7 @@ def syslog_live(client, node_ids, opts=None):
         res["why"] = "Log Analyzer could not be read: %s" % ad._say(e)
         return res
     res["capped"] = len(rows) >= cap
-    by = {}
+    by, times, levels_seen = {}, [], {}
     for r in rows:
         nid = sdb._int(r.get(cols["node_id"]))
         if nid is None:
@@ -551,6 +551,11 @@ def syslog_live(client, node_ids, opts=None):
         # redacted whole, then cut: a cut can split a secret so the redactor no longer sees it (review 1970e B)
         msg = red(re.sub(r"\s+", " ", str(r.get(cols["message"]) or "")).strip())
         t = ad._utc(r.get(cols["time"]))
+        if window:
+            level = red(str(r.get(cols["level"]) or "Unknown"))
+            levels_seen[level] = levels_seen.get(level, 0) + 1
+            if t:
+                times.append(t)
         n = by.setdefault(nid, {"count": 0, "groups": {}})
         n["count"] += 1
         g = n["groups"].setdefault(norm(msg), {"message": msg[:300], "count": 0, "last": None})
@@ -562,5 +567,7 @@ def syslog_live(client, node_ids, opts=None):
         res["by_node"][nid] = {"count": n["count"], "top": [{"message": g["message"], "count": g["count"], "last": g["last"].strftime("%Y-%m-%d %H:%M:%S")
                                                              if window and g["last"] else ad._hm(g["last"])}
                                                             for g in top[:3]]}
+    if window:
+        res.update(levels_seen=levels_seen, span=[t.strftime("%Y-%m-%d %H:%M:%S") for t in (min(times), max(times))] if times else [])
     res["ok"] = True
     return res
