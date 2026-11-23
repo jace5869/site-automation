@@ -40,6 +40,194 @@ RULES = {"templates": ["rhel9-*"], "clusters": ["PROD-*"], "datastores": [], "fo
          "name_regex": r"^[a-z0-9][a-z0-9-]{1,14}$", "assignment_group": "linux operations"}
 
 
+class ApprovalPlan(unittest.TestCase):
+    digest = "sha256:0011"
+    ticket = dict(number="CHG0030001", table="change_request", tasks=["CTASK0030002"])
+    job = "AAP job 4813"
+    read_at = "2026-11-23T09:14:00Z"
+
+    def setUp(self):
+        self.record = dict(number=self.ticket["number"], state="Implement", approval="Approved",
+                           description="Server name: vm-app01\ntemplate: rhel9-gold\ncpu: 4")
+        self.rules = dict(templates=["rhel9-gold"])
+        self.parsed = d.vm_deploy_spec(self.record, {"folder": "Servers/App"})
+        self.checked = d.vm_deploy_check(self.parsed, self.record, self.rules)
+        self.vm = dict(vcenter="vc01.corp.example.mil", datacenter="SITA0101-DC", cluster="SITA0101-CL01", datastore="SITA0101-DS02",
+                       folder="/SITA0101-DC/vm/Servers/App", cpu=4, memory_gb=16, disks_gb=[120, 200], networks=["VM Network"],
+                       chosen=dict(cluster="template", datastore="auto", folder="named"), datastore_candidates=["SITA0101-DS*"],
+                       fit=dict(cluster=dict(pct_after=82.4, target=80, down=1), datastore=dict(pct_after=41.2, max=85, why="41.2% used with this VM")))
+        self.results = [dict(vm=self.vm)]
+
+    def plan(self, **kw):
+        return d.vm_deploy_plan(self.checked, self.parsed["question_fields"], self.results, self.ticket, self.digest, self.read_at, self.job, **kw)
+
+    @staticmethod
+    def rows(plan, i=0):
+        return {r["key"]: r for r in plan["vms"][i]["rows"]}
+
+    def note(self):
+        header = "[AAP] Checked - ready to build after the approval (%s, ticket text %s):" % (self.job, self.digest)
+        return "\n".join([header] + d.vm_deploy_plan_note_lines(self.plan(), "vm-app01"))
+
+    @staticmethod
+    def journal(*notes):
+        return {"work_notes": "\n\n".join("2026-11-23 09:14:00 - AAP (Work notes)\n" + n for n in notes)}
+
+    def test_source_strings(self):
+        sources = {
+            "ticket": ["description", "the ticket", "work note", "work note 2026-11-23 (Work notes)", "comment", "parent CHG0030001 implementation_plan",
+                       "comment 2026-11-23 (Additional comments)", "the words 'Red Hat 9' in the description", "the words '4 vCPU' in the short description",
+                       "the words '4 vCPU' in the parent CHG0030001 description", "size 'small' (the words 'small' in a comment)",
+                       "GenAI proposal (this run)", "description; written 'RHEL9-GOLD'"],
+            "default": ["default (vm_deploy_defaults)", "site SITA0101", "the ticket's Location field", "vm_deploy_plain_sites",
+                        "name rule vm-*", "datastore rule vm-*", "vm_deploy_datastore_balance (the cluster's least used)",
+                        "vm_deploy_template_specs", "vm_deploy_pxe_templates", "description; short name 'gold'", "the template", "unknown", ""],
+            "job": ["the least used of SITA0101-DS*", "the template's cluster", "the template's datastore", "the template's folder"]}
+        for kind, values in sources.items():
+            for where in values:
+                self.assertEqual(d.vm_deploy_source_kind(where), kind, where)
+
+    def test_ready_values_sources_and_warning(self):
+        p = self.plan()
+        self.assertEqual(p["state"], "ready")
+        self.assertEqual((p["ticket"], p["tasks"], p["read_at"]), (self.ticket["number"], self.ticket["tasks"], self.read_at))
+        self.assertEqual(p["counts"], dict(vms=1, fields=10, ticket=3, default=5, job=2, warnings=1, stops=0))
+        self.assertEqual(p["warnings"], ["SITA0101-CL01: 82.4% memory used with this VM and 1 host down (target 80%)"])
+        rows = self.rows(p)
+        self.assertEqual([k for k, r in rows.items() if r["editable"]], ["cluster", "datastore", "folder"])
+        self.assertEqual((rows["network"]["kind"], rows["network"]["level"]), ("default", ""))
+        lines = d.vm_deploy_plan_note_lines(p, "VM-APP01")
+        self.assertIn("vm_name: vm-app01   (from the ticket: description)", lines)
+        self.assertIn("- Network: the template's - VM Network, IP by DHCP   (default: the template)", lines)
+        self.assertIn("- Size: 4 vCPU, 16 GB memory, disks 120 + 200 GB", lines)
+        self.assertIn("- Cluster: SITA0101-CL01   (chosen by the job: the template's cluster) - WARNING: " + rows["cluster"]["why"], lines)
+
+    def test_named_datastore_warning_and_site_source(self):
+        self.vm["chosen"]["datastore"] = "named"
+        self.vm["fit"]["datastore"].update(pct_after=87.5)
+        self.checked["vms"][0]["sources"].update(datastore="default (vm_deploy_defaults)", vcenter="site SITA0101", site="the ticket's Location field")
+        p = self.plan()
+        rows = self.rows(p)
+        self.assertEqual((rows["vcenter"]["kind"], rows["vcenter"]["where"]), ("default", "site SITA0101, the ticket's Location field"))
+        self.assertEqual((p["state"], rows["datastore"]["kind"], p["counts"]["warnings"]), ("ready", "default", 2))
+        rec = self.journal(self.note())
+        self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest)["vm-app01"]["warned"], ["cluster", "datastore"])
+
+    def test_missing_resolved_placement_stops_but_unknown_network_does_not(self):
+        self.vm["networks"] = [""]
+        self.assertEqual(self.plan()["state"], "ready")
+        self.vm["datacenter"] = ""
+        p = self.plan()
+        self.assertEqual(p["state"], "stopped")
+        self.assertIn("datacenter", self.rows(p)["vcenter"]["why"])
+
+    def test_human_note_keeps_a_long_folder_path_and_artifact_is_bounded(self):
+        self.vm["folder"] = "/SITA0101-DC/vm/" + "App/" * 60 + "Servers"
+        self.assertEqual(len(self.rows(self.plan())["folder"]["value"]), 240)
+        report = self.plan(report=True)
+        lines = d.vm_deploy_plan_note_lines(report, "vm-app01")
+        header = self.note().splitlines()[0]
+        place = d.vm_deploy_checked_placement(self.journal("\n".join([header] + lines)), self.digest)
+        self.assertEqual(place["vm-app01"]["folder"], "App/" * 60 + "Servers")
+
+    def test_ambiguous_os_and_disks_attach_to_their_rows(self):
+        self.record["description"] = "named vm-app01, RHEL 9 or Windows Server 2022\ndisk 1: 120 GB\ndisk 1: 200 GB"
+        self.parsed = d.vm_deploy_spec(self.record, words={"allowed": ["rhel9-gold", "Windows Server 2022"]})
+        self.checked = d.vm_deploy_check(self.parsed, self.record, self.rules)
+        self.results = []
+        p = self.plan(comment="[AAP] We cannot build this VM yet")
+        self.assertEqual(p["state"], "stopped")
+        for key in ("template", "disks_gb"):
+            row = self.rows(p)[key]
+            self.assertEqual((row["kind"], row["level"]), ("stop", "stop"))
+            self.assertEqual(row["why"], self.parsed["question_fields"][key])
+        self.assertTrue(p["comment"].startswith("[AAP]"))
+        self.assertEqual(self.rows(p)["network"]["kind"], "default")
+
+    def test_owner_optional_and_required_when_configured(self):
+        task = dict(number="CTASK0030002", u_owner_group="task value")
+        change = dict(self.record, u_owner_group={"display_value": "APP-TEAM-1"})
+        self.assertEqual(d.vm_deploy_owner(task, "u_owner_group", change=change)["value"], "APP-TEAM-1")
+        fallback = d.vm_deploy_owner(task, "u_owner_group")
+        self.assertEqual((fallback["value"], fallback["where"]), ("task value", "the task's Owner field"))
+        self.assertEqual(d.vm_deploy_owner(task, "u_owner_group", change={})["value"], "")
+        self.assertEqual(d.vm_deploy_owner(change, ""), {})
+        self.assertNotIn("owner", self.rows(self.plan()))
+        owner = {"label": "Owner", "value": "APP-TEAM-1"}
+        r = self.rows(self.plan(owner=owner))["owner"]
+        self.assertEqual((r["kind"], r["value"], r["where"]), ("ticket", "APP-TEAM-1", "the change's Owner field"))
+        self.assertIn("owner: APP-TEAM-1   (from the ticket: Owner)", d.vm_deploy_plan_note_lines(self.plan(owner=owner), "vm-app01"))
+        owner["value"] = ""
+        self.checked = d.vm_deploy_check(self.parsed, self.record, dict(self.rules, owner=owner))
+        self.assertIn("the change does not say the owner: its Owner field is empty", self.checked["problems"])
+        self.assertEqual(self.rows(self.plan(owner=owner))["owner"]["level"], "stop")
+
+    def test_not_ready_has_no_rows(self):
+        reason = d.vm_deploy_ready(dict(self.record, approval="Requested"), "change_request", {"change_request": {"approval": "Approved"}})
+        p = self.plan(state="not_ready", reason=reason)
+        self.assertTrue(p["reason"])
+        self.assertEqual((p["vms"], p["counts"]["vms"], p["counts"]["fields"]), ([], 0, 0))
+
+    def test_multiple_vms_failed_placement_and_artifact_bounds(self):
+        self.parsed = d.vm_deploy_spec(dict(self.record, description=self.record["description"].replace("vm-app01", "vm-app01, vm-app02")))
+        self.checked = d.vm_deploy_check(self.parsed, self.record, self.rules)
+        self.results.append(dict(failed=True, msg="no folder " + "x" * 400, invocation={"private": "private payload"}))
+        p = self.plan()
+        self.assertEqual((p["state"], p["counts"]["vms"], p["counts"]["warnings"], p["counts"]["stops"]), ("stopped", 2, 1, 1))
+        self.assertFalse(self.rows(p)["folder"]["level"])
+        self.assertEqual(self.rows(p, 1)["folder"]["why"], self.results[1]["msg"][:240])
+        self.assertNotIn("private payload", json.dumps(p))
+        self.checked["vms"] *= 6
+        self.assertEqual(len(self.plan()["vms"]), 10)
+
+    def test_placement_header_and_round_trip(self):
+        note = self.note()
+        rec = self.journal(note)
+        place = d.vm_deploy_checked_placement(rec, self.digest)
+        self.assertEqual(place["vm-app01"], dict(vcenter=self.vm["vcenter"], datacenter=self.vm["datacenter"], cluster=self.vm["cluster"],
+                                                 datastore=self.vm["datastore"], folder="Servers/App", warned=["cluster"]))
+        self.assertEqual(d.vm_deploy_checked_digest(rec), self.digest)
+        self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest + "f"), {})
+        h = note.splitlines()[0]
+        legacy = h + "\nvm_name: vm-app01"
+        self.assertFalse(d.vm_deploy_checked_placement(self.journal(legacy), self.digest))
+        self.assertEqual(d.vm_deploy_checked_placement(self.journal(note, legacy), self.digest), place)
+        for bad in [legacy, note.replace(self.digest, self.digest + "ff") + "\n" + h, note.replace("- Folder:", "- Old folder:")]:
+            self.assertEqual(d.vm_deploy_checked_placement(self.journal(bad, note), self.digest), {})
+        self.assertEqual(d.vm_deploy_checked_placement(self.journal(note, note.replace("DS02", "DS01")), self.digest), {})
+        other = note.replace("vm-app01", "vm-app02")
+        one = note.replace("Checked - ready", "Checked - VM vm-app01 - 1 of 2 - ready")
+        two = other.replace("Checked - ready", "Checked - VM vm-app02 - 2 of 2 - ready")
+        self.assertEqual(set(d.vm_deploy_checked_placement(self.journal(two, one), self.digest)), {"vm-app01", "vm-app02"})
+        self.assertEqual(set(d.vm_deploy_checked_placement(self.journal(other, note), self.digest)), {"vm-app02"})
+        self.assertEqual(d.vm_deploy_checked_placement(self.journal(two, one.replace("4813", "4812")), self.digest).keys(), {"vm-app02"})
+        self.assertEqual(set(d.vm_deploy_checked_placement(self.journal(other.replace("4813", "4814"), note), self.digest)), {"vm-app02"})
+
+    def test_only_one_runs_notes_count(self):
+        # review 1.117 a1: a second check of the same ticket text that chose another datastore neither blocks the
+        # build forever nor replaces the run that was approved: the workflow's own run (its job) is the one read
+        newer = note = self.note()
+        older = note.replace("AAP job 4813", "AAP job 4812 by admin").replace("DS02", "DS01")
+        rec = self.journal(newer, older)
+        self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest)["vm-app01"]["datastore"], "SITA0101-DS02")
+        self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest, "4812")["vm-app01"]["datastore"], "SITA0101-DS01")
+        self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest, "4813")["vm-app01"]["datastore"], "SITA0101-DS02")
+        self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest, "481"), {})
+        self.assertEqual(d.vm_deploy_checked_placement(rec, self.digest, "4811"), {})
+
+    def test_build_refuses_any_missing_or_disallowed_placement(self):
+        pin = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest)
+        self.parsed["spec"]["vm_name"] = "vm-app01, vm-app02"
+        checked = d.vm_deploy_check(self.parsed, self.record, dict(self.rules, approved=pin))
+        self.assertIn("the approved plan has no placement for VM vm-app02: run the workflow from the start", checked["problems"])
+        self.assertEqual(checked["vms"][0]["sources"]["datastore"], "the approved plan")
+        for setting in ("clusters", "datastores", "folders"):
+            checked = d.vm_deploy_check(self.parsed, self.record, dict(self.rules, approved=pin, **{setting: ["other"]}))
+            self.assertTrue(any("vm_deploy_" + setting in problem for problem in checked["problems"]))
+        rules = dict(self.rules, approved=pin, datastore_rules=[{"match": "vm-*", "datastores": ["*-DS01"]}])
+        self.assertTrue(any("is not one" in q for q in d.vm_deploy_check(self.parsed, self.record, rules)["problems"]))
+
+
 class Tables(unittest.TestCase):
     def test_prefixes(self):
         self.assertEqual([d.vm_deploy_table(x) for x in ("INC0012345", "sctask0001234", "TASK0012345", "RITM0010001", "CHG0030001", "XYZ123", "")],

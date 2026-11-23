@@ -1,0 +1,58 @@
+---
+- name: VMware | refused - say why on the ticket - the note
+  ansible.builtin.set_fact:
+    _vd_b_refused: >-
+      {%- set items = _vd_refusals | map('regex_replace', '^', '- ') | list -%}
+      {{ {'comments': (['[AAP] We cannot build this VM yet (' ~ _vd_job ~ '):'] + items
+                       + ['Please answer with a comment on this ticket.']) | join(_vd_nl)}
+         if vm_deploy_plain_words | bool or (_vd_state == 'stopped' and
+             (_vd_plan_only | default(false) | bool or _vd_own_q | length > 0 or (_vd_owner and not _vd_owner.value)
+              or _vd_refusals | select('search', 'ticket does not say') | list)) else
+         {'work_notes': (['[AAP] VM not deployed (' ~ _vd_job ~ '):'] + items
+                         + ["To fix it: add a comment with the corrected values (e.g. 'memory_gb: 32') and run the job again."]) | join(_vd_nl)} }}
+  vars:
+    _vd_nl: "\n"
+  when: _vd_refusals | length > 0 and not ansible_check_mode
+
+- name: VMware | refused - say why on the ticket
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    # with plain words, the questions are for the requester: a comment (requesters see comments, not work notes)
+    # one problem per line, under a header line
+    body: "{{ _vd_b_refused }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+  register: _vd_refused_write
+  failed_when: false
+  when: _vd_refusals | length > 0 and not ansible_check_mode
+
+- name: VMware | refused - say why on the ticket - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_refused] }}"
+  when: _vd_also | default([]) | length > 0 and (_vd_refusals | length > 0 and not ansible_check_mode)
+
+- name: VMware | publish the refused plan
+  ansible.builtin.include_tasks: deploy_plan.yml
+  vars:
+    _vd_comment: "{{ _vd_b_refused.comments | default('') if _vd_refused_write.status | default(0) == 200 else '' }}"
+
+- name: VMware | report the refused plan
+  ansible.builtin.include_tasks: report.yml
+  when: not _vd_report_at_end | default(false) | bool
+  vars:
+    _vm_report_subject: "VM deploy {{ _vd_number }}: {{ _vd_state }}"
+    _vm_report_lines: "{{ [_vd_plan.reason] | select | list + _vd_plan_lines }}"
+    _vm_report_doc: "{{ {'title': _vm_report_subject, 'status': 'critical', 'sections': [{'title': 'Deploy plan', 'lines': _vm_report_lines}]} }}"
+
+- name: VMware | the request passes the rules
+  when: not _vd_report_at_end | default(false) | bool
+  ansible.builtin.fail:
+    msg: "Not deployed: {{ _vd_refusals | join('; ') }}"

@@ -656,6 +656,10 @@ vm_deploy_close_tasks: false
 # labels, e.g. {change_request: {approval: Approved, state: [Implement, Scheduled]}}; {} = no check.
 vm_deploy_ready_by_table:
   change_request: {approval: Approved, state: Implement}
+# The change field to read as the VM owner. Empty leaves the owner out of the plan and notes.
+vm_deploy_owner_field: ""
+# The display label for that field in the plan, requester questions and VM notes.
+vm_deploy_owner_label: Owner
 # What a ticket may ask for (names; * and ? allowed). Templates MUST be listed: nothing else is
 # deployed. The others: [] = any.
 vm_deploy_templates: []                  # e.g. [rhel9-gold, win2022-gold]

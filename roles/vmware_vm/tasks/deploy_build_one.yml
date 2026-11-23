@@ -19,13 +19,15 @@
     cluster: "{{ _vd_i.spec.cluster | default('') }}"
     datastore: "{{ _vd_i.spec.datastore | default('') }}"
     folder: "{{ _vd_i.spec.folder | default('') }}"
+    pinned: "{{ _vd_pinned }}"
+    pinned_ok: "{{ _vd_approved.get(_vd_i.spec.vm_name | lower, {}).get('warned', []) }}"
     folders_allowed: "{{ vm_deploy_folders }}"
     template_folders: "{{ vm_deploy_template_folders }}"
     cpu: "{{ _vd_i.spec.cpu | default(0) | int }}"
     memory_mb: "{{ ((_vd_i.spec.memory_gb | default(0) | float) * 1024) | int }}"
     # the VM's notes, one line each - the module puts the ticket's line on top (CTASK0010009 - built 2026-10-20)
     annotation: >-
-      {{ (['Template: ' ~ _vd_i.spec.template, _vd_job_note]
+      {{ (['Template: ' ~ _vd_i.spec.template] + ([_vd_owner.label ~ ': ' ~ _vd_owner.value] if _vd_owner else []) + [_vd_job_note]
           + (['Service: ' ~ _vd_svc.note] if (_vd_svc | default({})).note | default('') else [])
           + (['Notes: ' ~ _vd_i.spec.notes | trim] if _vd_i.spec.notes | default('') | trim else [])) | join(_vd_nl) | truncate(1000) }}
     domain: "{{ _vd_i.spec.domain | default(vm_deploy_domain, true) }}"
@@ -38,7 +40,9 @@
     datastore_candidates: "{{ [] if _vd_i.spec.datastore | default('') else (_vd_i.spec.datastores | default(vm_deploy_datastores)) }}"
     datastore_exclude: "{{ _vd_i.spec._datastore_exclude | default([]) }}"
     # what the VMs before this one in the run take on a datastore counts as used: the VMs of a ticket spread out
-    datastore_planned: "{{ _vd_ds_planned }}"
+    # a pinned build: the check before the first clone counted the VMs before this one. At the clone, the
+    # datastores as they are now (the VMs built before this one are in them already).
+    datastore_planned: "{{ {} if _vd_pinned | bool and not _vd_pre | default(false) | bool else _vd_ds_planned }}"
     mem_target_pct: "{{ vm_deploy_mem_target_pct | float }}"
     failover_hosts: "{{ vm_deploy_failover_hosts | int }}"
     datastore_max_used_pct: "{{ vm_deploy_datastore_max_used_pct | float }}"
@@ -70,11 +74,14 @@
 - name: VMware | {{ _vd_i.spec.vm_name }} - its result
   ansible.builtin.set_fact:
     _vd_res: "{{ _vd_res + [_vd_one | combine({'_vd_i': _vd_i})] }}"
+  when: not _vd_pre | default(false) | bool
+
+- name: VMware | count the full size already assigned on this datastore
+  ansible.builtin.set_fact:
     _vd_ds_planned: >-
       {%- set v = _vd_one.vm | default({}) -%}
       {{ _vd_ds_planned | combine({v.datastore: (_vd_ds_planned[v.datastore] | default(0) | float) + (v.need_gb | default(0) | float)})
          if v.datastore | default('') and v.need_gb | default(0) | float > 0 and not _vd_one.failed | default(false) else _vd_ds_planned }}
-  when: not _vd_pre | default(false) | bool
 
 # its service's AAP inventory (vm_deploy_services): it joins right after its build - before its note, which says so
 - name: VMware | {{ _vd_i.spec.vm_name }} - joins its service's AAP inventory (vm_deploy_service)
@@ -84,79 +91,8 @@
     - not _vd_one.failed | default(false)
     - (_vd_svc | default({})).inventory | default('') | length > 0
 
-- name: VMware | {{ _vd_i.spec.vm_name }} - the result on the ticket - the note
-  ansible.builtin.set_fact:
-    _vd_b_result: >-
-      {%- set v = _vd_r.vm | default({}) -%}
-      {%- set sp = _vd_r._vd_i.spec -%}
-      {%- set total = _vd.vms | length -%}
-      {%- set nth = (' - ' ~ (_vd_n + 1) ~ ' of ' ~ total) if _vd_multi | bool else '' -%}
-      {%- set size = v.cpu | default('?') ~ ' vCPU, ' ~ v.memory_gb | default('?') ~ ' GB memory, disks '
-                     ~ (v.disks_gb | default([]) | join(' + ') or '?') ~ ' GB' -%}
-      {%- set notes = (['Notes:'] + _vd_r.notes | map('regex_replace', '^', '- ') | list) if _vd_r.notes | default([]) else [] -%}
-      {%- set svc = (_vd_svc | default({})).name | default('') -%}
-      {%- set inv = [_vd_inv[sp.vm_name] | vm_deploy_inventory_text] if sp.vm_name in _vd_inv | default({}) else [] -%}
-      {%- if _vd_plan_only | bool and not _vd_r.failed | default(false) -%}
-      {%-   set lines = [('[AAP] Checked - VM ' ~ sp.vm_name ~ nth ~ ' - ready to build after the approval (' if _vd_multi | bool
-                          else '[AAP] Checked - ready to build after the approval (') ~ _vd_job ~ ', ticket text ' ~ _vd_digest ~ '):']
-                       + (sp | vm_deploy_spec_text)
-                       + ['It would go to:', '- vCenter: ' ~ v.vcenter | default('') ~ ', datacenter ' ~ v.datacenter | default(''),
-                          '- Cluster: ' ~ v.cluster | default(''), '- Datastore: ' ~ v.datastore | default(''), '- Folder: ' ~ v.folder | default(''),
-                          '- Size: ' ~ size]
-                       + (['- Service: ' ~ svc] if svc else []) + (inv | map('regex_replace', '^', '- ') | list) + notes
-                       + (['Each VM is placed at the build, after the ones before it: where they go may differ from this.']
-                          if _vd_multi | bool and _vd_n + 1 == total else []) -%}
-      {%- elif not _vd_r.failed | default(false) -%}
-      {%-   set lines = ['[AAP] VM ' ~ v.name ~ ' deployed (' ~ _vd_job ~ ')' ~ nth ~ '.']
-                       + (['Built by an earlier run for this ticket: left as it is.'] if v.existing | default(false) else [])
-                       + (['Picked up where an earlier run for this ticket stopped: finished in place.'] if v.resumed | default(false) else [])
-                       + (['MAC address: ' ~ v.mac | default('?'),
-                           'Operating system: none yet - it installs from the network (MECM) or its CD',
-                           'Computer name: ' ~ v.hostname | default(v.name) ~ (' (also in the VM setting guestinfo.hostname)' if v.guestinfo is defined else '')]
-                          if sp.pxe | default(false) else ['IP address: ' ~ (v.ip | default('', true) or 'none yet (DHCP: see the notes)')])
-                       + ['Customization: ' ~ v.customization | default('?'),
-                          'vCenter: ' ~ v.vcenter | default('') ~ ', datacenter ' ~ v.datacenter | default(''),
-                          'Cluster: ' ~ v.cluster | default('') ~ ', host ' ~ v.host | default(''),
-                          'Datastore: ' ~ v.datastore | default(''), 'Folder: ' ~ v.folder | default(''),
-                          'Size: ' ~ size, 'Power: ' ~ v.power | default('')]
-                       + (['Service: ' ~ svc] if svc else []) + inv + notes -%}
-      {%- else -%}
-      {%-   set lines = ['[AAP] VM ' ~ sp.vm_name ~ ' NOT deployed (' ~ _vd_job ~ ')' ~ nth ~ ':', '- ' ~ _vd_r.msg | default('unknown error')]
-                       + (['The VM exists in vCenter (partly set up), marked for this ticket: run the job again to finish it, or delete it.']
-                          if v.created | default(false) else [])
-                       + notes -%}
-      {%- endif -%}
-      {{ {'work_notes': lines | join(_vd_nl)} }}
+- name: VMware | record the result before building the next VM
+  ansible.builtin.include_tasks: deploy_result.yml
   vars:
-    _vd_nl: "\n"                       # a real newline: '\n' inside {{ }} in a >- block reaches ServiceNow as a backslash and n
     _vd_r: "{{ _vd_one | combine({'_vd_i': _vd_i}) }}"
-  when: not ansible_check_mode and not _vd_pre | default(false) | bool
-
-- name: VMware | {{ _vd_i.spec.vm_name }} - the result on the ticket
-  ansible.builtin.uri:
-    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
-    method: PATCH
-    url_username: "{{ _vd_sn_user }}"
-    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
-    force_basic_auth: true
-    headers: {Accept: application/json}
-    body_format: json
-    body: "{{ _vd_b_result }}"
-    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
-    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
-    timeout: "{{ servicenow_timeout | default(30) }}"
-    status_code: [200, 400, 401, 403, 404]
-  register: _vd_note_one
-  failed_when: false                  # a refused note is reported; the VM is built (and marked in vCenter)
-  when: not ansible_check_mode and not _vd_pre | default(false) | bool
-
-- name: VMware | {{ _vd_i.spec.vm_name }} - did ServiceNow take the note?
-  ansible.builtin.set_fact:
-    _vd_note_status: "{{ _vd_note_status + [_vd_note_one.status | default(0)] }}"
-  when: not ansible_check_mode and not _vd_pre | default(false) | bool
-
-- name: VMware | {{ _vd_i.spec.vm_name }} - the result on the ticket - the same on the other tickets (vm_deploy_notes_also)
-  ansible.builtin.include_tasks: deploy_note_also.yml
-  vars:
-    _vd_also_bodies: "{{ [_vd_b_result] }}"
-  when: _vd_also | default([]) | length > 0 and not ansible_check_mode and not _vd_pre | default(false) | bool
+  when: not _vd_pre | default(false) | bool and not _vd_dry | bool

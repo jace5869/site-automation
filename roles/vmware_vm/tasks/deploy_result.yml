@@ -1,0 +1,69 @@
+---
+- name: VMware | {{ _vd_i.spec.vm_name }} - the result on the ticket - the note
+  ansible.builtin.set_fact:
+    _vd_b_result: >-
+      {%- set v = _vd_r.vm | default({}) -%}
+      {%- set sp = _vd_r._vd_i.spec -%}
+      {%- set total = _vd.vms | length -%}
+      {%- set nth = (' - ' ~ (_vd_n + 1) ~ ' of ' ~ total) if _vd_multi | bool else '' -%}
+      {%- set size = v.cpu | default('?') ~ ' vCPU, ' ~ v.memory_gb | default('?') ~ ' GB memory, disks '
+                     ~ (v.disks_gb | default([]) | join(' + ') or '?') ~ ' GB' -%}
+      {%- set notes = (['Notes:'] + _vd_r.notes | map('regex_replace', '^', '- ') | list) if _vd_r.notes | default([]) else [] -%}
+      {%- set svc = (_vd_svc | default({})).name | default('') -%}
+      {%- set inv = [_vd_inv[sp.vm_name] | vm_deploy_inventory_text] if sp.vm_name in _vd_inv | default({}) else [] -%}
+      {%- if _vd_plan_only | bool and not _vd_r.failed | default(false) -%}
+      {%-   set lines = [('[AAP] Checked - VM ' ~ sp.vm_name ~ nth ~ ' - ready to build after the approval (' if _vd_multi | bool
+                          else '[AAP] Checked - ready to build after the approval (') ~ _vd_job ~ ', ticket text ' ~ _vd_digest ~ '):']
+                       + (_vd_plan | vm_deploy_plan_note_lines(sp.vm_name))
+                       + (['- Service: ' ~ svc] if svc else []) + (inv | map('regex_replace', '^', '- ') | list) + notes -%}
+      {%- elif not _vd_r.failed | default(false) -%}
+      {%-   set lines = ['[AAP] VM ' ~ v.name ~ ' deployed (' ~ _vd_job ~ ')' ~ nth ~ '.']
+                       + (['Built by an earlier run for this ticket: left as it is.'] if v.existing | default(false) else [])
+                       + (['Picked up where an earlier run for this ticket stopped: finished in place.'] if v.resumed | default(false) else [])
+                       + (['MAC address: ' ~ v.mac | default('?'),
+                           'Operating system: none yet - it installs from the network (MECM) or its CD',
+                           'Computer name: ' ~ v.hostname | default(v.name) ~ (' (also in the VM setting guestinfo.hostname)' if v.guestinfo is defined else '')]
+                          if sp.pxe | default(false) else ['IP address: ' ~ (v.ip | default('', true) or 'none yet (DHCP: see the notes)')])
+                       + ['Customization: ' ~ v.customization | default('?'),
+                          'vCenter: ' ~ v.vcenter | default('') ~ ', datacenter ' ~ v.datacenter | default(''),
+                          'Cluster: ' ~ v.cluster | default('') ~ ', host ' ~ v.host | default(''),
+                          'Datastore: ' ~ v.datastore | default(''), 'Folder: ' ~ v.folder | default(''),
+                          'Size: ' ~ size, 'Power: ' ~ v.power | default('')]
+                       + ([_vd_owner.label ~ ': ' ~ _vd_owner.value] if _vd_owner else [])
+                       + (['Service: ' ~ svc] if svc else []) + inv + notes -%}
+      {%- else -%}
+      {%-   set lines = ['[AAP] VM ' ~ sp.vm_name ~ ' NOT deployed (' ~ _vd_job ~ ')' ~ nth ~ ':', '- ' ~ _vd_r.msg | default('unknown error')]
+                       + (['The VM exists in vCenter (partly set up), marked for this ticket: run the job again to finish it, or delete it.']
+                          if v.created | default(false) else [])
+                       + ([_vd_owner.label ~ ': ' ~ _vd_owner.value] if _vd_owner else []) + notes -%}
+      {%- endif -%}
+      {{ {'work_notes': lines | join(_vd_nl)} }}
+  vars:
+    _vd_nl: "\n"                       # a real newline: '\n' inside {{ }} in a >- block reaches ServiceNow as a backslash and n
+
+- name: VMware | {{ _vd_i.spec.vm_name }} - the result on the ticket
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: "{{ _vd_b_result }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_note_one
+  failed_when: false                  # a refused note is reported; the VM is built (and marked in vCenter)
+
+- name: VMware | {{ _vd_i.spec.vm_name }} - did ServiceNow take the note?
+  ansible.builtin.set_fact:
+    _vd_note_status: "{{ _vd_note_status + [_vd_note_one.status | default(0)] }}"
+
+- name: VMware | {{ _vd_i.spec.vm_name }} - the result on the ticket - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_result] }}"
+  when: _vd_also | default([]) | length > 0

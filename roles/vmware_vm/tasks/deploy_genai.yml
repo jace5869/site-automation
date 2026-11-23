@@ -56,10 +56,11 @@
            'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
            'max_total_disk_gb': vm_deploy_max_total_disk_gb | float, 'parent': _vd_parent,
            'datastore_rules': vm_deploy_datastore_rules | default([], true), 'datastore_balance': vm_deploy_datastore_balance | bool,
-           'ready': vm_deploy_ready_by_table | default({}, true), 'table': _vd_table}) }}
+           'ready': vm_deploy_ready_by_table | default({}, true), 'table': _vd_table, 'owner': _vd_owner}) }}
 
 - name: VMware | does the request go on? (questions, or a refusal, stop it)
   ansible.builtin.set_fact:
+    _vd_requester_questions: "{{ (_vd_g.questions + _vd_gc.problems) | unique | list if _ea_ran | default(false) | bool and not _vd_g.error else [] }}"
     _vd_g_ask: "{{ _ea_ran | default(false) | bool and not _vd_g.error and _vd_g.questions | length > 0 }}"
     _vd_g_clean: >-
       {{ _ea_ran | default(false) | bool and not _vd_g.error and _vd_g.questions | length == 0 and _vd_gc.problems | length == 0 }}
@@ -82,10 +83,10 @@
     _vd_b_questions:
       comments: >-
         {{ (['[AAP] To build this VM we need a few details. Please add a comment with the answers, one per line - for example "memory_gb: 16":']
-            + (_vd_g.questions | map('regex_replace', '^', '- ') | list)) | join(_vd_nl) }}
+            + (_vd_requester_questions | map('regex_replace', '^', '- ') | list)) | join(_vd_nl) }}
   vars:
     _vd_nl: "\n"                       # a real newline ('\n' inside {{ }} in a >- block stays a backslash and n)
-  when: _vd_g_ask | bool and not ansible_check_mode
+  when: _vd_requester_questions | length > 0 and not ansible_check_mode
 
 - name: VMware | questions to the requester (a comment - requesters see comments, not work notes)
   ansible.builtin.uri:
@@ -104,13 +105,13 @@
   vars:
     _vd_nl: "\n"                       # a real newline ('\n' inside {{ }} in a >- block stays a backslash and n)
   register: _vd_gnote_q
-  when: _vd_g_ask | bool and not ansible_check_mode
+  when: _vd_requester_questions | length > 0 and not ansible_check_mode
 
 - name: VMware | questions to the requester (a comment - requesters see comments, not work notes) - the same on the other tickets (vm_deploy_notes_also)
   ansible.builtin.include_tasks: deploy_note_also.yml
   vars:
     _vd_also_bodies: "{{ [_vd_b_questions] }}"
-  when: _vd_also | default([]) | length > 0 and (_vd_g_ask | bool and not ansible_check_mode)
+  when: _vd_also | default([]) | length > 0 and (_vd_requester_questions | length > 0 and not ansible_check_mode)
 
 - name: VMware | the proposal on the ticket (a work note, read back by the build run) - the note
   ansible.builtin.set_fact:
@@ -150,6 +151,15 @@
     _vd_also_bodies: "{{ [_vd_b_proposal] }}"
   when: _vd_also | default([]) | length > 0 and (_ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode)
 
+- name: VMware | publish a stopped GenAI plan
+  ansible.builtin.include_tasks: deploy_plan.yml
+  vars:
+    _vd_state: stopped
+    _vd_check: "{{ _vd_gc }}"
+    _vd_questions: "{{ _vd_g.questions + ([_vd_g.error] if _vd_g.error else []) }}"
+    _vd_comment: "{{ _vd_b_questions.comments | default('') if _vd_gnote_q.status | default(0) == 200 else '' }}"
+  when: not _vd_g_clean | bool
+
 # a clean proposal goes on to the check / build step, which reports; here only what stops
 - name: VMware | GenAI proposal report (it stops here)
   ansible.builtin.include_tasks: report.yml
@@ -166,7 +176,7 @@
                ('dry run: GenAI read the ticket - the rules refuse it' if ansible_check_mode else
                 'GenAI proposal posted - the rules refuse it (nothing built)'))))) }}
     _vm_report_lines: >-
-      {{ [_vm_report_subject | trim] + (_vd_g.fields | vm_deploy_spec_text)
+      {{ [_vm_report_subject | trim] + _vd_plan_lines + (_vd_g.fields | vm_deploy_spec_text)
          + (['ERROR: ' ~ _vd_g.error] if _vd_g.error else [])
          + (_vd_g.dropped | map('regex_replace', '^', 'DROPPED: ') | list) + (_vd_g.questions | map('regex_replace', '^', 'QUESTION: ') | list)
          + (_vd_g.notes | default([]) | map('regex_replace', '^', 'GENAI NOTE (not sent to the requester): ') | list)
@@ -185,6 +195,7 @@
                            'rows': rows, 'text': ('A dry run (Check): nothing was written on the ticket and nothing built - a real run asks GenAI again.'
                                                   if ansible_check_mode else
                                                   'Nothing was built in this run. The next run builds this, as long as the ticket text does not change.')}] -%}
+      {%- set _ = sections.insert(0, {'title': 'Deploy plan', 'lines': _vd_plan_lines}) -%}
       {%- if _vd_g.questions -%}{%- set _ = sections.append({'title': 'Questions for the requester', 'status': 'warning', 'lines': _vd_g.questions}) -%}{%- endif -%}
       {%- if _vd_g.dropped -%}{%- set _ = sections.append({'title': 'Dropped: not traceable to the ticket, or for another version', 'status': 'warning', 'lines': _vd_g.dropped}) -%}{%- endif -%}
       {%- if _vd_g.notes | default([]) -%}{%- set _ = sections.append({'title': "GenAI's own notes (not sent to the requester)", 'lines': _vd_g.notes}) -%}{%- endif -%}

@@ -2787,6 +2787,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_notes_tasks_limit` | `50` | the change's tasks that get the notes (and are closed), at most - more is a warning |
 | `vm_deploy_close_tasks` | `false` | Launched with a change: also close its tasks found that way (with vm_deploy_done_fields_by_table's change_task entry, when every VM is built) - the change itself is not closed by this. They get the notes too. |
 | `vm_deploy_ready_by_table` | `change_request: {approval: Approved, state: Implement}` | Before anything is built, a ticket of these tables - the ticket itself, or the parent it belongs to (a change task's change) - must have these fields: one value or a list (any of them), written as the ticket's form shows them (upper / lower case ignored). Checked by the dry run, the propose step AND right before the b… (all of it: the role file) |
+| `vm_deploy_owner_field` | (empty) | The change field to read as the VM owner. Empty leaves the owner out of the plan and notes. |
+| `vm_deploy_owner_label` | `Owner` | The display label for that field in the plan, requester questions and VM notes. |
 | `vm_deploy_templates` | `[]` | What a ticket may ask for (names; * and ? allowed). Templates MUST be listed: nothing else is deployed. The others: [] = any. e.g. [rhel9-gold, win2022-gold] |
 | `vm_deploy_clusters` | `[]` | clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement |
 | `vm_deploy_datastores` | `[]` | datastores (or datastore clusters) a ticket may use; also the candidates of automatic placement |

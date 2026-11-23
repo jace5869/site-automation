@@ -120,6 +120,12 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 # vm_deploy_ready_by_table:
 #   change_request: {approval: Approved, state: Implement}
 
+## The change field to read as the VM owner. Empty leaves the owner out of the plan and notes.
+# vm_deploy_owner_field: ""
+
+## The display label for that field in the plan, requester questions and VM notes.
+# vm_deploy_owner_label: Owner
+
 ## clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement
 # vm_deploy_clusters: []
 

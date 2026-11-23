@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import unittest
+from types import SimpleNamespace as NS
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "roles", "vmware_vm", "library"))
 # the modules import their shared vCenter code as Ansible does: from ansible.module_utils.site_vcenters
@@ -23,10 +25,120 @@ import site_vmware_certs as vcert  # noqa: E402
 import site_vmware_watch as wt  # noqa: E402
 import site_vcsa_access as va  # noqa: E402
 import site_vmware_cert_install as vci  # noqa: E402
+import site_vmware_deploy as deploy  # noqa: E402
 import site_vmware_vms as vms  # noqa: E402
 import site_vmware_outage_events as oev  # noqa: E402
 
 G = 1024 ** 3
+
+
+class DeployFit(unittest.TestCase):
+    """Exercise the module entry point with a read-only inventory, including the concrete child of a pod."""
+    def setUp(self):
+        class Object:
+            def __init__(self, **fields):
+                self.__dict__.update(fields)
+
+        self.vim = NS(**{k: type(k, (Object,), {}) for k in
+                         ("Datacenter", "Folder", "ComputeResource", "ClusterComputeResource", "Datastore", "StoragePod")})
+        self.vim.vm = NS(device=NS(VirtualDisk=type("Disk", (Object,), {}), VirtualEthernetCard=type("NIC", (Object,), {})))
+        self.dc = self.vim.Datacenter(name="SITA0101-DC", hostFolder=Object(), datastoreFolder=Object())
+        self.dc.vmFolder = self.vim.Folder(name="vm", parent=self.dc, childEntity=[])
+        self.cr = self.vim.ComputeResource(name="SITA0101-CL01", resourcePool=Object(), host=[])
+        for n in range(2):
+            self.cr.host.append(Object(name=str(n), parent=self.cr, runtime=NS(connectionState="connected", inMaintenanceMode=False),
+                                       summary=NS(hardware=NS(memorySize=100 * G), quickStats=NS(overallMemoryUsage=30 * 1024))))
+        self.ds = self.vim.Datastore(name="SITA0101-DS02", summary=NS(capacity=100 * G, freeSpace=50 * G, accessible=True,
+                                                                     maintenanceMode="normal", multipleHostAccess=True),
+                                     host=[NS(key=h) for h in self.cr.host])
+        self.pod = self.vim.StoragePod(name="SITA0101", childEntity=[self.ds])
+        nic = self.vim.vm.device.VirtualEthernetCard
+        disk = self.vim.vm.device.VirtualDisk(key=1, capacityInKB=10 * 1048576, controllerKey=1, unitNumber=0)
+        devices = [disk, nic(backing=NS(deviceName="VM Network"), connectable=None), nic(backing=NS(port=NS(portgroupKey="1")), connectable=None),
+                   nic(backing=None, connectable=NS(startConnected=False), deviceInfo=NS(label="Network adapter 3"))]
+        self.tpl = Object(name="rhel9-gold", runtime=NS(host=self.cr.host[0]), parent=self.dc.vmFolder, datastore=[self.ds],
+                          config=NS(guestId="linux", hardware=NS(device=devices, memoryMB=16 * 1024, numCPU=4)),
+                          network=[NS(key="1", name="SITA0101")], CloneVM_Task=Mock(side_effect=AssertionError("unexpected clone")))
+        self.vc = "vc01.corp.example.mil"
+        self.params = dict(name="vm-app01", template=self.tpl.name, cluster=self.cr.name, datastore=self.ds.name, folder="/",
+                           ticket="CHG0030001", vcenter=self.vc, datacenter=self.dc.name, customize=False)
+
+    def run_module(self, check=True, **params):
+        class Result(BaseException):
+            pass
+
+        def module(argument_spec, supports_check_mode):
+            defaults = {k: v.get("default") for k, v in argument_spec.items()}
+            return NS(params={**defaults, **self.params, **params}, check_mode=check,
+                      exit_json=lambda **kw: self.finish(Result, False, kw), fail_json=lambda **kw: self.finish(Result, True, kw))
+
+        objects = {self.vim.ComputeResource: [self.cr], self.vim.Datastore: [self.ds], self.vim.StoragePod: [self.pod]}
+        props = [(self.tpl, {"name": self.tpl.name, "config.template": True})] + getattr(self, "others", [])
+        with patch.object(deploy, "vim", self.vim, create=True), patch.multiple(
+                deploy, AnsibleModule=module, HAS_PYVMOMI=True, connect=lambda *a: NS(RetrieveContent=lambda: object()),
+                disconnect=lambda si: None, vm_properties=lambda *a: props,
+                vcenter_list=lambda names: [self.vc], _all=lambda content, kind, root: objects[kind]), self.assertRaises(Result) as result:
+            deploy.main()
+        self.tpl.CloneVM_Task.assert_not_called()
+        return result.exception.args[0]
+
+    @staticmethod
+    def finish(exc, failed, result):
+        raise exc(dict(result, failed=failed))
+
+    def test_named_fit_counts_planned_disks_and_failover(self):
+        result = self.run_module(datastore_planned={self.ds.name: 10})
+        self.assertFalse(result["failed"], result)
+        vm = result["vm"]
+        self.assertEqual(vm["chosen"], dict(cluster="named", datastore="named", folder="named"))
+        cluster, ds = vm["fit"]["cluster"], vm["fit"]["datastore"]
+        self.assertEqual((cluster["pct_after"], cluster["fits"], cluster["hosts"], cluster["down"], cluster["target"]), (76, True, 2, 1, 80))
+        self.assertEqual((ds["pct_after"], ds["fits"], ds["free_gb"], ds["capacity_gb"], ds["max"]), (86, False, 40, 100, 85))
+        vm = self.run_module(mem_target_pct=70)["vm"]
+        self.assertFalse(vm["fit"]["cluster"]["fits"])
+        self.assertTrue(vm["fit"]["datastore"]["fits"])
+        self.assertEqual(vm["networks"], ["VM Network", "SITA0101", ""])
+
+    def test_pod_template_and_automatic_placement(self):
+        vm = self.run_module(datastore=self.pod.name)["vm"]
+        self.assertEqual((vm["chosen"]["datastore"], vm["fit"]["datastore"]["name"]), ("pod", self.ds.name))
+        for choice, candidates in (("template", []), ("auto", ["*"])):
+            vm = self.run_module(cluster="", datastore="", folder="", cluster_candidates=candidates, datastore_candidates=candidates)["vm"]
+            self.assertEqual(vm["chosen"], dict(cluster=choice, datastore=choice, folder="template"))
+            self.assertEqual(vm["fit"]["cluster"]["name"], self.cr.name)
+
+    def test_pins_refuse_new_warnings_and_absolute_shortage(self):
+        args = dict(pinned=True, mem_target_pct=70, datastore_max_used_pct=70)
+        for warned, what in (([], "cluster"), (["cluster"], "datastore"), (["datastore"], "cluster")):
+            result = self.run_module(check=False, pinned_ok=warned, **args)
+            self.assertTrue(result["failed"])
+            self.assertIn(what, result["msg"])
+            self.assertIn("run the workflow again: it is checked and approved again", result["msg"])
+        self.assertFalse(self.run_module(pinned_ok=["cluster", "datastore"], **args)["failed"])
+        result = self.run_module(check=False, datastore_planned={self.ds.name: 25}, pinned_ok=["cluster", "datastore"], **args)
+        self.assertIn("no longer has room", result["msg"])
+        self.assertTrue(self.run_module(pinned=True, datastore=self.pod.name)["failed"])
+        self.assertTrue(self.run_module(pinned=True, cluster="", cluster_candidates=["*"])["failed"])
+
+
+    def test_check_mode_keeps_the_template_network_notes(self):
+        # review 1.117 a1: the propose step (check mode) reports a template adapter that does not connect at power on
+        result = self.run_module()
+        self.assertFalse(result["failed"], result)
+        self.assertTrue(any("Network adapter 3 is not set to connect at power on" in n for n in result["notes"]), result["notes"])
+
+    def test_a_pinned_build_leaves_a_vm_already_built_whatever_its_fit(self):
+        # review 1.117 a1: a VM an earlier run built adds nothing to its cluster or datastore, so a relaunched
+        # build is not refused because the cluster or datastore is fuller now
+        built = NS(name="vm-app01", runtime=NS(host=self.cr.host[0], powerState="poweredOn"), parent=self.dc.vmFolder, datastore=[self.ds],
+                   config=NS(hardware=NS(device=[], memoryMB=16 * 1024, numCPU=4)), guest=None)
+        self.others = [(built, {"name": "vm-app01", "config.template": False, "runtime.powerState": "poweredOn",
+                                "config.annotation": deploy.with_mark("Template: rhel9-gold", "CHG0030001", "built")})]
+        result = self.run_module(check=False, pinned=True, mem_target_pct=10, datastore_max_used_pct=10)
+        self.assertFalse(result["failed"], result)
+        self.assertTrue(result["vm"]["existing"])
+        result = self.run_module(check=False, pinned=True, cluster="SITA0101-CL09")
+        self.assertIn("has moved", result["msg"])
 
 
 class SnapshotSizes(unittest.TestCase):

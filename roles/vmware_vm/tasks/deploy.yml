@@ -122,6 +122,7 @@
     url: >-
       {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
       (['sys_id', 'number', 'state', 'active', 'assignment_group', 'location', 'short_description', 'description', 'comments', 'work_notes']
+       + ([vm_deploy_owner_field] if vm_deploy_owner_field else [])
        + vm_deploy_parent_fields | default([]) + ((vm_deploy_ready_by_table | default({}, true))[_vd_table] | default({}, true)).keys() | list)
       | unique | join(',') }}&sysparm_query={{
       ('number=' ~ _vd_number) | urlencode }}
@@ -170,6 +171,7 @@
     url: >-
       {{ _vd_sn_url }}/api/now/table/{{ _vd_pref.table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
       (['sys_id', 'number', 'state', 'active', 'short_description'] + vm_deploy_parent_text_fields
+       + ([vm_deploy_owner_field] if vm_deploy_owner_field else [])
        + ((vm_deploy_ready_by_table | default({}, true))[_vd_pref.table] | default({}, true)).keys() | list) | unique | join(',') }}&sysparm_query={{
       ('number=' ~ _vd_pref.number) | urlencode }}
     method: GET
@@ -195,6 +197,11 @@
 - name: VMware | the ticket, its parent, and a GenAI proposal on it (vm_deploy_genai)
   ansible.builtin.set_fact:
     _vd_rec: "{{ _vd_get.json.result[0] }}"
+    _vd_read_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+    _vd_owner: >-
+      {%- set parent = _vd_pget.json.result | default([]) if _vd_pref.table | default('') == 'change_request' else [] -%}
+      {{ _vd_get.json.result[0] | vm_deploy_owner(vm_deploy_owner_field, vm_deploy_owner_label,
+                                                  parent[0] if parent and _vd_table == 'change_task' else none) }}
     # the groups the ticket launched must be assigned to: its table's in vm_deploy_assignment_group_by_table
     # (e.g. a change: any group), else vm_deploy_assignment_group - which still finds the change's tasks
     _vd_grp: "{{ _vd_table | vm_deploy_group_for(vm_deploy_assignment_group_by_table | default({}, true), vm_deploy_assignment_group) }}"
@@ -264,8 +271,25 @@
 
 - name: VMware | what GenAI would read, and the ticket's own lines (its parent's under them)
   ansible.builtin.set_fact:
+    _vd_not_ready: >-
+      {{ _vd_rec | vm_deploy_ready(_vd_table, vm_deploy_ready_by_table, 'this ticket (' ~ _vd_number ~ ')')
+         or _vd_parent.problem | default('') }}
+    _vd_plan_ticket: >-
+      {{ {'number': _vd_number, 'table': _vd_table, 'tasks': ([_vd_number] if _vd_table == 'change_task' else [])
+           + (_vd_also | selectattr('table', 'equalto', 'change_task') | map(attribute='number') | list)} }}
     _vd_text: "{{ _vd_rec | vm_deploy_ticket_text(_vd_parent) }}"
-    _vd_digest: "{{ 'sha256:' ~ ((_vd_rec | vm_deploy_ticket_text(_vd_parent)) | hash('sha256'))[:16] }}"
+    _vd_digest: "{{ 'sha256:' ~ (((_vd_rec | vm_deploy_ticket_text(_vd_parent)) ~ (_vd_owner | to_json if _vd_owner else '')) | hash('sha256'))[:16] }}"
+
+- name: VMware | record why the change is not ready
+  ansible.builtin.include_tasks: deploy_refused.yml
+  vars:
+    _vd_check: "{{ {'problems': [_vd_not_ready]} }}"
+    _vd_state: not_ready
+    _vd_refusals: "{{ [_vd_not_ready] }}"
+  when: _vd_not_ready | length > 0
+
+- name: VMware | the values and questions in the ticket text
+  ansible.builtin.set_fact:
     _vd_own: "{{ (_vd_rec | vm_deploy_spec({}, none, _vd_words, _vd_parent)).spec }}"
     _vd_own_q: "{{ (_vd_rec | vm_deploy_spec({}, none, _vd_words, _vd_parent)).questions }}"
 
@@ -300,40 +324,33 @@
     fail_msg: "vm_deploy_phase must be propose, build or empty, not {{ _vd_phase }}"
     quiet: true
 
-- name: VMware | the build step has something to build (it never asks GenAI)
-  ansible.builtin.assert:
-    that: not (_vd_genai_needed | bool and _vd_phase == 'build')
-    fail_msg: >-
-      Nothing was built: ticket {{ _vd_rec.number }} has no GenAI proposal for its text as it is now (none yet, or the ticket
-      was changed after it - a new comment voids it). Run the workflow from the start: its first step makes the proposal.
-    quiet: true
+- name: VMware | the placements approved for this build
+  ansible.builtin.set_fact:
+    _vd_pinned: "{{ _vd_phase == 'build' and not ansible_check_mode }}"
+    _vd_approved: "{{ _vd_rec | vm_deploy_checked_placement(_vd_digest, vm_deploy_checked_job | default('')) if _vd_phase == 'build' and not ansible_check_mode else {} }}"
 
-# the approval is for what the propose step checked: the build step builds only that ticket text. Changed
-# since (a new comment, an edited description, the change's text), it is checked and approved again.
-- name: VMware | the build step builds what was approved (the ticket as the propose step checked it)
-  ansible.builtin.assert:
-    that: (_vd_rec | vm_deploy_checked_digest) == _vd_digest
-    fail_msg: >-
-      Nothing was built: ticket {{ _vd_rec.number }} {{ 'was changed after the approval (a new comment, an edited description or its change)'
-      if _vd_rec | vm_deploy_checked_digest else 'has no "[AAP] Checked - ready to build" note with its text digest (none, or one from an older release)' }}
-      - the approval was for {{ (_vd_rec | vm_deploy_checked_digest) or 'nothing' }}, the ticket is {{ _vd_digest }} now. Run the workflow from
-      the start: its first step checks it again, then someone approves it.
-    quiet: true
-  when: _vd_phase == 'build'
+- name: VMware | check the proposal and ticket digest for the build
+  ansible.builtin.set_fact:
+    _vd_approval_problem: >-
+      {%- set approved = _vd_rec | vm_deploy_checked_digest -%}
+      {{ ('ticket ' ~ _vd_number ~ ' has no GenAI proposal for its text as it is now. Run the workflow from the start.')
+         if _vd_phase == 'build' and _vd_genai_needed | bool else
+         ('ticket ' ~ _vd_number ~ ' was changed after the approval. Run the workflow from the start: its first step checks it again.')
+         if _vd_pinned | bool and approved and approved != _vd_digest else '' }}
 
 - name: VMware | GenAI reads the request and proposes
   ansible.builtin.include_tasks: deploy_genai.yml
-  when: _vd_genai_needed | bool
+  when: _vd_genai_needed | bool and _vd_phase != 'build'
 
 - name: VMware | the proposal GenAI just made is the one to check (and, without an approval, to build)
   ansible.builtin.set_fact:
     _vd_prop: "{{ {'fields': _vd_g.fields, 'header': 'this run', 'digest': _vd_digest} }}"
     _vd_prop_ok: true
-  when: _vd_genai_needed | bool and _vd_g_clean | bool
+  when: _vd_genai_needed | bool and _vd_phase != 'build' and _vd_g_clean | bool
 
 - name: VMware | check and build - or, in the propose step (or waiting for a person), check and say where it would go
   ansible.builtin.include_tasks: deploy_build.yml
   vars:
     _vd_plan_only: >-
       {{ _vd_phase == 'propose' or (_vd_genai_needed | bool and _vd_phase == '' and vm_deploy_genai_approval | bool) }}
-  when: not _vd_genai_needed | bool or _vd_g_clean | bool
+  when: _vd_phase == 'build' or not _vd_genai_needed | bool or _vd_g_clean | bool
