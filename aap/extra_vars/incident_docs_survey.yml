@@ -45,5 +45,7 @@
 
 ## The SOP draft (incident_sop_draft) is written through AAP's API by the AAR job: name a "Red Hat
 ## Ansible Automation Platform" credential here and the setup job attaches it to the AAR and SOP
-## templates (its user: Admin on the SOP template). Empty = attach it by hand, or no draft.
+## templates (its user: Admin on the SOP template) and, since 1.112.1, gives its user the Read role
+## on the VM - outage watch template (the AAR reads its reviews). Empty = attach it by hand, or no
+## draft.
 # incident_docs_draft_credential: ""

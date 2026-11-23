@@ -13,6 +13,7 @@
         questions: "{{ 'sop' | incident_survey({'levels': incident_impact_levels, 'most': incident_docs_survey_max | int}) }}"
     project: "{{ incident_docs_survey_project }}"
     credential: "{{ incident_docs_draft_credential if incident_docs_survey_state == 'present' else '' }}"
+    read_for: "{{ ['vm_outage_watch.yml'] if incident_docs_draft_credential else [] }}"   # 1.112.1: its user gets Read there (the AAR reads the outage reviews)
     state: "{{ incident_docs_survey_state }}"
     ca_path: "{{ incident_docs_survey_ca_path }}"
   register: _ids

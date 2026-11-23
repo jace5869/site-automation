@@ -25,6 +25,9 @@ description:
     start, which an outage review can fill now). Nothing else of a question that is there is changed.
   - O(credential) attaches that credential (its name) to each template found, unless the template already has one
     of its type.
+  - O(read_for) (1.112.1) gives that credential's user the Read role on the job templates that run those playbooks (the
+    outage AAR reads the VM - outage watch's reviews), unless it has it. A credential with a token and no user name: said,
+    to give by hand.
   - In check mode it only reads, and says what it would change.
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform" credential sets it.
     Its user needs the Admin role on each template.
@@ -37,6 +40,7 @@ options:
     required: true
   project: {description: "Only job templates of this AAP project (its name); empty = any project.", type: str, default: ''}
   credential: {description: "A credential to attach to the templates (its name in AAP); empty = none.", type: str, default: ''}
+  read_for: {description: "Playbooks (file names) whose job templates the credential's user gets the Read role on (state present).", type: list, elements: str, default: []}
   state: {description: present adds the questions, absent takes them out., type: str, choices: [present, absent], default: present}
   ca_path: {description: A CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)., type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 30}
@@ -55,6 +59,7 @@ missing: {description: The playbooks no job template runs (make the template fir
 
 import copy
 import os
+import re
 from urllib.parse import quote
 
 from ansible.module_utils.basic import AnsibleModule
@@ -170,12 +175,14 @@ def attach(api, rec, cred, check_mode):
         return "", "its credentials: " + why
     same = [c for c in have if c.get("id") == cred.get("id") or c.get("credential_type") == cred.get("credential_type")]
     if same:
+        rec["_cred_used"] = same[0].get("id") == cred.get("id")
         return ("credential '%s' already there" % same[0].get("name")) if same[0].get("id") == cred.get("id") else (
             "has '%s' of that credential type already - left as it is" % same[0].get("name")), ""
     if not check_mode:
         code, d = api.call("POST", path, {"id": cred.get("id")})
         if code not in (200, 201, 204):
             return "", "AAP refused to attach credential '%s' (HTTP %d): %s" % (cred.get("name"), code, error_text(d))
+    rec["_cred_used"] = True
     return "credential '%s' attached" % cred.get("name"), ""
 
 
@@ -249,19 +256,126 @@ def one(api, rec, questions, state, check_mode, defaults=None, match=None, cred=
     return r
 
 
+def _row(template, tid, playbook, action="", ok=True, changed=False, error=""):
+    return {"template": template, "id": tid, "playbook": playbook, "action": action, "added": [], "removed": [], "relaxed": [], "defaults": [],
+            "cut": [], "no_question": [], "changed": changed, "ok": ok, "error": error}
+
+
+AAR_PLAYBOOK = "playbooks/incident_aar.yml"
+
+
+def _proj(j):
+    """A job template's project id (its name repeats across organizations; the id does not)."""
+    return j.get("project") if j.get("project") is not None else ((j.get("summary_fields") or {}).get("project") or {}).get("id")
+
+
+def _host(url):
+    """A URL's endpoint: scheme://host:port/path, lower case, the scheme's port filled in, no trailing dot or slash ('' when none)."""
+    u = str(url or "").strip().lower()
+    m = re.match(r"^([a-z][a-z0-9+.-]*)://([^/?#]*)([^?#]*)", u) or re.match(r"^()([^/?#]*)([^?#]*)", "https://" + u if u else "")
+    if not u or not m:
+        return ""
+    scheme = m.group(1) or "https"
+    hp = m.group(2).rsplit("@", 1)[-1]
+    if hp.startswith("["):
+        host, _, port = hp[1:].partition("]")
+        port = port.lstrip(":")
+    else:
+        host, _, port = hp.partition(":")
+    port = port or {"http": "80", "https": "443"}.get(scheme, "")
+    return "%s://%s:%s%s" % (scheme, host.rstrip("."), port, m.group(3).rstrip("/"))
+
+
+def read_role(api, cred, playbooks, jobs, project, check_mode, aar_projects=None, unique=True):
+    """1.112.1: the credential's user gets the Read role on the job templates that run these playbooks (playbooks/<file>: the AAR reads
+    the outage watch's reviews through it). Given only when it is sure who that user is - an AAP credential (its type), named once,
+    for this AAP, with a user name and no token, and the one the AAR template runs with; else each line says to give it by hand.
+    Never fails the setup job: a refused grant is said, by hand. (rows like one()'s, missing playbooks)."""
+    rows, missing, todo = [], [], []
+    for pb in playbooks:
+        want = pb if "/" in str(pb) else "playbooks/" + str(pb)
+        found = sorted([j for j in jobs if str(j.get("playbook") or "") == want and (
+            not project or (((j.get("summary_fields") or {}).get("project") or {}).get("name")) == project)],
+            key=lambda x: (str(x.get("name")).lower(), x.get("id")))
+        if not found:
+            missing.append(_base(pb))
+        todo += found
+    if not todo:
+        return rows, missing
+
+    def hand(why):
+        return rows + [_row(j.get("name") or "", j.get("id"), j.get("playbook") or "", "the Read role not given: %s - give the AAR's AAP user the Read "
+                     "role on this template by hand" % why) for j in todo], missing
+
+    name = cred.get("name")
+    if not unique:
+        return hand("more than one credential is named '%s'" % name)
+    if not aar_projects and aar_projects is not None:
+        return hand("the AAR template runs with another AAP credential, not '%s'" % name)
+    if aar_projects is not None:            # only the outage watch of the AAR's own project (project names repeat across organizations)
+        other = [j for j in todo if _proj(j) not in aar_projects]
+        todo = [j for j in todo if _proj(j) in aar_projects]
+        rows += [_row(j.get("name") or "", j.get("id"), j.get("playbook") or "", "the Read role not given: another project than the AAR "
+                      "template's - give the AAR's AAP user the Read role here by hand if it should read it") for j in other]
+        if not todo:
+            return rows, missing
+    code, d = api.call("GET", "credentials/%s/" % cred.get("id"))
+    if code != 200:
+        return hand("the credential '%s' could not be read (HTTP %d)" % (name, code))
+    tcode, t = api.call("GET", "credential_types/%s/" % d.get("credential_type"))
+    if tcode != 200 or str((t or {}).get("namespace") or "") != "controller" or not (t or {}).get("managed", True):
+        return hand("'%s' is not a Red Hat Ansible Automation Platform credential" % name)
+    srcs, why = _all(api, "credentials/%s/input_sources/" % cred.get("id"))
+    if why or srcs:
+        return hand("'%s' takes %s from another credential (a secret store), so its user is not known here"
+                    % (name, ", ".join(sorted(set(str(x.get("input_field_name")) for x in srcs))) or "its login"))
+    inputs = d.get("inputs") or {}
+    user = str(inputs.get("username") or "").strip()
+    if inputs.get("oauth_token") or not user:
+        return hand("'%s' logs in with a token, so its user is not known here" % name)
+    if _host(inputs.get("host")) != _host(api.conn.get("host")):
+        return hand("'%s' is for another AAP (%s)" % (name, _host(inputs.get("host")) or "no host"))
+    users, why = _all(api, "users/?username=%s" % quote(user))
+    users = [u for u in users if str(u.get("username")) == user]
+    if why or len(users) != 1:
+        return hand("AAP has no user '%s' (the credential '%s'), or this job's user may not see it" % (user, name))
+    uid = int(users[0]["id"])
+    have, why = _all(api, "users/%d/roles/" % uid)
+    if why:
+        return hand("the roles of '%s' could not be read" % user)
+    have = set(int(r["id"]) for r in have if r.get("id") is not None)
+    for j in todo:
+        tn, tid, pb = j.get("name") or "", j.get("id"), j.get("playbook") or ""
+        roles, why = _all(api, "job_templates/%s/object_roles/" % tid)
+        rid = next((int(r["id"]) for r in roles if str(r.get("name")) == "Read"), None)
+        if why or rid is None:
+            rows.append(_row(tn, tid, pb, "the Read role not given: AAP did not show its roles - give '%s' the Read role on this template by hand" % user))
+        elif rid in have:
+            rows.append(_row(tn, tid, pb, "'%s' has the Read role already" % user))
+        else:
+            if not check_mode:
+                code, d = api.call("POST", "users/%d/roles/" % uid, {"id": rid})
+                if code not in (200, 201, 204):
+                    rows.append(_row(tn, tid, pb, "the Read role not given: AAP refused it (HTTP %d) - this job's user needs Admin on this "
+                                     "template; or give '%s' the Read role here by hand" % (code, user)))
+                    continue
+            rows.append(_row(tn, tid, pb, "the Read role given to '%s' (the AAR reads its reviews)" % user, changed=True))
+    return rows, missing
+
+
 def run(api, p, check_mode):
     """(results, problems, missing playbooks)."""
     jobs, why = _all(api, "job_templates/")
     if why:
         return [], ["the job templates: " + why], []
-    cred = None
+    cred, unique = None, False
     if p.get("credential"):
         found, why = _all(api, "credentials/?name=%s" % quote(p["credential"]))
         found = [c for c in found if c.get("name") == p["credential"]]
         if why or not found:
             return [], ["the credential '%s' (incident_docs_draft_credential): %s" % (
                 p["credential"], why or "not there, or this job's AAP user may not use it")], []
-        cred = found[0]
+        cred, unique = found[0], len(found) == 1
     results, missing = [], []
     for s in p["surveys"]:
         pb = _base(s.get("playbook"))
@@ -278,13 +392,19 @@ def run(api, p, check_mode):
                                 "action": "", "added": [], "removed": [], "defaults": [], "cut": [], "no_question": [],
                                 "changed": False, "ok": False,
                                 "error": "unexpected answer from AAP: %s" % e})
+    if cred and p.get("read_for") and p["state"] == "present":
+        uses = set(_proj(j) for j in jobs if str(j.get("playbook") or "") == AAR_PLAYBOOK and j.get("_cred_used")
+                   and any(r.get("ok") and r.get("id") == j.get("id") for r in results))
+        rows, miss = read_role(api, cred, p["read_for"], jobs, p["project"], check_mode, uses, unique)
+        results += rows
+        missing += [m for m in miss if m not in missing]
     return results, [], missing
 
 
 def main():
     module = AnsibleModule(argument_spec=dict(
         surveys=dict(type="list", elements="dict", required=True), project=dict(type="str", default=""),
-        credential=dict(type="str", default=""),
+        credential=dict(type="str", default=""), read_for=dict(type="list", elements="str", default=[]),
         state=dict(type="str", choices=["present", "absent"], default="present"),
         ca_path=dict(type="str", default=""), timeout=dict(type="int", default=30)), supports_check_mode=True)
     p = module.params

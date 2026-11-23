@@ -1178,7 +1178,7 @@ File: `roles/incident_docs/defaults/main.yml`
 | `incident_docs_survey_project` | (empty) | only job templates of this AAP project (its name); empty = any project |
 | `incident_docs_survey_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
 | `incident_docs_survey_max` | `8000` | characters a text box takes at most (AAP's own default is 1024) |
-| `incident_docs_draft_credential` | (empty) | The SOP draft (incident_sop_draft) is written through AAP's API by the AAR job: name a "Red Hat Ansible Automation Platform" credential here and the setup job attaches it to the AAR and SOP templates (its user: Admin on the SOP template). Empty = attach it by hand, or no draft. |
+| `incident_docs_draft_credential` | (empty) | The SOP draft (incident_sop_draft) is written through AAP's API by the AAR job: name a "Red Hat Ansible Automation Platform" credential here and the setup job attaches it to the AAR and SOP templates (its user: Admin on the SOP template) and, since 1.112.1, gives its user the Read role on the VM - outage watch templat… (all of it: the role file) |
 | `incident_review_look_back` | `25` | 1.112.0, the AAR from an outage review (incident_review): the AAR job reads the review from the outage watch's job, through the same AAP credential - its user needs to see the VM - outage watch jobs (the Read role on that template is enough). latest: the newest outage watch jobs read at most to find the last review |
 
 ## log_analysis

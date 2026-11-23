@@ -214,8 +214,9 @@ What the AAR then has:
 typed in the survey.
 
 **What it needs:** the AAR template's AAP credential (`incident_docs_draft_credential`, the one the SOP draft uses; the setup
-job attaches it). Its user must see the *VM - outage watch* jobs: give it the **Read** role on that template. It reads only
-(GET). The review must come from 1.112.0 or later: an older run has no draft in its artifact.
+job attaches it). Its user must see the *VM - outage watch* jobs: the **Read** role on that template. Since 1.112.1 the same
+setup job (*AAP - incident document surveys*, with `incident_docs_draft_credential` set) gives it that role, when it is sure who
+that user is (an AAP credential with a user name and no token, for this AAP, the AAR's own); otherwise its line says why, to give by hand. It reads only (GET). The review must come from 1.112.0 or later: an older run has no draft in its artifact.
 
 | You see | Why, and what to do |
 |---|---|

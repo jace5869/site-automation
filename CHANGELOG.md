@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.112.1 — 2026-11-23
+
+**To set up:** run **AAP - incident document surveys** again (with `incident_docs_draft_credential` set). Nothing by hand.
+
+- **The AAR's Read role, by the setup job.** *AAP - incident document surveys* now gives the AAR draft credential's AAP user
+  the **Read** role on every *VM - outage watch* template (found by its playbook), so the AAR job can read the outage reviews.
+  It gives it only when it is sure who that user is: a Red Hat Ansible Automation Platform credential, named once, for this
+  AAP, with a user name and no token, and the one the AAR template runs with. Otherwise - or when AAP refuses the grant - that
+  template's line says why, to give by hand; the setup job never fails for it. Only templates of playbooks/vm_outage_watch.yml. Check only reads and says "the Read role given to ..."; a second run says
+  "has the Read role already". The 1.112.0 hand step is no longer needed.
+- Tests: tests/test_incident_docs.py (the role given once, Check writes nothing; each "by hand" case; no outage watch template).
+
 ## 1.112.0 — 2026-11-22
 
 **To set up:**

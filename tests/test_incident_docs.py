@@ -437,8 +437,37 @@ class FakeAapCredentials(FakeAap):
         self.creds = [{"id": 51, "name": "AAP draft writer", "credential_type": 18}, {"id": 52, "name": "Machine", "credential_type": 1},
                       {"id": 53, "name": "AAP admin", "credential_type": 18}]
         self.attached = {}
+        self.inputs = {51: {"host": self.url + "/", "username": "svc_aar_draft", "password": "$encrypted$"},
+                       52: {"username": "deploy", "ssh_key_data": "$encrypted$"},
+                       53: {"host": self.url, "username": "admin", "oauth_token": "$encrypted$"}}
+        self.users = [{"id": 7, "username": "svc_aar_draft"}, {"id": 8, "username": "deploy"}]
+        self.user_roles = {7: [{"id": 900, "name": "Read"}], 8: []}
+        self.refuse_roles = False
+        self.sources = {}
 
     def answer(self, method, rest, qs, body, path):
+        if len(rest) == 3 and rest[0] == "credentials" and rest[2] == "input_sources" and method == "GET":
+            return self.page(self.sources.get(int(rest[1]), []), qs, path)
+        if len(rest) == 2 and rest[0] == "credentials" and method == "GET":                # 1.112.1: its user name (inputs)
+            c = next((x for x in self.creds if str(x["id"]) == rest[1]), None)
+            return (200, dict(c, inputs=self.inputs.get(c["id"], {}))) if c else (404, {"detail": "Not found."})
+        if len(rest) == 2 and rest[0] == "credential_types" and method == "GET":
+            return 200, ({"id": 18, "name": "Red Hat Ansible Automation Platform", "namespace": "controller"} if rest[1] == "18"
+                         else {"id": 1, "name": "Machine", "namespace": "ssh"})
+        if rest == ["users"] and method == "GET":
+            return self.page([u for u in self.users if not qs.get("username") or u["username"] == qs["username"]], qs, path)
+        if len(rest) == 3 and rest[0] == "users" and rest[2] == "roles":
+            have = self.user_roles.setdefault(int(rest[1]), [])
+            if method == "GET":
+                return self.page(have, qs, path)
+            if self.refuse_roles:
+                return 403, {"detail": "You do not have permission to perform this action."}
+            have.append({"id": body["id"], "name": "Read"})
+            self.writes.append((method, "user", int(rest[1]), "roles", body))
+            return 204, {}
+        if len(rest) == 3 and rest[0] == "job_templates" and rest[2] == "object_roles":
+            n = int(rest[1])
+            return self.page([{"id": 1000 + n, "name": "Admin"}, {"id": 2000 + n, "name": "Execute"}, {"id": 3000 + n, "name": "Read"}], qs, path)
         if rest == ["credentials"] and method == "GET":
             return self.page([c for c in self.creds if not qs.get("name") or c["name"] == qs["name"]], qs, path)
         if len(rest) == 3 and rest[0] == "job_templates" and rest[2] == "credentials":
@@ -556,6 +585,78 @@ class SurveyWriter(unittest.TestCase):
         results, _, _ = sv.run(self.api, dict(self.p, credential="AAP draft writer"), False)
         self.assertIn("credential 'AAP draft writer' already there", dict((r["template"], r["action"]) for r in results)["SOP"])
         self.assertIn("not there", sv.run(self.api, dict(self.p, credential="Nope"), False)[1][0])
+
+    def test_read_role_on_the_outage_watch(self):
+        """1.112.1: the draft credential's user gets the Read role on the VM - outage watch templates (the AAR reads their reviews) - once,
+        and only when it is sure who that user is (Codex review: an AAP credential, named once, this AAP, no token, the AAR's own)."""
+        self.aap.jobs += [_jt(4, "VM - outage watch", "playbooks/vm_outage_watch.yml"), _jt(5, "Restricted", "restricted/vm_outage_watch.yml")]
+        p = dict(self.p, credential="AAP draft writer", read_for=["vm_outage_watch.yml"])
+
+        def line(results):
+            rows = [r for r in results if r["template"] in ("VM - outage watch", "Restricted")]
+            self.assertEqual([r["template"] for r in rows], ["VM - outage watch"])        # the same file name elsewhere: never
+            self.assertTrue(rows[0]["ok"])                                                 # never fails the setup job
+            return rows[0]
+
+        def grants():
+            return [w for w in self.aap.writes if w[1] == "user"]
+        results, problems, missing = sv.run(self.api, p, True)                                 # Check: reads only
+        self.assertEqual((problems, missing, grants()), ([], [], []))
+        row = line(results)
+        self.assertEqual((row["changed"], row["action"]), (True, "the Read role given to 'svc_aar_draft' (the AAR reads its reviews)"))
+        line(sv.run(self.api, p, False)[0])
+        self.assertEqual(grants(), [("POST", "user", 7, "roles", {"id": 3004})])
+        row = line(sv.run(self.api, p, False)[0])
+        self.assertEqual((row["changed"], row["action"]), (False, "'svc_aar_draft' has the Read role already"))
+        self.assertEqual(len(grants()), 1)
+
+        def by_hand(why, **kw):
+            self.aap.user_roles[7] = [{"id": 900, "name": "Read"}]
+            self.aap.writes = []
+            row = line(sv.run(self.api, dict(p, **kw), False)[0])
+            self.assertIn("the Read role not given: " + why, row["action"])
+            self.assertEqual(grants(), [])
+        self.aap.attached = {1: [self.aap.creds[2]]}                                          # the AAR runs with another AAP credential
+        by_hand("the AAR template runs with another AAP credential, not 'AAP draft writer'")
+        self.aap.attached = {}
+        by_hand("'AAP admin' logs in with a token, so its user is not known here", credential="AAP admin")
+        self.aap.attached = {}
+        by_hand("'Machine' is not a Red Hat Ansible Automation Platform credential", credential="Machine")
+        self.aap.attached = {}
+        self.aap.inputs[51]["host"] = "https://aap-test.example.mil"
+        by_hand("'AAP draft writer' is for another AAP (https://aap-test.example.mil:443)")
+        self.aap.inputs[51]["host"] = self.aap.url
+        self.aap.creds.append({"id": 54, "name": "AAP draft writer", "credential_type": 18})
+        by_hand("more than one credential is named 'AAP draft writer'")
+        self.aap.creds.pop()
+        self.aap.inputs[51]["host"] = self.aap.url.replace("http://", "https://")              # same host, another port and scheme
+        by_hand("'AAP draft writer' is for another AAP")
+        self.aap.inputs[51]["host"] = self.aap.url
+        self.aap.sources = {51: [{"input_field_name": "password"}]}
+        by_hand("'AAP draft writer' takes password from another credential (a secret store)")
+        self.aap.sources = {}
+        # the outage watch of another project (an organization's own 'Site automation'): never given, said
+        self.aap.jobs[0]["project"], self.aap.jobs[3]["project"], self.aap.jobs[4]["project"] = 10, 11, 10
+        self.aap.attached = {}
+        self.aap.writes = []
+        row = line(sv.run(self.api, p, False)[0])
+        self.assertIn("the Read role not given: another project than the AAR template's", row["action"])
+        self.assertEqual(grants(), [])
+        del self.aap.jobs[0]["project"], self.aap.jobs[3]["project"], self.aap.jobs[4]["project"]
+        # a credential of the same type left on the AAR whose NAME quotes ours: still "another credential"
+        self.aap.creds.append({"id": 55, "name": "Old credential 'AAP draft writer' attached before", "credential_type": 18})
+        self.aap.attached = {1: [self.aap.creds[-1]]}
+        by_hand("the AAR template runs with another AAP credential")
+        self.aap.creds.pop()
+        self.aap.attached = {}
+        self.aap.users = []
+        by_hand("AAP has no user 'svc_aar_draft'")
+        self.aap.users = [{"id": 7, "username": "svc_aar_draft"}]
+        self.aap.refuse_roles = True
+        by_hand("AAP refused it (HTTP 403)")
+        self.aap.jobs = self.aap.jobs[:3]
+        self.assertEqual(sv.run(self.api, p, False)[2], ["vm_outage_watch.yml"])
+        self.assertEqual(sv.run(self.api, dict(p, read_for=[]), False)[2], [])                # without read_for: as before
 
     def test_pure_parts(self):
         spec = {"spec": [{"variable": "a", "type": "textarea", "default": "", "max": 3}, {"variable": "c", "type": "multiplechoice", "default": "No"}]}
