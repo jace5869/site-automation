@@ -123,7 +123,9 @@ return ($LASTEXITCODE -eq 0 -and $o.Count -eq 1 -and $o[0] -eq 'root')
 - **Name**: `answer_keys_name`. If it is not set, the `--AnswerKey` of `check_stig_evaluate_args` is used, else `DEFAULT`.
 - **ExpectedStatus**: Evaluate-STIG's own result for the rule on the hosts (the majority's), `Open` or `Not_Reviewed`.
 - **ValidationCode**: PowerShell that only reads. It returns `$true` when the host is as DISA's check text wants.
-  It says what it read with `Write-Verbose`.
+  It says what it read with `Write-Verbose`. (The local group members job's answer files, docs/WINDOWS.md, return
+  `@{ 'Valid' = $true or $false; 'Results' = text }` instead, so the members found show in the results: that form
+  needs an Evaluate-STIG that reads Valid and Results.)
 - **The statuses**: `NotAFinding` for true and `Open` for false. Only `NotAFinding`, `Open` or `Not_Applicable` are ever
   used, never RA or POA&M. A comment never contains those words (`stigman_protect_words`).
 - **The element names** come from the answer file template of its STIG's first host's own Evaluate-STIG (an XML file in its

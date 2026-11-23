@@ -1512,6 +1512,24 @@ job_templates:
       produces: Report email and report website page; findings as job artifacts (site_health) for the ServiceNow tickets step
       supports: 'Run constraint=Read-only by default (event log line per finding); changes hosts if check_trust_remove: true;
         email/website if set; Check = dry run'
+  - name: Windows - local group members
+    playbook: playbooks/win_local_groups.yml
+    credentials: [machine_windows]
+    optional_credentials: []
+    ask_limit: true
+    ask_variables: false
+    ask_inventory: false
+    ee: windows
+    variables_file: aap/extra_vars/win_local_groups.yml
+    area: Windows
+    description:
+      does: Inventories every member of Administrators and the other privileged local groups on each server; builds the approved
+        list and its checks.
+      targets: Windows hosts of the target or the Limit over WinRM (Windows Machine credential)
+      produces: Report email and website page; CSV, JSON, xlsx, approved-list.yml; with an approved list, Evaluate-STIG answer
+        files and a PowerShell check
+      supports: Run constraint=Read-only (nothing on a server changes; it judges nothing); email/website if set; Check = same
+        read
   - name: VMware - trust store report
     playbook: playbooks/vmware_trust_report.yml
     credentials: [vmware]

@@ -134,6 +134,7 @@
 #   - win_stig_recheck.yml
 #   - win_troubleshoot.yml
 #   - win_trust_report.yml
+#   - win_local_groups.yml
 
 ## more job templates or workflows, by name or ID
 # aap_email_question_templates: []
@@ -163,6 +164,14 @@
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## The text to write.
 # vm_notes: ""
+
+# ---- win_local_groups ----------------------------------------------------------------------------
+## Windows - local group members (playbooks/win_local_groups.yml; docs/WINDOWS.md "Local group
+## members"). Read only. The local groups read. A well-known group is found by its SID first
+## (Administrators = S-1-5-32-544 on any language of Windows); any other by its name. A SID
+## (S-1-5-32-...) works too.
+# win_local_groups: ["Administrators", "Remote Desktop Users", "Remote Management Users", "Backup Operators",
+#                    "Server Operators", "Print Operators", "Account Operators"]
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.122.0 — 2026-11-23
+
+**To set up:** AAP - set up job templates makes the template (or by hand: playbook playbooks/win_local_groups.yml, the
+Windows credential, Limit your Windows servers); run it.
+
+- **New job: Windows - local group members.** Who is in Administrators, Remote Desktop Users, Remote Management Users,
+  Backup Operators, Server Operators, Print Operators and Account Operators on each Windows server (`win_local_groups`).
+  Read only. It inventories and exports; it judges nothing.
+- **The complete inventory:** every member of every group on every server, one row each, nothing left out. Columns:
+  server, group, member, type, source, SID, enabled, servers with this member (then last logon, the name on the
+  server). As `local-groups.csv` and `local-groups.json` (attached, and beside the page on the report website), the
+  workbook's By server sheet, and the job artifact `win_local_groups.rows`.
+- Groups are found by their well-known SID, so Administratoren on a German Windows is Administrators.
+- A member Windows cannot name is listed as `unresolved SID S-1-5-21-...`, never dropped. When
+  Get-LocalGroupMember fails on one (orphaned SID, Azure AD member), the group is read with ADSI. A read that stops
+  part way keeps what it found ("partial read", a warning).
+- The report: At a glance tiles, then **Unusual members**, **By server**, **By member**, **Not read**. An enabled
+  local account that is not the built-in one in Administrators is a warning. Members on few of the servers are
+  flagged only with `win_local_groups_usual` (default `off`; `auto` = 80%, or a percent).
+- The website page has a Group button row (each group with its member count) and a Member search over By server and
+  By member. The atlas, brief and ops looks take a label for these buttons (`facets.pf_label`, `h_label`).
+- **Build the approved list from it:** `approved-list.yml` (every member with `#` in front: nothing is approved for
+  you), the workbook's *Approved list* sheet (a blank Approve column), or the page: a box in each row, *Select all
+  shown* (with the Group buttons and the search) and *Export selected*: CSV, JSON, Approved list (YAML).
+- **The checks to run on the servers, made from the approved list:** with `win_local_groups_approved` set, the job
+  attaches an Evaluate-STIG answer file per STIG (`answer-file-WinServer2019.xml`, `-2022`, `-2025`: a `<Vuln>` for
+  the member server and the domain controller rule each, from `win_local_groups_stig_rules`) and
+  `check-local-admins.ps1`. The page's *Export selected* makes the same files from the ticked Administrators rows.
+  - The rules (DISA XCCDF 2019 V3R9, 2022 V2R11, 2025 V1R4): WN19-MS-000010 V-205746, WN19-DC-000010 V-205738,
+    WN22-MS-000010 V-254428, WN22-DC-000010 V-254385, WN25-MS-000010 V-278177, WN25-DC-000010 V-278132.
+  - The ValidationCode reads Administrators by SID S-1-5-32-544 (ADSI when Get-LocalGroupMember fails, in Full
+    Language). It compares each member by SID when the entry is a SID, else by name (any case, to the character);
+    `{computer}` is the server's own name. It returns `@{ 'Valid' = ...; 'Results' = ... }`: Results is the members
+    found and the ones not approved; Valid is true only when every member is approved, false when the group could not
+    be read. This form needs an Evaluate-STIG that reads Valid and Results. ExpectedStatus is Not_Reviewed (the
+    status Evaluate-STIG gives the rule before the key runs; `expected` in a rule changes it); NotAFinding when
+    valid, Open when not.
+  - A scope is the server's own identity on the server: `match` globs on its computer name (ASCII, compared upper
+    case, ordinal), and full names `COMPUTERNAME.domain` (from Win32_ComputerSystem) for what the job resolved - a key
+    in a server's language (Administratoren) and `group:` rules - so a same-named server of another domain never gets
+    them. A selector that is there but empty, a glob with `[ ]` or not ASCII, approves nothing. Names compare ordinal,
+    ignoring case. Entries with a character XML does not allow are left out. The .ps1 has a UTF-8 BOM (Windows
+    PowerShell 5.1).
+- Safe exports: a CSV cell starting with = + - @ gets a ' in front (the JSON keeps the values). A name with a Jinja
+  mark never goes into a YAML to paste (its SID instead). A By server row in *Export selected* is that server's
+  account (SRV01\svc); a By member row is one line per server with its own SID.
+- Tests: tests/test_win_local_groups.py (parse, German names by SID, orphaned SID, partial read, the inventory and its
+  columns, nothing prefilled, the answer files parsed and as the answer keys write them, the ValidationCode and the
+  script run under pwsh against stand-in members: approved only, one extra, SID and name, {computer}, nothing read),
+  tests/test_win_local_groups_select.py (the page's exports with node; its answer files and script are the job's).
+- Next: domain groups expanded one level over LDAP (now shown as "Domain group (not expanded)"); more baselines
+  (services, tasks, shares, software, DNS servers) the same way.
+
 ## 1.120.0 — 2026-11-23
 
 **To set up:**

@@ -718,7 +718,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- if fx.platforms | default([]) or fx.collections | default([]) %}
 <div class="facets" hidden role="group" aria-label="Choose the rows shown">
 {%- if fx.platforms | default([]) %}
-<span class="fl" id="fl-pf">Platform</span>
+<span class="fl" id="fl-pf">{{ fx.pf_label | default('Platform', true) | e }}</span>
 <span class="fbs" role="group" aria-labelledby="fl-pf"><button type="button" class="fb" data-fk="pf" data-fv="" aria-pressed="true">All</button>{% for p in fx.platforms %}<button type="button" class="fb hu{{ p.hue | default(0) }}" data-fk="pf" data-fv="{{ p.key | e }}" aria-pressed="false"><span class="sw" aria-hidden="true"></span>{{ p.name | e }}</button>{% endfor %}</span>
 <select class="fsel fsel-pf" data-fk="pf" aria-labelledby="fl-pf"><option value="">All</option>{% for p in fx.platforms %}<option value="{{ p.key | e }}">{{ p.name | e }}</option>{% endfor %}</select>
 {%- endif %}
@@ -732,8 +732,8 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 <span class="fbs fbs-cat" role="group" aria-labelledby="fl-cat"><button type="button" class="fb" data-fk="cat" data-fv="" aria-pressed="true">All</button>{% for k in fx.cats %}<button type="button" class="fb k{{ k.cat }}" data-fk="cat" data-fv="{{ k.key | e }}" aria-pressed="false"><span class="sw2" aria-hidden="true"></span>{{ k.name | e }}</button>{% endfor %}</span>
 {%- endif %}
 {%- if fx.host | default(false) %}
-<label class="fl" for="fhost">Host</label>
-<input class="fsel fhost" id="fhost" type="search" data-fk="h" placeholder="A host's name, or part of it" autocomplete="off">
+<label class="fl" for="fhost">{{ fx.h_label | default('Host', true) | e }}</label>
+<input class="fsel fhost" id="fhost" type="search" data-fk="h" placeholder="{{ fx.h_placeholder | default("A host's name, or part of it", true) | e }}" autocomplete="off">
 {%- endif %}
 {%- if fx.note | default('') %}
 <p class="fnote">{{ fx.note | e }}</p>

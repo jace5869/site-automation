@@ -849,6 +849,19 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # check_trust_remove: false
 # check_trust_remove_severities: [critical, warning]
 """),
+    "win_local_groups.yml": ("Windows - local group members", "Machine (Windows)", "win_local_groups", """\
+## 1.122.0 (docs/WINDOWS.md "Local group members"). Read only. Limit: your Windows servers.
+## The local groups read (a well-known one by its SID, so any language of Windows; others by name or SID)
+# win_local_groups: ["Administrators", "Remote Desktop Users", "Remote Management Users", "Backup Operators", "Server Operators", "Print Operators", "Account Operators"]
+## "Unusual members": on fewer than this share of the servers: off (default), auto (80), or a percent
+# win_local_groups_usual: "off"
+## The workbook (Approved list, By member, By server, Not read); the CSV and JSON of every member are always attached
+# report_email_xlsx: true
+## The approved members (from approved-list.yml or the page): the job then attaches an Evaluate-STIG answer file per
+## STIG and check-local-admins.ps1 - it judges nothing itself
+# win_local_groups_approved: {groups: {Administrators: ['{computer}\\Administrator', 'CORP\\Domain Admins']}}
+# win_local_groups_approved_by: [{match: 'SRV-SQL*', groups: {Administrators: ['CORP\\SQL-Admins']}}]
+"""),
     "java4shell.yml": ("Security - Java4Shell check (Keycloak)", "Machine", "", """\
 ## 1.91.0 (docs/JAVA4SHELL.md). Limit: the Keycloak host(s). Reads only, unless:
 ## j4s_fix: add -XX:-UseBASE64Intrinsics to the Keycloak service in the compose file (a backup beside it) - run as Check first to preview

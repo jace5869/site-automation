@@ -505,6 +505,55 @@ A few defaults worth knowing:
 
 **All settings**, with their defaults: [win_check_accounts](VARIABLES_REFERENCE.md#win_check_accounts), [win_check_audit](VARIABLES_REFERENCE.md#win_check_audit), [win_check_certs](VARIABLES_REFERENCE.md#win_check_certs), [win_check_disk](VARIABLES_REFERENCE.md#win_check_disk), [win_check_eventlog](VARIABLES_REFERENCE.md#win_check_eventlog), [win_check_network](VARIABLES_REFERENCE.md#win_check_network), [win_check_patching](VARIABLES_REFERENCE.md#win_check_patching), [win_check_performance](VARIABLES_REFERENCE.md#win_check_performance), [win_check_security](VARIABLES_REFERENCE.md#win_check_security), [win_check_services](VARIABLES_REFERENCE.md#win_check_services), [win_check_time](VARIABLES_REFERENCE.md#win_check_time).
 
+## Local group members
+
+The job **Windows - local group members** (`playbooks/win_local_groups.yml`, 1.122.0) lists who is in the privileged
+local groups of each server. It is read only: nothing on a server changes.
+
+1. Run it with the Windows credential and Limit your Windows servers.
+2. Set `report_email_to` (and `report_email_xlsx: true` for the workbook) to get the report.
+
+What it reads:
+
+- `win_local_groups`: the groups. Default: Administrators, Remote Desktop Users, Remote Management Users, Backup
+  Operators, Server Operators, Print Operators, Account Operators. These are found by their well-known SID, so a German
+  or French Windows counts too. Other groups by name.
+- Each member: name, kind (local user enabled or disabled, domain user or group, unresolved SID), last logon of a local
+  user. A member Windows cannot name (an orphaned SID) is listed as `unresolved SID S-1-5-21-...`.
+- When `Get-LocalGroupMember` fails on such a member, the group is read with ADSI instead.
+
+What the report shows:
+
+- **Unusual members**: an enabled local account (not the built-in one) in Administrators (a warning). With
+  `win_local_groups_usual` (`auto` = 80%, or a percent; default `off`), members on few of the servers too.
+- **By server**, **By member** (who is in which group where), **Not read** (the server and why).
+- The page has a Group button row and a Member search; they choose the rows of By server and By member.
+- The inventory: every member of every group on every server, one row each, nothing left out. Columns: server, group,
+  member, type, source, SID, enabled, servers with this member. As `local-groups.csv` and `local-groups.json` (attached,
+  and beside the page on the report website), the workbook's By server sheet, and the job artifact `win_local_groups`.
+- The workbook (`report_email_xlsx: true`): Approved list, By member, By server (each with a Group column), Not read.
+
+The job judges nothing. To check the servers against an approved list:
+
+1. Run the job. Build the list from `approved-list.yml` (take the `#` away from each approved member), the workbook's
+   *Approved list* sheet, or the page: tick rows, then *Export selected: Approved list (YAML)*.
+2. Paste it into all.yml as `win_local_groups_approved`. Run the job again.
+3. It attaches the checks: `answer-file-WinServer2019.xml` (and 2022, 2025) for Evaluate-STIG, and
+   `check-local-admins.ps1`. The page's *Export selected* makes the same files from the ticked Administrators rows.
+4. Check each answer file's `STIGComments Name` against your Evaluate-STIG's short names, and try it on a test server.
+
+- An entry is a name (any case) or a SID. `{computer}` is each server's own name.
+- `win_local_groups_approved_by`: more for some servers, `[{match: 'SRV-SQL*', groups: {Administrators: [...]}}]` or
+  `group: sql_servers` (an inventory group: the servers of it that were read).
+- The answer file: a `<Vuln>` per rule of `win_local_groups_stig_rules` (member server and domain controller),
+  ExpectedStatus Not_Reviewed (Evaluate-STIG's own status for the rule), NotAFinding when every member is approved,
+  Open when not. Its ValidationCode returns `@{ 'Valid' = ...; 'Results' = ... }` (the members found, the ones not
+  approved): that form needs an Evaluate-STIG that reads Valid and Results.
+- `check-local-admins.ps1` prints the members and the ones not approved, and exits 0 (all approved) or 1. Run it by
+  hand, by GPO or by SCCM.
+
+Domain groups are listed as members, not expanded (next).
+
 ## If something goes wrong
 
 | What you see | What to do |

@@ -1,0 +1,18 @@
+---
+# Runs files/win_local_groups.ps1 on the server (ansible.builtin.script: no collection needed). Read only: it changes
+# nothing on the server, also in Check mode. The result: win_local_groups_result (the script's JSON, or {error}).
+- name: Local groups | read the members
+  ansible.builtin.script: win_local_groups.ps1
+  environment:
+    SITE_CHECK_CONFIG: "{{ {'groups': win_local_groups | list} | to_json }}"
+  register: _wlg_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Local groups | the result
+  ansible.builtin.set_fact:
+    win_local_groups_result: >-
+      {{ (_wlg_out.stdout_lines | default([]) | win_local_groups_parse)
+         if _wlg_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | length > 0
+         else {'error': 'the script did not finish: ' ~ ((_wlg_out.stderr | default(_wlg_out.msg | default('no output')) | string | trim)[:300] or 'no output')} }}

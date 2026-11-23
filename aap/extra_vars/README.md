@@ -156,6 +156,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VMware - trust store report | `playbooks/vmware_trust_report.yml` | [vmware_trust_report.yml](vmware_trust_report.yml) |
 | VMware - version report | `playbooks/vmware_version_report.yml` | [vmware_version_report.yml](vmware_version_report.yml) |
 | VMware ask - deploy | `playbooks/vmware_ask_deploy.yml` | [vmware_ask_deploy.yml](vmware_ask_deploy.yml) |
+| Windows - local group members | `playbooks/win_local_groups.yml` | [win_local_groups.yml](win_local_groups.yml) |
 | Windows - trust store report | `playbooks/win_trust_report.yml` | [win_trust_report.yml](win_trust_report.yml) |
 | Windows certificate install - approved | `playbooks/win_cert_install_approved.yml` | [win_cert_install_approved.yml](win_cert_install_approved.yml) |
 | Windows certificate install - check | `playbooks/win_cert_install_check.yml` | [win_cert_install_check.yml](win_cert_install_check.yml) |

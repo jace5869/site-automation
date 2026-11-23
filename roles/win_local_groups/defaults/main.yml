@@ -1,0 +1,30 @@
+---
+# Windows - local group members (playbooks/win_local_groups.yml; docs/WINDOWS.md "Local group members"). Read only.
+# The local groups read. A well-known group is found by its SID first (Administrators = S-1-5-32-544 on any language of
+# Windows); any other by its name. A SID (S-1-5-32-...) works too.
+win_local_groups: ["Administrators", "Remote Desktop Users", "Remote Management Users", "Backup Operators",
+                   "Server Operators", "Print Operators", "Account Operators"]
+# "Unusual members": a member in the group on fewer than this share of the servers that have it. off (the default:
+# nothing is called unusual), auto = 80 (percent), or a number (e.g. 60). Fewer than 3 servers read: none is unusual.
+win_local_groups_usual: "off"
+# The approved members of Administrators (built from the job's approved-list.yml or the page's Export selected). The job
+# judges nothing with it: it writes the checks to run on the servers - an Evaluate-STIG answer file per STIG
+# (answer-file-<STIG>.xml) and check-local-admins.ps1. A name (any case) or a SID (S-1-...); {computer} is each server's
+# own name. The other groups may be listed too (kept for later checks).
+#   win_local_groups_approved:
+#     groups:
+#       Administrators: ['{computer}\Administrator', 'CORP\Domain Admins']
+win_local_groups_approved: {}
+# More for some servers: [{match: 'SRV-SQL*' (a name glob), group: sql_servers (an inventory group: the names of its
+# servers read), groups: {Administrators: [...]}}]
+win_local_groups_approved_by: []
+# The answer files: one per STIG (stig: the STIGComments Name - check it against your Evaluate-STIG's short names), a
+# <Vuln> per rule. From DISA's XCCDF (2019 V3R9, 2022 V2R11, 2025 V1R4): "only administrators responsible for the system
+# must have Administrator rights" - member server (MS) and domain controller (DC).
+win_local_groups_stig_rules:
+  - {stig: WinServer2019, role: member, rule: WN19-MS-000010, vuln: V-205746}
+  - {stig: WinServer2019, role: dc, rule: WN19-DC-000010, vuln: V-205738}
+  - {stig: WinServer2022, role: member, rule: WN22-MS-000010, vuln: V-254428}
+  - {stig: WinServer2022, role: dc, rule: WN22-DC-000010, vuln: V-254385}
+  - {stig: WinServer2025, role: member, rule: WN25-MS-000010, vuln: V-278177}
+  - {stig: WinServer2025, role: dc, rule: WN25-DC-000010, vuln: V-278132}

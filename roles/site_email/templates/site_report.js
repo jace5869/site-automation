@@ -1004,5 +1004,88 @@
     /* a scroll hides it - but the element with the keyboard's focus keeps it, moved with it (Tab scrolls to it) */
     window.addEventListener('scroll',function(){if(tt.hidden)return;
       if(pinned&&owner&&owner._at)owner._at();else if(owner&&owner===document.activeElement&&owner._at)owner._at();else hide()},{passive:true})}
+  /* 1.122.0: Export selected (a section with data-sel-export: the local groups' By server and By member). A box in each
+     row's first cell, "Select all shown" (the rows the Group buttons and the search leave), and the ticked rows as CSV,
+     JSON or the approved list's YAML, made here (Blob, a download link) - nothing leaves the page. Each row's data is its
+     data-sel (JSON: g group, e approved-list entry, m member, i SID, k kind, n servers, s server). */
+  /* sel-pure-start */
+  var SelX={
+    /* a cell Excel never runs as a formula: = + - @ (a tab, a return) first get a ' in front */
+    q:function(v){if(typeof v==='number')return String(v);v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;
+      return /[",\r\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v},
+    /* a By member row (x: {server: SID}) is one line per server: its own SID, never one for all */
+    flat:function(rows){var out=[];rows.forEach(function(r){if(r.x&&typeof r.x==='object'&&!r.s){Object.keys(r.x).sort().forEach(function(h){
+        out.push({s:h,g:r.g,m:r.m,i:r.x[h],k:r.k,e:r.e,n:r.n})})}else out.push(r)});return out},
+    csv:function(rows){var cols=['server','group','member','sid','kind','entry','servers'],k={server:'s',group:'g',member:'m',sid:'i',kind:'k',entry:'e',servers:'n'};
+      return [cols.join(',')].concat(SelX.flat(rows).map(function(r){return cols.map(function(c){return SelX.q(r[k[c]])}).join(',')})).join('\r\n')+'\r\n'},
+    json:function(rows){return JSON.stringify(SelX.flat(rows).map(function(r){var o={group:r.g,member:r.m,sid:r.i,kind:r.k,entry:r.e,servers:r.n};
+      if(r.s)o.server=r.s;return o}),null,1)+'\n'},
+    /* an entry Ansible would run as a template (a Jinja mark: two braces, a brace and a percent or a hash) never goes into
+       the YAML: its SID instead, else left out. The marks are made from char codes: this file is read through Jinja too */
+    marks:(function(){var o=String.fromCharCode(123),c=String.fromCharCode(125);return [o+o,o+'%',o+'#',c+c,'%'+c,'#'+c]})(),
+    tpl:function(v){v=String(v==null?'':v);return SelX.marks.some(function(m){return v.indexOf(m)>=0})},
+    lit:function(e,sid){if(!SelX.tpl(e))return e;return sid&&!SelX.tpl(sid)?sid:''},
+    yq:function(v){return "'"+String(v).replace(/'/g,"''")+"'"},
+    yaml:function(rows,setting,kind){var by={},order=[];
+      rows.forEach(function(r){if(!(r.g in by)){by[r.g]=[];order.push(r.g)}var e=SelX.lit(r.e,r.i);
+        if(e&&by[r.g].map(function(x){return x.toLowerCase()}).indexOf(String(e).toLowerCase())<0)by[r.g].push(e)});
+      var out=['# '+setting+' - the rows ticked on the report page. Paste it into all.yml (or the Variables of the template).',setting+':','  '+kind+':'];
+      order.forEach(function(g){if(!by[g].length){out.push('    '+SelX.yq(g)+': []');return}
+        out.push('    '+SelX.yq(g)+':');by[g].forEach(function(e){out.push('      - '+SelX.yq(e))})});
+      return out.join('\n')+'\n'},
+    /* the checks from the ticked Administrators rows, the same text as the job's (plugins/filter/win_local_groups_filters.py
+       check_data, check_code, answer_file, check_script): the fixed parts come from the section (c), the entries are data */
+    cq:function(v){return '"'+String(v).replace(/\r/g,' ').replace(/\n/g,' ').replace(/"/g,'""')+'"'},
+    data:function(entries,c){var seen={},lines=[c.data_head];entries.forEach(function(x){if(SelX.bad.test(String(x[0]))||SelX.bad.test(String(x[1]||''))||SelX.bad.test(String(x[2]||'')))return;
+        var e=String(x[0]).replace(/\r/g,' ').replace(/\n/g,' ').replace(/^ +| +$/g,''),m=String(x[1]||''),h=String(x[2]||''),
+          k=e.toLowerCase()+'\u0000'+m.toLowerCase()+'\u0000'+h.toLowerCase();if(!e||seen[k])return;seen[k]=1;lines.push(SelX.cq(e)+','+SelX.cq(m)+','+SelX.cq(h))});
+      lines.push(c.data_tail);return lines.join('\n')},
+    /* a character XML 1.0 does not allow: the entry is left out (as check_data does) */
+    /* control characters, U+FFFE/FFFF, and a surrogate without its pair (a pair is one character: kept) */
+    bad:{test:function(v){return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/.test(v)||/[\ud800-\udbff](?![\udc00-\udfff])|(^|[^\ud800-\udbff])[\udc00-\udfff]/.test(v)}},
+    xesc:function(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')},
+    admins:function(rows){return rows.filter(function(r){return r.g==='Administrators'&&r.e}).map(function(r){return [r.e,'','']})},
+    code:function(entries,c){return [SelX.data(entries,c),c.body,c.vc_tail].join('\n')},
+    xml:function(entries,c,st){var code=SelX.code(entries,c).split('\n').map(SelX.xesc).join('\n');return st.xml.split(c.mark).join(code)},
+    ps1:function(entries,c){return '\ufeff'+[c.ps1_head,SelX.data(entries,c),c.body,c.ps1_tail].join('\n')+'\n'}
+  };
+  /* sel-pure-end */
+  all('details.sec[data-sel-export]').forEach(function(sec){var cfg={};try{cfg=JSON.parse(sec.getAttribute('data-sel-export'))}catch(e){}
+    var tb=sec.querySelector('.tw table');if(!tb||!tb.tBodies[0])return;
+    /* the rows now (a table of more than 100 rows adds the rest later: Show all, a filter) - each gets its box when it comes */
+    var rows=[];var take=function(){rows=[].slice.call(tb.tBodies[0].rows).filter(function(r){return r.hasAttribute('data-sel')});
+      rows.forEach(function(r){if(r._sel)return;var c=r.cells[0];if(!c)return;var b=document.createElement('input');b.type='checkbox';b.className='selc';
+        b.setAttribute('aria-label','Select this row');b.addEventListener('change',function(){upd()});r._sel=b;c.insertBefore(b,c.firstChild)})};
+    take();if(!rows.length&&!tb.tBodies[0].querySelector('script.defer-main'))return;
+    var bar=document.createElement('div');bar.className='selx';
+    var lab=document.createElement('label');lab.className='sela';var allb=document.createElement('input');allb.type='checkbox';
+    lab.appendChild(allb);lab.appendChild(document.createTextNode(' Select all shown'));bar.appendChild(lab);
+    var cnt=document.createElement('span');cnt.className='seln';cnt.setAttribute('aria-live','polite');bar.appendChild(cnt);
+    var lx=document.createElement('span');lx.className='sell';lx.textContent='Export selected:';bar.appendChild(lx);
+    var name=cfg.name||'selected';
+    var picked=function(){take();return rows.filter(function(r){return r._sel&&r._sel.checked}).map(function(r){try{return JSON.parse(r.getAttribute('data-sel'))}catch(e){return null}}).filter(Boolean)};
+    var save=function(text,file,type){var b=new Blob([text],{type:type}),u=URL.createObjectURL(b),a=document.createElement('a');
+      a.href=u;a.download=file;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(u);a.remove()},0)};
+    var btns=[];
+    var acts=[['CSV',function(p){save(SelX.csv(p),name+'-selected.csv','text/csv')}],['JSON',function(p){save(SelX.json(p),name+'-selected.json','application/json')}],
+     ['Approved list (YAML)',function(p){save(SelX.yaml(p,cfg.setting||'approved',cfg.kind||'groups'),'approved-list-selected.yml','text/yaml')}]];
+    /* 1.122.0: the checks from the ticked Administrators rows - an Evaluate-STIG answer file per STIG, and the PowerShell check */
+    var ck=cfg.check;
+    if(ck&&ck.stigs){var fit=function(f){return function(p){var e=SelX.admins(p);if(!e.length){cnt.textContent='Tick an Administrators row first';return}f(e)}};
+      ck.stigs.forEach(function(st){acts.push(['Answer file '+st.name+' (XML)',fit(function(e){save(SelX.xml(e,ck,st),st.file,'application/xml')})])});
+      acts.push(['PowerShell check (.ps1)',fit(function(e){save(SelX.ps1(e,ck),'check-local-admins.ps1','text/plain')})])}
+    acts.forEach(function(x){
+      var b=document.createElement('button');b.type='button';b.className='copy selb';b.textContent=x[0];
+      b.addEventListener('click',function(){var p=picked();if(p.length)x[1](p)});btns.push(b);bar.appendChild(b)});
+    if(cfg.note){var n=document.createElement('span');n.className='selnote';n.textContent=cfg.note;bar.appendChild(n)}
+    var shown=function(){take();return rows.filter(function(r){return !r.hidden})};
+    var upd=function(){take();var k=rows.filter(function(r){return r._sel.checked}).length,sh=shown(),ks=sh.filter(function(r){return r._sel.checked}).length;
+      cnt.textContent=k+' selected';btns.forEach(function(b){b.disabled=!k});
+      allb.checked=sh.length>0&&ks===sh.length;allb.indeterminate=ks>0&&ks<sh.length;
+      rows.forEach(function(r){r.classList.toggle('sel-on',r._sel.checked)})};
+    if(window.MutationObserver)new MutationObserver(function(){upd()}).observe(tb.tBodies[0],{childList:true});
+    allb.addEventListener('change',function(){var on=allb.checked;shown().forEach(function(r){r._sel.checked=on});upd()});
+    var w=tb.closest('.tw');w.parentNode.insertBefore(bar,w);upd();
+    document.addEventListener('site-facets',upd);var f=document.getElementById('fhost');if(f)f.addEventListener('input',function(){setTimeout(upd,200)})});
   });
 })();

@@ -302,6 +302,12 @@ ul.passed .ic{width:17px;height:17px}
 .ccopy{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;margin-left:6px;vertical-align:-4px;
   color:var(--muted);background:var(--card);border:1px solid var(--edge);border-radius:7px;cursor:pointer}
 .ccopy .ic{width:13px;height:13px}
+.selx{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 10px;padding:8px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--card-strong)}
+.selx .sela{font-weight:600;display:inline-flex;align-items:center;gap:6px}.selx .seln{color:var(--muted);font-variant-numeric:tabular-nums}
+.selx .sell{font-weight:600;color:var(--label);margin-left:auto}.selx .selb:disabled{opacity:.5;cursor:default}
+.selx .selnote{flex-basis:100%;font-size:12px;color:var(--muted)}
+input.selc{margin:0 6px 0 0;vertical-align:-2px}tr.sel-on td{background:var(--accent-soft)}
+@media print{.selx,input.selc{display:none!important}}
 .ccopy:hover{color:var(--ink);border-color:var(--accent)}
 .ccopy.done{color:var(--ok);border-color:var(--ok-bd)}
 :root:not(.js) td.lk .cmd,:root:not(.js) .code pre{-webkit-user-select:all;user-select:all}
@@ -698,7 +704,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- if fx.platforms | default([]) or fx.collections | default([]) %}
 <div class="facets" hidden role="group" aria-label="Choose the rows shown">
 {%- if fx.platforms | default([]) %}
-<span class="fl" id="fl-pf">Platform</span>
+<span class="fl" id="fl-pf">{{ fx.pf_label | default('Platform', true) | e }}</span>
 <span class="fbs" role="group" aria-labelledby="fl-pf"><button type="button" class="fb" data-fk="pf" data-fv="" aria-pressed="true">All</button>{% for p in fx.platforms %}<button type="button" class="fb hu{{ p.hue | default(0) }}" data-fk="pf" data-fv="{{ p.key | e }}" aria-pressed="false"><span class="sw" aria-hidden="true"></span>{{ p.name | e }}</button>{% endfor %}</span>
 <select class="fsel fsel-pf" data-fk="pf" aria-labelledby="fl-pf"><option value="">All</option>{% for p in fx.platforms %}<option value="{{ p.key | e }}">{{ p.name | e }}</option>{% endfor %}</select>
 {%- endif %}
@@ -712,8 +718,8 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 <span class="fbs fbs-cat" role="group" aria-labelledby="fl-cat"><button type="button" class="fb" data-fk="cat" data-fv="" aria-pressed="true">All</button>{% for k in fx.cats %}<button type="button" class="fb k{{ k.cat }}" data-fk="cat" data-fv="{{ k.key | e }}" aria-pressed="false"><span class="sw2" aria-hidden="true"></span>{{ k.name | e }}</button>{% endfor %}</span>
 {%- endif %}
 {%- if fx.host | default(false) %}
-<label class="fl" for="fhost">Host</label>
-<input class="fsel fhost" id="fhost" type="search" data-fk="h" placeholder="A host's name, or part of it" autocomplete="off">
+<label class="fl" for="fhost">{{ fx.h_label | default('Host', true) | e }}</label>
+<input class="fsel fhost" id="fhost" type="search" data-fk="h" placeholder="{{ fx.h_placeholder | default("A host's name, or part of it", true) | e }}" autocomplete="off">
 {%- endif %}
 {%- if fx.note | default('') %}
 <p class="fnote">{{ fx.note | e }}</p>
@@ -750,7 +756,7 @@ th.k-cat1,th.k-cat2,th.k-cat3,td.k-catn{text-align:right}
 {%- include 'report_teams.html.j2' %}
 {%- else %}
 {#- a section the report marks collapsed (a long list - 1.6.1) starts closed: a click, the search or Print opens it #}
-<details class="card sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}>
+<details class="card sec" id="s{{ si }}"{{ '' if s.collapsed | default(false) else ' open' }}{% if s.select_export is defined %} data-sel-export="{{ s.select_export | tojson | forceescape }}"{% endif %}>
 <summary><h2>{{ s.title | e }}{% if s.issue_count is defined %}<span class="count">{{ s.issue_count | int }}</span>{% endif %}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
 <button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>

@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: win_local_groups
+  description: "Windows: the members of the privileged local groups (read only)."
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions: [all]
+dependencies: []
