@@ -1066,7 +1066,8 @@ function deployPlanEl(plan) {
 function whyEl(a) {
   const box = el("div", "dwhy"), t = el("span");
   const code = (x) => el("code", "", x);
-  if (a.why === "approvers") t.append(el("b", "", "You are not in "), code("portal_approvers"), document.createTextNode(" - only the approvers decide."));
+  if (a.why === "approvers") t.append(el("b", "", "You are not an approver"), document.createTextNode(" ("), code("portal_approvers"), document.createTextNode(", "),
+                                      code("portal_approver_groups"), document.createTextNode(") - only the approvers decide."));
   else if (a.why === "self") t.append(el("b", "", "You started this run"), document.createTextNode(" - another approver decides ("), code("portal_allow_self_approval"), document.createTextNode(")."));
   else if (a.why === "role") t.append(el("b", "", "The portal's account has no Approve role on this workflow"), document.createTextNode(" - give it Approve in AAP, or decide there."));
   else t.textContent = a.reason || "Decide it in AAP.";
@@ -1085,7 +1086,7 @@ function reportEl(rep, cls) {
 function approvalsPage() {
   const box = $("approvals");
   if (!box) return;
-  const approver = box.dataset.approver === "1";
+  let approver = box.dataset.approver === "1";            // 1.122.2: as the service says on each read (AD groups read since the page opened)
   const open = new Set();                                        // the panels open across the 15 s reads
   async function load() {
     let r;
@@ -1098,6 +1099,7 @@ function approvalsPage() {
     }
     if (box.querySelector(".decs .chip.s-warning")) return;      // someone is answering Sure?: the list is read again after
     const list = r.approvals || [];
+    if (typeof r.approver === "boolean") approver = r.approver;
     const mineN = list.filter((a) => a.may_decide).length;
     $("a-status").textContent = list.length ? list.length + " waiting" + (approver ? ", " + mineN + " for you to decide here." : ".") : "Nothing is waiting for a decision.";
     $("a-status").className = "status";

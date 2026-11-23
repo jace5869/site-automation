@@ -47,6 +47,8 @@ def card_key(cn, match="{edipi}@mil"):
     e = edipi(cn)
     if ("{edipi}" not in match and "{cn}" not in match) or ("{edipi}" in match and not e):
         return ""
+    if "{cn}" in match and not str(cn or "").strip():
+        return ""                                         # 1.122.2: no CN, nothing to match (never the template's own text)
     return match.replace("{edipi}", e).replace("{cn}", str(cn or "").strip()).lower()
 
 
@@ -58,7 +60,7 @@ def card_pattern(cn, match="{edipi}@mil"):
     ident = {"{edipi}": re.escape(edipi(cn)), "{cn}": re.escape(str(cn or "").strip().lower())}
     out = []
     for part in re.split(r"(\{edipi\}|\{cn\}|\*|\?)", match.lower()):
-        out.append(ident.get(part) or {"*": ".*", "?": "."}.get(part) or re.escape(part))
+        out.append(ident[part] if part in ident else {"*": ".*", "?": "."}.get(part) or re.escape(part))
     return re.compile("".join(out) + r"\Z", re.S)        # used with fullmatch: the whole value, no trailing newline
 
 
@@ -89,13 +91,22 @@ class Reader(object):
     def servers(self):
         """The DCs to ask: [{fqdn, address}] - the deploy's (portal_ldap_server, the inventory's DCs: {name, address}), else
         the domain's from DNS."""
-        s = [{"fqdn": str(x.get("fqdn") or x.get("name") or x.get("address")), "address": str(x.get("address") or x.get("fqdn") or x.get("name"))}
-             for x in self.o.get("servers") or [] if isinstance(x, dict) and (x.get("fqdn") or x.get("name") or x.get("address"))]
+        ip = re.compile(r"^[0-9.:]+$")
+        s = []
+        for x in self.o.get("servers") or []:
+            if not isinstance(x, dict) or not (x.get("fqdn") or x.get("name") or x.get("address")):
+                continue
+            addr = str(x.get("address") or "").strip()       # the address given, if any (ansible_host)
+            fqdn = str(x.get("fqdn") or x.get("name") or addr).strip()
+            if "." not in fqdn and "." in addr and not ip.match(addr):
+                fqdn = addr                                   # 1.122.2: dc01 at dc01.corp.example.mil - the full name is the address's
+            s.append({"fqdn": fqdn, "address": addr})
         s = [x for x in s if "://" not in x["fqdn"] + x["address"]]        # ldap://host would be a bind in clear: a host only
         dom = str(self.o.get("domain") or "").strip().strip(".")
         for x in s:                                       # dc01 + corp.example.mil: the name its certificate carries
-            if dom and "." not in x["fqdn"] and not re.match(r"^[0-9.:]+$", x["fqdn"]):
+            if dom and "." not in x["fqdn"] and not ip.match(x["fqdn"]):
                 x["fqdn"] = "%s.%s" % (x["fqdn"], dom)
+            x["address"] = x["address"] or x["fqdn"]      # 1.122.2: no address given - the full name is dialed, never bare dc01
         if s or not self.o.get("domain"):
             return s
         try:                                              # the domain's DCs from DNS (the AD report's way too)
@@ -317,8 +328,12 @@ class Groups(object):
         with self.lock:
             r, nxt = self.last, self.next_at
         ok = self.fresh(r)
+        now = time.time()
+        # 1.122.2: the next read only when there is one to come - none after a wrong password (held until the next deploy),
+        # none when it is past (a read under way, or hung)
+        nxt = nxt if nxt and now <= nxt <= now + self.seconds + 2 * RETRY else None
         return {"configured": bool(self.want.get(role)), "read": r is not None, "ok": ok, "at": (r or {}).get("at"),
-                "next": nxt or None, "error": (r or {}).get("error") or ("" if not r else "" if ok else "the last read is too old") or ("" if r else "not read yet"),
+                "next": nxt, "error": (r or {}).get("error") or ("" if not r else "" if ok else "the last read is too old") or ("" if r else "not read yet"),
                 "groups": [{"name": g["name"], "count": g["count"], "found": g["found"], "why": g.get("why") or ""} for g in ((r or {}).get("groups") or {}).get(role) or []]
                 if ok else [{"name": short_name(n), "count": None, "found": None, "why": ""} for n in self.want.get(role) or []]}
 

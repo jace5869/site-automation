@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -468,6 +469,123 @@ class Deploy(unittest.TestCase):
         r = self.read("roles", "ad_report", "library", "site_ad_reader.py")
         self.assertIn("return site_ldap.connect(", r)
         self.assertNotIn("ldap3.Connection(", r)
+
+
+class Review1122(unittest.TestCase):
+    """1.122.2 (the review after the release): a short DC name dialed by its full name, a wrong password's read never
+    "again at" a time decades away, aap-check never binds, a group of two names logged as such, the socket closed when
+    StartTLS fails, the {cn} match with no CN, the approver as the service says on each read."""
+
+    def test_1_a_short_name_is_dialed_by_its_full_name(self):
+        r = G.Reader({"domain": "corp.example.mil", "servers": [{"name": "dc01", "address": ""}]})
+        self.assertEqual(r.servers(), [{"fqdn": "dc01.corp.example.mil", "address": "dc01.corp.example.mil"}])
+        r2 = G.Reader({"servers": [{"name": "dc01", "address": "dc01.corp.example.mil"}, {"name": "dc02", "address": "192.0.2.12"}]})
+        self.assertEqual(r2.servers(), [{"fqdn": "dc01.corp.example.mil", "address": "dc01.corp.example.mil"},
+                                        {"fqdn": "dc02", "address": "192.0.2.12"}])
+        self.assertEqual(r2.base(FakeConn()), BASE)                                                   # the first DC's domain
+
+    def test_2_a_wrong_password_is_never_again_at(self):
+        g = G.Groups(WANT, {"base": BASE}, opener=lambda o: (None, "", "dc01.corp.example.mil:636 the bind was refused - invalidCredentials: 80090308"))
+        r = g.refresh()
+        self.assertGreater(g.next_at - r["at"], 10 ** 8)                                             # still held: no second bind
+        self.assertIsNone(g.status("approvers")["next"])
+        import site_portal as sp
+        c = sp.Config({"PORTAL_DATA": tempfile.mkdtemp(), "PORTAL_APPROVERS": "[]", "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]',
+                       "PORTAL_LDAP_LOGIN": '{"user": "svc", "password": "x"}', "PORTAL_LDAP_BASE": BASE, "PORTAL_TIME_ZONE": "Europe/Berlin"})
+        c.ad_groups.reader.opener = g.reader.opener
+        c.ad_groups.refresh()
+        h = sp.deciders_html(c)
+        self.assertIn("not tried again until the portal is deployed again", h)
+        self.assertIn(" - tried ", h)
+        self.assertNotIn("again at", h)
+        c.ad_groups.reader.opener = opener(down=True)                                                 # a read that is late: no time in the past
+        c.ad_groups.refresh()
+        c.ad_groups.next_at = time.time() - 30
+        self.assertIsNone(c.ad_groups.status("approvers")["next"])
+        self.assertNotIn("again at", sp.deciders_html(c))
+        c.ad_groups.next_at = time.time() + 60
+        self.assertIn(", again at ", sp.deciders_html(c))
+
+    def test_3_aap_check_never_starts_the_reader_and_two_names_are_said(self):
+        import site_portal as sp
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "a.json"), "w") as fh:
+            json.dump({"actions": {}}, fh)
+        c = sp.Config({"PORTAL_DATA": d, "PORTAL_ACTIONS": os.path.join(d, "a.json"), "PORTAL_APPROVERS": "[]",
+                       "PORTAL_APPROVER_GROUPS": '["AAP-Approvers"]', "PORTAL_LDAP_LOGIN": '{"user": "svc", "password": "x"}',
+                       "PORTAL_LDAP_BASE": BASE, "PORTAL_AAP_URL": "http://127.0.0.1:9", "PORTAL_AAP_TOKEN": "x"})
+        started = []
+        c.ad_groups.start = lambda: started.append(1)
+        sp.Portal(c, log=sp.Log(""), cache_catalog=False, start_ad=False)
+        self.assertEqual(started, [])
+        sp.Portal(c, log=sp.Log(""), cache_catalog=False)
+        self.assertEqual(started, [1])
+        with open(sp.__file__) as fh:
+            self.assertIn("Portal(cfg, log=Log(\"\"), cache_catalog=False, start_ad=False)", fh.read())    # --aap-check
+        log = []
+        p = sp.Portal.__new__(sp.Portal)
+        p.log = type("L", (), {"add": lambda self, rec: log.append(rec)})()
+        p._ad_groups_changed({"ok": True, "server": "dc01", "groups": {"approvers": [
+            {"name": "Ops", "found": False, "count": 0, "why": "2 groups have this name - give its DN"},
+            {"name": "Gone", "found": False, "count": 0, "why": ""}]}})
+        self.assertEqual(log[-1]["groups"]["approvers"], ["Ops: 2 groups have this name - give its DN", "Gone: not found"])
+
+    def test_4_starttls_refused_or_a_failed_handshake_closes_the_socket(self):
+        import site_ldap
+        made = []
+
+        class Conn(object):
+            def __init__(self, *a, **k):
+                self.closed, self.result, self.unbound = False, {"description": "unavailable"}, 0
+                made.append(self)
+
+            def open(self):
+                pass
+
+            def start_tls(self):
+                if mode[0] == "raise":
+                    raise OSError("handshake failed")
+                return False
+
+            def unbind(self):
+                self.unbound += 1
+
+        fake = type("L", (), {"Server": staticmethod(lambda *a, **k: None), "Connection": Conn, "Tls": staticmethod(lambda **k: None),
+                              "SIMPLE": "SIMPLE", "NONE": "NONE"})
+        real = site_ldap.ldap3
+        site_ldap.ldap3 = fake
+        try:
+            mode = ["false"]
+            c, _ms, err = site_ldap.connect("dc01.corp.example.mil", "dc01.corp.example.mil", 389, "starttls", "u", "p")
+            self.assertIsNone(c)
+            self.assertIn("StartTLS refused", err)
+            mode = ["raise"]
+            c, _ms, err = site_ldap.connect("dc01.corp.example.mil", "dc01.corp.example.mil", 389, "starttls", "u", "p")
+            self.assertIsNone(c)
+            self.assertIn("handshake failed", err)
+        finally:
+            site_ldap.ldap3 = real
+        self.assertEqual([m.unbound for m in made], [1, 1])
+
+    def test_5_a_cn_match_with_no_cn(self):
+        self.assertEqual(G.card_key("", "*CN={cn}"), "")
+        self.assertIsNone(G.card_pattern("", "*CN={cn}"))
+        self.assertIsNone(G.card_pattern("  ", "{cn}"))
+        p = G.card_pattern("DOE.JANE.Q.1234567890", "*CN={cn}")
+        self.assertIsNotNone(p.fullmatch("x509:<s>cn=doe.jane.q.1234567890"))
+
+    def test_6_the_approver_as_the_service_says(self):
+        import site_portal as sp
+        with open(sp.__file__) as fh:
+            src = fh.read()
+        self.assertIn('"approver": bool(cn) and cn in self.cfg.approvers}', src)
+        with open(os.path.join(REPO, "roles", "site_portal_stack", "files", "static", "portal.js")) as fh:
+            js = fh.read()
+        self.assertIn('if (typeof r.approver === "boolean") approver = r.approver;', js)
+        self.assertIn('code("portal_approver_groups")', js)
+        with open(os.path.join(REPO, "roles", "site_portal_stack", "tasks", "main.yml")) as fh:
+            t = fh.read()
+        self.assertIn("'win_dc' if (groups.get('win_dc') or []) | length > 0 else 'domain_controllers'", t)   # an empty win_dc: the other
 
 
 if __name__ == "__main__":

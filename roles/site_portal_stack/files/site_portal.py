@@ -1978,19 +1978,20 @@ class Portal(object):
         """1.120.0: the AD groups read, or not: in the portal's log (and the journal) when it changes."""
         if r.get("ok"):
             self.log.add({"event": "ad-groups", "ok": True, "server": r.get("server"),
-                          "groups": dict((role, ["%s: %d" % (g["name"], g["count"]) if g["found"] else "%s: not found" % g["name"]
+                          "groups": dict((role, ["%s: %d" % (g["name"], g["count"]) if g["found"] else "%s: %s" % (g["name"], g.get("why") or "not found")
                                                  for g in gs]) for role, gs in (r.get("groups") or {}).items())})
         else:
             self.log.add({"event": "ad-groups", "ok": False, "why": "AD not read - only the named lists (portal_approvers, portal_requesters): " + str(r.get("error") or "")[:300]})
 
-    def __init__(self, cfg, aap=None, log=None, cache_catalog=True):
+    def __init__(self, cfg, aap=None, log=None, cache_catalog=True, start_ad=True):
         self.cfg = cfg
         os.makedirs(cfg.data, exist_ok=True)
         self.log = log or Log(os.path.join(cfg.data, "portal-log.jsonl"))
         if cfg.ad_groups is not None:                     # 1.120.0: the AD groups' members, read in the background, said when it changes
-            cfg.ad_groups.on_change = self._ad_groups_changed
-            cfg.ad_groups.start()
-        elif cfg.ad_groups_why:
+            if start_ad:                                  # 1.122.2: never from --aap-check - one bind per deploy, not two
+                cfg.ad_groups.on_change = self._ad_groups_changed
+                cfg.ad_groups.start()
+        elif start_ad and cfg.ad_groups_why:
             self.log.add({"event": "ad-groups", "ok": False, "why": cfg.ad_groups_why})
         with open(cfg.actions_file) as fh:
             doc = json.load(fh)
@@ -2941,7 +2942,7 @@ class Portal(object):
             a["reason"] = {"": "", "approvers": "You are not an approver (portal_approvers, portal_approver_groups) - only the approvers decide.",
                            "self": "You started this run - another approver decides (portal_allow_self_approval).",
                            "role": "The portal's account has no Approve role on this workflow - give it Approve in AAP, or decide there."}[a["why"]]
-        return 200, {"approvals": out, "self_approval": self.cfg.self_approval}
+        return 200, {"approvals": out, "self_approval": self.cfg.self_approval, "approver": bool(cn) and cn in self.cfg.approvers}
 
     def approval_of(self, wid, cn):
         """1.92.0, the job page: the approval workflow job wid waits for, as approvals() gives it to this person, or None."""
@@ -4284,7 +4285,8 @@ def deciders_html(cfg):
                 ("%d in <code>portal_approvers</code>" % named) if named else "nobody (<code>portal_approvers</code> is empty)",
                 " and ".join("%s (AD)" % esc(g["name"]) for g in st["groups"]), "is" if len(st["groups"]) == 1 else "are",
                 esc(st["error"] or "not read yet"),
-                (" - tried %s, again at %s" % (esc(_when(cfg, st["at"])), esc(_when(cfg, st["next"])))) if st["read"] else " - the first read is under way"))
+                ((" - tried %s" % esc(_when(cfg, st["at"]))) + ((", again at %s" % esc(_when(cfg, st["next"]))) if st["next"] else ""))
+                if st["read"] else " - the first read is under way"))
 
 
 def approvals_page(cfg, portal, cn):
@@ -5568,7 +5570,7 @@ def serve(cfg):
 def aap_check(cfg):
     """For the deploy (site_portal.py --aap-check, in the container): AAP's answer, each action's state, and AAP's
     ALLOW_JINJA_IN_EXTRA_VARS (an account that may not read AAP's settings: said, not an error) -> JSON on stdout."""
-    portal = Portal(cfg, log=Log(""), cache_catalog=False)
+    portal = Portal(cfg, log=Log(""), cache_catalog=False, start_ad=False)
     out = {"aap": portal.aap.connect() or "ok", "account": portal.aap.user, "actions": {}, "jinja": "", "jinja_http": 0}
     if out["aap"] == "ok":
         out["actions"] = {k: (v[1] or "ok") for k, v in sorted(portal.aap.resolve(portal.actions).items())}

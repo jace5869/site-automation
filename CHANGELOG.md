@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.122.2 — 2026-11-24
+
+**To set up:** nothing (redeploy the site portal for the AD-group fixes)
+
+- **Portal AD groups: a short DC name is dialed by its full name.** `portal_ldap_server: dc01` (or an inventory DC
+  without `ansible_host`) with the domain set now connects to `dc01.<domain>`, not bare `dc01`; a DC named `dc01` whose
+  `ansible_host` is its full name takes that full name.
+- **Portal AD groups: a wrong LDAP password no longer says "again at" a time decades away**, and a late read no
+  longer shows a time in the past. The wrong password is still tried once per deploy only.
+- **Portal deploy: `--aap-check` no longer starts the AD groups reader** - one LDAP bind per deploy, not two (a wrong
+  password counted twice toward the account's lockout).
+- **Portal log: a group name that two AD groups share** is logged with that reason, not as "not found".
+- **LDAP (portal and AD report): a StartTLS that is refused or fails** now closes its connection to port 389 at once.
+- **Portal AD groups: `portal_ad_card_match` with `{cn}`** never matches when there is no CN.
+- **Approvals page:** the "not an approver" line names `portal_approver_groups` too, and the status line follows the
+  AD read while the page stays open.
+- **Portal deploy: an empty `win_dc` inventory group** no longer hides `domain_controllers` for the AD groups.
+
 ## 1.123.0 — 2026-11-23
 
 **To set up:**

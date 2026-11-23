@@ -232,7 +232,7 @@
       {%- for x in (portal_ldap_server | default('', true) | string).split(',') if x | trim | length > 0 -%}
       {%-   set _ = out.append({'name': x | trim, 'address': ''}) -%}
       {%- endfor -%}
-      {{ out if out else (query('ansible.builtin.inventory_hostnames', 'win_dc' if 'win_dc' in groups else 'domain_controllers')
+      {{ out if out else (query('ansible.builtin.inventory_hostnames', 'win_dc' if (groups.get('win_dc') or []) | length > 0 else 'domain_controllers')
                           | map('extract', hostvars) | map('ad_reader_inventory_dc') | list) }}
 
 # 1.85.0: the live Network map - on with a SolarWinds credential (auto), or as portal_netmap says

@@ -198,7 +198,7 @@ class Interactive(unittest.TestCase):
         self.assertGreater(self.c.js("document.querySelectorAll('#approvals tr.locked').length"), 0)
         # 1.92.0: why, in words to act on - the setting named
         self.assertEqual(self.c.js("document.querySelector('#approvals tr.locked .dwhy').textContent"),
-                         "You are not in portal_approvers - only the approvers decide.")
+                         "You are not an approver (portal_approvers, portal_approver_groups) - only the approvers decide.")   # 1.122.2: the groups too
         self.assertEqual(self.c.js("document.querySelector('#approvals tr.locked .dwhy code').textContent"), "portal_approvers")
         self.assertEqual(self.c.js("document.querySelectorAll('#approvals button').length"), 0)
 

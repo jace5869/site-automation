@@ -39,6 +39,7 @@ def connect(fqdn, address, port, how, user="", password="", timeout=5, validate=
         return None, None, "a host name or address, not a URI (%s)" % str(address)[:80]     # ldap:// would override use_ssl
     kw = {} if how == "anon" else {"authentication": ldap3.SIMPLE, "user": user, "password": password}
     t0 = time.time()
+    c = None
     try:
         srv = ldap3.Server(address, port=int(port), use_ssl=how == "ldaps", tls=tls(fqdn, validate, ca_file), get_info=ldap3.NONE,
                            connect_timeout=timeout)
@@ -47,12 +48,24 @@ def connect(fqdn, address, port, how, user="", password="", timeout=5, validate=
         if c.closed:
             return None, None, "no answer"
         if how == "starttls" and not c.start_tls():
-            return None, None, "StartTLS refused: %s" % (c.result or {}).get("description", "?")
+            why = "StartTLS refused: %s" % (c.result or {}).get("description", "?")
+            _close(c)                         # 1.122.2: the socket to 389 closed, never left for the next retry
+            return None, None, why
         if how != "anon" and not c.bind():
             r = c.result or {}
             msg = (r.get("description") or "") + (": " + r.get("message") if r.get("message") else "")
-            c.unbind()
+            _close(c)
             return None, int((time.time() - t0) * 1000), "the bind was refused - " + (msg or "?")
         return c, int((time.time() - t0) * 1000), ""
     except Exception as e:                    # noqa: BLE001 - any failure is an answer about this server
+        _close(c)                             # 1.122.2: a TLS handshake that failed after open() leaves no socket behind
         return None, None, short_err(e)
+
+
+def _close(c):
+    if c is None:
+        return
+    try:
+        c.unbind()
+    except Exception:                         # noqa: BLE001 - closing what may never have opened
+        pass
