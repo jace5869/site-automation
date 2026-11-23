@@ -2,7 +2,7 @@
 
 ## 1.115.0 — 2026-11-23
 
-**To set up:** set `report_theme_season: christmas` (or `auto`: on from Dec 1 to Jan 6). Nothing else.
+**To set up:** set `report_theme_season: christmas` (or `auto`: on from Dec 1 to Jan 6). The report website shows it from each job's next run; the portal after **Site portal - deploy** runs once.
 
 **The Christmas theme for the report website and the Site portal (user-approved mockup).**
 
