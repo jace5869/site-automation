@@ -284,6 +284,9 @@ TIP = "(() => {const t = document.getElementById('site-tip'); return t && !t.hid
 class RealChrome(unittest.TestCase):
     TPL = "report_atlas.html.j2"
     handler = Csp
+    WIDTH = 1366
+    MOTION = "reduce"                       # 1.122.1: the AD matrix's classes test the look's motion as a viewer has it,
+    WHOLE_SCRIPT = False                    # and the page's whole script (site_report.js and report_pop.js) as the website has it
 
     @classmethod
     def web(cls):
@@ -299,14 +302,19 @@ class RealChrome(unittest.TestCase):
         h = cls.page()
         with open(os.path.join(cls.dir, "page.html"), "w") as f:
             f.write(h)
-        shutil.copy(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), os.path.join(cls.dir, "site-report.js"))
+        if cls.WHOLE_SCRIPT:
+            from test_report_web import rw
+            with open(os.path.join(cls.dir, "site-report.js"), "w") as f:
+                f.write(rw.page_script(h))
+        else:
+            shutil.copy(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), os.path.join(cls.dir, "site-report.js"))
         handler = lambda *a, **k: cls.handler(*a, directory=cls.dir, **k)  # noqa: E731
         cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
-        cls.c = Cdp(_browser(), 1366, 1000)
+        cls.c = Cdp(_browser(), cls.WIDTH, 1000)
         cls.c.call("Page.enable")
         # no smooth scrolling (the looks honour reduced motion): a Tab's scroll is over before the mouse moves
-        cls.c.call("Emulation.setEmulatedMedia", features=[{"name": "prefers-reduced-motion", "value": "reduce"}])
+        cls.c.call("Emulation.setEmulatedMedia", features=[{"name": "prefers-reduced-motion", "value": cls.MOTION}])
         cls.c.call("Page.navigate", url="http://127.0.0.1:%d/page.html" % cls.srv.server_address[1])
         end = time.time() + 30
         while not cls.c.js("document.readyState === 'complete' && !!window.siteReport"):
@@ -1294,6 +1302,96 @@ class RealChromeOutageLinks(RealChromeOutage):
 
 class RealChromeOutageBrief(RealChromeOutage):
     TPL = "report_brief.html.j2"
+
+
+class RealChromeAdMatrix(RealChrome):
+    """1.122.1: the AD report's replication matrix (report_matrix.html.j2, its cells' data-tip) with the look's motion on, as
+    a viewer without the reduced-motion wish has it: hovering a cell, or Tab to it, shows its tip at once - its lines, the
+    first in bold - beside the cell and inside the window (before: report_pop.js faded the tip in with a transform that
+    put it at the window's top left corner, each new cell again)."""
+    test_2_hovering_a_sparkline_shows_the_day_and_value = test_3_keyboard_focus_shows_it_too = None
+    test_4_a_runway_bar_and_a_tile = test_5_a_trend_column_line = None
+    WIDTH = 1280
+    MOTION = "no-preference"
+    WHOLE_SCRIPT = True
+    SEL = "table.rm td.rm-c[data-tip]"
+    BOX = ("(() => {const t = document.getElementById('site-tip'), r = t.getBoundingClientRect(), h = t.firstElementChild; "
+           "return [r.left, r.top, r.right, r.bottom, document.documentElement.clientWidth, innerHeight, "
+           "h.className, +getComputedStyle(h).fontWeight, getComputedStyle(t).opacity]})()")
+
+    @classmethod
+    def web(cls):
+        import test_ad_repl as tar
+        return tar.Looks().doc(tar.view()["web_sections"])
+
+    def beside(self, x, y, i):
+        """The tip now: the cell's lines, the first bold, inside the window and over (or under) the point x, y."""
+        want = self.c.js("document.querySelectorAll(%s)[%d].getAttribute('data-tip').split('\\n')" % (json.dumps(self.SEL), i))
+        self.assertEqual(self.c.js(TIP), want, i)
+        l, t, r, b, vw, vh, head, weight, _ = self.c.js(self.BOX)
+        self.assertEqual(head, "tt-h")
+        self.assertGreaterEqual(weight, 600)
+        self.assertTrue(0 <= l and r <= vw and 0 <= t and b <= vh, (i, l, t, r, b, vw, vh))
+        self.assertTrue(l - 1 <= x <= r + 1, (i, x, l, r))                      # over the cell, not in a corner
+        self.assertTrue(b <= y or t >= y, (i, y, t, b))                         # above the point, or below it
+        self.assertLess(min(abs(b - y), abs(t - y)), 40, (i, y, t, b))
+        self.assertEqual(self.c.js("document.getElementById('site-tip').getAnimations().length"), 0)
+        self.assertEqual(self.c.js(self.BOX)[8], "1")
+
+    def test_6_hovering_a_cell_shows_its_tip_beside_it(self):
+        n = self.c.js("document.querySelectorAll(%s).length" % json.dumps(self.SEL))
+        self.assertEqual(n, 30)
+        self.assertTrue(self.c.js("document.documentElement.classList.contains('pop-move')"))   # the look's motion is on
+        crit = self.c.js("[...document.querySelectorAll(%s)].findIndex(e => e.classList.contains('s-critical'))" % json.dumps(self.SEL))
+        for i in (0, crit, crit + 1, n - 1):                                    # cell to cell, as a mouse goes
+            x, y = self.at(self.SEL, i)
+            time.sleep(0.8)                                                     # the scroll's event and the card's fade-in over
+            x, y = self.c.js("(() => {const r = document.querySelectorAll(%s)[%d].getBoundingClientRect(); "
+                             "return [r.left + r.width / 2, r.top + r.height / 2]})()" % (json.dumps(self.SEL), i))
+            self.c.mouse(x, y)
+            self.beside(x, y, i)
+        self.c.mouse(5, 5)
+        self.assertIsNone(self.c.js(TIP))
+
+    def settled(self):
+        """The focused cell's top middle once a Tab's (smooth) scroll is over."""
+        last = None
+        for _ in range(60):
+            y = self.c.js("scrollY")
+            if y == last:
+                break
+            last = y
+            time.sleep(0.05)
+        return self.c.js("(() => {const r = document.activeElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top]})()")
+
+    def test_7_tab_to_a_cell_shows_its_tip(self):
+        self.c.mouse(5, 5)
+        self.c.js("document.activeElement && document.activeElement.blur(); window.scrollTo(0, 0)")
+        for _ in range(400):
+            self.c.key("Tab", "Tab", 9)
+            if self.c.js("document.activeElement.matches(%s)" % json.dumps(self.SEL)):
+                break
+        i = self.c.js("[...document.querySelectorAll(%s)].indexOf(document.activeElement)" % json.dumps(self.SEL))
+        self.assertEqual(i, 0, "Tab did not reach the matrix")
+        x, y = self.settled()
+        self.beside(x, y, 0)
+        self.c.key("Tab", "Tab", 9)
+        x, y = self.settled()
+        self.beside(x, y, 1)
+        self.c.key("Escape", "Escape", 27)
+        self.assertIsNone(self.c.js(TIP))
+
+
+class RealChromeAdMatrix800(RealChromeAdMatrix):
+    WIDTH = 800
+
+
+class RealChromeAdMatrixBrief(RealChromeAdMatrix):
+    TPL = "report_brief.html.j2"
+
+
+class RealChromeAdMatrixOps(RealChromeAdMatrix800):
+    TPL = "report_ops.html.j2"
 
 
 @unittest.skipUnless(_browser(), "no headless browser here")

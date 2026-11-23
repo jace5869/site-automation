@@ -76,10 +76,13 @@
     if(!io||t.closest('[hidden]')){light(t);return}
     t.style.setProperty('--pop-i',String(seen?(i++)%8:0));t.classList.add('pop-wait');io.observe(t)})}
 
-  /* rows and parts that become visible fade in */
+  /* rows and parts that become visible fade in - never the hover tip (site_report.js #site-tip, role tooltip): its place is
+     its transform, which the fade's own transform took over, so for its first .38 s each time it showed it sat at the
+     window's top left corner, not by the cell (1.122.1: the AD matrix, cell after cell) */
   function rowsIn(){if(still||!('MutationObserver' in window)||!document.body)return;
     new MutationObserver(function(ms){ms.forEach(function(m){var t=m.target;
       if(m.attributeName!=='hidden'||t.hidden||!/^(TR|TBODY|DIV|LI|SECTION)$/.test(t.tagName))return;
+      if(t.id==='site-tip'||t.getAttribute('role')==='tooltip')return;
       t.classList.remove('pop-show');void t.offsetWidth;t.classList.add('pop-show')})}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['hidden']})}
 
   /* the crosshair: a line chart drawn as one path of 4 or more points, with its grid's values written at the left */

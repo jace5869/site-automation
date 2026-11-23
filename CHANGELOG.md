@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.122.1 — 2026-11-23
+
+**To set up:** nothing - the next AD report run publishes pages with the tip
+
+- **AD report - the replication matrix's cells show their tip on hover and on keyboard focus,** beside the cell and inside
+  the window (atlas, brief and ops). The page's fade-in for parts that open (report_pop.js) also took the tip and, with
+  its own transform, held it at the window's top left corner each time it showed - cell after cell, so it never stood
+  by the cell. The tip is left out of that fade now (every hover tip of the website, the matrix's too).
+
 ## 1.116.2 — 2026-11-23
 
 **To set up:** nothing. Optional: `outage_ops_center`, what your site calls its operations center (default `NOC`).
