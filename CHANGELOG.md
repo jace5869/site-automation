@@ -44,10 +44,18 @@
   `vm_watch_skip_vms` or `vm_watch_skip_folders` is still listed, as "not judged" (info). A protected VM is marked
   "protected". Nothing is restarted: phase 2 only ever acts on hung VMs.
 - A disconnected host's row names the VMs on it, instead of leaving them out.
+- **A lost datastore is the headline, not "all paths down" per host.** When a datastore is not accessible, its hosts'
+  storage path lines fold into its row: "Datastore ds-07 NOT ACCESSIBLE on 3 hosts (esx02, esx04, esx05): all paths
+  down since ... - 6 VMs inaccessible". It is the first row and leads the email's subject and the page's title. Each
+  host's line is in that row's detail ("Per host: ..."). The same device lost on 2 or more hosts, while its datastore is
+  still accessible, is one row too. A path problem on one host, of no lost datastore, stays as it was. The watch reads
+  each VMFS datastore's devices (its extents) to tell which datastore a device is.
 - *How it judged* says how many VMs were read, judged, listed as inaccessible, and on a disconnected host.
 - Tests: tests/test_vmware_modules.py (the read, on stand-ins: 3 inaccessible VMs powered off or of unknown power and 1
   orphaned on a lost datastore, a skipped one, a template, a disconnected host); tests/test_vm_watch.py (the conditions,
-  their order, the marks, no restart, the counts).
+  their order, the marks, no restart, the counts; Fold1124: the lost datastore's line, the device on 2 hosts, the
+  headline, cleared on every host).
+
 ## 1.112.3 — 2026-11-23
 
 **To set up:** nothing to set up.

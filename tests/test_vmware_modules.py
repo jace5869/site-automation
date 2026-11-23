@@ -936,7 +936,8 @@ class LostVMs1124(unittest.TestCase):
             wt._props = lambda content, root, objtype, paths: table[objtype]
             wt._folder = lambda o, cache: "/DC1/vm"
             wt._datacenter_of = lambda o, cache: "DC1"
-            wt._objs_props = lambda content, objs, objtype, paths: {}
+            info = types.SimpleNamespace(vmfs=types.SimpleNamespace(extent=[types.SimpleNamespace(diskName="naa.600a07")]))
+            wt._objs_props = lambda content, objs, objtype, paths: {"ds-7": {"info": info}} if paths == ["info"] else {}
             p = {"datacenter": "", "skip_vms": ["test*"], "skip_folders": [], "min_up_minutes": 15, "window_minutes": 0, "event_types": []}
             import types as _t
             return wt._read(_t.SimpleNamespace(rootFolder=None), p, 1763900000.0, "vc01.example.mil")
@@ -956,6 +957,7 @@ class LostVMs1124(unittest.TestCase):
         self.assertEqual(r["vms_disconnected"][0]["esxi_host"], "esx02.example.mil")
         self.assertEqual((r["vms_read"], r["vms_checked"], r["vms_skipped"]), (8, 1, 0))
         self.assertEqual(r["suspects"], [])
+        self.assertEqual(dict((x["name"], x["devices"]) for x in r["datastores"]), {"ds-07": ["naa.600a07"], "ds-02": []})   # its devices
 
 
 class OutageWatch(unittest.TestCase):

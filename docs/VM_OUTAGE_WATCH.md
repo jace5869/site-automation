@@ -31,7 +31,7 @@ Every vCenter of the job (the credential's, and `vmware_vcenters`), or one datac
 | A host's HA agent unreachable, or it failed to uninitialize | warning |
 | A datastore not accessible (and not in maintenance mode); its condition names the VMs vCenter shows as inaccessible on it | critical |
 | A VM vCenter shows as **inaccessible**, **invalid** or **orphaned** (its files cannot be reached, or its host lost it), whatever its power state. Listed under its datastore. Never remove it from the inventory: it comes back when its files can be reached (1.112.4) | critical (a VM of `vm_watch_skip_vms` / `vm_watch_skip_folders`: info, "not judged", still listed; a protected VM is marked "protected") |
-| All paths down, a permanent device loss, or a VMFS heartbeat timeout in the window, **not cleared** since | critical |
+| All paths down, a permanent device loss, or a VMFS heartbeat timeout in the window, **not cleared** since. A device of a datastore that is not accessible: folded into that datastore's row ("Datastore ds-07 NOT ACCESSIBLE on 3 hosts ...", first, the report's headline; each host's line in its detail). The same device on 2 or more hosts: one row (1.112.4) | critical |
 | The same, cleared since (the clear event came later, on the same host and device) | warning |
 | HA could not restart a VM, or found a host failed or isolated (events of the window) | critical |
 | HA restarted or reset a VM, or started a failover (events of the window) | warning |

@@ -457,14 +457,26 @@ def _read(content, p, now, vcenter):
         host_of[m] = rec
         if in_dc(dc):
             res["hosts"].append(rec)
-    ds_name = {}
+    ds_name, ds_objs = {}, []
     for m, (o, pr) in _props(content, root, vim.Datastore, ["name", "summary.accessible", "summary.maintenanceMode", "parent"]).items():
         ds_name[m] = pr.get("name", "")
         dc = _datacenter_of(o, dc_cache)
         if in_dc(dc):
+            ds_objs.append(o)
             res["datastores"].append({"name": pr.get("name", ""), "moid": m, "datacenter": dc, "vcenter": vcenter,
                                       "accessible": bool(pr.get("summary.accessible", True)),
                                       "maintenance": str(pr.get("summary.maintenanceMode") or "normal")})
+
+    # 1.112.4: each VMFS datastore's devices (its extents' naa / eui names), so the hosts' "all paths down" events of a device
+    # are told as its datastore's (vm_watch_conditions). One read; a datastore whose info cannot be read has none
+    try:
+        infos = _objs_props(content, ds_objs, vim.Datastore, ["info"])
+    except Exception:  # pylint: disable=broad-except
+        infos = {}
+    for rec in res["datastores"]:
+        info = (infos.get(rec["moid"]) or {}).get("info")
+        ext = getattr(getattr(info, "vmfs", None), "extent", None) or []
+        rec["devices"] = sorted(set(str(getattr(x, "diskName", "") or "") for x in ext) - {""})
 
     folders = {}
     vms = _props(content, root, vim.VirtualMachine, VM_PROPS)
