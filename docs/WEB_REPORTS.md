@@ -542,6 +542,20 @@ vmware-snapshot-cleanup/
   insights' period and view add none either. So **Back** leaves the report in one click.
 - The page scrolls there smoothly (the ticket insights at once, as before), unless the system asks for reduced motion (or `?motion=off`).
 
+### The Site portal link (1.118.0)
+
+**Site portal ›** in the index's top bar (between *Updated* and Light / Auto / Dark), and *‹ All reports · Site
+portal ›* on each report page. `report_portal_link` (role defaults, all.yml):
+
+| Value | The link |
+|---|---|
+| `auto` (default) | `report_portal_url` when set; else `portal_path` when the inventory sets it (the portal on the website's own server: `/portal/`); else none |
+| an address or a path | that: `https://stigman.yoursite.mil/portal/`, or `/portal/` (from the server's root - the portal's nginx serves the reports at `/portal/reports/`, and STIG Manager's nginx can serve them at `/reports/`) |
+| `""` | no link |
+
+The link only: the pages' **Ask ACT**, **Recheck** and **Import checklists** buttons stay with `report_portal_url`. It is
+written into the page (no script); a value that is not an `http(s)://` address or a path from the root is left out.
+
 ### The index page: tabs, and each report's last runs
 
 Since 1.72.0 the index is calm: red only when a run needs a look. Findings are counts in plain ink, so a report with
@@ -551,7 +565,12 @@ colours. With an email look (`report_web_theme: portal` and the others) the inde
 - **At a glance**: four tiles. *Runs ok* (of all reports), *Not checked* (the last run could not check: its status is
   unknown), *Critical up since last run* (with the counts, e.g. *AD health: 1 → 3 critical*), *Didn't run on time*.
 - **Findings in the newest runs**: the critical, warning and low findings of every report's last run, added up.
-- **Look at these first**: each report a tile counts, with its reason and an Open link. Not there when there is none.
+- **Look at these first** (1.118.0): **Got worse** - one line per report: its name, *+2 critical 5 → 7* (or *Not
+  checked*), what it says now (cut with …, the whole text in its tooltip) and **Open**. The most critical added first,
+  the reports that could not check last. Then **one** line for the late reports: *5 reports are late: A, B, C +2* -
+  **Show list** opens one row each (last ran, expected by, every N hours). At most 5 lines show (the late line is one
+  of them), then **Show N more** - never *Show 1 more*: that row shows instead. Red only on the critical counts; the
+  late clock is amber; the box has a thin red top only when something got worse. Not there when there is none.
 - **A card per area**, in the tabs' order. An area of five reports or more takes the whole row.
 - **Each report's line**: its state (an icon and a word), its name (a link to its `latest.html`), **Copy link**, what
   it said, the change since the previous run, its counts and its last run's time. On the right, a small line of its
@@ -562,7 +581,15 @@ colours. With an email look (`report_web_theme: portal` and the others) the inde
 fixed and one new read 0. A drop is said in plain ink (*−3 critical*).
 
 *Didn't run on time* is judged by the page's script when the page is read: the last run is older than twice the
-report's usual gap, at least 26 hours. Without the script (a strict web server, or a page saved alone) it says nothing
+report's usual gap, at least 26 hours. Since 1.118.0 only these reports can be late:
+- its newest run was started by an **AAP schedule** - AAP's `awx_job_launch_type` is `scheduled` (or `awx_schedule_id`
+  is set), or it is a step of a workflow a schedule started (`awx_parent_job_schedule_id`,
+  `awx_workflow_job_launch_type`);
+- or it has a **steady cadence**: at least 5 gaps between its runs, each within 25 % of their median.
+
+A report started by hand, or as a step of a workflow someone started, is late only when it runs on such a steady cadence
+all the same. A line written before 1.118.0 has no launch on
+its runs: only the steady rule applies until its next run. Without the script (a strict web server, or a page saved alone) it says nothing
 about it. **Copy link** needs the script too: it copies the address of the report's latest page (`report_web_url`
 and the page, or the page's own address when that is not set).
 

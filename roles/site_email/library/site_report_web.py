@@ -157,7 +157,7 @@ from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
 from ansible.module_utils import site_report_files as rf
 from ansible.module_utils.site_time import local as local_time, zone as zone_of
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
-from ansible.module_utils.six.moves.urllib.parse import quote
+from ansible.module_utils.six.moves.urllib.parse import quote, urlparse
 from ansible.module_utils.six.moves.urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler
 
 IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif'}
@@ -1094,15 +1094,40 @@ BACK_ICON = ('<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"
 BACK_STYLE = ('display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none;font-size:13px;font-weight:600;'
               'line-height:1.4;white-space:nowrap;opacity:.88')
 BACK_LINE = 'margin:0 auto 10px;text-align:left;color:#1f2937;font-family:\'Segoe UI\',Arial,Helvetica,sans-serif'
+# 1.118.0: the site portal's link (report_portal_link), beside All reports and in the index's top bar
+PORTAL_ICON = ('<svg class="ic" width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="flex:none"><path d="M6 3.5L10.5 8 6 12.5" '
+               'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+PORTAL_TITLE = 'The site portal: run jobs, follow them, approvals'
 
 
-def back_link(page, rel, index, banner=None):
+def portal_href(link):
+    """report_portal_link as written into a page: an http(s) address or a path from the server's root (/portal/); '' for
+    anything else (none, or not a link a page may carry)."""
+    link = str(link or '').strip()
+    if not link or re.search(r'[\\\x00-\x20\x7f"<>]', link):
+        return ''                                    # a backslash (/\\host) or a control character: a browser may read another host
+    if re.match(r'(?i)https?://', link):
+        try:
+            u = urlparse(link)
+            u.port                                  # noqa: B018 - a port that is not a number raises
+        except ValueError:
+            return ''
+        return link if u.hostname else ''
+    return link if re.match(r'/(?!/)', link) else ''
+
+
+def back_link(page, rel, index, banner=None, portal=''):
     """The page rel with its way back to the index (an <a> to it, relative to rel) and data-site-index on <html>; page as it is when there is
-    no index (a page that is not on a website with one) or rel is the index."""
+    no index (a page that is not on a website with one) or rel is the index. 1.118.0: portal (report_portal_link) adds
+    "· Site portal ›" beside All reports."""
     if not page or not index or not rel or rel == index:
         return page
     href = htmllib.escape(_href(rel, index), quote=True)
     a = '<a class="sr-back" href="%s" style="%s">%sAll reports</a>' % (href, BACK_STYLE, BACK_ICON)
+    if portal_href(portal):
+        a = ('<span style="display:inline-flex;align-items:center;gap:8px;flex:none;white-space:nowrap">%s<span aria-hidden="true" style="opacity:.55">&middot;</span>'
+             '<a class="sr-portal" href="%s" title="%s" style="%s">Site portal%s</a></span>'
+             % (a, htmllib.escape(portal_href(portal), quote=True), PORTAL_TITLE, BACK_STYLE.replace('gap:5px', 'gap:3px'), PORTAL_ICON))
 
     def put(m):
         w = m.group(1)
@@ -1190,7 +1215,9 @@ def run_counts(report):
 
 
 def _trend_point(x):
-    return dict((k, x.get(k)) for k in ('when', 'status', 'job', 'counts'))
+    """A run in a line's trend; launch (1.118.0: 'scheduled' when an AAP schedule started it, also through a scheduled
+    workflow) only when the run said it."""
+    return dict((k, x.get(k)) for k in ('when', 'status', 'job', 'counts', 'launch') if k != 'launch' or x.get('launch'))
 
 
 def newest_first(items, this):
@@ -1231,16 +1258,44 @@ def _when_dt(text):
         return None
 
 
+STEADY_RUNS, STEADY_SPREAD = 5, 0.25        # 1.118.0: a steady cadence - at least 5 gaps, each within 25 % of their median
+
+
+def _gaps(line):
+    ts = sorted([d for d in (_when_dt(x.get('when')) for x in (line or {}).get('trend') or [] if isinstance(x, dict)) if d], reverse=True)
+    return sorted((a - b).total_seconds() / 3600.0 for a, b in zip(ts, ts[1:]) if a > b)
+
+
+def _median(v):
+    return v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2.0
+
+
+def scheduled(line):
+    """1.118.0: the line's newest run was started by an AAP schedule (its launch, from awx_job_launch_type, awx_schedule_id
+    or a scheduled workflow's awx_parent_job_schedule_id)."""
+    t = [x for x in (line or {}).get('trend') or [] if isinstance(x, dict)]
+    return bool(t) and t[0].get('launch') == 'scheduled'
+
+
+def steady(line, n=STEADY_RUNS, spread=STEADY_SPREAD):
+    """1.118.0: at least n gaps between the runs its trend keeps, each within spread of their median."""
+    gaps = _gaps(line)
+    if len(gaps) < n:
+        return False
+    mid = _median(gaps)
+    return all(abs(g - mid) <= spread * mid for g in gaps)
+
+
 def due_hours(line, floor=26):
     """1.72.0: how long after its last run a report is late - twice its usual gap (the median between the runs its trend
     keeps), at least floor hours; None with fewer than two runs (no judgement). The page decides at view time
-    (site-report.js): the index is written when a report runs, never when it is read."""
-    ts = sorted([d for d in (_when_dt(x.get('when')) for x in (line or {}).get('trend') or [] if isinstance(x, dict)) if d], reverse=True)
-    gaps = sorted((a - b).total_seconds() / 3600.0 for a, b in zip(ts, ts[1:]) if a > b)
-    if not gaps:
+    (site-report.js): the index is written when a report runs, never when it is read. 1.118.0: only a report AAP runs on
+    a schedule (its newest run) or with a steady cadence can be late - a run by hand, or a step of a workflow someone
+    started, never is."""
+    gaps = _gaps(line)
+    if not gaps or not (scheduled(line) or steady(line)):
         return None
-    mid = gaps[len(gaps) // 2] if len(gaps) % 2 else (gaps[len(gaps) // 2 - 1] + gaps[len(gaps) // 2]) / 2.0
-    return int(round(max(2 * mid, float(floor))))
+    return int(round(max(2 * _median(gaps), float(floor))))
 
 
 def index_summary(reports):
@@ -1296,7 +1351,7 @@ INDEX_PAGE = """<!DOCTYPE html>
 <div style="min-height:100vh;background:linear-gradient(160deg,#d9f0e7 0%%,#e5eff4 55%%,#dde8f2 100%%);padding:22px 12px;box-sizing:border-box;">
 <div style="max-width:1000px;margin:0 auto;">
 <div style="%(card)spadding:18px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%%;"><tr>%(logo)s
-<td><div style="font-size:18px;font-weight:700;">%(header)s</div><div style="color:#5b6b66;font-size:13px;">Every report's last runs &middot; %(n)d report(s) &middot; updated %(generated)s</div></td>
+<td><div style="font-size:18px;font-weight:700;">%(header)s</div><div style="color:#5b6b66;font-size:13px;">Every report's last runs &middot; %(n)d report(s) &middot; updated %(generated)s</div></td>%(portal)s
 </tr></table></div>
 <table class="tiles" role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%%;margin:14px 0;table-layout:fixed;"><tr>%(tiles)s</tr></table>
 %(tabs)s<div class="list" style="%(card)spadding:4px 8px;">
@@ -1340,13 +1395,14 @@ def run_tables(rows, table):
                      (_plural(len(rows) - 5, 'older run', 'older runs'), table % ''.join(rows[5:])))
 
 
-def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base='', files_line=''):
+def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js='', tz=None, base='', files_line='', portal=''):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs; at the foot
-    the space the hosted files take and the limits (1.79.8, files_line - never the files themselves)."""
+    the space the hosted files take and the limits (1.79.8, files_line - never the files themselves). 1.118.0: portal
+    (report_portal_link) - a "Site portal" link in its top bar."""
     index_controls = theme in WEB_LOOKS and not js
     history_tag = script_tag(index, INDEX_SCRIPT, INDEX_SCRIPT_FILE) if index_controls else ''
     if theme in WEB_LOOKS:                               # 1.72.0: the board, in the look's colours
-        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line, history_tag)
+        return index_board(reports, index, header_text, logo, generated, tabs, js, tz, base, theme, files_line, history_tag, portal)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -1408,6 +1464,9 @@ def index_html(reports, index, header_text, logo, generated, tabs=(), theme='por
                 % (logo[1], logo[0], logo[1], logo[2])) if logo else ''
     return INDEX_PAGE % {
         'header': e(header_text), 'card': card, 'logo': logo_img, 'n': len(reports), 'generated': e(local_time(generated, tz)), 'tiles': tiles,
+        'portal': ('<td style="text-align:right;white-space:nowrap;"><a class="plink" href="%s" title="%s" style="color:#0f6b4f;font-size:13px;'
+                   'font-weight:600;text-decoration:none;">Site portal &rsaquo;</a></td>' % (e(portal_href(portal), quote=True), PORTAL_TITLE))
+                  if portal_href(portal) else '',
         'style': INDEX_STYLE % ''.join(rules) + history_tag,
         'tabs': (''.join(t[0] for t in tabs) + '\n<div class="bar">' + ''.join(t[1] for t in tabs) + '</div>\n') if reports else '',
         'th': 'font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#45534e;',
@@ -1528,13 +1587,45 @@ main{max-width:1240px;margin:0 auto;padding:18px 20px 40px}
 .t-bad .td{color:var(--ink2)}
 .totals{margin:10px 2px 0;color:var(--mute);font-size:12.5px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}
 .totals b{color:var(--ink);font-weight:600}
-.look{margin-top:18px;background:var(--card);border:1px solid var(--crit-edge);border-radius:14px;padding:12px 16px 6px}
+.look{margin-top:18px;background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:12px 16px 8px;position:relative;overflow:hidden}
+.look.lf-crit::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--crit-fill)}
 .look h2,.area h2{margin:0;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--mute)}
-.look h2{color:var(--crit)}
-.look ul{list-style:none;margin:6px 0 0;padding:0}
-.look li{display:grid;grid-template-columns:22px minmax(150px,220px) minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0}
-.look li:not([hidden])~li:not([hidden]){border-top:1px solid var(--line)}
-.look li>a:not(.go){font-weight:600}
+.lf-gh{margin:10px 0 0;font-size:12px;font-weight:700;color:var(--ink);display:flex;gap:6px;align-items:baseline}
+.lf-gh .n{color:var(--mute);font-weight:400}
+.look ul{list-style:none;margin:0;padding:0}
+.lf-rows li,.lf-latel li{border-top:1px solid var(--line)}
+.lf-gh+.lf-rows>li:first-child{border-top:0}
+.look .lf-r{display:grid;grid-template-columns:minmax(150px,250px) 150px minmax(0,1fr) auto;gap:14px;align-items:center;padding:7px 0;min-height:22px}
+.lf-n{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lf-d{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px}
+.lf-d b{color:var(--crit);font-weight:700}
+.lf-ft{color:var(--mute);font-variant-numeric:tabular-nums;font-size:12.5px}
+.lf-nc{color:var(--ink2)}.lf-nc b{color:var(--ink2);font-weight:700}.lf-nc .ic{width:12px;height:12px;color:var(--crit)}
+.lf-s{color:var(--ink2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lf-s::before{content:"\\00B7";color:var(--mute);margin-right:8px}
+.lf-more>summary,.lf-ld>summary{list-style:none;cursor:pointer}
+.lf-more>summary::-webkit-details-marker,.lf-ld>summary::-webkit-details-marker{display:none}
+.lf-more>summary{display:inline-block;margin:2px 0 4px;padding:4px 0;font-size:12.5px;font-weight:600;color:var(--accent)}
+.lf-more>summary:hover,.lf-ld>summary:hover .lf-tog{text-decoration:underline}
+.lf-more:not([open])>summary .m2,.lf-more[open]>summary .m1,.lf-ld:not([open]) .lf-tog .m2,.lf-ld[open] .lf-tog .m1{display:none}
+.lf-more[open]{display:flex;flex-direction:column}.lf-more[open]>summary{order:2}
+.lf-more .lf-rows>li:first-child{border-top:1px solid var(--line)}
+.lf-late{border-top:1px solid var(--line);margin-top:2px}
+.lf-gh~.lf-late,.lf-more~.lf-late{margin-top:4px}
+.lf-ld>summary{display:flex;align-items:center;gap:10px;padding:9px 0 5px;min-width:0}
+.lf-clock{color:var(--warn);display:inline-flex;flex:none}.lf-clock .ic{width:15px;height:15px}
+.lf-lt{display:flex;align-items:baseline;min-width:0;flex:0 1 auto;font-size:13px;color:var(--ink2)}
+.lf-lc{color:var(--ink);font-weight:600;white-space:nowrap;margin-right:6px}
+.lf-ln{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lf-lplus{white-space:nowrap;color:var(--mute);margin-left:6px}
+.lf-tog{flex:none;margin-left:auto;font-size:12.5px;font-weight:600;color:var(--accent)}
+.look .lf-latel li{display:grid;grid-template-columns:minmax(150px,250px) 220px minmax(0,1fr) auto;gap:14px;align-items:center;padding:6px 0 6px 25px;font-size:13px}
+.lf-lw{color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lf-latel{margin-bottom:4px!important}
+.plink{display:inline-flex;align-items:center;gap:4px;flex:none;font-size:12.5px;font-weight:600;color:var(--accent);text-decoration:none;
+ border:1px solid var(--edge);background:var(--card);border-radius:999px;padding:4px 8px 4px 12px;white-space:nowrap}
+.plink:hover{background:var(--card2);text-decoration:underline}
+.plink .ic{width:13px;height:13px}
 .lw{color:var(--ink2);font-size:13px;overflow-wrap:anywhere}
 .go{font-size:12.5px;font-weight:600;white-space:nowrap}
 .tab{position:absolute;opacity:0;pointer-events:none}
@@ -1603,10 +1694,12 @@ main{max-width:1240px;margin:0 auto;padding:18px 20px 40px}
 .foot{margin-top:22px;color:var(--mute);font-size:12px;display:flex;flex-wrap:wrap;gap:4px 16px;justify-content:space-between}
 @media (max-width:980px){.grid{grid-template-columns:minmax(0,1fr)}.span2{grid-column:auto}
 .hero{grid-template-columns:repeat(2,minmax(0,1fr))}.tile:nth-child(3){border-left:0}.tile:nth-child(n+3){border-top:1px solid var(--line)}}
-@media (max-width:860px){.span2 .rows{columns:1}.seg label span{display:none}}
+@media (max-width:860px){.span2 .rows{columns:1}.seg label span{display:none}
+ .look .lf-r{grid-template-columns:minmax(120px,190px) 132px minmax(0,1fr) auto;gap:10px}
+ .look .lf-latel li{grid-template-columns:minmax(120px,190px) 200px minmax(0,1fr) auto;gap:10px}}
 @media (prefers-reduced-motion:no-preference){.rr[open]>.runs{animation:board-in .25s cubic-bezier(.16,1,.3,1)}
 @keyframes board-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}}
-@media print{.top{position:static}.seg,.tabs,.lcopy{display:none!important}html,body{background:#fff}}
+@media print{.top{position:static}.seg,.tabs,.lcopy,.plink{display:none!important}html,body{background:#fff}}
 @TABS@"""
 BOARD_ICON = {   # each state its own shape and word, never colour alone
     'ok': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" '
@@ -1727,7 +1820,16 @@ def _place_areas(areas, size):
     return wide
 
 
-def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas', files_line='', history_tag=''):
+LOOK_CAP = 5                     # 1.118.0: Look at these first shows at most 5 lines (the late line one of them), then "Show N more"
+
+
+def _cut(text, n=110):
+    text = str(text or '')
+    return text if len(text) <= n else text[:n - 1].rstrip() + '\u2026'
+
+
+def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz=None, base='', look='atlas', files_line='', history_tag='',
+                portal=''):
     """1.72.0: the index page in the look made for a browser (atlas, brief, ops): At a glance (Runs ok, Not checked,
     Critical up since last run, Didn't run on time), the findings of the newest runs, Look at these first, a tab per
     area (radio buttons, no script), a card per area with each report's line (its state, what it said, the change since
@@ -1803,18 +1905,24 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
                copy, e(r.get('title') or ''), chip, late, _counts_html(c) if c else '', e(local_time(r.get('when') or '', tz)), e(when_s),
                '' if r.get('page') or not _job(r.get('job')) else ' <span class="when">%s</span>' % _job(r.get('job')),
                _spark_svg(r), table))))
-        go = ('<a class="go" href="%s">Open &rsaquo;</a>' % href) if href else '<span></span>'
-        nm = ('<a href="%s">%s</a>' % (href, e(name))) if href else '<span>%s</span>' % e(name)
+        go = ('<a class="go" href="%s">Open&nbsp;&rsaquo;</a>' % href) if href else '<span></span>'
+        nm = ('<a class="lf-n" href="%s" title="%s">%s</a>' % (href, e(name), e(name))) if href else '<span class="lf-n">%s</span>' % e(name)
+        said = '<span class="lf-s" title="%s">%s</span>' % (e(r.get('title') or ''), e(_cut(r.get('title'))))
         if u:
-            look_li.append('<li><span class="si si-up">%s</span>%s<span class="lw">Since the previous run: +%d critical (%d &rarr; %d). %s</span>%s</li>'
-                           % (BOARD_ICON['up'], nm, u['delta'], u['before'], u['now'], e(r.get('title') or ''), go))
+            look_li.append(((0, -u['delta'], name.lower()), '<li class="lf-r">%s<span class="lf-d"><i class="sh sh-c" aria-hidden="true"></i><b>+%d critical</b>'
+                            '<span class="lf-ft">%d&#8202;&rarr;&#8202;%d</span></span>%s%s</li>' % (nm, u['delta'], u['before'], u['now'], said, go)))
         elif st == 'notchecked':
-            look_li.append('<li><span class="si si-notchecked">%s</span>%s<span class="lw">Not checked. %s</span>%s</li>'
-                           % (BOARD_ICON['notchecked'], nm, e(r.get('title') or ''), go))
+            look_li.append(((1, 0, name.lower()), '<li class="lf-r">%s<span class="lf-d lf-nc">%s<b>Not checked</b></span>%s%s</li>'
+                            % (nm, BOARD_ICON['notchecked'], said, go)))
         if hook and due:
-            late_li.append('<li data-late-li="%s" hidden><span class="si si-late">%s</span>%s<span class="lw">Didn&#39;t run on time: last ran %s, '
-                           'usually every %s.</span>%s</li>' % (rid, BOARD_ICON['late'], nm, e(local_time(r.get('when') or '', tz)),
-                                                              _plural(max(1, int(round(due / 2.0))), 'hour', 'hours'), go))
+            gap = max(1, int(round(_median(_gaps(r)))))
+            try:
+                exp = 'expected by %s (every %s)' % (local_time((w + datetime.timedelta(hours=gap)).strftime('%Y-%m-%d %H:%M UTC'), tz),
+                                                    _plural(gap, 'hour', 'hours'))
+            except OverflowError:
+                exp = 'every %s' % _plural(gap, 'hour', 'hours')
+            late_li.append('<li data-late-li="%s" data-name="%s" hidden>%s<span class="lf-lw">last ran %s</span><span class="lf-lw">%s</span>%s</li>'
+                           % (rid, e(name), nm, e(local_time(r.get('when') or '', tz)), e(exp), go))
     # the areas' cards, report_web_tabs' order; in each, the reports that need a look first, then A to Z
     cards = []
     for a in areas:
@@ -1863,8 +1971,27 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
               '<span class="ct"><i class="sh sh-w" aria-hidden="true"></i><b>%d</b> warning</span><span><b>%d</b> low</span>'
               '<span>&middot; each report&#39;s own page has them, worst first</span></p>' % (tot['critical'], tot['warning'], tot['low'])
               if any(isinstance(r.get('counts'), dict) for r in reports) else '')
-    lookfirst = ('<section class="look" aria-labelledby="look-h"%s><h2 id="look-h">Look at these first</h2><ul>%s%s</ul></section>'
-                 % ('' if look_li else ' hidden', ''.join(look_li), ''.join(late_li))) if look_li or late_li else ''
+    # 1.118.0: Look at these first - "Got worse" (critical up, most first; then not checked), one line each, at most
+    # LOOK_CAP lines with the late line (never "Show 1 more": that row shows instead); the late reports one line that
+    # site-report.js fills ("5 reports are late: A, B, C +2", the list under Show list) - no script: no late line
+    # site-report.js makes room for the late line when it shows it (the same rule, one row fewer)
+    worse = [x[1] for x in sorted(look_li, key=lambda x: x[0])]
+    shown = LOOK_CAP
+    if len(worse) == shown + 1:
+        shown += 1
+    more = ('<details class="lf-more"%s><summary><span class="m1">Show %d more</span><span class="m2">Show fewer</span></summary>'
+            '<ul class="lf-rows">%s</ul></details>' % ('' if len(worse) > shown else ' hidden', max(len(worse) - shown, 0), ''.join(worse[shown:]))
+            ) if len(worse) > shown or (worse and late_li) else ''
+    group = ('<h3 class="lf-gh">Got worse <span class="n">%d</span></h3><ul class="lf-rows">%s</ul>%s'
+             % (len(worse), ''.join(worse[:shown]), more)) if worse else ''
+    late_box = ('<div class="lf-late" hidden><details class="lf-ld"><summary><span class="lf-clock">%s</span><span class="lf-lt"><b class="lf-lc"></b>'
+                '<span class="lf-ln"></span><span class="lf-lplus"></span></span><span class="lf-tog"><span class="m1">Show list</span>'
+                '<span class="m2">Hide list</span></span></summary><ul class="lf-latel">%s</ul></details></div>'
+                % (BOARD_ICON['late'], ''.join(late_li))) if late_li else ''
+    lookfirst = ('<section class="look%s" aria-labelledby="look-h" data-cap="%d"%s><h2 id="look-h">Look at these first</h2>%s%s</section>'
+                 % (' lf-crit' if worse else '', LOOK_CAP, '' if worse else ' hidden', group, late_box)) if worse or late_li else ''
+    plink = ('<a class="plink" href="%s" title="%s">Site portal%s</a>' % (e(portal_href(portal), quote=True), PORTAL_TITLE, PORTAL_ICON)
+             if portal_href(portal) else '')
     newest = max(reports, key=lambda r: str(r.get('when') or '')) if reports else None
     words = [w for w in re.split(r'\W+', str(header_text or '')) if w][:2]
     mark = (('<img class="logo" src="%s" width="%d" height="%d" alt="">' % (logo[0], logo[1], logo[2])) if logo
@@ -1879,7 +2006,8 @@ def index_board(reports, index, header_text, logo, generated, tabs=(), js='', tz
             '<div class="top"><div class="in">' + mark + '<div><h1>' + e(header_text) + '</h1><div class="site">' +
             _plural(len(reports), 'report', 'reports') + ' in ' + _plural(len(areas), 'area', 'areas') + '</div></div><div class="grow"></div>'
             '<div class="upd">Updated <b>' + e(local_time(generated, tz)) + '</b>' +
-            ('<br>newest run: ' + e(str(newest.get('name') or newest.get('key') or '')) if newest else '') + '</div>' + ATLAS_SWITCH + '</div></div>\n'
+            ('<br>newest run: ' + e(str(newest.get('name') or newest.get('key') or '')) if newest else '') + '</div>' + plink + ATLAS_SWITCH +
+            '</div></div>\n'
             '<main>\n<section class="hero" aria-label="At a glance">' + tiles + '</section>\n' + totals + '\n' + lookfirst + '\n' + body +
             '<div class="foot"><span>The sparkline: each report&#39;s critical and warning findings over its last 12 runs, newest right. A gap: not counted.</span>' +
             ('<span class="files-used">' + e(files_line) + '</span>' if files_line else '') +
@@ -2256,6 +2384,7 @@ def main():
             season_lights=dict(type='bool', default=True),
             season_twinkle=dict(type='bool', default=True),
             season_snow=dict(type='bool', default=True),
+            portal_link=dict(type='str', default=''),          # 1.118.0: report_portal_link, resolved (vars/main.yml _web_portal_link)
         ),
         supports_check_mode=True,
     )
@@ -2440,7 +2569,7 @@ def main():
             if not rel:
                 continue
             h = rf.put_files(html, step['hosted'], step['refused'], rel, folder, web_look)   # the latest page links the run's
-            h = back_link(h, rel, back_to if inside(back_to) else '', banner)   # 1.87.2: the way back to the index, from this page's place
+            h = back_link(h, rel, back_to if inside(back_to) else '', banner, p['portal_link'])   # 1.87.2: the way back to the index, from this page's place
             h = deck(h, rel, 'report')                   # 1.115.0: the Christmas theme, when it is on
             publish_page(h, rel, js, js_name, rel == latest)
             if p['json']:
@@ -2455,7 +2584,7 @@ def main():
             if not rel:
                 continue
             h = rf.put_files(banner_inject(web_page(str(sp.get('html') or ''), p['images'], p['theme']), banner), [], [], rel, '')
-            h = deck(back_link(h, rel, back_to if inside(back_to) else '', banner), rel, 'report')
+            h = deck(back_link(h, rel, back_to if inside(back_to) else '', banner, p['portal_link']), rel, 'report')
             sjs, sname = page_script(h), page_script_name(h)
             if sjs and not (js and sname == js_name) and (sname != SCRIPT or ready(sjs)):
                 scripts[sname] = sjs
@@ -2487,6 +2616,8 @@ def main():
                 index_js = ''
         if index and index_js and not ready(index_js):
             index_js = ''
+        if index_js and p['theme'] in WEB_LOOKS and 'lf-late' not in index_js:
+            index_js = ''                                # 1.118.0: a site-report.js from before Look at these first's late line
         index_text = ''
         deleted, not_deleted, gone = [], [], []
 
@@ -2613,7 +2744,7 @@ def main():
             files_line = rf.used_line(led, max(1, p['files_total_max_mb']), max(0, p['files_keep_days'])) if led else ''
             index_text = json.dumps(out_doc, indent=2, sort_keys=True, default=str) + '\n'
             index_page = banner_inject(index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js, tz,
-                                                  base, files_line), top)
+                                                  base, files_line, p['portal_link']), top)
             index_page = deck(index_page, index, 'index')     # 1.115.0
             if isinstance(target, Staged) and index_js:
                 target.script_fallbacks[index] = (report_script_file(index_js), index_page.replace(script_tag(index, index_js), '', 1))

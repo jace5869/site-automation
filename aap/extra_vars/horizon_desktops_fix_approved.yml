@@ -97,6 +97,10 @@
 ## horizon_fix_hold_error_kinds is held back.
 # horizon_clone_error_kinds: {}
 
+# ---- site_portal_stack ---------------------------------------------------------------------------
+## the portal's path on the proxy
+# portal_path: /portal/
+
 # ---- site_exclude --------------------------------------------------------------------------------
 ## ---- Leave hosts out of every job (1.67.0; playbooks/site_exclude.yml, README "Leave hosts out of
 ## every job") Hosts no job runs on or connects to, whatever its template, Limit or target: the
@@ -317,6 +321,12 @@
 ## confirm page in a new tab: nothing runs until the person presses Run there. "" = no buttons, the
 ## pages as before.
 # report_portal_url: ""
+
+## 1.118.0: the "Site portal" link on the report website - the index's top bar and "All reports ·
+## Site portal" on each page. auto: report_portal_url, else portal_path when the inventory sets it
+## (the portal on the same server as the website: /portal/); an address (https://...) or a path
+## (/portal/): that; "" = no link. The link only - the buttons stay with report_portal_url.
+# report_portal_link: auto
 
 ## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower
 ## case with dashes; the play's name outside AAP), {template_id}, {job} (the AAP job; local outside

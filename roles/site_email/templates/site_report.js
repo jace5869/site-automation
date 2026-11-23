@@ -225,7 +225,21 @@
     var w0=late[0].querySelector('.when');
     all('[data-tile-note=late]').forEach(function(t){t.textContent=(late[0].getAttribute('data-name')||'')+(w0?': last ran '+w0.textContent:'')+
       (late.length>1?' and '+(late.length-1)+' more':'')});
-    all('.look[hidden]').forEach(function(s){if(s.querySelector('li:not([hidden])'))s.hidden=false});
+    /* 1.118.0: Look at these first says the late reports in ONE line - "5 reports are late: A, B, C +2" - the list
+       under it (Show list) */
+    all('.look .lf-late').forEach(function(box){var li=[].slice.call(box.querySelectorAll('li[data-late-li]:not([hidden])'));if(!li.length)return;
+      var names=li.map(function(x){return x.getAttribute('data-name')||''}),c=box.querySelector('.lf-lc'),n=box.querySelector('.lf-ln'),
+        m=box.querySelector('.lf-lplus');
+      if(c)c.textContent=li.length+(li.length===1?' report is late:':' reports are late:');
+      if(n){n.textContent=names.slice(0,3).join(', ');n.title=names.join('\n')}
+      if(m)m.textContent=names.length>3?'+'+(names.length-3):'';
+      box.hidden=false;var s=box.closest('.look');if(!s)return;s.hidden=false;
+      /* the late line is one of the box's lines: one row fewer above it, the rest under Show N more (never Show 1 more) */
+      var head=s.querySelector('.lf-gh+.lf-rows'),more=s.querySelector('.lf-more'),ml=more&&more.querySelector('.lf-rows');
+      if(head&&ml){var rows=[].slice.call(head.children).concat([].slice.call(ml.children)),keep=(parseInt(s.getAttribute('data-cap'),10)||5)-1;
+        if(rows.length===keep+1)keep++;
+        rows.forEach(function(r,i){(i<keep?head:ml).appendChild(r)});
+        var m1=more.querySelector('.m1');if(m1)m1.textContent='Show '+(rows.length-keep)+' more';more.hidden=rows.length<=keep}});
     all('.area').forEach(function(a){var n=a.querySelectorAll('.rr.bad,.rr[data-late]').length;if(!n)return;
       var b=a.querySelector('.ah.bad'),g=a.querySelector('.ah.good'),k=a.querySelector('.ahn'),v=a.querySelector('.ahv');
       if(k)k.textContent=n;if(v)v.textContent=n===1?'needs':'need';if(b)b.hidden=false;if(g)g.hidden=true;

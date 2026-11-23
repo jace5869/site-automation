@@ -1219,11 +1219,13 @@ class Release1720(unittest.TestCase):
         {"title": "Start here", "cards": [{"status": "critical", "title": "do this"}]},
         {"title": "Notes", "lines": ["n"]}]}
 
-    def line(self, runs, key="vm/latest.html", latest_url=""):
-        """A line after these runs: [(when, status, counts or None)], oldest first."""
+    def line(self, runs, key="vm/latest.html", latest_url="", launch=""):
+        """A line after these runs: [(when, status, counts or None)], oldest first; launch (1.118.0) on each run."""
         line = None
         for i, (when, status, counts) in enumerate(runs):
             e = dict(_run(i + 1, when, status), key=key, name="VMware - VM health report", latest=key)
+            if launch:
+                e["launch"] = launch
             if counts is not None:
                 e["counts"] = counts
             if latest_url:
@@ -1288,13 +1290,14 @@ class Release1720(unittest.TestCase):
         self.assertEqual(rw.run_delta(line)["critical"], -3)
 
     def test_when_a_report_is_late(self):
-        daily = self.line([("2026-11-%02d 06:%02d UTC" % (d, d) , "ok", None) for d in range(10, 15)])
+        # 1.118.0: scheduled runs (the newest one's launch); the steady rule: Late1180
+        daily = self.line([("2026-11-%02d 06:%02d UTC" % (d, d) , "ok", None) for d in range(10, 15)], launch="scheduled")
         self.assertEqual(rw.due_hours(daily), 48)                                           # twice its usual gap
-        hourly = self.line([("2026-11-17 %02d:00 UTC" % h, "ok", None) for h in range(1, 6)])
+        hourly = self.line([("2026-11-17 %02d:00 UTC" % h, "ok", None) for h in range(1, 6)], launch="scheduled")
         self.assertEqual(rw.due_hours(hourly), 26)                                          # at least 26 h
-        weekly = self.line([("2026-10-%02d 06:00 UTC" % d, "ok", None) for d in (6, 13, 20, 27)])
+        weekly = self.line([("2026-10-%02d 06:00 UTC" % d, "ok", None) for d in (6, 13, 20, 27)], launch="scheduled")
         self.assertEqual(rw.due_hours(weekly), 336)
-        self.assertIsNone(rw.due_hours(self.line([("2026-11-17 06:00 UTC", "ok", None)])))   # one run: no judgement
+        self.assertIsNone(rw.due_hours(self.line([("2026-11-17 06:00 UTC", "ok", None)], launch="scheduled")))   # one run: no judgement
 
     def test_the_tiles_data(self):
         a = self.line([("2026-11-16 06:00 UTC", "critical", {"critical": 1, "warning": 0, "low": 0}),
@@ -1308,8 +1311,8 @@ class Release1720(unittest.TestCase):
         self.assertEqual((s["total"], s["runs_ok"], s["not_checked"]), (3, 2, ["NetApp ONTAP health"]))
         self.assertEqual(s["critical_up"], [{"name": "AD health", "key": "ad/latest.html", "delta": 2, "before": 1, "now": 3}])
 
-    def named(self, name, key, runs, latest_url=""):
-        line = self.line(runs, key=key, latest_url=latest_url)
+    def named(self, name, key, runs, latest_url="", launch=""):
+        line = self.line(runs, key=key, latest_url=latest_url, launch=launch)
         line["name"] = name
         return line
 
@@ -1348,7 +1351,7 @@ class Release1720(unittest.TestCase):
                                                                ("2026-11-17 06:00 UTC", "critical", {"critical": 2, "warning": 0, "low": 0})])
         calm = self.board([same, down])
         self.assertNotIn('class="tile t-bad"', calm)
-        self.assertIn('<section class="look" aria-labelledby="look-h" hidden>', calm)      # only the script shows it (a late report)
+        self.assertNotIn('<section class="look', calm)                              # 1.118.0: nothing worse, nothing can be late: no box
         self.assertNotIn('class="flag">', calm)                                     # only the hidden late word
         self.assertIn('<span class="ct"><i class="sh sh-c" aria-hidden="true"></i>3 critical</span>', calm)
         self.assertIn('<span class="calm">Since the previous run: &minus;3 critical</span>', calm)
@@ -1368,8 +1371,11 @@ class Release1720(unittest.TestCase):
         self.assertIn('<span class="flag">', hot)
         self.assertIn("Since the previous run: +2 critical</span>", hot)
         self.assertIn('<h2 id="look-h">Look at these first</h2>', hot)
-        self.assertIn("Since the previous run: +2 critical (1 &rarr; 3).", hot)
-        self.assertIn("Not checked. ", hot)
+        self.assertIn('<section class="look lf-crit" aria-labelledby="look-h" data-cap="5">', hot)    # 1.118.0: the thin red top only when worse
+        self.assertIn('<h3 class="lf-gh">Got worse <span class="n">2</span></h3>', hot)
+        self.assertIn('<b>+2 critical</b><span class="lf-ft">1&#8202;&rarr;&#8202;3</span>', hot)
+        self.assertIn('<span class="lf-d lf-nc">', hot)
+        self.assertNotIn("Since the previous run: +2 critical (1", hot)
         self.assertIn('<b class="ahn">2</b> <span class="ahv">need</span> a look', hot)
         self.assertIn('<i class="tdot"></i>', hot)                                    # its tab's dot, with its words
         nums = [m.group(1) for m in re.finditer(r'<details class="rr[^"]*" id="r\d+" data-name="([^"]+)"', hot)]
@@ -1433,14 +1439,16 @@ class Release1720(unittest.TestCase):
         now = datetime.datetime.now(datetime.timezone.utc)
         when = lambda h: (now - datetime.timedelta(hours=h)).strftime("%Y-%m-%d %H:%M UTC")
         c0 = {"critical": 0, "warning": 0, "low": 0}
-        late = self.named("Backup - nightly", "late/latest.html", [(when(h), "ok", c0) for h in (100, 76, 52)])     # daily, last 52 h ago
-        fine = self.named("Backup - weekly", "fine/latest.html", [(when(h), "ok", c0) for h in (50, 26, 2)])       # daily, last 2 h ago
+        late = self.named("Backup - nightly", "late/latest.html", [(when(h), "ok", c0) for h in (100, 76, 52)], launch="scheduled")   # daily, 52 h ago
+        fine = self.named("Backup - weekly", "fine/latest.html", [(when(h), "ok", c0) for h in (50, 26, 2)], launch="scheduled")     # daily, 2 h ago
+        worse = [self.named("Patch - %d" % i, "p%d/latest.html" % i, [(when(26), "critical", dict(c0, critical=1)),
+                                                                       (when(2), "critical", dict(c0, critical=1 + i))]) for i in range(1, 7)]
         with open(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js"), encoding="utf-8") as f:
             js = f.read()
         d = tempfile.mkdtemp()
         try:
             with open(os.path.join(d, "index.html"), "w") as f:
-                f.write(rw.index_html([late, fine], "index.html", "Site reports", None, when(0), (), "ops", js, None, ""))
+                f.write(rw.index_html([late, fine] + worse, "index.html", "Site reports", None, when(0), (), "ops", js, None, ""))
             with open(os.path.join(d, rw.report_script_file(js)), "w") as f:
                 f.write(js)
             srv = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a, **k: RH.Csp(*a, directory=d, **k))
@@ -1455,27 +1463,168 @@ class Release1720(unittest.TestCase):
                     time.sleep(0.1)
                 got = c.js("""(() => {const q = s => document.querySelector(s);
                     const rows = [...document.querySelectorAll('details.rr')].map(r => [r.dataset.name, r.hasAttribute('data-late'),
-                        !r.querySelector('.late-slot').hidden, getComputedStyle(r.querySelector('.si-late')).display !== 'none']);
+                        !(r.querySelector('.late-slot') || {hidden: true}).hidden, getComputedStyle(r.querySelector('.si-late')).display !== 'none']);
                     const b = q('.lcopy'); b.click();
                     return {rows, late: q('[data-tile=late]').textContent, ok: q('[data-tile=ok]').textContent,
                             box: q('[data-tile-box=late]').className, note: q('[data-tile-note=late]').textContent,
                             look: !q('.look').hidden, li: [...document.querySelectorAll('.look li:not([hidden])')].length,
-                            head: q('.area .ah.bad').hidden ? '' : q('.area .ah.bad').textContent, dot: !q('label[for=t1] .tdot').hidden,
+                            lateLine: q('.lf-late').hidden ? '' : q('.lf-lt').textContent, listShut: !q('.lf-ld').open,
+                            head: [...document.querySelectorAll('.lf-gh+.lf-rows>li')].map(x => x.querySelector('.lf-n').textContent),
+                            more: q('.lf-more').hidden ? '' : q('.lf-more .m1').textContent,
+                            ahead: q('.area .ah.bad').hidden ? '' : q('.area .ah.bad').textContent, dot: !q('label[for=t1] .tdot').hidden,
                             copy: !b.hidden, open: b.closest('details').open}})()""")
             finally:
                 c.close()
                 srv.shutdown()
         finally:
             shutil.rmtree(d, ignore_errors=True)
-        self.assertEqual(sorted(got["rows"]), [["Backup - nightly", True, True, True], ["Backup - weekly", False, False, False]])
-        self.assertEqual((got["late"], got["ok"]), ("1", "1"))
+        self.assertEqual(sorted(got["rows"])[:2], [["Backup - nightly", True, True, True], ["Backup - weekly", False, False, False]])
+        self.assertEqual((got["late"], got["ok"]), ("1", "7"))
         self.assertIn("t-bad", got["box"])
         self.assertTrue(got["note"].startswith("Backup - nightly: last ran "), got["note"])
-        self.assertEqual((got["look"], got["li"]), (True, 1))
-        self.assertEqual(got["head"], "1 needs a look")
+        self.assertEqual(got["look"], True)
+        self.assertEqual(got["lateLine"], "1 report is late:Backup - nightly")       # 1.118.0: one line, the list shut under it
+        self.assertTrue(got["listShut"])
+        self.assertEqual(got["head"], ["Patch - 6", "Patch - 5", "Patch - 4", "Patch - 3"])   # the late line takes the 5th line
+        self.assertEqual(got["more"], "Show 2 more")
+        self.assertEqual(got["ahead"], "1 needs a look")
         self.assertTrue(got["dot"])
         self.assertTrue(got["copy"])
         self.assertFalse(got["open"])                                                  # Copy link copies, the line stays shut
+
+class LookFirst1180(unittest.TestCase):
+    """1.118.0: Look at these first - "Got worse" one line per report, the late reports one line (site-report.js), at most 5
+    lines; only a report AAP runs on a schedule or with a steady cadence can be late; the Site portal link."""
+
+    def line(self, name, gaps, launch="", crit=(0, 0), status="ok", title="t"):
+        """A line whose runs are gaps hours apart (oldest first), its newest run 1 h ago; crit: the critical counts, oldest first."""
+        t = datetime.datetime(2026, 11, 23, 8, 0, tzinfo=datetime.timezone.utc)
+        whens = [t]
+        for g in reversed(gaps):
+            whens.insert(0, whens[0] - datetime.timedelta(hours=g))
+        line, key = None, name.lower().replace(" ", "-")
+        for i, w in enumerate(whens):
+            c = crit[min(i, len(crit) - 1)] if i >= len(whens) - len(crit) else 0
+            e = dict(_run(i + 1, w.strftime("%Y-%m-%d %H:%M UTC"), status if i == len(whens) - 1 else "ok"),
+                     key=key + "/latest.html", name=name, latest=key + "/latest.html", title=title,
+                     counts={"critical": c, "warning": 0, "low": 0})
+            if launch:
+                e["launch"] = launch[i] if isinstance(launch, list) else launch
+            line, _ = rw.history(line, e, 5)
+        return line
+
+    def board(self, reports, look="atlas", portal=""):
+        return rw.index_html(reports, "index.html", "Site reports", None, "2026-11-23 09:00 UTC", (), look, "", None, "", "", portal)
+
+    def test_1_only_scheduled_or_steady_reports_can_be_late(self):
+        self.assertEqual(rw.due_hours(self.line("Steady", [24, 23, 25, 24, 26])), 48)              # 5 gaps within 25 %
+        self.assertIsNone(rw.due_hours(self.line("Four gaps", [24, 24, 24, 24])))                   # too few to call steady
+        odd = [9, 21, 15, 30, 6]
+        self.assertIsNone(rw.due_hours(self.line("By hand", odd, "manual")))
+        self.assertIsNone(rw.due_hours(self.line("A workflow's step", odd, "workflow")))
+        self.assertEqual(rw.due_hours(self.line("Scheduled", odd, "scheduled")), 30)               # median 15, twice that
+        self.assertIsNone(rw.due_hours(self.line("Now by hand", odd, ["scheduled"] * 5 + ["manual"])))   # the newest run decides
+        self.assertTrue(rw.steady(self.line("Edge", [20, 25, 25, 25, 30])))                         # 25 +- 25 % holds
+        self.assertFalse(rw.steady(self.line("Over", [18, 25, 25, 25, 30])))
+        self.assertEqual(rw._trend_point({"when": "w", "launch": "scheduled"})["launch"], "scheduled")
+        self.assertNotIn("launch", rw._trend_point({"when": "w"}))                                # a run that did not say: none
+
+    def test_2_got_worse_one_line_each_at_most_five(self):
+        ups = [self.line("Up %d" % i, [24], "scheduled", crit=(1, 1 + i)) for i in range(1, 8)]
+        nc = self.line("Down here", [24], "scheduled", status="unknown")
+        late = self.line("Late one", [24, 24, 24, 24, 24])
+        late["trend"] = [dict(x, when=(rw._when_dt(x["when"]) - datetime.timedelta(hours=72)).strftime("%Y-%m-%d %H:%M UTC")) for x in late["trend"]]
+        late["when"] = late["trend"][0]["when"]
+        h = self.board(ups + [nc, late])
+        box = h[h.index('<section class="look'):h.index('</section>', h.index('<section class="look')) + 10]
+        self.assertIn('<h3 class="lf-gh">Got worse <span class="n">8</span></h3>', box)
+        head = box[:box.index('<details class="lf-more">')]
+        self.assertEqual(head.count('<li class="lf-r">'), 5)              # no row kept back: the script makes room for a late line
+        self.assertIn('<span class="m1">Show 3 more</span>', box)
+        self.assertIn('data-cap="5"', box)
+        names = re.findall(r'<li class="lf-r"><a class="lf-n" href="[^"]*" title="([^"]*)"', box)
+        self.assertEqual(names, ["Up 7", "Up 6", "Up 5", "Up 4", "Up 3", "Up 2", "Up 1", "Down here"])   # most first, not checked last
+        self.assertIn('<li data-late-li="r9" data-name="Late one" hidden>', box)
+        self.assertIn('<div class="lf-late" hidden>', box)                                   # no script: no late line
+        self.assertNotIn("Since the previous run", box)
+        # never "Show 1 more": the row shows instead
+        five = self.board(ups[:4] + [nc, late])
+        self.assertNotIn("Show 1 more", five)
+        self.assertEqual(five.count('<li class="lf-r">'), 5)
+        self.assertIn('<details class="lf-more" hidden><summary><span class="m1">Show 0 more</span>', five)   # there for the script
+        ups = [self.line("Up %d" % i, [24], "manual", crit=(1, 1 + i)) for i in range(1, 8)]     # by hand: none can be late
+        six = self.board(ups[:6])
+        self.assertNotIn('<details class="lf-more">', six)
+        self.assertEqual(six.count('<li class="lf-r">'), 6)
+        seven = self.board(ups[:7])
+        self.assertIn("Show 2 more", seven)
+
+    def test_3_red_only_when_worse_and_the_summary_cut(self):
+        long_ = "x" * 150
+        h = self.board([self.line("Up", [24], "scheduled", crit=(1, 3), title=long_)])
+        self.assertIn('<section class="look lf-crit"', h)
+        self.assertIn('<span class="lf-s" title="%s">%s…</span>' % (long_, "x" * 109), h)
+        late = self.line("Only late", [24, 24, 24, 24, 24], "scheduled")
+        h = self.board([late])
+        self.assertIn('<section class="look" aria-labelledby="look-h" data-cap="5" hidden>', h)          # late only: neutral, shown by the script
+        self.assertIn("(every 24 hours)", h)
+        self.assertNotIn("look lf-crit", h)
+        hourly = self.board([self.line("Hourly", [1, 1, 1, 1, 1], "scheduled")])
+        self.assertIn('data-due="26"', hourly)                                              # late after 26 h (the floor) ...
+        self.assertIn("expected by 2026-11-23 09:00 UTC (every 1 hour)", hourly)              # ... expected every hour (review)
+        far = self.line("Far", [24], "scheduled")
+        far["trend"] = [dict(x, when=w) for x, w in zip(far["trend"], ("9999-12-31 08:00 UTC", "9999-12-30 08:00 UTC"))]
+        far["when"] = far["trend"][0]["when"]
+        self.assertIn("every 24 hours", self.board([far]))                                    # no date past 9999: no crash
+
+    def test_4_the_portal_link(self):
+        for ok in ("https://portal.example.mil/portal/", "/portal/", "http://192.0.2.5/portal"):
+            self.assertEqual(rw.portal_href(ok), ok)
+        for bad in ("", "auto", "javascript:alert(1)", "//elsewhere.example.mil/", "portal/", 'https://a.example.mil/"x', "/a b",
+                    "/\\elsewhere.example.mil/", "https://?x", "https://h.example.mil:port/", "/portal/\x01"):
+            self.assertEqual(rw.portal_href(bad), "", bad)
+        r = [self.line("A", [24], "scheduled")]
+        for look in rw.WEB_LOOKS:
+            h = self.board(r, look, "/portal/")
+            self.assertIn('<a class="plink" href="/portal/" title="The site portal: run jobs, follow them, approvals">Site portal', h, look)
+            self.assertLess(h.index('class="plink"'), h.index('id="theme"'))                  # in the top bar, before Light / Auto / Dark
+            self.assertNotIn('class="plink"', self.board(r, look, ""))
+            self.assertNotIn('class="plink"', self.board(r, look, "javascript:x"))
+        self.assertIn('<a class="plink" href="https://p.example.mil/portal"', self.board(r, "portal", "https://p.example.mil/portal"))
+        self.assertNotIn('class="plink"', self.board(r, "portal", ""))
+        page = "<html><head></head><body><div class=\"appbar-in\"><!--site-report-back--></div></body></html>"
+        h = rw.back_link(page, "vm/latest.html", "index.html", None, "/portal/")
+        self.assertRegex(h, r'All reports</a><span aria-hidden="true" style="opacity:.55">&middot;</span><a class="sr-portal" href="/portal/"')
+        self.assertNotIn("sr-portal", rw.back_link(page, "vm/latest.html", "index.html"))
+        self.assertNotIn("sr-portal", rw.back_link(page, "vm/latest.html", "index.html", None, "javascript:x"))
+
+    def test_5_the_role_vars(self):
+        """vars/main.yml: _web_portal_link (report_portal_link auto / an address / "") and _web_launch (AWX's awx_meta_vars)."""
+        import jinja2
+        import yaml
+        with open(os.path.join(REPO, "roles", "site_email", "vars", "main.yml")) as f:
+            v = yaml.safe_load(f)
+        env = jinja2.Environment()
+
+        def r(key, **ctx):
+            return env.from_string(v[key]).render(**ctx).strip()
+        self.assertEqual(r("_web_portal_link"), "")
+        self.assertEqual(r("_web_portal_link", report_portal_url="https://p.example.mil/portal"), "https://p.example.mil/portal")
+        self.assertEqual(r("_web_portal_link", portal_path="/portal/"), "/portal/")
+        self.assertEqual(r("_web_portal_link", report_portal_link="", report_portal_url="https://p.example.mil/portal"), "")
+        self.assertEqual(r("_web_portal_link", report_portal_link="/site/"), "/site/")
+        self.assertEqual(r("_web_launch"), "")
+        self.assertEqual(r("_web_launch", awx_job_launch_type="manual"), "manual")
+        self.assertEqual(r("_web_launch", awx_job_launch_type="scheduled", awx_schedule_id=4), "scheduled")
+        self.assertEqual(r("_web_launch", awx_job_launch_type="workflow", awx_workflow_job_launch_type="manual"), "workflow")
+        self.assertEqual(r("_web_launch", awx_job_launch_type="workflow", awx_workflow_job_launch_type="scheduled",
+                           awx_parent_job_schedule_id=9), "scheduled")
+        self.assertEqual(r("_web_launch", tower_job_launch_type="scheduled"), "scheduled")
+        for empty in (None, "", "0", 0):                                                    # a placeholder is no schedule (review)
+            self.assertEqual(r("_web_launch", awx_job_launch_type="manual", awx_schedule_id=empty), "manual", empty)
+        self.assertEqual(r("_web_launch", awx_job_launch_type="manual", awx_schedule_id=12), "scheduled")
+        self.assertEqual(r("_web_portal_link", report_portal_url=None, portal_path="/portal/"), "/portal/")
+
 
 class Back1872(unittest.TestCase):
     """1.87.2: every page on the website has "All reports" (to the index, relative to the page), put in at publish time - never in the email;

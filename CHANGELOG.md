@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.118.0 — 2026-11-23
+
+**To set up:** nothing. The link shows by itself where `report_portal_url` is set (or `portal_path` in the inventory);
+set `report_portal_link: ""` for none, or an address or `/portal/` to choose it (docs/WEB_REPORTS.md).
+
+**The report website: a calmer "Look at these first", and a Site portal link (user-approved mockup, variant A).**
+
+- **Got worse**: one line per report - *+2 critical 5 → 7* (or *Not checked*), what it says now, **Open**. "Since the
+  previous run" is no longer on every row; a long text is cut with …, all of it in the tooltip.
+- **The late reports: one line** - *5 reports are late: A, B, C +2*, the list under **Show list** (last ran, expected by,
+  every N hours).
+- At most 5 lines, then **Show N more** (never *Show 1 more*). Red only on the critical counts, an amber clock, a neutral
+  border with a thin red top only when something got worse. No solid red tiles in the box.
+- **Late, only when it can be**: a report is late only when its newest run was started by an AAP schedule (also as a step of
+  a scheduled workflow: `awx_job_launch_type`, `awx_schedule_id`, `awx_parent_job_schedule_id`, `awx_workflow_job_launch_type` -
+  checked against AWX's job variables), or when it runs on a steady cadence (5 gaps or more, each within 25 % of their
+  median). Runs by hand and steps of a workflow someone started are late only on such a steady cadence. The index keeps
+  each run's `launch`.
+- **Site portal ›** in the index's top bar, and *‹ All reports · Site portal ›* on each report page: `report_portal_link`
+  (`auto`, an address or a path, `""` for none). In every look, light and dark; written into the page, no script.
+- Works under the website's strict Content-Security-Policy (the late line is filled by site-report.js); without the script the
+  late line stays hidden, as before.
+- Tests: tests/test_report_web.py (LookFirst1180: the late rule, the box's lines and cap, red only when worse, the portal link
+  in every look and on a report page, the role's `_web_launch` and `_web_portal_link`; the browser test fills the late line).
+
 ## 1.115.0 — 2026-11-23
 
 **To set up:** set `report_theme_season: christmas` (or `auto`: on from Dec 1 to Jan 6). The report website shows it from each job's next run; the portal after **Site portal - deploy** runs once.

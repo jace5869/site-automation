@@ -130,6 +130,10 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 ## copy could not be kept gets nothing sent. false = the load without that copy (as before 1.22.0).
 # net_config_keep_before: true
 
+# ---- site_portal_stack ---------------------------------------------------------------------------
+## the portal's path on the proxy
+# portal_path: /portal/
+
 # ---- servicenow ----------------------------------------------------------------------------------
 ## check the instance's HTTPS certificate (see servicenow_ca_path)
 # servicenow_validate_certs: true
@@ -363,6 +367,12 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 ## confirm page in a new tab: nothing runs until the person presses Run there. "" = no buttons, the
 ## pages as before.
 # report_portal_url: ""
+
+## 1.118.0: the "Site portal" link on the report website - the index's top bar and "All reports ·
+## Site portal" on each page. auto: report_portal_url, else portal_path when the inventory sets it
+## (the portal on the same server as the website: /portal/); an address (https://...) or a path
+## (/portal/): that; "" = no link. The link only - the buttons stay with report_portal_url.
+# report_portal_link: auto
 
 ## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower
 ## case with dashes; the play's name outside AAP), {template_id}, {job} (the AAP job; local outside

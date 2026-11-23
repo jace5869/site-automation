@@ -18,6 +18,10 @@
 ## report_web_host, report_web_dest and report_web_url belong in all.yml - the report jobs read them too
 # report_web_copy_jobs: [907, 908]               # these AAP jobs' pages again (job IDs), whatever was copied before
 
+# ---- site_portal_stack ---------------------------------------------------------------------------
+## the portal's path on the proxy
+# portal_path: /portal/
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## The look of the HTML version (docs/EMAIL_REPORTS.md, "The look"): standard = a header band in the
 ## report's colour (green, amber, red, blue) with number boxes under it; command = a dark header
@@ -152,6 +156,12 @@
 ## confirm page in a new tab: nothing runs until the person presses Run there. "" = no buttons, the
 ## pages as before.
 # report_portal_url: ""
+
+## 1.118.0: the "Site portal" link on the report website - the index's top bar and "All reports ·
+## Site portal" on each page. auto: report_portal_url, else portal_path when the inventory sets it
+## (the portal on the same server as the website: /portal/); an address (https://...) or a path
+## (/portal/): that; "" = no link. The link only - the buttons stay with report_portal_url.
+# report_portal_link: auto
 
 ## every report's last runs, a tab per area ("" = none)
 # report_web_index: index.html
