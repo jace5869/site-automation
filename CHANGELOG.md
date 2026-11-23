@@ -124,6 +124,9 @@ set `report_portal_link: ""` for none, or an address or `/portal/` to choose it 
   tests/test_no_escaped_quote.py keeps it so.
 - **Java4Shell check: a Keycloak container whose JVM is not PID 1** (a wrapper script or an init starts it) said
   "Java version not read". The check now finds the container's java process itself and reads its version and flags.
+  A minimal image with no readlink or jcmd in it is read from the HOST instead (read only, nothing runs in the container):
+  the container's process tree in /proc, the JDK's release file through /proc/<pid>/root, the options from its command
+  line and environment. Tested on Keycloak 26 started through a wrapper, with the tools taken away.
 - **Site portal: the Auto/Light/Dark switch no longer covers a tab.** With Network map and Active Directory on, at
   800 px the switch sat over *Active Directory*. The same happened with a long user name (1001 to 1280 px) or a long
   portal name. Now the tabs take the room the portal's name and the switch leave, and wrap to a second row there.
