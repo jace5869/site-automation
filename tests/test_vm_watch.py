@@ -37,6 +37,65 @@ def data(**kw):
     return d
 
 
+def lost(name, conn="inaccessible", power="poweredOff", dss=("ds-07",), **kw):
+    v = {"name": name, "moid": "vm-" + name, "vcenter": VC, "datacenter": "DC1", "cluster": "CL1", "esxi_host": "esx01.example.mil",
+         "hostname": "", "ip": "", "ips": [], "power": power, "connection": conn, "datastores": list(dss), "not_judged": ""}
+    v.update(kw)
+    return v
+
+
+class Lost1124(unittest.TestCase):
+    """1.112.4: inaccessible, invalid and orphaned VMs are critical, whatever their power, under their datastore; a skipped
+    one is listed "not judged", a protected one marked; a disconnected host lists its VMs; the counts in How it judged."""
+
+    def d(self):
+        return data(hosts=[host("esx01.example.mil"), host("esx02.example.mil", connection="disconnected")],
+                    datastores=[{"name": "DS1", "accessible": True, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1"},
+                                {"name": "ds-07", "accessible": False, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1"}],
+                    vms_read=60, vms_checked=50,
+                    vms_lost=[lost("app01"), lost("app02", power=""), lost("db01", dss=("DS1", "ds-07")), lost("old01", conn="orphaned"),
+                              lost("test01", not_judged="vm_watch_skip_vms"), lost("aap01")],
+                    vms_disconnected=[dict(lost("web01", conn="disconnected", power="poweredOn"), esxi_host="esx02.example.mil")])
+
+    def test_1_conditions(self):
+        cs = w.vm_watch_conditions(self.d(), {"protected_names": ["aap*"]})
+        order = [(c["kind"], c["object"]) for c in cs]
+        i = order.index(("datastore", "ds-07"))
+        self.assertEqual(order[i + 1:i + 6], [("lost", "aap01"), ("lost", "app01"), ("lost", "app02"), ("lost", "db01"), ("lost", "old01")])
+        by = dict((c["object"], c) for c in cs if c["kind"] == "lost")
+        self.assertEqual(by["app01"]["severity"], "critical")
+        self.assertEqual(by["app01"]["summary"], "VM app01 is inaccessible in vCenter: its files cannot be reached (datastore ds-07)")
+        self.assertIn("orphaned in vCenter", by["old01"]["summary"])
+        self.assertIn("Do not remove the VM from the inventory", by["app01"]["todo"])
+        self.assertEqual(by["app02"]["detail"], "power unknown")
+        self.assertEqual((by["test01"]["severity"], by["test01"]["not_judged"]), ("info", "vm_watch_skip_vms"))
+        self.assertTrue(by["test01"]["summary"].endswith("- not judged (vm_watch_skip_vms)"))
+        self.assertTrue(by["aap01"]["protected"] and by["aap01"]["summary"].endswith("- protected"))
+        ds = next(c for c in cs if c["kind"] == "datastore")
+        self.assertIn("vCenter shows 6 VMs on it as inaccessible: aap01, app01, app02, db01, old01, test01", ds["summary"])
+        h = next(c for c in cs if c["kind"] == "host")
+        self.assertTrue(h["summary"].endswith("; 1 VM on it: web01"), h["summary"])
+        self.assertFalse(any(c["object"] == "web01" and c["kind"] != "host" for c in cs))          # under its host, not a row of its own
+
+    def test_2_never_an_action_and_counted(self):
+        d = self.d()
+        cs = w.vm_watch_conditions(d)
+        a = w.vm_watch_actions(cs, {"max_actions": 5})
+        self.assertEqual(a, {"would_restart": [], "protected": [], "over_limit": []})
+        rep = w.vm_watch_report(d, cs, a)
+        how = next(s for s in rep["sections"] if s["title"] == "How it judged")
+        self.assertIn("VMs read: 60. Judged (powered on, connected): 50. Listed as inaccessible, invalid or orphaned: 6 (1 of them not "
+                      "judged: vm_watch_skip_vms / vm_watch_skip_folders). On a disconnected host (listed under it): 1.", how["lines"])
+        rows = next(s for s in rep["sections"] if s["title"] == "Down or hung now")["rows"]
+        self.assertTrue(any(r[1] == "vm app01" for r in rows))
+        self.assertEqual(rep["status"], "critical")
+
+    def test_3_an_older_read_unchanged(self):
+        rep = w.vm_watch_report(data(), [], {})
+        how = next(s for s in rep["sections"] if s["title"] == "How it judged")
+        self.assertFalse(any(l.startswith("VMs read") for l in how["lines"]))
+
+
 class Conditions(unittest.TestCase):
     def test_clean(self):
         self.assertEqual(w.vm_watch_conditions(data()), [])

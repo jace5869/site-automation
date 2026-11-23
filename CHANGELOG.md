@@ -31,6 +31,23 @@
   content styles unchanged and no sideways scroll on atlas, brief, ops and their index and on the portal's Jobs page, the
   sticky table heads in all three looks; the portal's files).
 
+## 1.112.4 — 2026-11-23
+
+**To set up:** nothing to set up.
+
+- **VM outage watch: a VM vCenter shows as inaccessible is reported.** The watch read each VM's connection state, but
+  skipped every VM that was not powered on before looking at it. A VM whose files cannot be reached often reads powered
+  off or unknown, so an inaccessible, invalid or orphaned VM was never named. Now each one is a critical condition,
+  whatever its power state: "VM app01 is inaccessible in vCenter: its files cannot be reached (datastore ds-07)".
+  What to do: check the datastore and its paths; do not remove the VM from the inventory.
+- In the report these VMs sit right under their datastore's row, and the datastore's row names them. A VM in
+  `vm_watch_skip_vms` or `vm_watch_skip_folders` is still listed, as "not judged" (info). A protected VM is marked
+  "protected". Nothing is restarted: phase 2 only ever acts on hung VMs.
+- A disconnected host's row names the VMs on it, instead of leaving them out.
+- *How it judged* says how many VMs were read, judged, listed as inaccessible, and on a disconnected host.
+- Tests: tests/test_vmware_modules.py (the read, on stand-ins: 3 inaccessible VMs powered off or of unknown power and 1
+  orphaned on a lost datastore, a skipped one, a template, a disconnected host); tests/test_vm_watch.py (the conditions,
+  their order, the marks, no restart, the counts).
 ## 1.112.3 — 2026-11-23
 
 **To set up:** nothing to set up.

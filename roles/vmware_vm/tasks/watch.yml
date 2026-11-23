@@ -40,7 +40,9 @@
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: VMware | what was found, and what phase 2 would restart (nothing is restarted)
   ansible.builtin.set_fact:
-    _vm_w_cond: "{{ _vm_w | vm_watch_conditions({'one_signal_severity': vm_watch_one_signal_severity}) }}"
+    _vm_w_cond: >-
+      {{ _vm_w | vm_watch_conditions({'one_signal_severity': vm_watch_one_signal_severity,
+           'protected_ids': _vm_prot.ids, 'protected_names': _vm_prot.names + (vm_watch_protect | name_list)}) }}
     _vm_w_opts: >-
       {{ {'protected_ids': _vm_prot.ids,
           'protected_names': _vm_prot.names + (vm_watch_protect | name_list),
