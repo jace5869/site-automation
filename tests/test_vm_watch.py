@@ -153,6 +153,40 @@ class Fold1124(unittest.TestCase):
         self.assertTrue(c["summary"].endswith("cleared since on every host"))
 
 
+class Tickets1124(unittest.TestCase):
+    """1.112.4: tickets fold to their root - a big storage loss with 20 VMs is 1 ticket; a VM no lost datastore or down host
+    explains is its own."""
+
+    def test_1_twenty_vms_one_ticket(self):
+        lost20 = [lost("app%02d" % i) for i in range(1, 21)]
+        hung_here = suspect("db01", "hung", datastores=["ds-07"])
+        hung_else = suspect("web09", "hung", datastores=["DS1"])
+        orphan = lost("old01", conn="orphaned", dss=("DS1",))                       # its datastore is fine: no root
+        on_down_host = lost("app99", dss=("DS1",), esxi_host="esx02.example.mil")
+        d = data(hosts=[host("esx01.example.mil"), host("esx02.example.mil", connection="notResponding")],
+                 datastores=[{"name": "DS1", "accessible": True, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1"},
+                             {"name": "ds-07", "accessible": False, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1"}],
+                 vms_read=80, vms_lost=lost20 + [orphan, on_down_host], suspects=[hung_here, hung_else])
+        cs = w.vm_watch_conditions(d)
+        self.assertEqual(len([c for c in cs if c["kind"] in ("lost", "hung")]), 24)    # the report still has every VM
+        f = w.vm_watch_health(d, cs)[VC]["findings"]
+        by = dict((x["id"], x) for x in f)
+        self.assertEqual(sorted(by), ["vm-watch:datastore:ds-07", "vm-watch:host:esx02.example.mil", "vm-watch:hung:web09",
+                                      "vm-watch:lost:old01"])
+        ds = by["vm-watch:datastore:ds-07"]["summary"]
+        self.assertIn("; 21 VMs: app01 (inaccessible), app02 (inaccessible)", ds)
+        self.assertIn("app20 (inaccessible), db01 (hung) [DC1]", ds)
+        self.assertIn("app20 (inaccessible)", ds)
+        self.assertIn("1 VM: app99 (inaccessible)", by["vm-watch:host:esx02.example.mil"]["summary"])
+
+    def test_2_the_summary_changes_with_the_vms(self):
+        def summary(n):
+            d = data(datastores=[{"name": "ds-07", "accessible": False, "maintenance": "normal", "vcenter": VC, "datacenter": "DC1"}],
+                     vms_lost=[lost("app%02d" % i) for i in range(n)])
+            return w.vm_watch_health(d, w.vm_watch_conditions(d))[VC]["findings"][0]["summary"]
+        self.assertNotEqual(summary(3), summary(4))                                     # the ticket is noted as it changes
+
+
 class Conditions(unittest.TestCase):
     def test_clean(self):
         self.assertEqual(w.vm_watch_conditions(data()), [])
