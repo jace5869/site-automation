@@ -643,7 +643,7 @@ class Browser1012(unittest.TestCase):
                                                "DCs with a problem, last 7 daysthe worst run of each 2 hours; the numbers: the runs below"], (look, w))
                 self.assertEqual(len(r["tiles"]), 8)
                 self.assertEqual(r["dcs"][0][:6], ["dc03", "r-critical", "Critical", r["dcs"][0][3], 48, 8], (look, w))
-                self.assertRegex(r["dcs"][0][3], r"^since \d\d:\d\d UTC · 8 runs$")
+                self.assertRegex(r["dcs"][0][3], r"^since (\d{4}-\d\d-\d\d )?\d\d:\d\d UTC · 8 runs$")   # just after midnight UTC the runs began yesterday: its date said
                 self.assertEqual([x[0] for x in r["dcs"]], ["dc03", "dc02", "dc01"])   # AD's worst, then SolarWinds down
                 self.assertTrue(r["dcs"][1][6].startswith("Down"), r["dcs"][1][6])
                 self.assertIn("Live", r["live"])
