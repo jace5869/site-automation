@@ -1,6 +1,7 @@
 ---
 # Runs files/win_certs.ps1 on the server (ansible.builtin.script: no collection needed) with the
-# settings from defaults/main.yml, then adds its findings to this host's list.
+# settings from defaults/main.yml, then adds its findings to this host's list. The roots Windows needs
+# (vars/main.yml, KB 293781 - several long expired) are left out of everything.
 - name: Windows certs | check
   ansible.builtin.script: win_certs.ps1
   environment:
@@ -9,7 +10,8 @@
           'expired_report_days': win_check_certs_expired_report_days, 'stores': win_check_certs_stores,
           'notice_days': win_check_certs_notice_days, 'trust': win_check_certs_trust | bool,
           'trust_skip_stores': win_check_certs_trust_skip_stores, 'remote_desktop': win_check_certs_remote_desktop | bool,
-          'ignore_subjects': win_check_certs_ignore_subjects, 'endpoints': win_check_certs_endpoints} | to_json }}
+          'ignore_subjects': win_check_certs_ignore_subjects, 'endpoints': win_check_certs_endpoints,
+          'required_roots': win_required_roots + (win_required_roots_extra | default([], true))} | to_json }}
   register: _win_check_out
   changed_when: false
   failed_when: false

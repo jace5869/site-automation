@@ -1,0 +1,25 @@
+---
+# The root certificates Windows needs to run correctly (Microsoft, "Required trusted root certificates", KB 293781:
+# learn.microsoft.com/troubleshoot/windows-server/certificates-and-public-key-infrastructure-pki/trusted-root-certificates-are-required).
+# Several are long expired, and that is how Windows ships them: anything signed before a root expired still needs that
+# root to validate (backward compatibility). Microsoft: "Do not remove them."
+# So they are never in the certificate report (expired or not, in any store), never a finding, never renewed, and the
+# Windows trust check never removes or blocks one, even when check_trust_extra names it.
+# A certificate matches when it is self-issued (subject = issuer), its serial number is the one here (leading zeros
+# ignored) and its subject contains the "issued to" text here. Add your own in win_required_roots_extra (same keys).
+# Here and not in defaults/: a safety list, not a setting - inventory cannot shrink it.
+win_required_roots:
+  # necessary and trusted in Windows 10 / Server 2016 and newer
+  - {issued_to: "Microsoft Root Authority", serial: "00c1008b3c3c8811d13ef663ecdf40", expires: "2020-12-31"}
+  - {issued_to: "Microsoft Root Certificate Authority", serial: "79ad16a14aa0a5ad4c7358f407132e65", expires: "2021-05-09"}
+  - {issued_to: "Microsoft Root Certificate Authority 2010", serial: "28cc3a25bfba44ac449a9b586b4339aa", expires: "2035-06-23"}
+  - {issued_to: "Microsoft Root Certificate Authority 2011", serial: "3f8bc8b5fc9fb29643b569d66c42e144", expires: "2036-03-22"}
+  - {issued_to: "Copyright (c) 1997 Microsoft Corp.", serial: "01", expires: "1999-12-30"}            # Microsoft Timestamp Root
+  - {issued_to: "Microsoft Authenticode(tm) Root Authority", serial: "01", expires: "1999-12-31"}
+  - {issued_to: "NO LIABILITY ACCEPTED, (c)97 VeriSign, Inc.", serial: "4a19d2388c82591ca55d735f155ddca3", expires: "2004-01-07"}  # VeriSign Time Stamping CA
+  - {issued_to: "Thawte Timestamping CA", serial: "00", expires: "2020-12-31"}
+  # not in Windows 8 / Server 2012, in Windows 10 and newer
+  - {issued_to: "Symantec Enterprise Mobile Root for Microsoft", serial: "0f6b552f9ebf907b0f6629a9bdf4d8ce", expires: "2032-03-14"}
+  - {issued_to: "Microsoft ECC Product Root Certificate Authority 2018", serial: "14982666dc7ccd8f4053677bb999ec85", expires: "2043-02-27"}
+  - {issued_to: "Microsoft ECC TS Root Certificate Authority 2018", serial: "153875e1647ed1b047b4efaf41128245", expires: "2043-02-27"}
+  - {issued_to: "Microsoft Time Stamp Root Certificate Authority 2014", serial: "2fd67a432293329045e953343ee27466", expires: "2039-10-22"}

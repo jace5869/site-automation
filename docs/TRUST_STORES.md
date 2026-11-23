@@ -126,6 +126,12 @@ whatever `check_trust_remove` says. A JKS `cacerts` is rewritten only when it wa
 integrity digest matches the keystore password given (the **Keystore password** credential, else
 `check_trust_keystore_password`, `changeit`); otherwise it is listed as not removed, unchanged.
 
+**Never removed: the roots Windows needs** (1.112.2). A root certificate in Microsoft's *Required trusted root
+certificates* (KB 293781; `roles/win_check_certs/vars/main.yml`, plus `win_required_roots_extra`) is never put in
+Disallowed or deleted, even when `check_trust_extra` names it: its finding stays, and the removal lists it as not
+removed - "a root certificate Windows needs (Microsoft KB 293781)". Several of them are expired; Windows still needs
+them for what was signed before they expired.
+
 ## VMware
 
 The **VMware trust store report** (`playbooks/vmware_trust_report.yml`, template *VMware - trust store

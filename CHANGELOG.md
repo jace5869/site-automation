@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.112.2 — 2026-11-23
+
+**To set up:** nothing.
+
+- **The roots Windows needs are never reported or removed** (Microsoft, *Required trusted root certificates*, KB 293781).
+  Its twelve roots - Microsoft Root Authority, Microsoft Root Certificate Authority, 2010 and 2011, the Microsoft
+  timestamp and Authenticode roots, the VeriSign and Thawte time-stamping roots, Symantec Enterprise Mobile Root for
+  Microsoft, the Microsoft ECC 2018 roots, Microsoft Time Stamp Root 2014 - several long expired, as Windows ships them.
+  - **Windows certificate report / health check:** left out in every store, expired or not: not in the table, not a
+    finding, never a CSR (before, one that expired in the last 30 days was listed, and in Personal it was a critical).
+    The script's facts count them (`required_roots_left_out`).
+  - **Windows trust store report:** never put in Disallowed or deleted, even when `check_trust_extra` names one; the
+    finding stays, the removal lists it as not removed with the reason. Check mode shows the same.
+  - The list is `roles/win_check_certs/vars/main.yml` (vars, not defaults: inventory cannot shrink it), matched by
+    subject text, serial number (leading zeros ignored) and self-issued. More of your own: `win_required_roots_extra`.
+- Tests: tests/windows/test_win_checks.ps1 - certs_trust (three required roots expired lately, in Personal and Trusted
+  Root: left out; a lookalike with another serial: listed), trust_remove_required (named by the list: not removed) and
+  its control trust_remove_required_off (removed).
+
 ## 1.112.1 — 2026-11-23
 
 **To set up:** run **AAP - incident document surveys** again (with `incident_docs_draft_credential` set). Nothing by hand.

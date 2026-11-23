@@ -62,6 +62,29 @@ $backupDir = [string](Get-Setting 'backup_dir' 'C:\ProgramData\site-automation\t
 $keystorePassword = [string](Get-Setting 'keystore_password' 'changeit')
 $timeout = [int](Get-Setting 'timeout' 60)
 
+# ---- the roots Windows needs (Microsoft KB 293781; roles/win_check_certs/vars/main.yml) ----------------------
+# Several are long expired, as Windows ships them: still needed for what was signed before. Never reported as expired,
+# never removed. A match: self-issued, the serial number (leading zeros ignored), the subject holds the "issued to" text.
+$requiredRoots = @(Get-Setting 'required_roots' @())
+function Get-SerialKey([string] $s) {
+    $k = ($s -replace '[^0-9A-Fa-f]', '').ToUpper().TrimStart('0')
+    if (-not $k) { $k = '0' }
+    return $k
+}
+function Test-RequiredRoot($c) {
+    if ($null -eq $c -or $script:requiredRoots.Count -eq 0) { return $false }
+    $subj = [string]$c.Subject
+    $sn = [string]$c.SerialNumber
+    if (-not $subj -or -not $sn -or $subj -ne [string]$c.Issuer) { return $false }
+    $sk = Get-SerialKey $sn
+    foreach ($r in $script:requiredRoots) {
+        if ($null -eq $r -or -not [string]$r.issued_to -or -not [string]$r.serial) { continue }
+        if ((Get-SerialKey ([string]$r.serial)) -ne $sk) { continue }
+        if ($subj.ToUpper().Contains(([string]$r.issued_to).ToUpper())) { return $true }
+    }
+    return $false
+}
+
 # ---- the list: by fingerprint and by public key ----------------------------------------------------
 $bySha = @{}
 $bySpki = @{}
@@ -446,7 +469,21 @@ function Remove-FromStore($rec) {
     $disallowed = $(if ($st -like 'Cert:\CurrentUser*') { 'Cert:\CurrentUser\Disallowed' } else { 'Cert:\LocalMachine\Disallowed' })
     $authRoot = ($st -like '*\AuthRoot')
     $tps = @()
-    foreach ($tp in @($rec.thumbprints.Keys)) { if ($names -contains [string]$rec.thumbprints[$tp]) { $tps += @($tp) } }
+    $kept = @()
+    foreach ($tp in @($rec.thumbprints.Keys)) {
+        if ($names -notcontains [string]$rec.thumbprints[$tp]) { continue }
+        # a root Windows needs (KB 293781): never blocked or deleted, whatever list names it
+        $c = $null
+        try { $c = Get-ChildItem -Path ($st + '\' + $tp) -ErrorAction Stop } catch { }
+        if (Test-RequiredRoot $c) { $kept += @([string]$rec.thumbprints[$tp]); continue }
+        $tps += @($tp)
+    }
+    if ($kept.Count -gt 0) {
+        $script:notRemoved += @(@{ kind = [string]$rec.kind; where = $st; names = @($kept | Sort-Object -Unique)
+            why = 'a root certificate Windows needs (Microsoft KB 293781): never removed or blocked, even expired' })
+        $names = @($names | Where-Object { $kept -notcontains $_ })
+        if ($tps.Count -eq 0 -or $names.Count -eq 0) { return }
+    }
     $action = 'put in ' + $disallowed + ' (Windows'' blocklist)' + $(if ($authRoot) { ' - left in AuthRoot: Windows Update owns that store, Disallowed overrides it' } else { ' and deleted from ' + $st })
     if ($dryRun) { Add-Action $rec $action $names $false '' ''; return }
     $errors = @()

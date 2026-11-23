@@ -48,6 +48,11 @@
 ## wildcards, e.g. ['CN=localhost*']
 # win_check_certs_ignore_subjects: []
 
+## more roots never reported, renewed or removed, beside the ones Windows needs (vars/main.yml,
+## Microsoft KB 293781 - left out always): [{issued_to: 'My Root CA', serial: '1a2b...'}]; the
+## Windows trust check honors it too
+# win_required_roots_extra: []
+
 ## TLS services whose certificate a client actually gets, e.g. win_check_certs_endpoints: - {name:
 ## IIS, host: 127.0.0.1, port: 443, servername: web01.yoursite.mil}
 # win_check_certs_endpoints: []

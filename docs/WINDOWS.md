@@ -221,6 +221,13 @@ found too:
   `win_check_certs_notice_days` (60) or expired in the last `win_check_certs_expired_report_days` (30).
   Never a finding or a ticket: its CA renews it. The older Windows roots that expired long ago are left
   out.
+- **The roots Windows needs: always left out** (1.112.2). The twelve root certificates in Microsoft's
+  *Required trusted root certificates* (KB 293781) - Microsoft Root Authority, Microsoft Root Certificate
+  Authority (and 2010, 2011), the Microsoft timestamp and Authenticode roots, the VeriSign and Thawte
+  time-stamping roots, the ECC 2018 roots, ... - are never in the report, never a finding and never renewed,
+  in any store, expired or not. Several expired years ago and that is how Windows ships them: anything signed
+  before a root expired still needs it. **Do not delete them.** The list: `roles/win_check_certs/vars/main.yml`
+  (matched by subject, serial number and self-issued); more of your own in `win_required_roots_extra`.
 - **In use** (an https binding, the WinRM listener): always checked, whatever its store.
 - **Remote Desktop: left out.** Windows (or your GPO's autoenrollment) renews these itself, so they are
   not in the report, the findings or the renewal: the **Remote Desktop** store (the self-signed one RDP

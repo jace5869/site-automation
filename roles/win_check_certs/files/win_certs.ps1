@@ -6,6 +6,7 @@
 # without is one the server trusts: listed in the report, never a finding.
 # Remote Desktop's certificates are left out unless remote_desktop is on (win_check_certs_remote_desktop):
 # the Remote Desktop store, the one RDP uses, and those for Remote Desktop only (Windows or the GPO renews them).
+# The roots Windows needs (Microsoft KB 293781, several long expired) are left out of everything: required_roots.
 # Read-only: it changes nothing on the server.
 # ---- common to every site-automation Windows check (keep identical in all of them) -----------
 # Settings arrive as JSON in $env:SITE_CHECK_CONFIG (the role's defaults and your inventory).
@@ -52,6 +53,29 @@ $trustOn = [bool](Get-Setting 'trust' $false)
 $trustSkip = @(Get-Setting 'trust_skip_stores' @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'))
 $rdpOn = [bool](Get-Setting 'remote_desktop' $false)
 $now = Get-Date
+# ---- the roots Windows needs (Microsoft KB 293781; roles/win_check_certs/vars/main.yml) ----------------------
+# Several are long expired, as Windows ships them: still needed for what was signed before. Never reported as expired,
+# never removed. A match: self-issued, the serial number (leading zeros ignored), the subject holds the "issued to" text.
+$requiredRoots = @(Get-Setting 'required_roots' @())
+function Get-SerialKey([string] $s) {
+    $k = ($s -replace '[^0-9A-Fa-f]', '').ToUpper().TrimStart('0')
+    if (-not $k) { $k = '0' }
+    return $k
+}
+function Test-RequiredRoot($c) {
+    if ($null -eq $c -or $script:requiredRoots.Count -eq 0) { return $false }
+    $subj = [string]$c.Subject
+    $sn = [string]$c.SerialNumber
+    if (-not $subj -or -not $sn -or $subj -ne [string]$c.Issuer) { return $false }
+    $sk = Get-SerialKey $sn
+    foreach ($r in $script:requiredRoots) {
+        if ($null -eq $r -or -not [string]$r.issued_to -or -not [string]$r.serial) { continue }
+        if ((Get-SerialKey ([string]$r.serial)) -ne $sk) { continue }
+        if ($subj.ToUpper().Contains(([string]$r.issued_to).ToUpper())) { return $true }
+    }
+    return $false
+}
+$requiredKept = 0
 # Which certificates are in use: https bindings (IIS, WSUS, ...), the WinRM HTTPS listener AAP
 # connects through, and Remote Desktop (with remote_desktop on).
 # netsh prints its labels in the server's language: each https binding is a block of "label : value" lines, read by
@@ -228,6 +252,8 @@ foreach ($st in $stores) {
         $skip = $false
         foreach ($p in $ignore) { if ($subj -like [string]$p) { $skip = $true } }
         if ($skip) { continue }
+        # a root Windows needs (KB 293781): not in the report, not a finding, never renewed - expired or not
+        if (Test-RequiredRoot $c) { $requiredKept++; continue }
         $tp = ([string]$c.Thumbprint).ToUpper()
         if (-not $rdpOn -and -not $bound.ContainsKey($tp)) {
             # the one Remote Desktop uses, or one for Remote Desktop only: left out
@@ -275,4 +301,5 @@ elseif ($endpoints.Count -gt 0) {
     }
 }
 $facts.inventory = $inv
+$facts.required_roots_left_out = $requiredKept
 Write-Result

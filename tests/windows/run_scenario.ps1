@@ -11,6 +11,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $now = Get-Date
 function O($h) { return [pscustomobject]$h }
+# the roots Windows needs, from the role's vars file (roles/win_check_certs/vars/main.yml)
+function RequiredRoots {
+    $out = @()
+    foreach ($l in @(Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\roles\win_check_certs\vars\main.yml'))) {
+        if ($l -match 'issued_to:\s*"([^"]+)",\s*serial:\s*"([^"]+)"') { $out += @(@{ issued_to = $Matches[1]; serial = $Matches[2] }) }
+    }
+    return $out
+}
 function Ev($log, $id, $provider, $level, $hoursAgo, $message, $props) {
     $p = @()
     foreach ($v in @($props)) { $p += @([pscustomobject]@{ Value = $v }) }
@@ -195,13 +203,24 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
     }
     'certs_trust' {
         # "Automatically select the store": a .cer lands in Trusted Root / Intermediate CAs / Other People
-        $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; notice_days = 60; stores = @('Cert:\LocalMachine\My'); trust = $true; trust_skip_stores = @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'); endpoints = @() }
+        $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; notice_days = 60; stores = @('Cert:\LocalMachine\My'); trust = $true; trust_skip_stores = @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'); endpoints = @(); required_roots = @(RequiredRoots) }
         $f = 'F' * 40; $g = 'G' * 40; $h = 'ABCD' * 10; $i = '1' * 40; $j = '2' * 40; $k = '3' * 40; $l = '4' * 40
         $M.exe['netsh.exe http show sslcert'] = @('SSL Certificate bindings:', '', '    IP:port                      : 0.0.0.0:8443', "    Certificate Hash             : $h", '    Application ID               : {4dc3e181-e14b-4a21-b022-59fc669b0914}')
         $M.certStores = @((O @{ Name = 'My' }), (O @{ Name = 'Root' }), (O @{ Name = 'CA' }), (O @{ Name = 'AddressBook' }), (O @{ Name = 'Disallowed' }), (O @{ Name = 'AuthRoot' }))
         $M.certs = @{
-            'Cert:\LocalMachine\My'          = @()
+            # the roots Windows needs (KB 293781), expired lately: never listed, never a finding - in Personal too
+            'Cert:\LocalMachine\My'          = @(
+                (O @{ Subject = 'CN=Microsoft Root Authority, OU=Microsoft Corporation, OU=Copyright (c) 1997 Microsoft Corp.'; Issuer = 'CN=Microsoft Root Authority, OU=Microsoft Corporation, OU=Copyright (c) 1997 Microsoft Corp.'
+                        SerialNumber = '00C1008B3C3C8811D13EF663ECDF40'; Thumbprint = ('A1' * 20); NotAfter = $now.AddDays(-5); HasPrivateKey = $false }))
             'Cert:\LocalMachine\Root'        = @(
+                (O @{ Subject = 'CN=Thawte Timestamping CA, OU=Thawte Certification, O=Thawte, L=Durbanville, S=Western Cape, C=ZA'; Issuer = 'CN=Thawte Timestamping CA, OU=Thawte Certification, O=Thawte, L=Durbanville, S=Western Cape, C=ZA'
+                        SerialNumber = '00'; Thumbprint = ('A2' * 20); NotAfter = $now.AddDays(-5); HasPrivateKey = $false }),
+                (O @{ Subject = 'OU="NO LIABILITY ACCEPTED, (c)97 VeriSign, Inc.", OU=VeriSign Time Stamping Service Root, OU="VeriSign, Inc.", O=VeriSign Trust Network'
+                        Issuer = 'OU="NO LIABILITY ACCEPTED, (c)97 VeriSign, Inc.", OU=VeriSign Time Stamping Service Root, OU="VeriSign, Inc.", O=VeriSign Trust Network'
+                        SerialNumber = '4A19D2388C82591CA55D735F155DDCA3'; Thumbprint = ('A3' * 20); NotAfter = $now.AddDays(-2); HasPrivateKey = $false }),
+                # the name of one, another serial number: not the one Windows needs - listed as usual
+                (O @{ Subject = 'CN=Microsoft Root Certificate Authority 2011, O=Lookalike'; Issuer = 'CN=Microsoft Root Certificate Authority 2011, O=Lookalike'
+                        SerialNumber = '1234'; Thumbprint = ('A4' * 20); NotAfter = $now.AddDays(-3); HasPrivateKey = $false }),
                 (O @{ Subject = 'CN=test26.corp.test'; Thumbprint = $f; NotAfter = $now.AddDays(26); HasPrivateKey = $false }),
                 (O @{ Subject = 'CN=Old Vendor Root'; Thumbprint = $i; NotAfter = $now.AddDays(-4000); HasPrivateKey = $false }),
                 (O @{ Subject = 'CN=Far Root'; Thumbprint = $j; NotAfter = $now.AddDays(3000); HasPrivateKey = $false }))
@@ -267,6 +286,20 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
             'Cert:\LocalMachine\AuthRoot'   = @($root)
             'Cert:\LocalMachine\Disallowed' = @($aaa)
         }
+    }
+    { $_ -in @('trust_remove_required', 'trust_remove_required_off') } {
+        # a list names a root Windows needs (KB 293781; here the test root stands in for one): the finding stays, the
+        # certificate is never blocked or deleted. _off: the same without it in required_roots - removed (blocked)
+        $pem = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\fixtures\pki\root.pem') -Raw
+        $testRoot = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, [Convert]::FromBase64String(($pem -replace '-----[A-Z ]+-----', '' -replace '\s', '')))
+        $req = @(RequiredRoots)
+        if ($Scenario -eq 'trust_remove_required') { $req += @(@{ issued_to = 'Test Root CA'; serial = '000F965ECAB20EF6EA9F895AA1C292DCD86E14B1D3' }) }
+        $fs = Join-Path ([System.IO.Path]::GetTempPath()) 'sa-win-trust-required'
+        $null = New-Item -ItemType Directory -Path $fs -Force
+        $cfg = @{ known = @(@{ name = 'Test Root CA'; kind = 'root'; severity = 'critical'; why = 'test'; sha256 = 'EAEC495D8D35C5A1893115476844DD2961B89C6F859543A9E3158E9DD4B0420C' })
+            required_roots = $req; stores = @('Cert:\LocalMachine\Root'); block_stores = @('Cert:\LocalMachine\Disallowed')
+            java = $false; python = $false; backup_dir = $fs; remove = $true; dry_run = $false; severities = @('critical', 'warning') }
+        $M.certs = @{ 'Cert:\LocalMachine\Root' = @($testRoot); 'Cert:\LocalMachine\Disallowed' = @() }
     }
     'certs_meta' {
         # real certificates (tests/fixtures/pki): what the inventory reads from each - issuer, names, key, tier ...

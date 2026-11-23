@@ -37,6 +37,8 @@ $cases = @(
     @('trust', 'trust_remove_dry', @{ 'trust:system' = 'critical'; ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
     @('trust', 'trust_remove', @{ 'trust:python' = 'warning' }),
     @('trust', 'trust_remove_wrongpw', @{ ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
+    @('trust', 'trust_remove_required', @{ 'trust:system' = 'critical' }),
+    @('trust', 'trust_remove_required_off', @{}),
     @('trust', 'trust_remove_partial', @{ ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
     @('patching', 'patching', @{ 'patching:reboot' = 'warning'; 'patching:age' = 'critical' }),
     @('patching', 'patching_ok', @{})
@@ -89,12 +91,33 @@ foreach ($clm in @($false, $true)) {
         $want = @{ 'CN=test26.corp.test' = 'LocalMachine\Root (Trusted Root Certification Authorities) (trust store)'
             'CN=peer.corp.test' = 'LocalMachine\AddressBook (Other People) (trust store)'
             'CN=keyed.corp.test' = 'LocalMachine\CA (Intermediate Certification Authorities), with its private key'
-            'CN=bound.corp.test' = 'LocalMachine\CA (Intermediate Certification Authorities), used by https 0.0.0.0:8443' }
+            'CN=bound.corp.test' = 'LocalMachine\CA (Intermediate Certification Authorities), used by https 0.0.0.0:8443'
+            'CN=Microsoft Root Certificate Authority 2011, O=Lookalike' = 'LocalMachine\Root (Trusted Root Certification Authorities) (trust store)' }
         foreach ($k in $want.Keys) { if ($w[$k] -ne $want[$k]) { $bad += "$k where '$($w[$k])', expected '$($want[$k])'" } }
         foreach ($k in $w.Keys) { if (-not $want.ContainsKey($k)) { $bad += "$k should not be listed" } }
+        $kept = (ConvertFrom-Json -InputObject $line.Substring(16)).facts.required_roots_left_out
+        if ($kept -ne 3) { $bad += "required roots left out: $kept, expected 3 (KB 293781)" }
     }
     $label = 'certs/certs_trust inventory' + $(if ($clm) { ' (constrained)' } else { '' })
     if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
+}
+# A root Windows needs (KB 293781), named by the list: not removed, and the removal says why
+foreach ($clm in @($false, $true)) {
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Script 'trust'), '-Scenario', 'trust_remove_required')
+    if ($clm) { $a += '-Clm' }
+    $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+    $count++
+    $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
+    $bad = @()
+    if (-not $line) { $bad += 'no result line' }
+    else {
+        $rm = (ConvertFrom-Json -InputObject $line.Substring(16)).facts.removed
+        if (@($rm.actions | Where-Object { $_ }).Count -ne 0) { $bad += "actions: $(ConvertTo-Json -Compress @($rm.actions))" }
+        $nr = @($rm.not_removed | Where-Object { $_ -and [string]$_.why -like '*KB 293781*' })
+        if ($nr.Count -ne 1 -or (@($nr[0].names) -join ',') -ne 'Test Root CA') { $bad += "not_removed: $(ConvertTo-Json -Compress @($rm.not_removed))" }
+    }
+    $label = 'trust/trust_remove_required: a root Windows needs is never removed' + $(if ($clm) { ' (constrained)' } else { '' })
+    if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')"; $out | Select-Object -Last 5 | ForEach-Object { Write-Host "       $_" } } else { Write-Host "ok   - $label" }
 }
 # What the inventory reads from a certificate (tests/fixtures/pki): issuer, serial, SHA-1 and SHA-256, key, names, tier
 $metaWant = @{

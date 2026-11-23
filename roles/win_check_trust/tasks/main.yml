@@ -11,6 +11,11 @@
     file: "{{ role_path }}/../check_trust/vars/main.yml"
     name: _trust_shipped
 
+- name: Windows trust | the roots Windows needs (roles/win_check_certs/vars/main.yml, KB 293781) - never removed
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../win_check_certs/vars/main.yml"
+    name: _win_required
+
 - name: Windows trust | check
   ansible.builtin.script: win_trust.ps1
   environment:
@@ -24,7 +29,8 @@
           'severity_overrides': check_trust_severity | default({}, true),
           'backup_dir': win_check_trust_backup_dir,
           'keystore_password': lookup('ansible.builtin.env', 'KEYSTORE_PASSWORD') or check_trust_keystore_password | default('changeit'),
-          'timeout': win_check_trust_timeout | int} | to_json }}
+          'timeout': win_check_trust_timeout | int,
+          'required_roots': _win_required.win_required_roots + (win_required_roots_extra | default([], true))} | to_json }}
   register: _win_check_out
   changed_when: false
   failed_when: false

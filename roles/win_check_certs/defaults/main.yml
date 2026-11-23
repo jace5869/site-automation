@@ -14,6 +14,7 @@ win_check_certs_trust: false             # also every other machine store: Trust
 win_check_certs_trust_skip_stores: ['Disallowed', 'AuthRoot', 'REQUEST', 'SMS']  # stores never read: the untrusted certificates, the roots Windows Update keeps, pending requests (a CSR's key), the MECM client's own
 win_check_certs_remote_desktop: false    # false = Remote Desktop's certificates are left out of the report and the renewal (Windows or the GPO renews them): the Remote Desktop store, the one RDP uses, those for Remote Desktop only; true = checked like the others
 win_check_certs_ignore_subjects: []     # wildcards, e.g. ['CN=localhost*']
+win_required_roots_extra: []            # more roots never reported, renewed or removed, beside the ones Windows needs (vars/main.yml, Microsoft KB 293781 - left out always): [{issued_to: 'My Root CA', serial: '1a2b...'}]; the Windows trust check honors it too
 # TLS services whose certificate a client actually gets, e.g.
 #   win_check_certs_endpoints:
 #     - {name: IIS, host: 127.0.0.1, port: 443, servername: web01.yoursite.mil}

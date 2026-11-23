@@ -108,6 +108,12 @@
 ## either way (web01 = web01.example.mil); * and ?; any case
 # site_exclude_hosts: []
 
+# ---- win_check_certs -----------------------------------------------------------------------------
+## more roots never reported, renewed or removed, beside the ones Windows needs (vars/main.yml,
+## Microsoft KB 293781 - left out always): [{issued_to: 'My Root CA', serial: '1a2b...'}]; the
+## Windows trust check honors it too
+# win_required_roots_extra: []
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
