@@ -2148,6 +2148,18 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_approvers` | `[]` | who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works) |
 | `portal_launches_per_hour` | `20` | one person's launches in an hour, at most |
 | `portal_allow_self_approval` | `false` | true = an approver may approve or deny a run they started themselves |
+| `portal_approver_groups` | `[]` | 1.120.0: approvers and requesters from AD groups too (each person still needs a verified card). A group's name (its cn or sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind Account" credential on this job's template (portal_ldap_vars), every portal_a… (all of it: the role file) |
+| `portal_requester_groups` | `[]` | the same for who may run the actions (with portal_requesters); [] = none |
+| `portal_ad_card_attribute` | `userPrincipalName` | the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine) |
+| `portal_ad_card_match` | `"{edipi}@mil"` | its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything |
+| `portal_ad_groups_seconds` | `300` | how often the members are read (60 to 3600); 60 s after a failed read |
+| `portal_ldap_server` | (empty) | a DC (or several, comma-separated); "" = the inventory's DCs (win_dc / domain_controllers), else portal_ldap_domain's from DNS |
+| `portal_ldap_domain` | `"{{ ad_reader_domain \| default('') }}"` | the domain's DNS name (its DCs from DNS; the base DN from it) |
+| `portal_ldap_base` | (empty) | where the groups and users are searched; "" = from portal_ldap_domain, else the DC's defaultNamingContext |
+| `portal_ldap_starttls` | `false` | true = StartTLS on 389 when LDAPS (636) does not answer - never a bind in clear |
+| `portal_ldap_validate_certs` | `true` | the DC's certificate checked (the server's trust, as for AAP) before the password is sent |
+| `portal_ldap_ports` | `{ldaps: 636, ldap: 389}` | the ports the DCs answer LDAPS and LDAP (StartTLS) on |
+| `portal_ldap_timeout` | `5` | seconds per connection |
 | `portal_actions` | `{}` | ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it ----------------------- |
 | `portal_actions_extra` | `{}` | 1.75.3: your own actions, beside the built-in ones (same shape as actions.yml's actions, checked by the same rules; a name a built-in has is an error), and built-in actions to hide (a list of their names). docs/SITE_PORTAL.md, "Adding your own action". |
 | `portal_actions_off` | `[]` | built-in actions to hide: a list of their names (one that is no action is an error) |
@@ -2208,7 +2220,8 @@ File: `roles/site_portal_stack/defaults/main.yml`
 | `portal_report_db_tls` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_TLS') \| default('false', true) \| bool }}"` | TLS with the certificate checked (the credential's) |
 | `portal_report_db_ca_file` | `"{{ lookup('ansible.builtin.env', 'REPORT_DB_CA_FILE') \| trim }}"` | on the controller: its text goes in the secret |
 | `portal_aap_token` | (worked out by the role; see its file) | ---- Secrets: NEVER set these in a vars file or inventory --------------------------------------------------------------- From the AAP credential, as environment variables on the controller: the token of the portal's account (a podman secret on the server, never in a file, a unit or the logs). |
-| `portal_solarwinds_username` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"` | 1.85.0: the "SolarWinds (read-only)" credential's login - one podman secret on the server (site-portal-swis), never in a file, a unit or the logs |
+| `portal_ldap_vars` | `{user: MICROSOFT_AD_LDAP_USERNAME, password: MICROSOFT_AD_LDAP_PASSWORD}` | 1.85.0: the "SolarWinds (read-only)" credential's login - one podman secret on the server (site-portal-swis), never in a file, a unit or the logs 1.120.0: the "LDAP Bind Account" credential's login for the AD groups: where it is in this job - the name of an environment variable the credential sets, or of an extra vari… (all of it: the role file) |
+| `portal_solarwinds_username` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"` | 1.85.0: the "SolarWinds (read-only)" credential's user |
 | `portal_solarwinds_password` | `"{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"` | the credential's password (secret) |
 
 ## solarwinds_report

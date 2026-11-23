@@ -115,7 +115,7 @@ settled() {  # '' when settled, else what is not yet - read as the plain user, a
     "$py" - "$repo/roles/ad_report/library" "$p_ldaps1" "$p_ldaps2" "$p_dns" <<'PY'
 import ssl, sys
 import dns.resolver, ldap3
-sys.path.insert(0, sys.argv[1])
+sys.path[:0] = [sys.argv[1], sys.argv[1] + "/../../../plugins/module_utils"]   # the reader and its module_utils (site_ad_ident, site_ldap)
 from site_ad_reader import parse_reps_from
 nc = "DC=corp,DC=example,DC=mil"
 ncs = [nc, "CN=Configuration," + nc, "CN=Schema,CN=Configuration," + nc, "DC=DomainDnsZones," + nc, "DC=ForestDnsZones," + nc]
@@ -366,6 +366,64 @@ R stop -t 2 "$dc2" > /dev/null
 on1 samba-tool drs replicate dc01 dc02 "$nc" -U Administrator --password="$pass_admin" > /dev/null 2>&1
 run "replication failing, DC02 stopped: red, the failing link from DC01's own repsFrom" ok '{"ad_health_mode": "reader", "ad_reader_kerberos": "probe"}' \
     'critical' 'LDAP does not answer on DC02' 'consecutive failure(s)' 'DC01  corp.example.mil'
+
+# 1.120.0: the site portal's approvers from AD groups, read from DC01 (DC02 is stopped now) with the portal's own reader
+# (plugins/module_utils/site_ad_groups.py) as svc_aap_adreader, over LDAPS with the test's CA: a group in a group, a disabled
+# member, the card matched by userPrincipalName = <EDIPI>@mil; a wrong password and a DC that does not answer read nobody.
+on1 samba-tool group add AAP-Approvers > /dev/null
+on1 samba-tool group add Platform-Leads > /dev/null
+for u in appr1 lead1 lead2; do on1 samba-tool user create "$u" "Us3r-$u-Pass" > /dev/null; done
+on1 samba-tool group addmembers AAP-Approvers appr1,Platform-Leads > /dev/null
+on1 samba-tool group addmembers Platform-Leads lead1,lead2 > /dev/null
+on1 samba-tool user disable lead2 > /dev/null
+groups_out="$("$py" - "$repo/plugins/module_utils" "$p_ldaps1" "$work/certs/ca.crt" "$pass_admin" "$pass_reader" <<'PY'
+import sys, ssl
+sys.path.insert(0, sys.argv[1])
+import ldap3
+import site_ad_groups as G
+port, ca, admin, reader = int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+nc = "DC=corp,DC=example,DC=mil"
+# the cards' numbers, as the site's accounts carry them (an admin's change - the reader only reads)
+c = ldap3.Connection(ldap3.Server("127.0.0.1", port=port, use_ssl=True, tls=ldap3.Tls(validate=ssl.CERT_NONE)),
+                     user="Administrator@corp.example.mil", password=admin, auto_bind=True)
+for u, upn in (("appr1", "3456789012@mil"), ("lead1", "4567890123@mil"), ("lead2", "5678901234@mil")):
+    c.modify("CN=%s,CN=Users,%s" % (u, nc), {"userPrincipalName": [(ldap3.MODIFY_REPLACE, [upn])]})
+    assert c.result["result"] == 0, c.result
+dc = [{"name": "dc01.corp.example.mil", "address": "127.0.0.1"}]
+opts = {"servers": dc, "ports": {"ldaps": port}, "user": "svc_aap_adreader@corp.example.mil", "password": reader, "validate": True,
+        "ca_file": ca, "timeout": 5}
+g = G.Groups({"approvers": ["AAP-Approvers"]}, opts)
+r = g.refresh()
+st = g.status("approvers")
+print("read", r["ok"], r["error"], r["server"])
+print("count", st["groups"][0]["count"] if st["groups"] else None)
+print("appr1", g.has("approvers", "APPR.ONE.A.3456789012"))
+print("lead1-nested", g.has("approvers", "LEAD.ONE.B.4567890123"))
+print("lead2-disabled", g.has("approvers", "LEAD.TWO.C.5678901234"))
+bad = G.Groups({"approvers": ["AAP-Approvers"]}, dict(opts, password="not-the-password"))
+r = bad.refresh()
+print("wrong-password", r["ok"], bad.has("approvers", "APPR.ONE.A.3456789012"), "refused" in r["error"])
+down = G.Groups({"approvers": ["AAP-Approvers"]}, dict(opts, ports={"ldaps": 9}))
+r = down.refresh()
+print("dc-down", r["ok"], down.has("approvers", "APPR.ONE.A.3456789012"))
+untrusted = G.Groups({"approvers": ["AAP-Approvers"]}, dict(opts, ca_file=""))
+r = untrusted.refresh()
+print("untrusted", r["ok"])
+PY
+)"
+want="read True  dc01.corp.example.mil:$p_ldaps1
+count 2
+appr1 True
+lead1-nested True
+lead2-disabled False
+wrong-password False False True
+dc-down False False
+untrusted False"
+if [ "$groups_out" = "$want" ]; then
+    echo "ok   - 1.120.0: the portal's AD groups - nested member, disabled never, the card by its UPN; wrong password, no answer, an untrusted certificate: nobody"
+else
+    echo "FAIL - 1.120.0: the portal's AD groups:"; printf '%s\n' "$groups_out" | head -20; fails=$((fails + 1))
+fi
 
 if [ "$fails" -gt 0 ]; then echo "$fails test(s) failed"; exit 1; fi
 echo "all AD reader mode tests passed"

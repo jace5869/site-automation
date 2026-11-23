@@ -696,7 +696,7 @@ class Live(unittest.TestCase):
         self.assertIn(b'data-approver="0"', raw)
         code, r = self.post("/api/approvals/%d/approve" % aid, {})
         self.assertEqual(code, 403)
-        self.assertIn("not on the list of approvers", r["error"])
+        self.assertIn("You are not an approver (portal_approvers, portal_approver_groups)", r["error"])
         code, r = self.post("/api/approvals/%d/approve" % aid, {}, dn=APPR, token="")
         self.assertEqual(code, 403)                                                   # the CSRF check for approvals too
         code, r = self.post("/api/approvals/%d/approve" % aid, {}, dn=APPR)
@@ -832,7 +832,7 @@ class Live(unittest.TestCase):
         wid, aid = self._scheduled_approval()
         try:
             a = next(x for x in json.loads(self.req("/api/approvals")[1])["approvals"] if x["id"] == aid)               # a person who is no approver sees it, cannot decide it
-            self.assertEqual((a["may_decide"], a["why"], a["reason"]), (False, "approvers", "You are not in portal_approvers - only the approvers decide."))
+            self.assertEqual((a["may_decide"], a["why"], a["reason"]), (False, "approvers", "You are not an approver (portal_approvers, portal_approver_groups) - only the approvers decide."))
             self.assertEqual(self.post("/api/approvals/%d/approve" % aid, {})[0], 403)
         finally:
             self._gone(wid, aid)

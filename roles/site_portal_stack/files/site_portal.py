@@ -68,6 +68,10 @@ try:
     import site_report_db  # noqa: E402  1.101.2: the report database (PyMySQL, in the all-in-one EE the portal runs in)
 except ImportError:
     site_report_db = None
+try:
+    import site_ad_groups  # noqa: E402  1.120.0: approvers and requesters from AD groups (the AD report's LDAP connection)
+except ImportError:                     # an older deploy's files: the named lists only
+    site_ad_groups = None
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 AAP_TIME = re.compile(r"^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d)")
@@ -149,6 +153,33 @@ def step_ids(nodes):
             out.append(int(jid))
     return out
 
+class NamedOnly(list):
+    """1.120.0: a role's named people when the AD groups cannot be read at all (site_ad_groups.py not deployed): only
+    they count; with groups set, an empty list is nobody - never "anyone"."""
+
+    def __init__(self, named, closed=False):
+        list.__init__(self, named or [])
+        self.closed = closed
+
+    def __bool__(self):
+        return len(self) > 0 or self.closed
+
+    __nonzero__ = __bool__
+
+    def named(self):
+        return list(self)
+
+
+def same_person(a, b):
+    """1.120.0: two card CNs of one person - the same CN, or the same EDIPI (a new card after a name change): who started
+    a run never approves it under another CN."""
+    a, b = str(a or "").strip(), str(b or "").strip()
+    if not a or not b:
+        return False
+    ea, eb = re.search(r"(?:^|\.)(\d{10})$", a), re.search(r"(?:^|\.)(\d{10})$", b)
+    return a == b or bool(ea and eb and ea.group(1) == eb.group(1))
+
+
 class Config(object):
     """The settings: the file PORTAL_SETTINGS names (JSON - the deploy writes it), then the environment over it (the
     secret: PORTAL_AAP_TOKEN)."""
@@ -176,7 +207,7 @@ class Config(object):
         self.aap_token = g("PORTAL_AAP_TOKEN")
         self.aap_timeout = int(g("PORTAL_AAP_TIMEOUT", "30"))
         self.inventory = g("PORTAL_INVENTORY")
-        self.requesters = names(g("PORTAL_REQUESTERS", "[]"))
+        self.requesters = names(g("PORTAL_REQUESTERS", "[]"))      # 1.120.0: made People below (the named + the AD groups')
         self.limit_max = max(1, min(500, int(g("PORTAL_LIMIT_MAX", "50"))))          # 1.78.0: hosts a discovered template's Limit may stand for (groups counted by their hosts)
         self.approvers = names(g("PORTAL_APPROVERS", "[]"))
         self.per_hour = max(1, int(g("PORTAL_LAUNCHES_PER_HOUR", "20")))
@@ -246,6 +277,41 @@ class Config(object):
         self.season_style = site_festive.style_of(g("PORTAL_SEASON_STYLE", "16bit"))
         self.season_parts = site_festive.allowed(g("PORTAL_SEASON_LIGHTS", "1"), g("PORTAL_SEASON_TWINKLE", "1"), g("PORTAL_SEASON_SNOW", "1"))
         self.self_approval = flag(g("PORTAL_SELF_APPROVAL", "0"))
+        # 1.120.0: approvers and requesters from AD groups (portal_approver_groups, portal_requester_groups: names or DNs), read
+        # over LDAP with the "LDAP Bind Account" login (the secret site-portal-ldap: JSON {user, password}) every
+        # portal_ad_groups_seconds; a card matches its AD account by portal_ad_card_attribute = portal_ad_card_match
+        self.approver_groups = names(g("PORTAL_APPROVER_GROUPS", "[]"))
+        self.requester_groups = names(g("PORTAL_REQUESTER_GROUPS", "[]"))
+        try:
+            lg = json.loads(g("PORTAL_LDAP_LOGIN", "{}"))
+        except ValueError:
+            lg = {}
+        lg = lg if isinstance(lg, dict) else {}
+        try:
+            srv = g("PORTAL_LDAP_SERVERS", "[]")
+            srv = json.loads(srv) if isinstance(srv, str) else srv
+        except ValueError:
+            srv = []
+        self.ldap_opts = {"user": str(lg.get("user") or ""), "password": str(lg.get("password") or ""),
+                          "servers": [x for x in (srv if isinstance(srv, list) else []) if isinstance(x, dict)],
+                          "domain": str(g("PORTAL_LDAP_DOMAIN", "")).strip(), "base": str(g("PORTAL_LDAP_BASE", "")).strip(),
+                          "ports": {"ldaps": int(g("PORTAL_LDAP_LDAPS_PORT", "636")), "ldap": int(g("PORTAL_LDAP_PORT", "389"))},
+                          "starttls": flag(g("PORTAL_LDAP_STARTTLS", "0")), "validate": flag(g("PORTAL_LDAP_VERIFY", "1")),
+                          "ca_file": e.get("SSL_CERT_FILE", ""), "timeout": max(2, min(60, int(g("PORTAL_LDAP_TIMEOUT", "5")))),
+                          "attribute": str(g("PORTAL_AD_CARD_ATTRIBUTE", "userPrincipalName")).strip() or "userPrincipalName"}
+        self.card_match = str(g("PORTAL_AD_CARD_MATCH", "{edipi}@mil")).strip() or "{edipi}@mil"
+        self.ad_groups_seconds = max(60, min(3600, int(g("PORTAL_AD_GROUPS_SECONDS", "300"))))
+        self.ad_groups = (site_ad_groups.Groups({"approvers": self.approver_groups, "requesters": self.requester_groups}, self.ldap_opts,
+                                                self.card_match, self.ad_groups_seconds)
+                          if site_ad_groups and (self.approver_groups or self.requester_groups) else None)
+        if site_ad_groups:
+            self.approvers = site_ad_groups.People(self.approvers, "approvers", self.ad_groups)
+            self.requesters = site_ad_groups.People(self.requesters, "requesters", self.ad_groups)
+        else:                                             # no reader: the named only - with groups set, an empty list is nobody
+            self.approvers = NamedOnly(self.approvers, bool(self.approver_groups))
+            self.requesters = NamedOnly(self.requesters, bool(self.requester_groups))
+        self.ad_groups_why = ("" if not (self.approver_groups or self.requester_groups) or site_ad_groups else
+                              "The portal's AD groups reader (site_ad_groups.py) is not in the service's files - deploy again; the named lists only.")
         # 1.85.0: the live network map - SolarWinds' address and its read-only login (the secret PORTAL_SWIS_LOGIN: JSON
         # {user, password}), read every netmap_live_seconds (30 at least) while someone has the page open
         self.netmap = flag(g("PORTAL_NETMAP", "0"))
@@ -1704,10 +1770,24 @@ def multi_host(actions, cfg):
 class Portal(object):
     """What the pages ask for."""
 
+    def _ad_groups_changed(self, r):
+        """1.120.0: the AD groups read, or not: in the portal's log (and the journal) when it changes."""
+        if r.get("ok"):
+            self.log.add({"event": "ad-groups", "ok": True, "server": r.get("server"),
+                          "groups": dict((role, ["%s: %d" % (g["name"], g["count"]) if g["found"] else "%s: not found" % g["name"]
+                                                 for g in gs]) for role, gs in (r.get("groups") or {}).items())})
+        else:
+            self.log.add({"event": "ad-groups", "ok": False, "why": "AD not read - only the named lists (portal_approvers, portal_requesters): " + str(r.get("error") or "")[:300]})
+
     def __init__(self, cfg, aap=None, log=None, cache_catalog=True):
         self.cfg = cfg
         os.makedirs(cfg.data, exist_ok=True)
         self.log = log or Log(os.path.join(cfg.data, "portal-log.jsonl"))
+        if cfg.ad_groups is not None:                     # 1.120.0: the AD groups' members, read in the background, said when it changes
+            cfg.ad_groups.on_change = self._ad_groups_changed
+            cfg.ad_groups.start()
+        elif cfg.ad_groups_why:
+            self.log.add({"event": "ad-groups", "ok": False, "why": cfg.ad_groups_why})
         with open(cfg.actions_file) as fh:
             doc = json.load(fh)
         self.actions, problems = rules.check_actions((doc or {}).get("actions") if isinstance(doc, dict) else doc)
@@ -1752,7 +1832,7 @@ class Portal(object):
             scope = [2, cfg.discover_seconds, KEEP_WHOLE, ca_digest, cfg.aap_url, cfg.aap_token, cfg.aap_verify, cfg.aap_ca,
                      cfg.label, cfg.label_approval, cfg.label_area,
                      cfg.label_title, cfg.titles, cfg.approval_required, cfg.area_rules, cfg.playbook_areas, cfg.limit_max,
-                     cfg.inventories_max, cfg.requesters, cfg.approvers, doc]
+                     cfg.inventories_max, cfg.requesters, cfg.approvers, doc, cfg.approver_groups, cfg.requester_groups]
             self.catalog_key = hmac.digest(self.key, json.dumps(scope, sort_keys=True).encode(), "sha256")
             self._load_catalog()
 
@@ -2578,12 +2658,12 @@ class Portal(object):
                         "can_approve": self._can_approve(ap),
                         "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
         for a in out:
-            a["self"] = bool(cn) and a["requested_by"] == cn
+            a["self"] = bool(cn) and same_person(a["requested_by"], cn)
             a["may_decide"] = cn in self.cfg.approvers and not (a["self"] and not self.cfg.self_approval) and a["can_approve"]
             # 1.92.0: why not, in words the person can act on - the setting named
             a["why"] = ("" if a["may_decide"] else "approvers" if cn not in self.cfg.approvers else
                         "self" if a["self"] and not self.cfg.self_approval else "role")
-            a["reason"] = {"": "", "approvers": "You are not in portal_approvers - only the approvers decide.",
+            a["reason"] = {"": "", "approvers": "You are not an approver (portal_approvers, portal_approver_groups) - only the approvers decide.",
                            "self": "You started this run - another approver decides (portal_allow_self_approval).",
                            "role": "The portal's account has no Approve role on this workflow - give it Approve in AAP, or decide there."}[a["why"]]
         return 200, {"approvals": out, "self_approval": self.cfg.self_approval}
@@ -2596,7 +2676,7 @@ class Portal(object):
     def decide(self, cn, ip, aid, decision):
         if cn not in self.cfg.approvers:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision, "why": "not an approver"})
-            return 403, {"error": "You are not on the list of approvers (portal_approvers)."}
+            return 403, {"error": "You are not an approver (portal_approvers, portal_approver_groups)."}
         code, listing = self.approvals(fresh=True)          # 1.92.0 review: never the shared 10 s read for a decision
         if code != 200:
             return code, listing
@@ -2606,7 +2686,7 @@ class Portal(object):
         if not ap.get("can_approve", True):
             self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision, "why": "the portal's account has no Approve role on it"})
             return 403, {"error": "The portal's account has no Approve role on this approval: decide it in AAP."}
-        if ap["requested_by"] == cn and not self.cfg.self_approval:
+        if same_person(ap["requested_by"], cn) and not self.cfg.self_approval:
             self.log.add({"event": "refused", "user": cn, "ip": ip, "approval": aid, "decision": decision,
                           "why": "self-approval: the person started this run"})
             return 403, {"error": "You started this run: another approver decides (portal_allow_self_approval: false)."}
@@ -3391,7 +3471,7 @@ def job_results_html(buttons):
 
 CHEV = '<svg class="ic chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 LEVEL_CHIP = {"critical": ("bad", "s-critical", "Critical"), "warning": ("wait", "s-warning", "Warning"), "low": ("skip", "s-low", "Low"), "info": ("skip", "s-info", "Info")}
-WHY_HTML = {"approvers": "<b>You are not in <code>portal_approvers</code></b> - only the approvers decide.",
+WHY_HTML = {"approvers": "<b>You are not an approver</b> (<code>portal_approvers</code>, <code>portal_approver_groups</code>) - only the approvers decide.",
             "self": "<b>You started this run</b> - another approver decides (<code>portal_allow_self_approval</code>).",
             "role": "<b>The portal's account has no Approve role on this workflow</b> - give it Approve in AAP, or decide there."}
 
@@ -3554,15 +3634,51 @@ def job_page(cfg, portal, cn, jid, via, scope="mine"):
     return jobs_page(cfg, portal, cn, jid, scope, via)
 
 
+def _when(cfg, t):
+    """An epoch time as the page says times ('' for none)."""
+    if not t:
+        return ""
+    return shown(cfg, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)))
+
+
+def deciders_html(cfg):
+    """1.120.0: who may decide here - the members of portal_approver_groups as last read from AD (nested groups count,
+    disabled accounts never) and the named portal_approvers; when AD cannot be read, the named ones only, said."""
+    named = len(cfg.approvers.named() if hasattr(cfg.approvers, "named") else cfg.approvers)
+    named_t = ("%d named in <code>portal_approvers</code>" % named) if named else ""
+    st = cfg.ad_groups.status("approvers") if cfg.ad_groups is not None else None
+    if not st or not st["configured"]:
+        if cfg.ad_groups_why and cfg.approver_groups:
+            return ('<div class="note warn deciders"><span class="chip s-warning">AD not read</span><b>Only the named approvers may decide</b>: %s. %s</div>'
+                    % (("%d in <code>portal_approvers</code>" % named) if named else "nobody (<code>portal_approvers</code> is empty)", esc(cfg.ad_groups_why)))
+        return '<div class="note deciders"><b>Who may decide:</b> %s.</div>' % (
+            named_t or "nobody here (<code>portal_approvers</code> is empty) - AAP's own page still works")
+    if st["ok"]:
+        parts = []
+        for g in st["groups"]:
+            parts.append("%s (AD), %s" % (esc(g["name"]), ("%d %s" % (g["count"], "person" if g["count"] == 1 else "people")) if g["found"]
+                                         else esc(g.get("why") or "not found in AD")))
+        return ('<div class="note deciders"><b>Who may decide:</b> %s.<p class="muted-line">Read from AD %s, every %d minutes; members of nested groups '
+                'count, disabled accounts never. A card matches its AD account by its number (%s).</p></div>'
+                % (" &middot; ".join(parts + ([named_t] if named_t else [])), esc(_when(cfg, st["at"])), max(1, cfg.ad_groups_seconds // 60),
+                   esc(cfg.ldap_opts["attribute"])))
+    return ('<div class="note warn deciders"><span class="chip s-warning">AD not read</span><b>Only the named approvers may decide</b>: %s. '
+            '%s %s not counted until AD answers.<p class="muted-line">%s%s. Said in the portal\'s log too.</p></div>' % (
+                ("%d in <code>portal_approvers</code>" % named) if named else "nobody (<code>portal_approvers</code> is empty)",
+                " and ".join("%s (AD)" % esc(g["name"]) for g in st["groups"]), "is" if len(st["groups"]) == 1 else "are",
+                esc(st["error"] or "not read yet"),
+                (" - tried %s, again at %s" % (esc(_when(cfg, st["at"])), esc(_when(cfg, st["next"])))) if st["read"] else " - the first read is under way"))
+
+
 def approvals_page(cfg, portal, cn):
     approver = cn in cfg.approvers
     body = ('<div class="hero"><p class="crumb"><span class="eyebrow">Portal</span></p><h1>Approvals</h1><p class="lede">Every workflow waiting for a decision that the portal\'s account can see.%s</p></div>'
-            '<p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
+            '%s<p class="note">AAP records each decision made here as the portal\'s own account. The portal\'s log keeps who decided: '
             'your name, the decision and the time.</p><p class="status" id="a-status" aria-live="polite">Asking AAP…</p>'
             '<div id="approvals" data-approver="%s"></div>'
             % ((" You may approve or deny - not a run you started yourself." if not cfg.self_approval else " You may approve or deny.")
-               if approver else " You can see them; only the approvers (portal_approvers) may decide.",
-               "1" if approver else "0"))
+               if approver else " You can see them; only the approvers may decide.",
+               deciders_html(cfg), "1" if approver else "0"))
     return shell(cfg, "Approvals", body, cn, token=portal.token(cn), page="approvals")
 
 
@@ -4475,9 +4591,9 @@ def make_handler(cfg, portal, static_dir):
                 self._deny(why, api)
                 return None
             if not portal.may_use(user):
-                portal.log.add({"event": "refused", "user": user, "ip": self._ip(), "why": "not on portal_requesters or portal_approvers",
+                portal.log.add({"event": "refused", "user": user, "ip": self._ip(), "why": "not on portal_requesters or portal_approvers (nor in their AD groups)",
                                 "path": urllib.parse.urlsplit(self.path).path[:200]})
-                self._deny("You are not on the list of people who may use this portal (portal_requesters).", api)
+                self._deny("You are not on the list of people who may use this portal (portal_requesters, portal_requester_groups).", api)
                 return None
             return user
 

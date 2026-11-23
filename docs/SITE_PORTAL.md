@@ -567,12 +567,13 @@ Workflow 46 takes Linux and Windows hosts. Workflow 48 is for Linux hosts, as `c
 one that has timed out is left out. Each shows the workflow, who or what started it, the approval's name and description, the time left before it times out,
 the check's plan (*What it will change*, below) and the report the steps before it left (a job artifact `site_report_url`) as a button: **Open the full report**.
 
-- **Approve** and **Deny** are there only for the people in `portal_approvers`, and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
+- **Approve** and **Deny** are there only for the approvers - `portal_approvers`, and since 1.120.0 the members of
+  `portal_approver_groups` (*Approvers from AD groups*, below) - and only where the portal's account has the **Approve** role on that approval. They ask once more, in place
   (*Sure? Yes, approve / Back*).
   - A decision AAP refuses (1.110.0) shows its message. Decided already, timed out or not allowed: the list is read
     again after 3 seconds. Anything else: **Approve** and **Deny** are back, to try again. The list keeps updating.
 - **Everyone else sees why, in words to act on**, with the setting's name:
-  - *You are not in `portal_approvers`* - only the approvers decide.
+  - *You are not an approver* (`portal_approvers`, `portal_approver_groups`) - only the approvers decide.
   - *You started this run* - another approver decides (`portal_allow_self_approval`).
   - *The portal's account has no Approve role on this workflow* - give it Approve in AAP, or decide there.
 - **The header badge.** *Approvals* shows how many are waiting for you to decide here; *Jobs* shows how many of your jobs run. Both update every 10 seconds while the page is open.
@@ -587,6 +588,64 @@ the check's plan (*What it will change*, below) and the report the steps before 
   card, the decision and the time. The page says so.
 - **At 900 px and narrower** each approval is a card: its name and who started it, the run and its plan, the time, the decision.
 - AAP's own approval page works as before.
+
+- **Who may decide** (1.120.0): one line under the heading - *AAP-Approvers (AD), 6 people · 1 named in
+  `portal_approvers`*, and when AD was last read. When AD cannot be read: *AD not read - only the named approvers may
+  decide*, with the reason and when it is tried again.
+
+### Approvers from AD groups (1.120.0)
+
+The approvers and the requesters can be AD groups as well as names. Each person still needs a verified card.
+
+```yaml
+portal_approver_groups: [AAP-Approvers]          # a group's name (cn or sAMAccountName) or its DN
+portal_requester_groups: []                      # the same for who may run the actions
+```
+
+- **Who counts.** The members of a group, also through groups inside it (nested, LDAP_MATCHING_RULE_IN_CHAIN). A disabled
+  account never counts. The named lists (`portal_approvers`, `portal_requesters`) count as well.
+- **A card and its AD account.** The card's CN ends in the EDIPI (*LAST.FIRST.MI.1234567890*). By default the portal looks
+  for the AD account whose `userPrincipalName` is `1234567890@mil`. Another attribute: `portal_ad_card_attribute` and
+  `portal_ad_card_match` (`{edipi}`, `{cn}`; `*` and `?` match anything). For example
+  `portal_ad_card_attribute: altSecurityIdentities` with `portal_ad_card_match: "*CN={cn}"`.
+- **How often.** One read of all the groups every 5 minutes (`portal_ad_groups_seconds`), kept by the portal. After a
+  failed read it tries again in a minute.
+- **AD down: the named lists only.** When AD cannot be read, or before the first read, nobody counts as a group member. Only
+  `portal_approvers` and `portal_requesters` count. The Approvals page says so, and so does the portal's log
+  (`ad-groups` events). It never falls open: with `portal_requester_groups` set, an empty `portal_requesters` means nobody,
+  not everyone.
+- **`portal_allow_self_approval`** is unchanged. A new card of the same person (the same EDIPI under a new name) is the same
+  person: they never approve their own run.
+- **A group's name in two places.** When two groups have the name, neither counts and the page says so: give its DN.
+- **Not counted:** members only through their primary group (`primaryGroupID`, e.g. *Domain Users*) - use a group they are
+  members of. A member whose `userAccountControl` cannot be read is not counted either.
+- **The match must name the person.** `portal_ad_card_match` needs `{edipi}` or `{cn}`; the card's own number and CN are
+  matched as they are (a `*` in a CN is a `*`). A read older than the interval and two retries counts for nobody.
+- **A wrong password** is tried on one DC only, once per read (the shared account would lock out).
+
+**The login: the "LDAP Bind Account" credential.** Attach it to the portal deploy's job template. Any domain user will do,
+with nothing granted.
+- **The microsoft.ad pair works as it is.** By default the deploy reads the environment pair `MICROSOFT_AD_LDAP_USERNAME`
+  and `MICROSOFT_AD_LDAP_PASSWORD`. The repository's type sets that pair: `aap/credential_types/ldap_bind_account.yml`.
+- **A site's own type with other names.** Name them in `portal_ldap_vars`. Each name is an environment variable or an extra
+  variable:
+  ```yaml
+  portal_ldap_vars: {user: SITE_LDAP_USER, password: SITE_LDAP_PASSWORD}
+  ```
+  A type's names are in AAP under **Credential Types > the type > Injector configuration**.
+- **The user name** is passed as given: a UPN (`svc_aap_adreader@corp.example.mil`), `DOMAIN\user` or a DN.
+- **Where the password goes.** The deploy hands the login to the portal as a podman secret (`site-portal-ldap`). It is never
+  in a settings file, a unit or the logs.
+
+**Where AD is read.**
+- **The DCs:** `portal_ldap_server` (one or more, comma-separated). Empty: the inventory's DCs (`win_dc`, else
+  `domain_controllers`, as the AD report finds them). Else the DCs of `portal_ldap_domain` (default `ad_reader_domain`)
+  from DNS.
+- **The connection:** LDAPS (636) first. StartTLS on 389 only with `portal_ldap_starttls: true`. Never a bind in clear.
+- **The certificate:** the DC's certificate is checked against the server's trust store, the same one as for AAP
+  (`portal_ldap_validate_certs`).
+- **The base DN:** `portal_ldap_base`. Empty: from the domain's name (`DC=corp,DC=example,DC=mil`), else the DC's
+  `defaultNamingContext`.
 
 ### On the job page (1.92.0)
 

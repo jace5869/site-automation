@@ -89,6 +89,10 @@ try:
 except ImportError:
     HAS_CRYPTO = False
 try:
+    from ansible.module_utils import site_ldap        # 1.120.0: the LDAP connection, shared with the site portal's AD groups
+except ImportError:                                  # the tests: plugins/module_utils on sys.path
+    import site_ldap
+try:
     from ansible.module_utils.site_aap import Api, connection, error_text
     HAS_AAP = True
 except ImportError:
@@ -531,39 +535,11 @@ class Reader(object):
                 "ldaps": int(e.get("ldaps") or self.ports["ldaps"]), "kerberos": int(e.get("kerberos") or self.ports["kerberos"]),
                 "nat": bool(e)}
 
-    def tls(self, fqdn, validate):
-        if validate:
-            return ldap3.Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=self.p.get("ca_file") or None, valid_names=[fqdn],
-                             version=ssl.PROTOCOL_TLS_CLIENT, sni=fqdn)
-        return ldap3.Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLS_CLIENT, sni=fqdn)
-
-
     def connect(self, fqdn, ep, how):
-        """how: 'ldaps' (bind over TLS), 'starttls' (389, StartTLS, bind), 'anon' (389, no bind). -> (conn, ms, error)."""
-        validate = bool(self.p.get("validate_certs", True))
-        if how == "ldaps":
-            srv = ldap3.Server(ep["address"], port=ep["ldaps"], use_ssl=True, tls=self.tls(fqdn, validate), get_info=ldap3.NONE,
-                               connect_timeout=self.timeout)
-        else:
-            srv = ldap3.Server(ep["address"], port=ep["ldap"], use_ssl=False, tls=self.tls(fqdn, validate), get_info=ldap3.NONE,
-                               connect_timeout=self.timeout)
-        kw = {} if how == "anon" else {"authentication": ldap3.SIMPLE, "user": self.p["user"], "password": self.p["password"]}
-        t0 = time.time()
-        try:
-            c = ldap3.Connection(srv, receive_timeout=self.timeout * 3, raise_exceptions=False, auto_referrals=False, **kw)
-            c.open()
-            if c.closed:
-                return None, None, "no answer"
-            if how == "starttls" and not c.start_tls():
-                return None, None, "StartTLS refused: %s" % (c.result or {}).get("description", "?")
-            if how != "anon" and not c.bind():
-                r = c.result or {}
-                msg = (r.get("description") or "") + (": " + r.get("message") if r.get("message") else "")
-                c.unbind()
-                return None, int((time.time() - t0) * 1000), "the bind was refused - " + (msg or "?")
-            return c, int((time.time() - t0) * 1000), ""
-        except Exception as e:                    # noqa: BLE001 - any failure is an answer about this DC
-            return None, None, short_err(e)
+        """how: 'ldaps' (bind over TLS), 'starttls' (389, StartTLS, bind), 'anon' (389, no bind). -> (conn, ms, error).
+        1.120.0: site_ldap.connect - the same code the site portal's AD groups connect with."""
+        return site_ldap.connect(fqdn, ep["address"], ep["ldaps"] if how == "ldaps" else ep["ldap"], how, self.p.get("user") or "",
+                                 self.p.get("password") or "", self.timeout, bool(self.p.get("validate_certs", True)), self.p.get("ca_file") or None)
 
     def search(self, c, base, flt, attrs, scope=None, controls=None, size=0):
         return self.search_capped(c, base, flt, attrs, scope, controls, size)[0]

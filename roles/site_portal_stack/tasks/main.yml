@@ -208,6 +208,33 @@
     fail_msg: "portal_theme_season is {{ portal_theme_season }}; it must be none, christmas or auto (report_theme_season_style 16bit or 8bit) - nothing was changed"
     quiet: true
 
+# 1.120.0: approvers and requesters from AD groups - on when a group is set; the DCs asked: portal_ldap_server, else the
+# inventory's DCs (as the AD report finds them), else the domain's from DNS (the portal asks)
+- name: Settings | the AD groups - no blank name (it would read as no group at all)
+  ansible.builtin.assert:
+    that:
+      - portal_approver_groups | default([], true) is not string
+      - portal_requester_groups | default([], true) is not string
+      - (portal_approver_groups | default([], true) | map('string') | map('trim') | reject('equalto', '') | list | length)
+        == (portal_approver_groups | default([], true) | length)
+      - (portal_requester_groups | default([], true) | map('string') | map('trim') | reject('equalto', '') | list | length)
+        == (portal_requester_groups | default([], true) | length)
+    fail_msg: >-
+      portal_approver_groups and portal_requester_groups are lists of AD group names or DNs, none of them blank - nothing was changed.
+      docs/SITE_PORTAL.md, "Approvers from AD groups"
+    quiet: true
+
+- name: Settings | the AD groups (portal_approver_groups, portal_requester_groups)
+  ansible.builtin.set_fact:
+    _portal_ldap_on: "{{ (portal_approver_groups | default([], true) | length > 0) or (portal_requester_groups | default([], true) | length > 0) }}"
+    _portal_ldap_servers: >-
+      {%- set out = [] -%}
+      {%- for x in (portal_ldap_server | default('', true) | string).split(',') if x | trim | length > 0 -%}
+      {%-   set _ = out.append({'name': x | trim, 'address': ''}) -%}
+      {%- endfor -%}
+      {{ out if out else (query('ansible.builtin.inventory_hostnames', 'win_dc' if 'win_dc' in groups else 'domain_controllers')
+                          | map('extract', hostvars) | map('ad_reader_inventory_dc') | list) }}
+
 # 1.85.0: the live Network map - on with a SolarWinds credential (auto), or as portal_netmap says
 - name: Settings | the live Network map (portal_netmap)
   ansible.builtin.set_fact:
@@ -386,6 +413,9 @@
     - {src: "{{ role_path }}/../../plugins/filter/ad_swis_filters.py", dest: ad_swis_filters.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_report_db.py", dest: site_report_db.py}
     - {src: "{{ role_path }}/../../plugins/module_utils/site_ad_ident.py", dest: site_ad_ident.py}
+    # 1.120.0: approvers and requesters from AD groups - the reader and the AD report's LDAP connection
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_ldap.py", dest: site_ldap.py}
+    - {src: "{{ role_path }}/../../plugins/module_utils/site_ad_groups.py", dest: site_ad_groups.py}
     - {src: netmap_history.py, dest: netmap_history.py}
     - {src: static/netmap-history.js, dest: static/netmap-history.js}
     - {src: static/netmap-history.css, dest: static/netmap-history.css}
@@ -568,6 +598,64 @@
     msg: "podman secret create site-portal-swis failed (rc {{ _portal_swis_set.rc }}): {{ _portal_swis_set.stderr | default('', true) | trim or 'no reason given' }}"
   when: _portal_swis_set.rc | default(0) != 0
 
+# ---------------------------------------------------------------- 1.120.0: the LDAP login of the AD groups, a podman secret
+# {user, password} as JSON in one secret (site-portal-ldap -> PORTAL_LDAP_LOGIN), from the "LDAP Bind Account" credential
+# (portal_ldap_vars: an environment variable's name, or an extra variable's); its SHA-256 on a label, as the others
+- name: Secret | the AD groups' LDAP login - the value
+  ansible.builtin.set_fact:
+    _portal_ldap_login: >-
+      {{ {'user': lookup('ansible.builtin.vars', portal_ldap_vars.user | default('MICROSOFT_AD_LDAP_USERNAME'), default='')
+                  or lookup('ansible.builtin.env', portal_ldap_vars.user | default('MICROSOFT_AD_LDAP_USERNAME')),
+          'password': lookup('ansible.builtin.vars', portal_ldap_vars.password | default('MICROSOFT_AD_LDAP_PASSWORD'), default='')
+                      or lookup('ansible.builtin.env', portal_ldap_vars.password | default('MICROSOFT_AD_LDAP_PASSWORD'))} | to_json }}
+  no_log: true
+  when: _portal_ldap_on | bool
+
+- name: Secret | the AD groups' LDAP login - there is one
+  ansible.builtin.debug:
+    msg: >-
+      WARNING - portal_approver_groups / portal_requester_groups are set, but this job has no LDAP login: attach the "LDAP Bind Account"
+      credential to its template (portal_ldap_vars names where its user and password are). Until then the portal reads no group: only
+      portal_approvers and portal_requesters count (said on its Approvals page). docs/SITE_PORTAL.md, "Approvers from AD groups".
+  when: _portal_ldap_on | bool and not ((_portal_ldap_login | from_json).user | length > 0 and (_portal_ldap_login | from_json).password | length > 0)
+
+- name: Secret | the AD groups' LDAP login - current state
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, site-portal-ldap, --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]
+  register: _portal_ldap_state
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads the label
+
+- name: Secret | the AD groups' LDAP login - the old value removed first (podman before 4.7), or no AD groups any more
+  ansible.builtin.command:
+    argv: [podman, secret, rm, site-portal-ldap]
+  when: >-
+    _portal_ldap_state.rc == 0 and (not _portal_ldap_on | bool or
+    ((_portal_ldap_state.stdout | trim) != (_portal_ldap_login | hash('sha256')) and _portal_podman.stdout is version('4.7', '<')))
+  changed_when: true
+  no_log: true
+  register: _portal_ldap_gone
+
+- name: Secret | the AD groups' LDAP login - create or replace
+  ansible.builtin.command:
+    argv: >-
+      {{ ['podman', 'secret', 'create']
+         + (['--replace'] if _portal_podman.stdout is version('4.7', '>=') and _portal_ldap_state.rc == 0 else [])
+         + ['--label', 'site.sha256=' ~ (_portal_ldap_login | hash('sha256')), 'site-portal-ldap', '-'] }}
+    stdin: "{{ _portal_ldap_login }}"
+    stdin_add_newline: false
+  when: _portal_ldap_on | bool and (_portal_ldap_state.rc != 0 or (_portal_ldap_state.stdout | trim) != (_portal_ldap_login | hash('sha256')))
+  changed_when: true
+  failed_when: false                      # said by the next task, with podman's reason
+  no_log: true
+  register: _portal_ldap_set
+
+- name: Secret | the AD groups' LDAP login - podman made it
+  ansible.builtin.fail:
+    msg: "podman secret create site-portal-ldap failed (rc {{ _portal_ldap_set.rc }}): {{ _portal_ldap_set.stderr | default('', true) | trim or 'no reason given' }}"
+  when: _portal_ldap_set.rc | default(0) != 0
+
 # ---------------------------------------------------------------- 1.101.2: the report database's read-only login, a podman secret
 # {host, port, database, user, password, tls, ca_pem} as JSON in one secret (site-portal-reportdb -> PORTAL_REPORT_DB), its
 # SHA-256 on a label as the others'. The live AD page reads the AD job's runs with it; the deploy never fails on it.
@@ -726,6 +814,20 @@
       PORTAL_INVENTORY: "{{ portal_inventory }}"
       PORTAL_REQUESTERS: "{{ portal_requesters }}"
       PORTAL_APPROVERS: "{{ portal_approvers }}"
+      # 1.120.0: approvers and requesters from AD groups (the login: the secret site-portal-ldap)
+      PORTAL_APPROVER_GROUPS: "{{ portal_approver_groups | default([], true) }}"
+      PORTAL_REQUESTER_GROUPS: "{{ portal_requester_groups | default([], true) }}"
+      PORTAL_AD_CARD_ATTRIBUTE: "{{ portal_ad_card_attribute }}"
+      PORTAL_AD_CARD_MATCH: "{{ portal_ad_card_match }}"
+      PORTAL_AD_GROUPS_SECONDS: "{{ portal_ad_groups_seconds | string }}"
+      PORTAL_LDAP_SERVERS: "{{ _portal_ldap_servers | to_json }}"
+      PORTAL_LDAP_DOMAIN: "{{ portal_ldap_domain | default('', true) | trim }}"
+      PORTAL_LDAP_BASE: "{{ portal_ldap_base | default('', true) | trim }}"
+      PORTAL_LDAP_STARTTLS: "{{ '1' if portal_ldap_starttls | bool else '0' }}"
+      PORTAL_LDAP_VERIFY: "{{ '1' if portal_ldap_validate_certs | bool else '0' }}"
+      PORTAL_LDAP_LDAPS_PORT: "{{ portal_ldap_ports.ldaps | default(636) | string }}"
+      PORTAL_LDAP_PORT: "{{ portal_ldap_ports.ldap | default(389) | string }}"
+      PORTAL_LDAP_TIMEOUT: "{{ portal_ldap_timeout | string }}"
       PORTAL_LAUNCHES_PER_HOUR: "{{ portal_launches_per_hour | string }}"
       PORTAL_JOB_EVENTS: "{{ portal_job_events | string }}"
       PORTAL_STIGMAN_PATH: "{{ portal_stigman_path }}"
@@ -906,6 +1008,7 @@
     _portal_has_trust: "{{ _portal_trust_parts.matched | int > 0 }}"
     _portal_has_swis: "{{ _portal_netmap | bool }}"
     _portal_has_rdb: "{{ _portal_rdb | bool }}"
+    _portal_has_ldap: "{{ _portal_ldap_on | bool }}"
   register: _portal_units
 
 - name: Units | an own nginx no longer wanted
@@ -945,6 +1048,7 @@
          or _portal_actions_file is changed or _portal_logo_file is changed or _portal_secret_set is changed or _portal_trust is changed
          or _portal_swis_set is changed or _portal_swis_gone is changed
          or _portal_rdb_set is changed or _portal_rdb_gone is changed
+         or _portal_ldap_set is changed or _portal_ldap_gone is changed
          or _portal_trust_gone is changed)
 
 - name: Units | restart its nginx (its server or certificates changed)

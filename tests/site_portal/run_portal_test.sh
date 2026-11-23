@@ -43,6 +43,7 @@ for n in "$net" site-portal; do podman network exists "$n" && { echo "ABORT - a 
 podman volume exists site-portal-data && { echo "ABORT - a podman volume site-portal-data exists already"; exit 1; }
 podman secret inspect site-portal-aap-token >/dev/null 2>&1 && { echo "ABORT - a podman secret site-portal-aap-token exists already"; exit 1; }
 podman secret inspect site-portal-reportdb >/dev/null 2>&1 && { echo "ABORT - a podman secret site-portal-reportdb exists already"; exit 1; }
+podman secret inspect site-portal-ldap >/dev/null 2>&1 && { echo "ABORT - a podman secret site-portal-ldap exists already"; exit 1; }
 cleanup() {
     systemctl --user stop site-portal-nginx.service site-portal-app.service site-portal-network.service \
         site-portal-data-volume.service >/dev/null 2>&1
@@ -54,6 +55,7 @@ cleanup() {
     podman network rm -f "$net" site-portal >/dev/null 2>&1
     podman secret rm site-portal-aap-token >/dev/null 2>&1
     podman secret rm site-portal-reportdb >/dev/null 2>&1
+    podman secret rm site-portal-ldap >/dev/null 2>&1
     rm -rf "${work:?}"
 }
 trap cleanup EXIT
@@ -99,6 +101,7 @@ cat > "$work/vars.json" <<EOF
  "portal_image": "$image", "portal_network": "$net", "portal_server_name": "localhost",
  "portal_public_url": "https://localhost:$port/portal/", "portal_reports_dir": "$work/reports",
  "portal_inventory": "Site hosts", "portal_approvers": ["APPROVER.ALEX.B.3456789012"], "portal_ready_delay": 2,
+ "portal_approver_groups": ["AAP-Approvers"],
  "portal_actions_extra": {"health_one_host": {"title": "Health check of one host", "summary": "Runs the Linux health check on one host.", "area": "Health",
    "aap": {"type": "job", "name": "Health check - Linux (portal)"}, "vars": {"target": {"kind": "inventory_host", "label": "Host"}},
    "limit_from": "target", "approval": false, "fixes": false}},
@@ -125,6 +128,7 @@ deploy() {
     # 1.101.2: a "Report database" credential on the deploy - nothing listens on port 9: its check says so, never a failure
     (cd "$repo" && CONTROLLER_HOST=http://portal-test-aap:8000 CONTROLLER_OAUTH_TOKEN=test-token-1670 ANSIBLE_NOCOLOR=1 \
         REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=9 REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=Test-Only-dbpw-1012 \
+        MICROSOFT_AD_LDAP_USERNAME=svc_aap_adreader@corp.example.mil MICROSOFT_AD_LDAP_PASSWORD=Test-Only-ldappw-1120 \
         "$ap" -i "$work/inv.yml" playbooks/site_portal_deploy.yml -e "@$work/vars.json" "$@") > "$work/out.txt" 2>&1
 }
 if deploy -e '{"portal_network": "podman"}'; then fail "podman's default network refused" "$(cat "$work/out.txt")"
@@ -366,7 +370,7 @@ r="$(c "$k/jdoe" launch ckl_import '{"stigman_ckl_import_mode": "import and scor
 wf="$(echo "$r" | jq_ 'd["body"].get("job_id", "")')"
 aid="$(c "$k/appr" get /portal/api/approvals | jq_ '[a["id"] for a in d["json"]["approvals"] if a["workflow_job"] == '"${wf:-0}"'][0]')"
 r="$(c "$k/jdoe" decide "$aid" approve)"
-case "$r" in *'"code": 403'*"not on the list of approvers"*) pass "approve by a person not an approver: refused";; *) fail "a non-approver refused" "$r";; esac
+case "$r" in *'"code": 403'*"You are not an approver (portal_approvers, portal_approver_groups)"*) pass "approve by a person not an approver: refused";; *) fail "a non-approver refused" "$r";; esac
 r="$(c "$k/appr" decide "$aid" approve)"
 if [ "$(echo "$r" | jq_ 'd["code"]')" = 200 ] && grep -q "workflow_approvals/$aid/approve/" "$work/aap/aap.jsonl"; then pass "approve by an approver: AAP got it"
 else fail "approve by an approver" "$r"; fi
@@ -464,6 +468,19 @@ leak="$( (grep -rl "Test-Only-dbpw-1012" "$work/etc" "$units" "$work/log.jsonl" 
 if podman secret inspect site-portal-reportdb >/dev/null 2>&1 && grep -q "Secret=site-portal-reportdb,type=env,target=PORTAL_REPORT_DB" "$units/site-portal-app.container" \
     && [ -z "$leak" ]; then pass "the report database's login: the podman secret site-portal-reportdb, not in a file, a unit, the log or podman inspect"
 else fail "the report database's secret" "leak: $leak; $(grep -c site-portal-reportdb "$units/site-portal-app.container")"; fi
+# 1.120.0: the AD groups' LDAP login ("LDAP Bind Account", microsoft.ad's env pair) - a podman secret, never anywhere else; no DC
+# here to read the group from: only the named approvers may decide, said on the page and in the log - never open
+leak="$( (grep -rl "Test-Only-ldappw-1120" "$work/etc" "$units" "$work/log.jsonl" "$work/out.txt"; podman inspect site-portal-app | grep -c "Test-Only-ldappw-1120" | grep -v '^0$') 2>/dev/null)"
+if podman secret inspect site-portal-ldap >/dev/null 2>&1 && grep -q "Secret=site-portal-ldap,type=env,target=PORTAL_LDAP_LOGIN" "$units/site-portal-app.container" \
+    && "$py" -c 'import json, sys; assert json.load(open(sys.argv[1]))["PORTAL_APPROVER_GROUPS"] == ["AAP-Approvers"]' "$work/etc/settings.json" \
+    && [ -z "$leak" ]; then
+    pass "1.120.0: the AD groups' LDAP login: the podman secret site-portal-ldap, not in a file, a unit, the log or podman inspect"
+else fail "the AD groups' secret" "leak: $leak; secret: $(podman secret inspect site-portal-ldap >/dev/null 2>&1 && echo there || echo missing); unit: $(grep -c site-portal-ldap "$units/site-portal-app.container"); groups: $(grep -A2 PORTAL_APPROVER_GROUPS "$work/etc/settings.json" | tr -d ' \n')"; fi
+r="$(c "$k/appr" get /portal/approvals)"
+if echo "$r" | grep -q 'AD not read</span><b>Only the named approvers may decide</b>: 1 in <code>portal_approvers</code>' \
+    && echo "$r" | grep -q 'AAP-Approvers (AD) is not counted until AD answers' && grep -q '"event": "ad-groups", "ok": false' "$work/log.jsonl"; then
+    pass "1.120.0: AD not read - only the named approvers decide, said on the Approvals page and in the log"
+else fail "the AD groups not read, said" "$(echo "$r" | grep -o 'deciders.\{0,300\}' | head -2); $(grep ad-groups "$work/log.jsonl" | head -2)"; fi
 if grep -q "The report database could not be read from here" "$work/out.txt"; then pass "the deploy's look at the login: a database not reached is said, the deploy goes on"
 else fail "the deploy's database check said" "$(grep -A4 'Report database' "$work/out.txt" | head -20)"; fi
 r="$(c "$k/jdoe" get /portal/ad)"; a="$(c "$k/jdoe" get /portal/api/ad)"; h="$(c "$k/jdoe" get /healthz)"

@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.120.0 — 2026-11-23
+
+**To set up:**
+1. In the inventory (or the deploy's template), set the approvers' AD group: `portal_approver_groups: [<your group>]`. Do the
+   same for who may run the actions, if wanted: `portal_requester_groups`. A name (cn or sAMAccountName) or a DN.
+2. Attach the **LDAP Bind Account** credential to the **Site portal - deploy** template.
+   - A credential type that sets microsoft.ad's pair (`MICROSOFT_AD_LDAP_USERNAME`, `MICROSOFT_AD_LDAP_PASSWORD`) works as it
+     is. The repository's `aap/credential_types/ldap_bind_account.yml` sets that pair.
+   - A type with other names: set `portal_ldap_vars` (docs/SITE_PORTAL.md, "Approvers from AD groups").
+3. Only if the deploy's inventory has no DCs (`win_dc` / `domain_controllers`) and no `ad_reader_domain`: set
+   `portal_ldap_server`.
+4. Run the deploy again. Check the Approvals page: *Who may decide: <your group> (AD), N people*.
+
+**The site portal: approvers and requesters from AD groups (user-approved).**
+
+- `portal_approver_groups` and `portal_requester_groups`: the members of these AD groups count as approvers and requesters,
+  with the named `portal_approvers` and `portal_requesters`.
+  - Nested groups count (LDAP_MATCHING_RULE_IN_CHAIN); a disabled account never does.
+  - A card matches its AD account by the EDIPI at the end of its CN: `userPrincipalName` = `<EDIPI>@mil` by default
+    (`portal_ad_card_attribute`, `portal_ad_card_match`).
+- One shared LDAP read every 5 minutes (`portal_ad_groups_seconds`), kept; after a failed read, again in a minute. Read-only,
+  as a plain domain user. LDAPS first, StartTLS only when allowed, the DC's certificate checked.
+- **AD down: only the named lists**, never open. It is said on the Approvals page (*AD not read - only the named approvers
+  may decide*, with the reason) and in the portal's log. With `portal_requester_groups` set, an empty `portal_requesters` is
+  nobody, not everyone. `portal_allow_self_approval` is unchanged.
+- The Approvals page says who may decide: *AAP-Approvers (AD), 6 people · 1 named in `portal_approvers`*.
+- The login is the "LDAP Bind Account" credential (new type file `aap/credential_types/ldap_bind_account.yml`, or the site's
+  own via `portal_ldap_vars`). The deploy hands it to the portal as a podman secret (`site-portal-ldap`), never in a file or
+  the logs.
+- The AD report's reader and the portal now connect with the same code (`plugins/module_utils/site_ldap.py`).
+- Tests: tests/test_ad_groups.py, against a fake directory: nested groups and a loop, a disabled account (also when the DC
+  ignores that part of the filter), a filter-injection name, AD down failing closed and coming back, the portal's page
+  and log, and the deploy's secret. tests/ad/run_ad_reader_test.sh, against real Samba DCs: a nested member, a disabled
+  member, a wrong password, a DC that does not answer and an untrusted certificate.
+
 ## 1.118.5 — 2026-11-23
 
 **To set up:** nothing - a site with its own stigman_scorecard_platforms keeps its list (add the new patterns there to use them).

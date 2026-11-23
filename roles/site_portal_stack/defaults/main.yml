@@ -63,6 +63,22 @@ portal_requesters: []                               # who may run the actions (a
 portal_approvers: []                                # who may approve or deny on /portal/approvals; [] = nobody (AAP's own page still works)
 portal_launches_per_hour: 20                        # one person's launches in an hour, at most
 portal_allow_self_approval: false                   # true = an approver may approve or deny a run they started themselves
+# 1.120.0: approvers and requesters from AD groups too (each person still needs a verified card). A group's name (its cn or
+# sAMAccountName) or its DN; members of nested groups count, a disabled account never. Read over LDAP with the "LDAP Bind
+# Account" credential on this job's template (portal_ldap_vars), every portal_ad_groups_seconds, kept. AD not read: only
+# portal_approvers / portal_requesters count (with groups set, an empty portal_requesters is nobody - never everyone).
+portal_approver_groups: []                          # e.g. [AAP-Approvers] or ["CN=AAP-Approvers,OU=Groups,DC=corp,DC=example,DC=mil"]
+portal_requester_groups: []                         # the same for who may run the actions (with portal_requesters); [] = none
+portal_ad_card_attribute: userPrincipalName         # the AD account attribute a card is matched by (altSecurityIdentities is multi-valued: fine)
+portal_ad_card_match: "{edipi}@mil"                 # its value: {edipi} = the 10 digits at the end of the card's CN, {cn} = the CN; * and ? match anything
+portal_ad_groups_seconds: 300                       # how often the members are read (60 to 3600); 60 s after a failed read
+portal_ldap_server: ""                              # a DC (or several, comma-separated); "" = the inventory's DCs (win_dc / domain_controllers), else portal_ldap_domain's from DNS
+portal_ldap_domain: "{{ ad_reader_domain | default('') }}"   # the domain's DNS name (its DCs from DNS; the base DN from it)
+portal_ldap_base: ""                                # where the groups and users are searched; "" = from portal_ldap_domain, else the DC's defaultNamingContext
+portal_ldap_starttls: false                         # true = StartTLS on 389 when LDAPS (636) does not answer - never a bind in clear
+portal_ldap_validate_certs: true                    # the DC's certificate checked (the server's trust, as for AAP) before the password is sent
+portal_ldap_ports: {ldaps: 636, ldap: 389}          # the ports the DCs answer LDAPS and LDAP (StartTLS) on
+portal_ldap_timeout: 5                              # seconds per connection
 
 # ---- the actions: {} = the role's files/actions.yml; a dict of the same shape here replaces it -----------------------
 portal_actions: {}
@@ -191,5 +207,11 @@ portal_aap_token: >-
      or lookup('ansible.builtin.env', 'TOWER_OAUTH_TOKEN') }}
 # 1.85.0: the "SolarWinds (read-only)" credential's login - one podman secret on the server (site-portal-swis), never in a
 # file, a unit or the logs
-portal_solarwinds_username: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"
+# 1.120.0: the "LDAP Bind Account" credential's login for the AD groups: where it is in this job - the name of an environment variable
+# the credential sets, or of an extra variable. The defaults are microsoft.ad's own pair (MICROSOFT_AD_LDAP_USERNAME / _PASSWORD), which
+# the repo's type (aap/credential_types/ldap_bind_account.yml) sets too; a site's own type: its injector's names here (Credential Types >
+# the type > Injector configuration). The user as given: a UPN (svc@corp.example.mil), DOMAIN\user or a DN. One podman secret on the
+# server (site-portal-ldap), never in a file, a unit or the logs.
+portal_ldap_vars: {user: MICROSOFT_AD_LDAP_USERNAME, password: MICROSOFT_AD_LDAP_PASSWORD}
+portal_solarwinds_username: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_USERNAME') }}"   # 1.85.0: the "SolarWinds (read-only)" credential's user
 portal_solarwinds_password: "{{ lookup('ansible.builtin.env', 'SOLARWINDS_PASSWORD') }}"   # the credential's password (secret)

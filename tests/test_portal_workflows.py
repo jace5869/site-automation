@@ -690,7 +690,7 @@ class Live(unittest.TestCase):
         # the one who started it is no approver: the plan, the reason by its setting's name, the way to Approvals - no buttons
         h = self.req("/jobs/%d" % wid)
         self.assertIn("<b>Waiting for an approver</b>", h)
-        self.assertIn("<b>You are not in <code>portal_approvers</code></b> - only the approvers decide.", h)
+        self.assertIn("<b>You are not an approver</b> (<code>portal_approvers</code>, <code>portal_approver_groups</code>) - only the approvers decide.", h)
         self.assertIn('<a href="%sapprovals">Approvals</a>' % self.cfg.path, h)
         self.assertNotIn('data-d="approve"', h)
         self.assertIn("What it will change", h)
