@@ -51,7 +51,7 @@ class DeployFit(unittest.TestCase):
                                        summary=NS(hardware=NS(memorySize=100 * G), quickStats=NS(overallMemoryUsage=30 * 1024))))
         self.ds = self.vim.Datastore(name="SITA0101-DS02", summary=NS(capacity=100 * G, freeSpace=50 * G, accessible=True,
                                                                      maintenanceMode="normal", multipleHostAccess=True),
-                                     host=[NS(key=h) for h in self.cr.host])
+                                     host=[NS(key=h, mountInfo=NS(mounted=True, accessible=True)) for h in self.cr.host])
         self.pod = self.vim.StoragePod(name="SITA0101", childEntity=[self.ds])
         nic = self.vim.vm.device.VirtualEthernetCard
         disk = self.vim.vm.device.VirtualDisk(key=1, capacityInKB=10 * 1048576, controllerKey=1, unitNumber=0)
@@ -104,6 +104,50 @@ class DeployFit(unittest.TestCase):
     def finish(exc, failed, result):
         raise exc(dict(result, failed=failed))
 
+    def test_pinned_clone_checks_ordered_networks(self):
+        spec = dict(template=self.tpl.name, cpu="4", memory_gb="16", disks_gb="10", networks="SITA0101, APP-TEAM-1")
+        devices = self.tpl.config.hardware.device
+        devices.pop()
+        devices[1].backing.deviceName = "SITA0101"
+        self.tpl.network[0].name = "APP-TEAM-1"
+        self.assertTrue(self.run_module(check=False, expect_clone=True, pinned=True, checked_spec=spec)["vm"]["created"])
+        devices[1].backing.deviceName = "DS01"
+        for check in (True, False):
+            refused = self.run_module(check=check, pinned=True, checked_spec=spec)
+            self.assertIn("network", refused["msg"])
+
+    def test_require_fit_refuses_a_clone_time_nic_issue(self):
+        for check in (True, False):
+            refused = self.run_module(check=check, pinned=True, require_fit=True)
+            self.assertTrue(refused["failed"], refused)
+            self.assertIn("not set to connect at power on", refused["msg"])
+            if not check:
+                self.assertIn(": no touch builds only a clean plan", refused["msg"])
+
+    def test_shared_requires_two_accessible_cluster_mounts(self):
+        mounts = self.ds.host
+
+        def shared():
+            return deploy.datastore_info(self.ds, self.cr, {})["shared"]
+        self.assertTrue(shared())
+        mounts[1].key = object()
+        self.assertFalse(shared())
+        mounts[1].key = self.cr.host[1]
+        mounts[1].mountInfo.accessible = False
+        self.assertFalse(shared())
+        mounts[1].mountInfo = NS(mounted=False, accessible=True)
+        self.assertFalse(shared())
+
+    def test_pinned_clone_requires_pod_membership(self):
+        self.pod.name = "ProdPod"
+        self.ds.name = "DS01"
+        pin = dict(pinned=True, datastore=self.ds.name, datastore_pod=self.pod.name)
+        self.assertTrue(self.run_module(check=False, expect_clone=True, **pin)["vm"]["created"])
+        self.pod.childEntity = []
+        refused = self.run_module(check=False, **pin)
+        self.assertIn("DS01", refused["msg"])
+        self.assertIn("ProdPod", refused["msg"])
+
     def test_named_fit_counts_planned_disks_and_failover(self):
         result = self.run_module(datastore_planned={self.ds.name: 10})
         self.assertFalse(result["failed"], result)
@@ -145,7 +189,7 @@ class DeployFit(unittest.TestCase):
         self.cr.datastore[2].summary.accessible = False
         self.cr.datastore[3].summary.maintenanceMode = "inMaintenance"
         self.cr.datastore[4].summary.multipleHostAccess = False
-        self.cr.datastore[4].host = [NS(key=self.cr.host[0])]
+        self.cr.datastore[4].host = self.ds.host[:1]
         args = dict(shortlist=True, datastores_allowed=["SITA0101-*"], datastore_rule=["*-DS0[2-6]"],
                     template_folders=["vm"], folders_allowed=["App"], folder="Servers/App")
         self.dc.vmFolder.childEntity = [app.parent]
@@ -242,7 +286,7 @@ class DeployFit(unittest.TestCase):
         # choose, so the shortlist and a changed placement measure it the same way
         self.cr.host = self.cr.host[:1]
         self.ds.summary.multipleHostAccess = False
-        self.ds.host = [NS(key=self.cr.host[0])]
+        self.ds.host = self.ds.host[:1]
         self.ds.summary.freeSpace = 80 * G
         short = self.run_module(shortlist=True, mem_target_pct=100)["vm"]["shortlist"]
         stores = short["datastores"]["|".join((self.vc, self.dc.name, self.cr.name))]

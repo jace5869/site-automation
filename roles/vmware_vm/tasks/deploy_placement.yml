@@ -107,6 +107,7 @@
         data:
           vm_deploy_placement_change: >-
             {{ {'ok': _vd_change_error is undefined, 'ticket': vm_deploy_ticket | default(''), 'checked_job': vm_deploy_checked_job | default('') | string,
+                'launch_note': 'not written' if _vd_launch_patch is undefined or (_vd_launch_patch.status | default(-1) | int) >= 400 else 'written',
                 'vms': _vd_new_places | default([]), 'error': _vd_change_error | default('')} }}
 
     - name: VMware | report the placement change

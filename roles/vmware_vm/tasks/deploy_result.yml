@@ -14,7 +14,7 @@
       {%- if _vd_plan_only | bool and not _vd_r.failed | default(false) -%}
       {%-   set lines = [('[AAP] Checked - VM ' ~ sp.vm_name ~ nth ~ ' - ready to build after the approval (' if _vd_multi | bool
                           else '[AAP] Checked - ready to build after the approval (') ~ _vd_job ~ ', ticket text ' ~ _vd_digest ~ '):']
-                       + (_vd_plan | vm_deploy_plan_note_lines(sp.vm_name))
+                       + (_vd_plan | vm_deploy_plan_note_lines(sp.vm_name)) + ['networks: ' ~ v.networks | join(', ') ~ '   (default: the template)']
                        + (['- Service: ' ~ svc] if svc else []) + (inv | map('regex_replace', '^', '- ') | list) + notes -%}
       {%- elif not _vd_r.failed | default(false) -%}
       {%-   set lines = ['[AAP] VM ' ~ v.name ~ ' deployed (' ~ _vd_job ~ ')' ~ nth ~ '.']

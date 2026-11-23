@@ -346,6 +346,7 @@ The plan's DHCP then holds only when that specification uses DHCP. Blank PXE or 
 
 For the job page and the Approvals view, see [The VM deploy plan](SITE_PORTAL.md#the-vm-deploy-plan).
 
+The plan warns when it cannot measure a cluster or datastore and gives the reason.
 A capacity warning goes to the approver. Conflicting answers, missing required fields or a placement
 refusal stop the workflow. The requester gets a comment and the stopped plan identifies the affected rows.
 
@@ -396,7 +397,9 @@ The placement change job checks the allow-lists and the VM’s datastore rule. B
 The datastore must stay at or below 85% with the VM at full size. The limits come from `vm_deploy_mem_target_pct`,
 `vm_deploy_failover_hosts` and `vm_deploy_datastore_max_used_pct`.
 
+If a stopped job may have written the note, the portal asks you to save that VM again.
 Save one VM at a time. The job writes the `[AAP] Placement changed` note on the launch ticket first. Its report names any related ticket that refused the copy.
+For a datastore cluster request, the approved datastore must still belong to that cluster at build time.
 The note names the approver and the propose job. The build checks the ticket digest, the allow-lists and the fit again before cloning.
 
 ### No touch: a clean change builds without an approval

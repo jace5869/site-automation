@@ -332,7 +332,7 @@ function jobsPage() {
           // 1.92.0: the decision box stays as the person left it - a question being answered is not swapped away; an open panel stays open
           const oldBox = same && pane.querySelector("#decide"), newBox = fresh.querySelector("#decide");
           const previous = oldBox?.querySelector("[data-aid]")?.dataset, next = newBox?.querySelector("[data-aid]")?.dataset;
-          if (oldBox?.dataset.hold && previous && next && previous.aid === next.aid &&
+          if (oldBox?.dataset.hold && previous && next && previous.aid === next.aid && previous.approveBlocked === next.approveBlocked &&
               previous.savedJob === next.savedJob && previous.pendingJob === next.pendingJob) newBox.replaceWith(oldBox);
           else if (oldBox && newBox && oldBox.querySelector("details.wic[open]") && newBox.querySelector("details.wic")) newBox.querySelector("details.wic").open = true;
           pane.replaceWith(fresh); pane = $("jd");
@@ -714,7 +714,7 @@ function placementEditor(card, approval, viewer, save, undo) {
     const label = el("label", "placement-folder", "VM"), select = el("select");
     for (const vm of names) select.append(el("option", "", vm.name));
     select.onchange = () => {
-      if (requested.length) {
+      if (choices.get(name)?.edited) {
         select.value = name;
         message.textContent = "Save one VM at a time.";
         return;
@@ -746,13 +746,12 @@ function placementEditor(card, approval, viewer, save, undo) {
     requested = [];
     let valid = true;
     for (const [vm, pick] of choices) {
-      if (vm !== name || !pick.edited) continue;
+      if (vm !== name || !pick.cluster) continue;
       const c = pick.cluster, d = pick.store;
       const values = {vcenter: location(c), cluster: c.name, datastore: d?.name || "", folder: pick.folder};
       const old = originals.get(vm);
       const moved = old.vcenter !== values.vcenter;
       const changed = fields.filter(k => moved || old[k] !== values[k]);
-      if (!changed.length) continue;
       requested.push({vm_name: vm, vcenter: c.vcenter, cluster: c.name, datastore: values.datastore, folder: values.folder});
       valid = valid && Boolean(c.fits && d?.fits && pick.folder);
       for (const tr of tables.get(vm).querySelectorAll("[data-field]")) {
@@ -887,7 +886,7 @@ function decider(row, aid, after) {
     hold(false);
     row.replaceChildren();
     for (const [d, label] of [["approve", approveLabel], ["deny", "Deny"]]) {
-      if (pendingJob && d === "approve") continue;
+      if ((pendingJob || row.dataset.approveBlocked) && d === "approve") continue;
       const b = el("button", d === "deny" ? "deny" : "pri", label);
       b.type = "button";
       b.dataset.d = d;
@@ -946,7 +945,7 @@ function decider(row, aid, after) {
       try {
         const result = await call("api/placement/" + job);
         if (result.done) {
-          msg.textContent = result.ok ? "Placement saved. Updating the plan…" : result.error + " Nothing was changed.";
+          msg.textContent = result.ok ? "Placement saved. Updating the plan…" : result.error + (result.launch_note === "not written" ? " Nothing was changed." : "");
           hold(false);
           after(null);
           return;
@@ -1039,6 +1038,7 @@ function deployPlanEl(plan) {
   summary.append(chev(), el("span", "t", "What will be built"), counts);
   const body = el("div", "wicp deploy-list");
   body.append(el("p", "pt", [plan.ticket, ...plan.tasks, plan.digest].filter(Boolean).join(" · ")));
+  if (plan.approve_error) body.append(el("p", "placement-status", plan.approve_error));
   for (const vm of plan.vms) {
     const group = el("div", "hg"), list = el("ul");
     group.append(el("div", "hn", vm.name));
@@ -1146,6 +1146,7 @@ function approvalsPage() {
       const act = el("td", "nw decs");
       if (a.may_decide) {
         const row = el("div", "row-btns");
+        if (a.deploy_plan?.approve_error) row.dataset.approveBlocked = "1";
         row.dataset.savedJob = a.deploy_plan?.saved_job || "";
         if (a.deploy_plan?.saved_job) row.dataset.approveLabel = "Approve with the new placement";
         if (a.deploy_plan?.placement?.done === false) row.dataset.pendingJob = a.deploy_plan.placement.job;

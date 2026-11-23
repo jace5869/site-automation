@@ -13,3 +13,4 @@
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
     status_code: 200
+  register: _vd_launch_patch

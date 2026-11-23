@@ -44,7 +44,8 @@ options:
   datastore_rule: {description: Datastore patterns of the rule matching this VM., type: list, elements: str, default: []}
   require_fit: {description: Require a pinned placement to meet both capacity targets., type: bool, default: false}
   pinned_pct: {description: Approved capacity warning percentages by placement field., type: dict, default: {}}
-  checked_spec: {description: Template and size recorded by the check., type: dict, default: {}}
+  datastore_pod: {description: Datastore cluster of the pinned datastore., type: str, default: ""}
+  checked_spec: {description: "Template, networks and size recorded by the check.", type: dict, default: {}}
   pinned_ok: {description: Capacity warnings recorded for this VM before approval (unshared - its datastore approved as not shared)., type: list, elements: str, choices: [cluster, datastore, unshared], default: []}
   cluster_candidates: {description: With no cluster - choose among these (names; * and ?) the one with the most memory left with failover_hosts host(s) down, staying under mem_target_pct. Empty = the template's cluster., type: list, elements: str, default: []}
   datastore_candidates: {description: With no datastore - choose among these (names; * and ?) a shared, accessible datastore of the chosen cluster that stays under datastore_max_used_pct with the VM's full size. Empty = the template's datastore., type: list, elements: str, default: []}
@@ -267,10 +268,12 @@ def cluster_info(cluster):
 def datastore_info(ds, cluster, planned, vc="", dc="", require_shared=False):
     summary = ds.summary
     reserved = planned.get("|".join((vc, dc, ds.name)).lower(), planned.get(ds.name.lower(), 0))
+    hosts = set(cluster.host or [])
+    mounts = {m.key for m in ds.host or [] if m.key in hosts and m.mountInfo.mounted and m.mountInfo.accessible}
     return {"name": ds.name, "capacity": summary.capacity,
             "free": (summary.freeSpace or 0) - reserved,
             "ok": bool(summary.accessible) and str(summary.maintenanceMode or "normal") == "normal",
-            "shared": bool(summary.multipleHostAccess) or len(ds.host or []) >= 2 or (not require_shared and len(cluster.host or []) == 1)}
+            "shared": len(mounts) >= 2 or (not require_shared and len(hosts) == 1)}
 
 
 def pinned_problem(fit, need_disk, warned, pinned_pct):
@@ -569,6 +572,7 @@ def main():
                            shortlist=dict(type="bool", default=False), checked_spec=dict(type="dict", default={}),
                            clusters_allowed=dict(type="list", elements="str", default=[]),
                            datastores_allowed=dict(type="list", elements="str", default=[]),
+                           datastore_pod=dict(type="str", default=""),
                            datastore_rule=dict(type="list", elements="str", default=[]),
                            pinned=dict(type="bool", default=False), pinned_pct=dict(type="dict", default={}),
                            require_fit=dict(type="bool", default=False),
@@ -604,6 +608,9 @@ def main():
     def issue(text):
         notes.append(text)
         issues.append(text)
+        if p["require_fit"]:
+            why = text if module.check_mode else text + ": no touch builds only a clean plan"
+            module.fail_json(msg=why, changed=vm["created"], vm=vm, notes=notes, issues=issues)
     sessions = {}
     again, again_vc = None, ""                  # a VM an earlier run of this ticket started and did not finish
     try:
@@ -781,6 +788,7 @@ def main():
                     ds = dss[0]
                 elif pods and not p["pinned"]:
                     chosen["datastore"] = "pod"
+                    vm["datastore_pod"] = pods[0].name
                     kids = [d for d in pods[0].childEntity if isinstance(d, vim.Datastore) and d.summary.accessible]
                     if not kids:
                         module.fail_json(msg="datastore cluster %s has no accessible datastore" % p["datastore"], vm=vm, notes=notes)
@@ -872,9 +880,18 @@ def main():
         if p["checked_spec"]:
             actual = {"template": vm["template"], "cpu": str(vm["cpu"]), "memory_gb": "%g" % vm["memory_gb"],
                       "disks_gb": " + ".join(str(gb) for gb in vm["disks_gb"])}
+            if "networks" in p["checked_spec"]:
+                actual["networks"] = ", ".join(vm["networks"])
+                if actual["networks"] != p["checked_spec"]["networks"]:
+                    module.fail_json(msg="the template networks differ from the checked plan", vm=vm, notes=notes)
             if actual != p["checked_spec"]:
                 module.fail_json(msg="the template or VM size differs from the checked plan", vm=vm, notes=notes)
         if p["pinned"]:
+            if p["datastore_pod"]:
+                pods = _all(content, vim.StoragePod, dc.datastoreFolder)
+                if not any(pod.name == p["datastore_pod"] and ds in pod.childEntity for pod in pods):
+                    module.fail_json(msg="datastore %s is no longer in datastore cluster %s" % (ds.name, p["datastore_pod"]), vm=vm, notes=notes)
+                vm["datastore_pod"] = p["datastore_pod"]
             why = pinned_problem(fit, need_disk, [] if p["require_fit"] else p["pinned_ok"], p["pinned_pct"])
             if cr.name != p["cluster"] or ds.name != p["datastore"] or folder != _find_folder(dc, p["folder"]):
                 why = "placement has changed: run the workflow again: it is checked and approved again"

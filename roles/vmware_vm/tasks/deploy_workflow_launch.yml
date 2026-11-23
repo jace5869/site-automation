@@ -35,3 +35,28 @@
             ('started as workflow job ' ~ jid ~ ', but it ignored vm_deploy_ticket: give the workflow its survey question vm_deploy_ticket') if jid else
             ('AAP did not start it (HTTP ' ~ l.status | default('?') ~ ': ' ~ ((l.json | default({})) | to_json | truncate(200)) ~ ')') -%}
       {{ {'job': jid | int, 'url': url, 'error': err} }}
+
+- name: VMware | cancel the workflow that started without its origin
+  ansible.builtin.uri:
+    url: "{{ _vp_aap_host }}/{{ _vp_wf.api }}workflow_jobs/{{ _vp_started.job }}/cancel/"
+    method: POST
+    headers: >-
+      {{ {'Accept': 'application/json'} | combine({'Authorization': 'Bearer ' ~ lookup('ansible.builtin.env', _vp_aap_vars.token)}
+                                                  if _vp_aap_login == 'token' else {}) }}
+    url_username: "{{ lookup('ansible.builtin.env', _vp_aap_vars.user) if _vp_aap_login == 'password' else omit }}"
+    url_password: "{{ lookup('ansible.builtin.env', _vp_aap_vars.password) if _vp_aap_login == 'password' else omit }}"
+    force_basic_auth: "{{ _vp_aap_login == 'password' }}"
+    validate_certs: "{{ _vp_aap_verify }}"
+    ca_path: "{{ _vp_aap_ca | default(omit, true) }}"
+    status_code: 202
+  register: _vp_cancel
+  failed_when: false
+  no_log: true
+  when: _vp_handoff_from is defined and _vp_started.job > 0 and _vp_started.error == _vd_handoff_fix
+
+- name: VMware | report whether AAP took the cancellation
+  ansible.builtin.set_fact:
+    _vp_started: >-
+      {{ _vp_started | combine({'error': 'AAP job ' ~ _vp_started.job ~ ' was started without its origin and ' ~
+         ('was canceled' if _vp_cancel.status | default(0) == 202 else 'could not be canceled: cancel it in AAP') ~ '. ' ~ _vp_started.error}) }}
+  when: _vp_cancel is not skipped

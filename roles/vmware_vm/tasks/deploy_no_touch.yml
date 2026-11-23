@@ -17,7 +17,7 @@
 
 - name: VMware | does the plan need an approval?
   ansible.builtin.set_fact:
-    _vd_decision: "{{ _vd_plan | vm_deploy_no_touch(_vd_pre_res | map(attribute='issues', default=[]) | flatten) }}"
+    _vd_decision: "{{ _vd_plan | vm_deploy_no_touch(_vd_pre_res | map(attribute='issues', default=[]) | flatten, _vd.vms) }}"
     _vd_no_touch_job: "{{ 'AAP job ' ~ awx_job_id if awx_job_id is defined else 'AAP' }}"
 
 - name: VMware | preview the no-touch decision

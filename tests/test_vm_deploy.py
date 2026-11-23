@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 import unittest
 
 import yaml
@@ -66,12 +67,129 @@ class ApprovalPlan(unittest.TestCase):
         return {r["key"]: r for r in plan["vms"][i]["rows"]}
 
     def note(self):
-        header = "[AAP] Checked - ready to build after the approval (%s, ticket text %s):" % (self.job, self.digest)
-        return "\n".join([header] + d.vm_deploy_plan_note_lines(self.plan(), "vm-app01"))
+        import jinja2.nativetypes
+        task = yaml.safe_load(Path(HERE, "..", "roles/vmware_vm/tasks/deploy_result.yml").read_text())[0]
+        env = jinja2.nativetypes.NativeEnvironment(undefined=jinja2.StrictUndefined)
+        env.filters.update(d.FilterModule().filters(), bool=bool)
+        render = env.from_string(task["ansible.builtin.set_fact"]["_vd_b_result"]).render
+        result = render(_vd_r=dict(vm=self.vm, _vd_i=self.checked["vms"][0]), _vd=self.checked, _vd_multi=False,
+                        _vd_plan_only=True, _vd_plan=self.plan(report=True), _vd_job=self.job, _vd_digest=self.digest, _vd_nl="\n")
+        return result["work_notes"]
 
     @staticmethod
     def journal(*notes):
         return {"work_notes": "\n\n".join("2026-11-23 09:14:00 - AAP (Work notes)\n" + n for n in notes)}
+
+    def test_checked_networks_round_trip_and_old_note(self):
+        self.vm["networks"] = ["SITA0101", "APP-TEAM-1"]
+        line = "networks: SITA0101, APP-TEAM-1   (default: the template)"
+        note = self.note()
+        self.assertIn(line, note.splitlines())
+        for text, expected in ((note, "SITA0101, APP-TEAM-1"), ("\n".join(s for s in note.splitlines() if s != line), None)):
+            pin = d.vm_deploy_checked_placement(self.journal(text), self.digest, with_spec=True)["vm-app01"]
+            self.assertEqual(pin["checked_spec"].get("networks"), expected)
+
+        for networks in ([], ["SITA0101", ""]):
+            self.vm["networks"] = networks
+            pin = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest, with_spec=True)["vm-app01"]
+            self.assertEqual(pin["checked_spec"]["networks"], ", ".join(networks))
+
+    def test_unmeasurable_fit_warns_and_needs_approval(self):
+        self.vm["fit"]["cluster"]["pct_after"] = 76
+        for key, why in (("datastore", "not accessible"), ("cluster", "no connected hosts")):
+            with self.subTest(key=key):
+                fit = self.vm["fit"][key]
+                original = fit.copy()
+                fit.update(fits=False, pct_after=None, why=why)
+                plan = self.plan()
+                row = self.rows(plan)[key]
+                self.assertEqual((row["level"], row["why"]), ("warning", why))
+                self.assertEqual(d.vm_deploy_no_touch(plan), {"build": False, "why": plan["warnings"]})
+                pin = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest, with_spec=True)["vm-app01"]
+                self.assertNotIn(key, pin["warned_pct"])
+                self.vm["fit"][key] = original
+
+    def test_genai_site_needs_approval(self):
+        self.vm["fit"]["cluster"]["pct_after"] = 76
+        self.checked["vms"][0]["sources"].update(vcenter="site SITA0101", site="GenAI proposal (work note)")
+        decision = d.vm_deploy_no_touch(self.plan())
+        self.assertFalse(decision["build"])
+        self.assertIn("GenAI", decision["why"][0])
+        self.checked["vms"][0]["sources"]["vcenter"] = "description"
+        self.assertFalse(d.vm_deploy_no_touch(self.plan(), entries=self.checked["vms"])["build"])
+
+    def test_approved_pod_member_passes_the_allow_list(self):
+        self.vm.update(datastore="DS01")
+        self.checked["vms"][0]["spec"]["datastore"] = "ProdPod"
+        self.vm["chosen"]["datastore"] = "pod"
+        pins = d.vm_deploy_checked_placement(self.journal(self.note()), self.digest, with_spec=True)
+        rules = dict(self.rules, datastores=["ProdPod"], approved=pins)
+        self.assertEqual(pins["vm-app01"].get("datastore_pod"), "ProdPod")
+        self.assertEqual(d.vm_deploy_check(self.parsed, self.record, rules)["problems"], [])
+        import jinja2
+        task = yaml.safe_load(Path(HERE, "..", "roles/vmware_vm/tasks/deploy_build_one.yml").read_text())[0]
+        pod = jinja2.Environment().from_string(task["site_vmware_deploy"]["datastore_pod"])
+        self.assertEqual(pod.render(_vd_pin=pins["vm-app01"]), "ProdPod")
+        del pins["vm-app01"]["datastore_pod"]
+        self.assertEqual(pod.render(_vd_pin=pins["vm-app01"]), "")
+        self.assertIn("not in vm_deploy_datastores", d.vm_deploy_check(self.parsed, self.record, rules)["problems"][0])
+
+    def test_artifact_counts_all_vms_and_keeps_up_to_25(self):
+        entry, = self.checked["vms"]
+        for count in (11, 26):
+            self.checked["vms"] = [entry] * count
+            plan = self.plan()
+            self.assertEqual((plan.get("vm_count"), len(plan["vms"])), (count, min(count, 25)))
+
+    def test_placement_artifact_records_launch_note(self):
+        import jinja2.nativetypes
+        tasks = Path(HERE, "..", "roles/vmware_vm/tasks")
+        placement = yaml.safe_load((tasks / "deploy_placement.yml").read_text())[0]
+        expr = placement["always"][0]["ansible.builtin.set_stats"]["data"]["vm_deploy_placement_change"]
+        render = jinja2.nativetypes.NativeEnvironment().from_string(expr).render
+        self.assertEqual(render(_vd_change_error="refused").get("launch_note"), "not written")
+        patch, = yaml.safe_load((tasks / "deploy_placement_note.yml").read_text())
+        self.assertEqual(patch["ansible.builtin.uri"]["method"], "PATCH")
+        for status, expected in ((403, "not written"), (200, "written")):
+            self.assertEqual(render(**{patch["register"]: {"status": status}})["launch_note"], expected)
+
+    def test_a_placement_patch_without_an_answer_may_have_written(self):
+        # nuc-3 review: a timeout or a lost connection (status -1) may come after ServiceNow wrote the note. Only an
+        # HTTP refusal, or no PATCH at all, is "not written". "written" makes the portal ask for the VM to be saved again.
+        import jinja2.nativetypes
+        tasks = Path(HERE, "..", "roles/vmware_vm/tasks")
+        placement = yaml.safe_load((tasks / "deploy_placement.yml").read_text())[0]
+        expr = placement["always"][0]["ansible.builtin.set_stats"]["data"]["vm_deploy_placement_change"]
+        render = jinja2.nativetypes.NativeEnvironment().from_string(expr).render
+        for status, expected in ((-1, "written"), (500, "not written"), (404, "not written")):
+            self.assertEqual(render(_vd_launch_patch={"status": status}, _vd_change_error="x")["launch_note"], expected, status)
+        self.assertEqual(render(_vd_change_error="x")["launch_note"], "not written")
+
+    def test_ignored_handoff_is_canceled(self):
+        import jinja2.nativetypes
+        tasks = yaml.safe_load(Path(HERE, "..", "roles/vmware_vm/tasks/deploy_workflow_launch.yml").read_text())
+        cancels = [t for t in tasks if "/cancel/" in t.get("ansible.builtin.uri", {}).get("url", "")]
+        self.assertEqual(len(cancels), 1)
+        cancel, = cancels
+        uri = cancel["ansible.builtin.uri"]
+        self.assertEqual(uri["method"], "POST")
+        self.assertTrue(cancel["no_log"])
+        for key in ("ca_path", "validate_certs", "headers", "url_username", "url_password"):
+            self.assertEqual(uri[key], tasks[0]["ansible.builtin.uri"][key])
+        env = jinja2.nativetypes.NativeEnvironment(undefined=jinja2.StrictUndefined)
+        context = dict(_vp_started=dict(job=4814, error="survey"), _vd_handoff_fix="survey",
+                       _vp_handoff_from="4813", _vp_aap_host="", _vp_wf={"api": "api/v2/"})
+        self.assertEqual(env.from_string(uri["url"]).render(**context), "/api/v2/workflow_jobs/4814/cancel/")
+        guard = env.compile_expression(cancel["when"])
+        self.assertTrue(guard(**context))
+        self.assertFalse(guard(**dict(context, _vp_started=dict(job=0, error="survey"))))
+        self.assertFalse(guard(**dict(context, _vp_started=dict(job=4814, error=""))))
+        self.assertFalse(guard(**{k: v for k, v in context.items() if k != "_vp_handoff_from"}))
+        env.filters["combine"] = lambda a, b: {**a, **b}
+        result = env.from_string(tasks[-1]["ansible.builtin.set_fact"]["_vp_started"])
+        for status, outcome in ((202, "was canceled"), (403, "could not be canceled: cancel it in AAP")):
+            got = result.render(**context, **{cancel["register"]: {"status": status}})
+            self.assertIn("AAP job 4814 was started without its origin and " + outcome, got["error"])
 
     def test_source_strings(self):
         sources = {
@@ -249,8 +367,8 @@ class ApprovalPlan(unittest.TestCase):
         self.assertFalse(self.rows(p)["folder"]["level"])
         self.assertEqual(self.rows(p, 1)["folder"]["why"], self.results[1]["msg"][:240])
         self.assertNotIn("private payload", json.dumps(p))
-        self.checked["vms"] *= 6
-        self.assertEqual(len(self.plan()["vms"]), 10)
+        self.checked["vms"] *= 13
+        self.assertEqual(len(self.plan()["vms"]), 25)
 
     def test_build_reads_the_checked_spec_from_its_propose_note(self):
         import jinja2.nativetypes
@@ -261,7 +379,7 @@ class ApprovalPlan(unittest.TestCase):
         env.filters.update(d.FilterModule().filters())
         pins = env.from_string(expr).render(_vd_rec=self.journal(self.note()), _vd_digest=self.digest, _vd_phase="build",
                                             vm_deploy_checked_job="4813", ansible_check_mode=False)
-        self.assertEqual(pins["vm-app01"].get("checked_spec"), dict(template="rhel9-gold", cpu="4", memory_gb="16", disks_gb="120 + 200"))
+        self.assertEqual(pins["vm-app01"].get("checked_spec"), dict(template="rhel9-gold", cpu="4", memory_gb="16", disks_gb="120 + 200", networks="VM Network"))
 
     def test_checked_note_keeps_approved_percentages(self):
         self.vm["fit"]["datastore"]["pct_after"] = 86
@@ -292,7 +410,7 @@ class ApprovalPlan(unittest.TestCase):
         pins = env.from_string(facts["_vd_approved"]).render(_vd_pre_res=[{"vm": vm}])
         self.assertEqual(pins["vm-app01"], dict(vcenter=vm["vcenter"], datacenter=vm["datacenter"], cluster=vm["cluster"],
                                                 datastore=vm["datastore"], folder="Servers/App", warned=[],
-                                                checked_spec=dict(template=vm["template"], cpu="4", memory_gb="16", disks_gb="120 + 200")))
+                                                checked_spec=dict(template=vm["template"], cpu="4", memory_gb="16", disks_gb="120 + 200", networks="VM Network")))
 
         with open(os.path.join(HERE, "..", "roles/vmware_vm/tasks/deploy_build_one.yml")) as f:
             clone = yaml.safe_load(f)[0]["site_vmware_deploy"]
@@ -311,14 +429,14 @@ class ApprovalPlan(unittest.TestCase):
                             if "_vd_decision" in t.get("ansible.builtin.set_fact", {}))
         env = jinja2.nativetypes.NativeEnvironment()
         env.filters.update(d.FilterModule().filters(), flatten=lambda lists: [s for group in lists for s in group])
-        got = env.from_string(decision).render(_vd_plan=self.plan(), _vd_pre_res=[{}, {"issues": issues}])
+        got = env.from_string(decision).render(_vd_plan=self.plan(), _vd_pre_res=[{}, {"issues": issues}], _vd=self.checked)
         self.assertEqual(got, {"build": False, "why": issues})
 
     def test_handoff_launch_sends_parent_workflow_only_for_no_touch(self):
         import jinja2.nativetypes
         root = os.path.join(HERE, "..", "roles/vmware_vm/tasks")
         with open(os.path.join(root, "deploy_workflow_launch.yml")) as f:
-            launch, result = yaml.safe_load(f)
+            launch, result = yaml.safe_load(f)[:2]
         with open(os.path.join(root, "deploy_send_to_approval.yml")) as f:
             handoff = next(t["vars"] for t in yaml.safe_load(f) if t.get("ansible.builtin.include_tasks") == "deploy_workflow_launch.yml")
         env = jinja2.nativetypes.NativeEnvironment(undefined=jinja2.StrictUndefined)
@@ -428,8 +546,8 @@ class ApprovalPlan(unittest.TestCase):
         self.assertEqual(d.vm_deploy_checked_placement(self.journal(bodies[0]["work_notes"], self.note()), self.digest)["vm-app01"]["datastore"],
                          "SITA0101-DS01")
         stats = block["always"][0]["ansible.builtin.set_stats"]["data"]["vm_deploy_placement_change"]
-        inputs = dict(vm_deploy_ticket=self.ticket["number"], vm_deploy_checked_job="4813", _vd_new_places=places)
-        self.assertEqual(render(stats, **inputs), dict(ok=True, error="", ticket=self.ticket["number"], checked_job="4813", vms=places))
+        inputs = dict(vm_deploy_ticket=self.ticket["number"], vm_deploy_checked_job="4813", _vd_new_places=places, _vd_launch_patch={"status": 200})
+        self.assertEqual(render(stats, **inputs), dict(ok=True, error="", ticket=self.ticket["number"], checked_job="4813", vms=places, launch_note="written"))
         self.assertFalse(render(stats, **inputs, _vd_change_error="refused")["ok"])
 
     def test_placement_change_reserves_other_unbuilt_vms(self):

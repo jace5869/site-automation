@@ -110,12 +110,12 @@ class DeployPlan(unittest.TestCase):
     def test_bounds_types_and_unexpected_fields(self):
         plan = vm_plan()
         row = dict(plan["vms"][0]["rows"][0], kind="unknown", level=["warning"], editable="yes", value="x" * 250, extra="omit")
-        plan.update(vms=[{"name": "n" * 130, "rows": [row] * 13}] * 11, extra="omit",
+        plan.update(vms=[{"name": "n" * 130, "rows": [row] * 13}] * 26, extra="omit",
                     counts={"vms": "11", "ticket": -3, "job": "many", "stops": []})
         got = sp.deploy_plan(plan)
         self.assertNotIn("extra", got)
         self.assertEqual(got["counts"], dict(vms=11, fields=0, ticket=0, default=0, job=0, stops=0, warnings=0))
-        self.assertEqual(len(got["vms"]), 10)
+        self.assertEqual(len(got["vms"]), 25)
         self.assertEqual(len(got["vms"][0]["name"]), 120)
         rows = got["vms"][0]["rows"]
         self.assertEqual(len(rows), 12)
@@ -2704,23 +2704,137 @@ class DeployPlanPages(unittest.TestCase):
         template["ask_variables_on_launch"] = True
         return template
 
-    def test_handoff_keeps_the_portal_requester(self):
-        parent, _ = self._vm_workflow(vm_plan())
-        child, _ = self._vm_workflow(vm_plan(), launched=False)
-        forged, _ = self._vm_workflow(vm_plan(), launched=False)
+    def handoff(self):
+        parent, origin = self._vm_workflow(vm_plan())
+        child, step = self._vm_workflow(vm_plan(), launched=False)
         jobs = fake_aap.STATE["jobs"]
-        jobs[child]["template"] = jobs[forged]["template"] = 0
-        jobs[child]["extra_vars"] = {"vm_deploy_handoff_from": str(parent)}
-        jobs[forged]["extra_vars"] = {"vm_deploy_handoff_from": str(child)}
+        jobs[child].update(template=0, extra_vars={"vm_deploy_handoff_from": str(parent)})
+        jobs[origin]["arts"]["vm_deploy_plan"].update(phase="no_touch", no_touch={"outcome": "sent_to_approval", "workflow_job": child})
+        del fake_aap.STATE["approvals"][jobs[parent]["nodes"][1]]
+        return parent, origin, child, step
+
+    def test_forged_handoff_does_not_inherit_access(self):
+        parent, _, _, _ = self.handoff()
+        forged, _ = self._vm_workflow(vm_plan(), launched=False)
+        fake_aap.STATE["jobs"][forged].update(template=0, extra_vars={"vm_deploy_handoff_from": str(parent)})
+        self.assertNotIn(forged, [a["workflow_job"] for a in self.get("/api/approvals")["approvals"]])
+        approval = next(a for a in self.get("/api/approvals", APPR)["approvals"] if a["workflow_job"] == forged)
+        self.assertEqual(approval["requested_by"], "")
+        self.assertEqual(self.request(self.handler, "/jobs/%d" % forged, cert())[0], 404)
+
+    def test_verified_handoff_keeps_requester_and_opens_job_and_steps(self):
+        _, origin, child, step = self.handoff()
         requester = sp.who(cert())[0]
-        visible = [a["workflow_job"] for a in self.get("/api/approvals")["approvals"]]
-        self.assertIn(child, visible)
-        self.assertNotIn(forged, visible)
+        self.assertEqual(self.get("/api/jobs/%d" % child)["requested_by"], requester)
+        approval, = self.get("/api/approvals")["approvals"]
+        self.assertEqual((approval["workflow_job"], approval["requested_by"]), (child, requester))
+        for dn in (JDOE, APPR):
+            self.assertIn("what will be built", self.get("/jobs/%d" % child, dn))
+            self.assertEqual(self.get("/api/jobs/%d?via=%d" % (step, child), dn)["requested_by"], requester)
+        self.assertEqual(self.request(self.handler, "/api/jobs/%d?via=%d" % (origin, child), cert())[0], 404)
         self.portal.cfg.approvers.append(requester)
-        approvals = {a["workflow_job"]: a for a in self.get("/api/approvals")["approvals"]}
-        self.assertEqual(approvals[child]["requested_by"], requester)
-        self.assertEqual(approvals[forged]["requested_by"], "")
-        self.assertEqual(self.portal.decide(requester, "", approvals[child]["id"], "approve")[0], 403)
+        self.assertEqual(self.portal.decide(requester, "", approval["id"], "approve")[0], 403)
+
+    def test_a_verified_handoff_is_read_once_after_the_decision(self):
+        # nuc-3 review: after the decision wf_info forgets the workflow. Its job page polls, and each look must not read AAP again.
+        parent, _, child, _ = self.handoff()
+        learned = []
+        real = self.portal._learn
+        self.portal._learn = lambda wids, handoff_only=False: learned.append(handoff_only) or real(wids, handoff_only)
+        self.portal.wf_info, self.portal.wf_tmp = {}, {}
+        for _ in range(3):
+            self.assertEqual(self.portal._workflow_record(self.portal.launched(), child)["job_id"], parent)
+        self.assertEqual(learned, [True])
+
+    def test_uncertain_placement_requires_resaving_the_same_vm(self):
+        wid, _, aid, vm, raw = self.placement_workflow()
+        lists = raw["vms"]["vm-app01"]
+        cluster = lists["clusters"][0]
+        cluster.update(fits=True, pct_after=76)
+        store = dict(next(iter(lists["datastores"].values()))[0], name="SITA0101")
+        dc = cluster["vcenter"] + "|" + cluster["datacenter"]
+        lists["datastores"][dc + "|" + cluster["name"]] = [store]
+        lists["folders"][dc] = [vm["folder"]]
+        checked = dict(vm, vcenter=cluster["vcenter"], cluster=cluster["name"], datastore=store["name"])
+        self.placement_template()
+        code, result = self.change(aid, {"vms": [vm]})
+        self.assertEqual(code, 200)
+        job = result["job"]
+        fake_aap.STATE["jobs"][job]["force"] = "canceled"
+        message = ("Placement job %d did not finish after it may have changed VM vm-app01 on the change: "
+                   "save that VM's placement again, then approve." % job)
+        self.assertEqual(self.change(aid, {"plan": ""}, action="approve"), (409, {"error": message}))
+        self.assertIn(sp.esc(message), self.get("/jobs/%d" % wid, APPR))
+        self.assertEqual(self.portal._decision_approval(sp.who(cert(APPR))[0], "", aid, "deny")[0], 200)
+        code, retry = self.change(aid, {"vms": [checked]})
+        self.assertEqual(code, 200)
+        fake_aap.STATE["jobs"][retry["job"]].update(force="failed", arts={"vm_deploy_placement_change": {"launch_note": "not written"}})
+        self.assertEqual(self.change(aid, {"plan": ""}, action="approve"), (409, {"error": message}))
+        code, result = self.change(aid, {"vms": [checked]})
+        self.assertEqual(code, 200)
+        place = dict(checked, name=checked["vm_name"], datacenter=cluster["datacenter"],
+                     fit=dict(cluster=cluster, datastore=store))
+        saved = result["job"]
+        fake_aap.STATE["jobs"][saved].update(force="successful", arts={"vm_deploy_placement_change": {"ok": True, "vms": [place]}})
+        self.assertEqual(self.change(aid, {"plan": str(saved)}, action="approve")[0], 200)
+
+    def test_failed_placement_with_written_note_allows_only_deny(self):
+        _, _, aid, vm, _ = self.placement_workflow()
+        self.placement_template()
+        code, result = self.change(aid, {"vms": [vm]})
+        self.assertEqual(code, 200)
+        job = result["job"]
+        fake_aap.STATE["jobs"][job].update(force="failed", arts={"vm_deploy_placement_change": {"launch_note": "written"}})
+        code, error = self.change(aid, {"plan": ""}, action="approve")
+        self.assertEqual(code, 409)
+        self.assertIn("Placement job %d did not finish" % job, error["error"])
+        self.assertEqual(self.change(aid, {}, action="deny")[0], 200)
+
+    def test_editor_can_save_the_checked_placement(self):
+        with open(os.path.join(FILES, "static", "portal.js")) as f:
+            editor = f.read().split("function placementEditor(", 1)[1].split("function decider(", 1)[0]
+        self.assertNotIn("if (!changed.length) continue", editor)
+        self.assertNotIn("!pick.edited", editor)
+
+    def test_failed_propose_read_is_retried_before_approval(self):
+        wid, jid, aid, _, _ = self.placement_workflow()
+        api = self.portal.aap.api
+        route = api.route
+        def failed_read(method, path, body):
+            if path == "jobs/%d/" % jid:
+                return 503, {}
+            code, data = route(method, path, body)
+            if path.startswith("jobs/?id__in="):
+                for row in data["results"]:
+                    row.pop("artifacts", None)
+            return code, data
+        api.route = failed_read
+        self.assertFalse(self.get("/api/approvals", APPR)["approvals"])
+        self.assertEqual(self.change(aid, {"plan": ""}, action="approve")[0], 404)
+        self.assertNotIn(wid, self.portal.wf_info)
+        api.route = route
+        self.assertEqual(self.change(aid, {"plan": ""}, action="approve")[0], 200)
+
+    def test_running_placement_blocks_approval_without_plan(self):
+        wid, jid, aid, vm, _ = self.placement_workflow()
+        self.placement_template()
+        code, result = self.change(aid, {"vms": [vm]})
+        self.assertEqual(code, 200)
+        job = result["job"]
+        fake_aap.STATE["jobs"][job]["force"] = "running"
+        del fake_aap.STATE["jobs"][jid]["arts"]["vm_deploy_plan"]
+        self.portal.wf_info.pop(wid)
+        self.assertEqual(self.change(aid, {"plan": ""}, action="approve"), (409, {"error": "Wait for placement job %d to finish." % job}))
+
+    def test_incomplete_vm_card_refuses_approve(self):
+        plan = dict(vm_plan(), vm_count=26)
+        plan["vms"] *= 26
+        wid, _ = self._vm_workflow(plan)
+        aid = fake_aap.STATE["jobs"][wid]["nodes"][1]
+        message = "This plan has 26 VMs and the portal shows 25: approve it in AAP after reading the propose job's output."
+        self.assertEqual(self.change(aid, {"plan": ""}, action="approve"), (409, {"error": message}))
+        self.assertIn(sp.esc(message), self.get("/jobs/%d" % wid, APPR))
+        self.assertEqual(self.change(aid, {}, action="deny")[0], 200)
 
     def test_placement_save_accepts_only_one_vm(self):
         _, jid, aid, vm, raw = self.placement_workflow()
@@ -2890,8 +3004,8 @@ class DeployPlanPages(unittest.TestCase):
         self.assertEqual((cluster["kind"], cluster["value"], cluster["why"], cluster["level"]), ("approver", "SITB0201", "58 % memory", ""))
         code, result = self.change(aid, {"vms": [vm]})
         self.assertEqual(code, 200)
-        fake_aap.STATE["jobs"][result["job"]].update(force="failed", arts={"vm_deploy_placement_change": dict(artifact, ok=False, error="Not shared.")})
-        self.assertEqual(self.get("/api/placement/%d" % result["job"]), {"status": "failed", "ok": False, "done": True, "error": "Not shared.", "vms": []})
+        fake_aap.STATE["jobs"][result["job"]].update(force="failed", arts={"vm_deploy_placement_change": dict(artifact, ok=False, error="Not shared.", launch_note="not written")})
+        self.assertEqual(self.get("/api/placement/%d" % result["job"]), {"status": "failed", "ok": False, "done": True, "error": "Not shared.", "vms": [], "launch_note": "not written"})
         page = self.get("/jobs/%d" % wid, APPR)
         self.assertIn("Not shared. Nothing was changed.", page)
         self.assertIn("Approve with the new placement", page)
@@ -2901,11 +3015,12 @@ class DeployPlanPages(unittest.TestCase):
         self.placement_template()
         code, result = self.change(aid, {"vms": [vm]})
         self.assertEqual(code, 200)
-        fake_aap.STATE["jobs"][result["job"]].update(force="failed", arts={"vm_deploy_placement_change": {"ok": False, "error": "The ticket changed."}})
+        fake_aap.STATE["jobs"][result["job"]].update(force="failed", arts={"vm_deploy_placement_change": {"ok": False, "error": "The ticket changed.", "launch_note": "not written"}})
         page = self.get("/jobs/%d" % wid, APPR)
         self.assertIn("The ticket changed. Nothing was changed.", page)
         self.assertIn("Approve - build as shown", page)
         self.assertNotIn("Changed by the approver", page)
+        self.assertEqual(self.change(aid, {"plan": ""}, action="approve")[0], 200)
 
     def test_vm_plan_at_approval_and_on_the_propose_job(self):
         plan = vm_plan()

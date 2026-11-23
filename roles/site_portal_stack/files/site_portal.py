@@ -1774,7 +1774,7 @@ def deploy_plan(v):
             plan["counts"][key] = max(0, int(counts.get(key, 0)))
         except (TypeError, ValueError, OverflowError):
             plan["counts"][key] = 0
-    for vm in deploy_entries(v, "vms", 10):
+    for vm in deploy_entries(v, "vms", 25):
         if not isinstance(vm, dict):
             continue
         rows = []
@@ -1791,6 +1791,12 @@ def deploy_plan(v):
                          "kind": kind if kind in DEPLOY_SOURCES else "default", "level": level if level in ("stop", "warning") else "",
                          "editable": row.get("editable") is True})
         plan["vms"].append({"name": deploy_text(vm.get("name"), 120), "rows": rows})
+    if type(v.get("vm_count")) is int:
+        plan["vm_count"] = v["vm_count"]
+    count = plan.get("vm_count", plan["counts"]["vms"] if "vms" in counts else len(plan["vms"]))
+    if count != len(plan["vms"]):
+        plan["approve_error"] = ("This plan has %d VMs and the portal shows %d: approve it in AAP after reading "
+                                 "the propose job's output." % (count, len(plan["vms"])))
     return plan
 
 
@@ -1909,6 +1915,7 @@ class Portal(object):
         self.pend_lock = threading.Lock()
         self.wf_info = {}                               # 1.92.0: waiting workflow job id -> workflow, report and plans: read once while it waits
         self.wf_tmp = {}                                # 1.92.0 review: one not fully read (or a check still running): this cycle only
+        self.handoffs = {}                              # 1.117.0: handed-off workflow -> its verified portal workflow (a fact that never changes)
         self.found_at = 0.0
         self.whole_at = 0.0
         self.found_fails = 0                            # failed reads in a row (the back-off)
@@ -2542,31 +2549,44 @@ class Portal(object):
         a = self.actions.get(rec.get("action"))
         return bool(cn) and a is not None and rules.may_run(a, cn, self.cfg.requesters)
 
+    def _workflow_record(self, mine, wid):
+        if wid in mine:
+            return mine[wid]
+        with self.pend_lock:
+            info = self.wf_info.get(wid) or self.wf_tmp.get(wid)
+            # Direct links also work before the approvals page is opened and after the decision.
+            parent = info.get("handoff_from") if info else self.handoffs.get(wid)
+            if parent is None and not info:
+                parent = self._learn([wid], handoff_only=True)
+            if parent:
+                self.handoffs[wid] = parent             # a job page polls: verified once, not on every look
+        return mine.get(parent)
+
     def visible(self, cn, jid, via=None):
-        """The launch record that lets this person see job jid (itself, or the workflow it is a step of - checked against
-        AAP by job()), or None. None for a job the portal did not start and for one this person may not see alike: the
-        answer never says which (404 for both)."""
+        """The launch or verified hand-off that allows this view. job() checks step membership in AAP."""
         mine = self.launched()
-        rec = mine.get(jid) if jid in mine else (mine.get(via) if via is not None else None)
+        rec = mine.get(jid) or self._workflow_record(mine, via if via is not None else jid)
         return rec if self.may_see(cn, rec) else None
 
     def job(self, jid, via=None, cn=None):
-        """-> (HTTP code, the job's view). Only what the portal started (or a step of it), and only for the people who
-        may see it (may_see) - for anyone else 404, as for a job the portal did not start."""
+        """The job or a verified workflow step, visible to the people who may see the portal launch."""
         mine = self.launched()
         rec = mine.get(jid)
         parent = None
+        if via is None and not rec:
+            rec = self._workflow_record(mine, jid)
+        elif via is not None and not rec:
+            parent = self._workflow_record(mine, via)
         nope = (404, {"error": "There is no job %d here." % jid})
-        if cn is not None and not self.visible(cn, jid, via):
+        if cn is not None and not self.may_see(cn, rec or parent):
             return nope
         if rec is None:
-            if via is None or via not in mine or mine[via].get("kind") != "workflow":
+            if not parent or parent.get("kind") != "workflow":
                 return nope
             code, nodes = self.aap.call("GET", "workflow_jobs/%d/workflow_nodes/?page_size=200" % via)
             ids = [((n.get("summary_fields") or {}).get("job") or {}).get("id") for n in (nodes.get("results") or [])] if code == 200 else []
             if jid not in ids:
                 return nope
-            parent = mine[via]
         code, uj = self.aap.call("GET", "unified_jobs/?id=%d" % jid)
         rows = uj.get("results") or [] if code == 200 else []
         if not rows:
@@ -2700,12 +2720,28 @@ class Portal(object):
             self.pend = (time.time(), res)
             return res
 
-    def _learn(self, wids):
-        """What the approvals page and the job page show of a waiting workflow, read once for all the new ones (three calls, whatever their number):
-        the workflow jobs, their nodes, their finished check jobs' artifacts for the report, approval summary and VM deploy plan."""
+    def _learn(self, wids, handoff_only=False):
+        """Read workflow nodes and finished jobs in batches, including the jobs that can verify a hand-off.
+        A direct job lookup needs only the verified origin. Pending approvals also cache their report and plans."""
         ids = ",".join(str(w) for w in wids)
         wjs, why = self.aap._paged("workflow_jobs/?id__in=%s&page_size=200" % ids, 5)
         wjs = dict((int(x["id"]), x) for x in (wjs if not why else []))
+        # Only a portal workflow whose finished job names this child can pass on its launch record.
+        parents = {}
+        mine = None
+        for w, wj in wjs.items():
+            extra = wj.get("extra_vars")
+            if isinstance(extra, str):
+                extra = site_aap.vars_of(extra)
+            parent = str(deploy_mapping(extra).get("vm_deploy_handoff_from", ""))
+            if re.fullmatch(r"[1-9][0-9]{0,11}", parent):
+                if mine is None:
+                    mine = self.launched()
+                if w not in mine and mine.get(int(parent), {}).get("kind") == "workflow":
+                    parents[w] = int(parent)
+        if handoff_only and not parents:
+            return None
+        ids = ",".join(str(w) for w in sorted(set(wids) | set(parents.values())))
         nodes, why = self.aap._paged("workflow_job_nodes/?workflow_job__in=%s&order_by=id&page_size=200" % ids, 10)
         nodes_ok = not why
         by_wf, jobs = {}, []
@@ -2723,29 +2759,42 @@ class Portal(object):
                     arts[int(r["id"])] = r.get("artifacts") or {}
             for jid in sorted(set(jobs) - set(arts)):          # an AAP whose list leaves the artifacts out: each check job once
                 c2, jd = self.aap.call("GET", "jobs/%d/" % jid)
-                arts[jid] = (jd.get("artifacts") or {}) if c2 == 200 and isinstance(jd, dict) else {}
+                if c2 == 200 and isinstance(jd, dict):
+                    arts[jid] = jd.get("artifacts") or {}
         after = after_approval(nodes if nodes_ok else [])
         for w in wids:
             # 1.92.0 review: a workflow whose reads failed, or whose checks are not all over yet (Linux and Windows side by side),
             # is read again next cycle - never kept half known. 1.110.0 (1.92.0 review): a check still new, pending or waiting (a Windows
             # check queued beside the Linux one) is not over either: its plan would be left out of "What it will change". A job after
             # an approval (the apply) is not a check: it waits for the decision, and would have the workflow read every cycle (Codex)
-            if w not in wjs or not nodes_ok:
-                continue
-            unfinished = any(n.get("workflow_job") == w and n.get("id") not in after
-                             and ((n.get("summary_fields") or {}).get("job") or {}).get("type") == "job"
-                             and ((n.get("summary_fields") or {}).get("job") or {}).get("status") not in DONE
-                             for n in nodes or [])
+            parent = parents.get(w)
             finished = by_wf.get(w, [])
+            origin_jobs = by_wf.get(parent, [])
+            if w not in wjs or not nodes_ok or any(j not in arts for _, j in finished + origin_jobs):
+                continue
+            verified = None
+            if parent:
+                for _, j in origin_jobs:
+                    outcome = deploy_mapping(deploy_mapping(arts[j].get("vm_deploy_plan")).get("no_touch"))
+                    if str(outcome.get("workflow_job")) == str(w):
+                        verified = parent
+                        break
+            if handoff_only:
+                return verified
+            # An unfinished origin can still publish the hand-off. Recheck it next cycle.
+            unfinished = any((n.get("workflow_job") == w and n.get("id") not in after
+                              or parent and not verified and n.get("workflow_job") == parent)
+                             and (job := (n.get("summary_fields") or {}).get("job") or {}).get("type") == "job"
+                             and job.get("status") not in DONE for n in nodes)
             al = [arts.get(j) or {} for _, j in finished]
             b = [x for x in result_buttons(al) if x["primary"]]
             cache = self.wf_tmp if unfinished else self.wf_info
             plans = (deploy_artifacts(arts.get(j, {}), j) for node, j in reversed(finished) if node not in after)
-            cache[w] = {"wj": wjs[w], "report": {"label": b[-1]["label"], "url": b[-1]["url"]} if b else None,
+            cache[w] = {"wj": wjs[w], "handoff_from": verified, "report": {"label": b[-1]["label"], "url": b[-1]["url"]} if b else None,
                         "plan": approval_summary(merge_summaries([a.get("site_approval_summary") for a in al])),
                         **next((p for p in plans if p["deploy_plan"]), {})}
 
-    def approvals(self, cn="", fresh=False):
+    def approvals(self, cn="", fresh=False, with_placements=True):
         """1.78.4: EVERY pending workflow approval in AAP that the portal's account can see, the expired ones left out -> (code, {approvals}). Each has its workflow,
         who or what started it (a person in the portal, a schedule, a person in AAP), its own name and description, the time left, the report the steps
         before it left and (1.92.0) the check's plan (site_approval_summary), and whether this person may decide it here: an approver (portal_approvers),
@@ -2772,18 +2821,7 @@ class Portal(object):
             if exp is not None and exp < now:                   # timed out since the shared read: AAP will not take a decision on it
                 continue
             a = wf_ids.get(int(wj.get("workflow_job_template") or 0))
-            rec = mine.get(wid) or {}
-            if not rec:
-                extra = wj.get("extra_vars")
-                if isinstance(extra, str):
-                    extra = site_aap.vars_of(extra)
-                parent = str(deploy_mapping(extra).get("vm_deploy_handoff_from", ""))
-                if re.fullmatch(r"[1-9][0-9]{0,11}", parent):
-                    source = mine.get(int(parent)) or {}
-                    # A forged ID grants no approval rights. It can only name a portal
-                    # workflow's requester, which blocks that person from self-approval.
-                    if source.get("kind") == "workflow":
-                        rec = source
+            rec = mine.get(wid) or mine.get(info.get("handoff_from")) or {}
             if cn and cn not in self.cfg.approvers and not (self.may_see(cn, rec) if rec else (a is not None and rules.may_run(a, cn, self.cfg.requesters))):
                 continue
             sf = wj.get("summary_fields") or {}
@@ -2794,12 +2832,15 @@ class Portal(object):
             else:
                 started, by = "AAP: %s" % (((sf.get("created_by") or {}).get("username")) or "a person there"), ""
             left = (exp - now) if exp is not None else None
+            plan = info.get("deploy_plan") if cn else None
+            if plan and with_placements:
+                plan = self.placed_plan(wid, plan)
             out.append({"id": ap.get("id"), "name": ap.get("name") or "", "description": str(ap.get("description") or "")[:300], "created": ap.get("created") or "",
                         "timeout": ap.get("approval_expiration") or "", "workflow_job": wid, "workflow": wj.get("name", ""),
                         "action": a["name"] if a else "", "title": a["title"] if a else (wj.get("name") or ""),
                         "requested_by": by, "values": rec.get("values") or {}, "launched_in": started,
                         "time_left": dur_text(left) if left is not None else "", "report": info.get("report") if cn else None,
-                        "plan": info.get("plan") if cn else None, "deploy_plan": self.placed_plan(wid, info.get("deploy_plan")) if cn else None,
+                        "plan": info.get("plan") if cn else None, "deploy_plan": plan,
                         "deploy_shortlist": info.get("deploy_shortlist") if cn else None,
                         "can_approve": self._can_approve(ap),
                         "created_text": shown(self.cfg, ap.get("created")), "timeout_text": shown(self.cfg, ap.get("approval_expiration"))})
@@ -2842,6 +2883,8 @@ class Portal(object):
             ok = ok and bool(measured) and sorted(vm["name"] for vm in measured) == sorted(vm["vm_name"] for vm in record["vms"])
             error = deploy_text(art.get("error") or record.get("launch_error") or job.get("job_explanation"), 2000)
             result = {"status": status, "done": status in DONE, "ok": ok, "vms": measured if ok else [], "error": error}
+            if art.get("launch_note") in ("written", "not written"):
+                result["launch_note"] = art["launch_note"]
             if result["done"]:
                 if not ok and not error:
                     result["error"] = "AAP job %d ended %s without a saved placement." % (jid, status)
@@ -2858,25 +2901,53 @@ class Portal(object):
             return 403, {"error": "You may not see this workflow."}
         return self._placement_result(record)
 
-    def placed_plan(self, wid, plan):
-        if not plan or plan["phase"] != "propose":
-            return plan
+    def _placement_states(self, wid):
         with self.lock:
             records = list(self.workflow_placements.get(wid, ()))
-        if not records:
+        return [(rec, self._placement_result(rec)[1]) for rec in records]
+
+    @staticmethod
+    def _placement_block(states):
+        """A running job blocks all saves. Only a successful save can resolve an uncertain note for its VM."""
+        uncertain = {}
+        for rec, result in states:
+            if not result.get("done"):
+                return {"job": rec["job"], "done": False, "ok": False, "error": "Wait for placement job %d to finish." % rec["job"]}
+            for vm in rec["vms"]:
+                name = vm["vm_name"]
+                if result["ok"]:
+                    uncertain.pop(name, None)
+                elif result.get("launch_note") != "not written":
+                    uncertain[name] = rec
+        for name, rec in uncertain.items():
+            error = ("Placement job %d did not finish after it may have changed VM %s on the change: "
+                     "save that VM's placement again, then approve." % (rec["job"], name))
+            return {"job": rec["job"], "done": True, "ok": False, "error": error}
+        return None
+
+    def placed_plan(self, wid, plan, states=None):
+        if not plan or plan["phase"] != "propose":
+            return plan
+        if states is None:
+            states = self._placement_states(wid)
+        if not states:
             return plan
         plan = copy.deepcopy(plan)                 # approvals share the original propose artifact
         latest = {}
-        for rec in records:
+        for rec, result in states:
             if rec["checked_job"] != plan["job"] or rec["digest"] != plan["digest"]:
                 continue
-            code, result = self._placement_result(rec)
             plan["placement"] = {"job": rec["job"], "done": result.get("done", False), "ok": result.get("ok", False),
                                  "error": result.get("error", "")}
-            if code == 200 and result["ok"]:
+            if result.get("ok"):
                 plan["saved_job"] = rec["job"]
                 for vm in result["vms"]:
                     latest[vm["name"]] = (rec, vm)
+        block = self._placement_block(states)
+        if block:
+            plan["placement"] = block
+            if block["done"]:
+                plan["approve_error"] = block["error"]
         if not latest:
             return plan
         for vm in plan["vms"]:
@@ -2967,7 +3038,7 @@ class Portal(object):
 
         if cn not in self.cfg.approvers:
             return refused("not an approver", "You are not on the list of approvers (portal_approvers).")
-        code, listing = self.approvals(cn, fresh=True)
+        code, listing = self.approvals(cn, fresh=True, with_placements=False)
         if code != 200:
             return code, listing
         ap = next((x for x in listing["approvals"] if x["id"] == aid), None)
@@ -2980,9 +3051,14 @@ class Portal(object):
             return refused("the portal's account has no Approve role on it", "The portal's account has no Approve role on this approval: decide it in AAP.")
         if ap["self"] and not self.cfg.self_approval:
             return refused("self-approval: the person started this run", "You started this run: another approver decides (portal_allow_self_approval: false).")
-        placement = (ap.get("deploy_plan") or {}).get("placement")
-        if decision != "deny" and placement and not placement["done"]:
-            return refused("placement in progress", "Wait for placement job %d to finish." % placement["job"], 409)
+        if decision != "deny":
+            states = self._placement_states(ap["workflow_job"])
+            block = self._placement_block(states)
+            if block and (decision == "approve" or not block["done"]):
+                return refused("placement uncertain" if block["done"] else "placement in progress", block["error"], 409)
+            if decision == "approve" and (ap.get("deploy_plan") or {}).get("approve_error"):
+                return refused("incomplete plan", ap["deploy_plan"]["approve_error"], 409)
+            ap["deploy_plan"] = self.placed_plan(ap["workflow_job"], ap.get("deploy_plan"), states)
         return 200, ap
 
     def decide(self, cn, ip, aid, decision, plan=None):
@@ -3849,6 +3925,8 @@ def deploy_card(cfg, plan, left="", actions="", editable_vms=(), workflow_visibl
             label = '<a href="%sjobs/%d">%s</a>' % (cfg.path, job, label)
         parts.insert(1, "<p>Sent to approval%s.%s</p>" % ((": " + esc(why)) if why else "", (" " + label + ".") if label else ""))
     c = plan["counts"]
+    if plan.get("approve_error"):
+        parts.append('<p role="status">%s</p>' % esc(plan["approve_error"]))
     if stopped:
         reasons = list(dict.fromkeys([plan["reason"]] + plan["stops"]))
         if any(reasons):
@@ -3876,7 +3954,7 @@ def deploy_card(cfg, plan, left="", actions="", editable_vms=(), workflow_visibl
                      else "<strong>Approval and build: not reached</strong>")
     else:
         result = plan.get("placement")
-        if result:
+        if result and result.get("error") != plan.get("approve_error"):
             if result["ok"]:
                 message = "Placement saved on %s by AAP job %d" % (plan["ticket"], result["job"])
             elif result["done"]:
@@ -3906,13 +3984,15 @@ def decide_box_html(cfg, a):
     editable_vms = (a.get("deploy_shortlist") or {}).get("vms", {}) if a.get("may_decide") and not pending_job else {}
     rep = report_btn(a.get("report"))
     if a.get("may_decide"):
-        buttons = [] if pending_job else ['<button type="button" class="pri" data-d="approve">%s</button>' % approve]
+        blocked = (vm_plan or {}).get("approve_error")
+        buttons = [] if pending_job or blocked else ['<button type="button" class="pri" data-d="approve">%s</button>' % approve]
         buttons.append('<button type="button" class="deny" data-d="deny">Deny</button>')
         if vm_plan and editable_vms:
             buttons.append('<button type="button" data-change-placement>Change placement...</button>')
-        act = ('<div class="dbtns" data-aid="%d" data-viewer="%s" data-saved-job="%s"%s>%s<span class="sp"></span>%s<span class="state" aria-live="polite"></span>'
+        act = ('<div class="dbtns" data-aid="%d" data-viewer="%s" data-saved-job="%s"%s%s>%s<span class="sp"></span>%s<span class="state" aria-live="polite"></span>'
                '<span class="log">Logged with your name, the decision and the time. AAP records it as the portal\'s account.</span></div>' %
-               (int(a["id"]), esc(a.get("viewer", "")), esc((vm_plan or {}).get("saved_job")), (' data-pending-job="%d"' % pending_job) if pending_job else "", "".join(buttons), rep))
+               (int(a["id"]), esc(a.get("viewer", "")), esc((vm_plan or {}).get("saved_job")), (' data-pending-job="%d"' % pending_job) if pending_job else "",
+                ' data-approve-blocked="1"' if blocked else "", "".join(buttons), rep))
     else:
         act = ('<div class="dwhy">%s<span>%s They decide on <a href="%sapprovals">Approvals</a>.</span></div>%s'
                % (icon("lock"), WHY_HTML.get(a.get("why"), esc(a.get("reason", ""))), cfg.path, ('<div class="dbtns">%s</div>' % rep) if rep else ""))
@@ -3969,7 +4049,7 @@ def job_pane_html(cfg, portal, cn, jid, via=None):
             saving = vm_plan.get("placement")
             if saving and not saving["done"]:
                 msg += " AAP is checking the requested placement."
-            elif may_decide:
+            elif may_decide and not vm_plan.get("approve_error"):
                 msg += " Approve to build it as shown, or Deny."
         else:
             c = ((appr or {}).get("plan") or {}).get("counts") or {}

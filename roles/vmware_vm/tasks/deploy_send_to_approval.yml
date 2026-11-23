@@ -30,7 +30,8 @@
 - name: VMware | the note for the change and its tasks
   ansible.builtin.set_fact:
     _vd_handoff: >-
-      {{ ('The approval workflow could not start for this change. ' ~ _vd_launch_problem
+      {{ _vd_launch_problem if _vd_workflow_job and _vd_launch_problem else
+         ('The approval workflow could not start for this change. ' ~ _vd_launch_problem
           ~ ' Check vm_deploy_approval_workflow and the credential’s Execute role on that workflow.')
          if _vd_launch_problem else 'The approval workflow was started: AAP job ' ~ _vd_workflow_job ~ '.' }}
 

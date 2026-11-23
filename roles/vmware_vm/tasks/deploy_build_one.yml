@@ -17,6 +17,7 @@
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     datacenter: "{{ '' if _vd_resolve_dc | default(false) else _vd_pin.datacenter | default(_vd_i.spec.datacenter | default(vmware_datacenter | default('', true))) }}"
     cluster: "{{ _vd_pin.cluster | default(_vd_i.spec.cluster | default('')) }}"
+    datastore_pod: "{{ _vd_pin.datastore_pod | default('') }}"
     datastore: "{{ _vd_pin.datastore | default(_vd_i.spec.datastore | default('')) }}"
     folder: "{{ _vd_pin.folder | default(_vd_i.spec.folder | default('')) }}"
     shortlist: "{{ _vd_phase in ['propose', 'no_touch'] }}"

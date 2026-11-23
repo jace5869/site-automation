@@ -1950,7 +1950,7 @@ unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
 aap_port=$((port + 43)); aap_port2=$((port + 44))
 AAPMOCK_LOG="$work/aap.jsonl" AAPMOCK_INV_LOG="$work/inv.jsonl" AAPMOCK_OVERWRITE=1 "$py" "$repo/tests/servicenow/aapmock.py" "$aap_port" >/dev/null 2>&1 &
 aap_pid=$!
-AAPMOCK_LOG="$work/aap2.jsonl" AAPMOCK_INV_LOG="$work/inv2.jsonl" AAPMOCK_INV_FAIL=1 "$py" "$repo/tests/servicenow/aapmock.py" "$aap_port2" >/dev/null 2>&1 &
+AAPMOCK_IGNORE_ORIGIN=1 AAPMOCK_LOG="$work/aap2.jsonl" AAPMOCK_INV_LOG="$work/inv2.jsonl" AAPMOCK_INV_FAIL=1 "$py" "$repo/tests/servicenow/aapmock.py" "$aap_port2" >/dev/null 2>&1 &
 aap_pid2=$!
 for p_ in $aap_port $aap_port2; do for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$p_") 2>/dev/null && break; sleep 0.1; done; done
 svcs='{"vm_deploy_services": {"web": {"inventory": "Linux servers", "group": "web", "note": "Web server for the test."},
@@ -2156,7 +2156,7 @@ placement_run "refuse LocalDS_1 outside the datastore allow-list" fail -e '{"vm_
 "$py" - "$work/out.txt" <<'EOPY' || { echo "FAIL - refused placement artifact"; fails=$((fails + 1)); }
 import json, sys
 result = next(json.loads(l.strip()[5:]) for l in open(sys.argv[1]) if l.strip().startswith("RUN: {"))["vm_deploy_placement_change"]
-assert result["ok"] is False and "vm_deploy_datastores" in result["error"]
+assert result["ok"] is False and result["launch_note"] == "not written" and "vm_deploy_datastores" in result["error"]
 EOPY
 nplan=$(nsn)
 placement_run "change to LocalDS_1 before approval" ok -- '"vm_deploy_placement_change"'
@@ -2168,7 +2168,7 @@ notes = [w["body"]["work_notes"] for w in writes]
 assert notes[0] == notes[1] and notes[0].startswith("[AAP] Placement changed - VM vm-app01")
 assert "for AAP job 4813" in notes[0] and "- Datastore: LocalDS_1   (changed by the approver:" in notes[0]
 result = next(json.loads(l.strip()[5:]) for l in open(sys.argv[3]) if l.strip().startswith("RUN: {"))["vm_deploy_placement_change"]
-assert result["ok"] is True and result["vms"][0]["datastore"] == "LocalDS_1"
+assert result["ok"] is True and result["launch_note"] == "written" and result["vms"][0]["datastore"] == "LocalDS_1"
 EOPY
 plan_run "build on the datastore recorded by the placement change" ok -e vm_deploy_phase=build -e vm_deploy_checked_job=4813 \
     -e vm_deploy_mem_target_pct=80 -- "vm-app01 deployed"
@@ -2221,6 +2221,15 @@ assert result["why"][0] in note and note.endswith("The approval workflow was sta
 assert result["why"][0] in stats["vm_report"]["lines"] and "Sent to approval" in stats["vm_report"]["subject"]
 EOPY
 STATE_PORT=$plan_port state vm-app01 "1" >/dev/null 2>&1 && { echo "FAIL - built a VM sent to approval"; fails=$((fails + 1)); }
+
+CONTROLLER_HOST="http://127.0.0.1:$aap_port2" CONTROLLER_OAUTH_TOKEN=goodtoken no_touch "cancel a child started without its origin" fail \
+    -e awx_workflow_job_id=4813 -- "was started without its origin and was canceled"
+"$py" - "$work/aap2.jsonl" <<'EOPY' || { echo "FAIL - handoff cancellation"; fails=$((fails + 1)); }
+import json, sys
+launch, cancel = [json.loads(line) for line in open(sys.argv[1])][-2:]
+assert launch["extra_vars"] == {"vm_deploy_ticket": "CHG0030001"}
+assert cancel == {"canceled": launch["job"]}
+EOPY
 
 nplan=$(nsn)
 no_touch "build a clean change without approval" ok -e vm_deploy_mem_target_pct=80 -- "vm-app01 deployed"

@@ -1376,6 +1376,7 @@ def _datastore_rules(spec, sources, o, problems):
 def _check_one(parsed, record=None, opts=None):
     """vm_deploy_check for one VM (its name in spec.vm_name)."""
     o, r = opts or {}, record or {}
+    pin = {}
     spec = dict((parsed or {}).get("spec") or {})
     sources = dict((parsed or {}).get("sources") or {})
     problems = []
@@ -1479,6 +1480,8 @@ def _check_one(parsed, record=None, opts=None):
             # as the module does when checking a folder found from a ticket's bare name.
             if _allowed(spec[k].split("/")[-1], [pat for pat in o.get(lk) or [] if "/" not in pat]):
                 continue
+        if k == "datastore" and sources.get(k) == "the approved plan" and pin.get("datastore_pod") and _allowed(pin["datastore_pod"], o.get(lk) or []):
+            continue
         if spec.get(k) and o.get(lk) and not _allowed(spec[k], o[lk]):
             problems.append("%s %r is not in vm_deploy_%s (%s)" % (k, spec[k], lk, ", ".join(o[lk])))
     if "disks_gb" in spec:
@@ -2038,7 +2041,9 @@ def _plan_row(key, spec, sources, vm, owner, problem):
     # a datastore not shared by the cluster's hosts (one host's own disk, named by the ticket) is a warning: the person
     # approving it sees it, and the pinned build then accepts it (no touch and a placement change never do)
     unshared = key == "datastore" and fit.get("shared") is False
-    if limit is not None and fit.get("pct_after") is not None and (fit["pct_after"] > limit or unshared):
+    if key in ("cluster", "datastore") and fit.get("fits") is False and fit.get("pct_after") is None:
+        why = fit["why"]
+    elif limit is not None and fit.get("pct_after") is not None and (fit["pct_after"] > limit or unshared):
         if key == "cluster":
             down = fit["down"]
             why = "%g%% memory used with this VM and %d host%s down (target %g%%)" % (fit["pct_after"], down, "" if down == 1 else "s", limit)
@@ -2114,7 +2119,7 @@ def vm_deploy_plan(checked, questions=None, results=None, ticket=None, digest=""
     return plan if report else _plan_artifact(plan)
 
 
-def vm_deploy_no_touch(plan, issues=()):
+def vm_deploy_no_touch(plan, issues=(), entries=()):
     """Decide on the full checked plan before the artifact limits its rows and text."""
     reasons = [s or "The plan has a stop." for s in plan.get("stops", [])]
     reasons.extend(issues)
@@ -2134,9 +2139,12 @@ def vm_deploy_no_touch(plan, issues=()):
                 reasons.append("%s: %s" % (vm["name"], row.get("why") or "The plan stopped."))
             elif row.get("kind") not in ("ticket", "default", "job"):
                 reasons.append("%s: %s needs a person's approval." % (vm["name"], row["label"]))
-            elif str(row.get("where") or "").startswith("GenAI proposal"):
+            elif "GenAI" in str(row.get("where") or ""):
                 # the change was approved for its words, not for GenAI's reading of them: a person reads that
                 reasons.append("%s: GenAI read the request. A person approves GenAI's reading." % vm["name"])
+    for entry in entries:
+        if any("GenAI" in str(source) for source in entry.get("sources", {}).values()):
+            reasons.append("%s: GenAI read the request. A person approves GenAI's reading." % entry["spec"]["vm_name"])
     reasons = list(dict.fromkeys(reasons))
     return {"build": not reasons, "why": reasons}
 
@@ -2153,7 +2161,7 @@ def _plan_artifact(plan):
         return value
 
     # the comment sent to the requester is shown whole on the portal: kept up to 2000 characters
-    return dict(bound(dict(plan, vms=plan["vms"][:10])), comment=str(plan.get("comment") or "")[:2000])
+    return dict(bound(dict(plan, vm_count=len(plan["vms"]), vms=plan["vms"][:25])), comment=str(plan.get("comment") or "")[:2000])
 
 
 def vm_deploy_plan_note_lines(plan, vm_name):
@@ -2178,8 +2186,8 @@ def vm_deploy_plan_note_lines(plan, vm_name):
 
 _CHECK_HEADER = re.compile(r"^\[AAP\] Checked - (?:VM (\S+) - (\d+) of (\d+) - )?ready to build after the approval "
                            r"\((.+), ticket text (sha256:[0-9a-f]+)\):$")
-_CHECK_ROW = re.compile(r"^(.+?)   \((from the ticket|default|chosen by the job|changed by the approver): .+?\)( - WARNING: .+)?$")
-_CHECKED_SPEC = ("template", "cpu", "memory_gb", "disks_gb")
+_CHECK_ROW = re.compile(r"^(.+?)   \((from the ticket|default|chosen by the job|changed by the approver): (.+?)\)( - WARNING: .+)?$")
+_CHECKED_SPEC = ("template", "cpu", "memory_gb", "disks_gb", "networks")
 _CHANGE = "[AAP] Placement changed - VM "
 _CHANGE_HEADER = re.compile(r"^\[AAP\] Placement changed - VM (\S+) \(AAP job \d+(?: by .+?)?, asked by .+?, "
                             r"for AAP job (\d+), ticket text (sha256:[0-9a-f]+)\):$")
@@ -2187,6 +2195,8 @@ _CHANGE_HEADER = re.compile(r"^\[AAP\] Placement changed - VM (\S+) \(AAP job \d
 
 def _measured_place(vm):
     place = {k: vm[k] for k in ("datacenter", *_PLACES)}
+    if vm.get("datastore_pod"):
+        place["datastore_pod"] = vm["datastore_pod"]
     root = "/%s/vm" % vm["datacenter"]
     if vm["folder"] != root and not vm["folder"].startswith(root + "/"):
         raise ValueError("%s: vCenter returned an unexpected VM folder %s" % (vm["name"], vm["folder"]))
@@ -2200,7 +2210,7 @@ def vm_deploy_preflight_pins(results):
         vm = result["vm"]
         place = _measured_place(vm)
         place["warned"] = []
-        place["checked_spec"] = {k: _plan_text(vm[k]) for k in _CHECKED_SPEC}
+        place["checked_spec"] = {k: ", ".join(vm[k]) if k == "networks" else _plan_text(vm[k]) for k in _CHECKED_SPEC}
         pins[vm["name"].lower()] = place
     return pins
 
@@ -2226,6 +2236,8 @@ def vm_deploy_change_lines(vm, old, job, asked_by, checked_job, digest):
                "cluster": "%.1f%% memory used with this VM and %d host%s down (target %g%%)" %
                           (cluster["pct_after"], cluster["down"], "" if cluster["down"] == 1 else "s", cluster["target"]),
                "datastore": "%.1f%% used with this VM at full size (at most %g%%)" % (ds["pct_after"], ds["max"])}
+    if vm.get("datastore_pod"):
+        reasons["datastore"] += ", datastore cluster " + vm["datastore_pod"]
     values = dict(vm, vcenter=vm["vcenter"] + ", datacenter " + vm["datacenter"])
     return [("%s%s (%s, asked by %s, for AAP job %s, ticket text %s):" %
              (_CHANGE, vm["name"], job, asked_by, checked_job, digest)), "It would go to:"] + [
@@ -2248,6 +2260,8 @@ def vm_deploy_requested_places(request, old):
             raise ValueError("VM %s: the change was changed after the check, or that check is not this change's: "
                              "run the workflow from the start" % name)
         changes[name] = dict(old[name], **{k: row[k] for k in _PLACES}, warned=[], warned_pct={}, changed=True)
+        if any(row[k] != old[name][k] for k in ("vcenter", "datastore")):
+            changes[name].pop("datastore_pod", None)
     return changes
 
 
@@ -2274,16 +2288,18 @@ def _checked_place(lines, changed=False):
         if i >= len(lines) or not lines[i].startswith(prefix):
             return None
         match = _CHECK_ROW.fullmatch(lines[i][len(prefix):])
-        if not match or not match[1].strip() or (changed and (match[2] != _SOURCE_WORD["approver"] or match[3])):
+        if not match or not match[1].strip() or (changed and (match[2] != _SOURCE_WORD["approver"] or match[4])):
             return None
         place[key] = match[1]
-        if key in ("cluster", "datastore") and match[3]:
-            pct = re.match(r" - WARNING: (\d+(?:\.\d+)?)%", match[3])
+        if key == "datastore" and ", datastore cluster " in match[3]:
+            place["datastore_pod"] = match[3].rsplit(", datastore cluster ", 1)[1]
+        if key in ("cluster", "datastore") and match[4]:
+            pct = re.match(r" - WARNING: (\d+(?:\.\d+)?)%", match[4])
             if not pct:
-                return None
+                continue
             place["warned"].append(key)
             place["warned_pct"][key] = float(pct[1])
-            if key == "datastore" and "not shared" in match[3]:
+            if key == "datastore" and "not shared" in match[4]:
                 place["warned"].append("unshared")          # the approval saw a datastore not shared: only then is one accepted
     vc, sep, dc = place["vcenter"].partition(", datacenter ")
     if not sep or not dc or not vc:
@@ -2365,7 +2381,7 @@ def vm_deploy_checked_placement(record, digest, job="", with_spec=False):
                 break
         if place:
             if with_spec or place.get("changed"):
-                if set(checked_specs[name]) != set(_CHECKED_SPEC):
+                if not all(k in checked_specs[name] for k in _CHECKED_SPEC if k != "networks"):
                     continue
                 place = dict(place, checked_spec=checked_specs[name])
             result[name] = place
