@@ -74,7 +74,8 @@ made() { [ "$(cat "$work/secrets/$1" 2>/dev/null)" = "$(sha "$2")" ]; }
 clean() { rm -f "$work/secrets/"*; }
 
 # ---- the site portal: one secret, the AAP token
-P() { printf '{"_portal_podman": {"stdout": "%s"}, "portal_aap_token": "%s"}' "$1" "$2"; }
+# _portal_ldap_on: set by the role's "Settings |" task (1.120.0), not part of these tasks - off here, on in the AD groups' block below
+P() { printf '{"_portal_podman": {"stdout": "%s"}, "portal_aap_token": "%s", "_portal_ldap_on": false}' "$1" "$2"; }
 clean
 run site_portal_stack 4.9.4-rhel "$(P 4.9.4-rhel tok-one-0001)"
 check "portal, podman 4.9.4-rhel, a new secret: made, without --replace" \
@@ -93,7 +94,7 @@ check "portal, podman refuses: the job stops with podman's reason, never the tok
     '[ $rc != 0 ] && grep -q "podman secret create site-portal-aap-token failed (rc 125): Error: creating secret: disk quota exceeded" "$work/out.txt" && ! grep -qE "tok-four-0004|$(sha tok-four-0004)" "$work/out.txt"'
 
 # ---- 1.85.0: the portal's second secret, SolarWinds' login (the live Network map): {user, password} as JSON
-W() { printf '{"_portal_podman": {"stdout": "%s"}, "portal_aap_token": "tok-three-0003", "_portal_netmap": %s, "portal_solarwinds_username": "svc_swis_ro", "portal_solarwinds_password": "%s"}' "$1" "$2" "$3"; }
+W() { printf '{"_portal_podman": {"stdout": "%s"}, "portal_aap_token": "tok-three-0003", "_portal_ldap_on": false, "_portal_netmap": %s, "portal_solarwinds_username": "svc_swis_ro", "portal_solarwinds_password": "%s"}' "$1" "$2" "$3"; }
 login() { printf '{"user": "svc_swis_ro", "password": "%s"}' "$1"; }
 clean
 run site_portal_stack 4.9.4-rhel "$(W 4.9.4-rhel true 'sw-pw&0001')"
@@ -108,6 +109,21 @@ run site_portal_stack 4.9.4-rhel "$(W 4.9.4-rhel false '')"
 check "portal, the Network map off: SolarWinds' login removed" '[ $rc = 0 ] && grep -q "secret rm site-portal-swis" "$work/calls" && [ ! -f "$work/secrets/site-portal-swis" ]'
 run site_portal_stack 4.9.4-rhel "$(W 4.9.4-rhel false '')"
 check "portal, off and no secret: nothing done" '[ $rc = 0 ] && ! grep -qE "secret (rm|create).*site-portal-swis" "$work/calls"'
+
+# ---- 1.120.0: the portal's AD groups' LDAP login (site-portal-ldap): {user, password} as JSON, from the LDAP Bind Account's variables
+L() { printf '{"_portal_podman": {"stdout": "%s"}, "portal_aap_token": "tok-three-0003", "_portal_ldap_on": %s, "MICROSOFT_AD_LDAP_USERNAME": "svc_ldap_ro", "MICROSOFT_AD_LDAP_PASSWORD": "%s"}' "$1" "$2" "$3"; }
+ldap() { printf '{"user": "svc_ldap_ro", "password": "%s"}' "$1"; }
+clean
+run site_portal_stack 4.9.4-rhel "$(L 4.9.4-rhel true 'ld-pw&0001')"
+check "portal, AD groups on: the LDAP login made (site-portal-ldap, its hash on the label), never in the output" \
+    '[ $rc = 0 ] && made site-portal-ldap "$(ldap "ld-pw&0001")" && ! grep -q "ld-pw" "$work/out.txt"'
+run site_portal_stack 4.9.4-rhel "$(L 4.9.4-rhel true 'ld-pw&0001')"
+check "portal, the same LDAP login: nothing removed or made" '[ $rc = 0 ] && ! grep -qE "secret (rm|create).*site-portal-ldap" "$work/calls"'
+run site_portal_stack 4.4.1 "$(L 4.4.1 true 'ld-pw-0002')"
+check "portal, podman 4.4, a new LDAP password: removed, then made" \
+    '[ $rc = 0 ] && grep -q "secret rm site-portal-ldap" "$work/calls" && made site-portal-ldap "$(ldap ld-pw-0002)"'
+run site_portal_stack 4.9.4-rhel "$(L 4.9.4-rhel false '')"
+check "portal, no AD groups any more: the LDAP login removed" '[ $rc = 0 ] && grep -q "secret rm site-portal-ldap" "$work/calls" && [ ! -f "$work/secrets/site-portal-ldap" ]'
 
 # ---- STIG Manager: two secrets; a value that differs is replaced only with stigman_replace_secrets
 S() { printf '{"_stigman_podman": {"stdout": "%s"}, "stigman_mysql_root_password": "%s", "stigman_db_password": "%s", "stigman_replace_secrets": %s}' "$1" "$2" "$3" "$4"; }
