@@ -301,7 +301,8 @@ kept here: the portal draws the page from them, not from a snapshot.
 | What a run deletes | the day rows older than `netmap_db_keep_days` (400) |
 | An outage | a link or a site down for two reads in a row, also across midnight (the day row keeps the streak it ended with: `tail_down`, `tail_at`, and the time of its last read, `last_at`) - counted once, also when a late read makes a day roll up again |
 | The gap rule | reads more than twice the usual gap apart (the median gap of the reads that worked; a daily schedule: a day), a read SolarWinds did not give (`ok` 0) and a read without the link are not "in a row": no outage is made across them. A read down counts the time to the next read that worked when that is at most twice the usual gap later, else one usual gap - never past the next read that worked, missed reads between or not; never past midnight (at most 1,440 minutes a day) |
-| What is never written | a read older than `netmap_db_keep_reads_days`, or more than a day ahead of the database's clock (a wrong clock on the AAP node): one warning, nothing kept. The keeping and the pruning count from the database's own clock. The database must answer within 120 seconds a statement, else the history is skipped with one warning |
+| One SolarWinds | the history keeps the reads of one SolarWinds address: `source` on each read is the address the job is configured with (host and port, lower case), never the server that answered - several servers behind one name are one source. A read from another address is refused with one warning |
+| What is never written | a read older than `netmap_db_keep_reads_days`, or more than a day ahead of the database's clock (a wrong clock on the AAP node): one warning, nothing kept; the same when the database's clock cannot be read. The keeping and the pruning count from the database's own clock. A deadlock or lock wait timeout repeats the write up to 3 times. A host with a login in it (`user@host`) is refused before any connection, and never repeated in a message. A site is one site whatever its case (`site_key`, the spelling kept in `site`). The database must answer within 120 seconds a statement, else the history is skipped with one warning |
 | When the database is down | one warning in the job output. The report goes on. The job stays green |
 | A dry run (Check) | writes nothing |
 | Turning it off | `netmap_db: false`, or take the credential off the template |
@@ -327,6 +328,7 @@ CREATE TABLE IF NOT EXISTS netmap_read (
   read_at DATETIME NOT NULL PRIMARY KEY,
   job BIGINT NOT NULL DEFAULT 0,
   ok TINYINT NOT NULL DEFAULT 1,
+  source VARCHAR(255) NOT NULL DEFAULT '',
   nodes INT NOT NULL DEFAULT 0,
   sites INT NOT NULL DEFAULT 0,
   links INT NOT NULL DEFAULT 0,
@@ -342,13 +344,14 @@ CREATE TABLE IF NOT EXISTS netmap_read (
 ```sql
 CREATE TABLE IF NOT EXISTS netmap_site (
   read_at DATETIME NOT NULL,
-  site VARCHAR(255) NOT NULL,
+  site_key VARCHAR(255) NOT NULL,
+  site VARCHAR(255) NOT NULL DEFAULT '',
   nodes INT NOT NULL DEFAULT 0,
   down INT NOT NULL DEFAULT 0,
   warning INT NOT NULL DEFAULT 0,
   unknown INT NOT NULL DEFAULT 0,
   status VARCHAR(16) NOT NULL DEFAULT '',
-  PRIMARY KEY (site, read_at),
+  PRIMARY KEY (site_key, read_at),
   KEY netmap_site_read_at (read_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
@@ -373,7 +376,8 @@ CREATE TABLE IF NOT EXISTS netmap_link (
 ```sql
 CREATE TABLE IF NOT EXISTS netmap_site_day (
   day DATE NOT NULL,
-  site VARCHAR(255) NOT NULL,
+  site_key VARCHAR(255) NOT NULL,
+  site VARCHAR(255) NOT NULL DEFAULT '',
   n_reads INT NOT NULL DEFAULT 0,
   down_reads INT NOT NULL DEFAULT 0,
   warn_reads INT NOT NULL DEFAULT 0,
@@ -385,7 +389,7 @@ CREATE TABLE IF NOT EXISTS netmap_site_day (
   tail_at DATETIME NULL,
   last_at DATETIME NULL,
   gap_min DECIMAL(8,1) NULL,
-  PRIMARY KEY (site, day),
+  PRIMARY KEY (site_key, day),
   KEY netmap_site_day_day (day)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```

@@ -36,6 +36,7 @@ options:
   job: {description: This job's ID (0 outside AAP)., type: int, default: 0}
   ok: {description: SolarWinds was read this run., type: bool, default: true}
   sites: {description: "[{site, nodes, down, warning, unknown, status}] - each site's counts of nodes by status.", type: list, elements: dict, default: []}
+  source: {description: The SolarWinds server this read is from (its host name). The history keeps one server's reads; a read from another is refused with a warning., type: str, default: ''}
   read_timeout: {description: Seconds to wait for the database to answer once connected (a server that takes the connection and never answers)., type: int, default: 120}
   links_total: {description: All the links the map has (WAN or not); the default is the number of links given., type: int, default: -1}
   links: {description: "[{key, site_a, site_b, node_a, node_b, status, in, out, speed}] - each WAN link (its two ends in two sites).", type: list, elements: dict, default: []}
@@ -56,6 +57,7 @@ created: {description: Tables made this run., type: list}
 
 import datetime
 import re
+import time
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils import site_report_db as db
@@ -67,23 +69,23 @@ TABLES = ("netmap_read", "netmap_site", "netmap_link", "netmap_site_day", "netma
 CREATE = {
     "netmap_read": (
         "CREATE TABLE IF NOT EXISTS netmap_read (read_at DATETIME NOT NULL PRIMARY KEY, job BIGINT NOT NULL DEFAULT 0, "
-        "ok TINYINT NOT NULL DEFAULT 1, nodes INT NOT NULL DEFAULT 0, sites INT NOT NULL DEFAULT 0, links INT NOT NULL DEFAULT 0, "
+        "ok TINYINT NOT NULL DEFAULT 1, source VARCHAR(255) NOT NULL DEFAULT '', nodes INT NOT NULL DEFAULT 0, sites INT NOT NULL DEFAULT 0, links INT NOT NULL DEFAULT 0, "
         "wan_links INT NOT NULL DEFAULT 0, nodes_down INT NOT NULL DEFAULT 0, nodes_warning INT NOT NULL DEFAULT 0, "
         "nodes_unknown INT NOT NULL DEFAULT 0, wan_down INT NOT NULL DEFAULT 0, wan_warning INT NOT NULL DEFAULT 0) " + db.TABLE_OPTS),
     "netmap_site": (
-        "CREATE TABLE IF NOT EXISTS netmap_site (read_at DATETIME NOT NULL, site VARCHAR(255) NOT NULL, nodes INT NOT NULL DEFAULT 0, "
+        "CREATE TABLE IF NOT EXISTS netmap_site (read_at DATETIME NOT NULL, site_key VARCHAR(255) NOT NULL, site VARCHAR(255) NOT NULL DEFAULT '', nodes INT NOT NULL DEFAULT 0, "
         "down INT NOT NULL DEFAULT 0, warning INT NOT NULL DEFAULT 0, unknown INT NOT NULL DEFAULT 0, status VARCHAR(16) NOT NULL DEFAULT '', "
-        "PRIMARY KEY (site, read_at), KEY netmap_site_read_at (read_at)) " + db.TABLE_OPTS),
+        "PRIMARY KEY (site_key, read_at), KEY netmap_site_read_at (read_at)) " + db.TABLE_OPTS),
     "netmap_link": (
         "CREATE TABLE IF NOT EXISTS netmap_link (read_at DATETIME NOT NULL, link_key VARCHAR(255) NOT NULL, site_a VARCHAR(255) NOT NULL DEFAULT '', "
         "site_b VARCHAR(255) NOT NULL DEFAULT '', node_a VARCHAR(255) NOT NULL DEFAULT '', node_b VARCHAR(255) NOT NULL DEFAULT '', "
         "status VARCHAR(16) NOT NULL DEFAULT '', in_pct SMALLINT NULL, out_pct SMALLINT NULL, speed VARCHAR(32) NOT NULL DEFAULT '', "
         "PRIMARY KEY (link_key, read_at), KEY netmap_link_read_at (read_at)) " + db.TABLE_OPTS),
     "netmap_site_day": (
-        "CREATE TABLE IF NOT EXISTS netmap_site_day (day DATE NOT NULL, site VARCHAR(255) NOT NULL, n_reads INT NOT NULL DEFAULT 0, "
+        "CREATE TABLE IF NOT EXISTS netmap_site_day (day DATE NOT NULL, site_key VARCHAR(255) NOT NULL, site VARCHAR(255) NOT NULL DEFAULT '', n_reads INT NOT NULL DEFAULT 0, "
         "down_reads INT NOT NULL DEFAULT 0, warn_reads INT NOT NULL DEFAULT 0, max_down INT NOT NULL DEFAULT 0, max_warn INT NOT NULL DEFAULT 0, "
         "outages INT NOT NULL DEFAULT 0, down_min INT NOT NULL DEFAULT 0, tail_down TINYINT NOT NULL DEFAULT 0, tail_at DATETIME NULL, last_at DATETIME NULL, gap_min DECIMAL(8,1) NULL, "
-        "PRIMARY KEY (site, day), KEY netmap_site_day_day (day)) " + db.TABLE_OPTS),
+        "PRIMARY KEY (site_key, day), KEY netmap_site_day_day (day)) " + db.TABLE_OPTS),
     "netmap_link_day": (
         "CREATE TABLE IF NOT EXISTS netmap_link_day (day DATE NOT NULL, link_key VARCHAR(255) NOT NULL, site_a VARCHAR(255) NOT NULL DEFAULT '', "
         "site_b VARCHAR(255) NOT NULL DEFAULT '', node_a VARCHAR(255) NOT NULL DEFAULT '', node_b VARCHAR(255) NOT NULL DEFAULT '', "
@@ -151,6 +153,11 @@ def _pct(x):
         return None if x is None else max(0, min(100, int(round(float(x)))))
     except (TypeError, ValueError):
         return None
+
+
+def skey(name):
+    """A site's key: its name with the spelling folded (case, spaces at the ends) - 'Site A ' and 'SITE A' are one site; the spelling is kept beside it."""
+    return str(name if name is not None else "").strip().casefold()[:255]
 
 
 def _text(x, n):
@@ -271,29 +278,25 @@ def schema(conn, create):
     made = []
     if missing and not create:
         return missing, made
-    if "schema_version" in have:
+    had = "schema_version" in have
+    row = None
+    if had:
         cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
-        r = cur.fetchone()
-        if r is not None and int(r[0]) > SCHEMA_VERSION:
-            raise RuntimeError("the tables netmap_* are version %s, newer than this release knows (%s) - update site-automation" % (r[0], SCHEMA_VERSION))
-    if create and (missing or "schema_version" not in have):
+        row = cur.fetchone()
+        if row is not None and int(row[0]) > SCHEMA_VERSION:
+            raise RuntimeError("the tables netmap_* are version %s, newer than this release knows (%s) - update site-automation" % (row[0], SCHEMA_VERSION))
+    if create and (missing or not had):
         cur.execute(db.SCHEMA_VERSION_TABLE)
-        have.add("schema_version")
-    for t in missing:
-        cur.execute(CREATE[t])
-        made.append(t)
-    if "schema_version" in have:
-        cur.execute("SELECT version FROM schema_version WHERE component = %s", (COMPONENT,))
-        r = cur.fetchone()
-        if r is None and create:
-            cur.execute("INSERT IGNORE INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
-        elif r is not None and int(r[0]) > SCHEMA_VERSION:
-            raise RuntimeError("the tables netmap_* are version %s, newer than this release knows (%s) - update site-automation" % (r[0], SCHEMA_VERSION))
+        for t in missing:
+            cur.execute(CREATE[t])
+            made.append(t)
+    if create and row is None:
+        cur.execute("INSERT IGNORE INTO schema_version (component, version, applied_at) VALUES (%s, %s, UTC_TIMESTAMP())", (COMPONENT, SCHEMA_VERSION))
     conn.commit()
     return [], made
 
 
-def write(conn, now, job, ok, sites, links, links_total=None):
+def write(conn, now, job, ok, sites, links, links_total=None, source=""):
     """This run's rows -> {reads, sites, links}. A read SolarWinds did not give is one row with ok 0 and zero counts (a missed read shows). The same read_at
     again replaces the rows of the first (never a mix): the header row is written first, which locks it, so two writers of one time wait for each other."""
     cur = conn.cursor()
@@ -301,22 +304,30 @@ def write(conn, now, job, ok, sites, links, links_total=None):
     ss = [x for x in sites or [] if isinstance(x, dict)]
     if not ok:
         ss, wan, links_total = [], [], 0
+    seen, uniq = set(), []
+    for x in ss:                                    # two spellings of one site in one read (case only) are one site
+        k = skey(x.get("site"))
+        if k and k not in seen:
+            seen.add(k)
+            uniq.append(x)
+    ss = uniq
     total = len(wan) if links_total is None else max(_int(links_total), len(wan))
-    cur.execute(
-        "INSERT INTO netmap_read (read_at, job, ok, nodes, sites, links, wan_links, nodes_down, nodes_warning, nodes_unknown, wan_down, wan_warning) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE job = VALUES(job), ok = VALUES(ok), nodes = VALUES(nodes), "
+    fresh = cur.execute(
+        "INSERT INTO netmap_read (read_at, job, ok, source, nodes, sites, links, wan_links, nodes_down, nodes_warning, nodes_unknown, wan_down, wan_warning) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE job = VALUES(job), ok = VALUES(ok), source = VALUES(source), nodes = VALUES(nodes), "
         "sites = VALUES(sites), links = VALUES(links), wan_links = VALUES(wan_links), nodes_down = VALUES(nodes_down), nodes_warning = VALUES(nodes_warning), "
         "nodes_unknown = VALUES(nodes_unknown), wan_down = VALUES(wan_down), wan_warning = VALUES(wan_warning)",
-        (now, job, 1 if ok else 0, sum(_int(x.get("nodes")) for x in ss), len(ss), total, len(wan), sum(_int(x.get("down")) for x in ss),
+        (now, job, 1 if ok else 0, _text(source, 255).lower(), sum(_int(x.get("nodes")) for x in ss), len(ss), total, len(wan), sum(_int(x.get("down")) for x in ss),
          sum(_int(x.get("warning")) for x in ss), sum(_int(x.get("unknown")) for x in ss),
          sum(1 for x in wan if _status(x.get("status")) == "Down"), sum(1 for x in wan if _status(x.get("status")) == "Warning")))
-    cur.execute("DELETE FROM netmap_site WHERE read_at = %s", (now,))
-    cur.execute("DELETE FROM netmap_link WHERE read_at = %s", (now,))
-    srows = [(now, _text(x.get("site"), 255), _int(x.get("nodes")), _int(x.get("down")), _int(x.get("warning")), _int(x.get("unknown")),
+    if fresh != 1:                                  # a header that was there already (a rewrite): its children are replaced; a new one has none
+        cur.execute("DELETE FROM netmap_site WHERE read_at = %s", (now,))
+        cur.execute("DELETE FROM netmap_link WHERE read_at = %s", (now,))
+    srows = [(now, skey(x.get("site")), _text(x.get("site"), 255), _int(x.get("nodes")), _int(x.get("down")), _int(x.get("warning")), _int(x.get("unknown")),
               _status(x.get("status"))) for x in ss if x.get("site")]
     if srows:
-        cur.executemany("INSERT INTO netmap_site (read_at, site, nodes, down, warning, unknown, status) VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                        "ON DUPLICATE KEY UPDATE nodes = VALUES(nodes), down = VALUES(down), warning = VALUES(warning), unknown = VALUES(unknown), status = VALUES(status)", srows)
+        cur.executemany("INSERT INTO netmap_site (read_at, site_key, site, nodes, down, warning, unknown, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                        "ON DUPLICATE KEY UPDATE site = VALUES(site), nodes = VALUES(nodes), down = VALUES(down), warning = VALUES(warning), unknown = VALUES(unknown), status = VALUES(status)", srows)
     lrows = [(now, _text(x.get("key"), 255), _text(x.get("site_a"), 255), _text(x.get("site_b"), 255), _text(x.get("node_a"), 255), _text(x.get("node_b"), 255),
               _status(x.get("status")), _pct(x.get("in")), _pct(x.get("out")), _text(x.get("speed"), 32)) for x in wan if x.get("key")]
     if lrows:
@@ -324,6 +335,38 @@ def write(conn, now, job, ok, sites, links, links_total=None):
                         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE site_a = VALUES(site_a), site_b = VALUES(site_b), "
                         "node_a = VALUES(node_a), node_b = VALUES(node_b), status = VALUES(status), in_pct = VALUES(in_pct), out_pct = VALUES(out_pct), speed = VALUES(speed)", lrows)
     return {"reads": 1, "sites": len(srows), "links": len(lrows)}
+
+
+DEADLOCK = (1205, 1213)
+
+
+def write_retry(conn, tries, *args, **kw):
+    """write(), the whole transaction again (up to `tries` times, a short wait between) when MySQL gave a deadlock (1213) or a lock wait timeout (1205)."""
+    for n in range(1, max(1, tries) + 1):
+        try:
+            out = write(conn, *args, **kw)
+            conn.commit()
+            return out
+        except Exception as e:      # noqa: BLE001
+            code = e.args[0] if getattr(e, "args", None) and isinstance(e.args[0], int) else None
+            try:
+                conn.rollback()
+            except Exception:       # noqa: BLE001
+                pass
+            if code not in DEADLOCK or n >= tries:
+                raise
+            time.sleep(0.5 * n)
+
+
+def source_conflict(conn, source):
+    """The SolarWinds server the history has been keeping, when this read is from another one (else ''): the history keeps one."""
+    src = _text(source, 255).lower()
+    if not src:
+        return ""
+    cur = conn.cursor()
+    cur.execute("SELECT source FROM netmap_read WHERE source <> '' ORDER BY read_at DESC LIMIT 1")
+    r = cur.fetchone()
+    return str(r[0]) if r and str(r[0]).lower() != src else ""
 
 
 SITE_DAY_COLS = ("n_reads", "down_reads", "warn_reads", "max_down", "max_warn", "outages", "down_min", "tail_down", "tail_at", "last_at", "gap_min")
@@ -372,21 +415,20 @@ def roll_day(cur, day):
     prev = day - datetime.timedelta(days=1)
     nominal = usual_gap(cur, [t for t, ok in window if ok], prev)
     after = next(((t, ok) for t, ok in window if t >= hi and ok), None)               # the first read after the day that worked
-    cur.execute("SELECT read_at, site, status, down, warning FROM netmap_site WHERE read_at >= %s AND read_at < %s ORDER BY read_at FOR UPDATE", (lo, hi))
-    srows, sdel = {}, []
-    for t, site, status, down, warn in cur.fetchall():
-        srows.setdefault(site, {})[t] = (status, down, warn)
-        sdel.append((site, t))
+    cur.execute("SELECT read_at, site_key, site, status, down, warning FROM netmap_site WHERE read_at >= %s AND read_at < %s ORDER BY read_at FOR UPDATE", (lo, hi))
+    srows, names = {}, {}
+    for t, key, site, status, down, warn in cur.fetchall():
+        srows.setdefault(key, {})[t] = (status, down, warn)
+        names[key] = site
     cur.execute("SELECT read_at, link_key, site_a, site_b, node_a, node_b, status, in_pct, out_pct FROM netmap_link WHERE read_at >= %s AND read_at < %s "
                 "ORDER BY read_at FOR UPDATE", (lo, hi))
-    lrows, ends, ldel = {}, {}, []
+    lrows, ends = {}, {}
     for t, key, sa, sb, na, nb, status, pin, pout in cur.fetchall():
         lrows.setdefault(key, {})[t] = (status, pin, pout)
-        ldel.append((key, t))
         ends[key] = (sa, sb, na, nb)
-    old_s = _day_table(cur, "netmap_site_day", "site", SITE_DAY_COLS, day)
+    old_s = _day_table(cur, "netmap_site_day", "site_key", SITE_DAY_COLS, day)
     old_l = _day_table(cur, "netmap_link_day", "link_key", LINK_DAY_COLS, day)
-    cur.execute("SELECT site, tail_down, tail_at FROM netmap_site_day WHERE day = %s", (prev,))
+    cur.execute("SELECT site_key, tail_down, tail_at FROM netmap_site_day WHERE day = %s", (prev,))
     tails_s = dict((r[0], (_int(r[1]), r[2])) for r in cur.fetchall())
     cur.execute("SELECT link_key, tail_down, tail_at FROM netmap_link_day WHERE day = %s", (prev,))
     tails_l = dict((r[0], (_int(r[1]), r[2])) for r in cur.fetchall())
@@ -397,7 +439,7 @@ def roll_day(cur, day):
         r["max_warn"] = max(_int(v[2]) for v in by_t.values())
         if site in old_s:
             r = merge(old_s[site], r)
-        _store_day(cur, "netmap_site_day", "site", [], SITE_DAY_COLS, lo.date(), site, [], r)
+        _store_day(cur, "netmap_site_day", "site_key", ["site"], SITE_DAY_COLS, lo.date(), site, [names.get(site, site)], r)
     for key, by_t in lrows.items():
         seq = [(t, ok) + (by_t[t] if t in by_t else (None, None, None)) for t, ok in reads]
         r = walk(seq, nominal, hi, after, *((0, None) if key in old_l else tails_l.get(key, (0, None))))
@@ -496,11 +538,12 @@ def main():
         argument_spec=dict(db.ARGS, create=dict(type="bool", default=True), write=dict(type="bool", default=True),
                            read_at=dict(type="str", required=True), job=dict(type="int", default=0), ok=dict(type="bool", default=True),
                            sites=dict(type="list", elements="dict", default=[]), links=dict(type="list", elements="dict", default=[]),
-                           links_total=dict(type="int", default=-1), read_timeout=dict(type="int", default=120),
+                           links_total=dict(type="int", default=-1), source=dict(type="str", default=""), read_timeout=dict(type="int", default=120),
                            keep_reads_days=dict(type="int", default=90), keep_days=dict(type="int", default=400), max_days=dict(type="int", default=40)),
         supports_check_mode=True)
     p = module.params
-    where = "%s:%s/%s" % (p["host"], p["port"], p["database"])
+    userinfo = "@" in str(p["host"])
+    where = "(the host is not shown)" if userinfo else "%s:%s/%s" % (p["host"], p["port"], p["database"])
     res = {"changed": False, "ok": False, "error": "", "note": "", "tls": "", "where": where, "written": {"reads": 0, "sites": 0, "links": 0}, "rolled": 0,
            "pruned": {"sites": 0, "links": 0}, "created": []}
 
@@ -509,6 +552,8 @@ def main():
         module.warn("The report database %s: %s - the network map's history is not kept this run (netmap_db: false turns the database off for it)" % (where, msg))
         module.exit_json(**res)
 
+    if userinfo:        # a login in the host (user@host): refused before any connection, and the text is never repeated
+        give_up("the report database host has user information in it (an '@') - give only the server's name in the credential")
     if not db.HAS_PYMYSQL:
         give_up(db.NO_PYMYSQL)
     now = stamp(p["read_at"])
@@ -527,34 +572,40 @@ def main():
     except Exception as e:      # noqa: BLE001 - unreachable, refused, a grant missing: one line, the job goes on
         shut(conn)
         give_up(db.explain(e, p))
+    writing = p["write"] and not module.check_mode
     db_now = None
     try:
         db_now = db_clock(conn)
-    except Exception:           # noqa: BLE001 - the clock is a convenience: without it, the supplied time is used
+    except Exception:           # noqa: BLE001
         pass
-    clock = db_now or now
-    bad = sane_time(now, db_now, p["keep_reads_days"]) if p["write"] and not module.check_mode else None
+    bad = ""
+    if writing and db_now is None:      # nothing destructive is ever counted from the collector's clock
+        bad = "the database's clock could not be read"
+    elif writing:
+        bad = sane_time(now, db_now, p["keep_reads_days"]) or ""
+        if not bad:
+            try:
+                other = source_conflict(conn, p["source"])
+            except Exception:   # noqa: BLE001 - an old table: no source to compare
+                other = ""
+            if other:
+                bad = "the history keeps one SolarWinds server (%s); this read is from another" % _text(other, 80)
     if bad:
         res["error"] = "this run's rows were not kept: %s" % bad
         module.warn("The report database %s: %s" % (where, res["error"]))
-    elif p["write"] and not module.check_mode:
+    elif writing:
         try:
-            res["written"] = write(conn, now, p["job"], p["ok"], p["sites"], p["links"], None if p["links_total"] < 0 else p["links_total"])
-            conn.commit()
+            res["written"] = write_retry(conn, 3, now, p["job"], p["ok"], p["sites"], p["links"], None if p["links_total"] < 0 else p["links_total"], p["source"])
             res["changed"] = True
         except Exception as e:      # noqa: BLE001 - a read-only account, a full disk: said, the report goes on
-            try:
-                conn.rollback()
-            except Exception:       # noqa: BLE001
-                pass
             res["error"] = "this run's rows were not kept: %s" % db.explain(e, p)
             module.warn("The report database %s: %s" % (where, res["error"]))
         if not res["error"]:
             try:
                 if lock(conn, p["database"]):
                     try:
-                        res["rolled"] = rollup(conn, clock, p["keep_reads_days"], p["max_days"])
-                        res["pruned"] = prune(conn, clock, p["keep_days"])
+                        res["rolled"] = rollup(conn, db_now, p["keep_reads_days"], p["max_days"])
+                        res["pruned"] = prune(conn, db_now, p["keep_days"])
                     finally:
                         unlock(conn, p["database"])
                 else:

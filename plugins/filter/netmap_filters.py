@@ -7,6 +7,7 @@ __metaclass__ = type
 
 import importlib.util
 import os
+import re
 
 # the discovery settings' check (1.95.0): plugins/module_utils/site_swis.py, loaded as ad_filters.py loads site_time
 _spec = importlib.util.spec_from_file_location(
@@ -356,20 +357,34 @@ def netmap_summary_counts(res):
             "changes": len(r.get("changes") or []), "version": (r.get("version") or {}).get("platform", ""), "read_at": r.get("read_at", "")}
 
 
+def _source(url):
+    """The SolarWinds address the job is CONFIGURED to read (client.url) as 'host:port', lower case, no trailing dot (the snapshot's orion_key rule): never a login,
+    never a path, and never the identity of the server that answered (one name may have several servers behind it, one database: the history is one)."""
+    t = str(url or "").strip().lower()
+    if "@" in t:
+        return ""
+    t = re.sub(r"^[a-z]+://", "", t).split("/", 1)[0].split("?", 1)[0]
+    m = re.match(r"^([a-z0-9._-]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$", t)
+    if not m:
+        return ""
+    return ("%s:%s" % (m.group(1).rstrip("."), m.group(2) or getattr(_sw, "PORT", 17774)))[:255]
+
+
 def netmap_db_rows(res):
     """1.111.0: what a run read -> what site_netmap_db keeps: {ok, links_total, sites: [{site, nodes, down, warning, unknown, status}], links: [{key, site_a, site_b, node_a,
     node_b, status, in, out, speed}]} - every site, and the WAN links (between two sites; a link that is gone is not one). SolarWinds not read: ok false and
     nothing else (a missed read is one row)."""
     r = res or {}
+    source = _source(r.get("url"))
     m = r.get("map") or {}
     if not r.get("reachable") or not m:
-        return {"ok": False, "sites": [], "links": [], "links_total": 0}
+        return {"ok": False, "sites": [], "links": [], "links_total": 0, "source": source}
     sites = [{"site": s["name"], "nodes": s.get("nodes", 0), "down": s.get("down", 0), "warning": s.get("warning", 0), "unknown": s.get("unknown", 0),
               "status": s.get("worst") or "Unknown"} for s in m.get("sites") or []]
     links = [{"key": _sw.link_key(l), "site_a": a["site"], "site_b": b["site"], "node_a": a["name"], "node_b": b["name"], "status": l["status"],
               "in": l.get("in"), "out": l.get("out"), "speed": l.get("speed") or ""} for l, a, b in _wan(m)]
     total = len([l for l in m.get("links") or [] if not l.get("gone")])
-    return {"ok": True, "sites": sites, "links": links, "links_total": total}
+    return {"ok": True, "sites": sites, "links": links, "links_total": total, "source": source}
 
 
 class FilterModule(object):

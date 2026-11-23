@@ -27,6 +27,7 @@
         sites: "{{ _nm_db_rows.sites }}"
         links: "{{ _nm_db_rows.links }}"
         links_total: "{{ _nm_db_rows.links_total }}"
+        source: "{{ _nm_db_rows.source }}"
         keep_reads_days: "{{ netmap_db_keep_reads_days | int }}"
         keep_days: "{{ netmap_db_keep_days | int }}"
       register: _nm_db

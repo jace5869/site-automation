@@ -27,12 +27,14 @@ NOW = datetime.datetime(2026, 11, 23, 9, 30)
 class Cursor(object):
     """Records every statement; answers SELECTs from a script (a list of rowsets, used in order) and the DELETE row count."""
     def __init__(self, answers=()):
-        self.answers, self.sql, self.many, self.out, self.rowcount = list(answers), [], [], [], 0
+        self.answers, self.sql, self.many, self.out, self.rowcount, self.header_rows = list(answers), [], [], [], 0, 2
 
     def execute(self, sql, args=()):
         sql = " ".join(sql.split())
         self.sql.append((sql, args))
         self.out = self.answers.pop(0) if sql.startswith("SELECT") and self.answers else []
+        if sql.startswith("INSERT INTO netmap_read"):
+            return self.header_rows                             # 1 = a new row, 2 = an existing one replaced
         return 1
 
     def executemany(self, sql, rows):
@@ -208,25 +210,87 @@ class Writing(unittest.TestCase):
 
     def test_a_read_a_row_each_site_each_wan_link(self):
         c = Conn()
-        n = ndb.write(c, NOW, 4711, True, self.SITES, self.LINKS, links_total=40)
+        n = ndb.write(c, NOW, 4711, True, self.SITES, self.LINKS, links_total=40, source="Orion.Example.mil")
         self.assertEqual(n, {"reads": 1, "sites": 2, "links": 2})
         sql = [s for s, a in c.cur.sql]
         self.assertTrue(sql[0].startswith("INSERT INTO netmap_read"))                                            # the header first: it locks the read's time
         self.assertEqual(sql[1:3], ["DELETE FROM netmap_site WHERE read_at = %s", "DELETE FROM netmap_link WHERE read_at = %s"])    # the same read again replaces, never mixes
         isql, args = c.cur.sql[0]
         self.assertTrue(isql.startswith("INSERT INTO netmap_read"))
-        self.assertEqual(args, (NOW, 4711, 1, 500, 2, 40, 2, 3, 4, 1, 1, 1))     # nodes, sites, ALL links, wan, nodes down/warning/unknown, wan down/warning
+        self.assertEqual(args, (NOW, 4711, 1, "orion.example.mil", 500, 2, 40, 2, 3, 4, 1, 1, 1))     # source, nodes, sites, ALL links, wan, nodes down/warning/unknown, wan down/warning
         (ssql, srows), (lsql, lrows) = c.cur.many
-        self.assertEqual(srows[1], (NOW, "SITEB", 188, 3, 0, 0, "Down"))
+        self.assertEqual(srows[1], (NOW, "siteb", "SITEB", 188, 3, 0, 0, "Down"))                      # the key is the folded name, the spelling kept beside it
         self.assertEqual(lrows[1], (NOW, "5/6|7/8", "SITEA", "SITEC", "a2", "c1", "Warning", 91, 33, "100 Mb/s"))
         self.assertEqual(lrows[0][7:9], (None, None))
+
+    def test_a_new_header_has_no_children_to_delete(self):
+        c = Conn()
+        c.cur.header_rows = 1
+        ndb.write(c, NOW, 1, True, self.SITES, self.LINKS)
+        self.assertFalse(any(s.startswith("DELETE") for s, a in c.cur.sql))
+
+    def test_a_site_is_one_site_whatever_its_case(self):
+        c = Conn()
+        n = ndb.write(c, NOW, 1, True, [{"site": "Site A ", "nodes": 5}, {"site": "SITE A", "nodes": 9}, {"site": "Site B", "nodes": 1}], [])
+        self.assertEqual(n["sites"], 2)
+        self.assertEqual([r[1] for r in c.cur.many[0][1]], ["site a", "site b"])
+        self.assertEqual(ndb.skey("  Éa "), "éa")
+
+    def test_a_deadlock_or_lock_timeout_is_tried_again_three_times(self):
+        class Dead(Exception):
+            pass
+
+        class C(Conn):
+            tries = 0
+
+            def cursor(self_):
+                if self_.tries < 2:
+                    self_.tries += 1
+                    raise Dead(1213, "deadlock")
+                return self_.cur
+        orig = ndb.time.sleep
+        ndb.time.sleep = lambda x: None
+        try:
+            c = C()
+            self.assertEqual(ndb.write_retry(c, 3, NOW, 1, True, [], [])["reads"], 1)            # the third try works
+            self.assertEqual(c.rollbacks, 2)
+
+            class Always(C):
+                tries = -99
+            with self.assertRaises(Dead):
+                ndb.write_retry(Always(), 3, NOW, 1, True, [], [])                                # still failing: raised, said by the caller
+            e = Conn()
+            e.cursor = lambda: (_ for _ in ()).throw(RuntimeError("Access denied"))               # a code that is not a deadlock: no second try
+            with self.assertRaises(RuntimeError):
+                ndb.write_retry(e, 3, NOW, 1, True, [], [])
+            self.assertEqual(e.rollbacks, 1)
+        finally:
+            ndb.time.sleep = orig
+
+    def test_the_source_is_the_configured_name_never_the_answering_server(self):
+        base = {"reachable": True, "url": "https://Orion.Example.mil.:17774", "map": {"sites": [], "nodes": [], "links": []}}
+        a = dict(base, version={"engine": "ORION-WEB01"}, engines=["ORION-WEB01"])
+        b = dict(base, version={"engine": "ORION-WEB02"}, engines=["ORION-WEB02"])      # the same name, another server behind it answered
+        self.assertEqual(nf.netmap_db_rows(a)["source"], "orion.example.mil:17774")       # case-folded, trailing dot stripped
+        self.assertEqual(nf.netmap_db_rows(a)["source"], nf.netmap_db_rows(b)["source"])
+        stored = nf.netmap_db_rows(a)["source"]
+        self.assertEqual(ndb.source_conflict(Conn([[(stored,)]]), nf.netmap_db_rows(b)["source"]), "")      # never refused
+        # and the outage is counted across both reads: the data keeps no backend identity at all
+        r = ndb.walk([(T(1, 10), True, "Down", None, None), (T(1, 10, 30), True, "Down", None, None)], 30, T(2, 0))
+        self.assertEqual(r["outages"], 1)
+
+    def test_one_solarwinds_server(self):
+        self.assertEqual(ndb.source_conflict(Conn([[("orion.example.mil",)]]), "ORION.example.mil"), "")
+        self.assertEqual(ndb.source_conflict(Conn([[("orion.example.mil",)]]), "other.example.mil"), "orion.example.mil")
+        self.assertEqual(ndb.source_conflict(Conn([[]]), "other.example.mil"), "")                 # nothing kept yet: any
+        self.assertEqual(ndb.source_conflict(Conn(), ""), "")                                      # no source given: no check
 
     def test_a_missed_read_is_one_row_with_zero_counts(self):
         c = Conn()
         n = ndb.write(c, NOW, 4712, False, self.SITES, self.LINKS, links_total=40)
         self.assertEqual(n, {"reads": 1, "sites": 0, "links": 0})
         args = [a for s, a in c.cur.sql if s.startswith("INSERT INTO netmap_read")][0]
-        self.assertEqual(args, (NOW, 4712, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+        self.assertEqual(args, (NOW, 4712, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0))
         self.assertEqual(c.cur.many, [])
 
     def test_what_a_run_gives_the_writer(self):
@@ -240,9 +304,11 @@ class Writing(unittest.TestCase):
         self.assertEqual((r["ok"], len(r["sites"]), len(r["links"]), r["links_total"]), (True, 2, 1, 2))
         self.assertEqual((r["links"][0]["site_a"], r["links"][0]["site_b"], r["links"][0]["status"], r["links"][0]["speed"]), ("SITEA", "SITEB", "Down", "1 Gb/s"))
         self.assertEqual(r["links"][0]["key"], "2/12|3/13")
-        none = {"ok": False, "sites": [], "links": [], "links_total": 0}
+        none = {"ok": False, "sites": [], "links": [], "links_total": 0, "source": ""}
         self.assertEqual(nf.netmap_db_rows({"reachable": False, "map": {}}), none)
         self.assertEqual(nf.netmap_db_rows(None), none)
+        self.assertEqual(nf.netmap_db_rows(dict(res, url="https://Orion.Example.mil:17774/path?x=1"))["source"], "orion.example.mil:17774")
+        self.assertEqual(nf.netmap_db_rows({"reachable": False, "url": "https://svc:pw@orion.example.mil"})["source"], "")      # a login in the address: no source at all, never a piece of it
 
 
 class Schema(unittest.TestCase):
@@ -299,7 +365,7 @@ class Rolling(unittest.TestCase):
         d = datetime.date(2026, 8, 1)
         t = [T(1, 0), T(1, 0, 30), T(1, 1)]
         c = Conn([[(x, 1) for x in t], [(x, 1) for x in t],
-                  [(x, "SITEB", "Down" if i else "Up", 1 if i else 0, 0) for i, x in enumerate(t)],
+                  [(x, "siteb", "SITEB", "Down" if i else "Up", 1 if i else 0, 0) for i, x in enumerate(t)],
                   [(x, "L1", "SITEA", "SITEB", "a1", "b1", "Down" if i else "Up", None if i else 40, None if i else 10) for i, x in enumerate(t)],
                   [], [], [], []])
         self.assertTrue(ndb.roll_day(c.cur, d))
@@ -348,6 +414,75 @@ class Rolling(unittest.TestCase):
         self.assertTrue(ndb.lock(c, "site_reports"))
         self.assertIn("GET_LOCK", c.cur.sql[0][0])
         self.assertFalse(ndb.lock(Conn([[(0,)]]), "site_reports"))
+
+
+class Exit(Exception):
+    pass
+
+
+class FakeModule(object):
+    """AnsibleModule for main(): the params it is given, the warnings and the result it hands back."""
+    last = None
+
+    def __init__(self, argument_spec=None, supports_check_mode=False):
+        self.params = dict(FakeModule.params)
+        self.check_mode, self.warnings, self.result = False, [], None
+        FakeModule.last = self
+
+    def warn(self, msg):
+        self.warnings.append(msg)
+
+    def exit_json(self, **kw):
+        self.result = kw
+        raise Exit()
+
+
+class Main(unittest.TestCase):
+    """main() with a fake module and a fake database: what it refuses, warns about and never does."""
+    BASE = {"host": "db.example.mil", "port": 3309, "database": "site_reports", "user": "w", "password": "secret-pw", "tls": False, "ca_file": "",
+            "connect_timeout": 10, "create": True, "write": True, "read_at": "2026-11-23T09:30:05Z", "job": 1, "ok": True, "sites": [], "links": [],
+            "links_total": -1, "source": "orion.example.mil", "read_timeout": 120, "keep_reads_days": 90, "keep_days": 400, "max_days": 40}
+
+    def run_main(self, answers=(), clock=NOW, **params):
+        FakeModule.params = dict(self.BASE, **params)
+        conn = Conn([[(t,) for t in ndb.TABLES + ("schema_version",)], [(1,)]] + list(answers))        # the tables there, schema version 1
+        saved = (ndb.AnsibleModule, ndb.db.connect, ndb.db.HAS_PYMYSQL, ndb.db_clock)
+        ndb.AnsibleModule, ndb.db.connect, ndb.db.HAS_PYMYSQL = FakeModule, (lambda p: (conn, "none")), True
+        ndb.db_clock = lambda c: clock
+        try:
+            ndb.main()
+        except Exit:
+            pass
+        finally:
+            ndb.AnsibleModule, ndb.db.connect, ndb.db.HAS_PYMYSQL, ndb.db_clock = saved
+        return FakeModule.last, conn
+
+    def statements(self, conn):
+        return [s for s, a in conn.cur.sql]
+
+    def test_a_host_with_a_login_is_refused_before_connecting_and_never_repeated(self):
+        m, conn = self.run_main(host="svc:hunter2@db.example.mil")
+        self.assertEqual(conn.cur.sql, [])
+        self.assertTrue(m.warnings and "user information" in m.warnings[0])
+        self.assertNotIn("hunter2", " ".join(m.warnings) + str(m.result))
+        self.assertNotIn("svc", " ".join(m.warnings) + str(m.result))
+
+    def test_no_database_clock_nothing_is_written_or_rolled_up(self):
+        m, conn = self.run_main(clock=None)
+        self.assertTrue(any("clock" in w for w in m.warnings))
+        s = self.statements(conn)
+        self.assertFalse(any(x.startswith(("INSERT INTO netmap_read", "DELETE", "SELECT GET_LOCK")) for x in s))
+
+    def test_a_read_from_another_solarwinds_is_refused(self):
+        m, conn = self.run_main(answers=[[("other.example.mil",)]])
+        self.assertTrue(any("one SolarWinds server" in w for w in m.warnings))
+        self.assertFalse(any(x.startswith("INSERT INTO netmap_read") for x in self.statements(conn)))
+
+    def test_a_good_read_is_written_and_rolled_with_the_database_clock(self):
+        m, conn = self.run_main(answers=[[("orion.example.mil",)]])
+        self.assertEqual(m.warnings, [])
+        self.assertTrue(any(x.startswith("INSERT INTO netmap_read") for x in self.statements(conn)))
+        self.assertTrue(any("GET_LOCK" in x for x in self.statements(conn)))
 
 
 class Doc(unittest.TestCase):

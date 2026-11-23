@@ -67,7 +67,7 @@ DB="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports 
 # run NAME EXPECT(ok|fail) VARS_JSON [TEXT...]   (!TEXT: must not be there; DB_ENV: the credential, default the writer's; CHECK=1: a dry run)
 run() {
     local tname="$1" want="$2" vars="$3"; shift 3
-    (cd "$repo" && env -u REPORT_DB_HOST SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_PASSWORD="$pw" ${DB_ENV-$DB} ANSIBLE_NOCOLOR=1 \
+    (cd "$repo" && env -u REPORT_DB_HOST SOLARWINDS_USERNAME=svc_swis_ro SOLARWINDS_PASSWORD="${SW_PW-$pw}" ${DB_ENV-$DB} ANSIBLE_NOCOLOR=1 \
         ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default \
         "$ap" -i "$work/inv.yml" playbooks/netmap_report.yml -e "$vars" ${CHECK:+--check}) > "$work/out.txt" 2>&1
     local rc=$? t
@@ -105,6 +105,8 @@ sites="$(qw "SELECT COUNT(*) FROM netmap_site")"; wan="$(qw "SELECT COUNT(*) FRO
 is "the read's counts are the rows'" "$(qw "SELECT IF(sites = (SELECT COUNT(*) FROM netmap_site) AND wan_links = (SELECT COUNT(*) FROM netmap_link) AND nodes = (SELECT SUM(nodes) FROM netmap_site), 'same', 'differ') FROM netmap_read")" same
 is "the reader sees the rows" "$(qr "SELECT COUNT(*) FROM netmap_read")" 1
 is "the job number kept" "$(qw "SELECT job FROM netmap_read")" 5001
+is "the source is the address the job is configured with" "$(qw "SELECT source FROM netmap_read WHERE job = 5001")" "127.0.0.1:$port"
+is "every site row is keyed by its folded name, its spelling beside it" "$(qw "SELECT IF(COUNT(*) > 0 AND SUM(site_key = LOWER(site)) = COUNT(*), 'ok', 'no') FROM netmap_site")" ok
 is "the site Down in the fixture is Down in the rows" "$(qw "SELECT IF(SUM(down) = (SELECT nodes_down FROM netmap_read), 'ok', 'no') FROM netmap_site")" ok
 sleep 1.2
 # 2. a second run is a second read
@@ -118,7 +120,7 @@ is "still two reads" "$(qw "SELECT COUNT(*) FROM netmap_read")" 2
 CHECK=1 run "a dry run (Check): nothing written" ok "{$base}"
 is "still two reads (Check)" "$(qw "SELECT COUNT(*) FROM netmap_read")" 2
 # 5. SolarWinds not read: one row ok 0, the job green
-run "SolarWinds not reached: a missed read is one row, the job green" ok "{$base, \"netmap_solarwinds_url\": \"https://127.0.0.1:$((port + 5))\", \"awx_job_id\": 5003}" "Report database: read kept (0 sites, 0 WAN links)"
+SW_PW=wrong-password run "SolarWinds not read (a refused login): a missed read is one row, the job green" ok "{$base, \"awx_job_id\": 5003}" "Report database: read kept (0 sites, 0 WAN links)"
 is "a missed read: ok 0" "$(qw "SELECT COUNT(*) FROM netmap_read WHERE ok = 0")" 1
 is "no site rows for it" "$(qw "SELECT COUNT(*) FROM netmap_site WHERE read_at = (SELECT read_at FROM netmap_read WHERE ok = 0)")" 0
 sleep 1.2
@@ -196,6 +198,12 @@ EOPY
 run "a daily schedule rolled up" ok "{$base, \"awx_job_id\": 5007}" "2 day(s) rolled up"
 is "daily: the outage is counted on the second day, 18 hours down each (06:00 to midnight)" "$(qw "SELECT GROUP_CONCAT(CONCAT(outages, '/', down_min, '/', gap_min) ORDER BY day) FROM netmap_link_day WHERE link_key = 'L2'")" "0/1080/1440.0,1/1080/1440.0"
 # 7. never a failed job
+qw "UPDATE netmap_read SET source = 'other.example.mil' WHERE source <> ''" > /dev/null
+run "a read from another SolarWinds address: refused, said, green" ok "{$base, \"awx_job_id\": 5008}" "the history keeps one SolarWinds server" "Report database: not kept"
+is "that read was not written" "$(qw "SELECT COUNT(*) FROM netmap_read WHERE job = 5008")" 0
+qw "UPDATE netmap_read SET source = '127.0.0.1:$port' WHERE source <> ''" > /dev/null
+DB_ENV="REPORT_DB_HOST=svc:hunter2@127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_writer REPORT_DB_PASSWORD=$wpw" \
+    run "a host with a login in it: refused before connecting, never repeated" ok "{$base}" "has user information" "!hunter2" "!svc:"
 DB_ENV="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_writer REPORT_DB_PASSWORD=wrong-password" \
     run "a wrong password: one warning, the report whole, green" ok "{$base}" "Report database: not kept" "Network map: " "!wrong-password"
 DB_ENV="REPORT_DB_HOST=127.0.0.1 REPORT_DB_PORT=$dbport REPORT_DB_NAME=site_reports REPORT_DB_USER=report_reader REPORT_DB_PASSWORD=$rpw" \
